@@ -1,7 +1,8 @@
 """Chat with Qwen3 running on openTPU.
 
     python3 tools/chat.py                                 # ISA simulator (~3 s/token on a laptop)
-    python3 tools/chat.py --backend board                 # the FPGA over PCIe (host/driver)
+    python3 tools/chat.py --backend board                 # the FPGA over PCIe (host/board.py)
+    python3 tools/chat.py --backend board-sim             # the Verilator board model (very slow)
     python3 tools/chat.py --prompt "Why is the sky blue?" # one-shot
     python3 tools/chat.py --think                         # Qwen3 thinking mode
 
@@ -45,8 +46,10 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None):
 
 
 class Chat:
-    def __init__(self, engine: Engine, tok, think: bool, pick, max_new: int):
+    def __init__(self, engine: Engine, tok, think: bool, pick, max_new: int,
+                 clock_mhz: float = 0.0):
         self.eng, self.tok, self.think, self.pick, self.max_new = engine, tok, think, pick, max_new
+        self.clock_mhz = clock_mhz
         self.history: list[dict] = []
         self.fed: list[int] = []            # tokens whose K/V are in the device cache
 
@@ -85,30 +88,47 @@ class Chat:
         t2 = time.time()
         stream.write("\n")
         n_pre, n_gen = len(ids) - n, len(out)
+        dev = ""
+        cyc = [st.get("cycles", 0) for st in self.eng.stats[-max(n_gen, 1):] if st]
+        if cyc and self.clock_mhz:
+            c = float(np.mean(cyc))
+            dev = (f", device {c / 1e6:.2f} Mcycles/token = "
+                   f"{self.clock_mhz * 1e6 / c:.1f} tok/s at {self.clock_mhz:.0f} MHz")
         stream.write(f"[{n_pre} prompt tokens in {t1 - t0:.1f}s, {n_gen} tokens in "
-                     f"{t2 - t1:.1f}s ({n_gen / max(t2 - t1, 1e-9):.2f} tok/s), "
+                     f"{t2 - t1:.1f}s ({n_gen / max(t2 - t1, 1e-9):.2f} tok/s){dev}, "
                      f"context {self.eng.pos}/{self.eng.cap}]\n")
         reply = self.tok.decode(out, skip_special_tokens=True)
         self.history.append({"role": "assistant", "content": reply})
         return reply
 
 
-def make_backend(name: str):
+def make_backend(name: str, spec: Spec, cap: int, dev: str):
+    """(backend, configuration) for Engine."""
     if name == "isa":
-        return "isa"
+        return "isa", None
     if name == "board":
-        from host.board import BoardBackend      # PCIe driver (host/board.py)
-        return BoardBackend
+        from host.board import BoardBackend, XdmaTransport      # PCIe driver (host/board.py)
+        from opentpu.isasim import board_config
+        return (lambda c, imgs: BoardBackend(c, imgs, transport=XdmaTransport(dev))), \
+            board_config()
+    if name == "board-sim":
+        from host.board import BoardBackend, SimTransport, sim_config
+        cfg = sim_config(spec, cap)
+        tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2)
+        return (lambda c, imgs: BoardBackend(c, imgs, transport=tr)), cfg
     if name == "rtl":
         from opentpu.llm.rtl_backend import RtlBackend
-        return RtlBackend
+        return RtlBackend, None
     raise SystemExit(f"unknown backend {name}")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--model", default=str(ROOT / "models" / "Qwen3-0.6B"))
-    ap.add_argument("--backend", default="isa", choices=["isa", "board", "rtl"])
+    ap.add_argument("--backend", default="isa", choices=["isa", "board", "board-sim", "rtl"])
+    ap.add_argument("--dev", default="/dev/xdma0", help="XDMA device prefix (--backend board)")
+    ap.add_argument("--clock-mhz", type=float, default=100.0,
+                    help="core clock, to turn device cycles into tokens/s")
     ap.add_argument("--cap", type=int, default=2048, help="KV cache capacity (tokens)")
     ap.add_argument("--prompt", help="ask one question and exit")
     ap.add_argument("--think", action="store_true", help="enable Qwen3 thinking mode")
@@ -119,15 +139,15 @@ def main():
     ap.add_argument("--seed", type=int)
     ap.add_argument("--max-new", type=int, default=256)
     a = ap.parse_args()
-    if a.backend == "board":
-        sys.path.insert(0, str(ROOT))
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(a.model)
     spec = Spec.from_hf(a.model)
     print(f"loading {Path(a.model).name} onto openTPU ({a.backend}) ...", flush=True)
-    eng = Engine(spec, load_weights(a.model), cap=a.cap, backend=make_backend(a.backend))
+    backend, cfg = make_backend(a.backend, spec, a.cap, a.dev)
+    eng = Engine(spec, load_weights(a.model), cap=a.cap, cfg=cfg, backend=backend)
     pick = sampler(0 if a.greedy else a.temperature, a.top_k, a.top_p, a.seed)
-    chat = Chat(eng, tok, a.think, pick, a.max_new)
+    chat = Chat(eng, tok, a.think, pick, a.max_new,
+                clock_mhz=a.clock_mhz if a.backend.startswith("board") else 0.0)
     if a.prompt:
         chat.ask(a.prompt)
         return
