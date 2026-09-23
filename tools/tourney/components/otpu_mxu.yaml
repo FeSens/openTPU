@@ -1,0 +1,40 @@
+name: otpu_mxu
+description: 'MXU: streams int8 weight chunks (D bytes/cycle) through a prefetch FIFO against up to MCOLS
+  stationary int8 rows in ACT RAM; products, adder tree, i2f, scale multiplies, isum_4 partial loop, result
+  FIFO, drain with ACC/ASCALE read-modify-write, RMAX.'
+allowed:
+- rtl/mxu/otpu_mxu.sv
+synth:
+  parts:
+  - top: otpu_mxu
+    weight: 1
+    params:
+      D: 128
+      MCOLS: 2
+      DEPTH: 1024
+      LANES: 8
+      SID: 0
+    sources:
+    - rtl/vpu/otpu_fp.sv
+    - rtl/vpu/otpu_fpipe.sv
+    - rtl/top/otpu_pkg.sv
+    - rtl/mxu/otpu_mxu.sv
+target_mhz: 110
+tests:
+  fast:
+  - tests/test_rtl.py::test_mlp_rtl[1]
+  - tests/test_rtl.py::test_attention_decode_rtl[1-8-2-100]
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_fuzz_single_slice[0]
+  - tests/test_rtl.py::test_fuzz_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[0]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[2]
+  - tests/test_rtl.py::test_attention_layer_rtl[1]
+  - tests/test_rtl.py::test_mlp_rtl[2]
+  board:
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_board_memory_path_stress[1-30]
+  - tests/test_rtl.py::test_board_memory_path_stress[4-80]
+  - tests/test_rtl.py::test_board_memory_path_fuzz[0-40]
+perf: true

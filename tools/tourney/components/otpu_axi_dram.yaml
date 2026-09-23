@@ -1,0 +1,40 @@
+name: otpu_axi_dram
+description: 'AXI DRAM adapter: slice ports A (words), B (chunks) and the QST write port onto two 512-bit
+  AXI4 channels, 64-byte interleave, per-channel queues and response FIFOs, A-beat reuse, write acknowledges
+  (wr_idle).'
+allowed:
+- rtl/mem/otpu_axi_dram.sv
+synth:
+  parts:
+  - top: otpu_axi_dram
+    weight: 1
+    params:
+      D: 128
+    sources:
+    - rtl/vpu/otpu_fp.sv
+    - rtl/vpu/otpu_fpipe.sv
+    - rtl/top/otpu_pkg.sv
+    - rtl/mem/otpu_axi_dram.sv
+target_mhz: 110
+tests:
+  fast:
+  - tests/test_rtl.py::test_mlp_rtl[1]
+  - tests/test_rtl.py::test_attention_decode_rtl[1-8-2-100]
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_fuzz_single_slice[0]
+  - tests/test_rtl.py::test_fuzz_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[0]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[2]
+  board:
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_board_memory_path_stress[1-30]
+  - tests/test_rtl.py::test_board_memory_path_stress[4-80]
+  - tests/test_rtl.py::test_board_memory_path_fuzz[0-40]
+  - tests/test_rtl.py::test_board_memory_path_stress[0-0]
+  - tests/test_rtl.py::test_board_memory_path_stress[2-60]
+  - tests/test_rtl.py::test_board_memory_path_stress[3-30]
+  - tests/test_rtl.py::test_board_memory_path_stress[5-50]
+  - tests/test_rtl.py::test_board_memory_path_fuzz[1-70]
+  - tests/test_board.py
+perf: true

@@ -1,0 +1,38 @@
+name: otpu_vpu
+description: 'VPU: elementwise fp32 ops on LANES lanes (split lanes: CL composite lanes with 10 multiply-add
+  slots for EXP2/RECIP/RSQRT, simple lanes with 1 slot), RMAX, RSUM/RSSQ (isum_64 partial loop and folding
+  trees).'
+allowed:
+- rtl/vpu/otpu_vpu.sv
+synth:
+  parts:
+  - top: otpu_vpu
+    weight: 1
+    params:
+      LANES: 8
+      SID: 0
+    sources:
+    - rtl/vpu/otpu_fp.sv
+    - rtl/vpu/otpu_fpipe.sv
+    - rtl/top/otpu_pkg.sv
+    - rtl/vpu/otpu_vpu.sv
+target_mhz: 110
+tests:
+  fast:
+  - tests/test_rtl.py::test_mlp_rtl[1]
+  - tests/test_rtl.py::test_attention_decode_rtl[1-8-2-100]
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_fuzz_single_slice[0]
+  - tests/test_rtl.py::test_fuzz_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[0]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[2]
+  - tests/test_rtl.py::test_lane_count_does_not_change_results[4]
+  - tests/test_rtl.py::test_lane_count_does_not_change_results[16]
+  - tests/test_rtl.py::test_attention_layer_rtl[1]
+  board:
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_board_memory_path_stress[1-30]
+  - tests/test_rtl.py::test_board_memory_path_stress[4-80]
+  - tests/test_rtl.py::test_board_memory_path_fuzz[0-40]
+perf: true

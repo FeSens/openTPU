@@ -1,0 +1,35 @@
+name: otpu_fp
+description: 'Shared fp32 operators: the staged functions of otpu_fp (unpack, multiply, align, normalize
+  with tree LZC, round) and the pipelined otpu_fmul (2 stages) / otpu_fadd (4 stages) / otpu_fmadd built
+  from them. Instantiated ~140 times across the VPU, MXU and quantizer, so every LUT here counts many
+  times.'
+allowed:
+- rtl/vpu/otpu_fp.sv
+- rtl/vpu/otpu_fpipe.sv
+synth:
+  parts:
+  - top: otpu_fadd
+    weight: 64
+    params:
+      LAT: 4
+    sources:
+    - rtl/vpu/otpu_fp.sv
+    - rtl/vpu/otpu_fpipe.sv
+  - top: otpu_fmul
+    weight: 78
+    params:
+      LAT: 2
+    sources:
+    - rtl/vpu/otpu_fp.sv
+    - rtl/vpu/otpu_fpipe.sv
+  note: weights = approximate instance counts at the board configuration (VPU ~42 fadd / 34 fmul, MXU
+    ~16 / 12, quantizer ~6 / 32); otpu_fp functions used inline elsewhere (fp_gt, i2f, q8, ...) are not
+    in the area figure.
+target_mhz: 110
+tests:
+  fast:
+  - tests/test_fp.py
+  - tests/test_rtl.py
+  board:
+  - tests/test_rtl.py
+perf: true

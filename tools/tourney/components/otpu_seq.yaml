@@ -1,0 +1,41 @@
+name: otpu_seq
+description: 'Sequencer: instruction fetch (IMEM block RAM), decode, loop stack, dispatch window with
+  the scoreboard (footprint conflicts), per-unit oldest-ready start, MXU two-phase release.'
+allowed:
+- rtl/seq/otpu_seq.sv
+synth:
+  parts:
+  - top: otpu_seq
+    weight: 1
+    params:
+      IMEM_WORDS: 32768
+      SID: 0
+      S: 1
+      D: 128
+      WIN: 16
+    sources:
+    - rtl/vpu/otpu_fp.sv
+    - rtl/vpu/otpu_fpipe.sv
+    - rtl/top/otpu_pkg.sv
+    - rtl/seq/otpu_seq.sv
+target_mhz: 110
+tests:
+  fast:
+  - tests/test_rtl.py::test_mlp_rtl[1]
+  - tests/test_rtl.py::test_attention_decode_rtl[1-8-2-100]
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_fuzz_single_slice[0]
+  - tests/test_rtl.py::test_fuzz_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[0]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[2]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[3]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[4]
+  - tests/test_rtl.py::test_fuzz_two_slices[0]
+  - tests/test_rtl.py::test_scoreboard_stress_two_slices[0]
+  board:
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_board_memory_path_stress[1-30]
+  - tests/test_rtl.py::test_board_memory_path_stress[4-80]
+  - tests/test_rtl.py::test_board_memory_path_fuzz[0-40]
+perf: true

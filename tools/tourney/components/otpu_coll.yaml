@@ -1,0 +1,38 @@
+name: otpu_coll
+description: 'Collective unit: all-gather / gather across slices through TMEM (S=1 on the board, but the
+  RTL is generic in S and the multi-slice tests gate it).'
+allowed:
+- rtl/top/otpu_coll.sv
+synth:
+  parts:
+  - top: otpu_coll
+    weight: 1
+    params:
+      S: 1
+      LANES: 8
+    sources:
+    - rtl/vpu/otpu_fp.sv
+    - rtl/vpu/otpu_fpipe.sv
+    - rtl/top/otpu_pkg.sv
+    - rtl/top/otpu_coll.sv
+target_mhz: 110
+tests:
+  fast:
+  - tests/test_rtl.py::test_mlp_rtl[1]
+  - tests/test_rtl.py::test_attention_decode_rtl[1-8-2-100]
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_fuzz_single_slice[0]
+  - tests/test_rtl.py::test_fuzz_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[0]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[2]
+  - tests/test_rtl.py::test_mlp_rtl[2]
+  - tests/test_rtl.py::test_fuzz_two_slices[0]
+  - tests/test_rtl.py::test_scoreboard_stress_two_slices[0]
+  - tests/test_rtl.py::test_attention_decode_rtl[2-8-2-100]
+  board:
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_board_memory_path_stress[1-30]
+  - tests/test_rtl.py::test_board_memory_path_stress[4-80]
+  - tests/test_rtl.py::test_board_memory_path_fuzz[0-40]
+perf: true

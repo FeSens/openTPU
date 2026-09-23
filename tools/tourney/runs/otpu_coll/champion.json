@@ -1,0 +1,31 @@
+{
+ "lut": 1325,
+ "lutram": 0,
+ "ff": 262,
+ "dsp": 9,
+ "bram36": 0,
+ "bram18": 0,
+ "carry4": 316,
+ "logic_ns": 8.055,
+ "fmax": 74.69375560203167,
+ "backend": "yosys",
+ "log": "/Users/bonetto/bonetto/openTPU/.claude/worktrees/agent-af485a5594cc0730a/build/tourney/otpu_coll/champ-9a8e6b170/otpu_coll/yosys.log",
+ "area_eq": 1816.0,
+ "parts": {
+  "otpu_coll": {
+   "lut": 1325,
+   "lutram": 0,
+   "ff": 262,
+   "dsp": 9,
+   "bram36": 0,
+   "bram18": 0,
+   "carry4": 316,
+   "logic_ns": 8.055,
+   "fmax": 74.69375560203167,
+   "backend": "yosys"
+  }
+ },
+ "perf_cycles": 1912335,
+ "sha": "9a8e6b1702c6a966dbe812f0e964d1ddddab2371",
+ "critical": "[otpu_coll]\nLatest arrival time in 'otpu_coll' is 8055:\n    8055 (<primary output>)\n           \\w_addr [253]\n    8055 $abc$58742$lut\\w_addr[253] (LUT2.I1->O)\n           $techmap59714$abc$58742$lut\\w_addr[253].A [1]\n    7928 $auto$alumacc.cc:512:replace_alu$3593.genblk1.slice[7].genblk1.carry4 (CARRY4.CI->O)\n           $abc$58742$aiger58741$3404\n    7594 $auto$alumacc.cc:512:replace_alu$3593.genblk1.slice[6].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$58742$aiger58741$3396\n    7480 $auto$alumacc.cc:512:replace_alu$3593.genblk1.slice[5].genblk1.carry4 (CARRY4.S->CO)\n           $techmap60215$abc$58742$lut\\w_addr[21].A [1]\n    6952 $auto$maccmap.cc:240:synth$5046.genblk1.slice[5].genblk1.carry4 (CARRY4.CI->O)\n           $abc$58742$aiger58741$2964\n    6618 $auto$maccmap.cc:240:synth$5046.genblk1.slice[4].genblk1.carry4 (CARRY4.S->CO)\n           $abc$58742$aiger58741$8333b\n    6090 $auto$abc9_ops.cc:1613:reintegrate$58836 (LUT6.I5->O)\n           $techmap58970$auto$abc9_ops.cc:1613:reintegrate$58836.A [5]\n    5963 $auto$abc9_ops.cc:1613:reintegrate$58840 (LUT5.I2->O)\n           $170.Y [17]\n    5556 $170.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.sliceA.last.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.sliceB[0].mul (DSP48E1.PCIN->P)\n           $abc$58742$auto$xilinx_dsp_cascade_pm.h:379:block_2$2413 [0]\n    4449 $170.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.sliceA[0].mul.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.mul_sliceB_last (DSP48E1.PCIN->PCOUT)\n           $abc$58742$auto$xilinx_dsp_cascade_pm.h:379:block_2$2412 [0]\n    3194 $170.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.sliceA[0].mul.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.sliceB[0].mul (DSP48E1.CLK->PCOUT)\n           $auto$clkbufmap.cc:294:execute$60250\n      96 $auto$clkbufmap.cc:261:execute$60248 (BUFG.I->O)\n       0   \\clk (<primary input>)\nArrival histogram:\n legend: * represents 3 endpoint(s)\n         + represents [1,3) endpoint(s)\n(  8060,   7657] |**********************+\n(  7657,   7254] |********************+\n(  7254,   6851] |***********+\n(  6851,   6448] |******+\n(  6448,   6045] |+\n(  6045,   5642] | \n(  5642,   5239] |**************************+\n(  5239,   4836] |******************+\n(  4836,   4433] |***********+\n(  4433,   4030] |*****+\n(  4030,   3627] |***+\n(  3627,   3224] |************************************************************ \n(  3224,   2821] |************+\n(  2821,   2418] |********+\n(  2418,   2015] |****+\n(  2015,   1612] |*******+\n(  1612,   1209] |*******+"
+}

@@ -1,0 +1,41 @@
+name: otpu_tmem
+description: 'TMEM: fp32 scratchpad, LANES banks, one copy per read port (simple dual-port block RAM),
+  writes broadcast (WPB per bank), per-lane read data held until the lane reads again.'
+allowed:
+- rtl/mem/otpu_tmem.sv
+synth:
+  parts:
+  - top: otpu_tmem
+    weight: 1
+    params:
+      WORDS: 65536
+      LANES: 8
+      NRP: 8
+      NWP: 4
+      WPB: 1
+      SID: 0
+    sources:
+    - rtl/vpu/otpu_fp.sv
+    - rtl/vpu/otpu_fpipe.sv
+    - rtl/top/otpu_pkg.sv
+    - rtl/mem/otpu_tmem.sv
+target_mhz: 110
+tests:
+  fast:
+  - tests/test_rtl.py::test_mlp_rtl[1]
+  - tests/test_rtl.py::test_attention_decode_rtl[1-8-2-100]
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_fuzz_single_slice[0]
+  - tests/test_rtl.py::test_fuzz_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[0]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[2]
+  - tests/test_rtl.py::test_lane_count_does_not_change_results[4]
+  - tests/test_rtl.py::test_lane_count_does_not_change_results[16]
+  - tests/test_rtl.py::test_scoreboard_stress_two_slices[0]
+  board:
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_board_memory_path_stress[1-30]
+  - tests/test_rtl.py::test_board_memory_path_stress[4-80]
+  - tests/test_rtl.py::test_board_memory_path_fuzz[0-40]
+perf: true

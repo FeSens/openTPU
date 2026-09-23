@@ -1,0 +1,37 @@
+name: otpu_quant
+description: 'Quantizer: QACT (fp32 TMEM rows -> int8 ACT RAM rows with per-block or per-row scales, streaming
+  or two-pass) and QST (int8 bytes + scales to DRAM); prescale, amax trees, reciprocal (Newton), q8 rounding.'
+allowed:
+- rtl/vpu/otpu_quant.sv
+synth:
+  parts:
+  - top: otpu_quant
+    weight: 1
+    params:
+      D: 128
+      LANES: 8
+      SID: 0
+    sources:
+    - rtl/vpu/otpu_fp.sv
+    - rtl/vpu/otpu_fpipe.sv
+    - rtl/top/otpu_pkg.sv
+    - rtl/vpu/otpu_quant.sv
+target_mhz: 110
+tests:
+  fast:
+  - tests/test_rtl.py::test_mlp_rtl[1]
+  - tests/test_rtl.py::test_attention_decode_rtl[1-8-2-100]
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_fuzz_single_slice[0]
+  - tests/test_rtl.py::test_fuzz_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[0]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[2]
+  - tests/test_rtl.py::test_attention_layer_rtl[1]
+  - tests/test_rtl.py::test_scoreboard_stress_single_slice[3]
+  board:
+  - tests/test_rtl.py::test_design_size_block_128_rtl
+  - tests/test_rtl.py::test_board_memory_path_stress[1-30]
+  - tests/test_rtl.py::test_board_memory_path_stress[4-80]
+  - tests/test_rtl.py::test_board_memory_path_fuzz[0-40]
+perf: true
