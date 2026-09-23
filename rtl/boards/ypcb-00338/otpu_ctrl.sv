@@ -62,6 +62,9 @@ module otpu_ctrl #(
   logic [63:0] cycles;
   logic [31:0] n_brd, n_bwr, n_ard, n_awr, n_bst, scratch;
   logic        clear;
+  logic [1:0]  ld_pend_q;                  // LOAD written, loader not yet visibly busy
+  wire         ld_pend = ld_start || (|ld_pend_q);
+  always_ff @(posedge clk) ld_pend_q <= rst ? 2'b00 : {ld_pend_q[0], ld_start};
 
   // ---- write channel: take address and data together
   logic       w_go;
@@ -124,7 +127,7 @@ module otpu_ctrl #(
           6'h00: s_rdata <= 32'h4F54_5055;
           6'h01: s_rdata <= {16'(D), 8'(MCOLS), 8'(LANES)};
           6'h02: s_rdata <= {31'd0, run};
-          6'h03: s_rdata <= {24'd0, run, calib, axi_err, wr_idle, ld_busy, error, halted};
+          6'h03: s_rdata <= {24'd0, run, calib, axi_err, wr_idle, ld_busy || ld_pend, error, halted};
           6'h04: s_rdata <= ld_addr;
           6'h05: s_rdata <= ld_n;
           6'h06: s_rdata <= cycles[31:0];

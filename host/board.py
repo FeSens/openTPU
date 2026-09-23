@@ -92,6 +92,9 @@ class XdmaTransport:
     def reg_read(self, off: int) -> int:
         return struct.unpack("<I", self.regs[off:off + 4])[0]
 
+    def reg_read_many(self, offs: list[int]) -> list[int]:
+        return [self.reg_read(o) for o in offs]
+
     def poll(self, off: int, mask: int, val: int, timeout: float = 600.0) -> int:
         t = time.time()
         while True:
@@ -105,7 +108,12 @@ class XdmaTransport:
 class SimTransport:
     """The Verilator model of the board (sim/verilator/tb_board.sv): the memory lives here as
     the two channels' physical images, register operations are queued and replayed by the
-    testbench when a result is needed."""
+    testbench when a result is needed (a flush).
+
+    Every flush is a fresh simulation: DRAM persists (through the channel image files), but the
+    control registers, IMEM and TMEM start from reset. The Board protocol is built for that --
+    a program load, its run and the reads of its counters happen in one flush -- and the Qwen3
+    step programs do not rely on TMEM surviving between runs."""
 
     def __init__(self, ch_bytes: int = 1 << 24, stall: int = 20, seed: int = 1,
                  params: dict | None = None):
@@ -128,9 +136,14 @@ class SimTransport:
         self.script.append(f"W {off:x} {val & 0xFFFFFFFF:x}")
 
     def reg_read(self, off: int) -> int:
-        self.script.append(f"R {off:x}")
+        return self.reg_read_many([off])[0]
+
+    def reg_read_many(self, offs: list[int]) -> list[int]:
+        """All reads in one simulation, in order (a later flush starts a fresh machine)."""
+        for o in offs:
+            self.script.append(f"R {o:x}")
         self.flush()
-        return self.regs_seen[off]
+        return [self.regs_seen[o] for o in offs]
 
     def poll(self, off: int, mask: int, val: int, timeout: float = 0) -> int:
         self.script.append(f"P {off:x} {mask:x} {val:x}")
@@ -181,8 +194,7 @@ class Board:
                 raise RuntimeError(f"no openTPU on the card (ID register {ident:#x})")
 
     def info(self) -> dict:
-        v = self.t.reg_read(R_VERSION)
-        st = self.t.reg_read(R_STATUS)
+        v, st = self.t.reg_read_many([R_VERSION, R_STATUS])
         return {"D": v >> 16, "MCOLS": (v >> 8) & 0xFF, "LANES": v & 0xFF,
                 "calibrated": bool(st & ST_CALIB0) and bool(st & ST_CALIB1), "status": st}
 
@@ -222,12 +234,12 @@ class Board:
         t.reg_write(R_CTRL, CTRL_CLEAR)
         t.reg_write(R_CTRL, CTRL_RUN)
         t.poll(R_STATUS, ST_HALTED, ST_HALTED, timeout)
-        st = t.reg_read(R_STATUS)
-        stats = {"cycles": t.reg_read(R_CYCLES) | t.reg_read(R_CYCLES_HI) << 32,
-                 "instructions": [t.reg_read(R_ICOUNT)],
-                 "b_reads": t.reg_read(R_B_RD), "b_writes": t.reg_read(R_B_WR),
-                 "a_reads": t.reg_read(R_A_RD), "a_writes": t.reg_read(R_A_WR),
-                 "b_stall": t.reg_read(R_B_STALL), "status": st}
+        st, lo, hi, ic, brd, bwr, ard, awr, bst = t.reg_read_many(
+            [R_STATUS, R_CYCLES, R_CYCLES_HI, R_ICOUNT, R_B_RD, R_B_WR, R_A_RD, R_A_WR,
+             R_B_STALL])
+        stats = {"cycles": lo | hi << 32, "instructions": [ic], "b_reads": brd,
+                 "b_writes": bwr, "a_reads": ard, "a_writes": awr, "b_stall": bst,
+                 "status": st}
         t.reg_write(R_CTRL, 0)
         if st & ST_ERROR:
             raise RuntimeError("the program stopped on an illegal instruction")
