@@ -81,6 +81,11 @@ UARCH = {"WIN": 32, "RPB": 4, "WPB": 2}
 BOARD_UARCH = {"WIN": 16, "RPB": 64, "WPB": 1, "FIFO_DEPTH": 1024}
 if os.environ.get("OTPU_UARCH") == "board":
     UARCH = dict(BOARD_UARCH)
+# MXU dot-product implementation (timing only): OTPU_MXU=cascade selects the DSP cascade
+# chains (OTPU_MXU_CL products per chain) instead of the adder tree.
+if os.environ.get("OTPU_MXU") == "cascade":
+    UARCH["MXU_IMPL"] = 1
+    UARCH["MXU_CL"] = int(os.environ.get("OTPU_MXU_CL", "16"))
 
 # The memory path. AXI: the board's AXI adapter in front of a two-channel AXI memory model with
 # random stalls (percent) and latency (D = 128 only; other configurations keep the behavioural
