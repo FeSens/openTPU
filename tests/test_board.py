@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 
 from host.board import BASE, BEAT, Board, BoardBackend, SimTransport, join, split
-from host.checks import address_lines, pattern_test, run_demo
+from host.checks import (address_lines, channel_patterns, masked_program, partial_writes,
+                         pattern_test, run_demo)
 from opentpu.isasim import board_config
 
 
@@ -73,13 +74,25 @@ def test_program_on_board_model(have_verilator):
     assert st["b_reads"] > 0 and st["a_writes"] > 0 and st["cycles"] > 0
 
 
+def test_partial_dram_writes_on_board_model(have_verilator):
+    """QST byte writes and short word-masked stores (read-modify-writes in the board's memory
+    controllers, which have no DDR3 data-mask pins)."""
+    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=40, seed=9))
+    ok, msg, st = run_demo(b, CFG, masked_program())
+    assert ok, msg
+    assert st["a_writes"] > 500 and st["b_writes"] > 20
+
+
 def test_pattern_and_address_lines_on_board_model(have_verilator):
     t = SimTransport(ch_bytes=1 << 21)
     b = Board(t, check=False)
     ok, msg = pattern_test(b, [(0, 4096), (4096 + 60, 1000), ((1 << 22) - 777, 777)])
     assert ok, msg
     for c in (0, 1):
-        ok, msg = address_lines(t, c, 1 << 21)
+        for check in (address_lines, channel_patterns):
+            ok, msg = check(t, c, 1 << 21)
+            assert ok, msg
+        ok, msg = partial_writes(t, c)
         assert ok, msg
 
 

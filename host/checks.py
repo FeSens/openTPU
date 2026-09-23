@@ -43,10 +43,24 @@ def demo_program() -> list:
     ]
 
 
-def run_demo(board, cfg) -> tuple[bool, str, dict]:
-    """Run the demo program on the board and on the ISA simulator; compare DRAM."""
+def masked_program() -> list:
+    """Many partial DRAM writes from the accelerator: QST byte writes (dense and strided) and
+    short word-masked stores at every alignment. The board's DDR3 has no data-mask pins, so
+    each of these is a read-modify-write inside the memory controller."""
+    prog = [I.ld(DATA, 0, 4096)]
+    for k in range(24):
+        n = 1 + (k * 7) % 23                                   # 1..23 words
+        prog.append(I.st(OUT + 0x10000 + 4 * (37 * k + k % 5), 64 * k, n))
+    prog.append(I.qst(0, OUT + 0x14000 + 3, OUT + 0x16000 + 4, 2, 2, 256, 256, 1))   # dense
+    prog.append(I.qst(512, OUT + 0x18000 + 1, OUT + 0x1A000, 3, 1, 128, 1024, 3))    # strided
+    prog.append(I.halt())
+    return prog
+
+
+def run_demo(board, cfg, prog: list | None = None) -> tuple[bool, str, dict]:
+    """Run a program (default: the demo) on the board and on the ISA simulator; compare DRAM."""
     img = demo_image()
-    prog = demo_program()
+    prog = prog or demo_program()
     ref = np.zeros(min(cfg.DRAM_BYTES, 1 << 23), np.uint8)
     ref[:len(img)] = img
     m = Machine(dataclasses.replace(cfg, DRAM_BYTES=len(ref)), [prog], [ref]).run()
@@ -78,6 +92,40 @@ def pattern_test(board, regions: list[tuple[int, int]], seed: int = 1) -> tuple[
                            f"{a + int(bad[0]):#x} (logical beat {(a + int(bad[0])) // 64}, "
                            f"channel {((a + int(bad[0])) // 64) % 2})")
     return True, f"{len(regions)} regions, {sum(n for _, n in regions)} bytes"
+
+
+def channel_patterns(transport, ch: int, ch_bytes: int, seed: int = 2) -> tuple[bool, str]:
+    """Random data straight to one channel (raw channel addresses) at the bottom, middle and
+    top of the channel."""
+    rng = np.random.default_rng(seed + ch)
+    n = min(65536, ch_bytes // 8)
+    for off in (0, 4096, ch_bytes // 2, ch_bytes - n):
+        d = rng.integers(0, 256, n).astype(np.uint8)
+        transport.mem_write(ch, off, d)
+        if not np.array_equal(transport.mem_read(ch, off, n), d):
+            return False, f"channel {ch} offset {off:#x}: read-back mismatch"
+    return True, "4 regions"
+
+
+def partial_writes(transport, ch: int, base: int = 1 << 20, seed: int = 3) -> tuple[bool, str]:
+    """Sub-beat host writes (1..63 bytes at odd offsets) into a filled region of one channel:
+    the DMA engine sends them with partial byte strobes, which the memory controller turns into
+    read-modify-writes (no DDR3 data-mask pins on this board)."""
+    rng = np.random.default_rng(seed + ch)
+    ref = rng.integers(0, 256, 4096).astype(np.uint8)
+    transport.mem_write(ch, base, ref)
+    for _ in range(200):
+        n = int(rng.integers(1, 64))
+        o = int(rng.integers(0, 4096 - n))
+        d = rng.integers(0, 256, n).astype(np.uint8)
+        transport.mem_write(ch, base + o, d)
+        ref[o:o + n] = d
+    got = transport.mem_read(ch, base, 4096)
+    bad = np.nonzero(got != ref)[0]
+    if len(bad):
+        return False, (f"channel {ch}: {len(bad)} bytes wrong after partial writes, first at "
+                       f"{base + int(bad[0]):#x}")
+    return True, "200 partial writes"
 
 
 def address_lines(transport, ch: int, ch_bytes: int) -> tuple[bool, str]:

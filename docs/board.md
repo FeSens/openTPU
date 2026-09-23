@@ -97,7 +97,7 @@ Python on the host: `pip install numpy torch transformers safetensors` (as for t
 ## 4. Self-test, then chat
 
 ```sh
-python3 boards/ypcb-00338/scripts/selftest.py          # registers, calibration, DRAM, a program
+python3 tools/board_selftest.py                       # staged bring-up, see docs/host.md
 python3 tools/chat.py --backend board                  # chat with Qwen3-0.6B on the card
 ```
 

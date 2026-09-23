@@ -9,11 +9,14 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
   2 config     the bitstream's D / MCOLS / LANES match opentpu.isasim.board_config()
   3 calib      both DDR3 controllers report calibration done
   4 regs       SCRATCH register write / read
-  5 addr       walking address bits on each channel (raw channel addresses)
+  5 addr       walking address bits and random patterns on each channel (raw channel
+               addresses: bottom, middle, top)
   6 pattern    random data through the 64-byte channel interleave, unaligned edges, the top
-               of each channel (logical addresses near 4 GiB)
+               of DRAM (logical addresses near 4 GiB); sub-beat host writes on each channel
+               (partial byte strobes: read-modify-write in the controller, no DDR3 DM pins)
   7 bandwidth  host <-> card DMA rate
-  8 kernel     a program using every unit, DRAM compared with the ISA simulator bit for bit
+  8 kernel     a program using every unit, and one of partial DRAM writes from the
+               accelerator (QST bytes, short stores), compared with the ISA simulator bit for bit
   9 qwen       (with --qwen) greedy decoding on the card equals the ISA simulator, token for
                token, and the answer to "What is the capital of France?"
 """
@@ -32,7 +35,8 @@ import numpy as np  # noqa: E402
 
 from host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST_CALIB0,  # noqa: E402
                         ST_CALIB1, Board, BoardBackend, SimTransport, XdmaTransport, sim_config)
-from host.checks import address_lines, bandwidth, pattern_test, run_demo  # noqa: E402
+from host.checks import (address_lines, bandwidth, channel_patterns, masked_program,  # noqa: E402
+                         partial_writes, pattern_test, run_demo)
 from opentpu.isasim import board_config  # noqa: E402
 
 HINTS = {
@@ -134,17 +138,23 @@ def main() -> int:
     def addr():
         msgs = []
         for c in (0, 1):
-            ok, m = address_lines(t, c, ch_bytes)
-            if not ok:
-                return False, m
-            msgs.append(m)
+            for check in (address_lines, channel_patterns):
+                ok, m = check(t, c, ch_bytes)
+                if not ok:
+                    return False, m
+            msgs.append(f"channel {c} ok")
         return True, "; ".join(msgs)
 
     def pattern():
         m = 1 << 20                                       # disjoint regions
         regions = [(0, m), (m + 12345, 1000), (2 * m + 60, 70), (top // 2 - 4096, 8192),
                    (top - 2 * m, m), (top - 100, 100)]
-        return pattern_test(board, regions)
+        ok, msg = pattern_test(board, regions)
+        for c in (0, 1):
+            if ok:
+                ok, m2 = partial_writes(t, c)
+                msg += "; " + m2
+        return ok, msg
 
     def bw():
         if a.sim:
@@ -155,7 +165,12 @@ def main() -> int:
 
     def kernel():
         ok, msg, st = run_demo(board, cfg)
-        return ok, msg + f" (b_reads={st['b_reads']}, a_writes={st['a_writes']})"
+        if not ok:
+            return ok, "all units: " + msg
+        ok2, msg2, st2 = run_demo(board, cfg, masked_program())
+        return ok2, (f"all units: {msg} (b_reads={st['b_reads']}, a_writes={st['a_writes']}); "
+                     f"partial writes: {msg2} (b_writes={st2['b_writes']}, "
+                     f"a_writes={st2['a_writes']})")
 
     def qwen():
         from opentpu.llm.qwen3 import Engine, Spec, load_weights
