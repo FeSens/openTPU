@@ -40,33 +40,55 @@ COMPONENTS = {
 }
 
 
-def synth(name: str) -> dict:
+def parse(name: str, out: Path = OUT) -> dict | None:
+    """Results of a finished run from its report files."""
+    sta, stat = out / f"{name}.sta", out / f"{name}.stat"
+    if not (sta.exists() and stat.exists()):
+        return None
+    m = re.search(r"Latest arrival time in '\S+' is (\d+)", sta.read_text())
+    first = stat.read_text().split("=== design hierarchy ===")[0]
+
+    def cnt(pat):
+        return sum(int(n) for n, c in re.findall(r"^\s+(\d+)\s+(\S+)\s*$", first, re.M)
+                   if re.fullmatch(pat, c))
+    return {"name": name, "ns": int(m.group(1)) / 1000 if m else float("nan"),
+            "lut": cnt(r"LUT[1-6]"), "ff": cnt(r"FD[A-Z]*"), "dsp": cnt(r"DSP48E1"),
+            "bram36": cnt(r"RAMB36E1") + cnt(r"RAMB18E1") / 2,
+            "lutram": cnt(r"RAM\d+[A-Z0-9]*|SRL[A-Z0-9]*")}
+
+
+def synth(name: str) -> dict | None:
     files, params = COMPONENTS[name]
     srcs = [str(RTL / f) for f in BASE + [f for f in files if f not in BASE]]
     gp = " ".join(f"-G {k}={v}" for k, v in params.items())
-    r = subprocess.run(["bash", str(ROOT / "tools/synth/sta.sh"), str(OUT), name, gp] + srcs,
-                       capture_output=True, text=True)
-    lines = r.stdout.strip().splitlines()
-    d = {"name": name, "raw": lines[-1] if lines else f"{name} failed"}
-    d.update(re.findall(r"(\w+)=(\S+)", d["raw"]))
-    return d
+    for f in (OUT / f"{name}.sta", OUT / f"{name}.stat"):
+        f.unlink(missing_ok=True)
+    subprocess.run(["bash", str(ROOT / "tools/synth/sta.sh"), str(OUT), name, gp] + srcs,
+                   capture_output=True, text=True)
+    return parse(name) or {"name": name, "failed": True}
 
 
-def main():
-    names = sys.argv[1:] or list(COMPONENTS)
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        res = list(ex.map(synth, names))
+def table(res: list) -> None:
     print(f"{'component':<15}{'LUT':>8}{'FF':>8}{'DSP':>6}{'BRAM36':>8}{'LUTRAM':>8}"
           f"{'logic ns':>10}{'est fmax':>11}")
     for d in res:
-        if not d.get("arrival", "?").isdigit():
-            print(d["raw"])
+        if d is None or d.get("failed"):
+            print(f"{(d or {}).get('name', '?'):<15} failed (see build/synth_board/*.ylog)")
             continue
-        ns = int(d["arrival"]) / 1000
-        b36 = int(d["bram36"]) + int(d["bram18"]) / 2
-        f = 1000 / (1.6 * ns + 0.5)
-        print(f"{d['name']:<15}{d['luts']:>8}{d['ff']:>8}{d['dsp']:>6}{b36:>8.1f}{d['lutram']:>8}"
-              f"{ns:>10.2f}{f:>7.0f} MHz", flush=True)
+        f = 1000 / (1.6 * d["ns"] + 0.5)
+        print(f"{d['name']:<15}{d['lut']:>8}{d['ff']:>8}{d['dsp']:>6}{d['bram36']:>8.1f}"
+              f"{d['lutram']:>8}{d['ns']:>10.2f}{f:>7.0f} MHz", flush=True)
+
+
+def main():
+    args = sys.argv[1:]
+    if args[:1] == ["--report"]:
+        table([parse(n) or {"name": n, "failed": True} for n in (args[1:] or COMPONENTS)])
+        return
+    names = args or list(COMPONENTS)
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        res = list(ex.map(synth, names))
+    table(res)
 
 
 if __name__ == "__main__":

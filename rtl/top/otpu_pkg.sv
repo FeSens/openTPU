@@ -96,7 +96,77 @@ package otpu_pkg;
   endfunction
 
   // Everything an instruction may read or write (docs/isa.md), conservatively as intervals.
-  function automatic fp_t footprint(input cmd_t c, input int D, input int S);
+  // Two steps so that hardware can register in between: fp_prod (the multiplications) and
+  // fp_ranges (the intervals); footprint() is their composition.
+  typedef struct packed { logic [31:0] p0, p1, p2, p3; } fpm_t;
+  // the multiplications as (a, w) pairs; a < 2^24 whenever the product is used
+  typedef struct packed { logic [3:0][23:0] a; logic [3:0][31:0] w; } fpo_t;
+  // partial products: low 32 bits of a * w[15:0], low 16 bits of a * w[31:16] (one DSP each)
+  typedef struct packed { logic [3:0][31:0] pl; logic [3:0][15:0] ph; } fpp_t;
+
+  function automatic fpo_t fp_ops(input cmd_t c, input int D, input int S);
+    fpo_t o;
+    logic [31:0] rows, n, kb, m;
+    o = '0;
+    case (c.op)
+      OP_MM: begin
+        n = 32'(c.w4[15:0]); m = 32'(c.w6[23:16]);
+        o.a[0] = 24'(n - 1); o.w[0] = c.w5;
+        o.a[1] = 24'(n - 1); o.w[1] = c.w7;
+        o.a[2] = 24'(m - 1); o.w[2] = 32'(c.w6[15:0]);
+        o.a[3] = 24'(m);     o.w[3] = 32'(c.w6[15:0]);
+      end
+      OP_QACT: begin
+        rows = 32'(c.w2[7:0]);
+        o.a[0] = 24'(rows - 1); o.w[0] = c.w3;
+      end
+      OP_QST: begin
+        rows = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]);
+        o.a[0] = 24'(rows - 1);   o.w[0] = c.w5;
+        o.a[1] = 24'(rows - 1);   o.w[1] = c.w6;
+        o.a[2] = 24'(kb * D - 1); o.w[2] = c.w7;
+        o.a[3] = 24'(rows);       o.w[3] = kb;
+      end
+      OP_VOP: begin
+        rows = 32'(c.w4[15:0]);
+        o.a[0] = 24'(rows - 1); o.w[0] = 32'(c.w5[31:16]);
+        o.a[1] = 24'(rows - 1); o.w[1] = 32'(c.w6[15:0]);
+        o.a[2] = 24'(rows - 1); o.w[2] = 32'(c.w5[15:0]);
+      end
+      OP_GATHER: begin
+        rows = 32'(c.w3[15:0]);
+        o.a[0] = 24'(rows - 1); o.w[0] = c.w4;
+        o.a[1] = 24'(S - 1);    o.w[1] = c.w6;
+        o.a[2] = 24'(rows - 1); o.w[2] = c.w5;
+      end
+      default: ;
+    endcase
+    return o;
+  endfunction
+
+  function automatic fpp_t fp_part(input fpo_t o);
+    fpp_t p;
+    for (int i = 0; i < 4; i++) begin
+      p.pl[i] = 32'({8'd0, o.a[i]} * {16'd0, o.w[i][15:0]});
+      p.ph[i] = 16'({8'd0, o.a[i]} * {16'd0, o.w[i][31:16]});
+    end
+    return p;
+  endfunction
+
+  function automatic fpm_t fp_sum(input fpp_t p);
+    fpm_t m;
+    m.p0 = p.pl[0] + {p.ph[0], 16'd0};
+    m.p1 = p.pl[1] + {p.ph[1], 16'd0};
+    m.p2 = p.pl[2] + {p.ph[2], 16'd0};
+    m.p3 = p.pl[3] + {p.ph[3], 16'd0};
+    return m;
+  endfunction
+
+  function automatic fpm_t fp_prod(input cmd_t c, input int D, input int S);
+    return fp_sum(fp_part(fp_ops(c, D, S)));
+  endfunction
+
+  function automatic fp_t fp_ranges(input cmd_t c, input fpm_t p, input int D, input int S);
     fp_t f;
     logic [31:0] rows, cols, n, kb, m;
     f = '0;
@@ -112,18 +182,18 @@ package otpu_pkg;
       OP_MM: begin
         n = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]); m = 32'(c.w6[23:16]);
         if (n != 0 && kb != 0 && m != 0) begin
-          f.rd[0] = mk(SP_DRAM, c.w1, (n - 1) * c.w5 + kb * D);
-          if (!c.flags[0]) f.rd[1] = mk(SP_DRAM, c.w2, (n - 1) * c.w7 + kb * 4);
+          f.rd[0] = mk(SP_DRAM, c.w1, p.p0 + kb * D);
+          if (!c.flags[0]) f.rd[1] = mk(SP_DRAM, c.w2, p.p1 + kb * 4);
           if (c.flags[3])  f.rd[3] = mk(SP_TMEM, c.w2, m);                         // ASCALE
           f.rd[2] = mk(SP_ACT, 32'(c.w6[31:24]), kb);
-          f.wr[0] = mk(SP_TMEM, c.w3, (m - 1) * 32'(c.w6[15:0]) + n);
-          if (c.flags[2]) f.wr[1] = mk(SP_TMEM, c.w3 + m * 32'(c.w6[15:0]), m);   // RMAX
+          f.wr[0] = mk(SP_TMEM, c.w3, p.p2 + n);
+          if (c.flags[2]) f.wr[1] = mk(SP_TMEM, c.w3 + p.p3, m);                   // RMAX
         end
       end
       OP_QACT: begin
         rows = 32'(c.w2[7:0]); kb = 32'(c.w2[31:16]);
         if (rows != 0 && kb != 0) begin
-          f.rd[0] = mk(SP_TMEM, c.w1, (rows - 1) * c.w3 + kb * D);
+          f.rd[0] = mk(SP_TMEM, c.w1, p.p0 + kb * D);
           if (c.flags[1]) f.rd[1] = mk(SP_TMEM, c.w4, kb * D);                     // CSCALE
           if (c.flags[2]) f.rd[2] = mk(SP_TMEM, c.w5, rows);                       // RSCALE
           f.wr[0] = mk(SP_ACT, 32'(c.w2[15:8]), kb);
@@ -132,40 +202,44 @@ package otpu_pkg;
       OP_QST: begin
         rows = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]);
         if (rows != 0 && kb != 0) begin
-          f.rd[0] = mk(SP_TMEM, c.w1, (rows - 1) * c.w5 + kb * D);
-          f.wr[0] = mk(SP_DRAM, c.w2, (rows - 1) * c.w6 + (kb * D - 1) * c.w7 + 1);
-          f.wr[1] = mk(SP_DRAM, c.w3, 4 * (c.flags[0] ? rows : rows * kb));
+          f.rd[0] = mk(SP_TMEM, c.w1, p.p0 + kb * D);
+          f.wr[0] = mk(SP_DRAM, c.w2, p.p1 + p.p2 + 1);
+          f.wr[1] = mk(SP_DRAM, c.w3, 4 * (c.flags[0] ? rows : p.p3));
         end
       end
       OP_VOP: begin
         rows = 32'(c.w4[15:0]); cols = 32'(c.w4[31:16]);
         if (rows != 0 && cols != 0) begin
           if (c.w6[23:16] != V_FILL)
-            f.rd[0] = mk(SP_TMEM, c.w2, (rows - 1) * 32'(c.w5[31:16]) + cols);
+            f.rd[0] = mk(SP_TMEM, c.w2, p.p0 + cols);
           if (is_binary(c.w6[23:16])) begin
             case (c.w6[25:24])
-              B_FULL: f.rd[1] = mk(SP_TMEM, c.w3, (rows - 1) * 32'(c.w6[15:0]) + cols);
-              B_ROW:  f.rd[1] = mk(SP_TMEM, c.w3, (rows - 1) * 32'(c.w6[15:0]) + 1);
+              B_FULL: f.rd[1] = mk(SP_TMEM, c.w3, p.p1 + cols);
+              B_ROW:  f.rd[1] = mk(SP_TMEM, c.w3, p.p1 + 1);
               B_COL:  f.rd[1] = mk(SP_TMEM, c.w3, cols);
               default: ;
             endcase
           end
           if (c.w6[23:16] == V_RSUM || c.w6[23:16] == V_RMAX || c.w6[23:16] == V_RSSQ)
-            f.wr[0] = mk(SP_TMEM, c.w1, (rows - 1) * 32'(c.w5[15:0]) + 1);
+            f.wr[0] = mk(SP_TMEM, c.w1, p.p2 + 1);
           else
-            f.wr[0] = mk(SP_TMEM, c.w1, (rows - 1) * 32'(c.w5[15:0]) + cols);
+            f.wr[0] = mk(SP_TMEM, c.w1, p.p2 + cols);
         end
       end
       OP_GATHER: begin
         rows = 32'(c.w3[15:0]); cols = 32'(c.w3[31:16]);
         if (rows != 0 && cols != 0) begin
-          f.rd[0] = mk(SP_TMEM, c.w1, (rows - 1) * c.w4 + cols);
-          f.wr[0] = mk(SP_TMEM, c.w2, 32'(S - 1) * c.w6 + (rows - 1) * c.w5 + cols);
+          f.rd[0] = mk(SP_TMEM, c.w1, p.p0 + cols);
+          f.wr[0] = mk(SP_TMEM, c.w2, p.p1 + p.p2 + cols);
         end
       end
       OP_BAR: f.all = 1'b1;
       default: ;
     endcase
     return f;
+  endfunction
+
+  function automatic fp_t footprint(input cmd_t c, input int D, input int S);
+    return fp_ranges(c, fp_prod(c, D, S), D, S);
   endfunction
 endpackage
