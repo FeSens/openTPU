@@ -8,7 +8,7 @@ Y=${YOSYS:-$HOME/bonetto/riscv-autoarch/.toolchain/oss-cad-suite/bin/yosys}
 out=$1; top=$2; params=$3; shift 3
 mkdir -p "$out"
 s="$out/$top"
-$Y -m slang -p "read_slang $* $params --top $top -DSYNTHESIS; synth_xilinx -family xc7 -flatten -abc9 -noiopad; read_verilog -lib -specify +/xilinx/cells_sim.v +/xilinx/cells_xtra.v; tee -q -o $s.stat stat; tee -q -o $s.sta sta" > $s.ylog 2>&1
+$Y -m slang -p "read_slang $* $params --top $top -DSYNTHESIS; synth_xilinx -family xc7 -flatten -abc9 -noiopad $SYNTH_OPTS; read_verilog -lib -specify +/xilinx/cells_sim.v +/xilinx/cells_xtra.v; tee -q -o $s.stat stat; tee -q -o $s.sta sta" > $s.ylog 2>&1
 arr=$(grep -m1 "Latest arrival" $s.sta | sed 's/.* is //; s/://')
 # stat lists the cells twice (module, then design totals): count the first listing only
 first=$(sed "/=== design hierarchy ===/q" $s.stat)

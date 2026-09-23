@@ -272,8 +272,12 @@ module otpu_axi_dram #(
       wsrc[0] <= '0; wsrc[1] <= '0;
       err <= 1'b0;
     end else begin
-      logic [15:0] wn;
-      wn = wr_n;
+      // writes outstanding: this cycle's accepts and responses fold into one small delta (a sum
+      // of single bits), added once
+      logic signed [4:0] wn;
+      wn = 5'(qb_push[0] && b_we) + 5'(qa_push[0] && a_we) + 5'(qw_push[0]) +
+           5'(qb_push[1] && b_we) + 5'(qa_push[1] && a_we) + 5'(qw_push[1]) -
+           5'(m_bvalid[0]) - 5'(m_bvalid[1]);
       for (int c = 0; c < 2; c++) begin
         logic [QW:0] nb, na, nw;
         logic [RW:0] rbn, rbr;
@@ -285,15 +289,12 @@ module otpu_axi_dram #(
         // ---- accept
         if (qb_push[c]) begin
           nb = nb + 1;
-          if (b_we) wn = wn + 1;
         end
         if (qa_push[c]) begin
           na = na + 1;
-          if (a_we) wn = wn + 1;
         end
         if (qw_push[c]) begin
           nw = nw + 1;
-          wn = wn + 1;
         end
         // ---- AR
         if (m_arvalid[c] && m_arready[c]) begin
@@ -330,7 +331,6 @@ module otpu_axi_dram #(
         // ---- B
         if (m_bvalid[c]) begin
           if (m_bresp[c][1]) err <= 1'b1;
-          wn = wn - 1;
         end
         // ---- merge pops
         if (b_out) begin
@@ -344,7 +344,7 @@ module otpu_axi_dram #(
         qb_n[c] <= nb; qa_n[c] <= na; qw_n[c] <= nw;
         rb_n[c] <= rbn; rb_res[c] <= rbr; ra_n[c] <= ran; ra_res[c] <= rar;
       end
-      wr_n <= wn;
+      wr_n <= wr_n + {{11{wn[4]}}, wn};
       // ---- order FIFOs
       begin
         logic [OW:0] btn, aon;

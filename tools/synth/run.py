@@ -9,6 +9,7 @@ moderately full Kintex-7 -2; Vivado's post-route timing is the reference.
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RTL = ROOT / "rtl"
-OUT = ROOT / "build" / "synth_board"
+OUT = Path(os.environ.get("SYNTH_OUT", ROOT / "build" / "synth_board"))
 BASE = ["vpu/otpu_fp.sv", "vpu/otpu_fpipe.sv", "top/otpu_pkg.sv"]
 ALL = ["mem/otpu_tmem.sv", "mem/otpu_axi_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv",
        "dma/otpu_dma.sv", "mxu/otpu_mxu.sv", "vpu/otpu_quant.sv", "vpu/otpu_vpu.sv",
