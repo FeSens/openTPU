@@ -55,8 +55,9 @@ short chain costs more fabric than the DSPs it saves, so the variant uses one pr
 - The logic delay grew with MCOLS (7.6 ns at 4, 10.4 ns at 8) because of one control path: the
   drain's bank-conflict lane selection (serial over min(MCOLS, LANES) lanes) feeding the RMAX
   compare and a dynamically indexed write. This study registers the RMAX compare one cycle after
-  the drain (`rx`, bit-exact, `c_drained` waits for it); the remaining paths at MCOLS 8 are the
-  common fp datapath (~5.7 ns, the same as MCOLS 2).
+  the drain (`rx`, bit-exact, `c_drained` waits for it): MCOLS 4 drops to 6.19 ns (the common fp
+  datapath, as at MCOLS 2). At MCOLS 8 one 8.2 ns path remains, the 8-lane selection itself
+  feeding `dj`; all other endpoints are under 6.6 ns.
 - est. fmax = 1 / (1.6 x logic + 0.5 ns) (routing allowance used by the synth workstream).
 - ACT RAM (outside the MXU) is MCOLS x 1024 bits per read, 128 blocks deep: 16 x MCOLS BRAM36
   plus one (33 at MCOLS 2, matching the synthesized `otpu_actram`).
