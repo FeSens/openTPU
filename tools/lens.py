@@ -1,4 +1,6 @@
-"""Lens: profile openTPU kernels on the RTL and write an interactive HTML report.
+"""Lens: profile the standard openTPU kernels on the RTL into one standalone HTML page.
+
+(The Lens program itself is `python -m opentpu.lens` -- record / open / html; see docs/lens.md.)
 
     python3 tools/lens.py                       # the standard workloads -> build/lens.html
     python3 tools/lens.py mlp attn --out x.html

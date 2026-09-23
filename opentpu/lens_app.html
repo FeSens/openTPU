@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root {
+  --ground: #f2f4f3; --panel: #ffffff; --panel2: #f6f8f7; --ink: #121917; --muted: #5b6a64;
+  --faint: #8d9a95; --line: #d7dfdb; --grid: #e8edeb; --focus: #1f6fd1;
+  --u0: #4f6fae; --u1: #0f8a78; --u2: #bb7f12; --u3: #7357bf; --u4: #bb4b76;
+  --busy: #1d8a4c; --dram: #cf3b30; --arb: #8a47c9; --blocked: #e07a12; --dep: #c9a100;
+  --idle: #b8c2be; --good: #1d8a4c; --warn: #a86a05; --bad: #c23b33; --info: #3d5a8a;
+  --good-bg: #e3f3ea; --warn-bg: #fbf0dc; --bad-bg: #fbe4e2; --info-bg: #e6edf7;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0d1311; --panel: #141c19; --panel2: #19231f; --ink: #e2eae6; --muted: #94a69e;
+    --faint: #6a7c74; --line: #26322d; --grid: #1d2824; --focus: #6ea8ff;
+    --u0: #86a3de; --u1: #3cc6ae; --u2: #e6ae46; --u3: #aa8eeb; --u4: #e782a8;
+    --busy: #47c07a; --dram: #f06a5f; --arb: #b88af0; --blocked: #f5a04a; --dep: #e0c030;
+    --idle: #3c4a45; --good: #4cc27d; --warn: #e5ad4a; --bad: #f06c62; --info: #86a8e0;
+    --good-bg: #13291d; --warn-bg: #2c2412; --bad-bg: #321715; --info-bg: #16213a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0d1311; --panel: #141c19; --panel2: #19231f; --ink: #e2eae6; --muted: #94a69e;
+  --faint: #6a7c74; --line: #26322d; --grid: #1d2824; --focus: #6ea8ff;
+  --u0: #86a3de; --u1: #3cc6ae; --u2: #e6ae46; --u3: #aa8eeb; --u4: #e782a8;
+  --busy: #47c07a; --dram: #f06a5f; --arb: #b88af0; --blocked: #f5a04a; --dep: #e0c030;
+  --idle: #3c4a45; --good: #4cc27d; --warn: #e5ad4a; --bad: #f06c62; --info: #86a8e0;
+  --good-bg: #13291d; --warn-bg: #2c2412; --bad-bg: #321715; --info-bg: #16213a;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--ground); color: var(--ink); font: 14px/1.45 var(--sans); }
+header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: center; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header .brand { font-weight: 700; letter-spacing: .2px; margin-right: 6px; }
+header .brand span { color: var(--u1); }
+select, button, input[type=text], input[type=search] { font: inherit; color: var(--ink);
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+button { cursor: pointer; }
+button:hover { border-color: var(--focus); }
+button.primary { background: var(--u1); color: #fff; border-color: transparent; }
+nav.tabs { display: flex; gap: 2px; }
+nav.tabs button { border: none; background: none; padding: 6px 10px; border-radius: 6px; color: var(--muted); }
+nav.tabs button.on { background: var(--panel2); color: var(--ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--u1); }
+.spacer { flex: 1; }
+main { padding: 16px; max-width: 1480px; margin: 0 auto; }
+.view { display: none; }
+.view.on { display: block; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+.card h2 { font-size: 15px; margin: 0 0 10px; }
+.card h2 small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.kpi { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.kpi .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi .l { color: var(--muted); font-size: 12px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+.note { border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
+.note.good { background: var(--good-bg); } .note.warn { background: var(--warn-bg); }
+.note.bad { background: var(--bad-bg); } .note.info { background: var(--info-bg); }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
+td.n, th.n { text-align: right; }
+td.code { font-family: var(--mono); font-size: 12px; white-space: pre; max-width: 520px; overflow: hidden; text-overflow: ellipsis; }
+tr.sel td { background: var(--info-bg); }
+tbody tr:hover td { background: var(--panel2); cursor: pointer; }
+.scroll { max-height: 70vh; overflow: auto; }
+.stack { display: flex; height: 26px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+.stack div { height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.bar { height: 10px; background: var(--grid); border-radius: 5px; overflow: hidden; }
+.bar > div { height: 100%; }
+.urow { display: grid; grid-template-columns: 110px 1fr 60px; gap: 10px; align-items: center; margin: 4px 0; }
+#drop { display: none; border: 2px dashed var(--line); border-radius: 14px; padding: 60px 20px; text-align: center; color: var(--muted); margin-top: 40px; }
+#drop.on { display: block; }
+#drop.hover, body.dragging #drop { border-color: var(--u1); color: var(--ink); }
+#tl-wrap { position: relative; }
+#tl { width: 100%; display: block; border-radius: 8px; background: var(--panel2); }
+.tip { position: fixed; pointer-events: none; z-index: 20; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.15); max-width: 460px; display: none; }
+.tip b { font-size: 13px; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 12px; }
+#fp-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; }
+@media (max-width: 1100px) { #fp-wrap { grid-template-columns: 1fr; } }
+#fp { width: 100%; height: auto; display: block; background: var(--panel2); border-radius: 8px; }
+#fp .blk { stroke: var(--line); stroke-width: 1.5; rx: 8; }
+#fp text { fill: var(--ink); font: 13px var(--sans); }
+#fp text.small { font-size: 10.5px; fill: var(--muted); }
+#fp text.lbl { font-weight: 700; }
+#fp .edge { fill: none; stroke: var(--grid); stroke-width: 5; stroke-linecap: round; }
+#fp .flow { fill: none; stroke-width: 5; stroke-linecap: round; stroke-dasharray: 10 12; opacity: 0; }
+#fp .flow.on { opacity: 1; animation: dash .6s linear infinite; }
+#fp .arrow { opacity: 0; } #fp .arrow.on { opacity: 1; }
+@keyframes dash { to { stroke-dashoffset: -22; } }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.controls input[type=range] { flex: 1; min-width: 200px; }
+.clock { font-family: var(--mono); font-variant-numeric: tabular-nums; min-width: 190px; }
+.side h3 { font-size: 13px; margin: 12px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.side .unit { border-left: 4px solid var(--idle); padding: 3px 8px; margin: 4px 0; background: var(--panel2); border-radius: 0 6px 6px 0; }
+.side .unit .st { font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.side .unit .w { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill { display: inline-block; padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 700; color: #fff; }
+.gapnow { font-size: 13px; margin-top: 6px; }
+kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--panel2); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">openTPU <span>Lens</span></div>
+  <select id="sel-prof" title="profile"></select>
+  <select id="sel-slice" title="slice"></select>
+  <nav class="tabs" id="tabs">
+    <button data-v="overview" class="on">Overview</button>
+    <button data-v="timeline">Timeline</button>
+    <button data-v="floor">Floorplan</button>
+    <button data-v="instrs">Instructions</button>
+    <button data-v="source">Source</button>
+  </nav>
+  <div class="spacer"></div>
+  <span id="fname" class="muted mono"></span>
+  <button id="btn-open" class="primary">Open profile…</button>
+  <input id="file" type="file" accept=".otpuprof,.json,.gz" hidden>
+  <button id="btn-theme" title="theme">◐</button>
+</header>
+<main>
+  <section id="drop"><div style="font-size:18px;font-weight:600;margin-bottom:6px">Drop an openTPU profile here</div>
+    <div>.otpuprof files from <span class="mono">python -m opentpu.lens record …</span> — or use <b>Open profile…</b></div>
+    <div id="drop-err" style="color:var(--bad);margin-top:10px"></div></section>
+
+  <section class="view" id="v-overview"></section>
+
+  <section class="view" id="v-timeline">
+    <div class="card">
+      <h2>Timeline <small>wheel: zoom · drag: pan · double-click: reset · click: select</small></h2>
+      <div id="tl-wrap"><canvas id="tl" height="420"></canvas></div>
+      <div id="tl-sel" class="muted" style="margin-top:8px"></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-floor">
+    <div class="card">
+      <div class="controls">
+        <button id="fp-prev" title="previous event (←)">⏮</button>
+        <button id="fp-play" class="primary" title="play / pause (space)">▶ Play</button>
+        <button id="fp-next" title="next event (→)">⏭</button>
+        <select id="fp-mode" title="playback mode">
+          <option value="cyc">Continuous (cycles)</option>
+          <option value="ins">Instruction by instruction</option>
+        </select>
+        <select id="fp-speed" title="speed"></select>
+        <input id="fp-scrub" type="range" min="0" max="1000" value="0">
+        <span class="clock" id="fp-clock"></span>
+      </div>
+      <div id="fp-wrap">
+        <svg id="fp" viewBox="0 0 1100 640" role="img" aria-label="floorplan of the TPU"></svg>
+        <div class="side" id="fp-side"></div>
+      </div>
+      <div class="legend" id="fp-legend"></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-instrs">
+    <div class="card">
+      <h2>Instructions <small id="ins-count"></small></h2>
+      <div class="controls">
+        <input id="ins-q" type="search" placeholder="filter: name, detail, source…" style="flex:1">
+        <select id="ins-unit"><option value="-1">all units</option></select>
+      </div>
+      <div class="scroll"><table id="ins-t"></table></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-source">
+    <div class="card">
+      <h2>Source lines <small>cycles attributed to the kernel lines that issued the instructions</small></h2>
+      <div class="scroll"><table id="src-t"></table></div>
+    </div>
+  </section>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+const EMBED = /*__DATA__*/null;
+const URL0 = /*__URL__*/null;
+const FORMAT = "openTPU-profile", VERSION = 1;
+const UNITS = ["DMA", "MXU", "QUANT", "VPU", "COLL"];
+const UCOL = i => `var(--u${i})`;
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = n => n == null ? "–" : Number(n).toLocaleString("en-US");
+const pct = x => (100 * x).toFixed(1) + "%";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+let DOC = null, PI = 0, SI = 0, M = null, VIEW = "overview";
+
+// ------------------------------------------------------------------ loading
+async function parseBytes(buf) {
+  const u8 = new Uint8Array(buf);
+  let text;
+  if (u8[0] === 0x1f && u8[1] === 0x8b) {
+    const ds = new Blob([u8]).stream().pipeThrough(new DecompressionStream("gzip"));
+    text = await new Response(ds).text();
+  } else text = new TextDecoder().decode(u8);
+  const doc = JSON.parse(text);
+  if (doc.format !== FORMAT) throw new Error("not an openTPU profile file");
+  if ((doc.version | 0) > VERSION) throw new Error(`profile version ${doc.version} is newer than this Lens`);
+  return doc;
+}
+function setDoc(doc, name) {
+  DOC = doc; PI = 0; SI = 0;
+  $("fname").textContent = name || "";
+  $("drop").classList.remove("on");
+  const sp = $("sel-prof");
+  sp.innerHTML = doc.profiles.map((p, i) => `<option value="${i}">[${p.kind}] ${esc(p.name)}</option>`).join("");
+  selectProfile(0);
+}
+async function openFile(f) {
+  try { setDoc(await parseBytes(await f.arrayBuffer()), f.name); $("drop-err").textContent = ""; }
+  catch (e) { $("drop").classList.add("on"); $("drop-err").textContent = "Could not open " + f.name + ": " + e.message; }
+}
+$("btn-open").onclick = () => $("file").click();
+$("file").onchange = e => e.target.files[0] && openFile(e.target.files[0]);
+document.addEventListener("dragover", e => { e.preventDefault(); document.body.classList.add("dragging"); });
+document.addEventListener("dragleave", e => { if (!e.relatedTarget) document.body.classList.remove("dragging"); });
+document.addEventListener("drop", e => { e.preventDefault(); document.body.classList.remove("dragging");
+  if (e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]); });
+$("btn-theme").onclick = () => {
+  const r = document.documentElement, cur = r.dataset.theme;
+  const dark = cur ? cur === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  r.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem("lens-theme", r.dataset.theme); } catch (e) {}
+  redraw();
+};
+try { const t = localStorage.getItem("lens-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+
+// ------------------------------------------------------------------ model of one profile + slice
+function build(p, s) {
+  const cfg = p.config, units = p.units || UNITS;
+  const ins = p.instrs.filter(r => r[0] === s).map((r, i) => ({
+    i, idx: r[1], pc: r[2], unit: r[3], name: r[4], detail: r[5], disp: r[6], ready: r[7],
+    rel: r[8], start: r[9], end: r[10], src: r[11], stats: r[12] || {}, work: r[13] | 0,
+    pb: r[14] | 0, pa: r[15] | 0 }));
+  const sl = p.slices[s] || {buckets: {}};
+  const B = sl.buckets || {};
+  const nb = (B.c || []).length;
+  const bn = B.n || [];
+  const bstart = new Float64Array(nb), bend = new Float64Array(nb);
+  for (let k = 0; k < nb; k++) { bend[k] = B.c[k] + 1; bstart[k] = bend[k] - bn[k]; }
+  const get = (key, k) => (B[key] ? B[key][k] : 0) | 0;
+  // unit coverage per bucket (union of in-flight intervals)
+  const cov = units.map(() => new Float64Array(nb));
+  if (nb) {
+    for (let u = 0; u < units.length; u++) {
+      // an MM streams from its start but computes only once released (its operands ready)
+      const iv = ins.filter(r => r.unit === u && r.start >= 0 && r.end > r.start)
+        .map(r => [u === 1 && r.rel > r.start ? Math.min(r.rel, r.end) : r.start, r.end]).sort((a, b) => a[0] - b[0]);
+      const merged = [];
+      for (const [a, b] of iv) { const L = merged[merged.length - 1]; if (L && a <= L[1]) L[1] = Math.max(L[1], b); else merged.push([a, b]); }
+      let k = 0;
+      for (const [a, b] of merged) {
+        while (k < nb && bend[k] <= a) k++;
+        for (let j = k; j < nb && bstart[j] < b; j++) cov[u][j] += Math.max(0, Math.min(b, bend[j]) - Math.max(a, bstart[j]));
+      }
+    }
+  }
+  const events = [...new Set(ins.flatMap(r => [r.start, r.end, r.disp]).filter(x => x >= 0))].sort((a, b) => a - b);
+  const starts = ins.filter(r => r.start >= 0).map(r => r.start).sort((a, b) => a - b);
+  const byStart = ins.slice().sort((a, b) => a.start - b.start);
+  return { p, s, cfg, units, ins, B, nb, bstart, bend, bn, get, cov, events, starts, byStart,
+           cycles: p.cycles || 1, fifo: 128 };
+}
+
+// gap causes: why DRAM port B was idle
+const CAUSES = [
+  ["busy", "DRAM port B streaming", "--u1"],
+  ["dram", "DRAM not ready (backpressure)", "--dram"],
+  ["starve", "MXU starved: chunk FIFO empty (latency)", "--blocked"],
+  ["blocked", "MXU not consuming (drain / row credits)", "--dep"],
+  ["arb", "TMEM bank arbitration", "--arb"],
+  ["mxu", "MXU computing, not streaming (row turnarounds, epilogue)", "--u1"],
+  ["w3", "waiting on VPU work", "--u3"],
+  ["w2", "waiting on quantizer work", "--u2"],
+  ["w4", "waiting on collectives", "--u4"],
+  ["w0", "waiting on DMA work", "--u0"],
+  ["none", "nothing in flight (dispatch / program order)", "--idle"],
+];
+function bucketCauses(m, k) {
+  const g = x => m.get(x, k), n = m.bn[k] || 0;
+  const out = {};
+  const busy = Math.min(n, g("bm") + g("bd"));
+  out.busy = busy;
+  let r = n - busy;
+  const take = (key, v) => { const t = Math.max(0, Math.min(r, v)); out[key] = (out[key] || 0) + t; r -= t; };
+  take("dram", g("bs"));
+  take("starve", g("ms"));
+  take("blocked", g("mb"));
+  take("arb", g("fm"));
+  if (r > 0) take("mxu", m.cov[1][k] - busy);
+  if (r > 0) {
+    const others = [3, 2, 4, 0].map(u => [u, m.cov[u][k]]).filter(x => x[1] > 0);
+    const tot = others.reduce((a, x) => a + x[1], 0);
+    if (tot > 0) { const rr = r; for (const [u, c] of others) take("w" + u, rr * c / tot); }
+  }
+  if (r > 0) take("none", r);
+  return out;
+}
+function allCauses(m, k1 = m.nb) {
+  const tot = {};
+  for (let k = 0; k < k1; k++) { const c = bucketCauses(m, k); for (const key in c) tot[key] = (tot[key] || 0) + c[key]; }
+  return tot;
+}
+function stackBar(tot, total) {
+  let h = "", leg = "";
+  for (const [key, label, col] of CAUSES) {
+    const v = tot[key] || 0;
+    if (v <= 0) continue;
+    h += `<div title="${esc(label)}: ${fmt(Math.round(v))} cycles (${pct(v / total)})" style="width:${100 * v / total}%;background:var(${col})${key === "mxu" ? ";opacity:.45" : ""}"></div>`;
+    leg += `<span><i style="background:var(${col})${key === "mxu" ? ";opacity:.45" : ""}"></i>${esc(label)} <b>${pct(v / total)}</b></span>`;
+  }
+  return `<div class="stack">${h}</div><div class="legend">${leg}</div>`;
+}
+
+// ------------------------------------------------------------------ selection
+function selectProfile(i) {
+  PI = i; const p = DOC.profiles[i];
+  $("sel-prof").value = i;
+  const S = p.config.S || 1;
+  $("sel-slice").innerHTML = Array.from({length: S}, (_, s) => `<option value="${s}">slice ${s}</option>`).join("");
+  $("sel-slice").style.display = S > 1 ? "" : "none";
+  selectSlice(0);
+}
+function selectSlice(s) {
+  SI = s; $("sel-slice").value = s;
+  M = build(DOC.profiles[PI], s);
+  TL.t0 = 0; TL.t1 = M.cycles; TL.sel = null; FP.t = 0; FP.playing = false; FP.built = false;
+  renderOverview(); renderInstrs(); renderSource();
+  if (VIEW === "timeline") drawTimeline();
+  if (VIEW === "floor") { buildFloor(); updateFloor(); }
+}
+$("sel-prof").onchange = e => selectProfile(+e.target.value);
+$("sel-slice").onchange = e => selectSlice(+e.target.value);
+function show(v) {
+  VIEW = v;
+  for (const b of $("tabs").children) b.classList.toggle("on", b.dataset.v === v);
+  for (const sec of document.querySelectorAll(".view")) sec.classList.toggle("on", sec.id === "v-" + v);
+  if (!M) return;
+  if (v === "timeline") drawTimeline();
+  if (v === "floor") { if (!FP.built) buildFloor(); updateFloor(); }
+}
+for (const b of $("tabs").children) b.onclick = () => show(b.dataset.v);
+function redraw() { if (!M) return; if (VIEW === "timeline") drawTimeline(); if (VIEW === "floor") { FP.built = false; buildFloor(); updateFloor(); } }
+
+// ------------------------------------------------------------------ overview
+function renderOverview() {
+  const p = M.p, m = M, cyc = m.cycles, cfg = p.config, rl = p.roofline;
+  const us = cyc / (p.clock_mhz || 100);
+  const sl = p.slices[m.s] || {};
+  const ports = sl.ports || {};
+  const portB = ((ports.bmxu || 0) + (ports.bdma || 0)) / cyc;
+  let h = `<div class="card"><h2>${esc(p.name)} <small>${esc(p.kind)} · S=${cfg.S} D=${cfg.D} MCOLS=${cfg.MCOLS} LANES=${cfg.LANES}${cfg.WIN ? " WIN=" + cfg.WIN : ""}${cfg.WPB ? " WPB=" + cfg.WPB : ""}</small></h2>
+  <div class="kpis">
+    <div class="kpi"><div class="v">${fmt(cyc)}</div><div class="l">cycles${p.kind === "isa" ? " (analytic, serial)" : ""}</div></div>
+    <div class="kpi"><div class="v">${us >= 1000 ? (us / 1000).toFixed(2) + " ms" : us.toFixed(1) + " µs"}</div><div class="l">at ${p.clock_mhz || 100} MHz</div></div>
+    <div class="kpi"><div class="v" style="color:var(${rl.efficiency >= .9 ? "--good" : rl.efficiency >= .7 ? "--warn" : "--bad"})">${pct(rl.efficiency)}</div><div class="l">of the DRAM roofline (${fmt(rl.bound)} cycles)</div></div>
+    <div class="kpi"><div class="v">${ports.bmxu != null ? pct(portB) : "–"}</div><div class="l">DRAM port B busy (slice ${m.s})</div></div>
+    <div class="kpi"><div class="v">${p.macs ? (p.macs / cyc).toFixed(0) : "–"}</div><div class="l">MACs / cycle (peak ${fmt(p.peak_macs)})</div></div>
+    <div class="kpi"><div class="v">${fmt(m.ins.length)}</div><div class="l">instructions (slice ${m.s})</div></div>
+  </div></div>`;
+  if (m.nb) {
+    const tot = allCauses(m);
+    const top = CAUSES.filter(c => c[0] !== "busy").map(c => [c, tot[c[0]] || 0]).sort((a, b) => b[1] - a[1]).filter(x => x[1] > 0).slice(0, 3);
+    h += `<div class="card"><h2>Where the cycles went <small>every cycle of DRAM port B, streaming or idle — and why it idled</small></h2>
+      ${stackBar(tot, m.bn.reduce((a, b) => a + b, 0) || cyc)}
+      <div style="margin-top:10px">${top.length ? "Biggest losses: " + top.map(([c, v]) => `<b>${esc(c[1])}</b> (${pct(v / cyc)})`).join(", ") + "." : ""}</div></div>`;
+  }
+  // utilisation
+  const busy = sl.busy || {};
+  h += `<div class="grid2"><div class="card"><h2>Unit utilisation <small>cycles with an instruction in flight</small></h2>`;
+  m.units.forEach((u, i) => { const v = (busy[u] || 0) / cyc; h += `<div class="urow"><span><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${UCOL(i)};margin-right:6px"></i>${u}</span><div class="bar"><div style="width:${Math.min(100, 100 * v)}%;background:${UCOL(i)}"></div></div><span class="mono" style="text-align:right">${pct(v)}</span></div>`; });
+  const lose = sl.lose || {};
+  if (Object.values(lose).some(x => x)) {
+    h += `<h2 style="margin-top:14px">TMEM arbitration losses</h2>`;
+    for (const [k, v] of Object.entries(lose)) h += `<div class="urow"><span>${esc(k)}</span><div class="bar"><div style="width:${Math.min(100, 100 * v / cyc)}%;background:var(--arb)"></div></div><span class="mono" style="text-align:right">${pct(v / cyc)}</span></div>`;
+  }
+  h += `</div><div class="card"><h2>Findings</h2>${(p.notes || []).map(n => `<div class="note ${n.level}">${esc(n.text)}</div>`).join("") || "<span class=muted>none</span>"}`;
+  if (p.board) h += `<h2 style="margin-top:14px">Board counters</h2><table>${Object.entries(p.board).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n mono">${esc(typeof v === "object" ? JSON.stringify(v) : fmt(v))}</td></tr>`).join("")}</table>`;
+  h += `</div></div>`;
+  // per class
+  const agg = {};
+  for (const r of m.ins) {
+    const a = agg[r.name] || (agg[r.name] = {n: 0, busy: 0, dep: 0, unit: 0, work: 0, pb: 0, u: r.unit});
+    a.n++; if (r.start >= 0 && r.end >= 0) a.busy += r.end - r.start;
+    a.dep += Math.max(0, r.ready - r.disp); a.unit += Math.max(0, r.start - r.ready); a.work += r.work; a.pb += r.pb;
+  }
+  const rows = Object.entries(agg).sort((a, b) => b[1].busy - a[1].busy);
+  h += `<div class="card"><h2>By instruction class <small>busy = start→end; waiting = dispatch→ready (dependencies) and ready→start (unit busy)</small></h2><div class="scroll"><table><thead><tr><th>class</th><th>unit</th><th class=n>count</th><th class=n>busy cycles (Σ)</th><th class=n>Σ busy / run</th><th class=n>nominal work</th><th class=n>work/busy</th><th class=n>wait deps</th><th class=n>wait unit</th><th class=n>DRAM chunks</th></tr></thead><tbody>`
+    + rows.map(([k, a]) => `<tr><td>${esc(k)}</td><td>${m.units[a.u]}</td><td class=n>${fmt(a.n)}</td><td class=n>${fmt(a.busy)}</td><td class=n>${pct(a.busy / cyc)}</td><td class=n>${fmt(a.work)}</td><td class=n>${a.busy ? pct(a.work / a.busy) : "–"}</td><td class=n>${fmt(a.dep)}</td><td class=n>${fmt(a.unit)}</td><td class=n>${fmt(a.pb)}</td></tr>`).join("") + `</tbody></table></div></div>`;
+  $("v-overview").innerHTML = h;
+}
+
+// ------------------------------------------------------------------ timeline (canvas)
+const TL = { t0: 0, t1: 1, sel: null, drag: null, rows: [] };
+const STRIPS = [
+  ["DRAM B busy", k => (M.get("bm", k) + M.get("bd", k)) / (M.bn[k] || 1), "--u1"],
+  ["MXU compute", k => M.get("mx", k) / (M.bn[k] || 1), "--busy"],
+  ["DRAM stall", k => (M.get("bs", k) + M.get("ms", k)) / (M.bn[k] || 1), "--dram"],
+  ["TMEM lost", k => (M.get("fm", k) + M.get("fq", k) + M.get("fv", k) + M.get("fc", k)) / (M.bn[k] || 1), "--arb"],
+  ["MXU FIFO", k => M.get("ff", k) / (M.bn[k] || 1) / M.fifo, "--u0"],
+];
+function laneRows() {
+  // pack each unit's instructions into sub-rows (instructions overlap within a unit)
+  const rows = [];
+  M.units.forEach((u, ui) => {
+    const lanes = [];
+    const rs = M.ins.filter(r => r.unit === ui && r.start >= 0).sort((a, b) => a.start - b.start);
+    for (const r of rs) {
+      let L = lanes.findIndex(e => e <= r.start);
+      if (L < 0) { if (lanes.length < 3) { lanes.push(0); L = lanes.length - 1; } else L = lanes.indexOf(Math.min(...lanes)); }
+      lanes[L] = r.end; r.lane = L;
+    }
+    rows.push({ui, name: u, n: Math.max(1, lanes.length)});
+  });
+  return rows;
+}
+function drawTimeline() {
+  const cv = $("tl"), dpr = devicePixelRatio || 1;
+  const W = cv.clientWidth; const LEFT = 110, RH = 16, SH = 26;
+  TL.rows = laneRows();
+  const hasB = M.nb > 0;
+  const H = 28 + TL.rows.reduce((a, r) => a + r.n * RH + 6, 0) + (hasB ? STRIPS.length * (SH + 4) + 6 : 0);
+  cv.style.height = H + "px"; cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const t0 = TL.t0, t1 = TL.t1, sx = (W - LEFT - 8) / Math.max(1, t1 - t0);
+  const X = t => LEFT + (t - t0) * sx;
+  g.font = "11px " + css("--sans"); g.textBaseline = "middle";
+  // axis
+  g.fillStyle = css("--muted"); g.strokeStyle = css("--grid");
+  const step = Math.pow(10, Math.floor(Math.log10((t1 - t0) / 6 || 1)));
+  const st = [1, 2, 5, 10].map(x => x * step).find(x => (t1 - t0) / x <= 10) || step;
+  for (let t = Math.ceil(t0 / st) * st; t <= t1; t += st) {
+    const x = X(t); g.beginPath(); g.moveTo(x, 18); g.lineTo(x, H); g.stroke();
+    g.fillText(fmt(t), x + 3, 9);
+  }
+  let y = 28;
+  TL.rowY = {};
+  for (const row of TL.rows) {
+    const col = css(`--u${row.ui}`);
+    g.fillStyle = css("--ink"); g.fillText(row.name, 8, y + row.n * RH / 2);
+    TL.rowY[row.ui] = y;
+    for (const r of M.ins) {
+      if (r.unit !== row.ui || r.start < 0 || r.end < t0 || r.start > t1) continue;
+      const yy = y + (r.lane || 0) * RH;
+      if (r.disp < r.start && X(r.start) - X(r.disp) > 2) {    // waiting
+        g.strokeStyle = r.ready > r.disp ? css("--dep") : css("--faint"); g.globalAlpha = .6;
+        g.beginPath(); g.moveTo(Math.max(LEFT, X(r.disp)), yy + RH / 2); g.lineTo(X(r.start), yy + RH / 2); g.stroke(); g.globalAlpha = 1;
+      }
+      const x0 = Math.max(LEFT, X(r.start)), x1 = Math.max(x0 + 1, X(r.end));
+      g.fillStyle = col; g.globalAlpha = TL.sel === r ? 1 : .8;
+      g.fillRect(x0, yy + 2, x1 - x0, RH - 4); g.globalAlpha = 1;
+      if (TL.sel === r) { g.strokeStyle = css("--ink"); g.lineWidth = 2; g.strokeRect(x0, yy + 2, x1 - x0, RH - 4); g.lineWidth = 1; }
+      if (x1 - x0 > 40) { g.fillStyle = "#fff"; g.save(); g.beginPath(); g.rect(x0, yy, x1 - x0, RH); g.clip(); g.fillText(r.name, x0 + 3, yy + RH / 2); g.restore(); }
+    }
+    y += row.n * RH + 6;
+  }
+  if (hasB) {
+    y += 6;
+    for (const [label, f, cv2] of STRIPS) {
+      g.fillStyle = css("--muted"); g.fillText(label, 8, y + SH / 2);
+      g.fillStyle = css("--grid"); g.fillRect(LEFT, y, W - LEFT - 8, SH);
+      g.fillStyle = css(cv2);
+      let k0 = lowerBound(M.bend, t0);
+      for (let k = k0; k < M.nb && M.bstart[k] <= t1; k++) {
+        const v = Math.max(0, Math.min(1, f(k)));
+        const x0 = Math.max(LEFT, X(M.bstart[k])), x1 = Math.max(x0 + 1, X(M.bend[k]));
+        g.fillRect(x0, y + SH * (1 - v), x1 - x0, SH * v);
+      }
+      y += SH + 4;
+    }
+  }
+  if (FP.t > 0 && FP.t >= t0 && FP.t <= t1) { g.strokeStyle = css("--focus"); g.lineWidth = 2; g.beginPath(); g.moveTo(X(FP.t), 18); g.lineTo(X(FP.t), H); g.stroke(); g.lineWidth = 1; }
+  TL.X = X; TL.sx = sx; TL.LEFT = LEFT; TL.RH = RH;
+}
+function lowerBound(arr, v) { let lo = 0, hi = arr.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid] < v) lo = mid + 1; else hi = mid; } return lo; }
+function tlHit(ev) {
+  const r = $("tl").getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  const t = TL.t0 + (x - TL.LEFT) / TL.sx;
+  for (const row of TL.rows) {
+    const y0 = TL.rowY[row.ui];
+    if (y >= y0 && y < y0 + row.n * TL.RH) {
+      const lane = Math.floor((y - y0) / TL.RH);
+      const tol = 3 / TL.sx;
+      return M.ins.find(q => q.unit === row.ui && (q.lane || 0) === lane && q.start - tol <= t && t <= q.end + tol) || null;
+    }
+  }
+  return null;
+}
+function srcText(id) { const s = M.p.sources[id]; return s ? `${s.file}:${s.line} ${s.func} — ${s.text}` : "(compiler)"; }
+function insHTML(r) {
+  const st = Object.entries(r.stats || {}).map(([k, v]) => `${k}=${v}`).join(" ");
+  return `<b>${esc(r.name)}</b> <span class="muted">${esc(r.detail)}</span><br>#${r.idx} pc ${r.pc} · ${M.units[r.unit]}<br>
+  dispatch ${fmt(r.disp)} · ready ${fmt(r.ready)} · start ${fmt(r.start)} · end ${fmt(r.end)}<br>
+  busy ${fmt(r.end - r.start)} · waited deps ${fmt(Math.max(0, r.ready - r.disp))} · waited unit ${fmt(Math.max(0, r.start - r.ready))}<br>
+  nominal ${fmt(r.work)} · DRAM chunks ${fmt(r.pb)}${st ? "<br><span class=mono>" + esc(st) + "</span>" : ""}<br><span class="mono">${esc(srcText(r.src))}</span>`;
+}
+(() => {
+  const cv = $("tl"), tip = $("tip");
+  cv.addEventListener("wheel", e => {
+    e.preventDefault(); if (!M) return;
+    const r = cv.getBoundingClientRect(), x = e.clientX - r.left;
+    const t = TL.t0 + (x - TL.LEFT) / TL.sx, f = Math.exp(e.deltaY * 0.0015);
+    let w = Math.max(20, (TL.t1 - TL.t0) * f);
+    w = Math.min(w, M.cycles * 1.05);
+    const a = (t - TL.t0) / (TL.t1 - TL.t0);
+    TL.t0 = Math.max(-M.cycles * .02, t - a * w); TL.t1 = TL.t0 + w; drawTimeline();
+  }, {passive: false});
+  cv.addEventListener("mousedown", e => { TL.drag = {x: e.clientX, t0: TL.t0, t1: TL.t1, moved: false}; });
+  addEventListener("mouseup", e => {
+    if (TL.drag && !TL.drag.moved && e.target === cv) { TL.sel = tlHit(e); $("tl-sel").innerHTML = TL.sel ? insHTML(TL.sel) : ""; if (TL.sel) FP.t = TL.sel.start; drawTimeline(); }
+    TL.drag = null;
+  });
+  addEventListener("mousemove", e => {
+    if (TL.drag) {
+      const dx = e.clientX - TL.drag.x; if (Math.abs(dx) > 3) TL.drag.moved = true;
+      const dt = dx / TL.sx; TL.t0 = TL.drag.t0 - dt; TL.t1 = TL.drag.t1 - dt; drawTimeline(); return;
+    }
+    if (e.target !== cv || !M) { tip.style.display = "none"; return; }
+    const r = tlHit(e);
+    if (r) { tip.innerHTML = insHTML(r); tip.style.display = "block"; tip.style.left = Math.min(innerWidth - 470, e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px"; }
+    else tip.style.display = "none";
+  });
+  cv.addEventListener("dblclick", () => { TL.t0 = 0; TL.t1 = M.cycles; drawTimeline(); });
+  addEventListener("resize", () => { if (VIEW === "timeline" && M) drawTimeline(); });
+})();
+
+// ------------------------------------------------------------------ floorplan
+const FP = { t: 0, playing: false, built: false, last: 0, evi: 0 };
+const STATE = {
+  busy: ["busy", "--busy"], dram: ["stalled on DRAM", "--dram"], arb: ["lost TMEM arbitration", "--arb"],
+  blocked: ["blocked (output / credits)", "--blocked"], dep: ["waiting on a dependency", "--dep"],
+  queued: ["queued (unit busy)", "--faint"], idle: ["idle", "--idle"],
+};
+const BOX = {
+  dram0: [20, 150, 125, 95, "DRAM ch0"], dram1: [20, 275, 125, 95, "DRAM ch1"],
+  axi: [180, 170, 100, 180, "AXI ports"], dma: [180, 430, 160, 80, "DMA"],
+  act: [330, 40, 230, 80, "ACT RAM"], mxu: [330, 160, 230, 190, "MXU"],
+  quant: [600, 40, 170, 95, "Quantizer"], tmem: [610, 175, 220, 240, "TMEM"],
+  vpu: [870, 140, 210, 320, "VPU"], coll: [610, 470, 220, 75, "Collective"],
+  seq: [20, 540, 540, 88, "Sequencer · dispatch window"],
+};
+// directed edges: [id, points]
+const EDGES = {
+  "dram-axi": [[145, 245], [180, 245]], "dram1-axi": [[145, 322], [180, 322]],
+  "axi-dram": [[180, 262], [145, 262]], "axi-dram1": [[180, 338], [145, 338]],
+  "axi-mxu": [[280, 230], [330, 230]], "axi-mxuA": [[280, 300], [330, 300]],
+  "axi-dma": [[225, 350], [225, 430]], "dma-axi": [[245, 430], [245, 350]],
+  "dma-tmem": [[340, 460], [650, 460], [650, 415]], "tmem-dma": [[680, 415], [680, 480], [340, 480]],
+  "act-mxu": [[445, 120], [445, 160]], "mxu-tmem": [[560, 255], [610, 255]], "tmem-mxu": [[610, 285], [560, 285]],
+  "tmem-quant": [[680, 175], [680, 135]], "quant-act": [[600, 80], [560, 80]],
+  "quant-axi": [[640, 40], [640, 22], [230, 22], [230, 170]],
+  "tmem-vpu": [[830, 250], [870, 250]], "vpu-tmem": [[870, 330], [830, 330]],
+  "tmem-coll": [[700, 415], [700, 470]], "coll-tmem": [[760, 470], [760, 415]],
+};
+const FLOWS = {
+  LD: ["dram-axi", "dram1-axi", "axi-dma", "dma-tmem"], ST: ["tmem-dma", "dma-axi", "axi-dram", "axi-dram1"],
+  MM: ["dram-axi", "dram1-axi", "axi-mxu", "axi-mxuA", "act-mxu", "mxu-tmem"],
+  QACT: ["tmem-quant", "quant-act"], QST: ["tmem-quant", "quant-axi", "axi-dram", "axi-dram1"],
+  VOP: ["tmem-vpu", "vpu-tmem"], GATHER: ["tmem-coll", "coll-tmem"],
+};
+const EDGE_UNIT = {"dram-axi": 1, "dram1-axi": 1, "axi-dram": 0, "axi-dram1": 0, "axi-mxu": 1, "axi-mxuA": 1, "axi-dma": 0, "dma-axi": 0,
+  "dma-tmem": 0, "tmem-dma": 0, "act-mxu": 1, "mxu-tmem": 1, "tmem-mxu": 1, "tmem-quant": 2, "quant-act": 2, "quant-axi": 2,
+  "tmem-vpu": 3, "vpu-tmem": 3, "tmem-coll": 4, "coll-tmem": 4};
+const UBOX = ["dma", "mxu", "quant", "vpu", "coll"];
+function svg(tag, attrs, parent) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function buildFloor() {
+  const root = $("fp"); root.innerHTML = "";
+  const cfg = M.p.config, L = cfg.LANES || 8, CL = Math.min(cfg.CL || 2, L), WIN = cfg.WIN || 16, MC = cfg.MCOLS || 2;
+  const defs = svg("defs", {}, root);
+  for (let u = 0; u < 5; u++) {
+    const mk = svg("marker", {id: "ar" + u, viewBox: "0 0 10 10", refX: 6, refY: 5, markerWidth: 4, markerHeight: 4, orient: "auto-start-reverse"}, defs);
+    svg("path", {d: "M0,0 L10,5 L0,10 z", fill: css(`--u${u}`)}, mk);
+  }
+  const eg = svg("g", {}, root), fg = svg("g", {}, root), bg = svg("g", {}, root);
+  FP.el = {flows: {}, boxes: {}};
+  for (const [id, pts] of Object.entries(EDGES)) {
+    const d = "M" + pts.map(p => p.join(",")).join(" L");
+    svg("path", {d, class: "edge"}, eg);
+    FP.el.flows[id] = svg("path", {d, class: "flow", stroke: css(`--u${EDGE_UNIT[id]}`), "marker-end": `url(#ar${EDGE_UNIT[id]})`}, fg);
+  }
+  for (const [id, [x, y, w, h, label]] of Object.entries(BOX)) {
+    const g = svg("g", {}, bg);
+    const r = svg("rect", {x, y, width: w, height: h, class: "blk", fill: css("--panel"), rx: 8}, g);
+    const t = svg("text", {x: x + 10, y: y + 20, class: "lbl"}, g); t.textContent = label;
+    const st = svg("text", {x: x + 10, y: y + h - 10, class: "small"}, g);
+    FP.el.boxes[id] = {g, r, st, x, y, w, h};
+  }
+  // MXU: FIFO bar and columns
+  const mx = FP.el.boxes.mxu;
+  svg("rect", {x: mx.x + 12, y: mx.y + 34, width: 22, height: 120, fill: css("--grid"), rx: 3}, mx.g);
+  FP.el.fifo = svg("rect", {x: mx.x + 12, y: mx.y + 154, width: 22, height: 0, fill: css("--u0"), rx: 3}, mx.g);
+  svg("text", {x: mx.x + 8, y: mx.y + 170, class: "small"}, mx.g).textContent = "FIFO";
+  FP.el.cols = [];
+  const cw = Math.min(40, (mx.w - 70) / MC - 6);
+  for (let j = 0; j < MC; j++) FP.el.cols.push(svg("rect", {x: mx.x + 50 + j * (cw + 6), y: mx.y + 40, width: cw, height: 110, fill: css("--grid"), rx: 4}, mx.g));
+  svg("text", {x: mx.x + 50, y: mx.y + 166, class: "small"}, mx.g).textContent = `${MC} columns × ${cfg.D} deep`;
+  // TMEM banks
+  const tm = FP.el.boxes.tmem; FP.el.banks = [];
+  const bw = (tm.w - 20) / L;
+  for (let b = 0; b < L; b++) FP.el.banks.push(svg("rect", {x: tm.x + 10 + b * bw + 1, y: tm.y + 34, width: bw - 2, height: tm.h - 70, fill: css("--grid"), rx: 3}, tm.g));
+  svg("text", {x: tm.x + 10, y: tm.y + tm.h - 22, class: "small"}, tm.g).textContent = `${L} banks · ${fmt(cfg.TMEM_WORDS || 0)} words`;
+  // VPU lanes: CL composite (10 slots) + simple
+  const vp = FP.el.boxes.vpu; FP.el.clanes = []; FP.el.slanes = [];
+  const lh = Math.min(24, (vp.h - 70) / L - 4);
+  for (let l = 0; l < L; l++) {
+    const y = vp.y + 34 + l * (lh + 4);
+    if (l < CL) {
+      const segs = [];
+      for (let s = 0; s < 10; s++) segs.push(svg("rect", {x: vp.x + 10 + s * 19, y, width: 16, height: lh, fill: css("--grid"), rx: 2}, vp.g));
+      FP.el.clanes.push(segs);
+    } else FP.el.slanes.push(svg("rect", {x: vp.x + 10, y, width: 16, height: lh, fill: css("--grid"), rx: 2}, vp.g));
+  }
+  svg("text", {x: vp.x + 40, y: vp.y + 34 + CL * (lh + 4) + lh * .7, class: "small"}, vp.g).textContent = `← ${L - CL} simple lanes`;
+  svg("text", {x: vp.x + 10, y: vp.y + vp.h - 24, class: "small"}, vp.g).textContent = `${CL} composite lanes (exp2 / recip / rsqrt)`;
+  // DRAM channel meters
+  for (const id of ["dram0", "dram1"]) {
+    const b = FP.el.boxes[id];
+    svg("rect", {x: b.x + 10, y: b.y + 34, width: b.w - 20, height: 12, fill: css("--grid"), rx: 3}, b.g);
+    b.meter = svg("rect", {x: b.x + 10, y: b.y + 34, width: 0, height: 12, fill: css("--u1"), rx: 3}, b.g);
+  }
+  // sequencer window slots
+  const sq = FP.el.boxes.seq; FP.el.slots = [];
+  const sw = Math.min(30, (sq.w - 20) / WIN - 3);
+  for (let i = 0; i < WIN; i++) FP.el.slots.push(svg("rect", {x: sq.x + 10 + i * (sw + 3), y: sq.y + 30, width: sw, height: 26, fill: css("--grid"), rx: 3}, sq.g));
+  // legend
+  $("fp-legend").innerHTML = Object.values(STATE).map(([l, c]) => `<span><i style="background:var(${c})"></i>${l}</span>`).join("")
+    + `<span style="margin-left:12px">moving dashes = data moving on that path · <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> step</span>`;
+  $("fp-scrub").max = M.cycles;
+  FP.built = true;
+}
+function bucketAt(t) { return M.nb ? Math.min(M.nb - 1, lowerBound(M.bend, t + 1)) : -1; }
+function unitState(u, t, k, running, pending) {
+  const fr = key => k >= 0 && M.bn[k] ? M.get(key, k) / M.bn[k] : 0;
+  if (running.length) {
+    if (u === 1 && running.every(r => r.rel > t)) return "dep";     // prefetching, operands not ready
+    if (u === 1) { if (fr("ms") > .25) return "dram"; if (fr("fm") > .25) return "arb"; if (fr("mb") > .25) return "blocked"; }
+    if (u === 0 && fr("bs") > .25) return "dram";
+    if (u === 2) { if (fr("fq") > .25) return "arb"; if (fr("as") > .25) return "dram"; }
+    if (u === 3 && fr("fv") > .25) return "arb";
+    if (u === 4 && fr("fc") > .25) return "arb";
+    return "busy";
+  }
+  if (pending.some(r => r.ready > t)) return "dep";
+  if (pending.length) return "queued";
+  return "idle";
+}
+function updateFloor() {
+  if (!M || !FP.built) return;
+  const t = FP.t, k = bucketAt(t);
+  const running = [[], [], [], [], []], pending = [[], [], [], [], []], window_ = [];
+  for (const r of M.ins) {
+    if (r.disp <= t && (r.end < 0 || t < r.end)) window_.push(r);
+    if (r.start >= 0 && r.start <= t && t < r.end) running[r.unit].push(r);
+    else if (r.disp <= t && (r.start < 0 || t < r.start)) pending[r.unit].push(r);
+  }
+  // flows
+  const on = new Set();
+  for (let u = 0; u < 5; u++) for (const r of running[u]) {
+    const op = r.name.startsWith("VOP") ? "VOP" : r.name;
+    for (const e of (FLOWS[op] || [])) on.add(e);
+  }
+  for (const [id, el] of Object.entries(FP.el.flows)) el.classList.toggle("on", on.has(id));
+  // unit boxes
+  const side = [];
+  for (let u = 0; u < 5; u++) {
+    const st = unitState(u, t, k, running[u], pending[u]);
+    const b = FP.el.boxes[UBOX[u]];
+    b.r.setAttribute("stroke", css(STATE[st][1])); b.r.setAttribute("stroke-width", st === "idle" ? 1.5 : 4);
+    b.r.setAttribute("fill", st === "idle" ? css("--panel") : css("--panel2"));
+    const r0 = running[u][0];
+    b.st.textContent = r0 ? `${r0.name} ${r0.detail}`.slice(0, 34) : STATE[st][0];
+    side.push({u, st, r: r0, n: running[u].length, pend: pending[u]});
+  }
+  // MXU internals
+  const fr = key => k >= 0 && M.bn[k] ? M.get(key, k) / M.bn[k] : 0;
+  const lvl = Math.min(1, fr("ff") / M.fifo);
+  FP.el.fifo.setAttribute("y", FP.el.boxes.mxu.y + 154 - 120 * lvl); FP.el.fifo.setAttribute("height", 120 * lvl);
+  const mxOn = running[1].length > 0;
+  const mxCol = mxOn ? css(fr("mx") > .5 ? "--u1" : "--blocked") : css("--grid");
+  FP.el.cols.forEach(c => c.setAttribute("fill", mxCol));
+  // TMEM banks: any unit touching TMEM
+  const tmOn = running[0].length + running[1].length + running[2].length + running[3].length + running[4].length > 0;
+  FP.el.banks.forEach((b, i) => b.setAttribute("fill", tmOn ? css(`--u${[0, 1, 2, 3, 4].find(u => running[u].length) ?? 1}`) : css("--grid")));
+  FP.el.banks.forEach(b => b.setAttribute("opacity", tmOn ? .55 : 1));
+  // VPU lanes
+  const vop = running[3][0];
+  const comp = vop && /exp2|recip|rsqrt/.test(vop.name);
+  const vcol = vop ? css(unitState(3, t, k, running[3], pending[3]) === "arb" ? "--arb" : "--u3") : css("--grid");
+  FP.el.clanes.forEach(segs => segs.forEach(s => s.setAttribute("fill", vop ? vcol : css("--grid"))));
+  FP.el.slanes.forEach(s => s.setAttribute("fill", vop && !comp ? vcol : css("--grid")));
+  // DRAM meters
+  const pb = fr("bm") + fr("bd");
+  for (const id of ["dram0", "dram1"]) { const b = FP.el.boxes[id]; b.meter.setAttribute("width", (b.w - 20) * Math.min(1, pb)); b.st.textContent = k >= 0 ? `port B ${pct(Math.min(1, pb))}` : ""; }
+  FP.el.boxes.axi.st.textContent = k >= 0 ? `B ${pct(Math.min(1, pb))} · A ${pct(Math.min(1, fr("am") + fr("aq")))}` : "";
+  // window
+  window_.sort((a, b) => a.disp - b.disp);
+  FP.el.slots.forEach((s, i) => {
+    const r = window_[i];
+    if (!r) { s.setAttribute("fill", css("--grid")); s.removeAttribute("stroke"); return; }
+    const run = r.start >= 0 && r.start <= t;
+    s.setAttribute("fill", run ? css(`--u${r.unit}`) : css("--panel"));
+    s.setAttribute("stroke", run ? "none" : css(r.ready > t ? "--dep" : `--u${r.unit}`)); s.setAttribute("stroke-width", 2);
+  });
+  FP.el.boxes.seq.st.textContent = `${window_.length} in flight · ${M.ins.filter(r => r.disp <= t).length} / ${M.ins.length} dispatched`;
+  // clock + scrub
+  const us = t / (M.p.clock_mhz || 100);
+  $("fp-clock").textContent = `cycle ${fmt(Math.round(t))} / ${fmt(M.cycles)} · ${us.toFixed(1)} µs`;
+  if (document.activeElement !== $("fp-scrub")) $("fp-scrub").value = t;
+  // side panel
+  let h = `<h3>Roofline gap</h3>`;
+  if (k >= 0) {
+    const c = bucketCauses(M, k), n = M.bn[k] || 1;
+    const top = CAUSES.filter(x => x[0] !== "busy").map(x => [x, c[x[0]] || 0]).sort((a, b) => b[1] - a[1])[0];
+    h += stackBar(c, n).replace('<div class="legend">', '<div class="legend" style="display:none">');
+    h += `<div class="gapnow">Now: DRAM port B at <b>${pct(c.busy / n)}</b> of peak${top && top[1] > 0 && c.busy < n ? ` — held back by <b style="color:var(${top[0][2]})">${esc(top[0][1])}</b>` : ""}.</div>`;
+    const kk = k + 1, cum = allCauses(M, kk), tot = M.bn.slice(0, kk).reduce((a, b) => a + b, 0) || 1;
+    h += `<div class="gapnow muted">So far: ${pct((cum.busy || 0) / tot)} of peak streaming.</div>`;
+  } else h += `<div class="muted">No counter buckets in this profile (${esc(M.p.kind)}).</div>`;
+  h += `<h3>Units</h3>`;
+  for (const s of side) {
+    const [label, col] = STATE[s.st];
+    h += `<div class="unit" style="border-left-color:var(${col})"><div><b>${M.units[s.u]}</b> <span class="st" style="color:var(${col})">${label}</span>${s.n > 1 ? ` <span class="muted">+${s.n - 1}</span>` : ""}</div>`
+      + (s.r ? `<div class="w">${esc(s.r.name)} ${esc(s.r.detail)}</div><div class="w mono">${esc(srcText(s.r.src))}</div>` : s.pend.length ? `<div class="w">next: ${esc(s.pend[0].name)} ${esc(s.pend[0].detail)}${s.st === "dep" ? " (dependencies not done)" : ""}</div>` : "") + `</div>`;
+  }
+  $("fp-side").innerHTML = h;
+}
+function setT(t) { FP.t = Math.max(0, Math.min(M.cycles, t)); updateFloor(); }
+function stepEvent(dir) {
+  const ev = M.events; if (!ev.length) return;
+  let i = lowerBound(ev, FP.t + (dir > 0 ? 1 : 0));
+  i = dir > 0 ? i : i - 1;
+  setT(ev[Math.max(0, Math.min(ev.length - 1, i))]);
+}
+function stepStart(dir) {
+  const st = M.starts; if (!st.length) return;
+  let i = lowerBound(st, FP.t + (dir > 0 ? 1 : 0));
+  i = dir > 0 ? i : i - 1;
+  setT(st[Math.max(0, Math.min(st.length - 1, i))]);
+}
+const SPEEDS = { cyc: [[100, "100 cyc/s"], [1000, "1k cyc/s"], [10000, "10k cyc/s"], [100000, "100k cyc/s"], [1000000, "1M cyc/s"], [10000000, "10M cyc/s"]],
+                 ins: [[1, "1 instr/s"], [2, "2 instr/s"], [5, "5 instr/s"], [10, "10 instr/s"], [30, "30 instr/s"], [100, "100 instr/s"]] };
+function fillSpeeds() {
+  const mode = $("fp-mode").value;
+  $("fp-speed").innerHTML = SPEEDS[mode].map(([v, l], i) => `<option value="${v}" ${i === 2 ? "selected" : ""}>${l}</option>`).join("");
+}
+fillSpeeds();
+$("fp-mode").onchange = fillSpeeds;
+function tick(now) {
+  if (!FP.playing) return;
+  const dt = Math.min(0.1, (now - FP.last) / 1000); FP.last = now;
+  const sp = +$("fp-speed").value;
+  if ($("fp-mode").value === "cyc") setT(FP.t + sp * dt);
+  else { FP.acc = (FP.acc || 0) + sp * dt; while (FP.acc >= 1) { FP.acc -= 1; stepStart(1); } }
+  if (FP.t >= M.cycles) { FP.playing = false; $("fp-play").textContent = "▶ Play"; return; }
+  requestAnimationFrame(tick);
+}
+function togglePlay() {
+  if (!M) return;
+  FP.playing = !FP.playing; $("fp-play").textContent = FP.playing ? "⏸ Pause" : "▶ Play";
+  if (FP.playing) { if (FP.t >= M.cycles) FP.t = 0; FP.last = performance.now(); requestAnimationFrame(tick); }
+}
+$("fp-play").onclick = togglePlay;
+$("fp-prev").onclick = () => ($("fp-mode").value === "ins" ? stepStart : stepEvent)(-1);
+$("fp-next").onclick = () => ($("fp-mode").value === "ins" ? stepStart : stepEvent)(1);
+$("fp-scrub").oninput = e => setT(+e.target.value);
+addEventListener("keydown", e => {
+  if (VIEW !== "floor" || !M || e.target.tagName === "INPUT" && e.target.type !== "range") return;
+  if (e.key === " ") { e.preventDefault(); togglePlay(); }
+  if (e.key === "ArrowRight") { e.preventDefault(); $("fp-next").click(); }
+  if (e.key === "ArrowLeft") { e.preventDefault(); $("fp-prev").click(); }
+});
+
+// ------------------------------------------------------------------ instruction and source tables
+const INS = { sort: "start", dir: 1 };
+function renderInstrs() {
+  $("ins-unit").innerHTML = `<option value="-1">all units</option>` + M.units.map((u, i) => `<option value="${i}">${u}</option>`).join("");
+  drawInstrs();
+}
+function drawInstrs() {
+  const q = $("ins-q").value.toLowerCase(), u = +$("ins-unit").value;
+  let rs = M.ins.filter(r => (u < 0 || r.unit === u) && (!q || (r.name + " " + r.detail + " " + srcText(r.src)).toLowerCase().includes(q)));
+  const key = {idx: r => r.idx, pc: r => r.pc, unit: r => r.unit, name: r => r.name, start: r => r.start, busy: r => r.end - r.start,
+    dep: r => r.ready - r.disp, wu: r => r.start - r.ready, work: r => r.work, pb: r => r.pb}[INS.sort] || (r => r.start);
+  rs.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) * INS.dir);
+  $("ins-count").textContent = `${fmt(rs.length)} of ${fmt(M.ins.length)}${rs.length > 3000 ? " (first 3000 shown)" : ""}`;
+  const H = [["idx", "#"], ["pc", "pc"], ["unit", "unit"], ["name", "instruction"], ["detail", "shape"], ["start", "start"], ["busy", "busy"], ["dep", "wait deps"], ["wu", "wait unit"], ["work", "nominal"], ["pb", "DRAM chunks"], ["src", "source"]];
+  const num = new Set(["idx", "pc", "start", "busy", "dep", "wu", "work", "pb"]);
+  $("ins-t").innerHTML = `<thead><tr>${H.map(([k, l]) => `<th data-k="${k}" class="${num.has(k) ? "n" : ""}">${l}${INS.sort === k ? (INS.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead><tbody>`
+    + rs.slice(0, 3000).map(r => `<tr data-i="${r.i}"><td class=n>${r.idx}</td><td class=n>${r.pc}</td><td>${M.units[r.unit]}</td><td>${esc(r.name)}</td><td>${esc(r.detail)}</td><td class=n>${fmt(r.start)}</td><td class=n>${fmt(r.end - r.start)}</td><td class=n>${fmt(Math.max(0, r.ready - r.disp))}</td><td class=n>${fmt(Math.max(0, r.start - r.ready))}</td><td class=n>${fmt(r.work)}</td><td class=n>${fmt(r.pb)}</td><td class="code">${esc(srcText(r.src))}</td></tr>`).join("") + "</tbody>";
+}
+$("ins-q").oninput = () => M && drawInstrs();
+$("ins-unit").onchange = () => M && drawInstrs();
+$("ins-t").addEventListener("click", e => {
+  const th = e.target.closest("th");
+  if (th) { const k = th.dataset.k; INS.dir = INS.sort === k ? -INS.dir : 1; INS.sort = k; drawInstrs(); return; }
+  const tr = e.target.closest("tr[data-i]"); if (!tr) return;
+  const r = M.ins[+tr.dataset.i]; TL.sel = r; FP.t = Math.max(0, r.start);
+  const w = Math.max(200, (r.end - r.start) * 6); TL.t0 = Math.max(0, r.start - w / 3); TL.t1 = TL.t0 + w;
+  $("tl-sel").innerHTML = insHTML(r); show("floor");
+});
+function renderSource() {
+  const agg = {};
+  for (const r of M.ins) {
+    const a = agg[r.src] || (agg[r.src] = {n: 0, busy: 0, dep: 0, wu: 0, pb: 0, names: new Set()});
+    a.n++; if (r.start >= 0) a.busy += r.end - r.start; a.dep += Math.max(0, r.ready - r.disp); a.wu += Math.max(0, r.start - r.ready); a.pb += r.pb; a.names.add(r.name);
+  }
+  const tot = M.ins.reduce((a, r) => a + r.pb, 0) || 1;
+  const rows = Object.entries(agg).sort((a, b) => b[1].busy - a[1].busy);
+  $("src-t").innerHTML = `<thead><tr><th>source</th><th>instructions</th><th class=n>count</th><th class=n>busy cycles</th><th class=n>% run</th><th class=n>wait deps</th><th class=n>wait unit</th><th class=n>DRAM share</th></tr></thead><tbody>`
+    + rows.map(([id, a]) => { const s = M.p.sources[id];
+      return `<tr title="${esc(s ? s.chain.join("\n") : "")}"><td class="code">${esc(s ? `${s.file}:${s.line} ${s.func}\n    ${s.text}` : "(compiler)")}</td><td>${esc([...a.names].join(", "))}</td><td class=n>${fmt(a.n)}</td><td class=n>${fmt(a.busy)}</td><td class=n>${pct(a.busy / M.cycles)}</td><td class=n>${fmt(a.dep)}</td><td class=n>${fmt(a.wu)}</td><td class=n>${pct(a.pb / tot)}</td></tr>`; }).join("") + "</tbody>";
+}
+
+// ------------------------------------------------------------------ start
+(async () => {
+  try {
+    if (EMBED) setDoc(EMBED, "");
+    else if (URL0) { const r = await fetch(URL0); setDoc(await parseBytes(await r.arrayBuffer()), URL0); }
+    else $("drop").classList.add("on");
+  } catch (e) { $("drop").classList.add("on"); $("drop-err").textContent = "Could not load the profile: " + e.message; }
+  // deep links: #view=floor&t=1234&slice=0&profile=0
+  const hp = new URLSearchParams(location.hash.slice(1));
+  if (M && hp.has("profile")) selectProfile(+hp.get("profile"));
+  if (M && hp.has("slice")) selectSlice(+hp.get("slice"));
+  if (M && hp.has("t")) FP.t = +hp.get("t");
+  show(hp.get("view") || "overview");
+})();
+addEventListener("error", e => { const d = document.createElement("div"); d.className = "note bad";
+  d.textContent = "Lens error: " + e.message; document.querySelector("main").prepend(d); });
+window.__lens = { get model() { return M; }, setT, bucketCauses, allCauses };
+</script>
+</body>
+</html>

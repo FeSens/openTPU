@@ -339,4 +339,38 @@ module otpu_slice
     end
   end
 `endif
+
+`ifndef SYNTHESIS
+  // ---- Lens: memory-side stall counters, a Q line per `bucket` cycles next to the P line:
+  // bs/as  cycles a DRAM port B / A request waited for the memory (not ready)
+  // ms     cycles the MXU had work but its chunk FIFO was empty (starved by DRAM)
+  // mb     cycles the MXU had chunks but did not consume (result FIFO / row credit / scales)
+  // ff     sum over the window of the MXU chunk-FIFO level (average = ff / n)
+  // ld     cycles the program loader used port B
+  int  q_n, q_bs, q_as, q_ms, q_mb, q_ld;
+  longint q_ff;
+  logic q_h;
+  wire q_bstall = b_req && !b_rdy;
+  wire q_astall = (a_req || q_awant) && !a_rdy;
+  wire q_mstarve = u_mxu.more && u_mxu.f_count == 0;
+  wire q_mblock = u_mxu.more && u_mxu.f_count != 0 && !u_mxu.pop;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      q_n <= 0; q_bs <= 0; q_as <= 0; q_ms <= 0; q_mb <= 0; q_ld <= 0; q_ff <= 0; q_h <= 1'b0;
+    end else if (trace && !q_h) begin
+      q_h <= halted;
+      if (q_n + 1 == bucket || halted) begin
+        $display("T%0d Q c=%0d n=%0d bs=%0d as=%0d ms=%0d mb=%0d ff=%0d ld=%0d", SID, c_cyc,
+                 q_n + 1, q_bs + q_bstall, q_as + q_astall, q_ms + q_mstarve, q_mb + q_mblock,
+                 q_ff + u_mxu.f_count, q_ld + (ld_busy && ld_req));
+        q_n <= 0; q_bs <= 0; q_as <= 0; q_ms <= 0; q_mb <= 0; q_ff <= 0; q_ld <= 0;
+      end else begin
+        q_n <= q_n + 1;
+        q_bs <= q_bs + q_bstall; q_as <= q_as + q_astall;
+        q_ms <= q_ms + q_mstarve; q_mb <= q_mb + q_mblock;
+        q_ff <= q_ff + u_mxu.f_count; q_ld <= q_ld + (ld_busy && ld_req);
+      end
+    end
+  end
+`endif
 endmodule
