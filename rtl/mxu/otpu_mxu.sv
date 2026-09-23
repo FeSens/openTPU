@@ -39,6 +39,7 @@ module otpu_mxu
   output logic                  computing,   // a chunk is consumed this cycle (profiling)
   // ACT RAM read
   output logic [15:0]           act_blk,
+  output logic                  act_ren,     // the ACT RAM read register advances (with S0)
   input  logic [MCOLS*D*8-1:0]  act_data,
   input  logic [MCOLS*32-1:0]   act_scale,
   // DRAM port A (scales) and B (chunks)
@@ -124,6 +125,7 @@ module otpu_mxu
   assign a_req  = go_iss && !i_unit;
   assign a_addr = a_req ? (scale_addr >> 2) : '0;
   assign act_blk = 16'(c_ab) + ck;
+  assign act_ren = en_c;
 
   // ================================================================== compute pipeline
   typedef struct packed {
@@ -145,6 +147,9 @@ module otpu_mxu
   logic signed [23:0]  s3 [MCOLS][D/16];
   logic signed [31:0]  s4 [MCOLS];
   f32_t                fi [MCOLS];
+  // S0's ACT RAM block and scales are the ACT RAM's registered read
+  assign a0 = act_data;
+  always_comb for (int j = 0; j < MCOLS; j++) as0[j] = act_scale[j*32 +: 32];
 
   always_ff @(posedge clk) if (en_c) begin
     // S0: the popped chunk, its ACT RAM block and scales
@@ -157,9 +162,7 @@ module otpu_mxu
       m0.q <= ck[1:0];
     end
     w0 <= f_data[f_head];
-    a0 <= act_data;
     ws0 <= c_unit ? F_ONE : f_scale[s_head];
-    for (int j = 0; j < MCOLS; j++) as0[j] <= act_scale[j*32 +: 32];
     // S1: products
     for (int j = 0; j < MCOLS; j++)
       for (int i = 0; i < D; i++)

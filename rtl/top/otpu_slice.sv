@@ -135,11 +135,12 @@ module otpu_slice
   logic [7:0]             act_row, asc_row;
   logic [31:0]            act_idx, asc_data;
   logic [15:0]            asc_blk, act_rblk;
+  logic                   act_ren;
   logic [MCOLS*D*8-1:0]   act_rdata;
   logic [MCOLS*32-1:0]    act_rscale;
   otpu_actram #(.D(D), .MCOLS(MCOLS), .BLOCKS(ACT_BLOCKS), .LANES(LANES)) u_act (
     .clk, .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data), .swe(asc_we),
-    .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .r_blk(act_rblk),
+    .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_blk(act_rblk),
     .r_data(act_rdata), .r_scale(act_rscale));
 
   // ---- units
@@ -166,7 +167,7 @@ module otpu_slice
   otpu_mxu #(.D(D), .MCOLS(MCOLS), .DEPTH(FIFO_DEPTH), .LANES(LANES), .SID(SID)) u_mxu (
     .clk, .rst, .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
     .computing(mxu_pop),
-    .act_blk(act_rblk), .act_data(act_rdata), .act_scale(act_rscale),
+    .act_blk(act_rblk), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
     .a_req(mxu_areq), .a_addr(mxu_aaddr), .a_gnt(mxu_agnt), .a_rvalid, .a_rdata,
     .b_req(mxu_breq), .b_addr(mxu_baddr), .b_gnt(mxu_bgnt), .b_rvalid(b_rvalid && !b_rtag),
     .b_rdata,
