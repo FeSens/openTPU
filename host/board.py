@@ -248,6 +248,16 @@ class Board:
         return stats
 
 
+def sim_config(spec, cap: int):
+    """board_config with the DRAM cut to what the model needs (power of two), for the board
+    model: the image, then the program area."""
+    from opentpu.isasim import board_config
+    from opentpu.llm.qwen3 import Image
+    probe = Image(spec, board_config(), cap)
+    need = -(-probe.nbytes // 4096) * 4096 + 4 * board_config().IMEM_WORDS
+    return board_config(DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
+
+
 class BoardBackend:
     """Engine backend on the card: images are written once, each token's program is copied to
     the program area right after the image and loaded into IMEM, then run."""

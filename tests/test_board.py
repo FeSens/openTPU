@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 
 from host.board import BASE, BEAT, Board, BoardBackend, SimTransport, join, split
-from opentpu import isa as I
-from opentpu.isasim import Machine, board_config
+from host.checks import address_lines, pattern_test, run_demo
+from opentpu.isasim import board_config
 
 
 # ------------------------------------------------------------------------------ address map
@@ -61,53 +61,26 @@ def test_unaligned_read_modify_write(addr, n):
 
 # ------------------------------------------------------------------------------ board model
 CFG = board_config(DRAM_BYTES=1 << 22)
-DATA, W8, SC, OUT = 0, 0x10000, 0x20000, 0x30000
-
-
-def _image(rng):
-    img = np.zeros(CFG.DRAM_BYTES, np.uint8)
-    img[DATA:DATA + 4 * 4096] = rng.uniform(-2, 2, 4096).astype(np.float32).view(np.uint8)
-    img[W8:W8 + 16 * 256] = rng.integers(-127, 128, 16 * 256).astype(np.int8).view(np.uint8)
-    img[SC:SC + 4 * 64] = rng.uniform(0.01, 0.02, 64).astype(np.float32).view(np.uint8)
-    return img
-
-
-def _program():
-    return [
-        I.ld(DATA, 0, 1024),
-        I.ld(DATA + 4 * 1024 + 4, 1024, 777),                         # unaligned DRAM source
-        I.vop(I.V_MUL, 2048, 0, 0, 4, 256, 256, 256, 0, I.B_SCALAR, 0.5),
-        I.vop(I.V_EXP2, 3072, 0, 0, 2, 200, 200, 256, 0, I.B_SCALAR, 0.0),   # composite lanes
-        I.vop(I.V_ADD, 3600, 1024, 0, 1, 300, 300, 300, 256, I.B_FULL),
-        I.qact(0, 2, 0, 2, 256),
-        I.mm(W8, SC, 4096, 16, 2, 256, 16, 2, 0, 8),
-        I.qst(2048, OUT + 0x8000, OUT + 0xC000, 2, 2, 256, 256, 1),
-        I.st(OUT, 2048, 1024),
-        I.st(OUT + 4 * 1024 + 8, 3072, 400),                           # unaligned DRAM target
-        I.st(OUT + 0x2000, 3600, 300),
-        I.st(OUT + 0x3000, 4096, 32 + 2),
-        I.halt(),
-    ]
 
 
 def test_program_on_board_model(have_verilator):
-    rng = np.random.default_rng(7)
-    img = _image(rng)
-    prog = _program()
-    m = Machine(CFG, [prog], [img.copy()]).run()
+    """LD/ST (aligned and not), simple and composite VOPs, QACT, MM, QST on the board model."""
     t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=3)
     b = Board(t)
     assert b.info()["calibrated"]
-    b.write(0, img)
-    at = 0x3C0000
-    b.load_program(at, np.asarray(I.assemble(prog), np.uint32))
-    st = b.run()
-    assert st["instructions"][0] == len(prog) and st["cycles"] > 0      # HALT counts
-    assert st["b_reads"] > 0 and st["a_writes"] > 0
-    got = b.read(0, at)
-    want = m.slices[0].dram[:at]
-    bad = np.nonzero(got != want)[0]
-    assert len(bad) == 0, f"{len(bad)} bytes differ, first at {bad[:8]}"
+    ok, msg, st = run_demo(b, CFG)
+    assert ok, msg
+    assert st["b_reads"] > 0 and st["a_writes"] > 0 and st["cycles"] > 0
+
+
+def test_pattern_and_address_lines_on_board_model(have_verilator):
+    t = SimTransport(ch_bytes=1 << 21)
+    b = Board(t, check=False)
+    ok, msg = pattern_test(b, [(0, 4096), (4096 + 60, 1000), ((1 << 22) - 777, 777)])
+    assert ok, msg
+    for c in (0, 1):
+        ok, msg = address_lines(t, c, 1 << 21)
+        assert ok, msg
 
 
 # ------------------------------------------------------------------------------ Qwen3
