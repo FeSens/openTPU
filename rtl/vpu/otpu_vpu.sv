@@ -3,7 +3,7 @@
 // or the scalar immediate (docs/isa.md, VOP).
 //
 // Pipelined for the FPGA clock. Split lanes: lanes 0..CL-1 are chains of NSLOT multiply-add
-// slots (slot = (a*b)+c with its own input register, SL = 1 + LM + LA cycles; slot 1 has two
+// slots (slot = (a*b)+c with its own input register, SL = 1 + LM + LA cycles; slot 1 has three
 // more for the EXP2 range reduction); lanes CL..LANES-1 have slot 0 only. The composite
 // functions (EXP2, RECIP, RSQRT) are issued CL columns per cycle onto the long lanes, every
 // other function LANES columns per cycle. Composite functions
@@ -186,8 +186,8 @@ module otpu_vpu
   f32_t  lres [LANES];
 
   assign mtap[0] = m0;
-  // slot 1 has two extra input stages for the EXP2 range reduction (floor, then i2f)
-  localparam int PRE1 = 2;
+  // slot 1 has three extra input stages for the EXP2 range reduction (clamp, floor, i2f)
+  localparam int PRE1 = 3;
   meta_t msl [NSLOT];                        // meta at each slot's input mux
   for (genvar s = 0; s < NSLOT; s++) begin : g_mdel
     if (s == 1) begin : g_pre
@@ -250,11 +250,9 @@ module otpu_vpu
       logic       negd;                  // store fneg(result)
       if (s == 1) begin : g_pre
         // EXP2 range reduction: xf = x clamped, i = floor(xf) | -i2f(i) (into k2, unused here)
-        lst_t p1, p2;
-        logic msl_p1_exp;
-        meta_t mp1;
-        otpu_delay #(.W($bits(meta_t)), .N(1)) u_mp1 (.clk, .en, .d(mtap[s]), .q(mp1));
-        assign msl_p1_exp = (mp1.func == V_EXP2 || mp1.func == V_EXP2SUB);
+        // three stages: clamp | floor | i2f
+        lst_t p0, p1, p2;
+        logic e1, e2;                    // the entry in p0 / p1 is an EXP2
         always_ff @(posedge clk) if (en) begin
           lst_t t;
           logic lo, hi;
@@ -263,12 +261,16 @@ module otpu_vpu
             lo = fp_gt(F_M126, t.v);
             hi = !fp_gt(F_128, t.v);
             t.v = (lo || hi) ? F_ZERO : t.v;
-            t.ii = 9'(ffloor(t.v));
             t.f = {1'b0, hi, lo};
           end
+          p0 <= t;
+          e1 <= (mtap[s].func == V_EXP2 || mtap[s].func == V_EXP2SUB);
+          t = p0;
+          if (e1) t.ii = 9'(ffloor(p0.v));
           p1 <= t;
+          e2 <= e1;
           t = p1;
-          if (msl_p1_exp) t.k2 = fneg(i2f(32'($signed(p1.ii))));
+          if (e2) t.k2 = fneg(i2f(32'($signed(p1.ii))));
           p2 <= t;
         end
         assign sti = p2;
@@ -359,7 +361,12 @@ module otpu_vpu
   end
 
   // ------------------------------------------------------------------ RMAX
-  // pairwise max tree over the lanes of the chunk (masked lanes drop out), registered
+  // pairwise max tree over the lanes of the chunk (masked lanes drop out), in two registered
+  // stages: the first level (from the TMEM read data), then the rest
+  localparam int HL = LANES / 2;
+  f32_t  mxh_v [HL];
+  logic  mxh_h [HL];
+  meta_t mxh_m;
   f32_t  mxc_q;
   meta_t mxm_q;
   f32_t  mx_run;
@@ -371,14 +378,27 @@ module otpu_vpu
       v[l] = ftz(ta_data[l]);
       h[l] = m0.mask[l];
     end
-    for (int w = LANES / 2; w >= 1; w = w / 2) begin
+    for (int l = 0; l < HL; l++) begin
+      mxh_v[l] <= (!h[l] || (h[l + HL] && fp_gt(v[l + HL], v[l]))) ? v[l + HL] : v[l];
+      mxh_h[l] <= h[l] || h[l + HL];
+    end
+    mxh_m <= m0;
+  end
+  always_ff @(posedge clk) if (en) begin
+    f32_t v [HL];
+    logic h [HL];
+    for (int l = 0; l < HL; l++) begin
+      v[l] = mxh_v[l];
+      h[l] = mxh_h[l];
+    end
+    for (int w = HL / 2; w >= 1; w = w / 2) begin
       for (int l = 0; l < w; l++) begin
         if (!h[l] || (h[l + w] && fp_gt(v[l + w], v[l]))) v[l] = v[l + w];
         h[l] = h[l] || h[l + w];
       end
     end
     mxc_q <= v[0];
-    mxm_q <= m0;
+    mxm_q <= mxh_m;
   end
   wire f32_t mx_new = (mx_have && fp_gt(mx_run, mxc_q)) ? mx_run : mxc_q;
 
@@ -400,9 +420,12 @@ module otpu_vpu
   // Final partials of a row are captured into one of NTB buffers; each buffer runs its own
   // folding tree (level n = 32, 16, .., 1: x[i] += x[i+n], i < n) and the trees of different
   // rows interleave on the LANES tree adders (one buffer issues up to LANES adds per cycle).
+  // Partial p sits in row p / LANES, lane p % LANES: levels n >= LANES add rows of the same
+  // lane, levels n < LANES add lanes of row 0, so tree adder k only reads lane k (and lane
+  // k + n) and only writes lane k -- narrow muxes instead of any-of-64 reads.
   localparam int NTB = 4;
   localparam int TBW = $clog2(NTB);
-  f32_t          pb [NTB][NP];
+  f32_t          pb [NTB][RL][LANES];
   logic [NTB-1:0] tb_act;                 // captured, tree in progress
   logic [6:0]    tb_n [NTB], tb_i [NTB];   // pairs in the level, next pair
   logic [2:0]    tb_inf [NTB];             // issue cycles in flight
@@ -420,6 +443,11 @@ module otpu_vpu
         tr_go = 1'b1; tr_b = TBW'(b);
       end
   end
+  // issue register: the selected buffer and its pair range; pb is read the next cycle (the
+  // issue counts as in flight from selection, so a level never reads before its inputs land)
+  logic          is_go;
+  logic [TBW-1:0] is_b;
+  logic [6:0]    is_i, is_n;
   f32_t          tr_y [LANES];
   logic [LANES-1:0] tr_m;
   logic [6:0]    tr_dst_q [LA];
@@ -427,11 +455,14 @@ module otpu_vpu
   logic [LANES-1:0] tr_v_q [LA];
   for (genvar k = 0; k < LANES; k++) begin : g_tree
     logic [6:0] ia, ib;
-    assign ia = tb_i[tr_b] + 7'(k);
-    assign ib = ia + tb_n[tr_b];
-    assign tr_m[k] = tr_go && (ia < tb_n[tr_b]);
-    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(pb[tr_b][ia[5:0]]),
-                                  .b(pb[tr_b][ib[5:0]]), .y(tr_y[k]));
+    assign ia = is_i + 7'(k);
+    assign ib = ia + is_n;
+    assign tr_m[k] = is_go && (ia < is_n);
+    f32_t oa, ob;
+    assign oa = pb[is_b][ia[5:0] >> LW][k];
+    assign ob = (is_n >= 7'(LANES)) ? pb[is_b][ib[5:0] >> LW][k]
+                                    : pb[is_b][0][ib[LW-1:0]];
+    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
   end
 
   // finished rows wait here for the (single) TMEM write lane
@@ -486,6 +517,7 @@ module otpu_vpu
       tb_act <= '0;
       rq_n <= '0;
       for (int k = 0; k < LA; k++) tr_v_q[k] <= '0;
+      is_go <= 1'b0;
     end else begin
       logic [3:0] ewn;
       logic [1:0] qn;
@@ -526,6 +558,7 @@ module otpu_vpu
             for (int bb = 0; bb < NTB; bb++) tb_inf[bb] <= '0;
             mx_have <= 1'b0;
             for (int k = 0; k < LA; k++) tr_v_q[k] <= '0;
+            is_go <= 1'b0;
           end else begin
             ewn = ewn + 1;
             last_tap <= n_slots(hf);
@@ -576,7 +609,7 @@ module otpu_vpu
         end
         // ---- RSUM/RSSQ: capture the final partials of a row
         if (red_act && is_sum && live(mt, tag) && mt.final_) begin
-          for (int l = 0; l < LANES; l++) pb[cap_sel][32'(mt.sub) * LANES + l] <= pacc[l];
+          for (int l = 0; l < LANES; l++) pb[cap_sel][mt.sub[5:0]][l] <= pacc[l];
           if (mt.row_last) begin
             tb_act[cap_sel] <= 1'b1;
             tb_n[cap_sel] <= 7'(NP / 2);
@@ -592,16 +625,20 @@ module otpu_vpu
         rn = rq_n;
         pushed = 1'b0;
         // ---- tree adds
+        is_go <= tr_go;
+        is_b <= tr_b;
+        is_i <= tb_i[tr_b];
+        is_n <= tb_n[tr_b];
         tr_v_q[0] <= tr_m;
-        tr_dst_q[0] <= tb_i[tr_b];
-        tr_b_q[0] <= tr_b;
+        tr_dst_q[0] <= is_i;
+        tr_b_q[0] <= is_b;
         for (int k = 1; k < LA; k++) begin
           tr_v_q[k] <= tr_v_q[k-1];
           tr_dst_q[k] <= tr_dst_q[k-1];
           tr_b_q[k] <= tr_b_q[k-1];
         end
         for (int k = 0; k < LANES; k++)
-          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][6'(tr_dst_q[LA-1] + 7'(k))] <= tr_y[k];
+          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][tr_dst_q[LA-1][5:0] >> LW][k] <= tr_y[k];
         for (int bb = 0; bb < NTB; bb++) begin
           logic [2:0] inf;
           inf = tb_inf[bb];
@@ -619,7 +656,7 @@ module otpu_vpu
               tb_i[bb] <= '0;
             end else if (!pushed && rn < (TBW+1)'(NTB)) begin
               pushed = 1'b1;
-              rq_v[TBW'(rq_h + rn)] <= pb[bb][0];
+              rq_v[TBW'(rq_h + rn)] <= pb[bb][0][0];
               rq_a[TBW'(rq_h + rn)] <= tb_dst[bb];
               rn = rn + 1;
               tb_act[bb] <= 1'b0;

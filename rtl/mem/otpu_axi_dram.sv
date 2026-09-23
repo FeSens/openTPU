@@ -104,18 +104,15 @@ module otpu_axi_dram #(
     logic [3:0]   be;
   } qa_t;
 
-  qb_t        qb [2][QD];
   logic [QW:0] qb_n [2];
   logic [QW-1:0] qb_h [2];
-  qa_t        qa [2][QD];
   logic [QW:0] qa_n [2];
   logic [QW-1:0] qa_h [2];
-  qa_t        qw [2][QD];                   // port SW writes
-  logic [QW:0] qw_n [2];
+  logic [QW:0] qw_n [2];                    // port SW writes
   logic [QW-1:0] qw_h [2];
 
   // order of B reads (tags) and of A reads (channel, word, reuse)
-  logic         bt_q [OD];
+  logic         bt_q [OD];                     // LUT RAM
   logic [OW:0]  bt_n;
   logic [OW-1:0] bt_h;
   typedef struct packed { logic c; logic [3:0] idx; logic reuse; } ao_t;
@@ -139,25 +136,70 @@ module otpu_axi_dram #(
   wire a_reuse = !a_we && al_v && al_beat == a_beat;
 
   // ------------------------------------------------------------------ response FIFOs
-  logic [511:0] rb_q [2][RD];
   logic [RW:0]  rb_n [2], rb_res [2];          // stored; stored + in flight
   logic [RW-1:0] rb_h [2], rb_t [2];
-  logic [511:0] ra_q [2][AD];
   logic [AW_:0] ra_n [2], ra_res [2];
   logic [AW_-1:0] ra_h [2], ra_t [2];
+
+  // ------------------------------------------------------------------ queue and FIFO memories
+  // (per channel; written in their own processes so they map to LUT RAM)
+  logic [1:0]   qb_push, qa_push, qw_push;
+  qb_t          qb_e [2];
+  qa_t          qa_e [2], qw_e [2];
+  qb_t          hb [2];
+  qa_t          ha [2], hw [2];
+  logic [511:0] rb_head [2], ra_head [2];
+  always_comb begin
+    for (int c = 0; c < 2; c++) begin
+      qb_push[c] = b_take && (!b_we || b_wmask[16 * c +: 16] != 0);
+      qb_e[c].we = b_we;
+      qb_e[c].addr = chan_addr(b_addr + 32'(16 * c), c[0]);
+      qb_e[c].data = b_wdata[512 * c +: 512];
+      qb_e[c].wmask = b_we ? b_wmask[16 * c +: 16] : '0;
+      qa_push[c] = a_take && a_ch == c[0] && !a_reuse;
+      qa_e[c].we = a_we;
+      qa_e[c].addr = chan_addr(a_addr, c[0]);
+      qa_e[c].idx = a_addr[3:0];
+      qa_e[c].data = a_wdata;
+      qa_e[c].be = a_be;
+      qw_push[c] = sw_take && sw_ch == c[0];
+      qw_e[c].we = 1'b1;
+      qw_e[c].addr = chan_addr(sw_addr, c[0]);
+      qw_e[c].idx = sw_addr[3:0];
+      qw_e[c].data = sw_wdata;
+      qw_e[c].be = sw_be;
+    end
+  end
+  for (genvar c = 0; c < 2; c++) begin : g_mem
+    qb_t          qbm [QD];
+    qa_t          qam [QD];
+    qa_t          qwm [QD];
+    logic [511:0] rbm [RD];
+    logic [511:0] ram [AD];
+    always_ff @(posedge clk) begin
+      if (qb_push[c]) qbm[QW'(qb_h[c] + qb_n[c])] <= qb_e[c];
+      if (qa_push[c]) qam[QW'(qa_h[c] + qa_n[c])] <= qa_e[c];
+      if (qw_push[c]) qwm[QW'(qw_h[c] + qw_n[c])] <= qw_e[c];
+    end
+    always_ff @(posedge clk)
+      if (m_rvalid[c] && !m_rid[c]) rbm[rb_t[c]] <= m_rdata[c];
+    always_ff @(posedge clk)
+      if (m_rvalid[c] && m_rid[c]) ram[ra_t[c]] <= m_rdata[c];
+    assign hb[c] = qbm[qb_h[c]];
+    assign ha[c] = qam[qa_h[c]];
+    assign hw[c] = qwm[qw_h[c]];
+    assign rb_head[c] = rbm[rb_h[c]];
+    assign ra_head[c] = ram[ra_h[c]];
+  end
 
   // ------------------------------------------------------------------ per-channel issue
   logic [1:0] ar_b, ar_a, w_b, w_a, w_w;         // this cycle's AR / write source
   logic [1:0] aw_done, w_done;                   // current write head: halves already taken
   logic [1:0] wsrc [2];                          // current write's source: 0 qb, 1 qa, 2 qw
   logic [1:0] wcur;                              // a write is in progress
-  qb_t hb [2];
-  qa_t ha [2], hw [2], hs [2];
+  qa_t hs [2];
   always_comb begin
     for (int c = 0; c < 2; c++) begin
-      hb[c] = qb[c][qb_h[c]];
-      ha[c] = qa[c][qa_h[c]];
-      hw[c] = qw[c][qw_h[c]];
       // reads: A first (rare), then B; each needs reserved response room
       ar_a[c] = (qa_n[c] != 0) && !ha[c].we && (ra_res[c] < AD);
       ar_b[c] = !ar_a[c] && (qb_n[c] != 0) && !hb[c].we && (rb_res[c] < RD);
@@ -199,12 +241,17 @@ module otpu_axi_dram #(
   assign aoh = ao_q[ao_h];
   logic [511:0] a_last;                          // the beat of the last fetched A read
   wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] != 0);
-  wire [511:0] a_src = aoh.reuse ? a_last : ra_q[aoh.c][ra_h[aoh.c]];
+  wire [511:0] a_src = aoh.reuse ? a_last : ra_head[aoh.c];
   assign b_rvalid = b_out;
   assign b_rtag = bt_q[bt_h];
-  assign b_rdata = {rb_q[1][rb_h[1]], rb_q[0][rb_h[0]]};
+  assign b_rdata = {rb_head[1], rb_head[0]};
   assign a_rvalid = a_out;
   assign a_rdata = a_src[32 * aoh.idx +: 32];
+
+  always_ff @(posedge clk) begin
+    if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= b_tag;
+    if (a_take && !a_we) ao_q[OW'(ao_h + ao_n)] <= '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse};
+  end
 
   // ------------------------------------------------------------------ writes outstanding
   logic [15:0] wr_n;
@@ -225,8 +272,12 @@ module otpu_axi_dram #(
       wsrc[0] <= '0; wsrc[1] <= '0;
       err <= 1'b0;
     end else begin
-      logic [15:0] wn;
-      wn = wr_n;
+      // writes outstanding: this cycle's accepts and responses fold into one small delta (a sum
+      // of single bits), added once
+      logic signed [4:0] wn;
+      wn = 5'(qb_push[0] && b_we) + 5'(qa_push[0] && a_we) + 5'(qw_push[0]) +
+           5'(qb_push[1] && b_we) + 5'(qa_push[1] && a_we) + 5'(qw_push[1]) -
+           5'(m_bvalid[0]) - 5'(m_bvalid[1]);
       for (int c = 0; c < 2; c++) begin
         logic [QW:0] nb, na, nw;
         logic [RW:0] rbn, rbr;
@@ -236,37 +287,14 @@ module otpu_axi_dram #(
         rbn = rb_n[c]; rbr = rb_res[c]; ran = ra_n[c]; rar = ra_res[c];
         popb = 1'b0; popa = 1'b0; popw = 1'b0;
         // ---- accept
-        if (b_take && (!b_we || b_wmask[16 * c +: 16] != 0)) begin
-          qb_t e;
-          e.we = b_we;
-          e.addr = chan_addr(b_addr + 32'(16 * c), c[0]);
-          e.data = b_wdata[512 * c +: 512];
-          e.wmask = b_we ? b_wmask[16 * c +: 16] : '0;
-          qb[c][QW'(qb_h[c] + nb)] <= e;
+        if (qb_push[c]) begin
           nb = nb + 1;
-          if (b_we) wn = wn + 1;
         end
-        if (a_take && a_ch == c[0] && !a_reuse) begin
-          qa_t e;
-          e.we = a_we;
-          e.addr = chan_addr(a_addr, c[0]);
-          e.idx = a_addr[3:0];
-          e.data = a_wdata;
-          e.be = a_be;
-          qa[c][QW'(qa_h[c] + na)] <= e;
+        if (qa_push[c]) begin
           na = na + 1;
-          if (a_we) wn = wn + 1;
         end
-        if (sw_take && sw_ch == c[0]) begin
-          qa_t e;
-          e.we = 1'b1;
-          e.addr = chan_addr(sw_addr, c[0]);
-          e.idx = sw_addr[3:0];
-          e.data = sw_wdata;
-          e.be = sw_be;
-          qw[c][QW'(qw_h[c] + nw)] <= e;
+        if (qw_push[c]) begin
           nw = nw + 1;
-          wn = wn + 1;
         end
         // ---- AR
         if (m_arvalid[c] && m_arready[c]) begin
@@ -293,11 +321,9 @@ module otpu_axi_dram #(
         if (m_rvalid[c]) begin
           if (m_rresp[c][1]) err <= 1'b1;
           if (m_rid[c]) begin
-            ra_q[c][ra_t[c]] <= m_rdata[c];
             ra_t[c] <= ra_t[c] + 1;
             ran = ran + 1;
           end else begin
-            rb_q[c][rb_t[c]] <= m_rdata[c];
             rb_t[c] <= rb_t[c] + 1;
             rbn = rbn + 1;
           end
@@ -305,7 +331,6 @@ module otpu_axi_dram #(
         // ---- B
         if (m_bvalid[c]) begin
           if (m_bresp[c][1]) err <= 1'b1;
-          wn = wn - 1;
         end
         // ---- merge pops
         if (b_out) begin
@@ -319,23 +344,17 @@ module otpu_axi_dram #(
         qb_n[c] <= nb; qa_n[c] <= na; qw_n[c] <= nw;
         rb_n[c] <= rbn; rb_res[c] <= rbr; ra_n[c] <= ran; ra_res[c] <= rar;
       end
-      wr_n <= wn;
+      wr_n <= wr_n + {{11{wn[4]}}, wn};
       // ---- order FIFOs
       begin
         logic [OW:0] btn, aon;
         btn = bt_n; aon = ao_n;
-        if (b_take && !b_we) begin
-          bt_q[OW'(bt_h + btn)] <= b_tag;
-          btn = btn + 1;
-        end
+        if (b_take && !b_we) btn = btn + 1;
         if (b_out) begin bt_h <= bt_h + 1; btn = btn - 1; end
-        if (a_take && !a_we) begin
-          ao_q[OW'(ao_h + aon)] <= '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse};
-          aon = aon + 1;
-        end
+        if (a_take && !a_we) aon = aon + 1;
         if (a_out) begin
           ao_h <= ao_h + 1; aon = aon - 1;
-          if (!aoh.reuse) a_last <= ra_q[aoh.c][ra_h[aoh.c]];
+          if (!aoh.reuse) a_last <= ra_head[aoh.c];
         end
         bt_n <= btn; ao_n <= aon;
       end

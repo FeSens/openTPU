@@ -61,11 +61,14 @@ module otpu_seq
   logic [31:0] stk_start [4];
   logic [31:0] stk_end   [4];
   logic [31:0] stk_rem   [4];
+  // LOOP takes two cycles: the first registers the trip count and body length (pc holds), the
+  // second enters or skips the loop from registers -- keeps the add off the fetch-address path
+  logic        lp;
+  logic [31:0] lp_cnt, lp_len;
 
   // window
   logic [WIN-1:0]  sv;                       // slot valid (dispatched, not completed)
-  logic [31:0]     sage [WIN];               // dispatch sequence number
-  logic [31:0]     seqno;
+  logic [WIN-1:0]  older [WIN];              // older[i][j]: slot j was dispatched before slot i
   int              sunit [WIN];
   logic [WIN-1:0]  sstarted, sready;
   logic [WIN-1:0]  sdep [WIN];               // sdep[i][j]: slot i waits for slot j
@@ -108,8 +111,27 @@ module otpu_seq
   end
   int dunit;
   always_comb dunit = unit_of(op);
-  fp_t dfp;
-  assign dfp = footprint(dcmd, D, S);
+
+  // ---- dispatch pipeline: R (the instruction at pc: registers resolved) -> P (footprint
+  // partial products) -> S (products) -> Q (footprint ranges) -> C (dependencies on the window,
+  // slot allocation). In order; a stage holds while the next cannot take its instruction (C:
+  // the window is full). The stages stream, so they add latency only at the program start.
+  logic        p_v, s_v, q_v, c_v;
+  cmd_t        p_cmd, s_cmd, q_cmd, c_cmd;
+  int          p_unit, s_unit, q_unit, c_unit;
+  logic [31:0] p_pc, s_pc, q_pc, c_pc;
+  fpp_t        s_pp;
+  fpm_t        q_pr;
+  fp_t         c_fp;
+  logic        have_free;
+  wire         c_go = c_v && have_free;
+  wire         q_adv = !c_v || c_go;            // Q hands its instruction to C
+  wire         s_adv = !q_v || q_adv;           // S hands its instruction to Q
+  wire         p_adv = !s_v || s_adv;           // P hands its instruction to S
+  wire         r_take = !p_v || p_adv;          // P can take the instruction at R
+  wire         pipe_empty = !p_v && !s_v && !q_v && !c_v;
+  // R retires a control instruction this cycle (NOP, HALT, LI, ADDI, a LOOP's second cycle)
+  logic        r_ret;
 
   // ---- completions this cycle
   logic [WIN-1:0] fin;
@@ -120,7 +142,6 @@ module otpu_seq
   end
 
   // ---- free slot and the new instruction's dependencies
-  logic            have_free;
   logic [SW-1:0]   free_slot;
   logic [WIN-1:0]  ndep, ndepd;
   always_comb begin
@@ -128,8 +149,8 @@ module otpu_seq
     for (int i = WIN - 1; i >= 0; i--)
       if (!sv[i]) begin have_free = 1'b1; free_slot = SW'(i); end
     for (int i = 0; i < WIN; i++) begin
-      ndep[i] = sv[i] && !fin[i] && conflict(dfp, sfp[i]);
-      ndepd[i] = sv[i] && !fin[i] && conflict_dram(dfp, sfp[i]);
+      ndep[i] = sv[i] && !fin[i] && conflict(c_fp, sfp[i]);
+      ndepd[i] = sv[i] && !fin[i] && conflict_dram(c_fp, sfp[i]);
     end
   end
 
@@ -149,6 +170,11 @@ module otpu_seq
     end
   endtask
 
+  always_comb
+    r_ret = !stopping && !halted &&
+            (op == OP_NOP || op == OP_HALT || op == OP_LI || op == OP_ADDI ||
+             (op == OP_LOOP && lp));
+
   // ---- the next pc (mirrors the fetch/dispatch below)
   always_comb begin
     pc_n = pc;
@@ -157,8 +183,8 @@ module otpu_seq
       case (op)
         OP_NOP, OP_LI, OP_ADDI: pc_n = next_pc;
         OP_HALT: ;
-        OP_LOOP: pc_n = (rv(ra) + iw[2] == 0) ? pc + 1 + iw[1] : pc + 1;
-        default: if (dunit >= 0 && have_free) pc_n = next_pc;
+        OP_LOOP: if (lp) pc_n = (lp_cnt == 0) ? pc + 1 + lp_len : pc + 1;
+        default: if (dunit >= 0 && r_take) pc_n = next_pc;
       endcase
   end
 
@@ -178,22 +204,23 @@ module otpu_seq
   // ---- per-unit start: the oldest ready (all dependencies completed) instruction
   logic [NUNITS-1:0] can_start;
   logic [SW-1:0]     start_slot [NUNITS];
+  // (the oldest of a set: the member none of whose older slots is in the set -- an age matrix
+  // instead of comparing dispatch numbers, so the choice is parallel logic)
   always_comb begin
     for (int u = 0; u < NUNITS; u++) begin
       logic found;
-      logic [31:0] best;
-      found = 1'b0; best = '0; start_slot[u] = '0;
+      logic [WIN-1:0] cand;
+      found = 1'b0; start_slot[u] = '0;
       // collectives pair up across slices, so the collective unit stays strictly in order:
       // it only considers its oldest instruction
-      for (int i = 0; i < WIN; i++) begin
-        if (sv[i] && !sstarted[i] && sunit[i] == u &&
-            ((sdep[i] & ~same_started[u]) == '0 || u == U_COLL || u == U_MXU) &&
-            (!found || (sage[i] - best) >= 32'h8000_0000)) begin
+      for (int i = 0; i < WIN; i++)
+        cand[i] = sv[i] && !sstarted[i] && sunit[i] == u &&
+                  ((sdep[i] & ~same_started[u]) == '0 || u == U_COLL || u == U_MXU);
+      for (int i = 0; i < WIN; i++)
+        if (cand[i] && (older[i] & cand) == '0) begin
           found = 1'b1;
-          best = sage[i];
           start_slot[u] = SW'(i);
         end
-      end
       if (u == U_MXU)
         can_start[u] = found && (sdepd[start_slot[u]] & ~same_started[u]) == '0 && urdy[u] &&
                        !ustart[u];
@@ -220,15 +247,16 @@ module otpu_seq
       uq_r <= '0;
       pc <= '0; sp <= '0; cyc <= '0;
       halted <= 1'b0; error <= 1'b0; stopping <= 1'b0;
+      p_v <= 1'b0; s_v <= 1'b0; q_v <= 1'b0; c_v <= 1'b0; lp <= 1'b0;
       icount <= '0;
       sv <= '0; sstarted <= '0; sready <= '0;
       for (int i = 0; i < 16; i++) R[i] <= '0;
       for (int u = 0; u < NUNITS; u++) begin uq_h[u] <= '0; uq_t[u] <= '0; end
-      seqno <= '0;
       for (int i = 0; i < WIN; i++) sdep[i] <= '0;
     end else begin
       cyc <= cyc + 1;
       pc <= pc_n;
+      icount <= icount + 32'(r_ret) + 32'(c_go);
       // completions
       if (can_rel) begin
         urel <= 1'b1;
@@ -268,52 +296,85 @@ module otpu_seq
 `endif
         end
       end
-      // fetch / dispatch
+      // ---- C: dispatch into the window
+      if (c_go) begin
+        sv[free_slot] <= 1'b1;
+        older[free_slot] <= sv;           // every slot in the window is older
+        for (int i = 0; i < WIN; i++) older[i][free_slot] <= 1'b0;
+        sunit[free_slot] <= c_unit;
+        sstarted[free_slot] <= 1'b0;
+        sready[free_slot] <= 1'b0;
+        sdep[free_slot] <= ndep;
+        sdepd[free_slot] <= ndepd;
+        scmd[free_slot] <= c_cmd;
+        sfp[free_slot] <= c_fp;
+`ifndef SYNTHESIS
+        if (trace) $display("T%0d D c=%0d s=%0d pc=%0d op=%02h w1=%08h w2=%08h w3=%08h",
+                            SID, cyc, free_slot, c_pc, c_cmd.op, c_cmd.w1, c_cmd.w2, c_cmd.w3);
+`endif
+      end
+      // ---- Q: footprint ranges
+      if (q_adv) begin
+        c_v <= q_v;
+        if (q_v) begin
+          c_cmd <= q_cmd; c_unit <= q_unit; c_pc <= q_pc;
+          c_fp <= fp_ranges(q_cmd, q_pr, D, S);
+        end
+      end
+      // ---- S: products
+      if (s_adv) begin
+        q_v <= s_v;
+        if (s_v) begin
+          q_cmd <= s_cmd; q_unit <= s_unit; q_pc <= s_pc;
+          q_pr <= fp_sum(s_pp);
+        end
+      end
+      // ---- P: partial products
+      if (p_adv) begin
+        s_v <= p_v;
+        if (p_v) begin
+          s_cmd <= p_cmd; s_unit <= p_unit; s_pc <= p_pc;
+          s_pp <= fp_part(fp_ops(p_cmd, D, S));
+        end
+      end
+      if (r_take) p_v <= 1'b0;
+      // ---- R: fetch / execute control / hand over
       if (stopping) begin
-        if (sv == '0) halted <= 1'b1;
+        if (sv == '0 && pipe_empty) halted <= 1'b1;
       end else if (!halted) begin
         case (op)
-          OP_NOP: begin icount <= icount + 1; advance(); end
-          OP_HALT: begin icount <= icount + 1; stopping <= 1'b1; end
+          OP_NOP: advance();
+          OP_HALT: stopping <= 1'b1;
           OP_LI: begin
-            icount <= icount + 1;
             if (rd != 0) R[rd] <= iw[1];
             advance();
           end
           OP_ADDI: begin
-            icount <= icount + 1;
             if (rd != 0) R[rd] <= rv(ra) + iw[1];
             advance();
           end
           OP_LOOP: begin
-            icount <= icount + 1;
-            if (rv(ra) + iw[2] != 0) begin
-              stk_start[sp] <= pc + 1;
-              stk_end[sp]   <= pc + iw[1];
-              stk_rem[sp]   <= rv(ra) + iw[2];
-              sp <= sp + 1;
+            if (!lp) begin
+              lp <= 1'b1;
+              lp_cnt <= rv(ra) + iw[2];
+              lp_len <= iw[1];
+            end else begin
+              lp <= 1'b0;
+                if (lp_cnt != 0) begin
+                stk_start[sp] <= pc + 1;
+                stk_end[sp]   <= pc + lp_len;
+                stk_rem[sp]   <= lp_cnt;
+                sp <= sp + 1;
+              end
             end
           end
           default: begin
             if (dunit < 0) begin
               error <= 1'b1;
               halted <= 1'b1;
-            end else if (have_free) begin
-              icount <= icount + 1;
-              sv[free_slot] <= 1'b1;
-              sage[free_slot] <= seqno;
-              seqno <= seqno + 1;
-              sunit[free_slot] <= dunit;
-              sstarted[free_slot] <= 1'b0;
-              sready[free_slot] <= 1'b0;
-              sdep[free_slot] <= ndep;
-              sdepd[free_slot] <= ndepd;
-              scmd[free_slot] <= dcmd;
-              sfp[free_slot] <= dfp;
-`ifndef SYNTHESIS
-              if (trace) $display("T%0d D c=%0d s=%0d pc=%0d op=%02h w1=%08h w2=%08h w3=%08h",
-                                  SID, cyc, free_slot, pc, op, dcmd.w1, dcmd.w2, dcmd.w3);
-`endif
+            end else if (r_take) begin
+              p_v <= 1'b1;
+              p_cmd <= dcmd; p_unit <= dunit; p_pc <= pc;
               advance();
             end
           end
