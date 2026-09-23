@@ -92,3 +92,59 @@ def test_qwen3_0_6b_token_on_rtl_is_bit_exact():
     assert np.array_equal(want.view(np.uint32), got.view(np.uint32))
     for s in range(eng.cfg.S):
         assert np.array_equal(isa.machine.slices[s].dram[:n], rtl.drams[s][:n])
+
+
+def test_tiny_chunked_prefill_is_bit_exact(tiny):
+    """Prefill in chunks (P prompt rows per run, causal over the cache and the chunk) gives the
+    same logits and KV cache as token-by-token decode; decoding continues identically."""
+    m, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 23)]
+    ref = Engine(spec, W, cap=256)
+    want = [ref.step(t) for t in toks]
+    eng = Engine(spec, W, cap=256, rows=4)
+    got = eng.prefill(toks[:21], chunk=4)
+    assert np.array_equal(got, want[20]) and eng.pos == 21
+    assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[21:], want[21:]))
+    with torch.no_grad():
+        hf = m(torch.tensor([toks[:21]])).logits[0, -1].numpy()
+    assert _cos(got, hf) > 0.998
+
+
+def test_tiny_batched_decode_matches_separate_runs(tiny):
+    """b sequences decoded together (each weight stream shared by b rows, one KV cache and
+    position per sequence) equal b separate runs bit for bit."""
+    _, W, spec = tiny
+    rng = np.random.default_rng(2)
+    prompts = [[int(t) for t in rng.integers(0, 1000, n)] for n in (5, 12, 1)]
+    eng = Engine(spec, W, cap=128, batch=3)
+    got = eng.generate_batch(prompts, max_new=4, chunk=3)
+    for s, p in enumerate(prompts):
+        assert got[s] == Engine(spec, W, cap=128).generate(p, max_new=4)
+    lg = eng.step_batch([7, 8])                 # a subset; the last generated token was not fed
+    for s, t in enumerate((7, 8)):
+        ref = Engine(spec, W, cap=128)
+        ref.prefill(prompts[s] + got[s][:-1])
+        assert np.array_equal(lg[s], ref.step(t))
+
+
+@pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3-0.6B not downloaded")
+def test_qwen3_0_6b_chunked_prefill_and_batch_match_hf():
+    """Real weights: chunked prefill then decode gives HF's greedy tokens, and two prompts
+    decoded as a batch give the same tokens as separate runs."""
+    tok = transformers.AutoTokenizer.from_pretrained(REAL)
+    hf = transformers.AutoModelForCausalLM.from_pretrained(REAL, dtype=torch.float32).eval()
+    prompts = []
+    for q in ("What is the capital of France? Answer in one sentence.", "Name a prime number."):
+        ids = tok.apply_chat_template([{"role": "user", "content": q}],
+                                      add_generation_prompt=True, enable_thinking=False,
+                                      tokenize=True)
+        prompts.append(list(ids["input_ids"] if hasattr(ids, "keys") else ids))
+    W, spec = load_weights(REAL), Spec.from_hf(REAL)
+    eng = Engine(spec, W, cap=256, batch=2, rows=8)
+    got = eng.generate_batch(prompts, max_new=6, chunk=8)
+    for s, ids in enumerate(prompts):
+        with torch.no_grad():
+            want = hf.generate(torch.tensor([ids]), max_new_tokens=6,
+                               do_sample=False)[0, len(ids):].tolist()
+        assert got[s] == want[:len(got[s])] and len(got[s]) >= 5
+    assert got[1] == Engine(spec, W, cap=256).generate(prompts[1], max_new=6)

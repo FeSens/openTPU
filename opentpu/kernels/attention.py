@@ -18,7 +18,7 @@ def _attend(qh, kv, h, seq_len: int, block: int, scale: float | None = None, raw
 class _Head:
     """Online-softmax state of one KV head's query group."""
 
-    def __init__(self, qh, kv, h, scale):
+    def __init__(self, qh, kv, h, scale, seq_len, block, depth):
         G, d = qh.shape
         if scale is None:
             self.qs = ol.quantize(qh)                # q stays stationary for every K block
@@ -31,10 +31,14 @@ class _Head:
         self.K, self.VT, self.VS = kv.k(h), kv.vt(h), kv.vscale(h)
         self.buf = {}                                # block index -> score buffer
         self.S = None                                # the hardware loop's score buffers
+        nfull, tail = divmod(seq_len, block)
+        self.blocks = [(i * block, block) for i in range(nfull)] + \
+            ([(nfull * block, tail)] if tail else [])
+        self.groups = max(0, (nfull + 1 - depth) // depth)
 
 
 def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = None,
-                  depth: int = 3, ahead: int = 1):
+                  depth: int = 3, ahead: int = 1, emit=None):
     """Flash attention (online softmax) of several KV heads' query groups, software-pipelined
     FA3-style: while the VPU and quantizer finish block b (softmax, P.V), the MXU is already
     streaming q.K^T of the next depth-1 blocks into other score buffers -- across head
@@ -44,18 +48,23 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
     qhs: [G, d] query tiles, or functions that emit and return them (they are called
     `ahead` heads early, so the work producing a head's queries -- e.g. its slice of the Q
     projection -- is interleaved with the attention of the heads before it); hs: their KV
-    heads. The softmax scale log2(e)/sqrt(d) is either already in the queries or given as
+    heads. `kv` and `seq_len` are one cache / length for all entries, or one per entry (several
+    tokens or sequences chained through the same pipeline: batched decode, prefill). The softmax scale log2(e)/sqrt(d) is either already in the queries or given as
     `scale` (applied by the quantizer when q is loaded into ACT RAM, QACT CSCALE). Returns
-    [(acc, l)] per head, unnormalized.
+    [(acc, l)] per head, unnormalized -- or, with `emit`, calls emit(i, acc, l) as soon as entry
+    i is complete and releases its state (TMEM then holds only the entries in flight).
     """
     D = ol.block_size()
+    P = depth
+    kvs = kv if isinstance(kv, (list, tuple)) else [kv] * len(hs)
+    lens = seq_len if isinstance(seq_len, (list, tuple)) else [seq_len] * len(hs)
     heads: list = []
 
     def head(i):
         while len(heads) <= min(i, len(hs) - 1):
             j = len(heads)
             qh = qhs[j]() if callable(qhs[j]) else qhs[j]
-            heads.append(_Head(qh, kv, hs[j], scale))
+            heads.append(_Head(qh, kvs[j], hs[j], scale, lens[j], block, P))
         return heads[min(i, len(hs) - 1)]
 
     def scores(st, t0, n, out):
@@ -81,14 +90,10 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
         st.m.set(m_new)                                           # the next block needs m first
         st.l.set(st.l * alpha + ol.sum(p, axis=1))                # off the critical path
 
-    nfull, tail = divmod(seq_len, block)
-    blocks = [(i * block, block) for i in range(nfull)] + ([(nfull * block, tail)] if tail else [])
-    P = depth
-    groups = max(0, (nfull + 1 - P) // P)
-
     def prime(st):
         """Put the head's first P-1 score blocks in flight."""
-        if groups:
+        blocks = st.blocks
+        if st.groups:
             st.S = [ol.empty([st.G, block]) for _ in range(P)]
             for j in range(P - 1):
                 scores(st, j * block, block, st.S[j])
@@ -103,6 +108,7 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
         st = head(i)
         head(i + ahead + 1)                                       # the next queries, early
         nxt = head(i + 1) if i + 1 < len(hs) else None
+        blocks, groups = st.blocks, st.groups
         nb = 0
         if groups:
             S = st.S
@@ -129,6 +135,12 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
             finish(st, st.buf.pop(b), t0, n)
         if nxt is not None and not primed:
             prime(nxt)
+        if emit is not None:
+            emit(i, st.acc, st.l)
+            heads[i] = None                                       # free its tiles
+            del st
+    if emit is not None:
+        return None
     return [(st.acc, st.l) for st in heads]
 
 
