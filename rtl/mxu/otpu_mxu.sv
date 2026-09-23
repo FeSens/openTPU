@@ -252,7 +252,7 @@ module otpu_mxu
     logic [LANES-1:0] used;
     logic stop;
     logic [31:0] ad;
-    used = '0; stop = 1'b0; ncnt = '0; daddr_l = '0; dval_l = '0; dcol_l = '0;
+    used = '0; stop = 1'b0; ncnt = '0; daddr_l = '0; dval_l = '0; dcol_l = '0; ad = '0;
     for (int k = 0; k < LANES; k++) begin
       if (k < MCOLS && !stop && 32'(dj) + 32'(k) < 32'(c_M)) begin
         ad = d_row + q_jo[q_h][MW'(32'(dj) + 32'(k))];

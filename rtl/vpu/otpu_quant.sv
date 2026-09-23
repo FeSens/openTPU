@@ -206,6 +206,7 @@ module otpu_quant
   f32_t        sq_amax, sq_sc, sq_inv;
   always_comb begin
     f32_t m;
+    m = F_ZERO;
     sq_iv = 1'b0; sq_itag = mc.buf_; sq_amax = F_ZERO;
     if (mc.v && mc.last && (strm || !mc.pass)) begin
       m = strm ? bamax[mc.buf_] : amax2;
@@ -288,6 +289,8 @@ module otpu_quant
   // QST scale word: written when the group's scale arrives (no data writes are in flight)
   logic [31:0] saddr;                         // next scale word address
   wire  st_scale_w = busy && !ackw && is_st && sq_ov;
+  // a DRAM write is waiting (independent of the grant, which the slice derives from it)
+  assign a_want = (busy && !ackw && wqd.v && wqd.st) || st_scale_w;
 
   always_comb begin
     act_we = '0; act_row = '0; act_idx = '0; act_data = '0;
@@ -322,7 +325,6 @@ module otpu_quant
       a_wdata = sq_sc;
       a_be = 4'hF;
     end
-    a_want = a_req;
     if (!gnt) begin
       act_we = '0; asc_we = 1'b0; a_req = 1'b0; a_we = 1'b0;
     end
