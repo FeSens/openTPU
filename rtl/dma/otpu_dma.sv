@@ -38,9 +38,8 @@ module otpu_dma
   localparam int CW = D / 4;                          // words per chunk
   localparam int W  = (CW < LANES) ? CW : LANES;      // words per segment
   localparam int SWL = $clog2(W);
-  assign rdy = !busy;
-
   logic        busy, is_st, st_pend, ackw;
+  assign rdy = !busy;
   logic [31:0] dw, tm, n;              // DRAM word address, TMEM address, words
   logic [31:0] nseg, iss, cmp;         // segments: total, issued, completed (LD)
   logic [31:0] iw, rw, pw;             // DRAM word address of the segment issued / received / pending

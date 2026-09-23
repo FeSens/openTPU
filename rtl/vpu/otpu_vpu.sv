@@ -400,9 +400,12 @@ module otpu_vpu
   // Final partials of a row are captured into one of NTB buffers; each buffer runs its own
   // folding tree (level n = 32, 16, .., 1: x[i] += x[i+n], i < n) and the trees of different
   // rows interleave on the LANES tree adders (one buffer issues up to LANES adds per cycle).
+  // Partial p sits in row p / LANES, lane p % LANES: levels n >= LANES add rows of the same
+  // lane, levels n < LANES add lanes of row 0, so tree adder k only reads lane k (and lane
+  // k + n) and only writes lane k -- narrow muxes instead of any-of-64 reads.
   localparam int NTB = 4;
   localparam int TBW = $clog2(NTB);
-  f32_t          pb [NTB][NP];
+  f32_t          pb [NTB][RL][LANES];
   logic [NTB-1:0] tb_act;                 // captured, tree in progress
   logic [6:0]    tb_n [NTB], tb_i [NTB];   // pairs in the level, next pair
   logic [2:0]    tb_inf [NTB];             // issue cycles in flight
@@ -430,8 +433,11 @@ module otpu_vpu
     assign ia = tb_i[tr_b] + 7'(k);
     assign ib = ia + tb_n[tr_b];
     assign tr_m[k] = tr_go && (ia < tb_n[tr_b]);
-    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(pb[tr_b][ia[5:0]]),
-                                  .b(pb[tr_b][ib[5:0]]), .y(tr_y[k]));
+    f32_t oa, ob;
+    assign oa = pb[tr_b][ia[5:0] >> LW][k];
+    assign ob = (tb_n[tr_b] >= 7'(LANES)) ? pb[tr_b][ib[5:0] >> LW][k]
+                                          : pb[tr_b][0][ib[LW-1:0]];
+    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
   end
 
   // finished rows wait here for the (single) TMEM write lane
@@ -576,7 +582,7 @@ module otpu_vpu
         end
         // ---- RSUM/RSSQ: capture the final partials of a row
         if (red_act && is_sum && live(mt, tag) && mt.final_) begin
-          for (int l = 0; l < LANES; l++) pb[cap_sel][32'(mt.sub) * LANES + l] <= pacc[l];
+          for (int l = 0; l < LANES; l++) pb[cap_sel][mt.sub[5:0]][l] <= pacc[l];
           if (mt.row_last) begin
             tb_act[cap_sel] <= 1'b1;
             tb_n[cap_sel] <= 7'(NP / 2);
@@ -601,7 +607,7 @@ module otpu_vpu
           tr_b_q[k] <= tr_b_q[k-1];
         end
         for (int k = 0; k < LANES; k++)
-          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][6'(tr_dst_q[LA-1] + 7'(k))] <= tr_y[k];
+          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][tr_dst_q[LA-1][5:0] >> LW][k] <= tr_y[k];
         for (int bb = 0; bb < NTB; bb++) begin
           logic [2:0] inf;
           inf = tb_inf[bb];
@@ -619,7 +625,7 @@ module otpu_vpu
               tb_i[bb] <= '0;
             end else if (!pushed && rn < (TBW+1)'(NTB)) begin
               pushed = 1'b1;
-              rq_v[TBW'(rq_h + rn)] <= pb[bb][0];
+              rq_v[TBW'(rq_h + rn)] <= pb[bb][0][0];
               rq_a[TBW'(rq_h + rn)] <= tb_dst[bb];
               rn = rn + 1;
               tb_act[bb] <= 1'b0;
