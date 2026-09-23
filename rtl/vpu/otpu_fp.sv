@@ -1,0 +1,431 @@
+// openTPU fp32 arithmetic (docs/isa.md "Arithmetic").
+// IEEE-754 binary32, round-to-nearest-even, flush-to-zero on inputs and outputs.
+// Bit-exact with opentpu/fp32.py. Functions are combinational; composite functions (exp2,
+// recip, rsqrt) are fixed sequences of fp_add/fp_mul.
+package otpu_fp;
+
+  typedef logic [31:0] f32_t;
+
+  localparam f32_t F_ZERO  = 32'h0000_0000;
+  localparam f32_t F_ONE   = 32'h3F80_0000;
+  localparam f32_t F_TWO   = 32'h4000_0000;
+  localparam f32_t F_HALF  = 32'h3F00_0000;
+  localparam f32_t F_1P5   = 32'h3FC0_0000;
+  localparam f32_t F_127   = 32'h42FE_0000;
+  localparam f32_t F_M126  = 32'hC2FC_0000;   // -126.0
+  localparam f32_t F_128   = 32'h4300_0000;   //  128.0
+  localparam f32_t F_INF   = 32'h7F80_0000;
+  localparam f32_t F_NAN   = 32'h7FC0_0000;
+  localparam f32_t F_INV127 = 32'h3C01_0204;  // f32(1/127)
+
+  // Taylor coefficients ln2^k / k!, k = 0..7, rounded to fp32 (same as opentpu/fp32.py).
+  localparam f32_t EXP2_C0 = 32'h3F80_0000;
+  localparam f32_t EXP2_C1 = 32'h3F31_7218;
+  localparam f32_t EXP2_C2 = 32'h3E75_FDF0;
+  localparam f32_t EXP2_C3 = 32'h3D63_5847;
+  localparam f32_t EXP2_C4 = 32'h3C1D_955B;
+  localparam f32_t EXP2_C5 = 32'h3AAE_C3FF;
+  localparam f32_t EXP2_C6 = 32'h3921_8489;
+  localparam f32_t EXP2_C7 = 32'h377F_E5FE;
+
+  localparam logic [31:0] RECIP_MAGIC = 32'h7EF3_11C3;
+  localparam logic [31:0] RSQRT_MAGIC = 32'h5F37_59DF;
+
+  function automatic f32_t ftz(input f32_t a);
+    return (a[30:23] == 8'd0) ? {a[31], 31'd0} : a;
+  endfunction
+
+  function automatic f32_t fneg(input f32_t a);
+    return {~a[31], a[30:0]};
+  endfunction
+
+  function automatic f32_t fabs(input f32_t a);
+    f32_t t;
+    t = ftz(a);
+    return {1'b0, t[30:0]};
+  endfunction
+
+  function automatic logic is_nan(input f32_t a);
+    return (a[30:23] == 8'hFF) && (a[22:0] != 0);
+  endfunction
+
+  // Leading-zero counts as balanced trees (a priority chain is too slow for the FPGA clock).
+  function automatic logic [5:0] lzc32(input logic [31:0] m);
+    logic [4:0] n;
+    logic [31:0] x;
+    if (m == 0) return 6'd32;
+    x = m; n = '0;
+    if (x[31:16] == 0) begin n[4] = 1'b1; x = x << 16; end
+    if (x[31:24] == 0) begin n[3] = 1'b1; x = x << 8; end
+    if (x[31:28] == 0) begin n[2] = 1'b1; x = x << 4; end
+    if (x[31:30] == 0) begin n[1] = 1'b1; x = x << 2; end
+    if (x[31] == 0)    begin n[0] = 1'b1; end
+    return {1'b0, n};
+  endfunction
+
+  function automatic logic [5:0] lzc27(input logic [26:0] m);
+    return lzc32({m, 5'b11111});             // at most 27 for a nonzero... (m == 0 -> 27)
+  endfunction
+
+  // |x[k-1:0]| for a variable k (0..32)
+  function automatic logic sticky_below(input logic [31:0] x, input logic [5:0] k);
+    logic [31:0] mask;
+    mask = (k >= 6'd32) ? 32'hFFFF_FFFF : ((32'd1 << k) - 32'd1);
+    return |(x & mask);
+  endfunction
+
+  // ---- fp_mul in two stages (the product is the register boundary: on the FPGA it sits in
+  // the DSP48 M/P registers).
+  typedef struct packed {
+    logic               sp;      // special result (zero, inf, NaN) already known
+    logic [31:0]        sv;
+    logic               s;
+    logic signed [10:0] e;
+    logic [47:0]        p;
+  } fmul_mid_t;
+
+  function automatic fmul_mid_t fp_mul_s1(input f32_t a_in, input f32_t b_in);
+    fmul_mid_t m;
+    f32_t a, b;
+    a = ftz(a_in);
+    b = ftz(b_in);
+    m = '0;
+    m.s = a[31] ^ b[31];
+    if (a[30:23] == 8'hFF || b[30:23] == 8'hFF) begin
+      m.sp = 1'b1;
+      m.sv = (is_nan(a) || is_nan(b) || a[30:0] == 0 || b[30:0] == 0) ? F_NAN
+             : {m.s, 8'hFF, 23'd0};
+    end else if (a[30:23] == 0 || b[30:23] == 0) begin
+      m.sp = 1'b1;
+      m.sv = {m.s, 31'd0};
+    end
+    m.p = {1'b1, a[22:0]} * {1'b1, b[22:0]};
+    m.e = 11'(a[30:23]) + 11'(b[30:23]) - 11'sd127;
+    return m;
+  endfunction
+
+  function automatic f32_t fp_mul_s2(input fmul_mid_t m);
+    logic g, st;
+    logic signed [10:0] e;
+    logic [23:0] mm;
+    logic [24:0] mr;
+    if (m.sp) return m.sv;
+    e = m.e;
+    if (m.p[47]) begin
+      mm = m.p[47:24]; g = m.p[23]; st = |m.p[22:0]; e = e + 1;
+    end else begin
+      mm = m.p[46:23]; g = m.p[22]; st = |m.p[21:0];
+    end
+    mr = {1'b0, mm} + ((g && (st || mm[0])) ? 25'd1 : 25'd0);
+    if (mr[24]) begin
+      mr = mr >> 1;
+      e = e + 1;
+    end
+    if (e >= 255) return {m.s, 8'hFF, 23'd0};
+    if (e <= 0) return {m.s, 31'd0};
+    return {m.s, e[7:0], mr[22:0]};
+  endfunction
+
+  function automatic f32_t fp_mul(input f32_t a_in, input f32_t b_in);
+    return fp_mul_s2(fp_mul_s1(a_in, b_in));
+  endfunction
+
+  // ---- fp_add in four stages: unpack + compare | align + add | normalize | round.
+  typedef struct packed {
+    logic        sp;
+    logic [31:0] sv;
+    logic        sa;       // sign of the larger operand (the result sign unless it cancels)
+    logic        sub;      // effective subtraction
+    logic [7:0]  e;
+    logic [7:0]  d;        // exponent difference (>= 0)
+    logic [26:0] ma, mb;   // significands with 3 guard bits, mb not yet aligned
+  } fadd_p1_t;
+
+  typedef struct packed {
+    logic        sp;
+    logic [31:0] sv;
+    logic        sa;
+    logic        sub;
+    logic [7:0]  e;
+    logic [27:0] sum;
+  } fadd_p2_t;
+
+  typedef struct packed {
+    logic               sp;
+    logic [31:0]        sv;
+    logic               s;
+    logic signed [9:0]  e;
+    logic [26:0]        mn;   // normalized: mn[26] set, guard/round/sticky in [2:0]
+  } fadd_nm_t;
+
+  function automatic fadd_p1_t fp_add_s1(input f32_t a_in, input f32_t b_in);
+    fadd_p1_t r;
+    f32_t a, b, t;
+    a = ftz(a_in);
+    b = ftz(b_in);
+    r = '0;
+    if (a[30:23] == 8'hFF || b[30:23] == 8'hFF) begin
+      r.sp = 1'b1;
+      if (is_nan(a) || is_nan(b)) r.sv = F_NAN;
+      else if (a[30:23] == 8'hFF && b[30:23] == 8'hFF && a[31] != b[31]) r.sv = F_NAN;
+      else r.sv = (a[30:23] == 8'hFF) ? a : b;
+      return r;
+    end
+    if (a[30:0] == 0 && b[30:0] == 0) begin
+      r.sp = 1'b1;
+      r.sv = {a[31] & b[31], 31'd0};
+      return r;
+    end
+    if (a[30:0] == 0) begin
+      r.sp = 1'b1;
+      r.sv = b;
+      return r;
+    end
+    if (b[30:0] == 0) begin
+      r.sp = 1'b1;
+      r.sv = a;
+      return r;
+    end
+    if (b[30:0] > a[30:0]) begin
+      t = a; a = b; b = t;
+    end
+    r.sa = a[31];
+    r.sub = a[31] ^ b[31];
+    r.e = a[30:23];
+    r.d = a[30:23] - b[30:23];
+    r.ma = {1'b1, a[22:0], 3'b000};
+    r.mb = {1'b1, b[22:0], 3'b000};
+    return r;
+  endfunction
+
+  function automatic fadd_p2_t fp_add_s2(input fadd_p1_t r);
+    fadd_p2_t q;
+    logic [26:0] mb;
+    logic stk;
+    q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub; q.e = r.e;
+    mb = r.mb;
+    if (r.d > 8'd26) begin
+      mb = 27'd1;
+    end else if (r.d != 0) begin
+      stk = sticky_below({5'd0, mb}, 6'(r.d));
+      mb = (mb >> r.d) | {26'd0, stk};
+    end
+    q.sum = r.sub ? ({1'b0, r.ma} - {1'b0, mb}) : ({1'b0, r.ma} + {1'b0, mb});
+    return q;
+  endfunction
+
+  function automatic fadd_nm_t fp_add_s3(input fadd_p2_t q);
+    fadd_nm_t n;
+    int lz;
+    n.sp = q.sp;
+    n.sv = q.sv;
+    n.s = q.sa;
+    n.e = 10'(q.e);
+    n.mn = '0;
+    if (!q.sub) begin
+      if (q.sum[27]) begin
+        n.mn = {q.sum[27:2], q.sum[1] | q.sum[0]};
+        n.e = n.e + 1;
+      end else begin
+        n.mn = q.sum[26:0];
+      end
+    end else begin
+      if (q.sum == 0 && !q.sp) begin
+        n.sp = 1'b1;
+        n.sv = F_ZERO;
+      end
+      lz = int'(lzc27(q.sum[26:0]));
+      n.mn = q.sum[26:0] << lz;
+      n.e = n.e - 10'(lz);
+    end
+    return n;
+  endfunction
+
+  function automatic f32_t fp_add_s4(input fadd_nm_t n);
+    logic g, rs;
+    logic signed [9:0] e;
+    logic [23:0] mm;
+    logic [24:0] mr;
+    if (n.sp) return n.sv;
+    e = n.e;
+    g  = n.mn[2];
+    rs = n.mn[1] | n.mn[0];
+    mm = n.mn[26:3];
+    mr = {1'b0, mm} + ((g && (rs || mm[0])) ? 25'd1 : 25'd0);
+    if (mr[24]) begin
+      mr = mr >> 1;
+      e = e + 1;
+    end
+    if (e >= 255) return {n.s, 8'hFF, 23'd0};
+    if (e <= 0) return {n.s, 31'd0};
+    return {n.s, e[7:0], mr[22:0]};
+  endfunction
+
+  function automatic f32_t fp_add(input f32_t a_in, input f32_t b_in);
+    return fp_add_s4(fp_add_s3(fp_add_s2(fp_add_s1(a_in, b_in))));
+  endfunction
+
+  function automatic f32_t fp_sub(input f32_t a, input f32_t b);
+    return fp_add(a, fneg(b));
+  endfunction
+
+  // a > b in the total order of flushed values: -inf < ... < -0 < +0 < ... < +inf < NaN.
+  function automatic logic [31:0] fkey(input f32_t a_in);
+    f32_t a;
+    a = ftz(a_in);
+    return a[31] ? ~a : {1'b1, a[30:0]};
+  endfunction
+
+  function automatic logic fp_gt(input f32_t a, input f32_t b);
+    return fkey(a) > fkey(b);
+  endfunction
+
+  function automatic f32_t fp_max(input f32_t a, input f32_t b);
+    return fp_gt(a, b) ? ftz(a) : ftz(b);
+  endfunction
+
+  function automatic f32_t fp_min(input f32_t a, input f32_t b);
+    return fp_gt(b, a) ? ftz(a) : ftz(b);
+  endfunction
+
+  // i2f in two stages: magnitude + leading zeros | normalize + round.
+  typedef struct packed {
+    logic        z, s;
+    logic [5:0]  lz;
+    logic [31:0] mag;
+  } i2f_mid_t;
+
+  function automatic i2f_mid_t i2f_s1(input logic signed [31:0] x);
+    i2f_mid_t m;
+    m.z = (x == 0);
+    m.s = x[31];
+    m.mag = x[31] ? (~x + 32'd1) : x;
+    m.lz = lzc32(m.mag);
+    return m;
+  endfunction
+
+  function automatic f32_t i2f_s2(input i2f_mid_t m);
+    logic g, st;
+    logic [31:0] nrm;
+    logic [23:0] mm;
+    logic [24:0] mr;
+    logic [8:0] e;
+    if (m.z) return F_ZERO;
+    nrm = m.mag << m.lz;
+    e = 9'd158 - 9'(m.lz);
+    mm = nrm[31:8];
+    g = nrm[7];
+    st = |nrm[6:0];
+    mr = {1'b0, mm} + ((g && (st || mm[0])) ? 25'd1 : 25'd0);
+    if (mr[24]) begin
+      mr = mr >> 1;
+      e = e + 1;
+    end
+    return {m.s, e[7:0], mr[22:0]};
+  endfunction
+
+  function automatic f32_t i2f(input logic signed [31:0] x);
+    return i2f_s2(i2f_s1(x));
+  endfunction
+
+  // Round half to even, saturate to [-127, 127]; in two stages: shift | round + saturate.
+  typedef struct packed {
+    logic        zero, sat, s;
+    logic [31:0] ip;
+    logic        g, st;
+  } q8_mid_t;
+
+  function automatic q8_mid_t q8_s1(input f32_t x_in);
+    q8_mid_t q;
+    f32_t x;
+    int e, sh;
+    logic [23:0] m;
+    x = ftz(x_in);
+    e = int'(x[30:23]);
+    q = '0;
+    q.s = x[31];
+    q.zero = (e < 126);
+    q.sat = (e >= 134);
+    m = {1'b1, x[22:0]};
+    sh = (q.zero || q.sat) ? 17 : 150 - e;       // 17..24
+    q.ip = 32'(m) >> sh;
+    q.g = m[sh - 1];
+    q.st = sticky_below({8'd0, m}, 6'(sh - 1));
+    return q;
+  endfunction
+
+  function automatic logic [7:0] q8_s2(input q8_mid_t q);
+    logic [31:0] ip;
+    if (q.zero) return 8'd0;
+    if (q.sat) return q.s ? 8'h81 : 8'h7F;
+    ip = q.ip;
+    if (q.g && (q.st || ip[0])) ip = ip + 1;
+    if (ip > 127) ip = 127;
+    return q.s ? 8'(-ip) : 8'(ip);
+  endfunction
+
+  function automatic logic [7:0] q8(input f32_t x_in);
+    return q8_s2(q8_s1(x_in));
+  endfunction
+
+  // floor() of x in [-126, 128) as an integer.
+  function automatic int ffloor(input f32_t x_in);
+    f32_t x;
+    int e, sh, ip;
+    logic [23:0] m;
+    logic frac;
+    x = ftz(x_in);
+    if (x[30:0] == 0) return 0;
+    e = int'(x[30:23]);
+    if (e < 127) return x[31] ? -1 : 0;
+    m = {1'b1, x[22:0]};
+    sh = 150 - e;                       // 16..23 for |x| < 256
+    ip = int'(32'(m) >> sh);
+    frac = sticky_below({8'd0, m}, 6'(sh));
+    if (x[31]) return -(ip + (frac ? 1 : 0));
+    return ip;
+  endfunction
+
+  function automatic f32_t fp_exp2(input f32_t x_in);
+    f32_t x, f, p;
+    int i;
+    logic [31:0] r;
+    x = ftz(x_in);
+    if (fp_gt(F_M126, x)) return F_ZERO;
+    if (!fp_gt(F_128, x)) return F_INF;
+    i = ffloor(x);
+    f = fp_sub(x, i2f(i));
+    p = EXP2_C7;
+    p = fp_add(fp_mul(p, f), EXP2_C6);
+    p = fp_add(fp_mul(p, f), EXP2_C5);
+    p = fp_add(fp_mul(p, f), EXP2_C4);
+    p = fp_add(fp_mul(p, f), EXP2_C3);
+    p = fp_add(fp_mul(p, f), EXP2_C2);
+    p = fp_add(fp_mul(p, f), EXP2_C1);
+    p = fp_add(fp_mul(p, f), EXP2_C0);
+    r = p + (i << 23);
+    return r;
+  endfunction
+
+  function automatic f32_t fp_recip(input f32_t x_in);
+    f32_t x, ax, y;
+    x = ftz(x_in);
+    ax = {1'b0, x[30:0]};
+    if (ax == 0) return F_ZERO;
+    if (ax >= 32'h7E80_0000) return {x[31], 31'b0};      // |x| >= 2^126 (incl. inf): flushes
+    y = ftz(RECIP_MAGIC - ax);
+    for (int k = 0; k < 3; k++) y = fp_mul(y, fp_sub(F_TWO, fp_mul(ax, y)));
+    return x[31] ? fneg(y) : y;
+  endfunction
+
+  function automatic f32_t fp_rsqrt(input f32_t x_in);
+    f32_t x, y, h;
+    x = ftz(x_in);
+    if (x[31] || x[30:0] == 0 || x == 32'h7F80_0000) return F_ZERO;
+    y = RSQRT_MAGIC - (x >> 1);
+    h = fp_mul(F_HALF, x);
+    for (int k = 0; k < 3; k++) y = fp_mul(y, fp_sub(F_1P5, fp_mul(h, fp_mul(y, y))));
+    return y;
+  endfunction
+
+endpackage
