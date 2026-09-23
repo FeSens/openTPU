@@ -3,7 +3,7 @@
 // or the scalar immediate (docs/isa.md, VOP).
 //
 // Pipelined for the FPGA clock. Split lanes: lanes 0..CL-1 are chains of NSLOT multiply-add
-// slots (slot = (a*b)+c with its own input register, SL = 1 + LM + LA cycles; slot 1 has two
+// slots (slot = (a*b)+c with its own input register, SL = 1 + LM + LA cycles; slot 1 has three
 // more for the EXP2 range reduction); lanes CL..LANES-1 have slot 0 only. The composite
 // functions (EXP2, RECIP, RSQRT) are issued CL columns per cycle onto the long lanes, every
 // other function LANES columns per cycle. Composite functions
@@ -186,8 +186,8 @@ module otpu_vpu
   f32_t  lres [LANES];
 
   assign mtap[0] = m0;
-  // slot 1 has two extra input stages for the EXP2 range reduction (floor, then i2f)
-  localparam int PRE1 = 2;
+  // slot 1 has three extra input stages for the EXP2 range reduction (clamp, floor, i2f)
+  localparam int PRE1 = 3;
   meta_t msl [NSLOT];                        // meta at each slot's input mux
   for (genvar s = 0; s < NSLOT; s++) begin : g_mdel
     if (s == 1) begin : g_pre
@@ -250,11 +250,9 @@ module otpu_vpu
       logic       negd;                  // store fneg(result)
       if (s == 1) begin : g_pre
         // EXP2 range reduction: xf = x clamped, i = floor(xf) | -i2f(i) (into k2, unused here)
-        lst_t p1, p2;
-        logic msl_p1_exp;
-        meta_t mp1;
-        otpu_delay #(.W($bits(meta_t)), .N(1)) u_mp1 (.clk, .en, .d(mtap[s]), .q(mp1));
-        assign msl_p1_exp = (mp1.func == V_EXP2 || mp1.func == V_EXP2SUB);
+        // three stages: clamp | floor | i2f
+        lst_t p0, p1, p2;
+        logic e1, e2;                    // the entry in p0 / p1 is an EXP2
         always_ff @(posedge clk) if (en) begin
           lst_t t;
           logic lo, hi;
@@ -263,12 +261,16 @@ module otpu_vpu
             lo = fp_gt(F_M126, t.v);
             hi = !fp_gt(F_128, t.v);
             t.v = (lo || hi) ? F_ZERO : t.v;
-            t.ii = 9'(ffloor(t.v));
             t.f = {1'b0, hi, lo};
           end
+          p0 <= t;
+          e1 <= (mtap[s].func == V_EXP2 || mtap[s].func == V_EXP2SUB);
+          t = p0;
+          if (e1) t.ii = 9'(ffloor(p0.v));
           p1 <= t;
+          e2 <= e1;
           t = p1;
-          if (msl_p1_exp) t.k2 = fneg(i2f(32'($signed(p1.ii))));
+          if (e2) t.k2 = fneg(i2f(32'($signed(p1.ii))));
           p2 <= t;
         end
         assign sti = p2;

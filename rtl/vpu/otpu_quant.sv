@@ -27,9 +27,16 @@ module otpu_qscale
   localparam int SL = LM + LA;
   localparam int LAT = 6 * SL + LM;
   localparam f32_t F_NZ = 32'h8000_0000;
+  // input register (the amax selection in front of the unit is its own pipeline stage)
+  f32_t          amax_q;
+  logic          iv_q;
+  logic [TW-1:0] itag_q;
+  always_ff @(posedge clk) if (en) begin
+    amax_q <= amax; iv_q <= iv; itag_q <= itag;
+  end
   f32_t ax;
   logic zero, big;
-  assign ax = {1'b0, ftz(amax)[30:0]};
+  assign ax = {1'b0, ftz(amax_q)[30:0]};
   assign zero = (ax == 0);
   assign big = (ax >= 32'h7E80_0000);
   // recip(ax): y = y * (2 - ax*y), three times, from the magic seed
@@ -50,7 +57,7 @@ module otpu_qscale
   otpu_fmul #(.LAT(LM)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .y(scm));
   otpu_delay #(.W(32), .N(6 * SL)) u_scd (.clk, .en, .d(scm), .q(scd));
   otpu_delay #(.W(1), .N(LM)) u_z2 (.clk, .en, .d(zd), .q(zd2));
-  otpu_delay #(.W(1 + TW), .N(LAT)) u_v (.clk, .en, .d({iv, itag}), .q({ov, otag}));
+  otpu_delay #(.W(1 + TW), .N(LAT)) u_v (.clk, .en, .d({iv_q, itag_q}), .q({ov, otag}));
   assign inv = zd2 ? F_ZERO : invm;
   assign sc = zd2 ? F_ZERO : scd;
 endmodule
