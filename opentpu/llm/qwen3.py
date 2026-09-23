@@ -28,10 +28,10 @@ from .. import fp32 as F
 from .. import language as ol
 from ..compiler import Affine, KVDesc, QTensor, Tensor
 from ..isasim import Config, Machine, design_config
-from ..kernels.attention import _attend
+from ..kernels.attention import _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm, rope
-from ..kernels.mlp import swiglu_down
+from ..kernels.mlp import _chunk, swiglu_down
 from ..runtime import ALIGN, quantize_rows
 
 
@@ -259,9 +259,14 @@ class Image:
              "qn": lb.alloc(4 * d), "kn": lb.alloc(4 * d)}
         self.mats = {"wq": (self.nq_loc * d, H), "wk": (self.nkv_loc * d, H),
                      "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d),
-                     "wg": (self.f_loc, H), "wu": (self.f_loc, H), "wd": (self.h_loc, F_)}
+                     "wg": (self.f_loc, H), "wu": (self.f_loc, H)}
         for name, (n, k) in self.mats.items():
             L[name] = (lb.alloc(n * k), lb.alloc(4 * n * (k // D)))
+        # W_down in column parts of the MLP's F chunk: each down MM streams one part, whose
+        # scales are then contiguous (with row-major scales every row would cost a DRAM beat)
+        self.dchunk = _chunk(self.f_loc, D)
+        L["wd"] = [(lb.alloc(self.h_loc * self.dchunk), lb.alloc(4 * self.h_loc * (self.dchunk // D)))
+                   for _ in range(F_ // self.dchunk)]
         L["kv"] = [{"k": lb.alloc(cap * d), "ks": lb.alloc(4 * cap * (d // D)),
                     "vt": lb.alloc(d * cap), "vs": lb.alloc(4 * cap)}
                    for _ in range(self.nkv_loc)]
@@ -317,7 +322,11 @@ class Image:
             put_q(Lo["wo"], rows(wo, self.h_loc))
             put_q(Lo["wg"], rows(W[p + "mlp.gate_proj.weight"], self.f_loc))
             put_q(Lo["wu"], rows(W[p + "mlp.up_proj.weight"], self.f_loc))
-            put_q(Lo["wd"], rows(W[p + "mlp.down_proj.weight"], self.h_loc))
+            C = self.dchunk
+            for j, pair in enumerate(self.lofs["wd"]):
+                put_q((base + pair[0], base + pair[1]),
+                      [r[:, j * C:(j + 1) * C] for r in rows(W[p + "mlp.down_proj.weight"],
+                                                              self.h_loc)])
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
         put_q(self.head, rows(head, self.v_loc))
         return imgs
@@ -340,6 +349,11 @@ class Image:
             for name, (n, k) in self.mats.items():
                 da, sa = lofs[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (n, k), k, 4 * (k // D), D))
+            C, n = self.dchunk, self.h_loc
+            parts = tuple(QTensor(off + da, off + sa, (n, C), C, 4 * (C // D), D)
+                          for da, sa in lofs["wd"])
+            ns.wd = QTensor(parts[0].data, parts[0].scale, (n, spec.ffn), C, 4 * (C // D), D,
+                            parts=parts, pw=C)
             heads = {sid + j * cfg.S: {k: off + v for k, v in r.items()}
                      for j, r in enumerate(lofs["kv"])}
             ns.kv = KVDesc(heads, self.cap, d, D, cfg.S, sid)
@@ -354,31 +368,47 @@ class Image:
 
 
 # =============================================================================== kernel
+# Attention: tokens per flash block (256 halves the per-block vector-unit latency overhead of
+# 128 at long contexts) and score blocks in flight per head.
+ATTN_BLOCK = 256
+ATTN_DEPTH = 3
+
+
 def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int):
     """x + W_o . attention(x) for one token, this slice's heads; returns the new residual
-    (replicated on every slice)."""
+    (replicated on every slice).
+
+    Schedule (the MXU streams weights in program order, so what sits between two MMs in the
+    stream overlaps them): K and V are projected first and their norms, RoPE and cache appends
+    run while the Q projection streams; Q is projected one KV head's query group at a time,
+    interleaved with the attention of the heads before it (_attend_heads), so each head's
+    query preparation and softmax hide behind the next heads' Q weights."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
     kv = lw.kv
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
-    q = ol.dot(xs, lw.wq)                       # [1, nq_loc*d]
     k = ol.dot(xs, lw.wk)                       # [1, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
     qn, kn = ol.load(lw.qn), ol.load(lw.kn)
     scale = ol.LOG2E / math.sqrt(d)
     heads = list(kv.owned_heads(spec.n_kv))
-    o_loc = ol.empty([G * len(heads), d])
+    nh = len(heads)
+    kh = rope(rmsnorm(k.reshape(nh, d), kn, eps), c, s_)          # [nkv_loc, d]
+    vh = v.reshape(nh, d)
     for j, hh in enumerate(heads):
-        kh = rope(rmsnorm(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
-        ol.kv_append(kv, hh, pos, kh, v[:, j * d:(j + 1) * d])
-        qh = ol.empty([G, d])
-        for g in ol.static_range(G):
-            r = (j * G + g) * d
-            qh[g:g + 1, :].set(q[:, r:r + d])
-        qh = rope(rmsnorm(qh, qn, eps), c, s_)
-        o_loc[j * G:(j + 1) * G, :].set(_attend(qh, kv, hh, pos + 1, block, scale))
-    o_row = ol.empty([1, G * len(heads) * d])
-    for i in ol.static_range(G * len(heads)):
-        o_row[:, i * d:(i + 1) * d].set(o_loc[i:i + 1, :])
+        ol.kv_append(kv, hh, pos, kh[j:j + 1, :], vh[j:j + 1, :])
+
+    def queries(j):
+        def emit():
+            qj = ol.dot(xs, lw.wq[j * G * d:(j + 1) * G * d, :])  # [1, G*d]
+            return rope(rmsnorm(qj.reshape(G, d), qn, eps), c, s_)
+        return emit
+
+    outs = _attend_heads([queries(j) for j in range(nh)], kv, heads, pos + 1, block, scale,
+                         depth=ATTN_DEPTH, ahead=2)
+    o_row = ol.empty([1, G * nh * d])
+    o_loc = o_row.reshape(G * nh, d)            # the heads' outputs, written in place
+    for j, (acc, l) in enumerate(outs):
+        o_loc[j * G:(j + 1) * G, :].set(acc / l[:, None])
     o_all = ol.all_gather(o_row)                # [1, n_q*d], slice-major head order
     y = ol.all_gather(ol.dot(o_all, lw.wo))     # [1, H]
     return x + y
@@ -397,7 +427,7 @@ HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must f
 
 
 @ol.jit
-def qwen3_step(m, pos: int, block: int = 128):
+def qwen3_step(m, pos: int, block: int = ATTN_BLOCK):
     """One decode token at position `pos`: x (the token's embedding) -> logits.
 
     The layers run as a hardware loop; each layer appends its K/V at `pos` and attends over
@@ -418,7 +448,7 @@ def qwen3_step(m, pos: int, block: int = 128):
         ol.store(m.logits[:, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
 
 
-def compile_step(image: Image, pos: int, block: int = 128) -> list:
+def compile_step(image: Image, pos: int, block: int = ATTN_BLOCK) -> list:
     progs = []
     for s in range(image.cfg.S):
         b = qwen3_step.trace(image.cfg, s, {"m": image.descriptors(s), "pos": pos,
@@ -461,7 +491,7 @@ class Engine:
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
-                 backend="isa", block: int = 128):
+                 backend="isa", block: int = ATTN_BLOCK):
         self.spec, self.cap, self.block = spec, cap, block
         self.cfg = cfg or device_config(spec, cap)
         self.image = Image(spec, self.cfg, cap)

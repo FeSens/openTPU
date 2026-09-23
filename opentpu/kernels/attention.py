@@ -7,76 +7,129 @@ from .lib import rmsnorm, rope
 
 def _attend(qh, kv, h, seq_len: int, block: int, scale: float | None = None, raw: bool = False,
             depth: int = 3):
-    """Flash attention (online softmax) of the G query rows `qh` [G, d] against KV head h,
-    software-pipelined FA3-style: while the VPU and quantizer finish block b (softmax, P.V),
-    the MXU is already streaming q.K^T of the next depth-1 blocks into other score buffers.
-    The hardware loop body covers `depth` blocks, so every score buffer has a fixed role.
+    """Flash attention of the G query rows `qh` [G, d] against KV head h (see _attend_heads);
+    returns acc / l, or the unnormalized (acc, l) with `raw`."""
+    (acc, l), = _attend_heads([qh], kv, [h], seq_len, block, scale, depth)
+    if raw:
+        return acc, l
+    return acc / l[:, None]
 
-    The softmax scale log2(e)/sqrt(d) is either already in `qh` or given as `scale`, in which
-    case the quantizer applies it while loading q into ACT RAM (QACT CSCALE). Returns
-    acc / l, or the unnormalized (acc, l) with `raw`.
+
+class _Head:
+    """Online-softmax state of one KV head's query group."""
+
+    def __init__(self, qh, kv, h, scale):
+        G, d = qh.shape
+        if scale is None:
+            self.qs = ol.quantize(qh)                # q stays stationary for every K block
+        else:
+            self.qs = ol.quantize(qh * ol.full([d], scale)[None, :])
+        self.G = G
+        self.m = ol.full([G], -1e30)
+        self.l = ol.zeros([G])
+        self.acc = ol.zeros([G, d])
+        self.K, self.VT, self.VS = kv.k(h), kv.vt(h), kv.vscale(h)
+        self.buf = {}                                # block index -> score buffer
+        self.S = None                                # the hardware loop's score buffers
+
+
+def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = None,
+                  depth: int = 3, ahead: int = 1):
+    """Flash attention (online softmax) of several KV heads' query groups, software-pipelined
+    FA3-style: while the VPU and quantizer finish block b (softmax, P.V), the MXU is already
+    streaming q.K^T of the next depth-1 blocks into other score buffers -- across head
+    boundaries too, so the heads' dependency chains overlap. Within a head the hardware loop
+    body covers `depth` blocks, so every score buffer has a fixed role.
+
+    qhs: [G, d] query tiles, or functions that emit and return them (they are called
+    `ahead` heads early, so the work producing a head's queries -- e.g. its slice of the Q
+    projection -- is interleaved with the attention of the heads before it); hs: their KV
+    heads. The softmax scale log2(e)/sqrt(d) is either already in the queries or given as
+    `scale` (applied by the quantizer when q is loaded into ACT RAM, QACT CSCALE). Returns
+    [(acc, l)] per head, unnormalized.
     """
     D = ol.block_size()
-    G, d = qh.shape
-    if scale is None:
-        qs = ol.quantize(qh)                     # q stays stationary for every K block
-    else:
-        qs = ol.quantize(qh * ol.full([d], scale)[None, :])
-    m = ol.full([G], -1e30)
-    l = ol.zeros([G])
-    acc = ol.zeros([G, d])
-    K, VT, VS = kv.k(h), kv.vt(h), kv.vscale(h)
+    heads: list = []
 
-    def scores(t0, n, out):
+    def head(i):
+        while len(heads) <= min(i, len(hs) - 1):
+            j = len(heads)
+            qh = qhs[j]() if callable(qhs[j]) else qhs[j]
+            heads.append(_Head(qh, kv, hs[j], scale))
+        return heads[min(i, len(hs) - 1)]
+
+    def scores(st, t0, n, out):
         """s = q.K^T for tokens [t0, t0+n); the MXU epilogue also writes the row maxima."""
-        ol.dot(qs, K[t0:t0 + n, :], out=out, rowmax=True)
+        ol.dot(st.qs, st.K[t0:t0 + n, :], out=out, rowmax=True)
         return out
 
-    def finish(s, t0, n):
+    def finish(st, s, t0, n):
         """Online-softmax update and acc += P.V for the block whose scores are in `s`."""
-        vs = ol.load(VS[t0:t0 + n])
-        m_new = ol.maximum(m, s.rowmax)
-        p = ol.exp2(s - m_new[:, None])                          # fused EXP2SUB
-        alpha = ol.exp2(m - m_new)
+        G = st.G
+        vs = ol.load(st.VS[t0:t0 + n])
+        m_new = ol.maximum(st.m, s.rowmax)
+        p = ol.exp2(s - m_new[:, None])                           # fused EXP2SUB
+        alpha = ol.exp2(st.m - m_new)
         npad = -(-n // D) * D
         if npad == n:
-            pq = ol.quantize(p * vs[None, :])                    # V scales folded (QACT CSCALE)
-        else:                                                    # tail block: pad P with zeros
+            pq = ol.quantize(p * vs[None, :])                     # V scales folded (QACT CSCALE)
+        else:                                                     # tail block: pad P with zeros
             pp = ol.zeros([G, npad])
             pp[:, :n].set(p * vs[None, :])
             pq = ol.quantize(pp)
-        ol.dot(pq, VT[:, t0:t0 + npad], acc=acc, acc_scale=alpha)  # acc = acc*alpha + P.V
-        m.set(m_new)                                             # the next block needs m first
-        l.set(l * alpha + ol.sum(p, axis=1))                     # off the critical path
+        ol.dot(pq, st.VT[:, t0:t0 + npad], acc=st.acc, acc_scale=alpha)  # acc*alpha + P.V
+        st.m.set(m_new)                                           # the next block needs m first
+        st.l.set(st.l * alpha + ol.sum(p, axis=1))                # off the critical path
 
     nfull, tail = divmod(seq_len, block)
     blocks = [(i * block, block) for i in range(nfull)] + ([(nfull * block, tail)] if tail else [])
     P = depth
     groups = max(0, (nfull + 1 - P) // P)
-    buf = {}                                                     # block index -> score buffer
-    nb = 0
-    if groups:
-        S = [ol.empty([G, block]) for _ in range(P)]
-        for j in range(P - 1):
-            scores(j * block, block, S[j])
-        for i in ol.range(groups):
-            t0 = i * (P * block)
-            for p in range(P):
-                scores(t0 + (p + P - 1) * block, block, S[(p + P - 1) % P])   # prefetch
-                finish(S[p], t0 + p * block, block)
-        nb = groups * P
-        for j in range(P - 1):
-            buf[nb + j] = S[j]
-    for b in range(nb, len(blocks)):                             # the rest, unrolled
-        for f in range(b, min(b + P, len(blocks))):              # keep P-1 blocks in flight
-            if f not in buf:
+
+    def prime(st):
+        """Put the head's first P-1 score blocks in flight."""
+        if groups:
+            st.S = [ol.empty([st.G, block]) for _ in range(P)]
+            for j in range(P - 1):
+                scores(st, j * block, block, st.S[j])
+        else:
+            for f in range(min(P - 1, len(blocks))):
                 t0, n = blocks[f]
-                buf[f] = scores(t0, n, ol.empty([G, n]))
-        t0, n = blocks[b]
-        finish(buf.pop(b), t0, n)
-    if raw:
-        return acc, l
-    return acc / l[:, None]
+                st.buf[f] = scores(st, t0, n, ol.empty([st.G, n]))
+
+    head(ahead)
+    prime(head(0))
+    for i in range(len(hs)):
+        st = head(i)
+        head(i + ahead + 1)                                       # the next queries, early
+        nxt = head(i + 1) if i + 1 < len(hs) else None
+        nb = 0
+        if groups:
+            S = st.S
+            for g in ol.range(groups):
+                t0 = g * (P * block)
+                for p in range(P):
+                    scores(st, t0 + (p + P - 1) * block, block, S[(p + P - 1) % P])   # prefetch
+                    finish(st, S[p], t0 + p * block, block)
+            nb = groups * P
+            for j in range(P - 1):
+                st.buf[nb + j] = S[j]
+        primed = False
+        for b in range(nb, len(blocks)):                          # the rest, unrolled
+            for f in range(b, min(b + P, len(blocks))):           # keep P-1 blocks in flight
+                if f not in st.buf:
+                    t0, n = blocks[f]
+                    st.buf[f] = scores(st, t0, n, ol.empty([st.G, n]))
+            if nxt is not None and not primed and b + P - 1 >= len(blocks):
+                prime(nxt)                                        # ... continuing into the next head
+                primed = True
+            if b + 1 == len(blocks):
+                st.qs = None                                      # its ACT RAM blocks are free
+            t0, n = blocks[b]
+            finish(st, st.buf.pop(b), t0, n)
+        if nxt is not None and not primed:
+            prime(nxt)
+    return [(st.acc, st.l) for st in heads]
 
 
 @ol.jit
