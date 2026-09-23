@@ -176,7 +176,8 @@ def _config(cfg, uarch: dict | None) -> dict:
     lanes = cfg.LANES
     return {"S": cfg.S, "D": cfg.D, "MCOLS": cfg.MCOLS, "LANES": lanes,
             "CL": lanes // 4 if lanes >= 8 else 1, "ACT_BLOCKS": cfg.ACT_BLOCKS,
-            "TMEM_WORDS": cfg.TMEM_WORDS, "DRAM_BYTES": cfg.DRAM_BYTES, **ua}
+            "TMEM_WORDS": cfg.TMEM_WORDS, "DRAM_BYTES": cfg.DRAM_BYTES,
+            "IMEM_WORDS": cfg.IMEM_WORDS, "FIFO_DEPTH": 128, "NRP": 8, "NWP": 4, **ua}
 
 
 def _programs(programs, cfg, src: _Sources) -> list:
@@ -193,7 +194,8 @@ def _programs(programs, cfg, src: _Sources) -> list:
                     det = f"body {ins.w[0]} x {ins.w[1]}{' + R%d' % ins.ra if ins.ra else ''}"
                 elif ins.op in (I.LI, I.ADDI):
                     det = f"R{ins.rd} = {'R%d + ' % ins.ra if ins.op == I.ADDI else ''}{ins.w[0]}"
-            rows.append([pc, nm, det, ins.comment or "", src.id(ins)])
+            rows.append([pc, nm, det, ins.comment or "", src.id(ins), list(ins.w),
+                         [ins.ra, ins.rb, ins.rc, ins.rd], ins.flags, ins.op])
         out.append(rows)
     return out
 
@@ -579,7 +581,7 @@ def record(workload: str, board: bool = False, isa: bool = False, pos: int = 8,
         if isa:
             raise SystemExit("--isa is not supported for qwen workloads")
         p, cfg, _ = _qwen(workload == "qwen", pos, board, run_kw, uarch)
-        return to_data(p, uarch)
+        return _mem(to_data(p, uarch), cfg, axi)
     wl = _kernel_workloads()
     if workload not in wl:
         raise SystemExit(f"unknown workload {workload!r}; try `lens list`")
@@ -589,7 +591,14 @@ def record(workload: str, board: bool = False, isa: bool = False, pos: int = 8,
         comp, imgs = compile_kernel(kernel, cfg, **a)
         return isa_data(name + " [ISA]", cfg, comp.programs, imgs, uarch)
     p = profile(kernel, cfg, name, uarch=uarch, run_kw=run_kw, **a)
-    return to_data(p, uarch)
+    return _mem(to_data(p, uarch), cfg, axi)
+
+
+def _mem(d: dict, cfg, axi) -> dict:
+    """Record which memory model the RTL ran against."""
+    used = (rtlsim.MEMORY["AXI"] if axi is None else axi) and cfg.D == 128
+    d["config"]["MEM"] = "axi" if used else "fixed"
+    return d
 
 
 # ============================================================================ CLI

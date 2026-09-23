@@ -105,6 +105,36 @@ def test_server_serves_app_and_profile(tmp_path, rtl_prof):
         srv.server_close()
 
 
+CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+
+def test_floorplan_explains_every_element(tmp_path, have_verilator):
+    """Headless Chrome: the app's #selftest hovers and pins every floorplan element at several
+    moments of a tiny Qwen3 token; every one must show an explanation, with no errors."""
+    import html as H
+    import os
+    chrome = CHROME if os.path.exists(CHROME) else (shutil.which("google-chrome")
+                                                     or shutil.which("chromium"))
+    if not chrome:
+        pytest.skip("Chrome not installed")
+    d = lens.record("qwen-tiny", board=True, axi=True, pos=10)
+    page = tmp_path / "q.html"
+    page.write_text(lens.render(lens.load(lens.save([d], tmp_path / "q.otpuprof"))))
+    r = subprocess.run([chrome, "--headless=new", "--disable-gpu", "--window-size=1400,1150",
+                        "--virtual-time-budget=60000", "--enable-logging=stderr", "--v=0",
+                        "--dump-dom", f"file://{page}#selftest"],
+                       capture_output=True, text=True, timeout=300)
+    m = re.search(r'<pre id="selftest">(.*?)</pre>', r.stdout, re.S)
+    assert m, r.stderr[-2000:]
+    res = json.loads(H.unescape(m.group(1)))
+    kinds = {k.split(":")[0] for k in res["keys"]}
+    assert {"seq", "slot", "dma", "mxu", "fifo", "col", "quant", "act", "tmem", "bank", "vpu",
+            "clane", "slane", "coll", "axi", "axiA", "axiB", "dram0", "dram1", "ctrl", "flow",
+            "state", "gap", "ctl"} <= kinds
+    assert not res["fails"] and not res["errors"], res
+    assert not [ln for ln in r.stderr.splitlines() if "Uncaught" in ln]
+
+
 def test_cli_info(tmp_path, rtl_prof, capsys):
     f = lens.save([rtl_prof], tmp_path / "a.otpuprof")
     lens.main(["info", str(f)])

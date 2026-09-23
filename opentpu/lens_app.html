@@ -111,6 +111,34 @@ tbody tr:hover td { background: var(--panel2); cursor: pointer; }
 .side .unit .w { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pill { display: inline-block; padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 700; color: #fff; }
 .gapnow { font-size: 13px; margin-top: 6px; }
+#fp .hit { fill: none; stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: help; }
+#fp [data-tip] { cursor: help; }
+.tipable { cursor: help; }
+#fp [data-tip]:hover > rect.blk, #fp rect[data-tip]:hover { filter: brightness(1.12); }
+.ftip { position: fixed; z-index: 30; width: min(420px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.22); font-size: 12.5px; display: none; pointer-events: none; }
+.ftip.pinned { pointer-events: auto; border-color: var(--focus); }
+.ftip .hd { font-size: 14px; font-weight: 700; display: flex; gap: 8px; align-items: baseline; }
+.ftip .hd .pin { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--muted); }
+.ftip .sec { margin-top: 7px; }
+.ftip .sec > .h { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 1px; }
+.ftip .live { background: var(--panel2); border-radius: 6px; padding: 5px 7px; }
+.ftip .why { border-left: 3px solid var(--u1); padding-left: 7px; }
+.ftip details { margin-top: 7px; } .ftip summary { cursor: pointer; color: var(--focus); }
+.ftip table { width: 100%; }
+.ftip table td { padding: 1px 6px 1px 0; border: none; font-size: 12px; white-space: normal; }
+.ftip table td.n { white-space: nowrap; }
+#fp text.port { font-size: 10.5px; fill: var(--ink); font-weight: 600; }
+.ftip .x, .helppanel .x { float: right; border: none; background: none; font-size: 16px; line-height: 1; padding: 0 4px; }
+.helppanel { background: var(--info-bg); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
+.helppanel ul { margin: 6px 0 0; padding-left: 20px; }
+.tour { position: fixed; z-index: 40; width: min(360px, calc(100vw - 24px)); background: var(--panel); border: 2px solid var(--focus);
+  border-radius: 10px; padding: 12px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+.tour .n { color: var(--muted); font-size: 11px; }
+.tour .btns { display: flex; gap: 8px; margin-top: 10px; justify-content: flex-end; }
+#fp .hl { fill: none; stroke: var(--focus); stroke-width: 4; stroke-dasharray: 8 5; pointer-events: none; }
+.hl-html { outline: 3px dashed var(--focus); outline-offset: 3px; }
 kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--panel2); }
 </style>
 </head>
@@ -150,16 +178,28 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); 
   <section class="view" id="v-floor">
     <div class="card">
       <div class="controls">
-        <button id="fp-prev" title="previous event (←)">⏮</button>
-        <button id="fp-play" class="primary" title="play / pause (space)">▶ Play</button>
-        <button id="fp-next" title="next event (→)">⏭</button>
-        <select id="fp-mode" title="playback mode">
+        <button id="fp-prev" data-tip="ctl:prev">⏮</button>
+        <button id="fp-play" class="primary" data-tip="ctl:play">▶ Play</button>
+        <button id="fp-next" data-tip="ctl:next">⏭</button>
+        <select id="fp-mode" data-tip="ctl:mode">
           <option value="cyc">Continuous (cycles)</option>
           <option value="ins">Instruction by instruction</option>
         </select>
-        <select id="fp-speed" title="speed"></select>
-        <input id="fp-scrub" type="range" min="0" max="1000" value="0">
-        <span class="clock" id="fp-clock"></span>
+        <select id="fp-speed" data-tip="ctl:speed"></select>
+        <input id="fp-scrub" type="range" min="0" max="1000" value="0" data-tip="ctl:scrub">
+        <span class="clock" id="fp-clock" data-tip="ctl:clock"></span>
+        <button id="fp-help" data-tip="ctl:help">? How to read</button>
+        <button id="fp-tour" data-tip="ctl:tour">Tour</button>
+      </div>
+      <div id="fp-helppanel" class="helppanel" hidden>
+        <b>How to read this view</b> <button id="fp-helpclose" class="x" aria-label="close">×</button>
+        <ul>
+          <li><b>Blocks are the hardware units</b>; data flows along the grey paths. <b>Moving dashes</b> mean data is moving on that path right now.</li>
+          <li><b>Outline colour = state</b> of the unit at this moment (legend below): green busy, red stalled on DRAM, purple lost TMEM arbitration, orange blocked, amber waiting for a dependency, grey idle.</li>
+          <li>The <b>roofline gap</b> bar (right) is DRAM port B in the current window of cycles: teal = streaming (good), everything else = why it is not streaming.</li>
+          <li><b>The goal</b>: port B streaming every cycle (the DRAM roofline). Find the unit or cause that keeps it from doing so.</li>
+          <li><b>Hover anything</b> for what it is, how it works, its live state and what would help; <b>click</b> (or tap) to pin the explanation. <kbd>space</kbd> play/pause, <kbd>←</kbd>/<kbd>→</kbd> step.</li>
+        </ul>
       </div>
       <div id="fp-wrap">
         <svg id="fp" viewBox="0 0 1100 640" role="img" aria-label="floorplan of the TPU"></svg>
@@ -188,6 +228,7 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); 
   </section>
 </main>
 <div class="tip" id="tip"></div>
+<div class="ftip" id="ftip" role="tooltip"></div>
 
 <script>
 "use strict";
@@ -274,11 +315,21 @@ function build(p, s) {
       }
     }
   }
+  // prefix sums (index k+1 = buckets 0..k) of every counter and of unit coverage
+  const pre = {};
+  for (const key of Object.keys(B)) {
+    if (key === "c") continue;
+    const a = new Float64Array(nb + 1);
+    for (let k = 0; k < nb; k++) a[k + 1] = a[k] + (B[key][k] | 0);
+    pre[key] = a;
+  }
+  const preCov = cov.map(c => { const a = new Float64Array(nb + 1); for (let k = 0; k < nb; k++) a[k + 1] = a[k] + c[k]; return a; });
   const events = [...new Set(ins.flatMap(r => [r.start, r.end, r.disp]).filter(x => x >= 0))].sort((a, b) => a - b);
   const starts = ins.filter(r => r.start >= 0).map(r => r.start).sort((a, b) => a - b);
   const byStart = ins.slice().sort((a, b) => a.start - b.start);
-  return { p, s, cfg, units, ins, B, nb, bstart, bend, bn, get, cov, events, starts, byStart,
-           cycles: p.cycles || 1, fifo: 128 };
+  const prog = (p.programs || [])[s] || [];
+  return { p, s, cfg, units, ins, B, nb, bstart, bend, bn, get, cov, pre, preCov, events, starts, byStart, prog,
+           cycles: p.cycles || 1, fifo: cfg.FIFO_DEPTH || 128 };
 }
 
 // gap causes: why DRAM port B was idle
@@ -356,7 +407,10 @@ function show(v) {
   for (const sec of document.querySelectorAll(".view")) sec.classList.toggle("on", sec.id === "v-" + v);
   if (!M) return;
   if (v === "timeline") drawTimeline();
-  if (v === "floor") { if (!FP.built) buildFloor(); updateFloor(); }
+  if (v === "floor") {
+    if (!FP.built) buildFloor(); updateFloor();
+    if (!tourDone() && !/notour/.test(location.hash)) setTimeout(() => { if (VIEW === "floor" && TOURI < 0) tourShow(0); }, 300);
+  } else { tourClear(); TOURI = -1; if (TIP.key) unpin(); }
 }
 for (const b of $("tabs").children) b.onclick = () => show(b.dataset.v);
 function redraw() { if (!M) return; if (VIEW === "timeline") drawTimeline(); if (VIEW === "floor") { FP.built = false; buildFloor(); updateFloor(); } }
@@ -474,9 +528,11 @@ function drawTimeline() {
     }
     y += row.n * RH + 6;
   }
+  TL.strips = [];
   if (hasB) {
     y += 6;
     for (const [label, f, cv2] of STRIPS) {
+      TL.strips.push([y, y + SH]);
       g.fillStyle = css("--muted"); g.fillText(label, 8, y + SH / 2);
       g.fillStyle = css("--grid"); g.fillRect(LEFT, y, W - LEFT - 8, SH);
       g.fillStyle = css(cv2);
@@ -537,6 +593,10 @@ function insHTML(r) {
     }
     if (e.target !== cv || !M) { tip.style.display = "none"; return; }
     const r = tlHit(e);
+    const cy = e.clientY - cv.getBoundingClientRect().top;
+    const si = r ? -1 : (TL.strips || []).findIndex(([a, b]) => cy >= a && cy < b);
+    if (si >= 0) { const d = STRIP_TIPS[si]; tip.innerHTML = `<b>${esc(d.title)}</b><br>${d.what}<br><span class="muted">${d.how}</span><br>${d.why}`;
+      tip.style.display = "block"; tip.style.left = Math.min(innerWidth - 470, e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px"; return; }
     if (r) { tip.innerHTML = insHTML(r); tip.style.display = "block"; tip.style.left = Math.min(innerWidth - 470, e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px"; }
     else tip.style.display = "none";
   });
@@ -552,6 +612,7 @@ const STATE = {
   queued: ["queued (unit busy)", "--faint"], idle: ["idle", "--idle"],
 };
 const BOX = {
+  ctrl: [20, 30, 125, 95, "Control (host)"],
   dram0: [20, 150, 125, 95, "DRAM ch0"], dram1: [20, 275, 125, 95, "DRAM ch1"],
   axi: [180, 170, 100, 180, "AXI ports"], dma: [180, 430, 160, 80, "DMA"],
   act: [330, 40, 230, 80, "ACT RAM"], mxu: [330, 160, 230, 190, "MXU"],
@@ -596,15 +657,16 @@ function buildFloor() {
     const mk = svg("marker", {id: "ar" + u, viewBox: "0 0 10 10", refX: 6, refY: 5, markerWidth: 4, markerHeight: 4, orient: "auto-start-reverse"}, defs);
     svg("path", {d: "M0,0 L10,5 L0,10 z", fill: css(`--u${u}`)}, mk);
   }
-  const eg = svg("g", {}, root), fg = svg("g", {}, root), bg = svg("g", {}, root);
+  const eg = svg("g", {}, root), fg = svg("g", {}, root), bg = svg("g", {}, root), hg = svg("g", {}, root);
   FP.el = {flows: {}, boxes: {}};
   for (const [id, pts] of Object.entries(EDGES)) {
     const d = "M" + pts.map(p => p.join(",")).join(" L");
     svg("path", {d, class: "edge"}, eg);
     FP.el.flows[id] = svg("path", {d, class: "flow", stroke: css(`--u${EDGE_UNIT[id]}`), "marker-end": `url(#ar${EDGE_UNIT[id]})`}, fg);
+    svg("path", {d, class: "hit", "data-tip": "flow:" + id}, hg);        // wide invisible hover target
   }
   for (const [id, [x, y, w, h, label]] of Object.entries(BOX)) {
-    const g = svg("g", {}, bg);
+    const g = svg("g", {"data-tip": id}, bg);
     const r = svg("rect", {x, y, width: w, height: h, class: "blk", fill: css("--panel"), rx: 8}, g);
     const t = svg("text", {x: x + 10, y: y + 20, class: "lbl"}, g); t.textContent = label;
     const st = svg("text", {x: x + 10, y: y + h - 10, class: "small"}, g);
@@ -612,17 +674,18 @@ function buildFloor() {
   }
   // MXU: FIFO bar and columns
   const mx = FP.el.boxes.mxu;
-  svg("rect", {x: mx.x + 12, y: mx.y + 34, width: 22, height: 120, fill: css("--grid"), rx: 3}, mx.g);
-  FP.el.fifo = svg("rect", {x: mx.x + 12, y: mx.y + 154, width: 22, height: 0, fill: css("--u0"), rx: 3}, mx.g);
-  svg("text", {x: mx.x + 8, y: mx.y + 170, class: "small"}, mx.g).textContent = "FIFO";
+  const fg2 = svg("g", {"data-tip": "fifo"}, mx.g);
+  svg("rect", {x: mx.x + 12, y: mx.y + 34, width: 22, height: 120, fill: css("--grid"), rx: 3}, fg2);
+  FP.el.fifo = svg("rect", {x: mx.x + 12, y: mx.y + 154, width: 22, height: 0, fill: css("--u0"), rx: 3}, fg2);
+  svg("text", {x: mx.x + 8, y: mx.y + 170, class: "small"}, fg2).textContent = "FIFO";
   FP.el.cols = [];
   const cw = Math.min(40, (mx.w - 70) / MC - 6);
-  for (let j = 0; j < MC; j++) FP.el.cols.push(svg("rect", {x: mx.x + 50 + j * (cw + 6), y: mx.y + 40, width: cw, height: 110, fill: css("--grid"), rx: 4}, mx.g));
+  for (let j = 0; j < MC; j++) FP.el.cols.push(svg("rect", {x: mx.x + 50 + j * (cw + 6), y: mx.y + 40, width: cw, height: 110, fill: css("--grid"), rx: 4, "data-tip": "col:" + j}, mx.g));
   svg("text", {x: mx.x + 50, y: mx.y + 166, class: "small"}, mx.g).textContent = `${MC} columns × ${cfg.D} deep`;
   // TMEM banks
   const tm = FP.el.boxes.tmem; FP.el.banks = [];
   const bw = (tm.w - 20) / L;
-  for (let b = 0; b < L; b++) FP.el.banks.push(svg("rect", {x: tm.x + 10 + b * bw + 1, y: tm.y + 34, width: bw - 2, height: tm.h - 70, fill: css("--grid"), rx: 3}, tm.g));
+  for (let b = 0; b < L; b++) FP.el.banks.push(svg("rect", {x: tm.x + 10 + b * bw + 1, y: tm.y + 34, width: bw - 2, height: tm.h - 70, fill: css("--grid"), rx: 3, "data-tip": "bank:" + b}, tm.g));
   svg("text", {x: tm.x + 10, y: tm.y + tm.h - 22, class: "small"}, tm.g).textContent = `${L} banks · ${fmt(cfg.TMEM_WORDS || 0)} words`;
   // VPU lanes: CL composite (10 slots) + simple
   const vp = FP.el.boxes.vpu; FP.el.clanes = []; FP.el.slanes = [];
@@ -631,9 +694,10 @@ function buildFloor() {
     const y = vp.y + 34 + l * (lh + 4);
     if (l < CL) {
       const segs = [];
-      for (let s = 0; s < 10; s++) segs.push(svg("rect", {x: vp.x + 10 + s * 19, y, width: 16, height: lh, fill: css("--grid"), rx: 2}, vp.g));
+      const lg = svg("g", {"data-tip": "clane:" + l}, vp.g);
+      for (let s = 0; s < 10; s++) segs.push(svg("rect", {x: vp.x + 10 + s * 19, y, width: 16, height: lh, fill: css("--grid"), rx: 2}, lg));
       FP.el.clanes.push(segs);
-    } else FP.el.slanes.push(svg("rect", {x: vp.x + 10, y, width: 16, height: lh, fill: css("--grid"), rx: 2}, vp.g));
+    } else FP.el.slanes.push(svg("rect", {x: vp.x + 10, y, width: 16, height: lh, fill: css("--grid"), rx: 2, "data-tip": "slane:" + l}, vp.g));
   }
   svg("text", {x: vp.x + 40, y: vp.y + 34 + CL * (lh + 4) + lh * .7, class: "small"}, vp.g).textContent = `← ${L - CL} simple lanes`;
   svg("text", {x: vp.x + 10, y: vp.y + vp.h - 24, class: "small"}, vp.g).textContent = `${CL} composite lanes (exp2 / recip / rsqrt)`;
@@ -646,12 +710,33 @@ function buildFloor() {
   // sequencer window slots
   const sq = FP.el.boxes.seq; FP.el.slots = [];
   const sw = Math.min(30, (sq.w - 20) / WIN - 3);
-  for (let i = 0; i < WIN; i++) FP.el.slots.push(svg("rect", {x: sq.x + 10 + i * (sw + 3), y: sq.y + 30, width: sw, height: 26, fill: css("--grid"), rx: 3}, sq.g));
+  for (let i = 0; i < WIN; i++) FP.el.slots.push(svg("rect", {x: sq.x + 10 + i * (sw + 3), y: sq.y + 30, width: sw, height: 26, fill: css("--grid"), rx: 3, "data-tip": "slot:" + i}, sq.g));
+  // AXI ports B and A inside the AXI block
+  const ax = FP.el.boxes.axi;
+  for (const [key, yy, hh, lab] of [["axiB", 205, 70, "port B · chunks"], ["axiA", 285, 40, "port A · words"]]) {
+    const g = svg("g", {"data-tip": key}, ax.g);
+    FP.el[key] = svg("rect", {x: ax.x + 8, y: yy, width: ax.w - 16, height: hh, fill: css("--grid"), rx: 4}, g);
+    svg("text", {x: ax.x + 13, y: yy + 14, class: "port"}, g).textContent = lab;
+  }
+  // control block
+  const cb = FP.el.boxes.ctrl;
+  svg("text", {x: cb.x + 10, y: cb.y + 40, class: "small"}, cb.g).textContent = "PCIe regs · loader";
+  svg("text", {x: cb.x + 10, y: cb.y + 56, class: "small"}, cb.g).textContent = `IMEM ${fmt((cfg.IMEM_WORDS || 0) / 8)} instr`;
   // legend
-  $("fp-legend").innerHTML = Object.values(STATE).map(([l, c]) => `<span><i style="background:var(${c})"></i>${l}</span>`).join("")
+  $("fp-legend").innerHTML = Object.entries(STATE).map(([k, [l, c]]) => `<span data-tip="state:${k}" class="tipable"><i style="background:var(${c})"></i>${l}</span>`).join("")
     + `<span style="margin-left:12px">moving dashes = data moving on that path · <kbd>space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> step</span>`;
   $("fp-scrub").max = M.cycles;
   FP.built = true;
+}
+function snapshot(t) {
+  const running = [[], [], [], [], []], pending = [[], [], [], [], []], window_ = [];
+  for (const r of M.ins) {
+    if (r.disp <= t && (r.end < 0 || t < r.end)) window_.push(r);
+    if (r.start >= 0 && r.start <= t && t < r.end) running[r.unit].push(r);
+    else if (r.disp <= t && (r.start < 0 || t < r.start)) pending[r.unit].push(r);
+  }
+  window_.sort((a, b) => a.disp - b.disp);
+  return {t, running, pending, window_};
 }
 function bucketAt(t) { return M.nb ? Math.min(M.nb - 1, lowerBound(M.bend, t + 1)) : -1; }
 function unitState(u, t, k, running, pending) {
@@ -672,12 +757,8 @@ function unitState(u, t, k, running, pending) {
 function updateFloor() {
   if (!M || !FP.built) return;
   const t = FP.t, k = bucketAt(t);
-  const running = [[], [], [], [], []], pending = [[], [], [], [], []], window_ = [];
-  for (const r of M.ins) {
-    if (r.disp <= t && (r.end < 0 || t < r.end)) window_.push(r);
-    if (r.start >= 0 && r.start <= t && t < r.end) running[r.unit].push(r);
-    else if (r.disp <= t && (r.start < 0 || t < r.start)) pending[r.unit].push(r);
-  }
+  const {running, pending, window_} = FP.snap = snapshot(t);
+  FP.snap.k = k;
   // flows
   const on = new Set();
   for (let u = 0; u < 5; u++) for (const r of running[u]) {
@@ -717,6 +798,11 @@ function updateFloor() {
   const pb = fr("bm") + fr("bd");
   for (const id of ["dram0", "dram1"]) { const b = FP.el.boxes[id]; b.meter.setAttribute("width", (b.w - 20) * Math.min(1, pb)); b.st.textContent = k >= 0 ? `port B ${pct(Math.min(1, pb))}` : ""; }
   FP.el.boxes.axi.st.textContent = k >= 0 ? `B ${pct(Math.min(1, pb))} · A ${pct(Math.min(1, fr("am") + fr("aq")))}` : "";
+  FP.el.axiB.setAttribute("fill", k >= 0 && fr("bs") > .25 ? css("--dram") : pb > .05 ? css("--u1") : css("--grid"));
+  FP.el.axiB.setAttribute("opacity", k >= 0 ? .2 + .4 * Math.min(1, pb) : 1);
+  FP.el.axiA.setAttribute("opacity", .5);
+  const pa = fr("am") + fr("aq");
+  FP.el.axiA.setAttribute("fill", k >= 0 && fr("as") > .25 ? css("--dram") : pa > .02 ? css("--u2") : css("--grid"));
   // window
   window_.sort((a, b) => a.disp - b.disp);
   FP.el.slots.forEach((s, i) => {
@@ -732,7 +818,7 @@ function updateFloor() {
   $("fp-clock").textContent = `cycle ${fmt(Math.round(t))} / ${fmt(M.cycles)} · ${us.toFixed(1)} µs`;
   if (document.activeElement !== $("fp-scrub")) $("fp-scrub").value = t;
   // side panel
-  let h = `<h3>Roofline gap</h3>`;
+  let h = `<h3 data-tip="gap" class="tipable">Roofline gap ⓘ</h3><div data-tip="gap" class="tipable">`;
   if (k >= 0) {
     const c = bucketCauses(M, k), n = M.bn[k] || 1;
     const top = CAUSES.filter(x => x[0] !== "busy").map(x => [x, c[x[0]] || 0]).sort((a, b) => b[1] - a[1])[0];
@@ -741,13 +827,14 @@ function updateFloor() {
     const kk = k + 1, cum = allCauses(M, kk), tot = M.bn.slice(0, kk).reduce((a, b) => a + b, 0) || 1;
     h += `<div class="gapnow muted">So far: ${pct((cum.busy || 0) / tot)} of peak streaming.</div>`;
   } else h += `<div class="muted">No counter buckets in this profile (${esc(M.p.kind)}).</div>`;
-  h += `<h3>Units</h3>`;
+  h += `</div><h3>Units</h3>`;
   for (const s of side) {
     const [label, col] = STATE[s.st];
-    h += `<div class="unit" style="border-left-color:var(${col})"><div><b>${M.units[s.u]}</b> <span class="st" style="color:var(${col})">${label}</span>${s.n > 1 ? ` <span class="muted">+${s.n - 1}</span>` : ""}</div>`
+    h += `<div class="unit tipable" data-tip="${UBOX[s.u]}" style="border-left-color:var(${col})"><div><b>${M.units[s.u]}</b> <span class="st" style="color:var(${col})">${label}</span>${s.n > 1 ? ` <span class="muted">+${s.n - 1}</span>` : ""}</div>`
       + (s.r ? `<div class="w">${esc(s.r.name)} ${esc(s.r.detail)}</div><div class="w mono">${esc(srcText(s.r.src))}</div>` : s.pend.length ? `<div class="w">next: ${esc(s.pend[0].name)} ${esc(s.pend[0].detail)}${s.st === "dep" ? " (dependencies not done)" : ""}</div>` : "") + `</div>`;
   }
   $("fp-side").innerHTML = h;
+  if (TIP.key) renderTip();
 }
 function setT(t) { FP.t = Math.max(0, Math.min(M.cycles, t)); updateFloor(); }
 function stepEvent(dir) {
@@ -794,6 +881,436 @@ addEventListener("keydown", e => {
   if (e.key === "ArrowRight") { e.preventDefault(); $("fp-next").click(); }
   if (e.key === "ArrowLeft") { e.preventDefault(); $("fp-prev").click(); }
 });
+
+// ------------------------------------------------------------------ explanations (hover / pin)
+const TIP = { key: null, pinned: false, x: 0, y: 0, open: false };
+const BOXUNIT = {dma: 0, mxu: 1, quant: 2, vpu: 3, coll: 4};
+const ADVICE = {
+  dram: "The memory itself cannot keep up: this is the physical roof. Only more DRAM bandwidth (faster DDR, both channels busy) or fewer bytes (smaller weights) helps.",
+  starve: "DRAM latency is not hidden: the MXU drained its prefetch FIFO. A deeper FIFO, or issuing the MM earlier (fewer DRAM dependencies, so its stream starts sooner), hides it.",
+  blocked: "The MXU has data but its output side is slower (result FIFO full, row credits, missing scales): cheaper epilogues (no ACC/rescale), fewer TMEM conflicts on the drain.",
+  arb: "Several units wanted the same TMEM banks: spread their addresses over the banks, or run fewer TMEM-heavy units at once.",
+  mxu: "The MXU is computing without streaming (row turnarounds, the pipeline filling and draining at the start and end of each MM): longer rows (larger K) and back-to-back MMs keep the stream going.",
+  w3: "The stream waits for VPU work (norms, RoPE, softmax): overlap it with the previous matmul (software pipelining) or make it shorter.",
+  w2: "The stream waits for the quantizer (QACT of the next operand): quantize earlier, or in smaller pieces that overlap the stream.",
+  w4: "The stream waits for a collective: overlap the gather with independent work.",
+  w0: "The stream waits for DMA loads or stores, which also use port B: keep data in TMEM, move less.",
+  none: "Nothing was in flight: the program dispatches too slowly (window full or a serial chain). A larger dispatch window or reordering the kernel exposes more parallel work.",
+};
+const snapNow = () => FP.snap || snapshot(FP.t);
+function kNow() { return bucketAt(FP.t); }
+function frNow(key) { const k = kNow(); return k >= 0 && M.bn[k] ? M.get(key, k) / M.bn[k] : 0; }
+function cumNow(key) { const k = kNow(); return k >= 0 && M.pre[key] ? M.pre[key][k + 1] : 0; }
+function cyclesSoFar() { const k = kNow(); return k >= 0 && M.pre.n ? M.pre.n[k + 1] : FP.t; }
+function covSoFar(u) { const k = kNow(); return k >= 0 ? M.preCov[u][k + 1] : 0; }
+const hex = v => "0x" + (v >>> 0).toString(16);
+function operands(r) {
+  const row = M.prog[r.pc];
+  if (!row || !row[5]) return "";
+  const w = row[5], R = row[6] || [0, 0, 0, 0];
+  const a = (v, reg) => `${hex(v)}${reg ? ` + R${reg}` : ""}`;
+  const nm = r.name;
+  if (nm === "LD" || nm === "ST") return `DRAM ${a(w[0], R[0])} ${nm === "LD" ? "→" : "←"} TMEM ${a(w[1], R[1])}, ${fmt(w[2])} words`;
+  if (nm === "MM") return `weights DRAM ${a(w[0], R[0])}, scales ${a(w[1], R[1])} → TMEM ${a(w[2], R[2])}; N=${w[3] & 0xffff} rows × KB=${w[3] >>> 16} blocks, M=${(w[5] >>> 16) & 255} act rows from ACT block ${w[5] >>> 24}`;
+  if (nm === "QACT") return `TMEM ${a(w[0], R[0])} → ACT rows ${w[1] & 255} at block ${(w[1] >>> 8) & 255}, ${w[1] >>> 16} blocks`;
+  if (nm === "QST") return `TMEM ${a(w[0], R[0])} → DRAM int8 ${a(w[1], R[1])}, scales ${a(w[2], R[2])}`;
+  if (nm.startsWith("VOP")) return `TMEM ${a(w[1], R[1])} ⊙ ${a(w[2], R[2])} → ${a(w[0], R[0])}, ${w[3] & 0xffff}×${w[3] >>> 16}`;
+  if (nm === "GATHER") return `TMEM ${a(w[0], R[0])} → ${a(w[1], R[1])}`;
+  return "";
+}
+function srcShort(id) { const s = M.p.sources[id]; return s ? `${s.file.split("/").pop()}:${s.line} ${s.func}` : "(compiler)"; }
+function srcLine(id) { const s = M.p.sources[id]; return s ? esc(s.text) : ""; }
+function insBlock(r, t) {
+  const done = r.end > r.start ? Math.max(0, Math.min(1, (t - r.start) / (r.end - r.start))) : 0;
+  let h = `<div><b>${esc(r.name)}</b> ${esc(r.detail)} <span class="muted">#${r.idx}</span></div>`;
+  if (r.start >= 0 && r.start <= t) h += `<div class="muted">cycles ${fmt(r.start)}–${fmt(r.end)} · ${pct(done)} done${r.unit === 1 && r.rel > t ? " · <b>prefetching</b>: operands not ready until " + fmt(r.rel) : ""}</div>`;
+  const op = operands(r);
+  if (op) h += `<div class="mono">${esc(op)}</div>`;
+  h += `<div class="mono">${esc(srcShort(r.src))} — ${srcLine(r.src)}</div>`;
+  return h;
+}
+function blocker(r) {
+  // the instruction that finished just before r became ready: the likely dependency
+  let best = null;
+  for (const q of M.ins) if (q !== r && q.end >= 0 && q.end <= r.ready + 1 && q.end >= r.ready - 3 && (!best || q.end > best.end)) best = q;
+  return best;
+}
+function waitBlock(r, t) {
+  if (r.ready > t) {
+    const b = blocker(r);
+    return `<div>Waiting for its <b>dependencies</b> (clear at cycle ${fmt(r.ready)}${b ? `, when <b>${esc(b.name)}</b> on ${M.units[b.unit]} (${esc(srcShort(b.src))}) finishes` : ""}).</div>`;
+  }
+  return `<div>Dependencies done since ${fmt(r.ready)}; waiting for the <b>unit</b> to finish earlier work.</div>`;
+}
+function unitLive(u) {
+  const {t, running, pending} = snapNow();
+  let h = "";
+  if (running[u].length) h += running[u].slice(0, 2).map(r => insBlock(r, t)).join("<hr style='border:none;border-top:1px solid var(--line)'>") + (running[u].length > 2 ? `<div class="muted">+${running[u].length - 2} more in flight</div>` : "");
+  else if (pending[u].length) h += `<div>Next: ${insBlock(pending[u][0], t)}</div>${waitBlock(pending[u][0], t)}`;
+  else h += `<div class="muted">Nothing dispatched for this unit.</div>`;
+  const T = cyclesSoFar();
+  if (T > 0) h += `<div style="margin-top:4px">So far: busy <b>${pct(covSoFar(u) / T)}</b> of ${fmt(Math.round(T))} cycles${pending[u].length ? ` · ${pending[u].length} queued` : ""}</div>`;
+  return h;
+}
+function stallRows(keys) {
+  const T = cyclesSoFar() || 1;
+  const rows = keys.filter(([k]) => M.pre[k]).map(([k, l]) => `<tr><td>${l}</td><td class="n mono">${pct(frNow(k))}</td><td class="n mono">${fmt(cumNow(k))} (${pct(cumNow(k) / T)})</td></tr>`);
+  return rows.length ? `<table><tr><td class="muted">cause</td><td class="muted n">now</td><td class="muted n">so far</td></tr>${rows.join("")}</table>` : "";
+}
+function cfgv() { return M.p.config; }
+function memDesc() {
+  const c = cfgv();
+  return c.MEM === "axi" ? "the board's memory path: AXI adapter over two DDR3 channels, modelled with random stalls and latency"
+    : c.MEM === "fixed" ? "a behavioural DRAM with a fixed 8-cycle latency and no backpressure (the ideal case)" : "the simulated DRAM";
+}
+function flowDesc(id) {
+  return ({
+    "dram-axi": "DDR channel 0 → the DRAM ports: weight chunks for the MXU, DMA loads, scales",
+    "dram1-axi": "DDR channel 1 → the DRAM ports (the other half of every 128-byte chunk)",
+    "axi-dram": "DRAM ports → DDR channel 0: DMA stores and quantized KV-cache writes",
+    "axi-dram1": "DRAM ports → DDR channel 1: writes to the other beat of each chunk",
+    "axi-mxu": "port B → MXU: the weight stream, one D-byte chunk per cycle into the MXU's FIFO",
+    "axi-mxuA": "port A → MXU: one fp32 weight scale per chunk",
+    "axi-dma": "port B → DMA: loaded segments on their way to TMEM",
+    "dma-axi": "DMA → port B: segments being stored to DRAM",
+    "dma-tmem": "DMA → TMEM: loaded words written into the scratchpad",
+    "tmem-dma": "TMEM → DMA: words read for a store",
+    "act-mxu": "ACT RAM → MXU: the stationary int8 activation block (MCOLS rows × D) for each chunk",
+    "mxu-tmem": "MXU → TMEM: finished output rows (fp32), up to LANES words per cycle",
+    "tmem-mxu": "TMEM → MXU: old accumulator values for ACC / rescale",
+    "tmem-quant": "TMEM → quantizer: fp32 rows to be quantized",
+    "quant-act": "quantizer → ACT RAM: int8 blocks and their scales (QACT)",
+    "quant-axi": "quantizer → port A: int8 bytes and scales to DRAM (QST, the KV cache)",
+    "tmem-vpu": "TMEM → VPU: operand rows (A, and B or a broadcast)",
+    "vpu-tmem": "VPU → TMEM: results",
+    "tmem-coll": "TMEM → collective: rows to gather", "coll-tmem": "collective → TMEM: gathered rows",
+  })[id] || id;
+}
+const OPS_OF_FLOW = id => Object.entries(FLOWS).filter(([, es]) => es.includes(id)).map(([op]) => op);
+
+function tipData(key) {
+  const c = cfgv(), [kind, arg] = key.split(":");
+  const L = c.LANES, CL = Math.min(c.CL || 2, L), D = c.D, MC = c.MCOLS, W = Math.min(D / 4, L);
+  const T = cyclesSoFar() || 1, snap = snapNow();
+  switch (kind) {
+    case "ctrl": return {
+      title: "Control (host interface)",
+      what: "How the host PC drives the chip: registers on the PCIe BAR start and stop runs, and a loader copies each token's program from DRAM into the instruction memory.",
+      how: `IMEM holds ${fmt((c.IMEM_WORDS || 0) / 8)} instructions (8 words each). The loader copies one DRAM chunk (${D / 32} instructions) per cycle while the core is held in reset; then RUN releases it and the host polls HALTED. Counters (cycles, port traffic, stalls) are readable over PCIe.`,
+      live: M.pre.ld ? `Loader traffic in this run: ${fmt(cumNow("ld"))} cycles (0 when the simulation preloaded IMEM).` : "This profile has no loader counters.",
+      why: "Loading the program takes ~a few thousand cycles per token — small against a token, but it is serial before the run starts.",
+    };
+    case "seq": {
+      const WIN = c.WIN || 16, n = snap.window_.length, disp = M.ins.filter(r => r.disp <= FP.t).length;
+      const next = M.ins.find(r => r.disp > FP.t);
+      return {
+        title: "Sequencer · dispatch window",
+        what: "Reads the program one instruction per cycle and hands work to the units — out of order where it is safe.",
+        how: `Loops and address registers run here. Every other instruction enters a window of <b>${WIN}</b> slots with its memory footprint; a scoreboard records which earlier in-flight instructions it conflicts with (read/write overlaps on TMEM, DRAM or ACT RAM). Each unit starts its oldest instruction whose dependencies are done. An MM may start streaming weights as soon as its DRAM inputs are safe, before its activations are ready (prefetch).`,
+        live: `<b>${n} / ${WIN}</b> slots in use · ${fmt(disp)} of ${fmt(M.ins.length)} dispatched${n >= WIN ? " · <b style='color:var(--bad)'>window full: dispatch is stalled</b>" : ""}${next ? `<br>next to dispatch: ${esc(next.name)} ${esc(next.detail)} at cycle ${fmt(next.disp)}` : ""}`,
+        why: "A full window stops the sequencer from finding independent work further ahead. More slots allow more overlap (costs logic); reordering the kernel so independent work is close together does the same for free.",
+        more: "Slot colours: filled = running on its unit (unit colour); outlined amber = waiting for dependencies; outlined in unit colour = ready, waiting for its unit.",
+      };
+    }
+    case "slot": {
+      const r = snap.window_[+arg];
+      return {
+        title: `Window slot ${+arg + 1}`,
+        what: "One entry of the dispatch window: an instruction that has been dispatched and not yet completed.",
+        how: "Slots are shown oldest first. An instruction stays in its slot from dispatch until its unit reports completion.",
+        live: r ? insBlock(r, snap.t) + (r.start < 0 || r.start > snap.t ? waitBlock(r, snap.t) : "") : "<span class='muted'>Empty.</span>",
+        why: "Many amber-outlined slots = a dependency chain; the whole machine is waiting for one result.",
+      };
+    }
+    case "dma": return {
+      title: "DMA", what: "Copies words between DRAM and the TMEM scratchpad (LD and ST instructions).",
+      how: `One ${W}-word segment per cycle over DRAM port B (requests are whole ${D}-byte chunks, so no shifter is needed). Reads complete in order after any latency; a store finishes only after the memory acknowledges every write.`,
+      live: unitLive(0) + stallRows([["bs", "port B waiting for memory"]]),
+      why: "DMA traffic shares port B with the weight stream: every DMA cycle is a cycle the MXU cannot stream. Keep activations in TMEM; move only what must go to DRAM.",
+    };
+    case "mxu": return {
+      title: "MXU (matrix unit)",
+      what: "Multiplies weight rows streamed from DRAM by the activations held in ACT RAM — the matmuls of every projection, attention score and output.",
+      how: `Each cycle it takes one <b>${D}-byte chunk</b> (${D} int8 weights = one quantization block) and dots it with <b>${MC}</b> stationary activation rows: ${MC}×${D} = ${fmt(MC * D)} int8 MACs per cycle, exact integer sums. Then i2f, × weight scale × activation scale, accumulated into 4 interleaved fp32 partials (4-stage adder) and combined (p0+p2)+(p1+p3). Rows leave through a 32-row result FIFO to TMEM (optionally accumulate / rescale, and a row max).`,
+      live: unitLive(1) + `<div>Consuming a chunk: <b>${pct(frNow("mx"))}</b> of this window · ${fmt(cumNow("mx"))} chunks so far</div>` + stallRows([["ms", "starved (FIFO empty)"], ["mb", "has chunks, not consuming"], ["fm", "drain lost TMEM arbitration"]]),
+      why: "The MXU consumes exactly what DRAM port B delivers, so it sets the roofline: every cycle it does not consume a chunk is lost streaming — unless the memory itself is the limit.",
+      more: "Pipeline: pop → products → +4 → +4 → tree → i2f (2) → ×ws (2) → ×ascale (2) → partial loop (4) → combine. Two commands in flight: the next MM's stream is prefetched while the current one drains.",
+    };
+    case "fifo": {
+      const lvl = frNow("ff") ? M.get("ff", kNow()) / (M.bn[kNow()] || 1) : 0;
+      return {
+        title: "MXU chunk FIFO (prefetch)",
+        what: "A buffer of weight chunks already fetched from DRAM, waiting for the MXU.",
+        how: `${fmt(c.FIFO_DEPTH || 128)} chunks deep (${fmt((c.FIFO_DEPTH || 128) * D / 1024)} KiB) plus their scales. The issuer requests chunks ahead whenever there is room, so DRAM latency is covered as long as the FIFO never runs dry.`,
+        live: `Average level in this window: <b>${lvl.toFixed(1)}</b> / ${c.FIFO_DEPTH || 128}` + stallRows([["ms", "MXU starved (FIFO empty)"]]),
+        why: "Empty while the MXU has work = DRAM latency or bandwidth not covered. Full = the MXU or its output is the bottleneck. A deeper FIFO or an earlier stream start (prefetch) hides latency.",
+      };
+    }
+    case "col": {
+      const j = +arg, mm = snap.running[1].find(r => r.name === "MM");
+      const m = mm && M.prog[mm.pc] && M.prog[mm.pc][5] ? (M.prog[mm.pc][5][5] >>> 16) & 255 : 0;
+      return {
+        title: `MXU column ${j}`,
+        what: "One lane of the matrix unit: holds one activation row and dots it with every weight chunk that streams past.",
+        how: `${D} int8×int8 products summed exactly per cycle, then scaled. All ${MC} columns share the same chunk, so the chunk's bytes do ${MC}× the work.`,
+        live: mm ? (j < m ? `Working on row ${j} of the current MM (M=${m}).` : `<b>Idle</b>: the current MM has only M=${m} activation row${m === 1 ? "" : "s"}.`) : "No MM running.",
+        why: "Decode has one token, so projections use 1 of the columns; attention uses one per query row sharing a KV head. Columns only add work per byte — they don't make the stream faster.",
+      };
+    }
+    case "quant": return {
+      title: "Quantizer",
+      what: "Turns fp32 rows in TMEM into int8 blocks with one scale each — for the MXU (QACT → ACT RAM) or for DRAM (QST: the int8 KV cache).",
+      how: `Blocks of ${D} values: scale = max|x| / 127, then round to int8. Streaming QACT pipelines 4 block buffers; ROW mode takes two passes (max, then quantize). QST writes one byte per cycle on DRAM port A.`,
+      live: unitLive(2) + stallRows([["fq", "lost TMEM arbitration"], ["as", "port A waiting for memory"]]),
+      why: "A QACT sits between the vector work that produces x and the matmul that consumes it: when it is on the critical path the MXU waits for it (see the MXU's waits in the Overview findings).",
+    };
+    case "act": {
+      const q = snap.running[2].find(r => r.name === "QACT"), mm = snap.running[1].find(r => r.name === "MM");
+      return {
+        title: "ACT RAM", what: "Holds the quantized activations — the stationary operand of the matrix unit.",
+        how: `${MC} rows × ${fmt(c.ACT_BLOCKS)} blocks of ${D} int8 (+ one fp32 scale per block): up to ${fmt(c.ACT_BLOCKS * D)} elements per row. The MXU reads one block (${MC}×${D} bytes) per chunk.`,
+        live: (q ? `Being written by ${insBlock(q, snap.t)}` : "") + (mm ? `Read by ${insBlock(mm, snap.t)}` : "") || "<span class='muted'>Not in use right now.</span>",
+        why: "An MM cannot consume until its activations are quantized here — the classic wait at the start of each projection.",
+      };
+    }
+    case "tmem": {
+      const losses = [["fm", "MXU drain"], ["fq", "quantizer"], ["fv", "VPU"], ["fc", "collective"]];
+      return {
+        title: "TMEM (scratchpad)",
+        what: "The on-chip fp32 working memory every unit reads and writes: activations, attention scores, partial results.",
+        how: `${fmt(c.TMEM_WORDS)} words in <b>${L} banks</b> (bank = address mod ${L}). ${c.NRP || 8} read ports, ${c.NWP || 4} write ports; on the board each read port has its own copy (block RAM), and each bank takes <b>${c.WPB || 1}</b> write${(c.WPB || 1) > 1 ? "s" : ""} per cycle. Each cycle units are granted all-or-nothing in priority DMA > collective > MXU drain > quantizer > VPU; a unit that loses waits a cycle.`,
+        live: `Arbitration losses:` + stallRows(losses),
+        why: "A lost arbitration freezes that unit for the cycle. If the MXU drain loses often, the stream stops: spread addresses over the banks or avoid heavy simultaneous writers.",
+      };
+    }
+    case "bank": return {
+      title: `TMEM bank ${arg}`,
+      what: `Holds every word whose address mod ${L} = ${arg}.`,
+      how: `${fmt(c.TMEM_WORDS / L)} words. One read per port per cycle, ${c.WPB || 1} write${(c.WPB || 1) > 1 ? "s" : ""} per cycle. A row of ${L} consecutive words touches each bank once, which is why units process ${L} elements per cycle.`,
+      live: "Per-bank traffic is not traced; the colour shows which unit is using TMEM now. " + stallRows([["fm", "MXU drain lost"], ["fv", "VPU lost"], ["fq", "quantizer lost"]]),
+      why: "Strided accesses that keep hitting the same bank collide; consecutive addresses never do.",
+    };
+    case "vpu": return {
+      title: "VPU (vector unit)",
+      what: "Elementwise fp32 math over TMEM tiles (add, multiply, max, exp2, reciprocal, rsqrt…) and row reductions (sum, sum of squares, max): norms, RoPE, softmax, SiLU.",
+      how: `${L} lanes: ${L - CL} <b>simple</b> lanes do one multiply-add (7-cycle pipeline) and ${CL} <b>composite</b> lanes chain 10 of them for exp2 / recip / rsqrt. Those three run at ${CL} elements per cycle, everything else at ${L}. Several instructions overlap in the pipeline. Row sums keep 64 interleaved partials folded by a tree.`,
+      live: unitLive(3) + stallRows([["fv", "lost TMEM arbitration"]]),
+      why: "Vector work between matmuls is on the critical path when the MXU waits for it. Fusing ops or overlapping them with the previous matmul keeps DRAM streaming.",
+    };
+    case "clane": {
+      const v = snap.running[3][0];
+      return {
+        title: `VPU composite lane ${arg}`,
+        what: "A lane that can compute exp2, reciprocal and reciprocal square root.",
+        how: "10 chained fp32 multiply-add slots (each: 1 input stage + fmul 2 + fadd 4 = 7 cycles). exp2 uses 9 slots (range reduction + 7-term polynomial), recip 6 (3 Newton steps), rsqrt 10. Bit-exact with the ISA definition.",
+        live: v ? (/exp2|recip|rsqrt/.test(v.name) ? insBlock(v, snap.t) : `Running the simple op ${esc(v.name)} (as lane ${arg} of ${L}).`) : "<span class='muted'>Idle.</span>",
+        why: `Only ${CL} lanes are composite (area): exp2-heavy softmax runs ${L / CL}× slower than an add. Fine for decode; long contexts make softmax matter.`,
+      };
+    }
+    case "slane": {
+      const v = snap.running[3][0];
+      return {
+        title: `VPU simple lane ${arg}`,
+        what: "A lane for the cheap elementwise ops.",
+        how: "One multiply-add slot: add / sub / mul in 7 cycles; max / min / copy / abs / fill in one. Fully pipelined: a new element every cycle.",
+        live: v ? (/exp2|recip|rsqrt/.test(v.name) ? "Idle: the running op (" + esc(v.name) + ") only runs on the composite lanes." : insBlock(v, snap.t)) : "<span class='muted'>Idle.</span>",
+        why: "Simple lanes are cheap, so there are many: elementwise work runs at full width.",
+      };
+    }
+    case "coll": return {
+      title: "Collective unit", what: "Gathers rows from every slice into every slice (GATHER) — the all-gather between tensor-parallel slices.",
+      how: `${c.S} slice${c.S > 1 ? "s" : ""}. All slices must reach the same gather; it then copies ${L} words per cycle through TMEM.${c.S === 1 ? " With one slice it is a local copy." : ""}`,
+      live: unitLive(4) + stallRows([["fc", "lost TMEM arbitration"]]),
+      why: "A gather is a synchronization point: a slow slice stalls the others.",
+    };
+    case "axi": return {
+      title: "DRAM ports (AXI)",
+      what: "Where every unit's memory traffic meets the off-chip DRAM: port B for wide chunks, port A for single words.",
+      how: c.MEM === "axi" ? `An adapter turns both ports into AXI4 requests on two DDR3 channels (512-bit, one 64-byte beat per request), interleaved in 64-byte beats. It handles backpressure, reorders responses back into program order and reports when all writes are acknowledged.`
+        : `This run used ${memDesc()}. On the board an AXI adapter maps both ports onto two interleaved DDR3 channels.`,
+      live: `Port B ${pct(frNow("bm") + frNow("bd"))} · port A ${pct(frNow("am") + frNow("aq"))} busy now` + stallRows([["bs", "port B waiting"], ["as", "port A waiting"]]),
+      why: "Port B's utilisation is the roofline fraction; hover port B and port A for details.",
+    };
+    case "axiB": return {
+      title: "DRAM port B (chunk port)",
+      what: "The wide memory port: the weight stream into the MXU and the DMA's loads and stores.",
+      how: `One ${D}-byte chunk per cycle; the DMA has priority over the MXU stream. This run used ${memDesc()}.${c.MEM === "axi" ? " Each chunk is one 64-byte beat on each DDR3 channel (the adapter interleaves addresses in 64-byte beats)." : ""}`,
+      live: `Streaming: <b>${pct(frNow("bm") + frNow("bd"))}</b> now (MXU ${pct(frNow("bm"))}, DMA ${pct(frNow("bd"))}) · so far ${pct((cumNow("bm") + cumNow("bd")) / T)}` + stallRows([["bs", "request waiting for memory"]]),
+      why: "<b>This is the roofline.</b> The run is at the roofline when port B moves a chunk every cycle; the roofline-gap bar explains every cycle it doesn't.",
+    };
+    case "axiA": return {
+      title: "DRAM port A (word port)",
+      what: "The narrow memory port: the MXU's weight scales and the quantizer's KV-cache writes (QST).",
+      how: `One 32-bit word per cycle. The MXU reads one scale per chunk${c.MEM === "axi" ? " (16 scales share a 64-byte beat, so the adapter re-reads DRAM once per 16)" : ""}; QST writes one byte per cycle. QST has priority.`,
+      live: `Busy: <b>${pct(frNow("am") + frNow("aq"))}</b> now (scales ${pct(frNow("am"))}, QST ${pct(frNow("aq"))})` + stallRows([["as", "request waiting for memory"]]),
+      why: "Port A only limits the stream if scales can't keep up (rare) or a large QST competes for the memory.",
+    };
+    case "dram0": case "dram1": {
+      const ch = kind === "dram0" ? 0 : 1;
+      return {
+        title: `DDR3 channel ${ch}`,
+        what: "Off-chip memory holding the weights, the KV cache and the model's inputs and outputs.",
+        how: c.MEM === "axi" ? `One of two 64-bit DDR3 controllers (2 GiB each; DDR3-800 = 6.4 GB/s peak each). Addresses interleave in 64-byte beats: beat b is on channel b mod 2, so a ${D}-byte chunk reads both channels at once. At a 100 MHz core, two channels at peak exactly match one chunk per cycle.`
+          : `This run used ${memDesc()}; on the board this is one of two interleaved DDR3 channels.`,
+        live: `Port B streaming now: ${pct(frNow("bm") + frNow("bd"))}` + stallRows([["bs", "port B waiting for memory"]]),
+        why: "Real DDR3 delivers ~75–85% of its peak; that, not the core, is the true roof on the board.",
+      };
+    }
+    case "flow": {
+      const ops = OPS_OF_FLOW(arg), act = snap.running.flat().filter(r => ops.includes(r.name.startsWith("VOP") ? "VOP" : r.name));
+      return {
+        title: "Data path", what: flowDesc(arg), how: `Used by: ${ops.join(", ")}. Moving dashes = an instruction using it is running.`,
+        live: act.length ? act.slice(0, 2).map(r => insBlock(r, snap.t)).join("") : "<span class='muted'>Not in use right now.</span>",
+        why: arg.includes("dram") || arg.includes("axi") ? "Paths through the DRAM ports carry the traffic the roofline counts." : "On-chip paths are wide; they limit only through TMEM arbitration.",
+      };
+    }
+    case "state": {
+      const [label] = STATE[arg];
+      const desc = {
+        busy: "Running an instruction and making progress.",
+        dram: "Has work but is waiting on memory: for the MXU its chunk FIFO is empty, for the DMA port B requests are waiting (more than a quarter of the current window).",
+        arb: "Lost TMEM bank arbitration in more than a quarter of the current window's cycles.",
+        blocked: "The MXU has chunks but is not consuming them: result FIFO full, row credits or scales missing.",
+        dep: "Has dispatched work whose dependencies are not done yet (an MXU prefetching an MM whose activations aren't ready counts here).",
+        queued: "Its next instruction is ready, but the unit is still busy with earlier work.",
+        idle: "Nothing dispatched for this unit.",
+      }[arg];
+      const who = [0, 1, 2, 3, 4].filter(u => unitState(u, snap.t, kNow(), snap.running[u], snap.pending[u]) === arg).map(u => M.units[u]);
+      return { title: `State: ${label}`, what: desc, how: "Computed per counter window (the bucket around the current cycle) from the RTL's stall counters and the instruction timeline.",
+        live: who.length ? `Units in this state now: <b>${who.join(", ")}</b>` : "No unit is in this state right now.",
+        why: {dram: ADVICE.dram, arb: ADVICE.arb, blocked: ADVICE.blocked, dep: "Dependency waits on the MXU mean the stream waits for other units' results: overlap more.", idle: "An idle MXU while there is work elsewhere is lost streaming."}[arg] || "" };
+    }
+    case "gap": {
+      const k = kNow();
+      if (k < 0) return { title: "Roofline gap", what: "Shows DRAM port B in the current window of cycles and why it is not streaming.", live: "This profile has no counters (ISA or board profile).", why: "" };
+      const cc = bucketCauses(M, k), n = M.bn[k] || 1, cum = allCauses(M, k + 1);
+      const rows = CAUSES.map(([key, l, col]) => [key, l, col, cc[key] || 0, cum[key] || 0]).filter(r => r[3] > 0 || r[4] > 0);
+      const top = rows.filter(r => r[0] !== "busy").sort((a, b) => b[3] - a[3])[0];
+      return {
+        title: "Roofline gap",
+        what: "DRAM port B in the current window of cycles: teal = streaming (at the roofline); every other colour is a reason it was idle.",
+        how: `Idle cycles are attributed in order: memory not ready → MXU starved → MXU not consuming → TMEM arbitration → MXU computing between streams → waiting on other units' work (in proportion to what they were doing) → nothing in flight. Windows are ${fmt(M.bn[k] || 64)} cycles.`,
+        live: `<table>${rows.map(r => `<tr><td><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(${r[2]})"></i> ${esc(r[1])}</td><td class="n mono">${pct(r[3] / n)}</td><td class="n mono">${pct(r[4] / T)}</td></tr>`).join("")}</table><div class="muted">now · so far</div>`,
+        why: top && top[3] > 0 ? `Right now the biggest loss is <b>${esc(top[1])}</b>. ${ADVICE[top[0]] || ""}` : "Streaming at the roofline right now.",
+      };
+    }
+    case "ctl": return ({
+      play: {title: "Play / pause", what: "Replays the run: the floorplan shows the machine at the cycle on the clock.", how: "Continuous mode advances cycles per second; instruction mode jumps from one instruction start to the next.", live: FP.playing ? "Playing." : "Paused.", why: "Shortcut: space."},
+      prev: {title: "Step back", what: "Jumps to the previous event (continuous mode) or the previous instruction start (instruction mode).", how: "Events are instruction dispatches, starts and ends.", live: `At cycle ${fmt(Math.round(FP.t))}.`, why: "Shortcut: ←."},
+      next: {title: "Step forward", what: "Jumps to the next event (continuous mode) or the next instruction start (instruction mode).", how: "Events are instruction dispatches, starts and ends.", live: `At cycle ${fmt(Math.round(FP.t))}.`, why: "Shortcut: →."},
+      mode: {title: "Playback mode", what: "Continuous: time flows in cycles. Instruction by instruction: each step is the next instruction starting on any unit.", how: "Instruction mode is best to follow the program; continuous mode shows how long each phase takes.", live: $("fp-mode").selectedOptions[0].text, why: ""},
+      speed: {title: "Speed", what: "How fast playback advances.", how: "Cycles per second (continuous) or instructions per second (instruction mode).", live: $("fp-speed").selectedOptions[0] ? $("fp-speed").selectedOptions[0].text : "", why: ""},
+      scrub: {title: "Scrub", what: "Drag to any moment of the run.", how: `0 … ${fmt(M.cycles)} cycles.`, live: `At cycle ${fmt(Math.round(FP.t))}.`, why: "Tip: click an instruction in the Instructions tab to jump here at its start."},
+      clock: {title: "Clock", what: "The current cycle and the time it corresponds to at the board clock.", how: `${M.p.clock_mhz || 100} MHz core clock.`, live: `cycle ${fmt(Math.round(FP.t))} of ${fmt(M.cycles)}`, why: ""},
+      help: {title: "How to read this view", what: "Opens a short guide to the floorplan.", how: "", live: "", why: ""},
+      tour: {title: "Guided tour", what: "Walks through the main units in a few steps.", how: "", live: "", why: ""},
+    })[arg] || {title: arg};
+    case "strip": return STRIP_TIPS[+arg] || {title: "strip"};
+  }
+  return {title: key};
+}
+const STRIP_TIPS = [
+  {title: "DRAM B busy", what: "Fraction of each window's cycles in which DRAM port B moved a chunk (MXU stream + DMA).", how: "Full height = one chunk every cycle = the DRAM roofline.", why: "Dips are the lost streaming the Overview's 'where the cycles went' explains."},
+  {title: "MXU compute", what: "Fraction of cycles the MXU consumed a chunk.", how: "Tracks port B closely; a gap between the two means DMA traffic or stream starts.", why: "This is the useful work."},
+  {title: "DRAM stall", what: "Cycles port B waited for the memory plus cycles the MXU was starved (FIFO empty).", how: "Nonzero only when memory latency or bandwidth is the limit.", why: "With the AXI model this shows the cost of real DRAM."},
+  {title: "TMEM lost", what: "Cycles units lost TMEM bank arbitration (all units).", how: "A unit that loses holds for the cycle.", why: "Frequent losses on the MXU drain stop the stream."},
+  {title: "MXU FIFO", what: "Average fill of the MXU's prefetch FIFO.", how: "Full height = FIFO full.", why: "Near empty while the MXU works = latency not hidden; full = the consumer side is slower."},
+];
+
+function renderTip() {
+  const el = $("ftip");
+  if (!TIP.key || !M) { el.style.display = "none"; return; }
+  let d;
+  try { d = tipData(TIP.key); } catch (e) { d = {title: TIP.key, what: "(no details: " + e.message + ")"}; }
+  const sec = (t, v, cls = "") => v ? `<div class="sec ${cls}"><span class="h">${t}</span>${v}</div>` : "";
+  el.innerHTML = `<div class="hd">${esc(d.title)}<span class="pin">${TIP.pinned ? "pinned · click × or elsewhere to close" : "click to pin"}</span>${TIP.pinned ? '<button class="x" id="ftip-x" aria-label="close">×</button>' : ""}</div>`
+    + sec("What it is", d.what) + (d.how ? `<details ${TIP.open ? "open" : ""} id="ftip-more"><summary>How it works here</summary><div class="sec">${d.how}${d.more ? "<br><br>" + d.more : ""}</div></details>` : "")
+    + sec(`Now · cycle ${fmt(Math.round(FP.t))}`, d.live, "live") + sec("Why it matters", d.why, "why");
+  el.style.display = "block";
+  el.classList.toggle("pinned", TIP.pinned);
+  const mo = $("ftip-more"); if (mo) mo.ontoggle = () => { TIP.open = mo.open; };
+  const x = $("ftip-x"); if (x) x.onclick = e => { e.stopPropagation(); unpin(); };
+  placeTip();
+}
+function placeTip() {
+  const el = $("ftip"), w = el.offsetWidth, h = el.offsetHeight;
+  let x = TIP.x + 16, y = TIP.y + 16;
+  if (x + w > innerWidth - 8) x = Math.max(8, TIP.x - w - 16);
+  if (y + h > innerHeight - 8) y = Math.max(8, innerHeight - h - 8);
+  el.style.left = x + "px"; el.style.top = y + "px";
+}
+function unpin() { TIP.pinned = false; TIP.key = null; renderTip(); }
+function tipTarget(e) { const t = e.target.closest && e.target.closest("[data-tip]"); return t && ($("v-floor").contains(t)) ? t : null; }
+document.addEventListener("mousemove", e => {
+  if (TIP.pinned || VIEW !== "floor" || !M) return;
+  const t = tipTarget(e);
+  if (!t) { if (TIP.key) { TIP.key = null; renderTip(); } return; }
+  TIP.x = e.clientX; TIP.y = e.clientY;
+  if (t.dataset.tip !== TIP.key) { TIP.key = t.dataset.tip; renderTip(); } else placeTip();
+});
+document.addEventListener("click", e => {
+  if (VIEW !== "floor" || !M) return;
+  if ($("ftip").contains(e.target)) return;
+  const t = tipTarget(e);
+  if (t && !/^ctl:/.test(t.dataset.tip)) {
+    if (TIP.pinned && TIP.key === t.dataset.tip) { unpin(); return; }
+    TIP.key = t.dataset.tip; TIP.pinned = true; TIP.x = e.clientX; TIP.y = e.clientY; renderTip();
+  } else if (TIP.pinned && !(t && /^ctl:/.test(t.dataset.tip))) unpin();
+});
+addEventListener("keydown", e => { if (e.key === "Escape" && TIP.key) unpin(); });
+
+// ------------------------------------------------------------------ help and guided tour
+$("fp-help").onclick = () => { $("fp-helppanel").hidden = !$("fp-helppanel").hidden; };
+$("fp-helpclose").onclick = () => { $("fp-helppanel").hidden = true; };
+const TOUR = [
+  ["seq", "The sequencer reads the program and fills a window of in-flight instructions. Slots light up as instructions run; amber outlines are waiting for results."],
+  ["axiB", "DRAM port B streams one chunk per cycle when the machine is at its best. That rate is the roofline this whole view is about."],
+  ["fifo", "Chunks queue here before the MXU. If it runs dry while the MXU has work, memory latency is showing."],
+  ["mxu", "The matrix unit does the matmuls, consuming exactly one chunk per cycle when fed. Its outline colour tells you if it is busy, starved, blocked or waiting."],
+  ["quant", "The quantizer prepares the MXU's activations (int8) and writes the KV cache."],
+  ["tmem", "TMEM is the shared scratchpad. Units compete for its banks; losses show as purple."],
+  ["vpu", "The vector unit runs norms, RoPE and softmax between matmuls."],
+  ["gap", "The roofline-gap bar tells you, at every moment, why port B is not streaming. Hover anything for details; click to pin."],
+  ["ctl:play", "Press play (or space) to watch the run. Use the arrows to step instruction by instruction."],
+];
+const TOURK = "lens-tour-done";
+function tourDone(v) { try { if (v) localStorage.setItem(TOURK, "1"); return localStorage.getItem(TOURK) === "1"; } catch (e) { return !!v; } }
+let TOURI = -1;
+function tourTarget(key) {
+  return document.querySelector(`#v-floor [data-tip="${key}"]`);
+}
+function tourClear() {
+  document.querySelectorAll(".hl-html").forEach(x => x.classList.remove("hl-html"));
+  document.querySelectorAll("#fp .hl").forEach(x => x.remove());
+  const c = $("tourcard"); if (c) c.remove();
+}
+function tourShow(i) {
+  tourClear();
+  if (i < 0 || i >= TOUR.length) { TOURI = -1; tourDone(true); return; }
+  TOURI = i;
+  const [key, text] = TOUR[i], el = tourTarget(key);
+  let r = el ? el.getBoundingClientRect() : {left: 100, top: 100, right: 300, bottom: 200, width: 200, height: 100};
+  if (el && el.ownerSVGElement) {
+    const b = el.getBBox();
+    svg("rect", {x: b.x - 5, y: b.y - 5, width: b.width + 10, height: b.height + 10, rx: 10, class: "hl"}, $("fp"));
+  } else if (el) el.classList.add("hl-html");
+  const card = document.createElement("div");
+  card.className = "tour"; card.id = "tourcard";
+  card.innerHTML = `<div class="n">Tour ${i + 1} / ${TOUR.length}</div><div style="margin-top:4px">${text}</div>
+    <div class="btns"><button id="tour-skip">Skip tour</button>${i ? '<button id="tour-back">Back</button>' : ""}<button class="primary" id="tour-next">${i + 1 < TOUR.length ? "Next" : "Done"}</button></div>`;
+  document.body.appendChild(card);
+  const cw = card.offsetWidth, ch = card.offsetHeight;
+  let x = r.right + 12, y = r.top;
+  if (x + cw > innerWidth - 8) x = Math.max(8, r.left - cw - 12);
+  if (x < 8 || (x + cw > r.left && x < r.right)) { x = Math.max(8, Math.min(innerWidth - cw - 8, r.left)); y = r.bottom + 12; }
+  y = Math.max(8, Math.min(innerHeight - ch - 8, y));
+  card.style.left = x + "px"; card.style.top = y + "px";
+  $("tour-next").onclick = () => tourShow(i + 1);
+  $("tour-skip").onclick = () => tourShow(-1);
+  if (i) $("tour-back").onclick = () => tourShow(i - 1);
+}
+$("fp-tour").onclick = () => tourShow(0);
+addEventListener("resize", () => { if (TOURI >= 0) tourShow(TOURI); });
 
 // ------------------------------------------------------------------ instruction and source tables
 const INS = { sort: "start", dir: 1 };
@@ -849,9 +1366,49 @@ function renderSource() {
   if (M && hp.has("slice")) selectSlice(+hp.get("slice"));
   if (M && hp.has("t")) FP.t = +hp.get("t");
   show(hp.get("view") || "overview");
+  if (M && hp.has("pin")) {
+    const el = document.querySelector(`#v-floor [data-tip="${hp.get("pin")}"]`);
+    if (el) { const r = el.getBoundingClientRect(); TIP.key = hp.get("pin"); TIP.pinned = true; TIP.x = r.right - 20; TIP.y = r.top; renderTip(); }
+  }
+  if (M && hp.has("tour")) { tourShow(+hp.get("tour") || 0); }
 })();
 addEventListener("error", e => { const d = document.createElement("div"); d.className = "note bad";
   d.textContent = "Lens error: " + e.message; document.querySelector("main").prepend(d); });
+// ------------------------------------------------------------------ self-test (#selftest): hover and pin every element
+async function selfTest() {
+  const out = {errors: [], checked: 0, keys: [], fails: []};
+  addEventListener("error", e => out.errors.push(e.message));
+  tourDone(true); tourClear();
+  show("floor");
+  const T = [0, Math.floor(M.cycles * .1), Math.floor(M.cycles * .37), Math.floor(M.cycles * .75), M.cycles - 1];
+  for (const t of T) {
+    setT(t);
+    const els = [...document.querySelectorAll("#v-floor [data-tip]")];
+    for (const el of els) {
+      const r = el.getBoundingClientRect();
+      const ev = (type) => el.dispatchEvent(new MouseEvent(type, {bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2}));
+      try {
+        ev("mousemove");
+        const tip = $("ftip");
+        const ok = tip.style.display === "block" && tip.querySelector(".hd") && tip.textContent.length > 40 && !/no details/.test(tip.textContent);
+        if (!/^ctl:/.test(el.dataset.tip)) {
+          ev("click");
+          if (!TIP.pinned) out.fails.push("pin " + el.dataset.tip);
+          unpin();
+        }
+        if (!ok) out.fails.push(`t=${t} ${el.dataset.tip}: ${tip.textContent.slice(0, 80)}`);
+        out.checked++;
+        if (!out.keys.includes(el.dataset.tip)) out.keys.push(el.dataset.tip);
+      } catch (e) { out.fails.push(`t=${t} ${el.dataset.tip}: ${e.message}`); }
+    }
+    TIP.key = null; renderTip();
+  }
+  for (let i = 0; i < STRIP_TIPS.length; i++) if (!tipData("strip:" + i).what) out.fails.push("strip " + i);
+  tourShow(0); if (!$("tourcard")) out.fails.push("tour"); tourShow(TOUR.length - 1); tourShow(-1);
+  const pre = document.createElement("pre"); pre.id = "selftest"; pre.textContent = JSON.stringify(out);
+  document.body.appendChild(pre);
+}
+if (/selftest/.test(location.hash)) setTimeout(() => M ? selfTest() : null, 50);
 window.__lens = { get model() { return M; }, setT, bucketCauses, allCauses };
 </script>
 </body>

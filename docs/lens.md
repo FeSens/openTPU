@@ -74,6 +74,20 @@ to the next). At every moment:
   back right now, plus the fraction of peak streaming achieved so far;
 - window slots are filled when running, outlined in amber while waiting for dependencies.
 
+*Explanations.* Hover any element of the floorplan -- every unit, the dispatch-window slots,
+the MXU's FIFO and columns, each TMEM bank, each VPU lane, the DRAM ports and channels, the
+control block, every data path, each state colour in the legend, the roofline-gap bar, the
+unit list and the playback controls -- for a card with: what it is, how it works in this design
+(numbers from the profile's configuration, under "How it works here"), its live state at the
+current cycle (the instruction it runs with operand addresses and source line, what it waits
+for and why, occupancy, stalls so far by cause) and why it matters for the roofline, with what
+would improve it. Click (or tap) to pin the card; it keeps updating while the run plays; click
+elsewhere, × or Escape to close. Hovering the timeline's counter strips explains them too.
+**? How to read** opens a short guide; **Tour** walks through the main units (shown once
+automatically; remembered in the browser). Deep links: `#view=floor&t=9000&pin=mxu`,
+`#tour`, `#notour`. `#selftest` hovers and pins every element and reports failures (used by
+`tests/test_lens.py` in headless Chrome).
+
 **Instructions** -- every dynamic instruction, filterable and sortable; clicking one jumps the
 floorplan (and the timeline) to it. **Source** -- the same attributed to the kernel source lines.
 
