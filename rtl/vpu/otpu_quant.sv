@@ -34,14 +34,20 @@ module otpu_qscale
   always_ff @(posedge clk) if (en) begin
     amax_q <= amax; iv_q <= iv; itag_q <= itag;
   end
-  f32_t ax;
+  // seed stage: |amax|, its flags and the reciprocal seed, registered
+  f32_t ax, y0;
   logic zero, big;
-  assign ax = {1'b0, ftz(amax_q)[30:0]};
-  assign zero = (ax == 0);
-  assign big = (ax >= 32'h7E80_0000);
+  always_ff @(posedge clk) if (en) begin
+    f32_t a;
+    a = {1'b0, ftz(amax_q)[30:0]};
+    ax <= a;
+    zero <= (a == 0);
+    big <= (a >= 32'h7E80_0000);
+    y0 <= ftz(RECIP_MAGIC - a);
+  end
   // recip(ax): y = y * (2 - ax*y), three times, from the magic seed
   f32_t y [4], t [3], k1 [4], yd [3];
-  assign y[0] = ftz(RECIP_MAGIC - ax);
+  assign y[0] = y0;
   assign k1[0] = {1'b1, ax[30:0]};
   for (genvar i = 0; i < 3; i++) begin : g_it
     otpu_fmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .c(F_TWO), .y(t[i]));
@@ -57,7 +63,7 @@ module otpu_qscale
   otpu_fmul #(.LAT(LM)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .y(scm));
   otpu_delay #(.W(32), .N(6 * SL)) u_scd (.clk, .en, .d(scm), .q(scd));
   otpu_delay #(.W(1), .N(LM)) u_z2 (.clk, .en, .d(zd), .q(zd2));
-  otpu_delay #(.W(1 + TW), .N(LAT)) u_v (.clk, .en, .d({iv_q, itag_q}), .q({ov, otag}));
+  otpu_delay #(.W(1 + TW), .N(LAT + 1)) u_v (.clk, .en, .d({iv_q, itag_q}), .q({ov, otag}));
   assign inv = zd2 ? F_ZERO : invm;
   assign sc = zd2 ? F_ZERO : scd;
 endmodule
@@ -187,16 +193,39 @@ module otpu_quant
   end
   otpu_delay #(.W($bits(rm_t)), .N(QL)) u_mp (.clk, .en, .d(m0), .q(mp));
 
-  // chunk amax (tree over the lanes), registered with its meta
+  // two-pass QST byte address dst + row*drs + rel*es, built beside the prescale in three stages
+  // (inputs | 17-bit partial products | sum) so no multiply cascade sits in one cycle
+  logic [31:0] ba_rel, ba_row, ba_s, mp_baddr;
+  logic [31:0] ba_p [4];
+  always_ff @(posedge clk) if (en) begin
+    ba_rel <= m0.rel;
+    ba_row <= 32'(m0.row);
+    ba_p[0] <= ba_row * 32'(drs[16:0]);
+    ba_p[1] <= (32'(ba_row[14:0]) * 32'(drs[31:17])) << 17;
+    ba_p[2] <= ba_rel * 32'(es[16:0]);
+    ba_p[3] <= (32'(ba_rel[14:0]) * 32'(es[31:17])) << 17;
+    ba_s <= dst + ba_p[0] + ba_p[1] + ba_p[2] + ba_p[3];
+  end
+  otpu_delay #(.W(32), .N(QL - 3)) u_ba (.clk, .en, .d(ba_s), .q(mp_baddr));
+
+  // chunk amax (tree over the lanes) in two registered stages: the first level, then the rest
+  localparam int HL = LANES / 2;
+  f32_t  ch [HL];
   f32_t  cmax;
-  rm_t   mc;
+  rm_t   mh, mc;
   always_ff @(posedge clk) if (en) begin
     f32_t v [LANES];
     for (int l = 0; l < LANES; l++) v[l] = mp.mask[l] ? fabs(xp[l]) : F_ZERO;
-    for (int w = LANES / 2; w >= 1; w = w / 2)
+    for (int l = 0; l < HL; l++) ch[l] <= fp_gt(v[l + HL], v[l]) ? v[l + HL] : v[l];
+    mh <= mp;
+  end
+  always_ff @(posedge clk) if (en) begin
+    f32_t v [HL];
+    for (int l = 0; l < HL; l++) v[l] = ch[l];
+    for (int w = HL / 2; w >= 1; w = w / 2)
       for (int l = 0; l < w; l++) if (fp_gt(v[l + w], v[l])) v[l] = v[l + w];
     cmax <= v[0];
-    mc <= mp;
+    mc <= mh;
   end
 
   // block buffers (streaming QACT): chunk c of buffer b holds elements c*LANES ..
@@ -274,24 +303,34 @@ module otpu_quant
       wq.sw = !is_st && (mp.rel % D == 0);
       wq.blk = 16'(ab) + 16'(mp.rel / D);
       wq.st = is_st;
-      wq.baddr = dst + 32'(mp.row) * drs + mp.rel * es;
+      wq.baddr = mp_baddr;
       wq.fin = mp.glast;
       winv = inv2;
       wsc_in = sc2;
     end
   end
+  // the writer's selection registered in front of the multipliers
+  wm_t   wq_r;
+  f32_t  wx_r [LANES];
+  f32_t  winv_r, wsc_r;
+  always_ff @(posedge clk) if (en) begin
+    wq_r <= wq;
+    wx_r <= wx;
+    winv_r <= winv;
+    wsc_r <= wsc_in;
+  end
   logic [LANES-1:0][7:0] qb;
   for (genvar l = 0; l < LANES; l++) begin : g_q
     f32_t p;
     q8_mid_t qm;
-    otpu_fmul #(.LAT(LM)) u_q (.clk, .en, .a(wx[l]), .b(winv), .y(p));
+    otpu_fmul #(.LAT(LM)) u_q (.clk, .en, .a(wx_r[l]), .b(winv_r), .y(p));
     always_ff @(posedge clk) if (en) begin
       qm <= q8_s1(p);
       qb[l] <= q8_s2(qm);
     end
   end
-  otpu_delay #(.W($bits(wm_t)), .N(LM + 2)) u_wq (.clk, .en, .d(wq), .q(wqd));
-  otpu_delay #(.W(32), .N(LM + 2)) u_ws (.clk, .en, .d(wsc_in), .q(wsc_d));
+  otpu_delay #(.W($bits(wm_t)), .N(LM + 2)) u_wq (.clk, .en, .d(wq_r), .q(wqd));
+  otpu_delay #(.W(32), .N(LM + 2)) u_ws (.clk, .en, .d(wsc_r), .q(wsc_d));
 
   // QST scale word: written when the group's scale arrives (no data writes are in flight)
   logic [31:0] saddr;                         // next scale word address
