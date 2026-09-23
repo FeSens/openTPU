@@ -28,7 +28,7 @@ ALL = ["mem/otpu_tmem.sv", "mem/otpu_axi_dram.sv", "mem/otpu_actram.sv", "seq/ot
 COMPONENTS = {
     "otpu_seq": (["seq/otpu_seq.sv"], dict(IMEM_WORDS=32768, S=1, D=128, WIN=16)),
     "otpu_dma": (["dma/otpu_dma.sv"], dict(D=128, LANES=8)),
-    "otpu_mxu": (["mxu/otpu_mxu.sv"], dict(D=128, MCOLS=2, DEPTH=128, LANES=8)),
+    "otpu_mxu": (["mxu/otpu_mxu.sv"], dict(D=128, MCOLS=2, DEPTH=1024, LANES=8)),
     "otpu_quant": (["vpu/otpu_quant.sv"], dict(D=128, LANES=8)),
     "otpu_vpu": (["vpu/otpu_vpu.sv"], dict(LANES=8)),
     "otpu_tmem": (["mem/otpu_tmem.sv"], dict(WORDS=65536, LANES=8, NRP=8, NWP=4, WPB=1)),

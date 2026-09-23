@@ -12,15 +12,23 @@ module otpu_delay #(parameter int W = 32, parameter int N = 1) (
   input  logic [W-1:0] d,
   output logic [W-1:0] q
 );
+  // The last stage is a flip-flop, not part of a shift-register LUT: an SRL's clock-to-out is
+  // ~1.5 ns, too slow in front of the multipliers and adders these lines feed.
   if (N == 0) begin : g_wire
     assign q = d;
+  end else if (N == 1) begin : g_one
+    (* shreg_extract = "no", keep *) logic [W-1:0] qr;
+    always_ff @(posedge clk) if (en) qr <= d;
+    assign q = qr;
   end else begin : g_regs
-    logic [W-1:0] r [N];
+    logic [W-1:0] r [N - 1];
+    (* shreg_extract = "no", keep *) logic [W-1:0] qr;
     always_ff @(posedge clk) if (en) begin
       r[0] <= d;
-      for (int k = 1; k < N; k++) r[k] <= r[k-1];
+      for (int k = 1; k < N - 1; k++) r[k] <= r[k-1];
+      qr <= r[N-2];
     end
-    assign q = r[N-1];
+    assign q = qr;
   end
 endmodule
 
