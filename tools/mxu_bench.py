@@ -35,6 +35,7 @@ H, F = 1024, 3072
 # Full Qwen3-0.6B decode token at the board configuration (tools/perf_qwen.py, all 28 layers,
 # pos 9, 100% bandwidth): useful-byte roofline and measured cycles.
 TOKEN_ROOF, TOKEN_CYC = 4_839_968, 4_945_002
+LMHEAD_CYC = 1_270_000                   # LM head, one row, 100% (docs/benchmarks.md)
 KV_BYTES_PER_POS = 28 * 2 * 8 * 128      # K and V, 8 KV heads x 128, int8, 28 layers
 GQA = 2                                  # query heads per KV head
 
@@ -80,10 +81,11 @@ def project(mcols: int, meas: dict, mhz: float = 100.0, bw: float = 1.0) -> dict
     res = {"decode_tok_s": {}}
     for b in (1, 2, 4, 8):
         res["decode_tok_s"][b] = b * mhz * 1e6 / step(b, 256)
-    # prefill of T tokens: T / MCOLS full passes, plus causal attention whose K/V stream is
-    # shared by the MCOLS / GQA query tokens of a pass
+    # prefill of T tokens: T / MCOLS passes over the layers (the LM head runs once, for the last
+    # token), plus causal attention whose K/V stream is shared by the MCOLS / GQA query tokens
     for T in (128, 512, 2048):
-        lin = math.ceil(T / mcols) * pass_cyc(mcols)
+        head = LMHEAD_CYC / bw
+        lin = math.ceil(T / mcols) * (pass_cyc(mcols) - head * pass_cyc(mcols) / pass_cyc(1)) + head
         att = (T * T / 2) * KV_BYTES_PER_POS / 128 / max(1, mcols // GQA) / bw
         cyc = lin + att
         res.setdefault("prefill_tok_s", {})[T] = T * mhz * 1e6 / cyc
