@@ -110,7 +110,7 @@ res.outputs["out"]
 | `sim/verilator/` | Testbenches for the top level and the fp units |
 | `tests/` | pytest suites (see below) |
 | `opentpu/profile.py` | Parses the RTL cycle trace into per-instruction, per-unit and roofline data |
-| `opentpu/lens.py`, `tools/lens.py` | Lens, the interactive profiler report |
+| `opentpu/lens.py`, `opentpu/lens_app.html` | Lens: profile files, recorder CLI and the browser app (docs/lens.md) |
 
 ## Running
 
@@ -119,8 +119,8 @@ tests skip themselves when Verilator is missing.
 
 ```
 python3 -m pytest -q          # 96 tests: fp, ISA, compiler, kernels, RTL, fuzz, roofline
-python3 tools/lens.py         # profile the standard workloads -> build/lens.html
-python3 tools/lens.py mlp attn --out x.html     # pick workloads (--list shows them)
+python3 -m opentpu.lens record mlp attn -o run.otpuprof   # profile workloads on the RTL
+python3 -m opentpu.lens open run.otpuprof                 # explore them in the browser
 ```
 
 | Suite | What it proves |
@@ -134,19 +134,17 @@ python3 tools/lens.py mlp attn --out x.html     # pick workloads (--list shows t
 
 ## Lens: the profiler
 
-`tools/lens.py` compiles each workload, runs it on the Verilator RTL with tracing and writes a
-single HTML page with:
+Lens records runs into profile files (`.otpuprof`: RTL cycle traces, ISA-simulator runs, or
+board counter snapshots) and opens them in a browser app with an overview (roofline and where
+every DRAM cycle went), a zoomable timeline, a floorplan of the machine that replays the run
+instruction by instruction with data movement and unit states, and per-instruction and
+per-source-line tables. See [docs/lens.md](docs/lens.md).
 
-- a verdict strip: cycles, time at 200 MHz, percent of roofline, DRAM port and MXU utilisation;
-- a zoomable timeline per slice: DRAM port B, MXU multiplier, TMEM arbitration losses, and one
-  lane per unit (the MXU shows its prefetch stream and its consume phase). Click an instruction
-  to see its dependency wait chain;
-- a roofline chart (MAC per cycle vs MAC per DRAM byte);
-- per-unit busy and arbitration-loss bars;
-- bottleneck notes in plain sentences, with MXU stalls blamed on source lines;
-- hotspots: cycles, waits and arbitration losses per kernel source line.
-
-From Python: `write_report([profile(kernel, cfg, name, **args)], "out.html")`.
+```
+python3 -m opentpu.lens list
+python3 -m opentpu.lens record qwen-tiny --board --axi -o qwen.otpuprof
+python3 -m opentpu.lens open qwen.otpuprof
+```
 
 ## Results (RTL, design configuration S=2, D=128, 8 MXU columns, 16 lanes)
 

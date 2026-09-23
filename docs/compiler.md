@@ -164,7 +164,7 @@ streamed exactly once.
 
 `opentpu/profile.py` runs a kernel on the RTL with tracing and returns per-instruction dispatch,
 ready, start and end cycles, unit busy time, DRAM port counters and TMEM arbitration losses.
-`tools/lens.py` renders these as an interactive report; see the README.
+Lens (`python -m opentpu.lens`) records these into profile files and explores them; see docs/lens.md.
 
 ## Errors the compiler reports
 

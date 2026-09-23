@@ -155,6 +155,9 @@ class QTensor:
     """int8 matrix [rows, cols] with fp32 scales per (row, D-block) -- the MXU streamed operand.
 
     `scale is None` means unit scales (e.g. V^T, whose per-token scale is folded into P).
+    `parts`: the matrix is stored as separate column slices of width `pw` (each with its own
+    contiguous rows and scales, so a column-slice MM streams contiguous scales); it can then
+    only be sliced into whole parts.
     """
     data: Affine
     scale: Affine | None
@@ -162,6 +165,8 @@ class QTensor:
     rs: int            # row stride, bytes
     srs: int           # scale row stride, bytes
     D: int
+    parts: tuple | None = None
+    pw: int = 0
 
     def __getitem__(self, key) -> "QTensor":
         if not isinstance(key, tuple):
@@ -169,6 +174,13 @@ class QTensor:
         rk, ck = key
         if not (isinstance(rk, slice) and isinstance(ck, slice)):
             raise CompileError("QTensor supports 2-D slicing only")
+        if self.parts is not None:
+            c0 = _static(0 if ck.start is None else ck.start)
+            c1 = _static(self.shape[1] if ck.stop is None else ck.stop)
+            if c0 % self.pw or c1 - c0 != self.pw:
+                raise CompileError(f"this matrix is stored in column parts of {self.pw}: "
+                                   f"slice one part at a time")
+            return self.parts[c0 // self.pw][rk, :]
         r0 = Affine.of(0 if rk.start is None else rk.start)
         r1 = Affine.of(self.shape[0] if rk.stop is None else rk.stop)
         c0 = Affine.of(0 if ck.start is None else ck.start)
@@ -295,6 +307,12 @@ class Tile:
             return Tile(self.b, self.base + r0 * self.rs + c0, (r1 - r0, c1 - c0), self.rs,
                         self.buf)
         raise CompileError(f"unsupported 2-D index {key}")
+
+    def reshape(self, rows: int, cols: int) -> "Tile":
+        """The same words as a [rows, cols] tile (contiguous tiles only)."""
+        if not self.contiguous or rows * cols != self.rows * self.cols:
+            raise CompileError(f"reshape: {self} is not {rows}x{cols} contiguous words")
+        return Tile(self.b, self.base, (rows, cols), cols, self.buf)
 
     # ---- in-place update (loop-carried values)
     def set(self, value) -> "Tile":
@@ -792,6 +810,7 @@ class Builder:
             chunks.append((ab, mc))
             owners.append(owner)
         st = Stationary(x, chunks, KB, owners)
+        st.loop = self.loops[-1].loop if self.loops else None     # created in this loop body
         for ab, _ in chunks:
             for k in builtins.range(ab, ab + KB):
                 self.act_live[k] = weakref.ref(st)
@@ -868,7 +887,9 @@ class Builder:
         st = a if isinstance(a, Stationary) else self.quantize(a, temp)
         if not self.stationary_valid(st):
             raise CompileError("stationary operand was overwritten in ACT RAM")
-        if self.loops:
+        # an operand from outside the innermost loop must survive every iteration: keep it (and
+        # its blocks) until the loop ends; one created in the same body is rebuilt per iteration
+        if self.loops and getattr(st, "loop", None) is not self.loops[-1].loop:
             self.loop_uses.append((len(self.loops), st))
         N, K = w.shape
         if K != st.KB * self.cfg.D:

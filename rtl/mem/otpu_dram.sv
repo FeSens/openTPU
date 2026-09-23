@@ -1,5 +1,6 @@
 // Behavioural per-slice DRAM for simulation (the board version sits behind a DDR3/HBM
-// controller). Port A: one 32-bit word read or byte-enabled write per cycle. Port B: one
+// controller). Port A: one 32-bit word read or byte-enabled write per cycle; port SW: one
+// byte-enabled word write per cycle (the quantizer's QST stores). Port B: one
 // D-byte burst per cycle, read (the MXU's streamed operand, DMA loads) or word-masked write
 // (DMA stores). Reads return LAT cycles later, in order; data is sampled at the request.
 module otpu_dram #(
@@ -16,6 +17,10 @@ module otpu_dram #(
   input  logic [3:0]        a_be,
   output logic              a_rvalid,
   output logic [31:0]       a_rdata,
+  input  logic              sw_req,
+  input  logic [31:0]       sw_addr,
+  input  logic [31:0]       sw_wdata,
+  input  logic [3:0]        sw_be,
   input  logic              b_req,
   input  logic              b_tag,      // requester tag, returned with the read data
   input  logic              b_we,
@@ -40,6 +45,10 @@ module otpu_dram #(
     if (a_req && a_we) begin
       for (int b = 0; b < 4; b++)
         if (a_be[b]) mem[a_addr[AW-1:0]][8*b +: 8] <= a_wdata[8*b +: 8];
+    end
+    if (sw_req) begin
+      for (int b = 0; b < 4; b++)
+        if (sw_be[b]) mem[sw_addr[AW-1:0]][8*b +: 8] <= sw_wdata[8*b +: 8];
     end
     av[0] <= a_req && !a_we;
     ad[0] <= mem[a_addr[AW-1:0]];
