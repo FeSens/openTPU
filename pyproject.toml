@@ -8,3 +8,6 @@ dependencies = ["numpy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[project.scripts]
+lens = "opentpu.lens:main"

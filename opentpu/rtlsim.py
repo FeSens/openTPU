@@ -113,7 +113,7 @@ def build_top(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = Fal
 def run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int = 50_000_000,
         keep: Path | None = None, trace: bool = False, uarch: dict | None = None,
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
-        seed: int | None = None):
+        seed: int | None = None, plusargs: list | None = None):
     """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats)."""
     from . import isa as I
     axi = MEMORY["AXI"] if axi is None else axi
@@ -148,6 +148,7 @@ def run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int = 
             img = np.concatenate([img, np.zeros(at - len(img), np.uint8), progs[s].view(np.uint8)])
         img.view("<u4").astype(">u4").tofile(tmp / f"dram_{s}.bin")
     args = [str(exe), f"+dir={tmp}", f"+max_cycles={max_cycles}"] + (["+trace"] if trace else [])
+    args += list(plusargs or [])
     if axi:
         args += [f"+axi_stall={stall}", f"+axi_seed={seed}"]
     if boot:

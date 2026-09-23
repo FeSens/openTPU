@@ -12,6 +12,9 @@ Trace events (printed by the RTL with +trace, one line each):
     T<s> P c=<cyc> n=<cycles> bm bd am aq mx fm fq fv fc         activity of the last n cycles:
          DRAM port B (MXU/DMA), port A (MXU/QST), MXU compute, and cycles the MXU drain, QUANT,
          VPU and collective lost to TMEM bank arbitration
+    T<s> Q c=<cyc> n=<cycles> bs as ms mb ff ld                   memory-side stalls of the same
+         window: port B / A requests waiting for the memory, MXU starved (chunk FIFO empty) or
+         blocked (chunks but no consumption), summed MXU FIFO level, loader traffic
 
 Roofline. Per slice the DRAM burst port (B) moves one D-byte chunk per cycle and the MXU
 consumes one chunk per cycle, so both the memory and the compute roof are "chunks per cycle".
@@ -33,7 +36,7 @@ OPNAMES = {I.LD: "LD", I.ST: "ST", I.MM: "MM", I.QACT: "QACT", I.QST: "QST", I.V
 VFUNCS = {I.V_ADD: "add", I.V_SUB: "sub", I.V_RSUB: "rsub", I.V_MUL: "mul", I.V_MAX: "max",
           I.V_MIN: "min", I.V_COPY: "copy", I.V_EXP2: "exp2", I.V_RECIP: "recip",
           I.V_RSQRT: "rsqrt", I.V_ABS: "abs", I.V_FILL: "fill", I.V_EXP2SUB: "exp2sub",
-          I.V_RSUM: "rsum", I.V_RMAX: "rmax"}
+          I.V_RSUM: "rsum", I.V_RMAX: "rmax", I.V_RSSQ: "rssq"}
 
 
 @dataclass
@@ -195,7 +198,7 @@ class Profile:
         return "\n".join(lines)
 
 
-_EV = re.compile(r"^T(\d+) ([DSEUHGP]) c=(\d+)(.*)$")
+_EV = re.compile(r"^T(\d+) ([DSEUHGPQ]) c=(\d+)(.*)$")
 
 
 def parse(trace: str, cfg, programs, name: str = "") -> Profile:
@@ -244,6 +247,11 @@ def parse(trace: str, cfg, programs, name: str = "") -> Profile:
             b.setdefault("c", []).append(c)
             for k, v in kv.items():
                 b.setdefault(k, []).append(int(v))
+        elif kind == "Q":                       # same windows as P: add its counters
+            b = buckets[s]
+            for k, v in kv.items():
+                if k != "n":
+                    b.setdefault(k, []).append(int(v))
     # attach unit counters in completion order
     for key, rs in unit_done.items():
         for r, st in zip(sorted(rs, key=lambda x: x.end), unit_stats.get(key, [])):
@@ -254,10 +262,11 @@ def parse(trace: str, cfg, programs, name: str = "") -> Profile:
 
 
 def profile(kernel, cfg, name: str = "", dram_lat: int = 8, uarch: dict | None = None,
-            **args) -> Profile:
+            run_kw: dict | None = None, **args) -> Profile:
     from .runtime import compile_kernel
     comp, imgs = compile_kernel(kernel, cfg, **args)
-    _, _, st = rtlsim.run(cfg, comp.programs, imgs, dram_lat=dram_lat, trace=True, uarch=uarch)
+    _, _, st = rtlsim.run(cfg, comp.programs, imgs, dram_lat=dram_lat, trace=True, uarch=uarch,
+                          **(run_kw or {}))
     p = parse(st["trace"], cfg, comp.programs, name or kernel.__name__)
     p.cycles = st["cycles"]
     return p
