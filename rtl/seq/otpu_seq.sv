@@ -130,6 +130,8 @@ module otpu_seq
   wire         p_adv = !s_v || s_adv;           // P hands its instruction to S
   wire         r_take = !p_v || p_adv;          // P can take the instruction at R
   wire         pipe_empty = !p_v && !s_v && !q_v && !c_v;
+  // R retires a control instruction this cycle (NOP, HALT, LI, ADDI, a LOOP's second cycle)
+  logic        r_ret;
 
   // ---- completions this cycle
   logic [WIN-1:0] fin;
@@ -167,6 +169,11 @@ module otpu_seq
       else sp <= sp - 1;
     end
   endtask
+
+  always_comb
+    r_ret = !stopping && !halted &&
+            (op == OP_NOP || op == OP_HALT || op == OP_LI || op == OP_ADDI ||
+             (op == OP_LOOP && lp));
 
   // ---- the next pc (mirrors the fetch/dispatch below)
   always_comb begin
@@ -249,6 +256,7 @@ module otpu_seq
     end else begin
       cyc <= cyc + 1;
       pc <= pc_n;
+      icount <= icount + 32'(r_ret) + 32'(c_go);
       // completions
       if (can_rel) begin
         urel <= 1'b1;
@@ -290,7 +298,6 @@ module otpu_seq
       end
       // ---- C: dispatch into the window
       if (c_go) begin
-        icount <= icount + 1;
         sv[free_slot] <= 1'b1;
         older[free_slot] <= sv;           // every slot in the window is older
         for (int i = 0; i < WIN; i++) older[i][free_slot] <= 1'b0;
@@ -336,15 +343,13 @@ module otpu_seq
         if (sv == '0 && pipe_empty) halted <= 1'b1;
       end else if (!halted) begin
         case (op)
-          OP_NOP: begin icount <= icount + 1; advance(); end
-          OP_HALT: begin icount <= icount + 1; stopping <= 1'b1; end
+          OP_NOP: advance();
+          OP_HALT: stopping <= 1'b1;
           OP_LI: begin
-            icount <= icount + 1;
             if (rd != 0) R[rd] <= iw[1];
             advance();
           end
           OP_ADDI: begin
-            icount <= icount + 1;
             if (rd != 0) R[rd] <= rv(ra) + iw[1];
             advance();
           end
@@ -355,8 +360,7 @@ module otpu_seq
               lp_len <= iw[1];
             end else begin
               lp <= 1'b0;
-              icount <= icount + 1;
-              if (lp_cnt != 0) begin
+                if (lp_cnt != 0) begin
                 stk_start[sp] <= pc + 1;
                 stk_end[sp]   <= pc + lp_len;
                 stk_rem[sp]   <= lp_cnt;
