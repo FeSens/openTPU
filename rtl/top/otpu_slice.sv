@@ -3,7 +3,7 @@
 //   TMEM   each bank serves 3 reads + 1 write per cycle; units are granted all-or-nothing in
 //          the priority order DMA, COLL, MXU drain, QUANT, VPU (a unit that is not granted holds)
 //   DRAM B DMA first, then the MXU stream (read responses are routed back by tag)
-//   DRAM A QST writes first, then the MXU scale stream
+//   DRAM A the MXU scale stream (reads); QST writes have their own scalar write port (SW)
 // The slice's DRAM sits outside (otpu_top) so that board wrappers can swap it. The DRAM may
 // refuse requests (a_rdy/b_rdy, which must not depend on this cycle's requests), return reads
 // after any latency (in order per port), and acknowledge writes late (wr_idle: none pending).
@@ -38,12 +38,17 @@ module otpu_slice
   // DRAM
   input  logic          a_rdy,
   input  logic          b_rdy,
+  input  logic          sw_rdy,
   input  logic          wr_idle,
   output logic          a_req,
   output logic          a_we,
   output logic [31:0]   a_addr,
   output logic [31:0]   a_wdata,
   output logic [3:0]    a_be,
+  output logic          sw_req,     // scalar (QST) writes: one byte-enabled word per cycle
+  output logic [31:0]   sw_addr,
+  output logic [31:0]   sw_wdata,
+  output logic [3:0]    sw_be,
   input  logic          a_rvalid,
   input  logic [31:0]   a_rdata,
   output logic          b_req,
@@ -250,7 +255,7 @@ module otpu_slice
       ok = 1'b1;
       for (int b = 0; b < LANES; b++)
         if (rc[b] + ur[b] > RPB || wc[b] + uw[b] > WPB) ok = 1'b0;
-      if (g == G_Q && q_awant && !a_rdy) ok = 1'b0;     // QST write the DRAM cannot take
+      if (g == G_Q && q_awant && !sw_rdy) ok = 1'b0;    // QST write the DRAM cannot take
       if (g == G_COLL) begin
         coll_gnt_local = ok;
         gnt[g] = coll_gnt;        // every slice must grant the collective
@@ -270,13 +275,17 @@ module otpu_slice
 
   // ---- DRAM ports
   assign mxu_bgnt = !dma_breq && b_rdy;
-  assign mxu_agnt = !q_areq && a_rdy;
+  assign mxu_agnt = a_rdy;
   always_comb begin
-    a_req   = q_areq | mxu_areq;
-    a_we    = q_awe;
-    a_addr  = q_areq ? q_aaddr : mxu_aaddr;
-    a_wdata = q_awdata;
-    a_be    = q_abe;
+    a_req    = mxu_areq;
+    a_we     = 1'b0;
+    a_addr   = mxu_aaddr;
+    a_wdata  = '0;
+    a_be     = '0;
+    sw_req   = q_areq && q_awe;
+    sw_addr  = q_aaddr;
+    sw_wdata = q_awdata;
+    sw_be    = q_abe;
     b_req   = dma_breq | mxu_breq;
     b_tag   = dma_breq;
     b_we    = dma_bwe;

@@ -17,7 +17,7 @@
 //   0x24 B_RD      RO  port B read requests taken (chunks)
 //   0x28 B_WR      RO  port B write requests taken
 //   0x2C A_RD      RO  port A read requests taken
-//   0x30 A_WR      RO  port A write requests taken
+//   0x30 SW_WR     RO  scalar (QST) write requests taken
 //   0x34 B_STALL   RO  cycles a port B request waited for the memory
 //   0x38 SCRATCH   RW  (host bring-up test)
 module otpu_ctrl #(
