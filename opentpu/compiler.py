@@ -308,6 +308,12 @@ class Tile:
                         self.buf)
         raise CompileError(f"unsupported 2-D index {key}")
 
+    def row_stride_view(self, r0: int, n: int, step: int) -> "Tile":
+        """Rows r0, r0+step, ... (n of them) of a 2-D tile, as a [n, cols] view."""
+        if len(self.shape) != 2 or r0 + (n - 1) * step >= self.rows:
+            raise CompileError(f"row_stride_view({r0}, {n}, {step}) outside {self}")
+        return Tile(self.b, self.base + r0 * self.rs, (n, self.cols), self.rs * step, self.buf)
+
     def reshape(self, rows: int, cols: int) -> "Tile":
         """The same words as a [rows, cols] tile (contiguous tiles only)."""
         if not self.contiguous or rows * cols != self.rows * self.cols:
