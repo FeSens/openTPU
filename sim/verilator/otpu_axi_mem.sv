@@ -3,6 +3,8 @@
 // otpu_axi_dram. Every ready is randomly withheld and every response randomly delayed (seed
 // +axi_seed=N, stall probability +axi_stall=percent), so the slice sees variable latency and
 // backpressure; reads and writes are not ordered against each other, as in a real controller.
+// Bandwidth: +axi_bw=P limits each channel to P percent of one 64-byte beat per cycle (reads and
+// writes together; 100 = no limit); +axi_lat=N overrides the minimum latency.
 // Images load from dram_<SID>.bin and dump to dram_out_<SID>.bin, as otpu_dram. With PHYS = 1
 // the files are the channels' own memories instead, as the host sees them: ch<c>.bin (big-endian
 // words, as $fread reads) in, ch<c>_out.bin (little-endian) out, WORDS / 2 words each.
@@ -42,6 +44,8 @@ module otpu_axi_mem #(
 );
   logic [31:0] mem [WORDS];
   int stall = 0;
+  int bw = 100;
+  int lat = LAT;
   longint cyc = 0;
 
   function automatic int beat_word(input logic [31:0] addr, input int c);
@@ -66,6 +70,7 @@ module otpu_axi_mem #(
 
   for (genvar c = 0; c < 2; c++) begin : g_ch
     logic arr, awr, wr, rv, bv;
+    int cr = 0;                          // bandwidth credit (100 = one beat)
     always_ff @(posedge clk) begin
       arr <= !rnd_stall();
       awr <= !rnd_stall();
@@ -95,7 +100,7 @@ module otpu_axi_mem #(
       end else begin
         if (s_arvalid[c] && s_arready[c]) begin
           if (beat_word(s_araddr[c], c) + 16 > WORDS) $fatal(1, "AXI read beyond memory");
-          rq[c].push_back('{cyc + LAT + ($urandom % 8), s_arid[c], s_araddr[c]});
+          rq[c].push_back('{cyc + lat + ($urandom % 8), s_arid[c], s_araddr[c]});
         end
         if (s_awvalid[c] && s_awready[c]) begin
           aw_a[c].push_back(s_awaddr[c]);
@@ -105,21 +110,28 @@ module otpu_axi_mem #(
           w_d[c].push_back(s_wdata[c]);
           w_s[c].push_back(s_wstrb[c]);
         end
-        // a write is performed once both its address and data are in
-        if (aw_a[c].size() != 0 && w_d[c].size() != 0) begin
+        cr = (cr + bw > 200) ? 200 : cr + bw;
+        // a write is performed once both its address and data are in (and the channel has time)
+        if (aw_a[c].size() != 0 && w_d[c].size() != 0 && cr >= 100) begin
           int b;
+          cr = cr - 100;
           b = beat_word(aw_a[c][0], c);
           if (b + 16 > WORDS) $fatal(1, "AXI write beyond memory");
           for (int k = 0; k < 64; k++)
             if (w_s[c][0][k]) mem[b + k / 4][8 * (k % 4) +: 8] <= w_d[c][0][8 * k +: 8];
-          bq[c].push_back('{cyc + LAT + ($urandom % 8), aw_i[c][0]});
+          bq[c].push_back('{cyc + lat + ($urandom % 8), aw_i[c][0]});
           void'(aw_a[c].pop_front()); void'(aw_i[c].pop_front());
           void'(w_d[c].pop_front()); void'(w_s[c].pop_front());
         end
         if (rv && s_rready[c]) void'(rq[c].pop_front());
         if (bv && s_bready[c]) void'(bq[c].pop_front());
         // next cycle's responses (the queues above are already updated)
-        rv <= rq[c].size() != 0 && rq[c][0].t <= cyc && !rnd_stall();
+        if (rq[c].size() != 0 && rq[c][0].t <= cyc && !rnd_stall() && cr >= 100) begin
+          rv <= 1'b1;
+          cr = cr - 100;
+        end else begin
+          rv <= 1'b0;
+        end
         bv <= bq[c].size() != 0 && bq[c][0].t <= cyc && !rnd_stall();
       end
     end
@@ -130,6 +142,8 @@ module otpu_axi_mem #(
   logic [31:0] chm [WORDS / 2];
   initial begin
     void'($value$plusargs("axi_stall=%d", stall));
+    void'($value$plusargs("axi_bw=%d", bw));
+    void'($value$plusargs("axi_lat=%d", lat));
     begin
       int seed;
       if ($value$plusargs("axi_seed=%d", seed)) void'($urandom(seed));

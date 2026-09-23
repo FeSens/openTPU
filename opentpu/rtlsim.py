@@ -75,8 +75,10 @@ def _read_hex(path: Path, n: int) -> np.ndarray:
 # override them through `rtlsim.UARCH` or the `uarch` argument of run().
 UARCH = {"WIN": 32, "RPB": 4, "WPB": 2}
 # The board build: TMEM is replicated per read port (reads never conflict), one write per bank
-# per cycle (simple dual-port block RAM), a 16-entry dispatch window.
-BOARD_UARCH = {"WIN": 16, "RPB": 64, "WPB": 1}
+# per cycle (simple dual-port block RAM), a 16-entry dispatch window, and a 1024-chunk MXU
+# prefetch FIFO (128 KiB of block RAM: the weight stream runs ahead through the serial
+# norm -> quantize -> MM dependency chains).
+BOARD_UARCH = {"WIN": 16, "RPB": 64, "WPB": 1, "FIFO_DEPTH": 1024}
 if os.environ.get("OTPU_UARCH") == "board":
     UARCH = dict(BOARD_UARCH)
 
@@ -88,7 +90,9 @@ if os.environ.get("OTPU_UARCH") == "board":
 MEMORY = {"AXI": os.environ.get("OTPU_AXI", "0") == "1",
           "BOOT": os.environ.get("OTPU_BOOT", "0") == "1",
           "STALL": int(os.environ.get("OTPU_STALL", "20")),
-          "SEED": int(os.environ.get("OTPU_SEED", "1"))}
+          "SEED": int(os.environ.get("OTPU_SEED", "1")),
+          "BW": int(os.environ.get("OTPU_BW", "100")),        # percent of a beat/cycle/channel
+          "LAT": int(os.environ.get("OTPU_LAT", "20"))}
 
 
 def top_params(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = False,
@@ -113,7 +117,7 @@ def build_top(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = Fal
 def run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int = 50_000_000,
         keep: Path | None = None, trace: bool = False, uarch: dict | None = None,
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
-        seed: int | None = None):
+        seed: int | None = None, bw: int | None = None, lat: int | None = None):
     """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats)."""
     from . import isa as I
     axi = MEMORY["AXI"] if axi is None else axi
@@ -149,7 +153,9 @@ def run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int = 
         img.view("<u4").astype(">u4").tofile(tmp / f"dram_{s}.bin")
     args = [str(exe), f"+dir={tmp}", f"+max_cycles={max_cycles}"] + (["+trace"] if trace else [])
     if axi:
-        args += [f"+axi_stall={stall}", f"+axi_seed={seed}"]
+        args += [f"+axi_stall={stall}", f"+axi_seed={seed}",
+                 f"+axi_bw={MEMORY['BW'] if bw is None else bw}",
+                 f"+axi_lat={MEMORY['LAT'] if lat is None else lat}"]
     if boot:
         args += ["+boot", f"+boot_addr={at}", f"+boot_n={max(len(p) for p in progs) // 8}"]
     r = subprocess.run(args,
