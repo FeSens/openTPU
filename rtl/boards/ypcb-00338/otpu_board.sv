@@ -8,7 +8,7 @@ module otpu_board #(
   parameter int ACT_BLOCKS = 128,
   parameter int TMEM_WORDS = 1 << 16,
   parameter int IMEM_WORDS = 1 << 15,
-  parameter int FIFO_DEPTH = 128,
+  parameter int FIFO_DEPTH = 1024,
   parameter int LANES      = 8,
   parameter int WIN        = 16,
   parameter int RPB        = 64,
@@ -129,7 +129,9 @@ module otpu_board #(
   logic [31:0] ld_addr, ld_n, icount;
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_rvalid, b_rtag, b_rdy;
   logic [31:0] a_addr, a_wdata, a_rdata, b_addr;
-  logic [3:0]  a_be;
+  logic [3:0]  a_be, sw_be;
+  logic        sw_req, sw_rdy;
+  logic [31:0] sw_addr, sw_wdata;
   logic [D/4-1:0] b_wmask;
   logic [D*8-1:0] b_wdata, b_rdata;
 
@@ -144,7 +146,7 @@ module otpu_board #(
     .run, .ld_start, .ld_addr, .ld_n, .ld_busy, .halted, .error, .icount, .wr_idle, .axi_err,
     .calib(cal_s2),
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
-    .a_rd(a_req && a_rdy && !a_we), .a_wr(a_req && a_rdy && a_we), .b_wait(b_req && !b_rdy));
+    .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(b_req && !b_rdy));
 
   // ---- the slice (held in reset while RUN is 0) and the collective unit (one slice)
   logic core_rst;
@@ -161,8 +163,9 @@ module otpu_board #(
                .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS), .FIFO_DEPTH(FIFO_DEPTH),
                .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB)) u_slice (
     .clk, .sys_rst(rst), .rst(core_rst), .ld_start, .ld_addr, .ld_n, .ld_busy,
-    .a_rdy, .b_rdy, .wr_idle,
+    .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
+    .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
     .coll_req, .coll_cmd, .coll_ack,
     .coll_ren, .coll_raddr, .coll_rdata,
@@ -184,6 +187,7 @@ module otpu_board #(
   otpu_axi_dram #(.D(D), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
     .clk, .rst,
     .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
+    .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
     .wr_idle,
     .m_awvalid(awvalid), .m_awready(awready), .m_awaddr(awaddr), .m_awid(awid),

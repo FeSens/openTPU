@@ -49,14 +49,18 @@ module otpu_top
     logic [31:0]   a_addr, a_wdata, a_rdata, b_addr;
     logic [3:0]    a_be;
     logic [D*8-1:0] b_rdata;
-    logic          a_rdy, b_rdy, wr_idle;
+    logic          a_rdy, b_rdy, wr_idle, sw_req, sw_rdy;
+    logic [31:0]   sw_addr, sw_wdata;
+    logic [3:0]    sw_be;
 
     if (AXI == 0) begin : g_dram
       assign a_rdy = 1'b1;
+      assign sw_rdy = 1'b1;
       assign b_rdy = 1'b1;
       assign wr_idle = 1'b1;
       otpu_dram #(.WORDS(DRAM_WORDS), .D(D), .LAT(DRAM_LAT), .SID(s)) u_dram (
         .clk, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
+        .sw_req, .sw_addr, .sw_wdata, .sw_be,
         .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata, .dump);
     end else begin : g_axi
       logic [1:0] awvalid, awready, awid, wvalid, wready, bvalid, bready, bid;
@@ -69,6 +73,7 @@ module otpu_top
       otpu_axi_dram #(.D(D)) u_adapt (
         .clk, .rst(sys_rst),
         .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
+        .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
         .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
         .wr_idle,
         .m_awvalid(awvalid), .m_awready(awready), .m_awaddr(awaddr), .m_awid(awid),
@@ -92,8 +97,9 @@ module otpu_top
                  .FIFO_DEPTH(FIFO_DEPTH), .LANES(LANES), .WIN(WIN), .RPB(RPB),
                  .WPB(WPB)) u_slice (
       .clk, .sys_rst, .rst, .ld_start, .ld_addr, .ld_n, .ld_busy(ldb[s]),
-      .a_rdy, .b_rdy, .wr_idle,
+      .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
       .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
+      .sw_req, .sw_addr, .sw_wdata, .sw_be,
       .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
       .coll_req(coll_req[s]), .coll_cmd(coll_cmd[s]), .coll_ack,
       .coll_ren(coll_ren[s]), .coll_raddr(coll_raddr[s]), .coll_rdata(coll_rdata[s]),
