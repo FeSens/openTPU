@@ -76,10 +76,12 @@ its test gates are the whole of `tests/test_fp.py` + `tests/test_rtl.py`.
 
 ## Agents, models and effort
 
-`AGENT=claude` (default) runs `claude -p ... --dangerously-skip-permissions --output-format
+`AGENT=claude` (default) runs `claude -p ... --permission-mode acceptEdits --allowedTools <lint/test/read-only list> --disallowedTools WebFetch WebSearch --output-format
 stream-json --model M --effort E` in the slot worktree; `AGENT=codex` runs `codex exec
 --sandbox workspace-write --json --model M -c model_reasoning_effort=E`. The agents run
-unattended with write access to their worktree; the sandbox gate is what enforces scope.
+unattended with least privilege: edits auto-accepted in the slot worktree only, shell limited
+to lint/test/read-only commands, no network tools, everything else denied. The sandbox gate
+then checks that only the component's files changed.
 
 | role | model (`MODEL_*`) | effort (`EFFORT_*`) |
 |---|---|---|

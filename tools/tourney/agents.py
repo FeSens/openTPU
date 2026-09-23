@@ -54,10 +54,23 @@ def effort_for(role: str, slot: int, env: dict | None = None) -> str:
     return e
 
 
+ALLOWED_TOOLS = [
+    "Read", "Edit", "Write", "Glob", "Grep",
+    "Bash(verilator:*)", "Bash(python3 -m pytest:*)", "Bash(PYTHONPATH=. python3 -m pytest:*)",
+    "Bash(git diff:*)", "Bash(git status:*)", "Bash(git log:*)", "Bash(ls:*)",
+    "Bash(grep:*)", "Bash(wc:*)", "Bash(head:*)", "Bash(tail:*)",
+]
+
+
 def build_cmd(provider: str, prompt: str, cwd: Path, last_msg: Path,
               model: str | None = None, effort: str | None = None) -> list[str]:
     if provider == "claude":
-        cmd = ["claude", "-p", prompt, "--dangerously-skip-permissions",
+        # Least privilege: edits are auto-accepted inside the slot's worktree only (cwd),
+        # shell access is limited to lint/test/read-only commands, no network tools; any
+        # other permission request is denied (headless -p mode cannot prompt).
+        cmd = ["claude", "-p", prompt, "--permission-mode", "acceptEdits",
+               "--allowedTools", *ALLOWED_TOOLS,
+               "--disallowedTools", "WebFetch", "WebSearch",
                "--output-format", "stream-json", "--verbose"]
         return (cmd + (["--model", model] if model else []) +
                 (["--effort", effort] if effort else []))
