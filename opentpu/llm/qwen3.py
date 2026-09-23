@@ -8,8 +8,11 @@ Pieces:
                     fixed-size block (so a hardware loop walks the layers with one address
                     register), the tied LM head, and a small I/O area
   qwen3_step        the ol kernel for one decode token: 28 layers, final norm, LM head
+  qwen3_rows        R token rows at once, each row (sequence, position): batched decode (b
+                    sequences, one KV cache each) and chunked prefill (consecutive positions
+                    of one sequence; causal because each token attends over its own prefix)
   Engine            runs tokens on a backend (ISA simulator, RTL simulation or the board) and
-                    keeps the KV cache in device DRAM between tokens
+                    keeps the KV caches in device DRAM between tokens
 
 Weights are int8 with one fp32 scale per 128 inputs (per row); activations are quantized the
 same way on the fly (W8A8). The residual stream, norms, RoPE and softmax are fp32.
@@ -30,7 +33,7 @@ from ..compiler import Affine, KVDesc, QTensor, Tensor
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
-from ..kernels.lib import rmsnorm, rope
+from ..kernels.lib import rmsnorm, rope, rope_rows
 from ..kernels.mlp import _chunk, swiglu_down
 from ..runtime import ALIGN, quantize_rows
 
@@ -238,21 +241,24 @@ class Image:
 
     [ I/O: x_in, cos, sin | final norm | logits ] [ layer 0 block ] ... [ layer L-1 block ]
     [ LM head rows of this slice ]. A layer block holds the norms, this slice's rows of every
-    projection (int8 + scales) and this slice's KV heads with room for `cap` tokens.
+    projection (int8 + scales) and this slice's KV heads with room for `cap` tokens, for each
+    of `batch` sequences. The I/O area holds `rows` token rows (x, cos, sin, logits).
     """
 
-    def __init__(self, spec: Spec, cfg: Config, cap: int):
+    def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1):
         spec.check(cfg)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
         S, D = cfg.S, cfg.D
         H, d, F_ = spec.hidden, spec.head_dim, spec.ffn
         self.spec, self.cfg, self.cap = spec, cfg, cap
+        self.batch, self.rows = batch, rows
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
         b = _Bump()
-        self.io = {"x": b.alloc(4 * H), "cos": b.alloc(2 * d), "sin": b.alloc(2 * d),
-                   "gf": b.alloc(4 * H), "logits": b.alloc(4 * spec.vocab)}
+        R = rows
+        self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * d * R), "sin": b.alloc(2 * d * R),
+                   "gf": b.alloc(4 * H), "logits": b.alloc(4 * spec.vocab * R)}
         self.layer0 = b.next
         lb = _Bump()                                    # offsets inside one layer block
         L = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H),
@@ -267,9 +273,10 @@ class Image:
         self.dchunk = _chunk(self.f_loc, D)
         L["wd"] = [(lb.alloc(self.h_loc * self.dchunk), lb.alloc(4 * self.h_loc * (self.dchunk // D)))
                    for _ in range(F_ // self.dchunk)]
-        L["kv"] = [{"k": lb.alloc(cap * d), "ks": lb.alloc(4 * cap * (d // D)),
-                    "vt": lb.alloc(d * cap), "vs": lb.alloc(4 * cap)}
-                   for _ in range(self.nkv_loc)]
+        L["kvs"] = [[{"k": lb.alloc(cap * d), "ks": lb.alloc(4 * cap * (d // D)),
+                      "vt": lb.alloc(d * cap), "vs": lb.alloc(4 * cap)}
+                     for _ in range(self.nkv_loc)] for _ in range(batch)]
+        L["kv"] = L["kvs"][0]
         self.lofs, self.LS = L, (lb.next + 4095) // 4096 * 4096
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * H), b.alloc(4 * self.v_loc * (H // D)))
@@ -354,9 +361,10 @@ class Image:
                           for da, sa in lofs["wd"])
             ns.wd = QTensor(parts[0].data, parts[0].scale, (n, spec.ffn), C, 4 * (C // D), D,
                             parts=parts, pw=C)
-            heads = {sid + j * cfg.S: {k: off + v for k, v in r.items()}
-                     for j, r in enumerate(lofs["kv"])}
-            ns.kv = KVDesc(heads, self.cap, d, D, cfg.S, sid)
+            ns.kvs = [KVDesc({sid + j * cfg.S: {k: off + v for k, v in r.items()}
+                              for j, r in enumerate(heads)}, self.cap, d, D, cfg.S, sid)
+                      for heads in lofs["kvs"]]
+            ns.kv = ns.kvs[0]
             return ns
 
         return SimpleNamespace(
@@ -364,6 +372,10 @@ class Image:
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (d // 2,)),
             sin=_tdesc(self.io["sin"], (d // 2,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
+            xr=_tdesc(self.io["x"], (self.rows, H)),
+            cosr=_tdesc(self.io["cos"], (self.rows, d // 2)),
+            sinr=_tdesc(self.io["sin"], (self.rows, d // 2)),
+            logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
             head=_qdesc(*self.head, self.v_loc, H, D), v_loc=self.v_loc)
 
 
@@ -448,6 +460,101 @@ def qwen3_step(m, pos: int, block: int = ATTN_BLOCK):
         ol.store(m.logits[:, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
 
 
+def _runs(rows):
+    """Maximal runs of rows that continue one sequence at consecutive positions:
+    [(seq, first position, first row, count)]."""
+    out = []
+    for r, (sq, p) in enumerate(rows):
+        if out and out[-1][0] == sq and out[-1][1] + out[-1][3] == p:
+            out[-1] = (sq, out[-1][1], out[-1][2], out[-1][3] + 1)
+        else:
+            out.append((sq, p, r, 1))
+    return out
+
+
+def _attention_rows(x, lw, c, s_, rows, spec: Spec, block: int):
+    """x + W_o . attention(x) for R token rows; row r is token position rows[r][1] of sequence
+    rows[r][0] (its own KV cache). Every row's K/V is appended first, then each row attends
+    over positions 0..pos of its sequence -- for consecutive rows of one sequence (a prefill
+    chunk) that is exactly the causal mask. Each projection streams its weights once for all
+    R rows (ceil(R / MCOLS) MMs); the (row, KV head) pairs then run as one pipelined
+    flash-attention stream (_attend_heads)."""
+    d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
+    R = len(rows)
+    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
+    k = ol.dot(xs, lw.wk)                       # [R, nkv_loc*d]
+    v = ol.dot(xs, lw.wv)
+    q = ol.dot(xs, lw.wq)                       # [R, nq_loc*d]
+    qn, kn = ol.load(lw.qn), ol.load(lw.kn)
+    scale = ol.LOG2E / math.sqrt(d)
+    heads = list(lw.kv.owned_heads(spec.n_kv))
+    nh = len(heads)
+    nq = nh * G
+    for j, hh in enumerate(heads):
+        kj = rope_rows(rmsnorm(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
+        vj = v[:, j * d:(j + 1) * d]
+        for sq, p0, r0, n in _runs(rows):
+            ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
+        del kj, vj
+    del k, v
+    # queries as [R * nq, d]: (row r, KV head j) is the G contiguous rows r*nq + j*G ...
+    Q = ol.empty([R * nq, d])
+    for h in range(nq):
+        rope_rows(rmsnorm(q[:, h * d:(h + 1) * d], qn, eps), c, s_,
+                  out=Q.row_stride_view(h, R, nq))
+    del q
+    ent = [(r, j) for r in range(R) for j in range(nh)]
+    o = ol.empty([R, nq * d])
+
+    def emit(i, acc, l):
+        r, j = ent[i]
+        o[r, j * G * d:(j + 1) * G * d].reshape(G, d).set(acc / l[:, None])
+
+    _attend_heads([Q[r * nq + j * G:r * nq + (j + 1) * G, :] for r, j in ent],
+                  [lw.kvs[rows[r][0]] for r, _ in ent], [heads[j] for _, j in ent],
+                  [rows[r][1] + 1 for r, _ in ent], block, scale, depth=ATTN_DEPTH,
+                  emit=emit)
+    del Q
+    o_all = ol.all_gather(o)                    # [R, n_q*d]
+    y = ol.all_gather(ol.dot(o_all, lw.wo))     # [R, H]
+    return x + y
+
+
+@ol.jit
+def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK):
+    """R token rows at once (rows[r] = (sequence, position)): the rows' embeddings m.xr and
+    RoPE tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
+    empty: a prefill chunk that is not the last one skips the LM head)."""
+    spec, sid = m.spec, ol.program_id()
+    R = len(rows)
+    x = ol.load(m.xr[0:R, :])
+    c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    for li in ol.range(m.n_layers):
+        lw = m.layer(li)
+        x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
+        x.set(_mlp(x, lw, spec))
+    if not logit_rows:
+        return
+    a, e = logit_rows[0], logit_rows[-1] + 1
+    xs = ol.quantize(rmsnorm(x[a:e, :], ol.load(m.g_final), spec.eps))
+    chunk = min(HEAD_CHUNK, ol.tmem_words() // (8 * (e - a)))
+    for c0 in range(0, m.v_loc, chunk):
+        n = min(chunk, m.v_loc - c0)
+        col = sid * m.v_loc + c0
+        ol.store(m.logitsr[a:e, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
+
+
+def compile_rows(image: Image, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
+    if len(rows) > image.rows:
+        raise ValueError(f"{len(rows)} rows, the image's I/O area holds {image.rows}")
+    progs = []
+    for s in range(image.cfg.S):
+        b = qwen3_rows.trace(image.cfg, s, {"m": image.descriptors(s), "rows": list(rows),
+                                            "logit_rows": list(logit_rows), "block": block})
+        progs.append(b.finish())
+    return progs
+
+
 def compile_step(image: Image, pos: int, block: int = ATTN_BLOCK) -> list:
     progs = []
     for s in range(image.cfg.S):
@@ -458,9 +565,9 @@ def compile_step(image: Image, pos: int, block: int = ATTN_BLOCK) -> list:
 
 
 # =============================================================================== engine
-def device_config(spec: Spec, cap: int, **kw) -> Config:
+def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, **kw) -> Config:
     """The design configuration with DRAM sized for this model (power of two MiB)."""
-    probe = Image(spec, design_config(DRAM_BYTES=1 << 40, **kw), cap)
+    probe = Image(spec, design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows)
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
 
@@ -491,20 +598,31 @@ class Engine:
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
-                 backend="isa", block: int = ATTN_BLOCK):
+                 backend="isa", block: int = ATTN_BLOCK, batch: int = 1, rows: int = 1):
         self.spec, self.cap, self.block = spec, cap, block
-        self.cfg = cfg or device_config(spec, cap)
-        self.image = Image(spec, self.cfg, cap)
+        self.batch, self.rows = batch, max(rows, batch)
+        self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows)
+        self.image = Image(spec, self.cfg, cap, batch, self.rows)
         self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
-        self.pos = 0
+        self.poss = [0] * batch
         self.stats = []
 
-    def reset(self) -> None:
+    @property
+    def pos(self) -> int:
+        """Next position of sequence 0 (the only one unless batch > 1)."""
+        return self.poss[0]
+
+    @pos.setter
+    def pos(self, v: int) -> None:
+        self.poss[0] = v
+
+    def reset(self, seq: int | None = None) -> None:
         """Forget the context (the KV cache is overwritten from position 0 on)."""
-        self.pos = 0
+        for s in range(self.batch) if seq is None else [seq]:
+            self.poss[s] = 0
 
     def step(self, token: int) -> np.ndarray:
         """Feed one token at the next position; returns the logits [vocab] for the next one."""
@@ -525,11 +643,83 @@ class Engine:
         self.pos += 1
         return np.concatenate(parts)
 
-    def prefill(self, tokens) -> np.ndarray:
+    def run_rows(self, rows, tokens, logit_rows) -> np.ndarray:
+        """One device run over token rows (rows[r] = (sequence, position)); returns the logits
+        of `logit_rows` ([n, vocab])."""
+        io, S, spec = self.image.io, self.cfg.S, self.spec
+        if any(p >= self.cap for _, p in rows):
+            raise RuntimeError("KV cache full")
+        x = F.ftz(self.embed[[int(t) for t in tokens]].astype(np.float32))
+        cs = [rope_tables(spec, p) for _, p in rows]
+        cos = np.stack([c for c, _ in cs]).astype(np.float32)
+        sin = np.stack([s_ for _, s_ in cs]).astype(np.float32)
+        for s in range(S):
+            self.backend.write(s, io["x"], x)
+            self.backend.write(s, io["cos"], cos)
+            self.backend.write(s, io["sin"], sin)
+        st = self.backend.run(compile_rows(self.image, rows, logit_rows, self.block))
+        st["rows"] = len(rows)
+        self.stats.append(st)
+        v, v_loc = spec.vocab, self.image.v_loc
+        out = [np.concatenate([self.backend.read(s, io["logits"] + 4 * (r * v + s * v_loc),
+                                                 4 * v_loc).view(np.float32) for s in range(S)])
+               for r in logit_rows]
+        return np.array(out, np.float32).reshape(len(logit_rows), v)
+
+    def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
+        """Feed a prompt to sequence `seq`; returns the logits after its last token.
+
+        chunk=1 (the default for a one-row image) runs token by token with the decode kernel;
+        chunk > 1 runs up to `chunk` prompt tokens per device run: their projections share each
+        weight stream, and only the last chunk runs the LM head (for its last token)."""
+        tokens = [int(t) for t in tokens]
+        chunk = self.rows if chunk is None else max(1, min(chunk, self.rows))
+        if chunk == 1 and seq == 0:
+            logits = None
+            for t in tokens:
+                logits = self.step(t)
+            return logits
         logits = None
-        for t in tokens:
-            logits = self.step(int(t))
+        for i in range(0, len(tokens), chunk):
+            part = tokens[i:i + chunk]
+            last = i + chunk >= len(tokens)
+            p0 = self.poss[seq]
+            lg = self.run_rows([(seq, p0 + j) for j in range(len(part))], part,
+                               [len(part) - 1] if last else [])
+            self.poss[seq] += len(part)
+            if last:
+                logits = lg[0]
         return logits
+
+    def step_batch(self, tokens) -> np.ndarray:
+        """One token for each of the first len(tokens) sequences, each at its own next
+        position (weights streamed once for all); returns logits [len(tokens), vocab]."""
+        n = len(tokens)
+        if n > self.batch:
+            raise ValueError(f"{n} tokens for {self.batch} sequences")
+        lg = self.run_rows([(s, self.poss[s]) for s in range(n)], tokens, list(range(n)))
+        for s in range(n):
+            self.poss[s] += 1
+        return lg
+
+    def generate_batch(self, prompts, max_new: int = 32, chunk: int | None = None) -> list:
+        """Greedy generation for several prompts (one sequence each) decoded together; a
+        finished sequence keeps its row (its extra tokens are dropped) until all finish."""
+        n = len(prompts)
+        nxt = [int(np.argmax(self.prefill(p, seq=s, chunk=chunk)))
+               for s, p in enumerate(prompts)]
+        out = [[] for _ in range(n)]
+        done = [False] * n
+        for _ in range(max_new):
+            for s in range(n):
+                if not done[s]:
+                    out[s].append(nxt[s])
+                    done[s] = (nxt[s] in self.spec.eos or len(out[s]) >= max_new
+                               or self.poss[s] >= self.cap)
+            if all(done):
+                break
+            nxt = [int(np.argmax(r)) for r in self.step_batch(nxt)]
+        return out
 
     def generate(self, prompt, max_new: int = 32, sampler=None, on_token=None) -> list:
         """Greedy (or `sampler(logits) -> id`) generation; stops at an EOS token."""
