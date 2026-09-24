@@ -216,6 +216,9 @@ class Run:
 
             rec["files"] = gate("sandbox", G.sandbox, wt, self.comp["allowed"])
             rec["diff"] = git("diff", "--stat", cwd=wt)
+            pdir = self.dir / "patches"                # the full change, kept for every outcome
+            pdir.mkdir(exist_ok=True)
+            (pdir / f"{sid}.patch").write_text(git("diff", cwd=wt) + "\n")
             gate("lint", G.lint, wt)
             rec["fast"] = gate("fast", G.pytest, wt, self.comp["tests"]["fast"], None, "fast")
             rec["board"] = gate("board", G.pytest, wt, self.comp["tests"]["board"], G.BOARD_ENV,
