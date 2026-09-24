@@ -617,8 +617,11 @@ module otpu_vpu
     return m;
   endfunction
   localparam int DMAX = tree_dmax();
+  // LN2: the three lane levels of LANES = 8 fold onto two adders (see u_ln), root 2 cycles later
+  localparam bit LN2 = (LANES == 8) && (RL == 8) && (LA == 4);
   localparam int DL = tree_i(LR - 1) - (RL - 1);                // row_last -> last row level
-  localparam int RD = tree_i(LR - 1) + LA * (1 + LW) - (RL - 1); // row_last -> root
+  localparam int RD = tree_i(LR - 1) + LA * (1 + LW) - (RL - 1) // row_last -> root
+                      + (LN2 ? 2 : 0);
 
   // a final partial of this reduction is on `pacc`
   wire cap = red_act && is_sum && live(mt, tag) && mt.final_;
@@ -642,6 +645,7 @@ module otpu_vpu
   end
 
   f32_t tr_y [LANES];
+  f32_t tr_y1 [LANES];                        // tr_y delayed one cycle (td[1])
   for (genvar k = 0; k < LANES; k++) begin : g_tree
     f32_t pd, pdd, oa, ob;
     f32_t sa [LR], sb [LR];                  // level j's operands (row r, row r + H)
@@ -657,6 +661,7 @@ module otpu_vpu
       td[1] <= tr_y[k];
       for (int d = 2; d <= DMAX; d++) td[d] <= td[d-1];
     end
+    assign tr_y1[k] = td[1];
     assign sa[0] = pd;
     assign sb[0] = pacc[k];
     for (genvar j = 1; j < LR; j++) begin : g_op
@@ -676,26 +681,54 @@ module otpu_vpu
   // last row level (l2_v for q = 2), rows a multiple of RL cycles apart: unless LA is a
   // multiple of RL, level 2 never meets level 1 and runs on level 1's adders k < LANES/4
   // (SH2; xl[2][k] is then xl[1][k] LA cycles later)
-  localparam bit SH2 = (LW >= 2) && (LA % RL != 0);
+  localparam bit SH2 = !LN2 && (LW >= 2) && (LA % RL != 0);
   wire  l2_v = rsr[DL + 2 * LA - 1];
   f32_t xl [LW + 1][LANES];
   f32_t xs [LANES];                           // SH2: the shared adders' results (level 1 or 2)
+  logic ln_l1b, ln_l2, ln_l3;                 // LN2 issue strobes (L1a is rsr[DL + LA - 1])
   for (genvar k = 0; k < LANES; k++) begin : g_xl0
     assign xl[0][k] = tr_y[k];
   end
-  for (genvar q = 1; q <= LW; q++) begin : g_xl
-    for (genvar k = 0; k < (LANES >> q); k++) begin : g_k
-      if (SH2 && q == 2) begin : g_sh
-        assign xl[q][k] = xs[k];
-      end else if (SH2 && q == 1 && k < (LANES >> 2)) begin : g_mux
-        f32_t oa, ob;
-        assign oa = l2_v ? xs[k] : xl[0][k];
-        assign ob = l2_v ? xl[1][k + (LANES >> 2)] : xl[0][k + (LANES >> 1)];
-        otpu_fadd #(.LAT(LA)) u_add (.clk, .en, .a(oa), .b(ob), .y(xs[k]));
-        assign xl[q][k] = xs[k];
-      end else begin : g_add
-        otpu_fadd #(.LAT(LA)) u_add (.clk, .en, .a(xl[q-1][k]), .b(xl[q-1][k + (LANES >> q)]),
-                                     .y(xl[q][k]));
+  // LN2 (E = last row level + LA, the residues mod RL = 8 in brackets): u_ln[m] issues
+  //   L1a at E     (5): xl[0][m]     + xl[0][m + 4]
+  //   L1b at E+1   (6): xl[0][m + 2] + xl[0][m + 6]   (from td[1])
+  //   L2  at E+5   (2): xsd[m] + xs[m]                (L1a + L1b = xl[1][m] + xl[1][m + 2])
+  //   L3  at E+10  (7): xsd[0] + xsd[1], m = 0 only   (L2 results = xl[2][0] + xl[2][1])
+  // and the root is xs[0] at E+14. The residues are distinct and rows are a multiple of RL
+  // apart, so neither adder is ever double-booked; same operands in the same order as xl.
+  if (LN2) begin : g_ln
+    f32_t xsd [2];                            // xs registered
+    assign ln_l1b = rsr[DL + LA];
+    assign ln_l2  = rsr[DL + 2 * LA];
+    assign ln_l3  = rsr[DL + 2 * LA + 5];
+    always_ff @(posedge clk) if (en) begin
+      xsd[0] <= xs[0];
+      xsd[1] <= xs[1];
+    end
+    for (genvar m = 0; m < 2; m++) begin : g_m
+      f32_t oa, ob;
+      assign oa = (m == 0 && ln_l3) ? xsd[0] : ln_l2 ? xsd[m] : ln_l1b ? tr_y1[m + 2] : tr_y[m];
+      assign ob = (m == 0 && ln_l3) ? xsd[1] : ln_l2 ? xs[m]  : ln_l1b ? tr_y1[m + 6] : tr_y[m + 4];
+      otpu_fadd #(.LAT(LA)) u_ln (.clk, .en, .a(oa), .b(ob), .y(xs[m]));
+    end
+  end else begin : g_lg
+    assign ln_l1b = 1'b0;
+    assign ln_l2  = 1'b0;
+    assign ln_l3  = 1'b0;
+    for (genvar q = 1; q <= LW; q++) begin : g_xl
+      for (genvar k = 0; k < (LANES >> q); k++) begin : g_k
+        if (SH2 && q == 2) begin : g_sh
+          assign xl[q][k] = xs[k];
+        end else if (SH2 && q == 1 && k < (LANES >> 2)) begin : g_mux
+          f32_t oa, ob;
+          assign oa = l2_v ? xs[k] : xl[0][k];
+          assign ob = l2_v ? xl[1][k + (LANES >> 2)] : xl[0][k + (LANES >> 1)];
+          otpu_fadd #(.LAT(LA)) u_add (.clk, .en, .a(oa), .b(ob), .y(xs[k]));
+          assign xl[q][k] = xs[k];
+        end else begin : g_add
+          otpu_fadd #(.LAT(LA)) u_add (.clk, .en, .a(xl[q-1][k]), .b(xl[q-1][k + (LANES >> q)]),
+                                       .y(xl[q][k]));
+        end
       end
     end
   end
@@ -742,7 +775,7 @@ module otpu_vpu
     if (red_act && is_sum && root_v) begin
       cw_en[0] = 1'b1;
       cw_addr[0] = wr_row;
-      cw_data[0] = xl[LW][0];
+      cw_data[0] = LN2 ? xs[0] : xl[LW][0];
     end
   end
 
@@ -874,9 +907,11 @@ module otpu_vpu
   always_ff @(posedge clk)
     if (!rst && en && cap && mt.sub >= 8'(RL / 2) && lv != 0)
       $fatal(1, "otpu_vpu: RSUM/RSSQ tree schedule collision");
-  // lane level 2 shares level 1's adders: it must never issue with level 1
+  // lane level 2 shares level 1's adders: it must never issue with level 1 (LN2: the lane
+  // levels L1a, L1b, L2 and L3 share u_ln and must never issue together)
   always_ff @(posedge clk)
-    if (!rst && en && SH2 && l2_v && rsr[DL + LA - 1])
+    if (!rst && en && (LN2 ? !$onehot0({rsr[DL + LA - 1], ln_l1b, ln_l2, ln_l3})
+                           : SH2 && l2_v && rsr[DL + LA - 1]))
       $fatal(1, "otpu_vpu: RSUM/RSSQ lane level schedule collision");
 `endif
 endmodule
