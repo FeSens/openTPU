@@ -33,8 +33,8 @@ Works, in simulation:
 Not done or not verified:
 
 - **No hardware run.** No bitstream has been built.
-- **Clock speed is an estimate.** The 106 MHz figure comes from yosys logic delays times a
-  routing allowance (`1000 / (1.6 * logic_ns + 0.5)`), not from Vivado place and route.
+- **Clock speed is an estimate.** 106 MHz is a rough estimate from yosys, not from Vivado; it
+  still has to be validated by a real build.
 - **Tokens per second are projections.** They are simulated cycles divided by an assumed
   clock (100 MHz) and DRAM efficiency (80%), without host time.
 - **The board model skips the hardest parts of the physical integration.** DDR3 calibration
