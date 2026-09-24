@@ -5,6 +5,7 @@ TMEM and DRAM contents of every slice must be identical bit for bit.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -36,8 +37,10 @@ def design_config(**kw) -> Config:
 def board_config(**kw) -> Config:
     """The configuration built for the YPCB-00338 board (xc7k480t, 2 x DDR3, PCIe): one slice,
     128-deep MXU x 2 columns (Qwen3 query groups are 2 rows), 8 VPU lanes / TMEM banks,
-    64K-word TMEM, 128 ACT RAM blocks (K <= 16384), 4K-instruction IMEM, 4 GiB DRAM."""
-    base = dict(S=1, D=128, MCOLS=2, ACT_BLOCKS=128, LANES=8, TMEM_WORDS=1 << 16,
+    64K-word TMEM, 128 ACT RAM blocks (K <= 16384), 4K-instruction IMEM, 4 GiB DRAM.
+    OTPU_MCOLS in the environment selects the MXU column count (default 2; the bitstream must be
+    built with the same value: make -C boards/ypcb-00338 bit MCOLS=4)."""
+    base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 2)), ACT_BLOCKS=128, LANES=8, TMEM_WORDS=1 << 16,
                 IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32)
     base.update(kw)
     return Config(**base)

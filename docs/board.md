@@ -26,6 +26,9 @@ cd boards/ypcb-00338
 make lint          # offline: MIG pin check, Tcl syntax, XDC vs top ports, Verilator lint
 make bit           # = ./run_vivado.sh 800 -> build/vivado/otpu.bit, otpu.mcs, reports/
 make bit DDR=1066  # DDR3-1066 (533 MHz, MIG ui_clk 133 MHz) once 800 works
+make bit CORE_MHZ=80   # accelerator clock fallback when 100 MHz does not close (800/D MHz, D in 1/8 steps)
+make bit MCOLS=4   # 4 MXU columns: ~1.7x prefill and batched decode, ~67% LUT; run the host
+                   # with OTPU_MCOLS=4 (the host checks the bitstream's VERSION register)
 ```
 
 `run_vivado.sh` runs `scripts/gen_mig_prj.py` (MIG configuration from the board pin lists),
@@ -166,3 +169,6 @@ per token are small (program ~40 KB, logits 600 KB): the one-time weight upload 
    calibrated, led[2] the accelerator runs / halted cleanly.
 7. **Timing**: the accelerator was timed with yosys only; if core_clk fails at 100 MHz,
    `reports/timing_worst.rpt` names the paths; the MIG and XDMA domains are fixed by the IPs.
+   To get a working board first, rebuild with `make bit CORE_MHZ=80` (or 75): decode is
+   DRAM-bound, so 80 MHz loses little (the adapter issues one 64-byte beat per channel per
+   cycle, 80 MHz x 128 B = 10.2 GB/s against DDR3-800's 12.8 GB/s peak).

@@ -16,7 +16,9 @@
     .P``_rid(S.rid), .P``_rdata(S.rdata), .P``_rresp(S.rresp), .P``_rlast(S.rlast), \
     .P``_rvalid(S.rvalid), .P``_rready(M.rready)
 
-module otpu_fpga_top (
+module otpu_fpga_top #(
+  parameter int MCOLS = 2   // MXU columns (activation rows per weight chunk)
+) (
   // board
   input  logic        SYS_CLK,              // 50 MHz, AA28
   output logic [2:0]  led,                  // P30 red, M30 green, N30 yellow
@@ -117,7 +119,7 @@ module otpu_fpga_top (
   always_ff @(posedge core_clk) core_rst <= !core_rstn;
 
   logic [2:0] board_led;
-  otpu_board u_board (
+  otpu_board #(.MCOLS(MCOLS)) u_board (
     .clk(core_clk), .rst(core_rst), .calib, .led(board_led),
     .s_ctl_awaddr(ctl_awaddr[7:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),
     .s_ctl_wdata(ctl_wdata), .s_ctl_wstrb(ctl_wstrb), .s_ctl_wvalid(ctl_wvalid),

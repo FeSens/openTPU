@@ -2,6 +2,8 @@
 # Build the openTPU bitstream for the YPCB-00338 in Vivado batch mode, natively or in Docker.
 #
 #   ./run_vivado.sh [800|1066]            # native: `vivado` on PATH (x86-64 Linux / Windows WSL)
+#   MCOLS=4 ./run_vivado.sh               # 4 MXU columns (faster prefill / batched decode)
+#   CORE_MHZ=80 ./run_vivado.sh           # slower core clock when 100 MHz does not close
 #   VIVADO_DOCKER=image ./run_vivado.sh   # Docker (e.g. Apple Silicon with Rosetta), see docs/board.md
 #
 # Output: build/vivado/otpu.bit, build/vivado/otpu.mcs, build/vivado/reports/.
@@ -11,6 +13,8 @@ root="$(cd "$here/../.." && pwd)"
 speed="${1:-800}"
 out="${OUT_DIR:-$root/build/vivado}"
 jobs="${JOBS:-8}"
+mcols="${MCOLS:-2}"            # MXU columns; the host needs OTPU_MCOLS set to the same value
+core_mhz="${CORE_MHZ:-100}"   # accelerator clock; lower it (80, 75) if timing does not close
 
 python3 "$here/scripts/gen_mig_prj.py" --speed "$speed"
 
@@ -31,6 +35,6 @@ run() {  # run a Vivado Tcl script with arguments
 }
 
 mkdir -p "$out"
-run "$here/vivado/create_project.tcl" "$speed" "$out"
+run "$here/vivado/create_project.tcl" "$speed" "$out" "$mcols" "$core_mhz"
 run "$here/vivado/build.tcl" "$out" "$jobs"
 echo "done: $out/otpu.bit"

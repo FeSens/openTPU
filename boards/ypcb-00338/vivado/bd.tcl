@@ -8,7 +8,8 @@
 # of host/board.py and rtl/mem/otpu_axi_dram.sv.
 #
 # Clock plan (50 MHz board oscillator, AA28 -> MMCM, VCO 800 MHz):
-#   core_clk   100.000 MHz  accelerator, control, interconnect core side
+#   core_clk   100.000 MHz  accelerator, control, interconnect core side (CORE_MHZ: 800 / D,
+#                           D a multiple of 1/8, e.g. 80 / 75.3 / 66.7 as a timing fallback)
 #   clk_200    200.000 MHz  MIG reference (IDELAYCTRL) and, for DDR3-800, MIG system clock
 #   clk_267    266.667 MHz  MIG system clock for DDR3-1066 (DDR_SPEED=1066)
 #   ui_clk0/1  100 / 133 MHz  MIG user clocks (4:1 of 400 / 533 MHz)
@@ -29,6 +30,13 @@ proc ip_vlnv {name} {
 create_bd_design otpu_bd
 current_bd_design otpu_bd
 
+# core clock: CORE_MHZ (from create_project.tcl) rounded to the MMCM's 1/8 divider steps
+if {![info exists CORE_MHZ]} { set CORE_MHZ 100 }
+set CORE_DIV [expr {round(800.0 / $CORE_MHZ * 8) / 8.0}]
+set CORE_MHZ_ACT [format %.3f [expr {800.0 / $CORE_DIV}]]
+set CORE_HZ [expr {round(800.0e6 / $CORE_DIV)}]
+puts "core_clk: $CORE_MHZ_ACT MHz (MMCM divide $CORE_DIV)"
+
 # ------------------------------------------------------------------ external ports
 create_bd_port -dir I -type clk -freq_hz 50000000 sys_clk_50
 set pcie_refclk [create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 pcie_refclk]
@@ -48,11 +56,11 @@ foreach p {S_AXI_M0 S_AXI_M1} {
   set s [create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:aximm_rtl:1.0 $p]
   set_property -dict [list CONFIG.PROTOCOL AXI4 CONFIG.DATA_WIDTH 512 CONFIG.ADDR_WIDTH 32 \
     CONFIG.ID_WIDTH 1 CONFIG.HAS_REGION 0 CONFIG.NUM_READ_OUTSTANDING 64 \
-    CONFIG.NUM_WRITE_OUTSTANDING 16 CONFIG.MAX_BURST_LENGTH 1 CONFIG.FREQ_HZ 100000000] $s
+    CONFIG.NUM_WRITE_OUTSTANDING 16 CONFIG.MAX_BURST_LENGTH 1 CONFIG.FREQ_HZ $CORE_HZ] $s
 }
 set_property CONFIG.ASSOCIATED_BUSIF {M_AXI_CTL:S_AXI_M0:S_AXI_M1} [get_bd_ports core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_rstn} [get_bd_ports core_clk]
-set_property CONFIG.FREQ_HZ 100000000 [get_bd_ports core_clk]
+set_property CONFIG.FREQ_HZ $CORE_HZ [get_bd_ports core_clk]
 
 # ------------------------------------------------------------------ clocks and resets
 # The board reset pin (R28) is not wired: resets come from the MMCM lock (and PCIe PERST#).
@@ -60,11 +68,11 @@ set clk [create_bd_cell -type ip -vlnv [ip_vlnv clk_wiz] clk_wiz_0]
 set_property -dict [list \
   CONFIG.PRIM_IN_FREQ {50.000} CONFIG.PRIM_SOURCE {Single_ended_clock_capable_pin} \
   CONFIG.USE_RESET {false} CONFIG.USE_LOCKED {true} \
-  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {100.000} \
+  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $CORE_MHZ_ACT \
   CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000} \
   CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {266.667} \
   CONFIG.NUM_OUT_CLKS {3} CONFIG.MMCM_DIVCLK_DIVIDE {1} CONFIG.MMCM_CLKFBOUT_MULT_F {16.000} \
-  CONFIG.MMCM_CLKOUT0_DIVIDE_F {8.000} CONFIG.MMCM_CLKOUT1_DIVIDE {4} \
+  CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV CONFIG.MMCM_CLKOUT1_DIVIDE {4} \
   CONFIG.MMCM_CLKOUT2_DIVIDE {3} \
   CONFIG.CLK_OUT1_PORT {core_clk} CONFIG.CLK_OUT2_PORT {clk_200} CONFIG.CLK_OUT3_PORT {clk_267} \
 ] $clk

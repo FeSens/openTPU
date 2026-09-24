@@ -21,6 +21,9 @@ Accept rule (vs the champion; every gate must have passed):
   A. area:  fmax_new >= target  and  area_eq_new <= area_eq_old * (1 - AREA_GAIN)      (1%)
   B. speed: fmax_new >= fmax_old * (1 + FMAX_GAIN)  and  area_eq_new <= area_eq_old * (1 + AREA_SLACK)
             (3% faster, at most 1% bigger)
+  C. pareto: fmax_new >= fmax_old  and  area_eq_new <= area_eq_old * (1 - AREA_GAIN)
+            (smaller and no slower: below the target, an area win may not cost fmax, but it
+            need not reach the target either)
 """
 from __future__ import annotations
 
@@ -78,9 +81,11 @@ def accept(old: dict, new: dict, target_mhz: float) -> tuple[bool, str]:
         return True, f"area {da:+.1%} at {fn:.0f} MHz (>= {target_mhz:.0f})"
     if fn >= fo * (1 + FMAX_GAIN) and an <= ao * (1 + AREA_SLACK):
         return True, f"fmax {df:+.1%} ({fo:.0f} -> {fn:.0f} MHz), area {da:+.1%}"
+    if fn >= fo and an <= ao * (1 - AREA_GAIN):
+        return True, f"area {da:+.1%}, fmax {df:+.1%} ({fo:.0f} -> {fn:.0f} MHz, below target)"
     why = []
-    if fn < target_mhz:
-        why.append(f"fmax {fn:.0f} < target {target_mhz:.0f}")
+    if fn < target_mhz and fn < fo:
+        why.append(f"fmax {fn:.0f} < target {target_mhz:.0f} and below the champion's {fo:.0f}")
     why.append(f"area {da:+.1%} (need <= {-AREA_GAIN:.0%})")
     why.append(f"fmax {df:+.1%} (need >= {FMAX_GAIN:+.0%} with area <= {AREA_SLACK:+.0%})")
     return False, "; ".join(why)

@@ -47,8 +47,15 @@ def test_accept_area_rule():
 
 
 def test_accept_area_needs_target_fmax():
-    ok, why = A.accept(m(1000, 80), m(900, 81), 110)
+    ok, why = A.accept(m(1000, 80), m(900, 79), 110)       # smaller but slower, below target
     assert not ok and "< target" in why
+
+
+def test_accept_pareto_below_target():
+    ok, why = A.accept(m(1000, 80), m(900, 81), 110)       # smaller and not slower
+    assert ok and "below target" in why
+    assert A.accept(m(1000, 80), m(990, 80), 110)[0]
+    assert not A.accept(m(1000, 80), m(991, 80), 110)[0]   # < 1% smaller
 
 
 def test_accept_speed_rule():

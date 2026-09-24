@@ -1,11 +1,13 @@
 # Create the Vivado project for openTPU on the YPCB-00338.
-#   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR]
+#   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ]
 # DDR_SPEED: 800 (default) or 1066. OUT_DIR: default ../../../build/vivado (repository build/).
 
 set here [file normalize [file dirname [info script]]]
 set root [file normalize $here/../../..]
 set DDR_SPEED [expr {[llength $argv] > 0 ? [lindex $argv 0] : 800}]
 set out [expr {[llength $argv] > 1 ? [file normalize [lindex $argv 1]] : "$root/build/vivado"}]
+set MCOLS [expr {[llength $argv] > 2 ? [lindex $argv 2] : 2}]
+set CORE_MHZ [expr {[llength $argv] > 3 ? [lindex $argv 3] : 100}]
 set MIG_DIR $here/mig
 
 if {![file exists $MIG_DIR/mig_ddr3_ch0.prj]} {
@@ -36,6 +38,7 @@ source $here/bd.tcl
 make_wrapper -files [get_files otpu_bd.bd] -top
 add_files -norecurse [glob $out/otpu.gen/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v]
 set_property top otpu_fpga_top [current_fileset]
+set_property generic "MCOLS=$MCOLS" [current_fileset]
 
 # ---- constraints
 add_files -fileset constrs_1 -norecurse [list \

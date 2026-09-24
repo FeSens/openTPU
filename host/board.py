@@ -158,7 +158,8 @@ class SimTransport:
         srcs += [root / "rtl/boards/ypcb-00338/otpu_ctrl.sv",
                  root / "rtl/boards/ypcb-00338/otpu_board.sv",
                  rtlsim.TB / "otpu_axi_mem.sv", rtlsim.TB / "tb_board.sv"]
-        p = {"WORDS": 2 * len(self.ch[0]) // 4}
+        from opentpu.isasim import board_config
+        p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": board_config().MCOLS}  # OTPU_MCOLS
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
         with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:
