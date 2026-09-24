@@ -185,16 +185,35 @@ module otpu_mxu
   // s4 (with m4, ws4) is the chunk's result LDOT - 4 cycles after S0 + 4.
   if (IMPL == 0) begin : g_tree
     // products, then a 4 / 4 / 8 adder tree (one register level each)
-    logic signed [15:0] pr [MCOLS][D];
+    // Columns 2p and 2p+1 share the weight byte, so one multiplier (a DSP48 with its pre-adder)
+    // makes both: pp = (a0*2^16 + a1) * w = (a0*w)*2^16 + a1*w (a 25-bit A: shift 17 overflows).
+    // a1*w = pp[15:0] (signed), a0*w = pp[31:16] (signed) + pp[15] (the low field's borrow).
+    // An odd last column keeps a plain product.
+    logic signed [31:0] pp [(MCOLS + 1) / 2][D];
+    logic signed [15:0] pr [D];
     logic signed [19:0] s2 [MCOLS][D/4];
     logic signed [23:0] s3 [MCOLS][D/16];
     always_ff @(posedge clk) if (en_c) begin
-      for (int j = 0; j < MCOLS; j++)
+      for (int p = 0; p < MCOLS / 2; p++)
+        for (int i = 0; i < D; i++) begin
+          logic signed [24:0] pa;
+          pa = $signed({a0[(2*p*D + i)*8 +: 8], 16'b0}) + 25'($signed(a0[((2*p+1)*D + i)*8 +: 8]));
+          pp[p][i] <= 32'(int'(pa) * int'($signed(w0[i*8 +: 8])));
+        end
+      if (MCOLS % 2 == 1)
         for (int i = 0; i < D; i++)
-          pr[j][i] <= 16'(int'($signed(a0[(j*D + i)*8 +: 8])) * int'($signed(w0[i*8 +: 8])));
+          pr[i] <= 16'(int'($signed(a0[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(w0[i*8 +: 8])));
       for (int j = 0; j < MCOLS; j++) begin
-        for (int g = 0; g < D / 4; g++)
-          s2[j][g] <= 20'(pr[j][4*g]) + 20'(pr[j][4*g+1]) + 20'(pr[j][4*g+2]) + 20'(pr[j][4*g+3]);
+        for (int g = 0; g < D / 4; g++) begin
+          logic signed [19:0] t;
+          t = '0;
+          for (int k = 0; k < 4; k++)
+            if (j % 2 == 1) t = t + 20'($signed(pp[j/2][4*g+k][15:0]));
+            else if (j + 1 < MCOLS)
+              t = t + 20'($signed(pp[j/2][4*g+k][31:16])) + 20'(pp[j/2][4*g+k][15]);
+            else t = t + 20'(pr[4*g+k]);
+          s2[j][g] <= t;
+        end
         for (int g = 0; g < D / 16; g++)
           s3[j][g] <= 24'(s2[j][4*g]) + 24'(s2[j][4*g+1]) + 24'(s2[j][4*g+2]) + 24'(s2[j][4*g+3]);
         begin
