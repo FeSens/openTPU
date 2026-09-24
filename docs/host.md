@@ -28,6 +28,10 @@ The card's AXI address map: DDR3 channel 0 at `0x0000_0000`, channel 1 at `0x800
 
 ## 2. Build and load the XDMA driver
 
+`host/setup_pcie.sh` does sections 2 and 3 in one go (finds the card, builds and loads the
+driver, adds the udev rule, reads the ID register); `host/setup_pcie.sh --rescan` after JTAG
+programming. The manual steps:
+
 ```sh
 git clone https://github.com/Xilinx/dma_ip_drivers
 cd dma_ip_drivers/XDMA/linux-kernel/xdma
