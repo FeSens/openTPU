@@ -245,6 +245,49 @@ module otpu_slice
     endcase
   endfunction
 
+  // The board build (TMEM replicated per read port, RPB >= NRP * LANES: reads never conflict;
+  // WPB = 1) only needs write-bank masks: a unit is granted when no bank it writes was taken by
+  // a higher-priority unit this cycle (a unit's own lanes write distinct banks). Shallow logic,
+  // no counters. Other configurations count reads and writes per bank.
+  localparam bit ARB_MASK = (RPB >= NRP * LANES) && (WPB == 1);
+  logic [NG-1:0] gnt_m, gnt_c;
+  logic          cgl_m, cgl_c;
+  always_comb begin
+    logic [LANES-1:0] taken, mine;
+    logic ok;
+    logic [NWP-1:0] wp;
+    taken = '0;
+    cgl_m = 1'b1;
+    for (int g = 0; g < NG; g++) begin
+      wp = grp_wports(g);
+      mine = '0;
+      for (int p = 0; p < NWP; p++)
+        if (wp[p])
+          for (int l = 0; l < LANES; l++)
+            if (wq_en[p][l]) mine[w_addr[p][l][BW-1:0]] = 1'b1;
+      ok = (taken & mine) == '0;
+      if (g == G_Q && q_awant && !sw_rdy) ok = 1'b0;    // QST write the DRAM cannot take
+      if (g == G_COLL) begin
+        cgl_m = ok;
+        gnt_m[g] = coll_gnt;
+      end else begin
+        gnt_m[g] = ok;
+      end
+      if (ok) taken = taken | mine;
+    end
+  end
+
+  always_comb begin
+    gnt = ARB_MASK ? gnt_m : gnt_c;
+    coll_gnt_local = ARB_MASK ? cgl_m : cgl_c;
+    for (int p = 0; p < NRP; p++) r_en[p] = rq_en[p];
+    for (int p = 0; p < NWP; p++) w_en[p] = wq_en[p];
+    if (!gnt[G_MXU])  begin r_en[P_MXU] = '0; w_en[W_MXU] = '0; end
+    if (!gnt[G_Q])    begin r_en[P_Q] = '0; r_en[P_Q2] = '0; r_en[P_Q3] = '0; end
+    if (!gnt[G_VPU])  begin r_en[P_VA] = '0; r_en[P_VB] = '0; w_en[W_VPU] = '0; end
+    if (!gnt[G_COLL]) begin r_en[P_COLL] = '0; w_en[W_COLL] = '0; end
+  end
+
   always_comb begin
     int rc [LANES];
     int wc [LANES];
@@ -254,7 +297,7 @@ module otpu_slice
     logic [NRP-1:0] rp;
     logic [NWP-1:0] wp;
     for (int b = 0; b < LANES; b++) begin rc[b] = 0; wc[b] = 0; end
-    coll_gnt_local = 1'b1;
+    cgl_c = 1'b1;
     for (int g = 0; g < NG; g++) begin
       rp = grp_rports(g);
       wp = grp_wports(g);
@@ -272,20 +315,14 @@ module otpu_slice
         if (rc[b] + ur[b] > RPB || wc[b] + uw[b] > WPB) ok = 1'b0;
       if (g == G_Q && q_awant && !sw_rdy) ok = 1'b0;    // QST write the DRAM cannot take
       if (g == G_COLL) begin
-        coll_gnt_local = ok;
-        gnt[g] = coll_gnt;        // every slice must grant the collective
+        cgl_c = ok;
+        gnt_c[g] = coll_gnt;      // every slice must grant the collective
       end else begin
-        gnt[g] = ok;
+        gnt_c[g] = ok;
       end
       if (ok)
         for (int b = 0; b < LANES; b++) begin rc[b] += ur[b]; wc[b] += uw[b]; end
     end
-    for (int p = 0; p < NRP; p++) r_en[p] = rq_en[p];
-    for (int p = 0; p < NWP; p++) w_en[p] = wq_en[p];
-    if (!gnt[G_MXU])  begin r_en[P_MXU] = '0; w_en[W_MXU] = '0; end
-    if (!gnt[G_Q])    begin r_en[P_Q] = '0; r_en[P_Q2] = '0; r_en[P_Q3] = '0; end
-    if (!gnt[G_VPU])  begin r_en[P_VA] = '0; r_en[P_VB] = '0; w_en[W_VPU] = '0; end
-    if (!gnt[G_COLL]) begin r_en[P_COLL] = '0; w_en[W_COLL] = '0; end
   end
 
   // ---- DRAM ports
