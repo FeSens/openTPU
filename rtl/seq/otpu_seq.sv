@@ -83,14 +83,19 @@ module otpu_seq
   //   GATHER:                     t[0] = wr0 W, t[1] = rd0
   // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. ACT ranges
   // start below 2^8 (an 8-bit field) and are at most 2^16 - 1 long, so [alo, ahi) is exact.
+  // TMEM ranges keep TAW/TAW+1 bits: TMEM holds 2^16 words, so every access the ISA allows has
+  // lo < 2^16, hi <= 2^16. A valid TMEM range that does not fit raises all instead (the
+  // instruction then conflicts with everything, like BAR) -- conservative, never wrong.
+  localparam int TAW = 16;
   typedef struct packed { logic [31:0] lo, hi; } r32_t;
-  typedef struct packed { logic w; r32_t r; } r32w_t;   // TMEM, may be written
+  typedef struct packed { logic [TAW-1:0] lo; logic [TAW:0] hi; } rt_t;
+  typedef struct packed { logic w; rt_t r; } rtw_t;     // TMEM, may be written
   typedef struct packed {
     logic            all;
     logic            dw;        // the DRAM ranges are writes
     r32_t  [1:0]     d;         // DRAM
-    r32w_t [1:0]     t;         // TMEM
-    r32_t            t2;        // TMEM, always a read
+    rtw_t  [1:0]     t;         // TMEM
+    rt_t             t2;        // TMEM, always a read
     logic            aw;        // ACT
     logic [7:0]      alo;
     logic [16:0]     ahi;
@@ -102,51 +107,65 @@ module otpu_seq
     return o;
   endfunction
 
-  function automatic r32w_t r32w(input rng_t x, input logic w);
-    r32w_t o;
-    o.w = w; o.r = r32(x);
+  function automatic rt_t rt(input rng_t x);
+    rt_t o;
+    o.lo = x.lo[TAW-1:0]; o.hi = x.v ? x.hi[TAW:0] : '0;
     return o;
+  endfunction
+
+  // the TMEM range does not fit rt_t
+  function automatic logic tovf(input rng_t x);
+    return x.v && (x.lo[31:TAW] != '0 || x.hi[31:TAW+1] != '0);
   endfunction
 
   function automatic fps_t fp_seg(input logic [7:0] op, input fp_t f);
     fps_t s;
-    rng_t a;
-    s = '0; a = '0;
-    s.all = f.all;
+    rng_t a, t0, t1, t2;          // ACT; TMEM t[0], t[1], t2
+    logic w0, w1;
+    s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; w0 = 1'b0; w1 = 1'b0;
     case (op)
       OP_LD: begin
-        s.d[0] = r32(f.rd[0]); s.t[0] = r32w(f.wr[0], 1'b1);
+        s.d[0] = r32(f.rd[0]); t0 = f.wr[0]; w0 = 1'b1;
       end
       OP_ST: begin
-        s.dw = 1'b1; s.d[0] = r32(f.wr[0]); s.t[0] = r32w(f.rd[0], 1'b0);
+        s.dw = 1'b1; s.d[0] = r32(f.wr[0]); t0 = f.rd[0];
       end
       OP_MM: begin
         s.d[0] = r32(f.rd[0]); s.d[1] = r32(f.rd[1]);
-        s.t[0] = r32w(f.wr[0], 1'b1); s.t[1] = r32w(f.wr[1], 1'b1); s.t2 = r32(f.rd[3]);
+        t0 = f.wr[0]; w0 = 1'b1; t1 = f.wr[1]; w1 = 1'b1; t2 = f.rd[3];
         a = f.rd[2];
       end
       OP_QACT: begin
-        s.t[0] = r32w(f.rd[0], 1'b0); s.t[1] = r32w(f.rd[1], 1'b0); s.t2 = r32(f.rd[2]);
+        t0 = f.rd[0]; t1 = f.rd[1]; t2 = f.rd[2];
         s.aw = 1'b1; a = f.wr[0];
       end
       OP_QST: begin
         s.dw = 1'b1; s.d[0] = r32(f.wr[0]); s.d[1] = r32(f.wr[1]);
-        s.t[0] = r32w(f.rd[0], 1'b0);
+        t0 = f.rd[0];
       end
       OP_VOP: begin
-        s.t[0] = r32w(f.wr[0], 1'b1); s.t[1] = r32w(f.rd[0], 1'b0); s.t2 = r32(f.rd[1]);
+        t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1];
       end
       OP_GATHER: begin
-        s.t[0] = r32w(f.wr[0], 1'b1); s.t[1] = r32w(f.rd[0], 1'b0);
+        t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0];
       end
       default: ;   // BAR: all
     endcase
+    s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2);
+    s.t[0].w = w0; s.t[0].r = rt(t0);
+    s.t[1].w = w1; s.t[1].r = rt(t1);
+    s.t2 = rt(t2);
     s.alo = a.lo[7:0]; s.ahi = a.v ? a.hi[16:0] : '0;
     return s;
   endfunction
 
   function automatic logic ovr(input r32_t a, input r32_t b);
     return a.lo < b.hi && b.lo < a.hi;
+  endfunction
+
+  // ovr() on narrow TMEM ranges
+  function automatic logic ovr_t(input rt_t a, input rt_t b);
+    return {1'b0, a.lo} < b.hi && {1'b0, b.lo} < a.hi;
   endfunction
 
   // {conflict, conflict_dram} (otpu_pkg) on segregated footprints: the same-space pairs with at
@@ -157,10 +176,10 @@ module otpu_seq
     for (int i = 0; i < 2; i++) begin
       for (int j = 0; j < 2; j++) begin
         if ((n.dw || e.dw) && ovr(n.d[i], e.d[j])) begin any = 1'b1; dram = 1'b1; end
-        if ((n.t[i].w || e.t[j].w) && ovr(n.t[i].r, e.t[j].r)) any = 1'b1;
+        if ((n.t[i].w || e.t[j].w) && ovr_t(n.t[i].r, e.t[j].r)) any = 1'b1;
       end
-      if (n.t[i].w && ovr(n.t[i].r, e.t2)) any = 1'b1;
-      if (e.t[i].w && ovr(n.t2, e.t[i].r)) any = 1'b1;
+      if (n.t[i].w && ovr_t(n.t[i].r, e.t2)) any = 1'b1;
+      if (e.t[i].w && ovr_t(n.t2, e.t[i].r)) any = 1'b1;
     end
     if ((n.aw || e.aw) && {9'd0, n.alo} < e.ahi && {9'd0, e.alo} < n.ahi) any = 1'b1;
     return {any, dram};
@@ -418,11 +437,14 @@ module otpu_seq
           fa != ((op == OP_LOOP) ? ((lp_cnt == 0) ? pc + 1 + lp_len : pc + 1) :
                  (at_end && stk_rem[sp-1] > 1) ? stk_start[sp-1] : pc + 1))
         $fatal(1, "otpu_seq: fetch address %0d does not follow pc %0d", fa, pc);
-      // the segregated footprints give exactly otpu_pkg's conflict() and conflict_dram()
+      // the segregated footprints give exactly otpu_pkg's conflict() and conflict_dram(); a
+      // footprint whose TMEM ranges overflowed rt_t (all raised by fp_seg) conflicts with all
       if (c_v)
         for (int i = 0; i < WIN; i++)
-          if (sv[i] && conf_s(c_fp, sfp[i]) != {conflict(c_ref, sfp_ref[i]),
-                                                 conflict_dram(c_ref, sfp_ref[i])})
+          if (sv[i] && (c_fp.all == c_ref.all && sfp[i].all == sfp_ref[i].all ?
+                        conf_s(c_fp, sfp[i]) != {conflict(c_ref, sfp_ref[i]),
+                                                 conflict_dram(c_ref, sfp_ref[i])} :
+                        conf_s(c_fp, sfp[i]) != 2'b11))
             $fatal(1, "otpu_seq: scoreboard differs from conflict() for pc %0d vs slot %0d",
                    c_pc, i);
       // fp_seg's assumptions: ACT ranges fit [alo, ahi), DRAM ranges share their write role
