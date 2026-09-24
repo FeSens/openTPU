@@ -1360,12 +1360,13 @@ function renderSource() {
     else if (URL0) { const r = await fetch(URL0); setDoc(await parseBytes(await r.arrayBuffer()), URL0); }
     else $("drop").classList.add("on");
   } catch (e) { $("drop").classList.add("on"); $("drop-err").textContent = "Could not load the profile: " + e.message; }
-  // deep links: #view=floor&t=1234&slice=0&profile=0
+  // deep links: #view=floor&t=1234&speed=100&slice=0&profile=0
   const hp = new URLSearchParams(location.hash.slice(1));
   if (M && hp.has("profile")) selectProfile(+hp.get("profile"));
   if (M && hp.has("slice")) selectSlice(+hp.get("slice"));
   if (M && hp.has("t")) FP.t = +hp.get("t");
   show(hp.get("view") || "overview");
+  if (M && hp.has("speed")) { $("fp-speed").value = hp.get("speed"); updateFloor(); }
   if (M && hp.has("pin")) {
     const el = document.querySelector(`#v-floor [data-tip="${hp.get("pin")}"]`);
     if (el) { const r = el.getBoundingClientRect(); TIP.key = hp.get("pin"); TIP.pinned = true; TIP.x = r.right - 20; TIP.y = r.top; renderTip(); }
