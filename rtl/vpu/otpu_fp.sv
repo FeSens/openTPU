@@ -70,7 +70,7 @@ package otpu_fp;
   // |x[k-1:0]| for a variable k (0..32)
   function automatic logic sticky_below(input logic [31:0] x, input logic [5:0] k);
     logic [31:0] mask;
-    mask = (k >= 6'd32) ? 32'hFFFF_FFFF : ((32'd1 << k) - 32'd1);
+    mask = ~(32'hFFFF_FFFF << k);            // a shift by >= 32 gives 0: all ones
     return |(x & mask);
   endfunction
 
@@ -131,9 +131,11 @@ package otpu_fp;
   endfunction
 
   // ---- fp_add in four stages: unpack + compare | align + add | normalize | round.
+  // Only inf/NaN operands and exact cancellation are special; zero operands ride the datapath
+  // (a zero significand). The special value is {sign, exp_all_ones, quiet}, see fadd_sv.
   typedef struct packed {
     logic        sp;
-    logic [31:0] sv;
+    logic [2:0]  sv;
     logic        sa;       // sign of the larger operand (the result sign unless it cancels)
     logic        sub;      // effective subtraction
     logic [7:0]  e;
@@ -143,7 +145,7 @@ package otpu_fp;
 
   typedef struct packed {
     logic        sp;
-    logic [31:0] sv;
+    logic [2:0]  sv;
     logic        sa;
     logic        sub;
     logic [7:0]  e;
@@ -152,40 +154,31 @@ package otpu_fp;
 
   typedef struct packed {
     logic               sp;
-    logic [31:0]        sv;
+    logic [2:0]         sv;
     logic               s;
     logic signed [9:0]  e;
     logic [26:0]        mn;   // normalized: mn[26] set, guard/round/sticky in [2:0]
   } fadd_nm_t;
+
+  localparam logic [2:0] FADD_SV_NAN  = 3'b011;
+  localparam logic [2:0] FADD_SV_ZERO = 3'b000;
+
+  // Expand the 3-bit special value: NaN -> F_NAN, {s,2'b10} -> +-inf, 3'b000 -> F_ZERO.
+  function automatic f32_t fadd_sv(input logic [2:0] sv);
+    return {sv[2], {8{sv[1]}}, sv[0], 22'd0};
+  endfunction
 
   function automatic fadd_p1_t fp_add_s1(input f32_t a_in, input f32_t b_in);
     fadd_p1_t r;
     f32_t a, b, t;
     a = ftz(a_in);
     b = ftz(b_in);
-    r = '0;
-    if (a[30:23] == 8'hFF || b[30:23] == 8'hFF) begin
-      r.sp = 1'b1;
-      if (is_nan(a) || is_nan(b)) r.sv = F_NAN;
-      else if (a[30:23] == 8'hFF && b[30:23] == 8'hFF && a[31] != b[31]) r.sv = F_NAN;
-      else r.sv = (a[30:23] == 8'hFF) ? a : b;
-      return r;
-    end
-    if (a[30:0] == 0 && b[30:0] == 0) begin
-      r.sp = 1'b1;
-      r.sv = {a[31] & b[31], 31'd0};
-      return r;
-    end
-    if (a[30:0] == 0) begin
-      r.sp = 1'b1;
-      r.sv = b;
-      return r;
-    end
-    if (b[30:0] == 0) begin
-      r.sp = 1'b1;
-      r.sv = a;
-      return r;
-    end
+    // inf/NaN; the datapath fields below are don't-care when sp. A zero operand is not special:
+    // its significand is 0 (hidden bit = exponent nonzero), and align/add/round return the other.
+    r.sp = (a[30:23] == 8'hFF || b[30:23] == 8'hFF);
+    if (is_nan(a) || is_nan(b)) r.sv = FADD_SV_NAN;
+    else if (a[30:23] == 8'hFF && b[30:23] == 8'hFF && a[31] != b[31]) r.sv = FADD_SV_NAN;
+    else r.sv = {(a[30:23] == 8'hFF) ? a[31] : b[31], 2'b10};
     if (b[30:0] > a[30:0]) begin
       t = a; a = b; b = t;
     end
@@ -193,8 +186,8 @@ package otpu_fp;
     r.sub = a[31] ^ b[31];
     r.e = a[30:23];
     r.d = a[30:23] - b[30:23];
-    r.ma = {1'b1, a[22:0], 3'b000};
-    r.mb = {1'b1, b[22:0], 3'b000};
+    r.ma = {a[30:23] != 8'd0, a[22:0], 3'b000};
+    r.mb = {b[30:23] != 8'd0, b[22:0], 3'b000};
     return r;
   endfunction
 
@@ -232,7 +225,7 @@ package otpu_fp;
     end else begin
       if (q.sum == 0 && !q.sp) begin
         n.sp = 1'b1;
-        n.sv = F_ZERO;
+        n.sv = FADD_SV_ZERO;
       end
       lz = int'(lzc27(q.sum[26:0]));
       n.mn = q.sum[26:0] << lz;
@@ -246,7 +239,7 @@ package otpu_fp;
     logic signed [9:0] e;
     logic [23:0] mm;
     logic [24:0] mr;
-    if (n.sp) return n.sv;
+    if (n.sp) return fadd_sv(n.sv);
     e = n.e;
     g  = n.mn[2];
     rs = n.mn[1] | n.mn[0];
