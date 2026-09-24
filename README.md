@@ -169,7 +169,7 @@ simulator vs Hugging Face (`python3 tools/compare_hf.py --emulate`):
 model runs in W8A8, meaning weights (W) and the activations fed to the matrix unit (A) are
 stored as 8-bit integers instead of 32-bit floats. The rounding shifts the scores slightly, so
 when two candidate tokens are nearly tied the device can pick the other one. A float64 model
-with the same 8-bit rounding picks the same tokens as the device, which shows the differences
+with the same 8-bit rounding picks the same tokens as the device where we checked, which shows the differences
 come from the quantization and not from a bug.
 
 ## Lens
