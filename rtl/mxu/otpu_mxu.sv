@@ -148,6 +148,11 @@ module otpu_mxu
   f32_t                fi [MCOLS];
   // S0's ACT RAM block and scales are the ACT RAM's registered read
   assign a0 = act_data;
+  // the scale FIFO's registered read is kept free of logic (so it maps into the block RAM's
+  // output register); unit-scale chunks are substituted after it
+  f32_t ws0r;
+  logic cu0;
+  assign ws0 = cu0 ? F_ONE : ws0r;
   always_comb for (int j = 0; j < MCOLS; j++) as0[j] = act_scale[j*32 +: 32];
 
   always_ff @(posedge clk) if (en_c) begin
@@ -161,7 +166,8 @@ module otpu_mxu
       m0.q <= ck[1:0];
     end
     w0 <= f_data[f_head];
-    ws0 <= c_unit ? F_ONE : f_scale[s_head];
+    ws0r <= f_scale[s_head];
+    cu0 <= c_unit;
     // S5, S6: int -> fp32
     for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(s4[j]);
     for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
