@@ -81,6 +81,24 @@ package otpu_fp;
     return r;
   endfunction
 
+  // Align while collecting the sticky: each right-shift stage ORs the bits it drops.
+  // Equals {x >> k, |x[k-1:0]} for k = 0..31 (x is 27 bits, so k >= 27 gives y = 0).
+  typedef struct packed {
+    logic        st;
+    logic [26:0] y;
+  } align27_t;
+
+  function automatic align27_t align27(input logic [26:0] x, input logic [4:0] k);
+    align27_t r;
+    r.y = x; r.st = 1'b0;
+    if (k[4]) begin r.st = r.st | (|r.y[15:0]); r.y = r.y >> 16; end
+    if (k[3]) begin r.st = r.st | (|r.y[7:0]);  r.y = r.y >> 8;  end
+    if (k[2]) begin r.st = r.st | (|r.y[3:0]);  r.y = r.y >> 4;  end
+    if (k[1]) begin r.st = r.st | (|r.y[1:0]);  r.y = r.y >> 2;  end
+    if (k[0]) begin r.st = r.st | r.y[0];       r.y = r.y >> 1;  end
+    return r;
+  endfunction
+
   // |x[k-1:0]| for a variable k (0..32)
   function automatic logic sticky_below(input logic [31:0] x, input logic [5:0] k);
     logic [31:0] mask;
@@ -210,16 +228,12 @@ package otpu_fp;
   function automatic fadd_p2_t fp_add_s2(input fadd_p1_t r);
     fadd_p2_t q;
     logic [26:0] mb;
-    logic stk;
+    align27_t al;
     q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub;
     q.e = r.e + 8'd1;                        // pre-incremented for the 28-bit normalize in s3
-    mb = r.mb;
-    if (r.d > 8'd26) begin
-      mb = 27'd1;
-    end else if (r.d != 0) begin
-      stk = sticky_below({5'd0, mb}, 6'(r.d));
-      mb = (mb >> r.d) | {26'd0, stk};
-    end
+    // d = 0 shifts nothing (st = 0); d > 26 overrides, so the shifter only sees d[4:0].
+    al = align27(r.mb, r.d[4:0]);
+    mb = (r.d > 8'd26) ? 27'd1 : (al.y | {26'd0, al.st});
     q.sum = r.sub ? ({1'b0, r.ma} - {1'b0, mb}) : ({1'b0, r.ma} + {1'b0, mb});
     return q;
   endfunction
