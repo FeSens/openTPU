@@ -22,7 +22,8 @@ module otpu_tmem #(
   parameter int SID   = 0
 ) (
   input  logic                                clk,
-  input  logic [NRP-1:0][LANES-1:0]           r_en,
+  input  logic [NRP-1:0][LANES-1:0]           r_en,     // granted reads
+  input  logic [NRP-1:0][LANES-1:0]           r_req,    // requested reads (r_en before the grant)
   input  logic [NRP-1:0][LANES-1:0][31:0]     r_addr,
   output logic [NRP-1:0][LANES-1:0][31:0]     r_data,
   input  logic [NWP-1:0][LANES-1:0]           w_en,
@@ -72,16 +73,18 @@ module otpu_tmem #(
   // ---- read ports
   for (genvar p = 0; p < NRP; p++) begin : g_port
     // per bank: the address of the lane that reads it (lanes of one port hit distinct banks or
-    // read the same word, so an AND-OR merge is exact)
+    // read the same word, so an AND-OR merge is exact). A port belongs to one unit and the
+    // grant is all-or-nothing per unit, so the address is merged from the requests and the
+    // grant only reaches the block RAM's enable, not its address pins.
     logic [LANES-1:0]         b_en;
     logic [LANES-1:0][IW-1:0] b_a;
     always_comb begin
       b_en = '0; b_a = '0;
       for (int b = 0; b < LANES; b++)
         for (int l = 0; l < LANES; l++)
-          if (r_en[p][l] && r_addr[p][l][BW-1:0] == BW'(b)) begin
-            b_en[b] = 1'b1;
-            b_a[b] = b_a[b] | r_addr[p][l][BW +: IW];
+          if (r_addr[p][l][BW-1:0] == BW'(b)) begin
+            if (r_en[p][l]) b_en[b] = 1'b1;
+            if (r_req[p][l]) b_a[b] = b_a[b] | r_addr[p][l][BW +: IW];
           end
     end
     logic [LANES-1:0][31:0] q;

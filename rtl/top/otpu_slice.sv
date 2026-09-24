@@ -127,7 +127,7 @@ module otpu_slice
   logic [NWP-1:0][LANES-1:0]       wq_en, w_en;
   logic [NWP-1:0][LANES-1:0][31:0] w_addr, w_data;
   otpu_tmem #(.WORDS(TMEM_WORDS), .LANES(LANES), .NRP(NRP), .NWP(NWP), .WPB(WPB), .SID(SID)) u_tmem (
-    .clk, .r_en, .r_addr, .r_data, .w_en, .w_addr, .w_data, .dump);
+    .clk, .r_en, .r_req(rq_en), .r_addr, .r_data, .w_en, .w_addr, .w_data, .dump);
   assign coll_rdata = r_data[P_COLL];
   // the units' TMEM requests
   logic [LANES-1:0]        dma_ren, dma_wen, mxu_ren, mxu_wen, q_ren, q_ren2;

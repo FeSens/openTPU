@@ -83,6 +83,7 @@ module otpu_mxu
   // ================================================================== command queue (2)
   logic [31:0] q_out [2], q_total [2];
   logic [15:0] q_KB [2], q_ors [2];
+  logic [31:0] q_mxo [2];                     // RMAX output base: out + M * ors (no multiply later)
   logic [7:0]  q_M [2], q_ab [2];
   logic        q_unit [2], q_acc [2], q_rmax [2], q_asc [2], q_go [2];
   logic [31:0] q_asa [2];
@@ -421,7 +422,7 @@ module otpu_mxu
       for (int k = 0; k < LANES; k++) begin
         if (32'(mx_i) + 32'(k) < 32'(c_M)) begin
           t_wen[k] = 1'b1;
-          t_waddr[k] = c_out + 32'(c_M) * 32'(q_ors[q_h]) + 32'(mx_i) + 32'(k);
+          t_waddr[k] = q_mxo[q_h] + 32'(mx_i) + 32'(k);
           t_wdata[k] = mx[MW'(32'(mx_i) + 32'(k))];
         end
       end
@@ -461,6 +462,7 @@ module otpu_mxu
         q_total[qi] <= 32'(cmd.w4[15:0]) * 32'(cmd.w4[31:16]);
         q_KB[qi]    <= cmd.w4[31:16];
         q_ors[qi]   <= cmd.w6[15:0];
+        q_mxo[qi]   <= cmd.w3 + 32'(cmd.w6[23:16]) * 32'(cmd.w6[15:0]);
         q_M[qi]     <= cmd.w6[23:16];
         q_ab[qi]    <= cmd.w6[31:24];
         q_unit[qi]  <= cmd.flags[0];
