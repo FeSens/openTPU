@@ -382,13 +382,23 @@ module otpu_mxu
   rmw_t r0, rw;                               // r0: data arriving now; rw: at the write stage
   rmw_t rx;                                   // RMAX (no ACC): drained lanes, compared next cycle
   f32_t ry [NL];
+  // r1: r0 one granted cycle later, with the old values registered (xo): no path from the TMEM
+  // block RAMs into the fmadd's DSP inputs in one cycle
+  rmw_t r1;
+  f32_t xo [NL];
+  always_ff @(posedge clk)
+    if (rst) r1 <= '0;
+    else if (t_gnt) begin
+      r1 <= r0;
+      for (int k = 0; k < NL; k++) xo[k] <= t_rdata[k];
+    end
   for (genvar k = 0; k < NL; k++) begin : g_rmw
     f32_t al;
-    assign al = c_asc ? alpha[r0.col[k][MW-2:0]] : F_ONE;
-    otpu_fmadd #(.LM(LM), .LA(LA)) u_y (.clk, .en(t_gnt), .a(t_rdata[k]), .b(al), .c(r0.nv[k]),
+    assign al = c_asc ? alpha[r1.col[k][MW-2:0]] : F_ONE;
+    otpu_fmadd #(.LM(LM), .LA(LA)) u_y (.clk, .en(t_gnt), .a(xo[k]), .b(al), .c(r1.nv[k]),
                                         .y(ry[k]));
   end
-  otpu_delay #(.W($bits(rmw_t)), .N(LM + LA)) u_rw (.clk, .en(t_gnt), .d(r0), .q(rw));
+  otpu_delay #(.W($bits(rmw_t)), .N(LM + LA)) u_rw (.clk, .en(t_gnt), .d(r1), .q(rw));
   logic [3:0] rmw_n;                          // rows' lanes in flight (any nonzero = busy)
 
   // RMAX
@@ -396,7 +406,7 @@ module otpu_mxu
   logic [MCOLS-1:0] mx_have;
   logic mx_done;
 
-  wire c_drained = c_act && (c_pop == c_total) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !rx.v;
+  wire c_drained = c_act && (c_pop == c_total) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
   wire mx_go     = c_drained && c_rmax && !mx_done && (c_total != 0);
   wire c_fin     = c_drained && (!c_rmax || mx_done || c_total == 0);
   wire al_go     = c_act && c_asc && al_st == 2'd0;
