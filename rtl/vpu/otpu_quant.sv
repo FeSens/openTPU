@@ -401,7 +401,7 @@ module otpu_quant
       qb[l] <= q8_s2(qm);
     end
   end
-  otpu_delay #(.W($bits(wm_t)), .N(LM + 2)) u_wq (.clk, .en, .d(wq_r), .q(wqd));
+  otpu_qdly #(.W($bits(wm_t)), .N(LM + 2)) u_wq (.clk, .rst, .en, .d(wq_r), .q(wqd));  // ends in a flip-flop
   otpu_delay #(.W(32), .N(LM + 2)) u_ws (.clk, .en, .d(wsc_r), .q(wsc_d));
 
   // QST scale word: written when the group's scale arrives (no data writes are in flight)
