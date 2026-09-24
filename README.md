@@ -142,11 +142,6 @@ DDR3 behaviour.
 | Attention 6 q / 1 kv head, T=2048 | 6,535 | 66.1% |
 | Full attention layer at pos=1023 | 27,287 | 91.3% |
 
-Attention was at about 98% earlier in the project. The vector unit was then split into simple
-lanes plus a quarter as many lanes for exp2, recip and rsqrt, which saved about 70K LUT. Since
-then, attention with 4 or more query rows per KV head waits on exp2. Qwen3-0.6B has 2 rows
-per KV head, so it is affected less.
-
 One Qwen3-0.6B decode token at the board configuration (1 slice, 2 MXU columns, 8 lanes, AXI
 memory path) takes about 6.4 M cycles. At an assumed 100 MHz that would be about 15 tokens/s
 before host overhead. That is a projection, not a measurement.
