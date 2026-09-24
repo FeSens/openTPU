@@ -76,6 +76,35 @@ class Run:
         print(f"[tourney] champion branch {self.branch} <- {self.a.base} ({base[:9]})")
         return base
 
+    def sync_base(self) -> None:
+        """Merge the base branch into the champion when it has moved (other components'
+        verified winners land there), so candidates are built and tested against the current
+        design. A conflicting merge is abandoned: the round runs on the old champion."""
+        behind = git("rev-list", "--count", f"{self.branch}..{self.a.base}", cwd=self.repo)
+        if behind == "0":
+            return
+        wt = self.worktree("sync", self.branch, detach=True)
+        try:
+            r = subprocess.run(["git", "merge", "--no-edit", "-q", self.a.base], cwd=wt,
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                git("merge", "--abort", cwd=wt, check=False)
+                print(f"[tourney] sync: {self.a.base} does not merge into {self.branch} "
+                      f"cleanly; staying on the old champion", flush=True)
+                return
+            try:                                   # a clean text merge can still be broken
+                G.pytest(wt, self.comp["tests"]["fast"], None, "fast")
+            except G.GateFailure as e:
+                print(f"[tourney] sync: the merged champion fails its fast tests ({e.tail[-200:]}); "
+                      f"staying on the old champion", flush=True)
+                return
+            sha = git("rev-parse", "HEAD", cwd=wt)
+            git("branch", "-f", self.branch, sha, cwd=self.repo)
+            print(f"[tourney] sync: merged {behind} commits of {self.a.base} -> "
+                  f"{self.branch} {sha[:9]}", flush=True)
+        finally:
+            self.drop(wt, None)
+
     def champion(self) -> dict:
         """The champion's metrics, measured once per champion commit (cached)."""
         sha = git("rev-parse", self.branch, cwd=self.repo)
@@ -248,6 +277,7 @@ class Run:
 
     # ---- rounds
     def round(self, r: int) -> None:
+        self.sync_base()
         champ = self.champion()
         print(f"[tourney] round {r}: champion {champ['sha'][:9]} area_eq {champ['area_eq']:.0f} "
               f"fmax {champ['fmax']:.0f} MHz perf {champ.get('perf_cycles')}", flush=True)

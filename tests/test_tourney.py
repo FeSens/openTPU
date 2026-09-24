@@ -248,3 +248,11 @@ def test_report(tmp_path, monkeypatch):
     txt = R.report("otpu_x")
     assert "| opus | 1 | 1 |" in txt and "100%" in txt and "| fable | 1 | 0 |" in txt
     assert (d / "REPORT.md").exists()
+
+
+def test_fp_internals_rule():
+    from tools.tourney import gates as G
+    assert G.fp_internal_uses("rtl/vpu/otpu_quant.sv", "m = fp_mul_s1(a, b); fadd_p1_t r;") == \
+        ["fadd_p1_t", "fp_mul_s1"]
+    assert G.fp_internal_uses("rtl/vpu/otpu_fp.sv", "fp_mul_s1(a, b)") == []
+    assert G.fp_internal_uses("rtl/vpu/otpu_vpu.sv", "otpu_fmadd u (.a, .b); fp_gt(x, y)") == []

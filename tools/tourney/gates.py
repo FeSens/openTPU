@@ -58,6 +58,21 @@ def offlimits(paths: list[str], allowed: list[str]) -> list[str]:
     return [p for p in paths if not any(fnmatch.fnmatch(p, g) for g in ok)]
 
 
+# The fp operators' internals (stage functions, intermediate structs) belong to the otpu_fp
+# tournament, which may change them at will: other components must use the operator modules
+# (otpu_fmul / otpu_fadd / otpu_fmadd) or otpu_fp's whole-operation functions. A private
+# operator built from the stages passes on its own branch and breaks when both are merged.
+FP_FILES = ("rtl/vpu/otpu_fp.sv", "rtl/vpu/otpu_fpipe.sv")
+FP_INTERNALS = re.compile(r"\b(fp_add_s\d|fp_mul_s\d|fadd_p\d_t|fadd_nm_t|fmul_mid_t)\b")
+
+
+def fp_internal_uses(path: str, text: str) -> list[str]:
+    """The fp stage internals a non-fp RTL file uses (empty for the fp files themselves)."""
+    if path in FP_FILES or not path.endswith(".sv"):
+        return []
+    return sorted(set(m.group(1) for m in FP_INTERNALS.finditer(text)))
+
+
 def sandbox(wt: Path, allowed: list[str]) -> list[str]:
     """Returns the RTL files the candidate changed; raises if anything else changed."""
     paths = changed_paths(wt)
@@ -67,6 +82,12 @@ def sandbox(wt: Path, allowed: list[str]) -> list[str]:
     rtl = [p for p in paths if p not in NOTES]
     if not rtl:
         raise GateFailure("sandbox", "no RTL change")
+    for p in rtl:
+        f = wt / p
+        uses = fp_internal_uses(p, f.read_text()) if f.exists() else []
+        if uses:
+            raise GateFailure("sandbox", f"{p} uses otpu_fp stage internals {uses}: use the "
+                                         "operator modules (otpu_fmul/otpu_fadd/otpu_fmadd)")
     return rtl
 
 
