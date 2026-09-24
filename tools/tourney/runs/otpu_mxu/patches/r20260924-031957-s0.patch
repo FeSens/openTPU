@@ -1,0 +1,60 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index 14f6fa0..f5e68c2 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -388,6 +388,7 @@ module otpu_mxu
+   } rmw_t;
+   rmw_t r0, rw;                               // r0: data arriving now; rw: at the write stage
+   rmw_t rx;                                   // RMAX (no ACC): drained lanes, compared next cycle
++  rmw_t rz;                                   // RMAX (ACC): written lanes (nv = ry), compared next cycle
+   f32_t ry [NL];
+   // r1: r0 one granted cycle later, with the old values registered (xo): no path from the TMEM
+   // block RAMs into the fmadd's DSP inputs in one cycle
+@@ -413,7 +414,7 @@ module otpu_mxu
+   logic [MCOLS-1:0] mx_have;
+   logic mx_done;
+ 
+-  wire c_drained = c_act && (c_pop == c_total) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
++  wire c_drained = c_act && (c_pop == c_total) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v && !rz.v;
+   wire mx_go     = c_drained && c_rmax && !mx_done && (c_total != 0);
+   wire c_fin     = c_drained && (!c_rmax || mx_done || c_total == 0);
+   wire al_go     = c_act && c_asc && al_st == 2'd0;
+@@ -479,7 +480,7 @@ module otpu_mxu
+       rf_h <= '0; rf_t <= '0; rf_n <= '0;
+       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
+       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
+-      r0 <= '0; rx <= '0; rmw_n <= '0;
++      r0 <= '0; rx <= '0; rz <= '0; rmw_n <= '0;
+       cyc <= '0; st_starve <= '0; st_bp <= '0; st_frz <= '0; st_deny <= '0;
+     end else begin
+       logic [1:0] qn;
+@@ -575,6 +576,12 @@ module otpu_mxu
+       if (t_gnt) begin
+         r0 <= '0;
+         rx <= '0;
++        rz <= '0;
++        // rw is an SRL tap: register the ACC candidates before they meet the running max
++        if (rw.v && c_rmax) begin
++          rz <= rw;
++          for (int k = 0; k < NL; k++) rz.nv[k] <= ry[k];
++        end
+         if (drain_go) begin
+           if (c_acc) begin
+             r0.v <= 1'b1;
+@@ -610,12 +617,12 @@ module otpu_mxu
+             end
+           end
+         end
+-        if (rw.v && c_rmax) begin
++        if (rz.v) begin
+           for (int k = 0; k < NL; k++) begin
+-            if (rw.m[k]) begin
++            if (rz.m[k]) begin
+               logic [MW-2:0] j;
+-              j = rw.col[k][MW-2:0];
+-              if (!mx_have[j] || fp_gt(ry[k], mx[j])) mx[j] <= ftz(ry[k]);
++              j = rz.col[k][MW-2:0];
++              if (!mx_have[j] || fp_gt(rz.nv[k], mx[j])) mx[j] <= ftz(rz.nv[k]);
+               mx_have[j] <= 1'b1;
+             end
+           end

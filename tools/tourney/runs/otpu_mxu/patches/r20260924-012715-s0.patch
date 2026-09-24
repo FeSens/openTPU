@@ -1,0 +1,65 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index 83244ff..4556ac3 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -277,9 +277,19 @@ module otpu_mxu
+   // the ACT scale travels with the chunk to the second multiplier (S0 + LDOT + 2 + LM)
+   f32_t as_d [MCOLS];
+   f32_t t1 [MCOLS], t2 [MCOLS], pacc [MCOLS];
+-  cm_t  mt, ma;                              // meta at the adder inputs / outputs
+-  otpu_delay #(.W($bits(cm_t)), .N(2 * LM)) u_mt (.clk, .en(en_c), .d(m6), .q(mt));
+-  otpu_delay #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .en(en_c), .d(mt), .q(ma));
++  // Meta at the adder inputs (mt) and one advance before the adder outputs (ma_p). Yosys maps
++  // otpu_delay's last stage into the SRL too, so mt's last stage is a local register and the
++  // combine selects are registered decodes of ma_p (FFs, not SRL outputs, feed the adders).
++  cm_t  mt_p, mt, ma_p;
++  logic [NPART-1:0] csel;                    // partial q of the row is final at the adder output
++  logic lch;                                 // the row's last block is there: combine
++  otpu_delay #(.W($bits(cm_t)), .N(2 * LM - 1)) u_mt (.clk, .en(en_c), .d(m6), .q(mt_p));
++  otpu_delay #(.W($bits(cm_t)), .N(LA - 1)) u_ma (.clk, .en(en_c), .d(mt), .q(ma_p));
++  always_ff @(posedge clk) if (en_c) begin
++    mt <= mt_p;
++    for (int q = 0; q < NPART; q++) csel[q] <= ma_p.v && ma_p.fin && ma_p.q == 2'(q);
++    lch <= ma_p.v && ma_p.last;              // last implies fin
++  end
+   for (genvar j = 0; j < MCOLS; j++) begin : g_col
+     f32_t fb, prev;
+     otpu_delay #(.W(32), .N(LDOT + 2 + LM)) u_as (.clk, .en(en_c), .d(as0[j]), .q(as_d[j]));
+@@ -298,19 +308,20 @@ module otpu_mxu
+   always_comb begin
+     for (int j = 0; j < MCOLS; j++)
+       for (int q = 0; q < NPART; q++)
+-        cv[j][q] = (ma.v && ma.fin && ma.q == 2'(q)) ? pacc[j] : (pmask[q] ? pset[j][q] : F_ZERO);
++        cv[j][q] = csel[q] ? pacc[j] : (pmask[q] ? pset[j][q] : F_ZERO);
+   end
+   always_ff @(posedge clk) begin
+     if (rst) pmask <= '0;
+-    else if (en_c && ma.v && ma.fin) begin
+-      if (ma.last) pmask <= '0;
+-      else begin
+-        pmask[ma.q] <= 1'b1;
+-        for (int j = 0; j < MCOLS; j++) pset[j][ma.q] <= pacc[j];
+-      end
++    else if (en_c) begin
++      if (lch) pmask <= '0;
++      else
++        for (int q = 0; q < NPART; q++)
++          if (csel[q]) begin
++            pmask[q] <= 1'b1;
++            for (int j = 0; j < MCOLS; j++) pset[j][q] <= pacc[j];
++          end
+     end
+   end
+-  wire launch = ma.v && ma.last;
+   f32_t c01 [MCOLS], c23 [MCOLS], rowv [MCOLS];
+   logic lv1, lv2;
+   for (genvar j = 0; j < MCOLS; j++) begin : g_comb
+@@ -318,7 +329,7 @@ module otpu_mxu
+     otpu_fadd #(.LAT(LA)) u_c23 (.clk, .en(en_c), .a(cv[j][1]), .b(cv[j][3]), .y(c23[j]));
+     otpu_fadd #(.LAT(LA)) u_c (.clk, .en(en_c), .a(c01[j]), .b(c23[j]), .y(rowv[j]));
+   end
+-  otpu_delay #(.W(1), .N(2 * LA)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
++  otpu_delay #(.W(1), .N(2 * LA)) u_lv (.clk, .en(en_c), .d(lch), .q(lv2));
+ 
+   // ================================================================== result FIFO
+   f32_t        rf_v [RF][MCOLS];

@@ -1,0 +1,144 @@
+diff --git a/rtl/seq/otpu_seq.sv b/rtl/seq/otpu_seq.sv
+index 81a14c0..3b15da3 100644
+--- a/rtl/seq/otpu_seq.sv
++++ b/rtl/seq/otpu_seq.sv
+@@ -66,10 +66,30 @@ module otpu_seq
+   logic [31:0] stk_start [4];
+   logic [31:0] stk_end   [4];
+   logic [31:0] stk_rem   [4];
++  // stk_g1[k] == (stk_rem[k] > 1), stk_g2[k] == (stk_rem[k] > 2) for every live entry (k < sp):
++  // written with stk_rem, so the fetch-address path reads flags instead of comparing counts
++  logic        stk_g1    [4];
++  logic        stk_g2    [4];
++  logic [3:0]  top_oh, sec_oh;   // the top entry (sp - 1) / the one below it (sp - 2), one-hot
++  logic        top_g1, top_g2, sec_g1;
++  always_comb begin
++    for (int k = 0; k < 4; k++) begin
++      top_oh[k] = sp == 3'(k + 1);
++      sec_oh[k] = sp == 3'(k + 2);
++    end
++    top_g1 = 1'b0; top_g2 = 1'b0; sec_g1 = 1'b0;
++    for (int k = 0; k < 4; k++) begin
++      top_g1 |= top_oh[k] && stk_g1[k];
++      top_g2 |= top_oh[k] && stk_g2[k];
++      sec_g1 |= sec_oh[k] && stk_g1[k];
++    end
++  end
+   // LOOP takes two cycles: the first registers the trip count and body length (pc holds), the
+-  // second enters or skips the loop from registers -- keeps the add off the fetch-address path
++  // second enters or skips the loop from registers -- keeps the add off the fetch-address path.
++  // The flags lp_nz (lp_cnt != 0), lp_g1 (lp_cnt > 1) and lp_len1 (lp_len == 1) come with them
+   logic        lp;
+   logic [31:0] lp_cnt, lp_len;
++  logic        lp_nz, lp_g1, lp_len1;
+ 
+   // The footprint as the window keeps it: an MM's ASCALE TMEM range (fp_t rd[3]) never comes
+   // with its streamed-scale DRAM range (rd[1]; ASCALE needs UNIT, docs/isa.md), so it moves
+@@ -205,14 +225,29 @@ module otpu_seq
+     end
+   end
+ 
+-  // ---- loop-end handling for the instruction at pc
++  // ---- loop-end handling for the instruction at pc. Every entry's end is compared with fa and
++  // pc in parallel; the sp select comes after the comparators, as a 1-bit AND-OR
++  logic [3:0]  efa, epc;         // stk_end[k] == fa / pc
+   logic        at_end;
+-  always_comb at_end = (sp != 0) && (stk_end[sp-1] == pc);
++  always_comb begin
++    for (int k = 0; k < 4; k++) begin
++      efa[k] = stk_end[k] == fa;
++      epc[k] = stk_end[k] == pc;
++    end
++    at_end = |(epc & top_oh);
++  end
+ 
++  // the top keeps rem - 1 > 1 iff rem > 2, and rem - 1 > 2 iff rem > 3
+   task automatic advance();
+     if (at_end) begin
+-      if (stk_rem[sp-1] > 1) stk_rem[sp-1] <= stk_rem[sp-1] - 1;
+-      else sp <= sp - 1;
++      if (top_g1) begin
++        for (int k = 0; k < 4; k++)
++          if (top_oh[k]) begin
++            stk_rem[k] <= stk_rem[k] - 1;
++            stk_g1[k]  <= stk_g2[k];
++            stk_g2[k]  <= |stk_rem[k][31:2];
++          end
++      end else sp <= sp - 1;
+     end
+   endtask
+ 
+@@ -234,7 +269,8 @@ module otpu_seq
+   logic        hit;              // fa's successor is a loop start ...
+   logic [31:0] hit_pc;           // ... this one
+   logic        lp_z;             // the LOOP's trip count (R[ra] + iw[2]) is 0
+-  logic [31:0] lp_a;
++  logic        lp_one;           // ... is 1
++  logic [31:0] lp_a, lp_c1;
+   logic [31:0] succ;
+   always_comb begin
+     case (op)
+@@ -244,20 +280,23 @@ module otpu_seq
+       default: adv = dunit >= 0 && r_take;
+     endcase
+     ld = !ir_v || (!stopping && !halted && adv);
+-    hit1 = (sp != 0) && (stk_end[sp-1] == fa);
+-    hit2 = (sp >= 2) && (stk_end[sp-2] == fa);
+-    hit = hit1 && stk_rem[sp-1] > 1;                                          // D
++    hit1 = |(efa & top_oh);
++    hit2 = |(efa & sec_oh);
++    hit = hit1 && top_g1;                                                     // D
+     hit_pc = stk_start[sp-1];
+     if (ir_v && op == OP_LOOP) begin
+-      if (lp_cnt != 0) begin hit = lp_len == 1 && lp_cnt > 1; hit_pc = fa; end  // A
++      if (lp_nz) begin hit = lp_len1 && lp_g1; hit_pc = fa; end                // A
+     end else if (ir_v && at_end) begin
+-      if (stk_rem[sp-1] > 1) hit = hit1 && stk_rem[sp-1] > 2;                // B
+-      else begin hit = hit2 && stk_rem[sp-2] > 1; hit_pc = stk_start[sp-2]; end // C
++      if (top_g1) hit = hit1 && top_g2;                                       // B
++      else begin hit = hit2 && sec_g1; hit_pc = stk_start[sp-2]; end          // C
+     end
+     succ = hit ? hit_pc : fa + 1;
+-    // a + b == 0 without the carry chain: every sum bit is 0 iff a ^ b is the carry, (a | b) << 1
++    // a + b == K without the carry chain: every sum bit is K's iff a ^ b ^ K is the carry,
++    // c << 1 with c_i = K_i ? a_i & b_i : a_i | b_i (K = 0: all a | b; K = 1: bit 0 a & b)
+     lp_a = rv(ra);
+     lp_z = (lp_a ^ iw[2]) == ((lp_a | iw[2]) << 1);
++    lp_c1 = {lp_a[31:1] | iw[2][31:1], lp_a[0] & iw[2][0]};
++    lp_one = (lp_a ^ iw[2] ^ 32'd1) == (lp_c1 << 1);
+     if (rst) fa_d = '0;
+     else if (ir_v && op == OP_LOOP && !lp && !stopping && !halted)
+       fa_d = lp_z ? pc + 1 + iw[1] : pc + 1;
+@@ -347,6 +386,13 @@ module otpu_seq
+           fa != ((op == OP_LOOP) ? ((lp_cnt == 0) ? pc + 1 + lp_len : pc + 1) :
+                  (at_end && stk_rem[sp-1] > 1) ? stk_start[sp-1] : pc + 1))
+         $fatal(1, "otpu_seq: fetch address %0d does not follow pc %0d", fa, pc);
++      // the loop flags match the counts they stand for
++      for (int k = 0; k < 4; k++)
++        if (k < sp && (stk_g1[k] != (stk_rem[k] > 1) || stk_g2[k] != (stk_rem[k] > 2)))
++          $fatal(1, "otpu_seq: loop stack entry %0d flags %b%b do not match count %0d",
++                 k, stk_g1[k], stk_g2[k], stk_rem[k]);
++      if (lp && (lp_nz != (lp_cnt != 0) || lp_g1 != (lp_cnt > 1) || lp_len1 != (lp_len == 1)))
++        $fatal(1, "otpu_seq: LOOP flags do not match count %0d / length %0d", lp_cnt, lp_len);
+ `endif
+       icount <= icount + 32'(r_ret) + 32'(c_go);
+       // completions
+@@ -456,12 +502,17 @@ module otpu_seq
+               lp <= 1'b1;
+               lp_cnt <= rv(ra) + iw[2];
+               lp_len <= iw[1];
++              lp_nz <= !lp_z;
++              lp_g1 <= !lp_z && !lp_one;
++              lp_len1 <= iw[1] == 1;
+             end else begin
+               lp <= 1'b0;
+-                if (lp_cnt != 0) begin
++              if (lp_nz) begin
+                 stk_start[sp] <= pc + 1;
+                 stk_end[sp]   <= pc + lp_len;
+                 stk_rem[sp]   <= lp_cnt;
++                stk_g1[sp]    <= lp_g1;
++                stk_g2[sp]    <= |lp_cnt[31:2] || &lp_cnt[1:0];
+                 sp <= sp + 1;
+               end
+             end

@@ -1,0 +1,97 @@
+diff --git a/rtl/vpu/otpu_quant.sv b/rtl/vpu/otpu_quant.sv
+index 1d20f5b..b46c627 100644
+--- a/rtl/vpu/otpu_quant.sv
++++ b/rtl/vpu/otpu_quant.sv
+@@ -269,7 +269,7 @@ module otpu_quant
+ 
+   // ------------------------------------------------------------------ command
+   logic        busy, is_st, rowm, csf, rsf, strm, ackw;
+-  logic [31:0] csb, rsb, dst, sdst, srs, drs, es;
++  logic [31:0] csb, rsb, sdst, srs, drs, es;
+   logic [15:0] rows, KB;
+   logic [7:0]  ab;
+   logic [31:0] G;                            // elements per group
+@@ -283,6 +283,8 @@ module otpu_quant
+   logic [31:0] g, e, gi;                     // group in row, element in group, group index
+   logic [31:0] row_src, grp_src;             // TMEM address of the row / of the group
+   logic [31:0] rel;                          // element index within the row of e
++  logic [31:0] badr, bgrp, brs;              // QST byte address dst + r*drs + rel*es (mod 2^32)
++                                             // at (r, rel) / the group's start / rel = 0
+   logic        pass;                         // two-pass: 0 amax, 1 quantize
+   logic        rd_wait;                      // two-pass: waiting for the scale
+   logic        rd_done;
+@@ -338,20 +340,10 @@ module otpu_quant
+   end
+   otpu_delay #(.W($bits(rm_t)), .N(QL)) u_mp (.clk, .en, .d(m0), .q(mp));
+ 
+-  // two-pass QST byte address dst + row*drs + rel*es, built beside the prescale in three stages
+-  // (inputs | 17-bit partial products | sum) so no multiply cascade sits in one cycle
+-  logic [31:0] ba_rel, ba_row, ba_s, mp_baddr;
+-  logic [31:0] ba_p [4];
+-  always_ff @(posedge clk) if (en) begin
+-    ba_rel <= m0.rel;
+-    ba_row <= 32'(m0.row);
+-    ba_p[0] <= ba_row * 32'(drs[16:0]);
+-    ba_p[1] <= (32'(ba_row[14:0]) * 32'(drs[31:17])) << 17;
+-    ba_p[2] <= ba_rel * 32'(es[16:0]);
+-    ba_p[3] <= (32'(ba_rel[14:0]) * 32'(es[31:17])) << 17;
+-    ba_s <= dst + ba_p[0] + ba_p[1] + ba_p[2] + ba_p[3];
+-  end
+-  otpu_delay #(.W(32), .N(QL - 3)) u_ba (.clk, .en, .d(ba_s), .q(mp_baddr));
++  // two-pass QST byte address dst + row*drs + rel*es: the reader's running sum badr, taken in
++  // the issue cycle like m0 (one register) and delayed with it through the prescale (QL)
++  logic [31:0] mp_baddr;
++  otpu_delay #(.W(32), .N(QL + 1)) u_ba (.clk, .en, .d(badr), .q(mp_baddr));
+ 
+   // fp_gt for the amax path: every operand there is a non-negative flushed value (an otpu_qfmul
+   // result with the sign cleared, +0, or one taken from those), where fkey is {1, a[30:0]}, so
+@@ -591,7 +583,6 @@ module otpu_quant
+       rsb   <= cmd.w5;
+       strm  <= !qst && !cmd.flags[0];
+       if (qst) begin
+-        dst  <= cmd.w2;
+         sdst <= cmd.w3;
+         rows <= cmd.w4[15:0];
+         KB   <= cmd.w4[31:16];
+@@ -609,6 +600,7 @@ module otpu_quant
+         groups <= 32'(cmd.w2[7:0]) * (cmd.flags[0] ? 32'd1 : 32'(cmd.w2[31:16]));
+       end
+       r <= '0; g <= '0; e <= '0; gi <= '0; rel <= '0;
++      badr <= cmd.w2; bgrp <= cmd.w2; brs <= cmd.w2;     // QST dst (unused by QACT)
+       row_src <= cmd.w1; grp_src <= cmd.w1;
+       pass <= 1'b0; rd_wait <= 1'b0;
+       saddr <= cmd.w3;
+@@ -644,13 +636,16 @@ module otpu_quant
+           brow[rbuf] <= r;
+           bblk[rbuf] <= g;
+         end
++        // badr follows rel (QST: ew = 1, so rel + ew is badr + es)
+         if (!rlast) begin
+           e <= e + ew;
+           rel <= rel + ew;
++          badr <= badr + es;
+         end else if (!strm && !pass) begin        // two-pass: wait for the scale, re-read
+           rd_wait <= 1'b1;
+           e <= '0;
+           rel <= rel - e;
++          badr <= bgrp;
+         end else begin                             // next group
+           e <= '0;
+           gi <= gi + 1;
+@@ -659,11 +654,16 @@ module otpu_quant
+           if (G == D && g + 1 < 32'(KB)) begin
+             g <= g + 1;
+             rel <= rel + ew;
++            badr <= badr + es;
++            bgrp <= badr + es;
+             grp_src <= grp_src + D;
+           end else begin
+             g <= '0;
+             rel <= '0;
+             r <= r + 1;
++            brs <= brs + drs;
++            badr <= brs + drs;
++            bgrp <= brs + drs;
+             row_src <= row_src + srs;
+             grp_src <= row_src + srs;
+           end

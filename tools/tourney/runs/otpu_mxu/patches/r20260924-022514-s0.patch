@@ -1,0 +1,41 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index 69150c7..c8f21f0 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -173,8 +173,11 @@ module otpu_mxu
+     for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(s4[j]);
+     for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
+     m5 <= m4; ws5 <= ws4;
+-    m6 <= m5; ws6 <= ws5;
++    m6 <= m5;
+   end
++  // ws6 (u_m1's B operand) is a reset flop: yosys never chains an FDRE into an SRL, so the DSP
++  // input sees a flop's clock-to-out, not the SRL's
++  always_ff @(posedge clk) if (rst) ws6 <= '0; else if (en_c) ws6 <= ws5;
+ 
+   // dot-product latency S0 -> s4 (the tree: 4 register levels)
+   localparam int NG = D / CL;
+@@ -296,12 +299,19 @@ module otpu_mxu
+   // the ACT scale travels with the chunk to the second multiplier (S0 + LDOT + 2 + LM)
+   f32_t as_d [MCOLS];
+   f32_t t1 [MCOLS], t2 [MCOLS], pacc [MCOLS];
++  // These lines end in a reset flop (FDRE, never absorbed into an SRL; the synchronous reset
++  // only clears the flushed pipeline): the SRL's slow clock-to-out stays off the fp operands.
+   cm_t  mt, ma;                              // meta at the adder inputs / outputs
+-  otpu_delay #(.W($bits(cm_t)), .N(2 * LM)) u_mt (.clk, .en(en_c), .d(m6), .q(mt));
+-  otpu_delay #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .en(en_c), .d(mt), .q(ma));
++  cm_t  mt_p, ma_p;
++  otpu_delay #(.W($bits(cm_t)), .N(2 * LM - 1)) u_mt (.clk, .en(en_c), .d(m6), .q(mt_p));
++  otpu_delay #(.W($bits(cm_t)), .N(LA - 1)) u_ma (.clk, .en(en_c), .d(mt), .q(ma_p));
++  always_ff @(posedge clk)
++    if (rst) begin mt <= '0; ma <= '0; end
++    else if (en_c) begin mt <= mt_p; ma <= ma_p; end
+   for (genvar j = 0; j < MCOLS; j++) begin : g_col
+-    f32_t fb, prev;
+-    otpu_delay #(.W(32), .N(LDOT + 2 + LM)) u_as (.clk, .en(en_c), .d(as0[j]), .q(as_d[j]));
++    f32_t fb, prev, asp;
++    otpu_delay #(.W(32), .N(LDOT + 1 + LM)) u_as (.clk, .en(en_c), .d(as0[j]), .q(asp));
++    always_ff @(posedge clk) if (rst) as_d[j] <= '0; else if (en_c) as_d[j] <= asp;
+     otpu_fmul #(.LAT(LM)) u_m1 (.clk, .en(en_c), .a(fi[j]), .b(ws6), .y(t1[j]));
+     otpu_fmul #(.LAT(LM)) u_m2 (.clk, .en(en_c), .a(t1[j]), .b(as_d[j]), .y(t2[j]));
+     // partial loop: pacc(block k) = pacc(block k - 4) + t(k), exactly NPART advances

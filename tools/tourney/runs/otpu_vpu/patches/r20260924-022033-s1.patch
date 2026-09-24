@@ -1,0 +1,141 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 0a29d43..19e27f4 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -527,8 +527,8 @@ module otpu_vpu
+   // k + n) and only writes lane k -- narrow muxes instead of any-of-64 reads.
+   localparam int NTB = 2;
+   localparam int TBW = $clog2(NTB);
+-  f32_t          pb [NTB][RL][LANES];
+-  logic [NTB-1:0] tb_act;                 // captured, tree in progress
++  localparam int RW = $clog2(RL);
++  logic [NTB-1:0] tb_act;                // captured, tree in progress
+   logic [6:0]    tb_n [NTB], tb_i [NTB];   // pairs in the level, next pair
+   logic [2:0]    tb_inf [NTB];             // issue cycles in flight
+   logic [31:0]   tb_dst [NTB];
+@@ -545,35 +545,74 @@ module otpu_vpu
+         tr_go = 1'b1; tr_b = TBW'(b);
+       end
+   end
+-  // issue register: the selected buffer and its pair range; pb is read the next cycle (the
+-  // issue counts as in flight from selection, so a level never reads before its inputs land).
+-  // tb_i steps by LANES from 0, so pairs is_i .. is_i+LANES-1 share row is_i / LANES and, in
+-  // levels n >= LANES (n a multiple of LANES), their partners share row (is_i + n) / LANES:
+-  // the partner row is registered here instead of decoded from per-lane sums
++  // issue register: the selected buffer and its pair range. The operands are read in the
++  // selection cycle and registered with it: earlier levels have landed (a level's first issue
++  // waits for tb_inf == 0), earlier issues of the same level only write rows below the ones
++  // read, and captures never go to a running buffer.
++  // tb_i steps by LANES from 0, so pairs tb_i .. tb_i+LANES-1 share row tb_i / LANES and, in
++  // levels n >= LANES (n a multiple of LANES), their partners share row (tb_i + n) / LANES
+   logic          is_go;
+   logic [TBW-1:0] is_b;
+   logic [6:0]    is_i, is_n;
+-  logic [5:0]    is_rb;                    // row of the same-lane partners
+-  logic          is_x;                     // n >= LANES: partners in the same lane
++  logic [RW-1:0] ra_a, ra_b;               // read rows of the selected issue (all lanes)
++  f32_t          pa [NTB][LANES], pbr [NTB][LANES], proot [NTB];
+   f32_t          tr_y [LANES];
+   logic [LANES-1:0] tr_m;
+   logic [6:0]    tr_dst_q [LA];
+   logic [TBW-1:0] tr_b_q [LA];
+   logic [LANES-1:0] tr_v_q [LA];
++  always_comb begin
++    ra_a = RW'(tb_i[tr_b][5:0] >> LW);
++    ra_b = (tb_n[tr_b] >= 7'(LANES)) ? RW'(6'(tb_i[tr_b] + tb_n[tr_b]) >> LW) : '0;
++  end
++
++  // fold buffers: one distributed RAM per (buffer, lane). A buffer is written by its capture
++  // while idle and by its tree write-backs while running, never both (a capture into a running
++  // buffer stalls; tb_act clears only with no write-back in flight), so one write port does.
++  for (genvar b = 0; b < NTB; b++) begin : g_pb
++    for (genvar k = 0; k < LANES; k++) begin : g_l
++      (* ram_style = "distributed" *) f32_t mem [RL];
++      logic we_cap, we_tr, we;
++      logic [RW-1:0] wa;
++      f32_t wd;
++      assign we_cap = en && red_act && is_sum && live(mt, tag) && mt.final_ && cap_sel == TBW'(b);
++      assign we_tr = ent && red_act && is_sum && tr_v_q[LA-1][k] && tr_b_q[LA-1] == TBW'(b);
++      assign we = !rst && (tb_act[b] ? we_tr : we_cap);
++      assign wa = tb_act[b] ? RW'(tr_dst_q[LA-1][5:0] >> LW) : mt.sub[RW-1:0];
++      assign wd = tb_act[b] ? tr_y[k] : pacc[k];
++      always_ff @(posedge clk) if (we) mem[wa] <= wd;
++`ifndef SYNTHESIS
++      always_ff @(posedge clk)
++        if (!rst && ((we_tr && !tb_act[b]) || (we_cap && tb_act[b])))
++          $error("otpu_vpu: fold buffer %0d written by %s while %s", b,
++                 we_tr ? "its tree" : "a capture", tb_act[b] ? "running" : "idle");
++`endif
++      assign pa[b][k] = mem[ra_a];
++      assign pbr[b][k] = mem[ra_b];
++      if (k == 0) begin : g_root
++        assign proot[b] = mem[0];
++      end
++    end
++  end
++
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+     logic [6:0] ia;
+     assign ia = is_i + 7'(k);
+     assign tr_m[k] = is_go && (ia < is_n);
+-    f32_t oa, ob, obx;
+-    assign oa = pb[is_b][is_i[5:0] >> LW][k];
+-    // cross-lane (n < LANES: a single issue at is_i == 0, partner lane (k + n) % LANES); n is
++    f32_t oa_q, ob_q, obx;
++    // cross-lane (n < LANES: a single issue at tb_i == 0, partner lane (k + n) % LANES); n is
+     // one-hot, so pick the lane with its bits instead of adding
+     always_comb begin
+-      obx = pb[is_b][0][(k + 1) % LANES];
+-      for (int j = 1; j < LW; j++) if (is_n[j]) obx = pb[is_b][0][(k + (1 << j)) % LANES];
++      obx = pbr[tr_b][(k + 1) % LANES];
++      for (int j = 1; j < LW; j++) if (tb_n[tr_b][j]) obx = pbr[tr_b][(k + (1 << j)) % LANES];
+     end
+-    assign ob = is_x ? pb[is_b][is_rb][k] : obx;
+-    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
++    // loaded with is_* (same enable)
++    always_ff @(posedge clk)
++      if (ent && red_act && is_sum) begin
++        oa_q <= pa[tr_b][k];
++        ob_q <= (tb_n[tr_b] >= 7'(LANES)) ? pbr[tr_b][k] : obx;
++      end
++    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa_q), .b(ob_q), .y(tr_y[k]));
+   end
+ 
+   // finished rows wait here for the (single) TMEM write lane
+@@ -738,7 +777,7 @@ module otpu_vpu
+         end
+         // ---- RSUM/RSSQ: capture the final partials of a row
+         if (red_act && is_sum && live(mt, tag) && mt.final_) begin
+-          for (int l = 0; l < LANES; l++) pb[cap_sel][mt.sub[5:0]][l] <= pacc[l];
++          // (the partials themselves are written by g_pb)
+           if (mt.row_last) begin
+             tb_act[cap_sel] <= 1'b1;
+             tb_n[cap_sel] <= 7'(NP / 2);
+@@ -758,8 +797,6 @@ module otpu_vpu
+         is_b <= tr_b;
+         is_i <= tb_i[tr_b];
+         is_n <= tb_n[tr_b];
+-        is_rb <= 6'(tb_i[tr_b] + tb_n[tr_b]) >> LW;
+-        is_x <= tb_n[tr_b] >= 7'(LANES);
+ `ifndef SYNTHESIS
+         if (tr_go && (tb_i[tr_b] % 7'(LANES) != 0 ||
+                       (tb_n[tr_b] < 7'(LANES) && tb_i[tr_b] != 0) ||
+@@ -775,8 +812,7 @@ module otpu_vpu
+           tr_dst_q[k] <= tr_dst_q[k-1];
+           tr_b_q[k] <= tr_b_q[k-1];
+         end
+-        for (int k = 0; k < LANES; k++)
+-          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][tr_dst_q[LA-1][5:0] >> LW][k] <= tr_y[k];
++        // (the write-backs of tr_v_q[LA-1] are done by g_pb)
+         for (int bb = 0; bb < NTB; bb++) begin
+           logic [2:0] inf;
+           inf = tb_inf[bb];
+@@ -794,7 +830,7 @@ module otpu_vpu
+               tb_i[bb] <= '0;
+             end else if (!pushed && 32'(rn) < NTB) begin
+               pushed = 1'b1;
+-              rq_v[TBW'(rq_h + rn)] <= pb[bb][0][0];
++              rq_v[TBW'(rq_h + rn)] <= proot[bb];
+               rq_a[TBW'(rq_h + rn)] <= tb_dst[bb];
+               rn = rn + 1;
+               tb_act[bb] <= 1'b0;

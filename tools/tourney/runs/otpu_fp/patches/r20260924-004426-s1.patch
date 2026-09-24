@@ -1,0 +1,76 @@
+diff --git a/rtl/vpu/otpu_fp.sv b/rtl/vpu/otpu_fp.sv
+index 33d0aad..185e38a 100644
+--- a/rtl/vpu/otpu_fp.sv
++++ b/rtl/vpu/otpu_fp.sv
+@@ -63,8 +63,8 @@ package otpu_fp;
+     return {1'b0, n};
+   endfunction
+ 
+-  function automatic logic [5:0] lzc27(input logic [26:0] m);
+-    return lzc32({m, 5'b11111});             // at most 27 for a nonzero... (m == 0 -> 27)
++  function automatic logic [5:0] lzc28(input logic [27:0] m);
++    return lzc32({m, 4'b1111});              // at most 27 for a nonzero... (m == 0 -> 28)
+   endfunction
+ 
+   // |x[k-1:0]| for a variable k (0..32)
+@@ -150,7 +150,7 @@ package otpu_fp;
+     logic [2:0]  sv;
+     logic        sa;
+     logic        sub;
+-    logic [7:0]  e;
++    logic [7:0]  e;        // exponent + 1 (fits: e <= 254 unless sp)
+     logic [27:0] sum;
+   } fadd_p2_t;
+ 
+@@ -197,7 +197,8 @@ package otpu_fp;
+     fadd_p2_t q;
+     logic [26:0] mb;
+     logic stk;
+-    q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub; q.e = r.e;
++    q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub;
++    q.e = r.e + 8'd1;                        // pre-incremented for the 28-bit normalize in s3
+     mb = r.mb;
+     if (r.d > 8'd26) begin
+       mb = 27'd1;
+@@ -209,30 +210,25 @@ package otpu_fp;
+     return q;
+   endfunction
+ 
++  // One normalize for add and sub over the 28-bit sum. An add carry-out gives lz = 0 (the
++  // sticky OR folds sum[1:0]); otherwise sum[26] is set, lz = 1, and sh[0] is 0. A sub never
++  // carries out, so lz = lzc27(sum[26:0]) + 1, which the pre-incremented q.e absorbs. A zero
++  // add (0+0) leaves mn = 0 and e < 0: s4 returns {sa, 0}, keeping the -0 of (-0)+(-0).
+   function automatic fadd_nm_t fp_add_s3(input fadd_p2_t q);
+     fadd_nm_t n;
+     int lz;
++    logic [27:0] sh;
+     n.sp = q.sp;
+     n.sv = q.sv;
+     n.s = q.sa;
+-    n.e = 10'(q.e);
+-    n.mn = '0;
+-    if (!q.sub) begin
+-      if (q.sum[27]) begin
+-        n.mn = {q.sum[27:2], q.sum[1] | q.sum[0]};
+-        n.e = n.e + 1;
+-      end else begin
+-        n.mn = q.sum[26:0];
+-      end
+-    end else begin
+-      if (q.sum == 0 && !q.sp) begin
+-        n.sp = 1'b1;
+-        n.sv = FADD_SV_ZERO;
+-      end
+-      lz = int'(lzc27(q.sum[26:0]));
+-      n.mn = q.sum[26:0] << lz;
+-      n.e = n.e - 10'(lz);
++    if (q.sub && q.sum == 0 && !q.sp) begin
++      n.sp = 1'b1;
++      n.sv = FADD_SV_ZERO;
+     end
++    lz = int'(lzc28(q.sum));
++    sh = q.sum << lz;
++    n.mn = {sh[27:2], sh[1] | sh[0]};
++    n.e = 10'(q.e) - 10'(lz);
+     return n;
+   endfunction

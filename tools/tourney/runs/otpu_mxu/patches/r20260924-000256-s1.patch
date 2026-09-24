@@ -1,0 +1,318 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index 9fab386..afce57c 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -71,8 +71,38 @@ module otpu_mxu
+   localparam int RF = 32;                   // result FIFO rows
+   localparam int RFW = $clog2(RF);
+   localparam int MW = $clog2(MCOLS) + 1;
++  // |a*w| <= 2^14, so a chunk's dot product fits W4 bits signed (|s4| <= 2^(W4-2))
++  localparam int W4 = 16 + $clog2(D);
++  // RMW / RMAX lanes: the drain fills lanes k < min(MCOLS, LANES) only
++  localparam int RL = (MCOLS < LANES) ? MCOLS : LANES;
+   initial if (D % 16 != 0) $fatal(1, "otpu_mxu: D must be a multiple of 16");
+ 
++  // Exact i2f of a W4-bit dot product (W4 <= 25: |x| <= 2^23 is representable, so it never
++  // rounds; same result as i2f on the sign-extended value)
++  typedef struct packed {
++    logic          z, s;
++    logic [5:0]    lz;
++    logic [W4-2:0] mag;
++  } xi_mid_t;
++
++  function automatic xi_mid_t mxu_i2f_s1(input logic signed [W4-1:0] x);
++    xi_mid_t m;
++    logic [W4-1:0] n;
++    m.z = (x == 0);
++    m.s = x[W4-1];
++    n = x[W4-1] ? (~x + 1'b1) : x;
++    m.mag = n[W4-2:0];
++    m.lz = lzc32(32'(m.mag) << (33 - W4));
++    return m;
++  endfunction
++
++  function automatic f32_t mxu_i2f_s2(input xi_mid_t m);
++    logic [W4-2:0] nrm;
++    if (m.z) return F_ZERO;
++    nrm = m.mag << m.lz;
++    return {m.s, 8'(127 + W4 - 2 - int'(m.lz)), 23'(23'(nrm) << (W4 <= 25 ? 25 - W4 : 0))};
++  endfunction
++
+   // ================================================================== issuer
+   logic        i_act, i_unit;
+   logic [31:0] i_left, i_rs, i_srs;
+@@ -142,9 +172,8 @@ module otpu_mxu
+   logic [D*8-1:0]      w0;
+   logic [MCOLS*D*8-1:0] a0;
+   f32_t                ws0, ws1, ws2, ws3, ws4, ws5, ws6;
+-  i2f_mid_t            im [MCOLS];
+   f32_t                as0 [MCOLS];
+-  logic signed [31:0]  s4 [MCOLS];
++  logic signed [W4-1:0] s4 [MCOLS];
+   f32_t                fi [MCOLS];
+   // S0's ACT RAM block and scales are the ACT RAM's registered read
+   assign a0 = act_data;
+@@ -162,11 +191,27 @@ module otpu_mxu
+     end
+     w0 <= f_data[f_head];
+     ws0 <= c_unit ? F_ONE : f_scale[s_head];
+-    // S5, S6: int -> fp32
+-    for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(s4[j]);
+-    for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
+     m5 <= m4; ws5 <= ws4;
+-    m6 <= m5; ws6 <= ws5;
++    m6 <= m5;
++  end
++  // ws6 feeds the multipliers: a reset flop, so it is not packed into an SRL with ws1..ws5
++  always_ff @(posedge clk)
++    if (rst) ws6 <= '0;
++    else if (en_c) ws6 <= ws5;
++
++  // S5, S6: int -> fp32
++  if (W4 <= 25) begin : g_i2f
++    xi_mid_t im [MCOLS];
++    always_ff @(posedge clk) if (en_c) begin
++      for (int j = 0; j < MCOLS; j++) im[j] <= mxu_i2f_s1(s4[j]);
++      for (int j = 0; j < MCOLS; j++) fi[j] <= mxu_i2f_s2(im[j]);
++    end
++  end else begin : g_i2fw
++    i2f_mid_t im [MCOLS];
++    always_ff @(posedge clk) if (en_c) begin
++      for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(32'(s4[j]));
++      for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
++    end
+   end
+ 
+   // dot-product latency S0 -> s4 (the tree: 4 register levels)
+@@ -177,23 +222,24 @@ module otpu_mxu
+   // ---- S1 .. S4: the exact integer dot products of the chunk with every column's ACT block;
+   // s4 (with m4, ws4) is the chunk's result LDOT - 4 cycles after S0 + 4.
+   if (IMPL == 0) begin : g_tree
+-    // products, then a 4 / 4 / 8 adder tree (one register level each)
++    // products, then a 4 / 4 / 8 adder tree (one register level each), each level only as wide
++    // as its sums: products in [-16256, 16384], 4 of them fit 18 bits, 16 fit 20, D fit W4
+     logic signed [15:0] pr [MCOLS][D];
+-    logic signed [19:0] s2 [MCOLS][D/4];
+-    logic signed [23:0] s3 [MCOLS][D/16];
++    logic signed [17:0] s2 [MCOLS][D/4];
++    logic signed [19:0] s3 [MCOLS][D/16];
+     always_ff @(posedge clk) if (en_c) begin
+       for (int j = 0; j < MCOLS; j++)
+         for (int i = 0; i < D; i++)
+           pr[j][i] <= 16'(int'($signed(a0[(j*D + i)*8 +: 8])) * int'($signed(w0[i*8 +: 8])));
+       for (int j = 0; j < MCOLS; j++) begin
+         for (int g = 0; g < D / 4; g++)
+-          s2[j][g] <= 20'(pr[j][4*g]) + 20'(pr[j][4*g+1]) + 20'(pr[j][4*g+2]) + 20'(pr[j][4*g+3]);
++          s2[j][g] <= 18'(pr[j][4*g]) + 18'(pr[j][4*g+1]) + 18'(pr[j][4*g+2]) + 18'(pr[j][4*g+3]);
+         for (int g = 0; g < D / 16; g++)
+-          s3[j][g] <= 24'(s2[j][4*g]) + 24'(s2[j][4*g+1]) + 24'(s2[j][4*g+2]) + 24'(s2[j][4*g+3]);
++          s3[j][g] <= 20'(s2[j][4*g]) + 20'(s2[j][4*g+1]) + 20'(s2[j][4*g+2]) + 20'(s2[j][4*g+3]);
+         begin
+-          logic signed [31:0] t;
++          logic signed [W4-1:0] t;
+           t = '0;
+-          for (int g = 0; g < D / 16; g++) t = t + 32'(s3[j][g]);
++          for (int g = 0; g < D / 16; g++) t = t + W4'(s3[j][g]);
+           s4[j] <= t;
+         end
+       end
+@@ -260,7 +306,7 @@ module otpu_mxu
+           2: t = t2[j][0];
+           default: for (int u = 0; u < (NG + 15) / 16; u++) t = t + t2[j][u];
+         endcase
+-        s4[j] = t;
++        s4[j] = W4'(t);                                  // exact: the sum fits W4 bits
+       end
+     // the meta and the weight scale travel alongside (S0 -> S4 position)
+     otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));
+@@ -271,13 +317,14 @@ module otpu_mxu
+   f32_t as_d [MCOLS];
+   f32_t t1 [MCOLS], t2 [MCOLS], pacc [MCOLS];
+   cm_t  mt, ma;                              // meta at the adder inputs / outputs
+-  otpu_delay #(.W($bits(cm_t)), .N(2 * LM)) u_mt (.clk, .en(en_c), .d(m6), .q(mt));
+-  otpu_delay #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .en(en_c), .d(mt), .q(ma));
++  otpu_mxu_dly #(.W($bits(cm_t)), .N(2 * LM)) u_mt (.clk, .rst, .en(en_c), .d(m6), .q(mt));
++  otpu_mxu_dly #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .rst, .en(en_c), .d(mt), .q(ma));
+   for (genvar j = 0; j < MCOLS; j++) begin : g_col
+     f32_t fb, prev;
+-    otpu_delay #(.W(32), .N(LDOT + 2 + LM)) u_as (.clk, .en(en_c), .d(as0[j]), .q(as_d[j]));
+-    otpu_fmul #(.LAT(LM)) u_m1 (.clk, .en(en_c), .a(fi[j]), .b(ws6), .y(t1[j]));
+-    otpu_fmul #(.LAT(LM)) u_m2 (.clk, .en(en_c), .a(t1[j]), .b(as_d[j]), .y(t2[j]));
++    otpu_mxu_dly #(.W(32), .N(LDOT + 2 + LM)) u_as (.clk, .rst, .en(en_c), .d(as0[j]),
++                                                   .q(as_d[j]));
++    otpu_mxu_fmul #(.LAT(LM)) u_m1 (.clk, .en(en_c), .a(fi[j]), .b(ws6), .y(t1[j]));
++    otpu_mxu_fmul #(.LAT(LM)) u_m2 (.clk, .en(en_c), .a(t1[j]), .b(as_d[j]), .y(t2[j]));
+     // partial loop: pacc(block k) = pacc(block k - 4) + t(k), exactly NPART advances
+     otpu_delay #(.W(32), .N(NPART - LA)) u_fb (.clk, .en(en_c), .d(pacc[j]), .q(fb));
+     assign prev = mt.first ? F_ZERO : fb;
+@@ -311,7 +358,7 @@ module otpu_mxu
+     otpu_fadd #(.LAT(LA)) u_c23 (.clk, .en(en_c), .a(cv[j][1]), .b(cv[j][3]), .y(c23[j]));
+     otpu_fadd #(.LAT(LA)) u_c (.clk, .en(en_c), .a(c01[j]), .b(c23[j]), .y(rowv[j]));
+   end
+-  otpu_delay #(.W(1), .N(2 * LA)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
++  otpu_mxu_dly #(.W(1), .N(2 * LA)) u_lv (.clk, .rst, .en(en_c), .d(launch), .q(lv2));
+ 
+   // ================================================================== result FIFO
+   f32_t        rf_v [RF][MCOLS];
+@@ -348,22 +395,23 @@ module otpu_mxu
+   wire drain_row_done = drain_go && (dj + ncnt == c_M);
+ 
+   // read-modify-write pipeline for ACC: read now, data next cycle, (old*alpha)+new, write
++  // (only the RL lanes the drain can fill)
+   typedef struct packed {
+-    logic                   v;
+-    logic [LANES-1:0]       m;
+-    logic [LANES-1:0][31:0] ad, nv;
+-    logic [LANES-1:0][7:0]  col;
++    logic                v;
++    logic [RL-1:0]       m;
++    logic [RL-1:0][31:0] ad, nv;
++    logic [RL-1:0][7:0]  col;
+   } rmw_t;
+   rmw_t r0, rw;                               // r0: data arriving now; rw: at the write stage
+   rmw_t rx;                                   // RMAX (no ACC): drained lanes, compared next cycle
+-  f32_t ry [LANES];
+-  for (genvar k = 0; k < LANES; k++) begin : g_rmw
++  f32_t ry [RL];
++  for (genvar k = 0; k < RL; k++) begin : g_rmw
+     f32_t al;
+-    assign al = (c_asc && k < MCOLS) ? alpha[r0.col[k][MW-2:0]] : F_ONE;
+-    otpu_fmadd #(.LM(LM), .LA(LA)) u_y (.clk, .en(t_gnt), .a(t_rdata[k]), .b(al), .c(r0.nv[k]),
+-                                        .y(ry[k]));
++    assign al = c_asc ? alpha[r0.col[k][MW-2:0]] : F_ONE;
++    otpu_mxu_fmadd #(.LM(LM), .LA(LA)) u_y (.clk, .en(t_gnt), .a(t_rdata[k]), .b(al),
++                                            .c(r0.nv[k]), .y(ry[k]));
+   end
+-  otpu_delay #(.W($bits(rmw_t)), .N(LM + LA)) u_rw (.clk, .en(t_gnt), .d(r0), .q(rw));
++  otpu_mxu_dly #(.W($bits(rmw_t)), .N(LM + LA)) u_rw (.clk, .rst, .en(t_gnt), .d(r0), .q(rw));
+   logic [3:0] rmw_n;                          // rows' lanes in flight (any nonzero = busy)
+ 
+   // RMAX
+@@ -393,7 +441,7 @@ module otpu_mxu
+       end
+     end
+     if (rw.v) begin
+-      for (int k = 0; k < LANES; k++) begin
++      for (int k = 0; k < RL; k++) begin
+         if (rw.m[k]) begin
+           t_wen[k] = 1'b1;
+           t_waddr[k] = rw.ad[k];
+@@ -535,16 +583,16 @@ module otpu_mxu
+         if (drain_go) begin
+           if (c_acc) begin
+             r0.v <= 1'b1;
+-            for (int k = 0; k < LANES; k++) r0.m[k] <= (32'(k) < 32'(ncnt));
+-            r0.ad <= daddr_l;
+-            r0.nv <= dval_l;
+-            r0.col <= dcol_l;
++            for (int k = 0; k < RL; k++) r0.m[k] <= (32'(k) < 32'(ncnt));
++            r0.ad <= daddr_l[RL-1:0];
++            r0.nv <= dval_l[RL-1:0];
++            r0.col <= dcol_l[RL-1:0];
+           end
+           if (c_rmax && !c_acc) begin
+             rx.v <= 1'b1;
+-            for (int k = 0; k < LANES; k++) rx.m[k] <= (32'(k) < 32'(ncnt));
+-            rx.nv <= dval_l;
+-            rx.col <= dcol_l;
++            for (int k = 0; k < RL; k++) rx.m[k] <= (32'(k) < 32'(ncnt));
++            rx.nv <= dval_l[RL-1:0];
++            rx.col <= dcol_l[RL-1:0];
+           end
+           if (drain_row_done) begin
+             dj <= '0;
+@@ -558,7 +606,7 @@ module otpu_mxu
+         end
+         // registered so the lane selection and the max compare are in different cycles
+         if (rx.v) begin
+-          for (int k = 0; k < LANES; k++) begin
++          for (int k = 0; k < RL; k++) begin
+             if (rx.m[k]) begin
+               logic [MW-2:0] j;
+               j = rx.col[k][MW-2:0];
+@@ -568,7 +616,7 @@ module otpu_mxu
+           end
+         end
+         if (rw.v && c_rmax) begin
+-          for (int k = 0; k < LANES; k++) begin
++          for (int k = 0; k < RL; k++) begin
+             if (rw.m[k]) begin
+               logic [MW-2:0] j;
+               j = rw.col[k][MW-2:0];
+@@ -624,3 +672,76 @@ module otpu_mxu
+   initial trace = $test$plusargs("trace");
+ `endif
+ endmodule
++
++// otpu_delay whose last stage has a synchronous reset: a reset flop cannot be packed into the
++// SRL, so the line's output comes from a real flip-flop (the lines feed multipliers and adders).
++// Only pipeline contents pass through: a reset clears bubbles.
++module otpu_mxu_dly #(parameter int W = 32, parameter int N = 1) (
++  input  logic         clk,
++  input  logic         rst,
++  input  logic         en,
++  input  logic [W-1:0] d,
++  output logic [W-1:0] q
++);
++  if (N == 0) begin : g_wire
++    assign q = d;
++  end else if (N == 1) begin : g_one
++    (* shreg_extract = "no", keep *) logic [W-1:0] qr;
++    always_ff @(posedge clk)
++      if (rst) qr <= '0;
++      else if (en) qr <= d;
++    assign q = qr;
++  end else begin : g_regs
++    logic [W-1:0] r [N - 1];
++    (* shreg_extract = "no", keep *) logic [W-1:0] qr;
++    always_ff @(posedge clk) if (en) begin
++      r[0] <= d;
++      for (int k = 1; k < N - 1; k++) r[k] <= r[k-1];
++    end
++    always_ff @(posedge clk)
++      if (rst) qr <= '0;
++      else if (en) qr <= r[N-2];
++    assign q = qr;
++  end
++endmodule
++
++// otpu_fmul with the significand product taken from the raw operands: no flush-to-zero in front
++// of the DSP. Exact: fp_mul_s2 reads m.p only when !m.sp, i.e. both exponents are in 1..254,
++// where ftz(x) == x.
++module otpu_mxu_fmul
++  import otpu_fp::*;
++#(parameter int LAT = 2) (
++  input  logic  clk,
++  input  logic  en,
++  input  f32_t  a,
++  input  f32_t  b,
++  output f32_t  y
++);
++  fmul_mid_t m;
++  f32_t r;
++  always_ff @(posedge clk) if (en) begin
++    fmul_mid_t t;
++    t = fp_mul_s1(a, b);
++    t.p = {1'b1, a[22:0]} * {1'b1, b[22:0]};
++    m <= t;
++    r <= fp_mul_s2(m);
++  end
++  otpu_delay #(.W(32), .N(LAT - 2)) u_pad (.clk, .en, .d(r), .q(y));
++endmodule
++
++// otpu_fmadd on otpu_mxu_fmul: y = (a * b) + c, LAT = LM + LA
++module otpu_mxu_fmadd
++  import otpu_fp::*;
++#(parameter int LM = 2, parameter int LA = 4) (
++  input  logic  clk,
++  input  logic  en,
++  input  f32_t  a,
++  input  f32_t  b,
++  input  f32_t  c,
++  output f32_t  y
++);
++  f32_t p, cd;
++  otpu_mxu_fmul #(.LAT(LM)) u_m (.clk, .en, .a, .b, .y(p));
++  otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(c), .q(cd));
++  otpu_fadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y);
++endmodule

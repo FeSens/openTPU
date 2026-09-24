@@ -1,0 +1,218 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index af2df16..8e8ee0e 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -24,7 +24,7 @@
+ // the final partials of a row come out LANES per cycle, in order, and a streaming folding tree
+ // sums them while the next row streams: the levels across rows on LANES adders fed by delay
+ // lines on a fixed schedule, the levels across lanes on a pipeline of adders (level 2 reuses
+-// level 1's, which are idle then).
++// level 1's, which are idle then) or, for LANES = 8, on the same adders in their free slot.
+ //
+ // Everything (reads, lane pipelines, the tree, writes) advances on cycles the TMEM grant is
+ // given; nothing stalls.
+@@ -591,7 +591,7 @@ module otpu_vpu
+   // `tr_y`). Level j issues in the residues [H, 2H) mod RL, and rows start a multiple of RL
+   // cycles apart (nch is padded to a multiple of RL, rows issue back to back, reductions run
+   // alone), so the adders are never double-booked and nothing stalls. Lane levels (n < LANES)
+-  // run on a dedicated pipeline of adders (see xl).
++  // run on a dedicated pipeline of adders (see xl), or (LN2) on u_tree in residue 0 (see lane_q).
+   localparam int LR = $clog2(RL);             // row levels
+   function automatic int tree_h(input int j);   // pairs of row level j
+     return RL >> (j + 1);
+@@ -617,23 +617,47 @@ module otpu_vpu
+     return m;
+   endfunction
+   localparam int DMAX = tree_dmax();
+-  // LN2: the three lane levels of LANES = 8 fold onto two adders (see u_ln), root 2 cycles later
++  // LN2: the row levels leave residue 0 free on every u_tree adder, and the LANES - 1 lane adds
++  // of a row run there: lane level q issues at W1 + (q-1)*RL on the adders [lane_b(q),
++  // lane_b(q+1)), reading level q-1's results delayed G1 (q = 1: all of tr_y at E0) or HD (the
++  // previous level's adders, LA cycles after it issued). The levels of up to LW rows share a
++  // residue-0 cycle on disjoint adders; their results land in residue LA, which no row level
++  // reads. Root: tr_y[lane_b(LW)] = tr_y[LANES-2]. Same operands, same order as xl.
+   localparam bit LN2 = (LANES == 8) && (RL == 8) && (LA == 4);
++  localparam int E0 = tree_i(LR - 1) + LA;                      // lanes all on tr_y
++  localparam int W1 = RL * ((E0 + RL - 1) / RL);                // lane level 1 issues
++  localparam int G1 = W1 - E0, HD = RL - LA;
++  localparam int TDM = !LN2 ? DMAX : (G1 > DMAX && G1 >= HD) ? G1 : (HD > DMAX) ? HD : DMAX;
++  function automatic int lane_b(input int q);   // LN2: first u_tree adder of lane level q
++    return (q <= 1) ? 0 : LANES - (LANES >> (q - 1));
++  endfunction
++  function automatic int lane_q(input int k);   // LN2: lane level run on u_tree k (0: none)
++    int r;
++    r = 0;
++    for (int q = LW; q >= 1; q--) if (k < lane_b(q + 1)) r = q;
++    return r;
++  endfunction
+   localparam int DL = tree_i(LR - 1) - (RL - 1);                // row_last -> last row level
+-  localparam int RD = tree_i(LR - 1) + LA * (1 + LW) - (RL - 1) // row_last -> root
+-                      + (LN2 ? 2 : 0);
++  localparam int RD = LN2 ? W1 + (LW - 1) * RL + LA - (RL - 1)  // row_last -> root
++                          : tree_i(LR - 1) + LA * (1 + LW) - (RL - 1);
+ 
+   // a final partial of this reduction is on `pacc`
+   wire cap = red_act && is_sum && live(mt, tag) && mt.final_;
+ 
+   // level strobes: cap of the subs a level pairs up, delayed to the level's issue cycles
+-  // (level 0 is the default); the last row level and the root share one shift register
+-  logic [LR-1:1] lv;
++  // (level 0 is the default); the last row level, the lane levels (LN2) and the root share one
++  // shift register. The adders' operand select tsel is registered, loaded from the strobes one
++  // tap early (lv_e, lw_e): row level j, or LR for the lane levels.
++  localparam int TW = $clog2(LR + 1);
++  logic [LR-1:1] lv, lv_e;
++  logic          lw, lw_e;                    // LN2: a lane level issues (early)
++  logic [TW-1:0] tsel;
+   logic [RD-1:0] rsr;
+   always_ff @(posedge clk)
+     if (rst) rsr <= '0;
+     else if (en) rsr <= {rsr[RD-2:0], cap && mt.row_last};
+   assign lv[LR-1] = rsr[DL-1];
++  assign lv_e[LR-1] = rsr[DL-2];
+   wire root_v = rsr[RD-1];
+   for (genvar j = 1; j < LR - 1; j++) begin : g_lv
+     localparam int DJ = tree_i(j) - (RL - tree_h(j));
+@@ -642,15 +666,37 @@ module otpu_vpu
+       if (rst) sr <= '0;
+       else if (en) sr <= {sr[DJ-2:0], cap && mt.sub >= 8'(RL - tree_h(j))};
+     assign lv[j] = sr[DJ-1];
++    assign lv_e[j] = sr[DJ-2];
++  end
++  if (LN2) begin : g_lw
++    logic [LW:1] w, we;
++    for (genvar q = 1; q <= LW; q++) begin : g_q
++      assign w[q]  = rsr[W1 + (q - 2) * RL];
++      assign we[q] = rsr[W1 + (q - 2) * RL - 1];
++    end
++    assign lw = |w;
++    assign lw_e = |we;
++  end else begin : g_nlw
++    assign lw = 1'b0;
++    assign lw_e = 1'b0;
+   end
++  always_ff @(posedge clk)
++    if (rst) tsel <= '0;
++    else if (en) begin
++      tsel <= '0;
++      for (int j = 1; j < LR; j++) if (lv_e[j]) tsel <= TW'(j);
++      if (lw_e) tsel <= TW'(LR);
++    end
+ 
+   f32_t tr_y [LANES];
+-  f32_t tr_y1 [LANES];                        // tr_y delayed one cycle (td[1])
++  logic [TDM:0][31:0] trt [LANES];            // trt[k][d]: tr_y[k] delayed d
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+-    f32_t pd, pdd, oa, ob;
++    localparam int Q = lane_q(k);
++    f32_t pd, pdd, oa, ob, la, lb;
+     f32_t sa [LR], sb [LR];                  // level j's operands (row r, row r + H)
+-    logic [DMAX:1][31:0] td;                 // tr_y[k] delayed 1..DMAX
+-    wire  [DMAX:0][31:0] tt = {td, tr_y[k]};
++    logic [TDM:1][31:0] td;                  // tr_y[k] delayed 1..TDM
++    wire  [TDM:0][31:0] tt = {td, tr_y[k]};
++    assign trt[k] = tt;
+     // pd = pacc delayed RL/2; its last stage has a reset so it stays a flip-flop, not a
+     // shift-register LUT (the value after reset is never used)
+     otpu_delay #(.W(32), .N(RL / 2 - 1)) u_pd (.clk, .en, .d(pacc[k]), .q(pdd));
+@@ -659,19 +705,28 @@ module otpu_vpu
+       else if (en) pd <= pdd;
+     always_ff @(posedge clk) if (en) begin
+       td[1] <= tr_y[k];
+-      for (int d = 2; d <= DMAX; d++) td[d] <= td[d-1];
++      for (int d = 2; d <= TDM; d++) td[d] <= td[d-1];
+     end
+-    assign tr_y1[k] = td[1];
+     assign sa[0] = pd;
+     assign sb[0] = pacc[k];
+     for (genvar j = 1; j < LR; j++) begin : g_op
+       assign sa[j] = tt[tree_da(j)];
+       assign sb[j] = tt[tree_db(j)];
+     end
++    // the lane leg (LN2, lane level Q): xl[Q-1][m] + xl[Q-1][m + n] from level Q-1's adders
++    if (LN2 && Q > 0) begin : g_ll
++      localparam int M = k - lane_b(Q), S = lane_b(Q - 1), D = (Q == 1) ? G1 : HD;
++      assign la = trt[S + M][D];
++      assign lb = trt[S + M + (LANES >> Q)][D];
++    end else begin : g_nll
++      assign la = sa[0];
++      assign lb = sb[0];
++    end
+     always_comb begin
+       oa = sa[0]; ob = sb[0];
+       for (int j = 1; j < LR; j++)
+-        if (lv[j]) begin oa = sa[j]; ob = sb[j]; end
++        if (tsel == TW'(j)) begin oa = sa[j]; ob = sb[j]; end
++      if (tsel == TW'(LR)) begin oa = la; ob = lb; end
+     end
+     otpu_fadd #(.LAT(LA)) u_tree (.clk, .en, .a(oa), .b(ob), .y(tr_y[k]));
+   end
+@@ -685,36 +740,11 @@ module otpu_vpu
+   wire  l2_v = rsr[DL + 2 * LA - 1];
+   f32_t xl [LW + 1][LANES];
+   f32_t xs [LANES];                           // SH2: the shared adders' results (level 1 or 2)
+-  logic ln_l1b, ln_l2, ln_l3;                 // LN2 issue strobes (L1a is rsr[DL + LA - 1])
+   for (genvar k = 0; k < LANES; k++) begin : g_xl0
+     assign xl[0][k] = tr_y[k];
+   end
+-  // LN2 (E = last row level + LA, the residues mod RL = 8 in brackets): u_ln[m] issues
+-  //   L1a at E     (5): xl[0][m]     + xl[0][m + 4]
+-  //   L1b at E+1   (6): xl[0][m + 2] + xl[0][m + 6]   (from td[1])
+-  //   L2  at E+5   (2): xsd[m] + xs[m]                (L1a + L1b = xl[1][m] + xl[1][m + 2])
+-  //   L3  at E+10  (7): xsd[0] + xsd[1], m = 0 only   (L2 results = xl[2][0] + xl[2][1])
+-  // and the root is xs[0] at E+14. The residues are distinct and rows are a multiple of RL
+-  // apart, so neither adder is ever double-booked; same operands in the same order as xl.
+-  if (LN2) begin : g_ln
+-    f32_t xsd [2];                            // xs registered
+-    assign ln_l1b = rsr[DL + LA];
+-    assign ln_l2  = rsr[DL + 2 * LA];
+-    assign ln_l3  = rsr[DL + 2 * LA + 5];
+-    always_ff @(posedge clk) if (en) begin
+-      xsd[0] <= xs[0];
+-      xsd[1] <= xs[1];
+-    end
+-    for (genvar m = 0; m < 2; m++) begin : g_m
+-      f32_t oa, ob;
+-      assign oa = (m == 0 && ln_l3) ? xsd[0] : ln_l2 ? xsd[m] : ln_l1b ? tr_y1[m + 2] : tr_y[m];
+-      assign ob = (m == 0 && ln_l3) ? xsd[1] : ln_l2 ? xs[m]  : ln_l1b ? tr_y1[m + 6] : tr_y[m + 4];
+-      otpu_fadd #(.LAT(LA)) u_ln (.clk, .en, .a(oa), .b(ob), .y(xs[m]));
+-    end
+-  end else begin : g_lg
+-    assign ln_l1b = 1'b0;
+-    assign ln_l2  = 1'b0;
+-    assign ln_l3  = 1'b0;
++  // (LN2 runs the lane levels on u_tree, see lane_q)
++  if (!LN2) begin : g_lg
+     for (genvar q = 1; q <= LW; q++) begin : g_xl
+       for (genvar k = 0; k < (LANES >> q); k++) begin : g_k
+         if (SH2 && q == 2) begin : g_sh
+@@ -775,7 +805,7 @@ module otpu_vpu
+     if (red_act && is_sum && root_v) begin
+       cw_en[0] = 1'b1;
+       cw_addr[0] = wr_row;
+-      cw_data[0] = LN2 ? xs[0] : xl[LW][0];
++      cw_data[0] = LN2 ? tr_y[lane_b(LW)] : xl[LW][0];
+     end
+   end
+ 
+@@ -903,15 +933,14 @@ module otpu_vpu
+   bit trace;
+   initial trace = $test$plusargs("trace");
+   // the tree schedule needs rows a multiple of RL cycles apart: level 0 (issuing while the
+-  // subs >= RL/2 are on `pacc`) must never meet another level
++  // subs >= RL/2 are on `pacc`) must never meet another level, nor (LN2) the lane levels any
++  // row level
+   always_ff @(posedge clk)
+-    if (!rst && en && cap && mt.sub >= 8'(RL / 2) && lv != 0)
++    if (!rst && en && (cap && mt.sub >= 8'(RL / 2) && (lv != 0 || lw) || lw && lv != 0))
+       $fatal(1, "otpu_vpu: RSUM/RSSQ tree schedule collision");
+-  // lane level 2 shares level 1's adders: it must never issue with level 1 (LN2: the lane
+-  // levels L1a, L1b, L2 and L3 share u_ln and must never issue together)
++  // lane level 2 shares level 1's adders: it must never issue with level 1
+   always_ff @(posedge clk)
+-    if (!rst && en && (LN2 ? !$onehot0({rsr[DL + LA - 1], ln_l1b, ln_l2, ln_l3})
+-                           : SH2 && l2_v && rsr[DL + LA - 1]))
++    if (!rst && en && SH2 && l2_v && rsr[DL + LA - 1])
+       $fatal(1, "otpu_vpu: RSUM/RSSQ lane level schedule collision");
+ `endif
+ endmodule

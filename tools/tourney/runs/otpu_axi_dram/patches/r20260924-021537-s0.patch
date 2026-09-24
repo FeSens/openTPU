@@ -1,0 +1,48 @@
+diff --git a/rtl/mem/otpu_axi_dram.sv b/rtl/mem/otpu_axi_dram.sv
+index d7c6369..bffafcf 100644
+--- a/rtl/mem/otpu_axi_dram.sv
++++ b/rtl/mem/otpu_axi_dram.sv
+@@ -254,8 +254,12 @@ module otpu_axi_dram #(
+   end
+ 
+   // ------------------------------------------------------------------ writes outstanding
++  // wr_n counts the writes accepted before the last cycle; wacc_q holds the last cycle's accepts
++  // (folded into wr_n a cycle late, off the rdy -> take path). A B response comes after its W
++  // handshake, so at least a cycle after the accept: wr_n never goes negative
+   logic [15:0] wr_n;
+-  assign wr_idle = (wr_n == 0);
++  logic [3:0]  wacc_q;
++  assign wr_idle = (wr_n == 0) && (wacc_q == '0);
+ 
+   always_ff @(posedge clk) begin
+     if (rst) begin
+@@ -267,20 +271,21 @@ module otpu_axi_dram #(
+       end
+       bt_n <= '0; bt_h <= '0; ao_n <= '0; ao_h <= '0;
+       al_v <= 1'b0;
+-      wr_n <= '0;
++      wr_n <= '0; wacc_q <= '0;
+       aw_done <= '0; w_done <= '0; wcur <= '0;
+       wsrc[0] <= '0; wsrc[1] <= '0;
+       err <= 1'b0;
+     end else begin
+-      // writes outstanding: this cycle's accepts and responses fold into one small delta (a sum
+-      // of single bits), added once. Counted from the take strobes, not the queue pushes: an A
+-      // write is never a reuse and goes to exactly one channel, as does an SW write, so a_reuse
+-      // and the channel decode stay off this path
++      // writes outstanding: the last cycle's (registered) accepts and this cycle's responses fold
++      // into one small delta (a sum of single bits), added once. Accepts are counted from the
++      // take strobes, not the queue pushes: an A write is never a reuse and goes to exactly one
++      // channel, as does an SW write, so a_reuse and the channel decode stay off this path
+       logic signed [4:0] wn;
+-      wn = 5'(b_take && b_we && b_wmask[15:0]  != 0) +
+-           5'(b_take && b_we && b_wmask[31:16] != 0) +
+-           5'(a_take && a_we) + 5'(sw_take) -
++      wn = 5'(wacc_q[0]) + 5'(wacc_q[1]) + 5'(wacc_q[2]) + 5'(wacc_q[3]) -
+            5'(m_bvalid[0]) - 5'(m_bvalid[1]);
++      wacc_q <= {sw_take, a_take && a_we,
++                 b_take && b_we && b_wmask[31:16] != 0,
++                 b_take && b_we && b_wmask[15:0]  != 0};
+       for (int c = 0; c < 2; c++) begin
+         logic [QW:0] nb, na, nw;
+         logic [RW:0] rbn, rbr;

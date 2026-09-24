@@ -1,0 +1,109 @@
+diff --git a/rtl/vpu/otpu_quant.sv b/rtl/vpu/otpu_quant.sv
+index 70bc635..06c5879 100644
+--- a/rtl/vpu/otpu_quant.sv
++++ b/rtl/vpu/otpu_quant.sv
+@@ -62,7 +62,56 @@ module otpu_qfmul
+   otpu_delay #(.W(32), .N(LAT - 2)) u_pad (.clk, .en, .d(r), .q(y));
+ endmodule
+ 
+-// otpu_fmadd on otpu_qfmul
++// otpu_fadd whose align/add stage has one carry chain: the sticky bit stays off the add
++module otpu_qfadd
++  import otpu_fp::*;
++#(parameter int LAT = 4) (
++  input  logic  clk,
++  input  logic  en,
++  input  f32_t  a,
++  input  f32_t  b,
++  output f32_t  y
++);
++  // fp_add_s2 with the sticky bit kept off the add chain. ma[2:0] is always 000 (fp_add_s1
++  // builds {1, frac, 3'b000}, or '0 when sp), so the three guard bits of the sum only need the
++  // aligned mb's low bits: a sum puts them below ma's upper bits, and a difference borrows one
++  // from the upper bits unless they are all 0. The upper 25 bits are then a single add with
++  // carry-in (sub && lo == 0), written as {A,1} + {B,cin} so it maps to one $alu. The sticky
++  // mask (bit i set iff i < d) comes from a shift of a constant (a LUT decode), not from
++  // (1<<d)-1.
++  function automatic fadd_p2_t qadd_s2(input fadd_p1_t r);
++    fadd_p2_t q;
++    logic [26:0] mbs;
++    logic [31:0] lm;
++    logic        stk, cin;
++    logic [2:0]  lo;
++    logic [24:0] bh;
++    logic [25:0] hs;
++    q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub; q.e = r.e;
++    mbs = r.mb >> r.d;                                          // 0 once d > 26
++    lm  = (r.d[7:5] != 3'd0) ? '1 : ~(32'hFFFF_FFFF << r.d[4:0]);
++    stk = |({5'd0, r.mb} & lm);
++    lo  = {mbs[2:1], mbs[0] | stk};
++    cin = r.sub && (lo == 3'd0);
++    bh  = {1'b0, mbs[26:3]} ^ {25{r.sub}};
++    hs  = {1'b0, r.ma[26:3], 1'b1} + {bh, cin};
++    q.sum = {hs[25:1], r.sub ? 3'(3'd0 - lo) : lo};
++    return q;
++  endfunction
++  fadd_p1_t s1;
++  fadd_p2_t s2;
++  fadd_nm_t s3;
++  f32_t r;
++  always_ff @(posedge clk) if (en) begin
++    s1 <= fp_add_s1(a, b);
++    s2 <= qadd_s2(s1);
++    s3 <= fp_add_s3(s2);
++    r  <= fp_add_s4(s3);
++  end
++  otpu_delay #(.W(32), .N(LAT - 4)) u_pad (.clk, .en, .d(r), .q(y));
++endmodule
++
++// otpu_fmadd on otpu_qfmul and otpu_qfadd
+ module otpu_qfmadd
+   import otpu_fp::*;
+ #(parameter int LM = 2, parameter int LA = 4) (
+@@ -76,7 +125,7 @@ module otpu_qfmadd
+   f32_t p, cd;
+   otpu_qfmul #(.LAT(LM)) u_m (.clk, .en, .a, .b, .y(p));
+   otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(c), .q(cd));
+-  otpu_fadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y);
++  otpu_qfadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y);
+ endmodule
+ 
+ module otpu_qscale
+@@ -403,13 +452,36 @@ module otpu_quant
+     winv_r <= winv;
+     wsc_r <= wsc_in;
+   end
++  // q8_s1 with the shift (and its guard bit k = sh - 1) decoded from e by a table, not computed
++  // as 150 - e: no carry chain between e and ip/g/st (the e compares feed only zero/sat)
++  function automatic q8_mid_t qq8_s1(input f32_t x_in);
++    q8_mid_t q;
++    f32_t x;
++    logic [7:0]  e;
++    logic [23:0] m;
++    logic [4:0]  sh, k;
++    x = ftz(x_in);
++    e = x[30:23];
++    m = {1'b1, x[22:0]};
++    q = '0;
++    q.s = x[31];
++    q.zero = (e < 8'd126);
++    q.sat = (e >= 8'd134);
++    sh = 5'd17; k = 5'd16;                      // zero or sat (as q8_s1)
++    for (int c = 126; c < 134; c++)
++      if (e == 8'(c)) begin sh = 5'(150 - c); k = 5'(149 - c); end
++    q.ip = 32'(m) >> sh;
++    q.g = m[k];
++    q.st = |(m & ~(24'hFF_FFFF << k));          // |m[k-1:0]
++    return q;
++  endfunction
+   logic [LANES-1:0][7:0] qb;
+   for (genvar l = 0; l < LANES; l++) begin : g_q
+     f32_t p;
+     q8_mid_t qm;
+     otpu_qfmul #(.LAT(LM)) u_q (.clk, .en, .a(wx_r[l]), .b(winv_r), .y(p));
+     always_ff @(posedge clk) if (en) begin
+-      qm <= q8_s1(p);
++      qm <= qq8_s1(p);
+       qb[l] <= q8_s2(qm);
+     end
+   end

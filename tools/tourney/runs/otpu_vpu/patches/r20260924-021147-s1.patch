@@ -1,0 +1,84 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 0a29d43..e95ceaa 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -260,6 +260,13 @@ module otpu_vpu
+       end
+   end
+ 
++  // RSUM/RSSQ terms: each lane's slot-0 multiplier forms xr * 1 or xr * xr (reductions run
++  // alone, so it is free) and hands its product to g_red as sqp
++  f32_t  xr [LANES], sqp [LANES];
++  for (genvar l = 0; l < LANES; l++) begin : g_xr
++    assign xr[l] = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
++  end
++
+   // long lanes: all functions
+   for (genvar l = 0; l < NCL; l++) begin : g_lane
+     localparam int NS = NSLOT;                     // slots of this lane
+@@ -336,6 +343,8 @@ module otpu_vpu
+           V_ADD:  if (s == 0) begin ia = x; ic_ = y; dest = 2'd1; end
+           V_SUB:  if (s == 0) begin ia = x; ic_ = fneg(y); dest = 2'd1; end
+           V_RSUB: if (s == 0) begin ia = y; ic_ = fneg(x); dest = 2'd1; end
++          V_RSUM: if (s == 0) ia = xr[l];                                  // term only: no dest
++          V_RSSQ: if (s == 0) begin ia = xr[l]; ib = xr[l]; end
+           V_EXP2, V_EXP2SUB: begin
+             if (s == 0) begin
+               ia = x; ic_ = (msl[s].func == V_EXP2SUB) ? fneg(y) : F_NZ; dest = 2'd1;
+@@ -376,7 +385,16 @@ module otpu_vpu
+       always_ff @(posedge clk) if (en) begin
+         ra <= ia; rb <= ib; rc <= ic_; sr <= sin_; dr <= dest; nr <= negd;
+       end
+-      otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(r));
++      if (s == 0) begin : g_s0
++        // otpu_fmadd's body, with the product exported as the RSUM/RSSQ term
++        f32_t p, cd;
++        otpu_fmul #(.LAT(LM)) u_m (.clk, .en, .a(ra), .b(rb), .y(p));
++        otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(rc), .q(cd));
++        otpu_fadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y(r));
++        assign sqp[l] = p;
++      end else begin : g_sn
++        otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(r));
++      end
+       // the live fields only (see k1_live); the dead ones read as 0 and are never used
+       assign sd.v = '0;
+       if (k1_live(s)) begin : g_k1
+@@ -453,13 +471,20 @@ module otpu_vpu
+         V_ADD:  begin ia = x; ic_ = y; end
+         V_SUB:  begin ia = x; ic_ = fneg(y); end
+         V_RSUB: begin ia = y; ic_ = fneg(x); end
++        V_RSUM: ia = xr[l];
++        V_RSSQ: begin ia = xr[l]; ib = xr[l]; end
+         default: ;
+       endcase
+     end
+     always_ff @(posedge clk) if (en) begin
+       ra <= ia; rb <= ib; rc <= ic_;
+     end
+-    otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(st[1]));
++    // otpu_fmadd's body, with the product exported as the RSUM/RSSQ term
++    f32_t p, cd;
++    otpu_fmul #(.LAT(LM)) u_m (.clk, .en, .a(ra), .b(rb), .y(p));
++    otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(rc), .q(cd));
++    otpu_fadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y(st[1]));
++    assign sqp[l] = p;
+ 
+     // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here)
+     assign lres[l] = (wtap == 0) ? st[0] : st[1];
+@@ -507,12 +532,12 @@ module otpu_vpu
+   // ------------------------------------------------------------------ RSUM / RSSQ
+   f32_t  pacc [LANES];                  // partial after adding this chunk's term
+   rm_t   mtq, mt;                       // meta at the adder inputs / aligned with `pacc`
+-  otpu_delay #(.W($bits(rm_t)), .N(LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
++  // the terms come from the lanes' slot-0 multipliers: operand register + LM after m0
++  otpu_delay #(.W($bits(rm_t)), .N(LM + 1)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
+   otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
+   for (genvar l = 0; l < LANES; l++) begin : g_red
+-    f32_t xin, tq, prev, fb;
+-    assign xin = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
+-    otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xin), .b((m0.func == V_RSSQ) ? xin : F_ONE), .y(tq));
++    f32_t tq, prev, fb;
++    assign tq = sqp[l];
+     // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
+     otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
+     assign prev = mtq.first ? F_ZERO : fb;

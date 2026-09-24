@@ -1,0 +1,104 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index 2437440..89af235 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -418,10 +418,57 @@ module otpu_mxu
+   otpu_delay #(.W($bits(rmw_t)), .N(LM + LA)) u_rw (.clk, .en(t_gnt), .d(r1), .q(rw));
+   logic [3:0] rmw_n;                          // rows' lanes in flight (any nonzero = busy)
+ 
+-  // RMAX
+-  f32_t mx [MCOLS];
++  // RMAX: the running max is kept as its sort key (mk = fkey(max); the max is always stored
++  // ftz'd, so fkey(max) is the key it is compared by); written out through unkey.
++  logic [31:0] mk [MCOLS];
+   logic [MCOLS-1:0] mx_have;
+   logic mx_done;
++  function automatic f32_t unkey(input logic [31:0] k);
++    return k[31] ? {1'b0, k[30:0]} : ~k;
++  endfunction
++  // rw's column hits, one-hot, computed from r1 and carried alongside u_rw (same length and
++  // enable); the last stage is a reset flop, not an SRL tap. c_rmax is fixed while entries are
++  // in flight (q_h flips only once drained)
++  logic [NL-1:0][MCOLS-1:0] rh, rh_p, rwh, rxh;
++  always_comb
++    for (int k = 0; k < NL; k++)
++      for (int j = 0; j < MCOLS; j++) begin
++        rh[k][j]  = r1.v && c_rmax && r1.m[k] && (r1.col[k][MW-2:0] == (MW-1)'(j));
++        rxh[k][j] = rx.v && rx.m[k] && (rx.col[k][MW-2:0] == (MW-1)'(j));
++      end
++  otpu_delay #(.W(NL * MCOLS), .N(LM + LA - 1)) u_rwh (.clk, .en(t_gnt), .d(rh), .q(rh_p));
++  always_ff @(posedge clk) if (rst) rwh <= '0; else if (t_gnt) rwh <= rh_p;
++  // per column: the candidate key is selected by the hits alone, the compare only makes the
++  // enable. At most one lane hits a column per cycle (lanes drain distinct columns) and rx / rw
++  // are exclusive (rx only for !c_acc commands, rw only for c_acc ones)
++  logic [MCOLS-1:0] mx_hit, mx_upd;
++  logic [31:0] mx_cand [MCOLS];
++  always_comb
++    for (int j = 0; j < MCOLS; j++) begin
++      mx_hit[j] = 1'b0; mx_upd[j] = 1'b0; mx_cand[j] = '0;
++      for (int k = 0; k < NL; k++) begin
++        if (rxh[k][j]) begin
++          mx_hit[j] = 1'b1;
++          mx_cand[j] = mx_cand[j] | fkey(rx.nv[k]);
++          mx_upd[j] = mx_upd[j] | !mx_have[j] | (fkey(rx.nv[k]) > mk[j]);
++        end
++        if (rwh[k][j]) begin
++          mx_hit[j] = 1'b1;
++          mx_cand[j] = mx_cand[j] | fkey(ry[k]);
++          mx_upd[j] = mx_upd[j] | !mx_have[j] | (fkey(ry[k]) > mk[j]);
++        end
++      end
++    end
++`ifndef SYNTHESIS
++  always_ff @(posedge clk)
++    if (!rst && t_gnt)
++      for (int j = 0; j < MCOLS; j++) begin
++        int n;
++        n = 0;
++        for (int k = 0; k < NL; k++) n = n + int'(rxh[k][j]) + int'(rwh[k][j]);
++        if (n > 1) $fatal(1, "otpu_mxu: several RMAX updates of column %0d in one cycle", j);
++      end
++`endif
+ 
+   wire c_drained = c_act && (c_pop == c_total) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
+   wire mx_go     = c_drained && c_rmax && !mx_done && (c_total != 0);
+@@ -468,7 +515,7 @@ module otpu_mxu
+         if (32'(mx_i) + 32'(k) < 32'(c_M)) begin
+           t_wen[k] = 1'b1;
+           t_waddr[k] = q_mxo[q_h] + 32'(mx_i) + 32'(k);
+-          t_wdata[k] = mx[MW'(32'(mx_i) + 32'(k))];
++          t_wdata[k] = unkey(mk[MW'(32'(mx_i) + 32'(k))]);
+         end
+       end
+     end
+@@ -609,26 +656,10 @@ module otpu_mxu
+             dj <= dj + ncnt;
+           end
+         end
+-        // registered so the lane selection and the max compare are in different cycles
+-        if (rx.v) begin
+-          for (int k = 0; k < NL; k++) begin
+-            if (rx.m[k]) begin
+-              logic [MW-2:0] j;
+-              j = rx.col[k][MW-2:0];
+-              if (!mx_have[j] || fp_gt(rx.nv[k], mx[j])) mx[j] <= ftz(rx.nv[k]);
+-              mx_have[j] <= 1'b1;
+-            end
+-          end
+-        end
+-        if (rw.v && c_rmax) begin
+-          for (int k = 0; k < NL; k++) begin
+-            if (rw.m[k]) begin
+-              logic [MW-2:0] j;
+-              j = rw.col[k][MW-2:0];
+-              if (!mx_have[j] || fp_gt(ry[k], mx[j])) mx[j] <= ftz(ry[k]);
+-              mx_have[j] <= 1'b1;
+-            end
+-          end
++        // RMAX (rx: registered so the lane selection and the max compare are in different cycles)
++        for (int j = 0; j < MCOLS; j++) begin
++          if (mx_upd[j]) mk[j] <= mx_cand[j];
++          if (mx_hit[j]) mx_have[j] <= 1'b1;
+         end
+         rmw_n <= rmw_n + ((drain_go && c_acc) ? 4'd1 : 4'd0) - (rw.v ? 4'd1 : 4'd0);
+         if (mx_go) begin

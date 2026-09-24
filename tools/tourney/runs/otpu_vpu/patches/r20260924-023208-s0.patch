@@ -1,0 +1,37 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 0a29d43..56d13e6 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -169,6 +169,7 @@ module otpu_vpu
+     logic             first;     // reductions: chunk index < RL (partials start at +0)
+     logic             final_;    // reductions: chunk index >= nch - RL (partials become final)
+     logic [7:0]       sub;       // chunk index mod RL
++    logic             sq;        // func == V_RSSQ (a flip-flop for the squarers' b select)
+   } meta_t;
+   // mi: the chunk read this cycle; m0: that chunk one granted cycle later, together with its
+   // TMEM data registered (xa, xb), so no path runs from the TMEM block RAMs into the lanes'
+@@ -510,9 +511,13 @@ module otpu_vpu
+   otpu_delay #(.W($bits(rm_t)), .N(LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
+   otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
+   for (genvar l = 0; l < LANES; l++) begin : g_red
+-    f32_t xin, tq, prev, fb;
+-    assign xin = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
+-    otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xin), .b((m0.func == V_RSSQ) ? xin : F_ONE), .y(tq));
++    f32_t sa, sb, tq, prev, fb;
++    // sign and exponent masked (the multiplier flushes a zero exponent itself); significand raw
++    // from xa: the multiplier reads it only when the exponent is nonzero, and then it equals
++    // ftz(xa)'s. So the product matches (mask ? ftz(xa) : +0) squared / times one
++    assign sa = {m0.mask[l] & xa[l][31], m0.mask[l] ? xa[l][30:23] : 8'd0, xa[l][22:0]};
++    assign sb = m0.sq ? sa : F_ONE;
++    otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(sa), .b(sb), .y(tq));
+     // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
+     otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
+     assign prev = mtq.first ? F_ZERO : fb;
+@@ -710,6 +715,7 @@ module otpu_vpu
+           mi.first <= (ch < 16'(RL));
+           mi.final_ <= (ch + 16'(RL) >= nch);
+           mi.sub <= 8'(ch % 16'(RL));
++          mi.sq <= (func == V_RSSQ);
+           if (irow_last) begin
+             ic <= '0; ch <= '0;
+             a_row <= a_row + 32'(ars);

@@ -1,0 +1,37 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index a71d96a..c897238 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -555,15 +555,28 @@ module otpu_vpu
+   logic [6:0]    tr_dst_q [LA];
+   logic [TBW-1:0] tr_b_q [LA];
+   logic [LANES-1:0] tr_v_q [LA];
++  localparam int RW = $clog2(RL);               // row index bits
++  localparam int HR = $clog2(NP / 2) - LW;      // row bits of a live oa (rows < RL/2)
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+-    logic [6:0] ia, ib;
++    logic [6:0] ia;
+     assign ia = is_i + 7'(k);
+-    assign ib = ia + is_n;
+     assign tr_m[k] = is_go && (ia < is_n);
++    // live adds: is_i is a multiple of LANES below is_n (a power of two <= NP/2), so a reads
++    // row is_i/LANES (< RL/2) and b reads row (is_i | is_n)/LANES, which is 0 only in the
++    // levels n < LANES -- there b is lane k + n of row 0. Dead lanes read anything.
++    logic [RW-1:0] rb;
++    assign rb = is_i[LW +: RW] | is_n[LW +: RW];
++    f32_t obr [NTB][RL];                          // b candidates, row 0 = small levels
++    always_comb
++      for (int t = 0; t < NTB; t++) begin
++        obr[t][0] = pb[t][0][k];                  // dead (k >= LANES/2)
++        for (int j = 0; (1 << j) < LANES; j++)
++          if ((1 << j) > k && is_n[j]) obr[t][0] = pb[t][0][(k + (1 << j)) % LANES];
++        for (int r = 1; r < RL; r++) obr[t][r] = pb[t][r][k];
++      end
+     f32_t oa, ob;
+-    assign oa = pb[is_b][ia[5:0] >> LW][k];
+-    assign ob = (is_n >= 7'(LANES)) ? pb[is_b][ib[5:0] >> LW][k]
+-                                    : pb[is_b][0][ib[LW-1:0]];
++    assign oa = pb[is_b][is_i[LW +: HR]][k];
++    assign ob = obr[is_b][rb];
+     otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
+   end

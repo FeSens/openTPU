@@ -121,13 +121,12 @@ def _deltas(t, prog, img):
     t.reg_write(R_CTRL, CTRL_CLEAR)
     t.reg_write(R_CTRL, CTRL_RUN)
     t.poll(R_STATUS, ST_HALTED, ST_HALTED)
-    # the first snapshot's shadows are read before the second snapshot, in the same
-    # simulation (queued like reg_read_many's reads; t.reads then holds both sets in order)
+    # the first snapshot's shadows are read before the second snapshot, in the same simulation
     shadows = [0x100 + 4 * k for k in range(2 * len(COUNTERS))]
-    t.script += [f"R {o:x}" for o in shadows]
+    idx = [t.queue_read(o) for o in shadows]
     t.reg_write(R_SNAP, 1)
     v = t.reg_read_many(shadows + [R_CYCLES, R_ICOUNT, R_B_RD, R_B_WR, R_SNAP])
-    first = t.reads[:len(shadows)]
+    first = [t.results[i] for i in idx]
     c0 = {n: first[2 * k] | first[2 * k + 1] << 32 for k, n in enumerate(COUNTERS)}
     c1 = {n: v[2 * k] | v[2 * k + 1] << 32 for k, n in enumerate(COUNTERS)}
     cyc, ic, brd, bwr, nsnap = v[len(shadows):]

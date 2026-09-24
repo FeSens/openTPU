@@ -1,0 +1,77 @@
+diff --git a/rtl/mem/otpu_axi_dram.sv b/rtl/mem/otpu_axi_dram.sv
+index d7c6369..33bfb7a 100644
+--- a/rtl/mem/otpu_axi_dram.sv
++++ b/rtl/mem/otpu_axi_dram.sv
+@@ -79,6 +79,7 @@ module otpu_axi_dram #(
+   localparam int QW = $clog2(QD);
+   localparam int RW = $clog2(RD);
+   localparam int AW_ = $clog2(AD);
++  localparam int AP = AW_ + 1;                       // A response pointers: memory is 2*AD deep
+   localparam int OD = 2 * RD;                        // B tags / A order entries in flight (2^k)
+   localparam int OW = $clog2(OD);
+ 
+@@ -119,6 +120,8 @@ module otpu_axi_dram #(
+   ao_t          ao_q [OD];
+   logic [OW:0]  ao_n;
+   logic [OW-1:0] ao_h;
++  ao_t          aoh;
++  assign aoh = ao_q[ao_h];
+ 
+   // A beat reuse
+   logic         al_v;
+@@ -139,7 +142,7 @@ module otpu_axi_dram #(
+   logic [RW:0]  rb_n [2], rb_res [2];          // stored; stored + in flight
+   logic [RW-1:0] rb_h [2], rb_t [2];
+   logic [AW_:0] ra_n [2], ra_res [2];
+-  logic [AW_-1:0] ra_h [2], ra_t [2];
++  logic [AP-1:0] ra_h [2], ra_t [2];
+ 
+   // ------------------------------------------------------------------ queue and FIFO memories
+   // (per channel; written in their own processes so they map to LUT RAM)
+@@ -175,7 +178,11 @@ module otpu_axi_dram #(
+     qa_t          qam [QD];
+     qa_t          qwm [QD];
+     logic [511:0] rbm [RD];
+-    logic [511:0] ram [AD];
++    // 2*AD deep (free in RAM32M) so that the last popped beat, slot ra_h - 1, stays intact while
++    // reuse entries read it: at most AD beats are stored or reserved (the ra_res < AD issue
++    // limit), so ra_t never wraps onto it. Raising that limit toward 2*AD breaks reuse
++    logic [511:0] ram [2*AD];
++    wire  [AP-1:0] ra_rd = aoh.reuse ? ra_h[c] - 1'b1 : ra_h[c];
+     always_ff @(posedge clk) begin
+       if (qb_push[c]) qbm[QW'(qb_h[c] + qb_n[c])] <= qb_e[c];
+       if (qa_push[c]) qam[QW'(qa_h[c] + qa_n[c])] <= qa_e[c];
+@@ -189,7 +196,7 @@ module otpu_axi_dram #(
+     assign ha[c] = qam[qa_h[c]];
+     assign hw[c] = qwm[qw_h[c]];
+     assign rb_head[c] = rbm[rb_h[c]];
+-    assign ra_head[c] = ram[ra_h[c]];
++    assign ra_head[c] = ram[ra_rd];
+   end
+ 
+   // ------------------------------------------------------------------ per-channel issue
+@@ -237,11 +244,8 @@ module otpu_axi_dram #(
+ 
+   // ------------------------------------------------------------------ merge
+   wire b_out = (bt_n != 0) && (rb_n[0] != 0) && (rb_n[1] != 0);
+-  ao_t aoh;
+-  assign aoh = ao_q[ao_h];
+-  logic [511:0] a_last;                          // the beat of the last fetched A read
+   wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] != 0);
+-  wire [511:0] a_src = aoh.reuse ? a_last : ra_head[aoh.c];
++  wire [511:0] a_src = ra_head[aoh.c];           // a reuse entry reads the last fetched beat
+   assign b_rvalid = b_out;
+   assign b_rtag = bt_q[bt_h];
+   assign b_rdata = {rb_head[1], rb_head[0]};
+@@ -355,10 +359,7 @@ module otpu_axi_dram #(
+         if (b_take && !b_we) btn = btn + 1;
+         if (b_out) begin bt_h <= bt_h + 1; btn = btn - 1; end
+         if (a_take && !a_we) aon = aon + 1;
+-        if (a_out) begin
+-          ao_h <= ao_h + 1; aon = aon - 1;
+-          if (!aoh.reuse) a_last <= ra_head[aoh.c];
+-        end
++        if (a_out) begin ao_h <= ao_h + 1; aon = aon - 1; end
+         bt_n <= btn; ao_n <= aon;
+       end
+       // ---- A beat reuse: the beat of the last A read, forgotten on any write

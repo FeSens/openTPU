@@ -1,0 +1,24 @@
+diff --git a/rtl/vpu/otpu_quant.sv b/rtl/vpu/otpu_quant.sv
+index fccfbe4..83a8f75 100644
+--- a/rtl/vpu/otpu_quant.sv
++++ b/rtl/vpu/otpu_quant.sv
+@@ -187,15 +187,17 @@ module otpu_qscale
+   // recip(ax): y = y * (2 - ax*y), three times, from the magic seed; the delay lines into the
+   // multiplier operands end in a flip-flop with a reset (otpu_qdly). The ISA's y*t + (-0) is
+   // y*t for every product (no fp_mul result is changed by adding -0), so u_y is a multiply
+-  // padded to the multiply-add latency, and its output leaves otpu_delay's last flip-flop.
++  // padded to the multiply-add latency by u_yp, and its output leaves otpu_qdly's reset flip-flop.
+   f32_t y [4], t [3], k1 [4], yd [3];
+   assign y[0] = y0;
+   assign k1[0] = {1'b1, ax[30:0]};
+   for (genvar i = 0; i < 3; i++) begin : g_it
++    f32_t ym;
+     otpu_qfmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .c(F_TWO), .y(t[i]));
+     otpu_qdly #(.W(32), .N(SL)) u_yd (.clk, .rst, .en, .d(y[i]), .q(yd[i]));
+     otpu_qdly #(.W(32), .N(2 * SL)) u_k (.clk, .rst, .en, .d(k1[i]), .q(k1[i + 1]));
+-    otpu_qfmul #(.LAT(LM + LA)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .y(y[i + 1]));
++    otpu_qfmul #(.LAT(LM)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .y(ym));
++    otpu_qdly #(.W(32), .N(LA)) u_yp (.clk, .rst, .en, .d(ym), .q(y[i + 1]));
+   end
+   // big: 127 * (+0) = +0, forced on the product (bd delayed beside zd) instead of on the operand
+   f32_t invm, scm, scd;

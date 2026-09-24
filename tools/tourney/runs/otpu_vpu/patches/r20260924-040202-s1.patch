@@ -1,0 +1,77 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 412dfd5..d059c16 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -245,17 +245,24 @@ module otpu_vpu
+     otpu_delay #(.W($bits(mt_t)), .N(SL)) u_d (.clk, .en, .d(msl[s]), .q(mtap[s + 1]));
+   end
+ 
++  // the taps an entry can end at (n_slots of some function); the results are read there only
++  localparam int T_EW = n_slots(V_ADD);
++  localparam int T_RC = n_slots(V_RECIP);
++  localparam int T_EX = n_slots(V_EXP2);
++  localparam int T_RS = n_slots(V_RSQRT);
++  function automatic logic end_tap(input int s);
++    return s == 0 || s == T_EW || s == T_RC || s == T_EX || s == T_RS;
++  endfunction
++
+   // which boundary holds an entry at its function's last slot (at most one: see header)
+-  logic [3:0] wtap;
+-  mt_t        mo;
++  logic hit [NSLOT + 1];
++  mt_t  mo;
+   always_comb begin
+-    wtap = '0;
+     mo = '0;
+-    for (int s = NSLOT; s >= 0; s--)
+-      if (mtap[s].v && !red_f(mtap[s].func) && n_slots(mtap[s].func) == 4'(s)) begin
+-        wtap = 4'(s);
+-        mo = mtap[s];
+-      end
++    for (int s = NSLOT; s >= 0; s--) begin
++      hit[s] = end_tap(s) && mtap[s].v && !red_f(mtap[s].func) && n_slots(mtap[s].func) == 4'(s);
++      if (hit[s]) mo = mtap[s];
++    end
+   end
+ 
+   // long lanes: all functions
+@@ -407,20 +414,17 @@ module otpu_vpu
+       end
+     end
+ 
+-    // the result of the entry that ends at a tap this cycle (taps: 0, 1, 6, 9, 10)
++    // the result of the entry that ends at a tap this cycle, each function read at its own end
++    // tap (no mux over the boundaries)
+     always_comb begin
+-      lst_t t;
+-      t = st[wtap];
+-      case (mo.func)
+-        V_EXP2, V_EXP2SUB:
+-          lres[l] = t.f[0] ? F_ZERO : t.f[1] ? F_INF : (t.v + {t.ii, 23'd0});
+-        V_RECIP:
+-          lres[l] = t.f[0] ? F_ZERO : t.f[1] ? {t.f[2], 31'd0} : (t.f[2] ? fneg(t.k2) : t.k2);
+-        V_RSQRT:
+-          lres[l] = t.f[0] ? F_ZERO : t.k2;
+-        default:
+-          lres[l] = t.v;
+-      endcase
++      lst_t  e, r, q;
++      f32_t  ex_r, rc_r, rs_r;
++      e = st[T_EX]; r = st[T_RC]; q = st[T_RS];
++      ex_r = e.f[0] ? F_ZERO : e.f[1] ? F_INF : (e.v + {e.ii, 23'd0});
++      rc_r = r.f[0] ? F_ZERO : r.f[1] ? {r.f[2], 31'd0} : (r.f[2] ? fneg(r.k2) : r.k2);
++      rs_r = q.f[0] ? F_ZERO : q.k2;
++      lres[l] = hit[T_EX] ? ex_r : hit[T_RC] ? rc_r : hit[T_RS] ? rs_r :
++                hit[0] ? st[0].v : st[T_EW].v;
+     end
+   end
+ 
+@@ -460,7 +464,7 @@ module otpu_vpu
+     otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(st[1]));
+ 
+     // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here)
+-    assign lres[l] = (wtap == 0) ? st[0] : st[1];
++    assign lres[l] = hit[0] ? st[0] : st[1];
+   end
+ 
+   // ------------------------------------------------------------------ RMAX

@@ -1,0 +1,15 @@
+diff --git a/rtl/vpu/otpu_fp.sv b/rtl/vpu/otpu_fp.sv
+index 12072f4..33d0aad 100644
+--- a/rtl/vpu/otpu_fp.sv
++++ b/rtl/vpu/otpu_fp.sv
+@@ -99,7 +99,9 @@ package otpu_fp;
+       m.sp = 1'b1;
+       m.sv = {m.s, 31'd0};
+     end
+-    m.p = {1'b1, a[22:0]} * {1'b1, b[22:0]};
++    // The DSP operands skip the flush: ftz only changes a zero-exponent input, and then sp is
++    // set and m.p is never read.
++    m.p = {1'b1, a_in[22:0]} * {1'b1, b_in[22:0]};
+     m.e = 11'(a[30:23]) + 11'(b[30:23]) - 11'sd127;
+     return m;
+   endfunction

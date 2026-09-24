@@ -1,0 +1,89 @@
+diff --git a/rtl/vpu/otpu_quant.sv b/rtl/vpu/otpu_quant.sv
+index 70bc635..46de011 100644
+--- a/rtl/vpu/otpu_quant.sv
++++ b/rtl/vpu/otpu_quant.sv
+@@ -62,7 +62,70 @@ module otpu_qfmul
+   otpu_delay #(.W(32), .N(LAT - 2)) u_pad (.clk, .en, .d(r), .q(y));
+ endmodule
+ 
+-// otpu_fmadd on otpu_qfmul
++// otpu_fadd with stage 2 rebuilt: the sticky bit of the aligned mb is (tz < d), tz being the
++// trailing-zero count of the smaller significand counted in stage 1 (no (1 << d) - 1 mask and
++// OR-reduce), and ma +/- mb is one adder whose carry-in rides on an extra low bit (no negate
++// of mb in front of the add). Stages 1, 3 and 4 are the otpu_fp functions.
++module otpu_qfadd
++  import otpu_fp::*;
++#(parameter int LAT = 4) (
++  input  logic  clk,
++  input  logic  en,
++  input  f32_t  a,
++  input  f32_t  b,
++  output f32_t  y
++);
++  // trailing zeros of {1, m, 3'b000}: 3 + tz(m), 26 when m == 0 (the hidden 1 is bit 26)
++  function automatic logic [4:0] qtz(input logic [22:0] m);
++    logic [4:0] n;
++    logic [31:0] x;
++    x = {5'd0, 1'b1, m, 3'b000}; n = '0;
++    if (x[15:0] == 0) begin n[4] = 1'b1; x = x >> 16; end
++    if (x[7:0] == 0)  begin n[3] = 1'b1; x = x >> 8; end
++    if (x[3:0] == 0)  begin n[2] = 1'b1; x = x >> 4; end
++    if (x[1:0] == 0)  begin n[1] = 1'b1; x = x >> 2; end
++    if (x[0] == 0)    begin n[0] = 1'b1; end
++    return n;
++  endfunction
++  // Outside the special cases mb = {1, m, 000} is nonzero and its lowest set bit is tz, so for
++  // 1 <= d <= 26, |mb[d-1:0] == (tz < d); for d == 0 and d > 26 the sticky bit is not used. In
++  // the special cases fp_add_s1 leaves d = 0 and s3/s4 return sv whatever the sum is.
++  function automatic fadd_p2_t qadd_s2(input fadd_p1_t r, input logic [4:0] tz);
++    fadd_p2_t q;
++    logic [26:0] mb;
++    logic [28:0] t;
++    q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub; q.e = r.e;
++    mb = r.mb;
++    if (r.d > 8'd26) begin
++      mb = 27'd1;
++    end else if (r.d != 0) begin
++      mb = (mb >> r.d) | {26'd0, (8'(tz) < r.d)};
++    end
++    // {0,ma} +/- {0,mb} mod 2^28: the low bit 1 + sub carries sub into ma + (mb ^ sub)
++    t = {1'b0, r.ma, 1'b1} + ({1'b0, mb, 1'b0} ^ {29{r.sub}});
++    q.sum = t[28:1];
++    return q;
++  endfunction
++  fadd_p1_t s1;
++  logic [4:0] s1_tz;
++  fadd_p2_t s2;
++  fadd_nm_t s3;
++  f32_t r;
++  always_ff @(posedge clk) if (en) begin
++    s1 <= fp_add_s1(a, b);
++    // the count of mb, the smaller operand (b, or a when fp_add_s1 swaps; same compare, ties
++    // do not swap). Raw mantissa bits: ftz only changes an operand that is a zero, which is a
++    // special case (d = 0, the count is unused).
++    s1_tz <= (ftz(b)[30:0] > ftz(a)[30:0]) ? qtz(a[22:0]) : qtz(b[22:0]);
++    s2 <= qadd_s2(s1, s1_tz);
++    s3 <= fp_add_s3(s2);
++    r  <= fp_add_s4(s3);
++  end
++  otpu_delay #(.W(32), .N(LAT - 4)) u_pad (.clk, .en, .d(r), .q(y));
++endmodule
++
++// otpu_fmadd on otpu_qfmul and otpu_qfadd. c must be a constant: it goes to the adder
++// undelayed (a delayed constant is the same constant), so it folds into the adder's stage 1.
+ module otpu_qfmadd
+   import otpu_fp::*;
+ #(parameter int LM = 2, parameter int LA = 4) (
+@@ -73,10 +136,9 @@ module otpu_qfmadd
+   input  f32_t  c,
+   output f32_t  y
+ );
+-  f32_t p, cd;
++  f32_t p;
+   otpu_qfmul #(.LAT(LM)) u_m (.clk, .en, .a, .b, .y(p));
+-  otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(c), .q(cd));
+-  otpu_fadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y);
++  otpu_qfadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(c), .y);
+ endmodule
+ 
+ module otpu_qscale

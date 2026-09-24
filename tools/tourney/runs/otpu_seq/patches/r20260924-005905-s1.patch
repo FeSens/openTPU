@@ -1,0 +1,192 @@
+diff --git a/rtl/seq/otpu_seq.sv b/rtl/seq/otpu_seq.sv
+index c7720fa..0e05ff1 100644
+--- a/rtl/seq/otpu_seq.sv
++++ b/rtl/seq/otpu_seq.sv
+@@ -71,39 +71,123 @@ module otpu_seq
+   logic        lp;
+   logic [31:0] lp_cnt, lp_len;
+ 
+-  // The footprint as the window keeps it: an MM's ASCALE TMEM range (fp_t rd[3]) never comes
+-  // with its streamed-scale DRAM range (rd[1]; ASCALE needs UNIT, docs/isa.md), so it moves
+-  // into rd[1] -- 16 range pairs per slot instead of 20. Should both be set anyway (an invalid
+-  // MM), the instruction conflicts with everything instead: a superset of its dependencies.
++  // The footprint as the window keeps it: its ranges stored by space, each with a write bit,
++  // so only same-space pairs with a write are ever compared (no space fields, no read x read).
++  // Per space an instruction has at most two DRAM ranges, two TMEM ranges that may be written
++  // plus one that is only read (MM ASCALE, QACT RSCALE, a VOP's second operand), and one ACT
++  // range. ACT addresses are narrow: lo is 8 bits and hi = lo + kb < 2^17.
++  typedef struct packed { logic v, w; logic [31:0] lo, hi; } r32w_t;   // DRAM/TMEM, R or W
++  typedef struct packed { logic v;    logic [31:0] lo, hi; } r32_t;    // TMEM t2: read only
+   typedef struct packed {
+     logic            all;
+-    rng_t [2:0]      rd;
+-    rng_t [1:0]      wr;
+-  } fp5_t;
++    r32w_t [1:0]     d;        // DRAM
++    r32w_t [1:0]     t;        // TMEM (may be written)
++    r32_t            t2;       // TMEM (read only)
++    logic            av, aw;   // ACT: [alo, ahi)
++    logic [7:0]      alo;
++    logic [16:0]     ahi;
++  } fps_t;
+ 
+-  function automatic fp5_t fp_pack(input fp_t f);
+-    fp5_t p;
+-    p.all = f.all; p.rd = f.rd[2:0]; p.wr = f.wr;
+-    if (f.rd[3].v) begin
+-      if (f.rd[1].v) p.all = 1'b1;
+-      else p.rd[1] = f.rd[3];
++  function automatic r32w_t rw(input rng_t r, input logic w);
++    r32w_t s;
++    s.v = r.v; s.w = w; s.lo = r.lo; s.hi = r.hi;
++    return s;
++  endfunction
++
++  // fp_ranges' fixed per-op fields (otpu_pkg) routed to their spaces
++  function automatic fps_t fp_seg(input logic [7:0] o, input fp_t f);
++    fps_t s;
++    rng_t a;
++    s = '0; a = '0;
++    s.all = f.all;
++    case (o)
++      OP_LD:   begin s.d[0] = rw(f.rd[0], 1'b0); s.t[0] = rw(f.wr[0], 1'b1); end
++      OP_ST:   begin s.t[0] = rw(f.rd[0], 1'b0); s.d[0] = rw(f.wr[0], 1'b1); end
++      OP_MM: begin
++        s.d[0] = rw(f.rd[0], 1'b0); s.d[1] = rw(f.rd[1], 1'b0);
++        s.t[0] = rw(f.wr[0], 1'b1); s.t[1] = rw(f.wr[1], 1'b1);
++        s.t2.v = f.rd[3].v; s.t2.lo = f.rd[3].lo; s.t2.hi = f.rd[3].hi;           // ASCALE
++        a = f.rd[2];
++      end
++      OP_QACT: begin
++        s.t[0] = rw(f.rd[0], 1'b0); s.t[1] = rw(f.rd[1], 1'b0);
++        s.t2.v = f.rd[2].v; s.t2.lo = f.rd[2].lo; s.t2.hi = f.rd[2].hi;           // RSCALE
++        a = f.wr[0]; s.aw = 1'b1;
++      end
++      OP_QST: begin
++        s.d[0] = rw(f.wr[0], 1'b1); s.d[1] = rw(f.wr[1], 1'b1);
++        s.t[0] = rw(f.rd[0], 1'b0);
++      end
++      OP_VOP: begin
++        s.t[0] = rw(f.wr[0], 1'b1); s.t[1] = rw(f.rd[0], 1'b0);
++        s.t2.v = f.rd[1].v; s.t2.lo = f.rd[1].lo; s.t2.hi = f.rd[1].hi;
++      end
++      OP_GATHER: begin s.t[0] = rw(f.wr[0], 1'b1); s.t[1] = rw(f.rd[0], 1'b0); end
++      default: ;
++    endcase
++    s.av = a.v; s.alo = a.lo[7:0]; s.ahi = a.hi[16:0];
++    return s;
++  endfunction
++
++`ifndef SYNTHESIS
++  // fp_seg dropped nothing: as many ranges, each (read or write) in its own space, ACT narrow
++  function automatic bit fp_seg_ok(input fp_t f, input fps_t s);
++    int nf, ns;
++    bit ok;
++    ok = s.all == f.all;
++    nf = 0;
++    ns = int'(s.d[0].v) + int'(s.d[1].v) + int'(s.t[0].v) + int'(s.t[1].v) + int'(s.t2.v) +
++         int'(s.av);
++    for (int k = 0; k < 6; k++) begin
++      rng_t r;
++      bit w, hit;
++      r = (k < 4) ? f.rd[k] : f.wr[k - 4];
++      w = k >= 4;
++      if (r.v) begin
++        nf++;
++        hit = 1'b0;
++        case (r.sp)
++          SP_DRAM:
++            for (int j = 0; j < 2; j++)
++              hit |= s.d[j].v && s.d[j].w == w && s.d[j].lo == r.lo && s.d[j].hi == r.hi;
++          SP_TMEM: begin
++            for (int j = 0; j < 2; j++)
++              hit |= s.t[j].v && s.t[j].w == w && s.t[j].lo == r.lo && s.t[j].hi == r.hi;
++            hit |= !w && s.t2.v && s.t2.lo == r.lo && s.t2.hi == r.hi;
++          end
++          SP_ACT:
++            hit = s.av && s.aw == w && r.lo[31:8] == 0 && r.hi[31:17] == 0 &&
++                  s.alo == r.lo[7:0] && s.ahi == r.hi[16:0];
++          default: ;
++        endcase
++        ok &= hit;
++      end
+     end
+-    return p;
++    return ok && nf == ns;
+   endfunction
++`endif
+ 
+-  // {conflict, conflict_dram} (otpu_pkg) on packed footprints, each range pair tested once: a
+-  // pair can only overlap within one space, so the DRAM part is the overlaps of DRAM ranges
+-  function automatic logic [1:0] conf5(input fp5_t n, input fp5_t e);
++  function automatic logic ovs(input logic av, input logic [31:0] alo, input logic [31:0] ahi,
++                               input logic bv, input logic [31:0] blo, input logic [31:0] bhi);
++    return av && bv && alo < bhi && blo < ahi;
++  endfunction
++
++  // {conflict, conflict_dram} (otpu_pkg) on segregated footprints: every same-space pair of
++  // which at least one range is written, each tested once
++  function automatic logic [1:0] conf_s(input fps_t n, input fps_t e);
+     logic any, dram;
+     any = n.all || e.all; dram = any;
+     for (int i = 0; i < 2; i++) begin
+-      for (int j = 0; j < 3; j++) begin
+-        if (ov(n.wr[i], e.rd[j])) begin any = 1'b1; dram |= n.wr[i].sp == SP_DRAM; end
+-        if (ov(e.wr[i], n.rd[j])) begin any = 1'b1; dram |= e.wr[i].sp == SP_DRAM; end
++      for (int j = 0; j < 2; j++) begin
++        if (ovs(n.d[i].v && (n.d[i].w || e.d[j].w), n.d[i].lo, n.d[i].hi,
++                e.d[j].v, e.d[j].lo, e.d[j].hi)) begin any = 1'b1; dram = 1'b1; end
++        if (ovs(n.t[i].v && (n.t[i].w || e.t[j].w), n.t[i].lo, n.t[i].hi,
++                e.t[j].v, e.t[j].lo, e.t[j].hi)) any = 1'b1;
+       end
+-      for (int j = 0; j < 2; j++)
+-        if (ov(n.wr[i], e.wr[j])) begin any = 1'b1; dram |= n.wr[i].sp == SP_DRAM; end
++      if (ovs(n.t[i].v && n.t[i].w, n.t[i].lo, n.t[i].hi, e.t2.v, e.t2.lo, e.t2.hi)) any = 1'b1;
++      if (ovs(e.t[i].v && e.t[i].w, e.t[i].lo, e.t[i].hi, n.t2.v, n.t2.lo, n.t2.hi)) any = 1'b1;
+     end
++    if (n.av && e.av && (n.aw || e.aw) && n.alo < e.ahi && e.alo < n.ahi) any = 1'b1;
+     return {any, dram};
+   endfunction
+ 
+@@ -117,7 +201,7 @@ module otpu_seq
+   logic [WIN-1:0]  srel;                     // MXU: released
+   logic [SW:0]     uq_r;                     // MXU: next started slot to release
+   cmd_t            scmd [WIN];
+-  fp5_t            sfp  [WIN];
++  fps_t            sfp  [WIN];
+   logic [31:0]     srdy_c [WIN];
+   // per-unit queues of started slot ids, in start (= completion) order
+   logic [SW-1:0]   uq [NUNITS][WIN];
+@@ -171,7 +255,7 @@ module otpu_seq
+   logic [31:0] p_pc, s_pc, q_pc, c_pc;
+   fpp_t        s_pp;
+   fpm_t        q_pr;
+-  fp5_t        c_fp;
++  fps_t        c_fp;
+   logic        have_free;
+   wire         c_go = c_v && have_free;
+   wire         q_adv = !c_v || c_go;            // Q hands its instruction to C
+@@ -199,7 +283,7 @@ module otpu_seq
+       if (!sv[i]) begin have_free = 1'b1; free_slot = SW'(i); end
+     for (int i = 0; i < WIN; i++) begin
+       logic [1:0] cf;
+-      cf = conf5(c_fp, sfp[i]);
++      cf = conf_s(c_fp, sfp[i]);
+       ndep[i] = sv[i] && !fin[i] && cf[1];
+       ndepd[i] = sv[i] && !fin[i] && cf[0];
+     end
+@@ -402,7 +486,13 @@ module otpu_seq
+         c_v <= q_v;
+         if (q_v) begin
+           c_cmd <= q_cmd; c_unit <= q_unit; c_pc <= q_pc;
+-          c_fp <= fp_pack(fp_ranges(q_cmd, q_pr, D, S));
++          c_fp <= fp_seg(q_cmd.op, fp_ranges(q_cmd, q_pr, D, S));
++`ifndef SYNTHESIS
++          if (!fp_seg_ok(fp_ranges(q_cmd, q_pr, D, S),
++                         fp_seg(q_cmd.op, fp_ranges(q_cmd, q_pr, D, S))))
++            $fatal(1, "otpu_seq: footprint of op %02h at pc %0d does not fit the window layout",
++                   q_cmd.op, q_pc);
++`endif
+         end
+       end
+       // ---- S: products

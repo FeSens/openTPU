@@ -1,0 +1,155 @@
+diff --git a/rtl/seq/otpu_seq.sv b/rtl/seq/otpu_seq.sv
+index 76e46a5..393df0b 100644
+--- a/rtl/seq/otpu_seq.sv
++++ b/rtl/seq/otpu_seq.sv
+@@ -53,7 +53,15 @@ module otpu_seq
+   logic [31:0]    isel;
+ 
+   logic [31:0] pc, pc_n, cyc;
+-  logic [31:0] R [16];
++  // The registers in two halves: Rl (bits 15:0) is written in the R cycle, Rh (bits 31:16) one
++  // cycle later from the pending write wb (the high half of the add plus the low half's carry),
++  // so the register-relative adds only ripple 16 bits in the fetch cycle. wb is bypassed.
++  logic [15:0] Rl [16];
++  logic [15:0] Rh [16];
++  logic        wb_v, wb_c;
++  logic [3:0]  wb_rd;
++  logic [15:0] wb_a, wb_b;
++  wire  [15:0] wb_hi = wb_a + wb_b + 16'(wb_c);
+   logic        stopping;         // HALT fetched: wait for the window to drain
+ 
+   // loop stack
+@@ -63,8 +71,10 @@ module otpu_seq
+   logic [31:0] stk_rem   [4];
+   // LOOP takes two cycles: the first registers the trip count and body length (pc holds), the
+   // second enters or skips the loop from registers -- keeps the add off the fetch-address path
++  // (the trip count's add runs in the second cycle, from the registered operands)
+   logic        lp;
+-  logic [31:0] lp_cnt, lp_len;
++  logic [31:0] lp_a, lp_b, lp_len;
++  wire  [31:0] lp_cnt = lp_a + lp_b;
+ 
+   // window
+   logic [WIN-1:0]  sv;                       // slot valid (dispatched, not completed)
+@@ -97,16 +107,24 @@ module otpu_seq
+   wire [3:0] rd    = iw[0][23:20];
+   wire [7:0] flags = iw[0][31:24];
+ 
+-  function automatic logic [31:0] rv(input logic [3:0] r);
+-    return (r == 0) ? 32'd0 : R[r];
++  function automatic logic [15:0] rv_lo(input logic [3:0] r);
++    return (r == 0) ? 16'd0 : Rl[r];
++  endfunction
++  function automatic logic [15:0] rv_hi(input logic [3:0] r);
++    return (r == 0) ? 16'd0 : (wb_v && wb_rd == r) ? wb_hi : Rh[r];
+   endfunction
+ 
++  // The register-relative fields: the low halves are added here, the high halves (raw in dcmd)
++  // in P, from p_ah and the low halves' carries p_cy
++  wire [16:0] lo1 = {1'b0, iw[1][15:0]} + {1'b0, rv_lo(ra)};
++  wire [16:0] lo2 = {1'b0, iw[2][15:0]} + {1'b0, rv_lo(rb)};
++  wire [16:0] lo3 = {1'b0, iw[3][15:0]} + {1'b0, rv_lo(rc)};
+   cmd_t dcmd;
+   always_comb begin
+     dcmd.op = op; dcmd.flags = flags;
+-    dcmd.w1 = iw[1] + rv(ra);
+-    dcmd.w2 = iw[2] + rv(rb);
+-    dcmd.w3 = iw[3] + rv(rc);
++    dcmd.w1 = {iw[1][31:16], lo1[15:0]};
++    dcmd.w2 = {iw[2][31:16], lo2[15:0]};
++    dcmd.w3 = {iw[3][31:16], lo3[15:0]};
+     dcmd.w4 = iw[4]; dcmd.w5 = iw[5]; dcmd.w6 = iw[6]; dcmd.w7 = iw[7];
+   end
+   int dunit;
+@@ -120,6 +138,9 @@ module otpu_seq
+   cmd_t        p_cmd, s_cmd, q_cmd, c_cmd;
+   int          p_unit, s_unit, q_unit, c_unit;
+   logic [31:0] p_pc, s_pc, q_pc, c_pc;
++  logic [15:0] p_ah [3];                        // P: high halves of rv(ra), rv(rb), rv(rc)
++  logic [2:0]  p_cy;                            // P: carries out of the low-half adds
++  cmd_t        p_res;                           // P: the command with its fields resolved
+   fpp_t        s_pp;
+   fpm_t        q_pr;
+   fp_t         c_fp;
+@@ -133,6 +154,13 @@ module otpu_seq
+   // R retires a control instruction this cycle (NOP, HALT, LI, ADDI, a LOOP's second cycle)
+   logic        r_ret;
+ 
++  always_comb begin
++    p_res = p_cmd;
++    p_res.w1[31:16] = p_cmd.w1[31:16] + p_ah[0] + 16'(p_cy[0]);
++    p_res.w2[31:16] = p_cmd.w2[31:16] + p_ah[1] + 16'(p_cy[1]);
++    p_res.w3[31:16] = p_cmd.w3[31:16] + p_ah[2] + 16'(p_cy[2]);
++  end
++
+   // ---- completions this cycle
+   logic [WIN-1:0] fin;
+   always_comb begin
+@@ -250,12 +278,17 @@ module otpu_seq
+       p_v <= 1'b0; s_v <= 1'b0; q_v <= 1'b0; c_v <= 1'b0; lp <= 1'b0;
+       icount <= '0;
+       sv <= '0; sstarted <= '0; sready <= '0;
+-      for (int i = 0; i < 16; i++) R[i] <= '0;
++      for (int i = 0; i < 16; i++) begin Rl[i] <= '0; Rh[i] <= '0; end
++      wb_v <= 1'b0;
+       for (int u = 0; u < NUNITS; u++) begin uq_h[u] <= '0; uq_t[u] <= '0; end
+       for (int i = 0; i < WIN; i++) sdep[i] <= '0;
+     end else begin
+       cyc <= cyc + 1;
+       pc <= pc_n;
++      // the pending high-half register write lands whatever R does (an LI/ADDI below may queue
++      // the next one)
++      wb_v <= 1'b0;
++      if (wb_v) Rh[wb_rd] <= wb_hi;
+       icount <= icount + 32'(r_ret) + 32'(c_go);
+       // completions
+       if (can_rel) begin
+@@ -333,8 +366,8 @@ module otpu_seq
+       if (p_adv) begin
+         s_v <= p_v;
+         if (p_v) begin
+-          s_cmd <= p_cmd; s_unit <= p_unit; s_pc <= p_pc;
+-          s_pp <= fp_part(fp_ops(p_cmd, D, S));
++          s_cmd <= p_res; s_unit <= p_unit; s_pc <= p_pc;
++          s_pp <= fp_part(fp_ops(p_res, D, S));
+         end
+       end
+       if (r_take) p_v <= 1'b0;
+@@ -346,17 +379,25 @@ module otpu_seq
+           OP_NOP: advance();
+           OP_HALT: stopping <= 1'b1;
+           OP_LI: begin
+-            if (rd != 0) R[rd] <= iw[1];
++            if (rd != 0) begin
++              Rl[rd] <= iw[1][15:0];
++              wb_v <= 1'b1; wb_rd <= rd; wb_a <= '0; wb_b <= iw[1][31:16]; wb_c <= 1'b0;
++            end
+             advance();
+           end
+           OP_ADDI: begin
+-            if (rd != 0) R[rd] <= rv(ra) + iw[1];
++            if (rd != 0) begin
++              Rl[rd] <= lo1[15:0];
++              wb_v <= 1'b1; wb_rd <= rd; wb_a <= rv_hi(ra); wb_b <= iw[1][31:16];
++              wb_c <= lo1[16];
++            end
+             advance();
+           end
+           OP_LOOP: begin
+             if (!lp) begin
+               lp <= 1'b1;
+-              lp_cnt <= rv(ra) + iw[2];
++              lp_a <= {rv_hi(ra), rv_lo(ra)};
++              lp_b <= iw[2];
+               lp_len <= iw[1];
+             end else begin
+               lp <= 1'b0;
+@@ -375,6 +416,8 @@ module otpu_seq
+             end else if (r_take) begin
+               p_v <= 1'b1;
+               p_cmd <= dcmd; p_unit <= dunit; p_pc <= pc;
++              p_ah[0] <= rv_hi(ra); p_ah[1] <= rv_hi(rb); p_ah[2] <= rv_hi(rc);
++              p_cy <= {lo3[16], lo2[16], lo1[16]};
+               advance();
+             end
+           end

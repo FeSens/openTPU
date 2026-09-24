@@ -1,0 +1,134 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 0a29d43..755678d 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -20,7 +20,9 @@
+ // Reductions: RMAX folds each chunk with a max tree (the order is total, so any order is
+ // exact). RSUM/RSSQ implement isum_64: lane l owns the partials l, l+LANES, ... and adds each
+ // chunk's term into the partial last updated RL = 64/LANES chunks ago -- a loop of exactly RL
+-// cycles through a pipelined adder. Rows are padded with +0 terms to a multiple of 64 columns;
++// cycles through a pipelined adder. When RL >= SL (RFUSE) that is the lanes' idle slot-0
++// multiply-add (term * 1 or x * x, + partial); otherwise a separate multiplier and adder per
++// lane. Rows are padded with +0 terms to a multiple of 64 columns;
+ // the 64 final partials are captured into one of NTB = 2 buffers and summed by a folding tree
+ // (LANES adders) while the next row streams.
+ //
+@@ -59,6 +61,7 @@ module otpu_vpu
+   localparam int LW = $clog2(LANES);
+   localparam int NCL = (CL < LANES) ? CL : LANES;
+   localparam int CLW = $clog2(NCL);
++  localparam bit RFUSE = (RL >= SL);         // RSUM/RSSQ partial loop on the lanes' slot 0
+   initial if (RL < LA || NP % LANES != 0)
+     $fatal(1, "otpu_vpu: LANES must be a power of two <= 16");
+ 
+@@ -172,14 +175,15 @@ module otpu_vpu
+   } meta_t;
+   // mi: the chunk read this cycle; m0: that chunk one granted cycle later, together with its
+   // TMEM data registered (xa, xb), so no path runs from the TMEM block RAMs into the lanes'
+-  // multipliers in one cycle
++  // multipliers in one cycle. Masked lanes hold xa = +0 (the RSUM/RSSQ padding terms); their
++  // elementwise results are never written, RMAX drops them by mask.
+   meta_t m0, mi;
+   logic [LANES-1:0][31:0] xa, xb;
+   always_ff @(posedge clk)
+     if (rst) m0 <= '0;
+     else if (en) begin
+       m0 <= mi;
+-      xa <= ta_data;
++      for (int l = 0; l < LANES; l++) xa[l] <= mi.mask[l] ? ta_data[l] : '0;
+       xb <= tb_data;
+     end
+ 
+@@ -232,6 +236,9 @@ module otpu_vpu
+ 
+   mt_t   mtap [NSLOT + 1];
+   f32_t  lres [LANES];
++  // RSUM/RSSQ (RFUSE): slot 0 computes pacc = (x * (1 or x)) + rprev (see RSUM / RSSQ)
++  f32_t  pacc [LANES];                  // partial after adding this chunk's term
++  f32_t  rprev [LANES];                 // the partial it adds to, at the slot-0 input mux
+ 
+   assign mtap[0] = '{v: m0.v, func: m0.func, mask: m0.mask, waddr: m0.waddr,
+                      all_last: m0.all_last};
+@@ -336,6 +343,8 @@ module otpu_vpu
+           V_ADD:  if (s == 0) begin ia = x; ic_ = y; dest = 2'd1; end
+           V_SUB:  if (s == 0) begin ia = x; ic_ = fneg(y); dest = 2'd1; end
+           V_RSUB: if (s == 0) begin ia = y; ic_ = fneg(x); dest = 2'd1; end
++          V_RSUM: if (s == 0 && RFUSE) begin ia = x; ic_ = rprev[l]; end
++          V_RSSQ: if (s == 0 && RFUSE) begin ia = x; ib = ftz(x); ic_ = rprev[l]; end
+           V_EXP2, V_EXP2SUB: begin
+             if (s == 0) begin
+               ia = x; ic_ = (msl[s].func == V_EXP2SUB) ? fneg(y) : F_NZ; dest = 2'd1;
+@@ -377,6 +386,9 @@ module otpu_vpu
+         ra <= ia; rb <= ib; rc <= ic_; sr <= sin_; dr <= dest; nr <= negd;
+       end
+       otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(r));
++      if (s == 0 && RFUSE) begin : g_pacc
++        assign pacc[l] = r;
++      end
+       // the live fields only (see k1_live); the dead ones read as 0 and are never used
+       assign sd.v = '0;
+       if (k1_live(s)) begin : g_k1
+@@ -453,6 +465,8 @@ module otpu_vpu
+         V_ADD:  begin ia = x; ic_ = y; end
+         V_SUB:  begin ia = x; ic_ = fneg(y); end
+         V_RSUB: begin ia = y; ic_ = fneg(x); end
++        V_RSUM: if (RFUSE) begin ia = x; ic_ = rprev[l]; end
++        V_RSSQ: if (RFUSE) begin ia = x; ib = x; ic_ = rprev[l]; end
+         default: ;
+       endcase
+     end
+@@ -460,6 +474,9 @@ module otpu_vpu
+       ra <= ia; rb <= ib; rc <= ic_;
+     end
+     otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(st[1]));
++    if (RFUSE) begin : g_pacc
++      assign pacc[l] = st[1];
++    end
+ 
+     // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here)
+     assign lres[l] = (wtap == 0) ? st[0] : st[1];
+@@ -505,18 +522,32 @@ module otpu_vpu
+   assign mx_new = (mx_have && fp_gt(mx_run, mxc_q)) ? mx_run : mxc_q;
+ 
+   // ------------------------------------------------------------------ RSUM / RSSQ
+-  f32_t  pacc [LANES];                  // partial after adding this chunk's term
+-  rm_t   mtq, mt;                       // meta at the adder inputs / aligned with `pacc`
+-  otpu_delay #(.W($bits(rm_t)), .N(LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
+-  otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
+-  for (genvar l = 0; l < LANES; l++) begin : g_red
+-    f32_t xin, tq, prev, fb;
+-    assign xin = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
+-    otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xin), .b((m0.func == V_RSSQ) ? xin : F_ONE), .y(tq));
+-    // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
+-    otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
+-    assign prev = mtq.first ? F_ZERO : fb;
+-    otpu_fadd #(.LAT(LA)) u_acc (.clk, .en, .a(prev), .b(tq), .y(pacc[l]));
++  rm_t   mt;                            // meta aligned with `pacc`
++  if (RFUSE) begin : g_rfuse
++    // the lanes' slot 0 (idle: reductions run alone) computes pacc = (x * (1 or x)) + rprev,
++    // SL cycles after m0; x is +0 on masked lanes (see xa). fp_add is commutative bit for bit,
++    // so this is the ISA's partial + term.
++    otpu_delay #(.W($bits(rm_t)), .N(SL)) u_mt (.clk, .en, .d(m0r), .q(mt));
++    for (genvar l = 0; l < LANES; l++) begin : g_red
++      f32_t fb;
++      // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
++      otpu_delay #(.W(32), .N(RL - SL)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
++      assign rprev[l] = m0.first ? F_ZERO : fb;
++    end
++  end else begin : g_rsep
++    rm_t mtq;                           // meta at the adder inputs
++    otpu_delay #(.W($bits(rm_t)), .N(LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
++    otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
++    for (genvar l = 0; l < LANES; l++) begin : g_red
++      f32_t xin, tq, prev, fb;
++      assign xin = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
++      otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xin), .b((m0.func == V_RSSQ) ? xin : F_ONE), .y(tq));
++      // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
++      otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
++      assign prev = mtq.first ? F_ZERO : fb;
++      otpu_fadd #(.LAT(LA)) u_acc (.clk, .en, .a(prev), .b(tq), .y(pacc[l]));
++      assign rprev[l] = F_NZ;
++    end
+   end
+ 
+   // Final partials of a row are captured into one of NTB buffers; each buffer runs its own

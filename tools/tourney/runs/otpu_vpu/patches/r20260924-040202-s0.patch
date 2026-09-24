@@ -1,0 +1,128 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 412dfd5..ca555de 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -78,6 +78,7 @@ module otpu_vpu
+   logic [7:0]  tag;                            // instruction tag
+   logic [31:0] cyc, st_frz;
+ 
++  // the long lanes' result muxes use these as fixed taps (0, 1, 6, 9, 10): update them with it
+   function automatic logic [3:0] n_slots(input logic [7:0] f);
+     case (f)
+       V_ADD, V_SUB, V_RSUB, V_MUL: return 4'd1;
+@@ -169,16 +170,17 @@ module otpu_vpu
+     logic [7:0]       sub;       // chunk index mod RL
+   } meta_t;
+   // mi: the chunk read this cycle; m0: that chunk one granted cycle later, together with its
+-  // TMEM data registered (xa, xb), so no path runs from the TMEM block RAMs into the lanes'
+-  // multipliers in one cycle
++  // TMEM data registered (xa, yb), so no path runs from the TMEM block RAMs into the lanes'
++  // multipliers in one cycle. yb is operand B already muxed per lane (scalar, row word, column)
+   meta_t m0, mi;
+-  logic [LANES-1:0][31:0] xa, xb;
++  logic [LANES-1:0][31:0] xa, yb;
+   always_ff @(posedge clk)
+     if (rst) m0 <= '0;
+     else if (en) begin
+       m0 <= mi;
+       xa <= ta_data;
+-      xb <= tb_data;
++      for (int l = 0; l < LANES; l++)
++        yb[l] <= (mi.bmode == B_SCALAR) ? mi.imm : (mi.bmode == B_ROW) ? tb_data[0] : tb_data[l];
+     end
+ 
+   // the parts of the meta the later stages read: along the lane taps, and for the reductions
+@@ -246,17 +248,19 @@ module otpu_vpu
+   end
+ 
+   // which boundary holds an entry at its function's last slot (at most one: see header)
+-  logic [3:0] wtap;
++  function automatic logic ends_at(input mt_t m, input int s);
++    return m.v && !red_f(m.func) && n_slots(m.func) == 4'(s);
++  endfunction
+   mt_t        mo;
+   always_comb begin
+-    wtap = '0;
+     mo = '0;
+     for (int s = NSLOT; s >= 0; s--)
+-      if (mtap[s].v && !red_f(mtap[s].func) && n_slots(mtap[s].func) == 4'(s)) begin
+-        wtap = 4'(s);
+-        mo = mtap[s];
+-      end
++      if (ends_at(mtap[s], s)) mo = mtap[s];
+   end
++  // end strobes of the fixed taps (n_slots: 0, 1, 6, 9, 10), each decoded from its own tap's
++  // meta; the result muxes test them lowest tap first, as mo does, and fall back to tap 10
++  wire et0 = ends_at(mtap[0], 0), et1 = ends_at(mtap[1], 1), et6 = ends_at(mtap[6], 6),
++       et9 = ends_at(mtap[9], 9);
+ 
+   // long lanes: all functions
+   for (genvar l = 0; l < NCL; l++) begin : g_lane
+@@ -264,7 +268,7 @@ module otpu_vpu
+     f32_t x, y;
+     lst_t st [NS + 1];
+     assign x = xa[l];
+-    assign y = (m0.bmode == B_SCALAR) ? m0.imm : (m0.bmode == B_ROW) ? xb[0] : xb[l];
++    assign y = yb[l];
+ 
+     // boundary 0: the simple functions' results and the composite functions' setup
+     always_comb begin
+@@ -407,21 +411,15 @@ module otpu_vpu
+       end
+     end
+ 
+-    // the result of the entry that ends at a tap this cycle (taps: 0, 1, 6, 9, 10)
+-    always_comb begin
+-      lst_t t;
+-      t = st[wtap];
+-      case (mo.func)
+-        V_EXP2, V_EXP2SUB:
+-          lres[l] = t.f[0] ? F_ZERO : t.f[1] ? F_INF : (t.v + {t.ii, 23'd0});
+-        V_RECIP:
+-          lres[l] = t.f[0] ? F_ZERO : t.f[1] ? {t.f[2], 31'd0} : (t.f[2] ? fneg(t.k2) : t.k2);
+-        V_RSQRT:
+-          lres[l] = t.f[0] ? F_ZERO : t.k2;
+-        default:
+-          lres[l] = t.v;
+-      endcase
+-    end
++    // the result of the entry that ends at a tap this cycle (taps: 0, 1, 6, 9, 10), one fixed
++    // formula per tap: EXP2 ends at 9, RECIP at 6, RSQRT at 10, the rest at 0 or 1
++    f32_t r_exp2, r_recip, r_rsqrt, r_hi;
++    assign r_exp2  = st[9].f[0] ? F_ZERO : st[9].f[1] ? F_INF : (st[9].v + {st[9].ii, 23'd0});
++    assign r_recip = st[6].f[0] ? F_ZERO : st[6].f[1] ? {st[6].f[2], 31'd0}
++                                         : (st[6].f[2] ? fneg(st[6].k2) : st[6].k2);
++    assign r_rsqrt = st[10].f[0] ? F_ZERO : st[10].k2;
++    assign r_hi    = et1 ? st[1].v : et6 ? r_recip : et9 ? r_exp2 : r_rsqrt;
++    assign lres[l] = et0 ? st[0].v : r_hi;
+   end
+ 
+   // short lanes: slot 0 only. The composite functions are never issued here (imask), so their
+@@ -430,7 +428,7 @@ module otpu_vpu
+     f32_t x, y;
+     f32_t st [2];                                  // v at boundaries 0 and 1
+     assign x = xa[l];
+-    assign y = (m0.bmode == B_SCALAR) ? m0.imm : (m0.bmode == B_ROW) ? xb[0] : xb[l];
++    assign y = yb[l];
+ 
+     always_comb begin
+       st[0] = '0;
+@@ -460,7 +458,7 @@ module otpu_vpu
+     otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(st[1]));
+ 
+     // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here)
+-    assign lres[l] = (wtap == 0) ? st[0] : st[1];
++    assign lres[l] = et0 ? st[0] : st[1];
+   end
+ 
+   // ------------------------------------------------------------------ RMAX
+@@ -829,5 +827,9 @@ module otpu_vpu
+   always_ff @(posedge clk)
+     if (!rst && en && SH2 && l2_v && rsr[DL + LA - 1])
+       $fatal(1, "otpu_vpu: RSUM/RSSQ lane level schedule collision");
++  // the long lanes' result muxes have fixed taps: every elementwise function must end at one
++  always_ff @(posedge clk)
++    if (!rst && en && mo.v && !(n_slots(mo.func) inside {4'd0, 4'd1, 4'd6, 4'd9, 4'd10}))
++      $fatal(1, "otpu_vpu: elementwise function ends at a tap without a result mux");
+ `endif
+ endmodule

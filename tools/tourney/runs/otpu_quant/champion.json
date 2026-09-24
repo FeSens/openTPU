@@ -1,0 +1,31 @@
+{
+ "lut": 7897,
+ "lutram": 969,
+ "ff": 5250,
+ "dsp": 65,
+ "bram36": 0,
+ "bram18": 0,
+ "carry4": 949,
+ "logic_ns": 4.394,
+ "fmax": 132.7950706469776,
+ "backend": "yosys",
+ "log": "/Users/bonetto/bonetto/openTPU/build/tourney/otpu_quant/champ-f763376f8/otpu_quant/yosys.log",
+ "area_eq": 14091.0,
+ "parts": {
+  "otpu_quant": {
+   "lut": 7897,
+   "lutram": 969,
+   "ff": 5250,
+   "dsp": 65,
+   "bram36": 0,
+   "bram18": 0,
+   "carry4": 949,
+   "logic_ns": 4.394,
+   "fmax": 132.7950706469776,
+   "backend": "yosys"
+  }
+ },
+ "perf_cycles": 1912215,
+ "sha": "f763376f88059673a601c1430f77d6cd6e34e9a1",
+ "critical": "[otpu_quant]\nLatest arrival time in 'otpu_quant' is 4394:\n    4394 $2565.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.mul_sliceB_last (DSP48E1.PCIN)\n           $abc$336448$auto$abc9_ops.cc:685:prep_delays$108895\n    3369 $2565.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.sliceB[0].mul (DSP48E1.A->PCOUT)\n           \\u_sc.g_it[1].u_k.qr [22]\n     399 $auto$ff.cc:337:slice$68721 (FDRE.C->Q)\n           \\g_pre[0].u_c.clk\n      96 $auto$clkbufmap.cc:261:execute$348135 (BUFG.I->O)\n       0   \\clk (<primary input>)\nArrival histogram:\n legend: * represents 25 endpoint(s)\n         + represents [1,25) endpoint(s)\n(  4400,   4180] |************************************************************ \n(  4180,   3960] |***+\n(  3960,   3740] |***+\n(  3740,   3520] |****+\n(  3520,   3300] |*******************+\n(  3300,   3080] |*************************************+\n(  3080,   2860] |*******+\n(  2860,   2640] |*******+\n(  2640,   2420] |*******************+\n(  2420,   2200] |*********************************+\n(  2200,   1980] |*****+\n(  1980,   1760] |****************+\n(  1760,   1540] |*********************+\n(  1540,   1320] |********+\n(  1320,   1100] |*******+\n(  1100,    880] |***+\n(   880,    660] |****+\n(   660,    440] |*******************+\n(   440,    220] |********************+\n(   220,      0] |***************+"
+}

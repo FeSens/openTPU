@@ -1,0 +1,63 @@
+diff --git a/rtl/vpu/otpu_fp.sv b/rtl/vpu/otpu_fp.sv
+index 185e38a..69b0c4f 100644
+--- a/rtl/vpu/otpu_fp.sv
++++ b/rtl/vpu/otpu_fp.sv
+@@ -74,6 +74,15 @@ package otpu_fp;
+     return |(x & mask);
+   endfunction
+ 
++  // Position of the lowest set bit of {sig, 3'b000}; 27 when sig is 0. lzc32 of the
++  // bit-reversed value below 3 leading zeros, padded with ones so the count stops at 27.
++  function automatic logic [4:0] tz27(input logic [23:0] sig);
++    logic [31:0] r;
++    for (int i = 0; i < 24; i++) r[31 - 3 - i] = sig[i];
++    r[31:29] = 3'b000; r[4:0] = 5'b11111;
++    return 5'(lzc32(r));
++  endfunction
++
+   // ---- fp_mul in two stages (the product is the register boundary: on the FPGA it sits in
+   // the DSP48 M/P registers).
+   typedef struct packed {
+@@ -143,6 +152,7 @@ package otpu_fp;
+     logic [7:0]  e;
+     logic [7:0]  d;        // exponent difference (>= 0)
+     logic [26:0] ma, mb;   // significands with 3 guard bits, mb not yet aligned
++    logic [4:0]  tz;       // lowest set bit of mb (27 when mb == 0): the alignment sticky
+   } fadd_p1_t;
+ 
+   typedef struct packed {
+@@ -173,8 +183,13 @@ package otpu_fp;
+   function automatic fadd_p1_t fp_add_s1(input f32_t a_in, input f32_t b_in);
+     fadd_p1_t r;
+     f32_t a, b, t;
++    logic [4:0] tza, tzb;
+     a = ftz(a_in);
+     b = ftz(b_in);
++    // Trailing zeros of both significands in parallel with the compare; the swap muxes 5 bits.
++    tza = tz27({a[30:23] != 8'd0, a[22:0]});
++    tzb = tz27({b[30:23] != 8'd0, b[22:0]});
++    r.tz = (b[30:0] > a[30:0]) ? tza : tzb;
+     // inf/NaN; the datapath fields below are don't-care when sp. A zero operand is not special:
+     // its significand is 0 (hidden bit = exponent nonzero), and align/add/round return the other.
+     r.sp = (a[30:23] == 8'hFF || b[30:23] == 8'hFF);
+@@ -196,16 +211,12 @@ package otpu_fp;
+   function automatic fadd_p2_t fp_add_s2(input fadd_p1_t r);
+     fadd_p2_t q;
+     logic [26:0] mb;
+-    logic stk;
+     q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub;
+     q.e = r.e + 8'd1;                        // pre-incremented for the 28-bit normalize in s3
+-    mb = r.mb;
+-    if (r.d > 8'd26) begin
+-      mb = 27'd1;
+-    end else if (r.d != 0) begin
+-      stk = sticky_below({5'd0, mb}, 6'(r.d));
+-      mb = (mb >> r.d) | {26'd0, stk};
+-    end
++    // Sticky of the bits shifted out: set iff the lowest set bit of mb is below d (tz >= 3, so
++    // d == 0 gives 0; a zero mb has tz = 27 > 26).
++    if (r.d > 8'd26) mb = 27'd1;
++    else             mb = (r.mb >> r.d) | {26'd0, r.d > 8'(r.tz)};
+     q.sum = r.sub ? ({1'b0, r.ma} - {1'b0, mb}) : ({1'b0, r.ma} + {1'b0, mb});
+     return q;
+   endfunction

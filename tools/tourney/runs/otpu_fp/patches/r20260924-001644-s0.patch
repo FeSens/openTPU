@@ -1,0 +1,94 @@
+diff --git a/rtl/vpu/otpu_fp.sv b/rtl/vpu/otpu_fp.sv
+index f8dfa3d..7050bea 100644
+--- a/rtl/vpu/otpu_fp.sv
++++ b/rtl/vpu/otpu_fp.sv
+@@ -67,6 +67,32 @@ package otpu_fp;
+     return lzc32({m, 5'b11111});             // at most 27 for a nonzero... (m == 0 -> 27)
+   endfunction
+ 
++  // Trailing-zero count of v (v[23] set, so 0..23) as a balanced tree of (all-zero, count)
++  // pairs over 4-bit leaves, merged low half first.
++  function automatic logic [4:0] tzc24(input logic [23:0] v);
++    logic [31:0] x;
++    logic [7:0] z1;
++    logic [7:0][1:0] c1;
++    logic [3:0] z2;
++    logic [3:0][2:0] c2;
++    logic [1:0] z3;
++    logic [1:0][3:0] c3;
++    x = {8'hFF, v};
++    for (int i = 0; i < 8; i++) begin
++      z1[i] = (x[4*i +: 4] == 4'd0);
++      c1[i] = x[4*i] ? 2'd0 : x[4*i+1] ? 2'd1 : x[4*i+2] ? 2'd2 : 2'd3;
++    end
++    for (int i = 0; i < 4; i++) begin
++      z2[i] = z1[2*i] & z1[2*i+1];
++      c2[i] = z1[2*i] ? {1'b1, c1[2*i+1]} : {1'b0, c1[2*i]};
++    end
++    for (int i = 0; i < 2; i++) begin
++      z3[i] = z2[2*i] & z2[2*i+1];
++      c3[i] = z2[2*i] ? {1'b1, c2[2*i+1]} : {1'b0, c2[2*i]};
++    end
++    return z3[0] ? {1'b1, c3[1]} : {1'b0, c3[0]};
++  endfunction
++
+   // |x[k-1:0]| for a variable k (0..32)
+   function automatic logic sticky_below(input logic [31:0] x, input logic [5:0] k);
+     logic [31:0] mask;
+@@ -139,6 +165,7 @@ package otpu_fp;
+     logic [7:0]  e;
+     logic [7:0]  d;        // exponent difference (>= 0)
+     logic [26:0] ma, mb;   // significands with 3 guard bits, mb not yet aligned
++    logic [4:0]  tzp;      // trailing zeros of the unaligned mb (3..26)
+   } fadd_p1_t;
+ 
+   typedef struct packed {
+@@ -161,8 +188,13 @@ package otpu_fp;
+   function automatic fadd_p1_t fp_add_s1(input f32_t a_in, input f32_t b_in);
+     fadd_p1_t r;
+     f32_t a, b, t;
++    logic [4:0] tza, tzb;
++    logic swapped;
+     a = ftz(a_in);
+     b = ftz(b_in);
++    // from the raw pins, in parallel with the compare (only used when neither exponent is 0)
++    tza = tzc24({1'b1, a_in[22:0]});
++    tzb = tzc24({1'b1, b_in[22:0]});
+     r = '0;
+     if (a[30:23] == 8'hFF || b[30:23] == 8'hFF) begin
+       r.sp = 1'b1;
+@@ -186,9 +218,11 @@ package otpu_fp;
+       r.sv = a;
+       return r;
+     end
+-    if (b[30:0] > a[30:0]) begin
++    swapped = (b[30:0] > a[30:0]);
++    if (swapped) begin
+       t = a; a = b; b = t;
+     end
++    r.tzp = 5'd3 + (swapped ? tza : tzb);
+     r.sa = a[31];
+     r.sub = a[31] ^ b[31];
+     r.e = a[30:23];
+@@ -201,15 +235,13 @@ package otpu_fp;
+   function automatic fadd_p2_t fp_add_s2(input fadd_p1_t r);
+     fadd_p2_t q;
+     logic [26:0] mb;
+-    logic stk;
++    logic big, stk;
+     q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub; q.e = r.e;
+-    mb = r.mb;
+-    if (r.d > 8'd26) begin
+-      mb = 27'd1;
+-    end else if (r.d != 0) begin
+-      stk = sticky_below({5'd0, mb}, 6'(r.d));
+-      mb = (mb >> r.d) | {26'd0, stk};
+-    end
++    // mb's shifted-out bits are nonzero iff its lowest set bit sits below d (tzp >= 3, so
++    // d = 0 adds nothing)
++    big = (r.d > 8'd26);
++    stk = (r.d > {3'd0, r.tzp});
++    mb = big ? 27'd1 : ((r.mb >> r.d[4:0]) | {26'd0, stk});
+     q.sum = r.sub ? ({1'b0, r.ma} - {1'b0, mb}) : ({1'b0, r.ma} + {1'b0, mb});
+     return q;
+   endfunction

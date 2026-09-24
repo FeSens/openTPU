@@ -1,0 +1,43 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 0a29d43..3464a81 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -69,6 +69,7 @@ module otpu_vpu
+   logic [31:0] dst, a, b, imm;
+   logic [15:0] rows, cols, drs, ars, brs;
+   logic [7:0]  func;
++  logic        rssq;                           // func == V_RSSQ
+   logic [1:0]  bmode;
+   logic [15:0] ir, ic, nch, ch;               // issue: row, column, chunks per row, chunk
+   logic [31:0] a_row, b_row, d_row;           // row base addresses (no multipliers)
+@@ -509,10 +510,19 @@ module otpu_vpu
+   rm_t   mtq, mt;                       // meta at the adder inputs / aligned with `pacc`
+   otpu_delay #(.W($bits(rm_t)), .N(LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
+   otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
++  // The squarer always squares, its DSP pins driven straight from the `xa` flip-flops; RSUM's
++  // term (x * 1.0) is formed beside it and delayed to match, and `rssq` (constant for the whole
++  // reduction) picks one at the adder input.
+   for (genvar l = 0; l < LANES; l++) begin : g_red
+-    f32_t xin, tq, prev, fb;
+-    assign xin = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
+-    otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xin), .b((m0.func == V_RSSQ) ? xin : F_ONE), .y(tq));
++    f32_t xm, xs, sqy, sm, tq, prev, fb;
++    // lane mask folded into the exponent: a zero exponent flushes to +-0, whose square is +0,
++    // so the significand bits reach the DSP untouched from the xa flip-flops
++    assign xm = {xa[l][31], m0.mask[l] ? xa[l][30:23] : 8'd0, xa[l][22:0]};
++    // RSUM's term: x * 1.0 == ftz(x), NaN -> the canonical NaN; masked lanes +0
++    assign xs = !m0.mask[l] ? F_ZERO : is_nan(xa[l]) ? F_NAN : ftz(xa[l]);
++    otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xm), .b(xm), .y(sqy));
++    otpu_delay #(.W(32), .N(LM)) u_sm (.clk, .en, .d(xs), .q(sm));
++    assign tq = rssq ? sqy : sm;
+     // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
+     otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
+     assign prev = mtq.first ? F_ZERO : fb;
+@@ -669,6 +679,7 @@ module otpu_vpu
+           rows <= hc.w4[15:0]; cols <= hc.w4[31:16];
+           drs <= hc.w5[15:0]; ars <= hc.w5[31:16];
+           brs <= hc.w6[15:0]; func <= hf; bmode <= hc.w6[25:24];
++          rssq <= (hf == V_RSSQ);
+           imm <= hc.w7;
+           nslots <= n_slots(hf);
+           c16 = hc.w4[31:16];

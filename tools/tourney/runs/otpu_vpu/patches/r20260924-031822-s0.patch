@@ -1,0 +1,74 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index a71d96a..3228140 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -523,10 +523,14 @@ module otpu_vpu
+   // folding tree (level n = 32, 16, .., 1: x[i] += x[i+n], i < n) and the trees of different
+   // rows interleave on the LANES tree adders (one buffer issues up to LANES adds per cycle).
+   // Partial p sits in row p / LANES, lane p % LANES: levels n >= LANES add rows of the same
+-  // lane, levels n < LANES add lanes of row 0, so tree adder k only reads lane k (and lane
+-  // k + n) and only writes lane k -- narrow muxes instead of any-of-64 reads.
++  // lane, levels n < LANES add lanes of row 0. Their second operand, lane k + n of row 0, is
++  // staged into row 1, lane k by the write-back of the level before (row 1 is dead from level
++  // LANES on), so tree adder k only reads lane k of a (buffer, row) -- narrow muxes instead of
++  // any-of-64 reads.
+   localparam int NTB = 4;
+   localparam int TBW = $clog2(NTB);
++  localparam int RW = $clog2(RL);            // row index
++  localparam int OAW = $clog2(RL / 2);       // rows holding a first operand (pair < 32)
+   f32_t          pb [NTB][RL][LANES];
+   logic [NTB-1:0] tb_act;                 // captured, tree in progress
+   logic [6:0]    tb_n [NTB], tb_i [NTB];   // pairs in the level, next pair
+@@ -550,20 +554,20 @@ module otpu_vpu
+   logic          is_go;
+   logic [TBW-1:0] is_b;
+   logic [6:0]    is_i, is_n;
++  logic [RW-1:0] is_rb;                     // row of the second operands
+   f32_t          tr_y [LANES];
+   logic [LANES-1:0] tr_m;
+-  logic [6:0]    tr_dst_q [LA];
++  logic [6:0]    tr_dst_q [LA], tr_n_q [LA];
+   logic [TBW-1:0] tr_b_q [LA];
+   logic [LANES-1:0] tr_v_q [LA];
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+-    logic [6:0] ia, ib;
++    logic [6:0] ia;
+     assign ia = is_i + 7'(k);
+-    assign ib = ia + is_n;
+     assign tr_m[k] = is_go && (ia < is_n);
++    // is_i is a multiple of LANES: every adder reads the same rows
+     f32_t oa, ob;
+-    assign oa = pb[is_b][ia[5:0] >> LW][k];
+-    assign ob = (is_n >= 7'(LANES)) ? pb[is_b][ib[5:0] >> LW][k]
+-                                    : pb[is_b][0][ib[LW-1:0]];
++    assign oa = pb[is_b][is_i[OAW+LW-1:LW]][k];
++    assign ob = pb[is_b][is_rb][k];
+     otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
+   end
+ 
+@@ -749,16 +753,25 @@ module otpu_vpu
+         is_b <= tr_b;
+         is_i <= tb_i[tr_b];
+         is_n <= tb_n[tr_b];
++        is_rb <= (tb_n[tr_b] >= 7'(LANES)) ? RW'((tb_i[tr_b] + tb_n[tr_b]) >> LW) : RW'(1);
+         tr_v_q[0] <= tr_m;
+         tr_dst_q[0] <= is_i;
++        tr_n_q[0] <= is_n;
+         tr_b_q[0] <= is_b;
+         for (int k = 1; k < LA; k++) begin
+           tr_v_q[k] <= tr_v_q[k-1];
+           tr_dst_q[k] <= tr_dst_q[k-1];
++          tr_n_q[k] <= tr_n_q[k-1];
+           tr_b_q[k] <= tr_b_q[k-1];
+         end
+         for (int k = 0; k < LANES; k++)
+           if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][tr_dst_q[LA-1][5:0] >> LW][k] <= tr_y[k];
++        // levels n = 2h <= LANES (results in row 0): also stage lane k + h into row 1, lane k,
++        // the second operand of pair k of the next level
++        for (int j = 0; j < LW; j++)
++          if (tr_n_q[LA-1] == 7'(2 << j))
++            for (int k = 0; k < (1 << j); k++)
++              if (tr_v_q[LA-1][k + (1 << j)]) pb[tr_b_q[LA-1]][1][k] <= tr_y[k + (1 << j)];
+         for (int bb = 0; bb < NTB; bb++) begin
+           logic [2:0] inf;
+           inf = tb_inf[bb];

@@ -19,6 +19,7 @@ import itertools
 import gc
 import os
 import sys
+import threading
 import weakref
 from dataclasses import dataclass, field
 
@@ -994,13 +995,23 @@ class Builder:
 
 
 # =============================================================================== tracing context
-_CURRENT: list = []
+# per thread: the Engine compiles the next token's program on a worker thread while the
+# device runs the current one (opentpu/llm/qwen3.py)
+_TLS = threading.local()
+
+
+def _stack() -> list:
+    s = getattr(_TLS, "stack", None)
+    if s is None:
+        s = _TLS.stack = []
+    return s
 
 
 def current() -> Builder:
-    if not _CURRENT:
+    st = _stack()
+    if not st:
         raise CompileError("openTPU language functions can only be called inside a kernel")
-    return _CURRENT[-1]
+    return st[-1]
 
 
 @dataclass
@@ -1019,11 +1030,12 @@ class Kernel:
     def trace(self, cfg: Config, sid: int, bound: dict) -> Builder:
         b = Builder(cfg, sid)
         b.S = cfg.S
-        _CURRENT.append(b)
+        st = _stack()
+        st.append(b)
         try:
             self.fn(**bound)
         finally:
-            _CURRENT.pop()
+            st.pop()
         return b
 
 

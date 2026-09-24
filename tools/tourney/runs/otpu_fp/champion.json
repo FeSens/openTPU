@@ -1,0 +1,41 @@
+{
+ "lut": 38066.0,
+ "lutram": 64.0,
+ "ff": 16512.0,
+ "dsp": 156.0,
+ "bram36": 0.0,
+ "bram18": 0.0,
+ "logic_ns": 4.131,
+ "fmax": 140.65488916394733,
+ "area_eq": 52626.0,
+ "parts": {
+  "otpu_fadd": {
+   "lut": 479,
+   "lutram": 1,
+   "ff": 180,
+   "dsp": 0,
+   "bram36": 0,
+   "bram18": 0,
+   "carry4": 33,
+   "logic_ns": 4.131,
+   "fmax": 140.65488916394733,
+   "backend": "yosys"
+  },
+  "otpu_fmul": {
+   "lut": 95,
+   "lutram": 0,
+   "ff": 64,
+   "dsp": 2,
+   "bram36": 0,
+   "bram18": 0,
+   "carry4": 15,
+   "logic_ns": 3.995,
+   "fmax": 145.09576320371445,
+   "backend": "yosys"
+  }
+ },
+ "backend": "yosys",
+ "perf_cycles": 1912249,
+ "sha": "d649bce153d8c91ed83b5aec3deb1d20fb31d74d",
+ "critical": "[otpu_fadd]\nLatest arrival time in 'otpu_fadd' is 4131:\n    4131 (<unknown>)\nWarning: Critical-path does not terminate in a recognised endpoint.\n           $abc$17465$aiger17464$435\n    4131 $auto$alumacc.cc:512:replace_alu$1810.genblk1.slice[2].genblk1.carry4 (CARRY4.CI->O)\n           $abc$17465$aiger17464$433\n    3797 $auto$alumacc.cc:512:replace_alu$1810.genblk1.slice[1].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$17465$aiger17464$425\n    3683 $auto$alumacc.cc:512:replace_alu$1810.genblk1.slice[0].genblk1.carry4 (CARRY4.S->CO)\n           $abc$17465$aiger17464$1156b\n    3175 $auto$abc9_ops.cc:1613:reintegrate$17534 (LUT2.I1->O)\n           $techmap17772$auto$abc9_ops.cc:1613:reintegrate$17534.A [1]\n    3048 $abc$17465$lut$aiger17464$1123 (LUT3.I0->O)\n           $techmap17771$abc$17465$lut$aiger17464$1123.A [0]\n    2641 $abc$17465$lut$aiger17464$948 (LUT5.I4->O)\n           $techmap17768$abc$17465$lut$aiger17464$1121.A [4]\n    2514 $abc$17465$lut$aiger17464$856 (LUT4.I0->O)\n           $techmap17767$abc$17465$lut$aiger17464$856.A [0]\n    2042 $abc$17465$lut$aiger17464$853 (LUT6.I5->O)\n           $techmap17763$abc$17465$lut$aiger17464$847.A [5]\n    1915 $abc$17465$lut$aiger17464$831 (LUT5.I0->O)\n           $techmap17762$abc$17465$lut$aiger17464$831.A [0]\n    1284 $abc$17465$lut$aiger17464$827 (LUT3.I2->O)\n           $techmap17756$abc$17465$lut$aiger17464$823.A [2]\n    1157 $abc$17465$lut$aiger17464$810 (LUT6.I5->O)\n           $techmap17755$abc$17465$lut$aiger17464$810.A [5]\n    1030 $abc$17465$lut$aiger17464$802 (LUT5.I0->O)\n           \\s2 [23]\n     399 $auto$ff.cc:337:slice$2493 (FDRE.C->Q)\n           \\u_pad.clk\n      96 $auto$clkbufmap.cc:261:execute$18067 (BUFG.I->O)\n       0   \\clk (<primary input>)\nArrival histogram:\n legend: * represents 1 endpoint(s)\n         + represents [1,1) endpoint(s)\n(  4029,   3833] |***** \n(  3833,   3637] |**** \n(  3637,   3441] |******************************* \n(  3441,   3245] |************ \n(  3245,   3049] |************* \n(  3049,   2853] |************* \n(  2853,   2657] |** \n(  2657,   2461] |*** \n(  2461,   2265] |******************************************************* \n(  2265,   2069] |***** \n(  2069,   1873] |******** \n(  1873,   1677] |******** \n[otpu_fmul]\nLatest arrival time in 'otpu_fmul' is 3995:\n    3995 $26.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.mul_sliceB_last (DSP48E1.PCIN)\n           $abc$7002$aiger7001$314\n    2970 $26.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.genblk1.sliceB[0].mul (DSP48E1.A->PCOUT)\n       0   \\a [0] (<primary input>)\nArrival histogram:\n legend: * represents 1 endpoint(s)\n         + represents [1,1) endpoint(s)\n(  4009,   3814] |**************************************************** \n(  3814,   3619] |*** \n(  3619,   3424] |* \n(  3424,   3229] |** \n(  3229,   3034] | \n(  3034,   2839] | \n(  2839,   2644] |********************* \n(  2644,   2449] |************** \n(  2449,   2254] |****** \n(  2254,   2059] |** \n(  2059,   1864] |* \n(  1864,   1669] | \n(  1669,   1474] |* \n(  1474,   1279] |**** \n(  1279,   1084] |****** \n(  1084,    889] |** \n(   889,    694] |*** \n(   694,    499] | \n(   499,    304] |********************************* \n(   304,    109] |*** "
+}

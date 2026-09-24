@@ -1,0 +1,37 @@
+diff --git a/rtl/vpu/otpu_fp.sv b/rtl/vpu/otpu_fp.sv
+index 12072f4..79fee9d 100644
+--- a/rtl/vpu/otpu_fp.sv
++++ b/rtl/vpu/otpu_fp.sv
+@@ -86,21 +86,23 @@ package otpu_fp;
+ 
+   function automatic fmul_mid_t fp_mul_s1(input f32_t a_in, input f32_t b_in);
+     fmul_mid_t m;
+-    f32_t a, b;
+-    a = ftz(a_in);
+-    b = ftz(b_in);
++    logic za, zb, ia, ib, na, nb;
++    // Flush-to-zero only picks the special result: a zero exponent sets m.sp, and s2 then never
++    // reads m.p, so the DSP gets the raw mantissas (no LUTs in front of the multiplier).
++    za = (a_in[30:23] == 8'd0);  zb = (b_in[30:23] == 8'd0);
++    ia = (a_in[30:23] == 8'hFF); ib = (b_in[30:23] == 8'hFF);
++    na = ia && (a_in[22:0] != 0); nb = ib && (b_in[22:0] != 0);
+     m = '0;
+-    m.s = a[31] ^ b[31];
+-    if (a[30:23] == 8'hFF || b[30:23] == 8'hFF) begin
++    m.s = a_in[31] ^ b_in[31];
++    if (ia || ib) begin
+       m.sp = 1'b1;
+-      m.sv = (is_nan(a) || is_nan(b) || a[30:0] == 0 || b[30:0] == 0) ? F_NAN
+-             : {m.s, 8'hFF, 23'd0};
+-    end else if (a[30:23] == 0 || b[30:23] == 0) begin
++      m.sv = (na || nb || za || zb) ? F_NAN : {m.s, 8'hFF, 23'd0};
++    end else if (za || zb) begin
+       m.sp = 1'b1;
+       m.sv = {m.s, 31'd0};
+     end
+-    m.p = {1'b1, a[22:0]} * {1'b1, b[22:0]};
+-    m.e = 11'(a[30:23]) + 11'(b[30:23]) - 11'sd127;
++    m.p = {1'b1, a_in[22:0]} * {1'b1, b_in[22:0]};
++    m.e = 11'(a_in[30:23]) + 11'(b_in[30:23]) - 11'sd127;
+     return m;
+   endfunction
