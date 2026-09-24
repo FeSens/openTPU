@@ -20,14 +20,13 @@ in that cycle: busy, stalled on DRAM, lost TMEM arbitration, or waiting on a dep
 
 Works, in simulation:
 
-- **Qwen3-0.6B with its real weights** on the instruction-set simulator. Weights and matmul
-  activations are int8 with fp32 block scales, so the output is close to Hugging Face's fp32
-  model but not identical. With greedy decoding, the outputs follow Hugging Face until the
-  top two candidates are close; then the int8 rounding can pick the other one. See
-  [Accuracy](#accuracy) for how often that happens.
-- **RTL vs simulator.** The Verilator RTL gives the same DRAM and TMEM bits as the simulator
-  on the kernel tests, on random programs full of hazards, and on a full Qwen3-0.6B token at
-  the board configuration (6.38 M cycles).
+- **Qwen3-0.6B with its real weights** on the instruction-set simulator. It runs in int8, so
+  its output differs slightly from Hugging Face's fp32 model because of quantization error
+  (see [Accuracy](#accuracy)).
+- **RTL vs simulator.** The Verilator RTL ends with exactly the same memory contents as the
+  simulator on the kernel tests, on a full Qwen3-0.6B token (6.38 M cycles), and on random
+  programs where instructions keep conflicting over the same memory, which checks that the
+  hardware keeps them in the right order while running units in parallel.
 - **Board model.** A Verilator testbench of the board (`sim/verilator/tb_board.sv`) runs the
   bring-up and Qwen3 decode through the same host driver the card will use.
 
