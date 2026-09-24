@@ -79,7 +79,7 @@ module otpu_mxu
   logic [31:0] i_left, i_rs, i_srs;
   logic [15:0] i_KB, i_k;
   logic [31:0] row_addr, chunk_addr, srow_addr, scale_addr;
-  logic [31:0] issued, popped;
+  logic [PW:0] occ;                         // chunks issued and not yet popped (<= DEPTH)
 
   // ================================================================== command queue (2)
   logic [31:0] q_out [2], q_total [2];
@@ -119,7 +119,7 @@ module otpu_mxu
   wire more     = c_act && (c_pop < c_total);
   wire pop      = more && (f_count != 0) && (c_unit || s_count != 0) && (ck != 0 || rows_live < RF);
   wire en_c     = pop || !(more && ck != 0);       // freeze only in the middle of a row
-  wire want_iss = i_act && ((issued - popped) < DEPTH);
+  wire want_iss = i_act && (occ < (PW+1)'(DEPTH));
   wire go_iss   = want_iss && b_gnt && (i_unit || a_gnt);
 
   assign rdy = !i_act && (q_n < 2);
@@ -569,7 +569,7 @@ module otpu_mxu
     if (rst) begin
       i_act <= 1'b0;
       q_h <= 1'b0; q_n <= '0;
-      issued <= '0; popped <= '0;
+      occ <= '0;
       f_head <= '0; f_tail <= '0; f_count <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0;
       ck <= '0; c_pop <= '0; rows_live <= '0;
@@ -624,7 +624,6 @@ module otpu_mxu
       end
       // ---- issue one chunk request
       if (go_iss) begin
-        issued <= issued + 1;
         i_left <= i_left - 1;
         if (i_left == 1) i_act <= 1'b0;
         if (i_k + 1 == i_KB) begin
@@ -650,6 +649,7 @@ module otpu_mxu
         s_tail <= s_tail + 1;
       end
       f_count <= f_count + (b_rvalid ? 1 : 0) - (pop ? 1 : 0);
+      occ <= occ + (go_iss ? 1'b1 : 1'b0) - (pop ? 1'b1 : 1'b0);
       s_count <= s_count + (a_rvalid ? 1 : 0) - ((pop && !c_unit) ? 1 : 0);
       // ---- pop one chunk
       if (more && f_count == 0) st_starve <= st_starve + 1;
@@ -657,7 +657,6 @@ module otpu_mxu
       if (pop) begin
         f_head <= f_head + 1;
         if (!c_unit) s_head <= s_head + 1;
-        popped <= popped + 1;
         c_pop <= c_pop + 1;
         if (ck == 0) rl = rl + 1;
         ck <= last_k ? '0 : ck + 1;
