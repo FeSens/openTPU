@@ -57,7 +57,7 @@ module tb_top;
     dump = 1'b1;
     @(posedge clk);
     dump = 1'b0;
-    @(posedge clk);
+    repeat (2) @(posedge clk);     // the slices print their trace events a cycle late
     $display("RESULT cycles=%0d halted=%0d error=%0d", cycles, all_halted, any_error);
     for (int s = 0; s < S; s++) $display("SLICE %0d icount=%0d", s, icount[s]);
     $finish;

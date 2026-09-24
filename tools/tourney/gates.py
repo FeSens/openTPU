@@ -107,7 +107,8 @@ def lint(wt: Path, timeout: int = 900) -> None:
     rtl = [f"rtl/{s}" for s in _rtl_sources(wt)]
     sim = rtl + ["sim/verilator/otpu_axi_mem.sv"]
     board = [s for s in rtl if not s.endswith("otpu_top.sv")] + [
-        "rtl/boards/ypcb-00338/otpu_ctrl.sv", "rtl/boards/ypcb-00338/otpu_board.sv"]
+        "rtl/boards/ypcb-00338/otpu_ctrl.sv", "rtl/boards/ypcb-00338/otpu_trace.sv",
+        "rtl/boards/ypcb-00338/otpu_board.sv"]
     for top, srcs, params in (("otpu_top", sim, ["-GD=128", "-GMCOLS=2", "-GAXI=1"]),
                               ("otpu_board", board, [])):
         cmd = ["verilator", *LINT_FLAGS, "--top-module", top, *params, *srcs]

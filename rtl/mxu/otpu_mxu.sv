@@ -39,6 +39,13 @@ module otpu_mxu
   output logic                  rdy,
   output logic                  done,
   output logic                  computing,   // a chunk is consumed this cycle (profiling)
+  // profiling: this cycle's stream state (the FIFO level; work but no chunk / chunks but no
+  // consumption) and, a cycle after a command ends, its counters {deny, frz, bp, starve}
+  output logic [$clog2(DEPTH):0] pf_level,
+  output logic                  pf_starve,
+  output logic                  pf_block,
+  output logic                  pf_u,
+  output logic [3:0][31:0]      pf_uv,
   // ACT RAM read
   output logic [15:0]           act_blk,
   output logic                  act_ren,     // the ACT RAM read register advances (with S0)
@@ -124,6 +131,9 @@ module otpu_mxu
 
   assign rdy = !i_act && (q_n < 2);
   assign computing = pop;
+  assign pf_level  = f_count;
+  assign pf_starve = more && f_count == 0;
+  assign pf_block  = more && f_count != 0 && !pop;
   assign b_req  = go_iss;
   assign b_addr = go_iss ? (chunk_addr >> 2) : '0;
   assign a_req  = go_iss && !i_unit;
@@ -561,11 +571,19 @@ module otpu_mxu
     end
   end
 
-  // ---- statistics for the profiler (per completed command)
-  logic [31:0] cyc, st_starve, st_bp, st_frz, st_deny;
+  // ---- statistics for the profiler (per completed command): cycles the stream was starved
+  // (work, no chunk), backpressured (chunks, no consumption), the drain frozen by the TMEM grant,
+  // the issuer denied a DRAM port. The conditions are registered (st_c) and summed a cycle
+  // late, off the grant paths: a command's count is st + g, g the last cycle's pending bit (none
+  // after a command's end: that cycle's conditions belong to no command).
+  logic [31:0] st_starve, st_bp, st_frz, st_deny;
+  logic [3:0]  st_c, st_g;                  // {deny, frz, bp, starve}
+  logic        st_f;                        // the last cycle ended a command
+  assign st_g = st_f ? 4'd0 : st_c;
 
   always_ff @(posedge clk) begin
     done <= 1'b0;
+    pf_u <= 1'b0;
     if (rst) begin
       i_act <= 1'b0;
       q_h <= 1'b0; q_n <= '0;
@@ -577,12 +595,12 @@ module otpu_mxu
       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
       r0 <= '0; rx <= '0; rmw_n <= '0;
-      cyc <= '0; st_starve <= '0; st_bp <= '0; st_frz <= '0; st_deny <= '0;
+      st_starve <= '0; st_bp <= '0; st_frz <= '0; st_deny <= '0;
+      st_c <= '0; st_f <= 1'b0;
     end else begin
       logic [1:0] qn;
       logic [RFW:0] rn;
       logic [RFW:0] rl;
-      cyc <= cyc + 1;
       qn = q_n;
       rn = rf_n;
       rl = rows_live;
@@ -638,7 +656,6 @@ module otpu_mxu
           scale_addr <= scale_addr + 4;
         end
       end
-      if (want_iss && !go_iss) st_deny <= st_deny + 1;
       // ---- FIFO pushes
       if (b_rvalid) begin
         f_data[f_tail] <= b_rdata;
@@ -652,8 +669,6 @@ module otpu_mxu
       occ <= occ + (go_iss ? 1'b1 : 1'b0) - (pop ? 1'b1 : 1'b0);
       s_count <= s_count + (a_rvalid ? 1 : 0) - ((pop && !c_unit) ? 1 : 0);
       // ---- pop one chunk
-      if (more && f_count == 0) st_starve <= st_starve + 1;
-      if (more && f_count != 0 && !pop) st_bp <= st_bp + 1;
       if (pop) begin
         f_head <= f_head + 1;
         if (!c_unit) s_head <= s_head + 1;
@@ -715,11 +730,17 @@ module otpu_mxu
             al_st <= 2'd0;
           end
         end
-      end else if (drain_go || rw.v || mx_go || al_go) begin
-        st_frz <= st_frz + 1;
       end
       rf_n <= rn;
       rows_live <= rl;
+      // ---- statistics
+      st_c <= {want_iss && !go_iss, !t_gnt && (drain_go || rw.v || mx_go || al_go),
+               more && f_count != 0 && !pop, more && f_count == 0};
+      st_f <= c_fin && !pop;
+      st_starve <= st_starve + 32'(st_g[0]);
+      st_bp <= st_bp + 32'(st_g[1]);
+      st_frz <= st_frz + 32'(st_g[2]);
+      st_deny <= st_deny + 32'(st_g[3]);
       // ---- the consumer's command is complete
       if (c_fin && !pop) begin
         done <= 1'b1;
@@ -732,10 +753,9 @@ module otpu_mxu
                                            : q_out[~q_h] + q_jo[~q_h][j];
         mx_done <= 1'b0; mx_have <= '0;
         al_st <= 2'd0; al_i <= '0; mx_i <= '0;
-`ifndef SYNTHESIS
-        if (trace) $display("T%0d U c=%0d u=1 starve=%0d bp=%0d frz=%0d deny=%0d", SID, cyc,
-                            st_starve, st_bp, st_frz, st_deny);
-`endif
+        pf_u <= 1'b1;
+        pf_uv <= {st_deny + 32'(st_g[3]), st_frz + 32'(st_g[2]), st_bp + 32'(st_g[1]),
+                  st_starve + 32'(st_g[0])};
         st_starve <= '0; st_bp <= '0; st_frz <= '0; st_deny <= '0;
       end
       // the head's output base (set when a command becomes head)
@@ -746,8 +766,4 @@ module otpu_mxu
     end
   end
 
-`ifndef SYNTHESIS
-  bit trace;
-  initial trace = $test$plusargs("trace");
-`endif
 endmodule

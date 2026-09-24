@@ -242,4 +242,47 @@ package otpu_pkg;
   function automatic fp_t footprint(input cmd_t c, input int D, input int S);
     return fp_ranges(c, fp_prod(c, D, S), D, S);
   endfunction
+
+  // ---- activity and trace events (docs/observability.md). Every field describes cycle `cyc`
+  // and is reported one cycle later, from flip-flops or from sums of flip-flops. Slot fields
+  // hold up to 32 window slots.
+  // The sequencer's part: dispatches (D), starts (S), MM releases (G), completions (E).
+  typedef struct packed {
+    logic [31:0]             cyc;       // the sequencer's cycle counter (0 = the first cycle out of reset)
+    logic                    d;         // dispatched: pc into slot d_slot, resolved op and w1..w3
+    logic [4:0]              d_slot;
+    logic [31:0]             d_pc;
+    logic [7:0]              d_op;
+    logic [31:0]             d_w1, d_w2, d_w3;
+    logic [NUNITS-1:0]       s;         // unit u started slot s_slot[u], ready since s_rdy[u]
+    logic [NUNITS-1:0][4:0]  s_slot;
+    logic [NUNITS-1:0][31:0] s_rdy;
+    logic                    g;         // the MXU was released on slot g_slot
+    logic [4:0]              g_slot;
+    logic [31:0]             e;         // slots completed
+    logic [NUNITS-1:0]       busy;      // the unit has a started, uncompleted instruction
+    logic [1:0]              ret;       // instructions retired
+  } seq_ev_t;
+
+  // Per-window (P, Q) and per-run (H) counter fields, in trace-line order
+  localparam int NP = 9, NQ = 6, NH = 4;
+  // The slice's events: the sequencer's, the units' counters at an instruction's end (U), the
+  // P/Q window sums (w: a window of w_n cycles ended at cyc) and the port totals at the halt (h).
+  typedef struct packed {
+    seq_ev_t                 sq;
+    logic                    mac;       // the MXU consumed a weight chunk
+    logic                    deny;      // a unit with TMEM requests was not granted
+    logic                    u_mxu;     // MXU instruction ended: starve, bp, frz, deny
+    logic [3:0][31:0]        u_mxu_v;   // [0] starve ... [3] deny
+    logic                    u_q;       // QACT ended: frz
+    logic [31:0]             u_q_frz;
+    logic                    u_vpu;     // VPU instruction ended: frz
+    logic [31:0]             u_vpu_frz;
+    logic                    w;
+    logic [31:0]             w_n;
+    logic [NP-1:0][31:0]     w_p;       // bm bd am aq mx fm fq fv fc
+    logic [NQ-1:0][31:0]     w_q;       // bs as ms mb ff ld
+    logic                    h;
+    logic [NH-1:0][31:0]     h_v;       // bmxu bdma amxu aq
+  } perf_t;
 endpackage

@@ -7,6 +7,7 @@
 //   R <addr>                  read, printed as "REG <addr> <value>"
 //   C <cycles>                wait
 // Numbers are hex. At the end the channel memories are dumped (ch0_out.bin, ch1_out.bin).
+// +trace prints the slice's trace lines (as tb_top; the hardware trace records the same events).
 module tb_board;
   parameter int WORDS      = 1 << 20;     // logical memory words (both channels)
   parameter int D          = 128;
@@ -17,12 +18,18 @@ module tb_board;
   parameter int LANES      = 8;
   parameter int WIN        = 16;
   parameter int LAT        = 20;
+  parameter int CORE_KHZ   = 100000;
+  parameter logic [31:0] BUILD_ID = 32'h0B0A_4D00;
+  parameter int TRACE_DEPTH = 16384;
+  parameter int TRACE_QD   = 32;
+  parameter int PQ_WIN     = 1024;
+  parameter logic [11:0] TEMP = 12'hA1A;  // the XADC code of 45 C
 
   logic clk = 1'b0, rst = 1'b1, dump = 1'b0;
   always #5 clk = ~clk;
 
   // AXI-Lite
-  logic [7:0]  awaddr, araddr;
+  logic [11:0] awaddr, araddr;
   logic        awvalid = 0, awready, wvalid = 0, wready, bvalid, bready = 1;
   logic        arvalid = 0, arready, rvalid, rready = 1;
   initial begin awaddr = 0; araddr = 0; wdata = 0; end
@@ -43,8 +50,10 @@ module tb_board;
   logic       unusedl [6];
 
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
-               .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .WIN(WIN)) dut (
-    .clk, .rst, .calib(2'b11), .led,
+               .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
+               .BUILD_ID(BUILD_ID), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
+               .PQ_WIN(PQ_WIN)) dut (
+    .clk, .rst, .calib(2'b11), .temp(TEMP), .led,
     .s_ctl_awaddr(awaddr), .s_ctl_awvalid(awvalid), .s_ctl_awready(awready),
     .s_ctl_wdata(wdata), .s_ctl_wstrb(4'hF), .s_ctl_wvalid(wvalid), .s_ctl_wready(wready),
     .s_ctl_bresp(bresp), .s_ctl_bvalid(bvalid), .s_ctl_bready(bready),
@@ -88,17 +97,23 @@ module tb_board;
   always @(posedge clk) cyc <= cyc + 1;
 
   // Handshakes are driven and sampled on the falling edge (race-free): a ready seen there
-  // means the transfer happens at the next rising edge.
-  task automatic lwrite(input logic [7:0] a, input logic [31:0] v);
+  // means the transfer happens at the next rising edge. The write's ready depends on its valid
+  // (combinationally), so it is sampled a little after the valid is driven -- otherwise the
+  // stale ready sends the write twice (harmless for most registers, not for SNAP).
+  task automatic lwrite(input logic [11:0] a, input logic [31:0] v);
     @(negedge clk);
     awaddr = a; wdata = v; awvalid = 1'b1; wvalid = 1'b1;
-    while (!(awready && wready)) @(negedge clk);
+    #1;
+    while (!(awready && wready)) begin
+      @(negedge clk);
+      #1;
+    end
     @(negedge clk);
     awvalid = 1'b0; wvalid = 1'b0;
     while (!bvalid) @(negedge clk);
   endtask
 
-  task automatic lread(input logic [7:0] a, output logic [31:0] v);
+  task automatic lread(input logic [11:0] a, output logic [31:0] v);
     @(negedge clk);
     araddr = a; arvalid = 1'b1;
     while (!arready) @(negedge clk);
@@ -125,12 +140,12 @@ module tb_board;
       case (op)
         "W": begin
           n = $fscanf(fd, "%h %h", a, v);
-          lwrite(a[7:0], v);
+          lwrite(a[11:0], v);
         end
         "P": begin
           n = $fscanf(fd, "%h %h %h", a, m, v);
           do begin
-            lread(a[7:0], r);
+            lread(a[11:0], r);
             if (cyc > max_cycles) begin
               $display("TIMEOUT polling %h (%h)", a, r);
               $finish;
@@ -139,7 +154,7 @@ module tb_board;
         end
         "R": begin
           n = $fscanf(fd, "%h", a);
-          lread(a[7:0], r);
+          lread(a[11:0], r);
           $display("REG %h %h", a, r);
         end
         "C": begin

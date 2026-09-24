@@ -26,9 +26,11 @@ set_property PULLUP true [get_ports pcie_perstn]
 set_false_path -from [get_ports pcie_perstn]
 
 # ---------------------------------------------------------------- clock domain crossings
-# The accelerator synchronizes the calibration flags itself (2 flip-flops); everything else
-# crosses in the SmartConnects, which carry their own constraints.
+# The accelerator synchronizes the calibration flags and the die-temperature code itself (2
+# flip-flops per bit, ASYNC_REG; the temperature is taken only when two samples agree);
+# everything else crosses in the SmartConnects, which carry their own constraints.
 set_false_path -to [get_cells -hier -filter {NAME =~ *u_board/cal_s1_reg*}]
+set_false_path -to [get_cells -hier -filter {NAME =~ *u_board/tmp_s1_reg*}]
 
 # The MIGs' system clock comes from the MMCM on the 50 MHz pin (same I/O column as the DDR3
 # banks) through the CMT backbone. If placement reports "sub-optimal placement for a clock-

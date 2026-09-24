@@ -140,7 +140,10 @@ module otpu_quant
   output logic                    a_we,
   output logic [31:0]             a_addr,
   output logic [31:0]             a_wdata,
-  output logic [3:0]              a_be
+  output logic [3:0]              a_be,
+  // profiling: a cycle after a QACT ends, its cycles frozen by the TMEM grant
+  output logic                    pf_u,
+  output logic [31:0]             pf_frz
 );
   localparam int LM = 2, LA = 4;
   localparam int NB = 4;                    // block buffers (streaming QACT)
@@ -159,7 +162,11 @@ module otpu_quant
   logic [7:0]  ab;
   logic [31:0] G;                            // elements per group
   logic [31:0] groups;                       // rows * groups per row
-  logic [31:0] cyc, st_frz;
+  // cycles an instruction was frozen by the TMEM grant, for the profiler: the condition is
+  // registered (st_c) and summed a cycle late, off the grant path; the count is st_frz + st_c
+  // (a start clears it: the unit was idle the cycle before, st_c is 0)
+  logic [31:0] st_frz;
+  logic        st_c;
   assign rdy = !busy;
 
   // ------------------------------------------------------------------ reader
@@ -451,13 +458,13 @@ module otpu_quant
   // ------------------------------------------------------------------ sequencing
   always_ff @(posedge clk) begin
     done <= 1'b0;
-    cyc <= cyc + 1;
-    if (busy && !gnt) st_frz <= st_frz + 1;
+    pf_u <= 1'b0;
+    st_c <= busy && !gnt;
+    st_frz <= st_frz + 32'(st_c);
     if (rst) begin
       busy <= 1'b0;
       ackw <= 1'b0;
       m0 <= '0;
-      cyc <= '0;
     end else if (ackw) begin
       m0 <= '0;
       if (wr_idle) begin
@@ -597,14 +604,9 @@ module otpu_quant
       end else if (fin) begin
         busy <= 1'b0;
         done <= 1'b1;
-`ifndef SYNTHESIS
-        if (trace) $display("T%0d U c=%0d u=2 frz=%0d", SID, cyc, st_frz);
-`endif
+        pf_u <= 1'b1;
+        pf_frz <= st_frz + 32'(st_c);
       end
     end
   end
-`ifndef SYNTHESIS
-  bit trace;
-  initial trace = $test$plusargs("trace");
-`endif
 endmodule

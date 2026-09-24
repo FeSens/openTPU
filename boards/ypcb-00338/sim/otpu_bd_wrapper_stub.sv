@@ -8,6 +8,7 @@ module otpu_bd_wrapper (
   output logic [7:0]  pcie_mgt_txp, pcie_mgt_txn,
   output logic        pcie_link_up, core_clk, core_rstn,
   output logic [1:0]  calib,
+  output logic [11:0] device_temp,
   inout  wire  [71:0] DDR3_0_dq, DDR3_1_dq,
   inout  wire  [8:0]  DDR3_0_dqs_p, DDR3_0_dqs_n, DDR3_1_dqs_p, DDR3_1_dqs_n,
   output logic [14:0] DDR3_0_addr, DDR3_1_addr,

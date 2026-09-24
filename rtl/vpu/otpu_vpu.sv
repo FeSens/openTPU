@@ -51,7 +51,10 @@ module otpu_vpu
   input  logic [LANES-1:0][31:0]  tb_data,
   output logic [LANES-1:0]        tw_en,
   output logic [LANES-1:0][31:0]  tw_addr,
-  output logic [LANES-1:0][31:0]  tw_data
+  output logic [LANES-1:0][31:0]  tw_data,
+  // profiling: a cycle after an instruction ends, its cycles frozen by the TMEM grant
+  output logic                    pf_u,
+  output logic [31:0]             pf_frz
 );
   localparam int LM = 2, LA = 4;
   localparam int SL = 1 + LM + LA;          // cycles per slot
@@ -80,7 +83,12 @@ module otpu_vpu
   logic [AW-1:0] a_row, b_row, d_row;         // row base addresses (no multipliers)
   logic [3:0]  nslots;                         // slots of this function
   logic [7:0]  tag;                            // instruction tag
-  logic [31:0] cyc, st_frz;
+  // cycles an instruction was frozen by the TMEM grant, for the profiler: the condition is
+  // registered (st_c) and summed a cycle late, off the grant path; the count is st_frz + st_c
+  // (an instruction begins on a granted cycle, so a begin never drops a pending frozen cycle
+  // of its own)
+  logic [31:0] st_frz;
+  logic        st_c;
 
   function automatic logic [3:0] n_slots(input logic [7:0] f);
     case (f)
@@ -875,17 +883,17 @@ module otpu_vpu
   always_ff @(posedge clk) begin
     logic fin, ewfin;
     done_i <= 1'b0;
-    cyc <= cyc + 1;
+    pf_u <= 1'b0;
     fin = 1'b0;
     ewfin = 1'b0;
-    if (busy && !en) st_frz <= st_frz + 1;
+    st_c <= busy && !en;
+    st_frz <= st_frz + 32'(st_c);
     if (rst) begin
       cq_n <= '0; cq_h <= 1'b0;
       issuing <= 1'b0; red_act <= 1'b0;
       ew_n <= '0; last_tap <= '0;
       mi <= '0;
       tag <= '0;
-      cyc <= '0;
     end else begin
       logic [3:0] ewn;
       logic [1:0] qn;
@@ -985,15 +993,12 @@ module otpu_vpu
       if (fin) red_act <= 1'b0;
       if (fin || ewfin) begin
         done_i <= 1'b1;
-`ifndef SYNTHESIS
-        if (trace) $display("T%0d U c=%0d u=3 frz=%0d", SID, cyc, st_frz);
-`endif
+        pf_u <= 1'b1;
+        pf_frz <= st_frz + 32'(st_c);
       end
     end
   end
 `ifndef SYNTHESIS
-  bit trace;
-  initial trace = $test$plusargs("trace");
   // the tree schedule needs rows a multiple of RL cycles apart: level 0 (issuing while the
   // subs >= RL/2 are on `pacc`) must never meet another level
   always_ff @(posedge clk)

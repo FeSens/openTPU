@@ -27,7 +27,8 @@ module otpu_slice
   parameter int RPB        = 4,       // TMEM reads per bank per cycle
   parameter int WPB        = 2,       // TMEM writes per bank per cycle
   parameter int MXU_IMPL   = 0,       // MXU dot product: 0 adder tree, 1 DSP cascade chains
-  parameter int MXU_CL     = 16       // cascade chain length
+  parameter int MXU_CL     = 16,      // cascade chain length
+  parameter int PQ_WIN     = 64       // cycles per P/Q counter window (+bucket= in simulation)
 ) (
   input  logic          clk,
   input  logic          sys_rst,
@@ -78,6 +79,7 @@ module otpu_slice
   output logic          halted,
   output logic          error,
   output logic [31:0]   icount,
+  output perf_t         pf,         // activity and trace events, a cycle late (otpu_pkg)
   input  logic          dump
 );
   localparam int BW = $clog2(LANES);
@@ -91,8 +93,9 @@ module otpu_slice
   logic urel;
   logic im_we;
   logic [31:0] im_row;
+  seq_ev_t sq_ev;
   otpu_seq #(.IMEM_WORDS(IMEM_WORDS), .SID(SID), .S(S), .D(D), .WIN(WIN)) u_seq (
-    .clk, .rst, .ucmd, .ustart, .urel, .urdy, .udone, .halted, .error, .icount,
+    .clk, .rst, .ucmd, .ustart, .urel, .urdy, .udone, .halted, .error, .icount, .ev(sq_ev),
     .im_we, .im_row, .im_data(b_rdata));
 
   // ---- program loader
@@ -165,6 +168,11 @@ module otpu_slice
   logic [D/4-1:0] dma_bwmask;
   logic [D*8-1:0] dma_bwdata;
   logic [31:0] dma_baddr, mxu_baddr;
+  localparam int FW = $clog2(FIFO_DEPTH) + 1;
+  logic [FW-1:0] mxu_level;
+  logic mxu_starve, mxu_block, mxu_u, q_u, v_u;
+  logic [3:0][31:0] mxu_uv;
+  logic [31:0] q_frz, v_frz;
 
   otpu_dma #(.D(D), .LANES(LANES)) u_dma (
     .clk, .rst, .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
@@ -176,7 +184,8 @@ module otpu_slice
   otpu_mxu #(.D(D), .MCOLS(MCOLS), .DEPTH(FIFO_DEPTH), .LANES(LANES), .IMPL(MXU_IMPL),
              .CL(MXU_CL), .SID(SID)) u_mxu (
     .clk, .rst, .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
-    .computing(mxu_pop),
+    .computing(mxu_pop), .pf_level(mxu_level), .pf_starve(mxu_starve), .pf_block(mxu_block),
+    .pf_u(mxu_u), .pf_uv(mxu_uv),
     .act_blk(act_rblk), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
     .a_req(mxu_areq), .a_addr(mxu_aaddr), .a_gnt(mxu_agnt), .a_rvalid, .a_rdata,
     .b_req(mxu_breq), .b_addr(mxu_baddr), .b_gnt(mxu_bgnt), .b_rvalid(b_rvalid && !b_rtag),
@@ -191,14 +200,15 @@ module otpu_slice
     .t_ren3(q3_en), .t_raddr3(q3_addr), .t_rdata3(r_data[P_Q3][0]),
     .act_we, .act_row, .act_idx, .act_data, .asc_we, .asc_row, .asc_blk, .asc_data,
     .a_want(q_awant), .wr_idle,
-    .a_req(q_areq), .a_we(q_awe), .a_addr(q_aaddr), .a_wdata(q_awdata), .a_be(q_abe));
+    .a_req(q_areq), .a_we(q_awe), .a_addr(q_aaddr), .a_wdata(q_awdata), .a_be(q_abe),
+    .pf_u(q_u), .pf_frz(q_frz));
 
   otpu_vpu #(.LANES(LANES), .SID(SID)) u_vpu (
     .clk, .rst, .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
     .gnt(gnt[G_VPU]),
     .ta_en(va_ren), .ta_addr(va_raddr), .ta_data(r_data[P_VA]),
     .tb_en(vb_ren), .tb_addr(vb_raddr), .tb_data(r_data[P_VB]),
-    .tw_en(v_wen), .tw_addr(v_waddr), .tw_data(v_wdata));
+    .tw_en(v_wen), .tw_addr(v_waddr), .tw_data(v_wdata), .pf_u(v_u), .pf_frz(v_frz));
 
   // collective: request from start until acknowledged
   always_ff @(posedge clk) begin
@@ -362,89 +372,125 @@ module otpu_slice
     end
   end
 
-`ifndef SYNTHESIS
-  // ---- utilisation counters for the profiler: totals at halt, and every `bucket` cycles a
-  // P line with the activity of that window (DRAM ports, MXU compute, TMEM-arbitration losses)
-  bit trace;
-  int bucket;
-  initial begin
-    trace = $test$plusargs("trace");
-    if (!$value$plusargs("bucket=%d", bucket)) bucket = 64;
-  end
-  longint c_cyc, c_bmxu, c_bdma, c_amxu, c_aq;
-  int     w_n, w_bm, w_bd, w_am, w_aq, w_mx, w_fm, w_fq, w_fv, w_fc;
-  logic   h_d;
+  // ---- activity and trace events (pf; docs/observability.md). The sequencer's events come
+  // registered (seq_ev_t), the units report their counters the cycle after an instruction ends,
+  // and the port and stall counters of the H, P and Q trace lines live here:
+  //   P  per window of `win` cycles: DRAM port B requests (MXU bm, DMA bd), port A requests
+  //      (MXU am, QST aq), MXU compute (mx), and cycles the MXU drain, QUANT, VPU and collective
+  //      lost to TMEM bank arbitration (fm fq fv fc)
+  //   Q  the same window: a port B / A request waited for the memory (bs, as), the MXU had work
+  //      but no chunk (ms) or chunks but did not consume (mb), the summed MXU chunk-FIFO level
+  //      (ff; average = ff / n), the program loader used port B (ld)
+  //   H  at the halt: the port requests since reset (bmxu bdma amxu aq)
+  // Every cycle's activity is registered first (a*_r) and the sums run a cycle behind, so no
+  // counter adds to an arbitration or DRAM-ready path: a window's sums are s + a_r the cycle
+  // after its last cycle (pf.w), the halt totals the cycle after the halt (pf.h). Counting
+  // stops the cycle after the halt. In simulation, +trace prints the trace lines from pf.
   // a unit "loses" a cycle when it requested TMEM ports and was not granted
   wire lose_mxu = !gnt[G_MXU] && ((|rq_en[P_MXU]) || (|wq_en[W_MXU]));
   wire lose_q   = !gnt[G_Q] && ((|rq_en[P_Q]) || (|rq_en[P_Q2]) || q3_en);
   wire lose_vpu = !gnt[G_VPU] && ((|rq_en[P_VA]) || (|rq_en[P_VB]) || (|wq_en[W_VPU]));
   wire lose_col = !gnt[G_COLL] && ((|rq_en[P_COLL]) || (|wq_en[W_COLL]));
+
+  logic [31:0] win;                  // cycles per window
+`ifdef SYNTHESIS
+  assign win = 32'(PQ_WIN);
+`else
+  int bucket;
+  initial begin
+    if (!$value$plusargs("bucket=%d", bucket)) bucket = PQ_WIN;
+    if (bucket < 1 || bucket >= (1 << 24)) $fatal(1, "otpu_slice: bucket must be 1 .. 2^24 - 1");
+  end
+  assign win = 32'(bucket);
+`endif
+  initial if (PQ_WIN < 1 || PQ_WIN >= (1 << 24)) $fatal(1, "otpu_slice: PQ_WIN out of range");
+
+  // this cycle's activity: the P fields, the Q fields but ff (bs as ms mb ld), the FIFO level
+  logic [NP-1:0] ap, ap_r;
+  logic [4:0]    aq, aq_r;
+  logic [FW-1:0] af_r;
+  assign ap = {lose_col, lose_vpu, lose_q, lose_mxu, mxu_pop, q_areq, mxu_areq, dma_breq,
+               mxu_breq};
+  assign aq = {ld_busy && ld_req, mxu_block, mxu_starve, (a_req || q_awant) && !a_rdy,
+               b_req && !b_rdy};
+  logic [31:0] w_n, n_r;             // cycles of the current window before this one; last n
+  logic        h_d, we_r, h_ev;      // halted a cycle ago; a window ended / the halt, last cycle
+  logic [NP-1:0][31:0] sp;           // window sums, a cycle behind
+  logic [NQ-1:0][31:0] sq;
+  logic [NH-1:0][31:0] sh;           // totals since reset, a cycle behind
+  wire w_end = !h_d && (w_n + 1 == win || halted);
   always_ff @(posedge clk) begin
     if (rst) begin
-      c_cyc <= 0; c_bmxu <= 0; c_bdma <= 0; c_amxu <= 0; c_aq <= 0; h_d <= 1'b0;
-      w_n <= 0; w_bm <= 0; w_bd <= 0; w_am <= 0; w_aq <= 0; w_mx <= 0;
-      w_fm <= 0; w_fq <= 0; w_fv <= 0; w_fc <= 0;
-    end else if (!h_d) begin
-      c_cyc <= c_cyc + 1;
-      if (mxu_breq) c_bmxu <= c_bmxu + 1;
-      if (dma_breq) c_bdma <= c_bdma + 1;
-      if (mxu_areq) c_amxu <= c_amxu + 1;
-      if (q_areq) c_aq <= c_aq + 1;
+      h_d <= 1'b0; we_r <= 1'b0; h_ev <= 1'b0; w_n <= '0;
+      ap_r <= '0; aq_r <= '0; af_r <= '0;
+      sp <= '0; sq <= '0; sh <= '0;
+    end else begin
       h_d <= halted;
-      if (trace && halted && !h_d)
-        $display("T%0d H c=%0d bmxu=%0d bdma=%0d amxu=%0d aq=%0d", SID, c_cyc, c_bmxu, c_bdma,
-                 c_amxu, c_aq);
-      if (trace) begin
-        if (w_n + 1 == bucket || halted) begin
-          $display("T%0d P c=%0d n=%0d bm=%0d bd=%0d am=%0d aq=%0d mx=%0d fm=%0d fq=%0d fv=%0d fc=%0d",
-                   SID, c_cyc, w_n + 1, w_bm + mxu_breq, w_bd + dma_breq, w_am + mxu_areq,
-                   w_aq + q_areq, w_mx + mxu_pop, w_fm + lose_mxu, w_fq + lose_q,
-                   w_fv + lose_vpu, w_fc + lose_col);
-          w_n <= 0; w_bm <= 0; w_bd <= 0; w_am <= 0; w_aq <= 0; w_mx <= 0;
-          w_fm <= 0; w_fq <= 0; w_fv <= 0; w_fc <= 0;
-        end else begin
-          w_n <= w_n + 1;
-          w_bm <= w_bm + mxu_breq; w_bd <= w_bd + dma_breq; w_am <= w_am + mxu_areq;
-          w_aq <= w_aq + q_areq; w_mx <= w_mx + mxu_pop;
-          w_fm <= w_fm + lose_mxu; w_fq <= w_fq + lose_q; w_fv <= w_fv + lose_vpu;
-          w_fc <= w_fc + lose_col;
-        end
-      end
+      h_ev <= halted && !h_d;
+      we_r <= w_end;
+      n_r <= w_n + 1;
+      if (!h_d) w_n <= w_end ? '0 : w_n + 1;
+      ap_r <= h_d ? '0 : ap;
+      aq_r <= h_d ? '0 : aq;
+      af_r <= h_d ? '0 : mxu_level;
+      for (int k = 0; k < NP; k++) sp[k] <= we_r ? '0 : sp[k] + 32'(ap_r[k]);
+      for (int k = 0; k < NQ; k++)
+        sq[k] <= we_r ? '0 : sq[k] + ((k == 4) ? 32'(af_r) : 32'(aq_r[k < 4 ? k : 4]));
+      for (int k = 0; k < NH; k++) sh[k] <= sh[k] + 32'(ap_r[k]);
     end
   end
-`endif
+
+  always_comb begin
+    pf.sq = sq_ev;
+    pf.mac = ap_r[4];
+    pf.deny = |ap_r[8:5];
+    pf.u_mxu = mxu_u;
+    pf.u_mxu_v = mxu_uv;
+    pf.u_q = q_u;
+    pf.u_q_frz = q_frz;
+    pf.u_vpu = v_u;
+    pf.u_vpu_frz = v_frz;
+    pf.w = we_r;
+    pf.w_n = n_r;
+    for (int k = 0; k < NP; k++) pf.w_p[k] = sp[k] + 32'(ap_r[k]);
+    for (int k = 0; k < NQ; k++)
+      pf.w_q[k] = sq[k] + ((k == 4) ? 32'(af_r) : 32'(aq_r[k < 4 ? k : 4]));
+    pf.h = h_ev;
+    pf.h_v = sh;
+  end
 
 `ifndef SYNTHESIS
-  // ---- Lens: memory-side stall counters, a Q line per `bucket` cycles next to the P line:
-  // bs/as  cycles a DRAM port B / A request waited for the memory (not ready)
-  // ms     cycles the MXU had work but its chunk FIFO was empty (starved by DRAM)
-  // mb     cycles the MXU had chunks but did not consume (result FIFO / row credit / scales)
-  // ff     sum over the window of the MXU chunk-FIFO level (average = ff / n)
-  // ld     cycles the program loader used port B
-  int  q_n, q_bs, q_as, q_ms, q_mb, q_ld;
-  longint q_ff;
-  logic q_h;
-  wire q_bstall = b_req && !b_rdy;
-  wire q_astall = (a_req || q_awant) && !a_rdy;
-  wire q_mstarve = u_mxu.more && u_mxu.f_count == 0;
-  wire q_mblock = u_mxu.more && u_mxu.f_count != 0 && !u_mxu.pop;
-  always_ff @(posedge clk) begin
-    if (rst) begin
-      q_n <= 0; q_bs <= 0; q_as <= 0; q_ms <= 0; q_mb <= 0; q_ld <= 0; q_ff <= 0; q_h <= 1'b0;
-    end else if (trace && !q_h) begin
-      q_h <= halted;
-      if (q_n + 1 == bucket || halted) begin
-        $display("T%0d Q c=%0d n=%0d bs=%0d as=%0d ms=%0d mb=%0d ff=%0d ld=%0d", SID, c_cyc,
-                 q_n + 1, q_bs + q_bstall, q_as + q_astall, q_ms + q_mstarve, q_mb + q_mblock,
-                 q_ff + u_mxu.f_count, q_ld + (ld_busy && ld_req));
-        q_n <= 0; q_bs <= 0; q_as <= 0; q_ms <= 0; q_mb <= 0; q_ff <= 0; q_ld <= 0;
-      end else begin
-        q_n <= q_n + 1;
-        q_bs <= q_bs + q_bstall; q_as <= q_as + q_astall;
-        q_ms <= q_ms + q_mstarve; q_mb <= q_mb + q_mblock;
-        q_ff <= q_ff + u_mxu.f_count; q_ld <= q_ld + (ld_busy && ld_req);
+  // ---- +trace: the trace lines (opentpu/profile.py), from the events above -- exactly what the
+  // board's trace buffer records (otpu_trace.sv, opentpu/hwtrace.py)
+  bit trace;
+  initial trace = $test$plusargs("trace");
+  always_ff @(posedge clk)
+    if (trace) begin
+      if (pf.sq.g) $display("T%0d G c=%0d s=%0d", SID, pf.sq.cyc, pf.sq.g_slot);
+      for (int i = 0; i < 32; i++)
+        if (pf.sq.e[i]) $display("T%0d E c=%0d s=%0d", SID, pf.sq.cyc, i);
+      for (int u = 0; u < NUNITS; u++)
+        if (pf.sq.s[u])
+          $display("T%0d S c=%0d s=%0d u=%0d r=%0d", SID, pf.sq.cyc, pf.sq.s_slot[u], u,
+                   pf.sq.s_rdy[u]);
+      if (pf.sq.d)
+        $display("T%0d D c=%0d s=%0d pc=%0d op=%02h w1=%08h w2=%08h w3=%08h", SID, pf.sq.cyc,
+                 pf.sq.d_slot, pf.sq.d_pc, pf.sq.d_op, pf.sq.d_w1, pf.sq.d_w2, pf.sq.d_w3);
+      if (pf.u_mxu)
+        $display("T%0d U c=%0d u=1 starve=%0d bp=%0d frz=%0d deny=%0d", SID, pf.sq.cyc,
+                 pf.u_mxu_v[0], pf.u_mxu_v[1], pf.u_mxu_v[2], pf.u_mxu_v[3]);
+      if (pf.u_q) $display("T%0d U c=%0d u=2 frz=%0d", SID, pf.sq.cyc, pf.u_q_frz);
+      if (pf.u_vpu) $display("T%0d U c=%0d u=3 frz=%0d", SID, pf.sq.cyc, pf.u_vpu_frz);
+      if (pf.h)
+        $display("T%0d H c=%0d bmxu=%0d bdma=%0d amxu=%0d aq=%0d", SID, pf.sq.cyc, pf.h_v[0],
+                 pf.h_v[1], pf.h_v[2], pf.h_v[3]);
+      if (pf.w) begin
+        $display("T%0d P c=%0d n=%0d bm=%0d bd=%0d am=%0d aq=%0d mx=%0d fm=%0d fq=%0d fv=%0d fc=%0d",
+                 SID, pf.sq.cyc, pf.w_n, pf.w_p[0], pf.w_p[1], pf.w_p[2], pf.w_p[3], pf.w_p[4],
+                 pf.w_p[5], pf.w_p[6], pf.w_p[7], pf.w_p[8]);
+        $display("T%0d Q c=%0d n=%0d bs=%0d as=%0d ms=%0d mb=%0d ff=%0d ld=%0d", SID, pf.sq.cyc,
+                 pf.w_n, pf.w_q[0], pf.w_q[1], pf.w_q[2], pf.w_q[3], pf.w_q[4], pf.w_q[5]);
       end
     end
-  end
 `endif
 endmodule

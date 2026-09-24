@@ -15,6 +15,9 @@ out="${OUT_DIR:-$root/build/vivado}"
 jobs="${JOBS:-8}"
 mcols="${MCOLS:-2}"            # MXU columns; the host needs OTPU_MCOLS set to the same value
 core_mhz="${CORE_MHZ:-100}"   # accelerator clock; lower it (80, 75) if timing does not close
+# BUILD_ID register: the git commit's first 8 hex digits, taken here (Vivado may run in Docker)
+build_id="${BUILD_ID:-$(git -C "$root" rev-parse HEAD 2>/dev/null | cut -c1-8)}"
+build_id="${build_id:-0}"
 
 python3 "$here/scripts/gen_mig_prj.py" --speed "$speed"
 
@@ -35,6 +38,6 @@ run() {  # run a Vivado Tcl script with arguments
 }
 
 mkdir -p "$out"
-run "$here/vivado/create_project.tcl" "$speed" "$out" "$mcols" "$core_mhz"
+run "$here/vivado/create_project.tcl" "$speed" "$out" "$mcols" "$core_mhz" "$build_id"
 run "$here/vivado/build.tcl" "$out" "$jobs"
 echo "done: $out/otpu.bit"

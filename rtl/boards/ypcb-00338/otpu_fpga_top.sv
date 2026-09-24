@@ -17,7 +17,9 @@
     .P``_rvalid(S.rvalid), .P``_rready(M.rready)
 
 module otpu_fpga_top #(
-  parameter int MCOLS = 2   // MXU columns (activation rows per weight chunk)
+  parameter int MCOLS = 2,                  // MXU columns (activation rows per weight chunk)
+  parameter int CORE_KHZ = 100000,          // core_clk as the block design makes it (CORE_KHZ register)
+  parameter logic [31:0] BUILD_ID = 32'h0   // the git commit (BUILD_ID register)
 ) (
   // board
   input  logic        SYS_CLK,              // 50 MHz, AA28
@@ -63,6 +65,7 @@ module otpu_fpga_top #(
 );
   logic        core_clk, core_rstn, pcie_link_up;
   logic [1:0]  calib;
+  logic [11:0] device_temp;                  // MIG channel 0's XADC reading (its ui_clk domain)
 
   // ---- control (AXI4-Lite, BD master -> accelerator)
   logic [31:0] ctl_awaddr, ctl_araddr, ctl_wdata, ctl_rdata;
@@ -96,7 +99,7 @@ module otpu_fpga_top #(
     .sys_clk_50(SYS_CLK),
     .pcie_refclk_clk_p, .pcie_refclk_clk_n, .pcie_perstn,
     .pcie_mgt_rxp, .pcie_mgt_rxn, .pcie_mgt_txp, .pcie_mgt_txn,
-    .pcie_link_up, .core_clk, .core_rstn, .calib,
+    .pcie_link_up, .core_clk, .core_rstn, .calib, .device_temp,
     .DDR3_0_dq, .DDR3_0_dqs_p, .DDR3_0_dqs_n, .DDR3_0_addr, .DDR3_0_ba, .DDR3_0_ras_n,
     .DDR3_0_cas_n, .DDR3_0_we_n, .DDR3_0_reset_n, .DDR3_0_ck_p, .DDR3_0_ck_n, .DDR3_0_cke,
     .DDR3_0_cs_n, .DDR3_0_odt,
@@ -119,12 +122,12 @@ module otpu_fpga_top #(
   always_ff @(posedge core_clk) core_rst <= !core_rstn;
 
   logic [2:0] board_led;
-  otpu_board #(.MCOLS(MCOLS)) u_board (
-    .clk(core_clk), .rst(core_rst), .calib, .led(board_led),
-    .s_ctl_awaddr(ctl_awaddr[7:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),
+  otpu_board #(.MCOLS(MCOLS), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID)) u_board (
+    .clk(core_clk), .rst(core_rst), .calib, .temp(device_temp), .led(board_led),
+    .s_ctl_awaddr(ctl_awaddr[11:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),
     .s_ctl_wdata(ctl_wdata), .s_ctl_wstrb(ctl_wstrb), .s_ctl_wvalid(ctl_wvalid),
     .s_ctl_wready(ctl_wready), .s_ctl_bresp(ctl_bresp), .s_ctl_bvalid(ctl_bvalid),
-    .s_ctl_bready(ctl_bready), .s_ctl_araddr(ctl_araddr[7:0]), .s_ctl_arvalid(ctl_arvalid),
+    .s_ctl_bready(ctl_bready), .s_ctl_araddr(ctl_araddr[11:0]), .s_ctl_arvalid(ctl_arvalid),
     .s_ctl_arready(ctl_arready), .s_ctl_rdata(ctl_rdata), .s_ctl_rresp(ctl_rresp),
     .s_ctl_rvalid(ctl_rvalid), .s_ctl_rready(ctl_rready),
     `OTPU_AXI(m0_axi, m0, s0),

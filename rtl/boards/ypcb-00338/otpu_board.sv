@@ -1,7 +1,9 @@
 // The accelerator as built for the YPCB-00338 board: one slice, the DRAM adapter onto the two
 // DDR3 channels (AXI4 masters m0/m1, 512-bit, single beats) and the host control registers
 // (AXI4-Lite slave). Everything runs on the core clock; the block design's interconnect does
-// the clock and width conversion to the memory controllers and the PCIe bridge.
+// the clock and width conversion to the memory controllers and the PCIe bridge. The control
+// block also holds the free-running activity counters and reads out the hardware trace
+// (otpu_trace; docs/observability.md).
 module otpu_board #(
   parameter int D          = 128,
   parameter int MCOLS      = 2,
@@ -16,14 +18,20 @@ module otpu_board #(
   parameter int MXU_IMPL   = 0,
   parameter int MXU_CL     = 16,
   parameter logic [31:0] BASE0 = 32'h0000_0000,
-  parameter logic [31:0] BASE1 = 32'h8000_0000
+  parameter logic [31:0] BASE1 = 32'h8000_0000,
+  parameter int CORE_KHZ    = 100000,  // the core clock (CORE_KHZ register)
+  parameter logic [31:0] BUILD_ID = 32'h0,
+  parameter int TRACE_DEPTH = 16384,   // trace records (a power of two; 0: no trace buffer)
+  parameter int TRACE_QD    = 32,      // trace capture queue (cycles with events)
+  parameter int PQ_WIN      = 1024     // cycles per P/Q counter window
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
   input  logic [1:0]   calib,          // memory controllers calibrated (any clock domain)
+  input  logic [11:0]  temp,           // XADC die-temperature code (any clock domain, slow)
   output logic [2:0]   led,
   // ---- control: AXI4-Lite slave
-  input  logic [7:0]   s_ctl_awaddr,
+  input  logic [11:0]  s_ctl_awaddr,
   input  logic         s_ctl_awvalid,
   output logic         s_ctl_awready,
   input  logic [31:0]  s_ctl_wdata,
@@ -33,7 +41,7 @@ module otpu_board #(
   output logic [1:0]   s_ctl_bresp,
   output logic         s_ctl_bvalid,
   input  logic         s_ctl_bready,
-  input  logic [7:0]   s_ctl_araddr,
+  input  logic [11:0]  s_ctl_araddr,
   input  logic         s_ctl_arvalid,
   output logic         s_ctl_arready,
   output logic [31:0]  s_ctl_rdata,
@@ -126,6 +134,25 @@ module otpu_board #(
     cal_s2 <= cal_s1;
   end
 
+  // ---- die temperature: two flip-flops per bit, then a code is taken only when two
+  // consecutive samples agree (it changes slowly: a sample caught mid-change is skipped). Valid
+  // once channel 0 (which owns the XADC) is calibrated and has reported a reading.
+  (* ASYNC_REG = "TRUE" *) logic [11:0] tmp_s1, tmp_s2;
+  logic [11:0] tmp_s3, temp_q;
+  logic        temp_v;
+  always_ff @(posedge clk) begin
+    tmp_s1 <= temp;
+    tmp_s2 <= tmp_s1;
+    tmp_s3 <= tmp_s2;
+    if (rst) begin
+      temp_q <= '0;
+      temp_v <= 1'b0;
+    end else if (tmp_s2 == tmp_s3 && cal_s2[0] && tmp_s3 != '0) begin
+      temp_q <= tmp_s3;
+      temp_v <= 1'b1;
+    end
+  end
+
   // ---- control
   logic run, ld_start, ld_busy, halted, error, wr_idle, axi_err;
   logic [31:0] ld_addr, ld_n, icount;
@@ -137,7 +164,15 @@ module otpu_board #(
   logic [D/4-1:0] b_wmask;
   logic [D*8-1:0] b_wdata, b_rdata;
 
-  otpu_ctrl #(.D(D), .MCOLS(MCOLS), .LANES(LANES)) u_ctrl (
+  perf_t pf;
+  logic        tr_en, tr_stop, tr_clear, tr_busy;
+  logic [31:0] tr_addr, tr_count, tr_drop;
+  logic [63:0] tr_rdata;
+  logic [1:0]  awvalid, awready, awid, wvalid, wready, bvalid, bready, bid;
+  logic [1:0]  arvalid, arready, arid, rvalid, rready, rid, rlast;
+
+  otpu_ctrl #(.D(D), .MCOLS(MCOLS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
+              .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1)) u_ctrl (
     .clk, .rst,
     .s_awaddr(s_ctl_awaddr), .s_awvalid(s_ctl_awvalid), .s_awready(s_ctl_awready),
     .s_wdata(s_ctl_wdata), .s_wstrb(s_ctl_wstrb), .s_wvalid(s_ctl_wvalid),
@@ -148,7 +183,27 @@ module otpu_board #(
     .run, .ld_start, .ld_addr, .ld_n, .ld_busy, .halted, .error, .icount, .wr_idle, .axi_err,
     .calib(cal_s2),
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
-    .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(b_req && !b_rdy));
+    .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(b_req && !b_rdy),
+    .temp_v, .temp(temp_q),
+    .mxu_busy(pf.sq.busy[U_MXU]), .mxu_mac(pf.mac), .vpu_busy(pf.sq.busy[U_VPU]),
+    .qnt_busy(pf.sq.busy[U_Q]), .dma_busy(pf.sq.busy[U_DMA]), .tmem_deny(pf.deny),
+    .dram_rd(2'(rvalid[0] && rready[0]) + 2'(rvalid[1] && rready[1])),
+    .dram_wr(2'(wvalid[0] && wready[0]) + 2'(wvalid[1] && wready[1])),
+    .dram_wait((b_req && !b_rdy) || (a_req && !a_rdy) || (sw_req && !sw_rdy)),
+    .instr(pf.sq.ret),
+    .tr_en, .tr_stop, .tr_clear, .tr_addr, .tr_count, .tr_drop, .tr_busy, .tr_rdata);
+
+  // ---- hardware trace
+  if (TRACE_DEPTH != 0) begin : g_trace
+    otpu_trace #(.DEPTH(TRACE_DEPTH), .QD(TRACE_QD), .WIN(WIN)) u_trace (
+      .clk, .rst, .pf, .en(tr_en && run), .stop(tr_stop), .clear(tr_clear), .raddr(tr_addr),
+      .rdata(tr_rdata), .count(tr_count), .drop(tr_drop), .busy(tr_busy));
+  end else begin : g_no_trace
+    assign tr_rdata = '0;
+    assign tr_count = '0;
+    assign tr_drop = '0;
+    assign tr_busy = 1'b0;
+  end
 
   // ---- the slice (held in reset while RUN is 0) and the collective unit (one slice)
   logic core_rst;
@@ -164,7 +219,7 @@ module otpu_board #(
   otpu_slice #(.SID(0), .S(1), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS),
                .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS), .FIFO_DEPTH(FIFO_DEPTH),
                .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL),
-               .MXU_CL(MXU_CL)) u_slice (
+               .MXU_CL(MXU_CL), .PQ_WIN(PQ_WIN)) u_slice (
     .clk, .sys_rst(rst), .rst(core_rst), .ld_start, .ld_addr, .ld_n, .ld_busy,
     .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
@@ -173,7 +228,7 @@ module otpu_board #(
     .coll_req, .coll_cmd, .coll_ack,
     .coll_ren, .coll_raddr, .coll_rdata,
     .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl), .coll_gnt(coll_gl),
-    .halted, .error, .icount, .dump(1'b0));
+    .halted, .error, .icount, .pf, .dump(1'b0));
 
   otpu_coll #(.S(1), .LANES(LANES)) u_coll (
     .clk, .rst(core_rst), .req(coll_req), .cmds(coll_cmds), .gnt(coll_gl), .ack(coll_ack),
@@ -181,8 +236,6 @@ module otpu_board #(
     .w_en(coll_wen), .w_addr(coll_waddr), .w_data(coll_wdata));
 
   // ---- memory
-  logic [1:0] awvalid, awready, awid, wvalid, wready, bvalid, bready, bid;
-  logic [1:0] arvalid, arready, arid, rvalid, rready, rid, rlast;
   logic [1:0][31:0]  awaddr, araddr;
   logic [1:0][511:0] wdata, rdata;
   logic [1:0][63:0]  wstrb;

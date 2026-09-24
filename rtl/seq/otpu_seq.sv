@@ -40,6 +40,7 @@ module otpu_seq
   output logic                halted,
   output logic                error,
   output logic [31:0]         icount,
+  output seq_ev_t             ev,          // trace and activity events, a cycle late (otpu_pkg)
   // IMEM write port (the loader; used while the slice is held in reset)
   input  logic                im_we,
   input  logic [31:0]         im_row,
@@ -408,8 +409,6 @@ module otpu_seq
   always_comb for (int u = 0; u < NUNITS; u++) ucmd[u] = scmd[ucs[u]];
 
 `ifndef SYNTHESIS
-  bit trace;
-  initial trace = $test$plusargs("trace");
   // shadow of c_fp / sfp in otpu_pkg form: the scoreboard is checked against conflict()
   fp_t c_ref;
   fp_t sfp_ref [WIN];
@@ -472,18 +471,12 @@ module otpu_seq
       if (can_rel) begin
         urel <= 1'b1;
         uq_r <= uq_r + 1;
-`ifndef SYNTHESIS
-        if (trace) $display("T%0d G c=%0d s=%0d", SID, cyc, rel_slot);
-`endif
       end
       for (int i = 0; i < WIN; i++) begin
         sdep[i] <= sdep[i] & ~fin;
         sdepd[i] <= sdepd[i] & ~fin;
         if (fin[i]) begin
           sv[i] <= 1'b0;
-`ifndef SYNTHESIS
-          if (trace) $display("T%0d E c=%0d s=%0d", SID, cyc, i);
-`endif
         end
       end
       for (int u = 0; u < NUNITS; u++) if (udone[u]) uq_h[u] <= uq_h[u] + 1;
@@ -507,10 +500,6 @@ module otpu_seq
           ucs[u] <= start_slot[u];
           uq[u][uq_t[u][SW-1:0]] <= start_slot[u];
           uq_t[u] <= uq_t[u] + 1;
-`ifndef SYNTHESIS
-          if (trace) $display("T%0d S c=%0d s=%0d u=%0d r=%0d", SID, cyc, start_slot[u], u,
-                              sready[start_slot[u]] ? srdy_c[start_slot[u]] : cyc);
-`endif
         end
       end
       // ---- C: dispatch into the window
@@ -527,10 +516,6 @@ module otpu_seq
         sfp[free_slot] <= c_fp;
 `ifndef SYNTHESIS
         sfp_ref[free_slot] <= c_ref;
-`endif
-`ifndef SYNTHESIS
-        if (trace) $display("T%0d D c=%0d s=%0d pc=%0d op=%02h w1=%08h w2=%08h w3=%08h",
-                            SID, cyc, free_slot, c_pc, c_cmd.op, c_cmd.w1, c_cmd.w2, c_cmd.w3);
 `endif
       end
       // ---- Q: footprint ranges
@@ -606,7 +591,35 @@ module otpu_seq
     end
   end
 
+  // ---- trace and activity events (otpu_pkg seq_ev_t): this cycle's, registered. A start's
+  // ready cycle is looked up a cycle late, from the start's registered slot (ucs): if the slot
+  // was not ready when it started, it either became ready at that cycle's edge (srdy_c = the
+  // start cycle) or is still not ready (the start cycle, ev.cyc) -- the value at the start.
+  seq_ev_t evq;
+  always_ff @(posedge clk) begin
+    evq.cyc <= cyc;
+    evq.ret <= rst ? 2'd0 : 2'(r_ret) + 2'(c_go);
+    evq.d <= !rst && c_go;
+    evq.d_slot <= 5'(free_slot);
+    evq.d_pc <= c_pc;
+    evq.d_op <= c_cmd.op;
+    evq.d_w1 <= c_cmd.w1; evq.d_w2 <= c_cmd.w2; evq.d_w3 <= c_cmd.w3;
+    evq.g <= !rst && can_rel;
+    evq.g_slot <= 5'(rel_slot);
+    evq.e <= rst ? '0 : 32'(fin);
+    for (int u = 0; u < NUNITS; u++) evq.busy[u] <= !rst && uq_h[u] != uq_t[u];
+  end
+  always_comb begin
+    ev = evq;
+    ev.s = ustart;
+    for (int u = 0; u < NUNITS; u++) begin
+      ev.s_slot[u] = 5'(ucs[u]);
+      ev.s_rdy[u] = sready[ucs[u]] ? srdy_c[ucs[u]] : evq.cyc;
+    end
+  end
+
 `ifndef SYNTHESIS
+  initial if (WIN > 32) $fatal(1, "otpu_seq: the trace events hold 32 window slots");
   string dir;
   logic [31:0] init_w [IMEM_WORDS];
   initial begin

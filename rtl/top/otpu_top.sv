@@ -106,7 +106,7 @@ module otpu_top
       .coll_req(coll_req[s]), .coll_cmd(coll_cmd[s]), .coll_ack,
       .coll_ren(coll_ren[s]), .coll_raddr(coll_raddr[s]), .coll_rdata(coll_rdata[s]),
       .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl[s]), .coll_gnt,
-      .halted(halted[s]), .error(error[s]), .icount(icount[s]), .dump);
+      .halted(halted[s]), .error(error[s]), .icount(icount[s]), .pf(), .dump);
   end
 
   otpu_coll #(.S(S), .LANES(LANES)) u_coll (

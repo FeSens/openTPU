@@ -116,12 +116,15 @@ class SimTransport:
     step programs do not rely on TMEM surviving between runs."""
 
     def __init__(self, ch_bytes: int = 1 << 24, stall: int = 20, seed: int = 1,
-                 params: dict | None = None):
+                 params: dict | None = None, plusargs: list | None = None):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.stall, self.seed = stall, seed
         self.params = params or {}
+        self.plusargs = list(plusargs or [])     # extra simulator arguments (e.g. "+trace")
         self.script: list[str] = []
         self.regs_seen: dict[int, int] = {}
+        self.reads: list[int] = []               # the last flush's reads, in order
+        self.out = ""                            # the last flush's simulator output
         self.cycles = 0
 
     def mem_write(self, ch: int, off: int, data: np.ndarray) -> None:
@@ -143,7 +146,7 @@ class SimTransport:
         for o in offs:
             self.script.append(f"R {o:x}")
         self.flush()
-        return [self.regs_seen[o] for o in offs]
+        return self.reads[len(self.reads) - len(offs):]
 
     def poll(self, off: int, mask: int, val: int, timeout: float = 0) -> int:
         self.script.append(f"P {off:x} {mask:x} {val:x}")
@@ -156,6 +159,7 @@ class SimTransport:
         root = Path(__file__).resolve().parent.parent
         srcs = [rtlsim.RTL / s for s in rtlsim.RTL_SOURCES if not s.endswith("otpu_top.sv")]
         srcs += [root / "rtl/boards/ypcb-00338/otpu_ctrl.sv",
+                 root / "rtl/boards/ypcb-00338/otpu_trace.sv",
                  root / "rtl/boards/ypcb-00338/otpu_board.sv",
                  rtlsim.TB / "otpu_axi_mem.sv", rtlsim.TB / "tb_board.sv"]
         from opentpu.isasim import board_config
@@ -169,14 +173,17 @@ class SimTransport:
             (d / "host.txt").write_text("\n".join(self.script) + "\n")
             self.script = []
             r = subprocess.run([str(exe), f"+dir={d}", f"+axi_stall={self.stall}",
-                                f"+axi_seed={self.seed}"], capture_output=True, text=True)
+                                f"+axi_seed={self.seed}", *self.plusargs],
+                               capture_output=True, text=True)
             out = r.stdout + r.stderr
+            self.out, self.reads = out, []
             if "DONE" not in out:
                 raise RuntimeError(f"board simulation failed:\n{out[-3000:]}")
             for line in out.splitlines():
                 if line.startswith("REG "):
                     _, a, v = line.split()
                     self.regs_seen[int(a, 16)] = int(v, 16)
+                    self.reads.append(int(v, 16))
                 elif line.startswith("DONE"):
                     self.cycles += int(line.split("=")[1])
             for c in (0, 1):

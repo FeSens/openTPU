@@ -4,6 +4,9 @@
 #   M_AXI_CTL  AXI4-Lite master  -> the control registers (host BAR0 offset 0)
 #   S_AXI_M0   AXI4 slave, 512b  <- the accelerator's channel-0 master
 #   S_AXI_M1   AXI4 slave, 512b  <- the accelerator's channel-1 master
+# and two status ports in other clock domains, synchronized by the accelerator: calib (the
+# MIGs' calibration flags) and device_temp (MIG channel 0's XADC die-temperature code, 12 bits,
+# its ui_clk domain).
 # Address map (every master): MIG0 at 0x0000_0000, MIG1 at 0x8000_0000, 2 GiB each -- the map
 # of host/board.py and rtl/mem/otpu_axi_dram.sv.
 #
@@ -46,6 +49,7 @@ set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_ports pcie_perstn]
 create_bd_port -dir O -type clk core_clk
 create_bd_port -dir O -type rst core_rstn
 create_bd_port -dir O -from 1 -to 0 calib
+create_bd_port -dir O -from 11 -to 0 device_temp
 create_bd_port -dir O pcie_link_up
 
 set m_ctl [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 M_AXI_CTL]
@@ -140,8 +144,10 @@ foreach ch {0 1} {
   connect_bd_net [get_bd_pins mig_$ch/mmcm_locked] [get_bd_pins rst_mig_$ch/dcm_locked]
   connect_bd_net [get_bd_pins rst_mig_$ch/peripheral_aresetn] [get_bd_pins mig_$ch/aresetn]
 }
-# one XADC: channel 1 takes the die temperature from channel 0
-connect_bd_net [get_bd_pins mig_0/device_temp] [get_bd_pins mig_1/device_temp_i]
+# one XADC: channel 1 takes the die temperature from channel 0, and so does the accelerator
+# (the TEMP register)
+connect_bd_net [get_bd_pins mig_0/device_temp] [get_bd_pins mig_1/device_temp_i] \
+  [get_bd_ports device_temp]
 
 set cat [create_bd_cell -type ip -vlnv [ip_vlnv xlconcat] calib_cat]
 set_property CONFIG.NUM_PORTS {2} $cat

@@ -23,7 +23,7 @@ BASE = ["vpu/otpu_fp.sv", "vpu/otpu_fpipe.sv", "top/otpu_pkg.sv"]
 ALL = ["mem/otpu_tmem.sv", "mem/otpu_axi_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv",
        "dma/otpu_dma.sv", "mxu/otpu_mxu.sv", "vpu/otpu_quant.sv", "vpu/otpu_vpu.sv",
        "top/otpu_coll.sv", "top/otpu_slice.sv", "boards/ypcb-00338/otpu_ctrl.sv",
-       "boards/ypcb-00338/otpu_board.sv"]
+       "boards/ypcb-00338/otpu_trace.sv", "boards/ypcb-00338/otpu_board.sv"]
 
 # board parameters (rtl/boards/ypcb-00338/otpu_board.sv, opentpu.isasim.board_config)
 COMPONENTS = {
@@ -37,6 +37,7 @@ COMPONENTS = {
     "otpu_coll": (["top/otpu_coll.sv"], dict(S=1, LANES=8)),
     "otpu_axi_dram": (["mem/otpu_axi_dram.sv"], dict(D=128)),
     "otpu_ctrl": (["boards/ypcb-00338/otpu_ctrl.sv"], dict(D=128, MCOLS=2, LANES=8)),
+    "otpu_trace": (["boards/ypcb-00338/otpu_trace.sv"], dict(DEPTH=16384, QD=32, WIN=16)),
     "otpu_board": (ALL, {}),
 }
 
