@@ -53,11 +53,33 @@ module otpu_qfmul
     m.p = {1'b1, x[22:0]} * {1'b1, z[22:0]};
     return m;
   endfunction
+  // fp_mul_s2 with nothing after the round add's carry chain. Its carry out mr[24] is 1 only for
+  // mm == all ones with rnd, so ov = rnd & (&mm) replaces it; the mantissa field is then
+  // (mm[22:0] + rnd) mod 2^23 either way (0 after the >>1 when ov), so the >>1 mux goes. The
+  // exponent e + h + ov is tested as eh against the ov-shifted bounds (signed, like e).
+  function automatic f32_t qmul_s2(input fmul_mid_t m);
+    logic               h, g, st, rnd, ov;
+    logic [23:0]        mm;
+    logic [22:0]        man;
+    logic signed [10:0] eh;
+    if (m.sp) return m.sv;
+    h   = m.p[47];
+    mm  = h ? m.p[47:24] : m.p[46:23];
+    g   = h ? m.p[23]    : m.p[22];
+    st  = (|m.p[21:0]) | (h & m.p[22]);
+    rnd = g & (st | mm[0]);
+    ov  = rnd & (&mm);
+    man = mm[22:0] + 23'(rnd);
+    eh  = m.e + 11'(h);
+    if (ov ? (eh >= 254) : (eh >= 255)) return {m.s, 8'hFF, 23'd0};
+    if (ov ? (eh <= -1) : (eh <= 0)) return {m.s, 31'd0};
+    return {m.s, ov ? eh[7:0] + 8'd1 : eh[7:0], man};
+  endfunction
   fmul_mid_t m;
   f32_t r;
   always_ff @(posedge clk) if (en) begin
     m <= qmul_s1(a, b);
-    r <= fp_mul_s2(m);
+    r <= qmul_s2(m);
   end
   otpu_delay #(.W(32), .N(LAT - 2)) u_pad (.clk, .en, .d(r), .q(y));
 endmodule
@@ -143,7 +165,8 @@ module otpu_qscale
   output f32_t          inv
 );
   localparam int SL = LM + LA;
-  localparam int LAT = 6 * SL + LM;
+  localparam int P = SL + LM;               // one Newton step: u_t, then u_y
+  localparam int LAT = 3 * P + LM;
   // input register (the amax selection in front of the unit is its own pipeline stage)
   f32_t          amax_q;
   logic          iv_q;
@@ -151,12 +174,13 @@ module otpu_qscale
   always_ff @(posedge clk) if (en) begin
     amax_q <= amax; iv_q <= iv; itag_q <= itag;
   end
-  // seed stage: |amax|, its flags and the reciprocal seed, registered
+  // seed stage: |amax|, its flags and the reciprocal seed, registered (amax is an otpu_qfmul
+  // result or +0, so it is already flushed: no ftz)
   f32_t ax, y0;
   logic zero, big;
   always_ff @(posedge clk) if (en) begin
     f32_t a;
-    a = {1'b0, ftz(amax_q)[30:0]};
+    a = {1'b0, amax_q[30:0]};
     ax <= a;
     zero <= (a == 0);
     big <= (a >= 32'h7E80_0000);
@@ -164,24 +188,25 @@ module otpu_qscale
   end
   // recip(ax): y = y * (2 - ax*y), three times, from the magic seed; the delay lines into the
   // multiplier operands end in a flip-flop with a reset (otpu_qdly). The ISA's y*t + (-0) is
-  // y*t for every product (no fp_mul result is changed by adding -0), so u_y is a multiply
-  // padded to the multiply-add latency, and its output leaves otpu_delay's last flip-flop.
+  // y*t for every product (no fp_mul result is changed by adding -0), so u_y is a plain multiply,
+  // not padded: its output register feeds the next multipliers directly (no SRL in front of
+  // their DSPs), and k1 is delayed by the step's SL + LM to meet it.
   f32_t y [4], t [3], k1 [4], yd [3];
   assign y[0] = y0;
   assign k1[0] = {1'b1, ax[30:0]};
   for (genvar i = 0; i < 3; i++) begin : g_it
     otpu_qfmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .c(F_TWO), .y(t[i]));
     otpu_qdly #(.W(32), .N(SL)) u_yd (.clk, .rst, .en, .d(y[i]), .q(yd[i]));
-    otpu_qdly #(.W(32), .N(2 * SL)) u_k (.clk, .rst, .en, .d(k1[i]), .q(k1[i + 1]));
-    otpu_qfmul #(.LAT(LM + LA)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .y(y[i + 1]));
+    otpu_qdly #(.W(32), .N(P)) u_k (.clk, .rst, .en, .d(k1[i]), .q(k1[i + 1]));
+    otpu_qfmul #(.LAT(LM)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .y(y[i + 1]));
   end
   // big: 127 * (+0) = +0, forced on the product (bd delayed beside zd) instead of on the operand
   f32_t invm, scm, scd;
   logic zd, bd, zd2, bd2;
-  otpu_qdly #(.W(2), .N(6 * SL)) u_f (.clk, .rst, .en, .d({zero, big}), .q({zd, bd}));
+  otpu_qdly #(.W(2), .N(3 * P)) u_f (.clk, .rst, .en, .d({zero, big}), .q({zd, bd}));
   otpu_qfmul #(.LAT(LM)) u_inv (.clk, .en, .a(F_127), .b(y[3]), .y(invm));
   otpu_qfmul #(.LAT(LM)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .y(scm));
-  otpu_delay #(.W(32), .N(6 * SL)) u_scd (.clk, .en, .d(scm), .q(scd));
+  otpu_delay #(.W(32), .N(3 * P)) u_scd (.clk, .en, .d(scm), .q(scd));
   otpu_delay #(.W(2), .N(LM)) u_z2 (.clk, .en, .d({zd, bd}), .q({zd2, bd2}));
   otpu_delay #(.W(1 + TW), .N(LAT + 1)) u_v (.clk, .en, .d({iv_q, itag_q}), .q({ov, otag}));
   assign inv = (zd2 || bd2) ? F_ZERO : invm;
@@ -244,7 +269,7 @@ module otpu_quant
 
   // ------------------------------------------------------------------ command
   logic        busy, is_st, rowm, csf, rsf, strm, ackw;
-  logic [31:0] csb, rsb, dst, sdst, srs, drs, es;
+  logic [31:0] csb, rsb, sdst, srs, drs, es;
   logic [15:0] rows, KB;
   logic [7:0]  ab;
   logic [31:0] G;                            // elements per group
@@ -258,6 +283,8 @@ module otpu_quant
   logic [31:0] g, e, gi;                     // group in row, element in group, group index
   logic [31:0] row_src, grp_src;             // TMEM address of the row / of the group
   logic [31:0] rel;                          // element index within the row of e
+  logic [31:0] badr, bgrp, brs;              // QST byte address dst + r*drs + rel*es (mod 2^32)
+                                             // at (r, rel) / the group's start / rel = 0
   logic        pass;                         // two-pass: 0 amax, 1 quantize
   logic        rd_wait;                      // two-pass: waiting for the scale
   logic        rd_done;
@@ -313,20 +340,17 @@ module otpu_quant
   end
   otpu_delay #(.W($bits(rm_t)), .N(QL)) u_mp (.clk, .en, .d(m0), .q(mp));
 
-  // two-pass QST byte address dst + row*drs + rel*es, built beside the prescale in three stages
-  // (inputs | 17-bit partial products | sum) so no multiply cascade sits in one cycle
-  logic [31:0] ba_rel, ba_row, ba_s, mp_baddr;
-  logic [31:0] ba_p [4];
-  always_ff @(posedge clk) if (en) begin
-    ba_rel <= m0.rel;
-    ba_row <= 32'(m0.row);
-    ba_p[0] <= ba_row * 32'(drs[16:0]);
-    ba_p[1] <= (32'(ba_row[14:0]) * 32'(drs[31:17])) << 17;
-    ba_p[2] <= ba_rel * 32'(es[16:0]);
-    ba_p[3] <= (32'(ba_rel[14:0]) * 32'(es[31:17])) << 17;
-    ba_s <= dst + ba_p[0] + ba_p[1] + ba_p[2] + ba_p[3];
-  end
-  otpu_delay #(.W(32), .N(QL - 3)) u_ba (.clk, .en, .d(ba_s), .q(mp_baddr));
+  // two-pass QST byte address dst + row*drs + rel*es: the reader's running sum badr, taken in
+  // the issue cycle like m0 (one register) and delayed with it through the prescale (QL)
+  logic [31:0] mp_baddr;
+  otpu_delay #(.W(32), .N(QL + 1)) u_ba (.clk, .en, .d(badr), .q(mp_baddr));
+
+  // fp_gt for the amax path: every operand there is a non-negative flushed value (an otpu_qfmul
+  // result with the sign cleared, +0, or one taken from those), where fkey is {1, a[30:0]}, so
+  // the order is the unsigned order of a[30:0] (NaN still above +inf) and needs no ftz
+  function automatic logic mgt(input f32_t a, input f32_t b);
+    return a[30:0] > b[30:0];
+  endfunction
 
   // chunk amax (tree over the lanes) in two registered stages: the first level, then the rest
   localparam int HL = LANES / 2;
@@ -335,15 +359,16 @@ module otpu_quant
   rm_t   mh, mc;
   always_ff @(posedge clk) if (en) begin
     f32_t v [LANES];
-    for (int l = 0; l < LANES; l++) v[l] = mp.mask[l] ? fabs(xp[l]) : F_ZERO;
-    for (int l = 0; l < HL; l++) ch[l] <= fp_gt(v[l + HL], v[l]) ? v[l + HL] : v[l];
+    // xp is flushed (otpu_qfmul), so clearing the sign is fabs
+    for (int l = 0; l < LANES; l++) v[l] = mp.mask[l] ? {1'b0, xp[l][30:0]} : F_ZERO;
+    for (int l = 0; l < HL; l++) ch[l] <= mgt(v[l + HL], v[l]) ? v[l + HL] : v[l];
     mh <= mp;
   end
   always_ff @(posedge clk) if (en) begin
     f32_t v [HL];
     for (int l = 0; l < HL; l++) v[l] = ch[l];
     for (int w = HL / 2; w >= 1; w = w / 2)
-      for (int l = 0; l < w; l++) if (fp_gt(v[l + w], v[l])) v[l] = v[l + w];
+      for (int l = 0; l < w; l++) if (mgt(v[l + w], v[l])) v[l] = v[l + w];
     cmax <= v[0];
     mc <= mh;
   end
@@ -354,23 +379,20 @@ module otpu_quant
   logic [15:0] brow [NB];
   logic [31:0] bblk [NB];
   f32_t        bsc [NB], binv [NB];
-  f32_t        amax2;                        // two-pass: the group's running amax
 
-  // scale unit
+  // the group's running amax with this chunk folded in (a group's first chunk restarts it). The
+  // two-pass mode keeps its pass-0 max in bamax[mc.buf_] too: buf_ is constant over a group.
+  f32_t        amx, nmax;
+  assign amx  = bamax[mc.buf_];
+  assign nmax = (mc.e != 0 && mgt(amx, cmax)) ? amx : cmax;
+
+  // scale unit (its amax is don't-care while sq_iv is low: sc/inv are read only under sq_ov)
   logic        sq_iv, sq_ov;
   logic [BI-1:0] sq_itag, sq_otag;
   f32_t        sq_amax, sq_sc, sq_inv;
-  always_comb begin
-    f32_t m;
-    m = F_ZERO;
-    sq_iv = 1'b0; sq_itag = mc.buf_; sq_amax = F_ZERO;
-    if (mc.v && mc.last && (strm || !mc.pass)) begin
-      m = strm ? bamax[mc.buf_] : amax2;
-      if (mc.e != 0 && fp_gt(m, cmax)) sq_amax = m;
-      else sq_amax = cmax;
-      sq_iv = 1'b1;
-    end
-  end
+  assign sq_iv   = mc.v && mc.last && (strm || !mc.pass);
+  assign sq_itag = mc.buf_;
+  assign sq_amax = nmax;
   otpu_qscale #(.LM(LM), .LA(LA), .TW(BI)) u_sc (.clk, .rst, .en, .iv(sq_iv), .itag(sq_itag),
     .amax(sq_amax), .ov(sq_ov), .otag(sq_otag), .sc(sq_sc), .inv(sq_inv));
   f32_t sc2, inv2;                           // two-pass: the current group's scale
@@ -453,14 +475,15 @@ module otpu_quant
     wsc_r <= wsc_in;
   end
   // q8_s1 with the shift (and its guard bit k = sh - 1) decoded from e by a table, not computed
-  // as 150 - e: no carry chain between e and ip/g/st (the e compares feed only zero/sat)
+  // as 150 - e: no carry chain between e and ip/g/st (the e compares feed only zero/sat). No
+  // ftz: it changes only m, and only when e == 0, where zero makes q8_s2 return 0 anyway.
   function automatic q8_mid_t qq8_s1(input f32_t x_in);
     q8_mid_t q;
     f32_t x;
     logic [7:0]  e;
     logic [23:0] m;
     logic [4:0]  sh, k;
-    x = ftz(x_in);
+    x = x_in;
     e = x[30:23];
     m = {1'b1, x[22:0]};
     q = '0;
@@ -560,7 +583,6 @@ module otpu_quant
       rsb   <= cmd.w5;
       strm  <= !qst && !cmd.flags[0];
       if (qst) begin
-        dst  <= cmd.w2;
         sdst <= cmd.w3;
         rows <= cmd.w4[15:0];
         KB   <= cmd.w4[31:16];
@@ -578,6 +600,7 @@ module otpu_quant
         groups <= 32'(cmd.w2[7:0]) * (cmd.flags[0] ? 32'd1 : 32'(cmd.w2[31:16]));
       end
       r <= '0; g <= '0; e <= '0; gi <= '0; rel <= '0;
+      badr <= cmd.w2; bgrp <= cmd.w2; brs <= cmd.w2;     // QST dst (unused by QACT)
       row_src <= cmd.w1; grp_src <= cmd.w1;
       pass <= 1'b0; rd_wait <= 1'b0;
       saddr <= cmd.w3;
@@ -613,13 +636,16 @@ module otpu_quant
           brow[rbuf] <= r;
           bblk[rbuf] <= g;
         end
+        // badr follows rel (QST: ew = 1, so rel + ew is badr + es)
         if (!rlast) begin
           e <= e + ew;
           rel <= rel + ew;
+          badr <= badr + es;
         end else if (!strm && !pass) begin        // two-pass: wait for the scale, re-read
           rd_wait <= 1'b1;
           e <= '0;
           rel <= rel - e;
+          badr <= bgrp;
         end else begin                             // next group
           e <= '0;
           gi <= gi + 1;
@@ -628,23 +654,24 @@ module otpu_quant
           if (G == D && g + 1 < 32'(KB)) begin
             g <= g + 1;
             rel <= rel + ew;
+            badr <= badr + es;
+            bgrp <= badr + es;
             grp_src <= grp_src + D;
           end else begin
             g <= '0;
             rel <= '0;
             r <= r + 1;
+            brs <= brs + drs;
+            badr <= brs + drs;
+            bgrp <= brs + drs;
             row_src <= row_src + srs;
             grp_src <= row_src + srs;
           end
         end
       end
       // ---- after the prescale: buffers (the data: g_sb) and amax
-      if (mc.v && strm) begin
-        bamax[mc.buf_] <= (mc.e != 0 && fp_gt(bamax[mc.buf_], cmax)) ? bamax[mc.buf_] : cmax;
-        if (mc.last) bst[mc.buf_] <= B_FULL;
-      end
-      if (mc.v && !strm && !mc.pass)
-        amax2 <= (mc.e != 0 && fp_gt(amax2, cmax)) ? amax2 : cmax;
+      if (mc.v && (strm || !mc.pass)) bamax[mc.buf_] <= nmax;
+      if (mc.v && strm && mc.last) bst[mc.buf_] <= B_FULL;
       // ---- scale results
       if (sq_ov) begin
         if (strm) begin
