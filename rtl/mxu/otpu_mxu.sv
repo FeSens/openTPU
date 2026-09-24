@@ -143,10 +143,34 @@ module otpu_mxu
   logic [D*8-1:0]      w0;
   logic [MCOLS*D*8-1:0] a0;
   f32_t                ws0, ws1, ws2, ws3, ws4, ws5, ws6;
-  i2f_mid_t            im [MCOLS];
   f32_t                as0 [MCOLS];
-  logic signed [31:0]  s4 [MCOLS];
   f32_t                fi [MCOLS];
+  // The dot product of D int8 x int8 products is exact in SW bits: |dot| <= D*2^14 < 2^MG.
+  localparam int SW = 16 + $clog2(D);
+  localparam int MG = SW - 1;               // magnitude bits
+  localparam int LZW = $clog2(MG);
+  logic signed [SW-1:0] s4 [MCOLS];
+  // i2f of a dot product (MG <= 24): the magnitude converts exactly, so there is no rounding
+  // step; the same result as i2f(32'(x)). S5: sign, magnitude, leading zeros | S6: normalize.
+  typedef struct packed {
+    logic           z, s;
+    logic [LZW-1:0] lz;
+    logic [MG-1:0]  mag;
+  } dmid_t;
+  function automatic dmid_t d2f_s1(input logic signed [SW-1:0] x);
+    dmid_t m;
+    m.z   = (x == 0);
+    m.s   = x[SW-1];
+    m.mag = MG'(x[SW-1] ? -x : x);                        // |x| < 2^MG
+    m.lz  = LZW'(lzc32(32'(m.mag) << (32 - MG)));        // leading zeros within MG bits
+    return m;
+  endfunction
+  function automatic f32_t d2f_s2(input dmid_t m);
+    logic [MG-1:0] nrm;
+    if (m.z) return F_ZERO;
+    nrm = m.mag << m.lz;                                  // nrm[MG-1] = 1
+    return {m.s, 8'(126 + MG - int'(m.lz)), 23'(nrm[MG-2:0]) << (24 - MG)};
+  endfunction
   // S0's ACT RAM block and scales are the ACT RAM's registered read
   assign a0 = act_data;
   // the scale FIFO's registered read is kept free of logic (so it maps into the block RAM's
@@ -168,11 +192,22 @@ module otpu_mxu
     w0 <= f_data[f_head];
     ws0r <= f_scale[s_head];
     cu0 <= c_unit;
-    // S5, S6: int -> fp32
-    for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(s4[j]);
-    for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
     m5 <= m4; ws5 <= ws4;
     m6 <= m5;
+  end
+  // S5, S6: int -> fp32
+  if (MG <= 24) begin : g_d2f
+    dmid_t im [MCOLS];
+    always_ff @(posedge clk) if (en_c) begin
+      for (int j = 0; j < MCOLS; j++) im[j] <= d2f_s1(s4[j]);
+      for (int j = 0; j < MCOLS; j++) fi[j] <= d2f_s2(im[j]);
+    end
+  end else begin : g_i2f
+    i2f_mid_t im [MCOLS];
+    always_ff @(posedge clk) if (en_c) begin
+      for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(32'(s4[j]));
+      for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
+    end
   end
   // ws6 feeds the first fp multiplier's B operand: a reset flop, never an SRL tap
   always_ff @(posedge clk) if (rst) ws6 <= '0; else if (en_c) ws6 <= ws5;
@@ -229,9 +264,10 @@ module otpu_mxu
           s3[j][g] <= t;
         end
         begin
-          logic signed [31:0] t;
-          t = (j % 2 == 1) ? -32'(D / 2 * int'(PK)) : '0;
-          for (int g = 0; g < D / 16; g++) t = t + 32'(s3[j][g]);
+          // SW bits: the bias and partial sums may wrap, the final sum is exact
+          logic signed [SW-1:0] t;
+          t = (j % 2 == 1) ? SW'(-(D / 2 * int'(PK))) : '0;
+          for (int g = 0; g < D / 16; g++) t = t + SW'(s3[j][g]);
           s4[j] <= t;
         end
       end
@@ -298,7 +334,7 @@ module otpu_mxu
           2: t = t2[j][0];
           default: for (int u = 0; u < (NG + 15) / 16; u++) t = t + t2[j][u];
         endcase
-        s4[j] = t;
+        s4[j] = SW'(t);
       end
     // the meta and the weight scale travel alongside (S0 -> S4 position)
     otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));
