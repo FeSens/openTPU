@@ -29,7 +29,11 @@ module otpu_coll
   logic        pv, issuing;
   // row base addresses kept by adding the strides (no multipliers):
   // rrow = w1[s] + r*w4[s], wrow = dst + s*seg + r*drs, wseg = dst + s*seg
-  logic [31:0] rrow, wrow, wseg, pw;
+  logic [31:0] rrow, wrow, wseg;
+  // the write stage's address base and lane mask, registered with pcl (they feed the TMEM
+  // arbiter, so no adder or compare sits in front of it)
+  logic [31:0]      pwa;
+  logic [LANES-1:0] pm;
 
   always_comb begin
     ack = (st == C_ACK);
@@ -46,9 +50,9 @@ module otpu_coll
     end
     if (st == C_RUN && pv) begin
       for (int l = 0; l < LANES; l++)
-        if (pcl + 32'(l) < 32'(cols)) begin
+        if (pm[l]) begin
           w_en[l] = 1'b1;
-          w_addr[l] = pw + pcl + 32'(l);
+          w_addr[l] = pwa + 32'(l);
           for (int k = 0; k < S; k++) if (k == int'(ps)) w_data[l] = r_data[k][l];
         end
     end
@@ -79,7 +83,9 @@ module otpu_coll
         end
         C_RUN: if (gnt) begin
           pv <= issuing;
-          ps <= s; pr <= r; pcl <= c; pw <= wrow;
+          ps <= s; pr <= r; pcl <= c;
+          pwa <= wrow + c;
+          for (int l = 0; l < LANES; l++) pm[l] <= (c + 32'(l) < 32'(cols));
           if (issuing) begin
             if (c + LANES >= 32'(cols)) begin
               c <= '0;
