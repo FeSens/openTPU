@@ -400,7 +400,8 @@ module otpu_vpu
     mxc_q <= v[0];
     mxm_q <= mxh_m;
   end
-  wire f32_t mx_new = (mx_have && fp_gt(mx_run, mxc_q)) ? mx_run : mxc_q;
+  f32_t mx_new;
+  assign mx_new = (mx_have && fp_gt(mx_run, mxc_q)) ? mx_run : mxc_q;
 
   // ------------------------------------------------------------------ RSUM / RSSQ
   f32_t  pacc [LANES];                  // partial after adding this chunk's term
@@ -672,7 +673,7 @@ module otpu_vpu
             if (tb_n[bb] != 7'd1) begin
               tb_n[bb] <= tb_n[bb] >> 1;
               tb_i[bb] <= '0;
-            end else if (!pushed && rn < (TBW+1)'(NTB)) begin
+            end else if (!pushed && 32'(rn) < NTB) begin
               pushed = 1'b1;
               rq_v[TBW'(rq_h + rn)] <= pb[bb][0][0];
               rq_a[TBW'(rq_h + rn)] <= tb_dst[bb];

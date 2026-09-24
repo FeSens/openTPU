@@ -120,7 +120,7 @@ module otpu_board #(
   import otpu_pkg::*;
 
   // ---- calibration flags from the memory controllers' clock domains
-  logic [1:0] cal_s1, cal_s2;
+  (* ASYNC_REG = "TRUE" *) logic [1:0] cal_s1, cal_s2;
   always_ff @(posedge clk) begin
     cal_s1 <= calib;
     cal_s2 <= cal_s1;
