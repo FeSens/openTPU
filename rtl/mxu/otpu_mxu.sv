@@ -71,6 +71,7 @@ module otpu_mxu
   localparam int RF = 32;                   // result FIFO rows
   localparam int RFW = $clog2(RF);
   localparam int MW = $clog2(MCOLS) + 1;
+  localparam int NL = (LANES < MCOLS) ? LANES : MCOLS;   // lanes the drain can fill
   initial if (D % 16 != 0) $fatal(1, "otpu_mxu: D must be a multiple of 16");
 
   // ================================================================== issuer
@@ -310,34 +311,32 @@ module otpu_mxu
     otpu_fadd #(.LAT(LA)) u_acc (.clk, .en(en_c), .a(prev), .b(t2[j]), .y(pacc[j]));
   end
 
-  // collect the final partials of a row; at its last block combine (p0+p2)+(p1+p3)
+  // collect the final partials of a row; at its last block combine (p0+p2)+(p1+p3).
+  // The last block latches the combine operands into pset (its own slot <- pacc, slots the row
+  // never filled <- +0), so the adders read flops; pset's data input is always pacc.
   f32_t       pset [MCOLS][NPART];
   logic [NPART-1:0] pmask;
-  f32_t       cv [MCOLS][NPART];
-  always_comb begin
-    for (int j = 0; j < MCOLS; j++)
-      for (int q = 0; q < NPART; q++)
-        cv[j][q] = (ma.v && ma.fin && ma.q == 2'(q)) ? pacc[j] : (pmask[q] ? pset[j][q] : F_ZERO);
-  end
   always_ff @(posedge clk) begin
     if (rst) pmask <= '0;
     else if (en_c && ma.v && ma.fin) begin
       if (ma.last) pmask <= '0;
-      else begin
-        pmask[ma.q] <= 1'b1;
-        for (int j = 0; j < MCOLS; j++) pset[j][ma.q] <= pacc[j];
-      end
+      else pmask[ma.q] <= 1'b1;
+      for (int q = 0; q < NPART; q++)
+        for (int j = 0; j < MCOLS; j++)
+          if (ma.q == 2'(q)) pset[j][q] <= pacc[j];
+          else if (ma.last && !pmask[q]) pset[j][q] <= F_ZERO;
     end
   end
   wire launch = ma.v && ma.last;
   f32_t c01 [MCOLS], c23 [MCOLS], rowv [MCOLS];
   logic lv1, lv2;
   for (genvar j = 0; j < MCOLS; j++) begin : g_comb
-    otpu_fadd #(.LAT(LA)) u_c01 (.clk, .en(en_c), .a(cv[j][0]), .b(cv[j][2]), .y(c01[j]));
-    otpu_fadd #(.LAT(LA)) u_c23 (.clk, .en(en_c), .a(cv[j][1]), .b(cv[j][3]), .y(c23[j]));
+    otpu_fadd #(.LAT(LA)) u_c01 (.clk, .en(en_c), .a(pset[j][0]), .b(pset[j][2]), .y(c01[j]));
+    otpu_fadd #(.LAT(LA)) u_c23 (.clk, .en(en_c), .a(pset[j][1]), .b(pset[j][3]), .y(c23[j]));
     otpu_fadd #(.LAT(LA)) u_c (.clk, .en(en_c), .a(c01[j]), .b(c23[j]), .y(rowv[j]));
   end
-  otpu_delay #(.W(1), .N(2 * LA)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
+  // one advance to latch pset, then the two adder levels
+  otpu_delay #(.W(1), .N(2 * LA + 1)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
 
   // ================================================================== result FIFO
   f32_t        rf_v [RF][MCOLS];
@@ -358,7 +357,7 @@ module otpu_mxu
     logic stop;
     logic [31:0] ad;
     used = '0; stop = 1'b0; ncnt = '0; daddr_l = '0; dval_l = '0; dcol_l = '0; ad = '0;
-    for (int k = 0; k < LANES; k++) begin
+    for (int k = 0; k < NL; k++) begin
       if (k < MCOLS && !stop && 32'(dj) + 32'(k) < 32'(c_M)) begin
         ad = d_row + q_jo[q_h][MW'(32'(dj) + 32'(k))];
         if (!used[ad[BW-1:0]]) begin
@@ -376,16 +375,16 @@ module otpu_mxu
   // read-modify-write pipeline for ACC: read now, data next cycle, (old*alpha)+new, write
   typedef struct packed {
     logic                   v;
-    logic [LANES-1:0]       m;
-    logic [LANES-1:0][31:0] ad, nv;
-    logic [LANES-1:0][7:0]  col;
+    logic [NL-1:0]          m;
+    logic [NL-1:0][31:0]    ad, nv;
+    logic [NL-1:0][7:0]     col;
   } rmw_t;
   rmw_t r0, rw;                               // r0: data arriving now; rw: at the write stage
   rmw_t rx;                                   // RMAX (no ACC): drained lanes, compared next cycle
-  f32_t ry [LANES];
-  for (genvar k = 0; k < LANES; k++) begin : g_rmw
+  f32_t ry [NL];
+  for (genvar k = 0; k < NL; k++) begin : g_rmw
     f32_t al;
-    assign al = (c_asc && k < MCOLS) ? alpha[r0.col[k][MW-2:0]] : F_ONE;
+    assign al = c_asc ? alpha[r0.col[k][MW-2:0]] : F_ONE;
     otpu_fmadd #(.LM(LM), .LA(LA)) u_y (.clk, .en(t_gnt), .a(t_rdata[k]), .b(al), .c(r0.nv[k]),
                                         .y(ry[k]));
   end
@@ -419,7 +418,7 @@ module otpu_mxu
       end
     end
     if (rw.v) begin
-      for (int k = 0; k < LANES; k++) begin
+      for (int k = 0; k < NL; k++) begin
         if (rw.m[k]) begin
           t_wen[k] = 1'b1;
           t_waddr[k] = rw.ad[k];
@@ -562,16 +561,16 @@ module otpu_mxu
         if (drain_go) begin
           if (c_acc) begin
             r0.v <= 1'b1;
-            for (int k = 0; k < LANES; k++) r0.m[k] <= (32'(k) < 32'(ncnt));
-            r0.ad <= daddr_l;
-            r0.nv <= dval_l;
-            r0.col <= dcol_l;
+            for (int k = 0; k < NL; k++) r0.m[k] <= (32'(k) < 32'(ncnt));
+            r0.ad <= daddr_l[NL-1:0];
+            r0.nv <= dval_l[NL-1:0];
+            r0.col <= dcol_l[NL-1:0];
           end
           if (c_rmax && !c_acc) begin
             rx.v <= 1'b1;
-            for (int k = 0; k < LANES; k++) rx.m[k] <= (32'(k) < 32'(ncnt));
-            rx.nv <= dval_l;
-            rx.col <= dcol_l;
+            for (int k = 0; k < NL; k++) rx.m[k] <= (32'(k) < 32'(ncnt));
+            rx.nv <= dval_l[NL-1:0];
+            rx.col <= dcol_l[NL-1:0];
           end
           if (drain_row_done) begin
             dj <= '0;
@@ -585,7 +584,7 @@ module otpu_mxu
         end
         // registered so the lane selection and the max compare are in different cycles
         if (rx.v) begin
-          for (int k = 0; k < LANES; k++) begin
+          for (int k = 0; k < NL; k++) begin
             if (rx.m[k]) begin
               logic [MW-2:0] j;
               j = rx.col[k][MW-2:0];
@@ -595,7 +594,7 @@ module otpu_mxu
           end
         end
         if (rw.v && c_rmax) begin
-          for (int k = 0; k < LANES; k++) begin
+          for (int k = 0; k < NL; k++) begin
             if (rw.m[k]) begin
               logic [MW-2:0] j;
               j = rw.col[k][MW-2:0];
