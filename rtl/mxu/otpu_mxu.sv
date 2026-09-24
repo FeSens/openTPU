@@ -348,7 +348,9 @@ module otpu_mxu
 
   // ================================================================== drain
   // lanes this cycle: results dj .. dj+ncnt-1 of the head row, stopping at a bank conflict
-  logic [31:0] d_row;                        // out + n of the head row
+  logic [31:0] dad [MCOLS];                  // head row's TMEM addresses: out + n + j * ors,
+                                             // kept incrementally (no adder between the drain's
+                                             // lane pick and the arbiter)
   logic [7:0]  dj;
   logic [7:0]  ncnt;
   logic [LANES-1:0][31:0] daddr_l, dval_l;
@@ -361,7 +363,7 @@ module otpu_mxu
     used = '0; stop = 1'b0; ncnt = '0; daddr_l = '0; dval_l = '0; dcol_l = '0; ad = '0;
     for (int k = 0; k < NL; k++) begin
       if (k < MCOLS && !stop && 32'(dj) + 32'(k) < 32'(c_M)) begin
-        ad = d_row + q_jo[q_h][MW'(32'(dj) + 32'(k))];
+        ad = dad[MW'(32'(dj) + 32'(k))];
         if (!used[ad[BW-1:0]]) begin
           used[ad[BW-1:0]] = 1'b1;
           daddr_l[k] = ad;
@@ -590,7 +592,7 @@ module otpu_mxu
           end
           if (drain_row_done) begin
             dj <= '0;
-            d_row <= d_row + 1;
+            for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + 1;
             rf_h <= rf_h + 1;
             rn = rn - 1;
             rl = rl - 1;
@@ -646,7 +648,9 @@ module otpu_mxu
         qn = qn - 1;
         ck <= '0; c_pop <= '0;
         dj <= '0;
-        d_row <= (start && q_n == 2'd1) ? cmd.w3 : q_out[~q_h];
+        for (int j = 0; j < MCOLS; j++)
+          dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
+                                           : q_out[~q_h] + q_jo[~q_h][j];
         mx_done <= 1'b0; mx_have <= '0;
         al_st <= 2'd0; al_i <= '0; mx_i <= '0;
 `ifndef SYNTHESIS
@@ -656,7 +660,9 @@ module otpu_mxu
         st_starve <= '0; st_bp <= '0; st_frz <= '0; st_deny <= '0;
       end
       // the head's output base (set when a command becomes head)
-      if (start && q_n == 0) d_row <= cmd.w3;
+      if (start && q_n == 0) begin
+        for (int j = 0; j < MCOLS; j++) dad[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+      end
       q_n <= qn;
     end
   end
