@@ -11,10 +11,35 @@
 // amax, pass 1 quantizes); QST writes one byte per cycle to DRAM port A, preceded by the
 // group's scale word.
 // Everything advances only on cycles the TMEM grant is given.
+
+// N-cycle delay line (N >= 2) like otpu_delay, but its last stage has a synchronous reset: a
+// flip-flop with a reset is not packed into the shift-register LUTs in front of it, so the
+// multiplier operands it feeds leave a real flip-flop and not an SRL's slow clock-to-out.
+module otpu_qdly #(parameter int W = 32, parameter int N = 2) (
+  input  logic         clk,
+  input  logic         rst,
+  input  logic         en,
+  input  logic [W-1:0] d,
+  output logic [W-1:0] q
+);
+  initial if (N < 2) $fatal(1, "otpu_qdly: N must be at least 2");
+  logic [W-1:0] r [N - 1];
+  (* shreg_extract = "no", keep *) logic [W-1:0] qr;
+  always_ff @(posedge clk) if (en) begin
+    r[0] <= d;
+    for (int k = 1; k < N - 1; k++) r[k] <= r[k-1];
+  end
+  always_ff @(posedge clk)
+    if (rst) qr <= '0;
+    else if (en) qr <= r[N-2];
+  assign q = qr;
+endmodule
+
 module otpu_qscale
   import otpu_fp::*;
 #(parameter int LM = 2, parameter int LA = 4, parameter int TW = 2) (
   input  logic          clk,
+  input  logic          rst,
   input  logic          en,
   input  logic          iv,
   input  logic [TW-1:0] itag,
@@ -45,19 +70,20 @@ module otpu_qscale
     big <= (a >= 32'h7E80_0000);
     y0 <= ftz(RECIP_MAGIC - a);
   end
-  // recip(ax): y = y * (2 - ax*y), three times, from the magic seed
+  // recip(ax): y = y * (2 - ax*y), three times, from the magic seed; the delay lines into the
+  // multiplier operands end in a flip-flop with a reset (otpu_qdly)
   f32_t y [4], t [3], k1 [4], yd [3];
   assign y[0] = y0;
   assign k1[0] = {1'b1, ax[30:0]};
   for (genvar i = 0; i < 3; i++) begin : g_it
     otpu_fmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .c(F_TWO), .y(t[i]));
-    otpu_delay #(.W(32), .N(SL)) u_yd (.clk, .en, .d(y[i]), .q(yd[i]));
-    otpu_delay #(.W(32), .N(2 * SL)) u_k (.clk, .en, .d(k1[i]), .q(k1[i + 1]));
+    otpu_qdly #(.W(32), .N(SL)) u_yd (.clk, .rst, .en, .d(y[i]), .q(yd[i]));
+    otpu_qdly #(.W(32), .N(2 * SL)) u_k (.clk, .rst, .en, .d(k1[i]), .q(k1[i + 1]));
     otpu_fmadd #(.LM(LM), .LA(LA)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .c(F_NZ), .y(y[i + 1]));
   end
   f32_t r, invm, scm, scd;
   logic zd, bd, zd2;
-  otpu_delay #(.W(2), .N(6 * SL)) u_f (.clk, .en, .d({zero, big}), .q({zd, bd}));
+  otpu_qdly #(.W(2), .N(6 * SL)) u_f (.clk, .rst, .en, .d({zero, big}), .q({zd, bd}));
   assign r = bd ? F_ZERO : y[3];
   otpu_fmul #(.LAT(LM)) u_inv (.clk, .en, .a(F_127), .b(r), .y(invm));
   otpu_fmul #(.LAT(LM)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .y(scm));
@@ -228,8 +254,8 @@ module otpu_quant
     mc <= mh;
   end
 
-  // block buffers (streaming QACT): chunk c of buffer b holds elements c*LANES ..
-  f32_t        sbuf [NB][NC][LANES];
+  // block buffers (streaming QACT): chunk c of buffer b holds elements c*LANES .. (the data
+  // itself is in per-lane RAMs beside the writer, g_sb)
   f32_t        bamax [NB];
   logic [15:0] brow [NB];
   logic [31:0] bblk [NB];
@@ -251,7 +277,7 @@ module otpu_quant
       sq_iv = 1'b1;
     end
   end
-  otpu_qscale #(.LM(LM), .LA(LA), .TW(BI)) u_sc (.clk, .en, .iv(sq_iv), .itag(sq_itag),
+  otpu_qscale #(.LM(LM), .LA(LA), .TW(BI)) u_sc (.clk, .rst, .en, .iv(sq_iv), .itag(sq_itag),
     .amax(sq_amax), .ov(sq_ov), .otag(sq_otag), .sc(sq_sc), .inv(sq_inv));
   f32_t sc2, inv2;                           // two-pass: the current group's scale
 
@@ -261,6 +287,19 @@ module otpu_quant
   logic [31:0]   wc;                         // chunk of the buffer being written
   logic [31:0]   wdone;                      // groups written (streaming)
   wire w_go = busy && strm && bst[wsel] == B_SCL;
+
+  // block buffer data: one RAM per lane, (buffer, chunk) -> word, with one write port (the
+  // prescale output, under the sequencer's condition) and one asynchronous read port (the writer)
+  localparam int CI = (NC > 1) ? $clog2(NC) : 1;
+  wire [BI+CI-1:0] sb_wa = {mp.buf_, CI'(mp.e / LANES)};
+  wire [BI+CI-1:0] sb_ra = {wsel, CI'(wc)};
+  wire sb_we = !rst && !ackw && !start && busy && en && mp.v && strm;
+  f32_t sb_rd [LANES];
+  for (genvar l = 0; l < LANES; l++) begin : g_sb
+    f32_t mem [NB * (2 ** CI)];
+    always_ff @(posedge clk) if (sb_we) mem[sb_wa] <= xp[l];
+    assign sb_rd[l] = mem[sb_ra];
+  end
 
   typedef struct packed {
     logic             v;
@@ -285,7 +324,7 @@ module otpu_quant
       wq.v = 1'b1;
       for (int l = 0; l < LANES; l++) begin
         wq.mask[l] = 1'b1;
-        wx[l] = sbuf[wsel][wc][l];
+        wx[l] = sb_rd[l];
       end
       wq.row = brow[wsel][7:0];
       wq.idx = (32'(ab) + bblk[wsel]) * D + wc * LANES;
@@ -482,9 +521,7 @@ module otpu_quant
           end
         end
       end
-      // ---- after the prescale: buffers and amax
-      if (mp.v && strm)
-        for (int l = 0; l < LANES; l++) sbuf[mp.buf_][mp.e / LANES][l] <= xp[l];
+      // ---- after the prescale: buffers (the data: g_sb) and amax
       if (mc.v && strm) begin
         bamax[mc.buf_] <= (mc.e != 0 && fp_gt(bamax[mc.buf_], cmax)) ? bamax[mc.buf_] : cmax;
         if (mc.last) bst[mc.buf_] <= B_FULL;
