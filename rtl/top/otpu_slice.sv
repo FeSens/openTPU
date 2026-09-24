@@ -254,29 +254,36 @@ module otpu_slice
   localparam bit ARB_MASK = (RPB >= NRP * LANES) && (WPB == 1);
   logic [NG-1:0] gnt_m, gnt_c;
   logic          cgl_m, cgl_c;
+  // Each group's write-bank mask, the pairwise conflicts between groups (in parallel), then
+  // priority on single bits: a group is admitted unless it conflicts with an earlier admitted
+  // group (the same result as accumulating the admitted groups' banks in priority order, with
+  // the per-bank reductions out of the priority chain)
+  logic [NG-1:0][LANES-1:0] amk;
+  logic [NG-1:0][NG-1:0]    acf;
+  logic [NG-1:0]            aok;
   always_comb begin
-    logic [LANES-1:0] taken, mine;
-    logic ok;
     logic [NWP-1:0] wp;
-    taken = '0;
-    cgl_m = 1'b1;
     for (int g = 0; g < NG; g++) begin
       wp = grp_wports(g);
-      mine = '0;
+      amk[g] = '0;
       for (int p = 0; p < NWP; p++)
         if (wp[p])
           for (int l = 0; l < LANES; l++)
-            if (wq_en[p][l]) mine[w_addr[p][l][BW-1:0]] = 1'b1;
-      ok = (taken & mine) == '0;
-      if (g == G_Q && q_awant && !sw_rdy) ok = 1'b0;    // QST write the DRAM cannot take
-      if (g == G_COLL) begin
-        cgl_m = ok;
-        gnt_m[g] = coll_gnt;
-      end else begin
-        gnt_m[g] = ok;
-      end
-      if (ok) taken = taken | mine;
+            if (wq_en[p][l]) amk[g][w_addr[p][l][BW-1:0]] = 1'b1;
     end
+    acf = '0;
+    for (int g = 0; g < NG; g++)
+      for (int h = 0; h < g; h++) acf[g][h] = (amk[g] & amk[h]) != '0;
+  end
+  always_comb begin
+    for (int g = 0; g < NG; g++) begin
+      aok[g] = 1'b1;
+      for (int h = 0; h < g; h++) if (aok[h] && acf[g][h]) aok[g] = 1'b0;
+      if (g == G_Q && q_awant && !sw_rdy) aok[g] = 1'b0;   // QST write the DRAM cannot take
+    end
+    gnt_m = aok;
+    gnt_m[G_COLL] = coll_gnt;
+    cgl_m = aok[G_COLL];
   end
 
   always_comb begin
