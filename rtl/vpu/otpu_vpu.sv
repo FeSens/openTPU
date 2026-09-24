@@ -105,7 +105,8 @@ module otpu_vpu
   logic [3:0]  ew_n;                          // elementwise instructions issued, not done
   logic [3:0]  last_tap;                      // slots of the last one started
   assign rdy = (cq_n < 2);
-  wire  cmd_t hc = cq[cq_h];
+  cmd_t hc;
+  assign hc = cq[cq_h];
   wire  [7:0] hf = hc.w6[23:16];
   wire  h_empty = (hc.w4[15:0] == 0) || (hc.w4[31:16] == 0);
   wire  can_begin = (cq_n != 0) && !issuing && !red_act &&
@@ -169,7 +170,18 @@ module otpu_vpu
     logic             final_;    // reductions: chunk index >= nch - RL (partials become final)
     logic [7:0]       sub;       // chunk index mod RL
   } meta_t;
-  meta_t m0;
+  // mi: the chunk read this cycle; m0: that chunk one granted cycle later, together with its
+  // TMEM data registered (xa, xb), so no path runs from the TMEM block RAMs into the lanes'
+  // multipliers in one cycle
+  meta_t m0, mi;
+  logic [LANES-1:0][31:0] xa, xb;
+  always_ff @(posedge clk)
+    if (rst) m0 <= '0;
+    else if (en) begin
+      m0 <= mi;
+      xa <= ta_data;
+      xb <= tb_data;
+    end
 
   // the parts of the meta the later stages read: along the lane taps, and for the reductions
   typedef struct packed {
@@ -253,8 +265,8 @@ module otpu_vpu
     localparam int NS = NSLOT;                     // slots of this lane
     f32_t x, y;
     lst_t st [NS + 1];
-    assign x = ta_data[l];
-    assign y = (m0.bmode == B_SCALAR) ? m0.imm : (m0.bmode == B_ROW) ? tb_data[0] : tb_data[l];
+    assign x = xa[l];
+    assign y = (m0.bmode == B_SCALAR) ? m0.imm : (m0.bmode == B_ROW) ? xb[0] : xb[l];
 
     // boundary 0: the simple functions' results and the composite functions' setup
     always_comb begin
@@ -419,8 +431,8 @@ module otpu_vpu
   for (genvar l = NCL; l < LANES; l++) begin : g_slane
     f32_t x, y;
     f32_t st [2];                                  // v at boundaries 0 and 1
-    assign x = ta_data[l];
-    assign y = (m0.bmode == B_SCALAR) ? m0.imm : (m0.bmode == B_ROW) ? tb_data[0] : tb_data[l];
+    assign x = xa[l];
+    assign y = (m0.bmode == B_SCALAR) ? m0.imm : (m0.bmode == B_ROW) ? xb[0] : xb[l];
 
     always_comb begin
       st[0] = '0;
@@ -469,7 +481,7 @@ module otpu_vpu
     f32_t v [LANES];
     logic h [LANES];
     for (int l = 0; l < LANES; l++) begin
-      v[l] = ftz(ta_data[l]);
+      v[l] = ftz(xa[l]);
       h[l] = m0.mask[l];
     end
     for (int l = 0; l < HL; l++) begin
@@ -499,7 +511,7 @@ module otpu_vpu
   otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
   for (genvar l = 0; l < LANES; l++) begin : g_red
     f32_t xin, tq, prev, fb;
-    assign xin = m0.mask[l] ? ftz(ta_data[l]) : F_ZERO;
+    assign xin = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
     otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xin), .b((m0.func == V_RSSQ) ? xin : F_ONE), .y(tq));
     // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
     otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
@@ -619,7 +631,7 @@ module otpu_vpu
       cq_n <= '0; cq_h <= 1'b0;
       issuing <= 1'b0; red_act <= 1'b0;
       ew_n <= '0; last_tap <= '0;
-      m0 <= '0;
+      mi <= '0;
       tag <= '0;
       cyc <= '0;
       tb_act <= '0;
@@ -674,21 +686,21 @@ module otpu_vpu
         end
       end
       if (en) begin
-        // ---- issue the next chunk (its data arrives next cycle, described by m0)
-        m0 <= '0;
+        // ---- issue the next chunk (its data arrives next cycle, described by mi)
+        mi <= '0;
         if (issuing) begin
-          m0.v <= 1'b1;
-          m0.tag <= tag;
-          m0.func <= func;
-          m0.bmode <= bmode;
-          m0.imm <= imm;
-          m0.mask <= imask;
-          m0.waddr <= is_red ? d_row : d_row + 32'(ic);
-          m0.row_last <= irow_last;
-          m0.all_last <= iall_last;
-          m0.first <= (ch < 16'(RL));
-          m0.final_ <= (ch + 16'(RL) >= nch);
-          m0.sub <= 8'(ch % 16'(RL));
+          mi.v <= 1'b1;
+          mi.tag <= tag;
+          mi.func <= func;
+          mi.bmode <= bmode;
+          mi.imm <= imm;
+          mi.mask <= imask;
+          mi.waddr <= is_red ? d_row : d_row + 32'(ic);
+          mi.row_last <= irow_last;
+          mi.all_last <= iall_last;
+          mi.first <= (ch < 16'(RL));
+          mi.final_ <= (ch + 16'(RL) >= nch);
+          mi.sub <= 8'(ch % 16'(RL));
           if (irow_last) begin
             ic <= '0; ch <= '0;
             a_row <= a_row + 32'(ars);
