@@ -310,34 +310,32 @@ module otpu_mxu
     otpu_fadd #(.LAT(LA)) u_acc (.clk, .en(en_c), .a(prev), .b(t2[j]), .y(pacc[j]));
   end
 
-  // collect the final partials of a row; at its last block combine (p0+p2)+(p1+p3)
+  // collect the final partials of a row; at its last block combine (p0+p2)+(p1+p3).
+  // The last block latches the combine operands into pset (its own slot <- pacc, slots the row
+  // never filled <- +0), so the adders read flops; pset's data input is always pacc.
   f32_t       pset [MCOLS][NPART];
   logic [NPART-1:0] pmask;
-  f32_t       cv [MCOLS][NPART];
-  always_comb begin
-    for (int j = 0; j < MCOLS; j++)
-      for (int q = 0; q < NPART; q++)
-        cv[j][q] = (ma.v && ma.fin && ma.q == 2'(q)) ? pacc[j] : (pmask[q] ? pset[j][q] : F_ZERO);
-  end
   always_ff @(posedge clk) begin
     if (rst) pmask <= '0;
     else if (en_c && ma.v && ma.fin) begin
       if (ma.last) pmask <= '0;
-      else begin
-        pmask[ma.q] <= 1'b1;
-        for (int j = 0; j < MCOLS; j++) pset[j][ma.q] <= pacc[j];
-      end
+      else pmask[ma.q] <= 1'b1;
+      for (int q = 0; q < NPART; q++)
+        for (int j = 0; j < MCOLS; j++)
+          if (ma.q == 2'(q)) pset[j][q] <= pacc[j];
+          else if (ma.last && !pmask[q]) pset[j][q] <= F_ZERO;
     end
   end
   wire launch = ma.v && ma.last;
   f32_t c01 [MCOLS], c23 [MCOLS], rowv [MCOLS];
   logic lv1, lv2;
   for (genvar j = 0; j < MCOLS; j++) begin : g_comb
-    otpu_fadd #(.LAT(LA)) u_c01 (.clk, .en(en_c), .a(cv[j][0]), .b(cv[j][2]), .y(c01[j]));
-    otpu_fadd #(.LAT(LA)) u_c23 (.clk, .en(en_c), .a(cv[j][1]), .b(cv[j][3]), .y(c23[j]));
+    otpu_fadd #(.LAT(LA)) u_c01 (.clk, .en(en_c), .a(pset[j][0]), .b(pset[j][2]), .y(c01[j]));
+    otpu_fadd #(.LAT(LA)) u_c23 (.clk, .en(en_c), .a(pset[j][1]), .b(pset[j][3]), .y(c23[j]));
     otpu_fadd #(.LAT(LA)) u_c (.clk, .en(en_c), .a(c01[j]), .b(c23[j]), .y(rowv[j]));
   end
-  otpu_delay #(.W(1), .N(2 * LA)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
+  // one advance to latch pset, then the two adder levels
+  otpu_delay #(.W(1), .N(2 * LA + 1)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
 
   // ================================================================== result FIFO
   f32_t        rf_v [RF][MCOLS];
