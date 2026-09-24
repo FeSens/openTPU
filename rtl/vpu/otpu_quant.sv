@@ -174,12 +174,13 @@ module otpu_qscale
   always_ff @(posedge clk) if (en) begin
     amax_q <= amax; iv_q <= iv; itag_q <= itag;
   end
-  // seed stage: |amax|, its flags and the reciprocal seed, registered
+  // seed stage: |amax|, its flags and the reciprocal seed, registered (amax is an otpu_qfmul
+  // result or +0, so it is already flushed: no ftz)
   f32_t ax, y0;
   logic zero, big;
   always_ff @(posedge clk) if (en) begin
     f32_t a;
-    a = {1'b0, ftz(amax_q)[30:0]};
+    a = {1'b0, amax_q[30:0]};
     ax <= a;
     zero <= (a == 0);
     big <= (a >= 32'h7E80_0000);
@@ -352,6 +353,13 @@ module otpu_quant
   end
   otpu_delay #(.W(32), .N(QL - 3)) u_ba (.clk, .en, .d(ba_s), .q(mp_baddr));
 
+  // fp_gt for the amax path: every operand there is a non-negative flushed value (an otpu_qfmul
+  // result with the sign cleared, +0, or one taken from those), where fkey is {1, a[30:0]}, so
+  // the order is the unsigned order of a[30:0] (NaN still above +inf) and needs no ftz
+  function automatic logic mgt(input f32_t a, input f32_t b);
+    return a[30:0] > b[30:0];
+  endfunction
+
   // chunk amax (tree over the lanes) in two registered stages: the first level, then the rest
   localparam int HL = LANES / 2;
   f32_t  ch [HL];
@@ -359,15 +367,16 @@ module otpu_quant
   rm_t   mh, mc;
   always_ff @(posedge clk) if (en) begin
     f32_t v [LANES];
-    for (int l = 0; l < LANES; l++) v[l] = mp.mask[l] ? fabs(xp[l]) : F_ZERO;
-    for (int l = 0; l < HL; l++) ch[l] <= fp_gt(v[l + HL], v[l]) ? v[l + HL] : v[l];
+    // xp is flushed (otpu_qfmul), so clearing the sign is fabs
+    for (int l = 0; l < LANES; l++) v[l] = mp.mask[l] ? {1'b0, xp[l][30:0]} : F_ZERO;
+    for (int l = 0; l < HL; l++) ch[l] <= mgt(v[l + HL], v[l]) ? v[l + HL] : v[l];
     mh <= mp;
   end
   always_ff @(posedge clk) if (en) begin
     f32_t v [HL];
     for (int l = 0; l < HL; l++) v[l] = ch[l];
     for (int w = HL / 2; w >= 1; w = w / 2)
-      for (int l = 0; l < w; l++) if (fp_gt(v[l + w], v[l])) v[l] = v[l + w];
+      for (int l = 0; l < w; l++) if (mgt(v[l + w], v[l])) v[l] = v[l + w];
     cmax <= v[0];
     mc <= mh;
   end
@@ -378,23 +387,20 @@ module otpu_quant
   logic [15:0] brow [NB];
   logic [31:0] bblk [NB];
   f32_t        bsc [NB], binv [NB];
-  f32_t        amax2;                        // two-pass: the group's running amax
 
-  // scale unit
+  // the group's running amax with this chunk folded in (a group's first chunk restarts it). The
+  // two-pass mode keeps its pass-0 max in bamax[mc.buf_] too: buf_ is constant over a group.
+  f32_t        amx, nmax;
+  assign amx  = bamax[mc.buf_];
+  assign nmax = (mc.e != 0 && mgt(amx, cmax)) ? amx : cmax;
+
+  // scale unit (its amax is don't-care while sq_iv is low: sc/inv are read only under sq_ov)
   logic        sq_iv, sq_ov;
   logic [BI-1:0] sq_itag, sq_otag;
   f32_t        sq_amax, sq_sc, sq_inv;
-  always_comb begin
-    f32_t m;
-    m = F_ZERO;
-    sq_iv = 1'b0; sq_itag = mc.buf_; sq_amax = F_ZERO;
-    if (mc.v && mc.last && (strm || !mc.pass)) begin
-      m = strm ? bamax[mc.buf_] : amax2;
-      if (mc.e != 0 && fp_gt(m, cmax)) sq_amax = m;
-      else sq_amax = cmax;
-      sq_iv = 1'b1;
-    end
-  end
+  assign sq_iv   = mc.v && mc.last && (strm || !mc.pass);
+  assign sq_itag = mc.buf_;
+  assign sq_amax = nmax;
   otpu_qscale #(.LM(LM), .LA(LA), .TW(BI)) u_sc (.clk, .rst, .en, .iv(sq_iv), .itag(sq_itag),
     .amax(sq_amax), .ov(sq_ov), .otag(sq_otag), .sc(sq_sc), .inv(sq_inv));
   f32_t sc2, inv2;                           // two-pass: the current group's scale
@@ -477,14 +483,15 @@ module otpu_quant
     wsc_r <= wsc_in;
   end
   // q8_s1 with the shift (and its guard bit k = sh - 1) decoded from e by a table, not computed
-  // as 150 - e: no carry chain between e and ip/g/st (the e compares feed only zero/sat)
+  // as 150 - e: no carry chain between e and ip/g/st (the e compares feed only zero/sat). No
+  // ftz: it changes only m, and only when e == 0, where zero makes q8_s2 return 0 anyway.
   function automatic q8_mid_t qq8_s1(input f32_t x_in);
     q8_mid_t q;
     f32_t x;
     logic [7:0]  e;
     logic [23:0] m;
     logic [4:0]  sh, k;
-    x = ftz(x_in);
+    x = x_in;
     e = x[30:23];
     m = {1'b1, x[22:0]};
     q = '0;
@@ -663,12 +670,8 @@ module otpu_quant
         end
       end
       // ---- after the prescale: buffers (the data: g_sb) and amax
-      if (mc.v && strm) begin
-        bamax[mc.buf_] <= (mc.e != 0 && fp_gt(bamax[mc.buf_], cmax)) ? bamax[mc.buf_] : cmax;
-        if (mc.last) bst[mc.buf_] <= B_FULL;
-      end
-      if (mc.v && !strm && !mc.pass)
-        amax2 <= (mc.e != 0 && fp_gt(amax2, cmax)) ? amax2 : cmax;
+      if (mc.v && (strm || !mc.pass)) bamax[mc.buf_] <= nmax;
+      if (mc.v && strm && mc.last) bst[mc.buf_] <= B_FULL;
       // ---- scale results
       if (sq_ov) begin
         if (strm) begin
