@@ -1,4 +1,4 @@
-"""Performance on the RTL: MLP and attention decode must run at the DRAM roofline.
+"""Performance on the RTL: lower bounds on how close MLP and attention decode get to the DRAM roofline.
 
 The roofline of a program is the number of transfers it needs on the slice's DRAM burst port
 (one D-byte chunk per cycle; the MXU consumes chunks at the same rate) -- see profile.py. These

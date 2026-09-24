@@ -62,15 +62,18 @@ QACT `CSCALE` and `RSCALE` (per-column and per-row scale while quantizing), VOP 
 
 ### Measured (RTL, design config S=2, D=128, MCOLS=8, LANES=16)
 
-| Case | Of DRAM roofline |
-|---|---|
-| MLP M=1, H=1024, F=4096 | 99.5% |
-| MLP M=8 | 97.2% |
-| Flash attention 16q/4kv, d=128, T=1024 / 4096 | 97.4% / 98.2% |
-| Full attention layer, pos=1023 | 95.8% |
+| Case | At the time of this spec | Current RTL (2026-09-24) |
+|---|---|---|
+| MLP M=1, H=1024, F=4096 | 99.5% | 97.5% |
+| MLP M=8 | 97.2% | 94.9% |
+| Flash attention 16q/4kv, d=128, T=1024 / 4096 | 97.4% / 98.2% | 78.1% / 83.3% |
+| Full attention layer, pos=1023 | 95.8% | 91.3% |
 
-Both decode kernels are memory-bound at the DRAM stream rate. At 8 lanes the G=6, T=512
-attention drops to 79%, where the VPU softmax becomes the limit; Lens shows this case.
+The first column was measured before the VPU was split into LANES simple lanes plus LANES/4
+composite lanes (exp2, recip, rsqrt), which saved about 70K LUT. Attention with 4 or more query
+rows per KV head now waits on exp2; Qwen3-0.6B has 2 rows per KV head and is affected less.
+The MLP difference has not been broken down yet; the timing work that followed (registered
+TMEM inputs and unit outputs) added cycles per instruction and is the likely cause.
 
 ### Known simplifications
 

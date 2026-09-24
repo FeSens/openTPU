@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline checks of the Vivado flow (no Vivado needed):
   - every Tcl script is complete (balanced braces/quotes, via tclsh `info complete`);
+  - every proc_sys_reset in bd.tcl states its external reset polarity;
   - every port an XDC constrains exists on otpu_fpga_top, with a valid bit index;
   - every top-level port bit has a location (except the GT lanes and the refclk N side, which
     the XDMA IP / the GT reference-clock buffer place);
@@ -40,6 +41,12 @@ def main() -> int:
         print(f"tcl {tcl.name}: {'ok' if ok else 'INCOMPLETE ' + r.stderr}")
         if not ok:
             bad.append(tcl.name)
+    # ---- reset polarity: every proc_sys_reset must state its ext_reset_in polarity (the default
+    # is active-high, which is wrong for a `locked` or *_n source and holds the design in reset)
+    bd = (BOARD / "vivado/bd.tcl").read_text()
+    for m in re.finditer(r"set (\w+) \[create_bd_cell [^\n]*proc_sys_reset\] (\w+)", bd):
+        if not re.search(rf"CONFIG\.C_EXT_RESET_HIGH \{{[01]\}} \${m[1]}\b", bd):
+            bad.append(f"bd.tcl: proc_sys_reset {m[2]} has no explicit C_EXT_RESET_HIGH")
     # ---- XDC vs ports
     ports = top_ports()
     sites = {l.split()[0] for l in (HERE / "xc7k480t_ffg1156_iob.txt").read_text().split("\n") if l}

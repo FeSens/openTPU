@@ -83,8 +83,11 @@ set_property -dict [list \
 connect_bd_net [get_bd_ports sys_clk_50] [get_bd_pins clk_wiz_0/clk_in1]
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_ports core_clk]
 
-# power-on reset held until the MMCM locks
+# power-on reset held until the MMCM locks. ext_reset_in is active-high by default; `locked` is
+# high when the clock is good, so the input must be declared active-low (otherwise the core
+# stays in reset forever once the clock locks).
 set rst_core [create_bd_cell -type ip -vlnv [ip_vlnv proc_sys_reset] rst_core]
+set_property CONFIG.C_EXT_RESET_HIGH {0} $rst_core
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_pins rst_core/slowest_sync_clk]
 connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins rst_core/dcm_locked]
 connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins rst_core/ext_reset_in]

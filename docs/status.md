@@ -3,14 +3,20 @@
 ## Where things stand
 
 - **Model:** Qwen3-0.6B runs with real weights.
-  - On the ISA simulator it matches Hugging Face.
+  - On the ISA simulator it follows Hugging Face closely but not exactly: it is int8 (W8A8), and
+    greedy decoding picks a different token when the top two are nearly tied (README, Accuracy).
   - On the RTL at the board configuration it is bit-exact with the ISA simulator.
 - **Bring-up rehearsal:** from a clean clone, `otpu-selftest --sim --qwen models/Qwen3-0.6B` passed all 9 stages on the board model.
   - The model is `sim/verilator/tb_board.sv`: AXI-Lite registers, program loader, AXI adapter, two DDR3 channels with random stalls.
   - The run went through the same host driver as the card (`opentpu/host/board.py`).
-  - Greedy decoding matched the ISA simulator token for token, at 6.38 Mcycles/token (about 15.7 tok/s at 100 MHz).
+  - Greedy decoding matched the ISA simulator token for token, at 6.38 Mcycles/token (a projected 15.7 tok/s at an assumed 100 MHz, without host time).
   - The rehearsal ran before the night's timing changes. They add a few cycles per instruction, and the per-token cycle count the tournaments track stayed within 0.2%.
-- **Full board, yosys estimate:**
+  - What the board model does not cover: DDR3 calibration is hardwired to succeed, the MIGs are
+    replaced by an AXI memory model, and PCIe, clocks and resets are not simulated. A review
+    found that `rst_core` in bd.tcl took the MMCM `locked` signal on an active-high reset input,
+    which would have held the core in reset on hardware. Fixed (C_EXT_RESET_HIGH 0), and
+    `make lint` now requires every proc_sys_reset to state its polarity.
+- **Accelerator and control logic, yosys estimate** (excludes the XDMA and MIG IP, roughly 45K LUT more):
 
   | | Start of night | Now |
   |---|---|---|
