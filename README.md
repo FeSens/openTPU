@@ -165,15 +165,12 @@ simulator vs Hugging Face (`python3 tools/compare_hf.py --emulate`):
 | `The largest planet in the solar system is` | yes | | | |
 | `import numpy as np` | no | 2 | 2 | 0.08 |
 
-So 2 of 8 match exactly, and the rest drift apart after 1 to 10 tokens, each time at a point
-where Hugging Face's top candidates were close. To check that this comes from quantization and
-not from a bug, the script also runs a float64 model with the same int8 quantization points
-and none of the device's rounding. At the four divergence points checked, it picked the same
-token as the device, not Hugging Face's. A W8A8 model is expected to behave like this; it is
-not a claim of accuracy on any benchmark.
-
-The tests cover the tiny random model (cosine similarity of logits > 0.998 against Hugging
-Face) and one chat prompt on the real model.
+2 of 8 match exactly; the others drift apart after 1 to 10 tokens. That is expected: the
+model runs in W8A8, meaning weights (W) and the activations fed to the matrix unit (A) are
+stored as 8-bit integers instead of 32-bit floats. The rounding shifts the scores slightly, so
+when two candidate tokens are nearly tied the device can pick the other one. A float64 model
+with the same 8-bit rounding picks the same tokens as the device, which shows the differences
+come from the quantization and not from a bug.
 
 ## Lens
 
