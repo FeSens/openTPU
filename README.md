@@ -72,7 +72,7 @@ you can see in the trace, so a profile can usually tell you why something is slo
             host: program images, DRAM images in, DRAM out
                                   |
  +--------------------------------v-------------------------------------+  x S slices
- | SEQ  1 instr/cycle into a 32-slot scoreboard; 16 regs, LOOP, addr regs|
+ | SEQ  1 instr/cycle into a 16-slot scoreboard; 16 regs, LOOP, addr regs|
  |   +--> DMA (LD/ST)      DRAM burst port                              |
  |   +--> MXU (MM)         1 streamed D-byte int8 row/cycle from DRAM   |
  |   |      x M <= 8 stationary rows from ACT RAM, block scales, fp32   |
@@ -88,7 +88,7 @@ you can see in the trace, so a profile can usually tell you why something is slo
   elements. Everything else is fp32 with round-to-nearest-even and flush-to-zero. exp2, recip
   and rsqrt are fixed sequences of adds and multiplies, so Python, the simulator and the RTL
   agree bit for bit (they do not agree bit for bit with PyTorch).
-- **Concurrency.** The sequencer issues one instruction per cycle into a 32-entry window and
+- **Concurrency.** The sequencer issues one instruction per cycle into a 16-entry window and
   tracks what each instruction reads and writes. An instruction starts when nothing older
   conflicts with it, so the units overlap without the compiler scheduling them.
 - **Attention** is flash attention with an online softmax, software-pipelined so q·Kᵀ for the
@@ -126,21 +126,23 @@ res = launch(mlp, Config(S=2), backend="rtl",            # or "isa"
 
 ## Measured numbers
 
-All from Verilator RTL simulation with an idealized DRAM model, design configuration (S=2,
-D=128, 8 MXU columns, 16 lanes). "Of roofline" is the kernel's cycles compared with the
-cycles needed just to move its bytes over the simulated DRAM port; it says nothing about real
-DDR3 behaviour.
+All from Verilator RTL simulation of the board configuration (1 slice, 128-deep MXU with 2
+columns, 8 vector lanes, 16-entry window) on Qwen3-0.6B's shapes (hidden 1024, MLP 3072, 16
+query heads, 8 KV heads of 128). "Of roofline" is the kernel's cycles compared with the cycles
+needed just to move its bytes over the simulated DRAM port, which is idealized; it says
+nothing about real DDR3 behaviour.
 
 | Workload | Cycles | Of roofline |
 |---|---|---|
-| MLP decode M=1, H=1024, F=4096 | 50,591 | 97.5% |
-| MLP M=4 | 51,491 | 96.3% |
-| MLP M=8 | 52,692 | 94.9% |
-| Flash attention 16 q / 4 kv heads, d=128, T=1024 | 5,574 | 78.1% |
-| Same, T=2048 | 10,327 | 83.0% |
-| Same, T=4096 | 20,440 | 83.3% |
-| Attention 6 q / 1 kv head, T=2048 | 6,535 | 66.1% |
-| Full attention layer at pos=1023 | 27,287 | 91.3% |
+| MLP decode | 75,282 | 98.4% |
+| Flash attention, context 1024 | 27,835 | 64.4% |
+| Flash attention, context 4096 | 104,571 | 67.1% |
+| Full attention layer (norm, QKV, RoPE, KV append, attention, output), position 1023 | 81,362 | 82.3% |
+
+The MLP is limited by DRAM. Attention is not: the matrix unit and the vector unit are both
+busy almost every cycle (100% and 99% at context 1024) while DRAM streams only 64% of the
+time. The matrix unit spends that time on per-row work between streams, and the vector unit
+on the softmax. That is the obvious next thing to improve.
 
 One Qwen3-0.6B decode token at the board configuration (1 slice, 2 MXU columns, 8 lanes, AXI
 memory path) takes about 6.4 M cycles. At an assumed 100 MHz that would be about 15 tokens/s
