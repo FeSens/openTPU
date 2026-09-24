@@ -143,10 +143,34 @@ module otpu_mxu
   logic [D*8-1:0]      w0;
   logic [MCOLS*D*8-1:0] a0;
   f32_t                ws0, ws1, ws2, ws3, ws4, ws5, ws6;
-  i2f_mid_t            im [MCOLS];
   f32_t                as0 [MCOLS];
-  logic signed [31:0]  s4 [MCOLS];
   f32_t                fi [MCOLS];
+  // The dot product of D int8 x int8 products is exact in SW bits: |dot| <= D*2^14 < 2^MG.
+  localparam int SW = 16 + $clog2(D);
+  localparam int MG = SW - 1;               // magnitude bits
+  localparam int LZW = $clog2(MG);
+  logic signed [SW-1:0] s4 [MCOLS];
+  // i2f of a dot product (MG <= 24): the magnitude converts exactly, so there is no rounding
+  // step; the same result as i2f(32'(x)). S5: sign, magnitude, leading zeros | S6: normalize.
+  typedef struct packed {
+    logic           z, s;
+    logic [LZW-1:0] lz;
+    logic [MG-1:0]  mag;
+  } dmid_t;
+  function automatic dmid_t d2f_s1(input logic signed [SW-1:0] x);
+    dmid_t m;
+    m.z   = (x == 0);
+    m.s   = x[SW-1];
+    m.mag = MG'(x[SW-1] ? -x : x);                        // |x| < 2^MG
+    m.lz  = LZW'(lzc32(32'(m.mag) << (32 - MG)));        // leading zeros within MG bits
+    return m;
+  endfunction
+  function automatic f32_t d2f_s2(input dmid_t m);
+    logic [MG-1:0] nrm;
+    if (m.z) return F_ZERO;
+    nrm = m.mag << m.lz;                                  // nrm[MG-1] = 1
+    return {m.s, 8'(126 + MG - int'(m.lz)), 23'(nrm[MG-2:0]) << (24 - MG)};
+  endfunction
   // S0's ACT RAM block and scales are the ACT RAM's registered read
   assign a0 = act_data;
   // the scale FIFO's registered read is kept free of logic (so it maps into the block RAM's
@@ -168,11 +192,22 @@ module otpu_mxu
     w0 <= f_data[f_head];
     ws0r <= f_scale[s_head];
     cu0 <= c_unit;
-    // S5, S6: int -> fp32
-    for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(s4[j]);
-    for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
     m5 <= m4; ws5 <= ws4;
     m6 <= m5;
+  end
+  // S5, S6: int -> fp32
+  if (MG <= 24) begin : g_d2f
+    dmid_t im [MCOLS];
+    always_ff @(posedge clk) if (en_c) begin
+      for (int j = 0; j < MCOLS; j++) im[j] <= d2f_s1(s4[j]);
+      for (int j = 0; j < MCOLS; j++) fi[j] <= d2f_s2(im[j]);
+    end
+  end else begin : g_i2f
+    i2f_mid_t im [MCOLS];
+    always_ff @(posedge clk) if (en_c) begin
+      for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(32'(s4[j]));
+      for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
+    end
   end
   // ws6 feeds the first fp multiplier's B operand: a reset flop, never an SRL tap
   always_ff @(posedge clk) if (rst) ws6 <= '0; else if (en_c) ws6 <= ws5;
@@ -229,9 +264,10 @@ module otpu_mxu
           s3[j][g] <= t;
         end
         begin
-          logic signed [31:0] t;
-          t = (j % 2 == 1) ? -32'(D / 2 * int'(PK)) : '0;
-          for (int g = 0; g < D / 16; g++) t = t + 32'(s3[j][g]);
+          // SW bits: the bias and partial sums may wrap, the final sum is exact
+          logic signed [SW-1:0] t;
+          t = (j % 2 == 1) ? SW'(-(D / 2 * int'(PK))) : '0;
+          for (int g = 0; g < D / 16; g++) t = t + SW'(s3[j][g]);
           s4[j] <= t;
         end
       end
@@ -298,7 +334,7 @@ module otpu_mxu
           2: t = t2[j][0];
           default: for (int u = 0; u < (NG + 15) / 16; u++) t = t + t2[j][u];
         endcase
-        s4[j] = t;
+        s4[j] = SW'(t);
       end
     // the meta and the weight scale travel alongside (S0 -> S4 position)
     otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));
@@ -360,8 +396,11 @@ module otpu_mxu
   logic [31:0] dad [MCOLS];                  // head row's TMEM addresses: out + n + j * ors,
                                              // kept incrementally (no adder between the drain's
                                              // lane pick and the arbiter)
-  logic [7:0]  dj;
-  logic [7:0]  ncnt;
+  // dj, ncnt: MW bits (0 < M <= MCOLS < 2^MW, which the ISA requires), so the lane test and the
+  // row-done compare are a few bits wide instead of carry chains
+  logic [MW-1:0] dj;
+  logic [MW-1:0] ncnt;
+  wire  [MW-1:0] c_Mn = MW'(c_M);
   logic [LANES-1:0][31:0] daddr_l, dval_l;
   logic [LANES-1:0][7:0]  dcol_l;
   wire  drain_go = (rf_n != 0) && (!c_asc || al_st == 2'd2);
@@ -371,19 +410,20 @@ module otpu_mxu
     logic [31:0] ad;
     used = '0; stop = 1'b0; ncnt = '0; daddr_l = '0; dval_l = '0; dcol_l = '0; ad = '0;
     for (int k = 0; k < NL; k++) begin
-      if (k < MCOLS && !stop && 32'(dj) + 32'(k) < 32'(c_M)) begin
-        ad = dad[MW'(32'(dj) + 32'(k))];
+      // dj + k <= 2*MCOLS - 2 < 2^(MW+1): no overflow
+      if (k < MCOLS && !stop && (MW+1)'(dj) + (MW+1)'(k) < (MW+1)'(c_Mn)) begin
+        ad = dad[MW'(dj) + MW'(k)];
         if (!used[ad[BW-1:0]]) begin
           used[ad[BW-1:0]] = 1'b1;
           daddr_l[k] = ad;
-          dval_l[k] = rf_v[rf_h][MW'(32'(dj) + 32'(k))];
-          dcol_l[k] = dj + 8'(k);
-          ncnt = ncnt + 1;
+          dval_l[k] = rf_v[rf_h][MW'(dj) + MW'(k)];
+          dcol_l[k] = 8'(dj) + 8'(k);
+          ncnt = ncnt + 1'b1;
         end else stop = 1'b1;
       end else stop = 1'b1;
     end
   end
-  wire drain_row_done = drain_go && (dj + ncnt == c_M);
+  wire drain_row_done = drain_go && (MW'(dj + ncnt) == c_Mn);   // dj + ncnt <= M
 
   // read-modify-write pipeline for ACC: read now, data next cycle, (old*alpha)+new, write
   typedef struct packed {
@@ -418,10 +458,57 @@ module otpu_mxu
   otpu_delay #(.W($bits(rmw_t)), .N(LM + LA)) u_rw (.clk, .en(t_gnt), .d(r1), .q(rw));
   logic [3:0] rmw_n;                          // rows' lanes in flight (any nonzero = busy)
 
-  // RMAX
-  f32_t mx [MCOLS];
+  // RMAX: the running max is kept as its sort key (mk = fkey(max); the max is always stored
+  // ftz'd, so fkey(max) is the key it is compared by); written out through unkey.
+  logic [31:0] mk [MCOLS];
   logic [MCOLS-1:0] mx_have;
   logic mx_done;
+  function automatic f32_t unkey(input logic [31:0] k);
+    return k[31] ? {1'b0, k[30:0]} : ~k;
+  endfunction
+  // rw's column hits, one-hot, computed from r1 and carried alongside u_rw (same length and
+  // enable); the last stage is a reset flop, not an SRL tap. c_rmax is fixed while entries are
+  // in flight (q_h flips only once drained)
+  logic [NL-1:0][MCOLS-1:0] rh, rh_p, rwh, rxh;
+  always_comb
+    for (int k = 0; k < NL; k++)
+      for (int j = 0; j < MCOLS; j++) begin
+        rh[k][j]  = r1.v && c_rmax && r1.m[k] && (r1.col[k][MW-2:0] == (MW-1)'(j));
+        rxh[k][j] = rx.v && rx.m[k] && (rx.col[k][MW-2:0] == (MW-1)'(j));
+      end
+  otpu_delay #(.W(NL * MCOLS), .N(LM + LA - 1)) u_rwh (.clk, .en(t_gnt), .d(rh), .q(rh_p));
+  always_ff @(posedge clk) if (rst) rwh <= '0; else if (t_gnt) rwh <= rh_p;
+  // per column: the candidate key is selected by the hits alone, the compare only makes the
+  // enable. At most one lane hits a column per cycle (lanes drain distinct columns) and rx / rw
+  // are exclusive (rx only for !c_acc commands, rw only for c_acc ones)
+  logic [MCOLS-1:0] mx_hit, mx_upd;
+  logic [31:0] mx_cand [MCOLS];
+  always_comb
+    for (int j = 0; j < MCOLS; j++) begin
+      mx_hit[j] = 1'b0; mx_upd[j] = 1'b0; mx_cand[j] = '0;
+      for (int k = 0; k < NL; k++) begin
+        if (rxh[k][j]) begin
+          mx_hit[j] = 1'b1;
+          mx_cand[j] = mx_cand[j] | fkey(rx.nv[k]);
+          mx_upd[j] = mx_upd[j] | !mx_have[j] | (fkey(rx.nv[k]) > mk[j]);
+        end
+        if (rwh[k][j]) begin
+          mx_hit[j] = 1'b1;
+          mx_cand[j] = mx_cand[j] | fkey(ry[k]);
+          mx_upd[j] = mx_upd[j] | !mx_have[j] | (fkey(ry[k]) > mk[j]);
+        end
+      end
+    end
+`ifndef SYNTHESIS
+  always_ff @(posedge clk)
+    if (!rst && t_gnt)
+      for (int j = 0; j < MCOLS; j++) begin
+        int n;
+        n = 0;
+        for (int k = 0; k < NL; k++) n = n + int'(rxh[k][j]) + int'(rwh[k][j]);
+        if (n > 1) $fatal(1, "otpu_mxu: several RMAX updates of column %0d in one cycle", j);
+      end
+`endif
 
   wire c_drained = c_act && (c_pop == c_total) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
   wire mx_go     = c_drained && c_rmax && !mx_done && (c_total != 0);
@@ -468,7 +555,7 @@ module otpu_mxu
         if (32'(mx_i) + 32'(k) < 32'(c_M)) begin
           t_wen[k] = 1'b1;
           t_waddr[k] = q_mxo[q_h] + 32'(mx_i) + 32'(k);
-          t_wdata[k] = mx[MW'(32'(mx_i) + 32'(k))];
+          t_wdata[k] = unkey(mk[MW'(32'(mx_i) + 32'(k))]);
         end
       end
     end
@@ -609,26 +696,10 @@ module otpu_mxu
             dj <= dj + ncnt;
           end
         end
-        // registered so the lane selection and the max compare are in different cycles
-        if (rx.v) begin
-          for (int k = 0; k < NL; k++) begin
-            if (rx.m[k]) begin
-              logic [MW-2:0] j;
-              j = rx.col[k][MW-2:0];
-              if (!mx_have[j] || fp_gt(rx.nv[k], mx[j])) mx[j] <= ftz(rx.nv[k]);
-              mx_have[j] <= 1'b1;
-            end
-          end
-        end
-        if (rw.v && c_rmax) begin
-          for (int k = 0; k < NL; k++) begin
-            if (rw.m[k]) begin
-              logic [MW-2:0] j;
-              j = rw.col[k][MW-2:0];
-              if (!mx_have[j] || fp_gt(ry[k], mx[j])) mx[j] <= ftz(ry[k]);
-              mx_have[j] <= 1'b1;
-            end
-          end
+        // RMAX (rx: registered so the lane selection and the max compare are in different cycles)
+        for (int j = 0; j < MCOLS; j++) begin
+          if (mx_upd[j]) mk[j] <= mx_cand[j];
+          if (mx_hit[j]) mx_have[j] <= 1'b1;
         end
         rmw_n <= rmw_n + ((drain_go && c_acc) ? 4'd1 : 4'd0) - (rw.v ? 4'd1 : 4'd0);
         if (mx_go) begin

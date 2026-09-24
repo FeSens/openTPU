@@ -126,8 +126,10 @@ module otpu_slice
   logic [NRP-1:0][LANES-1:0][31:0] r_addr, r_data;
   logic [NWP-1:0][LANES-1:0]       wq_en, w_en;
   logic [NWP-1:0][LANES-1:0][31:0] w_addr, w_data;
+  logic [NWP-1:0]                  w_gnt;   // each write port's grant (the DMA always writes)
   otpu_tmem #(.WORDS(TMEM_WORDS), .LANES(LANES), .NRP(NRP), .NWP(NWP), .WPB(WPB), .SID(SID)) u_tmem (
-    .clk, .r_en, .r_req(rq_en), .r_addr, .r_data, .w_en, .w_addr, .w_data, .dump);
+    .clk, .r_en, .r_req(rq_en), .r_addr, .r_data, .w_en, .w_req(wq_en), .w_gnt, .w_addr,
+    .w_data, .dump);
   assign coll_rdata = r_data[P_COLL];
   // the units' TMEM requests
   logic [LANES-1:0]        dma_ren, dma_wen, mxu_ren, mxu_wen, q_ren, q_ren2;
@@ -282,6 +284,10 @@ module otpu_slice
     coll_gnt_local = ARB_MASK ? cgl_m : cgl_c;
     for (int p = 0; p < NRP; p++) r_en[p] = rq_en[p];
     for (int p = 0; p < NWP; p++) w_en[p] = wq_en[p];
+    w_gnt = '1;
+    w_gnt[W_MXU] = gnt[G_MXU];
+    w_gnt[W_VPU] = gnt[G_VPU];
+    w_gnt[W_COLL] = gnt[G_COLL];
     if (!gnt[G_MXU])  begin r_en[P_MXU] = '0; w_en[W_MXU] = '0; end
     if (!gnt[G_Q])    begin r_en[P_Q] = '0; r_en[P_Q2] = '0; r_en[P_Q3] = '0; end
     if (!gnt[G_VPU])  begin r_en[P_VA] = '0; r_en[P_VB] = '0; w_en[W_VPU] = '0; end
