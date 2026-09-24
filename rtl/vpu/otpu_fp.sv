@@ -63,8 +63,40 @@ package otpu_fp;
     return {1'b0, n};
   endfunction
 
-  function automatic logic [5:0] lzc27(input logic [26:0] m);
-    return lzc32({m, 5'b11111});             // at most 27 for a nonzero... (m == 0 -> 27)
+  // Normalize while counting: the shift stages of the leading-zero search are the normalize
+  // shifter (one mux chain, not an LZC plus a separate barrel shifter). m == 0 -> n = 31, y = 0.
+  typedef struct packed {
+    logic [4:0]  n;
+    logic [27:0] y;       // m << n
+  } norm28_t;
+
+  function automatic norm28_t norm28(input logic [27:0] m);
+    norm28_t r;
+    r.y = m; r.n = '0;
+    if (r.y[27:12] == 0) begin r.n[4] = 1'b1; r.y = r.y << 16; end
+    if (r.y[27:20] == 0) begin r.n[3] = 1'b1; r.y = r.y << 8; end
+    if (r.y[27:24] == 0) begin r.n[2] = 1'b1; r.y = r.y << 4; end
+    if (r.y[27:26] == 0) begin r.n[1] = 1'b1; r.y = r.y << 2; end
+    if (r.y[27] == 0)    begin r.n[0] = 1'b1; r.y = r.y << 1; end
+    return r;
+  endfunction
+
+  // Align while collecting the sticky: each right-shift stage ORs the bits it drops.
+  // Equals {x >> k, |x[k-1:0]} for k = 0..31 (x is 27 bits, so k >= 27 gives y = 0).
+  typedef struct packed {
+    logic        st;
+    logic [26:0] y;
+  } align27_t;
+
+  function automatic align27_t align27(input logic [26:0] x, input logic [4:0] k);
+    align27_t r;
+    r.y = x; r.st = 1'b0;
+    if (k[4]) begin r.st = r.st | (|r.y[15:0]); r.y = r.y >> 16; end
+    if (k[3]) begin r.st = r.st | (|r.y[7:0]);  r.y = r.y >> 8;  end
+    if (k[2]) begin r.st = r.st | (|r.y[3:0]);  r.y = r.y >> 4;  end
+    if (k[1]) begin r.st = r.st | (|r.y[1:0]);  r.y = r.y >> 2;  end
+    if (k[0]) begin r.st = r.st | r.y[0];       r.y = r.y >> 1;  end
+    return r;
   endfunction
 
   // |x[k-1:0]| for a variable k (0..32)
@@ -150,7 +182,7 @@ package otpu_fp;
     logic [2:0]  sv;
     logic        sa;
     logic        sub;
-    logic [7:0]  e;
+    logic [7:0]  e;        // exponent + 1 (fits: e <= 254 unless sp)
     logic [27:0] sum;
   } fadd_p2_t;
 
@@ -196,43 +228,34 @@ package otpu_fp;
   function automatic fadd_p2_t fp_add_s2(input fadd_p1_t r);
     fadd_p2_t q;
     logic [26:0] mb;
-    logic stk;
-    q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub; q.e = r.e;
-    mb = r.mb;
-    if (r.d > 8'd26) begin
-      mb = 27'd1;
-    end else if (r.d != 0) begin
-      stk = sticky_below({5'd0, mb}, 6'(r.d));
-      mb = (mb >> r.d) | {26'd0, stk};
-    end
+    align27_t al;
+    q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub;
+    q.e = r.e + 8'd1;                        // pre-incremented for the 28-bit normalize in s3
+    // d = 0 shifts nothing (st = 0); d > 26 overrides, so the shifter only sees d[4:0].
+    al = align27(r.mb, r.d[4:0]);
+    mb = (r.d > 8'd26) ? 27'd1 : (al.y | {26'd0, al.st});
     q.sum = r.sub ? ({1'b0, r.ma} - {1'b0, mb}) : ({1'b0, r.ma} + {1'b0, mb});
     return q;
   endfunction
 
+  // One normalize for add and sub over the 28-bit sum, counted and shifted together by norm28.
+  // An add carry-out gives n = 0 (the sticky OR folds sum[1:0]); otherwise sum[26] is set, n = 1,
+  // and y[0] is 0. A sub never carries out, so n = lzc27(sum[26:0]) + 1, which the
+  // pre-incremented q.e absorbs. A zero add (0+0) leaves mn = 0 and e = 1 - 31 < 0: s4 returns
+  // {sa, 0}, keeping the -0 of (-0)+(-0). A zero sub is the cancellation special.
   function automatic fadd_nm_t fp_add_s3(input fadd_p2_t q);
     fadd_nm_t n;
-    int lz;
+    norm28_t nz;
     n.sp = q.sp;
     n.sv = q.sv;
     n.s = q.sa;
-    n.e = 10'(q.e);
-    n.mn = '0;
-    if (!q.sub) begin
-      if (q.sum[27]) begin
-        n.mn = {q.sum[27:2], q.sum[1] | q.sum[0]};
-        n.e = n.e + 1;
-      end else begin
-        n.mn = q.sum[26:0];
-      end
-    end else begin
-      if (q.sum == 0 && !q.sp) begin
-        n.sp = 1'b1;
-        n.sv = FADD_SV_ZERO;
-      end
-      lz = int'(lzc27(q.sum[26:0]));
-      n.mn = q.sum[26:0] << lz;
-      n.e = n.e - 10'(lz);
+    if (q.sub && q.sum == 0 && !q.sp) begin
+      n.sp = 1'b1;
+      n.sv = FADD_SV_ZERO;
     end
+    nz = norm28(q.sum);
+    n.mn = {nz.y[27:2], nz.y[1] | nz.y[0]};
+    n.e = 10'(q.e) - 10'(nz.n);
     return n;
   endfunction
 
