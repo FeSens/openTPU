@@ -2,7 +2,12 @@ name: otpu_fp
 description: 'Shared fp32 operators: the staged functions of otpu_fp (unpack, multiply, align, normalize
   with tree LZC, round) and the pipelined otpu_fmul (2 stages) / otpu_fadd (4 stages) / otpu_fmadd built
   from them. Instantiated ~140 times across the VPU, MXU and quantizer, so every LUT here counts many
-  times.'
+  times. The MXU and the quantizer both bottom out at the same 6.19 ns (est. 96 MHz) path through
+  these operators: an SRL16E delay-line output (slow clock-to-out) -> LUT5 -> LUT2 (fmul stage 1
+  flush-to-zero of the mantissa) -> DSP48 A->PCOUT -> PCIN of the cascaded DSP (the 24x24
+  mantissa product). Keep each operator's latency (LAT) and interface unchanged: the users
+  depend on them. Breaking that path (FF-sourced DSP operands, the FTZ moved off the DSP input,
+  a DSP A/B input register or M register used without adding latency) lifts the whole board.'
 allowed:
 - rtl/vpu/otpu_fp.sv
 - rtl/vpu/otpu_fpipe.sv
