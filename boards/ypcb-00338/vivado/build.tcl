@@ -2,7 +2,8 @@
 # phys_opt), reports and bitstream.
 #   vivado -mode batch -source build.tcl -tclargs [OUT_DIR] [JOBS]
 # Expects the project from create_project.tcl. Outputs in OUT_DIR/reports and
-# OUT_DIR/otpu.bit (+ otpu.ltx when debug cores exist, + otpu.bin/.mcs for the BPI flash).
+# OUT_DIR/otpu.bit (+ otpu.ltx when debug cores exist, + otpu.bin/.mcs for the BPI flash);
+# reports/power.json feeds otpu-smi's power estimate.
 
 set here [file normalize [file dirname [info script]]]
 set root [file normalize $here/../../..]
@@ -43,7 +44,13 @@ report_utilization -file $out/reports/util.rpt
 report_utilization -hierarchical -hierarchical_depth 5 -file $out/reports/util_hier.rpt
 report_drc -file $out/reports/drc.rpt
 report_methodology -file $out/reports/methodology.rpt
-report_power -file $out/reports/power.rpt
+# power: hierarchical enough to reach the slice's units (otpu-smi's estimate; opentpu/host/power.py)
+report_power -hierarchical_depth 12 -file $out/reports/power.rpt
+report_power -hierarchical_depth 12 -format xml -file $out/reports/power.xml
+if {[catch {exec env PYTHONPATH=$root python3 -m opentpu.host.power $out/reports/power.xml \
+              -o $out/reports/power.json} msg]} {
+  puts "power.json not written ($msg): run python3 -m opentpu.host.power reports/power.rpt -o reports/power.json"
+} else { puts $msg }
 report_io -file $out/reports/io.rpt
 
 # per-clock worst slack in one line each (quick look)
