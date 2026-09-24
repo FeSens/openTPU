@@ -21,11 +21,12 @@
 // exact). RSUM/RSSQ implement isum_64: lane l owns the partials l, l+LANES, ... and adds each
 // chunk's term into the partial last updated RL = 64/LANES chunks ago -- a loop of exactly RL
 // cycles through a pipelined adder. Rows are padded with +0 terms to a multiple of 64 columns;
-// the 64 final partials are captured into one of two buffers and summed by a folding tree
-// (LANES adders) while the next row streams.
+// the final partials of a row come out LANES per cycle, in order, and a streaming folding tree
+// sums them while the next row streams: the levels across rows on LANES adders fed by delay
+// lines on a fixed schedule, the levels across lanes on a pipeline of LANES-1 adders.
 //
-// The stream (reads, lane pipelines, stream writes) advances on cycles the TMEM grant is given
-// and the tree is not holding it back; the tree advances whenever the grant is given.
+// Everything (reads, lane pipelines, the tree, writes) advances on cycles the TMEM grant is
+// given; nothing stalls.
 module otpu_vpu
   import otpu_pkg::*;
   import otpu_fp::*;
@@ -65,7 +66,7 @@ module otpu_vpu
   localparam f32_t F_NZ = 32'h8000_0000;     // -0: (a*b) + -0 == a*b exactly
 
   // ------------------------------------------------------------------ command state
-  logic        issuing, red_act, stall;
+  logic        issuing, red_act;
   logic [31:0] dst, a, b, imm;
   logic [15:0] rows, cols, drs, ars, brs;
   logic [7:0]  func;
@@ -115,8 +116,7 @@ module otpu_vpu
   wire  busy = issuing || red_act || ew_n != 0;
 
 
-  wire en  = gnt && !stall;                  // the stream
-  wire ent = gnt;                            // the reduction tree
+  wire en = gnt;
 
   // ------------------------------------------------------------------ issue
   logic [LANES-1:0] imask;
@@ -149,9 +149,6 @@ module otpu_vpu
         tb_en[0] = 1'b1;
         tb_addr[0] = b_row;
       end
-    end
-    if (stall) begin
-      ta_en = '0; tb_en = '0;
     end
   end
 
@@ -519,63 +516,105 @@ module otpu_vpu
     otpu_fadd #(.LAT(LA)) u_acc (.clk, .en, .a(prev), .b(tq), .y(pacc[l]));
   end
 
-  // Final partials of a row are captured into one of NTB buffers; each buffer runs its own
-  // folding tree (level n = 32, 16, .., 1: x[i] += x[i+n], i < n) and the trees of different
-  // rows interleave on the LANES tree adders (one buffer issues up to LANES adds per cycle).
-  // Partial p sits in row p / LANES, lane p % LANES: levels n >= LANES add rows of the same
-  // lane, levels n < LANES add lanes of row 0, so tree adder k only reads lane k (and lane
-  // k + n) and only writes lane k -- narrow muxes instead of any-of-64 reads.
-  localparam int NTB = 4;
-  localparam int TBW = $clog2(NTB);
-  f32_t          pb [NTB][RL][LANES];
-  logic [NTB-1:0] tb_act;                 // captured, tree in progress
-  logic [6:0]    tb_n [NTB], tb_i [NTB];   // pairs in the level, next pair
-  logic [2:0]    tb_inf [NTB];             // issue cycles in flight
-  logic [31:0]   tb_dst [NTB];
-  logic [TBW-1:0] cap_sel;
-  logic [15:0]   rows_done;
+  // Folding tree (level n = 32, 16, .., 1: x[i] += x[i+n], i < n), streamed. Partial p sits in
+  // row p / LANES, lane p % LANES, and a row's final partials arrive on `pacc` one row per
+  // cycle (sub 0..RL-1). Row levels (n >= LANES; j = 0..LR-1, H = RL >> (j+1) pairs: row r +=
+  // row r + H) run on the LANES adders u_tree; pair r of level j issues I_j + r cycles after
+  // sub 0 is on `pacc`, its operands taken from delay lines (level 0: `pacc`, level j >= 1:
+  // `tr_y`). Level j issues in the residues [H, 2H) mod RL, and rows start a multiple of RL
+  // cycles apart (nch is padded to a multiple of RL, rows issue back to back, reductions run
+  // alone), so the adders are never double-booked and nothing stalls. Lane levels (n < LANES)
+  // run on a dedicated pipeline of LANES-1 adders.
+  localparam int LR = $clog2(RL);             // row levels
+  function automatic int tree_h(input int j);   // pairs of row level j
+    return RL >> (j + 1);
+  endfunction
+  function automatic int tree_i(input int j);   // issue offset I_j of row level j
+    int t;
+    t = tree_h(0);
+    for (int i = 1; i <= j; i++)
+      t = t - tree_h(i) + RL * ((LA + 2 * tree_h(i) + RL - 1) / RL);
+    return t;
+  endfunction
+  // level j >= 1 reads row r from tr_y delayed tree_da(j), row r + H delayed tree_db(j)
+  function automatic int tree_da(input int j);
+    return tree_i(j) - tree_i(j - 1) - LA;
+  endfunction
+  function automatic int tree_db(input int j);
+    return tree_da(j) - tree_h(j);
+  endfunction
+  function automatic int tree_dmax();
+    int m;
+    m = 1;
+    for (int j = 1; j < LR; j++) if (tree_da(j) > m) m = tree_da(j);
+    return m;
+  endfunction
+  localparam int DMAX = tree_dmax();
+  localparam int DL = tree_i(LR - 1) - (RL - 1);                // row_last -> last row level
+  localparam int RD = tree_i(LR - 1) + LA * (1 + LW) - (RL - 1); // row_last -> root
 
-  // pick the lowest-numbered buffer that can issue
-  logic          tr_go;
-  logic [TBW-1:0] tr_b;
-  always_comb begin
-    tr_go = 1'b0; tr_b = '0;
-    for (int b = NTB - 1; b >= 0; b--)
-      if (tb_act[b] && tb_i[b] < tb_n[b] && !(tb_i[b] == 0 && tb_inf[b] != 0)) begin
-        tr_go = 1'b1; tr_b = TBW'(b);
-      end
+  // a final partial of this reduction is on `pacc`
+  wire cap = red_act && is_sum && live(mt, tag) && mt.final_;
+
+  // level strobes: cap of the subs a level pairs up, delayed to the level's issue cycles
+  // (level 0 is the default); the last row level and the root share one shift register
+  logic [LR-1:1] lv;
+  logic [RD-1:0] rsr;
+  always_ff @(posedge clk)
+    if (rst) rsr <= '0;
+    else if (en) rsr <= {rsr[RD-2:0], cap && mt.row_last};
+  assign lv[LR-1] = rsr[DL-1];
+  wire root_v = rsr[RD-1];
+  for (genvar j = 1; j < LR - 1; j++) begin : g_lv
+    localparam int DJ = tree_i(j) - (RL - tree_h(j));
+    logic [DJ-1:0] sr;
+    always_ff @(posedge clk)
+      if (rst) sr <= '0;
+      else if (en) sr <= {sr[DJ-2:0], cap && mt.sub >= 8'(RL - tree_h(j))};
+    assign lv[j] = sr[DJ-1];
   end
-  // issue register: the selected buffer and its pair range; pb is read the next cycle (the
-  // issue counts as in flight from selection, so a level never reads before its inputs land)
-  logic          is_go;
-  logic [TBW-1:0] is_b;
-  logic [6:0]    is_i, is_n;
-  f32_t          tr_y [LANES];
-  logic [LANES-1:0] tr_m;
-  logic [6:0]    tr_dst_q [LA];
-  logic [TBW-1:0] tr_b_q [LA];
-  logic [LANES-1:0] tr_v_q [LA];
+
+  f32_t tr_y [LANES];
   for (genvar k = 0; k < LANES; k++) begin : g_tree
-    logic [6:0] ia, ib;
-    assign ia = is_i + 7'(k);
-    assign ib = ia + is_n;
-    assign tr_m[k] = is_go && (ia < is_n);
-    f32_t oa, ob;
-    assign oa = pb[is_b][ia[5:0] >> LW][k];
-    assign ob = (is_n >= 7'(LANES)) ? pb[is_b][ib[5:0] >> LW][k]
-                                    : pb[is_b][0][ib[LW-1:0]];
-    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
+    f32_t pd, oa, ob;
+    f32_t sa [LR], sb [LR];                  // level j's operands (row r, row r + H)
+    logic [DMAX:1][31:0] td;                 // tr_y[k] delayed 1..DMAX
+    wire  [DMAX:0][31:0] tt = {td, tr_y[k]};
+    otpu_delay #(.W(32), .N(RL / 2)) u_pd (.clk, .en, .d(pacc[k]), .q(pd));
+    always_ff @(posedge clk) if (en) begin
+      td[1] <= tr_y[k];
+      for (int d = 2; d <= DMAX; d++) td[d] <= td[d-1];
+    end
+    assign sa[0] = pd;
+    assign sb[0] = pacc[k];
+    for (genvar j = 1; j < LR; j++) begin : g_op
+      assign sa[j] = tt[tree_da(j)];
+      assign sb[j] = tt[tree_db(j)];
+    end
+    always_comb begin
+      oa = sa[0]; ob = sb[0];
+      for (int j = 1; j < LR; j++)
+        if (lv[j]) begin oa = sa[j]; ob = sb[j]; end
+    end
+    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en, .a(oa), .b(ob), .y(tr_y[k]));
   end
 
-  // finished rows wait here for the (single) TMEM write lane
-  f32_t          rq_v [NTB];
-  logic [31:0]   rq_a [NTB];
-  logic [TBW-1:0] rq_h;
-  logic [TBW:0]  rq_n;
+  // lane levels n = LANES >> q: xl[q][k] = xl[q-1][k] + xl[q-1][k + n], k < n; the root is
+  // xl[LW][0], RD cycles after the row's last partial
+  f32_t xl [LW + 1][LANES];
+  for (genvar k = 0; k < LANES; k++) begin : g_xl0
+    assign xl[0][k] = tr_y[k];
+  end
+  for (genvar q = 1; q <= LW; q++) begin : g_xl
+    for (genvar k = 0; k < (LANES >> q); k++) begin : g_k
+      otpu_fadd #(.LAT(LA)) u_add (.clk, .en, .a(xl[q-1][k]), .b(xl[q-1][k + (LANES >> q)]),
+                                   .y(xl[q][k]));
+    end
+  end
 
-  // the last RL chunks of a row deliver its final partials: hold the stream if the buffer
-  // they go to still runs a tree
-  assign stall = red_act && is_sum && live(mt, tag) && mt.final_ && tb_act[cap_sel];
+  // rows finish in order: the next root goes to wr_row
+  logic [31:0]   wr_row;
+  logic [15:0]   rows_done;
 
   // ------------------------------------------------------------------ TMEM writes
   // The writes are computed here (cw_*) and registered (tw_*): a TMEM write is performed one
@@ -598,7 +637,7 @@ module otpu_vpu
   end
   always_comb begin
     cw_en = '0; cw_addr = '0; cw_data = '0;
-    if (mo.v && !stall) begin
+    if (mo.v) begin
       for (int l = 0; l < LANES; l++) begin
         if (mo.mask[l]) begin
           cw_en[l] = 1'b1;
@@ -612,10 +651,10 @@ module otpu_vpu
       cw_addr[0] = mxm_q.waddr;
       cw_data[0] = mx_new;
     end
-    if (red_act && is_sum && rq_n != 0) begin
+    if (red_act && is_sum && root_v) begin
       cw_en[0] = 1'b1;
-      cw_addr[0] = rq_a[rq_h];
-      cw_data[0] = rq_v[rq_h];
+      cw_addr[0] = wr_row;
+      cw_data[0] = xl[LW][0];
     end
   end
 
@@ -634,10 +673,6 @@ module otpu_vpu
       mi <= '0;
       tag <= '0;
       cyc <= '0;
-      tb_act <= '0;
-      rq_n <= '0;
-      for (int k = 0; k < LA; k++) tr_v_q[k] <= '0;
-      is_go <= 1'b0;
     end else begin
       logic [3:0] ewn;
       logic [1:0] qn;
@@ -674,11 +709,8 @@ module otpu_vpu
           st_frz <= '0;
           if (red_f(hf)) begin
             red_act <= 1'b1;
-            tb_act <= '0; cap_sel <= '0; rq_n <= '0; rq_h <= '0; rows_done <= '0;
-            for (int bb = 0; bb < NTB; bb++) tb_inf[bb] <= '0;
+            wr_row <= hc.w1; rows_done <= '0;
             mx_have <= 1'b0;
-            for (int k = 0; k < LA; k++) tr_v_q[k] <= '0;
-            is_go <= 1'b0;
           end else begin
             ewn = ewn + 1;
             last_tap <= n_slots(hf);
@@ -727,70 +759,12 @@ module otpu_vpu
           end
           if (mxm_q.all_last) fin = 1'b1;
         end
-        // ---- RSUM/RSSQ: capture the final partials of a row
-        if (red_act && is_sum && live(mt, tag) && mt.final_) begin
-          for (int l = 0; l < LANES; l++) pb[cap_sel][mt.sub[5:0]][l] <= pacc[l];
-          if (mt.row_last) begin
-            tb_act[cap_sel] <= 1'b1;
-            tb_n[cap_sel] <= 7'(NP / 2);
-            tb_i[cap_sel] <= '0;
-            tb_dst[cap_sel] <= mt.waddr;
-            cap_sel <= cap_sel + 1;
-          end
-        end
-      end
-      if (ent && red_act && is_sum) begin
-        logic [TBW:0] rn;
-        logic pushed;
-        rn = rq_n;
-        pushed = 1'b0;
-        // ---- tree adds
-        is_go <= tr_go;
-        is_b <= tr_b;
-        is_i <= tb_i[tr_b];
-        is_n <= tb_n[tr_b];
-        tr_v_q[0] <= tr_m;
-        tr_dst_q[0] <= is_i;
-        tr_b_q[0] <= is_b;
-        for (int k = 1; k < LA; k++) begin
-          tr_v_q[k] <= tr_v_q[k-1];
-          tr_dst_q[k] <= tr_dst_q[k-1];
-          tr_b_q[k] <= tr_b_q[k-1];
-        end
-        for (int k = 0; k < LANES; k++)
-          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][tr_dst_q[LA-1][5:0] >> LW][k] <= tr_y[k];
-        for (int bb = 0; bb < NTB; bb++) begin
-          logic [2:0] inf;
-          inf = tb_inf[bb];
-          if (tr_go && tr_b == TBW'(bb)) begin
-            inf = inf + 1;
-            tb_i[bb] <= tb_i[bb] + 7'(LANES);
-          end
-          if (tr_v_q[LA-1] != 0 && tr_b_q[LA-1] == TBW'(bb)) inf = inf - 1;
-          tb_inf[bb] <= inf;
-          // ---- level done: next level, or the root is ready (one per cycle)
-          if (tb_act[bb] && tb_i[bb] >= tb_n[bb] && tb_inf[bb] == 0 &&
-              !(tr_go && tr_b == TBW'(bb))) begin
-            if (tb_n[bb] != 7'd1) begin
-              tb_n[bb] <= tb_n[bb] >> 1;
-              tb_i[bb] <= '0;
-            end else if (!pushed && 32'(rn) < NTB) begin
-              pushed = 1'b1;
-              rq_v[TBW'(rq_h + rn)] <= pb[bb][0][0];
-              rq_a[TBW'(rq_h + rn)] <= tb_dst[bb];
-              rn = rn + 1;
-              tb_act[bb] <= 1'b0;
-            end
-          end
-        end
-        // ---- a finished row is written this cycle (see TMEM writes)
-        if (rq_n != 0) begin
-          rq_h <= rq_h + 1;
-          rn = rn - 1;
+        // ---- RSUM/RSSQ: a row's sum is written this cycle (see TMEM writes)
+        if (red_act && is_sum && root_v) begin
+          wr_row <= wr_row + 32'(drs);
           rows_done <= rows_done + 1;
           if (rows_done + 1 == rows) fin = 1'b1;
         end
-        rq_n <= rn;
       end
       ew_n <= ewn;
       cq_n <= qn;
@@ -806,5 +780,10 @@ module otpu_vpu
 `ifndef SYNTHESIS
   bit trace;
   initial trace = $test$plusargs("trace");
+  // the tree schedule needs rows a multiple of RL cycles apart: level 0 (issuing while the
+  // subs >= RL/2 are on `pacc`) must never meet another level
+  always_ff @(posedge clk)
+    if (!rst && en && cap && mt.sub >= 8'(RL / 2) && lv != 0)
+      $fatal(1, "otpu_vpu: RSUM/RSSQ tree schedule collision");
 `endif
 endmodule
