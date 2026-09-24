@@ -14,12 +14,12 @@
 
   | | Start of night | Now |
   |---|---|---|
-  | LUT | 131,915 | 87,763 |
-  | FF | 55,890 | 38,404 |
-  | DSP | 416 | 283 |
+  | LUT | 131,915 | 82,224 (27.5% of the xc7k480t) |
+  | FF | 55,890 | 35,944 |
+  | DSP | 416 | 267 |
   | BRAM36 | 603 | 603 |
-  | Logic delay | 14.94 ns | 6.28 ns |
-  | Est. fmax | 41 MHz | 95 MHz |
+  | Logic delay | 14.94 ns | 5.56 ns |
+  | Est. fmax | 41 MHz | 106 MHz |
 
   The estimate is `1000 / (1.6 * logic + 0.5)`, not signoff; Vivado gives the real number.
 
@@ -30,7 +30,8 @@
   - Grants reach only the BRAM enables. Read addresses are merged from requests, and write lanes are merged per port with the grant applied at the last level.
   - Registered TMEM data at the inputs of the VPU, the quantizer prescale and the MXU accumulate path.
   - Registered VPU writes.
-  - Registered request addresses and masks in the DMA (LD mask, address, write), the collective unit and the MXU drain, plus the RMAX base.
+  - Registered request addresses and masks in the DMA (LD mask, address, write), the collective unit (plus a write stage) and the MXU drain, plus the RMAX base and an in-flight counter.
+  - The arbiter computes pairwise conflicts in parallel instead of a serial chain.
   - MXU scale FIFO read.
   - One-cycle loops removed: IMEM fetch → decode → PC in the sequencer; the fp multiply's flush-to-zero in front of the DSPs.
 - **Component tournaments** (`tools/tourney`, Opus agents, yosys evaluation):
@@ -60,8 +61,8 @@
    Expect 1.5–3 h, then read `build/vivado/reports/SUMMARY.txt`.
 3. **If core_clk fails at 100 MHz:**
    - For a working board first: `make bit CORE_MHZ=80`. Decode is DRAM-bound, so the loss is small.
-   - Then look at `timing_worst.rpt`. By the yosys estimate the next limit is the TMEM arbiter itself: a combinational grant that drives the units' clock enables in the same cycle.
-   - The structural fix is to arbitrate one cycle ahead (registered grants).
+   - Then look at `timing_worst.rpt`. By the yosys estimate the limit is now inside the quantizer (its writer into the ACT RAM). The next cross-unit limit is the TMEM arbiter: a combinational grant that drives the units' clock enables in the same cycle.
+   - The structural fix for the arbiter is to arbitrate one cycle ahead (registered grants).
 4. **Program and bring up:**
    - `make program`, then `host/setup_pcie.sh --rescan` on the PC.
    - `python3 tools/board_selftest.py`, then `--qwen models/Qwen3-0.6B`.
