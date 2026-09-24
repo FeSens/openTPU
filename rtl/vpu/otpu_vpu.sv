@@ -105,7 +105,8 @@ module otpu_vpu
   logic [3:0]  ew_n;                          // elementwise instructions issued, not done
   logic [3:0]  last_tap;                      // slots of the last one started
   assign rdy = (cq_n < 2);
-  wire  cmd_t hc = cq[cq_h];
+  cmd_t hc;
+  assign hc = cq[cq_h];
   wire  [7:0] hf = hc.w6[23:16];
   wire  h_empty = (hc.w4[15:0] == 0) || (hc.w4[31:16] == 0);
   wire  can_begin = (cq_n != 0) && !issuing && !red_act &&
@@ -169,9 +170,42 @@ module otpu_vpu
     logic             final_;    // reductions: chunk index >= nch - RL (partials become final)
     logic [7:0]       sub;       // chunk index mod RL
   } meta_t;
-  meta_t m0;
+  // mi: the chunk read this cycle; m0: that chunk one granted cycle later, together with its
+  // TMEM data registered (xa, xb), so no path runs from the TMEM block RAMs into the lanes'
+  // multipliers in one cycle
+  meta_t m0, mi;
+  logic [LANES-1:0][31:0] xa, xb;
+  always_ff @(posedge clk)
+    if (rst) m0 <= '0;
+    else if (en) begin
+      m0 <= mi;
+      xa <= ta_data;
+      xb <= tb_data;
+    end
 
-  function automatic logic live(input meta_t m, input logic [7:0] t);
+  // the parts of the meta the later stages read: along the lane taps, and for the reductions
+  typedef struct packed {
+    logic             v;
+    logic [7:0]       func;
+    logic [LANES-1:0] mask;
+    logic [31:0]      waddr;
+    logic             all_last;
+  } mt_t;
+  typedef struct packed {
+    logic             v;
+    logic [7:0]       tag;
+    logic [31:0]      waddr;
+    logic             row_last;
+    logic             all_last;
+    logic             first;
+    logic             final_;
+    logic [7:0]       sub;
+  } rm_t;
+  rm_t m0r;
+  assign m0r = '{v: m0.v, tag: m0.tag, waddr: m0.waddr, row_last: m0.row_last,
+                 all_last: m0.all_last, first: m0.first, final_: m0.final_, sub: m0.sub};
+
+  function automatic logic live(input rm_t m, input logic [7:0] t);
     return m.v && m.tag == t;
   endfunction
 
@@ -182,25 +216,40 @@ module otpu_vpu
     logic [2:0]  f;
   } lst_t;
 
-  meta_t mtap [NSLOT + 1];
+  // Lane state fields live across slot s's delay line: read by a later slot or by the end tap
+  // (EXP2 9: f v ii, RECIP 6: f k2, RSQRT 10: f k2) before being rewritten. Derived from the
+  // slot programs in g_slot -- recheck when editing one. v is never live: every slot followed
+  // by a read of v writes v itself. f is always live; dead fields are not carried.
+  function automatic logic k1_live(input int s);
+    return s <= 7;
+  endfunction
+  function automatic logic k2_live(input int s);
+    return s <= 8 && s != 3 && s != 6;
+  endfunction
+  function automatic logic ii_live(input int s);
+    return s >= 1 && s <= 8;
+  endfunction
+
+  mt_t   mtap [NSLOT + 1];
   f32_t  lres [LANES];
 
-  assign mtap[0] = m0;
+  assign mtap[0] = '{v: m0.v, func: m0.func, mask: m0.mask, waddr: m0.waddr,
+                     all_last: m0.all_last};
   // slot 1 has three extra input stages for the EXP2 range reduction (clamp, floor, i2f)
   localparam int PRE1 = 3;
-  meta_t msl [NSLOT];                        // meta at each slot's input mux
+  mt_t   msl [NSLOT];                        // meta at each slot's input mux
   for (genvar s = 0; s < NSLOT; s++) begin : g_mdel
     if (s == 1) begin : g_pre
-      otpu_delay #(.W($bits(meta_t)), .N(PRE1)) u_p (.clk, .en, .d(mtap[s]), .q(msl[s]));
+      otpu_delay #(.W($bits(mt_t)), .N(PRE1)) u_p (.clk, .en, .d(mtap[s]), .q(msl[s]));
     end else begin : g_nopre
       assign msl[s] = mtap[s];
     end
-    otpu_delay #(.W($bits(meta_t)), .N(SL)) u_d (.clk, .en, .d(msl[s]), .q(mtap[s + 1]));
+    otpu_delay #(.W($bits(mt_t)), .N(SL)) u_d (.clk, .en, .d(msl[s]), .q(mtap[s + 1]));
   end
 
   // which boundary holds an entry at its function's last slot (at most one: see header)
   logic [3:0] wtap;
-  meta_t      mo;
+  mt_t        mo;
   always_comb begin
     wtap = '0;
     mo = '0;
@@ -211,12 +260,13 @@ module otpu_vpu
       end
   end
 
-  for (genvar l = 0; l < LANES; l++) begin : g_lane
-    localparam int NS = (l < NCL) ? NSLOT : 1;     // slots of this lane
+  // long lanes: all functions
+  for (genvar l = 0; l < NCL; l++) begin : g_lane
+    localparam int NS = NSLOT;                     // slots of this lane
     f32_t x, y;
     lst_t st [NS + 1];
-    assign x = ta_data[l];
-    assign y = (m0.bmode == B_SCALAR) ? m0.imm : (m0.bmode == B_ROW) ? tb_data[0] : tb_data[l];
+    assign x = xa[l];
+    assign y = (m0.bmode == B_SCALAR) ? m0.imm : (m0.bmode == B_ROW) ? xb[0] : xb[l];
 
     // boundary 0: the simple functions' results and the composite functions' setup
     always_comb begin
@@ -327,7 +377,24 @@ module otpu_vpu
         ra <= ia; rb <= ib; rc <= ic_; sr <= sin_; dr <= dest; nr <= negd;
       end
       otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(r));
-      otpu_delay #(.W($bits(lst_t)), .N(LM + LA)) u_st (.clk, .en, .d(sr), .q(sd));
+      // the live fields only (see k1_live); the dead ones read as 0 and are never used
+      assign sd.v = '0;
+      if (k1_live(s)) begin : g_k1
+        otpu_delay #(.W(32), .N(LM + LA)) u_k1 (.clk, .en, .d(sr.k1), .q(sd.k1));
+      end else begin : g_nk1
+        assign sd.k1 = '0;
+      end
+      if (k2_live(s)) begin : g_k2
+        otpu_delay #(.W(32), .N(LM + LA)) u_k2 (.clk, .en, .d(sr.k2), .q(sd.k2));
+      end else begin : g_nk2
+        assign sd.k2 = '0;
+      end
+      if (ii_live(s)) begin : g_ii
+        otpu_delay #(.W(9), .N(LM + LA)) u_ii (.clk, .en, .d(sr.ii), .q(sd.ii));
+      end else begin : g_nii
+        assign sd.ii = '0;
+      end
+      otpu_delay #(.W(3), .N(LM + LA)) u_f (.clk, .en, .d(sr.f), .q(sd.f));
       otpu_delay #(.W(3), .N(LM + LA)) u_dst (.clk, .en, .d({dr, nr}), .q({dd, nd}));
       always_comb begin
         f32_t rr;
@@ -345,8 +412,7 @@ module otpu_vpu
     // the result of the entry that ends at a tap this cycle (taps: 0, 1, 6, 9, 10)
     always_comb begin
       lst_t t;
-      if (NS == NSLOT) t = st[wtap];
-      else t = (wtap == 0) ? st[0] : st[NS];       // short lane: the simple functions only
+      t = st[wtap];
       case (mo.func)
         V_EXP2, V_EXP2SUB:
           lres[l] = t.f[0] ? F_ZERO : t.f[1] ? F_INF : (t.v + {t.ii, 23'd0});
@@ -360,57 +426,92 @@ module otpu_vpu
     end
   end
 
+  // short lanes: slot 0 only. The composite functions are never issued here (imask), so their
+  // setup, operand cases and result muxes are left out.
+  for (genvar l = NCL; l < LANES; l++) begin : g_slane
+    f32_t x, y;
+    f32_t st [2];                                  // v at boundaries 0 and 1
+    assign x = xa[l];
+    assign y = (m0.bmode == B_SCALAR) ? m0.imm : (m0.bmode == B_ROW) ? xb[0] : xb[l];
+
+    always_comb begin
+      st[0] = '0;
+      case (m0.func)
+        V_MAX:   st[0] = fp_max(x, y);
+        V_MIN:   st[0] = fp_min(x, y);
+        V_COPY:  st[0] = ftz(x);
+        V_ABS:   st[0] = fabs(x);
+        V_FILL:  st[0] = ftz(y);
+        default: ;
+      endcase
+    end
+    f32_t ia, ib, ic_, ra, rb, rc;
+    always_comb begin
+      ia = F_ZERO; ib = F_ONE; ic_ = F_NZ;
+      case (msl[0].func)
+        V_MUL:  begin ia = x; ib = y; end
+        V_ADD:  begin ia = x; ic_ = y; end
+        V_SUB:  begin ia = x; ic_ = fneg(y); end
+        V_RSUB: begin ia = y; ic_ = fneg(x); end
+        default: ;
+      endcase
+    end
+    always_ff @(posedge clk) if (en) begin
+      ra <= ia; rb <= ib; rc <= ic_;
+    end
+    otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(st[1]));
+
+    // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here)
+    assign lres[l] = (wtap == 0) ? st[0] : st[1];
+  end
+
   // ------------------------------------------------------------------ RMAX
-  // pairwise max tree over the lanes of the chunk (masked lanes drop out), in two registered
-  // stages: the first level (from the TMEM read data), then the rest
+  // pairwise max tree over the lanes of the chunk (masked lanes drop out), one registered
+  // stage per level: stage 0 from the TMEM read data (LANES -> HL), stage j halves HL >> (j-1)
   localparam int HL = LANES / 2;
-  f32_t  mxh_v [HL];
-  logic  mxh_h [HL];
-  meta_t mxh_m;
+  localparam int ML = $clog2(HL);             // levels after the first
+  f32_t  mxh_v [ML + 1][HL];                  // stage j holds HL >> j values
+  logic  mxh_h [ML + 1][HL];
+  rm_t   mxh_m [ML + 1];
   f32_t  mxc_q;
-  meta_t mxm_q;
+  rm_t   mxm_q;
   f32_t  mx_run;
   logic  mx_have;
   always_ff @(posedge clk) if (en) begin
     f32_t v [LANES];
     logic h [LANES];
     for (int l = 0; l < LANES; l++) begin
-      v[l] = ftz(ta_data[l]);
+      v[l] = ftz(xa[l]);
       h[l] = m0.mask[l];
     end
     for (int l = 0; l < HL; l++) begin
-      mxh_v[l] <= (!h[l] || (h[l + HL] && fp_gt(v[l + HL], v[l]))) ? v[l + HL] : v[l];
-      mxh_h[l] <= h[l] || h[l + HL];
+      mxh_v[0][l] <= (!h[l] || (h[l + HL] && fp_gt(v[l + HL], v[l]))) ? v[l + HL] : v[l];
+      mxh_h[0][l] <= h[l] || h[l + HL];
     end
-    mxh_m <= m0;
-  end
-  always_ff @(posedge clk) if (en) begin
-    f32_t v [HL];
-    logic h [HL];
-    for (int l = 0; l < HL; l++) begin
-      v[l] = mxh_v[l];
-      h[l] = mxh_h[l];
-    end
-    for (int w = HL / 2; w >= 1; w = w / 2) begin
-      for (int l = 0; l < w; l++) begin
-        if (!h[l] || (h[l + w] && fp_gt(v[l + w], v[l]))) v[l] = v[l + w];
-        h[l] = h[l] || h[l + w];
+    mxh_m[0] <= m0r;
+    for (int j = 1; j <= ML; j++) begin
+      for (int l = 0; l < (HL >> j); l++) begin
+        mxh_v[j][l] <= (!mxh_h[j-1][l] || (mxh_h[j-1][l + (HL >> j)] &&
+                        fp_gt(mxh_v[j-1][l + (HL >> j)], mxh_v[j-1][l]))) ?
+                       mxh_v[j-1][l + (HL >> j)] : mxh_v[j-1][l];
+        mxh_h[j][l] <= mxh_h[j-1][l] || mxh_h[j-1][l + (HL >> j)];
       end
+      mxh_m[j] <= mxh_m[j-1];
     end
-    mxc_q <= v[0];
-    mxm_q <= mxh_m;
   end
+  assign mxc_q = mxh_v[ML][0];
+  assign mxm_q = mxh_m[ML];
   f32_t mx_new;
   assign mx_new = (mx_have && fp_gt(mx_run, mxc_q)) ? mx_run : mxc_q;
 
   // ------------------------------------------------------------------ RSUM / RSSQ
   f32_t  pacc [LANES];                  // partial after adding this chunk's term
-  meta_t mtq, mt;                       // meta at the adder inputs / aligned with `pacc`
-  otpu_delay #(.W($bits(meta_t)), .N(LM)) u_mtq (.clk, .en, .d(m0), .q(mtq));
-  otpu_delay #(.W($bits(meta_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
+  rm_t   mtq, mt;                       // meta at the adder inputs / aligned with `pacc`
+  otpu_delay #(.W($bits(rm_t)), .N(LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
+  otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
   for (genvar l = 0; l < LANES; l++) begin : g_red
     f32_t xin, tq, prev, fb;
-    assign xin = m0.mask[l] ? ftz(ta_data[l]) : F_ZERO;
+    assign xin = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
     otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xin), .b((m0.func == V_RSSQ) ? xin : F_ONE), .y(tq));
     // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
     otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
@@ -530,7 +631,7 @@ module otpu_vpu
       cq_n <= '0; cq_h <= 1'b0;
       issuing <= 1'b0; red_act <= 1'b0;
       ew_n <= '0; last_tap <= '0;
-      m0 <= '0;
+      mi <= '0;
       tag <= '0;
       cyc <= '0;
       tb_act <= '0;
@@ -585,21 +686,21 @@ module otpu_vpu
         end
       end
       if (en) begin
-        // ---- issue the next chunk (its data arrives next cycle, described by m0)
-        m0 <= '0;
+        // ---- issue the next chunk (its data arrives next cycle, described by mi)
+        mi <= '0;
         if (issuing) begin
-          m0.v <= 1'b1;
-          m0.tag <= tag;
-          m0.func <= func;
-          m0.bmode <= bmode;
-          m0.imm <= imm;
-          m0.mask <= imask;
-          m0.waddr <= is_red ? d_row : d_row + 32'(ic);
-          m0.row_last <= irow_last;
-          m0.all_last <= iall_last;
-          m0.first <= (ch < 16'(RL));
-          m0.final_ <= (ch + 16'(RL) >= nch);
-          m0.sub <= 8'(ch % 16'(RL));
+          mi.v <= 1'b1;
+          mi.tag <= tag;
+          mi.func <= func;
+          mi.bmode <= bmode;
+          mi.imm <= imm;
+          mi.mask <= imask;
+          mi.waddr <= is_red ? d_row : d_row + 32'(ic);
+          mi.row_last <= irow_last;
+          mi.all_last <= iall_last;
+          mi.first <= (ch < 16'(RL));
+          mi.final_ <= (ch + 16'(RL) >= nch);
+          mi.sub <= 8'(ch % 16'(RL));
           if (irow_last) begin
             ic <= '0; ch <= '0;
             a_row <= a_row + 32'(ars);

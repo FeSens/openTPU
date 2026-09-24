@@ -71,39 +71,98 @@ module otpu_seq
   logic        lp;
   logic [31:0] lp_cnt, lp_len;
 
-  // The footprint as the window keeps it: an MM's ASCALE TMEM range (fp_t rd[3]) never comes
-  // with its streamed-scale DRAM range (rd[1]; ASCALE needs UNIT, docs/isa.md), so it moves
-  // into rd[1] -- 16 range pairs per slot instead of 20. Should both be set anyway (an invalid
-  // MM), the instruction conflicts with everything instead: a superset of its dependencies.
+  // The footprint as the window keeps it: ranges stored by space, so ranges in different
+  // spaces, and two reads, are never compared. No valid bits: an invalid range has hi = 0,
+  // which overlaps nothing (b.lo < 0 is false) -- exactly ov()'s v terms. Routing (fp_seg):
+  //   LD:     d[0] = rd0          t[0] = wr0 W
+  //   ST:     d[0] = wr0 (dw)     t[0] = rd0
+  //   MM:     d = rd0, rd1        t[0] = wr0 W, t[1] = wr1 W (RMAX), t2 = rd3 (ASCALE), a = rd2
+  //   QACT:                       t[0] = rd0, t[1] = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
+  //   QST:    d = wr0, wr1 (dw)   t[0] = rd0
+  //   VOP:                        t[0] = wr0 W, t[1] = rd0, t2 = rd1
+  //   GATHER:                     t[0] = wr0 W, t[1] = rd0
+  // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. ACT ranges
+  // start below 2^8 (an 8-bit field) and are at most 2^16 - 1 long, so [alo, ahi) is exact.
+  typedef struct packed { logic [31:0] lo, hi; } r32_t;
+  typedef struct packed { logic w; r32_t r; } r32w_t;   // TMEM, may be written
   typedef struct packed {
     logic            all;
-    rng_t [2:0]      rd;
-    rng_t [1:0]      wr;
-  } fp5_t;
+    logic            dw;        // the DRAM ranges are writes
+    r32_t  [1:0]     d;         // DRAM
+    r32w_t [1:0]     t;         // TMEM
+    r32_t            t2;        // TMEM, always a read
+    logic            aw;        // ACT
+    logic [7:0]      alo;
+    logic [16:0]     ahi;
+  } fps_t;
 
-  function automatic fp5_t fp_pack(input fp_t f);
-    fp5_t p;
-    p.all = f.all; p.rd = f.rd[2:0]; p.wr = f.wr;
-    if (f.rd[3].v) begin
-      if (f.rd[1].v) p.all = 1'b1;
-      else p.rd[1] = f.rd[3];
-    end
-    return p;
+  function automatic r32_t r32(input rng_t x);
+    r32_t o;
+    o.lo = x.lo; o.hi = x.v ? x.hi : '0;
+    return o;
   endfunction
 
-  // {conflict, conflict_dram} (otpu_pkg) on packed footprints, each range pair tested once: a
-  // pair can only overlap within one space, so the DRAM part is the overlaps of DRAM ranges
-  function automatic logic [1:0] conf5(input fp5_t n, input fp5_t e);
+  function automatic r32w_t r32w(input rng_t x, input logic w);
+    r32w_t o;
+    o.w = w; o.r = r32(x);
+    return o;
+  endfunction
+
+  function automatic fps_t fp_seg(input logic [7:0] op, input fp_t f);
+    fps_t s;
+    rng_t a;
+    s = '0; a = '0;
+    s.all = f.all;
+    case (op)
+      OP_LD: begin
+        s.d[0] = r32(f.rd[0]); s.t[0] = r32w(f.wr[0], 1'b1);
+      end
+      OP_ST: begin
+        s.dw = 1'b1; s.d[0] = r32(f.wr[0]); s.t[0] = r32w(f.rd[0], 1'b0);
+      end
+      OP_MM: begin
+        s.d[0] = r32(f.rd[0]); s.d[1] = r32(f.rd[1]);
+        s.t[0] = r32w(f.wr[0], 1'b1); s.t[1] = r32w(f.wr[1], 1'b1); s.t2 = r32(f.rd[3]);
+        a = f.rd[2];
+      end
+      OP_QACT: begin
+        s.t[0] = r32w(f.rd[0], 1'b0); s.t[1] = r32w(f.rd[1], 1'b0); s.t2 = r32(f.rd[2]);
+        s.aw = 1'b1; a = f.wr[0];
+      end
+      OP_QST: begin
+        s.dw = 1'b1; s.d[0] = r32(f.wr[0]); s.d[1] = r32(f.wr[1]);
+        s.t[0] = r32w(f.rd[0], 1'b0);
+      end
+      OP_VOP: begin
+        s.t[0] = r32w(f.wr[0], 1'b1); s.t[1] = r32w(f.rd[0], 1'b0); s.t2 = r32(f.rd[1]);
+      end
+      OP_GATHER: begin
+        s.t[0] = r32w(f.wr[0], 1'b1); s.t[1] = r32w(f.rd[0], 1'b0);
+      end
+      default: ;   // BAR: all
+    endcase
+    s.alo = a.lo[7:0]; s.ahi = a.v ? a.hi[16:0] : '0;
+    return s;
+  endfunction
+
+  function automatic logic ovr(input r32_t a, input r32_t b);
+    return a.lo < b.hi && b.lo < a.hi;
+  endfunction
+
+  // {conflict, conflict_dram} (otpu_pkg) on segregated footprints: the same-space pairs with at
+  // least one write -- 4 DRAM, 8 TMEM and 1 ACT range pair
+  function automatic logic [1:0] conf_s(input fps_t n, input fps_t e);
     logic any, dram;
     any = n.all || e.all; dram = any;
     for (int i = 0; i < 2; i++) begin
-      for (int j = 0; j < 3; j++) begin
-        if (ov(n.wr[i], e.rd[j])) begin any = 1'b1; dram |= n.wr[i].sp == SP_DRAM; end
-        if (ov(e.wr[i], n.rd[j])) begin any = 1'b1; dram |= e.wr[i].sp == SP_DRAM; end
+      for (int j = 0; j < 2; j++) begin
+        if ((n.dw || e.dw) && ovr(n.d[i], e.d[j])) begin any = 1'b1; dram = 1'b1; end
+        if ((n.t[i].w || e.t[j].w) && ovr(n.t[i].r, e.t[j].r)) any = 1'b1;
       end
-      for (int j = 0; j < 2; j++)
-        if (ov(n.wr[i], e.wr[j])) begin any = 1'b1; dram |= n.wr[i].sp == SP_DRAM; end
+      if (n.t[i].w && ovr(n.t[i].r, e.t2)) any = 1'b1;
+      if (e.t[i].w && ovr(n.t2, e.t[i].r)) any = 1'b1;
     end
+    if ((n.aw || e.aw) && {9'd0, n.alo} < e.ahi && {9'd0, e.alo} < n.ahi) any = 1'b1;
     return {any, dram};
   endfunction
 
@@ -117,7 +176,7 @@ module otpu_seq
   logic [WIN-1:0]  srel;                     // MXU: released
   logic [SW:0]     uq_r;                     // MXU: next started slot to release
   cmd_t            scmd [WIN];
-  fp5_t            sfp  [WIN];
+  fps_t            sfp  [WIN];
   logic [31:0]     srdy_c [WIN];
   // per-unit queues of started slot ids, in start (= completion) order
   logic [SW-1:0]   uq [NUNITS][WIN];
@@ -171,7 +230,8 @@ module otpu_seq
   logic [31:0] p_pc, s_pc, q_pc, c_pc;
   fpp_t        s_pp;
   fpm_t        q_pr;
-  fp5_t        c_fp;
+  fp_t         q_fp;             // Q's footprint ranges (otpu_pkg form)
+  fps_t        c_fp;
   logic        have_free;
   wire         c_go = c_v && have_free;
   wire         q_adv = !c_v || c_go;            // Q hands its instruction to C
@@ -193,13 +253,14 @@ module otpu_seq
   // ---- free slot and the new instruction's dependencies
   logic [SW-1:0]   free_slot;
   logic [WIN-1:0]  ndep, ndepd;
+  always_comb q_fp = fp_ranges(q_cmd, q_pr, D, S);
   always_comb begin
     have_free = 1'b0; free_slot = '0;
     for (int i = WIN - 1; i >= 0; i--)
       if (!sv[i]) begin have_free = 1'b1; free_slot = SW'(i); end
     for (int i = 0; i < WIN; i++) begin
       logic [1:0] cf;
-      cf = conf5(c_fp, sfp[i]);
+      cf = conf_s(c_fp, sfp[i]);
       ndep[i] = sv[i] && !fin[i] && cf[1];
       ndepd[i] = sv[i] && !fin[i] && cf[0];
     end
@@ -330,6 +391,9 @@ module otpu_seq
 `ifndef SYNTHESIS
   bit trace;
   initial trace = $test$plusargs("trace");
+  // shadow of c_fp / sfp in otpu_pkg form: the scoreboard is checked against conflict()
+  fp_t c_ref;
+  fp_t sfp_ref [WIN];
 `endif
 
   always_ff @(posedge clk) begin
@@ -354,6 +418,32 @@ module otpu_seq
           fa != ((op == OP_LOOP) ? ((lp_cnt == 0) ? pc + 1 + lp_len : pc + 1) :
                  (at_end && stk_rem[sp-1] > 1) ? stk_start[sp-1] : pc + 1))
         $fatal(1, "otpu_seq: fetch address %0d does not follow pc %0d", fa, pc);
+      // the segregated footprints give exactly otpu_pkg's conflict() and conflict_dram()
+      if (c_v)
+        for (int i = 0; i < WIN; i++)
+          if (sv[i] && conf_s(c_fp, sfp[i]) != {conflict(c_ref, sfp_ref[i]),
+                                                 conflict_dram(c_ref, sfp_ref[i])})
+            $fatal(1, "otpu_seq: scoreboard differs from conflict() for pc %0d vs slot %0d",
+                   c_pc, i);
+      // fp_seg's assumptions: ACT ranges fit [alo, ahi), DRAM ranges share their write role
+      if (q_v && q_adv) begin
+        logic dr, dwr;
+        dr = 1'b0; dwr = 1'b0;
+        for (int i = 0; i < 4; i++) begin
+          if (q_fp.rd[i].v && q_fp.rd[i].sp == SP_DRAM) dr = 1'b1;
+          if (q_fp.rd[i].v && q_fp.rd[i].sp == SP_ACT &&
+              (q_fp.rd[i].lo[31:8] != 0 || q_fp.rd[i].hi[31:17] != 0))
+            $fatal(1, "otpu_seq: ACT read range of pc %0d exceeds 8/17 bits", q_pc);
+        end
+        for (int i = 0; i < 2; i++) begin
+          if (q_fp.wr[i].v && q_fp.wr[i].sp == SP_DRAM) dwr = 1'b1;
+          if (q_fp.wr[i].v && q_fp.wr[i].sp == SP_ACT &&
+              (q_fp.wr[i].lo[31:8] != 0 || q_fp.wr[i].hi[31:17] != 0))
+            $fatal(1, "otpu_seq: ACT write range of pc %0d exceeds 8/17 bits", q_pc);
+        end
+        if (dr && dwr)
+          $fatal(1, "otpu_seq: pc %0d both reads and writes DRAM (one dw bit)", q_pc);
+      end
 `endif
       icount <= icount + 32'(r_ret) + 32'(c_go);
       // completions
@@ -414,6 +504,9 @@ module otpu_seq
         scmd[free_slot] <= c_cmd;
         sfp[free_slot] <= c_fp;
 `ifndef SYNTHESIS
+        sfp_ref[free_slot] <= c_ref;
+`endif
+`ifndef SYNTHESIS
         if (trace) $display("T%0d D c=%0d s=%0d pc=%0d op=%02h w1=%08h w2=%08h w3=%08h",
                             SID, cyc, free_slot, c_pc, c_cmd.op, c_cmd.w1, c_cmd.w2, c_cmd.w3);
 `endif
@@ -423,7 +516,10 @@ module otpu_seq
         c_v <= q_v;
         if (q_v) begin
           c_cmd <= q_cmd; c_unit <= q_unit; c_pc <= q_pc;
-          c_fp <= fp_pack(fp_ranges(q_cmd, q_pr, D, S));
+          c_fp <= fp_seg(q_cmd.op, q_fp);
+`ifndef SYNTHESIS
+          c_ref <= q_fp;
+`endif
         end
       end
       // ---- S: products
