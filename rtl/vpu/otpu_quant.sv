@@ -35,121 +35,6 @@ module otpu_qdly #(parameter int W = 32, parameter int N = 2) (
   assign q = qr;
 endmodule
 
-// otpu_fmul with the mantissa product taken from the raw operands: fp_mul_s2 reads p only when
-// !sp, i.e. when neither exponent is 0 or 0xFF, where ftz() is the identity. So p needs no flush
-// logic in front of the DSP inputs (sp/sv/s/e still come from fp_mul_s1).
-module otpu_qfmul
-  import otpu_fp::*;
-#(parameter int LAT = 2) (
-  input  logic  clk,
-  input  logic  en,
-  input  f32_t  a,
-  input  f32_t  b,
-  output f32_t  y
-);
-  function automatic fmul_mid_t qmul_s1(input f32_t x, input f32_t z);
-    fmul_mid_t m;
-    m = fp_mul_s1(x, z);
-    m.p = {1'b1, x[22:0]} * {1'b1, z[22:0]};
-    return m;
-  endfunction
-  // fp_mul_s2 with nothing after the round add's carry chain. Its carry out mr[24] is 1 only for
-  // mm == all ones with rnd, so ov = rnd & (&mm) replaces it; the mantissa field is then
-  // (mm[22:0] + rnd) mod 2^23 either way (0 after the >>1 when ov), so the >>1 mux goes. The
-  // exponent e + h + ov is tested as eh against the ov-shifted bounds (signed, like e).
-  function automatic f32_t qmul_s2(input fmul_mid_t m);
-    logic               h, g, st, rnd, ov;
-    logic [23:0]        mm;
-    logic [22:0]        man;
-    logic signed [10:0] eh;
-    if (m.sp) return m.sv;
-    h   = m.p[47];
-    mm  = h ? m.p[47:24] : m.p[46:23];
-    g   = h ? m.p[23]    : m.p[22];
-    st  = (|m.p[21:0]) | (h & m.p[22]);
-    rnd = g & (st | mm[0]);
-    ov  = rnd & (&mm);
-    man = mm[22:0] + 23'(rnd);
-    eh  = m.e + 11'(h);
-    if (ov ? (eh >= 254) : (eh >= 255)) return {m.s, 8'hFF, 23'd0};
-    if (ov ? (eh <= -1) : (eh <= 0)) return {m.s, 31'd0};
-    return {m.s, ov ? eh[7:0] + 8'd1 : eh[7:0], man};
-  endfunction
-  fmul_mid_t m;
-  f32_t r;
-  always_ff @(posedge clk) if (en) begin
-    m <= qmul_s1(a, b);
-    r <= qmul_s2(m);
-  end
-  otpu_delay #(.W(32), .N(LAT - 2)) u_pad (.clk, .en, .d(r), .q(y));
-endmodule
-
-// otpu_fadd whose align/add stage has one carry chain: the sticky bit stays off the add
-module otpu_qfadd
-  import otpu_fp::*;
-#(parameter int LAT = 4) (
-  input  logic  clk,
-  input  logic  en,
-  input  f32_t  a,
-  input  f32_t  b,
-  output f32_t  y
-);
-  // fp_add_s2 with the sticky bit kept off the add chain. ma[2:0] is always 000 (fp_add_s1
-  // builds {1, frac, 3'b000}, or '0 when sp), so the three guard bits of the sum only need the
-  // aligned mb's low bits: a sum puts them below ma's upper bits, and a difference borrows one
-  // from the upper bits unless they are all 0. The upper 25 bits are then a single add with
-  // carry-in (sub && lo == 0), written as {A,1} + {B,cin} so it maps to one $alu. The sticky
-  // mask (bit i set iff i < d) comes from a shift of a constant (a LUT decode), not from
-  // (1<<d)-1.
-  function automatic fadd_p2_t qadd_s2(input fadd_p1_t r);
-    fadd_p2_t q;
-    logic [26:0] mbs;
-    logic [31:0] lm;
-    logic        stk, cin;
-    logic [2:0]  lo;
-    logic [24:0] bh;
-    logic [25:0] hs;
-    q.sp = r.sp; q.sv = r.sv; q.sa = r.sa; q.sub = r.sub; q.e = r.e;
-    mbs = r.mb >> r.d;                                          // 0 once d > 26
-    lm  = (r.d[7:5] != 3'd0) ? '1 : ~(32'hFFFF_FFFF << r.d[4:0]);
-    stk = |({5'd0, r.mb} & lm);
-    lo  = {mbs[2:1], mbs[0] | stk};
-    cin = r.sub && (lo == 3'd0);
-    bh  = {1'b0, mbs[26:3]} ^ {25{r.sub}};
-    hs  = {1'b0, r.ma[26:3], 1'b1} + {bh, cin};
-    q.sum = {hs[25:1], r.sub ? 3'(3'd0 - lo) : lo};
-    return q;
-  endfunction
-  fadd_p1_t s1;
-  fadd_p2_t s2;
-  fadd_nm_t s3;
-  f32_t r;
-  always_ff @(posedge clk) if (en) begin
-    s1 <= fp_add_s1(a, b);
-    s2 <= qadd_s2(s1);
-    s3 <= fp_add_s3(s2);
-    r  <= fp_add_s4(s3);
-  end
-  otpu_delay #(.W(32), .N(LAT - 4)) u_pad (.clk, .en, .d(r), .q(y));
-endmodule
-
-// otpu_fmadd on otpu_qfmul and otpu_qfadd
-module otpu_qfmadd
-  import otpu_fp::*;
-#(parameter int LM = 2, parameter int LA = 4) (
-  input  logic  clk,
-  input  logic  en,
-  input  f32_t  a,
-  input  f32_t  b,
-  input  f32_t  c,
-  output f32_t  y
-);
-  f32_t p, cd;
-  otpu_qfmul #(.LAT(LM)) u_m (.clk, .en, .a, .b, .y(p));
-  otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(c), .q(cd));
-  otpu_qfadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y);
-endmodule
-
 module otpu_qscale
   import otpu_fp::*;
 #(parameter int LM = 2, parameter int LA = 4, parameter int TW = 2) (
@@ -174,7 +59,7 @@ module otpu_qscale
   always_ff @(posedge clk) if (en) begin
     amax_q <= amax; iv_q <= iv; itag_q <= itag;
   end
-  // seed stage: |amax|, its flags and the reciprocal seed, registered (amax is an otpu_qfmul
+  // seed stage: |amax|, its flags and the reciprocal seed, registered (amax is an otpu_fmul
   // result or +0, so it is already flushed: no ftz)
   f32_t ax, y0;
   logic zero, big;
@@ -195,17 +80,17 @@ module otpu_qscale
   assign y[0] = y0;
   assign k1[0] = {1'b1, ax[30:0]};
   for (genvar i = 0; i < 3; i++) begin : g_it
-    otpu_qfmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .c(F_TWO), .y(t[i]));
+    otpu_fmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .c(F_TWO), .y(t[i]));
     otpu_qdly #(.W(32), .N(SL)) u_yd (.clk, .rst, .en, .d(y[i]), .q(yd[i]));
     otpu_qdly #(.W(32), .N(P)) u_k (.clk, .rst, .en, .d(k1[i]), .q(k1[i + 1]));
-    otpu_qfmul #(.LAT(LM)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .y(y[i + 1]));
+    otpu_fmul #(.LAT(LM)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .y(y[i + 1]));
   end
   // big: 127 * (+0) = +0, forced on the product (bd delayed beside zd) instead of on the operand
   f32_t invm, scm, scd;
   logic zd, bd, zd2, bd2;
   otpu_qdly #(.W(2), .N(3 * P)) u_f (.clk, .rst, .en, .d({zero, big}), .q({zd, bd}));
-  otpu_qfmul #(.LAT(LM)) u_inv (.clk, .en, .a(F_127), .b(y[3]), .y(invm));
-  otpu_qfmul #(.LAT(LM)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .y(scm));
+  otpu_fmul #(.LAT(LM)) u_inv (.clk, .en, .a(F_127), .b(y[3]), .y(invm));
+  otpu_fmul #(.LAT(LM)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .y(scm));
   otpu_delay #(.W(32), .N(3 * P)) u_scd (.clk, .en, .d(scm), .q(scd));
   otpu_delay #(.W(2), .N(LM)) u_z2 (.clk, .en, .d({zd, bd}), .q({zd2, bd2}));
   otpu_delay #(.W(1 + TW), .N(LAT + 1)) u_v (.clk, .en, .d({iv_q, itag_q}), .q({ov, otag}));
@@ -334,9 +219,9 @@ module otpu_quant
   f32_t xp [LANES];
   for (genvar l = 0; l < LANES; l++) begin : g_pre
     f32_t v1, cd;
-    otpu_qfmul #(.LAT(LM)) u_r (.clk, .en, .a(t_rdata[l]), .b(rsf ? t_rdata3 : F_ONE), .y(v1));
+    otpu_fmul #(.LAT(LM)) u_r (.clk, .en, .a(t_rdata[l]), .b(rsf ? t_rdata3 : F_ONE), .y(v1));
     otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(csf ? t_rdata2[l] : F_ONE), .q(cd));
-    otpu_qfmul #(.LAT(LM)) u_c2 (.clk, .en, .a(v1), .b(cd), .y(xp[l]));
+    otpu_fmul #(.LAT(LM)) u_c2 (.clk, .en, .a(v1), .b(cd), .y(xp[l]));
   end
   otpu_delay #(.W($bits(rm_t)), .N(QL)) u_mp (.clk, .en, .d(m0), .q(mp));
 
@@ -345,7 +230,7 @@ module otpu_quant
   logic [31:0] mp_baddr;
   otpu_delay #(.W(32), .N(QL + 1)) u_ba (.clk, .en, .d(badr), .q(mp_baddr));
 
-  // fp_gt for the amax path: every operand there is a non-negative flushed value (an otpu_qfmul
+  // fp_gt for the amax path: every operand there is a non-negative flushed value (an otpu_fmul
   // result with the sign cleared, +0, or one taken from those), where fkey is {1, a[30:0]}, so
   // the order is the unsigned order of a[30:0] (NaN still above +inf) and needs no ftz
   function automatic logic mgt(input f32_t a, input f32_t b);
@@ -359,7 +244,7 @@ module otpu_quant
   rm_t   mh, mc;
   always_ff @(posedge clk) if (en) begin
     f32_t v [LANES];
-    // xp is flushed (otpu_qfmul), so clearing the sign is fabs
+    // xp is flushed (otpu_fmul), so clearing the sign is fabs
     for (int l = 0; l < LANES; l++) v[l] = mp.mask[l] ? {1'b0, xp[l][30:0]} : F_ZERO;
     for (int l = 0; l < HL; l++) ch[l] <= mgt(v[l + HL], v[l]) ? v[l + HL] : v[l];
     mh <= mp;
@@ -502,7 +387,7 @@ module otpu_quant
   for (genvar l = 0; l < LANES; l++) begin : g_q
     f32_t p;
     q8_mid_t qm;
-    otpu_qfmul #(.LAT(LM)) u_q (.clk, .en, .a(wx_r[l]), .b(winv_r), .y(p));
+    otpu_fmul #(.LAT(LM)) u_q (.clk, .en, .a(wx_r[l]), .b(winv_r), .y(p));
     always_ff @(posedge clk) if (en) begin
       qm <= qq8_s1(p);
       qb[l] <= q8_s2(qm);
