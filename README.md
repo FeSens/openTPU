@@ -272,3 +272,7 @@ python3 -m pytest -q
 - QST writes one byte per cycle.
 - The MXU dot product is behavioural in simulation; on the FPGA it maps to DSP48 cascades.
 - MAX and MIN on NaN inputs are undefined.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
