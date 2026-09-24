@@ -273,10 +273,13 @@ module otpu_axi_dram #(
       err <= 1'b0;
     end else begin
       // writes outstanding: this cycle's accepts and responses fold into one small delta (a sum
-      // of single bits), added once
+      // of single bits), added once. Counted from the take strobes, not the queue pushes: an A
+      // write is never a reuse and goes to exactly one channel, as does an SW write, so a_reuse
+      // and the channel decode stay off this path
       logic signed [4:0] wn;
-      wn = 5'(qb_push[0] && b_we) + 5'(qa_push[0] && a_we) + 5'(qw_push[0]) +
-           5'(qb_push[1] && b_we) + 5'(qa_push[1] && a_we) + 5'(qw_push[1]) -
+      wn = 5'(b_take && b_we && b_wmask[15:0]  != 0) +
+           5'(b_take && b_we && b_wmask[31:16] != 0) +
+           5'(a_take && a_we) + 5'(sw_take) -
            5'(m_bvalid[0]) - 5'(m_bvalid[1]);
       for (int c = 0; c < 2; c++) begin
         logic [QW:0] nb, na, nw;
