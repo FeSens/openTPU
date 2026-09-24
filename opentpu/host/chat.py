@@ -1,4 +1,4 @@
-"""otpu-chat: chat with Qwen3 running on openTPU (also tools/chat.py).
+"""otpu-chat: chat with Qwen3 running on openTPU.
 
     otpu-chat                                 # ISA simulator (~3 s/token on a laptop)
     otpu-chat --backend board                 # the FPGA over PCIe (opentpu/host/board.py)

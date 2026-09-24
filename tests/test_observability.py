@@ -8,9 +8,9 @@ import re
 import numpy as np
 import pytest
 
-from host.board import (CTRL_CLEAR, CTRL_RUN, R_B_RD, R_B_WR, R_CTRL, R_CYCLES, R_CYCLES_HI,
+from opentpu.host.board import (CTRL_CLEAR, CTRL_RUN, R_B_RD, R_B_WR, R_CTRL, R_CYCLES, R_CYCLES_HI,
                         R_ICOUNT, R_SCRATCH, R_STATUS, R_VERSION, ST_HALTED, Board, SimTransport)
-from host.checks import PROG_AT, demo_image, demo_program
+from opentpu.host.checks import PROG_AT, demo_image, demo_program
 from opentpu import isa as I
 from opentpu.hwtrace import (R_TRACE_ADDR, R_TRACE_COUNT, R_TRACE_CTRL, R_TRACE_DROP,
                              R_TRACE_HI, R_TRACE_LO, TRACE_BUSY, TRACE_CLEAR, TRACE_ENABLE,

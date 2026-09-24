@@ -5,7 +5,7 @@
 // beats: logical beat b = addr / 64 lives on channel b % 2 at BASE[b % 2] + (b / 2) * 64. A
 // D = 128-byte chunk (port B; requests are chunk aligned) is therefore one beat on each
 // channel, and a streamed operand uses both channels evenly. The host applies the same map
-// when it fills and reads the memory (host/board.py).
+// when it fills and reads the memory (opentpu/host/board.py).
 //
 // Port B: chunk reads and word-masked chunk writes. Port A: single-word reads and byte-enabled
 // word writes. Port SW: byte-enabled word writes (the quantizer's QST stores), independent of A

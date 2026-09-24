@@ -1,5 +1,4 @@
 """otpu-selftest: staged bring-up of the openTPU card (or of its Verilator model with --sim).
-Also tools/board_selftest.py.
 
     otpu-selftest                         # the card, /dev/xdma0
     otpu-selftest --sim                   # the board model (no hardware)

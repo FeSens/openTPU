@@ -24,12 +24,11 @@ Xilinx XDMA driver). `pip install -e .` installs its commands:
 | Command | What it does |
 |---|---|
 | `otpu-smi` | the cards' state, like nvidia-smi (section 7) |
-| `otpu-selftest` | staged bring-up (section 4); also `tools/board_selftest.py` |
-| `otpu-chat` | chat with Qwen3 on the card (section 5); also `tools/chat.py` |
+| `otpu-selftest` | staged bring-up (section 4) |
+| `otpu-chat` | chat with Qwen3 on the card (section 5) |
 | `otpu-lens` | Lens profiles from the card's hardware trace ([lens.md](lens.md)) |
 
-`host/` is a backward-compatible shim (`from host.board import ...` still works: `host.board`
-*is* `opentpu.host.board`); `host/setup_pcie.sh` stays there.
+Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens>` does the same.
 
 ## 1. Requirements
 
@@ -42,8 +41,8 @@ Xilinx XDMA driver). `pip install -e .` installs its commands:
 
 ## 2. Build and load the XDMA driver
 
-`host/setup_pcie.sh` does sections 2 and 3 in one go (finds the card, builds and loads the
-driver, adds the udev rule, reads the ID register); `host/setup_pcie.sh --rescan` after JTAG
+`opentpu/host/setup_pcie.sh` does sections 2 and 3 in one go (finds the card, builds and loads the
+driver, adds the udev rule, reads the ID register); `opentpu/host/setup_pcie.sh --rescan` after JTAG
 programming. The manual steps:
 
 ```sh
@@ -97,7 +96,7 @@ otpu-selftest --qwen models/Qwen3-0.6B        # plus the model, vs the ISA simul
 otpu-selftest --sim                           # rehearsal on the Verilator board model
 ```
 
-(`python3 tools/board_selftest.py ...` is the same without installing.)
+(`python3 -m opentpu.host.selftest ...` is the same without installing.)
 
 Stages, in order (it stops at the first failure and prints a hint):
 

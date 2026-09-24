@@ -1,4 +1,4 @@
-"""Bring-up checks shared by tools/board_selftest.py and tests/test_board.py."""
+"""Bring-up checks shared by otpu-selftest and tests/test_board.py."""
 from __future__ import annotations
 
 import dataclasses

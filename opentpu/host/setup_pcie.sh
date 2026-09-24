@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Host PC setup for the openTPU card (docs/host.md, sections 2-3), in one command:
 #
-#   host/setup_pcie.sh            # find the card, build/load the XDMA driver, udev rule, ID check
-#   host/setup_pcie.sh --rescan   # after JTAG programming: remove/rescan the card, reload the driver
+#   opentpu/host/setup_pcie.sh            # find the card, build/load the XDMA driver, udev rule, ID check
+#   opentpu/host/setup_pcie.sh --rescan   # after JTAG programming: remove/rescan the card, reload the driver
 #
 # Linux x86-64 only; asks for sudo where needed. Safe to re-run.
 set -euo pipefail
@@ -72,7 +72,7 @@ ls /dev/xdma0_user /dev/xdma0_h2c_0 /dev/xdma0_c2h_0 >/dev/null 2>&1 || \
 say "registers: ID at BAR offset 0"
 id="$(dd if=/dev/xdma0_user bs=4 count=1 2>/dev/null | od -An -tx4 | tr -d ' ')"
 if [[ "$id" == "4f545055" ]]; then
-  echo "   ID 0x$id (OTPU) -- next: python3 tools/board_selftest.py"
+  echo "   ID 0x$id (OTPU) -- next: otpu-selftest"
 else
   die "ID register reads 0x$id, want 0x4f545055: the PCIe link is up but the AXI-Lite path \
 to the accelerator is not (check the block design address map / core_clk / reset)"

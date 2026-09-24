@@ -1,7 +1,7 @@
 // Board-level simulation: otpu_board (control registers, slice, DRAM adapter) in front of the
 // two-channel AXI memory model holding the channels' physical images (ch0.bin, ch1.bin), driven
 // by a host script (+dir=<d>, <d>/host.txt) -- the same register and memory protocol the PCIe
-// host driver uses (host/board.py). Script lines:
+// host driver uses (opentpu/host/board.py). Script lines:
 //   W <addr> <value>          AXI-Lite write
 //   P <addr> <mask> <value>   poll until (read(addr) & mask) == value
 //   R <addr>                  read, printed as "REG <addr> <value>"

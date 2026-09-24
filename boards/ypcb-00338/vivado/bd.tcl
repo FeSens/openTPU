@@ -8,7 +8,7 @@
 # MIGs' calibration flags) and device_temp (MIG channel 0's XADC die-temperature code, 12 bits,
 # its ui_clk domain).
 # Address map (every master): MIG0 at 0x0000_0000, MIG1 at 0x8000_0000, 2 GiB each -- the map
-# of host/board.py and rtl/mem/otpu_axi_dram.sv.
+# of opentpu/host/board.py and rtl/mem/otpu_axi_dram.sv.
 #
 # Clock plan (50 MHz board oscillator, AA28 -> MMCM, VCO 800 MHz):
 #   core_clk   100.000 MHz  accelerator, control, interconnect core side (CORE_MHZ: 800 / D,

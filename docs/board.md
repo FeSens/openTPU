@@ -3,7 +3,7 @@
 The board build: one openTPU slice (D = 128, 2 MXU columns, 8 VPU lanes, 64K-word TMEM) on a
 Kintex-7 xc7k480t-ffg1156-2, with both DDR3 channels (2 x 2 GiB) behind Xilinx MIG
 controllers, and the host PC over PCIe Gen2 x8 (Xilinx XDMA). The host compiles each token's
-program, loads it and runs it; `tools/chat.py --backend board` chats with Qwen3-0.6B on it.
+program, loads it and runs it; `otpu-chat --backend board` chats with Qwen3-0.6B on it.
 
 ```
  host PC ── PCIe Gen2 x8 ── XDMA ──┬── AXI-Lite (BAR0) ─────────────── control registers ┐
@@ -15,7 +15,7 @@ program, loads it and runs it; `tools/chat.py --backend board` chats with Qwen3-
 
 Files: `rtl/boards/ypcb-00338/` (otpu_fpga_top, otpu_board, otpu_ctrl),
 `boards/ypcb-00338/` (constraints, Vivado Tcl, MIG generator, build and program scripts,
-self-test), `host/board.py` (driver).
+self-test), `opentpu/host/` (driver and tools, [host.md](host.md)).
 
 ## 1. Build the bitstream
 
@@ -92,7 +92,7 @@ ls /dev/xdma0_*                        # xdma0_user, xdma0_h2c_0, xdma0_c2h_0, .
 
 `/dev/xdma0_user` is BAR0 (the control registers), `/dev/xdma0_h2c_0` / `_c2h_0` move data
 to / from the DDR3 at the file offset = AXI address (MIG0 at 0, MIG1 at 0x8000_0000). The
-accelerator's logical DRAM is interleaved over the two channels in 64-byte beats; host/board.py
+accelerator's logical DRAM is interleaved over the two channels in 64-byte beats; opentpu/host/board.py
 applies the map (never write the channels directly except in the self-test).
 
 Python on the host: `pip install numpy torch transformers safetensors` (as for the simulator).
@@ -100,8 +100,8 @@ Python on the host: `pip install numpy torch transformers safetensors` (as for t
 ## 4. Self-test, then chat
 
 ```sh
-python3 tools/board_selftest.py                       # staged bring-up, see docs/host.md
-python3 tools/chat.py --backend board                  # chat with Qwen3-0.6B on the card
+otpu-selftest                                         # staged bring-up, see docs/host.md
+otpu-chat --backend board                              # chat with Qwen3-0.6B on the card
 ```
 
 The self-test runs the same checks against the Verilator model of the board with `--sim`

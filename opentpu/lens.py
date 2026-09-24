@@ -290,7 +290,7 @@ def isa_data(name: str, cfg, programs: list, images: list, uarch: dict | None = 
 
 
 def board_data(name: str, cfg, programs: list, stats: dict, uarch: dict | None = None) -> dict:
-    """Counters read from the card after a run (host/board.py Board.run)."""
+    """Counters read from the card after a run (opentpu.host.board Board.run)."""
     src = _Sources()
     per = []
     for prog in programs:
@@ -358,15 +358,6 @@ def render(doc_or_profiles, uarch: dict | None = None, title: str = "openTPU Len
     payload = json.dumps(doc, separators=(",", ":")).replace("</", "<\\/")
     html = APP.read_text()
     return html.replace("/*__DATA__*/null", payload).replace("__TITLE__", title)
-
-
-def write_report(profiles, path, uarch: dict | None = None, standalone: bool = True,
-                 title: str = "openTPU Lens") -> Path:
-    """Standalone HTML report of Profile objects or profile dicts (kept for tools/lens.py)."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render(profiles, uarch, title))
-    return path
 
 
 def serve(path, port: int = 0, open_browser: bool = True, block: bool = True):

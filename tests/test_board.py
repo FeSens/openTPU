@@ -1,4 +1,4 @@
-"""The host driver (host/board.py) and the board model (sim/verilator/tb_board.sv).
+"""The host driver (opentpu/host/board.py) and the board model (sim/verilator/tb_board.sv).
 
 The address-map tests are pure Python. The others drive the Verilator model of the board --
 control registers, program loader, slice, DRAM adapter, two-channel AXI memory -- through the
@@ -8,8 +8,8 @@ results bit for bit.
 import numpy as np
 import pytest
 
-from host.board import BASE, BEAT, Board, BoardBackend, SimTransport, join, split
-from host.checks import (address_lines, channel_patterns, masked_program, partial_writes,
+from opentpu.host.board import BASE, BEAT, Board, BoardBackend, SimTransport, join, split
+from opentpu.host.checks import (address_lines, channel_patterns, masked_program, partial_writes,
                          pattern_test, run_demo)
 from opentpu.isasim import board_config
 

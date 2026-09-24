@@ -5,9 +5,9 @@
 - **Model:** Qwen3-0.6B runs with real weights.
   - On the ISA simulator it matches Hugging Face.
   - On the RTL at the board configuration it is bit-exact with the ISA simulator.
-- **Bring-up rehearsal:** from a clean clone, `tools/board_selftest.py --sim --qwen models/Qwen3-0.6B` passed all 9 stages on the board model.
+- **Bring-up rehearsal:** from a clean clone, `otpu-selftest --sim --qwen models/Qwen3-0.6B` passed all 9 stages on the board model.
   - The model is `sim/verilator/tb_board.sv`: AXI-Lite registers, program loader, AXI adapter, two DDR3 channels with random stalls.
-  - The run went through the same host driver as the card (`host/board.py`).
+  - The run went through the same host driver as the card (`opentpu/host/board.py`).
   - Greedy decoding matched the ISA simulator token for token, at 6.38 Mcycles/token (about 15.7 tok/s at 100 MHz).
   - The rehearsal ran before the night's timing changes. They add a few cycles per instruction, and the per-token cycle count the tournaments track stayed within 0.2%.
 - **Full board, yosys estimate:**
@@ -22,6 +22,10 @@
   | Est. fmax | 41 MHz | 106 MHz |
 
   The estimate is `1000 / (1.6 * logic + 0.5)`, not signoff; Vivado gives the real number.
+
+  Since then (v0.3) the board has register map v2: free-running counters, die temperature and
+  a 16K-record hardware trace buffer (docs/observability.md). With them it is 85,594 LUT,
+  42,393 FF, 635 BRAM36 (the trace uses 32) and still an estimated 106 MHz (logic 5.61 ns).
 
 ## What changed overnight
 
@@ -46,7 +50,7 @@
 - **Build switches:**
   - `make bit CORE_MHZ=80` (or 75, 90): a slower accelerator clock if 100 MHz does not close.
   - `make bit MCOLS=4`: faster prefill and batched decode. Run the host with `OTPU_MCOLS=4`.
-- **Host:** `host/setup_pcie.sh` covers the XDMA driver, udev, rescan after JTAG and the ID check.
+- **Host:** `opentpu/host/setup_pcie.sh` covers the XDMA driver, udev, rescan after JTAG and the ID check.
 - **Vivado front-end audit:** no construct that is sure to break the build. The risky ones were fixed.
 
 ## Today, in order
@@ -64,9 +68,9 @@
    - Then look at `timing_worst.rpt`. By the yosys estimate the limit is now inside the quantizer (its writer into the ACT RAM). The next cross-unit limit is the TMEM arbiter: a combinational grant that drives the units' clock enables in the same cycle.
    - The structural fix for the arbiter is to arbitrate one cycle ahead (registered grants).
 4. **Program and bring up:**
-   - `make program`, then `host/setup_pcie.sh --rescan` on the PC.
-   - `python3 tools/board_selftest.py`, then `--qwen models/Qwen3-0.6B`.
-   - `tools/chat.py --backend board`.
+   - `make program`, then `opentpu/host/setup_pcie.sh --rescan` on the PC.
+   - `otpu-selftest`, then `--qwen models/Qwen3-0.6B`.
+   - `otpu-chat --backend board`.
 5. **First things to check on hardware** (docs/board.md section 6):
    - MIG calibration on both channels (channel 1 lanes 6–7 had read-capture trouble on the old SoC).
    - That the ECC mode does read-modify-write for partial writes (the self-test `pattern` stage checks it).
