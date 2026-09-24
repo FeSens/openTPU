@@ -58,9 +58,18 @@ module otpu_dma
     return int'((a % CW) / W);
   endfunction
 
+  // LD: the TMEM writes of the data arriving this cycle (lw_*) are registered (t_w*): the
+  // write lands one cycle later, so the DRAM read-valid path does not reach the TMEM arbiter
+  logic [LANES-1:0]       lw_en;
+  logic [LANES-1:0][31:0] lw_addr, lw_data;
+  always_ff @(posedge clk) begin
+    t_wen <= rst ? '0 : lw_en;
+    t_waddr <= lw_addr;
+    t_wdata <= lw_data;
+  end
   always_comb begin
     b_req = 1'b0; b_we = 1'b0; b_wmask = '0; b_wdata = '0; b_addr = '0;
-    t_ren = '0; t_raddr = '0; t_wen = '0; t_waddr = '0; t_wdata = '0;
+    t_ren = '0; t_raddr = '0; lw_en = '0; lw_addr = '0; lw_data = '0;
     if (busy && !is_st && !ackw) begin
       if (iss < nseg) begin
         b_req = 1'b1;
@@ -69,9 +78,9 @@ module otpu_dma
       if (b_rvalid) begin
         for (int l = 0; l < W; l++) begin
           if (rmask[l]) begin
-            t_wen[l] = 1'b1;
-            t_waddr[l] = rofs + 32'(l);
-            t_wdata[l] = b_rdata[32 * (pos_of(rw) * W + l) +: 32];
+            lw_en[l] = 1'b1;
+            lw_addr[l] = rofs + 32'(l);
+            lw_data[l] = b_rdata[32 * (pos_of(rw) * W + l) +: 32];
           end
         end
       end
@@ -99,9 +108,12 @@ module otpu_dma
     end
   end
 
+  logic ld_fin;                          // LD: the last data arrived (its write lands next cycle)
   always_ff @(posedge clk) begin
-    done <= 1'b0;
+    done <= ld_fin;                      // an LD is done once its last TMEM write has landed
+    ld_fin <= 1'b0;
     if (rst) begin
+      ld_fin <= 1'b0;
       busy <= 1'b0;
       st_pend <= 1'b0;
       ackw <= 1'b0;
@@ -142,7 +154,7 @@ module otpu_dma
           for (int l = 0; l < W; l++) rmask[l] <= in_rng(rw + W + 32'(l));
           if (cmp + 1 == nseg) begin
             busy <= 1'b0;
-            done <= 1'b1;
+            ld_fin <= 1'b1;
           end
         end
       end else if (adv) begin
