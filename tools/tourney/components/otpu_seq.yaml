@@ -1,6 +1,10 @@
 name: otpu_seq
 description: 'Sequencer: instruction fetch (IMEM block RAM), decode, loop stack, dispatch window with
-  the scoreboard (footprint conflicts), per-unit oldest-ready start, MXU two-phase release.'
+  the scoreboard (footprint conflicts), per-unit oldest-ready start, MXU two-phase release.
+  Known timing risk for Vivado: the fetch loop IMEM BRAM DO (no output register) -> row word
+  select (isel) -> op decode -> pc_n -> IMEM read address, all in one cycle; a design that
+  breaks it (prefetch / row buffer, next-row speculation, registered BRAM output) without
+  losing issue throughput on the perf proxy is the most valuable change.'
 allowed:
 - rtl/seq/otpu_seq.sv
 synth:
