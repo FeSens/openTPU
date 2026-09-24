@@ -136,7 +136,6 @@ module otpu_mxu
     logic       v;
     logic       last;     // last block of its row
     logic       first;    // block index < 4: the partial starts at +0
-    logic       fin;      // block index >= KB - 4: the partial is final after this block
     logic [1:0] q;        // block index mod 4
   } cm_t;
 
@@ -164,7 +163,6 @@ module otpu_mxu
       m0.v <= 1'b1;
       m0.last <= last_k;
       m0.first <= (ck < 16'(NPART));
-      m0.fin <= (32'(ck) + NPART >= 32'(c_KB));
       m0.q <= ck[1:0];
     end
     w0 <= f_data[f_head];
@@ -318,32 +316,29 @@ module otpu_mxu
     otpu_fadd #(.LAT(LA)) u_acc (.clk, .en(en_c), .a(prev), .b(t2[j]), .y(pacc[j]));
   end
 
-  // collect the final partials of a row; at its last block combine (p0+p2)+(p1+p3).
-  // The last block latches the combine operands into pset (its own slot <- pacc, slots the row
-  // never filled <- +0), so the adders read flops; pset's data input is always pacc.
-  f32_t       pset [MCOLS][NPART];
-  logic [NPART-1:0] pmask;
-  always_ff @(posedge clk) begin
-    if (rst) pmask <= '0;
-    else if (en_c && ma.v && ma.fin) begin
-      if (ma.last) pmask <= '0;
-      else pmask[ma.q] <= 1'b1;
-      for (int q = 0; q < NPART; q++)
-        for (int j = 0; j < MCOLS; j++)
-          if (ma.q == 2'(q)) pset[j][q] <= pacc[j];
-          else if (ma.last && !pmask[q]) pset[j][q] <= F_ZERO;
+  // combine a row's final partials: (p0+p2)+(p1+p3). Block k's partial meets its isum_4 partner,
+  // block k-2 (two advances earlier, same row: a row's blocks are consecutive advances); blocks
+  // k < 2 meet +0 (a slot the row never fills). One pair completes at block KB-2, the other at
+  // KB-1: consecutive advances, so one adder makes both, and the earlier sum waits a step in cy1
+  // (+0 when KB = 1: that pair is 0+0). The order within a pair may swap; fp_add commutes.
+  wire zb = !ma.v || ma.last || (ma.first && ma.q == 2'd0);   // the next block has k < 2
+  logic mid_y;                                                 // the block now at cy: not last
+  otpu_delay #(.W(1), .N(LA)) u_my (.clk, .en(en_c), .d(ma.v && !ma.last), .q(mid_y));
+  f32_t pp1 [MCOLS], pb [MCOLS], cy [MCOLS], cy1 [MCOLS], rowv [MCOLS];
+  always_ff @(posedge clk) if (en_c)
+    for (int j = 0; j < MCOLS; j++) begin
+      pp1[j] <= pacc[j];                          // block t
+      pb[j]  <= zb ? F_ZERO : pp1[j];             // block t-1: the partner of block t+1
+      cy1[j] <= mid_y ? cy[j] : F_ZERO;           // the earlier pair sum
     end
-  end
   wire launch = ma.v && ma.last;
-  f32_t c01 [MCOLS], c23 [MCOLS], rowv [MCOLS];
-  logic lv1, lv2;
+  logic lv2;
   for (genvar j = 0; j < MCOLS; j++) begin : g_comb
-    otpu_fadd #(.LAT(LA)) u_c01 (.clk, .en(en_c), .a(pset[j][0]), .b(pset[j][2]), .y(c01[j]));
-    otpu_fadd #(.LAT(LA)) u_c23 (.clk, .en(en_c), .a(pset[j][1]), .b(pset[j][3]), .y(c23[j]));
-    otpu_fadd #(.LAT(LA)) u_c (.clk, .en(en_c), .a(c01[j]), .b(c23[j]), .y(rowv[j]));
+    otpu_fadd #(.LAT(LA)) u_p (.clk, .en(en_c), .a(pacc[j]), .b(pb[j]), .y(cy[j]));
+    otpu_fadd #(.LAT(LA)) u_c (.clk, .en(en_c), .a(cy1[j]), .b(cy[j]), .y(rowv[j]));
   end
-  // one advance to latch pset, then the two adder levels
-  otpu_delay #(.W(1), .N(2 * LA + 1)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
+  // the two adder levels
+  otpu_delay #(.W(1), .N(2 * LA)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
 
   // ================================================================== result FIFO
   f32_t        rf_v [RF][MCOLS];
