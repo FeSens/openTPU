@@ -48,9 +48,13 @@ module otpu_trace
   perf_t      ev;
   logic [5:0] ev_n;                                    // events (trace lines) in ev
   always_ff @(posedge clk) begin
+    logic [5:0] n;
+    n = 6'(pf.sq.d) + 6'(pf.sq.g) + 6'(pf.u_mxu) + 6'(pf.u_q) + 6'(pf.u_vpu) + 6'(pf.h) +
+        6'({pf.w, 1'b0});
+    for (int u = 0; u < NUNITS; u++) n = n + 6'(pf.sq.s[u]);
+    for (int i = 0; i < 16; i++) n = n + 6'(pf.sq.e[i]);
     ev <= pf;
-    ev_n <= 6'(pf.sq.d) + 6'($countones(pf.sq.s)) + 6'(pf.sq.g) + 6'($countones(pf.sq.e)) +
-            6'(pf.u_mxu) + 6'(pf.u_q) + 6'(pf.u_vpu) + 6'(pf.h) + 6'({pf.w, 1'b0});
+    ev_n <= n;
     if (rst || clear || !en || stopped) begin
       ev.sq.d <= 1'b0; ev.sq.s <= '0; ev.sq.g <= 1'b0; ev.sq.e <= '0;
       ev.u_mxu <= 1'b0; ev.u_q <= 1'b0; ev.u_vpu <= 1'b0; ev.h <= 1'b0; ev.w <= 1'b0;

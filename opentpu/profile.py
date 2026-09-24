@@ -16,6 +16,10 @@ Trace events (printed by the RTL with +trace, one line each):
          window: port B / A requests waiting for the memory, MXU starved (chunk FIFO empty) or
          blocked (chunks but no consumption), summed MXU FIFO level, loader traffic
 
+The slice prints the lines a cycle after the fact, in a fixed order within a cycle (G, E, S, D,
+U, H, P, Q), from the same signals the board's hardware trace records (opentpu/hwtrace.py
+rebuilds these lines from the trace buffer; docs/observability.md).
+
 Roofline. Per slice the DRAM burst port (B) moves one D-byte chunk per cycle and the MXU
 consumes one chunk per cycle, so both the memory and the compute roof are "chunks per cycle".
 The bound for a program is the number of port-B transfers it needs (MM chunks + LD/ST bursts)

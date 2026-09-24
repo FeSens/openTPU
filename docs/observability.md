@@ -36,8 +36,9 @@ The version 1 registers keep their offsets.
 Build parameters (`make -C boards/ypcb-00338 bit`): CORE_KHZ is computed from CORE_MHZ the way
 the block design rounds it (the MMCM divides 800 MHz in steps of 1/8: 100 → 100000, 80 →
 80000, 75 → 75294); BUILD_ID is the first 8 hex digits of the git commit the bitstream was
-built from (`git rev-parse HEAD`; 0 if unknown; `make bit BUILD_ID=...` overrides). The board model (`sim/verilator/tb_board.sv`)
-reports CORE_KHZ 100000, BUILD_ID 0x0B0A4D00 and TEMP code 0xA1A (45 °C).
+built from (`git rev-parse HEAD`; 0 if unknown; `make bit BUILD_ID=...` overrides). The board
+model (`sim/verilator/tb_board.sv`) reports CORE_KHZ 100000, BUILD_ID 0x0B0A4D00 and TEMP code
+0xA1A (45 °C).
 
 ### Free-running counters
 
