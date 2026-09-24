@@ -281,29 +281,37 @@ module otpu_seq
   // ---- per-unit start: the oldest ready (all dependencies completed) instruction
   logic [NUNITS-1:0] can_start;
   logic [SW-1:0]     start_slot [NUNITS];
+  logic [WIN-1:0]    sel [NUNITS];           // the oldest candidate, one-hot (or none)
+  logic [NUNITS-1:0] cand_any;               // the unit has a candidate
+  logic [WIN-1:0]    mrdy, crdy;             // per slot: ready as the MXU / COLL oldest
   // (the oldest of a set: the member none of whose older slots is in the set -- an age matrix
-  // instead of comparing dispatch numbers, so the choice is parallel logic)
+  // instead of comparing dispatch numbers, so the choice is parallel logic). older is a strict
+  // total order over the valid slots, so sel has at most one bit; readiness is tested per slot
+  // in parallel with the selection and AND-ORed with sel -- no slot id on the can_start path
   always_comb begin
+    for (int i = 0; i < WIN; i++) begin
+      mrdy[i] = (sdepd[i] & ~same_started[U_MXU]) == '0;
+      crdy[i] = (sdep[i] & ~same_started[U_COLL]) == '0;
+    end
     for (int u = 0; u < NUNITS; u++) begin
-      logic found;
       logic [WIN-1:0] cand;
-      found = 1'b0; start_slot[u] = '0;
+      start_slot[u] = '0;
       // collectives pair up across slices, so the collective unit stays strictly in order:
       // it only considers its oldest instruction
       for (int i = 0; i < WIN; i++)
         cand[i] = sv[i] && !sstarted[i] && soh[i][u] &&
                   ((sdep[i] & ~same_started[u]) == '0 || u == U_COLL || u == U_MXU);
-      for (int i = 0; i < WIN; i++)
-        if (cand[i] && (older[i] & cand) == '0) begin
-          found = 1'b1;
-          start_slot[u] = SW'(i);
-        end
+      for (int i = 0; i < WIN; i++) begin
+        sel[u][i] = cand[i] && (older[i] & cand) == '0;
+        if (sel[u][i]) start_slot[u] |= SW'(i);
+      end
+      cand_any[u] = |cand;
       if (u == U_MXU)
-        can_start[u] = found && (sdepd[start_slot[u]] & ~same_started[u]) == '0 && urdy[u] &&
-                       !ustart[u];
-      else
-        can_start[u] = found && (sdep[start_slot[u]] & ~same_started[u]) == '0 && urdy[u] &&
-                       !ustart[u];
+        can_start[u] = |(sel[u] & mrdy) && urdy[u] && !ustart[u];
+      else if (u == U_COLL)
+        can_start[u] = |(sel[u] & crdy) && urdy[u] && !ustart[u];
+      else    // cand already requires readiness
+        can_start[u] = cand_any[u] && urdy[u] && !ustart[u];
     end
   end
 
@@ -368,10 +376,16 @@ module otpu_seq
         end
       // starts
       for (int u = 0; u < NUNITS; u++) begin
+`ifndef SYNTHESIS
+        // the age matrix orders every pair of candidates: exactly one oldest when any
+        if (!$onehot0(sel[u]) || cand_any[u] != |sel[u])
+          $fatal(1, "otpu_seq: unit %0d oldest-candidate select %b is not one-hot", u, sel[u]);
+`endif
+        for (int i = 0; i < WIN; i++)
+          if (can_start[u] && sel[u][i]) sstarted[i] <= 1'b1;
         if (can_start[u]) begin
           ustart[u] <= 1'b1;
           ucmd[u] <= scmd[start_slot[u]];
-          sstarted[start_slot[u]] <= 1'b1;
           uq[u][uq_t[u][SW-1:0]] <= start_slot[u];
           uq_t[u] <= uq_t[u] + 1;
 `ifndef SYNTHESIS
