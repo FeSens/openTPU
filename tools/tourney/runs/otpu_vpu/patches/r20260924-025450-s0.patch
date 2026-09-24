@@ -1,0 +1,76 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index a71d96a..608f86a 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -552,19 +552,23 @@ module otpu_vpu
+   logic [6:0]    is_i, is_n;
+   f32_t          tr_y [LANES];
+   logic [LANES-1:0] tr_m;
+-  logic [6:0]    tr_dst_q [LA];
+-  logic [TBW-1:0] tr_b_q [LA];
+-  logic [LANES-1:0] tr_v_q [LA];
++  // the tree adders' operands are registered (oa_q, ob_q), so an add retires LT cycles after
++  // its pb read
++  localparam int LT = LA + 1;
++  logic [6:0]    tr_dst_q [LT];
++  logic [TBW-1:0] tr_b_q [LT];
++  logic [LANES-1:0] tr_v_q [LT];
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+     logic [6:0] ia, ib;
+     assign ia = is_i + 7'(k);
+     assign ib = ia + is_n;
+     assign tr_m[k] = is_go && (ia < is_n);
+-    f32_t oa, ob;
++    f32_t oa, ob, oa_q, ob_q;
+     assign oa = pb[is_b][ia[5:0] >> LW][k];
+     assign ob = (is_n >= 7'(LANES)) ? pb[is_b][ib[5:0] >> LW][k]
+                                     : pb[is_b][0][ib[LW-1:0]];
+-    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
++    always_ff @(posedge clk) if (ent) begin oa_q <= oa; ob_q <= ob; end
++    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa_q), .b(ob_q), .y(tr_y[k]));
+   end
+ 
+   // finished rows wait here for the (single) TMEM write lane
+@@ -636,7 +640,7 @@ module otpu_vpu
+       cyc <= '0;
+       tb_act <= '0;
+       rq_n <= '0;
+-      for (int k = 0; k < LA; k++) tr_v_q[k] <= '0;
++      for (int k = 0; k < LT; k++) tr_v_q[k] <= '0;
+       is_go <= 1'b0;
+     end else begin
+       logic [3:0] ewn;
+@@ -677,7 +681,7 @@ module otpu_vpu
+             tb_act <= '0; cap_sel <= '0; rq_n <= '0; rq_h <= '0; rows_done <= '0;
+             for (int bb = 0; bb < NTB; bb++) tb_inf[bb] <= '0;
+             mx_have <= 1'b0;
+-            for (int k = 0; k < LA; k++) tr_v_q[k] <= '0;
++            for (int k = 0; k < LT; k++) tr_v_q[k] <= '0;
+             is_go <= 1'b0;
+           end else begin
+             ewn = ewn + 1;
+@@ -752,13 +756,13 @@ module otpu_vpu
+         tr_v_q[0] <= tr_m;
+         tr_dst_q[0] <= is_i;
+         tr_b_q[0] <= is_b;
+-        for (int k = 1; k < LA; k++) begin
++        for (int k = 1; k < LT; k++) begin
+           tr_v_q[k] <= tr_v_q[k-1];
+           tr_dst_q[k] <= tr_dst_q[k-1];
+           tr_b_q[k] <= tr_b_q[k-1];
+         end
+         for (int k = 0; k < LANES; k++)
+-          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][tr_dst_q[LA-1][5:0] >> LW][k] <= tr_y[k];
++          if (tr_v_q[LT-1][k]) pb[tr_b_q[LT-1]][tr_dst_q[LT-1][5:0] >> LW][k] <= tr_y[k];
+         for (int bb = 0; bb < NTB; bb++) begin
+           logic [2:0] inf;
+           inf = tb_inf[bb];
+@@ -766,7 +770,7 @@ module otpu_vpu
+             inf = inf + 1;
+             tb_i[bb] <= tb_i[bb] + 7'(LANES);
+           end
+-          if (tr_v_q[LA-1] != 0 && tr_b_q[LA-1] == TBW'(bb)) inf = inf - 1;
++          if (tr_v_q[LT-1] != 0 && tr_b_q[LT-1] == TBW'(bb)) inf = inf - 1;
+           tb_inf[bb] <= inf;
+           // ---- level done: next level, or the root is ready (one per cycle)
+           if (tb_act[bb] && tb_i[bb] >= tb_n[bb] && tb_inf[bb] == 0 &&

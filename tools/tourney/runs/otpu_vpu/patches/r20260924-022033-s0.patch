@@ -1,0 +1,28 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 0a29d43..f2b2fdd 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -506,13 +506,19 @@ module otpu_vpu
+ 
+   // ------------------------------------------------------------------ RSUM / RSSQ
+   f32_t  pacc [LANES];                  // partial after adding this chunk's term
+-  rm_t   mtq, mt;                       // meta at the adder inputs / aligned with `pacc`
+-  otpu_delay #(.W($bits(rm_t)), .N(LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
++  rm_t   mtq, mt;                       // meta at the adder inputs (operand reg + LM) / aligned with `pacc`
++  otpu_delay #(.W($bits(rm_t)), .N(LM + 1)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
+   otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
+   for (genvar l = 0; l < LANES; l++) begin : g_red
+-    f32_t xin, tq, prev, fb;
++    f32_t xin, sqa, sqb, tq, prev, fb;
+     assign xin = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
+-    otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xin), .b((m0.func == V_RSSQ) ? xin : F_ONE), .y(tq));
++    // the squarer's operands from flip-flops: the mask / flush / RSSQ select would otherwise
++    // sit in front of the multiplier's DSP cascade
++    always_ff @(posedge clk) if (en) begin
++      sqa <= xin;
++      sqb <= (m0.func == V_RSSQ) ? xin : F_ONE;
++    end
++    otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(sqa), .b(sqb), .y(tq));
+     // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
+     otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
+     assign prev = mtq.first ? F_ZERO : fb;

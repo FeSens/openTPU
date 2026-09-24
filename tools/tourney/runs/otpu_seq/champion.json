@@ -1,0 +1,31 @@
+{
+ "lut": 15742,
+ "lutram": 872,
+ "ff": 9274,
+ "dsp": 8,
+ "bram36": 0,
+ "bram18": 57,
+ "carry4": 1613,
+ "logic_ns": 4.685,
+ "fmax": 125.06253126563283,
+ "backend": "yosys",
+ "log": "/Users/bonetto/bonetto/openTPU/build/tourney/otpu_seq/champ-038454921/otpu_seq/yosys.log",
+ "area_eq": 23851.0,
+ "parts": {
+  "otpu_seq": {
+   "lut": 15742,
+   "lutram": 872,
+   "ff": 9274,
+   "dsp": 8,
+   "bram36": 0,
+   "bram18": 57,
+   "carry4": 1613,
+   "logic_ns": 4.685,
+   "fmax": 125.06253126563283,
+   "backend": "yosys"
+  }
+ },
+ "perf_cycles": 1912272,
+ "sha": "038454921bad961c4e940de63ae4759511956f9a",
+ "critical": "[otpu_seq]\nLatest arrival time in 'otpu_seq' is 4685:\n    4685 $auto$ff.cc:337:slice$170583 (FDRE.R)\n           $abc$641603$auto$rtlil.cc:3492:NotGate$172035\n    4281 $abc$641603$lut$auto$rtlil.cc:3492:NotGate$172035 (LUT4.I3->O)\n           $techmap652035$abc$641603$lut$aiger641602$102830.A [1]\n    4154 $abc$641603$lut$aiger641602$41932 (LUT5.I2->O)\n           $techmap652034$abc$641603$lut$aiger641602$41932.A [2]\n    3747 $abc$641603$lut$aiger641602$41927 (LUT6.I5->O)\n           $techmap652033$abc$641603$lut$aiger641602$41927.A [5]\n    3620 $abc$641603$lut$aiger641602$41921 (LUT4.I3->O)\n           $techmap652031$abc$641603$lut$aiger641602$41921.A [3]\n    3493 $abc$641603$lut$aiger641602$41835 (LUT5.I0->O)\n           $techmap650375$auto$abc9_ops.cc:1613:reintegrate$642971.A [1]\n    2862 $auto$alumacc.cc:512:replace_alu$28059.genblk1.slice[7].genblk1.carry4 (CARRY4.CI->O)\n           $abc$641603$aiger641602$29269\n    2623 $auto$alumacc.cc:512:replace_alu$28059.genblk1.slice[6].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$641603$aiger641602$29253\n    2509 $auto$alumacc.cc:512:replace_alu$28059.genblk1.slice[5].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$641603$aiger641602$29237\n    2395 $auto$alumacc.cc:512:replace_alu$28059.genblk1.slice[4].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$641603$aiger641602$29221\n    2281 $auto$alumacc.cc:512:replace_alu$28059.genblk1.slice[3].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$641603$aiger641602$29205\n    2167 $auto$alumacc.cc:512:replace_alu$28059.genblk1.slice[2].genblk1.carry4 (CARRY4.S->CO)\n           $techmap650692$auto$abc9_ops.cc:1613:reintegrate$642678.A [1]\n    1639 $auto$alumacc.cc:512:replace_alu$28107.genblk1.slice[2].genblk1.carry4 (CARRY4.CI->O)\n           $abc$641603$aiger641602$29181\n    1305 $auto$alumacc.cc:512:replace_alu$28107.genblk1.slice[1].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$641603$aiger641602$29165\n    1191 $auto$alumacc.cc:512:replace_alu$28107.genblk1.slice[0].genblk1.carry4 (CARRY4.S->CO)\n           $abc$641603$aiger641602$41524b\n     663 $auto$abc9_ops.cc:1613:reintegrate$643031 (LUT2.I0->O)\n           \\q_pr [65]\n     425 $5124 (DSP48E1.CLK->P)\n           $auto$clkbufmap.cc:294:execute$663151\n      96 $auto$clkbufmap.cc:261:execute$663149 (BUFG.I->O)\n       0   \\clk (<primary input>)\nArrival histogram:\n legend: * represents 22 endpoint(s)\n         + represents [1,22) endpoint(s)\n(  4687,   4470] |+\n(  4470,   4253] |***+\n(  4253,   4036] | \n(  4036,   3819] |+\n(  3819,   3602] |+\n(  3602,   3385] |****+\n(  3385,   3168] |****************+"
+}

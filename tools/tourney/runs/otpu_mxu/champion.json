@@ -1,0 +1,31 @@
+{
+ "lut": 10207,
+ "lutram": 427,
+ "ff": 4044,
+ "dsp": 142,
+ "bram36": 1,
+ "bram18": 57,
+ "carry4": 785,
+ "logic_ns": 4.777,
+ "fmax": 122.80184693977797,
+ "backend": "yosys",
+ "log": "/Users/bonetto/bonetto/openTPU/build/tourney/otpu_mxu/champ-bd756f1a5/otpu_mxu/yosys.log",
+ "area_eq": 20696.0,
+ "parts": {
+  "otpu_mxu": {
+   "lut": 10207,
+   "lutram": 427,
+   "ff": 4044,
+   "dsp": 142,
+   "bram36": 1,
+   "bram18": 57,
+   "carry4": 785,
+   "logic_ns": 4.777,
+   "fmax": 122.80184693977797,
+   "backend": "yosys"
+  }
+ },
+ "perf_cycles": 1912160,
+ "sha": "bd756f1a5311958c25aaed0c47ffa9a5bbf3c7e5",
+ "critical": "[otpu_mxu]\nLatest arrival time in 'otpu_mxu' is 4777:\n    4777 $auto$ff.cc:337:slice$18779 (FDRE.CE)\n           $abc$370699$auto$opt_dff.cc:234:make_patterns_logic$17507\n    4668 $auto$abc9_ops.cc:1613:reintegrate$371245 (LUT5.I2->O)\n           $techmap379634$auto$abc9_ops.cc:1613:reintegrate$371279.A [2]\n    4261 $abc$370699$lut$aiger370698$51398 (LUT2.I1->O)\n           $techmap379633$abc$370699$lut$aiger370698$51398.A [1]\n    4134 $abc$370699$lut$aiger370698$51397 (LUT6.I5->O)\n           $techmap379632$abc$370699$lut$aiger370698$51397.A [5]\n    4007 $3371.genblk1.slice[2].genblk1.carry4 (CARRY4.CI->O)\n           $abc$370699$aiger370698$16219\n    3694 $3371.genblk1.slice[1].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$370699$aiger370698$16211\n    3580 $3371.genblk1.slice[0].genblk1.carry4 (CARRY4.S->CO)\n           $abc$370699$aiger370698$51349\n    3052 $abc$370699$lut$aiger370698$51349 (LUT4.I0->O)\n           $techmap381592$abc$370699$lut$aiger370698$51349.A [0]\n    2580 $abc$370699$lut$aiger370698$51346 (LUT4.I3->O)\n           $techmap381591$abc$370699$lut$aiger370698$51346.A [3]\n    2453 $abc$370699$lut$aiger370698$51331 (LUT4.I3->O)\n           $techmap373987$abc$370699$lut$aiger370698$51108.A [4]\n    2326 $abc$370699$lut$aiger370698$50823 (LUT5.I0->O)\n           $techmap373986$abc$370699$lut$aiger370698$50823.A [0]\n    1695 $abc$370699$lut$aiger370698$50805 (LUT3.I2->O)\n           \\u_rw.g_regs.qr [0]\n    1568 $auto$ff.cc:337:slice$19961 (SRL16E.CLK->Q)\n           \\g_col[0].u_acc.clk\n      96 $auto$clkbufmap.cc:261:execute$384521 (BUFG.I->O)\n       0   \\clk (<primary input>)\nArrival histogram:\n legend: * represents 41 endpoint(s)\n         + represents [1,41) endpoint(s)\n(  4780,   4541] |*+\n(  4541,   4302] |******+\n(  4302,   4063] |*+\n(  4063,   3824] |**************************+\n(  3824,   3585] |*****+\n(  3585,   3346] |*********+\n(  3346,   3107] |*****+\n(  3107,   2868] |************************************************************ \n(  2868,   2629] |******************+\n(  2629,   2390] |*****************************************+\n(  2390,   2151] |*****************************+\n(  2151,   1912] |*****+\n(  1912,   1673] |****+\n(  1673,   1434] |****+\n(  1434,   1195] |***+"
+}

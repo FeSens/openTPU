@@ -1,0 +1,31 @@
+{
+ "lut": 2548,
+ "lutram": 3016,
+ "ff": 730,
+ "dsp": 0,
+ "bram36": 0,
+ "bram18": 0,
+ "carry4": 90,
+ "logic_ns": 3.315,
+ "fmax": 172.2949689869056,
+ "backend": "yosys",
+ "log": "/Users/bonetto/bonetto/openTPU/build/tourney/otpu_axi_dram/champ-b23252af6/otpu_axi_dram/yosys.log",
+ "area_eq": 5929.0,
+ "parts": {
+  "otpu_axi_dram": {
+   "lut": 2548,
+   "lutram": 3016,
+   "ff": 730,
+   "dsp": 0,
+   "bram36": 0,
+   "bram18": 0,
+   "carry4": 90,
+   "logic_ns": 3.315,
+   "fmax": 172.2949689869056,
+   "backend": "yosys"
+  }
+ },
+ "perf_cycles": 1912248,
+ "sha": "b23252af60ad90fb100d04cfce8696395eda5cdd",
+ "critical": "[otpu_axi_dram]\nLatest arrival time in 'otpu_axi_dram' is 3315:\n    3315 $auto$ff.cc:337:slice$5763 (FDRE.D)\n           $auto$alumacc.cc:512:replace_alu$2918.Y [13]\n    3315 $auto$alumacc.cc:512:replace_alu$2918.genblk1.slice[3].genblk1.carry4 (CARRY4.CI->O)\n           $abc$219175$aiger219174$7220\n    2981 $auto$alumacc.cc:512:replace_alu$2918.genblk1.slice[2].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$219175$aiger219174$7212\n    2867 $auto$alumacc.cc:512:replace_alu$2918.genblk1.slice[1].genblk1.carry4 (CARRY4.S->CO)\n           $abc$219175$aiger219174$12901b\n    2339 $auto$abc9_ops.cc:1613:reintegrate$220755 (LUT2.I1->O)\n           $techmap221795$auto$abc9_ops.cc:1613:reintegrate$220757.A [1]\n    2212 $auto$maccmap.cc:240:synth$5659.genblk1.slice[0].genblk1.carry4 (CARRY4.S->O)\n           $abc$219175$aiger219174$12503b\n    1594 $auto$abc9_ops.cc:1613:reintegrate$220760 (LUT4.I1->O)\n           $techmap221787$auto$abc9_ops.cc:1613:reintegrate$220763.A [1]\n    1187 $abc$219175$lut$aiger219174$12114 (LUT2.I1->O)\n           $techmap221743$abc$219175$lut$aiger219174$12341.A [1]\n    1060 $abc$219175$lut$aiger219174$12113 (LUT3.I2->O)\n           $techmap221670$abc$219175$lut\\qb_push[0].A [1]\n     933 $abc$219175$lut$aiger219174$11976 (LUT2.I1->O)\n           \\b_rdy\n     806 $abc$219175$lut\\b_rdy (LUT3.I0->O)\n           \\bt_n [7]\n     399 $auto$ff.cc:337:slice$5748 (FDRE.C->Q)\n           $auto$clkbufmap.cc:294:execute$224230\n      96 $auto$clkbufmap.cc:261:execute$224228 (BUFG.I->O)\n       0   \\clk (<primary input>)\nArrival histogram:\n legend: * represents 13 endpoint(s)\n         + represents [1,13) endpoint(s)\n(  3320,   3154] |+\n(  3154,   2988] |+\n(  2988,   2822] |+\n(  2822,   2656] |+\n(  2656,   2490] |+\n(  2490,   2324] |************************************************************ \n(  2324,   2158] |***************************+\n(  2158,   1992] |**+\n(  1992,   1826] |***+\n(  1826,   1660] |*+\n(  1660,   1494] |*+\n(  1494,   1328] |*+\n(  1328,   1162] |*****+\n(  1162,    996] |*******************************************+\n(   996,    830] |+\n(   830,    664] |+\n(   664,    498] |+"
+}

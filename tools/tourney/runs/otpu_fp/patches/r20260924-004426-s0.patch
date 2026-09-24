@@ -1,0 +1,66 @@
+diff --git a/rtl/vpu/otpu_fp.sv b/rtl/vpu/otpu_fp.sv
+index 33d0aad..0650b1c 100644
+--- a/rtl/vpu/otpu_fp.sv
++++ b/rtl/vpu/otpu_fp.sv
+@@ -49,7 +49,7 @@ package otpu_fp;
+     return (a[30:23] == 8'hFF) && (a[22:0] != 0);
+   endfunction
+ 
+-  // Leading-zero counts as balanced trees (a priority chain is too slow for the FPGA clock).
++  // Leading-zero count as a balanced tree (a priority chain is too slow for the FPGA clock).
+   function automatic logic [5:0] lzc32(input logic [31:0] m);
+     logic [4:0] n;
+     logic [31:0] x;
+@@ -63,10 +63,6 @@ package otpu_fp;
+     return {1'b0, n};
+   endfunction
+ 
+-  function automatic logic [5:0] lzc27(input logic [26:0] m);
+-    return lzc32({m, 5'b11111});             // at most 27 for a nonzero... (m == 0 -> 27)
+-  endfunction
+-
+   // |x[k-1:0]| for a variable k (0..32)
+   function automatic logic sticky_below(input logic [31:0] x, input logic [5:0] k);
+     logic [31:0] mask;
+@@ -209,30 +205,24 @@ package otpu_fp;
+     return q;
+   endfunction
+ 
++  // One normalize for add and subtract over the 28-bit sum. Adding: lz is 0 (carry out) or 1
++  // (|a| >= |b| and a normal give sum[26]; both zero gives lz = 28, e < 0, a signed zero in s4).
++  // Subtracting: sum[27] == 0, so lz >= 1 and sh[0] == 0.
+   function automatic fadd_nm_t fp_add_s3(input fadd_p2_t q);
+     fadd_nm_t n;
+-    int lz;
++    logic [5:0]  lz;
++    logic [27:0] sh;
+     n.sp = q.sp;
+     n.sv = q.sv;
+     n.s = q.sa;
+-    n.e = 10'(q.e);
+-    n.mn = '0;
+-    if (!q.sub) begin
+-      if (q.sum[27]) begin
+-        n.mn = {q.sum[27:2], q.sum[1] | q.sum[0]};
+-        n.e = n.e + 1;
+-      end else begin
+-        n.mn = q.sum[26:0];
+-      end
+-    end else begin
+-      if (q.sum == 0 && !q.sp) begin
+-        n.sp = 1'b1;
+-        n.sv = FADD_SV_ZERO;
+-      end
+-      lz = int'(lzc27(q.sum[26:0]));
+-      n.mn = q.sum[26:0] << lz;
+-      n.e = n.e - 10'(lz);
++    if (q.sub && q.sum == 0 && !q.sp) begin      // exact cancellation -> +0
++      n.sp = 1'b1;
++      n.sv = FADD_SV_ZERO;
+     end
++    lz = lzc32({q.sum, 4'b1111});
++    sh = q.sum << lz;
++    n.mn = {sh[27:2], sh[1] | sh[0]};            // sh[0] is sum[0] only when lz == 0
++    n.e = (10'(q.e) + 10'sd1) - 10'(lz);         // the +1 is on early bits, off the lz path
+     return n;
+   endfunction

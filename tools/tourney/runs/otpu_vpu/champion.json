@@ -1,0 +1,31 @@
+{
+ "lut": 26721,
+ "lutram": 2222,
+ "ff": 14924,
+ "dsp": 52,
+ "bram36": 0,
+ "bram18": 0,
+ "carry4": 2029,
+ "logic_ns": 4.467,
+ "fmax": 130.7668166126164,
+ "backend": "yosys",
+ "log": "/Users/bonetto/bonetto/openTPU/build/tourney/otpu_vpu/champ-a3630dd56/otpu_vpu/yosys.log",
+ "area_eq": 38485.0,
+ "parts": {
+  "otpu_vpu": {
+   "lut": 26721,
+   "lutram": 2222,
+   "ff": 14924,
+   "dsp": 52,
+   "bram36": 0,
+   "bram18": 0,
+   "carry4": 2029,
+   "logic_ns": 4.467,
+   "fmax": 130.7668166126164,
+   "backend": "yosys"
+  }
+ },
+ "perf_cycles": 1912187,
+ "sha": "a3630dd560893d168c95acb905215d33e36b71e8",
+ "critical": "[otpu_vpu]\nLatest arrival time in 'otpu_vpu' is 4467:\n    4467 $auto$ff.cc:337:slice$68772 (FDRE.D)\n           $auto$alumacc.cc:512:replace_alu$33436.Y [5]\n    4467 $auto$alumacc.cc:512:replace_alu$33436.genblk1.slice[1].genblk1.carry4 (CARRY4.CI->O)\n           $abc$957617$aiger957616$41797\n    4133 $auto$alumacc.cc:512:replace_alu$33436.genblk1.slice[0].genblk1.carry4 (CARRY4.DI->CO)\n           $auto$alumacc.cc:512:replace_alu$33436.A [0]\n    3607 $abc$957617$lut$auto$alumacc.cc:512:replace_alu$33436.A[0] (LUT3.I2->O)\n           $techmap981843$abc$957617$lut$auto$alumacc.cc:512:replace_alu$33436.A[0].A [2]\n    3480 $12619.genblk1.slice[2].genblk1.carry4 (CARRY4.CI->O)\n           $abc$957617$aiger957616$32265\n    3167 $12619.genblk1.slice[1].genblk1.carry4 (CARRY4.CI->CO)\n           $abc$957617$aiger957616$32257\n    3053 $12619.genblk1.slice[0].genblk1.carry4 (CARRY4.S->CO)\n           $abc$957617$aiger957616$67560\n    2525 $abc$957617$lut$aiger957616$67560 (LUT6.I0->O)\n           $techmap967794$auto$abc9_ops.cc:1613:reintegrate$964413.A [0]\n    1883 $abc$957617$lut$aiger957616$55951 (LUT6.I5->O)\n           $techmap967767$auto$abc9_ops.cc:1613:reintegrate$964414.A [5]\n    1756 $abc$957617$lut$aiger957616$55923 (LUT2.I1->O)\n           $techmap967766$abc$957617$lut$aiger957616$55923.A [1]\n    1629 $abc$957617$lut$aiger957616$55916 (LUT4.I3->O)\n           $techmap967764$abc$957617$lut$aiger957616$55916.A [3]\n    1502 $abc$957617$lut$aiger957616$55895 (LUT4.I0->O)\n           $techmap967760$abc$957617$lut$aiger957616$55895.A [0]\n    1030 $abc$957617$lut$aiger957616$55892 (LUT5.I0->O)\n           \\g_tree[0].u_tree.r [27]\n     399 $auto$ff.cc:337:slice$63683 (FDRE.C->Q)\n           \\g_lane[0].g_slot[0].g_k1.u_k1.clk\n      96 $auto$clkbufmap.cc:261:execute$997807 (BUFG.I->O)\n       0   \\clk (<primary input>)\nWarning: Endpoint otpu_vpu.$techmap26204$32.A [1] has no (* sta_arrival *) value.\nWarning: Endpoint otpu_vpu.$techmap26204$32.A [2] has no (* sta_arrival *) value.\nWarning: Endpoint otpu_vpu.$techmap26751$12959.genblk1.genblk1.G_ has no (* sta_arrival *) value.\nWarning: Endpoint otpu_vpu.$$234.$3.$3.nchunks$12968 [14] has no (* sta_arrival *) value.\nWarning: Endpoint otpu_vpu.$$234.$3.$3.nchunks$12968 [15] has no (* sta_arrival *) value.\nWarning: Endpoint otpu_vpu.$techmap27478$32.A has no (* sta_arrival *) value.\nArrival histogram:\n legend: * represents 44 endpoint(s)\n         + represents [1,44) endpoint(s)\n(  4480,   4256] |*****************************+\n(  4256,   4032] |****+\n(  4032,   3808] |*********+\n(  3808,   3584] |***********************+\n(  3584,   3360] |******************************+\n(  3360,   3136] |***********************+\n(  3136,   2912] |**************************************+"
+}

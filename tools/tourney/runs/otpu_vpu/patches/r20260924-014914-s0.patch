@@ -1,0 +1,73 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index a71d96a..31c703c 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -546,24 +546,26 @@ module otpu_vpu
+       end
+   end
+   // issue register: the selected buffer and its pair range; pb is read the next cycle (the
+-  // issue counts as in flight from selection, so a level never reads before its inputs land)
++  // issue counts as in flight from selection, so a level never reads before its inputs land).
++  // The pair range is registered already decoded into rows/lanes: tb_i is a multiple of LANES
++  // and tb_n a power of two (tb_i < tb_n), so pair i + k reads row i / LANES, pair i + n + k
++  // reads row (i | n) / LANES when n >= LANES, and levels n < LANES only issue at i == 0.
+   logic          is_go;
+   logic [TBW-1:0] is_b;
+-  logic [6:0]    is_i, is_n;
++  logic [5-LW:0] is_ra, is_rb;              // rows of operands a (and the write) and b
++  logic          is_big;                    // n >= LANES: add rows of one lane
++  logic [LW-1:0] is_nl;                     // n when n < LANES
++  logic [LANES-1:0] is_lm;                  // lanes with a pair (k < n)
+   f32_t          tr_y [LANES];
+   logic [LANES-1:0] tr_m;
+-  logic [6:0]    tr_dst_q [LA];
++  logic [5-LW:0] tr_dst_q [LA];
+   logic [TBW-1:0] tr_b_q [LA];
+   logic [LANES-1:0] tr_v_q [LA];
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+-    logic [6:0] ia, ib;
+-    assign ia = is_i + 7'(k);
+-    assign ib = ia + is_n;
+-    assign tr_m[k] = is_go && (ia < is_n);
++    assign tr_m[k] = is_go && is_lm[k];
+     f32_t oa, ob;
+-    assign oa = pb[is_b][ia[5:0] >> LW][k];
+-    assign ob = (is_n >= 7'(LANES)) ? pb[is_b][ib[5:0] >> LW][k]
+-                                    : pb[is_b][0][ib[LW-1:0]];
++    assign oa = pb[is_b][is_ra][k];
++    assign ob = is_big ? pb[is_b][is_rb][k] : pb[is_b][0][LW'(k) + is_nl];
+     otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
+   end
+ 
+@@ -747,10 +749,19 @@ module otpu_vpu
+         // ---- tree adds
+         is_go <= tr_go;
+         is_b <= tr_b;
+-        is_i <= tb_i[tr_b];
+-        is_n <= tb_n[tr_b];
++        is_ra <= tb_i[tr_b][5:LW];
++        is_rb <= tb_i[tr_b][5:LW] | tb_n[tr_b][5:LW];
++        is_big <= (tb_n[tr_b] >= 7'(LANES));
++        is_nl <= tb_n[tr_b][LW-1:0];
++        for (int k = 0; k < LANES; k++) is_lm[k] <= (tb_n[tr_b] > 7'(k));
++`ifndef SYNTHESIS
++        if (tr_go && !(tb_i[tr_b][LW-1:0] == 0 && $onehot(tb_n[tr_b]) &&
++                       tb_i[tr_b] < tb_n[tr_b] && (tb_n[tr_b] >= 7'(LANES) || tb_i[tr_b] == 0)))
++          $fatal(1, "otpu_vpu: tree issue i=%0d n=%0d breaks the row/lane select invariants",
++                 tb_i[tr_b], tb_n[tr_b]);
++`endif
+         tr_v_q[0] <= tr_m;
+-        tr_dst_q[0] <= is_i;
++        tr_dst_q[0] <= is_ra;
+         tr_b_q[0] <= is_b;
+         for (int k = 1; k < LA; k++) begin
+           tr_v_q[k] <= tr_v_q[k-1];
+@@ -758,7 +769,7 @@ module otpu_vpu
+           tr_b_q[k] <= tr_b_q[k-1];
+         end
+         for (int k = 0; k < LANES; k++)
+-          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][tr_dst_q[LA-1][5:0] >> LW][k] <= tr_y[k];
++          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][tr_dst_q[LA-1]][k] <= tr_y[k];
+         for (int bb = 0; bb < NTB; bb++) begin
+           logic [2:0] inf;
+           inf = tb_inf[bb];

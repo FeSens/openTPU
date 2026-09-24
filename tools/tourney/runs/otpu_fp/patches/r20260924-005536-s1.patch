@@ -1,0 +1,63 @@
+diff --git a/rtl/vpu/otpu_fp.sv b/rtl/vpu/otpu_fp.sv
+index 185e38a..ba971c8 100644
+--- a/rtl/vpu/otpu_fp.sv
++++ b/rtl/vpu/otpu_fp.sv
+@@ -63,8 +63,22 @@ package otpu_fp;
+     return {1'b0, n};
+   endfunction
+ 
+-  function automatic logic [5:0] lzc28(input logic [27:0] m);
+-    return lzc32({m, 4'b1111});              // at most 27 for a nonzero... (m == 0 -> 28)
++  // Normalize while counting: the shift stages of the leading-zero search are the normalize
++  // shifter (one mux chain, not an LZC plus a separate barrel shifter). m == 0 -> n = 31, y = 0.
++  typedef struct packed {
++    logic [4:0]  n;
++    logic [27:0] y;       // m << n
++  } norm28_t;
++
++  function automatic norm28_t norm28(input logic [27:0] m);
++    norm28_t r;
++    r.y = m; r.n = '0;
++    if (r.y[27:12] == 0) begin r.n[4] = 1'b1; r.y = r.y << 16; end
++    if (r.y[27:20] == 0) begin r.n[3] = 1'b1; r.y = r.y << 8; end
++    if (r.y[27:24] == 0) begin r.n[2] = 1'b1; r.y = r.y << 4; end
++    if (r.y[27:26] == 0) begin r.n[1] = 1'b1; r.y = r.y << 2; end
++    if (r.y[27] == 0)    begin r.n[0] = 1'b1; r.y = r.y << 1; end
++    return r;
+   endfunction
+ 
+   // |x[k-1:0]| for a variable k (0..32)
+@@ -210,14 +224,14 @@ package otpu_fp;
+     return q;
+   endfunction
+ 
+-  // One normalize for add and sub over the 28-bit sum. An add carry-out gives lz = 0 (the
+-  // sticky OR folds sum[1:0]); otherwise sum[26] is set, lz = 1, and sh[0] is 0. A sub never
+-  // carries out, so lz = lzc27(sum[26:0]) + 1, which the pre-incremented q.e absorbs. A zero
+-  // add (0+0) leaves mn = 0 and e < 0: s4 returns {sa, 0}, keeping the -0 of (-0)+(-0).
++  // One normalize for add and sub over the 28-bit sum, counted and shifted together by norm28.
++  // An add carry-out gives n = 0 (the sticky OR folds sum[1:0]); otherwise sum[26] is set, n = 1,
++  // and y[0] is 0. A sub never carries out, so n = lzc27(sum[26:0]) + 1, which the
++  // pre-incremented q.e absorbs. A zero add (0+0) leaves mn = 0 and e = 1 - 31 < 0: s4 returns
++  // {sa, 0}, keeping the -0 of (-0)+(-0). A zero sub is the cancellation special.
+   function automatic fadd_nm_t fp_add_s3(input fadd_p2_t q);
+     fadd_nm_t n;
+-    int lz;
+-    logic [27:0] sh;
++    norm28_t nz;
+     n.sp = q.sp;
+     n.sv = q.sv;
+     n.s = q.sa;
+@@ -225,10 +239,9 @@ package otpu_fp;
+       n.sp = 1'b1;
+       n.sv = FADD_SV_ZERO;
+     end
+-    lz = int'(lzc28(q.sum));
+-    sh = q.sum << lz;
+-    n.mn = {sh[27:2], sh[1] | sh[0]};
+-    n.e = 10'(q.e) - 10'(lz);
++    nz = norm28(q.sum);
++    n.mn = {nz.y[27:2], nz.y[1] | nz.y[0]};
++    n.e = 10'(q.e) - 10'(nz.n);
+     return n;
+   endfunction

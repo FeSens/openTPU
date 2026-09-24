@@ -1,0 +1,118 @@
+diff --git a/rtl/vpu/otpu_fp.sv b/rtl/vpu/otpu_fp.sv
+index 877f931..0519fc2 100644
+--- a/rtl/vpu/otpu_fp.sv
++++ b/rtl/vpu/otpu_fp.sv
+@@ -74,56 +74,72 @@ package otpu_fp;
+     return |(x & mask);
+   endfunction
+ 
++  // 3-bit special value {sign, exp_all_ones, quiet} shared by fp_mul and fp_add.
++  localparam logic [2:0] FADD_SV_NAN  = 3'b011;
++  localparam logic [2:0] FADD_SV_ZERO = 3'b000;
++
++  // Expand the 3-bit special value: NaN -> F_NAN, {s,2'b10} -> +-inf, {s,2'b00} -> +-0.
++  function automatic f32_t fadd_sv(input logic [2:0] sv);
++    return {sv[2], {8{sv[1]}}, sv[0], 22'd0};
++  endfunction
++
+   // ---- fp_mul in two stages (the product is the register boundary: on the FPGA it sits in
+-  // the DSP48 M/P registers).
++  // the DSP48 M/P registers). s1 also resolves the exponent range checks for both outcomes of
++  // the exponent increment, so s2 only picks one with `inc` (no compare after the round adder).
+   typedef struct packed {
+     logic               sp;      // special result (zero, inf, NaN) already known
+-    logic [31:0]        sv;
++    logic [2:0]         sv;      // see fadd_sv
+     logic               s;
+-    logic signed [10:0] e;
++    logic [7:0]         e8;      // (ea + eb - 127)[7:0]
++    logic               hi0, hi1; // ea + eb - 127 + {0,1} >= 255
++    logic               lo0, lo1; // ea + eb - 127 + {0,1} <= 0
+     logic [47:0]        p;
+   } fmul_mid_t;
+ 
+   function automatic fmul_mid_t fp_mul_s1(input f32_t a_in, input f32_t b_in);
+     fmul_mid_t m;
+     f32_t a, b;
++    logic [8:0] se;
+     a = ftz(a_in);
+     b = ftz(b_in);
+     m = '0;
+     m.s = a[31] ^ b[31];
+     if (a[30:23] == 8'hFF || b[30:23] == 8'hFF) begin
+       m.sp = 1'b1;
+-      m.sv = (is_nan(a) || is_nan(b) || a[30:0] == 0 || b[30:0] == 0) ? F_NAN
+-             : {m.s, 8'hFF, 23'd0};
++      m.sv = (is_nan(a) || is_nan(b) || a[30:0] == 0 || b[30:0] == 0) ? FADD_SV_NAN
++             : {m.s, 2'b10};
+     end else if (a[30:23] == 0 || b[30:23] == 0) begin
+       m.sp = 1'b1;
+-      m.sv = {m.s, 31'd0};
++      m.sv = {m.s, 2'b00};
+     end
+     m.p = {1'b1, a[22:0]} * {1'b1, b[22:0]};
+-    m.e = 11'(a[30:23]) + 11'(b[30:23]) - 11'sd127;
++    // Not special: ea, eb in 1..254, so se = e + 127 fits in 9 bits.
++    se = 9'(a[30:23]) + 9'(b[30:23]);
++    m.e8 = se[7:0] + 8'd129;
++    m.hi0 = (se >= 9'd382);
++    m.hi1 = (se >= 9'd381);
++    m.lo0 = (se <= 9'd127);
++    m.lo1 = (se <= 9'd126);
+     return m;
+   endfunction
+ 
++  // Both significands are normalized, so p <= (2^24-1)^2: with p[47] set the rounding never
++  // carries out (p[47:24] is never all ones); with p[47] clear it carries out iff p[46:22] is
++  // all ones. The exponent increment is therefore a single AND of p bits, off the adder, and
++  // the rounded mantissa is (mm[22:0] + rnd)[22:0] (a carried-out 2^24 >> 1 has zero low bits).
+   function automatic f32_t fp_mul_s2(input fmul_mid_t m);
+-    logic g, st;
+-    logic signed [10:0] e;
+-    logic [23:0] mm;
+-    logic [24:0] mr;
+-    if (m.sp) return m.sv;
+-    e = m.e;
+-    if (m.p[47]) begin
+-      mm = m.p[47:24]; g = m.p[23]; st = |m.p[22:0]; e = e + 1;
+-    end else begin
+-      mm = m.p[46:23]; g = m.p[22]; st = |m.p[21:0];
+-    end
+-    mr = {1'b0, mm} + ((g && (st || mm[0])) ? 25'd1 : 25'd0);
+-    if (mr[24]) begin
+-      mr = mr >> 1;
+-      e = e + 1;
+-    end
+-    if (e >= 255) return {m.s, 8'hFF, 23'd0};
+-    if (e <= 0) return {m.s, 31'd0};
+-    return {m.s, e[7:0], mr[22:0]};
++    logic inc, rnd, st;
++    logic [7:0] e;
++    logic [22:0] mf;
++    if (m.sp) return fadd_sv(m.sv);
++    st  = |m.p[21:0];
++    inc = m.p[47] | (&m.p[46:22]);
++    rnd = m.p[47] ? (m.p[23] & (m.p[22] | st | m.p[24])) : (m.p[22] & (st | m.p[23]));
++    mf  = (m.p[47] ? m.p[46:24] : m.p[45:23]) + 23'(rnd);
++    e   = inc ? m.e8 + 8'd1 : m.e8;
++    if (inc ? m.hi1 : m.hi0) return {m.s, 8'hFF, 23'd0};
++    if (inc ? m.lo1 : m.lo0) return {m.s, 31'd0};
++    return {m.s, e, mf};
+   endfunction
+ 
+   function automatic f32_t fp_mul(input f32_t a_in, input f32_t b_in);
+@@ -160,14 +176,6 @@ package otpu_fp;
+     logic [26:0]        mn;   // normalized: mn[26] set, guard/round/sticky in [2:0]
+   } fadd_nm_t;
+ 
+-  localparam logic [2:0] FADD_SV_NAN  = 3'b011;
+-  localparam logic [2:0] FADD_SV_ZERO = 3'b000;
+-
+-  // Expand the 3-bit special value: NaN -> F_NAN, {s,2'b10} -> +-inf, 3'b000 -> F_ZERO.
+-  function automatic f32_t fadd_sv(input logic [2:0] sv);
+-    return {sv[2], {8{sv[1]}}, sv[0], 22'd0};
+-  endfunction
+-
+   function automatic fadd_p1_t fp_add_s1(input f32_t a_in, input f32_t b_in);
+     fadd_p1_t r;
+     f32_t a, b, t;

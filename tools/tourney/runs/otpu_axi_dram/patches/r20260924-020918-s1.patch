@@ -1,0 +1,66 @@
+diff --git a/rtl/mem/otpu_axi_dram.sv b/rtl/mem/otpu_axi_dram.sv
+index 1f356e5..a0e61c1 100644
+--- a/rtl/mem/otpu_axi_dram.sv
++++ b/rtl/mem/otpu_axi_dram.sv
+@@ -139,7 +139,9 @@ module otpu_axi_dram #(
+   logic [RW:0]  rb_n [2], rb_res [2];          // stored; stored + in flight
+   logic [RW-1:0] rb_h [2], rb_t [2];
+   logic [AW_:0] ra_n [2], ra_res [2];
+-  logic [AW_-1:0] ra_h [2], ra_t [2];
++  logic [AW_:0] ra_h [2], ra_t [2];            // ring of 2*AD: a popped beat stays for reuse
++  logic [AW_:0] al_s;                          // ring slot of the last fetched A read (channel aoh.c)
++  logic [AW_:0] ra_rd [2];
+ 
+   // ------------------------------------------------------------------ queue and FIFO memories
+   // (per channel; written in their own processes so they map to LUT RAM)
+@@ -175,7 +177,7 @@ module otpu_axi_dram #(
+     qa_t          qam [QD];
+     qa_t          qwm [QD];
+     logic [511:0] rbm [RD];
+-    logic [511:0] ram [AD];
++    logic [511:0] ram [2*AD];
+     always_ff @(posedge clk) begin
+       if (qb_push[c]) qbm[QW'(qb_h[c] + qb_n[c])] <= qb_e[c];
+       if (qa_push[c]) qam[QW'(qa_h[c] + qa_n[c])] <= qa_e[c];
+@@ -189,7 +191,7 @@ module otpu_axi_dram #(
+     assign ha[c] = qam[qa_h[c]];
+     assign hw[c] = qwm[qw_h[c]];
+     assign rb_head[c] = rbm[rb_h[c]];
+-    assign ra_head[c] = ram[ra_h[c]];
++    assign ra_head[c] = ram[ra_rd[c]];
+   end
+ 
+   // ------------------------------------------------------------------ per-channel issue
+@@ -239,14 +241,20 @@ module otpu_axi_dram #(
+   wire b_out = (bt_n != 0) && (rb_n[0] != 0) && (rb_n[1] != 0);
+   ao_t aoh;
+   assign aoh = ao_q[ao_h];
+-  logic [511:0] a_last;                          // the beat of the last fetched A read
+   wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] != 0);
+-  wire [511:0] a_src = aoh.reuse ? a_last : ra_head[aoh.c];
++  // a reuse reads the last fetched beat where it still sits in the A ring: its channel is the
++  // fetch's (same beat), and the tail writes only the AD slots after it
++  logic [31:0] a_word [2];
++  always_comb
++    for (int c = 0; c < 2; c++) begin
++      ra_rd[c] = aoh.reuse ? al_s : ra_h[c];
++      a_word[c] = ra_head[c][32 * aoh.idx +: 32];
++    end
+   assign b_rvalid = b_out;
+   assign b_rtag = bt_q[bt_h];
+   assign b_rdata = {rb_head[1], rb_head[0]};
+   assign a_rvalid = a_out;
+-  assign a_rdata = a_src[32 * aoh.idx +: 32];
++  assign a_rdata = a_word[aoh.c];
+ 
+   always_ff @(posedge clk) begin
+     if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= b_tag;
+@@ -354,7 +362,7 @@ module otpu_axi_dram #(
+         if (a_take && !a_we) aon = aon + 1;
+         if (a_out) begin
+           ao_h <= ao_h + 1; aon = aon - 1;
+-          if (!aoh.reuse) a_last <= ra_head[aoh.c];
++          if (!aoh.reuse) al_s <= ra_h[aoh.c];
+         end
+         bt_n <= btn; ao_n <= aon;
+       end

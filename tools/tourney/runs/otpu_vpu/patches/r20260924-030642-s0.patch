@@ -1,0 +1,82 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index a71d96a..23beca0 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -535,36 +535,55 @@ module otpu_vpu
+   logic [TBW-1:0] cap_sel;
+   logic [15:0]   rows_done;
+ 
+-  // pick the lowest-numbered buffer that can issue
++  // pick the lowest-numbered buffer that can issue (tb_oh: the same pick, one-hot)
+   logic          tr_go;
+   logic [TBW-1:0] tr_b;
++  logic [NTB-1:0] tb_rdy, tb_oh;
+   always_comb begin
++    for (int b = 0; b < NTB; b++)
++      tb_rdy[b] = tb_act[b] && tb_i[b] < tb_n[b] && !(tb_i[b] == 0 && tb_inf[b] != 0);
++    tb_oh = tb_rdy & ~(tb_rdy - 1'b1);
+     tr_go = 1'b0; tr_b = '0;
+     for (int b = NTB - 1; b >= 0; b--)
+-      if (tb_act[b] && tb_i[b] < tb_n[b] && !(tb_i[b] == 0 && tb_inf[b] != 0)) begin
++      if (tb_rdy[b]) begin
+         tr_go = 1'b1; tr_b = TBW'(b);
+       end
+   end
+-  // issue register: the selected buffer and its pair range; pb is read the next cycle (the
+-  // issue counts as in flight from selection, so a level never reads before its inputs land)
++  // operands are read in the selection cycle: each buffer's candidates are addressed by its own
++  // pair range, the pick runs in parallel and a one-hot AND-OR meets them. A level never reads
++  // rows written in that level (other than an issue's own, LA cycles later), and the next
++  // level is selected two cycles after the last write lands, so reading pb here is the same as
++  // reading it after the issue register.
++  f32_t          oa_n [LANES], ob_n [LANES];
++  always_comb begin
++    logic [6:0] ca, cb;
++    for (int k = 0; k < LANES; k++) begin
++      oa_n[k] = '0; ob_n[k] = '0;
++      for (int bb = 0; bb < NTB; bb++) begin
++        ca = tb_i[bb] + 7'(k);
++        cb = ca + tb_n[bb];
++        oa_n[k] = oa_n[k] | ({32{tb_oh[bb]}} & pb[bb][ca[5:0] >> LW][k]);
++        ob_n[k] = ob_n[k] | ({32{tb_oh[bb]}} & ((tb_n[bb] >= 7'(LANES)) ? pb[bb][cb[5:0] >> LW][k]
++                                                                        : pb[bb][0][cb[LW-1:0]]));
++      end
++    end
++  end
++  // issue register: the selected buffer, its pair range and the operands (the issue counts as
++  // in flight from selection, so a level never reads before its inputs land)
+   logic          is_go;
+   logic [TBW-1:0] is_b;
+   logic [6:0]    is_i, is_n;
++  f32_t          oa_q [LANES], ob_q [LANES];
+   f32_t          tr_y [LANES];
+   logic [LANES-1:0] tr_m;
+   logic [6:0]    tr_dst_q [LA];
+   logic [TBW-1:0] tr_b_q [LA];
+   logic [LANES-1:0] tr_v_q [LA];
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+-    logic [6:0] ia, ib;
++    logic [6:0] ia;
+     assign ia = is_i + 7'(k);
+-    assign ib = ia + is_n;
+     assign tr_m[k] = is_go && (ia < is_n);
+-    f32_t oa, ob;
+-    assign oa = pb[is_b][ia[5:0] >> LW][k];
+-    assign ob = (is_n >= 7'(LANES)) ? pb[is_b][ib[5:0] >> LW][k]
+-                                    : pb[is_b][0][ib[LW-1:0]];
+-    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
++    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa_q[k]), .b(ob_q[k]), .y(tr_y[k]));
+   end
+ 
+   // finished rows wait here for the (single) TMEM write lane
+@@ -749,6 +768,10 @@ module otpu_vpu
+         is_b <= tr_b;
+         is_i <= tb_i[tr_b];
+         is_n <= tb_n[tr_b];
++        for (int k = 0; k < LANES; k++) begin
++          oa_q[k] <= oa_n[k];
++          ob_q[k] <= ob_n[k];
++        end
+         tr_v_q[0] <= tr_m;
+         tr_dst_q[0] <= is_i;
+         tr_b_q[0] <= is_b;

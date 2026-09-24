@@ -1,0 +1,137 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index c8fd1b2..70af844 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -72,6 +72,13 @@ module otpu_mxu
+   localparam int RFW = $clog2(RF);
+   localparam int MW = $clog2(MCOLS) + 1;
+   localparam int NL = (LANES < MCOLS) ? LANES : MCOLS;   // lanes the drain can fill
++  // exact integer dot-product widths (int8 * int8 in [-16256, 16384]; the +2^14 * n bound needs
++  // the extra bit): sums of 4 in [-65024, 65536], of 16 in [-260096, 262144], of D in
++  // |sum| <= D * 2^14 <= 2^(SW-2). Two's-complement sums wrap harmlessly below the final value.
++  localparam int SW2 = 18;
++  localparam int SW3 = 20;
++  localparam int SW = 16 + $clog2(D);
++  localparam int MG = SW - 1;               // magnitude bits of the dot product
+   initial if (D % 16 != 0) $fatal(1, "otpu_mxu: D must be a multiple of 16");
+ 
+   // ================================================================== issuer
+@@ -144,9 +151,8 @@ module otpu_mxu
+   logic [D*8-1:0]      w0;
+   logic [MCOLS*D*8-1:0] a0;
+   f32_t                ws0, ws1, ws2, ws3, ws4, ws5, ws6;
+-  i2f_mid_t            im [MCOLS];
+   f32_t                as0 [MCOLS];
+-  logic signed [31:0]  s4 [MCOLS];
++  logic signed [SW-1:0] s4 [MCOLS];
+   f32_t                fi [MCOLS];
+   // S0's ACT RAM block and scales are the ACT RAM's registered read
+   assign a0 = act_data;
+@@ -170,13 +176,54 @@ module otpu_mxu
+     w0 <= f_data[f_head];
+     ws0r <= f_scale[s_head];
+     cu0 <= c_unit;
+-    // S5, S6: int -> fp32
+-    for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(s4[j]);
+-    for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
+     m5 <= m4; ws5 <= ws4;
+     m6 <= m5; ws6 <= ws5;
+   end
+ 
++  // S5, S6: int -> fp32 (magnitude + leading zeros | normalize). With SW <= 25 (D <= 512) the
++  // magnitude has at most 24 significant bits, so every value is an fp32 exactly: no rounding.
++  if (SW <= 25) begin : g_i2f
++    localparam int LZW = $clog2(MG);
++    typedef struct packed {
++      logic           z, s;
++      logic [MG-1:0]  mag;
++      logic [LZW-1:0] lz;
++    } xi_mid_t;
++    function automatic xi_mid_t xi_s1(input logic signed [SW-1:0] x);
++      xi_mid_t m;
++      m.z = (x == 0);
++      m.s = x[SW-1];
++      m.mag = x[SW-1] ? MG'(-x) : MG'(x);
++      m.lz = '0;
++      for (int b = 0; b < MG; b++) if (m.mag[b]) m.lz = LZW'(MG - 1 - b);
++      return m;
++    endfunction
++    function automatic f32_t xi_s2(input xi_mid_t m);
++      logic [MG-1:0] nrm;
++      logic [7:0]    e;
++      logic [22:0]   frac;
++      if (m.z) return F_ZERO;
++      nrm = m.mag << m.lz;                    // leading one at bit MG-1
++      e = 8'(127 + MG - 1) - 8'(m.lz);
++      frac = '0;
++      frac[22 -: MG-1] = nrm[MG-2:0];
++      return {m.s, e, frac};
++    endfunction
++    xi_mid_t im [MCOLS];
++    always_ff @(posedge clk) if (en_c)
++      for (int j = 0; j < MCOLS; j++) begin
++        im[j] <= xi_s1(s4[j]);
++        fi[j] <= xi_s2(im[j]);
++      end
++  end else begin : g_i2f32
++    i2f_mid_t im [MCOLS];
++    always_ff @(posedge clk) if (en_c)
++      for (int j = 0; j < MCOLS; j++) begin
++        im[j] <= i2f_s1(32'(s4[j]));
++        fi[j] <= i2f_s2(im[j]);
++      end
++  end
++
+   // dot-product latency S0 -> s4 (the tree: 4 register levels)
+   localparam int NG = D / CL;
+   localparam int TL = (NG <= 1) ? 0 : (NG <= 4) ? 1 : (NG <= 16) ? 2 : 3;
+@@ -192,8 +239,8 @@ module otpu_mxu
+     // An odd last column keeps a plain product.
+     logic signed [31:0] pp [(MCOLS + 1) / 2][D];
+     logic signed [15:0] pr [D];
+-    logic signed [19:0] s2 [MCOLS][D/4];
+-    logic signed [23:0] s3 [MCOLS][D/16];
++    logic signed [SW2-1:0] s2 [MCOLS][D/4];
++    logic signed [SW3-1:0] s3 [MCOLS][D/16];
+     always_ff @(posedge clk) if (en_c) begin
+       for (int p = 0; p < MCOLS / 2; p++)
+         for (int i = 0; i < D; i++) begin
+@@ -206,21 +253,22 @@ module otpu_mxu
+           pr[i] <= 16'(int'($signed(a0[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(w0[i*8 +: 8])));
+       for (int j = 0; j < MCOLS; j++) begin
+         for (int g = 0; g < D / 4; g++) begin
+-          logic signed [19:0] t;
++          logic signed [SW2-1:0] t;
+           t = '0;
+           for (int k = 0; k < 4; k++)
+-            if (j % 2 == 1) t = t + 20'($signed(pp[j/2][4*g+k][15:0]));
++            if (j % 2 == 1) t = t + SW2'($signed(pp[j/2][4*g+k][15:0]));
+             else if (j + 1 < MCOLS)
+-              t = t + 20'($signed(pp[j/2][4*g+k][31:16])) + 20'(pp[j/2][4*g+k][15]);
+-            else t = t + 20'(pr[4*g+k]);
++              t = t + SW2'($signed(pp[j/2][4*g+k][31:16])) + SW2'(pp[j/2][4*g+k][15]);
++            else t = t + SW2'(pr[4*g+k]);
+           s2[j][g] <= t;
+         end
+         for (int g = 0; g < D / 16; g++)
+-          s3[j][g] <= 24'(s2[j][4*g]) + 24'(s2[j][4*g+1]) + 24'(s2[j][4*g+2]) + 24'(s2[j][4*g+3]);
++          s3[j][g] <= SW3'(s2[j][4*g]) + SW3'(s2[j][4*g+1]) + SW3'(s2[j][4*g+2]) +
++                      SW3'(s2[j][4*g+3]);
+         begin
+-          logic signed [31:0] t;
++          logic signed [SW-1:0] t;
+           t = '0;
+-          for (int g = 0; g < D / 16; g++) t = t + 32'(s3[j][g]);
++          for (int g = 0; g < D / 16; g++) t = t + SW'(s3[j][g]);
+           s4[j] <= t;
+         end
+       end
+@@ -287,7 +335,7 @@ module otpu_mxu
+           2: t = t2[j][0];
+           default: for (int u = 0; u < (NG + 15) / 16; u++) t = t + t2[j][u];
+         endcase
+-        s4[j] = t;
++        s4[j] = SW'(t);                        // exact: the dot product fits SW bits
+       end
+     // the meta and the weight scale travel alongside (S0 -> S4 position)
+     otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));

@@ -1,0 +1,123 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index a71d96a..4fe9d56 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -530,7 +530,7 @@ module otpu_vpu
+   f32_t          pb [NTB][RL][LANES];
+   logic [NTB-1:0] tb_act;                 // captured, tree in progress
+   logic [6:0]    tb_n [NTB], tb_i [NTB];   // pairs in the level, next pair
+-  logic [2:0]    tb_inf [NTB];             // issue cycles in flight
++  logic [2:0]    tb_w [NTB];               // ent cycles until the last issue has landed
+   logic [31:0]   tb_dst [NTB];
+   logic [TBW-1:0] cap_sel;
+   logic [15:0]   rows_done;
+@@ -541,30 +541,37 @@ module otpu_vpu
+   always_comb begin
+     tr_go = 1'b0; tr_b = '0;
+     for (int b = NTB - 1; b >= 0; b--)
+-      if (tb_act[b] && tb_i[b] < tb_n[b] && !(tb_i[b] == 0 && tb_inf[b] != 0)) begin
++      if (tb_act[b] && tb_i[b] < tb_n[b]) begin
+         tr_go = 1'b1; tr_b = TBW'(b);
+       end
+   end
+-  // issue register: the selected buffer and its pair range; pb is read the next cycle (the
+-  // issue counts as in flight from selection, so a level never reads before its inputs land)
++  // issue register: the selected buffer and its pair range; pb is read the next cycle into the
++  // operand registers, which feed the adders one cycle later. The pipe is LA + 2 ent cycles
++  // from selection to the pb write, so tb_w counts it down from the buffer's last issue: the
++  // level advances at tb_w == 2 (its first read follows the last write) and the root is read
++  // at tb_w == 0.
+   logic          is_go;
+   logic [TBW-1:0] is_b;
+   logic [6:0]    is_i, is_n;
+   f32_t          tr_y [LANES];
+   logic [LANES-1:0] tr_m;
+-  logic [6:0]    tr_dst_q [LA];
+-  logic [TBW-1:0] tr_b_q [LA];
+-  logic [LANES-1:0] tr_v_q [LA];
++  logic [6:0]    tr_dst_q [LA+1];
++  logic [TBW-1:0] tr_b_q [LA+1];
++  logic [LANES-1:0] tr_v_q [LA+1];
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+     logic [6:0] ia, ib;
+     assign ia = is_i + 7'(k);
+     assign ib = ia + is_n;
+     assign tr_m[k] = is_go && (ia < is_n);
+-    f32_t oa, ob;
++    f32_t oa, ob, oa_q, ob_q;
+     assign oa = pb[is_b][ia[5:0] >> LW][k];
+     assign ob = (is_n >= 7'(LANES)) ? pb[is_b][ib[5:0] >> LW][k]
+                                     : pb[is_b][0][ib[LW-1:0]];
+-    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
++    always_ff @(posedge clk) if (ent) begin
++      oa_q <= oa;
++      ob_q <= ob;
++    end
++    otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa_q), .b(ob_q), .y(tr_y[k]));
+   end
+ 
+   // finished rows wait here for the (single) TMEM write lane
+@@ -636,7 +643,7 @@ module otpu_vpu
+       cyc <= '0;
+       tb_act <= '0;
+       rq_n <= '0;
+-      for (int k = 0; k < LA; k++) tr_v_q[k] <= '0;
++      for (int k = 0; k <= LA; k++) tr_v_q[k] <= '0;
+       is_go <= 1'b0;
+     end else begin
+       logic [3:0] ewn;
+@@ -675,9 +682,9 @@ module otpu_vpu
+           if (red_f(hf)) begin
+             red_act <= 1'b1;
+             tb_act <= '0; cap_sel <= '0; rq_n <= '0; rq_h <= '0; rows_done <= '0;
+-            for (int bb = 0; bb < NTB; bb++) tb_inf[bb] <= '0;
++            for (int bb = 0; bb < NTB; bb++) tb_w[bb] <= '0;
+             mx_have <= 1'b0;
+-            for (int k = 0; k < LA; k++) tr_v_q[k] <= '0;
++            for (int k = 0; k <= LA; k++) tr_v_q[k] <= '0;
+             is_go <= 1'b0;
+           end else begin
+             ewn = ewn + 1;
+@@ -752,29 +759,29 @@ module otpu_vpu
+         tr_v_q[0] <= tr_m;
+         tr_dst_q[0] <= is_i;
+         tr_b_q[0] <= is_b;
+-        for (int k = 1; k < LA; k++) begin
++        for (int k = 1; k <= LA; k++) begin
+           tr_v_q[k] <= tr_v_q[k-1];
+           tr_dst_q[k] <= tr_dst_q[k-1];
+           tr_b_q[k] <= tr_b_q[k-1];
+         end
+         for (int k = 0; k < LANES; k++)
+-          if (tr_v_q[LA-1][k]) pb[tr_b_q[LA-1]][tr_dst_q[LA-1][5:0] >> LW][k] <= tr_y[k];
++          if (tr_v_q[LA][k]) pb[tr_b_q[LA]][tr_dst_q[LA][5:0] >> LW][k] <= tr_y[k];
+         for (int bb = 0; bb < NTB; bb++) begin
+-          logic [2:0] inf;
+-          inf = tb_inf[bb];
+           if (tr_go && tr_b == TBW'(bb)) begin
+-            inf = inf + 1;
+             tb_i[bb] <= tb_i[bb] + 7'(LANES);
++            tb_w[bb] <= 3'(LA + 2);
++          end else if (tb_w[bb] != 0) begin
++            tb_w[bb] <= tb_w[bb] - 1;
+           end
+-          if (tr_v_q[LA-1] != 0 && tr_b_q[LA-1] == TBW'(bb)) inf = inf - 1;
+-          tb_inf[bb] <= inf;
+-          // ---- level done: next level, or the root is ready (one per cycle)
+-          if (tb_act[bb] && tb_i[bb] >= tb_n[bb] && tb_inf[bb] == 0 &&
+-              !(tr_go && tr_b == TBW'(bb))) begin
++          // ---- level done: next level once its last write precedes the next read, or the
++          // root has landed (one per cycle)
++          if (tb_act[bb] && tb_i[bb] >= tb_n[bb]) begin
+             if (tb_n[bb] != 7'd1) begin
+-              tb_n[bb] <= tb_n[bb] >> 1;
+-              tb_i[bb] <= '0;
+-            end else if (!pushed && 32'(rn) < NTB) begin
++              if (tb_w[bb] == 3'd2) begin
++                tb_n[bb] <= tb_n[bb] >> 1;
++                tb_i[bb] <= '0;
++              end
++            end else if (tb_w[bb] == 3'd0 && !pushed && 32'(rn) < NTB) begin
+               pushed = 1'b1;
+               rq_v[TBW'(rq_h + rn)] <= pb[bb][0][0];
+               rq_a[TBW'(rq_h + rn)] <= tb_dst[bb];

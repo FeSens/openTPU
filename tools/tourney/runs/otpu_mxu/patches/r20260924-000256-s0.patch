@@ -1,0 +1,76 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index 9fab386..0a05b3c 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -166,8 +166,10 @@ module otpu_mxu
+     for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(s4[j]);
+     for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
+     m5 <= m4; ws5 <= ws4;
+-    m6 <= m5; ws6 <= ws5;
++    m6 <= m5;
+   end
++  // ws6 feeds u_m1: a flip-flop with a reset, so the ws0 .. ws6 chain does not end in an SRL
++  always_ff @(posedge clk) if (rst) ws6 <= '0; else if (en_c) ws6 <= ws5;
+ 
+   // dot-product latency S0 -> s4 (the tree: 4 register levels)
+   localparam int NG = D / CL;
+@@ -271,11 +273,12 @@ module otpu_mxu
+   f32_t as_d [MCOLS];
+   f32_t t1 [MCOLS], t2 [MCOLS], pacc [MCOLS];
+   cm_t  mt, ma;                              // meta at the adder inputs / outputs
+-  otpu_delay #(.W($bits(cm_t)), .N(2 * LM)) u_mt (.clk, .en(en_c), .d(m6), .q(mt));
+-  otpu_delay #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .en(en_c), .d(mt), .q(ma));
++  otpu_mxu_dly #(.W($bits(cm_t)), .N(2 * LM)) u_mt (.clk, .rst, .en(en_c), .d(m6), .q(mt));
++  otpu_mxu_dly #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .rst, .en(en_c), .d(mt), .q(ma));
+   for (genvar j = 0; j < MCOLS; j++) begin : g_col
+     f32_t fb, prev;
+-    otpu_delay #(.W(32), .N(LDOT + 2 + LM)) u_as (.clk, .en(en_c), .d(as0[j]), .q(as_d[j]));
++    otpu_mxu_dly #(.W(32), .N(LDOT + 2 + LM)) u_as (.clk, .rst, .en(en_c), .d(as0[j]),
++                                                    .q(as_d[j]));
+     otpu_fmul #(.LAT(LM)) u_m1 (.clk, .en(en_c), .a(fi[j]), .b(ws6), .y(t1[j]));
+     otpu_fmul #(.LAT(LM)) u_m2 (.clk, .en(en_c), .a(t1[j]), .b(as_d[j]), .y(t2[j]));
+     // partial loop: pacc(block k) = pacc(block k - 4) + t(k), exactly NPART advances
+@@ -311,7 +314,7 @@ module otpu_mxu
+     otpu_fadd #(.LAT(LA)) u_c23 (.clk, .en(en_c), .a(cv[j][1]), .b(cv[j][3]), .y(c23[j]));
+     otpu_fadd #(.LAT(LA)) u_c (.clk, .en(en_c), .a(c01[j]), .b(c23[j]), .y(rowv[j]));
+   end
+-  otpu_delay #(.W(1), .N(2 * LA)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
++  otpu_mxu_dly #(.W(1), .N(2 * LA)) u_lv (.clk, .rst, .en(en_c), .d(launch), .q(lv2));
+ 
+   // ================================================================== result FIFO
+   f32_t        rf_v [RF][MCOLS];
+@@ -624,3 +627,34 @@ module otpu_mxu
+   initial trace = $test$plusargs("trace");
+ `endif
+ endmodule
++
++// N-cycle delay line whose last stage is a flip-flop with a synchronous reset: Yosys' xilinx_srl
++// only chains FFs without a reset (FDRE with R tied 0), so the output is an FDRE (303 ps clk->Q)
++// and not an SRL (1472 ps); otpu_delay's attributes land on the wire and are ignored. The first
++// N-1 stages may still become SRLs. The reset value only shows before a chunk has passed.
++module otpu_mxu_dly #(parameter int W = 32, parameter int N = 1) (
++  input  logic         clk,
++  input  logic         rst,
++  input  logic         en,
++  input  logic [W-1:0] d,
++  output logic [W-1:0] q
++);
++  if (N == 0) begin : g_wire
++    assign q = d;
++  end else begin : g_regs
++    logic [W-1:0] din, qr;                 // qr: the output stage (reset: never an SRL)
++    if (N == 1) begin : g_one
++      assign din = d;
++    end else begin : g_sh
++      logic [W-1:0] r [N - 1];
++      always_ff @(posedge clk) if (en) begin
++        r[0] <= d;
++        for (int k = 1; k < N - 1; k++) r[k] <= r[k-1];
++      end
++      assign din = r[N-2];
++    end
++    always_ff @(posedge clk)
++      if (rst) qr <= '0; else if (en) qr <= din;
++    assign q = qr;
++  end
++endmodule

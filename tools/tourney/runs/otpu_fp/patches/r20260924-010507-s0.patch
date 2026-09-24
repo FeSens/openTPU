@@ -1,0 +1,71 @@
+diff --git a/rtl/vpu/otpu_fp.sv b/rtl/vpu/otpu_fp.sv
+index ba971c8..bf957ca 100644
+--- a/rtl/vpu/otpu_fp.sv
++++ b/rtl/vpu/otpu_fp.sv
+@@ -172,8 +172,9 @@ package otpu_fp;
+     logic               sp;
+     logic [2:0]         sv;
+     logic               s;
+-    logic signed [9:0]  e;
+-    logic [26:0]        mn;   // normalized: mn[26] set, guard/round/sticky in [2:0]
++    logic [7:0]         e;    // exponent + 1, before the normalize count is taken off
++    logic [4:0]         lz;   // normalize count (norm28 n); the exponent is e - lz
++    logic [25:0]        mn;   // normalized below the implicit 1; guard/round/sticky in [2:0]
+   } fadd_nm_t;
+ 
+   localparam logic [2:0] FADD_SV_NAN  = 3'b011;
+@@ -227,8 +228,10 @@ package otpu_fp;
+   // One normalize for add and sub over the 28-bit sum, counted and shifted together by norm28.
+   // An add carry-out gives n = 0 (the sticky OR folds sum[1:0]); otherwise sum[26] is set, n = 1,
+   // and y[0] is 0. A sub never carries out, so n = lzc27(sum[26:0]) + 1, which the
+-  // pre-incremented q.e absorbs. A zero add (0+0) leaves mn = 0 and e = 1 - 31 < 0: s4 returns
+-  // {sa, 0}, keeping the -0 of (-0)+(-0). A zero sub is the cancellation special.
++  // pre-incremented q.e absorbs. The subtract e - lz is left to s4 (it would sit on the slowest
++  // count bit). The implicit 1 (y[27]) is dropped: it is set unless sum == 0. A zero add (0+0)
++  // gives e = 1, lz = 31, so s4 underflows and returns {sa, 0}, keeping the -0 of (-0)+(-0).
++  // A zero sub is the cancellation special.
+   function automatic fadd_nm_t fp_add_s3(input fadd_p2_t q);
+     fadd_nm_t n;
+     norm28_t nz;
+@@ -240,26 +243,32 @@ package otpu_fp;
+       n.sv = FADD_SV_ZERO;
+     end
+     nz = norm28(q.sum);
+-    n.mn = {nz.y[27:2], nz.y[1] | nz.y[0]};
+-    n.e = 10'(q.e) - 10'(nz.n);
++    n.mn = {nz.y[26:2], nz.y[1] | nz.y[0]};
++    n.e = q.e;
++    n.lz = nz.n;
+     return n;
+   endfunction
+ 
++  // The exponent before rounding is e0 = e - lz with e in [1, 255] and lz in [0, 31] (not sp),
++  // so the flags below are exact rewrites of e0 >= 255 || (e0 == 254 && c) and
++  // e0 < 0 || (e0 == 0 && !c). The carry-out c is an AND beside the rounding increment, not its
++  // carry-out: mr reaches 2^24 only when mm is all ones, and then mm[0] = 1 so the increment is g.
+   function automatic f32_t fp_add_s4(input fadd_nm_t n);
+     logic g, rs, c;
+-    logic signed [9:0] e0;
++    logic [7:0] ed;
+     logic [23:0] mm;
+     logic [24:0] mr;
+     if (n.sp) return fadd_sv(n.sv);
+-    e0 = n.e;
+     g  = n.mn[2];
+     rs = n.mn[1] | n.mn[0];
+-    mm = n.mn[26:3];
++    mm = {1'b1, n.mn[25:3]};
+     mr = {1'b0, mm} + ((g && (rs || mm[0])) ? 25'd1 : 25'd0);
+-    c = mr[24];   // as in fp_mul_s2: no post-round shift, flags off e0
+-    if (e0 >= 10'sd255 || (e0 == 10'sd254 && c)) return {n.s, 8'hFF, 23'd0};
+-    if (e0 < 10'sd0 || (e0 == 10'sd0 && !c)) return {n.s, 31'd0};
+-    return {n.s, 8'(e0) + 8'(c), mr[22:0]};
++    c = g & (&mm);
++    ed = n.e - 8'(n.lz);
++    if ((n.lz == 5'd0 && (n.e == 8'd255 || (n.e == 8'd254 && c))) ||
++        (n.lz == 5'd1 && n.e == 8'd255 && c)) return {n.s, 8'hFF, 23'd0};
++    if (8'(n.lz) > n.e || (8'(n.lz) == n.e && !c)) return {n.s, 31'd0};
++    return {n.s, ed + 8'(c), mr[22:0]};
+   endfunction
+ 
+   function automatic f32_t fp_add(input f32_t a_in, input f32_t b_in);

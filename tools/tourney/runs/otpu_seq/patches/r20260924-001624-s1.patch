@@ -1,0 +1,226 @@
+diff --git a/rtl/seq/otpu_seq.sv b/rtl/seq/otpu_seq.sv
+index 76e46a5..272b5dc 100644
+--- a/rtl/seq/otpu_seq.sv
++++ b/rtl/seq/otpu_seq.sv
+@@ -55,16 +55,24 @@ module otpu_seq
+   logic [31:0] pc, pc_n, cyc;
+   logic [31:0] R [16];
+   logic        stopping;         // HALT fetched: wait for the window to drain
++  // LI/ADDI write R one cycle late: R registers the operands (pending write), the add and the
++  // R write happen in the next cycle -- keeps the add off the IMEM path. Reads forward it.
++  logic        pw_v;
++  logic [3:0]  pw_rd;
++  logic [31:0] pw_a, pw_b;
++  wire  [31:0] pw_sum = pw_a + pw_b;
+ 
+   // loop stack
+   logic [2:0]  sp;
+   logic [31:0] stk_start [4];
+   logic [31:0] stk_end   [4];
+   logic [31:0] stk_rem   [4];
+-  // LOOP takes two cycles: the first registers the trip count and body length (pc holds), the
+-  // second enters or skips the loop from registers -- keeps the add off the fetch-address path
++  // LOOP takes two cycles: the first registers the trip count operands and body length (pc
++  // holds), the second adds them and enters or skips the loop from registers -- keeps the add
++  // off the IMEM path
+   logic        lp;
+-  logic [31:0] lp_cnt, lp_len;
++  logic [31:0] lp_a, lp_b, lp_len;
++  wire  [31:0] lp_cnt = lp_a + lp_b;
+ 
+   // window
+   logic [WIN-1:0]  sv;                       // slot valid (dispatched, not completed)
+@@ -97,29 +105,31 @@ module otpu_seq
+   wire [3:0] rd    = iw[0][23:20];
+   wire [7:0] flags = iw[0][31:24];
+ 
++  // (a pending LI/ADDI write is forwarded: each read sees the sequential value)
+   function automatic logic [31:0] rv(input logic [3:0] r);
+-    return (r == 0) ? 32'd0 : R[r];
++    return (r == 0) ? 32'd0 : (pw_v && pw_rd == r) ? pw_sum : R[r];
+   endfunction
+ 
++  // the instruction at pc as fetched; O adds the register operands
+   cmd_t dcmd;
+   always_comb begin
+     dcmd.op = op; dcmd.flags = flags;
+-    dcmd.w1 = iw[1] + rv(ra);
+-    dcmd.w2 = iw[2] + rv(rb);
+-    dcmd.w3 = iw[3] + rv(rc);
++    dcmd.w1 = iw[1]; dcmd.w2 = iw[2]; dcmd.w3 = iw[3];
+     dcmd.w4 = iw[4]; dcmd.w5 = iw[5]; dcmd.w6 = iw[6]; dcmd.w7 = iw[7];
+   end
+   int dunit;
+   always_comb dunit = unit_of(op);
+ 
+-  // ---- dispatch pipeline: R (the instruction at pc: registers resolved) -> P (footprint
+-  // partial products) -> S (products) -> Q (footprint ranges) -> C (dependencies on the window,
+-  // slot allocation). In order; a stage holds while the next cannot take its instruction (C:
+-  // the window is full). The stages stream, so they add latency only at the program start.
+-  logic        p_v, s_v, q_v, c_v;
+-  cmd_t        p_cmd, s_cmd, q_cmd, c_cmd;
+-  int          p_unit, s_unit, q_unit, c_unit;
+-  logic [31:0] p_pc, s_pc, q_pc, c_pc;
++  // ---- dispatch pipeline: R (the instruction at pc: registers read) -> O (register-relative
++  // fields resolved) -> P (footprint partial products) -> S (products) -> Q (footprint ranges)
++  // -> C (dependencies on the window, slot allocation). In order; a stage holds while the next
++  // cannot take its instruction (C: the window is full). The stages stream, so they add latency
++  // only at the program start.
++  logic        o_v, p_v, s_v, q_v, c_v;
++  cmd_t        o_cmd, p_cmd, s_cmd, q_cmd, c_cmd;
++  logic [31:0] o_x1, o_x2, o_x3;                // O: R[ra], R[rb], R[rc]
++  int          o_unit, p_unit, s_unit, q_unit, c_unit;
++  logic [31:0] o_pc, p_pc, s_pc, q_pc, c_pc;
+   fpp_t        s_pp;
+   fpm_t        q_pr;
+   fp_t         c_fp;
+@@ -128,8 +138,16 @@ module otpu_seq
+   wire         q_adv = !c_v || c_go;            // Q hands its instruction to C
+   wire         s_adv = !q_v || q_adv;           // S hands its instruction to Q
+   wire         p_adv = !s_v || s_adv;           // P hands its instruction to S
+-  wire         r_take = !p_v || p_adv;          // P can take the instruction at R
+-  wire         pipe_empty = !p_v && !s_v && !q_v && !c_v;
++  wire         o_adv = !p_v || p_adv;           // O hands its instruction to P
++  wire         r_take = !o_v || o_adv;          // O can take the instruction at R
++  wire         pipe_empty = !o_v && !p_v && !s_v && !q_v && !c_v;
++  cmd_t        o_res;                           // o_cmd with its register-relative fields resolved
++  always_comb begin
++    o_res = o_cmd;
++    o_res.w1 = o_cmd.w1 + o_x1;
++    o_res.w2 = o_cmd.w2 + o_x2;
++    o_res.w3 = o_cmd.w3 + o_x3;
++  end
+   // R retires a control instruction this cycle (NOP, HALT, LI, ADDI, a LOOP's second cycle)
+   logic        r_ret;
+ 
+@@ -141,6 +159,50 @@ module otpu_seq
+       if (udone[u]) fin[uq[u][uq_h[u][SW-1:0]]] = 1'b1;
+   end
+ 
++  // ---- footprint conflicts (otpu_pkg conflict()/conflict_dram(), with cheaper comparators)
++  // x < z (unsigned 32-bit) as the carry out of an 11-bit add over 3-bit digits: per digit g,
++  // eq_g propagates, lt_g generates (le_g = lt_g | eq_g). One LUT6 for S = eq_g and one for
++  // DI = le_g per 3 bits: 22 LUTs + 3 CARRY4 instead of 32 LUTs + 8 CARRY4.
++  function automatic logic lt32(input logic [31:0] x, input logic [31:0] z);
++    logic [32:0] xe, ze;
++    logic [10:0] lt, le;
++    logic [11:0] s;
++    xe = {1'b0, x}; ze = {1'b0, z};
++    for (int g = 0; g < 11; g++) begin
++      // explicit gates, not '<', so Yosys does not build 11 tiny carry chains
++      lt[g] = (~xe[3*g+2] & ze[3*g+2]) |
++              (~(xe[3*g+2] ^ ze[3*g+2]) & ((~xe[3*g+1] & ze[3*g+1]) |
++              (~(xe[3*g+1] ^ ze[3*g+1]) & (~xe[3*g] & ze[3*g]))));
++      le[g] = lt[g] | (xe[3*g +: 3] == ze[3*g +: 3]);
++    end
++    s = {1'b0, le} + {1'b0, lt};
++    return s[11];
++  endfunction
++
++  function automatic logic ov_s(input rng_t a, input rng_t b);
++    return a.v && b.v && a.sp == b.sp && lt32(a.lo, b.hi) && lt32(b.lo, a.hi);
++  endfunction
++
++  // {conflict(n, e), conflict_dram(n, e)}: each pair test once; the DRAM variant keeps the
++  // overlapping pairs in DRAM (a.sp == b.sp, so that is the package's v masking)
++  function automatic logic [1:0] conf2(input fp_t n, input fp_t e);
++    logic c, cd, o;
++    c = n.all || e.all; cd = c;
++    for (int i = 0; i < 2; i++) begin
++      for (int j = 0; j < 4; j++) begin
++        o = ov_s(n.wr[i], e.rd[j]);
++        c |= o; cd |= o && n.wr[i].sp == SP_DRAM;
++        o = ov_s(e.wr[i], n.rd[j]);
++        c |= o; cd |= o && e.wr[i].sp == SP_DRAM;
++      end
++      for (int j = 0; j < 2; j++) begin
++        o = ov_s(n.wr[i], e.wr[j]);
++        c |= o; cd |= o && n.wr[i].sp == SP_DRAM;
++      end
++    end
++    return {c, cd};
++  endfunction
++
+   // ---- free slot and the new instruction's dependencies
+   logic [SW-1:0]   free_slot;
+   logic [WIN-1:0]  ndep, ndepd;
+@@ -149,8 +211,10 @@ module otpu_seq
+     for (int i = WIN - 1; i >= 0; i--)
+       if (!sv[i]) begin have_free = 1'b1; free_slot = SW'(i); end
+     for (int i = 0; i < WIN; i++) begin
+-      ndep[i] = sv[i] && !fin[i] && conflict(c_fp, sfp[i]);
+-      ndepd[i] = sv[i] && !fin[i] && conflict_dram(c_fp, sfp[i]);
++      logic [1:0] cf;
++      cf = conf2(c_fp, sfp[i]);
++      ndep[i] = sv[i] && !fin[i] && cf[1];
++      ndepd[i] = sv[i] && !fin[i] && cf[0];
+     end
+   end
+ 
+@@ -247,7 +311,8 @@ module otpu_seq
+       uq_r <= '0;
+       pc <= '0; sp <= '0; cyc <= '0;
+       halted <= 1'b0; error <= 1'b0; stopping <= 1'b0;
+-      p_v <= 1'b0; s_v <= 1'b0; q_v <= 1'b0; c_v <= 1'b0; lp <= 1'b0;
++      o_v <= 1'b0; p_v <= 1'b0; s_v <= 1'b0; q_v <= 1'b0; c_v <= 1'b0; lp <= 1'b0;
++      pw_v <= 1'b0;
+       icount <= '0;
+       sv <= '0; sstarted <= '0; sready <= '0;
+       for (int i = 0; i < 16; i++) R[i] <= '0;
+@@ -337,7 +402,17 @@ module otpu_seq
+           s_pp <= fp_part(fp_ops(p_cmd, D, S));
+         end
+       end
+-      if (r_take) p_v <= 1'b0;
++      // ---- O: register-relative fields
++      if (o_adv) begin
++        p_v <= o_v;
++        if (o_v) begin
++          p_cmd <= o_res; p_unit <= o_unit; p_pc <= o_pc;
++        end
++      end
++      if (r_take) o_v <= 1'b0;
++      // ---- the pending LI/ADDI write lands (the one R makes below is the next pending one)
++      pw_v <= 1'b0;
++      if (pw_v) R[pw_rd] <= pw_sum;
+       // ---- R: fetch / execute control / hand over
+       if (stopping) begin
+         if (sv == '0 && pipe_empty) halted <= 1'b1;
+@@ -345,18 +420,18 @@ module otpu_seq
+         case (op)
+           OP_NOP: advance();
+           OP_HALT: stopping <= 1'b1;
+-          OP_LI: begin
+-            if (rd != 0) R[rd] <= iw[1];
+-            advance();
+-          end
+-          OP_ADDI: begin
+-            if (rd != 0) R[rd] <= rv(ra) + iw[1];
++          OP_LI, OP_ADDI: begin
++            pw_v <= (rd != 0);
++            pw_rd <= rd;
++            pw_a <= (op == OP_LI) ? 32'd0 : rv(ra);
++            pw_b <= iw[1];
+             advance();
+           end
+           OP_LOOP: begin
+             if (!lp) begin
+               lp <= 1'b1;
+-              lp_cnt <= rv(ra) + iw[2];
++              lp_a <= rv(ra);
++              lp_b <= iw[2];
+               lp_len <= iw[1];
+             end else begin
+               lp <= 1'b0;
+@@ -373,8 +448,9 @@ module otpu_seq
+               error <= 1'b1;
+               halted <= 1'b1;
+             end else if (r_take) begin
+-              p_v <= 1'b1;
+-              p_cmd <= dcmd; p_unit <= dunit; p_pc <= pc;
++              o_v <= 1'b1;
++              o_cmd <= dcmd; o_unit <= dunit; o_pc <= pc;
++              o_x1 <= rv(ra); o_x2 <= rv(rb); o_x3 <= rv(rc);
+               advance();
+             end
+           end

@@ -1,0 +1,191 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 03b94b0..665f973 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -65,15 +65,25 @@ module otpu_vpu
+     $fatal(1, "otpu_vpu: LANES must be a power of two <= 16");
+ 
+   localparam f32_t F_NZ = 32'h8000_0000;     // -0: (a*b) + -0 == a*b exactly
++  // TMEM word-address bits the VPU carries: TMEM decodes only log2(TMEM_WORDS) <= 17 bits in
++  // every configuration, and a 2^20-word TMEM (one BRAM copy per read port) cannot fit in an
++  // xc7k480t, so the upper 12 bits are never read. Addresses wrap mod 2^AW, which agrees with
++  // the 32-bit arithmetic on every bit TMEM reads; the ports are zero-extended.
++  localparam int AW = 20;
++  // an AW-bit address onto a 32-bit port: the argument (a sum) is evaluated in AW bits
++  function automatic logic [31:0] port_addr(input logic [AW-1:0] x);
++    return 32'(x);
++  endfunction
+ 
+   // ------------------------------------------------------------------ command state
+-  logic        issuing, red_act;
+-  logic [31:0] dst, a, b, imm;
+-  logic [15:0] rows, cols, drs, ars, brs;
+-  logic [7:0]  func;
+-  logic [1:0]  bmode;
+-  logic [15:0] ir, ic, nch, ch;               // issue: row, column, chunks per row, chunk
+-  logic [31:0] a_row, b_row, d_row;           // row base addresses (no multipliers)
++  logic          issuing, red_act;
++  logic [AW-1:0] dst, a, b;
++  logic [31:0]   imm;
++  logic [15:0]   rows, cols, drs, ars, brs;
++  logic [7:0]    func;
++  logic [1:0]    bmode;
++  logic [15:0]   ir, ic, nch, ch;             // issue: row, column, chunks per row, chunk
++  logic [AW-1:0] a_row, b_row, d_row;         // row base addresses (no multipliers)
+   logic [3:0]  nslots;                         // slots of this function
+   logic [7:0]  tag;                            // instruction tag
+   logic [31:0] cyc, st_frz;
+@@ -132,15 +142,15 @@ module otpu_vpu
+         if (32'(ic) + 32'(l) < 32'(cols) && 16'(l) < iwid) begin
+           imask[l] = 1'b1;
+           ta_en[l] = (func != V_FILL);
+-          ta_addr[l] = a_row + 32'(ic) + 32'(l);
++          ta_addr[l] = port_addr(a_row + AW'(ic) + AW'(l));
+           if (is_binary(func)) case (bmode)
+             B_FULL: begin
+               tb_en[l] = 1'b1;
+-              tb_addr[l] = b_row + 32'(ic) + 32'(l);
++              tb_addr[l] = port_addr(b_row + AW'(ic) + AW'(l));
+             end
+             B_COL: begin
+               tb_en[l] = 1'b1;
+-              tb_addr[l] = b + 32'(ic) + 32'(l);
++              tb_addr[l] = port_addr(b + AW'(ic) + AW'(l));
+             end
+             default: ;
+           endcase
+@@ -148,7 +158,7 @@ module otpu_vpu
+       end
+       if (bmode == B_ROW && is_binary(func) && imask[0]) begin
+         tb_en[0] = 1'b1;
+-        tb_addr[0] = b_row;
++        tb_addr[0] = 32'(b_row);
+       end
+     end
+   end
+@@ -161,7 +171,7 @@ module otpu_vpu
+     logic [1:0]       bmode;
+     logic [31:0]      imm;
+     logic [LANES-1:0] mask;
+-    logic [31:0]      waddr;     // elementwise: dst row + column; reductions: dst row
++    logic [AW-1:0]    waddr;     // elementwise: dst row + column; reductions: dst row
+     logic             row_last;  // last chunk of its row
+     logic             all_last;  // last chunk of the instruction
+     logic             first;     // reductions: chunk index < RL (partials start at +0)
+@@ -187,13 +197,13 @@ module otpu_vpu
+     logic             v;
+     logic [7:0]       func;
+     logic [LANES-1:0] mask;
+-    logic [31:0]      waddr;
++    logic [AW-1:0]    waddr;
+     logic             all_last;
+   } mt_t;
+   typedef struct packed {
+     logic             v;
+     logic [7:0]       tag;
+-    logic [31:0]      waddr;
++    logic [AW-1:0]    waddr;
+     logic             row_last;
+     logic             all_last;
+     logic             first;
+@@ -661,7 +671,7 @@ module otpu_vpu
+   end
+ 
+   // rows finish in order: the next root goes to wr_row
+-  logic [31:0]   wr_row;
++  logic [AW-1:0] wr_row;
+   logic [15:0]   rows_done;
+ 
+   // ------------------------------------------------------------------ TMEM writes
+@@ -689,19 +699,19 @@ module otpu_vpu
+       for (int l = 0; l < LANES; l++) begin
+         if (mo.mask[l]) begin
+           cw_en[l] = 1'b1;
+-          cw_addr[l] = mo.waddr + 32'(l);
++          cw_addr[l] = port_addr(mo.waddr + AW'(l));
+           cw_data[l] = lres[l];
+         end
+       end
+     end
+     if (red_act && func == V_RMAX && live(mxm_q, tag) && mxm_q.row_last) begin
+       cw_en[0] = 1'b1;
+-      cw_addr[0] = mxm_q.waddr;
++      cw_addr[0] = 32'(mxm_q.waddr);
+       cw_data[0] = mx_new;
+     end
+     if (red_act && is_sum && root_v) begin
+       cw_en[0] = 1'b1;
+-      cw_addr[0] = wr_row;
++      cw_addr[0] = 32'(wr_row);
+       cw_data[0] = xl[LW][0];
+     end
+   end
+@@ -739,7 +749,7 @@ module otpu_vpu
+         if (h_empty) begin
+           done_i <= 1'b1;
+         end else begin
+-          dst <= hc.w1; a <= hc.w2; b <= hc.w3;
++          dst <= hc.w1[AW-1:0]; a <= hc.w2[AW-1:0]; b <= hc.w3[AW-1:0];
+           rows <= hc.w4[15:0]; cols <= hc.w4[31:16];
+           drs <= hc.w5[15:0]; ars <= hc.w5[31:16];
+           brs <= hc.w6[15:0]; func <= hf; bmode <= hc.w6[25:24];
+@@ -751,13 +761,13 @@ module otpu_vpu
+             nchunks = ((nchunks + 16'(RL) - 1) / 16'(RL)) * 16'(RL);
+           nch <= nchunks;
+           ir <= '0; ic <= '0; ch <= '0;
+-          a_row <= hc.w2; b_row <= hc.w3; d_row <= hc.w1;
++          a_row <= hc.w2[AW-1:0]; b_row <= hc.w3[AW-1:0]; d_row <= hc.w1[AW-1:0];
+           tag <= tag + 1;
+           issuing <= 1'b1;
+           st_frz <= '0;
+           if (red_f(hf)) begin
+             red_act <= 1'b1;
+-            wr_row <= hc.w1; rows_done <= '0;
++            wr_row <= hc.w1[AW-1:0]; rows_done <= '0;
+             mx_have <= 1'b0;
+           end else begin
+             ewn = ewn + 1;
+@@ -775,7 +785,7 @@ module otpu_vpu
+           mi.bmode <= bmode;
+           mi.imm <= imm;
+           mi.mask <= imask;
+-          mi.waddr <= is_red ? d_row : d_row + 32'(ic);
++          mi.waddr <= is_red ? d_row : d_row + AW'(ic);
+           mi.row_last <= irow_last;
+           mi.all_last <= iall_last;
+           mi.first <= (ch < 16'(RL));
+@@ -784,9 +794,9 @@ module otpu_vpu
+           mi.sq <= (func == V_RSSQ);
+           if (irow_last) begin
+             ic <= '0; ch <= '0;
+-            a_row <= a_row + 32'(ars);
+-            b_row <= b_row + 32'(brs);
+-            d_row <= d_row + 32'(drs);
++            a_row <= a_row + AW'(ars);
++            b_row <= b_row + AW'(brs);
++            d_row <= d_row + AW'(drs);
+             if (ir + 1 == rows) issuing <= 1'b0;
+             else ir <= ir + 1;
+           end else begin
+@@ -810,7 +820,7 @@ module otpu_vpu
+         end
+         // ---- RSUM/RSSQ: a row's sum is written this cycle (see TMEM writes)
+         if (red_act && is_sum && root_v) begin
+-          wr_row <= wr_row + 32'(drs);
++          wr_row <= wr_row + AW'(drs);
+           rows_done <= rows_done + 1;
+           if (rows_done + 1 == rows) fin = 1'b1;
+         end
+@@ -829,6 +839,12 @@ module otpu_vpu
+ `ifndef SYNTHESIS
+   bit trace;
+   initial trace = $test$plusargs("trace");
++  // the address bases an instruction uses must fit in AW bits (a TMEM of more than 2^AW words)
++  always_ff @(posedge clk)
++    if (!rst && can_begin && en && !h_empty &&
++        (hc.w1[31:AW] != 0 || (hf != V_FILL && hc.w2[31:AW] != 0) ||
++         (is_binary(hf) && hc.w6[25:24] != B_SCALAR && hc.w3[31:AW] != 0)))
++      $fatal(1, "otpu_vpu: TMEM address base beyond AW = %0d bits", AW);
+   // the tree schedule needs rows a multiple of RL cycles apart: level 0 (issuing while the
+   // subs >= RL/2 are on `pacc`) must never meet another level
+   always_ff @(posedge clk)

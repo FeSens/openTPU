@@ -1,0 +1,161 @@
+diff --git a/rtl/seq/otpu_seq.sv b/rtl/seq/otpu_seq.sv
+index a104568..7107fa3 100644
+--- a/rtl/seq/otpu_seq.sv
++++ b/rtl/seq/otpu_seq.sv
+@@ -70,6 +70,13 @@ module otpu_seq
+   // second enters or skips the loop from registers -- keeps the add off the fetch-address path
+   logic        lp;
+   logic [31:0] lp_cnt, lp_len;
++  logic        lp_len1, lp_len2, lp_nz;   // lp_len == 1, lp_len == 2, lp_cnt != 0
++  // The loop-stack predicates the fetch address needs, kept as flip-flops so that no compare
++  // and no 32-bit stack mux sits on the IMEM address path. Each is updated at the edges that
++  // move its operands and holds exactly for the valid entries k < sp:
++  logic [3:0]  e_eq, a_eq;       // stk_end[k] == fa, stk_end[k] == pc
++  logic [3:0]  g1, g2;           // stk_rem[k] > 1, stk_rem[k] > 2
++  logic [3:0]  se [4];           // se[k][j]: stk_end[k] == stk_start[j] (k <= j)
+ 
+   // The footprint as the window keeps it: an MM's ASCALE TMEM range (fp_t rd[3]) never comes
+   // with its streamed-scale DRAM range (rd[1]; ASCALE needs UNIT, docs/isa.md), so it moves
+@@ -207,12 +214,19 @@ module otpu_seq
+ 
+   // ---- loop-end handling for the instruction at pc
+   logic        at_end;
+-  always_comb at_end = (sp != 0) && (stk_end[sp-1] == pc);
++  logic        tg1, tg2, ng1;    // stk_rem[sp-1] > 1, stk_rem[sp-1] > 2, stk_rem[sp-2] > 1
++  always_comb begin
++    at_end = (sp != 0) && a_eq[sp-1];
++    tg1 = g1[sp-1]; tg2 = g2[sp-1]; ng1 = g1[sp-2];
++  end
+ 
+   task automatic advance();
+     if (at_end) begin
+-      if (stk_rem[sp-1] > 1) stk_rem[sp-1] <= stk_rem[sp-1] - 1;
+-      else sp <= sp - 1;
++      if (tg1) begin
++        stk_rem[sp-1] <= stk_rem[sp-1] - 1;
++        g1[sp-1] <= tg2;
++        g2[sp-1] <= stk_rem[sp-1][31:2] != 0;    // stk_rem[sp-1] > 3
++      end else sp <= sp - 1;
+     end
+   endtask
+ 
+@@ -233,9 +247,14 @@ module otpu_seq
+   logic        hit1, hit2;       // fa ends the loop on top of the stack / the one below it
+   logic        hit;              // fa's successor is a loop start ...
+   logic [31:0] hit_pc;           // ... this one
++  logic        case_a, case_c;   // ... it is picked by case A / case C
++  logic        lpf;              // a LOOP's first cycle
+   logic        lp_z;             // the LOOP's trip count (R[ra] + iw[2]) is 0
+   logic [31:0] lp_a;
+   logic [31:0] succ;
++  wire  [31:0] fa_inc = fa + 1;
++  wire  [31:0] pc_inc = pc + 1;
++  wire  [31:0] lp_skip = 32'(({pc, 1'b1} + {iw[1], 1'b1}) >> 1);   // pc + 1 + iw[1], one carry chain
+   always_comb begin
+     case (op)
+       OP_NOP, OP_LI, OP_ADDI: adv = 1'b1;
+@@ -244,27 +263,53 @@ module otpu_seq
+       default: adv = dunit >= 0 && r_take;
+     endcase
+     ld = !ir_v || (!stopping && !halted && adv);
+-    hit1 = (sp != 0) && (stk_end[sp-1] == fa);
+-    hit2 = (sp >= 2) && (stk_end[sp-2] == fa);
+-    hit = hit1 && stk_rem[sp-1] > 1;                                          // D
++    lpf = ir_v && op == OP_LOOP && !lp && !stopping && !halted;
++    hit1 = (sp != 0) && e_eq[sp-1];
++    hit2 = (sp >= 2) && e_eq[sp-2];
++    hit = hit1 && tg1;                                                         // D
+     hit_pc = stk_start[sp-1];
++    case_a = 1'b0; case_c = 1'b0;
+     if (ir_v && op == OP_LOOP) begin
+-      if (lp_cnt != 0) begin hit = lp_len == 1 && lp_cnt > 1; hit_pc = fa; end  // A
++      if (lp_nz) begin                                                         // A
++        hit = lp_len1 && lp_cnt[31:1] != 0; hit_pc = fa; case_a = 1'b1;       // (lp_cnt > 1)
++      end
+     end else if (ir_v && at_end) begin
+-      if (stk_rem[sp-1] > 1) hit = hit1 && stk_rem[sp-1] > 2;                // B
+-      else begin hit = hit2 && stk_rem[sp-2] > 1; hit_pc = stk_start[sp-2]; end // C
++      if (tg1) hit = hit1 && tg2;                                              // B
++      else begin hit = hit2 && ng1; hit_pc = stk_start[sp-2]; case_c = 1'b1; end // C
+     end
+-    succ = hit ? hit_pc : fa + 1;
++    succ = hit ? hit_pc : fa_inc;
+     // a + b == 0 without the carry chain: every sum bit is 0 iff a ^ b is the carry, (a | b) << 1
+     lp_a = rv(ra);
+     lp_z = (lp_a ^ iw[2]) == ((lp_a | iw[2]) << 1);
+     if (rst) fa_d = '0;
+-    else if (ir_v && op == OP_LOOP && !lp && !stopping && !halted)
+-      fa_d = lp_z ? pc + 1 + iw[1] : pc + 1;
++    else if (lpf) fa_d = lp_z ? lp_skip : pc_inc;
+     else if (ld) fa_d = succ;
+     else fa_d = fa;
+   end
+ 
++  // ---- the predicates on fa and pc, recomputed for the fa_d and pc they move to: against the
++  // new fetch address's incrementer or adder, or taken from se when fa moves to a loop start.
++  // The entry a LOOP pushes (fa == pc + 1 then) ends at pc + lp_len.
++  always_ff @(posedge clk) begin
++    if (rst) begin
++      e_eq <= '0; a_eq <= '0;
++    end else if (lpf) begin
++      for (int k = 0; k < 4; k++)
++        e_eq[k] <= lp_z ? stk_end[k] == lp_skip : stk_end[k] == pc_inc;
++    end else if (ld) begin
++      for (int k = 0; k < 4; k++) begin
++        if (!hit) e_eq[k] <= stk_end[k] == fa_inc;
++        else if (case_c) e_eq[k] <= se[k][sp-2];
++        else if (!case_a) e_eq[k] <= se[k][sp-1];                  // B, D (A: fa stays)
++        a_eq[k] <= e_eq[k];                                         // pc moves to fa
++        if (case_a && k == sp) begin
++          e_eq[k] <= hit ? lp_len1 : lp_len2;
++          a_eq[k] <= lp_len1;
++        end
++      end
++    end
++  end
++
+   // A dependency on an instruction that has already started on the SAME unit is satisfied:
+   // every unit processes its instructions in start order (the MXU consumes and drains its two
+   // commands strictly in order), so the older one's effects land first. This lets the MXU
+@@ -352,8 +397,21 @@ module otpu_seq
+       // fa is the pc the one-instruction-per-cycle fetch would move to (the next_pc rule)
+       if (ld && ir_v &&
+           fa != ((op == OP_LOOP) ? ((lp_cnt == 0) ? pc + 1 + lp_len : pc + 1) :
+-                 (at_end && stk_rem[sp-1] > 1) ? stk_start[sp-1] : pc + 1))
++                 (sp != 0 && stk_end[sp-1] == pc && stk_rem[sp-1] > 1) ? stk_start[sp-1] :
++                 pc + 1))
+         $fatal(1, "otpu_seq: fetch address %0d does not follow pc %0d", fa, pc);
++      // the loop-stack predicate flip-flops hold their compares for every valid entry
++      if (lp && (lp_len1 != (lp_len == 1) || lp_len2 != (lp_len == 2) || lp_nz != (lp_cnt != 0)))
++        $fatal(1, "otpu_seq: LOOP predicates do not match lp_len %0d / lp_cnt %0d", lp_len, lp_cnt);
++      for (int k = 0; k < 4; k++)
++        if (k < sp) begin
++          if (e_eq[k] != (stk_end[k] == fa) || a_eq[k] != (stk_end[k] == pc) ||
++              g1[k] != (stk_rem[k] > 1) || g2[k] != (stk_rem[k] > 2))
++            $fatal(1, "otpu_seq: loop-stack predicates of entry %0d do not match", k);
++          for (int j = k; j < 4; j++)
++            if (j < sp && se[k][j] != (stk_end[k] == stk_start[j]))
++              $fatal(1, "otpu_seq: loop-stack predicate se[%0d][%0d] does not match", k, j);
++        end
+ `endif
+       icount <= icount + 32'(r_ret) + 32'(c_go);
+       // completions
+@@ -463,12 +521,17 @@ module otpu_seq
+               lp <= 1'b1;
+               lp_cnt <= rv(ra) + iw[2];
+               lp_len <= iw[1];
++              lp_len1 <= iw[1] == 1; lp_len2 <= iw[1] == 2; lp_nz <= !lp_z;
+             end else begin
+               lp <= 1'b0;
+-                if (lp_cnt != 0) begin
++                if (lp_nz) begin
+                 stk_start[sp] <= pc + 1;
+                 stk_end[sp]   <= pc + lp_len;
+                 stk_rem[sp]   <= lp_cnt;
++                g1[sp] <= lp_cnt > 1; g2[sp] <= lp_cnt > 2;
++                // stk_end[k] == fa == pc + 1 == stk_start[sp]
++                for (int j = 0; j < 4; j++)
++                  if (j == sp) for (int k = 0; k <= j; k++) se[k][j] <= (k == j) ? lp_len1 : e_eq[k];
+                 sp <= sp + 1;
+               end
+             end

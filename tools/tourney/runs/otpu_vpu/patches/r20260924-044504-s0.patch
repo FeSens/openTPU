@@ -1,0 +1,244 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index e24457e..a217040 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -65,15 +65,19 @@ module otpu_vpu
+     $fatal(1, "otpu_vpu: LANES must be a power of two <= 16");
+ 
+   localparam f32_t F_NZ = 32'h8000_0000;     // -0: (a*b) + -0 == a*b exactly
++  // TMEM word addresses are computed in AW bits and zero-extended onto the ports: TMEM decodes
++  // only its low log2(words) bits (2^16 words in every build); raise AW with it past 2^20
++  localparam int AW = 20;
+ 
+   // ------------------------------------------------------------------ command state
+   logic        issuing, red_act;
+-  logic [31:0] dst, a, b, imm;
++  logic [AW-1:0] dst, a, b;
++  logic [31:0] imm;
+   logic [15:0] rows, cols, drs, ars, brs;
+   logic [7:0]  func;
+   logic [1:0]  bmode;
+   logic [15:0] ir, ic, nch, ch;               // issue: row, column, chunks per row, chunk
+-  logic [31:0] a_row, b_row, d_row;           // row base addresses (no multipliers)
++  logic [AW-1:0] a_row, b_row, d_row;         // row base addresses (no multipliers)
+   logic [3:0]  nslots;                         // slots of this function
+   logic [7:0]  tag;                            // instruction tag
+   logic [31:0] cyc, st_frz;
+@@ -132,15 +136,15 @@ module otpu_vpu
+         if (32'(ic) + 32'(l) < 32'(cols) && 16'(l) < iwid) begin
+           imask[l] = 1'b1;
+           ta_en[l] = (func != V_FILL);
+-          ta_addr[l] = a_row + 32'(ic) + 32'(l);
++          ta_addr[l] = 32'(AW'(a_row + AW'(ic) + AW'(l)));
+           if (is_binary(func)) case (bmode)
+             B_FULL: begin
+               tb_en[l] = 1'b1;
+-              tb_addr[l] = b_row + 32'(ic) + 32'(l);
++              tb_addr[l] = 32'(AW'(b_row + AW'(ic) + AW'(l)));
+             end
+             B_COL: begin
+               tb_en[l] = 1'b1;
+-              tb_addr[l] = b + 32'(ic) + 32'(l);
++              tb_addr[l] = 32'(AW'(b + AW'(ic) + AW'(l)));
+             end
+             default: ;
+           endcase
+@@ -148,7 +152,7 @@ module otpu_vpu
+       end
+       if (bmode == B_ROW && is_binary(func) && imask[0]) begin
+         tb_en[0] = 1'b1;
+-        tb_addr[0] = b_row;
++        tb_addr[0] = 32'(b_row);
+       end
+     end
+   end
+@@ -161,7 +165,7 @@ module otpu_vpu
+     logic [1:0]       bmode;
+     logic [31:0]      imm;
+     logic [LANES-1:0] mask;
+-    logic [31:0]      waddr;     // elementwise: dst row + column; reductions: dst row
++    logic [AW-1:0]    waddr;     // elementwise: dst row + column; reductions: dst row
+     logic             row_last;  // last chunk of its row
+     logic             all_last;  // last chunk of the instruction
+     logic             first;     // reductions: chunk index < RL (partials start at +0)
+@@ -187,13 +191,13 @@ module otpu_vpu
+     logic             v;
+     logic [7:0]       func;
+     logic [LANES-1:0] mask;
+-    logic [31:0]      waddr;
++    logic [AW-1:0]    waddr;
+     logic             all_last;
+   } mt_t;
+   typedef struct packed {
+     logic             v;
+     logic [7:0]       tag;
+-    logic [31:0]      waddr;
++    logic [AW-1:0]    waddr;
+     logic             row_last;
+     logic             all_last;
+     logic             first;
+@@ -624,49 +628,60 @@ module otpu_vpu
+   wire cap = red_act && is_sum && live(mt, tag) && mt.final_;
+ 
+   // level strobes: cap of the subs a level pairs up, delayed to the level's issue cycles
+-  // (level 0 is the default); the last row level and the root share one shift register
+-  logic [LR-1:1] lv;
++  // (level 0 is the default); the last row level and the root share one shift register.
++  // lvn: the same strobes one granted cycle early (for the tree's registered row-r operand)
++  logic [LR-1:1] lv, lvn;
+   logic [RD-1:0] rsr;
++  initial if (DL < 2) $fatal(1, "otpu_vpu: tree strobe DL < 2");
+   always_ff @(posedge clk)
+     if (rst) rsr <= '0;
+     else if (en) rsr <= {rsr[RD-2:0], cap && mt.row_last};
+   assign lv[LR-1] = rsr[DL-1];
++  assign lvn[LR-1] = rsr[DL-2];
+   wire root_v = rsr[RD-1];
+   for (genvar j = 1; j < LR - 1; j++) begin : g_lv
+     localparam int DJ = tree_i(j) - (RL - tree_h(j));
++    initial if (DJ < 2) $fatal(1, "otpu_vpu: tree strobe DJ < 2");
+     logic [DJ-1:0] sr;
+     always_ff @(posedge clk)
+       if (rst) sr <= '0;
+       else if (en) sr <= {sr[DJ-2:0], cap && mt.sub >= 8'(RL - tree_h(j))};
+     assign lv[j] = sr[DJ-1];
++    assign lvn[j] = sr[DJ-2];
+   end
+ 
+   f32_t tr_y [LANES];
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+-    f32_t pd, pdd, oa, ob;
+-    f32_t sa [LR], sb [LR];                  // level j's operands (row r, row r + H)
+-    logic [DMAX:1][31:0] td;                 // tr_y[k] delayed 1..DMAX
+-    wire  [DMAX:0][31:0] tt = {td, tr_y[k]};
+-    // pd = pacc delayed RL/2; its last stage has a reset so it stays a flip-flop, not a
+-    // shift-register LUT (the value after reset is never used)
++    // oa (row r) is a flip-flop loaded one granted cycle early (lvn) from what shifts into the
++    // last stage it replaces: pacc delayed RL/2 (level 0), tr_y delayed tree_da(j) (level j)
++    localparam int TD = (DMAX > 1) ? DMAX - 1 : 1;
++    f32_t pdd, oa, ob;
++    f32_t sa [LR], sb [LR];                  // level j's operands (row r a cycle early, row r + H)
++    logic [TD:1][31:0] td;                   // tr_y[k] delayed 1..DMAX-1
++    wire  [TD:0][31:0] tt = {td, tr_y[k]};
+     otpu_delay #(.W(32), .N(RL / 2 - 1)) u_pd (.clk, .en, .d(pacc[k]), .q(pdd));
+-    always_ff @(posedge clk)
+-      if (rst) pd <= '0;
+-      else if (en) pd <= pdd;
+     always_ff @(posedge clk) if (en) begin
+       td[1] <= tr_y[k];
+-      for (int d = 2; d <= DMAX; d++) td[d] <= td[d-1];
++      for (int d = 2; d <= TD; d++) td[d] <= td[d-1];
+     end
+-    assign sa[0] = pd;
++    assign sa[0] = pdd;
+     assign sb[0] = pacc[k];
+     for (genvar j = 1; j < LR; j++) begin : g_op
+-      assign sa[j] = tt[tree_da(j)];
++      initial if (tree_da(j) < 1) $fatal(1, "otpu_vpu: tree delay tree_da < 1");
++      assign sa[j] = tt[tree_da(j) - 1];
+       assign sb[j] = tt[tree_db(j)];
+     end
++    // oa has a reset so it stays a flip-flop (the value after reset is never used)
++    always_ff @(posedge clk)
++      if (rst) oa <= '0;
++      else if (en) begin
++        oa <= sa[0];
++        for (int j = 1; j < LR; j++) if (lvn[j]) oa <= sa[j];
++      end
+     always_comb begin
+-      oa = sa[0]; ob = sb[0];
++      ob = sb[0];
+       for (int j = 1; j < LR; j++)
+-        if (lv[j]) begin oa = sa[j]; ob = sb[j]; end
++        if (lv[j]) ob = sb[j];
+     end
+     otpu_fadd #(.LAT(LA)) u_tree (.clk, .en, .a(oa), .b(ob), .y(tr_y[k]));
+   end
+@@ -701,7 +716,7 @@ module otpu_vpu
+   end
+ 
+   // rows finish in order: the next root goes to wr_row
+-  logic [31:0]   wr_row;
++  logic [AW-1:0] wr_row;
+   logic [15:0]   rows_done;
+ 
+   // ------------------------------------------------------------------ TMEM writes
+@@ -729,19 +744,19 @@ module otpu_vpu
+       for (int l = 0; l < LANES; l++) begin
+         if (mo.mask[l]) begin
+           cw_en[l] = 1'b1;
+-          cw_addr[l] = mo.waddr + 32'(l);
++          cw_addr[l] = 32'(AW'(mo.waddr + AW'(l)));
+           cw_data[l] = lres[l];
+         end
+       end
+     end
+     if (red_act && func == V_RMAX && live(mxm_q, tag) && mxm_q.row_last) begin
+       cw_en[0] = 1'b1;
+-      cw_addr[0] = mxm_q.waddr;
++      cw_addr[0] = 32'(mxm_q.waddr);
+       cw_data[0] = mx_new;
+     end
+     if (red_act && is_sum && root_v) begin
+       cw_en[0] = 1'b1;
+-      cw_addr[0] = wr_row;
++      cw_addr[0] = 32'(wr_row);
+       cw_data[0] = xl[LW][0];
+     end
+   end
+@@ -779,7 +794,7 @@ module otpu_vpu
+         if (h_empty) begin
+           done_i <= 1'b1;
+         end else begin
+-          dst <= hc.w1; a <= hc.w2; b <= hc.w3;
++          dst <= AW'(hc.w1); a <= AW'(hc.w2); b <= AW'(hc.w3);
+           rows <= hc.w4[15:0]; cols <= hc.w4[31:16];
+           drs <= hc.w5[15:0]; ars <= hc.w5[31:16];
+           brs <= hc.w6[15:0]; func <= hf; bmode <= hc.w6[25:24];
+@@ -791,13 +806,13 @@ module otpu_vpu
+             nchunks = ((nchunks + 16'(RL) - 1) / 16'(RL)) * 16'(RL);
+           nch <= nchunks;
+           ir <= '0; ic <= '0; ch <= '0;
+-          a_row <= hc.w2; b_row <= hc.w3; d_row <= hc.w1;
++          a_row <= AW'(hc.w2); b_row <= AW'(hc.w3); d_row <= AW'(hc.w1);
+           tag <= tag + 1;
+           issuing <= 1'b1;
+           st_frz <= '0;
+           if (red_f(hf)) begin
+             red_act <= 1'b1;
+-            wr_row <= hc.w1; rows_done <= '0;
++            wr_row <= AW'(hc.w1); rows_done <= '0;
+             mx_have <= 1'b0;
+           end else begin
+             ewn = ewn + 1;
+@@ -815,7 +830,7 @@ module otpu_vpu
+           mi.bmode <= bmode;
+           mi.imm <= imm;
+           mi.mask <= imask;
+-          mi.waddr <= is_red ? d_row : d_row + 32'(ic);
++          mi.waddr <= is_red ? d_row : d_row + AW'(ic);
+           mi.row_last <= irow_last;
+           mi.all_last <= iall_last;
+           mi.first <= (ch < 16'(RL));
+@@ -824,9 +839,9 @@ module otpu_vpu
+           mi.sq <= (func == V_RSSQ);
+           if (irow_last) begin
+             ic <= '0; ch <= '0;
+-            a_row <= a_row + 32'(ars);
+-            b_row <= b_row + 32'(brs);
+-            d_row <= d_row + 32'(drs);
++            a_row <= a_row + AW'(ars);
++            b_row <= b_row + AW'(brs);
++            d_row <= d_row + AW'(drs);
+             if (ir + 1 == rows) issuing <= 1'b0;
+             else ir <= ir + 1;
+           end else begin
+@@ -850,7 +865,7 @@ module otpu_vpu
+         end
+         // ---- RSUM/RSSQ: a row's sum is written this cycle (see TMEM writes)
+         if (red_act && is_sum && root_v) begin
+-          wr_row <= wr_row + 32'(drs);
++          wr_row <= wr_row + AW'(drs);
+           rows_done <= rows_done + 1;
+           if (rows_done + 1 == rows) fin = 1'b1;
+         end

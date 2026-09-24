@@ -1,0 +1,34 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index a414099..abc11d9 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -385,19 +385,23 @@ module otpu_mxu
+   rmw_t rx;                                   // RMAX (no ACC): drained lanes, compared next cycle
+   f32_t ry [NL];
+   // r1: r0 one granted cycle later, with the old values registered (xo): no path from the TMEM
+-  // block RAMs into the fmadd's DSP inputs in one cycle
++  // block RAMs into the fmadd's DSP inputs in one cycle. The ASCALE factor (alr) is selected from
++  // r0 as it moves into r1, so the fmadd's b operand is a flop too (no mux in front of the DSP);
++  // c_asc and alpha cannot change while a valid entry sits in r0/r1 (q_h flips only once drained,
++  // alpha loads only before an ASCALE command drains)
+   rmw_t r1;
+-  f32_t xo [NL];
++  f32_t xo [NL], alr [NL];
+   always_ff @(posedge clk)
+     if (rst) r1 <= '0;
+     else if (t_gnt) begin
+       r1 <= r0;
+-      for (int k = 0; k < NL; k++) xo[k] <= t_rdata[k];
++      for (int k = 0; k < NL; k++) begin
++        xo[k]  <= t_rdata[k];
++        alr[k] <= c_asc ? alpha[r0.col[k][MW-2:0]] : F_ONE;
++      end
+     end
+   for (genvar k = 0; k < NL; k++) begin : g_rmw
+-    f32_t al;
+-    assign al = c_asc ? alpha[r1.col[k][MW-2:0]] : F_ONE;
+-    otpu_fmadd #(.LM(LM), .LA(LA)) u_y (.clk, .en(t_gnt), .a(xo[k]), .b(al), .c(r1.nv[k]),
++    otpu_fmadd #(.LM(LM), .LA(LA)) u_y (.clk, .en(t_gnt), .a(xo[k]), .b(alr[k]), .c(r1.nv[k]),
+                                         .y(ry[k]));
+   end
+   otpu_delay #(.W($bits(rmw_t)), .N(LM + LA)) u_rw (.clk, .en(t_gnt), .d(r1), .q(rw));

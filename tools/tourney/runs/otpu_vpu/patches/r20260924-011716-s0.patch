@@ -1,0 +1,87 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index ee8343f..bf4eac9 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -362,43 +362,65 @@ module otpu_vpu
+ 
+   // ------------------------------------------------------------------ RMAX
+   // pairwise max tree over the lanes of the chunk (masked lanes drop out), in two registered
+-  // stages: the first level (from the TMEM read data), then the rest
++  // stages: the first level (from the TMEM read data), then the rest. The first stage
++  // registers the winners' order keys (fkey), so the second compares plain unsigned numbers;
++  // unkey maps a key back to the ftz'd value.
+   localparam int HL = LANES / 2;
+-  f32_t  mxh_v [HL];
++  logic [31:0] mxh_k [HL];
+   logic  mxh_h [HL];
+   meta_t mxh_m;
+   f32_t  mxc_q;
+   meta_t mxm_q;
+   f32_t  mx_run;
+   logic  mx_have;
++  function automatic f32_t unkey(input logic [31:0] k);
++    return k[31] ? {1'b0, k[30:0]} : ~k;
++  endfunction
+   always_ff @(posedge clk) if (en) begin
+-    f32_t v [LANES];
++    logic [31:0] k [LANES];
+     logic h [LANES];
+     for (int l = 0; l < LANES; l++) begin
+-      v[l] = ftz(ta_data[l]);
++      k[l] = fkey(ta_data[l]);
+       h[l] = m0.mask[l];
+     end
+     for (int l = 0; l < HL; l++) begin
+-      mxh_v[l] <= (!h[l] || (h[l + HL] && fp_gt(v[l + HL], v[l]))) ? v[l + HL] : v[l];
++      mxh_k[l] <= (!h[l] || (h[l + HL] && k[l + HL] > k[l])) ? k[l + HL] : k[l];
+       mxh_h[l] <= h[l] || h[l + HL];
+     end
+     mxh_m <= m0;
+   end
+-  always_ff @(posedge clk) if (en) begin
+-    f32_t v [HL];
+-    logic h [HL];
+-    for (int l = 0; l < HL; l++) begin
+-      v[l] = mxh_v[l];
+-      h[l] = mxh_h[l];
++  if (HL == 4) begin : g_mx4
++    // all the pairs compared in parallel on the registered keys: the second level's compare
++    // is picked by the first level's selects instead of waiting for its winners
++    always_ff @(posedge clk) if (en) begin
++      logic s02, s13, g, s;
++      logic [1:0] idx;
++      s02 = !mxh_h[0] || (mxh_h[2] && mxh_k[2] > mxh_k[0]);
++      s13 = !mxh_h[1] || (mxh_h[3] && mxh_k[3] > mxh_k[1]);
++      g   = s13 ? (s02 ? mxh_k[3] > mxh_k[2] : mxh_k[3] > mxh_k[0])
++                : (s02 ? mxh_k[1] > mxh_k[2] : mxh_k[1] > mxh_k[0]);
++      s   = !(mxh_h[0] || mxh_h[2]) || ((mxh_h[1] || mxh_h[3]) && g);
++      idx = s ? (s13 ? 2'd3 : 2'd1) : (s02 ? 2'd2 : 2'd0);
++      mxc_q <= unkey(mxh_k[idx]);
++      mxm_q <= mxh_m;
+     end
+-    for (int w = HL / 2; w >= 1; w = w / 2) begin
+-      for (int l = 0; l < w; l++) begin
+-        if (!h[l] || (h[l + w] && fp_gt(v[l + w], v[l]))) v[l] = v[l + w];
+-        h[l] = h[l] || h[l + w];
++  end else begin : g_mxn
++    always_ff @(posedge clk) if (en) begin
++      logic [31:0] k [HL];
++      logic h [HL];
++      for (int l = 0; l < HL; l++) begin
++        k[l] = mxh_k[l];
++        h[l] = mxh_h[l];
++      end
++      for (int w = HL / 2; w >= 1; w = w / 2) begin
++        for (int l = 0; l < w; l++) begin
++          if (!h[l] || (h[l + w] && k[l + w] > k[l])) k[l] = k[l + w];
++          h[l] = h[l] || h[l + w];
++        end
+       end
++      mxc_q <= unkey(k[0]);
++      mxm_q <= mxh_m;
+     end
+-    mxc_q <= v[0];
+-    mxm_q <= mxh_m;
+   end
+   f32_t mx_new;
+   assign mx_new = (mx_have && fp_gt(mx_run, mxc_q)) ? mx_run : mxc_q;

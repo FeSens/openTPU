@@ -1,0 +1,79 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index a71d96a..0a29d43 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -21,7 +21,7 @@
+ // exact). RSUM/RSSQ implement isum_64: lane l owns the partials l, l+LANES, ... and adds each
+ // chunk's term into the partial last updated RL = 64/LANES chunks ago -- a loop of exactly RL
+ // cycles through a pipelined adder. Rows are padded with +0 terms to a multiple of 64 columns;
+-// the 64 final partials are captured into one of two buffers and summed by a folding tree
++// the 64 final partials are captured into one of NTB = 2 buffers and summed by a folding tree
+ // (LANES adders) while the next row streams.
+ //
+ // The stream (reads, lane pipelines, stream writes) advances on cycles the TMEM grant is given
+@@ -525,7 +525,7 @@ module otpu_vpu
+   // Partial p sits in row p / LANES, lane p % LANES: levels n >= LANES add rows of the same
+   // lane, levels n < LANES add lanes of row 0, so tree adder k only reads lane k (and lane
+   // k + n) and only writes lane k -- narrow muxes instead of any-of-64 reads.
+-  localparam int NTB = 4;
++  localparam int NTB = 2;
+   localparam int TBW = $clog2(NTB);
+   f32_t          pb [NTB][RL][LANES];
+   logic [NTB-1:0] tb_act;                 // captured, tree in progress
+@@ -546,24 +546,33 @@ module otpu_vpu
+       end
+   end
+   // issue register: the selected buffer and its pair range; pb is read the next cycle (the
+-  // issue counts as in flight from selection, so a level never reads before its inputs land)
++  // issue counts as in flight from selection, so a level never reads before its inputs land).
++  // tb_i steps by LANES from 0, so pairs is_i .. is_i+LANES-1 share row is_i / LANES and, in
++  // levels n >= LANES (n a multiple of LANES), their partners share row (is_i + n) / LANES:
++  // the partner row is registered here instead of decoded from per-lane sums
+   logic          is_go;
+   logic [TBW-1:0] is_b;
+   logic [6:0]    is_i, is_n;
++  logic [5:0]    is_rb;                    // row of the same-lane partners
++  logic          is_x;                     // n >= LANES: partners in the same lane
+   f32_t          tr_y [LANES];
+   logic [LANES-1:0] tr_m;
+   logic [6:0]    tr_dst_q [LA];
+   logic [TBW-1:0] tr_b_q [LA];
+   logic [LANES-1:0] tr_v_q [LA];
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+-    logic [6:0] ia, ib;
++    logic [6:0] ia;
+     assign ia = is_i + 7'(k);
+-    assign ib = ia + is_n;
+     assign tr_m[k] = is_go && (ia < is_n);
+-    f32_t oa, ob;
+-    assign oa = pb[is_b][ia[5:0] >> LW][k];
+-    assign ob = (is_n >= 7'(LANES)) ? pb[is_b][ib[5:0] >> LW][k]
+-                                    : pb[is_b][0][ib[LW-1:0]];
++    f32_t oa, ob, obx;
++    assign oa = pb[is_b][is_i[5:0] >> LW][k];
++    // cross-lane (n < LANES: a single issue at is_i == 0, partner lane (k + n) % LANES); n is
++    // one-hot, so pick the lane with its bits instead of adding
++    always_comb begin
++      obx = pb[is_b][0][(k + 1) % LANES];
++      for (int j = 1; j < LW; j++) if (is_n[j]) obx = pb[is_b][0][(k + (1 << j)) % LANES];
++    end
++    assign ob = is_x ? pb[is_b][is_rb][k] : obx;
+     otpu_fadd #(.LAT(LA)) u_tree (.clk, .en(ent), .a(oa), .b(ob), .y(tr_y[k]));
+   end
+ 
+@@ -749,6 +758,15 @@ module otpu_vpu
+         is_b <= tr_b;
+         is_i <= tb_i[tr_b];
+         is_n <= tb_n[tr_b];
++        is_rb <= 6'(tb_i[tr_b] + tb_n[tr_b]) >> LW;
++        is_x <= tb_n[tr_b] >= 7'(LANES);
++`ifndef SYNTHESIS
++        if (tr_go && (tb_i[tr_b] % 7'(LANES) != 0 ||
++                      (tb_n[tr_b] < 7'(LANES) && tb_i[tr_b] != 0) ||
++                      (tb_n[tr_b] >= 7'(LANES) && tb_n[tr_b] % 7'(LANES) != 0)))
++          $error("otpu_vpu: tree issue i=%0d n=%0d breaks the row identities",
++                 tb_i[tr_b], tb_n[tr_b]);
++`endif
+         tr_v_q[0] <= tr_m;
+         tr_dst_q[0] <= is_i;
+         tr_b_q[0] <= is_b;

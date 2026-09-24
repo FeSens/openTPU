@@ -1,0 +1,80 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index a414099..dbdb216 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -72,6 +72,7 @@ module otpu_mxu
+   localparam int RFW = $clog2(RF);
+   localparam int MW = $clog2(MCOLS) + 1;
+   localparam int NL = (LANES < MCOLS) ? LANES : MCOLS;   // lanes the drain can fill
++  localparam bit ONE_STEP = (MCOLS <= LANES);   // all M <= MCOLS ASCALE/RMAX words move in one step
+   initial if (D % 16 != 0) $fatal(1, "otpu_mxu: D must be a multiple of 16");
+ 
+   // ================================================================== issuer
+@@ -103,6 +104,9 @@ module otpu_mxu
+   logic [31:0] alpha [MCOLS];
+   logic [1:0]  al_st;                       // ASCALE factors: 0 to load, 1 loading, 2 loaded
+   logic [7:0]  al_i, mx_i;                  // next ASCALE factor to load / RMAX value to write
++  // step offsets as read: always 0 when one step moves them all (M <= MCOLS <= LANES)
++  wire  [7:0]  al_o = ONE_STEP ? 8'd0 : al_i;
++  wire  [7:0]  mx_o = ONE_STEP ? 8'd0 : mx_i;
+ 
+   // FIFOs of chunks and of their scales (the two DRAM ports return independently, in order;
+   // an issued chunk's slot is reserved, so neither FIFO can overflow)
+@@ -416,7 +420,7 @@ module otpu_mxu
+   always_comb begin
+     t_ren = '0; t_raddr = '0; t_wen = '0; t_waddr = '0; t_wdata = '0;
+     if (drain_go) begin
+-      for (int k = 0; k < LANES; k++) begin
++      for (int k = 0; k < NL; k++) begin
+         if (32'(k) < 32'(ncnt)) begin
+           if (c_acc) begin
+             t_ren[k] = 1'b1;
+@@ -439,21 +443,21 @@ module otpu_mxu
+       end
+     end
+     // ASCALE factors and RMAX values move LANES words per cycle (consecutive words: distinct
+-    // banks)
++    // banks); lanes >= MCOLS never hold one (M <= MCOLS), so only NL lanes are wired
+     if (al_go) begin
+-      for (int k = 0; k < LANES; k++) begin
+-        if (32'(al_i) + 32'(k) < 32'(c_M)) begin
++      for (int k = 0; k < NL; k++) begin
++        if (32'(al_o) + 32'(k) < 32'(c_M)) begin
+           t_ren[k] = 1'b1;
+-          t_raddr[k] = c_asa + 32'(al_i) + 32'(k);
++          t_raddr[k] = c_asa + 32'(al_o) + 32'(k);
+         end
+       end
+     end
+     if (mx_go) begin
+-      for (int k = 0; k < LANES; k++) begin
+-        if (32'(mx_i) + 32'(k) < 32'(c_M)) begin
++      for (int k = 0; k < NL; k++) begin
++        if (32'(mx_o) + 32'(k) < 32'(c_M)) begin
+           t_wen[k] = 1'b1;
+-          t_waddr[k] = q_mxo[q_h] + 32'(mx_i) + 32'(k);
+-          t_wdata[k] = mx[MW'(32'(mx_i) + 32'(k))];
++          t_waddr[k] = q_mxo[q_h] + 32'(mx_o) + 32'(k);
++          t_wdata[k] = mx[MW'(32'(mx_o) + 32'(k))];
+         end
+       end
+     end
+@@ -617,14 +621,14 @@ module otpu_mxu
+         end
+         rmw_n <= rmw_n + ((drain_go && c_acc) ? 4'd1 : 4'd0) - (rw.v ? 4'd1 : 4'd0);
+         if (mx_go) begin
+-          if (32'(mx_i) + LANES >= 32'(c_M)) mx_done <= 1'b1;
++          if (ONE_STEP || 32'(mx_i) + LANES >= 32'(c_M)) mx_done <= 1'b1;
+           else mx_i <= mx_i + 8'(LANES);
+         end
+         if (al_go) al_st <= 2'd1;
+         if (al_st == 2'd1) begin
+-          for (int k = 0; k < LANES; k++)
+-            if (32'(al_i) + 32'(k) < MCOLS) alpha[MW'(32'(al_i) + 32'(k))] <= t_rdata[k];
+-          if (32'(al_i) + LANES >= 32'(c_M)) al_st <= 2'd2;
++          for (int k = 0; k < NL; k++)
++            if (32'(al_o) + 32'(k) < MCOLS) alpha[MW'(32'(al_o) + 32'(k))] <= t_rdata[k];
++          if (ONE_STEP || 32'(al_i) + LANES >= 32'(c_M)) al_st <= 2'd2;
+           else begin
+             al_i <= al_i + 8'(LANES);
+             al_st <= 2'd0;

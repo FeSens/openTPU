@@ -1,0 +1,242 @@
+diff --git a/rtl/vpu/otpu_quant.sv b/rtl/vpu/otpu_quant.sv
+index 1d20f5b..da7fe49 100644
+--- a/rtl/vpu/otpu_quant.sv
++++ b/rtl/vpu/otpu_quant.sv
+@@ -20,7 +20,8 @@ module otpu_qdly #(parameter int W = 32, parameter int N = 2) (
+   input  logic         rst,
+   input  logic         en,
+   input  logic [W-1:0] d,
+-  output logic [W-1:0] q
++  output logic [W-1:0] q,
++  output logic [W-1:0] qn         // the D side of q (while rst is low)
+ );
+   initial if (N < 2) $fatal(1, "otpu_qdly: N must be at least 2");
+   logic [W-1:0] r [N - 1];
+@@ -33,24 +34,33 @@ module otpu_qdly #(parameter int W = 32, parameter int N = 2) (
+     if (rst) qr <= '0;
+     else if (en) qr <= r[N-2];
+   assign q = qr;
++  assign qn = r[N-2];
+ endmodule
+ 
+ // otpu_fmul with the mantissa product taken from the raw operands: fp_mul_s2 reads p only when
+ // !sp, i.e. when neither exponent is 0 or 0xFF, where ftz() is the identity. So p needs no flush
+ // logic in front of the DSP inputs (sp/sv/s/e still come from fp_mul_s1).
++// PM = 1: the product's operands are the unit's own registers am/bm, loaded with {exp != 0,
++// frac} of ad/bd (the words a/b load on the same enabled edge), so every DSP A/B bit is the Q of
++// a plain flip-flop and the multiplier cascade starts at the DSP's AREG/BREG. The hidden bit is
++// exp != 0, not 1: the two agree whenever p is read (!sp). yn is the D side of y (LAT == 2).
+ module otpu_qfmul
+   import otpu_fp::*;
+-#(parameter int LAT = 2) (
++#(parameter int LAT = 2, parameter bit PM = 0) (
+   input  logic  clk,
+   input  logic  en,
+   input  f32_t  a,
+   input  f32_t  b,
+-  output f32_t  y
++  input  f32_t  ad,               // PM: what a / b load on this enabled edge
++  input  f32_t  bd,
++  output f32_t  y,
++  output f32_t  yn
+ );
+-  function automatic fmul_mid_t qmul_s1(input f32_t x, input f32_t z);
++  function automatic fmul_mid_t qmul_s1(input f32_t x, input f32_t z, input logic [23:0] xm,
++                                        input logic [23:0] zm);
+     fmul_mid_t m;
+     m = fp_mul_s1(x, z);
+-    m.p = {1'b1, x[22:0]} * {1'b1, z[22:0]};
++    m.p = xm * zm;
+     return m;
+   endfunction
+   // fp_mul_s2 with nothing after the round add's carry chain. Its carry out mr[24] is 1 only for
+@@ -75,16 +85,28 @@ module otpu_qfmul
+     if (ov ? (eh <= -1) : (eh <= 0)) return {m.s, 31'd0};
+     return {m.s, ov ? eh[7:0] + 8'd1 : eh[7:0], man};
+   endfunction
++  logic [23:0] am, bm;
++  if (PM) begin : g_pm
++    always_ff @(posedge clk) if (en) begin
++      am <= {|ad[30:23], ad[22:0]};
++      bm <= {|bd[30:23], bd[22:0]};
++    end
++  end else begin : g_raw
++    assign am = {1'b1, a[22:0]};
++    assign bm = {1'b1, b[22:0]};
++  end
+   fmul_mid_t m;
+   f32_t r;
++  assign yn = qmul_s2(m);
+   always_ff @(posedge clk) if (en) begin
+-    m <= qmul_s1(a, b);
+-    r <= qmul_s2(m);
++    m <= qmul_s1(a, b, am, bm);
++    r <= yn;
+   end
+   otpu_delay #(.W(32), .N(LAT - 2)) u_pad (.clk, .en, .d(r), .q(y));
+ endmodule
+ 
+-// otpu_fadd whose align/add stage has one carry chain: the sticky bit stays off the add
++// otpu_fadd whose align/add stage has one carry chain: the sticky bit stays off the add. yn is
++// the D side of y (LAT == 4).
+ module otpu_qfadd
+   import otpu_fp::*;
+ #(parameter int LAT = 4) (
+@@ -92,7 +114,8 @@ module otpu_qfadd
+   input  logic  en,
+   input  f32_t  a,
+   input  f32_t  b,
+-  output f32_t  y
++  output f32_t  y,
++  output f32_t  yn
+ );
+   // fp_add_s2 with the sticky bit kept off the add chain. ma[2:0] is always 000 (fp_add_s1
+   // builds {1, frac, 3'b000}, or '0 when sp), so the three guard bits of the sum only need the
+@@ -124,16 +147,18 @@ module otpu_qfadd
+   fadd_p2_t s2;
+   fadd_nm_t s3;
+   f32_t r;
++  assign yn = fp_add_s4(s3);
+   always_ff @(posedge clk) if (en) begin
+     s1 <= fp_add_s1(a, b);
+     s2 <= qadd_s2(s1);
+     s3 <= fp_add_s3(s2);
+-    r  <= fp_add_s4(s3);
++    r  <= yn;
+   end
+   otpu_delay #(.W(32), .N(LAT - 4)) u_pad (.clk, .en, .d(r), .q(y));
+ endmodule
+ 
+-// otpu_fmadd on otpu_qfmul and otpu_qfadd
++// otpu_fmadd on otpu_qfmul (with its own operand registers: ad/bd are what a/b load on this
++// enabled edge) and otpu_qfadd; yn is the D side of y (LA == 4)
+ module otpu_qfmadd
+   import otpu_fp::*;
+ #(parameter int LM = 2, parameter int LA = 4) (
+@@ -141,13 +166,17 @@ module otpu_qfmadd
+   input  logic  en,
+   input  f32_t  a,
+   input  f32_t  b,
++  input  f32_t  ad,
++  input  f32_t  bd,
+   input  f32_t  c,
+-  output f32_t  y
++  output f32_t  y,
++  output f32_t  yn
+ );
++  initial if (LA != 4) $fatal(1, "otpu_qfmadd: yn needs LA == 4");
+   f32_t p, cd;
+-  otpu_qfmul #(.LAT(LM)) u_m (.clk, .en, .a, .b, .y(p));
++  otpu_qfmul #(.LAT(LM), .PM(1)) u_m (.clk, .en, .a, .b, .ad, .bd, .y(p), .yn());
+   otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(c), .q(cd));
+-  otpu_qfadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y);
++  otpu_qfadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y, .yn);
+ endmodule
+ 
+ module otpu_qscale
+@@ -167,6 +196,7 @@ module otpu_qscale
+   localparam int SL = LM + LA;
+   localparam int P = SL + LM;               // one Newton step: u_t, then u_y
+   localparam int LAT = 3 * P + LM;
++  initial if (LM != 2 || LA != 4) $fatal(1, "otpu_qscale: the operand D sides need LM == 2, LA == 4");
+   // input register (the amax selection in front of the unit is its own pipeline stage)
+   f32_t          amax_q;
+   logic          iv_q;
+@@ -176,36 +206,45 @@ module otpu_qscale
+   end
+   // seed stage: |amax|, its flags and the reciprocal seed, registered (amax is an otpu_qfmul
+   // result or +0, so it is already flushed: no ftz)
+-  f32_t ax, y0;
++  f32_t ax, y0, a, y0n;
+   logic zero, big;
++  assign a = {1'b0, amax_q[30:0]};
++  assign y0n = ftz(RECIP_MAGIC - a);
+   always_ff @(posedge clk) if (en) begin
+-    f32_t a;
+-    a = {1'b0, amax_q[30:0]};
+     ax <= a;
+     zero <= (a == 0);
+     big <= (a >= 32'h7E80_0000);
+-    y0 <= ftz(RECIP_MAGIC - a);
++    y0 <= y0n;
+   end
+   // recip(ax): y = y * (2 - ax*y), three times, from the magic seed; the delay lines into the
+   // multiplier operands end in a flip-flop with a reset (otpu_qdly). The ISA's y*t + (-0) is
+   // y*t for every product (no fp_mul result is changed by adding -0), so u_y is a plain multiply,
+   // not padded: its output register feeds the next multipliers directly (no SRL in front of
+-  // their DSPs), and k1 is delayed by the step's SL + LM to meet it.
++  // their DSPs), and k1 is delayed by the step's SL + LM to meet it. The *n signals are the D
++  // sides of the operand registers, for the multipliers' own mantissa copies (PM). While a qdly
++  // is held in reset its q is +0, so sp is set and the copy is don't-care.
+   f32_t y [4], t [3], k1 [4], yd [3];
++  f32_t yn [4], tn [3], k1n [4], ydn [3];
+   assign y[0] = y0;
++  assign yn[0] = y0n;
+   assign k1[0] = {1'b1, ax[30:0]};
++  assign k1n[0] = {1'b1, a[30:0]};
+   for (genvar i = 0; i < 3; i++) begin : g_it
+-    otpu_qfmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .c(F_TWO), .y(t[i]));
+-    otpu_qdly #(.W(32), .N(SL)) u_yd (.clk, .rst, .en, .d(y[i]), .q(yd[i]));
+-    otpu_qdly #(.W(32), .N(P)) u_k (.clk, .rst, .en, .d(k1[i]), .q(k1[i + 1]));
+-    otpu_qfmul #(.LAT(LM)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .y(y[i + 1]));
++    otpu_qfmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .ad(k1n[i]), .bd(yn[i]),
++      .c(F_TWO), .y(t[i]), .yn(tn[i]));
++    otpu_qdly #(.W(32), .N(SL)) u_yd (.clk, .rst, .en, .d(y[i]), .q(yd[i]), .qn(ydn[i]));
++    otpu_qdly #(.W(32), .N(P)) u_k (.clk, .rst, .en, .d(k1[i]), .q(k1[i + 1]), .qn(k1n[i + 1]));
++    otpu_qfmul #(.LAT(LM), .PM(1)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .ad(ydn[i]), .bd(tn[i]),
++      .y(y[i + 1]), .yn(yn[i + 1]));
+   end
+   // big: 127 * (+0) = +0, forced on the product (bd delayed beside zd) instead of on the operand
+   f32_t invm, scm, scd;
+   logic zd, bd, zd2, bd2;
+-  otpu_qdly #(.W(2), .N(3 * P)) u_f (.clk, .rst, .en, .d({zero, big}), .q({zd, bd}));
+-  otpu_qfmul #(.LAT(LM)) u_inv (.clk, .en, .a(F_127), .b(y[3]), .y(invm));
+-  otpu_qfmul #(.LAT(LM)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .y(scm));
++  otpu_qdly #(.W(2), .N(3 * P)) u_f (.clk, .rst, .en, .d({zero, big}), .q({zd, bd}), .qn());
++  otpu_qfmul #(.LAT(LM), .PM(1)) u_inv (.clk, .en, .a(F_127), .b(y[3]), .ad(F_127), .bd(yn[3]),
++    .y(invm), .yn());
++  otpu_qfmul #(.LAT(LM), .PM(1)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .ad(a), .bd(F_INV127),
++    .y(scm), .yn());
+   otpu_delay #(.W(32), .N(3 * P)) u_scd (.clk, .en, .d(scm), .q(scd));
+   otpu_delay #(.W(2), .N(LM)) u_z2 (.clk, .en, .d({zd, bd}), .q({zd2, bd2}));
+   otpu_delay #(.W(1 + TW), .N(LAT + 1)) u_v (.clk, .en, .d({iv_q, itag_q}), .q({ov, otag}));
+@@ -264,6 +303,7 @@ module otpu_quant
+   localparam int QL = 2 * LM;               // prescale latency
+   localparam f32_t F_NZ = 32'h8000_0000;
+   initial if (D % LANES != 0) $fatal(1, "otpu_quant: LANES must divide D");
++  initial if (LM != 2) $fatal(1, "otpu_quant: u_c2's operand D sides need LM == 2");
+ 
+   wire en = gnt;
+ 
+@@ -329,12 +369,17 @@ module otpu_quant
+   end
+ 
+   // ------------------------------------------------------------------ prescale
++  // u_r's operands are the input ports (no register to copy); u_c2 copies the D sides of v1 and
++  // of cd (the column factor's last delay stage, local here for that) into its own registers (PM)
+   f32_t xp [LANES];
+   for (genvar l = 0; l < LANES; l++) begin : g_pre
+-    f32_t v1, cd;
+-    otpu_qfmul #(.LAT(LM)) u_r (.clk, .en, .a(t_rdata[l]), .b(rsf ? t_rdata3 : F_ONE), .y(v1));
+-    otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(csf ? t_rdata2[l] : F_ONE), .q(cd));
+-    otpu_qfmul #(.LAT(LM)) u_c2 (.clk, .en, .a(v1), .b(cd), .y(xp[l]));
++    f32_t v1, v1n, c1, cd;
++    otpu_qfmul #(.LAT(LM)) u_r (.clk, .en, .a(t_rdata[l]), .b(rsf ? t_rdata3 : F_ONE),
++      .ad(F_ZERO), .bd(F_ZERO), .y(v1), .yn(v1n));
++    otpu_delay #(.W(32), .N(LM - 1)) u_c (.clk, .en, .d(csf ? t_rdata2[l] : F_ONE), .q(c1));
++    always_ff @(posedge clk) if (en) cd <= c1;
++    otpu_qfmul #(.LAT(LM), .PM(1)) u_c2 (.clk, .en, .a(v1), .b(cd), .ad(v1n), .bd(c1),
++      .y(xp[l]), .yn());
+   end
+   otpu_delay #(.W($bits(rm_t)), .N(QL)) u_mp (.clk, .en, .d(m0), .q(mp));
+ 
+@@ -510,7 +555,8 @@ module otpu_quant
+   for (genvar l = 0; l < LANES; l++) begin : g_q
+     f32_t p;
+     q8_mid_t qm;
+-    otpu_qfmul #(.LAT(LM)) u_q (.clk, .en, .a(wx_r[l]), .b(winv_r), .y(p));
++    otpu_qfmul #(.LAT(LM), .PM(1)) u_q (.clk, .en, .a(wx_r[l]), .b(winv_r), .ad(wx[l]), .bd(winv),
++      .y(p), .yn());
+     always_ff @(posedge clk) if (en) begin
+       qm <= qq8_s1(p);
+       qb[l] <= q8_s2(qm);

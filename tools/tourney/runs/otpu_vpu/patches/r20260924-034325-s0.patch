@@ -1,0 +1,75 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index 1bc0516..56a023a 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -370,8 +370,12 @@ module otpu_vpu
+       lst_t       sr;
+       logic [1:0] dr, dd;
+       logic       nr, nd;
+-      always_ff @(posedge clk) if (en) begin
+-        ra <= ia; rb <= ib; rc <= ic_; sr <= sin_; dr <= dest; nr <= negd;
++      always_ff @(posedge clk) begin
++        if (en) begin ra <= ia; rb <= ib; sr <= sin_; dr <= dest; nr <= negd; end
++        // the reset keeps rc out of a shift-register LUT with the fmadd's c delay (r[0], qr:
++        // 2 < shregmap's minlen 3), so the adder's c operand comes from a flip-flop. rc only
++        // differs right after reset, when no lane holds a valid entry.
++        if (rst) rc <= F_NZ; else if (en) rc <= ic_;
+       end
+       otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(r));
+       // the live fields only (see k1_live); the dead ones read as 0 and are never used
+@@ -453,8 +457,9 @@ module otpu_vpu
+         default: ;
+       endcase
+     end
+-    always_ff @(posedge clk) if (en) begin
+-      ra <= ia; rb <= ib; rc <= ic_;
++    always_ff @(posedge clk) begin
++      if (en) begin ra <= ia; rb <= ib; end
++      if (rst) rc <= F_NZ; else if (en) rc <= ic_;   // not an SRL: see g_lane
+     end
+     otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(st[1]));
+ 
+@@ -503,16 +508,26 @@ module otpu_vpu
+ 
+   // ------------------------------------------------------------------ RSUM / RSSQ
+   f32_t  pacc [LANES];                  // partial after adding this chunk's term
++  f32_t  fbm [LANES];                   // pacc delayed RL-LA-1 (RL > LA; else pacc)
+   rm_t   mtq, mt;                       // meta at the adder inputs / aligned with `pacc`
++  logic  first_e;                       // mtq.first one granted cycle early
+   otpu_delay #(.W($bits(rm_t)), .N(LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
+   otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
++  otpu_delay #(.W(1), .N(LM - 1)) u_fe (.clk, .en, .d(m0.first), .q(first_e));
+   for (genvar l = 0; l < LANES; l++) begin : g_red
+-    f32_t xin, tq, prev, fb;
++    f32_t xin, tq, prev;
+     assign xin = m0.mask[l] ? ftz(xa[l]) : F_ZERO;
+     otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(xin), .b((m0.func == V_RSSQ) ? xin : F_ONE), .y(tq));
+     // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
+-    otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
+-    assign prev = mtq.first ? F_ZERO : fb;
++    if (RL > LA) begin : g_fbq
++      // pacc delayed RL-LA-1, then a clearing register: its sync clear keeps it out of the SRL,
++      // so the adder sees a flip-flop, not a shift-register LUT's 1.5 ns clock-to-out
++      otpu_delay #(.W(32), .N(RL - LA - 1)) u_fb (.clk, .en, .d(pacc[l]), .q(fbm[l]));
++      always_ff @(posedge clk) if (en) prev <= first_e ? F_ZERO : fbm[l];
++    end else begin : g_fbw
++      assign fbm[l] = pacc[l];
++      assign prev = mtq.first ? F_ZERO : pacc[l];
++    end
+     otpu_fadd #(.LAT(LA)) u_acc (.clk, .en, .a(prev), .b(tq), .y(pacc[l]));
+   end
+ 
+@@ -580,7 +595,12 @@ module otpu_vpu
+     f32_t sa [LR], sb [LR];                  // level j's operands (row r, row r + H)
+     logic [DMAX:1][31:0] td;                 // tr_y[k] delayed 1..DMAX
+     wire  [DMAX:0][31:0] tt = {td, tr_y[k]};
+-    otpu_delay #(.W(32), .N(RL / 2)) u_pd (.clk, .en, .d(pacc[k]), .q(pd));
++    if (RL / 2 == RL - LA) begin : g_pds
++      // the loop's line already holds pacc delayed RL/2 - 1: one real flip-flop after it
++      always_ff @(posedge clk) if (en) pd <= fbm[k];
++    end else begin : g_pdl
++      otpu_delay #(.W(32), .N(RL / 2)) u_pd (.clk, .en, .d(pacc[k]), .q(pd));
++    end
+     always_ff @(posedge clk) if (en) begin
+       td[1] <= tr_y[k];
+       for (int d = 2; d <= DMAX; d++) td[d] <= td[d-1];

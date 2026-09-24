@@ -1,0 +1,205 @@
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index be24cce..e02757b 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -61,6 +61,9 @@ module otpu_vpu
+   localparam int LW = $clog2(LANES);
+   localparam int NCL = (CL < LANES) ? CL : LANES;
+   localparam int CLW = $clog2(NCL);
++  // TMEM address datapath width: the TMEM decodes far fewer bits (TMEM_WORDS <= 2^17), and the
++  // low AW bits of an address sum depend only on the operands' low AW bits
++  localparam int AW = 20;
+   initial if (RL < LA || NP % LANES != 0)
+     $fatal(1, "otpu_vpu: LANES must be a power of two <= 16");
+ 
+@@ -68,12 +71,13 @@ module otpu_vpu
+ 
+   // ------------------------------------------------------------------ command state
+   logic        issuing, red_act;
+-  logic [31:0] dst, a, b, imm;
++  logic [AW-1:0] dst, a, b;
++  logic [31:0] imm;
+   logic [15:0] rows, cols, drs, ars, brs;
+   logic [7:0]  func;
+   logic [1:0]  bmode;
+   logic [15:0] ir, ic, nch, ch;               // issue: row, column, chunks per row, chunk
+-  logic [31:0] a_row, b_row, d_row;           // row base addresses (no multipliers)
++  logic [AW-1:0] a_row, b_row, d_row;         // row base addresses (no multipliers)
+   logic [3:0]  nslots;                         // slots of this function
+   logic [7:0]  tag;                            // instruction tag
+   logic [31:0] cyc, st_frz;
+@@ -132,15 +136,15 @@ module otpu_vpu
+         if (32'(ic) + 32'(l) < 32'(cols) && 16'(l) < iwid) begin
+           imask[l] = 1'b1;
+           ta_en[l] = (func != V_FILL);
+-          ta_addr[l] = a_row + 32'(ic) + 32'(l);
++          ta_addr[l] = 32'(a_row + AW'(ic) + AW'(l));
+           if (is_binary(func)) case (bmode)
+             B_FULL: begin
+               tb_en[l] = 1'b1;
+-              tb_addr[l] = b_row + 32'(ic) + 32'(l);
++              tb_addr[l] = 32'(b_row + AW'(ic) + AW'(l));
+             end
+             B_COL: begin
+               tb_en[l] = 1'b1;
+-              tb_addr[l] = b + 32'(ic) + 32'(l);
++              tb_addr[l] = 32'(b + AW'(ic) + AW'(l));
+             end
+             default: ;
+           endcase
+@@ -148,7 +152,7 @@ module otpu_vpu
+       end
+       if (bmode == B_ROW && is_binary(func) && imask[0]) begin
+         tb_en[0] = 1'b1;
+-        tb_addr[0] = b_row;
++        tb_addr[0] = 32'(b_row);
+       end
+     end
+   end
+@@ -161,7 +165,7 @@ module otpu_vpu
+     logic [1:0]       bmode;
+     logic [31:0]      imm;
+     logic [LANES-1:0] mask;
+-    logic [31:0]      waddr;     // elementwise: dst row + column; reductions: dst row
++    logic [AW-1:0]    waddr;     // elementwise: dst row + column; reductions: dst row
+     logic             row_last;  // last chunk of its row
+     logic             all_last;  // last chunk of the instruction
+     logic             first;     // reductions: chunk index < RL (partials start at +0)
+@@ -174,12 +178,14 @@ module otpu_vpu
+   // multipliers in one cycle
+   meta_t m0, mi;
+   logic [LANES-1:0][31:0] xa, xb;
++  logic [LANES-1:0][22:0] xsm;   // RSSQ: the TMEM word's significand; RSUM: 0 (b = 1.0)
+   always_ff @(posedge clk)
+     if (rst) m0 <= '0;
+     else if (en) begin
+       m0 <= mi;
+       xa <= ta_data;
+       xb <= tb_data;
++      for (int l = 0; l < LANES; l++) xsm[l] <= mi.sq ? ta_data[l][22:0] : 23'd0;
+     end
+ 
+   // the parts of the meta the later stages read: along the lane taps, and for the reductions
+@@ -187,13 +193,13 @@ module otpu_vpu
+     logic             v;
+     logic [7:0]       func;
+     logic [LANES-1:0] mask;
+-    logic [31:0]      waddr;
++    logic [AW-1:0]    waddr;
+     logic             all_last;
+   } mt_t;
+   typedef struct packed {
+     logic             v;
+     logic [7:0]       tag;
+-    logic [31:0]      waddr;
++    logic [AW-1:0]    waddr;
+     logic             row_last;
+     logic             all_last;
+     logic             first;
+@@ -530,7 +536,9 @@ module otpu_vpu
+     // itself and reads the significand only when both exponents are normal), so the term is
+     // the same as that of m0.mask[l] ? ftz(xa[l]) : +0
+     assign sa = {m0.mask[l] & xa[l][31], m0.mask[l] ? xa[l][30:23] : 8'd0, xa[l][22:0]};
+-    assign sb = m0.sq ? sa : F_ONE;
++    // sb's significand from its own flip-flop (xsm == m0.sq ? xa[l][22:0] : 0): no LUT in
++    // front of the multiplier's B port
++    assign sb = {m0.sq ? sa[31:23] : F_ONE[31:23], xsm[l]};
+     otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(sa), .b(sb), .y(tq));
+     // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
+     if (RL - LA >= 1) begin : g_fbq
+@@ -671,7 +679,7 @@ module otpu_vpu
+   end
+ 
+   // rows finish in order: the next root goes to wr_row
+-  logic [31:0]   wr_row;
++  logic [AW-1:0] wr_row;
+   logic [15:0]   rows_done;
+ 
+   // ------------------------------------------------------------------ TMEM writes
+@@ -679,15 +687,19 @@ module otpu_vpu
+   // granted cycle after the cycle that produced it, so no path runs from the TMEM read data
+   // through the lanes into the TMEM write port. `done` follows its instruction's last write.
+   logic [LANES-1:0]       cw_en;
+-  logic [LANES-1:0][31:0] cw_addr, cw_data;
++  logic [LANES-1:0][AW-1:0] cw_addr, tw_a;     // tw_a: the registered write addresses
++  logic [LANES-1:0][31:0] cw_data;
+   logic                   done_i, dpend;
++  for (genvar l = 0; l < LANES; l++) begin : g_twa
++    assign tw_addr[l] = 32'(tw_a[l]);
++  end
+   always_ff @(posedge clk) begin
+     if (rst) begin
+       tw_en <= '0;
+       done <= 1'b0; dpend <= 1'b0;
+     end else begin
+       if (gnt) begin
+-        tw_en <= cw_en; tw_addr <= cw_addr; tw_data <= cw_data;
++        tw_en <= cw_en; tw_a <= cw_addr; tw_data <= cw_data;
+       end
+       done <= (done_i || dpend) && gnt;
+       dpend <= (done_i || dpend) && !gnt;
+@@ -699,7 +711,7 @@ module otpu_vpu
+       for (int l = 0; l < LANES; l++) begin
+         if (mo.mask[l]) begin
+           cw_en[l] = 1'b1;
+-          cw_addr[l] = mo.waddr + 32'(l);
++          cw_addr[l] = mo.waddr + AW'(l);
+           cw_data[l] = lres[l];
+         end
+       end
+@@ -749,7 +761,7 @@ module otpu_vpu
+         if (h_empty) begin
+           done_i <= 1'b1;
+         end else begin
+-          dst <= hc.w1; a <= hc.w2; b <= hc.w3;
++          dst <= hc.w1[AW-1:0]; a <= hc.w2[AW-1:0]; b <= hc.w3[AW-1:0];
+           rows <= hc.w4[15:0]; cols <= hc.w4[31:16];
+           drs <= hc.w5[15:0]; ars <= hc.w5[31:16];
+           brs <= hc.w6[15:0]; func <= hf; bmode <= hc.w6[25:24];
+@@ -761,13 +773,13 @@ module otpu_vpu
+             nchunks = ((nchunks + 16'(RL) - 1) / 16'(RL)) * 16'(RL);
+           nch <= nchunks;
+           ir <= '0; ic <= '0; ch <= '0;
+-          a_row <= hc.w2; b_row <= hc.w3; d_row <= hc.w1;
++          a_row <= hc.w2[AW-1:0]; b_row <= hc.w3[AW-1:0]; d_row <= hc.w1[AW-1:0];
+           tag <= tag + 1;
+           issuing <= 1'b1;
+           st_frz <= '0;
+           if (red_f(hf)) begin
+             red_act <= 1'b1;
+-            wr_row <= hc.w1; rows_done <= '0;
++            wr_row <= hc.w1[AW-1:0]; rows_done <= '0;
+             mx_have <= 1'b0;
+           end else begin
+             ewn = ewn + 1;
+@@ -785,7 +797,7 @@ module otpu_vpu
+           mi.bmode <= bmode;
+           mi.imm <= imm;
+           mi.mask <= imask;
+-          mi.waddr <= is_red ? d_row : d_row + 32'(ic);
++          mi.waddr <= is_red ? d_row : d_row + AW'(ic);
+           mi.row_last <= irow_last;
+           mi.all_last <= iall_last;
+           mi.first <= (ch < 16'(RL));
+@@ -794,9 +806,9 @@ module otpu_vpu
+           mi.sq <= (func == V_RSSQ);
+           if (irow_last) begin
+             ic <= '0; ch <= '0;
+-            a_row <= a_row + 32'(ars);
+-            b_row <= b_row + 32'(brs);
+-            d_row <= d_row + 32'(drs);
++            a_row <= a_row + AW'(ars);
++            b_row <= b_row + AW'(brs);
++            d_row <= d_row + AW'(drs);
+             if (ir + 1 == rows) issuing <= 1'b0;
+             else ir <= ir + 1;
+           end else begin
+@@ -820,7 +832,7 @@ module otpu_vpu
+         end
+         // ---- RSUM/RSSQ: a row's sum is written this cycle (see TMEM writes)
+         if (red_act && is_sum && root_v) begin
+-          wr_row <= wr_row + 32'(drs);
++          wr_row <= wr_row + AW'(drs);
+           rows_done <= rows_done + 1;
+           if (rows_done + 1 == rows) fin = 1'b1;
+         end

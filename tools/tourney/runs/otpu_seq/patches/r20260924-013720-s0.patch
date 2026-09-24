@@ -1,0 +1,255 @@
+diff --git a/rtl/seq/otpu_seq.sv b/rtl/seq/otpu_seq.sv
+index 36e9144..0ce36b5 100644
+--- a/rtl/seq/otpu_seq.sv
++++ b/rtl/seq/otpu_seq.sv
+@@ -166,6 +166,188 @@ module otpu_seq
+     return {any, dram};
+   endfunction
+ 
++  // fp_seg(fp_ranges()) split over S and Q, per fps_t cell rather than per (op, range). Every
++  // range is [lo, lo + c + P): c, its product-free part, comes from command fields only; P is 0,
++  // one of q_pr's products or two of them. S registers lo + c, the product selects and whatever
++  // validity it can decide; Q adds P (a carry-save step and one carry chain) and tests the
++  // length c + P for zero without a carry chain. lo is left as the command field for an empty
++  // range (fp_seg: 0) -- hi = 0 overlaps nothing either way.
++  // Cells: 0 = d[0], 1 = d[1], 2 = t[0], 3 = t[1], 4 = t2. Routing (lo in brackets):
++  //   LD/ST:  d0 [w1] w3<<2     t0 [w2] w3
++  //   MM:     d0 [w1] p0 + kb*D   d1 [w2] p1 + kb*4 (!f0)   t0 [w3] p2 + n
++  //           t1 [w3 + p3] m (f2: p3 is in lo, not in the length)   t2 [w2] m (f3)
++  //   QACT:   t0 [w1] p0 + kb*D   t1 [w4] kb*D (f1)   t2 [w5] rows (f2)
++  //   QST:    d0 [w2] p1 + p2 + 1   d1 [w3] f0 ? rows<<2 : p3<<2   t0 [w1] p0 + kb*D
++  //   VOP:    t0 [w1] p2 + (red ? 1 : cols)   t1 [w2] p0 + cols (!FILL)
++  //           t2 [w3] binary: FULL p1 + cols, ROW p1 + 1, COL cols
++  //   GATHER: t0 [w2] p1 + p2 + cols   t1 [w1] p0 + cols
++  localparam logic [4:0] X_P0 = 5'b00001, X_P1 = 5'b00010, X_P2 = 5'b00100, X_P3 = 5'b01000,
++                         X_P3S = 5'b10000;   // p3 << 2
++  typedef struct packed {
++    logic [31:0] bs;    // lo + c
++    logic [31:0] c;     // c, if the length has a product term (else 0)
++    logic [4:0]  x;     // hi adds this product (one-hot or none) ...
++    logic [4:0]  xl;    // ... and so does the length (not MM's t[1]: its p3 is in lo)
++    logic        y;     // hi and the length add p2 as well
++    logic        vs;    // valid, decided at S: no product term in the length and c != 0
++    logic        vp;    // the range exists and its length has a product term: valid iff != 0
++  } fq_t;
++  typedef struct packed {
++    fq_t [4:0] k;
++    logic      av;      // the ACT range is valid
++  } fqs_t;
++
++  function automatic fq_t fqr(input logic [31:0] lo, input logic [31:0] c, input logic [4:0] x,
++                              input logic y);
++    fq_t r;
++    r.bs = lo + c; r.x = x; r.xl = x; r.y = y;
++    r.vp = x != 0 || y;
++    r.vs = !r.vp && c != 0;
++    r.c = r.vp ? c : '0;
++    return r;
++  endfunction
++
++  // S: from the command alone, with fp_ranges' op, guard, flag and subop tests
++  function automatic fqs_t fq_s(input cmd_t c);
++    fqs_t f;
++    logic [31:0] rows, cols, n, kb, m;
++    logic [7:0]  fn;
++    f = '0;
++    case (c.op)
++      OP_LD, OP_ST: begin
++        f.k[0] = fqr(c.w1, c.w3 << 2, '0, 1'b0);
++        f.k[2] = fqr(c.w2, c.w3, '0, 1'b0);
++      end
++      OP_MM: begin
++        n = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]); m = 32'(c.w6[23:16]);
++        if (n != 0 && kb != 0 && m != 0) begin
++          f.k[0] = fqr(c.w1, kb * D, X_P0, 1'b0);
++          if (!c.flags[0]) f.k[1] = fqr(c.w2, kb * 4, X_P1, 1'b0);
++          f.k[2] = fqr(c.w3, n, X_P2, 1'b0);
++          if (c.flags[2]) begin                                                    // RMAX
++            f.k[3] = fqr(c.w3, m, '0, 1'b0);
++            f.k[3].x = X_P3;
++          end
++          if (c.flags[3]) f.k[4] = fqr(c.w2, m, '0, 1'b0);                         // ASCALE
++          f.av = 1'b1;
++        end
++      end
++      OP_QACT: begin
++        rows = 32'(c.w2[7:0]); kb = 32'(c.w2[31:16]);
++        if (rows != 0 && kb != 0) begin
++          f.k[2] = fqr(c.w1, kb * D, X_P0, 1'b0);
++          if (c.flags[1]) f.k[3] = fqr(c.w4, kb * D, '0, 1'b0);                    // CSCALE
++          if (c.flags[2]) f.k[4] = fqr(c.w5, rows, '0, 1'b0);                      // RSCALE
++          f.av = 1'b1;
++        end
++      end
++      OP_QST: begin
++        rows = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]);
++        if (rows != 0 && kb != 0) begin
++          f.k[0] = fqr(c.w2, 32'd1, X_P1, 1'b1);
++          f.k[1] = c.flags[0] ? fqr(c.w3, rows << 2, '0, 1'b0) : fqr(c.w3, '0, X_P3S, 1'b0);
++          f.k[2] = fqr(c.w1, kb * D, X_P0, 1'b0);
++        end
++      end
++      OP_VOP: begin
++        rows = 32'(c.w4[15:0]); cols = 32'(c.w4[31:16]); fn = c.w6[23:16];
++        if (rows != 0 && cols != 0) begin
++          f.k[2] = fqr(c.w1, (fn == V_RSUM || fn == V_RMAX || fn == V_RSSQ) ? 32'd1 : cols,
++                       X_P2, 1'b0);
++          if (fn != V_FILL) f.k[3] = fqr(c.w2, cols, X_P0, 1'b0);
++          if (is_binary(fn)) begin
++            case (c.w6[25:24])
++              B_FULL: f.k[4] = fqr(c.w3, cols, X_P1, 1'b0);
++              B_ROW:  f.k[4] = fqr(c.w3, 32'd1, X_P1, 1'b0);
++              B_COL:  f.k[4] = fqr(c.w3, cols, '0, 1'b0);
++              default: ;
++            endcase
++          end
++        end
++      end
++      OP_GATHER: begin
++        rows = 32'(c.w3[15:0]); cols = 32'(c.w3[31:16]);
++        if (rows != 0 && cols != 0) begin
++          f.k[2] = fqr(c.w2, cols, X_P1, 1'b1);
++          f.k[3] = fqr(c.w1, cols, X_P0, 1'b0);
++        end
++      end
++      default: ;
++    endcase
++    return f;
++  endfunction
++
++  function automatic logic [31:0] pick(input logic [4:0] x, input fpm_t p);
++    return ({32{x[0]}} & p.p0) | ({32{x[1]}} & p.p1) | ({32{x[2]}} & p.p2) |
++           ({32{x[3]}} & p.p3) | ({32{x[4]}} & (p.p3 << 2));
++  endfunction
++
++  // a + b + c == 0 (mod 2^32) without a carry chain: carry-save to s + k, then lp_z's test
++  function automatic logic zero3(input logic [31:0] a, input logic [31:0] b,
++                                 input logic [31:0] c);
++    logic [31:0] s, k;
++    s = a ^ b ^ c; k = ((a & b) | (a & c) | (b & c)) << 1;
++    return (s ^ k) == ((s | k) << 1);
++  endfunction
++
++  // Q: the products added in, lo and the op decodes from the command
++  function automatic fps_t fq_q(input cmd_t c, input fqs_t f, input fpm_t p);
++    fps_t s;
++    logic [4:0][31:0] lo, hi;
++    logic [7:0]  alo;
++    logic [15:0] akb;
++    lo = '0; alo = '0; akb = '0;
++    case (c.op)
++      OP_LD, OP_ST: begin lo[0] = c.w1; lo[2] = c.w2; end
++      OP_MM: begin
++        lo[0] = c.w1; lo[1] = c.w2; lo[2] = c.w3; lo[3] = c.w3 + p.p3; lo[4] = c.w2;
++        alo = c.w6[31:24]; akb = c.w4[31:16];
++      end
++      OP_QACT: begin
++        lo[2] = c.w1; lo[3] = c.w4; lo[4] = c.w5;
++        alo = c.w2[15:8]; akb = c.w2[31:16];
++      end
++      OP_QST: begin lo[0] = c.w2; lo[1] = c.w3; lo[2] = c.w1; end
++      OP_VOP: begin lo[2] = c.w1; lo[3] = c.w2; lo[4] = c.w3; end
++      OP_GATHER: begin lo[2] = c.w2; lo[3] = c.w1; end
++      default: ;
++    endcase
++    for (int i = 0; i < 5; i++) begin
++      logic [31:0] x, xl, y, s3, k3;
++      x = pick(f.k[i].x, p); xl = pick(f.k[i].xl, p); y = f.k[i].y ? p.p2 : '0;
++      s3 = f.k[i].bs ^ x ^ y; k3 = ((f.k[i].bs & x) | (f.k[i].bs & y) | (x & y)) << 1;
++      hi[i] = (f.k[i].vs || (f.k[i].vp && !zero3(f.k[i].c, xl, y))) ? s3 + k3 : '0;
++    end
++    s = '0;
++    s.all = c.op == OP_BAR;
++    s.dw = c.op == OP_ST || c.op == OP_QST;
++    s.d[0].lo = lo[0]; s.d[0].hi = hi[0];
++    s.d[1].lo = lo[1]; s.d[1].hi = hi[1];
++    s.t[0].w = c.op == OP_LD || c.op == OP_MM || c.op == OP_VOP || c.op == OP_GATHER;
++    s.t[0].r.lo = lo[2]; s.t[0].r.hi = hi[2];
++    s.t[1].w = c.op == OP_MM;
++    s.t[1].r.lo = lo[3]; s.t[1].r.hi = hi[3];
++    s.t2.lo = lo[4]; s.t2.hi = hi[4];
++    s.aw = c.op == OP_QACT;
++    s.alo = alo; s.ahi = f.av ? 17'(alo) + 17'(akb) : '0;
++    return s;
++  endfunction
++
++`ifndef SYNTHESIS
++  // fq_q(fq_s()) against fp_seg(fp_ranges()): equal but for the lo of empty ranges
++  function automatic logic r32_same(input r32_t a, input r32_t b);
++    return a.hi == b.hi && (b.hi == 0 || a.lo == b.lo);
++  endfunction
++  function automatic logic fps_same(input fps_t a, input fps_t b);
++    logic ok;
++    ok = a.all == b.all && a.dw == b.dw && a.aw == b.aw && a.ahi == b.ahi &&
++         (b.ahi == 0 || a.alo == b.alo) && r32_same(a.t2, b.t2);
++    for (int i = 0; i < 2; i++)
++      ok = ok && r32_same(a.d[i], b.d[i]) && a.t[i].w == b.t[i].w && r32_same(a.t[i].r, b.t[i].r);
++    return ok;
++  endfunction
++`endif
++
+   // window
+   logic [WIN-1:0]  sv;                       // slot valid (dispatched, not completed)
+   logic [WIN-1:0]  older [WIN];              // older[i][j]: slot j was dispatched before slot i
+@@ -221,16 +403,18 @@ module otpu_seq
+   always_comb dunit = unit_of(op);
+ 
+   // ---- dispatch pipeline: R (the instruction at pc: registers resolved) -> P (footprint
+-  // partial products) -> S (products) -> Q (footprint ranges) -> C (dependencies on the window,
+-  // slot allocation). In order; a stage holds while the next cannot take its instruction (C:
+-  // the window is full). The stages stream, so they add latency only at the program start.
++  // partial products) -> S (products; the product-free part of every range) -> Q (footprint
++  // ranges) -> C (dependencies on the window, slot allocation). In order; a stage holds while
++  // the next cannot take its instruction (C: the window is full). The stages stream, so they
++  // add latency only at the program start.
+   logic        p_v, s_v, q_v, c_v;
+   cmd_t        p_cmd, s_cmd, q_cmd, c_cmd;
+   logic [2:0]  p_unit, s_unit, q_unit, c_unit;
+   logic [31:0] p_pc, s_pc, q_pc, c_pc;
+   fpp_t        s_pp;
+   fpm_t        q_pr;
+-  fp_t         q_fp;             // Q's footprint ranges (otpu_pkg form)
++  fqs_t        q_fq;             // the ranges' product-free parts (fq_s)
++  fps_t        q_fs;             // Q's footprint ranges
+   fps_t        c_fp;
+   logic        have_free;
+   wire         c_go = c_v && have_free;
+@@ -253,7 +437,11 @@ module otpu_seq
+   // ---- free slot and the new instruction's dependencies
+   logic [SW-1:0]   free_slot;
+   logic [WIN-1:0]  ndep, ndepd;
++  always_comb q_fs = fq_q(q_cmd, q_fq, q_pr);
++`ifndef SYNTHESIS
++  fp_t         q_fp;             // Q's footprint ranges in otpu_pkg form (the reference)
+   always_comb q_fp = fp_ranges(q_cmd, q_pr, D, S);
++`endif
+   always_comb begin
+     have_free = 1'b0; free_slot = '0;
+     for (int i = WIN - 1; i >= 0; i--)
+@@ -443,6 +631,9 @@ module otpu_seq
+         end
+         if (dr && dwr)
+           $fatal(1, "otpu_seq: pc %0d both reads and writes DRAM (one dw bit)", q_pc);
++        // the S/Q split gives exactly fp_seg(fp_ranges()) (up to the lo of empty ranges)
++        if (!fps_same(q_fs, fp_seg(q_cmd.op, q_fp)))
++          $fatal(1, "otpu_seq: footprint of pc %0d differs from fp_ranges()", q_pc);
+       end
+ `endif
+       icount <= icount + 32'(r_ret) + 32'(c_go);
+@@ -516,7 +707,7 @@ module otpu_seq
+         c_v <= q_v;
+         if (q_v) begin
+           c_cmd <= q_cmd; c_unit <= q_unit; c_pc <= q_pc;
+-          c_fp <= fp_seg(q_cmd.op, q_fp);
++          c_fp <= q_fs;
+ `ifndef SYNTHESIS
+           c_ref <= q_fp;
+ `endif
+@@ -528,6 +719,7 @@ module otpu_seq
+         if (s_v) begin
+           q_cmd <= s_cmd; q_unit <= s_unit; q_pc <= s_pc;
+           q_pr <= fp_sum(s_pp);
++          q_fq <= fq_s(s_cmd);
+         end
+       end
+       // ---- P: partial products

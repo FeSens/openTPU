@@ -1,0 +1,50 @@
+diff --git a/rtl/vpu/otpu_quant.sv b/rtl/vpu/otpu_quant.sv
+index 06c5879..c2b1ed7 100644
+--- a/rtl/vpu/otpu_quant.sv
++++ b/rtl/vpu/otpu_quant.sv
+@@ -35,7 +35,7 @@ module otpu_qdly #(parameter int W = 32, parameter int N = 2) (
+   assign q = qr;
+ endmodule
+ 
+-// otpu_fmul with the mantissa product taken from the raw operands: fp_mul_s2 reads p only when
++// otpu_fmul with the mantissa product taken from the raw operands: qmul_s2 reads p only when
+ // !sp, i.e. when neither exponent is 0 or 0xFF, where ftz() is the identity. So p needs no flush
+ // logic in front of the DSP inputs (sp/sv/s/e still come from fp_mul_s1).
+ module otpu_qfmul
+@@ -53,11 +53,35 @@ module otpu_qfmul
+     m.p = {1'b1, x[22:0]} * {1'b1, z[22:0]};
+     return m;
+   endfunction
++  // fp_mul_s2 with the rounding overflow and the exponent off the mantissa carry chain:
++  // mr[24] of mm + rnd is rnd & (&mm), and then mr == 2^24, so (mr >> 1)[22:0] == (mm+1)[22:0] == 0.
++  function automatic f32_t qmul_s2(input fmul_mid_t m);
++    logic        n, lo, g, st, rnd, all1, inc;
++    logic [23:0] mm;
++    logic [24:0] mi;
++    logic signed [10:0] e0, e1, e2, ef;
++    if (m.sp) return m.sv;
++    n    = m.p[47];
++    lo   = |m.p[21:0];                                  // shared sticky part
++    mm   = n ? m.p[47:24] : m.p[46:23];
++    g    = n ? m.p[23] : m.p[22];
++    st   = n ? (lo | m.p[22]) : lo;
++    rnd  = g && (st || mm[0]);
++    all1 = (&m.p[46:24]) & (n ? m.p[47] : m.p[23]);     // &mm, straight from p (not the adder)
++    inc  = rnd & all1;                                   // == mr[24] of fp_mul_s2
++    mi   = {1'b0, mm} + 25'd1;                           // incrementer, independent of rnd
++    // exponent candidates from the registered e (settled long before the DSP output)
++    e0 = m.e; e1 = m.e + 11'sd1; e2 = m.e + 11'sd2;
++    ef = (n & inc) ? e2 : (n | inc) ? e1 : e0;           // e + n + inc
++    if (ef >= 255) return {m.s, 8'hFF, 23'd0};
++    if (ef <= 0)   return {m.s, 31'd0};
++    return {m.s, ef[7:0], rnd ? mi[22:0] : mm[22:0]};
++  endfunction
+   fmul_mid_t m;
+   f32_t r;
+   always_ff @(posedge clk) if (en) begin
+     m <= qmul_s1(a, b);
+-    r <= fp_mul_s2(m);
++    r <= qmul_s2(m);
+   end
+   otpu_delay #(.W(32), .N(LAT - 2)) u_pad (.clk, .en, .d(r), .q(y));
+ endmodule
