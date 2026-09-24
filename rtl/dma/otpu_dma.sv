@@ -44,6 +44,8 @@ module otpu_dma
   logic [31:0] nseg, iss, cmp;         // segments: total, issued, completed (LD)
   logic [31:0] iw, rw, pw;             // DRAM word address of the segment issued / received / pending
   wire         adv = !st_pend || b_gnt;  // ST: the read -> write pipeline moves
+  logic [W-1:0] rmask;                  // LD: lanes of the segment at rw inside the range
+                                        // (registered: the TMEM arbiter sees these lanes)
 
   function automatic logic in_rng(input logic [31:0] a);
     return (a >= dw) && (a < dw + n);
@@ -65,7 +67,7 @@ module otpu_dma
       end
       if (b_rvalid) begin
         for (int l = 0; l < W; l++) begin
-          if (in_rng(rw + 32'(l))) begin
+          if (rmask[l]) begin
             t_wen[l] = 1'b1;
             t_waddr[l] = tm + rw + 32'(l) - dw;
             t_wdata[l] = b_rdata[32 * (pos_of(rw) * W + l) +: 32];
@@ -114,6 +116,7 @@ module otpu_dma
       nseg <= ((s1 - s0) >> SWL) + 1;
       iss <= '0; cmp <= '0;
       iw <= s0; rw <= s0;
+      for (int l = 0; l < W; l++) rmask[l] <= (s0 + 32'(l) >= a) && (s0 + 32'(l) < a + cmd.w3);
       st_pend <= 1'b0;
       ackw <= 1'b0;
       if (cmd.w3 == 0) done <= 1'b1;
@@ -133,6 +136,7 @@ module otpu_dma
         if (b_rvalid) begin
           cmp <= cmp + 1;
           rw <= rw + W;
+          for (int l = 0; l < W; l++) rmask[l] <= in_rng(rw + W + 32'(l));
           if (cmp + 1 == nseg) begin
             busy <= 1'b0;
             done <= 1'b1;
