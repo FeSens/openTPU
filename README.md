@@ -39,10 +39,8 @@ Not done or not verified:
   clock (100 MHz) and DRAM efficiency (80%), without host time.
 - **The board model skips the hardest parts of the physical integration.** DDR3 calibration
   always succeeds, the DDR3 controllers are replaced by an AXI memory model, and PCIe, the
-  clocks and the resets are not simulated. A review found a reset-polarity bug in the Vivado
-  block design that no simulation here could have caught: the core would have stayed in reset
-  once the clock locked. It is fixed, and `make lint` now checks for it, but there are likely
-  more of these.
+  clocks and the resets are not simulated. Expect problems to show up when it first runs on
+  a real board.
 - **The host tools** (`otpu-smi`, `otpu-lens`, ...) have only run against the board model and
   a fake device.
 
