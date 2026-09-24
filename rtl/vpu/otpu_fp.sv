@@ -104,26 +104,26 @@ package otpu_fp;
     return m;
   endfunction
 
+  // Rounding carries out (mr[24]) only when mm was all ones: mr == 2^24, so mr[22:0] == 0 with
+  // or without a >> 1. The exponent bump c is checked against e0 (the exponent before rounding),
+  // so the overflow/underflow flags don't wait on the carry chain.
   function automatic f32_t fp_mul_s2(input fmul_mid_t m);
-    logic g, st;
-    logic signed [10:0] e;
+    logic g, st, c;
+    logic signed [10:0] e0;
     logic [23:0] mm;
     logic [24:0] mr;
     if (m.sp) return m.sv;
-    e = m.e;
     if (m.p[47]) begin
-      mm = m.p[47:24]; g = m.p[23]; st = |m.p[22:0]; e = e + 1;
+      mm = m.p[47:24]; g = m.p[23]; st = |m.p[22:0];
     end else begin
       mm = m.p[46:23]; g = m.p[22]; st = |m.p[21:0];
     end
+    e0 = m.e + 11'(m.p[47]);
     mr = {1'b0, mm} + ((g && (st || mm[0])) ? 25'd1 : 25'd0);
-    if (mr[24]) begin
-      mr = mr >> 1;
-      e = e + 1;
-    end
-    if (e >= 255) return {m.s, 8'hFF, 23'd0};
-    if (e <= 0) return {m.s, 31'd0};
-    return {m.s, e[7:0], mr[22:0]};
+    c = mr[24];
+    if (e0 >= 11'sd255 || (e0 == 11'sd254 && c)) return {m.s, 8'hFF, 23'd0};
+    if (e0 < 11'sd0 || (e0 == 11'sd0 && !c)) return {m.s, 31'd0};
+    return {m.s, 8'(e0) + 8'(c), mr[22:0]};
   endfunction
 
   function automatic f32_t fp_mul(input f32_t a_in, input f32_t b_in);
@@ -235,23 +235,20 @@ package otpu_fp;
   endfunction
 
   function automatic f32_t fp_add_s4(input fadd_nm_t n);
-    logic g, rs;
-    logic signed [9:0] e;
+    logic g, rs, c;
+    logic signed [9:0] e0;
     logic [23:0] mm;
     logic [24:0] mr;
     if (n.sp) return fadd_sv(n.sv);
-    e = n.e;
+    e0 = n.e;
     g  = n.mn[2];
     rs = n.mn[1] | n.mn[0];
     mm = n.mn[26:3];
     mr = {1'b0, mm} + ((g && (rs || mm[0])) ? 25'd1 : 25'd0);
-    if (mr[24]) begin
-      mr = mr >> 1;
-      e = e + 1;
-    end
-    if (e >= 255) return {n.s, 8'hFF, 23'd0};
-    if (e <= 0) return {n.s, 31'd0};
-    return {n.s, e[7:0], mr[22:0]};
+    c = mr[24];   // as in fp_mul_s2: no post-round shift, flags off e0
+    if (e0 >= 10'sd255 || (e0 == 10'sd254 && c)) return {n.s, 8'hFF, 23'd0};
+    if (e0 < 10'sd0 || (e0 == 10'sd0 && !c)) return {n.s, 31'd0};
+    return {n.s, 8'(e0) + 8'(c), mr[22:0]};
   endfunction
 
   function automatic f32_t fp_add(input f32_t a_in, input f32_t b_in);
