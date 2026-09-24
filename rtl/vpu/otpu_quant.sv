@@ -53,11 +53,33 @@ module otpu_qfmul
     m.p = {1'b1, x[22:0]} * {1'b1, z[22:0]};
     return m;
   endfunction
+  // fp_mul_s2 with nothing after the round add's carry chain. Its carry out mr[24] is 1 only for
+  // mm == all ones with rnd, so ov = rnd & (&mm) replaces it; the mantissa field is then
+  // (mm[22:0] + rnd) mod 2^23 either way (0 after the >>1 when ov), so the >>1 mux goes. The
+  // exponent e + h + ov is tested as eh against the ov-shifted bounds (signed, like e).
+  function automatic f32_t qmul_s2(input fmul_mid_t m);
+    logic               h, g, st, rnd, ov;
+    logic [23:0]        mm;
+    logic [22:0]        man;
+    logic signed [10:0] eh;
+    if (m.sp) return m.sv;
+    h   = m.p[47];
+    mm  = h ? m.p[47:24] : m.p[46:23];
+    g   = h ? m.p[23]    : m.p[22];
+    st  = (|m.p[21:0]) | (h & m.p[22]);
+    rnd = g & (st | mm[0]);
+    ov  = rnd & (&mm);
+    man = mm[22:0] + 23'(rnd);
+    eh  = m.e + 11'(h);
+    if (ov ? (eh >= 254) : (eh >= 255)) return {m.s, 8'hFF, 23'd0};
+    if (ov ? (eh <= -1) : (eh <= 0)) return {m.s, 31'd0};
+    return {m.s, ov ? eh[7:0] + 8'd1 : eh[7:0], man};
+  endfunction
   fmul_mid_t m;
   f32_t r;
   always_ff @(posedge clk) if (en) begin
     m <= qmul_s1(a, b);
-    r <= fp_mul_s2(m);
+    r <= qmul_s2(m);
   end
   otpu_delay #(.W(32), .N(LAT - 2)) u_pad (.clk, .en, .d(r), .q(y));
 endmodule
