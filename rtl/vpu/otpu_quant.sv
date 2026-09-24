@@ -146,7 +146,7 @@ module otpu_quant
   localparam int NB = 4;                    // block buffers (streaming QACT)
   localparam int BI = $clog2(NB);
   localparam int NC = D / LANES;            // chunks per block
-  localparam int QL = 2 * LM;               // prescale latency
+  localparam int QL = 2 * LM + 1;           // prescale latency (with its input register)
   localparam f32_t F_NZ = 32'h8000_0000;
   initial if (D % LANES != 0) $fatal(1, "otpu_quant: LANES must divide D");
 
@@ -216,11 +216,19 @@ module otpu_quant
   end
 
   // ------------------------------------------------------------------ prescale
+  // the TMEM read data is registered first (no path from the block RAMs into the multipliers'
+  // DSP inputs in one cycle); m0 and the byte address are delayed to match (QL)
   f32_t xp [LANES];
+  f32_t r3;
+  always_ff @(posedge clk) if (en) r3 <= rsf ? t_rdata3 : F_ONE;
   for (genvar l = 0; l < LANES; l++) begin : g_pre
-    f32_t v1, cd;
-    otpu_fmul #(.LAT(LM)) u_r (.clk, .en, .a(t_rdata[l]), .b(rsf ? t_rdata3 : F_ONE), .y(v1));
-    otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(csf ? t_rdata2[l] : F_ONE), .q(cd));
+    f32_t v1, cd, x1, x2;
+    always_ff @(posedge clk) if (en) begin
+      x1 <= t_rdata[l];
+      x2 <= csf ? t_rdata2[l] : F_ONE;
+    end
+    otpu_fmul #(.LAT(LM)) u_r (.clk, .en, .a(x1), .b(r3), .y(v1));
+    otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(x2), .q(cd));
     otpu_fmul #(.LAT(LM)) u_c2 (.clk, .en, .a(v1), .b(cd), .y(xp[l]));
   end
   otpu_delay #(.W($bits(rm_t)), .N(QL)) u_mp (.clk, .en, .d(m0), .q(mp));
