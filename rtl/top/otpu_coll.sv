@@ -34,6 +34,12 @@ module otpu_coll
   // arbiter, so no adder or compare sits in front of it)
   logic [31:0]      pwa;
   logic [LANES-1:0] pm;
+  // write stage q: stage p's address, mask and TMEM read data, registered (no path from the
+  // TMEM block RAMs to their write port in one cycle); qlast: it holds the command's last write
+  logic                   qv, qlast;
+  logic [31:0]            qwa;
+  logic [LANES-1:0]       qm;
+  logic [LANES-1:0][31:0] qd;
 
   always_comb begin
     ack = (st == C_ACK);
@@ -48,12 +54,12 @@ module otpu_coll
               r_addr[k][l] = rrow + c + 32'(l);
             end
     end
-    if (st == C_RUN && pv) begin
+    if (st == C_RUN && qv) begin
       for (int l = 0; l < LANES; l++)
-        if (pm[l]) begin
+        if (qm[l]) begin
           w_en[l] = 1'b1;
-          w_addr[l] = pwa + 32'(l);
-          for (int k = 0; k < S; k++) if (k == int'(ps)) w_data[l] = r_data[k][l];
+          w_addr[l] = qwa + 32'(l);
+          w_data[l] = qd[l];
         end
     end
   end
@@ -62,6 +68,7 @@ module otpu_coll
     if (rst) begin
       st <= C_IDLE;
       pv <= 1'b0;
+      qv <= 1'b0;
     end else begin
       case (st)
         C_IDLE: if (&req) begin
@@ -77,11 +84,18 @@ module otpu_coll
             rrow <= cmds[0].w1;
             wrow <= cmds[0].w2; wseg <= cmds[0].w2;
             pv <= 1'b0;
+            qv <= 1'b0;
             issuing <= 1'b1;
             st <= C_RUN;
           end
         end
         C_RUN: if (gnt) begin
+          qv <= pv;
+          qwa <= pwa;
+          qm <= pm;
+          for (int l = 0; l < LANES; l++)
+            for (int k = 0; k < S; k++) if (k == int'(ps)) qd[l] <= r_data[k][l];
+          qlast <= pv && ps + 1 == S && pr + 1 == 32'(rows) && pcl + LANES >= 32'(cols);
           pv <= issuing;
           ps <= s; pr <= r; pcl <= c;
           pwa <= wrow + c;
@@ -107,8 +121,10 @@ module otpu_coll
               c <= c + LANES;
             end
           end
-          if (pv && ps + 1 == S && pr + 1 == 32'(rows) && pcl + LANES >= 32'(cols)) begin
-            pv <= 1'b0;
+          if (pv && ps + 1 == S && pr + 1 == 32'(rows) && pcl + LANES >= 32'(cols))
+            pv <= 1'b0;                                 // the last read's data moves to q
+          if (qv && qlast) begin                         // the last write is taken this cycle
+            qv <= 1'b0;
             st <= C_ACK;
           end
         end
