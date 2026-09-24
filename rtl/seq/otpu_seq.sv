@@ -320,6 +320,13 @@ module otpu_seq
   wire [SW-1:0] rel_slot = uq[U_MXU][uq_r[SW-1:0]];
   wire          can_rel  = (uq_r != uq_t[U_MXU]) && (sdep[rel_slot] & ~same_started[U_MXU]) == '0;
 
+  // Each unit's command is read from the window at the slot it last started: a slot's scmd is
+  // written only at dispatch and stays until the slot completes, so it holds the command for as
+  // long as the unit reads it (at ustart; the collective until its udone). After completion the
+  // slot may be reused and ucmd shows the new occupant -- no unit reads it then.
+  logic [SW-1:0] ucs [NUNITS];
+  always_comb for (int u = 0; u < NUNITS; u++) ucmd[u] = scmd[ucs[u]];
+
 `ifndef SYNTHESIS
   bit trace;
   initial trace = $test$plusargs("trace");
@@ -385,7 +392,7 @@ module otpu_seq
           if (can_start[u] && sel[u][i]) sstarted[i] <= 1'b1;
         if (can_start[u]) begin
           ustart[u] <= 1'b1;
-          ucmd[u] <= scmd[start_slot[u]];
+          ucs[u] <= start_slot[u];
           uq[u][uq_t[u][SW-1:0]] <= start_slot[u];
           uq_t[u] <= uq_t[u] + 1;
 `ifndef SYNTHESIS
