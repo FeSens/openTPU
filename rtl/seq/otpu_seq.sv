@@ -17,8 +17,10 @@
 // prefetch therefore overlaps the stream with whatever produces the MM's stationary operand.
 //
 // IMEM is a synchronous RAM (FPGA block RAM) of rows of IPR = D/32 instructions -- one DRAM
-// chunk, so the slice's loader writes one row per cycle. It is read at the next pc, so the
-// instruction at pc is available every cycle.
+// chunk, so the slice's loader writes one row per cycle. It is read one instruction ahead, at
+// fa: the exact pc that R moves to next (computed from flip-flops only). When R moves on, the
+// instruction at fa is registered into ir, so no R-stage path starts at the RAM output. This
+// costs one cycle at the program start (ir is empty after reset).
 module otpu_seq
   import otpu_pkg::*;
 #(
@@ -49,10 +51,13 @@ module otpu_seq
   localparam int RW = $clog2(NROW);
   initial if (D % 32 != 0) $fatal(1, "otpu_seq: D must be a multiple of 32");
   logic [D*8-1:0] imem [NROW];
-  logic [D*8-1:0] irow;
-  logic [31:0]    isel;
+  logic [D*8-1:0] irow;           // the RAM output: the row holding fa
+  logic [255:0]   ir;             // the instruction at pc
+  logic           ir_v;           // ir is valid (0 only in the first cycle after reset)
+  logic [31:0]    fa, fa_d;       // the pc R moves to next; its next value (the RAM address)
+  logic           ld;             // R moves on to the instruction at fa
 
-  logic [31:0] pc, pc_n, cyc;
+  logic [31:0] pc, cyc;
   logic [31:0] R [16];
   logic        stopping;         // HALT fetched: wait for the window to drain
 
@@ -66,30 +71,74 @@ module otpu_seq
   logic        lp;
   logic [31:0] lp_cnt, lp_len;
 
+  // The footprint as the window keeps it: an MM's ASCALE TMEM range (fp_t rd[3]) never comes
+  // with its streamed-scale DRAM range (rd[1]; ASCALE needs UNIT, docs/isa.md), so it moves
+  // into rd[1] -- 16 range pairs per slot instead of 20. Should both be set anyway (an invalid
+  // MM), the instruction conflicts with everything instead: a superset of its dependencies.
+  typedef struct packed {
+    logic            all;
+    rng_t [2:0]      rd;
+    rng_t [1:0]      wr;
+  } fp5_t;
+
+  function automatic fp5_t fp_pack(input fp_t f);
+    fp5_t p;
+    p.all = f.all; p.rd = f.rd[2:0]; p.wr = f.wr;
+    if (f.rd[3].v) begin
+      if (f.rd[1].v) p.all = 1'b1;
+      else p.rd[1] = f.rd[3];
+    end
+    return p;
+  endfunction
+
+  // {conflict, conflict_dram} (otpu_pkg) on packed footprints, each range pair tested once: a
+  // pair can only overlap within one space, so the DRAM part is the overlaps of DRAM ranges
+  function automatic logic [1:0] conf5(input fp5_t n, input fp5_t e);
+    logic any, dram;
+    any = n.all || e.all; dram = any;
+    for (int i = 0; i < 2; i++) begin
+      for (int j = 0; j < 3; j++) begin
+        if (ov(n.wr[i], e.rd[j])) begin any = 1'b1; dram |= n.wr[i].sp == SP_DRAM; end
+        if (ov(e.wr[i], n.rd[j])) begin any = 1'b1; dram |= e.wr[i].sp == SP_DRAM; end
+      end
+      for (int j = 0; j < 2; j++)
+        if (ov(n.wr[i], e.wr[j])) begin any = 1'b1; dram |= n.wr[i].sp == SP_DRAM; end
+    end
+    return {any, dram};
+  endfunction
+
   // window
   logic [WIN-1:0]  sv;                       // slot valid (dispatched, not completed)
   logic [WIN-1:0]  older [WIN];              // older[i][j]: slot j was dispatched before slot i
-  int              sunit [WIN];
+  logic [NUNITS-1:0] soh [WIN];              // the slot's unit, one-hot
   logic [WIN-1:0]  sstarted, sready;
   logic [WIN-1:0]  sdep [WIN];               // sdep[i][j]: slot i waits for slot j
   logic [WIN-1:0]  sdepd [WIN];              // the DRAM part of sdep (MXU stream start)
   logic [WIN-1:0]  srel;                     // MXU: released
   logic [SW:0]     uq_r;                     // MXU: next started slot to release
   cmd_t            scmd [WIN];
-  fp_t             sfp  [WIN];
+  fp5_t            sfp  [WIN];
   logic [31:0]     srdy_c [WIN];
   // per-unit queues of started slot ids, in start (= completion) order
   logic [SW-1:0]   uq [NUNITS][WIN];
   logic [SW:0]     uq_h [NUNITS], uq_t [NUNITS];
 
-  // ---- fetch: the row holding pc_n is read at the clock edge that makes it pc
+  // ---- fetch: the row holding fa_d is read at the clock edge that makes it fa; ir takes the
+  // instruction at fa at the edge that makes fa pc
   always_ff @(posedge clk) begin
     if (im_we) imem[RW'(im_row)] <= im_data;
-    irow <= imem[RW'(pc_n / IPR)];
-    isel <= pc_n % IPR;
+    irow <= imem[RW'(fa_d / IPR)];
+  end
+  always_ff @(posedge clk) begin
+    fa <= fa_d;
+    if (rst) ir_v <= 1'b0;
+    else if (ld) begin
+      ir <= irow[256 * (fa % IPR) +: 256];
+      ir_v <= 1'b1;
+    end
   end
   logic [31:0] iw [8];
-  always_comb for (int k = 0; k < 8; k++) iw[k] = irow[32 * (8 * (isel % IPR) + k) +: 32];
+  always_comb for (int k = 0; k < 8; k++) iw[k] = ir[32 * k +: 32];
   wire [7:0] op    = iw[0][7:0];
   wire [3:0] ra    = iw[0][11:8];
   wire [3:0] rb    = iw[0][15:12];
@@ -118,11 +167,11 @@ module otpu_seq
   // the window is full). The stages stream, so they add latency only at the program start.
   logic        p_v, s_v, q_v, c_v;
   cmd_t        p_cmd, s_cmd, q_cmd, c_cmd;
-  int          p_unit, s_unit, q_unit, c_unit;
+  logic [2:0]  p_unit, s_unit, q_unit, c_unit;
   logic [31:0] p_pc, s_pc, q_pc, c_pc;
   fpp_t        s_pp;
   fpm_t        q_pr;
-  fp_t         c_fp;
+  fp5_t        c_fp;
   logic        have_free;
   wire         c_go = c_v && have_free;
   wire         q_adv = !c_v || c_go;            // Q hands its instruction to C
@@ -149,19 +198,16 @@ module otpu_seq
     for (int i = WIN - 1; i >= 0; i--)
       if (!sv[i]) begin have_free = 1'b1; free_slot = SW'(i); end
     for (int i = 0; i < WIN; i++) begin
-      ndep[i] = sv[i] && !fin[i] && conflict(c_fp, sfp[i]);
-      ndepd[i] = sv[i] && !fin[i] && conflict_dram(c_fp, sfp[i]);
+      logic [1:0] cf;
+      cf = conf5(c_fp, sfp[i]);
+      ndep[i] = sv[i] && !fin[i] && cf[1];
+      ndepd[i] = sv[i] && !fin[i] && cf[0];
     end
   end
 
   // ---- loop-end handling for the instruction at pc
   logic        at_end;
-  logic [31:0] next_pc;
-  always_comb begin
-    at_end  = (sp != 0) && (stk_end[sp-1] == pc);
-    next_pc = pc + 1;
-    if (at_end && stk_rem[sp-1] > 1) next_pc = stk_start[sp-1];
-  end
+  always_comb at_end = (sp != 0) && (stk_end[sp-1] == pc);
 
   task automatic advance();
     if (at_end) begin
@@ -171,21 +217,52 @@ module otpu_seq
   endtask
 
   always_comb
-    r_ret = !stopping && !halted &&
+    r_ret = ir_v && !stopping && !halted &&
             (op == OP_NOP || op == OP_HALT || op == OP_LI || op == OP_ADDI ||
              (op == OP_LOOP && lp));
 
-  // ---- the next pc (mirrors the fetch/dispatch below)
+  // ---- the next fetch address (mirrors the fetch/dispatch below). fa is the successor of pc
+  // under the loop stack as it stands while R holds pc; when R moves on, fa_d is the successor
+  // of fa under the stack as R's instruction leaves it:
+  //   A: a LOOP's second cycle pushes (fa == pc + 1 then) -- a one-instruction body repeats
+  //   B: advance() at a loop end decrements the top      -- repeats if the top keeps rem > 1
+  //   C: advance() at a loop end pops                    -- the next entry decides
+  //   D: the stack is unchanged (also the load after reset and a skipped LOOP)
+  // A LOOP's first cycle picks the enter/skip target a cycle ahead (pc holds, the RAM reads it).
+  logic        adv;              // R's instruction retires or is handed over this cycle
+  logic        hit1, hit2;       // fa ends the loop on top of the stack / the one below it
+  logic        hit;              // fa's successor is a loop start ...
+  logic [31:0] hit_pc;           // ... this one
+  logic        lp_z;             // the LOOP's trip count (R[ra] + iw[2]) is 0
+  logic [31:0] lp_a;
+  logic [31:0] succ;
   always_comb begin
-    pc_n = pc;
-    if (rst) pc_n = '0;
-    else if (!stopping && !halted)
-      case (op)
-        OP_NOP, OP_LI, OP_ADDI: pc_n = next_pc;
-        OP_HALT: ;
-        OP_LOOP: if (lp) pc_n = (lp_cnt == 0) ? pc + 1 + lp_len : pc + 1;
-        default: if (dunit >= 0 && r_take) pc_n = next_pc;
-      endcase
+    case (op)
+      OP_NOP, OP_LI, OP_ADDI: adv = 1'b1;
+      OP_HALT: adv = 1'b0;
+      OP_LOOP: adv = lp;
+      default: adv = dunit >= 0 && r_take;
+    endcase
+    ld = !ir_v || (!stopping && !halted && adv);
+    hit1 = (sp != 0) && (stk_end[sp-1] == fa);
+    hit2 = (sp >= 2) && (stk_end[sp-2] == fa);
+    hit = hit1 && stk_rem[sp-1] > 1;                                          // D
+    hit_pc = stk_start[sp-1];
+    if (ir_v && op == OP_LOOP) begin
+      if (lp_cnt != 0) begin hit = lp_len == 1 && lp_cnt > 1; hit_pc = fa; end  // A
+    end else if (ir_v && at_end) begin
+      if (stk_rem[sp-1] > 1) hit = hit1 && stk_rem[sp-1] > 2;                // B
+      else begin hit = hit2 && stk_rem[sp-2] > 1; hit_pc = stk_start[sp-2]; end // C
+    end
+    succ = hit ? hit_pc : fa + 1;
+    // a + b == 0 without the carry chain: every sum bit is 0 iff a ^ b is the carry, (a | b) << 1
+    lp_a = rv(ra);
+    lp_z = (lp_a ^ iw[2]) == ((lp_a | iw[2]) << 1);
+    if (rst) fa_d = '0;
+    else if (ir_v && op == OP_LOOP && !lp && !stopping && !halted)
+      fa_d = lp_z ? pc + 1 + iw[1] : pc + 1;
+    else if (ld) fa_d = succ;
+    else fa_d = fa;
   end
 
   // A dependency on an instruction that has already started on the SAME unit is satisfied:
@@ -198,7 +275,7 @@ module otpu_seq
   always_comb begin
     for (int u = 0; u < NUNITS; u++)
       for (int i = 0; i < WIN; i++)
-        same_started[u][i] = sv[i] && sstarted[i] && sunit[i] == u && u != U_VPU;
+        same_started[u][i] = sv[i] && sstarted[i] && soh[i][u] && u != U_VPU;
   end
 
   // ---- per-unit start: the oldest ready (all dependencies completed) instruction
@@ -214,7 +291,7 @@ module otpu_seq
       // collectives pair up across slices, so the collective unit stays strictly in order:
       // it only considers its oldest instruction
       for (int i = 0; i < WIN; i++)
-        cand[i] = sv[i] && !sstarted[i] && sunit[i] == u &&
+        cand[i] = sv[i] && !sstarted[i] && soh[i][u] &&
                   ((sdep[i] & ~same_started[u]) == '0 || u == U_COLL || u == U_MXU);
       for (int i = 0; i < WIN; i++)
         if (cand[i] && (older[i] & cand) == '0) begin
@@ -255,7 +332,14 @@ module otpu_seq
       for (int i = 0; i < WIN; i++) sdep[i] <= '0;
     end else begin
       cyc <= cyc + 1;
-      pc <= pc_n;
+      if (ld) pc <= fa;
+`ifndef SYNTHESIS
+      // fa is the pc the one-instruction-per-cycle fetch would move to (the next_pc rule)
+      if (ld && ir_v &&
+          fa != ((op == OP_LOOP) ? ((lp_cnt == 0) ? pc + 1 + lp_len : pc + 1) :
+                 (at_end && stk_rem[sp-1] > 1) ? stk_start[sp-1] : pc + 1))
+        $fatal(1, "otpu_seq: fetch address %0d does not follow pc %0d", fa, pc);
+`endif
       icount <= icount + 32'(r_ret) + 32'(c_go);
       // completions
       if (can_rel) begin
@@ -301,7 +385,7 @@ module otpu_seq
         sv[free_slot] <= 1'b1;
         older[free_slot] <= sv;           // every slot in the window is older
         for (int i = 0; i < WIN; i++) older[i][free_slot] <= 1'b0;
-        sunit[free_slot] <= c_unit;
+        soh[free_slot] <= NUNITS'(1) << c_unit;
         sstarted[free_slot] <= 1'b0;
         sready[free_slot] <= 1'b0;
         sdep[free_slot] <= ndep;
@@ -318,7 +402,7 @@ module otpu_seq
         c_v <= q_v;
         if (q_v) begin
           c_cmd <= q_cmd; c_unit <= q_unit; c_pc <= q_pc;
-          c_fp <= fp_ranges(q_cmd, q_pr, D, S);
+          c_fp <= fp_pack(fp_ranges(q_cmd, q_pr, D, S));
         end
       end
       // ---- S: products
@@ -341,7 +425,7 @@ module otpu_seq
       // ---- R: fetch / execute control / hand over
       if (stopping) begin
         if (sv == '0 && pipe_empty) halted <= 1'b1;
-      end else if (!halted) begin
+      end else if (!halted && ir_v) begin
         case (op)
           OP_NOP: advance();
           OP_HALT: stopping <= 1'b1;
@@ -374,7 +458,7 @@ module otpu_seq
               halted <= 1'b1;
             end else if (r_take) begin
               p_v <= 1'b1;
-              p_cmd <= dcmd; p_unit <= dunit; p_pc <= pc;
+              p_cmd <= dcmd; p_unit <= 3'(dunit); p_pc <= pc;
               advance();
             end
           end
