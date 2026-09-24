@@ -594,11 +594,20 @@ class Engine:
     """Token-by-token Qwen3 on an openTPU backend.
 
     backend: "isa" (default), or any object with write/read/run like IsaBackend (the RTL
-    simulator and the PCIe board driver implement the same interface).
+    simulator and the PCIe board driver implement the same interface). Optional backend hooks:
+    attach(engine), called once the engine exists; prepare(programs), called on the compile
+    thread with every precompiled program (the board assembles it there).
+
+    pipeline: step() compiles the next position's program (it depends on the position only,
+    not on the token) on a worker thread while the backend runs the current one. Default: on
+    for every backend but "isa" (whose run holds the GIL: nothing to overlap). A precompile is
+    used only for the position it was made for; otherwise it is waited for and dropped (one
+    trace at a time), so results do not change.
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
-                 backend="isa", block: int = ATTN_BLOCK, batch: int = 1, rows: int = 1):
+                 backend="isa", block: int = ATTN_BLOCK, batch: int = 1, rows: int = 1,
+                 pipeline: bool | None = None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows)
@@ -609,6 +618,41 @@ class Engine:
             self.cfg, images)
         self.poss = [0] * batch
         self.stats = []
+        self.pipeline = backend != "isa" if pipeline is None else pipeline
+        self._pool = None
+        self._next = None                   # (pos, Future of its compiled programs)
+        if hasattr(self.backend, "attach"):
+            self.backend.attach(self)
+
+    # ---- the compile pipeline
+    def _compile(self, pos: int) -> list:
+        progs = compile_step(self.image, pos, self.block)
+        prep = getattr(self.backend, "prepare", None)
+        if prep is not None:
+            prep(progs)
+        return progs
+
+    def _program(self, pos: int) -> list:
+        """The step program for `pos`: the precompiled one when it is for `pos`."""
+        nxt, self._next = self._next, None
+        if nxt is not None:
+            progs = nxt[1].result()             # always wait: one compile at a time
+            if nxt[0] == pos:
+                return progs
+        return self._compile(pos)
+
+    def _prefetch(self, pos: int) -> None:
+        if not self.pipeline or pos >= self.cap:
+            return
+        if self._pool is None:
+            from concurrent.futures import ThreadPoolExecutor
+            self._pool = ThreadPoolExecutor(1, thread_name_prefix="otpu-compile")
+        self._next = (pos, self._pool.submit(self._compile, pos))
+
+    def _drain(self) -> None:
+        nxt, self._next = self._next, None
+        if nxt is not None:
+            nxt[1].result()
 
     @property
     def pos(self) -> int:
@@ -635,7 +679,9 @@ class Engine:
             self.backend.write(s, io["x"], x)
             self.backend.write(s, io["cos"], cos)
             self.backend.write(s, io["sin"], sin)
-        st = self.backend.run(compile_step(self.image, self.pos, self.block))
+        progs = self._program(self.pos)
+        self._prefetch(self.pos + 1)
+        st = self.backend.run(progs)
         self.stats.append(st)
         v_loc = self.image.v_loc
         parts = [self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc).view(np.float32)
@@ -657,6 +703,7 @@ class Engine:
             self.backend.write(s, io["x"], x)
             self.backend.write(s, io["cos"], cos)
             self.backend.write(s, io["sin"], sin)
+        self._drain()
         st = self.backend.run(compile_rows(self.image, rows, logit_rows, self.block))
         st["rows"] = len(rows)
         self.stats.append(st)

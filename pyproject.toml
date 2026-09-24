@@ -11,3 +11,14 @@ pythonpath = ["."]
 
 [project.scripts]
 lens = "opentpu.lens:main"
+otpu-lens = "opentpu.host.hwlens:main"
+otpu-smi = "opentpu.host.smi:main"
+otpu-selftest = "opentpu.host.selftest:main"
+otpu-chat = "opentpu.host.chat:main"
+
+[tool.setuptools.packages.find]
+include = ["opentpu*", "host*"]
+
+[tool.setuptools.package-data]
+opentpu = ["lens_app.html"]
+host = ["setup_pcie.sh"]

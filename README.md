@@ -111,6 +111,7 @@ res.outputs["out"]
 | `tests/` | pytest suites (see below) |
 | `opentpu/profile.py` | Parses the RTL cycle trace into per-instruction, per-unit and roofline data |
 | `opentpu/lens.py`, `opentpu/lens_app.html` | Lens: profile files, recorder CLI and the browser app (docs/lens.md) |
+| `opentpu/host/` | Card driver (XDMA over PCIe) and its tools: `otpu-smi`, `otpu-selftest`, `otpu-chat`, `otpu-lens` (docs/host.md) |
 
 ## Running
 

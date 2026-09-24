@@ -121,7 +121,13 @@ instruction is placed back to back for its nominal work (no overlap between unit
 timeline is an upper bound; use it for instruction mix and DRAM traffic, the RTL for timing.
 
 **Board profiles**: `opentpu.lens.board_data(name, cfg, programs, stats)` turns the counters
-returned by `host.board.Board.run()` into a profile (totals only, no timeline).
+returned by `opentpu.host.board.Board.run()` into a profile (totals only, no timeline).
+
+**Hardware profiles** (kind `hw`, `otpu-lens record`, below) are the RTL profile built from the
+card's trace buffer: the same fields, plus `board` (the run's counters) and `hwtrace`:
+`count` (TRACE_COUNT), `drop` (TRACE_DROP), `depth`, `keep` (`first` / `last`), `wrapped`,
+`lost` (records that did not fit), `records` (read back), `open_at_end` (instructions still in
+flight where the trace stops), `traced_to` (the last traced cycle) and `complete`.
 
 From Python:
 
@@ -131,3 +137,41 @@ from opentpu.profile import profile
 d = lens.to_data(profile(kernel, cfg, "name", **args))
 lens.save([d], "run.otpuprof")
 ```
+
+## Hardware profiling (otpu-lens)
+
+The board's control block has a trace buffer (register map 2, [observability.md](observability.md)):
+while enabled it records the same events the RTL prints with `+trace` (dispatch, start,
+release, end, unit counters, the P/Q counter windows, the halt line) as 64-bit records.
+`otpu-lens` (installed with `pip install -e .`; `opentpu/host/hwlens.py`) turns them into
+Lens profiles:
+
+```
+otpu-lens record --dev /dev/xdma0 --model models/Qwen3-0.6B --prompt "Why is the sky blue?" \
+                 --tokens 2 -o card.otpuprof                 # 2 decode steps on the card
+otpu-lens record --dev /dev/xdma0 --pos 300 --tokens 1 -o late.otpuprof   # a long context
+otpu-lens record --sim -o sim.otpuprof                       # mlp-small on the board model
+otpu-lens record --sim --workload qwen-tiny --pos 8 -o q.otpuprof
+otpu-lens open card.otpuprof                                 # open / html / info / list: as lens
+```
+
+`record` feeds the prompt (chat template; `--prompt-ids 1,2,3` skips the tokenizer), then
+generates greedily; the steps at positions `--pos` .. `--pos` + `--tokens` - 1 (default: from
+the prompt's last token, whose step yields the first new token) run with `TRACE_CTRL` on. After
+each traced step the host reads the records back, rebuilds the trace text with
+`opentpu.hwtrace.records_to_trace` (the D lines take their opcode from the program the host
+loaded) and builds the profile with `opentpu.profile.parse` and `opentpu.lens.to_data`, exactly
+as `lens record` does from an RTL simulation: one profile per traced step, the timeline at the
+card's cycle resolution, at the bitstream's CORE_KHZ.
+
+The buffer holds CAPS-depth records. `--keep first` (default, STOP_WHEN_FULL) keeps the start
+of the run; `--keep last` makes it a ring that keeps the end (the host reorders it, oldest
+first, and drops events of instructions whose dispatch was overwritten). Records that did not
+fit, and events the capture queue dropped (TRACE_DROP), are reported on stdout, in the
+profile's `hwtrace` metadata and as the profile's first notes. On a register map 1 bitstream
+(no trace buffer) `record` writes counters-only `board` profiles; without `opentpu.hwtrace` it
+stops with an error and saves the raw records next to the output (`.records.npy`).
+
+`--sim` runs the same on the Verilator board model: a kernel workload of `lens list` (default
+`mlp-small`) placed as on the card, or `qwen-tiny` steps; the model's trace buffer is read out
+in the simulation that ran the program.
