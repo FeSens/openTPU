@@ -232,6 +232,15 @@ module otpu_vpu
   mt_t   mtap [NSLOT + 1];
   f32_t  lres [LANES];
 
+  // RSUM/RSSQ on the lanes' slot-0 multiply-add when the partial loop (RL cycles) holds the
+  // input register, the multiplier and the adder plus a feedback flip-flop (DF of them);
+  // otherwise (RL = 4) a squarer and an adder of their own per lane (see RSUM / RSSQ)
+  localparam bit RMA = (RL >= 2 + LM + LA);
+  localparam int DF  = RL - (1 + LM + LA);
+  f32_t  pacc [LANES];                  // partial after adding this chunk's term
+  f32_t  rsa [LANES], rsb [LANES];      // RMA: the term's factors, at m0
+  f32_t  rfb [LANES];                   // RMA: the partial RL chunks ago (+0 for the first)
+
   assign mtap[0] = '{v: m0.v, func: m0.func, mask: m0.mask, waddr: m0.waddr,
                      all_last: m0.all_last};
   // slot 1 has three extra input stages for the EXP2 range reduction (clamp, floor, i2f)
@@ -341,6 +350,7 @@ module otpu_vpu
           V_ADD:  if (s == 0) begin ia = x; ic_ = y; dest = 2'd1; end
           V_SUB:  if (s == 0) begin ia = x; ic_ = fneg(y); dest = 2'd1; end
           V_RSUB: if (s == 0) begin ia = y; ic_ = fneg(x); dest = 2'd1; end
+          V_RSUM, V_RSSQ: if (s == 0 && RMA) begin ia = rsa[l]; ib = rsb[l]; ic_ = rfb[l]; end
           V_EXP2, V_EXP2SUB: begin
             if (s == 0) begin
               ia = x; ic_ = (msl[s].func == V_EXP2SUB) ? fneg(y) : F_NZ; dest = 2'd1;
@@ -379,9 +389,18 @@ module otpu_vpu
       logic [1:0] dr, dd;
       logic       nr, nd;
       always_ff @(posedge clk) if (en) begin
-        ra <= ia; rb <= ib; rc <= ic_; sr <= sin_; dr <= dest; nr <= negd;
+        ra <= ia; rb <= ib; sr <= sin_; dr <= dest; nr <= negd;
       end
+      // rc has a sync reset so it can't join u_c's two stages in a shift-register LUT: the
+      // adder's c operand then leaves a flip-flop (clk->Q 0.3 ns) instead of an SRL (1.5 ns).
+      // F_NZ is every slot's default c, so bits constant across a slot's cases stay constant.
+      always_ff @(posedge clk)
+        if (rst)     rc <= F_NZ;
+        else if (en) rc <= ic_;
       otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(r));
+      if (s == 0 && RMA) begin : g_pacc
+        assign pacc[l] = r;
+      end
       // the live fields only (see k1_live); the dead ones read as 0 and are never used
       assign sd.v = '0;
       if (k1_live(s)) begin : g_k1
@@ -455,13 +474,21 @@ module otpu_vpu
         V_ADD:  begin ia = x; ic_ = y; end
         V_SUB:  begin ia = x; ic_ = fneg(y); end
         V_RSUB: begin ia = y; ic_ = fneg(x); end
+        V_RSUM, V_RSSQ: if (RMA) begin ia = rsa[l]; ib = rsb[l]; ic_ = rfb[l]; end
         default: ;
       endcase
     end
     always_ff @(posedge clk) if (en) begin
-      ra <= ia; rb <= ib; rc <= ic_;
+      ra <= ia; rb <= ib;
     end
+    // sync reset keeps rc out of u_c's SRL (see g_slot)
+    always_ff @(posedge clk)
+      if (rst)     rc <= F_NZ;
+      else if (en) rc <= ic_;
     otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(st[1]));
+    if (RMA) begin : g_pacc
+      assign pacc[l] = st[1];
+    end
 
     // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here)
     assign lres[l] = hit[0] ? st[0] : st[1];
@@ -507,36 +534,53 @@ module otpu_vpu
   assign mx_new = (mx_have && fp_gt(mx_run, mxc_q)) ? mx_run : mxc_q;
 
   // ------------------------------------------------------------------ RSUM / RSSQ
-  f32_t  pacc [LANES];                  // partial after adding this chunk's term
+  // RMA: the term enters the lane's slot 0 through its input register (ra/rb/rc), so it reaches
+  // the adder one cycle later than a squarer of its own would
   rm_t   mtq, mt;                       // meta at the adder inputs / aligned with `pacc`
-  otpu_delay #(.W($bits(rm_t)), .N(LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
+  otpu_delay #(.W($bits(rm_t)), .N(RMA ? LM + 1 : LM)) u_mtq (.clk, .en, .d(m0r), .q(mtq));
   otpu_delay #(.W($bits(rm_t)), .N(LA)) u_mt (.clk, .en, .d(mtq), .q(mt));
-  f32_t  fbd [LANES];                   // pacc delayed RL - LA - 1 (also read by the tree)
-  logic  first_e;                       // mtq.first one cycle early
-  otpu_delay #(.W(1), .N(LM - 1)) u_first (.clk, .en, .d(m0.first), .q(first_e));
+  logic  first_e;                       // !RMA: mtq.first one cycle early
+  if (RMA) begin : g_nfe
+    assign first_e = 1'b0;
+  end else begin : g_fe
+    otpu_delay #(.W(1), .N(LM - 1)) u_first (.clk, .en, .d(m0.first), .q(first_e));
+  end
   for (genvar l = 0; l < LANES; l++) begin : g_red
-    f32_t sa, sb, tq, prev;
+    f32_t sa, sb;
     // sign/exponent masked; the significand raw from xa (the multiplier flushes a zero exponent
     // itself and reads the significand only when both exponents are normal), so the term is
     // the same as that of m0.mask[l] ? ftz(xa[l]) : +0
     assign sa = {m0.mask[l] & xa[l][31], m0.mask[l] ? xa[l][30:23] : 8'd0, xa[l][22:0]};
     assign sb = m0.sq ? sa : F_ONE;
-    otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(sa), .b(sb), .y(tq));
+    assign rsa[l] = sa;
+    assign rsb[l] = sb;
     // pacc(chunk c) = pacc(chunk c - RL) + term(c): a loop of exactly RL cycles
-    if (RL - LA >= 1) begin : g_fbq
-      // the loop's last stage is a flip-flop with a sync clear (the first chunks' +0): no
-      // shift-register LUT and no mux in front of the adder
-      f32_t fbq;
-      otpu_delay #(.W(32), .N(RL - LA - 1)) u_fb (.clk, .en, .d(pacc[l]), .q(fbd[l]));
-      always_ff @(posedge clk) if (en) fbq <= first_e ? F_ZERO : fbd[l];
-      assign prev = fbq;
-    end else begin : g_fbw
-      f32_t fb;
-      otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
-      assign prev = mtq.first ? F_ZERO : fb;
-      assign fbd[l] = F_ZERO;
+    if (RMA) begin : g_ma
+      // through slot 0's u_ma (term + prev: the add is commutative bit for bit), fed back by
+      // fbq, which slot 0 reads (as c) the cycle after it's written: cleared on the chunks that
+      // are on m0 then (mi), the first ones' +0. rc keeps the adder's c off a shift register.
+      f32_t fbq, fbd;
+      otpu_delay #(.W(32), .N(DF - 1)) u_fb (.clk, .en, .d(pacc[l]), .q(fbd));
+      always_ff @(posedge clk) if (en) fbq <= mi.first ? F_ZERO : fbd;
+      assign rfb[l] = fbq;
+    end else begin : g_acc
+      f32_t tq, prev;
+      assign rfb[l] = F_ZERO;
+      otpu_fmul #(.LAT(LM)) u_sq (.clk, .en, .a(sa), .b(sb), .y(tq));
+      if (RL - LA >= 1) begin : g_fbq
+        // the loop's last stage is a flip-flop with a sync clear (the first chunks' +0): no
+        // shift-register LUT and no mux in front of the adder
+        f32_t fbq, fbd;
+        otpu_delay #(.W(32), .N(RL - LA - 1)) u_fb (.clk, .en, .d(pacc[l]), .q(fbd));
+        always_ff @(posedge clk) if (en) fbq <= first_e ? F_ZERO : fbd;
+        assign prev = fbq;
+      end else begin : g_fbw
+        f32_t fb;
+        otpu_delay #(.W(32), .N(RL - LA)) u_fb (.clk, .en, .d(pacc[l]), .q(fb));
+        assign prev = mtq.first ? F_ZERO : fb;
+      end
+      otpu_fadd #(.LAT(LA)) u_acc (.clk, .en, .a(prev), .b(tq), .y(pacc[l]));
     end
-    otpu_fadd #(.LAT(LA)) u_acc (.clk, .en, .a(prev), .b(tq), .y(pacc[l]));
   end
 
   // Folding tree (level n = 32, 16, .., 1: x[i] += x[i+n], i < n), streamed. Partial p sits in
@@ -573,8 +617,11 @@ module otpu_vpu
     return m;
   endfunction
   localparam int DMAX = tree_dmax();
+  // LN2: the three lane levels of LANES = 8 fold onto two adders (see u_ln), root 2 cycles later
+  localparam bit LN2 = (LANES == 8) && (RL == 8) && (LA == 4);
   localparam int DL = tree_i(LR - 1) - (RL - 1);                // row_last -> last row level
-  localparam int RD = tree_i(LR - 1) + LA * (1 + LW) - (RL - 1); // row_last -> root
+  localparam int RD = tree_i(LR - 1) + LA * (1 + LW) - (RL - 1) // row_last -> root
+                      + (LN2 ? 2 : 0);
 
   // a final partial of this reduction is on `pacc`
   wire cap = red_act && is_sum && live(mt, tag) && mt.final_;
@@ -598,6 +645,7 @@ module otpu_vpu
   end
 
   f32_t tr_y [LANES];
+  f32_t tr_y1 [LANES];                        // tr_y delayed one cycle (td[1])
   for (genvar k = 0; k < LANES; k++) begin : g_tree
     f32_t pd, pdd, oa, ob;
     f32_t sa [LR], sb [LR];                  // level j's operands (row r, row r + H)
@@ -605,11 +653,7 @@ module otpu_vpu
     wire  [DMAX:0][31:0] tt = {td, tr_y[k]};
     // pd = pacc delayed RL/2; its last stage has a reset so it stays a flip-flop, not a
     // shift-register LUT (the value after reset is never used)
-    if (RL / 2 == RL - LA) begin : g_pdf
-      assign pdd = fbd[k];
-    end else begin : g_pdd
-      otpu_delay #(.W(32), .N(RL / 2 - 1)) u_pd (.clk, .en, .d(pacc[k]), .q(pdd));
-    end
+    otpu_delay #(.W(32), .N(RL / 2 - 1)) u_pd (.clk, .en, .d(pacc[k]), .q(pdd));
     always_ff @(posedge clk)
       if (rst) pd <= '0;
       else if (en) pd <= pdd;
@@ -617,6 +661,7 @@ module otpu_vpu
       td[1] <= tr_y[k];
       for (int d = 2; d <= DMAX; d++) td[d] <= td[d-1];
     end
+    assign tr_y1[k] = td[1];
     assign sa[0] = pd;
     assign sb[0] = pacc[k];
     for (genvar j = 1; j < LR; j++) begin : g_op
@@ -636,26 +681,54 @@ module otpu_vpu
   // last row level (l2_v for q = 2), rows a multiple of RL cycles apart: unless LA is a
   // multiple of RL, level 2 never meets level 1 and runs on level 1's adders k < LANES/4
   // (SH2; xl[2][k] is then xl[1][k] LA cycles later)
-  localparam bit SH2 = (LW >= 2) && (LA % RL != 0);
+  localparam bit SH2 = !LN2 && (LW >= 2) && (LA % RL != 0);
   wire  l2_v = rsr[DL + 2 * LA - 1];
   f32_t xl [LW + 1][LANES];
   f32_t xs [LANES];                           // SH2: the shared adders' results (level 1 or 2)
+  logic ln_l1b, ln_l2, ln_l3;                 // LN2 issue strobes (L1a is rsr[DL + LA - 1])
   for (genvar k = 0; k < LANES; k++) begin : g_xl0
     assign xl[0][k] = tr_y[k];
   end
-  for (genvar q = 1; q <= LW; q++) begin : g_xl
-    for (genvar k = 0; k < (LANES >> q); k++) begin : g_k
-      if (SH2 && q == 2) begin : g_sh
-        assign xl[q][k] = xs[k];
-      end else if (SH2 && q == 1 && k < (LANES >> 2)) begin : g_mux
-        f32_t oa, ob;
-        assign oa = l2_v ? xs[k] : xl[0][k];
-        assign ob = l2_v ? xl[1][k + (LANES >> 2)] : xl[0][k + (LANES >> 1)];
-        otpu_fadd #(.LAT(LA)) u_add (.clk, .en, .a(oa), .b(ob), .y(xs[k]));
-        assign xl[q][k] = xs[k];
-      end else begin : g_add
-        otpu_fadd #(.LAT(LA)) u_add (.clk, .en, .a(xl[q-1][k]), .b(xl[q-1][k + (LANES >> q)]),
-                                     .y(xl[q][k]));
+  // LN2 (E = last row level + LA, the residues mod RL = 8 in brackets): u_ln[m] issues
+  //   L1a at E     (5): xl[0][m]     + xl[0][m + 4]
+  //   L1b at E+1   (6): xl[0][m + 2] + xl[0][m + 6]   (from td[1])
+  //   L2  at E+5   (2): xsd[m] + xs[m]                (L1a + L1b = xl[1][m] + xl[1][m + 2])
+  //   L3  at E+10  (7): xsd[0] + xsd[1], m = 0 only   (L2 results = xl[2][0] + xl[2][1])
+  // and the root is xs[0] at E+14. The residues are distinct and rows are a multiple of RL
+  // apart, so neither adder is ever double-booked; same operands in the same order as xl.
+  if (LN2) begin : g_ln
+    f32_t xsd [2];                            // xs registered
+    assign ln_l1b = rsr[DL + LA];
+    assign ln_l2  = rsr[DL + 2 * LA];
+    assign ln_l3  = rsr[DL + 2 * LA + 5];
+    always_ff @(posedge clk) if (en) begin
+      xsd[0] <= xs[0];
+      xsd[1] <= xs[1];
+    end
+    for (genvar m = 0; m < 2; m++) begin : g_m
+      f32_t oa, ob;
+      assign oa = (m == 0 && ln_l3) ? xsd[0] : ln_l2 ? xsd[m] : ln_l1b ? tr_y1[m + 2] : tr_y[m];
+      assign ob = (m == 0 && ln_l3) ? xsd[1] : ln_l2 ? xs[m]  : ln_l1b ? tr_y1[m + 6] : tr_y[m + 4];
+      otpu_fadd #(.LAT(LA)) u_ln (.clk, .en, .a(oa), .b(ob), .y(xs[m]));
+    end
+  end else begin : g_lg
+    assign ln_l1b = 1'b0;
+    assign ln_l2  = 1'b0;
+    assign ln_l3  = 1'b0;
+    for (genvar q = 1; q <= LW; q++) begin : g_xl
+      for (genvar k = 0; k < (LANES >> q); k++) begin : g_k
+        if (SH2 && q == 2) begin : g_sh
+          assign xl[q][k] = xs[k];
+        end else if (SH2 && q == 1 && k < (LANES >> 2)) begin : g_mux
+          f32_t oa, ob;
+          assign oa = l2_v ? xs[k] : xl[0][k];
+          assign ob = l2_v ? xl[1][k + (LANES >> 2)] : xl[0][k + (LANES >> 1)];
+          otpu_fadd #(.LAT(LA)) u_add (.clk, .en, .a(oa), .b(ob), .y(xs[k]));
+          assign xl[q][k] = xs[k];
+        end else begin : g_add
+          otpu_fadd #(.LAT(LA)) u_add (.clk, .en, .a(xl[q-1][k]), .b(xl[q-1][k + (LANES >> q)]),
+                                       .y(xl[q][k]));
+        end
       end
     end
   end
@@ -702,7 +775,7 @@ module otpu_vpu
     if (red_act && is_sum && root_v) begin
       cw_en[0] = 1'b1;
       cw_addr[0] = wr_row;
-      cw_data[0] = xl[LW][0];
+      cw_data[0] = LN2 ? xs[0] : xl[LW][0];
     end
   end
 
@@ -834,9 +907,11 @@ module otpu_vpu
   always_ff @(posedge clk)
     if (!rst && en && cap && mt.sub >= 8'(RL / 2) && lv != 0)
       $fatal(1, "otpu_vpu: RSUM/RSSQ tree schedule collision");
-  // lane level 2 shares level 1's adders: it must never issue with level 1
+  // lane level 2 shares level 1's adders: it must never issue with level 1 (LN2: the lane
+  // levels L1a, L1b, L2 and L3 share u_ln and must never issue together)
   always_ff @(posedge clk)
-    if (!rst && en && SH2 && l2_v && rsr[DL + LA - 1])
+    if (!rst && en && (LN2 ? !$onehot0({rsr[DL + LA - 1], ln_l1b, ln_l2, ln_l3})
+                           : SH2 && l2_v && rsr[DL + LA - 1]))
       $fatal(1, "otpu_vpu: RSUM/RSSQ lane level schedule collision");
 `endif
 endmodule
