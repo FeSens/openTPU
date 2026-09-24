@@ -379,8 +379,14 @@ module otpu_vpu
       logic [1:0] dr, dd;
       logic       nr, nd;
       always_ff @(posedge clk) if (en) begin
-        ra <= ia; rb <= ib; rc <= ic_; sr <= sin_; dr <= dest; nr <= negd;
+        ra <= ia; rb <= ib; sr <= sin_; dr <= dest; nr <= negd;
       end
+      // rc has a sync reset so it can't join u_c's two stages in a shift-register LUT: the
+      // adder's c operand then leaves a flip-flop (clk->Q 0.3 ns) instead of an SRL (1.5 ns).
+      // F_NZ is every slot's default c, so bits constant across a slot's cases stay constant.
+      always_ff @(posedge clk)
+        if (rst)     rc <= F_NZ;
+        else if (en) rc <= ic_;
       otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(r));
       // the live fields only (see k1_live); the dead ones read as 0 and are never used
       assign sd.v = '0;
@@ -459,8 +465,12 @@ module otpu_vpu
       endcase
     end
     always_ff @(posedge clk) if (en) begin
-      ra <= ia; rb <= ib; rc <= ic_;
+      ra <= ia; rb <= ib;
     end
+    // sync reset keeps rc out of u_c's SRL (see g_slot)
+    always_ff @(posedge clk)
+      if (rst)     rc <= F_NZ;
+      else if (en) rc <= ic_;
     otpu_fmadd #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .y(st[1]));
 
     // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here)
