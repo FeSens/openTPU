@@ -81,6 +81,11 @@ UARCH = {"WIN": 32, "RPB": 4, "WPB": 2}
 BOARD_UARCH = {"WIN": 16, "RPB": 64, "WPB": 1, "FIFO_DEPTH": 1024}
 if os.environ.get("OTPU_UARCH") == "board":
     UARCH = dict(BOARD_UARCH)
+# MXU dot-product implementation (timing only): OTPU_MXU=cascade selects the DSP cascade
+# chains (OTPU_MXU_CL products per chain) instead of the adder tree.
+if os.environ.get("OTPU_MXU") == "cascade":
+    UARCH["MXU_IMPL"] = 1
+    UARCH["MXU_CL"] = int(os.environ.get("OTPU_MXU_CL", "16"))
 
 # The memory path. AXI: the board's AXI adapter in front of a two-channel AXI memory model with
 # random stalls (percent) and latency (D = 128 only; other configurations keep the behavioural
@@ -114,7 +119,17 @@ def build_top(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = Fal
                  top_params(cfg, dram_lat, uarch, axi, dram_bytes))
 
 
-def run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int = 50_000_000,
+def run(cfg, programs: list, images: list, *args, keep: Path | None = None, **kw):
+    """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats). The run's
+    files (DRAM images, up to the machine's DRAM size) live in a temporary directory that is
+    removed afterwards, unless `keep` names a directory to leave them in."""
+    if keep:
+        return _run(cfg, programs, images, *args, keep=keep, **kw)
+    with tempfile.TemporaryDirectory(prefix="otpu_") as d:
+        return _run(cfg, programs, images, *args, keep=Path(d), **kw)
+
+
+def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int = 50_000_000,
         keep: Path | None = None, trace: bool = False, uarch: dict | None = None,
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
         seed: int | None = None, bw: int | None = None, lat: int | None = None,

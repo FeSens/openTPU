@@ -26,7 +26,9 @@ module otpu_mxu
   parameter int D     = 32,
   parameter int MCOLS = 8,
   parameter int DEPTH = 16,
-  parameter int LANES = 8,       // TMEM banks; must be >= MCOLS
+  parameter int LANES = 8,       // TMEM banks (MCOLS > LANES drains a row in several cycles)
+  parameter int IMPL  = 0,       // integer dot product: 0 adder tree, 1 DSP cascade chains
+  parameter int CL    = 16,      // IMPL 1: products per cascade chain (D / CL chains)
   parameter int SID   = 0
 ) (
   input  logic                  clk,
@@ -69,7 +71,6 @@ module otpu_mxu
   localparam int RF = 32;                   // result FIFO rows
   localparam int RFW = $clog2(RF);
   localparam int MW = $clog2(MCOLS) + 1;
-  initial if (LANES < MCOLS) $fatal(1, "otpu_mxu: LANES must be >= MCOLS");
   initial if (D % 16 != 0) $fatal(1, "otpu_mxu: D must be a multiple of 16");
 
   // ================================================================== issuer
@@ -99,6 +100,7 @@ module otpu_mxu
   wire        c_act = (q_n != 0) && q_go[q_h];
   logic [31:0] alpha [MCOLS];
   logic [1:0]  al_st;                       // ASCALE factors: 0 to load, 1 loading, 2 loaded
+  logic [7:0]  al_i, mx_i;                  // next ASCALE factor to load / RMAX value to write
 
   // FIFOs of chunks and of their scales (the two DRAM ports return independently, in order;
   // an issued chunk's slot is reserved, so neither FIFO can overflow)
@@ -142,9 +144,6 @@ module otpu_mxu
   f32_t                ws0, ws1, ws2, ws3, ws4, ws5, ws6;
   i2f_mid_t            im [MCOLS];
   f32_t                as0 [MCOLS];
-  logic signed [15:0]  pr [MCOLS][D];
-  logic signed [19:0]  s2 [MCOLS][D/4];
-  logic signed [23:0]  s3 [MCOLS][D/16];
   logic signed [31:0]  s4 [MCOLS];
   f32_t                fi [MCOLS];
   // S0's ACT RAM block and scales are the ACT RAM's registered read
@@ -163,27 +162,6 @@ module otpu_mxu
     end
     w0 <= f_data[f_head];
     ws0 <= c_unit ? F_ONE : f_scale[s_head];
-    // S1: products
-    for (int j = 0; j < MCOLS; j++)
-      for (int i = 0; i < D; i++)
-        pr[j][i] <= 16'(int'($signed(a0[(j*D + i)*8 +: 8])) * int'($signed(w0[i*8 +: 8])));
-    m1 <= m0; ws1 <= ws0;
-    // S2, S3, S4: adder tree (exact integers)
-    for (int j = 0; j < MCOLS; j++) begin
-      for (int g = 0; g < D / 4; g++)
-        s2[j][g] <= 20'(pr[j][4*g]) + 20'(pr[j][4*g+1]) + 20'(pr[j][4*g+2]) + 20'(pr[j][4*g+3]);
-      for (int g = 0; g < D / 16; g++)
-        s3[j][g] <= 24'(s2[j][4*g]) + 24'(s2[j][4*g+1]) + 24'(s2[j][4*g+2]) + 24'(s2[j][4*g+3]);
-      begin
-        logic signed [31:0] t;
-        t = '0;
-        for (int g = 0; g < D / 16; g++) t = t + 32'(s3[j][g]);
-        s4[j] <= t;
-      end
-    end
-    m2 <= m1; ws2 <= ws1;
-    m3 <= m2; ws3 <= ws2;
-    m4 <= m3; ws4 <= ws3;
     // S5, S6: int -> fp32
     for (int j = 0; j < MCOLS; j++) im[j] <= i2f_s1(s4[j]);
     for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
@@ -191,7 +169,105 @@ module otpu_mxu
     m6 <= m5; ws6 <= ws5;
   end
 
-  // the ACT scale travels with the chunk to the second multiplier (S0 + 6 + LM)
+  // dot-product latency S0 -> s4 (the tree: 4 register levels)
+  localparam int NG = D / CL;
+  localparam int TL = (NG <= 1) ? 0 : (NG <= 4) ? 1 : (NG <= 16) ? 2 : 3;
+  localparam int LDOT = (IMPL == 0) ? 4 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
+
+  // ---- S1 .. S4: the exact integer dot products of the chunk with every column's ACT block;
+  // s4 (with m4, ws4) is the chunk's result LDOT - 4 cycles after S0 + 4.
+  if (IMPL == 0) begin : g_tree
+    // products, then a 4 / 4 / 8 adder tree (one register level each)
+    logic signed [15:0] pr [MCOLS][D];
+    logic signed [19:0] s2 [MCOLS][D/4];
+    logic signed [23:0] s3 [MCOLS][D/16];
+    always_ff @(posedge clk) if (en_c) begin
+      for (int j = 0; j < MCOLS; j++)
+        for (int i = 0; i < D; i++)
+          pr[j][i] <= 16'(int'($signed(a0[(j*D + i)*8 +: 8])) * int'($signed(w0[i*8 +: 8])));
+      for (int j = 0; j < MCOLS; j++) begin
+        for (int g = 0; g < D / 4; g++)
+          s2[j][g] <= 20'(pr[j][4*g]) + 20'(pr[j][4*g+1]) + 20'(pr[j][4*g+2]) + 20'(pr[j][4*g+3]);
+        for (int g = 0; g < D / 16; g++)
+          s3[j][g] <= 24'(s2[j][4*g]) + 24'(s2[j][4*g+1]) + 24'(s2[j][4*g+2]) + 24'(s2[j][4*g+3]);
+        begin
+          logic signed [31:0] t;
+          t = '0;
+          for (int g = 0; g < D / 16; g++) t = t + 32'(s3[j][g]);
+          s4[j] <= t;
+        end
+      end
+      m1 <= m0; ws1 <= ws0;
+      m2 <= m1; ws2 <= ws1;
+      m3 <= m2; ws3 <= ws2;
+      m4 <= m3; ws4 <= ws3;
+    end
+  end else begin : g_casc
+    // Systolic accumulate chains (DSP48 A*B + PCIN cascades): the D positions form NG = D / CL
+    // chains of CL; position i = g*CL + k enters stage k of chain g k cycles after S0 (operand
+    // skew in shift registers), so a new chunk enters every cycle. Stage k: a registered product
+    // (the DSP's M register) added to stage k-1's running sum (its P register). The NG chain
+    // sums meet in a small adder tree (TL register levels of up to 4 inputs). Exact integers.
+    initial if (D % CL != 0 || NG > 64) $fatal(1, "otpu_mxu: CL must divide D, D/CL <= 64");
+    // operand skew: position k of every chain is delayed k cycles (weights shared by columns)
+    logic [7:0] ws_k [D];                               // skewed weight bytes
+    logic [7:0] as_k [MCOLS][D];                        // skewed activation bytes
+    for (genvar i = 0; i < D; i++) begin : g_wsk
+      otpu_delay #(.W(8), .N(i % CL)) u_w (.clk, .en(en_c), .d(w0[i*8 +: 8]), .q(ws_k[i]));
+      for (genvar j = 0; j < MCOLS; j++) begin : g_ask
+        otpu_delay #(.W(8), .N(i % CL)) u_a (.clk, .en(en_c), .d(a0[(j*D + i)*8 +: 8]),
+                                            .q(as_k[j][i]));
+      end
+    end
+    // the chains
+    logic signed [15:0] mreg [MCOLS][D];                // stage products (M registers)
+    logic signed [23:0] preg [MCOLS][D];                // running sums (P registers)
+    always_ff @(posedge clk) if (en_c) begin
+      for (int j = 0; j < MCOLS; j++)
+        for (int i = 0; i < D; i++) begin
+          mreg[j][i] <= 16'(int'($signed(as_k[j][i])) * int'($signed(ws_k[i])));
+          preg[j][i] <= ((i % CL == 0) ? 24'sd0 : preg[j][i - 1]) + 24'(mreg[j][i]);
+        end
+    end
+    // chain sums (stage CL-1 of each chain) -> tree
+    logic signed [31:0] t1 [MCOLS][(NG + 3) / 4];
+    logic signed [31:0] t2 [MCOLS][(NG + 15) / 16];
+    always_ff @(posedge clk) if (en_c) begin
+      for (int j = 0; j < MCOLS; j++) begin
+        for (int u = 0; u < (NG + 3) / 4; u++) begin
+          logic signed [31:0] t;
+          t = '0;
+          for (int v = 0; v < 4; v++)
+            if (4 * u + v < NG) t = t + 32'(preg[j][(4 * u + v) * CL + CL - 1]);
+          t1[j][u] <= t;
+        end
+        for (int u = 0; u < (NG + 15) / 16; u++) begin
+          logic signed [31:0] t;
+          t = '0;
+          for (int v = 0; v < 4; v++)
+            if (4 * u + v < (NG + 3) / 4) t = t + t1[j][4 * u + v];
+          t2[j][u] <= t;
+        end
+      end
+    end
+    always_comb
+      for (int j = 0; j < MCOLS; j++) begin
+        logic signed [31:0] t;
+        t = '0;
+        case (TL)
+          0: t = 32'(preg[j][CL - 1]);
+          1: t = t1[j][0];
+          2: t = t2[j][0];
+          default: for (int u = 0; u < (NG + 15) / 16; u++) t = t + t2[j][u];
+        endcase
+        s4[j] = t;
+      end
+    // the meta and the weight scale travel alongside (S0 -> S4 position)
+    otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));
+    otpu_delay #(.W(32), .N(LDOT)) u_ws4 (.clk, .en(en_c), .d(ws0), .q(ws4));
+  end
+
+  // the ACT scale travels with the chunk to the second multiplier (S0 + LDOT + 2 + LM)
   f32_t as_d [MCOLS];
   f32_t t1 [MCOLS], t2 [MCOLS], pacc [MCOLS];
   cm_t  mt, ma;                              // meta at the adder inputs / outputs
@@ -199,7 +275,7 @@ module otpu_mxu
   otpu_delay #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .en(en_c), .d(mt), .q(ma));
   for (genvar j = 0; j < MCOLS; j++) begin : g_col
     f32_t fb, prev;
-    otpu_delay #(.W(32), .N(6 + LM)) u_as (.clk, .en(en_c), .d(as0[j]), .q(as_d[j]));
+    otpu_delay #(.W(32), .N(LDOT + 2 + LM)) u_as (.clk, .en(en_c), .d(as0[j]), .q(as_d[j]));
     otpu_fmul #(.LAT(LM)) u_m1 (.clk, .en(en_c), .a(fi[j]), .b(ws6), .y(t1[j]));
     otpu_fmul #(.LAT(LM)) u_m2 (.clk, .en(en_c), .a(t1[j]), .b(as_d[j]), .y(t2[j]));
     // partial loop: pacc(block k) = pacc(block k - 4) + t(k), exactly NPART advances
@@ -279,6 +355,7 @@ module otpu_mxu
     logic [LANES-1:0][7:0]  col;
   } rmw_t;
   rmw_t r0, rw;                               // r0: data arriving now; rw: at the write stage
+  rmw_t rx;                                   // RMAX (no ACC): drained lanes, compared next cycle
   f32_t ry [LANES];
   for (genvar k = 0; k < LANES; k++) begin : g_rmw
     f32_t al;
@@ -294,7 +371,7 @@ module otpu_mxu
   logic [MCOLS-1:0] mx_have;
   logic mx_done;
 
-  wire c_drained = c_act && (c_pop == c_total) && (rows_live == 0) && (rmw_n == 0) && !r0.v;
+  wire c_drained = c_act && (c_pop == c_total) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !rx.v;
   wire mx_go     = c_drained && c_rmax && !mx_done && (c_total != 0);
   wire c_fin     = c_drained && (!c_rmax || mx_done || c_total == 0);
   wire al_go     = c_act && c_asc && al_st == 2'd0;
@@ -324,20 +401,22 @@ module otpu_mxu
         end
       end
     end
+    // ASCALE factors and RMAX values move LANES words per cycle (consecutive words: distinct
+    // banks)
     if (al_go) begin
-      for (int j = 0; j < MCOLS; j++) begin
-        if (32'(j) < 32'(c_M)) begin
-          t_ren[j] = 1'b1;
-          t_raddr[j] = c_asa + 32'(j);
+      for (int k = 0; k < LANES; k++) begin
+        if (32'(al_i) + 32'(k) < 32'(c_M)) begin
+          t_ren[k] = 1'b1;
+          t_raddr[k] = c_asa + 32'(al_i) + 32'(k);
         end
       end
     end
     if (mx_go) begin
-      for (int j = 0; j < MCOLS; j++) begin
-        if (32'(j) < 32'(c_M)) begin
-          t_wen[j] = 1'b1;
-          t_waddr[j] = c_out + 32'(c_M) * 32'(q_ors[q_h]) + 32'(j);
-          t_wdata[j] = mx[j];
+      for (int k = 0; k < LANES; k++) begin
+        if (32'(mx_i) + 32'(k) < 32'(c_M)) begin
+          t_wen[k] = 1'b1;
+          t_waddr[k] = c_out + 32'(c_M) * 32'(q_ors[q_h]) + 32'(mx_i) + 32'(k);
+          t_wdata[k] = mx[MW'(32'(mx_i) + 32'(k))];
         end
       end
     end
@@ -357,8 +436,8 @@ module otpu_mxu
       ck <= '0; c_pop <= '0; rows_live <= '0;
       rf_h <= '0; rf_t <= '0; rf_n <= '0;
       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
-      al_st <= 2'd0;
-      r0 <= '0; rmw_n <= '0;
+      al_st <= 2'd0; al_i <= '0; mx_i <= '0;
+      r0 <= '0; rx <= '0; rmw_n <= '0;
       cyc <= '0; st_starve <= '0; st_bp <= '0; st_frz <= '0; st_deny <= '0;
     end else begin
       logic [1:0] qn;
@@ -452,6 +531,7 @@ module otpu_mxu
       // ---- drain (holds while the TMEM grant is withheld)
       if (t_gnt) begin
         r0 <= '0;
+        rx <= '0;
         if (drain_go) begin
           if (c_acc) begin
             r0.v <= 1'b1;
@@ -461,14 +541,10 @@ module otpu_mxu
             r0.col <= dcol_l;
           end
           if (c_rmax && !c_acc) begin
-            for (int k = 0; k < LANES; k++) begin
-              if (32'(k) < 32'(ncnt)) begin
-                logic [MW-2:0] j;
-                j = dcol_l[k][MW-2:0];
-                if (!mx_have[j] || fp_gt(dval_l[k], mx[j])) mx[j] <= ftz(dval_l[k]);
-                mx_have[j] <= 1'b1;
-              end
-            end
+            rx.v <= 1'b1;
+            for (int k = 0; k < LANES; k++) rx.m[k] <= (32'(k) < 32'(ncnt));
+            rx.nv <= dval_l;
+            rx.col <= dcol_l;
           end
           if (drain_row_done) begin
             dj <= '0;
@@ -478,6 +554,17 @@ module otpu_mxu
             rl = rl - 1;
           end else begin
             dj <= dj + ncnt;
+          end
+        end
+        // registered so the lane selection and the max compare are in different cycles
+        if (rx.v) begin
+          for (int k = 0; k < LANES; k++) begin
+            if (rx.m[k]) begin
+              logic [MW-2:0] j;
+              j = rx.col[k][MW-2:0];
+              if (!mx_have[j] || fp_gt(rx.nv[k], mx[j])) mx[j] <= ftz(rx.nv[k]);
+              mx_have[j] <= 1'b1;
+            end
           end
         end
         if (rw.v && c_rmax) begin
@@ -491,11 +578,19 @@ module otpu_mxu
           end
         end
         rmw_n <= rmw_n + ((drain_go && c_acc) ? 4'd1 : 4'd0) - (rw.v ? 4'd1 : 4'd0);
-        if (mx_go) mx_done <= 1'b1;
+        if (mx_go) begin
+          if (32'(mx_i) + LANES >= 32'(c_M)) mx_done <= 1'b1;
+          else mx_i <= mx_i + 8'(LANES);
+        end
         if (al_go) al_st <= 2'd1;
         if (al_st == 2'd1) begin
-          for (int j = 0; j < MCOLS; j++) alpha[j] <= t_rdata[j];
-          al_st <= 2'd2;
+          for (int k = 0; k < LANES; k++)
+            if (32'(al_i) + 32'(k) < MCOLS) alpha[MW'(32'(al_i) + 32'(k))] <= t_rdata[k];
+          if (32'(al_i) + LANES >= 32'(c_M)) al_st <= 2'd2;
+          else begin
+            al_i <= al_i + 8'(LANES);
+            al_st <= 2'd0;
+          end
         end
       end else if (drain_go || rw.v || mx_go || al_go) begin
         st_frz <= st_frz + 1;
@@ -511,7 +606,7 @@ module otpu_mxu
         dj <= '0;
         d_row <= (start && q_n == 2'd1) ? cmd.w3 : q_out[~q_h];
         mx_done <= 1'b0; mx_have <= '0;
-        al_st <= 2'd0;
+        al_st <= 2'd0; al_i <= '0; mx_i <= '0;
 `ifndef SYNTHESIS
         if (trace) $display("T%0d U c=%0d u=1 starve=%0d bp=%0d frz=%0d deny=%0d", SID, cyc,
                             st_starve, st_bp, st_frz, st_deny);

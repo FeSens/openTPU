@@ -25,7 +25,9 @@ module otpu_slice
   parameter int LANES      = 8,
   parameter int WIN        = 32,
   parameter int RPB        = 4,       // TMEM reads per bank per cycle
-  parameter int WPB        = 2        // TMEM writes per bank per cycle
+  parameter int WPB        = 2,       // TMEM writes per bank per cycle
+  parameter int MXU_IMPL   = 0,       // MXU dot product: 0 adder tree, 1 DSP cascade chains
+  parameter int MXU_CL     = 16       // cascade chain length
 ) (
   input  logic          clk,
   input  logic          sys_rst,
@@ -169,7 +171,8 @@ module otpu_slice
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rdata(r_data[P_DMA]),
     .t_wen(dma_wen), .t_waddr(dma_waddr), .t_wdata(dma_wdata));
 
-  otpu_mxu #(.D(D), .MCOLS(MCOLS), .DEPTH(FIFO_DEPTH), .LANES(LANES), .SID(SID)) u_mxu (
+  otpu_mxu #(.D(D), .MCOLS(MCOLS), .DEPTH(FIFO_DEPTH), .LANES(LANES), .IMPL(MXU_IMPL),
+             .CL(MXU_CL), .SID(SID)) u_mxu (
     .clk, .rst, .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
     .computing(mxu_pop),
     .act_blk(act_rblk), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
