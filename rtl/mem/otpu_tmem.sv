@@ -26,7 +26,9 @@ module otpu_tmem #(
   input  logic [NRP-1:0][LANES-1:0]           r_req,    // requested reads (r_en before the grant)
   input  logic [NRP-1:0][LANES-1:0][31:0]     r_addr,
   output logic [NRP-1:0][LANES-1:0][31:0]     r_data,
-  input  logic [NWP-1:0][LANES-1:0]           w_en,
+  input  logic [NWP-1:0][LANES-1:0]           w_en,     // granted writes
+  input  logic [NWP-1:0][LANES-1:0]           w_req,    // requested writes (w_en before the grant)
+  input  logic [NWP-1:0]                      w_gnt,    // the grant of each write port's unit
   input  logic [NWP-1:0][LANES-1:0][31:0]     w_addr,
   input  logic [NWP-1:0][LANES-1:0][31:0]     w_data,
   input  logic                                dump
@@ -41,16 +43,29 @@ module otpu_tmem #(
   logic [LANES-1:0][WPB-1:0][IW-1:0] bw_a;
   logic [LANES-1:0][WPB-1:0][31:0]   bw_d;
   if (WPB == 1) begin : g_w1
+    // each port's lanes are merged per bank from its requests (a port belongs to one unit, its
+    // lanes hit distinct banks), then the ports by their grants: the grant enters at the last
+    // AND-OR level instead of at every lane (the arbiter admits one granted writer per bank)
     always_comb begin
       bw_v = '0; bw_a = '0; bw_d = '0;
       for (int b = 0; b < LANES; b++)
-        for (int p = 0; p < NWP; p++)
+        for (int p = 0; p < NWP; p++) begin
+          logic          pv;
+          logic [IW-1:0] pa;
+          logic [31:0]   pd;
+          pv = 1'b0; pa = '0; pd = '0;
           for (int l = 0; l < LANES; l++)
-            if (w_en[p][l] && w_addr[p][l][BW-1:0] == BW'(b)) begin
-              bw_v[b][0] = 1'b1;
-              bw_a[b][0] = bw_a[b][0] | w_addr[p][l][BW +: IW];
-              bw_d[b][0] = bw_d[b][0] | w_data[p][l];
+            if (w_req[p][l] && w_addr[p][l][BW-1:0] == BW'(b)) begin
+              pv = 1'b1;
+              pa = pa | w_addr[p][l][BW +: IW];
+              pd = pd | w_data[p][l];
             end
+          if (w_gnt[p] && pv) begin
+            bw_v[b][0] = 1'b1;
+            bw_a[b][0] = bw_a[b][0] | pa;
+            bw_d[b][0] = bw_d[b][0] | pd;
+          end
+        end
     end
   end else begin : g_wn
     always_comb begin
