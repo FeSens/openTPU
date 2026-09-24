@@ -184,8 +184,10 @@ def main() -> int:
         ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
         cap = 256
         rcfg = sim_config(spec, cap)                      # same layout, DRAM sized to the model
+        # the model's own board model: the one of the earlier stages has too little memory
+        tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if a.sim else t
         dev = Engine(spec, W, cap=cap, cfg=rcfg if a.sim else cfg,
-                     backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+                     backend=lambda c, imgs: BoardBackend(c, imgs, transport=tq))
         ref = Engine(spec, W, cap=cap, cfg=rcfg)
         t0 = time.time()
         got = dev.generate(ids, max_new=a.tokens)

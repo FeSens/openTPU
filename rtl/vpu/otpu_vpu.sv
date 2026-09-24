@@ -476,33 +476,51 @@ module otpu_vpu
   assign stall = red_act && is_sum && live(mt, tag) && mt.final_ && tb_act[cap_sel];
 
   // ------------------------------------------------------------------ TMEM writes
+  // The writes are computed here (cw_*) and registered (tw_*): a TMEM write is performed one
+  // granted cycle after the cycle that produced it, so no path runs from the TMEM read data
+  // through the lanes into the TMEM write port. `done` follows its instruction's last write.
+  logic [LANES-1:0]       cw_en;
+  logic [LANES-1:0][31:0] cw_addr, cw_data;
+  logic                   done_i, dpend;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      tw_en <= '0;
+      done <= 1'b0; dpend <= 1'b0;
+    end else begin
+      if (gnt) begin
+        tw_en <= cw_en; tw_addr <= cw_addr; tw_data <= cw_data;
+      end
+      done <= (done_i || dpend) && gnt;
+      dpend <= (done_i || dpend) && !gnt;
+    end
+  end
   always_comb begin
-    tw_en = '0; tw_addr = '0; tw_data = '0;
+    cw_en = '0; cw_addr = '0; cw_data = '0;
     if (mo.v && !stall) begin
       for (int l = 0; l < LANES; l++) begin
         if (mo.mask[l]) begin
-          tw_en[l] = 1'b1;
-          tw_addr[l] = mo.waddr + 32'(l);
-          tw_data[l] = lres[l];
+          cw_en[l] = 1'b1;
+          cw_addr[l] = mo.waddr + 32'(l);
+          cw_data[l] = lres[l];
         end
       end
     end
     if (red_act && func == V_RMAX && live(mxm_q, tag) && mxm_q.row_last) begin
-      tw_en[0] = 1'b1;
-      tw_addr[0] = mxm_q.waddr;
-      tw_data[0] = mx_new;
+      cw_en[0] = 1'b1;
+      cw_addr[0] = mxm_q.waddr;
+      cw_data[0] = mx_new;
     end
     if (red_act && is_sum && rq_n != 0) begin
-      tw_en[0] = 1'b1;
-      tw_addr[0] = rq_a[rq_h];
-      tw_data[0] = rq_v[rq_h];
+      cw_en[0] = 1'b1;
+      cw_addr[0] = rq_a[rq_h];
+      cw_data[0] = rq_v[rq_h];
     end
   end
 
   // ------------------------------------------------------------------ sequencing
   always_ff @(posedge clk) begin
     logic fin, ewfin;
-    done <= 1'b0;
+    done_i <= 1'b0;
     cyc <= cyc + 1;
     fin = 1'b0;
     ewfin = 1'b0;
@@ -534,7 +552,7 @@ module otpu_vpu
         cq_h <= ~cq_h;
         qn = qn - 1;
         if (h_empty) begin
-          done <= 1'b1;
+          done_i <= 1'b1;
         end else begin
           dst <= hc.w1; a <= hc.w2; b <= hc.w3;
           rows <= hc.w4[15:0]; cols <= hc.w4[31:16];
@@ -676,7 +694,7 @@ module otpu_vpu
       cq_n <= qn;
       if (fin) red_act <= 1'b0;
       if (fin || ewfin) begin
-        done <= 1'b1;
+        done_i <= 1'b1;
 `ifndef SYNTHESIS
         if (trace) $display("T%0d U c=%0d u=3 frz=%0d", SID, cyc, st_frz);
 `endif
