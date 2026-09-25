@@ -1,7 +1,7 @@
 name: otpu_vpu
 description: 'VPU: elementwise fp32 ops on LANES lanes (split lanes: CL composite lanes with 10 multiply-add
-  slots for EXP2/RECIP/RSQRT, simple lanes with 1 slot), RMAX, RSUM/RSSQ (isum_64 partial loop and folding
-  trees).'
+  slots for EXP2/RECIP/RSQRT/LOG2, simple lanes with 1 slot; slot 0 is a*b + c*e for OUTER, with per-lane
+  column buffers), RMAX, RSUM/RSSQ/RDOT (isum_64 partial loop and folding trees; RDOT buffers its row sums).'
 allowed:
 - rtl/vpu/otpu_vpu.sv
 synth:

@@ -7,9 +7,11 @@ package otpu_pkg;
                          OP_GATHER = 8'h40;
 
   localparam logic [7:0] V_ADD = 0, V_SUB = 1, V_RSUB = 2, V_MUL = 3, V_MAX = 4, V_MIN = 5,
-                         V_COPY = 8, V_EXP2 = 9, V_RECIP = 10, V_RSQRT = 11, V_ABS = 12,
-                         V_FILL = 13, V_EXP2SUB = 14, V_RSUM = 16, V_RMAX = 17,
-                         V_RSSQ = 18;
+                         V_OUTER = 6, V_COPY = 8, V_EXP2 = 9, V_RECIP = 10, V_RSQRT = 11,
+                         V_ABS = 12, V_FILL = 13, V_EXP2SUB = 14, V_LOG2 = 15, V_RSUM = 16,
+                         V_RMAX = 17, V_RSSQ = 18, V_RDOT = 19;
+  // VOP OUTER flags: one decay word T[d] for all columns / decay 1.0 (T[d] not read)
+  localparam int VF_DSCALAR = 0, VF_DONE = 1;
 
   localparam logic [1:0] B_FULL = 0, B_ROW = 1, B_COL = 2, B_SCALAR = 3;
 
@@ -93,6 +95,15 @@ package otpu_pkg;
   function automatic logic is_binary(input logic [7:0] f);
     return f == V_ADD || f == V_SUB || f == V_RSUB || f == V_MUL || f == V_MAX || f == V_MIN ||
            f == V_FILL || f == V_EXP2SUB;
+  endfunction
+
+  // the functions that read operand B in its bmode (OUTER's is always B_ROW)
+  function automatic logic reads_b(input logic [7:0] f);
+    return is_binary(f) || f == V_RDOT || f == V_OUTER;
+  endfunction
+
+  function automatic logic is_reduce(input logic [7:0] f);
+    return f == V_RSUM || f == V_RMAX || f == V_RSSQ || f == V_RDOT;
   endfunction
 
   // Everything an instruction may read or write (docs/isa.md), conservatively as intervals.
@@ -210,9 +221,14 @@ package otpu_pkg;
       OP_VOP: begin
         rows = 32'(c.w4[15:0]); cols = 32'(c.w4[31:16]);
         if (rows != 0 && cols != 0) begin
-          if (c.w6[23:16] != V_FILL)
+          // OUTER reads and writes dst in place (the write range covers the read); its A field
+          // is the decay (none with DONE) and w7 the column vector
+          if (c.w6[23:16] == V_OUTER) begin
+            if (!c.flags[VF_DONE]) f.rd[0] = mk(SP_TMEM, c.w2, c.flags[VF_DSCALAR] ? 1 : cols);
+            f.rd[2] = mk(SP_TMEM, c.w7, cols);
+          end else if (c.w6[23:16] != V_FILL)
             f.rd[0] = mk(SP_TMEM, c.w2, p.p0 + cols);
-          if (is_binary(c.w6[23:16])) begin
+          if (reads_b(c.w6[23:16])) begin
             case (c.w6[25:24])
               B_FULL: f.rd[1] = mk(SP_TMEM, c.w3, p.p1 + cols);
               B_ROW:  f.rd[1] = mk(SP_TMEM, c.w3, p.p1 + 1);
@@ -220,7 +236,7 @@ package otpu_pkg;
               default: ;
             endcase
           end
-          if (c.w6[23:16] == V_RSUM || c.w6[23:16] == V_RMAX || c.w6[23:16] == V_RSSQ)
+          if (is_reduce(c.w6[23:16]))
             f.wr[0] = mk(SP_TMEM, c.w1, p.p2 + 1);
           else
             f.wr[0] = mk(SP_TMEM, c.w1, p.p2 + cols);

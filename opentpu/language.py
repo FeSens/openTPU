@@ -7,6 +7,8 @@ Kernels are SPMD over slices. Inside a kernel:
     y   = ol.dot(x, w)                    # x: tile [M, K]; w: streamed QTensor [N, K] -> [M, N]
     m   = ol.max(y, axis=1)               # row reductions
     p   = ol.exp2(y - m[:, None])         # broadcasting maps onto the VPU operand modes
+    kv  = S @ k                           # row dot products of a tile with a vector (RDOT)
+    ol.outer(d, k, acc=S, decay=a)        # S = a * S + d k^T in place (OUTER)
     for i in ol.range(n): ...             # hardware loop (body traced once; use t.set(...))
     for i in ol.static_range(n): ...      # unrolled
     z   = ol.all_gather(y_shard)          # sharded -> replicated across slices
@@ -25,11 +27,13 @@ from .compiler import (TEMP_RC_FN, Affine, Bcast, CompileError, KVDesc, QTensor,
                        Tensor, Tile, current, jit)
 
 __all__ = ["jit", "program_id", "num_programs", "block_size", "tmem_words", "load", "store", "dot", "quantize", "exp2",
-           "recip", "rsqrt", "abs", "maximum", "minimum", "max", "sum", "full", "zeros",
+           "log2", "recip", "rsqrt", "abs", "maximum", "minimum", "max", "sum", "outer", "full",
+           "zeros",
            "empty", "all_gather", "all_reduce", "range", "static_range", "kv_append", "Tensor", "QTensor",
-           "KVDesc", "Tile", "CompileError", "LOG2E"]
+           "KVDesc", "Tile", "CompileError", "LOG2E", "LN2"]
 
 LOG2E = 1.0 / math.log(2.0)
+LN2 = math.log(2.0)
 
 
 def program_id() -> int:
@@ -146,6 +150,11 @@ def exp2(x) -> Tile:
     return current().unop(I.V_EXP2, x, temp=temp)
 
 
+def log2(x) -> Tile:
+    """log2(x): -inf at 0, NaN below it (VOP LOG2, within 2.3 ulp)."""
+    return current().unop(I.V_LOG2, x)
+
+
 def recip(x) -> Tile:
     return current().unop(I.V_RECIP, x)
 
@@ -171,9 +180,19 @@ def max(x, axis: int = -1) -> Tile:  # noqa: A001
 
 
 def sum(x, axis: int = -1) -> Tile:  # noqa: A001
-    """Row sums. `sum(a * a)` on an unnamed square is one RSSQ pass (sum of squares)."""
+    """Row sums. `sum(a * b)` on an unnamed product is one RDOT pass (b may be broadcast:
+    `sum(S * k[None, :], axis=1)` is S @ k); `sum(a * a)` is RSSQ."""
     temp = sys.getrefcount(x) <= TEMP_RC_FN
     return current().reduce(I.V_RSUM, x, axis, temp)
+
+
+def outer(x: Tile, y: Tile, acc: Tile | None = None, decay: Tile | None = None) -> Tile:
+    """The rank-1 tile x[:, None] * y[None, :] (one MUL pass).
+
+    With `acc`, the state update of a linear recurrence in one in-place pass (VOP OUTER):
+    acc = acc * decay + x[:, None] * y[None, :], decay a [1] tile (one factor), a [cols] tile
+    (per column) or None (1.0). As dot(acc=, acc_scale=) is for attention's accumulator."""
+    return current().outer(x, y, acc, decay)
 
 
 # ---- control

@@ -273,13 +273,16 @@ class Slice:
         rows, cols = w[3] & 0xFFFF, w[3] >> 16
         drs, ars = w[4] & 0xFFFF, w[4] >> 16
         brs, func, bmode = w[5] & 0xFFFF, (w[5] >> 16) & 0xFF, (w[5] >> 24) & 3
-        imm = np.array([w[6]], dtype=np.uint32).view(np.float32)[0]
+        w7 = (self.reg(ins.rd) + w[6]) & 0xFFFFFFFF
+        imm = np.array([w7], dtype=np.uint32).view(np.float32)[0]
         r = np.arange(rows)[:, None]
         c = np.arange(cols)[None, :]
+        if func == I.V_OUTER:
+            return self._outer(ins, dst, a, b, w7, rows, cols, drs, brs, bmode)
         aidx = a + r * ars + c
         A = self.tget(aidx) if func != I.V_FILL else None
         bidx = None
-        if func in I.BINARY:
+        if func in I.READS_B:
             if bmode == I.B_FULL:
                 bidx = b + r * brs + c
             elif bmode == I.B_ROW:
@@ -289,11 +292,14 @@ class Slice:
             B = self.tget(bidx) if bidx is not None else np.full((rows, cols), imm, np.float32)
         if func in I.REDUCE:
             didx = dst + np.arange(rows) * drs
-            self._check_hazard(np.repeat(didx, cols), [aidx.reshape(-1)], reduce_cols=cols)
+            reads = [aidx.reshape(-1)] + ([bidx.reshape(-1)] if bidx is not None else [])
+            self._check_hazard(np.repeat(didx, cols), reads, reduce_cols=cols)
             if func == I.V_RSUM:
                 acc = F.interleaved_sum(A, F.RED_PARTIALS)
             elif func == I.V_RSSQ:
-                acc = F.interleaved_sum(F.mul(A, A), F.RED_PARTIALS)
+                acc = F.rdot(A, A)
+            elif func == I.V_RDOT:
+                acc = F.rdot(A, B)
             else:
                 acc = F.chain_max(A)
             self.tput(didx, acc)
@@ -308,10 +314,27 @@ class Slice:
                I.V_COPY: lambda: F.ftz(A), I.V_EXP2: lambda: F.exp2(A),
                I.V_RECIP: lambda: F.recip(A), I.V_RSQRT: lambda: F.rsqrt(A),
                I.V_ABS: lambda: F.fabs(A), I.V_FILL: lambda: F.ftz(B),
-               I.V_EXP2SUB: lambda: F.exp2(F.sub(A, B))}
+               I.V_EXP2SUB: lambda: F.exp2(F.sub(A, B)), I.V_LOG2: lambda: F.log2(A)}
         if func not in ops:
             raise SimError(f"VOP: bad func {func}")
         self.tput(didx, ops[func]())
+
+    def _outer(self, ins, dst, d, b, cv, rows, cols, drs, brs, bmode) -> None:
+        """dst = dst * Dv + B(r) * Cv(c). Cv and Dv are read before anything is written (the
+        RTL buffers them), so they may overlap dst; B(r) is read with every element."""
+        if bmode != I.B_ROW or cols > I.OUTER_MAX_COLS:
+            raise SimError("VOP OUTER: bmode must be ROW and cols <= 256")
+        r = np.arange(rows)[:, None]
+        c = np.arange(cols)[None, :]
+        C = self.tget(cv + c)
+        if ins.flags & I.F_DONE:
+            Dv = np.ones((1, cols), np.float32)
+        else:
+            Dv = self.tget(np.broadcast_to(d if ins.flags & I.F_DSCALAR else d + c, (1, cols)))
+        didx = dst + r * drs + c
+        bidx = np.broadcast_to(b + r * brs, (rows, cols))
+        self._check_hazard(didx.reshape(-1), [didx.reshape(-1), bidx.reshape(-1)])
+        self.tput(didx, F.outer(self.tget(didx), Dv, self.tget(bidx), C))
 
     def _check_hazard(self, writes: np.ndarray, reads: list, reduce_cols: int = 0) -> None:
         """The RTL processes elements in order; a later element must not read an earlier write."""

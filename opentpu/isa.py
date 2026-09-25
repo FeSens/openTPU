@@ -20,14 +20,18 @@ F_UNIT, F_ACC, F_RMAX, F_ASCALE = 0x1, 0x2, 0x4, 0x8     # MM
 F_ROW, F_CSCALE, F_RSCALE = 0x1, 0x2, 0x4   # QACT (QST: F_ROW)
 
 # VOP functions
-V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN = 0, 1, 2, 3, 4, 5
-V_COPY, V_EXP2, V_RECIP, V_RSQRT, V_ABS, V_FILL, V_EXP2SUB = 8, 9, 10, 11, 12, 13, 14
-V_RSUM, V_RMAX, V_RSSQ = 16, 17, 18
+V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_OUTER = 0, 1, 2, 3, 4, 5, 6
+V_COPY, V_EXP2, V_RECIP, V_RSQRT, V_ABS, V_FILL, V_EXP2SUB, V_LOG2 = 8, 9, 10, 11, 12, 13, 14, 15
+V_RSUM, V_RMAX, V_RSSQ, V_RDOT = 16, 17, 18, 19
 VFUNCS = {V_ADD: "add", V_SUB: "sub", V_RSUB: "rsub", V_MUL: "mul", V_MAX: "max",
-          V_MIN: "min", V_COPY: "copy", V_EXP2: "exp2", V_RECIP: "recip",
-          V_RSQRT: "rsqrt", V_ABS: "abs", V_FILL: "fill", V_EXP2SUB: "exp2sub", V_RSUM: "rsum", V_RMAX: "rmax", V_RSSQ: "rssq"}
+          V_MIN: "min", V_OUTER: "outer", V_COPY: "copy", V_EXP2: "exp2", V_RECIP: "recip",
+          V_RSQRT: "rsqrt", V_ABS: "abs", V_FILL: "fill", V_EXP2SUB: "exp2sub",
+          V_LOG2: "log2", V_RSUM: "rsum", V_RMAX: "rmax", V_RSSQ: "rssq", V_RDOT: "rdot"}
 BINARY = {V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_FILL, V_EXP2SUB}
-REDUCE = {V_RSUM, V_RMAX, V_RSSQ}
+REDUCE = {V_RSUM, V_RMAX, V_RSSQ, V_RDOT}
+READS_B = BINARY | {V_RDOT}          # functions that read operand B in its bmode (OUTER: B_ROW)
+F_DSCALAR, F_DONE = 0x1, 0x2         # VOP OUTER: decay T[d] for every column / decay 1.0
+OUTER_MAX_COLS = 256                 # OUTER: its column vectors are held in 256-word buffers
 
 # VOP broadcast modes for operand B
 B_FULL, B_ROW, B_COL, B_SCALAR = 0, 1, 2, 3
@@ -151,6 +155,19 @@ def vop(func, dst, a, b, rows, cols, drs, ars, brs, bmode=B_FULL, imm=0.0,
     return Instr(VOP, ra=ra, rb=rb, rc=rc,
                  w=_w(dst, a, b, rows | (cols << 16), drs | (ars << 16),
                       brs | (func << 16) | (bmode << 24), f32bits(imm)),
+                 comment=comment)
+
+
+def outer(dst, d, b, c, rows, cols, drs, brs, dmode="scalar", ra=0, rb=0, rc=0, rd=0,
+          comment=""):
+    """VOP OUTER: T[dst + r*drs + j] = T[dst + r*drs + j] * Dv(j) + T[b + r*brs] * T[c + j],
+    Dv(j) = T[d] (dmode "scalar"), T[d + j] ("column") or 1.0 ("one", d unused). The decay
+    address travels in the A field and the column vector's in the immediate word (w7 += R[rd])."""
+    assert 0 < rows < 65536 and 0 < cols <= OUTER_MAX_COLS and drs < 65536 and brs < 65536
+    fl = {"scalar": F_DSCALAR, "column": 0, "one": F_DONE}[dmode]
+    return Instr(VOP, ra=ra, rb=rb, rc=rc, rd=rd, flags=fl,
+                 w=_w(dst, d, b, rows | (cols << 16), drs, brs | (V_OUTER << 16) | (B_ROW << 24),
+                      c),
                  comment=comment)
 
 

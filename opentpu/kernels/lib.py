@@ -14,6 +14,12 @@ def silu(x):
     return x * ol.recip(ol.exp2(x * -ol.LOG2E) + 1.0)
 
 
+def softplus(x):
+    """log(1 + e^x) = max(x, 0) + ln2 * log2(1 + 2^(-|x| log2(e))), exact to ~1e-6 absolute
+    (1 + e^x rounds to 1 for x < -17: the result is then 0 instead of e^x)."""
+    return ol.maximum(x, 0.0) + ol.log2(ol.exp2(ol.abs(x) * -ol.LOG2E) + 1.0) * ol.LN2
+
+
 def rope(x, cos, sin, out=None):
     """Rotate-half RoPE on the rows of x [M, d]; cos, sin: [d/2] tiles for one position.
     Writes into `out` (e.g. a view of a zero-padded tile) when given."""

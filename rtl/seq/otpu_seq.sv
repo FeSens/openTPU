@@ -80,7 +80,7 @@ module otpu_seq
   //   MM:     d = rd0, rd1        t[0] = wr0 W, t[1] = wr1 W (RMAX), t2 = rd3 (ASCALE), a = rd2
   //   QACT:                       t[0] = rd0, t[1] = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
   //   QST:    d = wr0, wr1 (dw)   t[0] = rd0
-  //   VOP:                        t[0] = wr0 W, t[1] = rd0, t2 = rd1
+  //   VOP:                        t[0] = wr0 W, t[1] = rd0, t2 = rd1, t3 = rd2 (OUTER)
   //   GATHER:                     t[0] = wr0 W, t[1] = rd0
   // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. ACT ranges
   // start below 2^8 (an 8-bit field) and are at most 2^16 - 1 long, so [alo, ahi) is exact.
@@ -97,6 +97,7 @@ module otpu_seq
     r32_t  [1:0]     d;         // DRAM
     rtw_t  [1:0]     t;         // TMEM
     rt_t             t2;        // TMEM, always a read
+    rt_t             t3;        // TMEM, always a read
     logic            aw;        // ACT
     logic [7:0]      alo;
     logic [16:0]     ahi;
@@ -121,9 +122,9 @@ module otpu_seq
 
   function automatic fps_t fp_seg(input logic [7:0] op, input fp_t f);
     fps_t s;
-    rng_t a, t0, t1, t2;          // ACT; TMEM t[0], t[1], t2
+    rng_t a, t0, t1, t2, t3;      // ACT; TMEM t[0], t[1], t2, t3
     logic w0, w1;
-    s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; w0 = 1'b0; w1 = 1'b0;
+    s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; t3 = '0; w0 = 1'b0; w1 = 1'b0;
     case (op)
       OP_LD: begin
         s.d[0] = r32(f.rd[0]); t0 = f.wr[0]; w0 = 1'b1;
@@ -145,17 +146,18 @@ module otpu_seq
         t0 = f.rd[0];
       end
       OP_VOP: begin
-        t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1];
+        t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1]; t3 = f.rd[2];
       end
       OP_GATHER: begin
         t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0];
       end
       default: ;   // BAR: all
     endcase
-    s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2);
+    s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2) || tovf(t3);
     s.t[0].w = w0; s.t[0].r = rt(t0);
     s.t[1].w = w1; s.t[1].r = rt(t1);
     s.t2 = rt(t2);
+    s.t3 = rt(t3);
     s.alo = a.lo[7:0]; s.ahi = a.v ? a.hi[16:0] : '0;
     return s;
   endfunction
@@ -179,8 +181,8 @@ module otpu_seq
         if ((n.dw || e.dw) && ovr(n.d[i], e.d[j])) begin any = 1'b1; dram = 1'b1; end
         if ((n.t[i].w || e.t[j].w) && ovr_t(n.t[i].r, e.t[j].r)) any = 1'b1;
       end
-      if (n.t[i].w && ovr_t(n.t[i].r, e.t2)) any = 1'b1;
-      if (e.t[i].w && ovr_t(n.t2, e.t[i].r)) any = 1'b1;
+      if (n.t[i].w && (ovr_t(n.t[i].r, e.t2) || ovr_t(n.t[i].r, e.t3))) any = 1'b1;
+      if (e.t[i].w && (ovr_t(n.t2, e.t[i].r) || ovr_t(n.t3, e.t[i].r))) any = 1'b1;
     end
     if ((n.aw || e.aw) && {9'd0, n.alo} < e.ahi && {9'd0, e.alo} < n.ahi) any = 1'b1;
     return {any, dram};
@@ -235,7 +237,8 @@ module otpu_seq
     dcmd.w1 = iw[1] + rv(ra);
     dcmd.w2 = iw[2] + rv(rb);
     dcmd.w3 = iw[3] + rv(rc);
-    dcmd.w4 = iw[4]; dcmd.w5 = iw[5]; dcmd.w6 = iw[6]; dcmd.w7 = iw[7];
+    dcmd.w4 = iw[4]; dcmd.w5 = iw[5]; dcmd.w6 = iw[6];
+    dcmd.w7 = iw[7] + ((op == OP_VOP) ? rv(rd) : 32'd0);        // VOP: w7 += R[rd]
   end
   int dunit;
   always_comb dunit = unit_of(op);

@@ -38,6 +38,15 @@ any NaN produced is the canonical `0x7FC00000` (a final sign flip, as in `recip`
   very negative `x`, where `exp2` overflows to infinity.
 - `rsqrt(x)`: `x <= 0` and `x = +inf` return `+0`. `y = bits(0x5F3759DF - (bits(x) >> 1))`, `h = 0.5*x`,
   three times `y = y * (1.5 - h*(y*y))`.
+- `log2(x)`: `x = +-0` returns `-inf`, `x < 0` (and NaN) the canonical NaN, `x = +inf` `+inf`.
+  Otherwise, with `f` the 23 fraction bits of `x` and `ex` its exponent field: `ge = f >= 0x3504F3`
+  (the mantissa is at least sqrt(2)), `e = ex - 127 + ge`, `m = bits((ge ? 126 : 127) << 23 | f)`
+  (so `x = 2^e * m`, `m` in [sqrt(1/2), sqrt(2))), `t = m + (-1)` (exact), `q = C9`, then
+  `q = q*t + Ck` for k = 8, 7, ..., 1, and the result is `q*t + i2f(e)` (every `a*b + c` is a
+  rounded `mul` then a rounded `add`). `C1..C9` are a minimax fit of `log2(1+t)/t` on
+  [sqrt(1/2)-1, sqrt(2)-1], as fp32 bits: `3FB8AA3B BF38AA38 3EF639EB BEB8AE27 3E9369C2
+  BE74ADF2 3E5CE48E BE543E8E 3E00DB73`. The result is within 2.3 ulp of the exact value
+  (every fp32 in [0.5, 4), and samples of every exponent: `tests/test_vops.py`).
 - `a > b` compares flushed values in a total order: `-inf < ... < -0 < +0 < ... < +inf < NaN`
   (sign-magnitude bits). `max(a, b)` = `a if a > b else b`; `min(a, b)` = `a if b > a else b`.
   Because the order is total, a max/min reduction gives the same bits in any order.
@@ -46,7 +55,7 @@ any NaN produced is the canonical `0x7FC00000` (a final sign flip, as in `recip`
   `p[q] = +0 + x[q] + x[q+P] + x[q+2P] + ...` (left to right, each `+` an fp32 add), then a
   folding tree over the partials: `n = P/2, P/4, ..., 1: p[i] = p[i] + p[i+n]` for `i < n`.
   (For MM that is `(p0 + p2) + (p1 + p3)`.)
-  MM uses P = 4 over the K blocks; RSUM and RSSQ use P = 64 over the columns. Missing terms
+  MM uses P = 4 over the K blocks; RSUM, RSSQ and RDOT use P = 64 over the columns. Missing terms
   are +0 (a partial is never -0, so they do not change it).
 - `q8(x)`: round half to even to an integer, saturate to `[-127, 127]`.
 
@@ -128,10 +137,12 @@ one QST must not overlap.
 
 `dst = R[ra]+w1`, `a = R[rb]+w2`, `b = R[rc]+w3` (TMEM words), `rows = w4[15:0]`,
 `cols = w4[31:16]`, `drs = w5[15:0]`, `ars = w5[31:16]`, `brs = w6[15:0]`,
-`func = w6[23:16]`, `bmode = w6[25:24]`, `imm = w7` (fp32 bits).
+`func = w6[23:16]`, `bmode = w6[25:24]`, `imm = R[rd] + w7` (fp32 bits; OUTER: a TMEM address,
+register-relative like the others; rd = 0 for an immediate).
 
-`B(r,c)` is `T[b + r*brs + c]` (bmode 0, full), `T[b + r*brs]` (1, per row),
-`T[b + c]` (2, per column) or `imm` (3, scalar). `A(r,c) = T[a + r*ars + c]`.
+`B(r,c)` is `T[b + r*brs + c]` (bmode 0, full), `T[b + r*brs]` (1, per row; with `brs = 0`, one
+TMEM scalar for the whole tile), `T[b + c]` (2, per column) or `imm` (3, scalar).
+`A(r,c) = T[a + r*ars + c]`.
 Elementwise functions write `T[dst + r*drs + c] = f(A, B)`; reductions write
 `T[dst + r*drs] = fold(A(r, 0..cols-1))` sequentially from `c = 0`.
 
@@ -143,6 +154,7 @@ Elementwise functions write `T[dst + r*drs + c] = f(A, B)`; reductions write
 | 3 | MUL | A * B |
 | 4 | MAX | max(A, B) |
 | 5 | MIN | min(A, B) |
+| 6 | OUTER | A * Dv(c) + B(r) * Cv(c), in place (see below) |
 | 8 | COPY | A |
 | 9 | EXP2 | exp2(A) |
 | 10 | RECIP | recip(A) |
@@ -150,9 +162,22 @@ Elementwise functions write `T[dst + r*drs + c] = f(A, B)`; reductions write
 | 12 | ABS | abs(A) |
 | 13 | FILL | B (A is not read) |
 | 14 | EXP2SUB | exp2(A - B) (the softmax step, fused) |
+| 15 | LOG2 | log2(A) |
 | 16 | RSUM | isum_64(A(r, 0..cols-1)) (see "Sums") |
 | 17 | RMAX | max over A(r, c) (total order: any evaluation order) |
-| 18 | RSSQ | isum_64(A(r,c) * A(r,c)) (sum of squares, for RMSNorm) |
+| 18 | RSSQ | isum_64(A(r,c) * A(r,c)) (sum of squares, for RMSNorm: RDOT with B = A) |
+| 19 | RDOT | isum_64(A(r,c) * B(r,c)), B in any bmode (row dot products: `S @ k` is B per column) |
+
+In RSSQ and RDOT each product is rounded, then added into the isum_64 partials.
+
+**OUTER** (the state update of linear recurrences: Gated DeltaNet, Mamba2/SSD, GLA, RWKV,
+linear attention) is elementwise and in place, `T[dst + r*drs + c] = add(mul(T[dst + r*drs + c],
+Dv(c)), mul(B(r), Cv(c)))`: two rounded products, then a rounded add. B must be per row
+(bmode 1): `B(r) = T[b + r*brs]`. The column vector is `Cv(c) = T[imm + c]`, and the decay
+`Dv(c)` is `T[a + c]`, or `T[a]` for every column with flag bit 0 (DSCALAR), or 1.0 with flag
+bit 1 (DONE; `a` is not read). The `a` field holds the decay address: A is dst itself (`ars` is
+not used). `cols <= 256`. `Cv` and `Dv` are read before anything is written, so they may overlap
+dst; `B(r)` is read with every element and must not be written by an earlier element.
 
 ### GATHER
 

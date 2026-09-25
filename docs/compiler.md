@@ -128,8 +128,42 @@ named intermediate is never rewritten, and a dead-tile check catches any later m
 | `ol.quantize(x * v[None, :])` | `QACT CSCALE` (column scale applied while quantizing) |
 | `ol.quantize((x * r[:, None]) * v[None, :])` | `QACT CSCALE RSCALE` |
 | `ol.sum(x * x, axis=1)` | `VOP RSSQ` (used by rmsnorm) |
+| `ol.sum(S * k[None, :], axis=1)` | `VOP RDOT` (any broadcast of the second factor; `S @ k` is the same without the product tile) |
+| `t.set(S @ k)` | the RDOT writes the 1-D tile `t` directly |
 | `ol.max(ol.dot(...), axis=1)` | `MM RMAX` |
 | `t.set(expr)` | the producer of `expr` writes straight into `t` |
+
+## Linear recurrences
+
+`x @ v` (a 2-D tile times a 1-D tile) is the row dot products, one RDOT pass with no product
+tile; `ol.sum(x * v[None, :], axis=1)` on an unnamed product gives the same RDOT but allocates
+the product tile while tracing. `ol.outer(x, y)` is the rank-1 tile `x[:, None] * y[None, :]`
+(one MUL). With `acc=S` it is the state update of a linear recurrence, in place in one pass
+(VOP OUTER): `S = S * decay + x[:, None] * y[None, :]`, where `decay` is a `[1]` tile (one
+factor), a `[cols]` tile (per column, e.g. GLA, KDA) or omitted (1.0). It mirrors
+`dot(acc=, acc_scale=)`. A `[1]` tile used as an operand broadcasts as a scalar read from TMEM
+(`x * a[h:h+1]`). `ol.log2` and `lib.softplus` (`max(x, 0) + ln2 * log2(1 + 2^(-|x| log2 e))`)
+complete the gates. The Gated DeltaNet step (`opentpu/kernels/deltanet.py`) keeps each head's
+state transposed, `St[v, k]`, so every contraction is a row reduction:
+
+```python
+w.set(St @ k)                             # RDOT: kv
+w.set((v - w * decay) * beta)             # 3 small VOPs: d
+ol.outer(w, k, acc=St, decay=decay)       # OUTER: St = decay * St + d k^T
+o[h].set(St @ q)                          # RDOT
+```
+
+Three passes over the 128 x 128 fp32 state instead of seven (MUL + RSUM, MUL, MUL, ADD,
+MUL + RSUM), with no 16K-word temporaries, so two state buffers fit and the DMA loads the next
+head's state during the passes. The schedule matters: a TMEM bank takes one write per cycle
+and the DMA's writes come first, so a state LD (8 writes per cycle) stalls an OUTER for as long
+as they overlap, while an RDOT (it holds its row sums until the last row) runs beside it. The
+work tile `w` shared by all heads makes head h+1's first RDOT wait for head h's OUTER, which
+puts the next LD under an RDOT (see `head_step`).
+
+Measured on the RTL at the board configuration (LANES = 8, AXI memory path, 80% bandwidth,
+`tools/perf_deltanet.py`): one head takes 9,208 cycles (old ISA: 17,411), and 16 heads
+108,678 (6.2K per additional head; old ISA: 16.8K per head, from 1 and 8 heads).
 
 ## Memory allocation
 

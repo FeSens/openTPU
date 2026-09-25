@@ -4,6 +4,8 @@
 //   otpu_fmul    y = a * b                LAT >= 2 (s1 | s2, extra cycles appended)
 //   otpu_fadd    y = a + b                LAT >= 4 (s1 | s2 | s3 | s4, extra cycles appended)
 //   otpu_fmadd   y = (a * b) + c          two roundings, as in the ISA; LAT = LM + LA
+//   otpu_fmma    y = (a * b) + (c * e)    three roundings; with e = 1.0 it is otpu_fmadd
+//                                         (c * 1.0 == c bit for bit after the adder's flush)
 //   otpu_delay   N-cycle delay line (SRL-friendly: no reset)
 
 module otpu_delay #(parameter int W = 32, parameter int N = 1) (
@@ -86,4 +88,21 @@ module otpu_fmadd
   otpu_fmul #(.LAT(LM)) u_m (.clk, .en, .a, .b, .y(p));
   otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(c), .q(cd));
   otpu_fadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y);
+endmodule
+
+module otpu_fmma
+  import otpu_fp::*;
+#(parameter int LM = 2, parameter int LA = 4) (
+  input  logic  clk,
+  input  logic  en,
+  input  f32_t  a,
+  input  f32_t  b,
+  input  f32_t  c,
+  input  f32_t  e,
+  output f32_t  y
+);
+  f32_t p, q;
+  otpu_fmul #(.LAT(LM)) u_m (.clk, .en, .a, .b, .y(p));
+  otpu_fmul #(.LAT(LM)) u_c (.clk, .en, .a(c), .b(e), .y(q));
+  otpu_fadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(q), .y);
 endmodule

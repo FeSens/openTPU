@@ -15,6 +15,12 @@ MIN_NORMAL = F32(2.0 ** -126)
 
 # 2^f = e^(f ln2) Taylor coefficients, degree 7, rounded to fp32 (Horner from C7 down to C0).
 EXP2_COEFFS = [F32(math.log(2.0) ** k / math.factorial(k)) for k in range(8)]
+# log2(1+t) ~ t*(C1 + t*(C2 + ... + t*C9)) on [sqrt(1/2)-1, sqrt(2)-1]: a minimax fit of the
+# relative error (degree 8 in t), rounded to fp32. Horner from C9 down to C1.
+LOG2_COEFFS = [np.uint32(b).view(np.float32) for b in (
+    0x3FB8AA3B, 0xBF38AA38, 0x3EF639EB, 0xBEB8AE27, 0x3E9369C2, 0xBE74ADF2, 0x3E5CE48E,
+    0xBE543E8E, 0x3E00DB73)]
+LOG2_SQRT2 = 0x3504F3        # mantissa bits of sqrt(2): m >= sqrt(2) is halved
 INV127 = F32(1.0 / 127.0)
 RECIP_MAGIC = 0x7EF311C3
 RSQRT_MAGIC = 0x5F3759DF
@@ -165,6 +171,38 @@ def exp2(x):
     res = np.where(lo, F32(0), res)
     res = np.where(hi, F32(np.inf), res)
     return res.astype(np.float32)
+
+
+def log2(x):
+    """log2(x) (docs/isa.md): x = 2^e * m with m in [sqrt(1/2), sqrt(2)), t = m - 1 (exact),
+    q = C9, q = q*t + Ck for k = 8..1, result = q*t + i2f(e) (each step a mul then an add).
+    +-0 -> -inf, x < 0 -> NaN, +inf -> +inf."""
+    x = ftz(x)
+    b = bits(x).astype(np.int64)
+    frac, ex = b & 0x7FFFFF, (b >> 23) & 0xFF
+    ge = frac >= LOG2_SQRT2
+    e = np.where(ex == 0, 0, ex - 127 + ge)
+    m = from_bits((np.where(ge, 126, 127) << 23 | frac).astype(np.uint32))
+    t = add(m, F32(-1))
+    q = np.broadcast_to(LOG2_COEFFS[8], t.shape).astype(np.float32)
+    for c in reversed(LOG2_COEFFS[:8]):
+        q = add(mul(q, t), c)
+    r = add(mul(q, t), i2f(e))
+    zero = (b & 0x7FFFFFFF) == 0
+    r = np.where(ex == 255, x, r)                               # +inf; NaN stays NaN
+    r = np.where((b >> 31).astype(bool) & ~zero, F32(np.nan), r)
+    r = np.where(zero, F32(-np.inf), r)
+    return ftz(r)
+
+
+def rdot(a, b):
+    """VOP RDOT row sums: isum_64 of the rounded products a*b."""
+    return interleaved_sum(mul(a, b), RED_PARTIALS)
+
+
+def outer(a, d, b, c):
+    """VOP OUTER: a*d + b*c, two rounded products and one rounded add."""
+    return add(mul(a, d), mul(b, c))
 
 
 def recip(x):

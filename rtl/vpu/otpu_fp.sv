@@ -1,7 +1,7 @@
 // openTPU fp32 arithmetic (docs/isa.md "Arithmetic").
 // IEEE-754 binary32, round-to-nearest-even, flush-to-zero on inputs and outputs.
 // Bit-exact with opentpu/fp32.py. Functions are combinational; composite functions (exp2,
-// recip, rsqrt) are fixed sequences of fp_add/fp_mul.
+// recip, rsqrt, log2) are fixed sequences of fp_add/fp_mul.
 package otpu_fp;
 
   typedef logic [31:0] f32_t;
@@ -15,6 +15,8 @@ package otpu_fp;
   localparam f32_t F_M126  = 32'hC2FC_0000;   // -126.0
   localparam f32_t F_128   = 32'h4300_0000;   //  128.0
   localparam f32_t F_INF   = 32'h7F80_0000;
+  localparam f32_t F_NINF  = 32'hFF80_0000;
+  localparam f32_t F_M1    = 32'hBF80_0000;   // -1.0
   localparam f32_t F_NAN   = 32'h7FC0_0000;
   localparam f32_t F_INV127 = 32'h3C01_0204;  // f32(1/127)
 
@@ -27,6 +29,18 @@ package otpu_fp;
   localparam f32_t EXP2_C5 = 32'h3AAE_C3FF;
   localparam f32_t EXP2_C6 = 32'h3921_8489;
   localparam f32_t EXP2_C7 = 32'h377F_E5FE;
+
+  // log2(1+t) ~ t*(C1 + t*(C2 + ... + t*C9)), minimax, fp32 (same as opentpu/fp32.py).
+  localparam f32_t LOG2_C1 = 32'h3FB8_AA3B;
+  localparam f32_t LOG2_C2 = 32'hBF38_AA38;
+  localparam f32_t LOG2_C3 = 32'h3EF6_39EB;
+  localparam f32_t LOG2_C4 = 32'hBEB8_AE27;
+  localparam f32_t LOG2_C5 = 32'h3E93_69C2;
+  localparam f32_t LOG2_C6 = 32'hBE74_ADF2;
+  localparam f32_t LOG2_C7 = 32'h3E5C_E48E;
+  localparam f32_t LOG2_C8 = 32'hBE54_3E8E;
+  localparam f32_t LOG2_C9 = 32'h3E00_DB73;
+  localparam logic [22:0] LOG2_SQRT2 = 23'h35_04F3;   // mantissa bits of sqrt(2)
 
   localparam logic [31:0] RECIP_MAGIC = 32'h7EF3_11C3;
   localparam logic [31:0] RSQRT_MAGIC = 32'h5F37_59DF;
@@ -441,6 +455,31 @@ package otpu_fp;
     h = fp_mul(F_HALF, x);
     for (int k = 0; k < 3; k++) y = fp_mul(y, fp_sub(F_1P5, fp_mul(h, fp_mul(y, y))));
     return y;
+  endfunction
+
+  // log2: x = 2^e * m, m in [sqrt(1/2), sqrt(2)); t = m - 1 (exact); Horner from C9; + i2f(e)
+  function automatic f32_t fp_log2(input f32_t x_in);
+    f32_t x, m, t, q;
+    logic ge;
+    logic signed [31:0] e;
+    x = ftz(x_in);
+    if (x[30:0] == 0) return F_NINF;
+    if (x[31] || is_nan(x)) return F_NAN;
+    if (x == F_INF) return F_INF;
+    ge = (x[22:0] >= LOG2_SQRT2);
+    e = 32'(x[30:23]) - 32'sd127 + 32'(ge);
+    m = {1'b0, ge ? 8'd126 : 8'd127, x[22:0]};
+    t = fp_add(m, F_M1);
+    q = LOG2_C9;
+    q = fp_add(fp_mul(q, t), LOG2_C8);
+    q = fp_add(fp_mul(q, t), LOG2_C7);
+    q = fp_add(fp_mul(q, t), LOG2_C6);
+    q = fp_add(fp_mul(q, t), LOG2_C5);
+    q = fp_add(fp_mul(q, t), LOG2_C4);
+    q = fp_add(fp_mul(q, t), LOG2_C3);
+    q = fp_add(fp_mul(q, t), LOG2_C2);
+    q = fp_add(fp_mul(q, t), LOG2_C1);
+    return fp_add(fp_mul(q, t), i2f(e));
   endfunction
 
 endpackage

@@ -327,6 +327,9 @@ class Tile:
     # ---- in-place update (loop-carried values)
     def set(self, value) -> "Tile":
         temp = sys.getrefcount(value) <= TEMP_RC_METHOD
+        if temp and isinstance(value, Tile) and self.b.retarget_matvec(value, self):
+            self.b.bump_version(self.buf)
+            return self
         if temp and isinstance(value, Tile) and self.b.retarget(value, self):
             self.b.bump_version(self.buf)
             return self
@@ -370,6 +373,10 @@ class Tile:
 
     def __neg__(self):
         return self * -1.0
+
+    def __matmul__(self, v):
+        """x @ v for a 1-D tile v: the row dot products (one RDOT pass, no product tile)."""
+        return self.b.matvec(self, v)
 
 
 B_ROWVIEW, B_COLVIEW = "row", "col"
@@ -630,6 +637,8 @@ class Builder:
         bmode, b_base, brs, imm = I.B_SCALAR, 0, 0, 0.0
         if isinstance(b, (int, float)):
             imm = float(b)
+        elif isinstance(b, Tile) and b.shape == (1,) and (rows, cols) != (1, 1):
+            bmode, b_base, brs = I.B_ROW, b.base, 0          # a TMEM scalar: every row reads T[b]
         elif isinstance(b, Tile):
             if (b.rows, b.cols) != (rows, cols):
                 raise CompileError(f"shape mismatch {b.shape} vs {dst.shape}")
@@ -653,7 +662,8 @@ class Builder:
     def binop(self, func: int, x, y):
         swap = {I.V_ADD: I.V_ADD, I.V_MUL: I.V_MUL, I.V_MAX: I.V_MAX, I.V_MIN: I.V_MIN,
                 I.V_SUB: I.V_RSUB, I.V_RSUB: I.V_SUB}
-        if not isinstance(x, Tile):
+        if not isinstance(x, Tile) or (x.shape == (1,) and isinstance(y, Tile)
+                                       and y.shape != (1,)):
             if isinstance(y, Tile):
                 x, y, func = y, x, swap[func]
             else:
@@ -742,9 +752,9 @@ class Builder:
         if axis not in (-1, len(x.shape) - 1):
             raise CompileError("reductions are along the last axis only")
         if func == I.V_RSUM and temp:
-            sq = self.fuse_sum_squares(x)
-            if sq is not None:
-                x, func = sq, I.V_RSSQ
+            fused = self.fuse_sum_products(x)
+            if fused is not None:
+                return fused
         if func == I.V_RMAX:
             fused = self.fuse_mm_rmax(x)
             if fused is not None:
@@ -856,20 +866,91 @@ class Builder:
             src, srs, rsc = prev.w[1], (p_ars if rows > 1 else x.cols), prev.w[2]
         return src, srs, ins.w[2], rsc
 
-    def fuse_sum_squares(self, x: Tile):
-        """sum(a * a) with the square an unnamed temp just computed: drop the multiply and
-        reduce with RSSQ over `a`. Returns the view of `a` to reduce, or None."""
+    def fuse_sum_products(self, x: Tile):
+        """sum(a * b) with the product an unnamed temp just computed: drop the multiply and
+        reduce with RDOT over a and b (any broadcast of b), or RSSQ when b is a itself."""
         ins = self._last_vop_writing(x)
         if ins is None or not getattr(x, "fresh", False):
             return None
         func, bmode = (ins.w[5] >> 16) & 0xFF, (ins.w[5] >> 24) & 3
-        rows = ins.w[3] & 0xFFFF
-        ars, brs = ins.w[4] >> 16, ins.w[5] & 0xFFFF
-        if func != I.V_MUL or bmode != I.B_FULL or ins.w[1] != ins.w[2] or (rows > 1 and ars != brs):
+        if func != I.V_MUL:
             return None
+        rows, cols = ins.w[3] & 0xFFFF, ins.w[3] >> 16
+        ars, brs = ins.w[4] >> 16, ins.w[5] & 0xFFFF
         self.stack[-1].pop()
         x.dead = True
-        return Tile(self, ins.w[1], x.shape, ars if rows > 1 else None, x.buf)
+        out = self.alloc((rows,))
+        square = bmode == I.B_FULL and ins.w[1] == ins.w[2] and (rows == 1 or ars == brs)
+        if square:
+            self.emit(I.vop(I.V_RSSQ, out.base, ins.w[1], 0, rows, cols, 1, ars, 0, I.B_FULL,
+                            0.0, comment="rssq"))
+        else:
+            self.emit(I.Instr(I.VOP, rb=ins.rb, rc=ins.rc, w=[
+                out.base, ins.w[1], ins.w[2], ins.w[3], 1 | (ars << 16),
+                brs | (I.V_RDOT << 16) | (bmode << 24), ins.w[6]], comment="rdot"))
+        return out
+
+    def matvec(self, x: Tile, v) -> Tile:
+        if not isinstance(v, Tile) or len(v.shape) != 1 or v.cols != x.cols:
+            raise CompileError(f"{x.shape} @ v needs a 1-D tile v of length {x.cols}")
+        self.check_live(x, v)
+        out = self.alloc((x.rows,))
+        ars = x.rs if len(x.shape) == 2 else 0
+        self.emit(I.vop(I.V_RDOT, out.base, x.base, v.base, x.rows, x.cols, 1, ars, 0, I.B_COL,
+                        comment="rdot"))
+        out.matvec = self.stack[-1][-1]
+        return out
+
+    def retarget_matvec(self, value: Tile, dst: Tile) -> bool:
+        """`dst.set(x @ v)` right after the RDOT: it writes dst (1-D) directly."""
+        ins = getattr(value, "matvec", None)
+        body = self.stack[-1]
+        if ins is None or not body or body[-1] is not ins or len(dst.shape) != 1 \
+                or dst.shape != value.shape:
+            return False
+        rows, cols, ars = ins.w[3] & 0xFFFF, ins.w[3] >> 16, ins.w[4] >> 16
+        lo, hi = dst.base, dst.base + dst.cols
+        if (ins.w[1] < hi and lo < ins.w[1] + (rows - 1) * ars + cols) or \
+                (ins.w[2] < hi and lo < ins.w[2] + cols):
+            return False
+        ins.w[0] = dst.base
+        value.dead = True
+        return True
+
+    def outer(self, x, y, acc: Tile | None = None, decay: Tile | None = None) -> Tile:
+        """x[:, None] * y[None, :] as one MUL (A = y repeated with row stride 0, B = x per row);
+        with `acc`, the in-place OUTER acc = acc * decay + x[:, None] * y[None, :]."""
+        for t in (x, y):
+            if not isinstance(t, Tile) or len(t.shape) != 1:
+                raise CompileError("outer(x, y) takes two 1-D tiles")
+        self.check_live(x, y, acc, decay)
+        rows, cols = x.cols, y.cols
+        if acc is None:
+            if decay is not None:
+                raise CompileError("outer(decay=...) needs acc=")
+            out = self.alloc((rows, cols))
+            self.emit(I.vop(I.V_MUL, out.base, y.base, x.base, rows, cols, out.rs, 0, 1,
+                            I.B_ROW, comment="outer"))
+            return out
+        if len(acc.shape) != 2 or acc.shape != (rows, cols):
+            raise CompileError(f"outer: acc shape {acc.shape} != {(rows, cols)}")
+        if cols > I.OUTER_MAX_COLS:
+            raise CompileError(f"outer(acc=...) supports up to {I.OUTER_MAX_COLS} columns")
+        lo, hi = acc.base, acc.base + (rows - 1) * acc.rs + cols
+        if x.base < hi and lo < x.base + rows:
+            raise CompileError("outer(acc=...): x must not overlap acc (it is read per row)")
+        if decay is None:
+            d, dmode = 0, "one"
+        elif isinstance(decay, Tile) and decay.shape == (1,):
+            d, dmode = decay.base, "scalar"
+        elif isinstance(decay, Tile) and decay.shape == (cols,):
+            d, dmode = decay.base, "column"
+        else:
+            raise CompileError(f"outer: decay must be a [1] or [{cols}] tile")
+        self.emit(I.outer(acc.base, d, x.base, y.base, rows, cols, acc.rs, 1, dmode,
+                          comment=f"outer acc*={dmode}"))
+        self.bump_version(acc.buf)
+        return acc
 
     def fuse_mm_rmax(self, x: Tile):
         """max(s, axis=1) of a dot output nothing has touched since: set RMAX on that MM and

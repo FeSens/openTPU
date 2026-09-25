@@ -49,3 +49,18 @@ def attention_layer(h, gamma, wq, wk, wv, wo, cos, sin, k_cache, v_cache, n_q_he
     V = np.concatenate([v_cache[:, :pos], v[:, None]], axis=1)
     o = attention(q, K, V, n_kv_heads)
     return h + (wo @ o.reshape(-1))[None, :], k, v
+
+
+def gated_deltanet_step(S, q, k, v, a, b, A_log, dt_bias, eps=1e-6):
+    """One token of the Gated DeltaNet recurrence (as HF's torch_recurrent_gated_delta_rule
+    with the q/k L2 norm in the kernel). S: [H, dk, dv]; returns (new S, o [H, dv])."""
+    S, q, k, v = (np.asarray(t, np.float64) for t in (S, q, k, v))
+    q = q / np.sqrt((q * q).sum(-1, keepdims=True) + eps) * q.shape[-1] ** -0.5
+    k = k / np.sqrt((k * k).sum(-1, keepdims=True) + eps)
+    a = np.asarray(a, np.float64) + dt_bias
+    g = -np.exp(np.asarray(A_log, np.float64)) * np.logaddexp(0.0, a)
+    beta = 1.0 / (1.0 + np.exp(-np.asarray(b, np.float64)))
+    S = S * np.exp(g)[:, None, None]
+    kv = np.einsum("hkv,hk->hv", S, k)
+    S = S + np.einsum("hk,hv->hkv", k, (v - kv) * beta[:, None])
+    return S, np.einsum("hkv,hk->hv", S, q)

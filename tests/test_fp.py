@@ -48,6 +48,11 @@ def _vectors(n=20000):
     add(9, y, y, F.q8(y).view(np.uint8).astype(np.uint32))
     add(10, a, b, F.gt(a, b).astype(np.uint32))
     add(11, a, a, F.bits(F.fabs(a)))
+    lg = np.concatenate([a, F.from_bits(rng.integers(0, 1 << 32, n, dtype=np.int64)
+                                        .astype(np.uint32)),
+                         F.from_bits(0x3F3504F3 + np.arange(-8, 8)),
+                         F.from_bits(0x3FB504F3 + np.arange(-8, 8))])
+    add(12, lg, lg, F.bits(F.log2(lg)))
     return np.concatenate(rows)
 
 

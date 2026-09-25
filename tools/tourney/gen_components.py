@@ -50,8 +50,9 @@ C = {
         files=["rtl/vpu/otpu_vpu.sv"], top="otpu_vpu",
         params=dict(LANES=8, SID=0),
         desc="VPU: elementwise fp32 ops on LANES lanes (split lanes: CL composite lanes with 10 "
-             "multiply-add slots for EXP2/RECIP/RSQRT, simple lanes with 1 slot), RMAX, RSUM/RSSQ "
-             "(isum_64 partial loop and folding trees).",
+             "multiply-add slots for EXP2/RECIP/RSQRT/LOG2, simple lanes with 1 slot; slot 0 is "
+             "a*b + c*e for OUTER, with per-lane column buffers), RMAX, RSUM/RSSQ/RDOT (isum_64 "
+             "partial loop and folding trees; RDOT buffers its row sums).",
         extra=["tests/test_rtl.py::test_lane_count_does_not_change_results[4]",
                "tests/test_rtl.py::test_lane_count_does_not_change_results[16]",
                "tests/test_rtl.py::test_attention_layer_rtl[1]"]),
