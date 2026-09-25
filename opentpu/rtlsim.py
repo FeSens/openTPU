@@ -91,6 +91,9 @@ if os.environ.get("OTPU_MXU") == "cascade":
 # VPU lanes with the composite functions (exp2, recip, rsqrt; timing only): OTPU_VPU_CL=4
 if os.environ.get("OTPU_VPU_CL"):
     UARCH["VPU_CL"] = int(os.environ["OTPU_VPU_CL"])
+# TMEM lanes of the MXU and the quantizer when fewer than LANES (timing only): OTPU_ULANES=8
+if os.environ.get("OTPU_ULANES"):
+    UARCH["ULANES"] = int(os.environ["OTPU_ULANES"])
 
 # The memory path. AXI: the board's AXI adapter in front of a two-channel AXI memory model with
 # random stalls (percent) and latency (D = 128 only; other configurations keep the behavioural

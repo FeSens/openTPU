@@ -287,7 +287,11 @@ are measured where given.
   in program order is the only control. Explicit fences (a one-element op that makes an RDOT
   wait for the end of prep) measured 1-10% worse per layer than leaving the order to the
   sequencer.
-- **8 VPU lanes.** The state passes and the small ops scale with lanes.
+- **8 VPU lanes.** The state passes and the small ops scale with lanes. With 16 lanes / TMEM
+  banks (the MXU and quantizer on 8 of them; `OTPU_LANES=16 OTPU_ULANES=8 OTPU_VPU_CL=2`),
+  measured: 8,068,007 cycles at 80% (99.3% of the useful bytes, -4.0%) and 6,510,050 at 100%
+  (98.5%, -12.6%). Qwen3 and LFM2 gain 0.1-0.2%. Not in the default bitstream (`make bit
+  LANES=16`: an estimated +21K LUT, not built).
 - **MCOLS=2** splits the 4-head query groups: each KV head is read twice (1.2 MB at context 128,
   6.4 MB at 1023).
 

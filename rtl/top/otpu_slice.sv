@@ -29,6 +29,7 @@ module otpu_slice
   parameter int MXU_IMPL   = 0,       // MXU dot product: 0 adder tree, 1 DSP cascade chains
   parameter int MXU_CL     = 16,      // cascade chain length
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with the composite functions
+  parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer (<= LANES)
   parameter int PQ_WIN     = 64       // cycles per P/Q counter window (+bucket= in simulation)
 ) (
   input  logic          clk,
@@ -138,14 +139,14 @@ module otpu_slice
     .w_data, .dump);
   assign coll_rdata = r_data[P_COLL];
   // the units' TMEM requests
-  logic [LANES-1:0]        dma_ren, dma_wen, mxu_ren, mxu_wen, q_ren, q_ren2;
-  logic [LANES-1:0]        va_ren, vb_ren, v_wen;
-  logic [LANES-1:0][31:0]  dma_raddr, dma_waddr, dma_wdata, mxu_raddr, mxu_waddr, mxu_wdata;
-  logic [LANES-1:0][31:0]  q_raddr, q_raddr2, va_raddr, vb_raddr, v_waddr, v_wdata;
+  logic [LANES-1:0]        dma_ren, dma_wen, va_ren, vb_ren, v_wen;
+  logic [LANES-1:0][31:0]  dma_raddr, dma_waddr, dma_wdata, va_raddr, vb_raddr, v_waddr, v_wdata;
+  logic [ULANES-1:0]       mxu_ren, mxu_wen, q_ren, q_ren2;
+  logic [ULANES-1:0][31:0] mxu_raddr, mxu_waddr, mxu_wdata, q_raddr, q_raddr2;
 
   // ---- ACT RAM
-  logic [LANES-1:0]       act_we;
-  logic [LANES-1:0][7:0]  act_data;
+  logic [ULANES-1:0]      act_we;
+  logic [ULANES-1:0][7:0] act_data;
   logic                   asc_we;
   logic [7:0]             act_row, asc_row;
   logic [31:0]            act_idx, asc_data;
@@ -153,7 +154,7 @@ module otpu_slice
   logic                   act_ren;
   logic [MCOLS*D*8-1:0]   act_rdata;
   logic [MCOLS*32-1:0]    act_rscale;
-  otpu_actram #(.D(D), .MCOLS(MCOLS), .BLOCKS(ACT_BLOCKS), .LANES(LANES)) u_act (
+  otpu_actram #(.D(D), .MCOLS(MCOLS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES)) u_act (
     .clk, .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data), .swe(asc_we),
     .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_blk(act_rblk),
     .r_data(act_rdata), .r_scale(act_rscale));
@@ -184,7 +185,7 @@ module otpu_slice
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rdata(r_data[P_DMA]),
     .t_wen(dma_wen), .t_waddr(dma_waddr), .t_wdata(dma_wdata));
 
-  otpu_mxu #(.D(D), .MCOLS(MCOLS), .DEPTH(FIFO_DEPTH), .LANES(LANES), .IMPL(MXU_IMPL),
+  otpu_mxu #(.D(D), .MCOLS(MCOLS), .DEPTH(FIFO_DEPTH), .LANES(ULANES), .IMPL(MXU_IMPL),
              .CL(MXU_CL), .SID(SID)) u_mxu (
     .clk, .rst, .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
     .computing(mxu_pop), .pf_level(mxu_level), .pf_starve(mxu_starve), .pf_block(mxu_block),
@@ -193,13 +194,13 @@ module otpu_slice
     .a_req(mxu_areq), .a_addr(mxu_aaddr), .a_gnt(mxu_agnt), .a_rvalid, .a_rdata,
     .b_req(mxu_breq), .b_addr(mxu_baddr), .b_gnt(mxu_bgnt), .b_rvalid(b_rvalid && !b_rtag),
     .b_rdata,
-    .t_ren(mxu_ren), .t_raddr(mxu_raddr), .t_rdata(r_data[P_MXU]),
+    .t_ren(mxu_ren), .t_raddr(mxu_raddr), .t_rdata(r_data[P_MXU][ULANES-1:0]),
     .t_wen(mxu_wen), .t_waddr(mxu_waddr), .t_wdata(mxu_wdata), .t_gnt(gnt[G_MXU]));
 
-  otpu_quant #(.D(D), .LANES(LANES), .SID(SID)) u_quant (
+  otpu_quant #(.D(D), .LANES(ULANES), .SID(SID)) u_quant (
     .clk, .rst, .start(ustart[U_Q]), .cmd(ucmd[U_Q]), .rdy(r_q), .done(d_q), .gnt(gnt[G_Q]),
-    .t_ren(q_ren), .t_raddr(q_raddr), .t_rdata(r_data[P_Q]),
-    .t_ren2(q_ren2), .t_raddr2(q_raddr2), .t_rdata2(r_data[P_Q2]),
+    .t_ren(q_ren), .t_raddr(q_raddr), .t_rdata(r_data[P_Q][ULANES-1:0]),
+    .t_ren2(q_ren2), .t_raddr2(q_raddr2), .t_rdata2(r_data[P_Q2][ULANES-1:0]),
     .t_ren3(q3_en), .t_raddr3(q3_addr), .t_rdata3(r_data[P_Q3][0]),
     .act_we, .act_row, .act_idx, .act_data, .asc_we, .asc_row, .asc_blk, .asc_data,
     .a_want(q_awant), .wr_idle,
@@ -224,15 +225,17 @@ module otpu_slice
   always_comb begin
     rq_en = '0; r_addr = '0; wq_en = '0; w_addr = '0; w_data = '0;
     rq_en[P_DMA] = dma_ren;   r_addr[P_DMA] = dma_raddr;
-    rq_en[P_MXU] = mxu_ren;   r_addr[P_MXU] = mxu_raddr;
-    rq_en[P_Q] = q_ren;       r_addr[P_Q] = q_raddr;
-    rq_en[P_Q2] = q_ren2;     r_addr[P_Q2] = q_raddr2;
+    rq_en[P_MXU][ULANES-1:0] = mxu_ren;   r_addr[P_MXU][ULANES-1:0] = mxu_raddr;
+    rq_en[P_Q][ULANES-1:0] = q_ren;       r_addr[P_Q][ULANES-1:0] = q_raddr;
+    rq_en[P_Q2][ULANES-1:0] = q_ren2;     r_addr[P_Q2][ULANES-1:0] = q_raddr2;
     rq_en[P_Q3][0] = q3_en;   r_addr[P_Q3][0] = q3_addr;
     rq_en[P_VA] = va_ren;     r_addr[P_VA] = va_raddr;
     rq_en[P_VB] = vb_ren;     r_addr[P_VB] = vb_raddr;
     rq_en[P_COLL] = coll_ren; r_addr[P_COLL] = coll_raddr;
     wq_en[W_DMA] = dma_wen;   w_addr[W_DMA] = dma_waddr;   w_data[W_DMA] = dma_wdata;
-    wq_en[W_MXU] = mxu_wen;   w_addr[W_MXU] = mxu_waddr;   w_data[W_MXU] = mxu_wdata;
+    wq_en[W_MXU][ULANES-1:0] = mxu_wen;
+    w_addr[W_MXU][ULANES-1:0] = mxu_waddr;
+    w_data[W_MXU][ULANES-1:0] = mxu_wdata;
     wq_en[W_VPU] = v_wen;     w_addr[W_VPU] = v_waddr;     w_data[W_VPU] = v_wdata;
     wq_en[W_COLL] = coll_wen; w_addr[W_COLL] = coll_waddr; w_data[W_COLL] = coll_wdata;
   end

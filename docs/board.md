@@ -32,6 +32,9 @@ make bit MCOLS=4   # 4 MXU columns: ~1.7x prefill and batched decode, ~67% LUT; 
                    # with OTPU_MCOLS=4 (the host checks the bitstream's VERSION register)
 make bit VPU_CL=4  # 4 VPU lanes with exp2/recip/rsqrt (2 by default): ~75% -> ~89% of the
                    # roofline on long-context attention; timing only, programs unchanged
+make bit LANES=16  # 16 VPU lanes / TMEM banks (the MXU and quantizer stay on 8): Qwen3.5 -4%
+                   # cycles at 80% bw, -13% at 100% (simulated); run the host with OTPU_LANES=16.
+                   # Not built yet: estimated +21K LUT with VPU_CL=2 (yosys, scaled per module)
 ```
 
 `run_vivado.sh` runs `scripts/gen_mig_prj.py` (MIG configuration from the board pin lists),

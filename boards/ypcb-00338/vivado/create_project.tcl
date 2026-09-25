@@ -1,5 +1,5 @@
 # Create the Vivado project for openTPU on the YPCB-00338.
-#   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL]
+#   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL] [LANES]
 # DDR_SPEED: 800 (default) or 1066. OUT_DIR: default ../../../build/vivado (repository build/).
 # BUILD_ID: 8 hex digits for the BUILD_ID register (default: the first 8 hex digits of the
 # repository's git commit, else 0).
@@ -12,6 +12,7 @@ set MCOLS [expr {[llength $argv] > 2 ? [lindex $argv 2] : 2}]
 set CORE_MHZ [expr {[llength $argv] > 3 ? [lindex $argv 3] : 100}]
 set BUILD_ID [expr {[llength $argv] > 4 ? [lindex $argv 4] : ""}]
 set VPU_CL [expr {[llength $argv] > 5 ? [lindex $argv 5] : 2}]
+set LANES [expr {[llength $argv] > 6 ? [lindex $argv 6] : 8}]
 if {$BUILD_ID eq ""} {
   if {[catch {exec git -C $root rev-parse HEAD} BUILD_ID]} { set BUILD_ID 0 }
   set BUILD_ID [string range $BUILD_ID 0 7]
@@ -51,7 +52,7 @@ source $here/bd.tcl
 make_wrapper -files [get_files otpu_bd.bd] -top
 add_files -norecurse [glob $out/otpu.gen/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v]
 set_property top otpu_fpga_top [current_fileset]
-set_property generic "MCOLS=$MCOLS VPU_CL=$VPU_CL CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID" [current_fileset]
+set_property generic "MCOLS=$MCOLS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID" [current_fileset]
 
 # ---- constraints
 add_files -fileset constrs_1 -norecurse [list \

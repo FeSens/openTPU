@@ -39,8 +39,10 @@ def board_config(**kw) -> Config:
     128-deep MXU x 2 columns (Qwen3 query groups are 2 rows), 8 VPU lanes / TMEM banks,
     64K-word TMEM, 128 ACT RAM blocks (K <= 16384), 4K-instruction IMEM, 4 GiB DRAM.
     OTPU_MCOLS in the environment selects the MXU column count (default 2; the bitstream must be
-    built with the same value: make -C boards/ypcb-00338 bit MCOLS=4)."""
-    base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 2)), ACT_BLOCKS=128, LANES=8, TMEM_WORDS=1 << 16,
+    built with the same value: make -C boards/ypcb-00338 bit MCOLS=4). OTPU_LANES likewise selects
+    the VPU lanes / TMEM banks (default 8; bit LANES=16; timing only, the programs do not change)."""
+    base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 2)), ACT_BLOCKS=128,
+                LANES=int(os.environ.get("OTPU_LANES", 8)), TMEM_WORDS=1 << 16,
                 IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32)
     base.update(kw)
     return Config(**base)

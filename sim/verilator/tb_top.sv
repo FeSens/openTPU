@@ -16,6 +16,7 @@ module tb_top;
   parameter int MXU_IMPL   = 0;
   parameter int MXU_CL     = 16;
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1;
+  parameter int ULANES     = LANES;
   parameter int AXI        = 0;
   parameter int FIFO_DEPTH = 128;
 
@@ -28,7 +29,7 @@ module tb_top;
 
   otpu_top #(.S(S), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
              .IMEM_WORDS(IMEM_WORDS), .DRAM_WORDS(DRAM_WORDS), .DRAM_LAT(DRAM_LAT),
-             .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .AXI(AXI), .FIFO_DEPTH(FIFO_DEPTH)) dut (
+             .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .AXI(AXI), .FIFO_DEPTH(FIFO_DEPTH)) dut (
     .clk, .sys_rst, .rst, .ld_start, .ld_addr, .ld_n, .ld_busy, .all_halted, .any_error, .icount,
     .dump);
 
