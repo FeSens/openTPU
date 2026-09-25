@@ -79,6 +79,15 @@ module otpu_mxu
   localparam int RFW = $clog2(RF);
   localparam int MW = $clog2(MCOLS) + 1;
   localparam int NL = (LANES < MCOLS) ? LANES : MCOLS;   // lanes the drain can fill
+
+  // conflict-free drain run for a row stride: LANES / gcd(ors, LANES), at most NL
+  function automatic logic [MW-1:0] drain_run(input logic [15:0] ors);
+    int d;
+    d = 1;                                   // ors a multiple of LANES: one lane per cycle
+    for (int t = BW - 1; t >= 0; t--)        // the lowest set bit t: gcd = 2^t
+      if (ors[t]) d = LANES >> t;
+    return MW'((d < NL) ? d : NL);
+  endfunction
   initial if (D % 16 != 0) $fatal(1, "otpu_mxu: D must be a multiple of 16");
 
   // ================================================================== issuer
@@ -95,6 +104,7 @@ module otpu_mxu
   logic [15:0] q_KB [2], q_ors [2];
   logic [31:0] q_mxo [2];                     // RMAX output base: out + M * ors (no multiply later)
   logic [7:0]  q_M [2], q_ab [2];
+  logic [MW-1:0] q_run [2];                  // drain lanes per cycle without a bank conflict
   logic        q_unit [2], q_acc [2], q_rmax [2], q_asc [2], q_go [2];
   logic [31:0] q_asa [2];
   logic [31:0] q_jo [2][MCOLS];            // j * ors
@@ -105,6 +115,7 @@ module otpu_mxu
   wire        c_tz = q_tz[q_h];
   wire [15:0] c_KB = q_KB[q_h];
   wire [7:0]  c_M = q_M[q_h], c_ab = q_ab[q_h];
+  wire [MW-1:0] c_run = q_run[q_h];
   wire        c_unit = q_unit[q_h], c_acc = q_acc[q_h], c_rmax = q_rmax[q_h];
   wire        c_asc = q_asc[q_h];
   wire [31:0] c_asa = q_asa[q_h];
@@ -425,25 +436,36 @@ module otpu_mxu
   logic [LANES-1:0][31:0] daddr_l, dval_l;
   logic [LANES-1:0][7:0]  dcol_l;
   wire  drain_go = (rf_n != 0) && (!c_asc || al_st == 2'd2);
+  // Results j and j' of a row sit ors * (j' - j) words apart: the same bank iff that is a multiple
+  // of LANES. So consecutive results are conflict-free in runs of LANES / gcd(ors, LANES)
+  // (capped at NL), a per-command constant: the lane count is min(run, M - dj), with no serial
+  // bank check between the result FIFO and the TMEM request.
+  wire  [MW-1:0] d_left = c_Mn - dj;
+  assign ncnt = (c_run < d_left) ? c_run : d_left;
+  // (the lanes' addresses and values do not wait for the count: only the enables do)
   always_comb begin
-    logic [LANES-1:0] used;
-    logic stop;
-    logic [31:0] ad;
-    used = '0; stop = 1'b0; ncnt = '0; daddr_l = '0; dval_l = '0; dcol_l = '0; ad = '0;
-    for (int k = 0; k < NL; k++) begin
-      // dj + k <= 2*MCOLS - 2 < 2^(MW+1): no overflow
-      if (k < MCOLS && !stop && (MW+1)'(dj) + (MW+1)'(k) < (MW+1)'(c_Mn)) begin
-        ad = dad[MW'(dj) + MW'(k)];
-        if (!used[ad[BW-1:0]]) begin
-          used[ad[BW-1:0]] = 1'b1;
-          daddr_l[k] = ad;
-          dval_l[k] = rf_v[rf_h][MW'(dj) + MW'(k)];
-          dcol_l[k] = 8'(dj) + 8'(k);
-          ncnt = ncnt + 1'b1;
-        end else stop = 1'b1;
-      end else stop = 1'b1;
-    end
+    daddr_l = '0; dval_l = '0; dcol_l = '0;
+    for (int k = 0; k < NL; k++)
+      if (32'(dj) + 32'(k) < MCOLS) begin
+        daddr_l[k] = dad[MW'(dj) + MW'(k)];
+        dval_l[k] = rf_v[rf_h][MW'(dj) + MW'(k)];
+        dcol_l[k] = 8'(dj) + 8'(k);
+      end
   end
+`ifndef SYNTHESIS
+  // the lane count is what a greedy pick that stops at the first bank conflict would take
+  always @(posedge clk) if (drain_go) begin
+    logic [LANES-1:0] used;
+    int n;
+    used = '0; n = 0;
+    for (int k = 0; k < NL && 32'(dj) + 32'(k) < 32'(c_M); k++) begin
+      if (used[dad[MW'(dj) + MW'(k)][BW-1:0]]) break;
+      used[dad[MW'(dj) + MW'(k)][BW-1:0]] = 1'b1;
+      n++;
+    end
+    if (n != 32'(ncnt)) $fatal(1, "otpu_mxu: drain lanes %0d, greedy pick %0d", ncnt, n);
+  end
+`endif
   wire drain_row_done = drain_go && (MW'(dj + ncnt) == c_Mn);   // dj + ncnt <= M
 
   // read-modify-write pipeline for ACC: read now, data next cycle, (old*alpha)+new, write
@@ -540,15 +562,13 @@ module otpu_mxu
     t_ren = '0; t_raddr = '0; t_wen = '0; t_waddr = '0; t_wdata = '0;
     if (drain_go) begin
       for (int k = 0; k < LANES; k++) begin
-        if (32'(k) < 32'(ncnt)) begin
-          if (c_acc) begin
-            t_ren[k] = 1'b1;
-            t_raddr[k] = daddr_l[k];
-          end else begin
-            t_wen[k] = 1'b1;
-            t_waddr[k] = daddr_l[k];
-            t_wdata[k] = dval_l[k];
-          end
+        if (c_acc) begin
+          t_ren[k] = 32'(k) < 32'(ncnt);
+          t_raddr[k] = daddr_l[k];
+        end else begin
+          t_wen[k] = 32'(k) < 32'(ncnt);
+          t_waddr[k] = daddr_l[k];
+          t_wdata[k] = dval_l[k];
         end
       end
     end
@@ -627,6 +647,7 @@ module otpu_mxu
         q_ors[qi]   <= cmd.w6[15:0];
         q_mxo[qi]   <= cmd.w3 + 32'(cmd.w6[23:16]) * 32'(cmd.w6[15:0]);
         q_M[qi]     <= cmd.w6[23:16];
+        q_run[qi]   <= drain_run(cmd.w6[15:0]);
         q_ab[qi]    <= cmd.w6[31:24];
         q_unit[qi]  <= cmd.flags[0];
         q_acc[qi]   <= cmd.flags[1];
