@@ -16,6 +16,7 @@ module tb_board;
   parameter int TMEM_WORDS = 1 << 16;
   parameter int IMEM_WORDS = 1 << 15;
   parameter int LANES      = 8;
+  parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1;
   parameter int WIN        = 16;
   parameter int LAT        = 20;
   parameter int CORE_KHZ   = 100000;
@@ -50,7 +51,7 @@ module tb_board;
   logic       unusedl [6];
 
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
-               .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
+               .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
                .PQ_WIN(PQ_WIN)) dut (
     .clk, .rst, .calib(2'b11), .temp(TEMP), .led,

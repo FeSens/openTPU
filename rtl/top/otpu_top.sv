@@ -20,6 +20,7 @@ module otpu_top
   parameter int WPB        = 2,
   parameter int MXU_IMPL   = 0,
   parameter int MXU_CL     = 16,
+  parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,
   parameter int AXI        = 0
 ) (
   input  logic          clk,
@@ -97,7 +98,7 @@ module otpu_top
     otpu_slice #(.SID(s), .S(S), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS),
                  .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS),
                  .FIFO_DEPTH(FIFO_DEPTH), .LANES(LANES), .WIN(WIN), .RPB(RPB),
-                 .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL)) u_slice (
+                 .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL), .VPU_CL(VPU_CL)) u_slice (
       .clk, .sys_rst, .rst, .ld_start, .ld_addr, .ld_n, .ld_busy(ldb[s]),
       .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
       .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,

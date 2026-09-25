@@ -30,6 +30,8 @@ make bit DDR=1066  # DDR3-1066 (533 MHz, MIG ui_clk 133 MHz) once 800 works
 make bit CORE_MHZ=80   # accelerator clock fallback when 100 MHz does not close (800/D MHz, D in 1/8 steps)
 make bit MCOLS=4   # 4 MXU columns: ~1.7x prefill and batched decode, ~67% LUT; run the host
                    # with OTPU_MCOLS=4 (the host checks the bitstream's VERSION register)
+make bit VPU_CL=4  # 4 VPU lanes with exp2/recip/rsqrt (2 by default): ~75% -> ~89% of the
+                   # roofline on long-context attention; timing only, programs unchanged
 ```
 
 `run_vivado.sh` runs `scripts/gen_mig_prj.py` (MIG configuration from the board pin lists),

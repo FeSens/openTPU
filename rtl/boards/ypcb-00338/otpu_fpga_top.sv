@@ -18,6 +18,7 @@
 
 module otpu_fpga_top #(
   parameter int MCOLS = 2,                  // MXU columns (activation rows per weight chunk)
+  parameter int VPU_CL = 2,                 // VPU lanes with the composite functions (exp2, ...)
   parameter int CORE_KHZ = 100000,          // core_clk as the block design makes it (CORE_KHZ register)
   parameter logic [31:0] BUILD_ID = 32'h0   // the git commit (BUILD_ID register)
 ) (
@@ -122,7 +123,7 @@ module otpu_fpga_top #(
   always_ff @(posedge core_clk) core_rst <= !core_rstn;
 
   logic [2:0] board_led;
-  otpu_board #(.MCOLS(MCOLS), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID)) u_board (
+  otpu_board #(.MCOLS(MCOLS), .VPU_CL(VPU_CL), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID)) u_board (
     .clk(core_clk), .rst(core_rst), .calib, .temp(device_temp), .led(board_led),
     .s_ctl_awaddr(ctl_awaddr[11:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),
     .s_ctl_wdata(ctl_wdata), .s_ctl_wstrb(ctl_wstrb), .s_ctl_wvalid(ctl_wvalid),

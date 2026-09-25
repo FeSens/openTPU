@@ -17,6 +17,7 @@ module otpu_board #(
   parameter int WPB        = 1,
   parameter int MXU_IMPL   = 0,
   parameter int MXU_CL     = 16,
+  parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with exp2/recip/rsqrt
   parameter logic [31:0] BASE0 = 32'h0000_0000,
   parameter logic [31:0] BASE1 = 32'h8000_0000,
   parameter int CORE_KHZ    = 100000,  // the core clock (CORE_KHZ register)
@@ -219,7 +220,7 @@ module otpu_board #(
   otpu_slice #(.SID(0), .S(1), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS),
                .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS), .FIFO_DEPTH(FIFO_DEPTH),
                .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL),
-               .MXU_CL(MXU_CL), .PQ_WIN(PQ_WIN)) u_slice (
+               .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .PQ_WIN(PQ_WIN)) u_slice (
     .clk, .sys_rst(rst), .rst(core_rst), .ld_start, .ld_addr, .ld_n, .ld_busy,
     .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
