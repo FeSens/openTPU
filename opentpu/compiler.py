@@ -200,11 +200,14 @@ class KVDesc:
     """Per-slice view of a KV cache whose heads are dealt round-robin over slices.
 
     Layout per head: K token-major int8 [cap, d] + scales [cap, d/D]; V^T dim-major int8
-    [d, cap]; one V scale per token [cap] (folded into P before P.V).
+    [d, cap]; one V scale per token [cap] (folded into P before P.V). With head_dim < D the
+    rows are zero-padded to d = D and dv = head_dim: P.V reads only the first dv rows of V^T.
     """
 
-    def __init__(self, heads: dict, cap: int, d: int, D: int, S: int, sid: int):
+    def __init__(self, heads: dict, cap: int, d: int, D: int, S: int, sid: int,
+                 dv: int | None = None):
         self.heads, self.cap, self.d, self.D, self.S, self.sid = heads, cap, d, D, S, sid
+        self.dv = d if dv is None else dv
 
     def owned_heads(self, n_kv_heads: int):
         return builtins.range(self.sid, n_kv_heads, self.S)
@@ -221,7 +224,7 @@ class KVDesc:
 
     def vt(self, h: int) -> QTensor:
         e = self._h(h)
-        return QTensor(Affine.of(e["vt"]), None, (self.d, self.cap), self.cap, 0, self.D)
+        return QTensor(Affine.of(e["vt"]), None, (self.dv, self.cap), self.cap, 0, self.D)
 
     def vscale(self, h: int) -> Tensor:
         e = self._h(h)

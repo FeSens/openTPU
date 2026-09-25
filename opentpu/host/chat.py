@@ -1,6 +1,7 @@
-"""otpu-chat: chat with Qwen3 running on openTPU.
+"""otpu-chat: chat with Qwen3 (or LFM2) running on openTPU.
 
     otpu-chat                                 # ISA simulator (~3 s/token on a laptop)
+    otpu-chat --model lfm2                    # LFM2.5-230M instead of Qwen3-0.6B
     otpu-chat --backend board                 # the FPGA over PCIe (opentpu/host/board.py)
     otpu-chat --backend board-sim             # the Verilator board model (very slow)
     otpu-chat --prompt "Why is the sky blue?" # one-shot
@@ -17,19 +18,32 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 
-from opentpu.llm.qwen3 import Engine, Spec, load_weights
+from opentpu.llm import MODELS, load_spec, model_dir
+from opentpu.llm.qwen3 import Engine, load_weights
 
-ROOT = Path(__file__).resolve().parents[2]
+
+# Sampling defaults per model family (Spec module); command-line flags override them. LFM2's
+# are its generation_config.json.
+SAMPLING = {"qwen3": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0),
+            "lfm2": dict(temperature=0.1, top_k=50, top_p=1.0, repetition_penalty=1.05)}
 
 
-def sampler(temperature: float, top_k: int, top_p: float, seed: int | None):
+def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
+            repetition_penalty: float = 1.0):
+    """pick(logits, context) -> token id. The repetition penalty (as Hugging Face's) divides
+    the positive logits and multiplies the negative ones of every token in `context`; it
+    applies to greedy decoding (temperature 0) too."""
     rng = np.random.default_rng(seed)
 
-    def pick(logits):
+    def pick(logits, context=()):
+        if repetition_penalty != 1.0 and len(context):
+            logits = logits.copy()
+            seen = np.unique(np.asarray(context, np.int64))
+            v = logits[seen]
+            logits[seen] = np.where(v > 0, v / repetition_penalty, v * repetition_penalty)
         if temperature <= 0:
             return int(np.argmax(logits))
         z = logits.astype(np.float64) / temperature
@@ -39,11 +53,19 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None):
         idx, z = idx[order], z[order]
         p = np.exp(z - z[0])
         p /= p.sum()
-        keep = np.searchsorted(np.cumsum(p), top_p) + 1
+        keep = min(len(p), np.searchsorted(np.cumsum(p), top_p) + 1)
         p = p[:keep] / p[:keep].sum()
         return int(idx[rng.choice(keep, p=p)])
 
     return pick
+
+
+def sampling(spec, args) -> dict:
+    """The model family's SAMPLING defaults, overridden by the flags given on the command
+    line (None when not given)."""
+    d = dict(SAMPLING[type(spec).__module__.rsplit(".", 1)[-1]])
+    d.update({k: getattr(args, k) for k in d if getattr(args, k, None) is not None})
+    return d
 
 
 class Chat:
@@ -74,7 +96,7 @@ class Chat:
         t1 = time.time()
         out, shown = [], ""
         for _ in range(self.max_new):
-            t = self.pick(logits)
+            t = self.pick(logits, self.fed)
             if t in self.eng.spec.eos:
                 break
             out.append(t)
@@ -103,7 +125,7 @@ class Chat:
         return reply
 
 
-def make_backend(name: str, spec: Spec, cap: int, dev: str, model: str | None = None):
+def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None):
     """(backend, configuration) for Engine."""
     if name == "isa":
         return "isa", None
@@ -125,7 +147,8 @@ def make_backend(name: str, spec: Spec, cap: int, dev: str, model: str | None = 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="otpu-chat", description=__doc__.split("\n")[0])
-    ap.add_argument("--model", default=str(ROOT / "models" / "Qwen3-0.6B"))
+    ap.add_argument("--model", default="qwen3",
+                    help=f"{' or '.join(MODELS)} (models/<name>), or a checkpoint directory")
     ap.add_argument("--backend", default="isa", choices=["isa", "board", "board-sim", "rtl"])
     ap.add_argument("--dev", default="/dev/xdma0", help="XDMA device prefix (--backend board)")
     ap.add_argument("--clock-mhz", type=float,
@@ -135,19 +158,26 @@ def main(argv=None):
     ap.add_argument("--prompt", help="ask one question and exit")
     ap.add_argument("--think", action="store_true", help="enable Qwen3 thinking mode")
     ap.add_argument("--greedy", action="store_true")
-    ap.add_argument("--temperature", type=float, default=0.7)
-    ap.add_argument("--top-k", type=int, default=20)
-    ap.add_argument("--top-p", type=float, default=0.8)
+    ap.add_argument("--temperature", type=float,
+                    help="sampling flags default per model: " + "; ".join(
+                        f"{m} " + " ".join(f"{k}={v}" for k, v in d.items())
+                        for m, d in SAMPLING.items()))
+    ap.add_argument("--top-k", type=int)
+    ap.add_argument("--top-p", type=float)
+    ap.add_argument("--repetition-penalty", type=float)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--max-new", type=int, default=256)
     a = ap.parse_args(argv)
     from transformers import AutoTokenizer
-    tok = AutoTokenizer.from_pretrained(a.model)
-    spec = Spec.from_hf(a.model)
-    print(f"loading {Path(a.model).name} onto openTPU ({a.backend}) ...", flush=True)
-    backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, Path(a.model).name)
-    eng = Engine(spec, load_weights(a.model), cap=a.cap, cfg=cfg, backend=backend)
-    pick = sampler(0 if a.greedy else a.temperature, a.top_k, a.top_p, a.seed)
+    path = model_dir(a.model)
+    tok = AutoTokenizer.from_pretrained(path)
+    spec = load_spec(path)
+    print(f"loading {path.name} onto openTPU ({a.backend}) ...", flush=True)
+    backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, path.name)
+    eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend)
+    sp = sampling(spec, a)
+    pick = sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,
+                   sp["repetition_penalty"])
     clock = 0.0
     if a.backend.startswith("board"):
         khz = eng.backend.info.get("core_khz")

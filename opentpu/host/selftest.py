@@ -2,7 +2,7 @@
 
     otpu-selftest                         # the card, /dev/xdma0
     otpu-selftest --sim                   # the board model (no hardware)
-    otpu-selftest --qwen models/Qwen3-0.6B   # also chat-level check
+    otpu-selftest --model qwen3           # also a model-level check (or lfm2, or a directory)
 
 Stages stop at the first failure, with a hint. Each builds on the previous one:
   1 link       the control registers answer (ID register)
@@ -17,8 +17,8 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
   7 bandwidth  host <-> card DMA rate
   8 kernel     a program using every unit, and one of partial DRAM writes from the
                accelerator (QST bytes, short stores), compared with the ISA simulator bit for bit
-  9 qwen       (with --qwen) greedy decoding on the card equals the ISA simulator, token for
-               token, and the answer to "What is the capital of France?"
+  9 model      (with --model) greedy decoding of Qwen3 or LFM2 on the card equals the ISA
+               simulator, token for token, and the answer to "What is the capital of France?"
 """
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ import argparse
 import sys
 import time
 import traceback
-from pathlib import Path
 
 import numpy as np
 
@@ -58,8 +57,8 @@ HINTS = {
                  "LnkSta should be 2.5GT/s x8).",
     "kernel": "The accelerator computed something different from the ISA simulator: run the "
               "same program on the RTL model (tests/test_board.py) and compare the counters.",
-    "qwen": "Kernels pass but the model differs: compare per-token logits against "
-            "IsaBackend with opentpu.llm.qwen3.Engine; check that the image fits the DRAM.",
+    "model": "Kernels pass but the model differs: compare per-token logits against "
+             "IsaBackend with opentpu.llm.qwen3.Engine; check that the image fits the DRAM.",
 }
 
 
@@ -88,8 +87,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-selftest", description=__doc__.split("\n")[0])
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")
     ap.add_argument("--dev", default="/dev/xdma0")
-    ap.add_argument("--qwen", help="model directory for the Qwen3 stage")
-    ap.add_argument("--tokens", type=int, default=8, help="Qwen3 tokens to generate")
+    ap.add_argument("--model", help="qwen3, lfm2 or a checkpoint directory: the model stage")
+    ap.add_argument("--tokens", type=int, default=8, help="tokens to generate in the model stage")
     ap.add_argument("--bw-mib", type=int, default=512, help="bandwidth test size (MiB)")
     a = ap.parse_args(argv)
 
@@ -171,12 +170,14 @@ def main(argv=None) -> int:
                      f"partial writes: {msg2} (b_writes={st2['b_writes']}, "
                      f"a_writes={st2['a_writes']})")
 
-    def qwen():
-        from opentpu.llm.qwen3 import Engine, Spec, load_weights
+    def model():
+        from opentpu.llm import load_spec, model_dir
+        from opentpu.llm.qwen3 import Engine, load_weights
         from transformers import AutoTokenizer
-        spec = Spec.from_hf(a.qwen)
-        W = load_weights(a.qwen)
-        tok = AutoTokenizer.from_pretrained(a.qwen)
+        path = model_dir(a.model)
+        spec = load_spec(path)
+        W = load_weights(path)
+        tok = AutoTokenizer.from_pretrained(path)
         msgs = [{"role": "user",
                  "content": "What is the capital of France? Answer in one sentence."}]
         ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
@@ -188,7 +189,7 @@ def main(argv=None) -> int:
         tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if a.sim else t
         dev = Engine(spec, W, cap=cap, cfg=rcfg if a.sim else cfg,
                      backend=lambda c, imgs: BoardBackend(c, imgs, transport=tq,
-                                                          model=Path(a.qwen).name))
+                                                          model=path.name))
         ref = Engine(spec, W, cap=cap, cfg=rcfg)
         t0 = time.time()
         got = dev.generate(ids, max_new=a.tokens)
@@ -209,8 +210,8 @@ def main(argv=None) -> int:
     r.stage("pattern", pattern)
     r.stage("bandwidth", bw)
     r.stage("kernel", kernel)
-    if a.qwen:
-        r.stage("qwen", qwen)
+    if a.model:
+        r.stage("model", model)
     print("ALL PASS" if not r.failed else f"stopped at stage '{r.failed}'")
     return 1 if r.failed else 0
 

@@ -25,7 +25,7 @@ Xilinx XDMA driver). `pip install -e .` installs its commands:
 |---|---|
 | `otpu-smi` | the cards' state, like nvidia-smi (section 7) |
 | `otpu-selftest` | staged bring-up (section 4) |
-| `otpu-chat` | chat with Qwen3 on the card (section 5) |
+| `otpu-chat` | chat with Qwen3 or LFM2 on the card (section 5) |
 | `otpu-lens` | Lens profiles from the card's hardware trace ([lens.md](lens.md)) |
 
 Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens>` does the same.
@@ -92,7 +92,7 @@ xxd` must print `55 50 54 4f` ("OTPU", the ID register at offset 0, little-endia
 
 ```sh
 otpu-selftest                                 # stages 1-8 on /dev/xdma0
-otpu-selftest --qwen models/Qwen3-0.6B        # plus the model, vs the ISA simulator
+otpu-selftest --model qwen3                   # plus the model, vs the ISA simulator (or lfm2)
 otpu-selftest --sim                           # rehearsal on the Verilator board model
 ```
 
@@ -126,11 +126,12 @@ strobes directly, so only the card proves the controller's read-modify-write.
 otpu-chat --backend board                      # interactive
 otpu-chat --backend board --prompt "Why is the sky blue?"
 otpu-chat --backend board --clock-mhz 100      # override the core clock (v1 bitstreams)
+otpu-chat --backend board --model lfm2         # LFM2.5-230M instead of Qwen3-0.6B
 ```
 
-The first call writes the model image (about 0.8 GiB for Qwen3-0.6B) to the card; every token
-then writes the embedding row and the token's program (a few tens of KiB), runs, and reads the
-logits (0.6 MiB). After each answer the tool prints wall-clock tokens/s and the device's own
+The first call writes the model image (about 0.8 GiB for Qwen3-0.6B, 0.3 GiB for LFM2.5-230M)
+to the card; every token then writes the embedding row and the token's program (a few tens of
+KiB), runs, and reads the logits (0.6 MiB for Qwen3, 0.25 MiB for LFM2). After each answer the tool prints wall-clock tokens/s and the device's own
 cycles per token (from the CYCLES register), converted with the bitstream's CORE_KHZ register
 (register map 2) or `--clock-mhz` (default 100 on a register map 1 bitstream). While it runs,
 `otpu-smi` shows the process, the model, the DRAM in use and tokens/s.

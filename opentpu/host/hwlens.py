@@ -184,10 +184,11 @@ def run_steps(eng, tokens: list[int], pos0: int, n: int, keep: str, prompt_len: 
 
 def record_card(a) -> list:
     from opentpu.isasim import board_config
-    from opentpu.llm.qwen3 import Engine, Spec, load_weights
+    from opentpu.llm import load_spec
+    from opentpu.llm.qwen3 import Engine, load_weights
     from .board import BoardBackend, XdmaTransport
     model = Path(a.model)
-    spec = Spec.from_hf(model)
+    spec = load_spec(model)
     if a.prompt_ids:
         ids = [int(x) for x in a.prompt_ids.split(",")]
     else:

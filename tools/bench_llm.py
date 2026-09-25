@@ -55,8 +55,7 @@ sys.path.insert(0, str(ROOT))
 
 from opentpu import rtlsim  # noqa: E402
 from opentpu.isasim import board_config  # noqa: E402
-from opentpu.llm.qwen3 import (Image, Spec, compile_rows, compile_step,  # noqa: E402
-                               rope_tables)
+from opentpu.llm.qwen3 import Image, Spec, rope_tables  # noqa: E402
 
 MODEL = ROOT / "models" / "Qwen3-0.6B"
 QWEN3_0_6B = Spec(hidden=1024, layers=28, n_q=16, n_kv=8, head_dim=128, ffn=3072, vocab=151936)
@@ -167,10 +166,10 @@ class Bench:
         if key in self.progs:
             return img, None, self.progs[key]
         if kind == "step":
-            progs = compile_step(img, rows[0][1])
+            progs = img.compile_step(rows[0][1])
         else:
-            progs = compile_rows(img, rows, [len(rows) - 1] if head == "last" else
-                                 (list(range(len(rows))) if head else []))
+            progs = img.compile_rows(rows, [len(rows) - 1] if head == "last" else
+                                     (list(range(len(rows))) if head else []))
         self.progs[key] = progs
         return img, None, progs
 

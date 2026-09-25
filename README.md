@@ -23,6 +23,10 @@ Works, in simulation:
 - **Qwen3-0.6B with its real weights** on the instruction-set simulator. It runs in int8, so
   its output differs slightly from Hugging Face's fp32 model because of quantization error
   (see [Accuracy](#accuracy)).
+- **LFM2.5-230M**, Liquid AI's hybrid of short-convolution and attention layers, the same way
+  (`otpu-chat --model lfm2`). Its 64-wide heads are zero-padded to the 128-deep matrix unit and
+  its convolution state lives in DRAM; no ISA or RTL change was needed. See
+  [docs/lfm2.md](docs/lfm2.md).
 - **RTL vs simulator.** The Verilator RTL ends with exactly the same memory contents as the
   simulator on the kernel tests, on a full Qwen3-0.6B token (6.38 M cycles), and on random
   programs where instructions keep conflicting over the same memory, which checks that the
@@ -148,6 +152,11 @@ One Qwen3-0.6B decode token at the board configuration (1 slice, 2 MXU columns, 
 memory path) takes about 6.4 M cycles. At an assumed 100 MHz that would be about 15 tokens/s
 before host overhead. That is a projection, not a measurement.
 
+LFM2.5-230M streams less than half as many bytes per token. Measured on the same RTL
+configuration at 80% DRAM bandwidth and a 128-token context, a token takes 2.37 M cycles (96%
+of the DRAM roofline), which would be about 42 tokens/s at 100 MHz, again a projection
+([docs/lfm2.md](docs/lfm2.md)).
+
 ## Accuracy
 
 The kernels are checked against float64 numpy references, and the full model against Hugging
@@ -228,8 +237,8 @@ Current yosys estimate for the accelerator and control logic (with the hardware 
 The host software runs on top of the stock Xilinx XDMA driver:
 
 ```
-otpu-selftest            registers, DRAM patterns, kernels, then Qwen3 (--sim for the board model)
-otpu-chat                chat with Qwen3-0.6B
+otpu-selftest            registers, DRAM patterns, kernels, then a model (--sim for the board model)
+otpu-chat                chat with Qwen3-0.6B (or LFM2.5-230M: --model lfm2)
 otpu-smi                 temperature, estimated power, DRAM use, per-unit utilization
 otpu-lens                record a hardware trace and open it in Lens
 ```
@@ -240,8 +249,8 @@ report scaled by the utilization counters.
 ## Running the tests
 
 You need Python 3.11+, numpy and pytest. The RTL tests also need Verilator 5 and skip
-themselves without it. The Qwen3 tests need `torch`, `transformers` and the checkpoint in
-`models/Qwen3-0.6B`.
+themselves without it. The Qwen3 and LFM2 tests need `torch` and `transformers`; their
+real-model tests need the checkpoints in `models/Qwen3-0.6B` and `models/LFM2.5-230M`.
 
 ```
 python3 -m pytest -q
@@ -257,6 +266,7 @@ python3 -m pytest -q
 | `test_perf.py` | Lower bounds on kernel efficiency on the RTL (MLP > 94.5%, attention > 60%) |
 | `test_board.py`, `test_host.py`, `test_observability.py` | The board model through the host driver |
 | `test_qwen3.py` | Qwen3 vs Hugging Face (tiny random model; one prompt on the real one) and one real token on the RTL |
+| `test_lfm2.py` | The same for LFM2, plus a tiny LFM2 on the board model |
 
 ## Known simplifications
 

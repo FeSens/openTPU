@@ -187,3 +187,18 @@ The full default sweep is 88 RTL runs plus the validation, about 10 minutes with
 - **Prefill of long prompts in chunks of 8** fits the IMEM up to about 1024 tokens.
 - **All sequences in a batch run at the same position here.** The kernel itself allows
   independent positions.
+
+## LFM2.5-230M
+
+LFM2 runs one token per device run (no batched decode or chunked prefill), so only b=1 decode
+is measured, on the full model with `tools/perf_qwen.py --model lfm2 --layers 0` (same
+configuration as above). Tokens/s are projections at 100 MHz.
+
+| bw | ctx | cycles/token (measured) | tok/s | % of DRAM roofline |
+|---:|---:|---:|---:|---:|
+| 80% | 128 | 2,366,994 | **42.2** | 96.4% |
+| 80% | 1024 | 2,455,759 | 40.7 | 96.3% |
+| 100% | 128 | 1,901,551 | 52.6 | 96.0% |
+| 100% | 1024 | 1,996,829 | 50.1 | 94.8% |
+
+Details, accuracy and the mapping are in [lfm2.md](lfm2.md).

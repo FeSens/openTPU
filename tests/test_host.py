@@ -519,3 +519,28 @@ def test_otpu_lens_record_on_board_model(tmp_path, capsys):
     h = d["hwtrace"]
     assert h["count"] >= len(d["instrs"]) and h["records"] == min(h["count"], h["depth"])
     assert "trace records" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------------------ otpu-chat
+def test_chat_sampling_defaults_per_model_and_repetition_penalty():
+    from opentpu.host.chat import sampler, sampling
+    from opentpu.llm import lfm2, qwen3
+    q = qwen3.Spec(256, 2, 4, 2, 128, 512, 1000)
+    f = lfm2.Spec(256, ("conv", "attn"), 4, 2, 64, 512, 1000)
+    none = types.SimpleNamespace(temperature=None, top_k=None, top_p=None,
+                                 repetition_penalty=None)
+    assert sampling(q, none) == dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0)
+    assert sampling(f, none) == dict(temperature=0.1, top_k=50, top_p=1.0,
+                                     repetition_penalty=1.05)
+    flags = types.SimpleNamespace(temperature=0.5, top_k=None, top_p=None, repetition_penalty=1.0)
+    assert sampling(f, flags) == dict(temperature=0.5, top_k=50, top_p=1.0,
+                                      repetition_penalty=1.0)
+    # Hugging Face's rule: a seen token's positive logit is divided, a negative one multiplied
+    greedy = sampler(0, 50, 1.0, None, repetition_penalty=1.05)
+    pos, neg = np.array([3.0, 2.9, -5.0]), np.array([-1.0, -1.02, -5.0])
+    assert greedy(pos, [0]) == 1 and greedy(neg, [0, 0]) == 1 and greedy(pos, []) == 0
+    assert pos[0] == 3.0                                      # the caller's logits are kept
+    assert sampler(0, 20, 0.8, None)(pos, [0]) == 0           # no penalty: plain argmax
+    # top_p = 1 keeps every top-k candidate (and does not overrun them)
+    pick = sampler(1.0, 3, 1.0, 0)
+    assert {pick(np.array([0.0, 0.0, 0.0, -50.0])) for _ in range(200)} == {0, 1, 2}

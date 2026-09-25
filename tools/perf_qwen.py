@@ -1,10 +1,12 @@
-"""Profile one Qwen3 decode token on the RTL at the board configuration (AXI memory path).
+"""Profile one decode token on the RTL at the board configuration (AXI memory path).
 
-    python3 tools/perf_qwen.py [--layers N] [--pos P] [--bw 100] [--check]
+    python3 tools/perf_qwen.py [--model qwen3|lfm2|DIR] [--layers N] [--pos P] [--bw 100]
+                               [--check]
 
-Uses the real weights (models/Qwen3-0.6B), optionally only the first N layers (the LM head is
-always complete). Prints cycles, the DRAM roofline (port-B chunk transfers: weights, KV, LD/ST
-bursts), efficiency, MM time per kernel source line, and the MXU idle gaps with their causes.
+Uses the real weights (models/Qwen3-0.6B, or --model lfm2: models/LFM2.5-230M), optionally only
+the first N layers (the LM head is always complete). Prints cycles, the DRAM roofline (port-B
+chunk transfers: weights, KV, LD/ST bursts), efficiency, tokens/s at an assumed 100 MHz, MM time
+per kernel source line, and the MXU idle gaps with their causes.
 """
 from __future__ import annotations
 
@@ -23,7 +25,8 @@ sys.path.insert(0, str(ROOT))
 from opentpu import isa as I  # noqa: E402
 from opentpu import rtlsim  # noqa: E402
 from opentpu.isasim import Machine, board_config  # noqa: E402
-from opentpu.llm.qwen3 import Image, Spec, compile_step, load_weights, rope_tables  # noqa: E402
+from opentpu.llm import MODELS, load_spec, model_dir  # noqa: E402
+from opentpu.llm.qwen3 import load_weights, rope_tables  # noqa: E402
 from opentpu.profile import parse  # noqa: E402
 
 
@@ -34,7 +37,8 @@ def _src(ins, depth=1):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default=str(ROOT / "models" / "Qwen3-0.6B"))
+    ap.add_argument("--model", default="qwen3",
+                    help=f"{' or '.join(MODELS)} (models/<name>), or a checkpoint directory")
     ap.add_argument("--layers", type=int, default=2, help="0: all")
     ap.add_argument("--pos", type=int, default=9)
     ap.add_argument("--cap", type=int, default=256)
@@ -47,13 +51,15 @@ def main():
     ap.add_argument("--timeline", help="print the instructions of dynamic index range A:B")
     ap.add_argument("--idle", action="store_true", help="list DRAM-idle stretches (64-cycle windows)")
     a = ap.parse_args()
-    spec = Spec.from_hf(a.model)
+    path = model_dir(a.model)
+    spec = load_spec(path)
     if a.layers:
-        spec = dataclasses.replace(spec, layers=a.layers)
-    W = load_weights(a.model)
-    need = Image(spec, board_config(DRAM_BYTES=1 << 40), a.cap).nbytes
+        spec = dataclasses.replace(spec, **({"kinds": spec.kinds[:a.layers]}
+                                            if hasattr(spec, "kinds") else {"layers": a.layers}))
+    W = load_weights(path)
+    need = spec.image(board_config(DRAM_BYTES=1 << 40), a.cap).nbytes
     cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()))
-    img = Image(spec, cfg, a.cap)
+    img = spec.image(cfg, a.cap)
     dram = img.build(W)[0]
     # this token's inputs (the KV cache before pos stays zero: timing does not depend on it)
     emb = np.asarray(W["model.embed_tokens.weight"][791], np.float32)
@@ -64,13 +70,13 @@ def main():
     if a.depth:
         import opentpu.llm.qwen3 as Q
         Q.ATTN_DEPTH = a.depth
-    progs = compile_step(img, a.pos, *([a.block] if a.block else []))
+    progs = img.compile_step(a.pos, *([a.block] if a.block else []))
     t = time.time()
     drams, _, st = rtlsim.run(cfg, progs, [dram], trace=True, uarch=rtlsim.BOARD_UARCH,
                               axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat,
                               max_cycles=1 << 40)
     wall = time.time() - t
-    p = parse(st["trace"], cfg, progs, "qwen3")
+    p = parse(st["trace"], cfg, progs, path.name)
     p.cycles = st["cycles"]
     rl = p.roofline()
     ideal = rl["bound"] * 100 / a.bw
@@ -92,6 +98,8 @@ def main():
     ub = useful / D * 100 / a.bw
     print(f"useful bytes {useful} -> {ub:.0f} cycles at this bandwidth: "
           f"efficiency {100 * ub / p.cycles:.1f}%")
+    print(f"at an assumed 100 MHz: {p.cycles / 1e5:.1f} ms/token, {1e8 / p.cycles:.1f} tok/s "
+          f"(simulated cycles, no host time)")
     print(p.summary())
     ph = defaultdict(lambda: [0, 0, 0])
     for r in p.recs:

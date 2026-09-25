@@ -14,11 +14,12 @@ def silu(x):
     return x * ol.recip(ol.exp2(x * -ol.LOG2E) + 1.0)
 
 
-def rope(x, cos, sin):
-    """Rotate-half RoPE on the rows of x [M, d]; cos, sin: [d/2] tiles for one position."""
+def rope(x, cos, sin, out=None):
+    """Rotate-half RoPE on the rows of x [M, d]; cos, sin: [d/2] tiles for one position.
+    Writes into `out` (e.g. a view of a zero-padded tile) when given."""
     half = x.cols // 2
     x1, x2 = x[:, :half], x[:, half:]
-    out = ol.empty(x.shape)
+    out = ol.empty(x.shape) if out is None else out
     out[:, :half].set(x1 * cos[None, :] - x2 * sin[None, :])
     out[:, half:].set(x2 * cos[None, :] + x1 * sin[None, :])
     return out

@@ -25,10 +25,10 @@ class _Head:
         else:
             self.qs = ol.quantize(qh * ol.full([d], scale)[None, :])
         self.G = G
+        self.K, self.VT, self.VS = kv.k(h), kv.vt(h), kv.vscale(h)
         self.m = ol.full([G], -1e30)
         self.l = ol.zeros([G])
-        self.acc = ol.zeros([G, d])
-        self.K, self.VT, self.VS = kv.k(h), kv.vt(h), kv.vscale(h)
+        self.acc = ol.zeros([G, self.VT.shape[0]])   # V's head_dim (q and K may be padded)
         self.buf = {}                                # block index -> score buffer
         self.S = None                                # the hardware loop's score buffers
         nfull, tail = divmod(seq_len, block)

@@ -84,6 +84,9 @@ class Spec:
         if bad:
             raise ValueError("model does not map onto this openTPU config: " + "; ".join(bad))
 
+    def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1) -> "Image":
+        return Image(self, cfg, cap, batch, rows)
+
 
 def load_weights(model_dir) -> dict:
     """All tensors of a HF safetensors checkpoint as fp32 numpy arrays."""
@@ -213,6 +216,12 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128) -> np.ndarray:
 
 
 # =============================================================================== DRAM image
+# Attention: tokens per flash block (256 halves the per-block vector-unit latency overhead of
+# 128 at long contexts) and score blocks in flight per head.
+ATTN_BLOCK = 256
+ATTN_DEPTH = 3
+
+
 class _Bump:
     def __init__(self, start: int = 0):
         self.next = start
@@ -278,6 +287,8 @@ class Image:
                      for _ in range(self.nkv_loc)] for _ in range(batch)]
         L["kv"] = L["kvs"][0]
         self.lofs, self.LS = L, (lb.next + 4095) // 4096 * 4096
+        head = cap * d + 4 * cap * (d // D) + d * cap + 4 * cap   # k, k scales, v^T, v scales
+        self.kv_bytes = spec.layers * self.nkv_loc * head         # per sequence
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * H), b.alloc(4 * self.v_loc * (H // D)))
         self.nbytes = b.next
@@ -338,6 +349,22 @@ class Image:
         put_q(self.head, rows(head, self.v_loc))
         return imgs
 
+    # ---- programs
+    def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
+        """One program per slice: the decode token at position `pos` (qwen3_step)."""
+        return [qwen3_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
+                                               "block": block}).finish()
+                for s in range(self.cfg.S)]
+
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
+        """One program per slice: token rows (sequence, position) at once (qwen3_rows)."""
+        if len(rows) > self.rows:
+            raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
+        return [qwen3_rows.trace(self.cfg, s, {"m": self.descriptors(s), "rows": list(rows),
+                                               "logit_rows": list(logit_rows),
+                                               "block": block}).finish()
+                for s in range(self.cfg.S)]
+
     # ---- kernel descriptors
     def descriptors(self, sid: int) -> SimpleNamespace:
         spec, cfg = self.spec, self.cfg
@@ -380,10 +407,27 @@ class Image:
 
 
 # =============================================================================== kernel
-# Attention: tokens per flash block (256 halves the per-block vector-unit latency overhead of
-# 128 at long contexts) and score blocks in flight per head.
-ATTN_BLOCK = 256
-ATTN_DEPTH = 3
+def _padded(x):
+    """Rows of one head each, as the KV cache stores them: with head_dim < D (LFM2: 64) padded
+    with zeros to a whole MXU block. q.K^T contracts over D, so the cached K rows and the
+    queries carry zeros beyond head_dim (the scores are unchanged); a quantized store writes
+    whole blocks, so V's zero rows are stored too, but P.V reads only its head_dim rows."""
+    d, D = x.cols, ol.block_size()
+    if d % D == 0:
+        return x
+    out = ol.zeros([x.rows, -(-d // D) * D])
+    out[:, :d].set(x)
+    return out
+
+
+def _rope_padded(x, c, s_):
+    """rope(x), padded like _padded (RoPE writes straight into the padded tile)."""
+    d, D = x.cols, ol.block_size()
+    if d % D == 0:
+        return rope(x, c, s_)
+    out = ol.zeros([x.rows, -(-d // D) * D])
+    rope(x, c, s_, out=out[:, :d])
+    return out
 
 
 def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int):
@@ -404,15 +448,15 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int):
     scale = ol.LOG2E / math.sqrt(d)
     heads = list(kv.owned_heads(spec.n_kv))
     nh = len(heads)
-    kh = rope(rmsnorm(k.reshape(nh, d), kn, eps), c, s_)          # [nkv_loc, d]
-    vh = v.reshape(nh, d)
+    kh = _rope_padded(rmsnorm(k.reshape(nh, d), kn, eps), c, s_)  # [nkv_loc, d or D]
+    vh = _padded(v.reshape(nh, d))
     for j, hh in enumerate(heads):
         ol.kv_append(kv, hh, pos, kh[j:j + 1, :], vh[j:j + 1, :])
 
     def queries(j):
         def emit():
             qj = ol.dot(xs, lw.wq[j * G * d:(j + 1) * G * d, :])  # [1, G*d]
-            return rope(rmsnorm(qj.reshape(G, d), qn, eps), c, s_)
+            return _rope_padded(rmsnorm(qj.reshape(G, d), qn, eps), c, s_)
         return emit
 
     outs = _attend_heads([queries(j) for j in range(nh)], kv, heads, pos + 1, block, scale,
@@ -445,13 +489,19 @@ def qwen3_step(m, pos: int, block: int = ATTN_BLOCK):
     The layers run as a hardware loop; each layer appends its K/V at `pos` and attends over
     positions 0..pos. Logits for this slice's vocabulary rows are stored to m.logits.
     """
-    spec, sid = m.spec, ol.program_id()
+    spec = m.spec
     x = ol.load(m.x)
     c, s_ = ol.load(m.cos), ol.load(m.sin)
     for li in ol.range(m.n_layers):
         lw = m.layer(li)
         x.set(_attention(x, lw, c, s_, pos, spec, block))
         x.set(_mlp(x, lw, spec))
+    _lm_head(x, m, spec)
+
+
+def _lm_head(x, m, spec):
+    """Final norm and this slice's vocabulary rows of the LM head -> m.logits."""
+    sid = ol.program_id()
     xs = ol.quantize(rmsnorm(x, ol.load(m.g_final), spec.eps))
     chunk = min(HEAD_CHUNK, ol.tmem_words() // 8)
     for c0 in range(0, m.v_loc, chunk):
@@ -544,30 +594,10 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK):
         ol.store(m.logitsr[a:e, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
 
 
-def compile_rows(image: Image, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
-    if len(rows) > image.rows:
-        raise ValueError(f"{len(rows)} rows, the image's I/O area holds {image.rows}")
-    progs = []
-    for s in range(image.cfg.S):
-        b = qwen3_rows.trace(image.cfg, s, {"m": image.descriptors(s), "rows": list(rows),
-                                            "logit_rows": list(logit_rows), "block": block})
-        progs.append(b.finish())
-    return progs
-
-
-def compile_step(image: Image, pos: int, block: int = ATTN_BLOCK) -> list:
-    progs = []
-    for s in range(image.cfg.S):
-        b = qwen3_step.trace(image.cfg, s, {"m": image.descriptors(s), "pos": pos,
-                                            "block": block})
-        progs.append(b.finish())
-    return progs
-
-
 # =============================================================================== engine
 def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, **kw) -> Config:
     """The design configuration with DRAM sized for this model (power of two MiB)."""
-    probe = Image(spec, design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows)
+    probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows)
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
 
@@ -591,7 +621,8 @@ class IsaBackend:
 
 
 class Engine:
-    """Token-by-token Qwen3 on an openTPU backend.
+    """Token-by-token decoding on an openTPU backend: Qwen3, or any model whose Spec builds an
+    image with compile_step (LFM2: opentpu.llm.lfm2).
 
     backend: "isa" (default), or any object with write/read/run like IsaBackend (the RTL
     simulator and the PCIe board driver implement the same interface). Optional backend hooks:
@@ -611,7 +642,7 @@ class Engine:
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows)
-        self.image = Image(spec, self.cfg, cap, batch, self.rows)
+        self.image = spec.image(self.cfg, cap, batch, self.rows)
         self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
@@ -626,7 +657,7 @@ class Engine:
 
     # ---- the compile pipeline
     def _compile(self, pos: int) -> list:
-        progs = compile_step(self.image, pos, self.block)
+        progs = self.image.compile_step(pos, self.block)
         prep = getattr(self.backend, "prepare", None)
         if prep is not None:
             prep(progs)
@@ -704,7 +735,7 @@ class Engine:
             self.backend.write(s, io["cos"], cos)
             self.backend.write(s, io["sin"], sin)
         self._drain()
-        st = self.backend.run(compile_rows(self.image, rows, logit_rows, self.block))
+        st = self.backend.run(self.image.compile_rows(rows, logit_rows, self.block))
         st["rows"] = len(rows)
         self.stats.append(st)
         v, v_loc = spec.vocab, self.image.v_loc

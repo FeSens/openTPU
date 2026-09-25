@@ -75,7 +75,7 @@
    - The structural fix for the arbiter is to arbitrate one cycle ahead (registered grants).
 4. **Program and bring up:**
    - `make program`, then `opentpu/host/setup_pcie.sh --rescan` on the PC.
-   - `otpu-selftest`, then `--qwen models/Qwen3-0.6B`.
+   - `otpu-selftest`, then `--model qwen3`.
    - `otpu-chat --backend board`.
 5. **First things to check on hardware** (docs/board.md section 6):
    - MIG calibration on both channels (channel 1 lanes 6–7 had read-capture trouble on the old SoC).

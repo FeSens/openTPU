@@ -11,9 +11,9 @@ The accelerator addresses one logical DRAM interleaved over the channels in 64-b
 This driver applies the same map, so the host works with logical addresses only.
 
 BoardBackend implements the Engine backend interface (write / read / run, plus prepare and
-attach), so `Engine(..., cfg=board_config(), backend=BoardBackend)` runs Qwen3 on the card.
-With transport=SimTransport the identical protocol runs against the Verilator model of the
-board (sim/verilator/tb_board.sv) -- the bring-up rehearsal.
+attach), so `Engine(..., cfg=board_config(), backend=BoardBackend)` runs Qwen3 or LFM2 on
+the card. With transport=SimTransport the identical protocol runs against the Verilator model
+of the board (sim/verilator/tb_board.sv) -- the bring-up rehearsal.
 
 A Board takes the device's exclusive lock (runstate.DeviceLock, /tmp/otpu/<dev>.lock) when its
 transport names a device (XdmaTransport, FakeTransport); monitors pass lock=False. Register map
@@ -472,24 +472,21 @@ def sim_config(spec, cap: int):
     """board_config with the DRAM cut to what the model needs (power of two), for the board
     model: the image, then the program area."""
     from opentpu.isasim import board_config
-    from opentpu.llm.qwen3 import Image
-    probe = Image(spec, board_config(), cap)
+    probe = spec.image(board_config(), cap)
     need = -(-probe.nbytes // 4096) * 4096 + 4 * board_config().IMEM_WORDS
     return board_config(DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
 
 
 def dram_layout(cfg, image_bytes: int, prog_at: int, image=None, poss=None) -> dict:
     """The device DRAM in bytes: the image (weights, norms, I/O area and KV capacity), the
-    program area after it, free; with a Qwen3 Image also the KV cache capacity and the part
-    filled at positions `poss` (one per sequence)."""
+    program area after it, free; with a model Image also the KV cache capacity (LFM2: with the
+    convolution state) and the part filled at positions `poss` (one per sequence)."""
     prog = 4 * cfg.IMEM_WORDS
     d = {"total": cfg.DRAM_BYTES, "image": image_bytes, "weights": image_bytes,
          "kv_capacity": 0, "kv_used": 0, "program": prog,
          "free": max(0, cfg.DRAM_BYTES - prog_at - prog)}
     if image is not None:
-        hd, cap = image.spec.head_dim, image.cap     # per KV head: k, k scales, v^T, v scales
-        head = cap * hd + 4 * cap * (hd // cfg.D) + hd * cap + 4 * cap
-        per_seq = image.spec.layers * image.nkv_loc * head
+        cap, per_seq = image.cap, image.kv_bytes
         d["kv_capacity"] = per_seq * image.batch
         d["weights"] = image_bytes - d["kv_capacity"]
         d["kv_used"] = int(sum(per_seq * min(p, cap) / cap for p in (poss or [0])))
