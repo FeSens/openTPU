@@ -1,6 +1,7 @@
 name: otpu_tmem
 description: 'TMEM: fp32 scratchpad, LANES banks, one copy per read port (simple dual-port block RAM),
-  writes broadcast (WPB per bank), per-lane read data held until the lane reads again.'
+  writes broadcast (WPB per bank), per-lane read data held until the lane reads again; contiguous ports
+  through barrel rotators, the MXU ports (GEN_R/GEN_W) through a lane crossbar.'
 allowed:
 - rtl/mem/otpu_tmem.sv
 synth:
@@ -13,6 +14,8 @@ synth:
       NRP: 8
       NWP: 4
       WPB: 1
+      GEN_R: 1
+      GEN_W: 2
       SID: 0
     sources:
     - rtl/vpu/otpu_fp.sv

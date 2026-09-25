@@ -131,7 +131,9 @@ module otpu_slice
   logic [NWP-1:0][LANES-1:0]       wq_en, w_en;
   logic [NWP-1:0][LANES-1:0][31:0] w_addr, w_data;
   logic [NWP-1:0]                  w_gnt;   // each write port's grant (the DMA always writes)
-  otpu_tmem #(.WORDS(TMEM_WORDS), .LANES(LANES), .NRP(NRP), .NWP(NWP), .WPB(WPB), .SID(SID)) u_tmem (
+  // the MXU's ports keep the crossbar (its drain writes scattered rows); the others are rotators
+  otpu_tmem #(.WORDS(TMEM_WORDS), .LANES(LANES), .NRP(NRP), .NWP(NWP), .WPB(WPB),
+              .GEN_R(NRP'(1) << P_MXU), .GEN_W(NWP'(1) << W_MXU), .SID(SID)) u_tmem (
     .clk, .r_en, .r_req(rq_en), .r_addr, .r_data, .w_en, .w_req(wq_en), .w_gnt, .w_addr,
     .w_data, .dump);
   assign coll_rdata = r_data[P_COLL];

@@ -58,10 +58,11 @@ C = {
                "tests/test_rtl.py::test_attention_layer_rtl[1]"]),
     "otpu_tmem": dict(
         files=["rtl/mem/otpu_tmem.sv"], top="otpu_tmem",
-        params=dict(WORDS=65536, LANES=8, NRP=8, NWP=4, WPB=1, SID=0),
+        params=dict(WORDS=65536, LANES=8, NRP=8, NWP=4, WPB=1, GEN_R=1, GEN_W=2, SID=0),
         desc="TMEM: fp32 scratchpad, LANES banks, one copy per read port (simple dual-port block "
              "RAM), writes broadcast (WPB per bank), per-lane read data held until the lane reads "
-             "again.",
+             "again; contiguous ports through barrel rotators, the MXU ports (GEN_R/GEN_W) through "
+             "a lane crossbar.",
         extra=["tests/test_rtl.py::test_lane_count_does_not_change_results[4]",
                "tests/test_rtl.py::test_lane_count_does_not_change_results[16]",
                "tests/test_rtl.py::test_scoreboard_stress_two_slices[0]"]),
