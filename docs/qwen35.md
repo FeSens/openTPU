@@ -275,7 +275,7 @@ are measured where given.
   out_proj and the state): at 80% the mixer could reach its roofline if nothing else were lost,
   at 100% (12.8 K) it stays VPU-bound. Pairing the small ops removed most of their latency, not their issue cycles:
   the composite functions (SiLU's exp2 and recip) issue at VPU_CL = 2 lanes.
-- **TMEM writes, one per bank per cycle (board RPB 64, WPB 1).** A VPU op that writes stalls on
+- **TMEM writes, one per bank per cycle (board WPB 1; reads never conflict).** A VPU op that writes stalls on
   any cycle the DMA or the MXU writes one of its banks; an RDOT writes only at its end (and that
   final write waits for a running load). The state loads are placed beside RDOTs, but the MXU's
   projection outputs (one per 8 chunks streamed) still cost OUTER about 10%. The DMA's state

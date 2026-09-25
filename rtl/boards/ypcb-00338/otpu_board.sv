@@ -13,7 +13,8 @@ module otpu_board #(
   parameter int FIFO_DEPTH = 1024,
   parameter int LANES      = 8,
   parameter int WIN        = 16,
-  parameter int RPB        = 64,
+  parameter int RPB        = 8 * LANES,   // every read lane (TMEM is replicated per read port):
+                                          // the slice's shallow write-mask arbiter
   parameter int WPB        = 1,
   parameter int MXU_IMPL   = 0,
   parameter int MXU_CL     = 16,

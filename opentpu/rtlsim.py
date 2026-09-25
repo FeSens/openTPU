@@ -80,7 +80,9 @@ UARCH = {"WIN": 32, "RPB": 4, "WPB": 2}
 # per cycle (simple dual-port block RAM), a 16-entry dispatch window, and a 1024-chunk MXU
 # prefetch FIFO (128 KiB of block RAM: the weight stream runs ahead through the serial
 # norm -> quantize -> MM dependency chains).
-BOARD_UARCH = {"WIN": 16, "RPB": 64, "WPB": 1, "FIFO_DEPTH": 1024}
+# RPB covers every read lane (8 ports x up to 16 lanes), which selects the slice's shallow
+# write-mask arbiter, as on the board.
+BOARD_UARCH = {"WIN": 16, "RPB": 128, "WPB": 1, "FIFO_DEPTH": 1024}
 if os.environ.get("OTPU_UARCH") == "board":
     UARCH = dict(BOARD_UARCH)
 # MXU dot-product implementation (timing only): OTPU_MXU=cascade selects the DSP cascade
