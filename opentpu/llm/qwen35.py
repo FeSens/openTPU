@@ -16,12 +16,13 @@ layers, (linear, linear, linear, attn) x 6.
 
 How it maps onto openTPU (docs/qwen35.md):
   * The DeltaNet state (1 MiB per layer) lives in DRAM in fp32 and streams through TMEM one
-    head at a time, double-buffered: head h+1's state and projections load while the VPU
-    updates head h. The state is stored transposed, St[j, i] = S[i, j], so both reads of S
-    are row sums (RSUM) and the update is one outer product (a VOP whose A operand repeats
-    one row) and one add.
+    head at a time, double-buffered. The state is stored transposed, St[j, i] = S[i, j], so
+    both reads of S are row dot products (RDOT) and the update is one in-place OUTER. The
+    heads run in pairs: the small vector work of a pair is done on [2, n] tiles, and it is
+    software-pipelined around the state passes (_deltanet).
   * The convolution state is a 4-slot ring of the pre-convolution q, k, v rows in DRAM
-    (position p in slot p % 4), as LFM2's (lfm2.py).
+    (position p in slot p % 4), as LFM2's (lfm2.py), stored per pair of heads after the
+    pair's taps.
   * 256-wide attention heads are two MXU blocks. With MCOLS < 4 a query group of 4 heads is
     split in pairs, each streaming the KV head (qwen3._attention).
 
@@ -50,7 +51,7 @@ from .. import language as ol
 from ..compiler import Affine, KVDesc, QTensor, Tensor
 from ..isasim import Config
 from ..kernels.layouts import head_parallel_attention_weights
-from ..kernels.deltanet import gates, head_step, l2norm_rows
+from ..kernels.deltanet import gates, l2norm_rows
 from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
 from ..runtime import quantize_rows
@@ -301,13 +302,14 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128) -> np.ndarray:
 class Image:
     """Per-slice DRAM layout of a Qwen3.5 model. Every slice uses the same addresses.
 
-    [ I/O: x_in, cos, sin | final norm | logits | per-head scalars ] [ layer 0 block ] ...
+    [ I/O: x_in, cos, sin | final norm | logits | per-pair gates ] [ layer 0 block ] ...
     [ layer L-1 block ] [ LM head rows of this slice ]. All layer blocks have one size: both
     kinds start with the norms and this slice's MLP rows. A DeltaNet block then holds, for
-    this slice's heads (a contiguous range), the projections head by head (the q, k, v and z
-    rows of head 0, then of head 1, ...), the a and b rows, out_proj as one [H, dv] column
-    block per head, the convolution taps, the convolution ring, the recurrent state (per head
-    [dv, dk] fp32, transposed) and the per-head constants. An attention block holds the q/k
+    this slice's heads (a contiguous range), the projections pair by pair (the q, k, v rows of
+    head 0, of head 1, then the z rows of heads 0 and 1; then heads 2 and 3, ...), the a and b
+    rows, out_proj as one [H, og * dv] column block per og heads, per pair the convolution taps
+    and then the convolution ring, the recurrent state (per head [dv, dk] fp32, transposed) and
+    the per-head constants. An attention block holds the q/k
     norms, the projections (the gate rows of q_proj as their own matrix) and this slice's KV
     heads with room for `cap` tokens.
     """
@@ -331,7 +333,8 @@ class Image:
         b = _Bump()
         self.io = {"x": b.alloc(4 * H), "cos": b.alloc(2 * spec.rope_dim),
                    "sin": b.alloc(2 * spec.rope_dim), "gf": b.alloc(4 * H),
-                   "logits": b.alloc(4 * spec.vocab), "hs": b.alloc(4 * 2 * self.nl)}
+                   "logits": b.alloc(4 * spec.vocab),
+                   "hs": b.alloc(4 * 2 * self.nl)}     # per pair: decays of a, b; betas
         self.layer0 = b.next
         lb = _Bump()                                    # offsets inside one layer block
         common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
@@ -343,14 +346,16 @@ class Image:
                          lb.alloc(4 * self.h_loc * (self.dchunk // D)))
                         for _ in range(F_ // self.dchunk)]
         nl, C = self.nl, self.C
-        self.mats = {LIN: {"wh": (nl * self.R, H), "wab": (2 * nl, H), "wout": (nl * H, dv),
+        self.og = 4 if nl % 4 == 0 else 2               # heads per out_proj MM
+        self.mats = {LIN: {"wh": (nl * self.R, H), "wab": (2 * nl, H),
+                           "wout": (nl // self.og * H, self.og * dv),
                            **mlp},
                      ATTN: {"wq": (self.nq_loc * d, H), "wgate": (self.nq_loc * d, H),
                             "wk": (self.nkv_loc * d, H), "wv": (self.nkv_loc * d, H),
                             "wo": (self.h_loc, spec.n_q * d), **mlp}}
         lnb = _Bump(lb.next)
         lin = dict(common, alog=lnb.alloc(4 * nl), dtb=lnb.alloc(4 * nl), gn=lnb.alloc(4 * dv),
-                   taps=lnb.alloc(4 * nl * K * C), ring=lnb.alloc(4 * K * nl * C),
+                   cv=lnb.alloc(4 * nl * 2 * K * C),    # per pair: taps, then ring slots
                    state=lnb.alloc(4 * nl * dv * dk))
         ab = _Bump(lb.next)
         attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
@@ -422,19 +427,23 @@ class Image:
                          for h in range(spec.lin_heads)]
                 taps = W[a + "conv1d.weight"][:, 0, :]                   # [channels, K]
                 hs = [range(s * nl, (s + 1) * nl) for s in range(S)]
-                put_q(Lo["wh"], [np.concatenate([np.concatenate([qkv[chans[h]],
-                                                                 wz[h * dv:(h + 1) * dv]])
-                                                 for h in hh]) for hh in hs])
+                # per pair of heads (a, b): the q, k, v rows of a, of b, then the z rows of a, of b
+                put_q(Lo["wh"], [np.concatenate([np.concatenate(
+                    [qkv[chans[h]], qkv[chans[h + 1]], wz[h * dv:(h + 2) * dv]])
+                    for h in hh[::2]]) for hh in hs])
                 put_q(Lo["wab"], [np.concatenate([W[a + "in_proj_a.weight"][hh.start:hh.stop],
                                                   W[a + "in_proj_b.weight"][hh.start:hh.stop]])
                                   for hh in hs])
-                put_q(Lo["wout"], [np.concatenate([wout[:, h * dv:(h + 1) * dv] for h in hh])
-                                   for hh in hs])
+                og = self.og                # out_proj column blocks of og heads
+                put_q(Lo["wout"], [np.concatenate([wout[:, h * dv:(h + og) * dv]
+                                                   for h in hh[::og]]) for hh in hs])
                 for s, hh in enumerate(hs):
                     put(s, Lo["alog"], f32(W[a + "A_log"][hh.start:hh.stop]))
                     put(s, Lo["dtb"], f32(W[a + "dt_bias"][hh.start:hh.stop]))
                     put(s, Lo["gn"], f32(W[a + "norm.weight"]))
-                    put(s, Lo["taps"], f32(np.stack([taps[chans[h]].T for h in hh])))
+                    for q, h in enumerate(hh[::2]):
+                        put(s, Lo["cv"] + q * 4 * 4 * K * self.C,
+                            f32(np.stack([taps[chans[h]].T, taps[chans[h + 1]].T])))
             else:
                 a = p + "self_attn."
                 for s in range(S):
@@ -494,8 +503,7 @@ class Image:
                 ns.alog = Tensor(off + lofs["alog"], (nl,), (1,))
                 ns.dtb = Tensor(off + lofs["dtb"], (nl,), (1,))
                 ns.gn = Tensor(off + lofs["gn"], (dv,), (1,))
-                ns.taps = Tensor(off + lofs["taps"], (nl, K, C), (K * C, C, 1))
-                ns.ring = Tensor(off + lofs["ring"], (K, nl * C), (nl * C, 1))
+                ns.cv = Tensor(off + lofs["cv"], (nl // 2, 4 * K * C), (4 * K * C, 1))
                 ns.state = Tensor(off + lofs["state"], (nl, dv, dk), (dv * dk, dk, 1))
             else:
                 ns.qn = Tensor(off + lofs["qn"], (d,), (1,))
@@ -509,7 +517,7 @@ class Image:
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (spec.rope_dim // 2,)),
             sin=_tdesc(self.io["sin"], (spec.rope_dim // 2,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
-            hs=_tdesc(self.io["hs"], (2, nl)),
+            hs=_tdesc(self.io["hs"], (nl // 2, 4)),
             head=_qdesc(*self.head, self.v_loc, H, D), v_loc=self.v_loc)
 
 
@@ -518,76 +526,210 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     """x + out_proj(Gated DeltaNet(x)) for one token, this slice's heads; returns the new
     residual (replicated on every slice).
 
-    First the decay exp(g) and beta of every head (small vectors, kernels.deltanet.gates) go to
-    `hs` in DRAM. Then the heads run in pairs in a hardware loop, with two sets of buffers used
-    in turn: head h's convolution, SiLU and L2 norms, then its recurrence (kernels.deltanet.
-    head_step: RDOT, OUTER, RDOT over the fp32 state, stored transposed), during which the MXU
-    and the DMA fetch head h+1's projections and state into the other set. o, normed and
-    gated, is multiplied into y by the head's column block of out_proj."""
+    First the decay exp(g) and beta of every head (kernels.deltanet.gates) go to `hs` in DRAM,
+    [decay a, decay b, beta a, beta b] per pair of heads. The heads then run in pairs (a, b).
+    The small vector work of a pair runs on [2, n] tiles: the convolution, SiLU, L2 norms and
+    silu(z) before the recurrence ("prep"), the gated RMSNorm after it ("post"). Per head the
+    recurrence is RDOT, OUTER, RDOT over its fp32 state (stored transposed; kernels.deltanet),
+    which streams through TMEM in two buffers, one per head of the pair.
+
+    The schedule is built around one fact: a TMEM bank takes one write per cycle, the DMA and
+    the MXU go first, and a VPU op that writes TMEM stalls while they write its banks. An RDOT
+    writes only its row sums, at its end. So the DMA's state loads (the only big TMEM writes)
+    should run beside RDOTs, and each state pass is split in halves of 64 rows so that a
+    buffer's store and the next head's load into it can start after the first half. Pair p's
+    segment, in program order (the sequencer overlaps the units):
+
+        MXU  projections of pair p+2
+        VPU  RDOT1(a)  d(a) OUTER(a)  post(p-1)  RDOT2(a)  RDOT1(b)  d(b) OUTER(b)  prep(p+1)
+             RDOT2(b)
+        DMA  load b (beside RDOT1(a)), store a, load pair p+1's a (beside RDOT2(a), RDOT1(b)),
+             store b, pair p+2's taps and convolution rows (beside RDOT2(b))
+        MXU  out_proj of pair p-1 and the one before it (after post, every other pair)
+
+    Buffers: two states, two projection tiles (the MXU runs two pairs ahead) and two sets of
+    the per-pair vectors (by pair parity). out_proj multiplies og = 4 heads at a time (K =
+    512): an MXU output write also stalls a writing VPU op, and it writes one output per og
+    heads. The first pair's projections are split so that head a starts early, and the last
+    group's out_proj is split in pairs."""
     eps, K = spec.eps, spec.conv_k
     dk, dv = spec.lin_dk, spec.lin_dv
     nl, C = lw.state.shape[0], 2 * dk + dv
-    R = C + dv
+    R, NP, og = C + dv, nl // 2, lw.wout.shape[1] // dv
+    TP = 2 * K * C                                      # taps words of a pair (then its ring)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     ab = ol.dot(xs, lw.wab)                             # [1, 2nl]: a, then b, of each head
     decay, beta = gates(ab[0, 0:nl], ab[0, nl:2 * nl], ol.load(lw.alog), ol.load(lw.dtb))
-    ol.store(hs[0, :], decay)
-    ol.store(hs[1, :], beta)
-    del decay, beta
+    eb = ol.empty([4 * NP]).reshape(NP, 4)              # per pair: decays of a, b; betas
+    eb[:, 0:2].set(decay.reshape(NP, 2))
+    eb[:, 2:4].set(beta.reshape(NP, 2))
+    ol.store(hs, eb)
+    del decay, beta, eb
     prevs = [(pos - j) % K for j in range(1, min(K, pos + 1))]          # ring slots of p-1, ...
 
-    def buffers():
-        return SimpleNamespace(St=ol.empty([dv * dk]).reshape(dv, dk), P=ol.empty([1, R]),
-                               taps=ol.empty([K * C]).reshape(K, C),
-                               prev=[ol.empty([C]) for _ in prevs], eg=ol.empty([1]),
-                               beta=ol.empty([1]))
+    def pairs(n, w):
+        return [ol.empty([2 * w]).reshape(2, w) for _ in range(n)]
 
-    def fetch(h, t):
-        """Head h's projections, taps, earlier convolution rows, decay and beta, then its state,
-        into the buffers t. At position 0 the state is zero, whatever DRAM holds from an
-        earlier sequence (Engine.reset)."""
-        ol.dot(xs, lw.wh[h * R:(h + 1) * R, :], out=t.P)
-        ol.load(lw.taps[h], out=t.taps)
-        for s, o in zip(prevs, t.prev):
-            ol.load(lw.ring[s, h * C:(h + 1) * C], out=o)
-        ol.load(hs[0, h:h + 1], out=t.eg)
-        ol.load(hs[1, h:h + 1], out=t.beta)
-        if pos:
-            ol.load(lw.state[h], out=t.St)
-        else:
-            t.St.set(0.0)
-
+    St = [ol.empty([dv * dk]).reshape(dv, dk) for _ in range(2)]        # heads a, b of a pair
+    P = [ol.empty([1, 2 * R]) for _ in range(2)]        # q k v of a, of b, then z of a, of b
+    CV = ol.empty([2 * TP])                             # taps (rows (head, tap)), ring slots
+    U, Qn, Kn, GZ = pairs(2, C), pairs(2, dk), pairs(2, dk), pairs(2, dv)
+    EB = [ol.empty([4]) for _ in range(2)]
+    O = ol.empty([2 * dv]).reshape(2, dv)
+    ON = ol.empty([og * dv]).reshape(og, dv)            # normed, gated o of og heads
+    w = ol.empty([dv])
     y = ol.zeros([1, spec.hidden])
     gn = ol.load(lw.gn)
-    w, o = ol.empty([dv]), ol.empty([dv])               # head_step's work and output tiles
+    halves = ((0, dv // 2), (dv // 2, dv))     # row halves of a state pass
 
-    def head(h, t, nxt=None):
-        """Head h from the buffers t; nxt = (h + 1, its buffers), fetched meanwhile."""
-        P, taps = t.P, t.taps
-        pre = P[:, 0:C]
-        ol.store(lw.ring[pos % K:pos % K + 1, h * C:(h + 1) * C], pre)
-        u = pre * taps[K - 1:K, :]
-        for j, r in enumerate(t.prev):
-            u = u + r * taps[K - 2 - j:K - 1 - j, :]
-        u = silu(u)
-        q = l2norm_rows(u[:, 0:dk], dk ** -0.5)
-        k = l2norm_rows(u[:, dk:2 * dk])
-        head_step(t.St, k[0, :], u[0, 2 * dk:C], q[0, :], t.eg, t.beta, w, o,
-                  prefetch=nxt and (lambda: fetch(*nxt)))
-        ol.store(lw.state[h], t.St)
-        on = rmsnorm(o.reshape(1, dv), gn, eps) * silu(P[:, C:R])
-        ol.dot(on, lw.wout[h * spec.hidden:(h + 1) * spec.hidden, :], acc=y)
+    def project(p, t, split=False):
+        """The MXU: pair p's projection rows into P[t] (q, k, v first: prep starts on them)."""
+        cuts = ((0, C), (C, 2 * C), (2 * C, 2 * R)) if split else ((0, 2 * C), (2 * C, 2 * R))
+        for c0, c1 in cuts:
+            ol.dot(xs, lw.wh[p * 2 * R + c0:p * 2 * R + c1, :], out=P[t][:, c0:c1])
 
-    a, b = buffers(), buffers()
-    fetch(0, a)
+    def fetch_cv(p):
+        """Pair p's taps and convolution ring (one load)."""
+        ol.load(lw.cv[p, :], out=CV)
 
-    def pair(i, last):
-        head(2 * i, a, (2 * i + 1, b))
-        head(2 * i + 1, b, None if last else (2 * i + 2, a))
+    def fetch_eb(p, t):
+        ol.load(hs[p, :], out=EB[t])
 
-    for i in ol.range(nl // 2 - 1):
-        pair(i, False)
-    pair(nl // 2 - 1, True)
+    def state_in(h, S):
+        if pos:
+            for r, e in halves:
+                ol.load(lw.state[h][r:e, :], out=S[r:e, :])
+        else:
+            S.set(0.0)
+
+    def state_out(h, S):
+        for r, e in halves:
+            ol.store(lw.state[h][r:e, :], S[r:e, :])
+
+    def conv(p, t, j=None):
+        """Pair p's convolution into U[t] (j: only head j of the pair)."""
+        a, n = (0, 2) if j is None else (j, 1)
+        pre = P[t][0, a * C:(a + n) * C]
+        s0 = TP + (pos % K) * 2 * C + a * C
+        ol.store(lw.cv[p, s0:s0 + n * C], pre)
+        taps = CV[0:TP].reshape(2 * K, C)
+
+        def tap(i):
+            return taps.row_stride_view(i, 2, K) if n == 2 else taps[a * K + i:a * K + i + 1, :]
+        terms = [(pre.reshape(n, C), K - 1)] + [
+            (CV[TP + s * 2 * C + a * C:TP + s * 2 * C + (a + n) * C].reshape(n, C), K - 2 - i)
+            for i, s in enumerate(prevs)]
+        out = U[t][a:a + n, :]
+        if len(terms) == 1:
+            out.set(terms[0][0] * tap(K - 1))
+            return
+        u = terms[0][0] * tap(terms[0][1])
+        for x, i in terms[1:-1]:
+            u = u + x * tap(i)
+        x, i = terms[-1]
+        out.set(u + x * tap(i))
+
+    def gatez(t):
+        """silu(z) of the pair in P[t]."""
+        GZ[t].set(silu(P[t][0, 2 * C:2 * R].reshape(2, dv)))
+
+    def qk(t, j=None):
+        """SiLU of the convolved q, k, v (in place), then the L2-normed q and k."""
+        a, n = (0, 2) if j is None else (j, 1)
+        u = U[t][a:a + n, :]
+        u.set(silu(u))
+        Qn[t][a:a + n, :].set(l2norm_rows(u[:, 0:dk], dk ** -0.5))
+        Kn[t][a:a + n, :].set(l2norm_rows(u[:, dk:2 * dk]))
+
+    def post(t):
+        """The gated RMSNorm of the pair in O (gates GZ[t]) into its rows of ON."""
+        r0 = 2 * t if og == 4 else 0
+        ON[r0:r0 + 2, :].set(rmsnorm(O, gn, eps) * GZ[t])
+
+    def flush(g, k=None):
+        """out_proj of head group g (k: only its k-th pair)."""
+        c0, c1 = (0, og) if k is None else (2 * k, 2 * k + 2)
+        ol.dot(ON[c0:c1, :].reshape(1, (c1 - c0) * dv),
+               lw.wout[g * spec.hidden:(g + 1) * spec.hidden, c0 * dv:c1 * dv], acc=y)
+
+    def rdot1(S, t, j):
+        """kv = S k of head j of the pair in buffers t, into w."""
+        w.set(S @ Kn[t][j, :])
+
+    def update(S, t, j):
+        """d = beta (v - e^g kv), then S = e^g S + d k^T (OUTER, in place)."""
+        w.set((U[t][j, 2 * dk:C] - w * EB[t][j:j + 1]) * EB[t][2 + j:3 + j])
+        for r, e in halves:
+            ol.outer(w[r:e], Kn[t][j, :], acc=S[r:e, :], decay=EB[t][j:j + 1])
+
+    def rdot2(S, t, j):
+        """o = S q of head j, into O[j]."""
+        for r, e in halves:
+            O[j, r:e].set(S[r:e, :] @ Qn[t][j, :])
+
+    def _pair_segment(p, t, last1, last2, g=None):
+        """Pair p (buffers t = p % 2); last1: no pair p+1, last2: no pair p+2; g: the head
+        group pair p-1 completes (to multiply by out_proj)."""
+        a, b = 2 * p, 2 * p + 1
+        first = isinstance(p, int) and p == 0
+        if not last2 and not first:
+            project(p + 2, t)
+        rdot1(St[0], t, 0)
+        state_in(b, St[1])
+        update(St[0], t, 0)
+        state_out(a, St[0])
+        if first:                               # head b's prep, after head a's start
+            conv(0, 0, 1)
+            qk(0, 1)
+            gatez(0)
+            if not last2:
+                project(2, 0)
+            if NP > 1:
+                fetch_cv(1)
+                fetch_eb(1, 1)
+        else:
+            post(1 - t)
+            if g is not None:
+                flush(g)
+            elif last1:                         # the last group: its first pair now
+                flush(group(p), 0)
+        rdot2(St[0], t, 0)
+        rdot1(St[1], t, 1)
+        if not last1:
+            state_in(a + 2, St[0])
+        update(St[1], t, 1)
+        state_out(b, St[1])
+        if not last1:
+            conv(p + 1, 1 - t)
+            qk(1 - t)
+            gatez(1 - t)
+        rdot2(St[1], t, 1)
+        if not last2:
+            fetch_cv(p + 2)
+            fetch_eb(p + 2, t)
+
+    def group(p):
+        """The head group pair p completes, or None."""
+        return p // (og // 2) if (p + 1) % (og // 2) == 0 else None
+
+    project(0, 0, split=True)               # head a's rows first: its recurrence starts
+    fetch_cv(0)
+    fetch_eb(0, 0)
+    state_in(0, St[0])
+    conv(0, 0, 0)
+    qk(0, 0)
+    if NP > 1:
+        project(1, 1)
+    _pair_segment(0, 0, NP == 1, NP <= 2)
+    n_it = max(0, (NP - 3) // 2)            # segments 1 .. NP-3 have every part: loop them
+    if n_it:
+        for i in ol.range(n_it):
+            _pair_segment(2 * i + 1, 1, False, False, None if og == 4 else 2 * i)
+            _pair_segment(2 * i + 2, 0, False, False, i if og == 4 else 2 * i + 1)
+    for p in range(1 + 2 * n_it, NP):
+        _pair_segment(p, p % 2, p + 1 >= NP, p + 2 >= NP, group(p - 1))
+    post((NP - 1) % 2)
+    flush(group(NP - 1), 1 if og == 4 and NP > 1 else None)
     return x + ol.all_reduce(y)
 
 

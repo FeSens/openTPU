@@ -165,8 +165,8 @@ work tile `w` shared by all heads makes head h+1's first RDOT wait for head h's 
 puts the next LD under an RDOT (see `head_step`).
 
 Measured on the RTL at the board configuration (LANES = 8, AXI memory path, 80% bandwidth,
-`tools/perf_deltanet.py`): one head takes 9,208 cycles (old ISA: 17,411), and 16 heads
-108,678 (6.2K per additional head; old ISA: 16.8K per head, from 1 and 8 heads).
+`tools/perf_deltanet.py`): one head takes 9,173 cycles (old ISA: 17,360), and 16 heads
+108,710 (6.6K per additional head; old ISA: 16.8K per head, from 1 and 8 heads).
 
 ## Memory allocation
 

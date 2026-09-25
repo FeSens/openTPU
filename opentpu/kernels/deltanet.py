@@ -27,7 +27,7 @@ def gates(a, b, A_log, dt_bias):
 def l2norm_rows(x, scale: float = 1.0, eps: float = 1e-6):
     """x[h] * scale / sqrt(|x[h]|^2 + eps) for every row h of x [H, d]."""
     r = ol.rsqrt(ol.sum(x * x, axis=1) + eps)
-    return x * (r * scale)[:, None]
+    return x * (r * scale if scale != 1.0 else r)[:, None]
 
 
 def head_step(St, k, v, q, decay, beta, w, o, fused: bool = True, prefetch=None):
