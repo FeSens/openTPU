@@ -68,7 +68,7 @@ C = {
         files=["rtl/dma/otpu_dma.sv"], top="otpu_dma",
         params=dict(D=128, LANES=8),
         desc="DMA: LD/ST between DRAM port B (chunk-aligned requests, backpressure, variable "
-             "latency) and TMEM, one W-word segment per cycle; ST completes on write acknowledge.",
+             "latency) and TMEM: each chunk requested once (LD chunk buffer, ST gather), one W-word segment per cycle on TMEM; ST completes on write acknowledge.",
         extra=["tests/test_rtl.py::test_fuzz_single_slice[2]",
                "tests/test_rtl.py::test_fuzz_single_slice[3]"],
         board_extra=["tests/test_rtl.py::test_board_memory_path_stress[2-60]"]),

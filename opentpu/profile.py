@@ -22,7 +22,7 @@ rebuilds these lines from the trace buffer; docs/observability.md).
 
 Roofline. Per slice the DRAM burst port (B) moves one D-byte chunk per cycle and the MXU
 consumes one chunk per cycle, so both the memory and the compute roof are "chunks per cycle".
-The bound for a program is the number of port-B transfers it needs (MM chunks + LD/ST bursts)
+The bound for a program is the number of port-B transfers it needs (MM chunks + the chunks LD/ST touch)
 and, separately, port-A transfers (MM scales + QST bytes); the roofline is the larger, taken
 over slices. Efficiency = roofline cycles / measured cycles.
 """
@@ -71,8 +71,9 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
     burst = min(D // 4, L)
     op = ins.op
     if op in (I.LD, I.ST):
+        # one TMEM segment per cycle; each D-byte chunk once on port B (chunk-aligned count)
         n = w[2]
-        return OPNAMES[op], f"{n} words", -(-n // burst), -(-n // burst), 0
+        return OPNAMES[op], f"{n} words", -(-n // burst), -(-n // (D // 4)), 0
     if op == I.MM:
         N, KB, M = w[3] & 0xFFFF, w[3] >> 16, (w[5] >> 16) & 0xFF
         acc = " +acc" if ins.flags & I.F_ACC else ""

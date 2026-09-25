@@ -1,6 +1,7 @@
 name: otpu_dma
 description: 'DMA: LD/ST between DRAM port B (chunk-aligned requests, backpressure, variable latency)
-  and TMEM, one W-word segment per cycle; ST completes on write acknowledge.'
+  and TMEM: each chunk requested once (LD chunk buffer, ST gather), one W-word segment
+  per cycle on TMEM; ST completes on write acknowledge.'
 allowed:
 - rtl/dma/otpu_dma.sv
 synth:

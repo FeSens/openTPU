@@ -63,8 +63,8 @@ Slot worktrees and branches are removed after the round (`ARGS=--keep` keeps the
 
 - `EVAL=yosys` (default, works today): Yosys + slang, `synth_xilinx -family xc7 -flatten -abc9`,
   then `sta` with the Xilinx cell timing models. Logic-only; the fmax is an estimate to *rank*
-  candidates, not signoff. Uses `--allow-use-before-declare` (current `otpu_dma` declares a
-  signal after use).
+  candidates, not signoff. Uses `--allow-use-before-declare` (for sources that declare a signal
+  after use).
 - `EVAL=vivado` (**untested** — Vivado is not installed yet): out-of-context synth, place, route
   on xc7k480tffg1156-2 through `~/bonetto/vivado-docker/vivado` (override with `VIVADO=`),
   10 ns clock; utilization and post-route WNS → fmax. Check the report parsing

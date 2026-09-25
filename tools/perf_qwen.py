@@ -5,7 +5,7 @@
 
 Uses the real weights (models/Qwen3-0.6B, or --model lfm2: models/LFM2.5-230M), optionally only
 the first N layers (the LM head is always complete). Prints cycles, the DRAM roofline (port-B
-chunk transfers: weights, KV, LD/ST bursts), efficiency, tokens/s at an assumed 100 MHz, MM time
+chunk transfers: weights, KV, LD/ST chunks), efficiency, tokens/s at an assumed 100 MHz, MM time
 per kernel source line, and the MXU idle gaps with their causes.
 """
 from __future__ import annotations

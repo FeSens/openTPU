@@ -135,8 +135,8 @@ def _deltas(t, prog, img):
 
 def test_counter_snapshots_bracket_a_run(have_verilator):
     """Deltas between two snapshots around a run: RUNNING is the run's CYCLES, INSTR its ICOUNT,
-    and the DRAM beats are the port B requests' (otpu_axi_dram.sv): a read fetches the whole
-    chunk (a beat on each channel), an aligned LANES-word write touches one channel's beat."""
+    and the DRAM beats are the port B requests' (otpu_axi_dram.sv): the DMA requests each chunk
+    once, and a read or a whole-chunk write takes a beat on each channel."""
     t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=4, params={"TRACE_DEPTH": 1024})
     prog = [I.ld(0, 0, 4096), I.st(0x20000, 0, 4096), I.ld(0x8000, 4096, 1024),
             I.st(0x30000, 4096, 1024), I.halt()]
@@ -145,8 +145,8 @@ def test_counter_snapshots_bracket_a_run(have_verilator):
     assert nsnap == 2
     assert d["RUNNING"] == cyc and d["UPTIME"] > cyc
     assert d["INSTR"] == ic == len(prog)
-    assert brd == (4096 + 1024) // CFG.LANES and bwr == brd     # a request per LANES words
-    assert d["DRAM_RD"] == 2 * brd and d["DRAM_WR"] == bwr
+    assert brd == (4096 + 1024) // (CFG.D // 4) and bwr == brd  # a request per chunk
+    assert d["DRAM_RD"] == 2 * brd and d["DRAM_WR"] == 2 * bwr
     assert d["DMA_BUSY"] > 0 and d["MXU_BUSY"] == d["MXU_MAC"] == d["VPU_BUSY"] == 0
     assert 0 < d["DRAM_WAIT"] < cyc                      # the AXI model stalls (30%)
     # the demo: every unit, the MXU consumes its 32 chunks
@@ -198,7 +198,7 @@ def test_trace_long_wait_is_exact(have_verilator):
     n = 60000
     prog = [I.ld(0, 0, n), I.ld(0, 61000, 64), I.st(0x40000, 61000, 64), I.halt()]
     img = np.random.default_rng(3).integers(0, 256, 4 * n).astype(np.uint8)
-    t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=92, seed=2,
+    t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=98, seed=2,
                      plusargs=["+trace", "+bucket=1000000"], params={"TRACE_DEPTH": 1024})
     r = run_traced(t, img, prog, nrec=64)
     sim = r["sim"]

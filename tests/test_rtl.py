@@ -350,6 +350,55 @@ def test_board_memory_path_fuzz(have_verilator, seed, stall):
     assert np.array_equal(tmems[0], m.slices[0].tmem)
 
 
+def _dma_program(rng, cfg: Config, n_ops=70):
+    """LD / ST only: every alignment within a chunk, lengths around the segment and chunk sizes
+    and past the DMA's chunk buffer (32 chunks), stores that share chunks, and loads of what
+    was just stored."""
+    CW, W = cfg.D // 4, min(cfg.D // 4, cfg.LANES)
+    lens = [1, 2, W - 1, W, W + 1, CW - 1, CW, CW + 1, 2 * CW + 3, 40 * CW + 5]
+    SRC, DST = 0, 1 << 18                           # DRAM bytes
+    prog = []
+    for _ in range(n_ops):
+        n = int(rng.choice(lens)) if rng.integers(3) else int(rng.integers(1, 6 * CW))
+        n = max(n, 1)
+        t = int(rng.integers(0, (1 << 14) - n))
+        kind = rng.choice(["ld", "st", "st_run", "st_ld"])
+        if kind == "ld":
+            prog.append(I.ld(SRC + 4 * int(rng.integers(0, 1 << 15)), t, n))
+        elif kind == "st":
+            prog.append(I.st(DST + 4 * int(rng.integers(0, 1 << 15)), t, n))
+        elif kind == "st_run":                      # short adjacent stores: shared chunks
+            d = DST + 4 * int(rng.integers(0, 1 << 15))
+            for _ in range(int(rng.integers(2, 6))):
+                k = int(rng.integers(1, W + 2))
+                prog.append(I.st(d, int(rng.integers(0, (1 << 14) - k)), k))
+                d += 4 * k
+        else:                                       # store, then load it back elsewhere
+            d = DST + 4 * int(rng.integers(0, 1 << 15))
+            prog.append(I.st(d, t, n))
+            prog.append(I.ld(d + 4 * int(rng.integers(0, 3)), (1 << 14) + t, n))
+    prog.append(I.halt())
+    return prog
+
+
+# The DMA moves whole chunks on DRAM port B and one segment per cycle on TMEM: partial and
+# misaligned first / last segments and chunks, long transfers that wrap its chunk buffer, and
+# (AXI) random backpressure and response delays.
+@pytest.mark.parametrize("D,lanes,axi,stall", [(32, 8, False, 0), (128, 4, False, 0),
+                                               (128, 16, False, 0), (128, 8, True, 0),
+                                               (128, 8, True, 50), (128, 8, True, 85)])
+def test_dma_alignment_stress(have_verilator, D, lanes, axi, stall):
+    rng = np.random.default_rng(7000 + D + lanes + stall)
+    cfg = Config(S=1, D=D, LANES=lanes, MCOLS=min(8, lanes), ACT_BLOCKS=16)
+    prog = _dma_program(rng, cfg)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], axi=axi, boot=axi, stall=stall,
+                                 seed=stall + 3, uarch=rtlsim.BOARD_UARCH if axi else None)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+
+
 def test_tmem_random_traffic(have_verilator):
     """TMEM alone against a reference model; most reads hit the previous cycle's writes, which
     are still in TMEM's registered write stage (the bypass)."""
