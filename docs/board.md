@@ -46,6 +46,12 @@ x8): all timing constraints met, WNS +0.082 ns, WHS +0.016 ns. Utilization: 187,
 estimate is 8.75 W (low confidence: no switching activity supplied). About 3 h with `JOBS=1`
 in Docker on a 16 GB Apple Silicon Mac (4 jobs ran out of memory).
 
+`make bit MCOLS=4 VPU_CL=4` (measured, same tools and date): all timing constraints met, WNS
++0.003 ns, WHS +0.012 ns (no margin: expect some builds of this configuration to miss by a few
+ps; try `IMPL_STRATEGY=Performance_Explore`). 211,629 LUT (70.9%), 144,722 FF (24.2%), 668 BRAM36
+tiles (70.0%), 443 DSP48 (23.1%); power estimate 9.40 W (low confidence). Run the host with
+`OTPU_MCOLS=4`.
+
 ### Vivado on Apple Silicon (Docker + Rosetta)
 
 Vivado is x86-64 Linux/Windows only. On an M-series Mac:
