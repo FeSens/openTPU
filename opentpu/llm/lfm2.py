@@ -68,6 +68,10 @@ class Spec:
     def layers(self) -> int:
         return len(self.kinds)
 
+    @property
+    def rope_dim(self) -> int:
+        return self.head_dim
+
     @staticmethod
     def from_hf(model_dir) -> "Spec":
         c = json.loads((Path(model_dir) / "config.json").read_text())
@@ -465,7 +469,15 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK):
             x.set(_attention(x, lw, c, s_, pos, spec, block))
         x.set(_mlp(x, lw, spec))
 
-    for first, unit, reps in m.plan:
+    run_layers(m.plan, layer)
+    _lm_head(x, m, spec)
+
+
+def run_layers(runs, layer) -> None:
+    """Emit the layers of a plan (runs of `plan`) as layer(index, kind): a run with repeats is
+    one hardware loop over its unit (the index is then a loop expression), the others are
+    unrolled."""
+    for first, unit, reps in runs:
         if reps == 1:
             for e, kind in enumerate(unit):
                 layer(first + e, kind)
@@ -473,4 +485,3 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK):
         for i in ol.range(reps):
             for e, kind in enumerate(unit):
                 layer(first + i * len(unit) + e, kind)
-    _lm_head(x, m, spec)

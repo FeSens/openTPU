@@ -26,9 +26,9 @@ from . import isa as I
 from .compiler import (TEMP_RC_FN, Affine, Bcast, CompileError, KVDesc, QTensor, Stationary,
                        Tensor, Tile, current, jit)
 
-__all__ = ["jit", "program_id", "num_programs", "block_size", "tmem_words", "load", "store", "dot", "quantize", "exp2",
-           "log2", "recip", "rsqrt", "abs", "maximum", "minimum", "max", "sum", "outer", "full",
-           "zeros",
+__all__ = ["jit", "program_id", "num_programs", "block_size", "tmem_words", "mxu_columns",
+           "load", "store", "dot", "quantize", "exp2", "log2", "recip", "rsqrt", "abs", "maximum",
+           "minimum", "max", "sum", "outer", "full", "zeros",
            "empty", "all_gather", "all_reduce", "range", "static_range", "kv_append", "Tensor", "QTensor",
            "KVDesc", "Tile", "CompileError", "LOG2E", "LN2"]
 
@@ -54,9 +54,16 @@ def tmem_words() -> int:
     return current().cfg.TMEM_WORDS
 
 
+def mxu_columns() -> int:
+    """MCOLS: the most rows a stationary operand of one MM can have."""
+    return current().cfg.MCOLS
+
+
 # ---- memory
-def load(desc: Tensor) -> Tile:
-    return current().load(desc)
+def load(desc: Tensor, out: Tile | None = None) -> Tile:
+    """DRAM -> TMEM. With `out`, into that existing tile (e.g. one of two buffers a hardware
+    loop fills in turn)."""
+    return current().load(desc, out)
 
 
 def store(desc: Tensor, value) -> None:

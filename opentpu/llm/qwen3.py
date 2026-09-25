@@ -33,7 +33,7 @@ from ..compiler import Affine, KVDesc, QTensor, Tensor
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
-from ..kernels.lib import rmsnorm, rope, rope_rows
+from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid
 from ..kernels.mlp import _chunk, swiglu_down
 from ..runtime import ALIGN, quantize_rows
 
@@ -53,6 +53,11 @@ class Spec:
     tied: bool = True
     bos: int = 151643
     eos: tuple = (151645, 151643)
+
+    @property
+    def rope_dim(self) -> int:
+        """RoPE rotates all of each head's dimensions."""
+        return self.head_dim
 
     @staticmethod
     def from_hf(model_dir) -> "Spec":
@@ -89,20 +94,25 @@ class Spec:
 
 
 def load_weights(model_dir) -> dict:
-    """All tensors of a HF safetensors checkpoint as fp32 numpy arrays."""
+    """All tensors of a HF safetensors checkpoint as fp32 numpy arrays. Of a multimodal
+    checkpoint (Qwen3.5) only the language model is loaded, under the names of a text-only one
+    (model.language_model.* -> model.*): not the vision tower or the multi-token prediction
+    layers."""
     import torch
     from safetensors.torch import load_file
     out = {}
     for f in sorted(Path(model_dir).glob("*.safetensors")):
         for k, v in load_file(str(f)).items():
-            out[k] = v.to(torch.float32).numpy()
+            if k.startswith(("model.visual.", "mtp.")):
+                continue
+            out[k.replace("model.language_model.", "model.", 1)] = v.to(torch.float32).numpy()
     return out
 
 
 def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
-    """cos, sin [head_dim/2] for one position (HF rotate-half convention)."""
-    half = spec.head_dim // 2
-    inv = 1.0 / (spec.theta ** (np.arange(half, dtype=np.float64) * 2 / spec.head_dim))
+    """cos, sin [rope_dim/2] for one position (HF rotate-half convention)."""
+    half = spec.rope_dim // 2
+    inv = 1.0 / (spec.theta ** (np.arange(half, dtype=np.float64) * 2 / spec.rope_dim))
     ang = pos * inv
     return np.cos(ang).astype(np.float32), np.sin(ang).astype(np.float32)
 
@@ -421,16 +431,19 @@ def _padded(x):
 
 
 def _rope_padded(x, c, s_):
-    """rope(x), padded like _padded (RoPE writes straight into the padded tile)."""
-    d, D = x.cols, ol.block_size()
-    if d % D == 0:
+    """rope(x) on the first 2 * len(c) dimensions of each row (the others pass through:
+    Qwen3.5's partial RoPE), padded like _padded (RoPE writes straight into the padded tile)."""
+    d, D, rd = x.cols, ol.block_size(), 2 * c.cols
+    if d % D == 0 and rd == d:
         return rope(x, c, s_)
-    out = ol.zeros([x.rows, -(-d // D) * D])
-    rope(x, c, s_, out=out[:, :d])
+    out = ol.zeros([x.rows, -(-d // D) * D]) if d % D else ol.empty(x.shape)
+    rope(x[:, :rd], c, s_, out=out[:, :rd])
+    if rd < d:
+        out[:, rd:d].set(x[:, rd:])
     return out
 
 
-def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int):
+def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = False):
     """x + W_o . attention(x) for one token, this slice's heads; returns the new residual
     (replicated on every slice).
 
@@ -438,12 +451,17 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int):
     stream overlaps them): K and V are projected first and their norms, RoPE and cache appends
     run while the Q projection streams; Q is projected one KV head's query group at a time,
     interleaved with the attention of the heads before it (_attend_heads), so each head's
-    query preparation and softmax hide behind the next heads' Q weights."""
+    query preparation and softmax hide behind the next heads' Q weights.
+
+    A query group of more heads than the MXU has columns attends in parts of MCOLS heads, each
+    streaming the KV head again. `gated` (Qwen3.5): lw.wgate projects a gate per query
+    dimension, and the attention output is multiplied by sigmoid(gate) before W_o."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
     kv = lw.kv
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     k = ol.dot(xs, lw.wk)                       # [1, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
+    sg = sigmoid(ol.dot(xs, lw.wgate)) if gated else None       # [1, nq_loc*d]
     qn, kn = ol.load(lw.qn), ol.load(lw.kn)
     scale = ol.LOG2E / math.sqrt(d)
     heads = list(kv.owned_heads(spec.n_kv))
@@ -459,12 +477,31 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int):
             return _rope_padded(rmsnorm(qj.reshape(G, d), qn, eps), c, s_)
         return emit
 
-    outs = _attend_heads([queries(j) for j in range(nh)], kv, heads, pos + 1, block, scale,
+    mc = min(G, ol.mxu_columns())
+    parts = [(j, g0, min(G, g0 + mc)) for j in range(nh) for g0 in range(0, G, mc)]
+    if mc == G:
+        qhs = [queries(j) for j in range(nh)]
+    else:
+        groups = {}
+
+        def part(j, g0, g1):
+            def emit():                         # the group's queries, made for its first part
+                if j not in groups:
+                    groups[j] = queries(j)()
+                qg = groups.pop(j) if g1 == G else groups[j]
+                return qg[g0:g1, :]
+            return emit
+        qhs = [part(*p) for p in parts]
+    outs = _attend_heads(qhs, kv, [heads[j] for j, _, _ in parts], pos + 1, block, scale,
                          depth=ATTN_DEPTH, ahead=2)
     o_row = ol.empty([1, G * nh * d])
     o_loc = o_row.reshape(G * nh, d)            # the heads' outputs, written in place
-    for j, (acc, l) in enumerate(outs):
-        o_loc[j * G:(j + 1) * G, :].set(acc / l[:, None])
+    for (j, g0, g1), (acc, l) in zip(parts, outs):
+        r0, r1 = j * G + g0, j * G + g1
+        if sg is None:
+            o_loc[r0:r1, :].set(acc / l[:, None])
+        else:
+            o_loc[r0:r1, :].set((acc / l[:, None]) * sg.reshape(G * nh, d)[r0:r1, :])
     o_all = ol.all_gather(o_row)                # [1, n_q*d], slice-major head order
     y = ol.all_gather(ol.dot(o_all, lw.wo))     # [1, H]
     return x + y
@@ -622,7 +659,7 @@ class IsaBackend:
 
 class Engine:
     """Token-by-token decoding on an openTPU backend: Qwen3, or any model whose Spec builds an
-    image with compile_step (LFM2: opentpu.llm.lfm2).
+    image with compile_step (LFM2: opentpu.llm.lfm2; Qwen3.5: opentpu.llm.qwen35).
 
     backend: "isa" (default), or any object with write/read/run like IsaBackend (the RTL
     simulator and the PCIe board driver implement the same interface). Optional backend hooks:

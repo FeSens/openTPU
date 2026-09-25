@@ -1,7 +1,8 @@
-"""otpu-chat: chat with Qwen3 (or LFM2) running on openTPU.
+"""otpu-chat: chat with Qwen3 (or LFM2, or Qwen3.5) running on openTPU.
 
     otpu-chat                                 # ISA simulator (~3 s/token on a laptop)
     otpu-chat --model lfm2                    # LFM2.5-230M instead of Qwen3-0.6B
+    otpu-chat --model qwen35                  # Qwen3.5-0.8B (text only)
     otpu-chat --backend board                 # the FPGA over PCIe (opentpu/host/board.py)
     otpu-chat --backend board-sim             # the Verilator board model (very slow)
     otpu-chat --prompt "Why is the sky blue?" # one-shot
@@ -26,9 +27,11 @@ from opentpu.llm.qwen3 import Engine, load_weights
 
 
 # Sampling defaults per model family (Spec module); command-line flags override them. LFM2's
-# are its generation_config.json.
+# are its generation_config.json; Qwen3.5's its model card's non-thinking settings (without the
+# presence penalty).
 SAMPLING = {"qwen3": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0),
-            "lfm2": dict(temperature=0.1, top_k=50, top_p=1.0, repetition_penalty=1.05)}
+            "lfm2": dict(temperature=0.1, top_k=50, top_p=1.0, repetition_penalty=1.05),
+            "qwen35": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0)}
 
 
 def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
@@ -156,7 +159,7 @@ def main(argv=None):
                          "bitstream's CORE_KHZ, or 100 on a register map 1 bitstream)")
     ap.add_argument("--cap", type=int, default=2048, help="KV cache capacity (tokens)")
     ap.add_argument("--prompt", help="ask one question and exit")
-    ap.add_argument("--think", action="store_true", help="enable Qwen3 thinking mode")
+    ap.add_argument("--think", action="store_true", help="enable Qwen3 / Qwen3.5 thinking mode")
     ap.add_argument("--greedy", action="store_true")
     ap.add_argument("--temperature", type=float,
                     help="sampling flags default per model: " + "; ".join(

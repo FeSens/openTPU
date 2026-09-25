@@ -2,7 +2,7 @@
 
     otpu-selftest                         # the card, /dev/xdma0
     otpu-selftest --sim                   # the board model (no hardware)
-    otpu-selftest --model qwen3           # also a model-level check (or lfm2, or a directory)
+    otpu-selftest --model qwen3           # also a model-level check (lfm2, qwen35 or a directory)
 
 Stages stop at the first failure, with a hint. Each builds on the previous one:
   1 link       the control registers answer (ID register)
@@ -87,7 +87,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-selftest", description=__doc__.split("\n")[0])
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")
     ap.add_argument("--dev", default="/dev/xdma0")
-    ap.add_argument("--model", help="qwen3, lfm2 or a checkpoint directory: the model stage")
+    ap.add_argument("--model",
+                    help="qwen3, lfm2, qwen35 or a checkpoint directory: the model stage")
     ap.add_argument("--tokens", type=int, default=8, help="tokens to generate in the model stage")
     ap.add_argument("--bw-mib", type=int, default=512, help="bandwidth test size (MiB)")
     a = ap.parse_args(argv)

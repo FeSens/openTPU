@@ -202,3 +202,21 @@ configuration as above). Tokens/s are projections at 100 MHz.
 | 100% | 1024 | 1,996,829 | 50.1 | 94.8% |
 
 Details, accuracy and the mapping are in [lfm2.md](lfm2.md).
+
+## Qwen3.5-0.8B
+
+Qwen3.5 runs one token per device run, so only b=1 decode is measured, on the full model with
+`tools/perf_qwen.py --model qwen35 --layers 0` (same configuration as above; the roofline is
+every byte the token moves, KV read once). Tokens/s are projections at 100 MHz.
+
+| bw | ctx | cycles/token (measured) | tok/s | % of DRAM roofline |
+|---:|---:|---:|---:|---:|
+| 80% | 128 | 11,535,257 | **8.7** | 69.3% |
+| 80% | 1024 | 11,636,450 | 8.6 | 69.2% |
+| 100% | 128 | 10,419,105 | 9.6 | 61.4% |
+| 100% | 1024 | 10,495,642 | 9.5 | 61.4% |
+
+The Gated DeltaNet recurrence runs on the vector unit and takes half the token (5.83 M cycles,
+at any bandwidth); the MLPs, attention and LM head run at their rooflines. The MCOLS=4, VPU_CL=4
+build gains under 1%. This is the baseline of the architecture tournament; details,
+accuracy and the cycle breakdown are in [qwen35.md](qwen35.md).

@@ -312,6 +312,13 @@ class Tile:
                         self.buf)
         raise CompileError(f"unsupported 2-D index {key}")
 
+    def repeat_rows(self, n: int) -> "Tile":
+        """A 1-D tile (or a single row) as an [n, cols] view whose every row is that row: row
+        stride 0, for the A operand of a VOP (the outer product u[:, None] * v[None, :])."""
+        if self.rows != 1:
+            raise CompileError(f"repeat_rows: {self} is not a single row")
+        return Tile(self.b, self.base, (n, self.cols), 0, self.buf)
+
     def row_stride_view(self, r0: int, n: int, step: int) -> "Tile":
         """Rows r0, r0+step, ... (n of them) of a 2-D tile, as a [n, cols] view."""
         if len(self.shape) != 2 or r0 + (n - 1) * step >= self.rows:
@@ -377,6 +384,22 @@ class Tile:
     def __matmul__(self, v):
         """x @ v for a 1-D tile v: the row dot products (one RDOT pass, no product tile)."""
         return self.b.matvec(self, v)
+
+    # ---- in place: `t += x` is one VOP writing t (no temporary)
+    def _inplace(self, func: int, o) -> "Tile":
+        self.b.check_live(self, o)
+        self.b.vop(func, self, self, o)
+        self.b.bump_version(self.buf)
+        return self
+
+    def __iadd__(self, o):
+        return self._inplace(I.V_ADD, o)
+
+    def __isub__(self, o):
+        return self._inplace(I.V_SUB, o)
+
+    def __imul__(self, o):
+        return self._inplace(I.V_MUL, o)
 
 
 B_ROWVIEW, B_COLVIEW = "row", "col"
@@ -645,7 +668,10 @@ class Builder:
             bmode, b_base, brs = I.B_FULL, b.base, (b.rs if len(b.shape) == 2 else 0)
         elif isinstance(b, Bcast):
             v = b.t
-            if b.kind == B_ROWVIEW:
+            if v.cols == 1 and (rows if b.kind == B_ROWVIEW else cols) > 1:
+                # one value for the whole tile: the per-row word, with row stride 0
+                bmode, b_base, brs = I.B_ROW, v.base, 0
+            elif b.kind == B_ROWVIEW:
                 if v.cols != rows:
                     raise CompileError(f"row broadcast of length {v.cols} over {rows} rows")
                 bmode, b_base, brs = I.B_ROW, v.base, 1
@@ -666,6 +692,12 @@ class Builder:
                                        and y.shape != (1,)):
             if isinstance(y, Tile):
                 x, y, func = y, x, swap[func]
+            elif isinstance(x, Bcast) and isinstance(y, Bcast) and {x.kind, y.kind} == {
+                    B_ROWVIEW, B_COLVIEW}:
+                # outer: u[:, None] (op) v[None, :] reads v as A with row stride 0, u per row
+                if x.kind == B_ROWVIEW:
+                    x, y, func = y, x, swap[func]
+                x = x.t.repeat_rows(y.t.cols)
             else:
                 raise CompileError("an elementwise op needs at least one full tile operand")
         self.check_live(x, y)
@@ -766,10 +798,16 @@ class Builder:
         return out
 
     # ---- data movement
-    def load(self, t: Tensor) -> Tile:
+    def load(self, t: Tensor, out: Tile | None = None) -> Tile:
         if not t.shape:
             raise CompileError("cannot load a scalar")
-        out = self.alloc(t.shape)
+        if out is None:
+            out = self.alloc(t.shape)
+        else:
+            self.check_live(out)
+            if out.shape != tuple(t.shape) or not out.contiguous:
+                raise CompileError(f"load: out {out} is not a contiguous {t.shape} tile")
+            self.bump_version(out.buf)
         if len(t.shape) == 1:
             if t.strides[0] != 1:
                 raise CompileError("strided 1-D loads are not supported")

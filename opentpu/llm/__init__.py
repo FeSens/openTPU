@@ -1,4 +1,4 @@
-"""Running real LLMs on openTPU: Qwen3 (qwen3.py) and LFM2 (lfm2.py)."""
+"""Running real LLMs on openTPU: Qwen3 (qwen3.py), LFM2 (lfm2.py) and Qwen3.5 (qwen35.py)."""
 from __future__ import annotations
 
 import json
@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 # short names for the checkpoints the tools know, downloaded into models/<dir>
-MODELS = {"qwen3": "Qwen3-0.6B", "lfm2": "LFM2.5-230M"}
+MODELS = {"qwen3": "Qwen3-0.6B", "lfm2": "LFM2.5-230M", "qwen35": "Qwen3.5-0.8B"}
 
 
 def model_dir(name) -> Path:
@@ -21,6 +21,8 @@ def load_spec(path):
         from .qwen3 import Spec
     elif t == "lfm2":
         from .lfm2 import Spec
+    elif t in ("qwen3_5", "qwen3_5_text"):
+        from .qwen35 import Spec
     else:
-        raise ValueError(f"{path}: model type {t!r} is not supported (qwen3, lfm2)")
+        raise ValueError(f"{path}: model type {t!r} is not supported (qwen3, lfm2, qwen3_5)")
     return Spec.from_hf(path)

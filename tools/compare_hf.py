@@ -1,6 +1,6 @@
 """Greedy decoding on the ISA simulator vs Hugging Face (fp32), prompt by prompt.
 
-    python3 tools/compare_hf.py [--model qwen3|lfm2|DIR] [--tokens 16] [--chat] [--emulate]
+    python3 tools/compare_hf.py [--model qwen3|lfm2|qwen35|DIR] [--tokens 16] [--chat] [--emulate]
                                 [prompt ...]
 
 For each prompt: the two continuations, the first token where they differ with Hugging Face's

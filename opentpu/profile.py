@@ -190,6 +190,36 @@ class Profile:
         epilogue = self.cycles - max(m.end for m in mms)
         return {"prologue": prologue, "epilogue": epilogue, "gaps": gaps, "blame": blame}
 
+    def phases(self, phase_of, s: int = 0) -> dict:
+        """Split the run into phases: phase_of(rec) names the phase of each instruction; the
+        instructions in dispatch order form runs of one phase, and a run is charged the cycles
+        from the latest end before it to the latest end within it (so the phases' cycles add up
+        to the run's). Per phase also its DRAM transfers and its VPU and MXU busy time (union of
+        the phase's own instructions' intervals)."""
+        out: dict = {}
+        done = 0
+        for r in sorted(self.slice_recs(s), key=lambda r: r.idx):
+            a = out.setdefault(phase_of(r), {"cycles": 0, "portb": 0, "porta": 0,
+                                             "iv": {1: [], 3: []}})
+            a["portb"] += r.portb
+            a["porta"] += r.porta
+            if r.unit in a["iv"] and r.start >= 0:
+                a["iv"][r.unit].append((r.start, r.end))
+            if r.end > done:
+                a["cycles"] += r.end - done
+                done = r.end
+        for a in out.values():
+            for u, iv in a.pop("iv").items():
+                tot, cur_s, cur_e = 0, None, None
+                for x, y in sorted(iv):
+                    if cur_e is None or x > cur_e:
+                        tot += 0 if cur_e is None else cur_e - cur_s
+                        cur_s, cur_e = x, y
+                    else:
+                        cur_e = max(cur_e, y)
+                a[UNITS[u]] = tot + (0 if cur_e is None else cur_e - cur_s)
+        return out
+
     def summary(self) -> str:
         rl = self.roofline()
         lines = [f"{self.name}: {self.cycles} cycles, roofline {rl['bound']} "

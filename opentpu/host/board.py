@@ -480,7 +480,9 @@ def sim_config(spec, cap: int):
 def dram_layout(cfg, image_bytes: int, prog_at: int, image=None, poss=None) -> dict:
     """The device DRAM in bytes: the image (weights, norms, I/O area and KV capacity), the
     program area after it, free; with a model Image also the KV cache capacity (LFM2: with the
-    convolution state) and the part filled at positions `poss` (one per sequence)."""
+    convolution state; Qwen3.5: with the convolution and DeltaNet state, which do not grow with
+    the position but are counted as if they did) and the part filled at positions `poss` (one
+    per sequence)."""
     prog = 4 * cfg.IMEM_WORDS
     d = {"total": cfg.DRAM_BYTES, "image": image_bytes, "weights": image_bytes,
          "kv_capacity": 0, "kv_used": 0, "program": prog,

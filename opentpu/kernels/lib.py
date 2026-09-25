@@ -9,9 +9,14 @@ def rmsnorm(x, gamma, eps: float):
     return (x * r[:, None]) * gamma[None, :]
 
 
+def sigmoid(x):
+    """1 / (1 + 2^(-x*log2(e)))."""
+    return ol.recip(ol.exp2(x * -ol.LOG2E) + 1.0)
+
+
 def silu(x):
-    """x * sigmoid(x) with sigmoid(x) = 1 / (1 + 2^(-x*log2(e)))."""
-    return x * ol.recip(ol.exp2(x * -ol.LOG2E) + 1.0)
+    """x * sigmoid(x)."""
+    return x * sigmoid(x)
 
 
 def softplus(x):

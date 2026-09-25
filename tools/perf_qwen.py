@@ -1,12 +1,14 @@
 """Profile one decode token on the RTL at the board configuration (AXI memory path).
 
-    python3 tools/perf_qwen.py [--model qwen3|lfm2|DIR] [--layers N] [--pos P] [--bw 100]
-                               [--check]
+    python3 tools/perf_qwen.py [--model qwen3|lfm2|qwen35|DIR] [--layers N] [--pos P]
+                               [--bw 100] [--check]
 
-Uses the real weights (models/Qwen3-0.6B, or --model lfm2: models/LFM2.5-230M), optionally only
-the first N layers (the LM head is always complete). Prints cycles, the DRAM roofline (port-B
-chunk transfers: weights, KV, LD/ST chunks), efficiency, tokens/s at an assumed 100 MHz, MM time
-per kernel source line, and the MXU idle gaps with their causes.
+Uses the real weights (models/Qwen3-0.6B, or --model lfm2: models/LFM2.5-230M, --model qwen35:
+models/Qwen3.5-0.8B), optionally only the first N layers (the LM head is always complete).
+Prints cycles, the DRAM roofline (port-B chunk transfers: weights, KV, LD/ST chunks), the
+useful-bytes roofline, efficiency, tokens/s at an assumed 100 MHz, the cycles per phase of the
+token (DeltaNet, attention, MLP, LM head) with their bytes, MM time per kernel source line, and
+the MXU idle gaps with their causes.
 """
 from __future__ import annotations
 
@@ -28,6 +30,20 @@ from opentpu.isasim import Machine, board_config  # noqa: E402
 from opentpu.llm import MODELS, load_spec, model_dir  # noqa: E402
 from opentpu.llm.qwen3 import load_weights, rope_tables  # noqa: E402
 from opentpu.profile import parse  # noqa: E402
+
+
+# kernel functions that name a phase of the token (the innermost one on an instruction's source
+# stack wins)
+PHASE_NAMES = {"head_step": "DeltaNet", "_deltanet": "DeltaNet",
+               "_attention": "attention", "_attend_heads": "attention", "_conv": "conv",
+               "_mlp": "MLP", "swiglu_down": "MLP", "_lm_head": "LM head"}
+
+
+def _phase(ins):
+    for _, _, fn in ins.src:
+        if fn in PHASE_NAMES:
+            return PHASE_NAMES[fn]
+    return "other"
 
 
 def _src(ins, depth=1):
@@ -86,21 +102,32 @@ def main():
     # useful-bytes roofline: weights + their fp32 block scales + KV + activations, at D bytes
     # per cycle (both channels at 100%)
     D = cfg.D
-    useful = 0
-    for r in p.recs:
-        ins = progs[0][r.pc]
+
+    def nbytes(r):
         if r.op == I.MM:
-            useful += r.portb * D + r.porta * 4
-        elif r.op in (I.LD, I.ST):
-            useful += 4 * ins.w[2]
-        elif r.op == I.QST:
-            useful += r.porta
+            return r.portb * D + r.porta * 4
+        if r.op in (I.LD, I.ST):
+            return 4 * progs[0][r.pc].w[2]
+        return r.porta if r.op == I.QST else 0
+
+    useful = sum(nbytes(r) for r in p.recs)
     ub = useful / D * 100 / a.bw
     print(f"useful bytes {useful} -> {ub:.0f} cycles at this bandwidth: "
           f"efficiency {100 * ub / p.cycles:.1f}%")
     print(f"at an assumed 100 MHz: {p.cycles / 1e5:.1f} ms/token, {1e8 / p.cycles:.1f} tok/s "
           f"(simulated cycles, no host time)")
     print(p.summary())
+    print(f"phases: cycles, share, useful bytes -> cycles at {a.bw}% (their roofline), "
+          f"VPU busy, MXU busy")
+    pb = defaultdict(int)
+    for r in p.recs:
+        pb[_phase(progs[0][r.pc])] += nbytes(r)
+    for k, v in sorted(p.phases(lambda r: _phase(progs[0][r.pc])).items(),
+                       key=lambda x: -x[1]["cycles"]):
+        rl_ph = pb[k] / D * 100 / a.bw
+        print(f"  {k:12s} {v['cycles']:9d} {100 * v['cycles'] / p.cycles:5.1f}%  "
+              f"{pb[k]:10d} B -> {rl_ph:9.0f} ({100 * rl_ph / max(1, v['cycles']):5.1f}%)  "
+              f"VPU {v['VPU']:9d}  MXU {v['MXU']:9d}")
     ph = defaultdict(lambda: [0, 0, 0])
     for r in p.recs:
         if r.op != I.MM or r.end < 0:

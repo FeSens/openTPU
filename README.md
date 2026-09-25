@@ -27,6 +27,11 @@ Works, in simulation:
   (`otpu-chat --model lfm2`). Its 64-wide heads are zero-padded to the 128-deep matrix unit and
   its convolution state lives in DRAM; no ISA or RTL change was needed. See
   [docs/lfm2.md](docs/lfm2.md).
+- **Qwen3.5-0.8B**, whose main layer is a Gated DeltaNet (linear attention with a 128 x 128
+  fp32 state per head), the same way (`otpu-chat --model qwen35`). The 1 MiB of state per layer
+  streams through the scratchpad head by head and the recurrence runs on the vector unit; no
+  ISA or RTL change. It is the baseline of the architecture tournament: see
+  [docs/qwen35.md](docs/qwen35.md).
 - **RTL vs simulator.** The Verilator RTL ends with exactly the same memory contents as the
   simulator on the kernel tests, on a full Qwen3-0.6B token (6.38 M cycles), and on random
   programs where instructions keep conflicting over the same memory, which checks that the
@@ -157,6 +162,11 @@ configuration at 80% DRAM bandwidth and a 128-token context, a token takes 2.37 
 of the DRAM roofline), which would be about 42 tokens/s at 100 MHz, again a projection
 ([docs/lfm2.md](docs/lfm2.md)).
 
+Qwen3.5-0.8B streams about 820 MB per token, but its DeltaNet recurrence runs on the vector
+unit, which cannot keep up with DRAM: measured on the same configuration (80%, context 128) a
+token takes 11.5 M cycles, 69% of the DRAM roofline, about 8.7 tokens/s at 100 MHz (a
+projection). Half of it is the recurrence ([docs/qwen35.md](docs/qwen35.md)).
+
 ## Accuracy
 
 The kernels are checked against float64 numpy references, and the full model against Hugging
@@ -238,7 +248,7 @@ The host software runs on top of the stock Xilinx XDMA driver:
 
 ```
 otpu-selftest            registers, DRAM patterns, kernels, then a model (--sim for the board model)
-otpu-chat                chat with Qwen3-0.6B (or LFM2.5-230M: --model lfm2)
+otpu-chat                chat with Qwen3-0.6B (or --model lfm2: LFM2.5-230M, qwen35: Qwen3.5-0.8B)
 otpu-smi                 temperature, estimated power, DRAM use, per-unit utilization
 otpu-lens                record a hardware trace and open it in Lens
 ```
@@ -249,8 +259,9 @@ report scaled by the utilization counters.
 ## Running the tests
 
 You need Python 3.11+, numpy and pytest. The RTL tests also need Verilator 5 and skip
-themselves without it. The Qwen3 and LFM2 tests need `torch` and `transformers`; their
-real-model tests need the checkpoints in `models/Qwen3-0.6B` and `models/LFM2.5-230M`.
+themselves without it. The Qwen3, LFM2 and Qwen3.5 tests need `torch` and `transformers`;
+their real-model tests need the checkpoints in `models/Qwen3-0.6B`, `models/LFM2.5-230M` and
+`models/Qwen3.5-0.8B`.
 
 ```
 python3 -m pytest -q
@@ -267,6 +278,7 @@ python3 -m pytest -q
 | `test_board.py`, `test_host.py`, `test_observability.py` | The board model through the host driver |
 | `test_qwen3.py` | Qwen3 vs Hugging Face (tiny random model; one prompt on the real one) and one real token on the RTL |
 | `test_lfm2.py` | The same for LFM2, plus a tiny LFM2 on the board model |
+| `test_qwen35.py` | The same for Qwen3.5 (DeltaNet and gated attention), plus a tiny Qwen3.5 on the board model |
 
 ## Known simplifications
 
