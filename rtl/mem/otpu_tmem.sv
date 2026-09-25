@@ -4,7 +4,8 @@
 // that is not granted holds its state.
 //
 // Implementation (the same for simulation and the FPGA): every read port has its own copy of
-// the memory, LANES banks of WORDS/LANES words, so reads never compete across ports. Writes are
+// the memory, LANES banks of WORDS/LANES words, so reads never compete across ports -- except
+// the guest ports (SH_MASK), rarely busy, which share one port's copy in priority order. Writes are
 // broadcast to every copy: each bank takes up to WPB writes per cycle, picked from all write
 // ports' lanes (WPB = 1 on the FPGA, where each bank copy is a simple dual-port BRAM with
 // read-first behaviour). A read returns the old word if it is written in the same cycle.
@@ -37,6 +38,9 @@ module otpu_tmem #(
   parameter int WPB   = 1,
   parameter logic [NRP-1:0] GEN_R = '1,   // read ports with the general crossbar
   parameter logic [NWP-1:0] GEN_W = '1,   // write ports with the general crossbar (WPB = 1)
+  parameter int SH_HOST = 0,              // the read port whose copy SH_MASK's ports share
+  parameter logic [NRP-1:0] SH_MASK = '0, // guests on SH_HOST's copy (the arbiter lets a guest
+                                          // read only when no port before it on the copy asks)
   parameter int SID   = 0
 ) (
   input  logic                                clk,
@@ -147,8 +151,11 @@ module otpu_tmem #(
   initial pw_v = '0;
 `endif
 
-  // ---- read ports
-  for (genvar p = 0; p < NRP; p++) begin : g_port
+  // ---- read ports: each port's bank enables and rows (from its requests)
+  logic [NRP-1:0][LANES-1:0]         pb_en;
+  logic [NRP-1:0][LANES-1:0][IW-1:0] pb_a;
+  logic [NRP-1:0][LANES-1:0][31:0]   pq;      // the bank data each port's copy returns
+  for (genvar p = 0; p < NRP; p++) begin : g_preq
     // per bank: the address of the lane that reads it (lanes of one port hit distinct banks or
     // read the same word, so an AND-OR merge is exact). A port belongs to one unit and the
     // grant is all-or-nothing per unit, so the address and the enable are merged from the
@@ -178,6 +185,30 @@ module otpu_tmem #(
         for (int b = 0; b < LANES; b++) b_a[b] = a0[BW +: IW] + IW'(BW'(b) < rot);
       end
     end
+    assign pb_en[p] = b_en;
+    assign pb_a[p] = b_a;
+  end
+
+  // ---- the copies: one per read port, except the guests (SH_MASK), which read SH_HOST's copy:
+  // it serves the first port that requests, the host, then the guests in port order
+  for (genvar p = 0; p < NRP; p++) begin : g_port
+   if (!SH_MASK[p]) begin : g_copy
+    logic [LANES-1:0]         b_en;
+    logic [LANES-1:0][IW-1:0] b_a;
+    if (p == SH_HOST && SH_MASK != '0) begin : g_sh
+      always_comb begin
+        logic take;
+        b_en = pb_en[p]; b_a = pb_a[p];
+        take = |r_req[p];
+        for (int g = 0; g < NRP; g++)
+          if (SH_MASK[g] && !take && |r_req[g]) begin
+            b_en = pb_en[g]; b_a = pb_a[g]; take = 1'b1;
+          end
+      end
+    end else begin : g_own
+      assign b_en = pb_en[p];
+      assign b_a = pb_a[p];
+    end
     logic [LANES-1:0][31:0]    q, qb;
     logic [LANES-1:0][WPB-1:0] bh;      // the read hit these writes, still registered
     for (genvar b = 0; b < LANES; b++) begin : g_bank
@@ -200,6 +231,12 @@ module otpu_tmem #(
       initial bh[b] = '0;
 `endif
     end
+    assign pq[p] = qb;
+   end else begin : g_guest
+    assign pq[p] = pq[SH_HOST];
+   end
+    wire  [BW-1:0]            rot = r_addr[p][0][BW-1:0];
+    wire  [LANES-1:0][31:0]   qb = pq[p];
     // lane data: the bank it read (the crossbar: each lane's bank; a rotator: the run's
     // rotation), fresh the cycle after the read, then held
     logic [LANES-1:0][BW-1:0] sel;
@@ -246,6 +283,12 @@ module otpu_tmem #(
     return 1;
   endfunction
   always @(posedge clk) begin
+    for (int p = 0; p < NRP; p++)
+      if (SH_MASK[p] && |r_en[p]) begin
+        if (|r_req[SH_HOST]) $fatal(1, "TMEM%0d: guest port %0d read beside its host at %0t", SID, p, $time);
+        for (int g = 0; g < p; g++)
+          if (SH_MASK[g] && |r_req[g]) $fatal(1, "TMEM%0d: guest port %0d read beside port %0d at %0t", SID, p, g, $time);
+      end
     for (int p = 0; p < NRP; p++)
       if (conflict(r_en[p], r_addr[p], 0)) $fatal(1, "TMEM%0d read port %0d bank conflict at %0t", SID, p, $time);
     for (int p = 0; p < NWP; p++)

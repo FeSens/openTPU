@@ -85,7 +85,7 @@ module otpu_slice
   input  logic          dump
 );
   localparam int BW = $clog2(LANES);
-  localparam int P_MXU = 0, P_DMA = 1, P_Q = 2, P_VA = 3, P_VB = 4, P_COLL = 5, P_Q2 = 6, P_Q3 = 7, NRP = 8;
+  localparam int P_MXU = 0, P_DMA = 1, P_Q = 2, P_VA = 3, P_VB = 4, P_Q3 = 5, P_Q2 = 6, P_COLL = 7, NRP = 8;
   localparam int W_DMA = 0, W_MXU = 1, W_COLL = 2, W_VPU = 3, NWP = 4;
   localparam int G_DMA = 0, G_COLL = 1, G_MXU = 2, G_Q = 3, G_VPU = 4, NG = 5;
 
@@ -132,9 +132,13 @@ module otpu_slice
   logic [NWP-1:0][LANES-1:0]       wq_en, w_en;
   logic [NWP-1:0][LANES-1:0][31:0] w_addr, w_data;
   logic [NWP-1:0]                  w_gnt;   // each write port's grant (the DMA always writes)
-  // the MXU's ports keep the crossbar (its drain writes scattered rows); the others are rotators
+  // the MXU's ports keep the crossbar (its drain writes scattered rows); the others are rotators.
+  // The quantizer's row-factor port (one word) and the collective's read port, rarely busy,
+  // share the DMA's copy (ST reads): 6 copies of the memory instead of 8.
   otpu_tmem #(.WORDS(TMEM_WORDS), .LANES(LANES), .NRP(NRP), .NWP(NWP), .WPB(WPB),
-              .GEN_R(NRP'(1) << P_MXU), .GEN_W(NWP'(1) << W_MXU), .SID(SID)) u_tmem (
+              .GEN_R(NRP'(1) << P_MXU), .GEN_W(NWP'(1) << W_MXU),
+              .SH_HOST(P_DMA), .SH_MASK((NRP'(1) << P_Q3) | (NRP'(1) << P_COLL)),
+              .SID(SID)) u_tmem (
     .clk, .r_en, .r_req(rq_en), .r_addr, .r_data, .w_en, .w_req(wq_en), .w_gnt, .w_addr,
     .w_data, .dump);
   assign coll_rdata = r_data[P_COLL];
@@ -291,11 +295,16 @@ module otpu_slice
     for (int g = 0; g < NG; g++)
       for (int h = 0; h < g; h++) acf[g][h] = (amk[g] & amk[h]) != '0;
   end
+  // the guests on the DMA's TMEM copy read only when no port before them there asks (from the
+  // requests: the copy's block RAM address does not wait for the grants)
+  wire q3_blk = (|rq_en[P_Q3]) && (|rq_en[P_DMA]);
+  wire coll_blk = (|rq_en[P_COLL]) && ((|rq_en[P_DMA]) || (|rq_en[P_Q3]));
   always_comb begin
     for (int g = 0; g < NG; g++) begin
       aok[g] = 1'b1;
       for (int h = 0; h < g; h++) if (aok[h] && acf[g][h]) aok[g] = 1'b0;
       if (g == G_Q && q_awant && !sw_rdy) aok[g] = 1'b0;   // QST write the DRAM cannot take
+      if ((g == G_Q && q3_blk) || (g == G_COLL && coll_blk)) aok[g] = 1'b0;
     end
     gnt_m = aok;
     gnt_m[G_COLL] = coll_gnt;
@@ -343,6 +352,7 @@ module otpu_slice
       for (int b = 0; b < LANES; b++)
         if (rc[b] + ur[b] > RPB || wc[b] + uw[b] > WPB) ok = 1'b0;
       if (g == G_Q && q_awant && !sw_rdy) ok = 1'b0;    // QST write the DRAM cannot take
+      if ((g == G_Q && q3_blk) || (g == G_COLL && coll_blk)) ok = 1'b0;
       if (g == G_COLL) begin
         cgl_c = ok;
         gnt_c[g] = coll_gnt;      // every slice must grant the collective
