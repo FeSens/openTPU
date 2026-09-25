@@ -52,6 +52,11 @@ ps; try `IMPL_STRATEGY=Performance_Explore`). 211,629 LUT (70.9%), 144,722 FF (2
 tiles (70.0%), 443 DSP48 (23.1%); power estimate 9.40 W (low confidence). Run the host with
 `OTPU_MCOLS=4`.
 
+With the DMA chunk buffer (eb29dd3) and the RDOT / OUTER / LOG2 VPU ops (ddec900), the same
+`make bit MCOLS=4 VPU_CL=4` (measured, 2026-09-25): all timing constraints met, WNS +0.028 ns,
+WHS +0.016 ns; 213,391 LUT (71.5%), 147,522 FF (24.7%), 690.5 BRAM36 tiles (72.3%), 459 DSP48
+(23.9%); power estimate 9.70 W (low confidence).
+
 ### Vivado on Apple Silicon (Docker + Rosetta)
 
 Vivado is x86-64 Linux/Windows only. On an M-series Mac:
