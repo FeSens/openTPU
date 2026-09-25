@@ -57,7 +57,8 @@ def main():
                     help=f"{' or '.join(MODELS)} (models/<name>), or a checkpoint directory")
     ap.add_argument("--layers", type=int, default=2, help="0: all")
     ap.add_argument("--pos", type=int, default=9)
-    ap.add_argument("--cap", type=int, default=256)
+    ap.add_argument("--cap", type=int, default=None,
+                    help="KV cache capacity (tokens); default: the multiple of 256 above pos")
     ap.add_argument("--bw", type=int, default=100)
     ap.add_argument("--lat", type=int, default=30)
     ap.add_argument("--stall", type=int, default=0)
@@ -72,6 +73,10 @@ def main():
     if a.layers:
         spec = dataclasses.replace(spec, **({"kinds": spec.kinds[:a.layers]}
                                             if hasattr(spec, "kinds") else {"layers": a.layers}))
+    if a.cap is None:
+        a.cap = 256 * (a.pos // 256 + 1)
+    if a.pos >= a.cap:
+        ap.error(f"--pos {a.pos} needs --cap above it (the KV write would land past the cache)")
     W = load_weights(path)
     need = spec.image(board_config(DRAM_BYTES=1 << 40), a.cap).nbytes
     cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()))

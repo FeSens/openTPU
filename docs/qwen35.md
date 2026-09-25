@@ -195,10 +195,12 @@ time.
 
 (`OTPU_MCOLS=4 OTPU_VPU_CL=4` is the 4&4 bitstream of [board.md](board.md). Context 1023 runs
 with `--cap 1024`. One run, 2/4 at 80% and context 1023, first reported a DRAM mismatch against
-the ISA simulator; the same run repeated was bit-identical at the same cycle count. That run
-was the only one sharing the machine with another simulation on a nearly full disk (14 GiB
-free, and each run writes its DRAM images to a temporary directory), so the likely cause is a
-truncated image file rather than the RTL; not proven.)
+the ISA simulator while another job hit "no space left on device" on the same disk; the same run
+repeated three times (on a disk with 28 GiB free) was bit-identical at the same cycle count.
+A truncated simulator dump used to read as zeros; `rtlsim` now rejects a short DRAM or TMEM
+dump, so a full disk fails loudly instead of looking like a mismatch. `perf_qwen.py` also
+refuses `--pos` at or past `--cap`, which writes the KV cache out of bounds and does not match
+the ISA simulator; its default `--cap` is now the multiple of 256 above `--pos`.)
 
 **Before pairing the heads** (commit 891fde4: one head at a time, the small vector work per head,
 out_proj per head; same measurement):

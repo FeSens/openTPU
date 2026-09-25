@@ -65,6 +65,8 @@ def _write_hex(path: Path, words: np.ndarray) -> None:
 
 def _read_hex(path: Path, n: int) -> np.ndarray:
     toks = [t for t in path.read_text().split() if not t.startswith(("@", "//"))]
+    if len(toks) != n:                  # a short dump (e.g. a full disk) is an error
+        raise RuntimeError(f"{path.name}: {len(toks)} words, expected {n}")
     out = np.zeros(n, dtype=np.uint32)
     vals = np.fromiter((int(t, 16) for t in toks), dtype=np.uint64, count=len(toks))
     out[: len(vals)] = vals.astype(np.uint32)
@@ -190,6 +192,10 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         raise RuntimeError(f"RTL did not halt cleanly (halted={halted} error={err}):\n{out[-2000:]}")
     icounts = [int(x) for x in re.findall(r"SLICE \d+ icount=(\d+)", out)]
     drams = [np.fromfile(tmp / f"dram_out_{s}.bin", dtype=np.uint8) for s in range(cfg.S)]
+    for s in range(cfg.S):             # a short dump (e.g. a full disk) is an error, not a result
+        if len(drams[s]) < len(imgs[s]):
+            raise RuntimeError(f"dram_out_{s}.bin has {len(drams[s])} bytes, fewer than the "
+                               f"{len(imgs[s])}-byte image: the dump was cut short")
     if boot:                           # the program is not part of the result
         drams = [d[:cfg.DRAM_BYTES] for d in drams]
         for s in range(cfg.S):
