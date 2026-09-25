@@ -30,7 +30,7 @@ The version 1 registers keep their offsets.
 | 0x040 | CAPS | RO | bit0 trace buffer present, bit1 temperature present, [15:8] log2(trace depth), [23:16] log2(P/Q window cycles) |
 | 0x044 | CORE_KHZ | RO | accelerator clock in kHz (a build parameter; the host turns cycles into time with it) |
 | 0x048 | BUILD_ID | RO | a build parameter: the first 8 hex digits of the git commit |
-| 0x04C | TEMP | RO | bit31 valid, [11:0] the XADC die-temperature code (from MIG channel 0's device_temp; °C = code × 503.975 / 4096 − 273.15). Valid once channel 0 is calibrated and has reported a non-zero code |
+| 0x04C | TEMP | RO | bit31 valid, [11:0] the XADC die-temperature code (from the block design's XADC, shared with the MIGs; °C = code × 503.975 / 4096 − 273.15). Valid once channel 0 is calibrated and has reported a non-zero code |
 | 0x050 | SNAP | W / R | write (any value): latch every free-running counter into its shadow at once; read: number of snapshots taken |
 
 Build parameters (`make -C boards/ypcb-00338 bit`): CORE_KHZ is computed from CORE_MHZ the way

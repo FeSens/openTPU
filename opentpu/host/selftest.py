@@ -55,7 +55,7 @@ HINTS = {
                "(opentpu/host/board.py) "
                "against rtl/mem/otpu_axi_dram.sv.",
     "bandwidth": "DMA is slow or failed: check the PCIe link width and speed (lspci -vv, "
-                 "LnkSta should be 5GT/s x8).",
+                 "LnkSta should be 2.5GT/s x8).",
     "kernel": "The accelerator computed something different from the ISA simulator: run the "
               "same program on the RTL model (tests/test_board.py) and compare the counters.",
     "qwen": "Kernels pass but the model differs: compare per-token logits against "

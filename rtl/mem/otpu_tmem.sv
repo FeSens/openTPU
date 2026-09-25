@@ -11,6 +11,15 @@
 // Each read lane's data is held until that lane reads again, so a frozen unit keeps its
 // operands.
 //
+// Timing: the grants are the end of the slice's deepest logic (unit requests -> arbiter), and
+// a write reaches every copy of its bank (NRP * the bank's block RAMs, spread over the die). So
+// the selected writes are registered here and land in the block RAMs a cycle later, and a read
+// of a word whose write is still in that register takes the registered data (a bypass): to the
+// units the memory behaves exactly as if the write had landed in its own cycle. Likewise the
+// block RAM read enables come from the requests, not the grants: a read that is not granted
+// only changes a block RAM output nobody looks at (the lanes take it only the cycle after a
+// granted read, and hold it otherwise).
+//
 // Within one port the enabled lanes must hit distinct banks (or read the same word); the
 // simulation stops on a violation, so the timing it reports is honest.
 module otpu_tmem #(
@@ -85,33 +94,58 @@ module otpu_tmem #(
     end
   end
 
+  // ---- the registered write stage: this cycle's selected writes land next cycle (pw_*); the
+  // data of the writes landing now is kept one more cycle (pd) for the reads that bypass them
+  logic [LANES-1:0][WPB-1:0]         pw_v;
+  logic [LANES-1:0][WPB-1:0][IW-1:0] pw_a;
+  logic [LANES-1:0][WPB-1:0][31:0]   pw_d, pd;
+  always_ff @(posedge clk) begin
+    pw_v <= bw_v;
+    pw_a <= bw_a;
+    pw_d <= bw_d;
+    pd <= pw_d;
+  end
+`ifndef SYNTHESIS
+  initial pw_v = '0;
+`endif
+
   // ---- read ports
   for (genvar p = 0; p < NRP; p++) begin : g_port
     // per bank: the address of the lane that reads it (lanes of one port hit distinct banks or
     // read the same word, so an AND-OR merge is exact). A port belongs to one unit and the
-    // grant is all-or-nothing per unit, so the address is merged from the requests and the
-    // grant only reaches the block RAM's enable, not its address pins.
+    // grant is all-or-nothing per unit, so the address and the enable are merged from the
+    // requests: the grant reaches no block RAM pin (it only decides which lanes take the data)
     logic [LANES-1:0]         b_en;
     logic [LANES-1:0][IW-1:0] b_a;
     always_comb begin
       b_en = '0; b_a = '0;
       for (int b = 0; b < LANES; b++)
         for (int l = 0; l < LANES; l++)
-          if (r_addr[p][l][BW-1:0] == BW'(b)) begin
-            if (r_en[p][l]) b_en[b] = 1'b1;
-            if (r_req[p][l]) b_a[b] = b_a[b] | r_addr[p][l][BW +: IW];
+          if (r_addr[p][l][BW-1:0] == BW'(b) && r_req[p][l]) begin
+            b_en[b] = 1'b1;
+            b_a[b] = b_a[b] | r_addr[p][l][BW +: IW];
           end
     end
-    logic [LANES-1:0][31:0] q;
+    logic [LANES-1:0][31:0]    q, qb;
+    logic [LANES-1:0][WPB-1:0] bh;      // the read hit these writes, still registered
     for (genvar b = 0; b < LANES; b++) begin : g_bank
       logic [31:0] mem [BD];
       always_ff @(posedge clk) begin
         if (b_en[b]) q[b] <= mem[b_a[b]];
         for (int w = 0; w < WPB; w++)
-          if (bw_v[b][w]) mem[bw_a[b][w]] <= bw_d[b][w];
+          if (pw_v[b][w]) mem[pw_a[b][w]] <= pw_d[b][w];
+      end
+      always_ff @(posedge clk)
+        if (b_en[b])
+          for (int w = 0; w < WPB; w++) bh[b][w] <= pw_v[b][w] && pw_a[b][w] == b_a[b];
+      // the last hit wins, as in the write loop
+      always_comb begin
+        qb[b] = q[b];
+        for (int w = 0; w < WPB; w++) if (bh[b][w]) qb[b] = pd[b][w];
       end
 `ifndef SYNTHESIS
       initial for (int i = 0; i < BD; i++) mem[i] = '0;
+      initial bh[b] = '0;
 `endif
     end
     // lane data: the bank it read, fresh the cycle after the read, then held
@@ -122,11 +156,11 @@ module otpu_tmem #(
       for (int l = 0; l < LANES; l++) begin
         fresh[l] <= r_en[p][l];
         if (r_en[p][l]) sel[l] <= r_addr[p][l][BW-1:0];
-        if (fresh[l]) held[l] <= q[sel[l]];
+        if (fresh[l]) held[l] <= qb[sel[l]];
       end
     end
     always_comb
-      for (int l = 0; l < LANES; l++) r_data[p][l] = fresh[l] ? q[sel[l]] : held[l];
+      for (int l = 0; l < LANES; l++) r_data[p][l] = fresh[l] ? qb[sel[l]] : held[l];
   end
 
 `ifndef SYNTHESIS
@@ -158,7 +192,7 @@ module otpu_tmem #(
       for (int l = 0; l < LANES; l++)
         if (w_en[p][l] && w_addr[p][l] >= WORDS) $fatal(1, "TMEM%0d write beyond %0d words", SID, WORDS);
   end
-  // dump: a flat shadow of the memory, written with the same selection as the banks
+  // dump: a flat shadow of the memory as the units see it (each write in its own cycle)
   logic [31:0] shadow [WORDS];
   initial for (int i = 0; i < WORDS; i++) shadow[i] = '0;
   always @(posedge clk)

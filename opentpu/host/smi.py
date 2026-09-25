@@ -46,7 +46,7 @@ def find_devices() -> list[str]:
 
 
 def pcie_link(dev: str) -> str | None:
-    """'5.0 GT/s PCIe x8' from sysfs (the XDMA driver's class device), None if unknown."""
+    """'2.5 GT/s PCIe x8' from sysfs (the XDMA driver's class device), None if unknown."""
     base = Path(f"/sys/class/xdma/{devname(dev)}_user/device")
     try:
         sp = (base / "current_link_speed").read_text().strip()

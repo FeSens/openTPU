@@ -18,7 +18,7 @@
 module otpu_axi_dram #(
   parameter int D = 128,
   parameter int QD = 4,                              // request queue depth per channel and port
-  parameter int RD = 64,                             // B read beats in flight per channel
+  parameter int RD = 128,                            // B read beats in flight per channel
   parameter int AD = 16,                             // A read beats in flight per channel
   parameter logic [31:0] BASE0 = 32'h0000_0000,
   parameter logic [31:0] BASE1 = 32'h8000_0000

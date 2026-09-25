@@ -3,6 +3,8 @@
 Every test runs the same program on the same DRAM images through both and requires identical
 DRAM and TMEM contents in every slice.
 """
+import subprocess
+
 import numpy as np
 import pytest
 
@@ -346,3 +348,11 @@ def test_board_memory_path_fuzz(have_verilator, seed, stall):
                                  stall=stall, seed=seed + 7)
     assert np.array_equal(drams[0], m.slices[0].dram)
     assert np.array_equal(tmems[0], m.slices[0].tmem)
+
+
+def test_tmem_random_traffic(have_verilator):
+    """TMEM alone against a reference model; most reads hit the previous cycle's writes, which
+    are still in TMEM's registered write stage (the bypass)."""
+    exe = rtlsim.build("tb_tmem", [rtlsim.RTL / "mem/otpu_tmem.sv", rtlsim.TB / "tb_tmem.sv"])
+    r = subprocess.run([str(exe)], capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0 and "PASS" in r.stdout, r.stdout[-2000:] + r.stderr[-2000:]

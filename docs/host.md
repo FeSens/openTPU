@@ -1,6 +1,6 @@
 # Host PC: driving the openTPU card over PCIe
 
-The YPCB-00338 card runs the accelerator behind a Xilinx XDMA PCIe bridge (Gen2 x8). This page
+The YPCB-00338 card runs the accelerator behind a Xilinx XDMA PCIe bridge (Gen1 x8). This page
 covers the host side: the PC the card is plugged into, its driver, and the tools that talk to
 the card. Building and loading the bitstream is in [board.md](board.md); the registers,
 counters and trace buffer the tools read are specified in [observability.md](observability.md).
@@ -77,7 +77,7 @@ bitstream already in the card's configuration flash, or program over JTAG and th
 ```sh
 lspci -d 10ee:                       # the card, e.g. "Memory controller: Xilinx ... Device 7028"
 sudo lspci -d 10ee: -vv | grep -E "LnkCap|LnkSta|Region"
-#   LnkSta: Speed 5GT/s, Width x8     <- Gen2 x8; anything less costs DMA bandwidth only
+#   LnkSta: Speed 2.5GT/s, Width x8   <- Gen1 x8; anything less costs DMA bandwidth only
 #   Region 0: Memory at ... [size=...]  <- BAR0, the control registers (AXI-Lite; size set in the block design, >= 4 KiB)
 # after JTAG programming, without a reboot:
 echo 1 | sudo tee /sys/bus/pci/devices/0000:XX:00.0/remove
@@ -205,7 +205,7 @@ $ otpu-smi
 otpu-smi 0.1.0                                                       2026-09-24 08:08:46
 +--------------------------------------------------------------------------------------+
 | /dev/xdma0       openTPU D=128 MCOLS=2 LANES=8  100.0 MHz  build 1234abcd  regmap v2 |
-| link ok (5.0 GT/s PCIe x8)   DDR3 calib ch0 ok ch1 ok   temp 34.5 C   running        |
+| link ok (2.5 GT/s PCIe x8)   DDR3 calib ch0 ok ch1 ok   temp 34.5 C   running        |
 | power 4.63 W est.   DRAM 900 / 4,096 MiB (KV 12 / 224)   DRAM bw 4.61 GB/s           |
 +--------------------------------------------------------------------------------------+
 | util  RUN 80%  MXU 60%  MAC 50%  VPU 12%  QNT 5%  DMA 3%                             |

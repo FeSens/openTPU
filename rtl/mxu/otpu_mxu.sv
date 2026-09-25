@@ -89,7 +89,9 @@ module otpu_mxu
   logic [PW:0] occ;                         // chunks issued and not yet popped (<= DEPTH)
 
   // ================================================================== command queue (2)
+  wire [31:0] cmd_total = 32'(cmd.w4[15:0]) * 32'(cmd.w4[31:16]);   // chunks to stream
   logic [31:0] q_out [2], q_total [2];
+  logic        q_tz [2];                      // q_total == 0 (registered: off the drain path)
   logic [15:0] q_KB [2], q_ors [2];
   logic [31:0] q_mxo [2];                     // RMAX output base: out + M * ors (no multiply later)
   logic [7:0]  q_M [2], q_ab [2];
@@ -100,7 +102,7 @@ module otpu_mxu
   logic [1:0]  q_n;
 
   wire [31:0] c_out = q_out[q_h];
-  wire [31:0] c_total = q_total[q_h];
+  wire        c_tz = q_tz[q_h];
   wire [15:0] c_KB = q_KB[q_h];
   wire [7:0]  c_M = q_M[q_h], c_ab = q_ab[q_h];
   wire        c_unit = q_unit[q_h], c_acc = q_acc[q_h], c_rmax = q_rmax[q_h];
@@ -113,17 +115,20 @@ module otpu_mxu
 
   // FIFOs of chunks and of their scales (the two DRAM ports return independently, in order;
   // an issued chunk's slot is reserved, so neither FIFO can overflow)
-  logic [D*8-1:0] f_data  [DEPTH];
-  logic [31:0]    f_scale [DEPTH];
+  // block RAM: written in their own reset-free process below (a write under the control
+  // process's reset made Vivado build them from ~22K LUTs of distributed RAM, with a write
+  // address fanning out to every LUT)
+  (* ram_style = "block" *) logic [D*8-1:0] f_data  [DEPTH];
+  (* ram_style = "block" *) logic [31:0]    f_scale [DEPTH];
   logic [PW-1:0]  f_head, f_tail, s_head, s_tail;
   logic [PW:0]    f_count, s_count;
 
   // ================================================================== consumer control
   logic [15:0] ck;
-  logic [31:0] c_pop;
+  logic [31:0] c_left;                      // chunks of the head command not yet popped
   logic [RFW:0] rows_live;                  // rows popped (first block) and not yet drained
   wire last_k   = (ck + 1 == c_KB);
-  wire more     = c_act && (c_pop < c_total);
+  wire more     = c_act && (c_left != 0);
   wire pop      = more && (f_count != 0) && (c_unit || s_count != 0) && (ck != 0 || rows_live < RF);
   wire en_c     = pop || !(more && ck != 0);       // freeze only in the middle of a row
   wire want_iss = i_act && (occ < (PW+1)'(DEPTH));
@@ -189,6 +194,12 @@ module otpu_mxu
   logic cu0;
   assign ws0 = cu0 ? F_ONE : ws0r;
   always_comb for (int j = 0; j < MCOLS; j++) as0[j] = act_scale[j*32 +: 32];
+
+  // FIFO writes (the slot was reserved when the chunk was issued; see occ)
+  always_ff @(posedge clk) begin
+    if (b_rvalid) f_data[f_tail] <= b_rdata;
+    if (a_rvalid) f_scale[s_tail] <= a_rdata;
+  end
 
   always_ff @(posedge clk) if (en_c) begin
     // S0: the popped chunk, its ACT RAM block and scales
@@ -520,9 +531,9 @@ module otpu_mxu
       end
 `endif
 
-  wire c_drained = c_act && (c_pop == c_total) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
-  wire mx_go     = c_drained && c_rmax && !mx_done && (c_total != 0);
-  wire c_fin     = c_drained && (!c_rmax || mx_done || c_total == 0);
+  wire c_drained = c_act && (c_left == 0) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
+  wire mx_go     = c_drained && c_rmax && !mx_done && !c_tz;
+  wire c_fin     = c_drained && (!c_rmax || mx_done || c_tz);
   wire al_go     = c_act && c_asc && al_st == 2'd0;
 
   always_comb begin
@@ -590,7 +601,7 @@ module otpu_mxu
       occ <= '0;
       f_head <= '0; f_tail <= '0; f_count <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0;
-      ck <= '0; c_pop <= '0; rows_live <= '0;
+      ck <= '0; c_left <= '0; rows_live <= '0;
       rf_h <= '0; rf_t <= '0; rf_n <= '0;
       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
@@ -609,7 +620,9 @@ module otpu_mxu
         logic qi;
         qi = q_h ^ (q_n != 0);
         q_out[qi]   <= cmd.w3;
-        q_total[qi] <= 32'(cmd.w4[15:0]) * 32'(cmd.w4[31:16]);
+        q_total[qi] <= cmd_total;
+        q_tz[qi]    <= (cmd_total == 0);
+        if (q_n == 0) c_left <= cmd_total;          // becomes the head now
         q_KB[qi]    <= cmd.w4[31:16];
         q_ors[qi]   <= cmd.w6[15:0];
         q_mxo[qi]   <= cmd.w3 + 32'(cmd.w6[23:16]) * 32'(cmd.w6[15:0]);
@@ -657,12 +670,8 @@ module otpu_mxu
         end
       end
       // ---- FIFO pushes
-      if (b_rvalid) begin
-        f_data[f_tail] <= b_rdata;
-        f_tail <= f_tail + 1;
-      end
+      if (b_rvalid) f_tail <= f_tail + 1;
       if (a_rvalid) begin
-        f_scale[s_tail] <= a_rdata;
         s_tail <= s_tail + 1;
       end
       f_count <= f_count + (b_rvalid ? 1 : 0) - (pop ? 1 : 0);
@@ -672,7 +681,7 @@ module otpu_mxu
       if (pop) begin
         f_head <= f_head + 1;
         if (!c_unit) s_head <= s_head + 1;
-        c_pop <= c_pop + 1;
+        c_left <= c_left - 1;
         if (ck == 0) rl = rl + 1;
         ck <= last_k ? '0 : ck + 1;
       end
@@ -722,8 +731,11 @@ module otpu_mxu
         end
         if (al_go) al_st <= 2'd1;
         if (al_st == 2'd1) begin
-          for (int k = 0; k < LANES; k++)
-            if (32'(al_i) + 32'(k) < MCOLS) alpha[MW'(32'(al_i) + 32'(k))] <= t_rdata[k];
+          // one write per entry (a constant index): a variable-index write of several lanes makes
+          // Vivado try, and crash while dissolving, a RAM for these MCOLS registers
+          for (int j = 0; j < MCOLS; j++)
+            if (32'(j) >= 32'(al_i) && 32'(j) < 32'(al_i) + LANES)
+              alpha[j] <= t_rdata[$clog2(LANES)'(32'(j) - 32'(al_i))];
           if (32'(al_i) + LANES >= 32'(c_M)) al_st <= 2'd2;
           else begin
             al_i <= al_i + 8'(LANES);
@@ -746,7 +758,9 @@ module otpu_mxu
         done <= 1'b1;
         q_h <= ~q_h;
         qn = qn - 1;
-        ck <= '0; c_pop <= '0;
+        ck <= '0;
+        // the next head's chunk count: the queued entry, or a command accepted this cycle
+        c_left <= (q_n == 2'd2) ? q_total[~q_h] : (start ? cmd_total : '0);
         dj <= '0;
         for (int j = 0; j < MCOLS; j++)
           dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])

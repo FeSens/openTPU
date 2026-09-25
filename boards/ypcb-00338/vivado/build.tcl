@@ -1,6 +1,8 @@
 # Build the bitstream: synthesis, implementation (opt, place, phys_opt, route, post-route
 # phys_opt), reports and bitstream.
-#   vivado -mode batch -source build.tcl -tclargs [OUT_DIR] [JOBS]
+#   vivado -mode batch -source build.tcl -tclargs [OUT_DIR] [JOBS] [impl|full] [IMPL_STRATEGY]
+# With "impl", the existing synthesis (and IP runs) are kept and only implementation reruns:
+# for constraint or implementation-strategy changes that do not touch the RTL.
 # Expects the project from create_project.tcl. Outputs in OUT_DIR/reports and
 # OUT_DIR/otpu.bit (+ otpu.ltx when debug cores exist, + otpu.bin/.mcs for the BPI flash);
 # reports/power.json feeds otpu-smi's power estimate.
@@ -9,26 +11,38 @@ set here [file normalize [file dirname [info script]]]
 set root [file normalize $here/../../..]
 set out [expr {[llength $argv] > 0 ? [file normalize [lindex $argv 0]] : "$root/build/vivado"}]
 set jobs [expr {[llength $argv] > 1 ? [lindex $argv 1] : 8}]
+set impl_only [expr {[lindex $argv 2] eq "impl"}]
+# an implementation strategy (e.g. Performance_Explore) when the default run misses timing
+set strategy [lindex $argv 3]
 
 open_project $out/otpu.xpr
 file mkdir $out/reports
 
-# ---- IP (block design) out-of-context runs first
-generate_target all [get_files otpu_bd.bd]
-export_ip_user_files -of_objects [get_files otpu_bd.bd] -no_script -sync -force -quiet
-create_ip_run [get_files otpu_bd.bd]
+if {!$impl_only} {
+  # ---- IP (block design) out-of-context runs first
+  generate_target all [get_files otpu_bd.bd]
+  export_ip_user_files -of_objects [get_files otpu_bd.bd] -no_script -sync -force -quiet
+  create_ip_run [get_files otpu_bd.bd]
 
-# ---- synthesis
-reset_run synth_1
-launch_runs synth_1 -jobs $jobs
-wait_on_run synth_1
-if {[get_property PROGRESS [get_runs synth_1]] != "100%"} { error "synthesis failed" }
-open_run synth_1
-report_utilization -hierarchical -hierarchical_depth 4 -file $out/reports/synth_util_hier.rpt
-report_timing_summary -max_paths 20 -file $out/reports/synth_timing.rpt
-close_design
+  # ---- synthesis
+  reset_run synth_1
+  launch_runs synth_1 -jobs $jobs
+  wait_on_run synth_1
+  if {[get_property PROGRESS [get_runs synth_1]] != "100%"} { error "synthesis failed" }
+  open_run synth_1
+  report_utilization -hierarchical -hierarchical_depth 4 -file $out/reports/synth_util_hier.rpt
+  report_timing_summary -max_paths 20 -file $out/reports/synth_timing.rpt
+  close_design
+} else {
+  if {[get_property PROGRESS [get_runs synth_1]] != "100%"} { error "impl: no finished synthesis to reuse" }
+  # constraint edits mark synthesis out of date; keep its netlist anyway
+  set_property NEEDS_REFRESH false [get_runs synth_1]
+}
 
 # ---- implementation to the routed design
+if {$strategy ne ""} { set_property strategy $strategy [get_runs impl_1] }
+set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+reset_run impl_1
 launch_runs impl_1 -jobs $jobs
 wait_on_run impl_1
 if {[get_property PROGRESS [get_runs impl_1]] != "100%"} { error "implementation failed" }
@@ -70,12 +84,10 @@ foreach clk [get_clocks] {
 close $fh
 puts [exec cat $out/reports/SUMMARY.txt]
 
-# ---- bitstream (the run's write_bitstream step), copied to stable names
-launch_runs impl_1 -to_step write_bitstream -jobs $jobs
-wait_on_run impl_1
-set bit [glob $out/otpu.runs/impl_1/*.bit]
-file copy -force $bit $out/otpu.bit
-foreach ltx [glob -nocomplain $out/otpu.runs/impl_1/*.ltx] { file copy -force $ltx $out/otpu.ltx }
+# ---- bitstream, written from the routed design opened above
+source $here/bitstream_pre.tcl
+write_bitstream -force $out/otpu.bit
+if {[llength [get_debug_cores -quiet]]} { write_debug_probes -force $out/otpu.ltx }
 # BPI x16 flash image (for a permanent load; see docs/board.md). The flash has address lines
 # A1..A25 on a x16 bus: 64 MB.
 write_cfgmem -force -format mcs -size 64 -interface BPIx16 -loadbit "up 0x0 $out/otpu.bit" \

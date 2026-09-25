@@ -65,7 +65,7 @@ module otpu_fpga_top #(
 );
   logic        core_clk, core_rstn, pcie_link_up;
   logic [1:0]  calib;
-  logic [11:0] device_temp;                  // MIG channel 0's XADC reading (its ui_clk domain)
+  logic [11:0] device_temp;                  // XADC die-temperature code (xadc_temp in bd.tcl)
 
   // ---- control (AXI4-Lite, BD master -> accelerator)
   logic [31:0] ctl_awaddr, ctl_araddr, ctl_wdata, ctl_rdata;

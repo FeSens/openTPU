@@ -35,8 +35,8 @@ After JTAG programming run: $0 --rescan (or reboot with the bitstream in flash)"
 lspci -s "$bdf" -nn
 sta="$(sudo lspci -s "$bdf" -vv | grep -E 'LnkSta:' | head -1 || true)"
 echo "   $sta"
-[[ "$sta" == *"5GT/s"* && "$sta" == *"Width x8"* ]] || \
-  echo "   warning: expected Gen2 (5GT/s) x8; the link works but DMA bandwidth is lower"
+[[ "$sta" == *"2.5GT/s"* && "$sta" == *"Width x8"* ]] || \
+  echo "   warning: expected Gen1 (2.5GT/s) x8; the link works but DMA bandwidth is lower"
 
 # ---- 2. the XDMA driver
 if ! lsmod | grep -q '^xdma'; then

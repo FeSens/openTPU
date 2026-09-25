@@ -108,7 +108,7 @@ def prj(ch: int, pins: dict, speed: int, ecc: bool) -> str:
     <Debug_En>OFF</Debug_En>
     <DataDepth_En>1024</DataDepth_En>
     <LowPower_En>ON</LowPower_En>
-    <XADC_En>{'Enabled' if ch == 0 else 'Disabled'}</XADC_En>
+    <XADC_En>Disabled</XADC_En>
     <TargetFPGA>xc7k480t-ffg1156/-2</TargetFPGA>
     <Version>4.2</Version>
     <SystemClock>No Buffer</SystemClock>

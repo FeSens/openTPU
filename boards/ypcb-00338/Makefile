@@ -2,6 +2,7 @@
 #   make lint       offline: MIG pin check, Tcl syntax, XDC ports vs the top, Verilator lint
 #   make mig        regenerate the MIG .prj files and DDR3 pin XDC (DDR=800|1066)
 #   make bit        Vivado batch build (MCOLS=2|4, CORE_MHZ=100|80|75) -> build/vivado/otpu.bit (VIVADO_DOCKER=image for Docker)
+#   make impl       rerun implementation only on the existing project (constraint changes)
 #   make program    JTAG load (openFPGALoader); make program-vivado with Vivado's hw_server
 #   make flash      write the BPI flash (permanent)
 ROOT := $(abspath ../..)
@@ -16,7 +17,7 @@ RTL := $(addprefix $(ROOT)/rtl/, vpu/otpu_fp.sv vpu/otpu_fpipe.sv top/otpu_pkg.s
   mxu/otpu_mxu.sv vpu/otpu_quant.sv vpu/otpu_vpu.sv top/otpu_coll.sv top/otpu_slice.sv \
   boards/ypcb-00338/otpu_ctrl.sv boards/ypcb-00338/otpu_trace.sv boards/ypcb-00338/otpu_board.sv)
 
-.PHONY: lint mig bit program program-vivado flash
+.PHONY: lint mig bit impl program program-vivado flash
 mig:
 	python3 scripts/gen_mig_prj.py --speed $(DDR)
 
@@ -28,6 +29,9 @@ lint: mig
 
 bit:
 	MCOLS=$(MCOLS) CORE_MHZ=$(CORE_MHZ) $(if $(BUILD_ID),BUILD_ID=$(BUILD_ID)) ./run_vivado.sh $(DDR)
+
+impl:
+	STEP=impl ./run_vivado.sh $(DDR)
 
 program:
 	./program.sh

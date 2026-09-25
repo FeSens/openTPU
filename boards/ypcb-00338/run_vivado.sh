@@ -5,6 +5,10 @@
 #   MCOLS=4 ./run_vivado.sh               # 4 MXU columns (faster prefill / batched decode)
 #   CORE_MHZ=80 ./run_vivado.sh           # slower core clock when 100 MHz does not close
 #   VIVADO_DOCKER=image ./run_vivado.sh   # Docker (e.g. Apple Silicon with Rosetta), see docs/board.md
+#   STEP=impl ./run_vivado.sh             # rerun implementation only (keeps project and synthesis)
+#   IMPL_STRATEGY=Performance_Explore     # a stronger implementation strategy (with bit or impl)
+#   The xc7k480t needs a paid or 30-day evaluation license, node-locked to a MAC address. In Docker
+#   set VIVADO_MAC (the MAC the license was issued for) and XILINXD_LICENSE_FILE (path to the .lic).
 #
 # Output: build/vivado/otpu.bit, build/vivado/otpu.mcs, build/vivado/reports/.
 set -euo pipefail
@@ -24,8 +28,10 @@ python3 "$here/scripts/gen_mig_prj.py" --speed "$speed"
 run() {  # run a Vivado Tcl script with arguments
   local script="$1"; shift
   if [[ -n "${VIVADO_DOCKER:-}" ]]; then
-    docker run --rm --platform linux/amd64 \
+    docker run --rm \
       -v "$root:$root" -w "$root" \
+      ${VIVADO_MAC:+--mac-address "$VIVADO_MAC"} \
+      ${XILINXD_LICENSE_FILE:+-v "$XILINXD_LICENSE_FILE:$XILINXD_LICENSE_FILE:ro" -e "XILINXD_LICENSE_FILE=$XILINXD_LICENSE_FILE"} \
       ${VIVADO_MOUNT:+-v "$VIVADO_MOUNT"} \
       "$VIVADO_DOCKER" \
       bash -lc "source ${VIVADO_SETTINGS:-/tools/Xilinx/Vivado/2026.1/settings64.sh} && \
@@ -38,6 +44,10 @@ run() {  # run a Vivado Tcl script with arguments
 }
 
 mkdir -p "$out"
-run "$here/vivado/create_project.tcl" "$speed" "$out" "$mcols" "$core_mhz" "$build_id"
-run "$here/vivado/build.tcl" "$out" "$jobs"
+if [[ "${STEP:-}" == impl ]]; then
+  run "$here/vivado/build.tcl" "$out" "$jobs" impl "${IMPL_STRATEGY:-}"
+else
+  run "$here/vivado/create_project.tcl" "$speed" "$out" "$mcols" "$core_mhz" "$build_id"
+  run "$here/vivado/build.tcl" "$out" "$jobs" full "${IMPL_STRATEGY:-}"
+fi
 echo "done: $out/otpu.bit"

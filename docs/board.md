@@ -2,12 +2,12 @@
 
 The board build: one openTPU slice (D = 128, 2 MXU columns, 8 VPU lanes, 64K-word TMEM) on a
 Kintex-7 xc7k480t-ffg1156-2, with both DDR3 channels (2 x 2 GiB) behind Xilinx MIG
-controllers, and the host PC over PCIe Gen2 x8 (Xilinx XDMA). The host compiles each token's
+controllers, and the host PC over PCIe Gen1 x8 (Xilinx XDMA). The host compiles each token's
 program, loads it and runs it; `otpu-chat --backend board` chats with Qwen3-0.6B on it.
 
 ```
- host PC ── PCIe Gen2 x8 ── XDMA ──┬── AXI-Lite (BAR0) ─────────────── control registers ┐
-                                   └── AXI4 128b @250 MHz ──┐                             │
+ host PC ── PCIe Gen1 x8 ── XDMA ──┬── AXI-Lite (BAR0) ─────────────── control registers ┐
+                                   └── AXI4 128b @125 MHz ──┐                             │
                                                             SmartConnect ── MIG0 ── DDR3 CH0 (2 GiB)
                otpu_board (core_clk 100 MHz) ── m0 512b ──┤            └── MIG1 ── DDR3 CH1 (2 GiB)
                  slice + otpu_axi_dram       ── m1 512b ──┘
@@ -19,7 +19,8 @@ self-test), `opentpu/host/` (driver and tools, [host.md](host.md)).
 
 ## 1. Build the bitstream
 
-Vivado 2026.1 (the free edition covers the xc7k480t, XDMA and MIG 7 series).
+Vivado 2026.1 with a license that covers the xc7k480t. The free edition does not include this
+device: use a paid license or AMD's 30-day evaluation license (see "License" below).
 
 ```sh
 cd boards/ypcb-00338
@@ -37,6 +38,12 @@ make bit MCOLS=4   # 4 MXU columns: ~1.7x prefill and batched decode, ~67% LUT; 
 BPI flash image). Expect 1.5-3 h. Look at `build/vivado/reports/SUMMARY.txt` first: WNS/WHS and
 the achieved frequency per clock; then `timing_summary.rpt`, `util_hier.rpt`, `cdc.rpt`.
 
+Measured (Vivado 2026.1, 2026-09-24; default build: MCOLS=2, core 100 MHz, DDR3-800, PCIe Gen1
+x8): all timing constraints met, WNS +0.082 ns, WHS +0.016 ns. Utilization: 187,852 LUT
+(62.9%), 126,679 FF (21.2%), 635 BRAM36 tiles (66.5%), 267 DSP48 (13.9%). Vivado's power
+estimate is 8.75 W (low confidence: no switching activity supplied). About 3 h with `JOBS=1`
+in Docker on a 16 GB Apple Silicon Mac (4 jobs ran out of memory).
+
 ### Vivado on Apple Silicon (Docker + Rosetta)
 
 Vivado is x86-64 Linux/Windows only. On an M-series Mac:
@@ -46,8 +53,27 @@ Vivado is x86-64 Linux/Windows only. On an M-series Mac:
 2. Build an image with Vivado installed (Ubuntu 22.04 amd64 base; the AMD unified installer in
    batch mode, `xsetup -b Install -a XilinxEULA,3rdPartyEULA -c install_config.txt`, edition
    "Vivado ML Standard", devices: Kintex-7 only to save space). Downloading the installer needs
-   your AMD account login (do it yourself in the browser); the free edition needs no license.
-3. `VIVADO_DOCKER=vivado:2026.1 VIVADO_SETTINGS=/tools/Xilinx/Vivado/2026.1/settings64.sh make bit`
+   your AMD account login (do it yourself in the browser).
+3. Install into a Docker volume so the image stays small, e.g. `xilinx-2026.1` mounted at
+   `/opt/Xilinx`, then:
+
+```sh
+VIVADO_DOCKER=vivado:2026.1 VIVADO_MOUNT=xilinx-2026.1:/opt/Xilinx \
+VIVADO_SETTINGS=/opt/Xilinx/2026.1/Vivado/settings64.sh \
+VIVADO_MAC=02:42:0a:7b:00:01 XILINXD_LICENSE_FILE=$HOME/.Xilinx/otpu.lic \
+JOBS=4 make bit
+```
+
+### License
+
+Without a license Vivado 2026.1 stops at start-up ("a valid license was not found"). A node-locked
+license is tied to a host ID, the Ethernet MAC address. Docker gives each container a new MAC, so
+pick one and pass it as `VIVADO_MAC`; `run_vivado.sh` starts every container with it.
+
+1. At AMD's Product Licensing site (your AMD login), generate a node-locked license for the
+   Vivado Enterprise edition (the 30-day evaluation is enough for bring-up). Host ID: the MAC
+   without colons, e.g. `02420a7b0001` for `02:42:0a:7b:00:01`.
+2. Save the `.lic` file and pass its path as `XILINXD_LICENSE_FILE`.
 
 Rosetta runs Vivado at roughly half native speed; a Linux x86 box is faster if one is at hand.
 JTAG does not go through Docker: program from macOS with openFPGALoader (below).
@@ -73,7 +99,7 @@ to rescan after loading:
 ```sh
 # on the host PC (the card sits in its slot, powered by it)
 sudo sh -c 'echo 1 > /sys/bus/pci/rescan'
-lspci -d 10ee: -vv        # expect: Xilinx 7028, LnkSta: Speed 5GT/s, Width x8
+lspci -d 10ee: -vv        # expect: Xilinx 7028, LnkSta: Speed 2.5GT/s, Width x8
 ```
 
 If the device does not appear, warm-reboot the host (the FPGA keeps its configuration across
@@ -117,7 +143,7 @@ The self-test runs the same checks against the Verilator model of the board with
 | clk_267 | 266.667 MHz | MMCM /3 | MIG system clock at DDR3-1066 |
 | ui_clk0/1 | 100 MHz (133 MHz at 1066) | MIG | MIG AXI side, 512 bit |
 | DDR3 CK | 400 MHz (533 MHz) | MIG PLL | memory |
-| axi_aclk | 250 MHz | XDMA | PCIe AXI side, 128 bit |
+| axi_aclk | 125 MHz | XDMA | PCIe AXI side, 128 bit (Gen1 x8) |
 
 Decode is DRAM-bound: every token streams all weights once. The accelerator consumes one
 128-byte chunk per core cycle at its peak; each DDR3 channel (x64) delivers 8 bytes per CK edge.
@@ -129,11 +155,12 @@ Decode is DRAM-bound: every token streams all weights once. The accelerator cons
 
 So the fmax each part must clear to stay at the roofline at DDR3-800: core_clk >= 100 MHz
 (accelerator, otpu_axi_dram, control), MIG ui_clk 100 MHz (fixed by the MIG), SmartConnect
-paths at their own clocks (100 / 250 MHz), XDMA 250 MHz (fixed by the IP). Real DDR3
+paths at their own clocks (100 / 125 MHz), XDMA 125 MHz (fixed by the IP at Gen1 x8). Real DDR3
 efficiency (refresh, row misses, read/write turnaround) is ~70-85 %, which the accelerator's
 deep prefetch absorbs; a core clock above 100 MHz buys nothing at DDR3-800. Host transfers
 per token are small (program ~40 KB, logits 600 KB): the one-time weight upload (~820 MB) takes
-~0.3-0.5 s at Gen2 x8.
+~0.5-0.7 s at Gen1 x8 (2 GB/s). Gen1 rather than Gen2: at Gen2 the PCIe block runs a
+500 MHz user clock whose IP-placed paths missed timing by ~0.1 ns (Vivado 2026.1, 80 MHz build).
 
 ## 6. What to check on first build (assumptions made without Vivado)
 
@@ -158,11 +185,11 @@ per token are small (program ~40 KB, logits 600 KB): the one-time weight upload 
    saw a stuck byte lane (CH0 physical lane 3) and capture trouble on CH1 lanes 6-7. MIG
    calibrates per lane; if a channel does not calibrate, read the MIG calibration status via
    the MIG debug signals (set `Debug_En` ON in the .prj) to find the lane.
-3. **PCIe placement**: the lanes are on the GTX pins F2 H2 K2 M2 N4 P2 T2 U4 (TX), refclk on
-   J8. bd.tcl leaves the XDMA block/quad at Vivado's default for the part; if placement fails
-   or lanes come up reversed, set `PCIE_BLK_LOCN` / `PCIE_QUAD` (e.g. `X0Y0`,
-   `GTX_Quad_115`/`116`) before sourcing bd.tcl. Check `report_io` for the GT sites. PERST# is
-   Y26 (LVCMOS18, pulled up).
+3. **PCIe placement**: the lanes are on the GTX pins F2 H2 K2 M2 N4 P2 T2 U4 (TX, lane 0..7:
+   banks 116 then 115), refclk on J8 (MGTREFCLK0_116). The XDMA's default GT sites are one quad
+   lower, so `constraints/otpu_top.xdc` LOCs lane i to `GTXE2_CHANNEL_X0Y(23-i)`. If the link
+   comes up narrower than x8 or not at all, suspect the lane order first (`lspci -vv`, LnkSta).
+   PERST# is Y26 (LVCMOS18, pulled up).
 4. **Reset**: the board reset pin R28 is not wired; the design resets from the MMCM lock.
 5. **Configuration**: CFGBVS GND / 1.8 V, BPI x16 flash (A1..A25, 64 MB), compressed bitstream.
 6. **LED polarity** is unverified: led[0] heartbeat, led[1] PCIe link up and both channels
