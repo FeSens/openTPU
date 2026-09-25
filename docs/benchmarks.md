@@ -209,14 +209,14 @@ Qwen3.5 runs one token per device run, so only b=1 decode is measured, on the fu
 `tools/perf_qwen.py --model qwen35 --layers 0` (same configuration as above; the roofline is
 every byte the token moves, KV read once). Tokens/s are projections at 100 MHz.
 
-| bw | ctx | cycles/token (measured) | tok/s | % of DRAM roofline |
-|---:|---:|---:|---:|---:|
-| 80% | 128 | 11,535,257 | **8.7** | 69.3% |
-| 80% | 1024 | 11,636,450 | 8.6 | 69.2% |
-| 100% | 128 | 10,419,105 | 9.6 | 61.4% |
-| 100% | 1024 | 10,495,642 | 9.5 | 61.4% |
+| bw | ctx | cycles/token (measured) | tok/s | % of DRAM roofline | without RDOT/OUTER (measured) |
+|---:|---:|---:|---:|---:|---:|
+| 80% | 128 | 9,130,829 | **11.0** | 87.6% | 11,535,257 (69.3%) |
+| 80% | 1024 | 9,231,246 | 10.8 | 87.2% | 11,636,450 (69.2%) |
+| 100% | 128 | 8,022,432 | 12.5 | 79.8% | 10,419,105 (61.4%) |
+| 100% | 1024 | 8,099,652 | 12.3 | 79.5% | 10,495,642 (61.4%) |
 
-The Gated DeltaNet recurrence runs on the vector unit and takes half the token (5.83 M cycles,
-at any bandwidth); the MLPs, attention and LM head run at their rooflines. The MCOLS=4, VPU_CL=4
-build gains under 1%. This is the baseline of the architecture tournament; details,
+The Gated DeltaNet recurrence runs on the vector unit with RDOT and OUTER (3 passes over each
+head's state instead of 7) and takes 37% of the token (3.41 M cycles, at either bandwidth); the
+MLPs, attention and LM head run at their rooflines. VPU_CL=4 gains under 1%. Details,
 accuracy and the cycle breakdown are in [qwen35.md](qwen35.md).

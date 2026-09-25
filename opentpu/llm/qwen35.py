@@ -50,7 +50,8 @@ from .. import language as ol
 from ..compiler import Affine, KVDesc, QTensor, Tensor
 from ..isasim import Config
 from ..kernels.layouts import head_parallel_attention_weights
-from ..kernels.lib import rmsnorm, sigmoid, silu, softplus
+from ..kernels.deltanet import gates, head_step, l2norm_rows
+from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
 from ..runtime import quantize_rows
 from .lfm2 import plan, run_layers
@@ -348,7 +349,7 @@ class Image:
                             "wk": (self.nkv_loc * d, H), "wv": (self.nkv_loc * d, H),
                             "wo": (self.h_loc, spec.n_q * d), **mlp}}
         lnb = _Bump(lb.next)
-        lin = dict(common, alpha=lnb.alloc(4 * nl), dtb=lnb.alloc(4 * nl), gn=lnb.alloc(4 * dv),
+        lin = dict(common, alog=lnb.alloc(4 * nl), dtb=lnb.alloc(4 * nl), gn=lnb.alloc(4 * dv),
                    taps=lnb.alloc(4 * nl * K * C), ring=lnb.alloc(4 * K * nl * C),
                    state=lnb.alloc(4 * nl * dv * dk))
         ab = _Bump(lb.next)
@@ -420,7 +421,6 @@ class Image:
                                2 * NK + h * dv:2 * NK + (h + 1) * dv]
                          for h in range(spec.lin_heads)]
                 taps = W[a + "conv1d.weight"][:, 0, :]                   # [channels, K]
-                alpha = -np.exp(np.asarray(W[a + "A_log"], np.float64)) / math.log(2)
                 hs = [range(s * nl, (s + 1) * nl) for s in range(S)]
                 put_q(Lo["wh"], [np.concatenate([np.concatenate([qkv[chans[h]],
                                                                  wz[h * dv:(h + 1) * dv]])
@@ -431,7 +431,7 @@ class Image:
                 put_q(Lo["wout"], [np.concatenate([wout[:, h * dv:(h + 1) * dv] for h in hh])
                                    for hh in hs])
                 for s, hh in enumerate(hs):
-                    put(s, Lo["alpha"], f32(alpha[hh.start:hh.stop]))
+                    put(s, Lo["alog"], f32(W[a + "A_log"][hh.start:hh.stop]))
                     put(s, Lo["dtb"], f32(W[a + "dt_bias"][hh.start:hh.stop]))
                     put(s, Lo["gn"], f32(W[a + "norm.weight"]))
                     put(s, Lo["taps"], f32(np.stack([taps[chans[h]].T for h in hh])))
@@ -491,7 +491,7 @@ class Image:
             ns.wd = QTensor(parts[0].data, parts[0].scale, (n, spec.ffn), Cd, 4 * (Cd // D), D,
                             parts=parts, pw=Cd)
             if kind == LIN:
-                ns.alpha = Tensor(off + lofs["alpha"], (nl,), (1,))
+                ns.alog = Tensor(off + lofs["alog"], (nl,), (1,))
                 ns.dtb = Tensor(off + lofs["dtb"], (nl,), (1,))
                 ns.gn = Tensor(off + lofs["gn"], (dv,), (1,))
                 ns.taps = Tensor(off + lofs["taps"], (nl, K, C), (K * C, C, 1))
@@ -514,99 +514,80 @@ class Image:
 
 
 # =============================================================================== kernel
-STATE_ROWS = 64       # DeltaNet state rows per VPU pass (bounds the TMEM for its temporaries)
-
-
 def _deltanet(x, lw, pos: int, spec: Spec, hs):
     """x + out_proj(Gated DeltaNet(x)) for one token, this slice's heads; returns the new
     residual (replicated on every slice).
 
-    First the decay exp(g) and beta of every head (small vectors) go to `hs` in DRAM. Then the
-    heads run in pairs in a hardware loop; the state and inputs of head h+1 (its fp32 state,
-    projections, taps and convolution rows) are fetched while the VPU works on head h, into
-    two sets of buffers used in turn. Per head, with the state stored transposed (St = S^T,
-    [dv, dk]), in blocks of STATE_ROWS rows (the rows are independent):
-        kS = St k,  qS = St q                       (products and row sums, of the old state)
-        delta = beta (v - exp(g) kS)
-        o = exp(g) qS + (k . q) delta               (= S_new^T q)
-        St = exp(g) St + delta k^T                  (a scale, an outer product and an add)
-    and o, normed and gated, is multiplied into y by the head's column block of out_proj."""
+    First the decay exp(g) and beta of every head (small vectors, kernels.deltanet.gates) go to
+    `hs` in DRAM. Then the heads run in pairs in a hardware loop, with two sets of buffers used
+    in turn: head h's convolution, SiLU and L2 norms, then its recurrence (kernels.deltanet.
+    head_step: RDOT, OUTER, RDOT over the fp32 state, stored transposed), during which the MXU
+    and the DMA fetch head h+1's projections and state into the other set. o, normed and
+    gated, is multiplied into y by the head's column block of out_proj."""
     eps, K = spec.eps, spec.conv_k
     dk, dv = spec.lin_dk, spec.lin_dv
     nl, C = lw.state.shape[0], 2 * dk + dv
     R = C + dv
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     ab = ol.dot(xs, lw.wab)                             # [1, 2nl]: a, then b, of each head
-    sp = softplus(ab[:, 0:nl] + ol.load(lw.dtb)[None, :])
-    ol.store(hs[0:1, :], ol.exp2(sp * ol.load(lw.alpha)[None, :]))     # exp(g)
-    ol.store(hs[1:2, :], sigmoid(ab[:, nl:2 * nl]))                     # beta
+    decay, beta = gates(ab[0, 0:nl], ab[0, nl:2 * nl], ol.load(lw.alog), ol.load(lw.dtb))
+    ol.store(hs[0, :], decay)
+    ol.store(hs[1, :], beta)
+    del decay, beta
     prevs = [(pos - j) % K for j in range(1, min(K, pos + 1))]          # ring slots of p-1, ...
 
-    def fetch(h, into=None):
-        """Head h's projections [q k v z], taps, earlier convolution rows, decay and beta, and
-        its state (into the tiles of `into`). The DMA runs in order, and the state load waits
-        for the store of the head that used the buffer before: it goes last. At position 0 the
-        state is zero, whatever DRAM holds from an earlier sequence (Engine.reset)."""
-        # a new set of buffers: the state first, so that the big tiles stay together in TMEM
-        t = into or SimpleNamespace(St=ol.empty([dv * dk]).reshape(dv, dk),
-                                    prev=[None] * len(prevs))
-        t.P = ol.dot(xs, lw.wh[h * R:(h + 1) * R, :], out=into and into.P)
-        t.taps = ol.load(lw.taps[h], out=into and into.taps)
-        t.prev = [ol.load(lw.ring[s, h * C:(h + 1) * C], out=o) for s, o in zip(prevs, t.prev)]
-        t.eg = ol.load(hs[0, h:h + 1], out=into and into.eg)
-        t.beta = ol.load(hs[1, h:h + 1], out=into and into.beta)
+    def buffers():
+        return SimpleNamespace(St=ol.empty([dv * dk]).reshape(dv, dk), P=ol.empty([1, R]),
+                               taps=ol.empty([K * C]).reshape(K, C),
+                               prev=[ol.empty([C]) for _ in prevs], eg=ol.empty([1]),
+                               beta=ol.empty([1]))
+
+    def fetch(h, t):
+        """Head h's projections, taps, earlier convolution rows, decay and beta, then its state,
+        into the buffers t. At position 0 the state is zero, whatever DRAM holds from an
+        earlier sequence (Engine.reset)."""
+        ol.dot(xs, lw.wh[h * R:(h + 1) * R, :], out=t.P)
+        ol.load(lw.taps[h], out=t.taps)
+        for s, o in zip(prevs, t.prev):
+            ol.load(lw.ring[s, h * C:(h + 1) * C], out=o)
+        ol.load(hs[0, h:h + 1], out=t.eg)
+        ol.load(hs[1, h:h + 1], out=t.beta)
         if pos:
             ol.load(lw.state[h], out=t.St)
-        else:                                       # a new sequence starts from S = 0
+        else:
             t.St.set(0.0)
-        return t
 
     y = ol.zeros([1, spec.hidden])
     gn = ol.load(lw.gn)
+    w, o = ol.empty([dv]), ol.empty([dv])               # head_step's work and output tiles
 
-    def head_step(h, t):
-        St, P, taps = t.St, t.P, t.taps
+    def head(h, t, nxt=None):
+        """Head h from the buffers t; nxt = (h + 1, its buffers), fetched meanwhile."""
+        P, taps = t.P, t.taps
         pre = P[:, 0:C]
         ol.store(lw.ring[pos % K:pos % K + 1, h * C:(h + 1) * C], pre)
         u = pre * taps[K - 1:K, :]
         for j, r in enumerate(t.prev):
             u = u + r * taps[K - 2 - j:K - 1 - j, :]
         u = silu(u)
-        q, k, v = u[:, 0:dk], u[:, dk:2 * dk], u[:, 2 * dk:C]
-        rq = ol.rsqrt(ol.sum(q * q, axis=1) + 1e-6) * (1.0 / math.sqrt(dk))
-        rk = ol.rsqrt(ol.sum(k * k, axis=1) + 1e-6)
-        q = q * rq[:, None]
-        k = k * rk[:, None]
-        eg, beta = t.eg, t.beta
-        kr, qr = k[0, :], q[0, :]
-        kq = ol.sum(k * q, axis=1)
-        o = ol.empty([1, dv])
-        for r0 in range(0, dv, STATE_ROWS):             # the rows of St are independent
-            r1 = r0 + STATE_ROWS
-            Sb = St[r0:r1, :]
-            kS = ol.sum(Sb * kr[None, :], axis=1)       # rows r0..r1 of S^T k
-            qS = ol.sum(Sb * qr[None, :], axis=1)
-            delta = (v[:, r0:r1] - kS.reshape(1, STATE_ROWS) * eg[:, None]) * beta[:, None]
-            o[:, r0:r1].set(qS.reshape(1, STATE_ROWS) * eg[:, None] + delta * kq[:, None])
-            Sb *= eg[:, None]                           # decay
-            Sb += delta[0, :][:, None] * kr[None, :]    # the delta rule's outer product
-        ol.store(lw.state[h], St)
-        on = rmsnorm(o, gn, eps) * silu(P[:, C:R])
+        q = l2norm_rows(u[:, 0:dk], dk ** -0.5)
+        k = l2norm_rows(u[:, dk:2 * dk])
+        head_step(t.St, k[0, :], u[0, 2 * dk:C], q[0, :], t.eg, t.beta, w, o,
+                  prefetch=nxt and (lambda: fetch(*nxt)))
+        ol.store(lw.state[h], t.St)
+        on = rmsnorm(o.reshape(1, dv), gn, eps) * silu(P[:, C:R])
         ol.dot(on, lw.wout[h * spec.hidden:(h + 1) * spec.hidden, :], acc=y)
 
-    npairs = nl // 2
+    a, b = buffers(), buffers()
+    fetch(0, a)
 
     def pair(i, last):
-        b = fetch(2 * i + 1)                            # streams while head 2i runs
-        head_step(2 * i, a)
-        if not last:
-            fetch(2 * i + 2, into=a)
-        head_step(2 * i + 1, b)
+        head(2 * i, a, (2 * i + 1, b))
+        head(2 * i + 1, b, None if last else (2 * i + 2, a))
 
-    a = fetch(0)
-    for i in ol.range(npairs - 1):
+    for i in ol.range(nl // 2 - 1):
         pair(i, False)
-    pair(npairs - 1, True)
+    pair(nl // 2 - 1, True)
     return x + ol.all_reduce(y)
 
 

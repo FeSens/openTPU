@@ -2,10 +2,10 @@
 
 openTPU runs a third model family: Qwen3.5, checked with
 [Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B) (the text decoder; the vision tower
-and the multi-token-prediction layer are not loaded). It uses the existing ISA and RTL
-unchanged, and the same W8A8 numerics and host driver as Qwen3 and LFM2. This port is the
-baseline of the architecture tournament: what the current hardware does with a model whose
-main layer is a linear-attention recurrence, measured on the RTL.
+and the multi-token-prediction layer are not loaded), with the same W8A8 numerics and host
+driver as Qwen3 and LFM2. Its main layer is a linear-attention recurrence, which runs on the
+VPU ops RDOT, OUTER and LOG2 (commit ddec900); the port was first written for the ISA without
+them, and both are measured on the RTL below.
 
 ```sh
 hf download Qwen/Qwen3.5-0.8B --local-dir models/Qwen3.5-0.8B
@@ -51,23 +51,26 @@ head h+1's projections (its 128 q, k, v and z rows of the input projections, sto
 head). Head h's output is multiplied into the residual by its own 1024 x 128 column block of
 `out_proj` (an accumulating MM), so no projection waits for all heads.
 
-**The recurrence is VPU passes.** The state is stored transposed, `St = S^T` (rows are the
-value dimension), so both reads of S are row sums and the update is one outer product:
+**The recurrence is three VPU passes.** The layers call `kernels/deltanet.py`'s `head_step`
+(the kernel of `gated_deltanet_step`), which uses the VPU ops RDOT (a row dot product against
+one vector), OUTER (a rank-1 update with a decay, in place) and LOG2 (commit ddec900). The state
+is stored transposed, `St = S^T` (rows are the value dimension), so both reads of S are row
+dots:
 
 ```
-kS = St k,  qS = St q           2 products (column broadcast) + 2 row sums
-delta = beta (v - exp(g) kS)    vectors of 128
-o = exp(g) qS + (k . q) delta   (= S_new^T q, from the old state)
-St = exp(g) St + delta k^T      a scale, an outer product, an add
+kv = St k                       RDOT
+delta = beta (v - exp(g) kv)    vectors of 128
+St = exp(g) St + delta k^T      OUTER, in place
+o  = St q                       RDOT
 ```
 
-Per head that is 7 passes over 16K fp32 values: about 14,300 VPU cycles at 8 lanes. The rows
-are independent, so each pass runs on blocks of 64 rows, which keeps the temporaries at 8K
-words (TMEM also holds the two state buffers of 16K).
+That is 3 passes over the 16K fp32 values of a head, about 6,100 VPU issue cycles at 8 lanes,
+with no temporary the size of the state. The two RDOTs write TMEM only at their end, so the
+next head's state load (which takes TMEM write slots first) overlaps them without stalling
+the VPU.
 
 **Everything else.** The convolution state is a 4-slot ring of the pre-convolution q, k, v rows
-in DRAM (LFM2's scheme, `docs/lfm2.md`). The VPU has no logarithm, so softplus is
-`max(x, 0) + log1p(2^(-|x| log2 e))` with log1p a degree-8 polynomial (within 2e-7). The `a`
+in DRAM (LFM2's scheme, `docs/lfm2.md`). softplus is `max(x, 0) + ln2 log2(1 + 2^(-|x| log2 e))` with the LOG2 op. The `a`
 and `b` projections run in int8 like every other matrix: in the float64 emulation, keeping them
 in full precision did not reduce the logit error (max 0.98 vs 1.10 and 1.42 vs 1.20 over two
 38- and 42-token texts, argmax agreement unchanged within one token). Attention reuses Qwen3's
@@ -76,15 +79,13 @@ kernel: a 256-wide head is two MXU blocks, the RoPE tables cover 64 dimensions a
 outputs. A query group of 4 heads does not fit a 2-column MXU; there each KV head is streamed
 twice, once per pair of query heads (with `OTPU_MCOLS=4`, once).
 
-**Language additions**, no ISA change: `u[:, None] * v[None, :]` is one VOP (the A operand reads
-`v` with row stride 0), a length-1 tile broadcasts over a whole tile (ROW mode with row stride
-0), `t += x` and `t *= x` update in place without a temporary, `ol.load(desc, out=t)` refills a
-buffer, and `ol.mxu_columns()` returns MCOLS. The Qwen3 and LFM2 programs assemble to exactly
-the same words as before (checked at several positions, both configurations, MCOLS 2 and 4).
+**Language additions**, no ISA change: `ol.load(desc, out=t)` refills an existing buffer, and
+`ol.mxu_columns()` returns MCOLS. The Qwen3 and LFM2 programs assemble to exactly the same
+words as before (checked at several positions, both configurations, MCOLS 2 and 4).
 
 **Program size.** The six-fold layer unit is one hardware loop and the head pairs another: the
-program is 1,781 instructions at position 0 and 2,181 at position 4095 (board configuration,
-MCOLS=2; 1,739 and 1,993 with MCOLS=4), within the 4K-instruction IMEM. The DRAM image is
+program is 1,496 instructions at position 0 and 1,896 at position 4095 (board configuration,
+MCOLS=2; 1,454 and 1,708 with MCOLS=4), within the 4K-instruction IMEM. The DRAM image is
 788 MiB at any KV capacity up to 4096 tokens (the DeltaNet layer blocks set the block size), of
 which 21 MiB are KV cache, convolution ring and DeltaNet state at a 256-token capacity.
 
@@ -104,23 +105,25 @@ Chat prompts (`--chat`, 48 tokens):
 
 | Prompt | Same tokens | First difference: HF's rank of the device's token, logit gap | Max logit error | Min cosine |
 |---|---|---|---:|---:|
-| What is the capital of France? Answer in one sentence. | all 8 (to EOS) | | 2.01 | 0.9932 |
-| Explain in two sentences why the sky is blue. | 28 | #2, 0.012 | 1.03 | 0.9987 |
-| Write a Python function that checks whether a number is prime. | 35 | #2, 0.036 | 1.45 | 0.9925 |
-| Give me a short definition of photosynthesis. | all 46 (to EOS) | | 1.10 | 0.9986 |
-| List the first five prime numbers. | all 48 | | 1.02 | 0.9980 |
-| Translate 'good morning' into French and Spanish. | all 20 (to EOS) | | 1.08 | 0.9976 |
-| What is the capital of Japan, and what is it famous for? | all 48 | | 1.25 | 0.9978 |
-| Describe the water cycle in one paragraph. | 28 | #2, 0.276 | 1.07 | 0.9981 |
+| What is the capital of France? Answer in one sentence. | all 8 (to EOS) | | 1.57 | 0.9970 |
+| Explain in two sentences why the sky is blue. | all 38 (to EOS) | | 1.09 | 0.9985 |
+| Write a Python function that checks whether a number is prime. | 35 | #2, 0.036 | 1.37 | 0.9946 |
+| Give me a short definition of photosynthesis. | 39 | #2, 0.239 | 1.15 | 0.9973 |
+| List the first five prime numbers. | all 48 | | 1.00 | 0.9979 |
+| Translate 'good morning' into French and Spanish. | all 20 (to EOS) | | 1.23 | 0.9978 |
+| What is the capital of Japan, and what is it famous for? | all 48 | | 1.02 | 0.9977 |
+| Describe the water cycle in one paragraph. | 8 | #2, 0.114 | 0.81 | 0.9990 |
 
-Raw prompts (the README's eight, 32 tokens): 5 of 8 identical for all 32 tokens. The other
-three differ at tokens 4, 5 and 6, where the device's token is HF's #3 (0.155 logits below the
-top) and #2 (0.012, 0.079). The largest logit error is 1.45, the lowest cosine 0.9957.
+Raw prompts (the README's eight, 32 tokens): 4 of 8 identical for all 32 tokens. The other
+four differ at tokens 4 to 6, where the device's token is HF's #2 or #3, 0.012 to 0.300 logits
+below the top. The largest logit error is 1.34, the lowest cosine 0.9972.
 
-HF's logits span about 30 to 55, so an error of 1 to 2 moves only near-ties. At the three raw
-differences the float64 emulation with the same int8 quantization points picks the device's
-token: quantization decides those ties. At the three chat differences it picks HF's: there the
-device's fp32 rounding decides. On a tiny random Qwen3.5 the device agrees with Hugging Face to
+HF's logits span about 30 to 55, so an error of 1 to 2 moves only near-ties. At three of the
+four raw differences the float64 emulation with the same int8 quantization points picks the
+device's token: quantization decides those ties. At the fourth, and at the three chat
+differences, it picks HF's: there the device's fp32 rounding decides. (Measured with the LOG2
+softplus of ddec900; with the earlier polynomial softplus the counts were 5 of 8 chat and 5 of
+8 raw, with the same kind of near-tie differences.) On a tiny random Qwen3.5 the device agrees with Hugging Face to
 a cosine above 0.998 over 48 tokens and with the emulation above 0.999 (`tests/test_qwen35.py`;
 the emulation also rounds the weights to int8 slightly differently, dividing by the scale
 where the device multiplies by 127/amax).
@@ -130,8 +133,8 @@ where the device multiplies by 127/amax).
 One decode token of the full model (24 layers and the LM head), measured on the Verilator RTL
 of the board configuration: 1 slice, D=128, 8 VPU lanes, the AXI memory path with the program
 booted from DRAM, 30 cycles of AXI latency (`tools/perf_qwen.py --model qwen35 --layers 0
---check`, RTL of commit eb29dd3, whose DMA requests each DRAM chunk once). `bw` is the fraction of peak DRAM bandwidth (one
-128-byte chunk per cycle). Every run ended with DRAM bit-identical to the ISA simulator's.
+--check`). `bw` is the fraction of peak DRAM bandwidth (one 128-byte chunk per cycle). Every
+run ended with DRAM bit-identical to the ISA simulator's.
 
 The **DRAM roofline** is every byte the token must move, at bw: the int8 weights and their fp32
 block scales (LM head included), the convolution taps, the DeltaNet state read and written
@@ -143,20 +146,31 @@ time.
 
 | MCOLS / VPU_CL | bw | context (pos) | cycles/token (measured) | DRAM roofline | % of roofline | tok/s at 100 MHz (projected) |
 |---|---:|---:|---:|---:|---:|---:|
-| 2 / 2 (default board) | 80% | 128 | 11,535,257 | 7,999,152 | 69.3% | **8.7** |
-| 2 / 2 | 80% | 1023 | 11,636,450 | 8,050,300 | 69.2% | 8.6 |
-| 2 / 2 | 100% | 128 | 10,419,105 | 6,399,322 | 61.4% | 9.6 |
-| 2 / 2 | 100% | 1023 | 10,495,642 | 6,440,240 | 61.4% | 9.5 |
-| 4 / 4 | 80% | 128 | 11,504,083 | 7,999,152 | 69.5% | 8.7 |
-| 4 / 4 | 80% | 1023 | 11,549,952 | 8,050,300 | 69.7% | 8.7 |
-| 4 / 4 | 100% | 128 | 10,353,455 | 6,399,322 | 61.8% | 9.7 |
-| 4 / 4 | 100% | 1023 | 10,386,998 | 6,440,240 | 62.0% | 9.6 |
-| 2 / 4 | 80% | 128 | 11,513,884 | 7,999,152 | 69.5% | 8.7 |
-| 4 / 2 | 80% | 128 | 11,525,809 | 7,999,152 | 69.4% | 8.7 |
+| 2 / 2 (default board) | 80% | 128 | 9,130,829 | 7,999,152 | 87.6% | **11.0** |
+| 2 / 2 | 80% | 1023 | 9,231,246 | 8,050,300 | 87.2% | 10.8 |
+| 2 / 2 | 100% | 128 | 8,022,432 | 6,399,322 | 79.8% | 12.5 |
+| 2 / 2 | 100% | 1023 | 8,099,652 | 6,440,240 | 79.5% | 12.3 |
+| 2 / 4 | 80% | 128 | 9,060,803 | 7,999,152 | 88.3% | 11.0 |
+| 2 / 4 | 80% | 1023 | 9,162,124 | 8,050,300 | 87.9% | 10.9 |
+| 2 / 4 | 100% | 128 | 7,949,977 | 6,399,322 | 80.5% | 12.6 |
+| 2 / 4 | 100% | 1023 | 8,029,275 | 6,440,240 | 80.2% | 12.5 |
+| 4 / 4 | 80% | 128 | 9,050,858 | 7,999,152 | 88.4% | 11.0 |
 
-(`OTPU_MCOLS=4 OTPU_VPU_CL=4` is the 4&4 bitstream of [board.md](board.md).) For comparison,
-at 80% and context 128 (before eb29dd3): Qwen3-0.6B 16.1 tok/s and LFM2.5-230M 42.2 tok/s, both
-at 96% or more of their rooflines.
+(`OTPU_MCOLS=4 OTPU_VPU_CL=4` is the 4&4 bitstream of [board.md](board.md).)
+
+**Without RDOT and OUTER.** The first version of this port ran on the ISA before ddec900: the
+recurrence was 7 VPU passes per head (products, row sums, a scale, an outer product through a
+row-stride-0 operand, an add) on 64-row blocks, and softplus a log1p polynomial. Measured the
+same way (RTL of eb29dd3, commit 2cc24c1 of this port):
+
+| MCOLS / VPU_CL | bw | context 128 | % of roofline | context 1023 | % of roofline |
+|---|---:|---:|---:|---:|---:|
+| 2 / 2 | 80% | 11,535,257 | 69.3% | 11,636,450 | 69.2% |
+| 2 / 2 | 100% | 10,419,105 | 61.4% | 10,495,642 | 61.4% |
+| 4 / 4 | 80% | 11,504,083 | 69.5% | 11,549,952 | 69.7% |
+| 4 / 4 | 100% | 10,353,455 | 61.8% | 10,386,998 | 62.0% |
+
+The new ops take 2.40 M cycles off the token at 80% (21%), all of it in the DeltaNet mixer.
 
 ### Where the cycles go
 
@@ -166,53 +180,47 @@ from the end of the previous phase to its own last completion, so the phases add
 token. The bytes column is what the phase moves; its roofline is those bytes at bw.
 Default board (MCOLS=2, VPU_CL=2), context 128, measured:
 
-| phase | cycles at 80% | share | its bytes (MB) | its roofline at 80% | cycles at 100% | its roofline at 100% |
-|---|---:|---:|---:|---:|---:|---:|
-| DeltaNet mixer, 18 layers | 5,834,217 | 50.6% | 236.6 | 39.6% | 5,856,438 | 31.6% |
-| MLP, 24 layers | 2,649,504 | 23.0% | 272.6 | 100.5% | 2,113,202 | 100.8% |
-| LM head | 2,574,507 | 22.3% | 263.2 | 99.8% | 2,060,090 | 99.8% |
-| attention, 6 layers | 459,940 | 4.0% | 47.9 | 102% | 372,432 | 100% |
+| phase | cycles at 80% | share | its bytes (MB) | its roofline at 80% | cycles at 100% | its roofline at 100% | before RDOT/OUTER, 80% |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| DeltaNet mixer, 18 layers | 3,411,051 | 37.4% | 236.6 | 67.7% | 3,397,901 | 54.4% | 5,834,217 |
+| MLP, 24 layers | 2,650,991 | 29.0% | 272.6 | 100.4% | 2,121,082 | 100.4% | 2,649,504 |
+| LM head | 2,574,494 | 28.2% | 263.2 | 99.8% | 2,060,087 | 99.8% | 2,574,507 |
+| attention, 6 layers | 459,927 | 5.0% | 47.9 | 101.6% | 372,432 | 100.4% | 459,940 |
 
 (Above 100%: a phase's first weights stream while the phase before it finishes.)
 
-- **The DeltaNet recurrence is VPU-bound, and the rest of the token is at its roofline.** The
-  mixer takes 5.83 to 5.86 M cycles at either bandwidth: it does not wait for DRAM. Its 236.6 MB (the
-  projections, out_proj, 37.7 MB of state traffic) need 2.31 M cycles at 80%. Run at its
-  roofline, the token would take about 8.01 M cycles at 80% and 6.41 M at 100%, i.e. the
-  roofline.
-- **Per head** (288 per token) the mixer spends about 20,300 cycles. The 7 state passes are
-  14,300 VPU cycles of issue (8 lanes); the rest is the state load competing with the VPU for
-  TMEM writes (one write per bank per cycle: the 16K-word load costs the VPU about 2,000
-  cycles), the per-head vector work (convolution, SiLU, L2 norms, gated RMSNorm: ~50 small
-  VOPs, whose composite functions run on 2 lanes) and dependency stalls in the chain
-  row sums -> delta -> outer product. Meanwhile the MXU streams the next head's 512 projection
-  rows and this head's out_proj block (5,120 chunks, 6,400 cycles at 80%) and then idles.
-- **VPU_CL=4** (composite functions on 4 lanes) saves 21 K cycles per token (0.2%); the
-  recurrence uses only multiplies, adds and row sums. **MCOLS=4** reads each KV head once
-  instead of twice: 9 K cycles at context 128 (80%). At context 1023 the 4&4 build saves 86 K
-  cycles over the default, about 21 K of them from VPU_CL.
+- **The DeltaNet mixer is still VPU-bound, and the rest of the token is at its roofline.** The
+  mixer takes 3.40 to 3.41 M cycles at either bandwidth, with the VPU busy 96% of it; its
+  236.6 MB (the projections, out_proj, 37.7 MB of state traffic) need 2.31 M cycles at 80%.
+  Run at its roofline, the token would take about 8.03 M cycles at 80%, i.e. the roofline.
+- **Per head** (288 per token) the mixer spends about 11,800 cycles. The 3 state passes are
+  about 6,100 VPU cycles of issue (16K values at 8 lanes; estimated from the op sizes). The rest
+  is the per-head vector work on 128- to 512-wide vectors: the convolution, SiLU and L2 norms
+  before the recurrence and the gated RMSNorm after it, some 50 small VOPs, each paying its
+  pipeline latency, whose composite functions (exp2, recip, rsqrt) run on VPU_CL lanes and
+  which wait on each other in a chain. Meanwhile the MXU streams the next head's 512
+  projection rows and this head's out_proj block (5,120 chunks, 6,400 cycles at 80%).
+- **VPU_CL=4** saves 70 K cycles per token at 80% (0.8%), 66 K of them in the mixer's
+  composite functions. **MCOLS=4** reads each KV head once instead of twice: 10 K cycles at
+  context 128 (80%).
 - Attention, MLP and LM head are what they were for Qwen3: at 99-100% of their bytes.
-
 
 ## What limits it
 
-These are the ISA's and the RTL's limits for this model, found while mapping it, measured
-where a number is given. An entrant can change them; this port does not.
+These are the limits of the ISA and the RTL for this model, found while mapping it; the numbers
+are measured where given.
 
-- **No multiply-reduce.** `S^T k` is a product pass (writes 8K words per 64-row block) and a
-  row-sum pass. A VOP that sums `A * B` along rows would remove two of the 7 passes and a third
-  of the TMEM writes.
-- **No three-operand update.** `exp(g) St + delta k^T` needs a scale, an outer product and an
-  add; a fused multiply-add VOP (or a per-row scale on the outer product) would make it one.
-- **TMEM writes, one per bank per cycle (board RPB 64, WPB 1).** The VPU writes 8 words per
-  cycle and the DMA's state load competes for the same write slots.
+- **Small vector ops per head.** With the recurrence at 3 passes, the per-head vectors
+  (convolution, SiLU, L2 norms, gated norm) cost about as much as the state passes. They are
+  independent across heads; issuing all 16 heads' short vectors as [16, 128] tiles once per
+  layer, before the head loop, would amortize their latency (not attempted: it needs the
+  projections of all heads first, i.e. a TMEM buffer of 16 x 512 words, or a second pass).
+- **TMEM writes, one per bank per cycle (board RPB 64, WPB 1).** OUTER writes 8 words per
+  cycle and the DMA's state load takes the same write slots first; `head_step` places the load
+  beside the RDOTs, which write only at their end.
 - **The DMA delivers 32 bytes per cycle to TMEM** (8 words; the MXU streams 128): the 2 MiB of
-  state per layer take 65 K DMA cycles, hidden here behind the VPU, but a faster recurrence would meet
-  them.
-- **8 VPU lanes.** Everything above scales with lanes: at 16 lanes the 7 passes would take
-  7,200 cycles per head, about the MXU's time for the head's weights at 80%.
-- **The VPU has no logarithm**: softplus is a polynomial (about 25 VOPs on 16 values, once per layer;
-  negligible time).
+  state per layer take 65 K DMA cycles per layer, 1.2 M per token, hidden behind the VPU.
+- **8 VPU lanes.** The state passes and the small ops scale with lanes.
 - **MCOLS=2** splits the 4-head query groups: each KV head is read twice (1.2 MB at context 128,
   6.4 MB at 1023).
 
@@ -238,4 +246,5 @@ sequence in the layer block, so batching would need a state per sequence.
 
 `otpu-selftest --sim --model qwen35 --tokens 2` also passes: the chat prompt and two generated
 tokens (26 tokens) on the Verilator board model through the host driver, identical to the ISA
-simulator, 11.8 M cycles per token (72 minutes of simulation; run before rebasing onto eb29dd3).
+simulator, 11.8 M cycles per token (72 minutes of simulation; run with the first version, without
+RDOT and OUTER, before eb29dd3).

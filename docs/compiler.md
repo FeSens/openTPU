@@ -51,12 +51,9 @@ operand's shape:
 | `a * v[:, None]` | ROW: one value per row |
 | `a * v[None, :]` | COL: one vector shared by all rows |
 | `a * 0.5` | SCALAR: an immediate in the instruction |
-| `a * s[:, None]`, `s` of length 1 | ROW with row stride 0: one TMEM value for the whole tile |
-| `u[:, None] * v[None, :]` | outer product: A reads `v` with row stride 0, `u` is ROW |
 
-`t += x`, `t -= x` and `t *= x` update `t` in place with one VOP and no temporary (Qwen3.5
-updates its 64 x 128 DeltaNet state blocks this way). `ol.load(desc, out=t)` loads into an
-existing tile, so a hardware loop can refill one of two buffers while the other is in use.
+`ol.load(desc, out=t)` loads into an existing tile, so a hardware loop can refill one of two
+buffers while the other is in use (Qwen3.5's DeltaNet head pairs).
 
 ## Loops
 

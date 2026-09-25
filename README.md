@@ -29,9 +29,8 @@ Works, in simulation:
   [docs/lfm2.md](docs/lfm2.md).
 - **Qwen3.5-0.8B**, whose main layer is a Gated DeltaNet (linear attention with a 128 x 128
   fp32 state per head), the same way (`otpu-chat --model qwen35`). The 1 MiB of state per layer
-  streams through the scratchpad head by head and the recurrence runs on the vector unit; no
-  ISA or RTL change. It is the baseline of the architecture tournament: see
-  [docs/qwen35.md](docs/qwen35.md).
+  streams through the scratchpad head by head and the recurrence runs on the vector unit
+  (RDOT, OUTER). See [docs/qwen35.md](docs/qwen35.md).
 - **RTL vs simulator.** The Verilator RTL ends with exactly the same memory contents as the
   simulator on the kernel tests, on a full Qwen3-0.6B token (6.38 M cycles), and on random
   programs where instructions keep conflicting over the same memory, which checks that the
@@ -163,9 +162,9 @@ of the DRAM roofline), which would be about 42 tokens/s at 100 MHz, again a proj
 ([docs/lfm2.md](docs/lfm2.md)).
 
 Qwen3.5-0.8B streams about 820 MB per token, but its DeltaNet recurrence runs on the vector
-unit, which cannot keep up with DRAM: measured on the same configuration (80%, context 128) a
-token takes 11.5 M cycles, 69% of the DRAM roofline, about 8.7 tokens/s at 100 MHz (a
-projection). Half of it is the recurrence ([docs/qwen35.md](docs/qwen35.md)).
+unit, which does not keep up with DRAM: measured on the same configuration (80%, context 128)
+a token takes 9.13 M cycles, 88% of the DRAM roofline, about 11 tokens/s at 100 MHz (a
+projection). The recurrence is 37% of it ([docs/qwen35.md](docs/qwen35.md)).
 
 ## Accuracy
 
