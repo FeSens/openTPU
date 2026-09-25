@@ -3,14 +3,14 @@
 #   make mig        regenerate the MIG .prj files and DDR3 pin XDC (DDR=800|1066)
 #   make bit        Vivado batch build (MCOLS=2|4, VPU_CL=2|4, LANES=8|16, CORE_MHZ=100|80|75) -> build/vivado/otpu.bit (VIVADO_DOCKER=image for Docker)
 #   make impl       rerun implementation only on the existing project (constraint changes)
-#   make program    JTAG load (openFPGALoader); make program-vivado with Vivado's hw_server
-#   make flash      write the BPI flash (permanent)
+#   make program    JTAG load (openFPGALoader; BIT=path, default build/vivado/otpu.bit); make program-vivado with Vivado's hw_server
+#   make flash      write the BPI flash (permanent; MCS=path, default build/vivado/otpu.mcs)
 ROOT := $(abspath ../..)
 DDR ?= 800
 # CORE_MHZ: accelerator clock (80 or 75 if 100 does not close timing)
-# MCOLS: MXU columns, 2 or 4 (run the host with OTPU_MCOLS set to the same value)
+# MCOLS: MXU columns, 2 or 4 (the host reads it from the bitstream's VERSION register)
 # VPU_CL: VPU lanes with exp2/recip/rsqrt, 2 or 4 (timing only: the programs do not change)
-# LANES: VPU lanes / TMEM banks, 8 or 16 (timing only; run the host with OTPU_LANES set to it)
+# LANES: VPU lanes / TMEM banks, 8 or 16 (timing only; the host reads it from VERSION)
 # BUILD_ID: the BUILD_ID register (8 hex digits; default: the git commit)
 CORE_MHZ ?= 100
 MCOLS ?= 2
@@ -38,10 +38,10 @@ impl:
 	STEP=impl ./run_vivado.sh $(DDR)
 
 program:
-	./program.sh
+	./program.sh $(BIT)
 
 program-vivado:
-	./program.sh --vivado
+	./program.sh --vivado $(BIT)
 
 flash:
-	./program.sh --flash
+	./program.sh --flash $(MCS)

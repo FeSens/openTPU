@@ -3,7 +3,8 @@
 The board build: one openTPU slice (D = 128, 2 MXU columns, 8 VPU lanes, 64K-word TMEM) on a
 Kintex-7 xc7k480t-ffg1156-2, with both DDR3 channels (2 x 2 GiB) behind Xilinx MIG
 controllers, and the host PC over PCIe Gen1 x8 (Xilinx XDMA). The host compiles each token's
-program, loads it and runs it; `otpu-chat --backend board` chats with Qwen3-0.6B on it.
+program, loads it and runs it; `otpu-chat --backend board` chats with Qwen3-0.6B (or LFM2.5-230M,
+or Qwen3.5-0.8B) on it.
 
 ```
  host PC ── PCIe Gen1 x8 ── XDMA ──┬── AXI-Lite (BAR0) ─────────────── control registers ┐
@@ -28,13 +29,12 @@ make lint          # offline: MIG pin check, Tcl syntax, XDC vs top ports, Veril
 make bit           # = ./run_vivado.sh 800 -> build/vivado/otpu.bit, otpu.mcs, reports/
 make bit DDR=1066  # DDR3-1066 (533 MHz, MIG ui_clk 133 MHz) once 800 works
 make bit CORE_MHZ=80   # accelerator clock fallback when 100 MHz does not close (800/D MHz, D in 1/8 steps)
-make bit MCOLS=4   # 4 MXU columns: ~1.7x prefill and batched decode, ~67% LUT; run the host
-                   # with OTPU_MCOLS=4 (the host checks the bitstream's VERSION register)
+make bit MCOLS=4   # 4 MXU columns: ~1.7x prefill and batched decode, ~67% LUT (the host
+                   # reads MCOLS and LANES from the bitstream's VERSION register)
 make bit VPU_CL=4  # 4 VPU lanes with exp2/recip/rsqrt (2 by default): ~75% -> ~89% of the
                    # roofline on long-context attention; timing only, programs unchanged
 make bit LANES=16  # 16 VPU lanes / TMEM banks (the MXU and quantizer stay on 8): Qwen3.5 -4%
-                   # cycles at 80% bw, -13% at 100% (simulated); run the host with OTPU_LANES=16.
-                   # Not built yet: estimated +21K LUT with VPU_CL=2 (yosys, scaled per module)
+                   # cycles at 80% bw, -13% at 100% (simulated). Not built yet: estimated +21K LUT with VPU_CL=2 (yosys, scaled per module)
 ```
 
 `run_vivado.sh` runs `scripts/gen_mig_prj.py` (MIG configuration from the board pin lists),
@@ -52,8 +52,7 @@ in Docker on a 16 GB Apple Silicon Mac (4 jobs ran out of memory).
 `make bit MCOLS=4 VPU_CL=4` (measured, same tools and date): all timing constraints met, WNS
 +0.003 ns, WHS +0.012 ns (no margin: expect some builds of this configuration to miss by a few
 ps; try `IMPL_STRATEGY=Performance_Explore`). 211,629 LUT (70.9%), 144,722 FF (24.2%), 668 BRAM36
-tiles (70.0%), 443 DSP48 (23.1%); power estimate 9.40 W (low confidence). Run the host with
-`OTPU_MCOLS=4`.
+tiles (70.0%), 443 DSP48 (23.1%); power estimate 9.40 W (low confidence).
 
 With the DMA chunk buffer (eb29dd3) and the RDOT / OUTER / LOG2 VPU ops (ddec900), the same
 `make bit MCOLS=4 VPU_CL=4` (measured, 2026-09-25): all timing constraints met, WNS +0.028 ns,
@@ -100,58 +99,106 @@ JTAG does not go through Docker: program from macOS with openFPGALoader (below).
 
 ## 2. Program the FPGA
 
+### Which bitstream to load
+
+The host needs no configuration for a bitstream: it reads D / MCOLS / LANES from the VERSION
+register and builds its configuration from them (`opentpu.host.board.device_config`). VPU_CL is
+timing only and not reported. What differs between builds is the instruction set: Qwen3.5 needs
+the RDOT / OUTER / LOG2 VPU functions (commit ddec900); a bitstream built before them runs Qwen3
+and LFM2 only, and the self-test's `vops` stage says so.
+
+| Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
+|---|---|---|---|---|---|---|
+| `build/vivado_100mhz_gen1_met/otpu.bit` | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | v0.4 (6587cb4) | D=128 MCOLS=2 LANES=8 | no | Qwen3, LFM2 | met, WNS +0.082 ns |
+| `build/vivado_100mhz_m4cl4_vops_met/otpu.bit` | `make bit MCOLS=4 VPU_CL=4` | ddec900 (DMA chunk buffer + new VPU ops) | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.028 ns |
+| _(final builds: to be filled in)_ | | | | | | |
+
+All are 100 MHz core, DDR3-800, PCIe Gen1 x8, register map 2. The RTL changes after ddec900
+(TMEM rotators, LANES=16 option, MXU drain) change timing or area only, not results. The
+`.mcs` next to each `.bit` is the BPI flash image of the same build.
+
+### Load it over JTAG
+
 ```sh
-make program           # openFPGALoader, Xilinx Platform Cable USB II (5 retries)
-make program-vivado    # or Vivado's hardware manager (on the machine with the cable)
-make flash             # permanent: BPI flash (loads at power-up)
+cd boards/ypcb-00338
+make program BIT=../../build/vivado_100mhz_gen1_met/otpu.bit          # openFPGALoader (5 retries)
+make program-vivado BIT=$PWD/../../build/vivado_100mhz_gen1_met/otpu.bit   # Vivado hw_manager
+make flash MCS=../../build/vivado_100mhz_gen1_met/otpu.mcs            # permanent: BPI flash
 ```
 
-The JTAG chain has an Inspur CPLD (IDCODE 0x10931093) in front of the FPGA; `program.sh`
-declares it (`--misc-device`, `--index-chain 0`). The cable needs its FX2 firmware on every
-plug-in (`XUSB_FIRMWARE`, default the inspur-adventures copy). See the `ypcb-00338` skill for
-the macOS cable quirks.
+Without `BIT=` / `MCS=` the scripts take `build/vivado/otpu.bit` / `otpu.mcs` (the last build).
+`program.sh` takes the same file as its argument (`./program.sh [--vivado|--flash] [file]`).
+
+- **openFPGALoader** (macOS or Linux) with a Xilinx Platform Cable USB II: the JTAG chain has an
+  Inspur CPLD (IDCODE 0x10931093) in front of the FPGA; `program.sh` declares it
+  (`--misc-device`, `--index-chain 0`). The cable needs its FX2 firmware on every plug-in
+  (`XUSB_FIRMWARE`, default the inspur-adventures copy). See the `ypcb-00338` / `xpcu-macos`
+  skills for the macOS cable quirks; after "Unable to read constant" on every attempt, replug.
+- **Vivado hardware manager** (`--vivado`): runs `vivado -mode batch` on the machine with the
+  cable (hw_server local). Give it an absolute path.
+
+Programming over JTAG does not survive a power cycle; the flash does.
 
 ### After programming: PCIe
 
 A PCIe device must be up within ~100 ms of power; a JTAG load is much later, so the host has
-to rescan after loading:
+to rescan after loading. With the card in the Linux PC (powered by it) and the JTAG cable on
+it, program, then on the PC:
 
 ```sh
-# on the host PC (the card sits in its slot, powered by it)
+opentpu/host/setup_pcie.sh --rescan      # remove + rescan the device, (re)load the driver, ID check
+# or by hand:
 sudo sh -c 'echo 1 > /sys/bus/pci/rescan'
-lspci -d 10ee: -vv        # expect: Xilinx 7028, LnkSta: Speed 2.5GT/s, Width x8
+lspci -d 10ee: -nn -vv    # expect: [10ee:7028], LnkSta: Speed 2.5GT/s, Width x8
 ```
 
-If the device does not appear, warm-reboot the host (the FPGA keeps its configuration across
-a warm reboot) -- or write the flash (`make flash`), then power-cycle: the FPGA configures from
-flash at power-up in time for enumeration. If the link trains at a lower width/speed, check
-`LnkSta` and the PCIe placement note in section 6.
+Expect the link at Gen1 x8 (2.5 GT/s, `LnkCap` also 2.5GT/s x8): the XDMA is configured for
+Gen1 (section 5), so 2.5 GT/s is not a downtrained link. Device ID 7028 is set in the block
+design (Xilinx's default for a 7-series Gen2 x8 core, 7018 would be Gen1 x8; both are in the
+XDMA driver's table, so the driver binds either way).
+
+If the device does not appear, warm-reboot the host (the FPGA keeps its configuration across a
+warm reboot, as long as the slot power stays on) -- or write the flash (`make flash`), then
+power-cycle: the FPGA configures from flash at power-up in time for enumeration. If the link
+trains at a lower width, check `LnkSta` and the PCIe placement note in section 6.
 
 ## 3. Host driver (Linux PC)
 
+`opentpu/host/setup_pcie.sh` does all of this ([host.md](host.md) sections 2-3). By hand:
+
 ```sh
 git clone https://github.com/Xilinx/dma_ip_drivers
-cd dma_ip_drivers/XDMA/linux-kernel/xdma && make && sudo make install
-sudo modprobe xdma                     # or: cd ../tests && sudo ./load_driver.sh
+cd dma_ip_drivers/XDMA/linux-kernel/xdma && make && sudo make install   # to /lib/modules/$(uname -r)/xdma
+sudo modprobe xdma                     # XDMA_POLL=1 setup_pcie.sh / modprobe xdma poll_mode=1: no interrupts
 ls /dev/xdma0_*                        # xdma0_user, xdma0_h2c_0, xdma0_c2h_0, ...
 ```
 
 `/dev/xdma0_user` is BAR0 (the control registers), `/dev/xdma0_h2c_0` / `_c2h_0` move data
 to / from the DDR3 at the file offset = AXI address (MIG0 at 0, MIG1 at 0x8000_0000). The
-accelerator's logical DRAM is interleaved over the two channels in 64-byte beats; opentpu/host/board.py
-applies the map (never write the channels directly except in the self-test).
+accelerator's logical DRAM is interleaved over the two channels in 64-byte beats;
+opentpu/host/board.py applies the map (never write the channels directly except in the
+self-test).
 
-Python on the host: `pip install numpy torch transformers safetensors` (as for the simulator).
+Python on the host: `pip install -e . torch transformers safetensors` (the `otpu-*`
+commands), and the checkpoints in `models/` (`Qwen3-0.6B`, `LFM2.5-230M`, `Qwen3.5-0.8B`).
 
 ## 4. Self-test, then chat
 
 ```sh
-otpu-selftest                                         # staged bring-up, see docs/host.md
-otpu-chat --backend board                              # chat with Qwen3-0.6B on the card
+otpu-selftest                                 # stages link .. vops (docs/host.md section 4)
+otpu-selftest --model qwen3 --tokens 8        # plus the model stage (lfm2, qwen35)
+otpu-chat --backend board                     # chat with Qwen3-0.6B on the card
+otpu-chat --backend board --model lfm2        # LFM2.5-230M; --model qwen35 needs the vops bitstream
+otpu-smi                                      # the card's state (from another terminal)
 ```
 
-The self-test runs the same checks against the Verilator model of the board with `--sim`
-(no card needed); it passes there.
+No `OTPU_MCOLS` / `OTPU_LANES`: the tools follow the bitstream. If either is set in the shell
+and disagrees with the bitstream, they stop with a message naming both.
+
+Verified so far only on the Verilator board model (`otpu-selftest --sim`, the current RTL; no
+card yet): every stage passes, and the model stage matches the ISA simulator token for token.
+What the model cannot show: MIG calibration, the controllers' read-modify-write of partial
+writes (the model applies byte strobes directly), PCIe, the DMA rate and the real DRAM latency.
 
 ## 5. Clocks and the roofline
 

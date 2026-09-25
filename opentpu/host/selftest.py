@@ -6,7 +6,8 @@
 
 Stages stop at the first failure, with a hint. Each builds on the previous one:
   1 link       the control registers answer (ID register)
-  2 config     the bitstream's D / MCOLS / LANES match opentpu.isasim.board_config()
+  2 config     the bitstream's VERSION (D / MCOLS / LANES) gives the host configuration
+               (opentpu.host.board.device_config); OTPU_MCOLS / OTPU_LANES, when set, must agree
   3 calib      both DDR3 controllers report calibration done
   4 regs       SCRATCH register write / read
   5 addr       walking address bits and random patterns on each channel (raw channel
@@ -17,8 +18,11 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
   7 bandwidth  host <-> card DMA rate
   8 kernel     a program using every unit, and one of partial DRAM writes from the
                accelerator (QST bytes, short stores), compared with the ISA simulator bit for bit
-  9 model      (with --model) greedy decoding of Qwen3 or LFM2 on the card equals the ISA
-               simulator, token for token, and the answer to "What is the capital of France?"
+  9 vops       RDOT / OUTER / LOG2 (the VPU functions of Qwen3.5's DeltaNet layers) against
+               the ISA simulator; a bitstream without them passes with a note, unless --model
+               names Qwen3.5
+ 10 model      (with --model) greedy decoding of Qwen3, LFM2 or Qwen3.5 on the card equals the
+               ISA simulator, token for token, and the answer to "What is the capital of France?"
 """
 from __future__ import annotations
 
@@ -31,17 +35,17 @@ import numpy as np
 
 from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST_CALIB0,
                                 ST_CALIB1, Board, BoardBackend, SimTransport, XdmaTransport,
-                                sim_config)
+                                device_config, sim_config)
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
-                                 partial_writes, pattern_test, run_demo)
-from opentpu.isasim import board_config
+                                 partial_writes, pattern_test, run_demo, vops_program)
 
 HINTS = {
     "link": "Is the card enumerated (lspci -d 10ee:), the XDMA driver loaded (lsmod | grep "
             "xdma) and /dev/xdma0_user present? Did the host reboot after programming the "
             "bitstream (or rescan the PCIe bus)? See docs/host.md.",
-    "config": "The bitstream was built with other parameters than board_config(): rebuild, or "
-              "run with a matching opentpu configuration.",
+    "config": "The host follows the bitstream's VERSION register: unset OTPU_MCOLS / "
+              "OTPU_LANES, or load the bitstream built for them (docs/board.md, which bitstream "
+              "to load). D must be 128.",
     "calib": "A DDR3 controller did not calibrate: check the MIG pinout / clocking in the "
              "bitstream (docs/board.md) and the memory voltage; STATUS bit5 = channel 0, "
              "bit6 = channel 1.",
@@ -57,6 +61,9 @@ HINTS = {
                  "LnkSta should be 2.5GT/s x8).",
     "kernel": "The accelerator computed something different from the ISA simulator: run the "
               "same program on the RTL model (tests/test_board.py) and compare the counters.",
+    "vops": "Qwen3.5 needs RDOT / OUTER / LOG2, which bitstreams built before commit ddec900 "
+            "lack (they run the program but compute other values): load a bitstream with them "
+            "(docs/board.md, which bitstream to load), or run Qwen3 / LFM2.",
     "model": "Kernels pass but the model differs: compare per-token logits against "
              "IsaBackend with opentpu.llm.qwen3.Engine; check that the image fits the DRAM.",
 }
@@ -96,11 +103,10 @@ def main(argv=None) -> int:
     if a.sim:
         ch_bytes = 1 << 22
         t = SimTransport(ch_bytes=ch_bytes)
-        cfg = board_config(DRAM_BYTES=2 * ch_bytes)
     else:
         ch_bytes = CH_BYTES
         t = XdmaTransport(a.dev)
-        cfg = board_config()
+    cfg = None                                            # from the bitstream (stage config)
     print(f"openTPU self-test on {'the board model' if a.sim else a.dev}")
     r = Runner()
     board = Board(t, check=False)
@@ -111,10 +117,15 @@ def main(argv=None) -> int:
         return v == ID_OTPU, f"ID {v:#010x}" + ("" if v == ID_OTPU else f", want {ID_OTPU:#x}")
 
     def config():
+        nonlocal cfg
         i = board.info()
-        want = (cfg.D, cfg.MCOLS, cfg.LANES)
-        got = (i["D"], i["MCOLS"], i["LANES"])
-        return got == want, f"D={got[0]} MCOLS={got[1]} LANES={got[2]}"
+        cfg = device_config(i, DRAM_BYTES=2 * ch_bytes)
+        msg = f"D={i['D']} MCOLS={i['MCOLS']} LANES={i['LANES']}, register map {i['regmap']}"
+        if i["core_khz"]:
+            msg += f", core {i['core_khz'] / 1e3:g} MHz"
+        if i["build_id"] is not None:
+            msg += f", build {i['build_id']:08x}"
+        return True, msg
 
     def calib():
         deadline = time.time() + (0 if a.sim else 5)
@@ -171,6 +182,17 @@ def main(argv=None) -> int:
                      f"partial writes: {msg2} (b_writes={st2['b_writes']}, "
                      f"a_writes={st2['a_writes']})")
 
+    def vops():
+        ok, msg, _ = run_demo(board, cfg, vops_program())
+        if ok:
+            return True, f"RDOT / OUTER / LOG2 ok ({msg})"
+        from opentpu.llm import load_spec, model_dir
+        qwen35 = bool(a.model) and \
+            type(load_spec(model_dir(a.model))).__module__.endswith(".qwen35")
+        msg = (f"RDOT / OUTER / LOG2 differ from the ISA simulator ({msg.split(',')[0]}), "
+               "most likely a bitstream built before them")
+        return (False, msg) if qwen35 else (True, f"note: {msg}: Qwen3 and LFM2 only")
+
     def model():
         from opentpu.llm import load_spec, model_dir
         from opentpu.llm.qwen3 import Engine, load_weights
@@ -185,7 +207,7 @@ def main(argv=None) -> int:
                                       tokenize=True)
         ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
         cap = 256
-        rcfg = sim_config(spec, cap)                      # same layout, DRAM sized to the model
+        rcfg = sim_config(spec, cap, cfg)                 # same layout, DRAM sized to the model
         # the model's own board model: the one of the earlier stages has too little memory
         tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if a.sim else t
         dev = Engine(spec, W, cap=cap, cfg=rcfg if a.sim else cfg,
@@ -211,6 +233,7 @@ def main(argv=None) -> int:
     r.stage("pattern", pattern)
     r.stage("bandwidth", bw)
     r.stage("kernel", kernel)
+    r.stage("vops", vops)
     if a.model:
         r.stage("model", model)
     print("ALL PASS" if not r.failed else f"stopped at stage '{r.failed}'")

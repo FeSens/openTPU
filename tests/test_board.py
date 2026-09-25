@@ -10,7 +10,7 @@ import pytest
 
 from opentpu.host.board import BASE, BEAT, Board, BoardBackend, SimTransport, join, split
 from opentpu.host.checks import (address_lines, channel_patterns, masked_program, partial_writes,
-                         pattern_test, run_demo)
+                                 pattern_test, run_demo, vops_program)
 from opentpu.isasim import board_config
 
 
@@ -81,6 +81,13 @@ def test_partial_dram_writes_on_board_model(have_verilator):
     ok, msg, st = run_demo(b, CFG, masked_program())
     assert ok, msg
     assert st["a_writes"] > 500 and st["b_writes"] > 20
+
+
+def test_vops_on_board_model(have_verilator):
+    """RDOT / OUTER / LOG2 (the selftest's vops stage) on the board model."""
+    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=20, seed=5))
+    ok, msg, _ = run_demo(b, CFG, vops_program())
+    assert ok, msg
 
 
 def test_pattern_and_address_lines_on_board_model(have_verilator):

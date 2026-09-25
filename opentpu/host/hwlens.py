@@ -183,10 +183,9 @@ def run_steps(eng, tokens: list[int], pos0: int, n: int, keep: str, prompt_len: 
 
 
 def record_card(a) -> list:
-    from opentpu.isasim import board_config
     from opentpu.llm import load_spec
     from opentpu.llm.qwen3 import Engine, load_weights
-    from .board import BoardBackend, XdmaTransport
+    from .board import Board, BoardBackend, XdmaTransport, device_config
     model = Path(a.model)
     spec = load_spec(model)
     if a.prompt_ids:
@@ -201,7 +200,8 @@ def record_card(a) -> list:
     pos0 = len(ids) - 1 if a.pos is None else a.pos
     cap = max(256, -(-(pos0 + a.tokens + 1) // 128) * 128)
     tr = XdmaTransport(a.dev)
-    eng = Engine(spec, load_weights(model), cap=cap, cfg=board_config(),
+    cfg = device_config(Board(tr, lock=False).info())
+    eng = Engine(spec, load_weights(model), cap=cap, cfg=cfg,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model.name))
     return _record_engine(eng, ids, pos0, a, f"{model.name} on {a.dev}")
 
@@ -291,9 +291,10 @@ def main(argv=None) -> int:
     for c in PASS:
         sub.add_parser(c, help=f"-> python -m opentpu.lens {c}")
     a = ap.parse_args(argv)
+    from .board import ConfigMismatch
     try:
         profs = record_sim(a) if a.sim else record_card(a)
-    except NoHwTrace as e:
+    except (NoHwTrace, ConfigMismatch) as e:
         print(f"otpu-lens: {e}", file=sys.stderr)
         return 2
     for d in profs:

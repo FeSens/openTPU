@@ -3,6 +3,7 @@
 #
 #   opentpu/host/setup_pcie.sh            # find the card, build/load the XDMA driver, udev rule, ID check
 #   opentpu/host/setup_pcie.sh --rescan   # after JTAG programming: remove/rescan the card, reload the driver
+#   XDMA_POLL=1 opentpu/host/setup_pcie.sh # load the driver in poll mode (DMA timeouts: no interrupts)
 #
 # Linux x86-64 only; asks for sudo where needed. Safe to re-run.
 set -euo pipefail
@@ -38,10 +39,11 @@ echo "   $sta"
 [[ "$sta" == *"2.5GT/s"* && "$sta" == *"Width x8"* ]] || \
   echo "   warning: expected Gen1 (2.5GT/s) x8; the link works but DMA bandwidth is lower"
 
-# ---- 2. the XDMA driver
-if ! lsmod | grep -q '^xdma'; then
+# ---- 2. the XDMA driver (built and installed once; --rescan unloads it, so test for the module
+# file, not for a loaded module)
+if ! modinfo xdma >/dev/null 2>&1; then
   say "XDMA driver: building from $DRV_DIR"
-  command -v make >/dev/null && command -v gcc >/dev/null || die "install gcc and make"
+  if ! command -v make >/dev/null || ! command -v gcc >/dev/null; then die "install gcc and make"; fi
   [[ -d "/lib/modules/$(uname -r)/build" ]] || \
     die "kernel headers missing: sudo apt install linux-headers-$(uname -r)"
   [[ -d "$DRV_DIR" ]] || git clone --depth 1 https://github.com/Xilinx/dma_ip_drivers "$DRV_DIR"
@@ -53,7 +55,9 @@ if ! lsmod | grep -q '^xdma'; then
   sudo make -C "$DRV_DIR/XDMA/linux-kernel/xdma" install
   sudo depmod -a
 fi
-sudo modprobe xdma
+# XDMA_POLL=1: poll_mode=1 (no interrupts; for DMA calls that time out in dmesg)
+if [[ "${XDMA_POLL:-0}" == 1 ]]; then sudo modprobe -r xdma 2>/dev/null || true; fi
+sudo modprobe xdma ${XDMA_POLL:+poll_mode=$XDMA_POLL}
 sleep 1
 
 # ---- 3. device nodes, non-root access

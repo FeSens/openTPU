@@ -133,10 +133,11 @@ def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None):
     if name == "isa":
         return "isa", None
     if name == "board":
-        from opentpu.host.board import BoardBackend, XdmaTransport   # the PCIe driver
-        from opentpu.isasim import board_config
-        return (lambda c, imgs: BoardBackend(c, imgs, transport=XdmaTransport(dev),
-                                             model=model)), board_config()
+        from opentpu.host.board import (Board, BoardBackend, XdmaTransport,   # the PCIe driver
+                                        device_config)
+        tr = XdmaTransport(dev)
+        cfg = device_config(Board(tr, lock=False).info())     # MCOLS / LANES of the bitstream
+        return (lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model)), cfg
     if name == "board-sim":
         from opentpu.host.board import BoardBackend, SimTransport, sim_config
         cfg = sim_config(spec, cap)
@@ -176,7 +177,11 @@ def main(argv=None):
     tok = AutoTokenizer.from_pretrained(path)
     spec = load_spec(path)
     print(f"loading {path.name} onto openTPU ({a.backend}) ...", flush=True)
-    backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, path.name)
+    from opentpu.host.board import ConfigMismatch
+    try:
+        backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, path.name)
+    except ConfigMismatch as e:
+        raise SystemExit(f"otpu-chat: {e}") from None
     eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend)
     sp = sampling(spec, a)
     pick = sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,

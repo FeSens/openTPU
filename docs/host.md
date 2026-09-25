@@ -25,7 +25,7 @@ Xilinx XDMA driver). `pip install -e .` installs its commands:
 |---|---|
 | `otpu-smi` | the cards' state, like nvidia-smi (section 7) |
 | `otpu-selftest` | staged bring-up (section 4) |
-| `otpu-chat` | chat with Qwen3 or LFM2 on the card (section 5) |
+| `otpu-chat` | chat with Qwen3, LFM2 or Qwen3.5 on the card (section 5) |
 | `otpu-lens` | Lens profiles from the card's hardware trace ([lens.md](lens.md)) |
 
 Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens>` does the same.
@@ -36,8 +36,12 @@ Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens>` does th
   make sure the slot provides enough power and there is airflow over the heatsink.
 - Kernel headers for the running kernel (`linux-headers-$(uname -r)`), `gcc`, `make`, `git`.
 - Python 3.10+ with `numpy`; for the model also `torch`, `transformers`, `safetensors`.
-- This repository, and the model in `models/Qwen3-0.6B` (the Hugging Face checkpoint:
-  `huggingface-cli download Qwen/Qwen3-0.6B --local-dir models/Qwen3-0.6B`).
+- This repository, and the models in `models/` (Hugging Face checkpoints, e.g.
+  `huggingface-cli download Qwen/Qwen3-0.6B --local-dir models/Qwen3-0.6B`; likewise
+  `LiquidAI/LFM2.5-230M` -> `models/LFM2.5-230M`, `Qwen/Qwen3.5-0.8B` -> `models/Qwen3.5-0.8B`).
+- No configuration: the tools read the bitstream's D / MCOLS / LANES from its VERSION register.
+  Leave `OTPU_MCOLS` / `OTPU_LANES` unset (they configure the simulators); when set, they must
+  match the bitstream or the tools stop, naming both values.
 
 ## 2. Build and load the XDMA driver
 
@@ -67,7 +71,9 @@ KERNEL=="xdma[0-9]*", MODE="0666"
 then `sudo udevadm control --reload && sudo udevadm trigger` (or reload the driver).
 
 If DMA transfers fail on a machine with the IOMMU on, boot with `iommu=pt` (Intel:
-`intel_iommu=on iommu=pt`).
+`intel_iommu=on iommu=pt`). If DMA calls hang and `dmesg` shows XDMA timeouts, the interrupts
+do not arrive: reload in poll mode, `sudo modprobe -r xdma; sudo modprobe xdma poll_mode=1`
+(`XDMA_POLL=1 opentpu/host/setup_pcie.sh`).
 
 ## 3. Check the card on the bus
 
@@ -75,10 +81,12 @@ The card must be configured before the PC enumerates the bus: either boot the PC
 bitstream already in the card's configuration flash, or program over JTAG and then rescan:
 
 ```sh
-lspci -d 10ee:                       # the card, e.g. "Memory controller: Xilinx ... Device 7028"
+lspci -d 10ee: -nn                   # the card: "... Xilinx ... [10ee:7028]"
 sudo lspci -d 10ee: -vv | grep -E "LnkCap|LnkSta|Region"
-#   LnkSta: Speed 2.5GT/s, Width x8   <- Gen1 x8; anything less costs DMA bandwidth only
-#   Region 0: Memory at ... [size=...]  <- BAR0, the control registers (AXI-Lite; size set in the block design, >= 4 KiB)
+#   LnkCap/LnkSta: Speed 2.5GT/s, Width x8  <- Gen1 x8 is the design (not a downtrained link);
+#                                             fewer lanes cost DMA bandwidth only
+#   Region 0: Memory at ... [size=1M]   <- BAR0, the control registers (AXI-Lite master, 1 MiB)
+#   Region 1: Memory at ... [size=64K]  <- the XDMA's own registers (the driver uses them)
 # after JTAG programming, without a reboot:
 echo 1 | sudo tee /sys/bus/pci/devices/0000:XX:00.0/remove
 echo 1 | sudo tee /sys/bus/pci/rescan
@@ -91,9 +99,11 @@ xxd` must print `55 50 54 4f` ("OTPU", the ID register at offset 0, little-endia
 ## 4. Self-test
 
 ```sh
-otpu-selftest                                 # stages 1-8 on /dev/xdma0
-otpu-selftest --model qwen3                   # plus the model, vs the ISA simulator (or lfm2)
+otpu-selftest                                 # stages link .. vops on /dev/xdma0
+otpu-selftest --model qwen3                   # plus the model stage (lfm2, qwen35, or a directory)
+otpu-selftest --model qwen3 --tokens 1        # fewer generated tokens (default 8)
 otpu-selftest --sim                           # rehearsal on the Verilator board model
+otpu-selftest --dev /dev/xdma1 --bw-mib 128   # another card; bandwidth test size
 ```
 
 (`python3 -m opentpu.host.selftest ...` is the same without installing.)
@@ -103,16 +113,36 @@ Stages, in order (it stops at the first failure and prints a hint):
 | Stage | Checks |
 |---|---|
 | link | the ID register reads `0x4F545055` |
-| config | the bitstream's D / MCOLS / LANES equal `opentpu.isasim.board_config()` |
+| config | reads D / MCOLS / LANES from VERSION and builds the host configuration from them (`device_config`); fails when `OTPU_MCOLS` / `OTPU_LANES` are set to other values, or D is not 128 |
 | calib | both DDR3 controllers calibrated (STATUS bits 5, 6) |
 | regs | SCRATCH register write / read |
 | addr | walking address bits and random patterns on each channel (raw channel addresses) |
 | pattern | random data through the channel interleave, unaligned edges, the top of DRAM; sub-beat host writes (partial byte strobes) |
 | bandwidth | host -> card and card -> host DMA rate |
 | kernel | a program using every unit (DMA, VPU, quantizer, MXU, QST), then one of partial DRAM writes (QST bytes, short stores); DRAM equals the ISA simulator bit for bit |
-| qwen | greedy decoding of "What is the capital of France?" equals the ISA simulator token for token |
+| vops | RDOT / OUTER / LOG2 (Qwen3.5's DeltaNet functions) against the ISA simulator. A bitstream built before them runs the program without an error but computes other values: the stage passes with a note ("Qwen3 and LFM2 only"), and fails only with `--model qwen35` |
+| model | (with `--model`) greedy decoding of "What is the capital of France?" (`--tokens` tokens) equals the ISA simulator token for token |
 
-The qwen stage needs the ISA simulator's reference too (about 3 s per token on the host).
+The model stage also runs the ISA simulator's reference on the host (a few seconds per token).
+The prompt (21-24 tokens) and every generated token are one step each; on the board model
+(`--sim`) each step is a Verilator run of minutes, so use `--tokens 1` there.
+
+### When a stage fails
+
+The self-test prints a hint under the failing stage; in more detail:
+
+| Stage | First things to check |
+|---|---|
+| link | `lspci -d 10ee:` lists the card? If not: rescan after JTAG (`setup_pcie.sh --rescan`) or reboot. Listed but `/dev/xdma0_user` missing: `lsmod \| grep xdma`, `dmesg \| grep -i xdma`. ID `0xffffffff`: the link dropped (the FPGA was reprogrammed after enumeration: rescan). Another ID: a bitstream without openTPU, or the AXI-Lite path in the block design |
+| config | The message names the bitstream's value and the environment's: `unset OTPU_MCOLS OTPU_LANES`, or load the bitstream built for them (board.md, "Which bitstream to load") |
+| calib | A DDR3 channel did not calibrate: STATUS bit 5 = channel 0, bit 6 = channel 1 (`otpu-smi` shows both). One channel only: its byte lanes / pinout (board.md section 6.2). Both: the 200 MHz reference clock, or the memory supply |
+| regs | SCRATCH does not hold writes: the AXI-Lite write path, or core_clk / reset not running (the heartbeat LED) |
+| addr | The message names the channel and the address bit that aliases or is stuck: MIG address width / pinout of that channel, or the interconnect map (channel 1 at 0x8000_0000) |
+| pattern | Errors on one channel only: its byte lanes. Errors every other 64-byte beat: the host interleave vs `rtl/mem/otpu_axi_dram.sv`. Only the partial writes fail: the MIG ECC read-modify-write (board.md section 6.1) |
+| bandwidth | Below 0.5 GB/s: `LnkSta` width / speed, the IOMMU (`iommu=pt`), or the driver in a slow mode. A DMA call that hangs: interrupts (reload with `poll_mode=1`) |
+| kernel | `retired n of m instructions`: the core stopped early (illegal instruction, AXI error). DRAM differs: run `pytest tests/test_board.py` (the same program on the RTL model) and compare the counters with `otpu-smi -q` |
+| vops | With `--model qwen35` only: the bitstream predates RDOT / OUTER / LOG2; load one that has them |
+| model | Kernels pass but tokens differ: the image does not fit or a DRAM region is bad (pattern stage covers only samples), or a timing-dependent bug; compare per-token logits against the ISA simulator (`opentpu.llm.qwen3.Engine` with `backend="isa"`) |
 
 Partial writes matter on this board: each DDR3 channel is 9 x8 devices (72-bit, ECC) without
 data-mask pins, so the memory controller turns every write with partial byte strobes into a
@@ -127,11 +157,13 @@ otpu-chat --backend board                      # interactive
 otpu-chat --backend board --prompt "Why is the sky blue?"
 otpu-chat --backend board --clock-mhz 100      # override the core clock (v1 bitstreams)
 otpu-chat --backend board --model lfm2         # LFM2.5-230M instead of Qwen3-0.6B
+otpu-chat --backend board --model qwen35       # Qwen3.5-0.8B (needs RDOT / OUTER / LOG2 in the bitstream)
 ```
 
-The first call writes the model image (about 0.8 GiB for Qwen3-0.6B, 0.3 GiB for LFM2.5-230M)
-to the card; every token then writes the embedding row and the token's program (a few tens of
-KiB), runs, and reads the logits (0.6 MiB for Qwen3, 0.25 MiB for LFM2). After each answer the tool prints wall-clock tokens/s and the device's own
+The first call writes the model image (at the default `--cap 2048`: 0.69 GiB for Qwen3-0.6B,
+0.27 GiB for LFM2.5-230M, 0.77 GiB for Qwen3.5-0.8B) to the card; every token then writes the
+embedding row and the token's program (a few tens of KiB), runs, and reads the logits (0.58 MiB
+for Qwen3, 0.25 MiB for LFM2, 0.95 MiB for Qwen3.5). After each answer the tool prints wall-clock tokens/s and the device's own
 cycles per token (from the CYCLES register), converted with the bitstream's CORE_KHZ register
 (register map 2) or `--clock-mhz` (default 100 on a register map 1 bitstream). While it runs,
 `otpu-smi` shows the process, the model, the DRAM in use and tokens/s.
@@ -263,9 +295,13 @@ read and returns its index in the next flush's `results` (in order; an address m
 `wait_cycles(n)` queues the testbench's existing `C n` command (wait n cycles; no RTL change).
 `otpu-smi --sim` samples the counters twice this way, and `Board.run(trace=...)` reads the
 whole trace buffer (CAPS depth) in the flush that ran the program. When
-`rtl/boards/ypcb-00338/otpu_trace.sv` exists it is added to the model's sources. The
-testbench's AXI-Lite address is 8 bits wide today: the register map 2 offsets (0x100 and up)
-need it widened to 12 bits (the RTL side of docs/observability.md).
+`rtl/boards/ypcb-00338/otpu_trace.sv` exists it is added to the model's sources; the
+testbench's AXI-Lite address is 12 bits wide (register map 2).
+
+The model is built with the configuration the environment selects -- `OTPU_MCOLS`,
+`OTPU_LANES`, `OTPU_VPU_CL` (default 2, as `make bit`) -- and the MXU and quantizer on 8 TMEM
+lanes as in the bitstream; the self-test and the tools then read it back from its VERSION
+register, exactly as on the card.
 
 `opentpu/host/fake.py`'s `FakeTransport` is an in-memory card with register map 2 (or 1):
 synthetic counters, a trace buffer served from a list, runs that take a set wall time. The

@@ -23,6 +23,7 @@ if [[ $mode == flash ]]; then bit="${1:-$root/build/vivado/otpu.mcs}"
 else bit="${1:-$root/build/vivado/otpu.bit}"; fi
 fw="${XUSB_FIRMWARE:-$HOME/bonetto/inspur-adventures/firmware/xusb_xp2.hex}"
 cable="${CABLE:-xilinxPlatformCableUsb}"
+# shellcheck disable=SC2054  # the commas are part of the --misc-device argument
 ofl=(openFPGALoader --cable "$cable" --probe-firmware "$fw"
      --misc-device 0x10931093,8,inspur_cpld --index-chain 0)
 
@@ -43,7 +44,8 @@ case $mode in
     # BPI flash through the FPGA (openFPGALoader loads its bpiOverJtag bridge first)
     retry "${ofl[@]}" --freq 6000000 --fpga-part xc7k480tffg1156 -f "$bit" ;;
   vivado)
-    tcl=$(mktemp /tmp/otpu_prog.XXXX.tcl)
+    tcl="$(mktemp "${TMPDIR:-/tmp}/otpu_prog.XXXXXX")"   # BSD mktemp: the X's must end the name
+    trap 'rm -f "$tcl"' EXIT
     cat > "$tcl" <<EOF
 open_hw_manager
 connect_hw_server -allow_non_jtag

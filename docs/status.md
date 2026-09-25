@@ -55,7 +55,7 @@
     - The kernel perf tests are part of every gate. This came after a VPU winner cut batched-attention speed.
 - **Build switches:**
   - `make bit CORE_MHZ=80` (or 75, 90): a slower accelerator clock if 100 MHz does not close.
-  - `make bit MCOLS=4`: faster prefill and batched decode. Run the host with `OTPU_MCOLS=4`.
+  - `make bit MCOLS=4`: faster prefill and batched decode. The host reads MCOLS from the bitstream.
 - **Host:** `opentpu/host/setup_pcie.sh` covers the XDMA driver, udev, rescan after JTAG and the ID check.
 - **Vivado front-end audit:** no construct that is sure to break the build. The risky ones were fixed.
 

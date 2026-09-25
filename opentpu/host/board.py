@@ -11,8 +11,9 @@ The accelerator addresses one logical DRAM interleaved over the channels in 64-b
 This driver applies the same map, so the host works with logical addresses only.
 
 BoardBackend implements the Engine backend interface (write / read / run, plus prepare and
-attach), so `Engine(..., cfg=board_config(), backend=BoardBackend)` runs Qwen3 or LFM2 on
-the card. With transport=SimTransport the identical protocol runs against the Verilator model
+attach), so `Engine(..., cfg=device_config(board.info()), backend=BoardBackend)` runs Qwen3,
+LFM2 or Qwen3.5 on the card; device_config takes MCOLS and LANES from the bitstream's VERSION
+register. With transport=SimTransport the identical protocol runs against the Verilator model
 of the board (sim/verilator/tb_board.sv) -- the bring-up rehearsal.
 
 A Board takes the device's exclusive lock (runstate.DeviceLock, /tmp/otpu/<dev>.lock) when its
@@ -28,6 +29,7 @@ import struct
 import subprocess
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -216,7 +218,10 @@ class SimTransport:
             srcs.insert(-2, board / "otpu_trace.sv")
         srcs += [rtlsim.TB / "otpu_axi_mem.sv", rtlsim.TB / "tb_board.sv"]
         from opentpu.isasim import board_config
-        p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": board_config().MCOLS}  # OTPU_MCOLS
+        cfg = board_config()                        # OTPU_MCOLS / OTPU_LANES: the "bitstream"
+        # VPU_CL and ULANES as the bitstream builds them (make bit: VPU_CL 2, ULANES 8)
+        p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": cfg.MCOLS, "LANES": cfg.LANES,
+             "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8)}
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
         with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:
@@ -467,14 +472,40 @@ class Board:
         return out
 
 
-# ------------------------------------------------------------------------------ Engine backend
-def sim_config(spec, cap: int):
-    """board_config with the DRAM cut to what the model needs (power of two), for the board
-    model: the image, then the program area."""
+# ------------------------------------------------------------------------------ configuration
+class ConfigMismatch(RuntimeError):
+    """The bitstream on the card and the host's configuration disagree."""
+
+
+def device_config(info: dict, **kw):
+    """The board_config of the bitstream that `info` (Board.info()) describes: MCOLS and LANES
+    come from its VERSION register, so the card needs no OTPU_MCOLS / OTPU_LANES. When either
+    is set in the environment it must name the bitstream's value (ConfigMismatch otherwise).
+    Keyword arguments set other fields (DRAM_BYTES)."""
     from opentpu.isasim import board_config
-    probe = spec.image(board_config(), cap)
-    need = -(-probe.nbytes // 4096) * 4096 + 4 * board_config().IMEM_WORDS
-    return board_config(DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
+    for k in ("MCOLS", "LANES"):
+        env = os.environ.get(f"OTPU_{k}")
+        if env is not None and int(env) != info[k]:
+            raise ConfigMismatch(f"the bitstream was built with {k}={info[k]} but OTPU_{k}={env}"
+                                 f": unset OTPU_{k} (the host follows the bitstream) or load "
+                                 f"a {k}={env} bitstream")
+    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], **kw})
+    if info["D"] != cfg.D:
+        raise ConfigMismatch(f"the bitstream has D={info['D']}, the board configuration "
+                             f"D={cfg.D}: not a YPCB-00338 openTPU build")
+    return cfg
+
+
+# ------------------------------------------------------------------------------ Engine backend
+def sim_config(spec, cap: int, base=None):
+    """`base` (default board_config()) with the DRAM cut to what the model needs (power of
+    two): the image, then the program area. The board model's memory, and the ISA reference
+    that runs the same layout."""
+    from opentpu.isasim import board_config
+    base = base or board_config()
+    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap)
+    need = -(-probe.nbytes // 4096) * 4096 + 4 * base.IMEM_WORDS
+    return replace(base, DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
 
 
 def dram_layout(cfg, image_bytes: int, prog_at: int, image=None, poss=None) -> dict:
@@ -516,8 +547,9 @@ class BoardBackend:
         info = self.info = self.board.info()
         if (info["D"], info["MCOLS"], info["LANES"]) != (cfg.D, cfg.MCOLS, cfg.LANES):
             self.board.close()
-            raise RuntimeError(f"bitstream is D={info['D']} MCOLS={info['MCOLS']} "
-                               f"LANES={info['LANES']}, the configuration differs")
+            raise ConfigMismatch(f"the bitstream is D={info['D']} MCOLS={info['MCOLS']} "
+                                 f"LANES={info['LANES']}, the configuration D={cfg.D} "
+                                 f"MCOLS={cfg.MCOLS} LANES={cfg.LANES} (use device_config)")
         img = np.asarray(images[0], np.uint8)
         self.image_bytes = len(img)
         self.prog_at = -(-len(img) // 4096) * 4096
@@ -581,8 +613,3 @@ class BoardBackend:
             self.status.remove()
             self.status = None
         self.board.close()
-
-    @staticmethod
-    def config(**kw):
-        from opentpu.isasim import board_config
-        return board_config(**kw)

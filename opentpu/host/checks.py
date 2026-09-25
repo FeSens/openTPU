@@ -57,6 +57,23 @@ def masked_program() -> list:
     return prog
 
 
+def vops_program() -> list:
+    """The VPU functions added for linear-recurrence models (RDOT, OUTER, LOG2; Qwen3.5's
+    DeltaNet layers). A bitstream built before them runs this program without an error but
+    computes other values: the model check of Qwen3.5 would fail late and obscurely."""
+    return [
+        I.ld(DATA, 0, 4096),
+        I.vop(I.V_ABS, 4096, 0, 0, 2, 256, 256, 256, 0, I.B_SCALAR, 0.0),
+        I.vop(I.V_LOG2, 4608, 4096, 0, 2, 256, 256, 256, 0, I.B_SCALAR, 0.0),
+        I.vop(I.V_RDOT, 5120, 0, 1024, 4, 256, 1, 256, 256),
+        I.vop(I.V_COPY, 6144, 0, 0, 4, 64, 64, 64, 0, I.B_SCALAR, 0.0),
+        I.outer(6144, 5120, 2048, 3072, 4, 64, 64, 1, "scalar"),
+        I.st(OUT + 0x20000, 4096, 1028),
+        I.st(OUT + 0x22000, 6144, 256),
+        I.halt(),
+    ]
+
+
 def run_demo(board, cfg, prog: list | None = None) -> tuple[bool, str, dict]:
     """Run a program (default: the demo) on the board and on the ISA simulator; compare DRAM."""
     img = demo_image()

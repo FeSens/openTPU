@@ -4,7 +4,7 @@
 #   ./run_vivado.sh [800|1066]            # native: `vivado` on PATH (x86-64 Linux / Windows WSL)
 #   MCOLS=4 ./run_vivado.sh               # 4 MXU columns (faster prefill / batched decode)
 #   VPU_CL=4 ./run_vivado.sh              # 4 VPU lanes with exp2/recip/rsqrt (faster softmax)
-#   LANES=16 ./run_vivado.sh              # 16 VPU lanes / TMEM banks (host: OTPU_LANES=16)
+#   LANES=16 ./run_vivado.sh              # 16 VPU lanes / TMEM banks
 #   CORE_MHZ=80 ./run_vivado.sh           # slower core clock when 100 MHz does not close
 #   VIVADO_DOCKER=image ./run_vivado.sh   # Docker (e.g. Apple Silicon with Rosetta), see docs/board.md
 #   STEP=impl ./run_vivado.sh             # rerun implementation only (keeps project and synthesis)
@@ -19,9 +19,9 @@ root="$(cd "$here/../.." && pwd)"
 speed="${1:-800}"
 out="${OUT_DIR:-$root/build/vivado}"
 jobs="${JOBS:-8}"
-mcols="${MCOLS:-2}"            # MXU columns; the host needs OTPU_MCOLS set to the same value
+mcols="${MCOLS:-2}"            # MXU columns (the host reads them from the VERSION register)
 vpu_cl="${VPU_CL:-2}"          # VPU lanes with the composite functions (timing only)
-lanes="${LANES:-8}"            # VPU lanes / TMEM banks; the host needs OTPU_LANES set to it
+lanes="${LANES:-8}"            # VPU lanes / TMEM banks (likewise in VERSION)
 core_mhz="${CORE_MHZ:-100}"   # accelerator clock; lower it (80, 75) if timing does not close
 # BUILD_ID register: the git commit's first 8 hex digits, taken here (Vivado may run in Docker)
 build_id="${BUILD_ID:-$(git -C "$root" rev-parse HEAD 2>/dev/null | cut -c1-8)}"

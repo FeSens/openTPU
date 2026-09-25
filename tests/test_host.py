@@ -12,6 +12,7 @@ import sys
 import textwrap
 import time
 import types
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -20,7 +21,7 @@ from opentpu import isa as I
 from opentpu.host import power as P
 from opentpu.host import regs as R
 from opentpu.host import smi
-from opentpu.host.board import Board, BoardBackend, rates
+from opentpu.host.board import Board, BoardBackend, ConfigMismatch, device_config, rates
 from opentpu.host.fake import RATES, FakeTransport
 from opentpu.host.runstate import DeviceBusy, RunnerStatus, read_status
 from opentpu.isasim import board_config
@@ -108,6 +109,64 @@ def test_v1_bitstream_fallback():
     d = smi.query(t, "/dev/fake", sleep=lambda s: None)
     assert d["ok"] and d["regmap"] == 1 and d["util"] is None and d["power"] is None
     assert d["temp_c"] is None and "n/a" in smi.table([d])
+
+
+# ------------------------------------------------------------------------------ configuration
+@pytest.fixture
+def no_cfg_env(monkeypatch):
+    for k in ("OTPU_MCOLS", "OTPU_LANES"):
+        monkeypatch.delenv(k, raising=False)
+    return monkeypatch
+
+
+def test_device_config_follows_the_bitstream(no_cfg_env):
+    info = Board(FakeTransport(devname=None, MCOLS=4, LANES=16)).info()
+    cfg = device_config(info, DRAM_BYTES=1 << 22)
+    assert (cfg.D, cfg.MCOLS, cfg.LANES, cfg.DRAM_BYTES) == (128, 4, 16, 1 << 22)
+    assert cfg == board_config(MCOLS=4, LANES=16, DRAM_BYTES=1 << 22)
+    no_cfg_env.setenv("OTPU_MCOLS", "4")                        # agreeing: fine
+    assert device_config(info).MCOLS == 4
+    no_cfg_env.setenv("OTPU_MCOLS", "2")
+    with pytest.raises(ConfigMismatch, match="MCOLS=4 but OTPU_MCOLS=2"):
+        device_config(info)
+    no_cfg_env.delenv("OTPU_MCOLS")
+    no_cfg_env.setenv("OTPU_LANES", "8")
+    with pytest.raises(ConfigMismatch, match="LANES=16 but OTPU_LANES=8"):
+        device_config(info)
+    with pytest.raises(ConfigMismatch, match="D=64"):
+        device_config(Board(FakeTransport(devname=None, D=64)).info())
+
+
+def test_board_backend_rejects_another_configuration(no_cfg_env):
+    card = FakeTransport(devname="fake6", MCOLS=4)
+    with pytest.raises(ConfigMismatch, match="MCOLS=4 LANES=8, the configuration D=128 MCOLS=2"):
+        BoardBackend(board_config(DRAM_BYTES=1 << 21), [np.zeros(4096, np.uint8)],
+                     transport=card)
+    Board(FakeTransport(devname="fake6")).close()             # the lock was released
+
+
+def test_chat_board_backend_takes_the_bitstream_configuration(no_cfg_env):
+    from opentpu.host import board, chat
+    card = FakeTransport(devname="fake4", MCOLS=4, LANES=16)
+    no_cfg_env.setattr(board, "XdmaTransport", lambda dev: card)
+    backend, cfg = chat.make_backend("board", None, 256, "/dev/fake4", "m0")
+    assert (cfg.MCOLS, cfg.LANES) == (4, 16)
+    be = backend(replace(cfg, DRAM_BYTES=1 << 21), [np.zeros(4096, np.uint8)])
+    assert be.info["MCOLS"] == 4 and be.board.lock is not None       # the probe did not lock
+    be.close()
+    no_cfg_env.setenv("OTPU_MCOLS", "2")
+    with pytest.raises(ConfigMismatch, match="OTPU_MCOLS=2"):
+        chat.make_backend("board", None, 256, "/dev/fake4", "m0")
+
+
+def test_selftest_stops_at_config_on_a_stale_environment(no_cfg_env, capsys):
+    from opentpu.host import selftest
+    no_cfg_env.setattr(selftest, "XdmaTransport", lambda dev: FakeTransport(MCOLS=4))
+    no_cfg_env.setenv("OTPU_MCOLS", "2")
+    assert selftest.main([]) == 1
+    out = capsys.readouterr().out
+    assert "[PASS] link" in out and "[FAIL] config" in out
+    assert "MCOLS=4 but OTPU_MCOLS=2" in out and "stopped at stage 'config'" in out
 
 
 # ------------------------------------------------------------------------------ status file
