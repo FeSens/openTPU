@@ -109,21 +109,25 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| `build/vivado_100mhz_gen1_met/otpu.bit` | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | v0.4 (6587cb4) | D=128 MCOLS=2 LANES=8 | no | Qwen3, LFM2 | met, WNS +0.082 ns |
-| `build/vivado_100mhz_m4cl4_vops_met/otpu.bit` | `make bit MCOLS=4 VPU_CL=4` | ddec900 (DMA chunk buffer + new VPU ops) | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.028 ns |
-| _(final builds: to be filled in)_ | | | | | | |
+| **`build/deploy_default_3c270c9/otpu.bit`** (primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 3c270c9 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.065 ns, WHS +0.038 ns |
+| `build/vivado_100mhz_m4cl4_vops_met/otpu.bit` (fallback) | `make bit MCOLS=4 VPU_CL=4` | ddec900 (DMA chunk buffer + new VPU ops) | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.028 ns |
+| `build/vivado_100mhz_gen1_met/otpu.bit` (fallback) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | v0.4 (6587cb4) | D=128 MCOLS=2 LANES=8 | no | Qwen3, LFM2 | met, WNS +0.082 ns |
 
-All are 100 MHz core, DDR3-800, PCIe Gen1 x8, register map 2. The RTL changes after ddec900
+Start with the primary image; the 4&4 build is the same instruction set with twice the MXU
+columns (the host picks MCOLS=4 up from VERSION); the v0.4 build is the last resort. All are
+100 MHz core, DDR3-800, PCIe Gen1 x8, register map 2. The RTL changes after ddec900
 (TMEM rotators, LANES=16 option, MXU drain) change timing or area only, not results. The
-`.mcs` next to each `.bit` is the BPI flash image of the same build.
+`.mcs` next to each `.bit` is the BPI flash image of the same build. The self-test's config stage and
+`otpu-smi` print the loaded image's BUILD_ID (the first 8 hex digits of the commit checked out
+at build time: `3c270c93` for the primary), so you can tell which image is on the card.
 
 ### Load it over JTAG
 
 ```sh
 cd boards/ypcb-00338
-make program BIT=../../build/vivado_100mhz_gen1_met/otpu.bit          # openFPGALoader (5 retries)
-make program-vivado BIT=$PWD/../../build/vivado_100mhz_gen1_met/otpu.bit   # Vivado hw_manager
-make flash MCS=../../build/vivado_100mhz_gen1_met/otpu.mcs            # permanent: BPI flash
+make program BIT=../../build/deploy_default_3c270c9/otpu.bit         # openFPGALoader (5 retries)
+make program-vivado BIT=$PWD/../../build/deploy_default_3c270c9/otpu.bit   # Vivado hw_manager
+make flash MCS=../../build/deploy_default_3c270c9/otpu.mcs          # permanent: BPI flash
 ```
 
 Without `BIT=` / `MCS=` the scripts take `build/vivado/otpu.bit` / `otpu.mcs` (the last build).
