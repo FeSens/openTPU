@@ -65,6 +65,16 @@ Default build of 3c270c9 (MCOLS=2, VPU_CL=2, LANES=8; rotator TMEM, drain fix; m
 2026-09-25): all timing constraints met, WNS +0.065 ns, WHS +0.038 ns; 184,124 LUT (61.7%),
 657.5 BRAM36 tiles (68.9%), 283 DSP48 (14.7%); power estimate 8.99 W (low confidence).
 
+In all the builds above the MXU's 1K x 128-byte chunk FIFO was not in block RAM: Vivado had
+absorbed its read register into the DSP inputs and built it from 5,472 RAM64M (~22K LUTs; synthesis
+warning `Infeasible attribute ram_style = "block"`). Since 54045fa it is a block RAM module of its
+own (29 BRAM36), and since 617fffb the TMEM keeps 6 read copies instead of 8.
+
+Default build of 74d4859 (MCOLS=2, VPU_CL=2, LANES=8; chunk FIFO in block RAM, 6 TMEM copies;
+measured, 2026-09-26): all timing constraints met, WNS +0.104 ns, WHS +0.038 ns; 155,965 LUT
+(52.2%, -28K), 558 BRAM36 tiles (58.4%, -99.5), 283 DSP48 (14.7%); power estimate 8.89 W (low
+confidence).
+
 ### Vivado on Apple Silicon (Docker + Rosetta)
 
 Vivado is x86-64 Linux/Windows only. On an M-series Mac:
@@ -111,25 +121,27 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_default_3c270c9/otpu.bit`** (primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 3c270c9 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.065 ns, WHS +0.038 ns |
+| **`build/deploy_r3route_74d4859/otpu.bit`** (primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 74d4859 (chunk FIFO in block RAM, 6 TMEM copies) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.104 ns, WHS +0.038 ns |
+| `build/deploy_default_3c270c9/otpu.bit` (first fallback) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 3c270c9 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.065 ns, WHS +0.038 ns |
 | `build/vivado_100mhz_m4cl4_vops_met/otpu.bit` (fallback) | `make bit MCOLS=4 VPU_CL=4` | ddec900 (DMA chunk buffer + new VPU ops) | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.028 ns |
 | `build/vivado_100mhz_gen1_met/otpu.bit` (fallback) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | v0.4 (6587cb4) | D=128 MCOLS=2 LANES=8 | no | Qwen3, LFM2 | met, WNS +0.082 ns |
 
-Start with the primary image; the 4&4 build is the same instruction set with twice the MXU
+Start with the primary image; if it misbehaves where the 3c270c9 image does not, the chunk FIFO
+/ TMEM change is the suspect (same programs, same cycles in simulation). The 4&4 build is the same instruction set with twice the MXU
 columns (the host picks MCOLS=4 up from VERSION); the v0.4 build is the last resort. All are
 100 MHz core, DDR3-800, PCIe Gen1 x8, register map 2. The RTL changes after ddec900
-(TMEM rotators, LANES=16 option, MXU drain) change timing or area only, not results. The
+(TMEM rotators, LANES=16 option, MXU drain, chunk FIFO in block RAM, 6 TMEM copies) change timing or area only, not results. The
 `.mcs` next to each `.bit` is the BPI flash image of the same build. The self-test's config stage and
 `otpu-smi` print the loaded image's BUILD_ID (the first 8 hex digits of the commit checked out
-at build time: `3c270c93` for the primary), so you can tell which image is on the card.
+at build time: `74d48591` for the primary, `3c270c93` for the first fallback), so you can tell which image is on the card.
 
 ### Load it over JTAG
 
 ```sh
 cd boards/ypcb-00338
-make program BIT=../../build/deploy_default_3c270c9/otpu.bit         # openFPGALoader (5 retries)
-make program-vivado BIT=$PWD/../../build/deploy_default_3c270c9/otpu.bit   # Vivado hw_manager
-make flash MCS=../../build/deploy_default_3c270c9/otpu.mcs          # permanent: BPI flash
+make program BIT=../../build/deploy_r3route_74d4859/otpu.bit         # openFPGALoader (5 retries)
+make program-vivado BIT=$PWD/../../build/deploy_r3route_74d4859/otpu.bit   # Vivado hw_manager
+make flash MCS=../../build/deploy_r3route_74d4859/otpu.mcs          # permanent: BPI flash
 ```
 
 Without `BIT=` / `MCS=` the scripts take `build/vivado/otpu.bit` / `otpu.mcs` (the last build).
