@@ -60,6 +60,11 @@ With the DMA chunk buffer (eb29dd3) and the RDOT / OUTER / LOG2 VPU ops (ddec900
 WHS +0.016 ns; 213,391 LUT (71.5%), 147,522 FF (24.7%), 690.5 BRAM36 tiles (72.3%), 459 DSP48
 (23.9%); power estimate 9.70 W (low confidence).
 
+In all the builds above the MXU's 1K x 128-byte chunk FIFO was not in block RAM: Vivado had
+absorbed its read register into the DSP inputs and built it from 5,472 RAM64M (~22K LUTs; synthesis
+warning `Infeasible attribute ram_style = "block"`). Since 54045fa it is a block RAM module of its
+own (29 BRAM36); expect about 22K fewer LUTs than the numbers above (not yet measured).
+
 ### Vivado on Apple Silicon (Docker + Rosetta)
 
 Vivado is x86-64 Linux/Windows only. On an M-series Mac:
