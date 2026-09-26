@@ -603,3 +603,64 @@ def test_chat_sampling_defaults_per_model_and_repetition_penalty():
     # top_p = 1 keeps every top-k candidate (and does not overrun them)
     pick = sampler(1.0, 3, 1.0, 0)
     assert {pick(np.array([0.0, 0.0, 0.0, -50.0])) for _ in range(200)} == {0, 1, 2}
+
+
+# ------------------------------------------------------------------------------ otpu-diag
+def test_diag_sim_registers_and_memory_pass(have_verilator, tmp_path, no_cfg_env):
+    from opentpu.host import diag
+    out = tmp_path / "diag.json"
+    assert diag.main(["--sim", "--only", "regs,mem", "--json", str(out)]) == 0
+    rep = json.loads(out.read_text())
+    assert rep["failed"] == 0 and not rep["hints"]
+    st = {r["name"]: r["status"] for r in rep["rows"]}
+    assert st["channel 1 data bits (walking 1 / 0)"] == "PASS"
+    assert st["SNAP and the free-running counters"] == "PASS"
+    assert st["PCIe link"] == "SKIP"
+
+
+class LaneFault(FakeTransport):
+    """A card whose channel 1 DQ44 (byte lane 5, bit 4) reads inverted."""
+
+    def mem_read(self, ch, off, n, out=None):
+        d = super().mem_read(ch, off, n).copy()
+        if ch == 1:
+            d[(8 - off % 8 + 5) % 8::8] ^= 0x10
+        if out is not None:
+            out[:] = d
+            return out
+        return d
+
+
+def test_diag_names_the_failing_byte_lane(tmp_path, capsys, no_cfg_env):
+    from opentpu.host import diag
+    card = LaneFault(devname="fake3")
+    out = tmp_path / "diag.json"
+    rc = diag.main(["--only", "mem", "--bw-mib", "1", "--json", str(out)],
+                   open_transport=lambda dev: card)
+    assert rc == 1
+    rep = json.loads(out.read_text())
+    st = {r["name"]: r["status"] for r in rep["rows"]}
+    assert st["channel 1 data bits (walking 1 / 0)"] == "FAIL"
+    assert st["channel 1 random blocks"] == "FAIL"
+    assert st["channel 0 data bits (walking 1 / 0)"] == "PASS"
+    assert st["channel 0 random blocks"] == "PASS"
+    assert "channel 1 byte lane 5 errors -> DQ[47:40] pinout / calibration of that lane; " \
+           "only DQ44 (stuck or shorted bit)" in rep["hints"]
+    assert not any("channel 0" in h for h in rep["hints"])
+    text = capsys.readouterr().out
+    assert "does not work:" in text and "DQ[47:40]" in text
+
+
+def test_diag_hints_from_the_pattern_of_failures():
+    from opentpu.host.diag import FAIL, PASS, Row, diagnose
+
+    def rows(**groups):
+        return [Row("isa", f"{g} {k}", st, "", group=g) for g, st in groups.items()
+                for k in range(3)]
+    h = diagnose(rows(mxu=FAIL, vpu=PASS, dma=PASS, control=PASS))
+    assert any("MXU / DSP path" in x for x in h)
+    h = diagnose(rows(mxu=PASS, vpu=PASS, dma=PASS, **{"vpu-new": FAIL}))
+    assert h == ["only RDOT / OUTER / LOG2 fail: a bitstream built before ddec900 (Qwen3 and "
+                 "LFM2 run; Qwen3.5 does not)"]
+    h = diagnose(rows(mxu=FAIL, vpu=FAIL, dma=FAIL, control=FAIL))
+    assert h[0].startswith("every program fails")

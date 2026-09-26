@@ -23,9 +23,10 @@ Xilinx XDMA driver). `pip install -e .` installs its commands:
 
 | Command | What it does |
 |---|---|
-| `otpu-smi` | the cards' state, like nvidia-smi (section 7) |
+| `otpu-smi` | the cards' state, like nvidia-smi (section 8) |
 | `otpu-selftest` | staged bring-up (section 4) |
-| `otpu-chat` | chat with Qwen3, LFM2 or Qwen3.5 on the card (section 5) |
+| `otpu-diag` | the full hardware diagnostic: every check, no stopping, a works / does-not-work matrix (section 5) |
+| `otpu-chat` | chat with Qwen3, LFM2 or Qwen3.5 on the card (section 6) |
 | `otpu-lens` | Lens profiles from the card's hardware trace ([lens.md](lens.md)) |
 
 Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens>` does the same.
@@ -150,7 +151,52 @@ read-modify-write. The pattern and kernel stages exercise that path from the hos
 and from the accelerator (QST byte writes, word-masked stores). The board model applies byte
 strobes directly, so only the card proves the controller's read-modify-write.
 
-## 5. Chat
+## 5. Full diagnostic: otpu-diag
+
+```sh
+otpu-diag                                     # every check, about a minute
+otpu-diag --json diag.json                    # the report as JSON as well
+otpu-diag --mem full                          # plus a march C- over all 4 GiB
+otpu-diag --soak 20                           # rerun the kernel set 20 times: intermittents
+otpu-diag --model qwen3 --tokens 8            # plus the model check of otpu-selftest
+otpu-diag --only mem,isa                      # platform plus some sections
+otpu-diag --sim                               # the board model (memory tests scaled to it)
+```
+
+Where otpu-selftest stops at the first failure, otpu-diag runs everything it can. A check whose
+prerequisite failed is marked SKIP with the reason (the memory tests of a channel need its
+calibration; the programs need the ID, the configuration and both calibrations); everything
+else runs. It prints a line per check, then a matrix (PASS / FAIL / SKIP / INFO per section),
+the failing checks with their details and the diagnosis. Exit code 1 on any FAIL.
+
+| Section | Checks |
+|---|---|
+| platform | PCIe link speed and width (sysfs; expected 2.5 GT/s x8), XDMA module and device nodes, ID, VERSION -> configuration, BUILD_ID and CORE_KHZ, calibration of each channel, STATUS ERROR / AXI_ERR (cleared with CLEAR if left by an earlier run), die temperature, the power estimate from `power.json` (an estimate, INFO) |
+| regs | SCRATCH, PROG_ADDR, PROG_N, TRACE_ADDR: 68 write / read patterns each (walking 1, walking 0, all 0 / 1, checkerboards; stuck bits named); TRACE_CTRL bits; read-only registers: sane values (VERSION, REGMAP, CAPS, CORE_KHZ, 0xDEADBEEF on an undefined offset) and ignoring writes; SNAP and the free-running counters |
+| mem | per channel (raw channel addresses): walking 1 and walking 0 over the 512 bits of a beat, walking address bits (aliasing named), 16 random blocks spread over the channel, 200 partial (byte-strobe) writes, DMA bandwidth each way; the interleave through the accelerator's address map; with `--mem full` a march C- over every byte with address-in-address data (progress line; errors per byte lane, DQ bit and address bit) |
+| isa | one program per instruction variant (`opentpu/host/opchecks.py`, 93 at MCOLS=2), each compared with the ISA simulator bit for bit: NOP, HALT, LI / ADDI, LOOP (nested, count from a register, count 0), BAR; LD / ST aligned, unaligned, short, register offsets; MM plain, UNIT, ACC, RMAX, ACC+RMAX, UNIT+ACC+ASCALE, M=1, another ACT block, a row stride, register operands; QACT ROW / CSCALE / RSCALE; QST dense, strided, ROW; GATHER; every VOP function under each legal broadcast mode (FULL / ROW / COL / SCALAR for the binary ones and RDOT), OUTER with each decay mode; the composite and simple functions on edge values (zeros, denormals, the largest floats, infinities) |
+| system | the all-units demo, the masked-write and the RDOT / OUTER / LOG2 programs; the cycle counters (a NOP loop of n and 2n iterations: CYCLES grows, on the card agrees with the wall time at CORE_KHZ and with UPTIME); `--soak N` |
+| model | `--model`: greedy decoding against the ISA simulator, as otpu-selftest |
+
+Memory errors are counted per byte lane: on this board byte b of a channel offset travels on
+DQ byte lane b % 8 (a 64-byte AXI beat is one BL8 burst of the 64-bit channel), so a failing
+lane names DQ[8L+7:8L]. The diagnosis reads the pattern of failures, for example:
+
+- `channel 1 byte lane 5 errors -> DQ[47:40] pinout / calibration of that lane` (and the one
+  DQ bit when only one is wrong); errors on every lane of a channel point at the whole channel;
+- `channel 0 address bit 27 aliases with bit 26 -> that address line or the MIG address width`;
+- `all MXU rows fail but the VPU and DMA pass -> MXU / DSP path`; `QACT / QST fail while MM
+  passes -> the quantizer`; composite functions against simple ones -> the composite lanes;
+- `only RDOT / OUTER / LOG2 fail: a bitstream built before ddec900`;
+- every program failing -> program load, sequencer, clock / reset or DRAM.
+
+The JSON report (`--json`) holds every row (section, name, status, message, seconds, the
+per-lane counts) and the hints. On the board model (`--sim`) the PCIe, driver and bandwidth
+checks are SKIP; everything else passes (about 80 s). Known difference between the RTL and the
+ISA simulator, left out of the edge values: NaN inputs (RECIP of a NaN is 0 in the RTL; MAX,
+ABS and COPY pass a signalling NaN through where the simulator returns the canonical NaN).
+
+## 6. Chat
 
 ```sh
 otpu-chat --backend board                      # interactive
@@ -171,7 +217,7 @@ cycles per token (from the CYCLES register), converted with the bitstream's CORE
 `--backend board-sim` runs the same driver against the Verilator board model (bit-exact, but
 minutes per token for the real model; use it with small models).
 
-## 6. Control registers
+## 7. Control registers
 
 [observability.md](observability.md) has the register map (version 2: the version 1 registers
 plus REGMAP, CAPS, CORE_KHZ, BUILD_ID, TEMP, SNAP, the free-running counters and the trace
@@ -215,7 +261,7 @@ compile of a step is 4.5-7 ms; per token, device 30 ms: 36.0 ms sequential -> 32
 pipelined; device 60 ms: 68.1 -> 64.2 ms (the compile is hidden; what remains is the
 embedding/RoPE writes, the 0.6 MiB logits read and the poll's wake-up).
 
-## 7. Device lock, status file and otpu-smi
+## 8. Device lock, status file and otpu-smi
 
 **Lock.** Anything that runs programs or writes the card's DRAM (`Board`, `BoardBackend`,
 `otpu-selftest`, `otpu-chat`, `otpu-lens record`) takes an exclusive `flock` on

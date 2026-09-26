@@ -247,6 +247,7 @@ The host software runs on top of the stock Xilinx XDMA driver:
 
 ```
 otpu-selftest            registers, DRAM patterns, kernels, then a model (--sim for the board model)
+otpu-diag                every hardware check without stopping: a works / does-not-work matrix
 otpu-chat                chat with Qwen3-0.6B (or --model lfm2: LFM2.5-230M, qwen35: Qwen3.5-0.8B)
 otpu-smi                 temperature, estimated power, DRAM use, per-unit utilization
 otpu-lens                record a hardware trace and open it in Lens

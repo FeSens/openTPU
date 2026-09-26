@@ -31,13 +31,11 @@ import sys
 import time
 import traceback
 
-import numpy as np
-
 from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST_CALIB0,
-                                ST_CALIB1, Board, BoardBackend, SimTransport, XdmaTransport,
-                                device_config, sim_config)
+                                ST_CALIB1, Board, SimTransport, XdmaTransport, device_config)
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
-                                 partial_writes, pattern_test, run_demo, vops_program)
+                                 model_check, partial_writes, pattern_test, run_demo,
+                                 vops_program)
 
 HINTS = {
     "link": "Is the card enumerated (lspci -d 10ee:), the XDMA driver loaded (lsmod | grep "
@@ -194,36 +192,7 @@ def main(argv=None) -> int:
         return (False, msg) if qwen35 else (True, f"note: {msg}: Qwen3 and LFM2 only")
 
     def model():
-        from opentpu.llm import load_spec, model_dir
-        from opentpu.llm.qwen3 import Engine, load_weights
-        from transformers import AutoTokenizer
-        path = model_dir(a.model)
-        spec = load_spec(path)
-        W = load_weights(path)
-        tok = AutoTokenizer.from_pretrained(path)
-        msgs = [{"role": "user",
-                 "content": "What is the capital of France? Answer in one sentence."}]
-        ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
-                                      tokenize=True)
-        ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
-        cap = 256
-        rcfg = sim_config(spec, cap, cfg)                 # same layout, DRAM sized to the model
-        # the model's own board model: the one of the earlier stages has too little memory
-        tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if a.sim else t
-        dev = Engine(spec, W, cap=cap, cfg=rcfg if a.sim else cfg,
-                     backend=lambda c, imgs: BoardBackend(c, imgs, transport=tq,
-                                                          model=path.name))
-        ref = Engine(spec, W, cap=cap, cfg=rcfg)
-        t0 = time.time()
-        got = dev.generate(ids, max_new=a.tokens)
-        dt = time.time() - t0
-        want = ref.generate(ids, max_new=a.tokens)
-        text = tok.decode(got, skip_special_tokens=True)
-        cyc = np.mean([s["cycles"] for s in dev.stats])
-        ok = got == want
-        return ok, (f"{text!r}; {len(dev.stats)} tokens, {cyc / 1e6:.2f} Mcycles/token, "
-                    f"{len(dev.stats) / dt:.2f} tok/s wall" +
-                    ("" if ok else f"; ISA simulator says {tok.decode(want)!r}"))
+        return model_check(t, cfg, a.model, a.tokens, a.sim)
 
     r.stage("link", link)
     r.stage("config", config)
