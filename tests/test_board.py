@@ -11,6 +11,7 @@ import pytest
 from opentpu.host.board import BASE, BEAT, Board, BoardBackend, SimTransport, join, split
 from opentpu.host.checks import (address_lines, channel_patterns, masked_program, partial_writes,
                                  pattern_test, run_demo, vops_program)
+from opentpu.host.opchecks import diag_image, op_checks
 from opentpu.isasim import board_config
 
 
@@ -87,6 +88,15 @@ def test_vops_on_board_model(have_verilator):
     """RDOT / OUTER / LOG2 (the selftest's vops stage) on the board model."""
     b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=20, seed=5))
     ok, msg, _ = run_demo(b, CFG, vops_program())
+    assert ok, msg
+
+
+@pytest.mark.parametrize("group,name,prog", op_checks(CFG),
+                         ids=[name for _, name, _ in op_checks(CFG)])
+def test_op_check_on_board_model(have_verilator, group, name, prog):
+    """otpu-diag's per-instruction programs (opentpu/host/opchecks.py), bit for bit."""
+    ok, msg, _ = run_demo(Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2)), CFG, prog,
+                          diag_image())
     assert ok, msg
 
 

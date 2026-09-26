@@ -14,6 +14,7 @@ pythonpath = ["."]
 otpu-lens = "opentpu.host.hwlens:main"
 otpu-smi = "opentpu.host.smi:main"
 otpu-selftest = "opentpu.host.selftest:main"
+otpu-diag = "opentpu.host.diag:main"
 otpu-chat = "opentpu.host.chat:main"
 
 [tool.setuptools.packages.find]

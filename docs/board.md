@@ -188,11 +188,24 @@ self-test).
 Python on the host: `pip install -e . torch transformers safetensors` (the `otpu-*`
 commands), and the checkpoints in `models/` (`Qwen3-0.6B`, `LFM2.5-230M`, `Qwen3.5-0.8B`).
 
-## 4. Self-test, then chat
+## 4. Self-test, diagnostic, then chat
+
+Run order on the card:
+
+1. `otpu-selftest` -- the staged check, a few seconds; it stops at the first failure with a
+   hint. All PASS: go to chat.
+2. `otpu-diag --json diag.json` -- when anything is off, or straight away for the full
+   picture (about a minute). It runs every check whose prerequisites passed instead of
+   stopping, and ends with a works / does-not-work matrix and diagnosis hints (byte lane, address
+   bit, unit). Keep the JSON: it is the record of the card's state.
+3. `otpu-diag --mem full --soak 10` -- the whole 4 GiB (march C-) and repeated kernels, for
+   intermittent faults (several minutes).
+4. Chat.
 
 ```sh
 otpu-selftest                                 # stages link .. vops (docs/host.md section 4)
 otpu-selftest --model qwen3 --tokens 8        # plus the model stage (lfm2, qwen35)
+otpu-diag --json diag.json                    # everything, no stopping (docs/host.md section 5)
 otpu-chat --backend board                     # chat with Qwen3-0.6B on the card
 otpu-chat --backend board --model lfm2        # LFM2.5-230M; --model qwen35 needs the vops bitstream
 otpu-smi                                      # the card's state (from another terminal)
@@ -201,10 +214,12 @@ otpu-smi                                      # the card's state (from another t
 No `OTPU_MCOLS` / `OTPU_LANES`: the tools follow the bitstream. If either is set in the shell
 and disagrees with the bitstream, they stop with a message naming both.
 
-Verified so far only on the Verilator board model (`otpu-selftest --sim`, the current RTL; no
-card yet): every stage passes, and the model stage matches the ISA simulator token for token.
-What the model cannot show: MIG calibration, the controllers' read-modify-write of partial
-writes (the model applies byte strobes directly), PCIe, the DMA rate and the real DRAM latency.
+Verified so far only on the Verilator board model (the current RTL; no card yet):
+`otpu-selftest --sim` passes every stage, and its model stage matches the ISA simulator token
+for token (Qwen3, LFM2 and Qwen3.5 at MCOLS=2; Qwen3 at MCOLS=4 VPU_CL=4); `otpu-diag --sim`
+passes every check that the model can run. What the model cannot show: MIG calibration, the
+controllers' read-modify-write of partial writes (the model applies byte strobes directly),
+PCIe, the DMA rate and the real DRAM latency.
 
 ## 5. Clocks and the roofline
 

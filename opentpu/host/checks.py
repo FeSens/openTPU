@@ -74,24 +74,31 @@ def vops_program() -> list:
     ]
 
 
-def run_demo(board, cfg, prog: list | None = None) -> tuple[bool, str, dict]:
-    """Run a program (default: the demo) on the board and on the ISA simulator; compare DRAM."""
-    img = demo_image()
+def run_demo(board, cfg, prog: list | None = None,
+             img: np.ndarray | None = None) -> tuple[bool, str, dict]:
+    """Run a program (default: the demo) on the board and on the ISA simulator, from the same
+    DRAM image (default: demo_image()); compare DRAM below PROG_AT. A mismatch reports the
+    number of bytes, the first addresses and got / want of the first differing words."""
+    img = demo_image() if img is None else img
     prog = prog or demo_program()
     ref = np.zeros(min(cfg.DRAM_BYTES, 1 << 23), np.uint8)
     ref[:len(img)] = img
-    m = Machine(dataclasses.replace(cfg, DRAM_BYTES=len(ref)), [prog], [ref]).run()
+    sl = Machine(dataclasses.replace(cfg, DRAM_BYTES=len(ref)), [prog], [ref]).run().slices[0]
     board.write(0, img)
     board.load_program(PROG_AT, np.asarray(I.assemble(prog), np.uint32))
     st = board.run(timeout=10.0)
     got = board.read(0, PROG_AT)
-    want = m.slices[0].dram[:PROG_AT]
+    want = sl.dram[:PROG_AT]
+    if st["instructions"][0] != sl.icount:
+        return False, f"retired {st['instructions'][0]} of {sl.icount} instructions", st
     bad = np.nonzero(got != want)[0]
-    if st["instructions"][0] != len(prog):
-        return False, f"retired {st['instructions'][0]} of {len(prog)} instructions", st
     if len(bad):
+        words = sorted({int(b) // 4 * 4 for b in bad[:64]})[:3]
+        gw, ww = got.view("<u4"), want.view("<u4")
+        diff = "; ".join(f"{a:#x}: got {int(gw[a // 4]):#010x} want {int(ww[a // 4]):#010x}"
+                         for a in words)
         return False, f"{len(bad)} DRAM bytes differ from the ISA simulator, first at " \
-                      f"{[hex(int(b)) for b in bad[:6]]}", st
+                      f"{[hex(int(b)) for b in bad[:6]]} ({diff})", st
     return True, f"{st['cycles']} cycles", st
 
 
@@ -175,3 +182,38 @@ def bandwidth(transport, nbytes: int) -> tuple[float, float]:
         transport.mem_read(c, 0, nbytes // 2)
     r = nbytes / (time.time() - t) / 1e9
     return w, r
+
+
+def model_check(t, cfg, model: str, tokens: int, sim: bool) -> tuple[bool, str]:
+    """Greedy decoding of "What is the capital of France?" on the card (transport t, its
+    configuration cfg) against the ISA simulator, token for token. sim: t is a small board
+    model; the model gets its own, sized to the model's DRAM."""
+    from opentpu.llm import load_spec, model_dir
+    from opentpu.llm.qwen3 import Engine, load_weights
+    from transformers import AutoTokenizer
+
+    from .board import BoardBackend, SimTransport, sim_config
+    path = model_dir(model)
+    spec = load_spec(path)
+    W = load_weights(path)
+    tok = AutoTokenizer.from_pretrained(path)
+    msgs = [{"role": "user", "content": "What is the capital of France? Answer in one sentence."}]
+    ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
+                                  tokenize=True)
+    ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
+    cap = 256
+    rcfg = sim_config(spec, cap, cfg)                     # same layout, DRAM sized to the model
+    tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if sim else t
+    dev = Engine(spec, W, cap=cap, cfg=rcfg if sim else cfg,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tq, model=path.name))
+    ref = Engine(spec, W, cap=cap, cfg=rcfg)
+    t0 = time.time()
+    got = dev.generate(ids, max_new=tokens)
+    dt = time.time() - t0
+    want = ref.generate(ids, max_new=tokens)
+    text = tok.decode(got, skip_special_tokens=True)
+    cyc = np.mean([s["cycles"] for s in dev.stats])
+    ok = got == want
+    return ok, (f"{text!r}; {len(dev.stats)} tokens, {cyc / 1e6:.2f} Mcycles/token, "
+                f"{len(dev.stats) / dt:.2f} tok/s wall" +
+                ("" if ok else f"; ISA simulator says {tok.decode(want)!r}"))
