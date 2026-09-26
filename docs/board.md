@@ -75,6 +75,11 @@ measured, 2026-09-26): all timing constraints met, WNS +0.104 ns, WHS +0.038 ns;
 (52.2%, -28K), 558 BRAM36 tiles (58.4%, -99.5), 283 DSP48 (14.7%); power estimate 8.89 W (low
 confidence).
 
+4&4 build of 550aa35 (MCOLS=4, VPU_CL=4, LANES=8; same RTL as 74d4859; measured, 2026-09-26):
+all timing constraints met, WNS +0.086 ns, WHS +0.037 ns; 179,081 LUT (60.0%, -34K against the
+ddec900 4&4 build), 591 BRAM36 tiles (61.9%), 459 DSP48 (23.9%); power estimate 9.53 W (low
+confidence).
+
 ### Vivado on Apple Silicon (Docker + Rosetta)
 
 Vivado is x86-64 Linux/Windows only. On an M-series Mac:
@@ -123,7 +128,7 @@ and LFM2 only, and the self-test's `vops` stage says so.
 |---|---|---|---|---|---|---|
 | **`build/deploy_r3route_74d4859/otpu.bit`** (primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 74d4859 (chunk FIFO in block RAM, 6 TMEM copies) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.104 ns, WHS +0.038 ns |
 | `build/deploy_default_3c270c9/otpu.bit` (first fallback) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 3c270c9 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.065 ns, WHS +0.038 ns |
-| `build/vivado_100mhz_m4cl4_vops_met/otpu.bit` (fallback) | `make bit MCOLS=4 VPU_CL=4` | ddec900 (DMA chunk buffer + new VPU ops) | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.028 ns |
+| `build/deploy_m4cl4_550aa35/otpu.bit` (faster prefill) | `make bit MCOLS=4 VPU_CL=4` | 550aa35 (as the primary, 4 MXU columns, 4 composite VPU lanes) | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.086 ns, WHS +0.037 ns |
 | `build/vivado_100mhz_gen1_met/otpu.bit` (fallback) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | v0.4 (6587cb4) | D=128 MCOLS=2 LANES=8 | no | Qwen3, LFM2 | met, WNS +0.082 ns |
 
 Start with the primary image; if it misbehaves where the 3c270c9 image does not, the chunk FIFO
@@ -133,7 +138,7 @@ columns (the host picks MCOLS=4 up from VERSION); the v0.4 build is the last res
 (TMEM rotators, LANES=16 option, MXU drain, chunk FIFO in block RAM, 6 TMEM copies) change timing or area only, not results. The
 `.mcs` next to each `.bit` is the BPI flash image of the same build. The self-test's config stage and
 `otpu-smi` print the loaded image's BUILD_ID (the first 8 hex digits of the commit checked out
-at build time: `74d48591` for the primary, `3c270c93` for the first fallback), so you can tell which image is on the card.
+at build time: `74d48591` for the primary, `3c270c93` for the first fallback, `550aa355` for the 4&4 image), so you can tell which image is on the card.
 
 ### Load it over JTAG
 
