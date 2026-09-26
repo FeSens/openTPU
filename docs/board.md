@@ -34,7 +34,9 @@ make bit MCOLS=4   # 4 MXU columns: ~1.7x prefill and batched decode, ~67% LUT (
 make bit VPU_CL=4  # 4 VPU lanes with exp2/recip/rsqrt (2 by default): ~75% -> ~89% of the
                    # roofline on long-context attention; timing only, programs unchanged
 make bit LANES=16  # 16 VPU lanes / TMEM banks (the MXU and quantizer stay on 8): Qwen3.5 -4%
-                   # cycles at 80% bw, -13% at 100% (simulated). Not built yet: estimated +21K LUT with VPU_CL=2 (yosys, scaled per module)
+                   # cycles at 80% bw, -13% at 100% (simulated). Does not route on the xc7k480t
+                   # (measured, MCOLS=4 VPU_CL=2 with the r3-route area cuts: 212K LUT placed,
+                   # route_design stops at global congestion level 6); kept for larger parts
 ```
 
 `run_vivado.sh` runs `scripts/gen_mig_prj.py` (MIG configuration from the board pin lists),
