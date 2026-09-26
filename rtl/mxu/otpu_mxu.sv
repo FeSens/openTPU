@@ -128,8 +128,9 @@ module otpu_mxu
   // an issued chunk's slot is reserved, so neither FIFO can overflow)
   // block RAM: written in their own reset-free process below (a write under the control
   // process's reset made Vivado build them from ~22K LUTs of distributed RAM, with a write
-  // address fanning out to every LUT)
-  (* ram_style = "block" *) logic [D*8-1:0] f_data  [DEPTH];
+  // address fanning out to every LUT). The chunk FIFO is its own module (kept as a hierarchy):
+  // inline, Vivado absorbed its read register into the DSP input registers of the products,
+  // which left an asynchronous read, and built it from 5,472 RAM64M anyway.
   (* ram_style = "block" *) logic [31:0]    f_scale [DEPTH];
   logic [PW-1:0]  f_head, f_tail, s_head, s_tail;
   logic [PW:0]    f_count, s_count;
@@ -208,9 +209,11 @@ module otpu_mxu
 
   // FIFO writes (the slot was reserved when the chunk was issued; see occ)
   always_ff @(posedge clk) begin
-    if (b_rvalid) f_data[f_tail] <= b_rdata;
     if (a_rvalid) f_scale[s_tail] <= a_rdata;
   end
+  (* keep_hierarchy = "yes" *)
+  otpu_ram_sdp #(.W(D * 8), .N(DEPTH)) u_fd (
+    .clk, .we(b_rvalid), .wa(f_tail), .wd(b_rdata), .re(en_c), .ra(f_head), .rd(w0));
 
   always_ff @(posedge clk) if (en_c) begin
     // S0: the popped chunk, its ACT RAM block and scales
@@ -221,7 +224,6 @@ module otpu_mxu
       m0.first <= (ck < 16'(NPART));
       m0.q <= ck[1:0];
     end
-    w0 <= f_data[f_head];
     ws0r <= f_scale[s_head];
     cu0 <= c_unit;
     m5 <= m4; ws5 <= ws4;
@@ -801,4 +803,20 @@ module otpu_mxu
     end
   end
 
+endmodule
+
+// Simple dual-port block RAM, registered read with enable (read-first: a read of the word
+// written at the same edge returns the old word).
+module otpu_ram_sdp #(parameter int W = 32, parameter int N = 1024) (
+  input  logic                 clk,
+  input  logic                 we,
+  input  logic [$clog2(N)-1:0] wa,
+  input  logic [W-1:0]         wd,
+  input  logic                 re,
+  input  logic [$clog2(N)-1:0] ra,
+  output logic [W-1:0]         rd
+);
+  (* ram_style = "block" *) logic [W-1:0] mem [N];
+  always_ff @(posedge clk) if (we) mem[wa] <= wd;
+  always_ff @(posedge clk) if (re) rd <= mem[ra];
 endmodule
