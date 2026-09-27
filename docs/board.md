@@ -360,14 +360,10 @@ limit for HR banks on a -2 part at 4:1 with single-rank components
 The same file gives 1500 ps (`tmin_hp_18`) and 1072 ps (`tmin_hp_20`), but those figures are
 for HP banks, where VCCAUX_IO matters, and this board has none.
 
-**DDR3 voltage (unknown).** The MT41K256M8 is DDR3L: it runs at 1.35 V or 1.5 V. The board's
-VDDQ and the banks' VCCO have not been measured. Every build uses 1.5 V (SSTL15), as the
-reverse-engineered MIG project (TiferKing's systest example, DDR3-1066 at 1.5 V, external VREF)
-does. DDR3-800 calibrates with MIG's internal VREF at 0.75 V, VCCO / 2 for 1.5 V. At 1.35 V
-that VREF would sit 75 mV high, and calibration at 800 might still pass. So the evidence for
-1.5 V is only suggestive: a working calibration at 1066 would support it. The direct check is a
-multimeter on a DDR3 decoupling capacitor (VDDQ 1.5 or 1.35 V) and on a bank VREF pin (half of
-it). If the board is at 1.35 V, MIG's limit drops to DDR3-800 and the SSTL15 settings are wrong.
+**DDR3 voltage: 1.5 V (measured).** The MT41K256M8 is DDR3L: it runs at 1.35 V or 1.5 V. The
+board's DDR3 supply was measured at 1.5 V with a multimeter (2026-09-27), which matches every
+build's SSTL15 setting and TiferKing's reverse-engineered MIG project (DDR3-1066 at 1.5 V). MIG's
+limit for these HR banks is therefore DDR3-1066, and DDR3-1066 is in spec on this board.
 
 MIG offers internal VREF only up to 800, so 1066 and up rely on an external VREF. The VREF pins
 of the six DDR3 banks carry no DDR3 signals, which fits an external VREF, but it has not been
