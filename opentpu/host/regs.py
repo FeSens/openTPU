@@ -29,7 +29,7 @@ CAP_TRACE, CAP_TEMP, CAP_I2C = 1, 2, 4   # CAPS bit0..2; [15:8] log2 trace depth
 # bitstreams leave the bit clear and read 0xDEADBEEF there: the rate is unknown.
 CAP_DDR, R_DDR_MTS = 8, 0x54
 # CAPS bit4: ACT_ROWS holds the ACT RAM rows (the most rows of one MM; older bitstreams: MCOLS)
-CAP_ACT, R_ACT_ROWS = 16, 0x58
+CAP_ACT, R_ACT_ROWS = 64, 0x58     # CAPS bit6 (bit4 / bit5: 4-bit MM / PAIR)
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset

@@ -585,8 +585,9 @@ def device_config(info: dict, **kw):
             raise ConfigMismatch(f"the bitstream was built with {k}={info[k]} but OTPU_{k}={env}"
                                  f": unset OTPU_{k} (the host follows the bitstream) or load "
                                  f"a {k}={env} bitstream")
+    rows = info.get("act_rows") or 0              # 0: MCOLS rows (no MM replay)
     cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"],
-                          "ACT_ROWS": info.get("act_rows") or info["MCOLS"], **kw})
+                          "ACT_ROWS": rows if rows > info["MCOLS"] else 0, **kw})
     if info["D"] != cfg.D:
         raise ConfigMismatch(f"the bitstream has D={info['D']}, the board configuration "
                              f"D={cfg.D}: not a YPCB-00338 openTPU build")

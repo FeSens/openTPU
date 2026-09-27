@@ -23,14 +23,14 @@
 //   0x38 SCRATCH   RW  (host bring-up test)
 //   0x3C REGMAP    RO  register map version (3)
 //   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, bit2 I2C pins, bit3 DDR_MTS,
-//                      bit4 ACT_ROWS,
+//                      bit6 ACT_ROWS (bit4 4-bit MM and bit5 PAIR are taken by the fp4 work),
 //                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
 //   0x48 BUILD_ID  RO  build parameter (the low 32 bits of the git commit)
 //   0x4C TEMP      RO  bit31 valid, [11:0] XADC die-temperature code
 //   0x50 SNAP      W   latch every free-running counter into its shadow; R: snapshots taken
 //   0x54 DDR_MTS   RO  the DDR3 data rate in MT/s (build parameter; CAPS bit3 when nonzero)
-//   0x58 ACT_ROWS  RO  ACT RAM rows: the most rows of one MM (build parameter; CAPS bit4)
+//   0x58 ACT_ROWS  RO  ACT RAM rows: the most rows of one MM (build parameter; CAPS bit6)
 //   0x100 + 8k     RO  free-running counter k's shadow (64 bits, low word first), k =
 //                      UPTIME RUNNING MXU_BUSY MXU_MAC VPU_BUSY QNT_BUSY DMA_BUSY TMEM_DENY
 //                      DRAM_RD DRAM_WR DRAM_WAIT INSTR MXU_STARVE (version 3); cleared by
@@ -118,7 +118,8 @@ module otpu_ctrl #(
   localparam int NFR = 13;
   localparam logic [31:0] CAPS = {8'd0, 8'($clog2(PQ_WIN)),
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
-                                  3'd0, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP, TRACE_DEPTH != 0};
+                                  1'b0, 1'b1, 2'd0, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
+                                  TRACE_DEPTH != 0};
 
   logic [63:0] cycles;
   logic [31:0] n_brd, n_bwr, n_ard, n_awr, n_bst, scratch;
