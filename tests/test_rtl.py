@@ -445,8 +445,9 @@ def test_axi_burst_throughput(have_verilator):
 
 # QST stores go out as single bytes (one byte-enabled word per cycle). The AXI adapter gathers
 # an SW beat until another beat is written or it has been idle, so a contiguous store (a K row)
-# costs one write per 64-byte beat and no ECC read-modify-write on the board; a strided store (a
-# transposed V column) still writes a beat per byte. Results bit-exact under random stalls.
+# costs one write per 64-byte beat; a beat left partial (a transposed V column: one byte per
+# beat) is read and written whole. No write reaches the memory with a partial strobe (the board's
+# controller would do an ECC read-modify-write). Results bit-exact under random stalls.
 @pytest.mark.parametrize("stall", [0, 40])
 def test_axi_sw_write_gather(have_verilator, stall):
     cfg = Config(S=1, D=128, ACT_BLOCKS=16)
@@ -464,10 +465,68 @@ def test_axi_sw_write_gather(have_verilator, stall):
                                   seed=3, uarch=rtlsim.BOARD_UARCH, plusargs=["+axi_dram=1"])
     assert np.array_equal(drams[0], m.slices[0].dram)
     assert np.array_equal(tmems[0], m.slices[0].tmem)
-    rmw = sum(d["rmw_a"] for d in st["axi_detail"])
-    # partial beats: the strided store's 128 bytes, the scales (4 + 1 + 1 beats), the unaligned
-    # store's first and last beats
-    assert 128 <= rmw <= 128 + 6 + 2, st["axi_detail"]
+    # the adapter reads every partial beat (the strided store's 128 bytes, the scales, the
+    # unaligned store's first and last beats) and writes it whole: no controller RMW
+    assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
+
+
+# The same beat left partial twice in one QST (row 0 writes the even bytes, row 1 the odd ones)
+# and again by the next QST: each read of the beat must see the writes queued before it.
+@pytest.mark.parametrize("stall,seed", [(0, 1), (30, 2), (60, 3), (80, 4)])
+def test_axi_sw_partial_beat_order(have_verilator, stall, seed):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8300 + seed)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * 4 * D * 4] = rng.standard_normal(4 * 4 * D).astype(np.float32).view(np.uint8)
+    prog = [I.ld(0, 0, 4 * 4 * D),
+            I.qst(0, 0x40000, 0x48000, 2, 1, D, 1, 2),                   # interleaved rows
+            I.qst(2 * D, 0x40100, 0x48040, 2, 1, D, 3, 2),               # overlaps the first
+            I.qst(0, 0x50001, 0x58000, 4, 1, D, 2, 64, row=True),         # strided, 4 rows
+            I.ld(0x40000, 1024, 3 * D), I.ld(0x50000, 2048, 64 * D), I.halt()]
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                  seed=seed, lat=400, uarch=rtlsim.BOARD_UARCH, plusargs=["+axi_dram=1"])
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
+
+
+# Random QSTs (strides 1..130 bytes, so beats are left partial or whole, and later stores revisit
+# the beats of earlier ones) into a 32 KB region, interleaved with loads of it, under random
+# stalls and long write latencies: every read sees every store before it.
+@pytest.mark.parametrize("seed", range(8))
+def test_axi_sw_rmw_fuzz(have_verilator, seed):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8400 + seed)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * 8 * D * 4] = rng.standard_normal(8 * 4 * D).astype(np.float32).view(np.uint8)
+    REG, SZ = 0x40000, 0x8000                         # the stores' 32 KB region
+    prog, t = [I.ld(0, 0, 8 * 4 * D)], 8 * 4 * D
+    for _ in range(14):
+        if rng.integers(3):
+            rows = int(rng.integers(1, 3))
+            es = int(rng.choice([1, 1, 2, 3, 64, 65, 130]))
+            drs = int(rng.integers(1, 3 * D))
+            span = (rows - 1) * drs + (D - 1) * es + 1
+            dst = REG + int(rng.integers(0, SZ - span))
+            sdst = REG + SZ + 4 * int(rng.integers(0, 256))       # scales: their own area
+            prog.append(I.qst(4 * D * int(rng.integers(0, 6)), dst, sdst, rows, 1, D, drs, es,
+                              row=bool(rng.integers(2))))
+        else:
+            n = 4 * int(rng.integers(1, 64))
+            prog.append(I.ld(REG + 4 * int(rng.integers(0, SZ // 4 - n)), t, n))
+            t += n
+    prog += [I.ld(REG, t, 4096), I.halt()]                   # (and the DRAM image compares)
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True,
+                                  stall=int(rng.integers(0, 70)), seed=seed,
+                                  lat=int(rng.choice([20, 120, 400])), uarch=rtlsim.BOARD_UARCH,
+                                  plusargs=["+axi_dram=1"])
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
 
 
 def test_tmem_random_traffic(have_verilator):
