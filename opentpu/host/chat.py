@@ -121,7 +121,8 @@ class Turn:
 
     @property
     def mcycles_per_token(self) -> float | None:
-        return self.decode_cycles / self.decode_steps / 1e6 if self.decode_steps else None
+        return self.decode_cycles / self.decode_steps / 1e6 \
+            if self.clock_mhz and self.decode_cycles and self.decode_steps else None
 
     def line(self) -> str:
         """The plain-mode summary: TTFT, prefill tok/s, decode tok/s, context."""

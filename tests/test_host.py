@@ -720,6 +720,9 @@ def test_chat_turn_metrics_and_plain_line():
     chat.think = True                             # a template change is not an issue here;
     chat.reset()                                  # /reset forgets history and KV
     assert chat.eng.pos == 0 and chat.history == [] and chat.fed == []
+    _, t = _stub_chat(clock=0.0).ask("hi")        # no device clock (ISA): wall numbers only
+    assert t.mcycles_per_token is None and t.decode_dev_tok_s is None
+    assert "device" not in t.line() and "Mcycles" not in t.line()
 
 
 def test_chat_tui_shows_the_live_numbers(tmp_path):
