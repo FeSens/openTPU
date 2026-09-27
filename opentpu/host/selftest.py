@@ -22,7 +22,11 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
                accelerator (QST bytes, short stores), compared with the ISA simulator bit for bit
   9 vops       RDOT / OUTER / LOG2 (the VPU functions of Qwen3.5's DeltaNet layers) against
                the ISA simulator; a bitstream without them passes with a note, unless --model
-               names Qwen3.5
+               names Qwen3.5. Then otpu-diag's reduction and RDOT / OUTER / LOG2 programs
+               (opchecks.py groups vpu-reduce, vpu-new) back to back, each result read right
+               after its program: a bitstream that has the functions must pass them all (a
+               125 MHz build computed the vops program right but returned the previous
+               program's RDOT result)
  10 model      (with --model) greedy decoding of Qwen3, LFM2 or Qwen3.5 on the card equals the
                ISA simulator, token for token, and the answer to "What is the capital of France?"
 """
@@ -69,7 +73,10 @@ HINTS = {
             "(tests/test_board.py). Older maps: Qwen3.5 needs them, which bitstreams built "
             "before commit ddec900 "
             "lack (they run the program but compute other values): load a bitstream with them "
-            "(docs/board.md, which bitstream to load), or run Qwen3 / LFM2.",
+            "(docs/board.md, which bitstream to load), or run Qwen3 / LFM2. If the vops "
+            "program passes and only the op checks fail, the bitstream itself misbehaves "
+            "(e.g. a core clock without enough timing margin): load a slower build and run "
+            "otpu-diag.",
     "model": "Kernels pass but the model differs: compare per-token logits against "
              "IsaBackend with opentpu.llm.qwen3.Engine; check that the image fits the DRAM.",
 }

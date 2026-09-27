@@ -56,7 +56,9 @@ module otpu_seq
   logic [D*8-1:0] irow;           // the RAM output: the row holding fa
   logic [255:0]   ir;             // the instruction at pc
   logic           ir_v;           // ir is valid (0 only in the first cycle after reset)
-  logic [31:0]    fa, fa_d;       // the pc R moves to next; its next value (the RAM address)
+  logic [31:0]    fa, fa_d;       // the pc R moves to next; its next value
+  logic [31:0]    fa_n;           // fa's next value when it moves (the RAM address)
+  logic           fe;             // fa moves (the RAM's read enable; otherwise it keeps fa's row)
   logic           ld;             // R moves on to the instruction at fa
 
   logic [31:0] pc, cyc;
@@ -212,9 +214,12 @@ module otpu_seq
 
   // ---- fetch: the row holding fa_d is read at the clock edge that makes it fa; ir takes the
   // instruction at fa at the edge that makes fa pc
+  // The RAM reads fa_n on the cycles fa moves (fe) and holds fa's row otherwise: the decision
+  // whether R moves on (the dispatch, from the window) reaches the read enable, not the
+  // address multiplexer (the sequencer's worst path at 125 MHz ran window -> ld -> address)
   always_ff @(posedge clk) begin
     if (im_we) imem[RW'(im_row)] <= im_data;
-    irow <= imem[RW'(fa_d / IPR)];
+    if (fe) irow <= imem[RW'(fa_n / IPR)];
   end
   always_ff @(posedge clk) begin
     fa <= fa_d;
@@ -348,11 +353,11 @@ module otpu_seq
     // a + b == 0 without the carry chain: every sum bit is 0 iff a ^ b is the carry, (a | b) << 1
     lp_a = rv(ra);
     lp_z = (lp_a ^ iw[2]) == ((lp_a | iw[2]) << 1);
-    if (rst) fa_d = '0;
-    else if (ir_v && op == OP_LOOP && !lp && !stopping && !halted)
-      fa_d = lp_z ? pc + 1 + iw[1] : pc + 1;
-    else if (ld) fa_d = succ;
-    else fa_d = fa;
+    if (rst) fa_n = '0;
+    else if (ir_v && op == OP_LOOP && !lp) fa_n = lp_z ? pc + 1 + iw[1] : pc + 1;
+    else fa_n = succ;
+    fe = rst || (ir_v && op == OP_LOOP && !lp && !stopping && !halted) || ld;
+    fa_d = fe ? fa_n : fa;
   end
 
   // A dependency on an instruction that has already started on the SAME unit is satisfied:

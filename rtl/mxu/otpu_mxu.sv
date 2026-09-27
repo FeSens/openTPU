@@ -629,8 +629,11 @@ module otpu_mxu
     otpu_fadd #(.LAT(LA)) u_p (.clk, .en(en_c), .a(pacc[j]), .b(pb[j]), .y(cy[j]));
     otpu_fadd #(.LAT(LA)) u_c (.clk, .en(en_c), .a(cy1[j]), .b(cy[j]), .y(rowv[j]));
   end
-  // the two adder levels
-  otpu_delay #(.W(1), .N(2 * LA)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
+  // the two adder levels, and the row registered before the result FIFO (the second adder's
+  // output ran into the FIFO's LUT RAM in one cycle: 0.19 ns slack at 125.49 MHz)
+  f32_t rowr [MCOLS];
+  always_ff @(posedge clk) if (en_c) for (int j = 0; j < MCOLS; j++) rowr[j] <= rowv[j];
+  otpu_delay #(.W(1), .N(2 * LA + 1)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
 
   // ================================================================== result FIFO
   f32_t        rf_v [RF][MCOLS];
@@ -953,7 +956,7 @@ module otpu_mxu
       end
       // ---- a finished row enters the result FIFO
       if (rf_push) begin
-        for (int j = 0; j < MCOLS; j++) rf_v[rf_t][j] <= rowv[j];
+        for (int j = 0; j < MCOLS; j++) rf_v[rf_t][j] <= rowr[j];
         rf_t <= rf_t + 1;
         rn = rn + 1;
       end
