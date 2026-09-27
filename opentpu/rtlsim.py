@@ -144,9 +144,11 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         keep: Path | None = None, trace: bool = False, uarch: dict | None = None,
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
         seed: int | None = None, bw: int | None = None, lat: int | None = None,
-        arc: int | None = None, plusargs: list | None = None):
-    """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats)."""
+        arc: int | None = None, plusargs: list | None = None, args=None):
+    """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats). args: the
+    run's arguments (R8..R15 at the start, as isasim.Machine)."""
     from . import isa as I
+    run_args = args
     axi = MEMORY["AXI"] if axi is None else axi
     axi = axi and cfg.D == 128
     boot = MEMORY["BOOT"] if boot is None else boot
@@ -180,6 +182,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         img.view("<u4").astype(">u4").tofile(tmp / f"dram_{s}.bin")
     args = [str(exe), f"+dir={tmp}", f"+max_cycles={max_cycles}"] + (["+trace"] if trace else [])
     args += list(plusargs or [])
+    args += [f"+arg{k}={int(v) & 0xFFFFFFFF}" for k, v in enumerate(run_args or [])]
     if axi:
         args += [f"+axi_stall={stall}", f"+axi_seed={seed}",
                  f"+axi_bw={MEMORY['BW'] if bw is None else bw}",

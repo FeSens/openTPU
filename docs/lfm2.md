@@ -29,9 +29,12 @@ wide), in the order `c c A c A c A c A c A c A c`.
 ## How it maps
 
 **Conv state.** Each conv layer keeps `B * x` in fp32 in a 3-slot ring in its DRAM layer block.
-Position p writes slot p % 3 and reads the slots of p - 1 and p - 2. Programs are compiled per
-position, so the slots are constant addresses. At positions 0 and 1 the missing rows are simply
-not read, so a new conversation (`Engine.reset`) needs no clearing.
+Position p writes slot p % 3 and reads the slots of p - 1 and p - 2. The ring is mirrored: 6
+rows, slot s at rows 1 + s and 4 + s (slot 2 has no mirror), row 0 scratch, so rows w + 1 ..
+w + 3, w = (p + 1) % 3, hold positions p - 2 .. p in order (`_ring_rows`). A per-position
+program uses constant rows; the resident decode program (docs/host.md) reaches them all with
+one argument register, w x row (storing its row to w and w + 3). At positions 0 and 1 the
+missing rows are simply not read, so a new conversation (`Engine.reset`) needs no clearing.
 
 **64-wide heads on a 128-deep MXU.** `q . K^T` contracts over whole MXU blocks of D = 128. The
 queries and the cached K rows are therefore padded with zeros to 128, which leaves the scores

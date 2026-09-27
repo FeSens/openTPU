@@ -399,18 +399,36 @@ class Slice:
                 raise SimError(f"slice {self.sid}: VOP read-after-write hazard at TMEM {v}")
 
 
+ARG0 = 8                    # the run's arguments are R8..R15 at the start (docs/isa.md)
+
+
+def _regs(args) -> list[int]:
+    args = list(args or [])
+    if len(args) > 8:
+        raise ValueError("at most 8 run arguments")
+    R = [0] * 16
+    for k, v in enumerate(args):
+        R[ARG0 + k] = int(v) & 0xFFFFFFFF
+    return R
+
+
 class Machine:
-    def __init__(self, cfg: Config, programs: list[list[I.Instr]], drams: list[np.ndarray | None]):
+    """args: the run's arguments (up to 8 words): R8..R15 start with them (0 without)."""
+
+    def __init__(self, cfg: Config, programs: list[list[I.Instr]], drams: list[np.ndarray | None],
+                 args=None):
         assert len(programs) == cfg.S and len(drams) == cfg.S
         self.cfg = cfg
         self.slices = [Slice(cfg, s, programs[s], drams[s]) for s in range(cfg.S)]
+        for s in self.slices:
+            s.R = _regs(args)
 
-    def load(self, programs: list[list[I.Instr]]) -> "Machine":
+    def load(self, programs: list[list[I.Instr]], args=None) -> "Machine":
         """Start new programs on the same machine: DRAM, TMEM and ACT RAM are kept (as on the
         board, where the host writes a new program image between launches)."""
         assert len(programs) == self.cfg.S
         for s, p in zip(self.slices, programs):
-            s.prog, s.R, s.pc, s.stack = p, [0] * 16, 0, []
+            s.prog, s.R, s.pc, s.stack = p, _regs(args), 0, []
             s.halted, s.waiting, s.icount = False, None, 0
         return self
 

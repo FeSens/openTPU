@@ -532,3 +532,26 @@ def test_mlp_4bit_rtl(have_verilator, fmt, S, D, pair):
         assert any(p.flags & I.F_PAIR for p in mms)
     ri, rr = both(mlp, cfg, **args)
     assert rel(rr.outputs["out"], want) < 0.1
+
+
+@pytest.mark.parametrize("boot", [False, True])
+def test_run_arguments_start_in_r8_to_r15(have_verilator, boot):
+    """The run's arguments are R8..R15 at the start (docs/isa.md "Arguments"): addresses and a
+    loop count taken from them, the same on the RTL as on the ISA simulator; R1..R7 start at 0."""
+    from opentpu.isasim import board_config
+    cfg = board_config(DRAM_BYTES=1 << 20)
+    rng = np.random.default_rng(4)
+    dram = rng.integers(0, 256, 1 << 16, dtype=np.uint8)
+    prog = [I.loop(3, 1, rcount=10),                    # R10 + 1 times
+            I.ld(0, 0, 32, ra=8),                       # 32 words from R8
+            I.st(0, 0, 32, ra=9),                       # to R9, then both move on
+            I.addi(9, 9, 128),
+            I.st(0, 0, 32, ra=1),                       # R1 = 0: to address 0
+            I.halt()]
+    args = [1024, 8192, 2, 0, 0, 0, 0, 0xFFFFFFF0]
+    m = Machine(cfg, [prog], [dram.copy()], args=args).run()
+    want = m.slices[0].dram[:1 << 16]
+    assert np.array_equal(want[8192:8192 + 3 * 128],
+                          np.tile(dram[1024:1024 + 128], 3))   # 3 iterations
+    got = rtlsim.run(cfg, [prog], [dram.copy()], args=args, boot=boot)[0][0][:1 << 16]
+    assert np.array_equal(want, got)

@@ -270,6 +270,41 @@ def test_pair_programs_need_a_pair_bitstream(run_dir):
             eng.backend.close()
 
 
+def test_resident_decode_takes_run_arguments(run_dir):
+    """Engine(resident=True) on a bitstream with run arguments (CAPS bit7): the decode program
+    is loaded once and each step writes the ARG registers only (no inputs, no program); on one
+    without them it falls back to per-position programs, and start(args=...) is refused."""
+    from opentpu import lens as L
+    from opentpu.compiler import arg_words
+    from opentpu.host import regs as R
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine, RunPos
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256, lookup=True)
+    for args in (False, True):
+        t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake7", args=args)
+        eng = Engine(spec, W, cap=256, cfg=cfg, resident=True,
+                     backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+        assert eng.resident == args and eng.backend.args == args
+        be, loads, writes = eng.backend, [], []
+        load, write = be.board.load_program, be.write
+        be.board.load_program = lambda *a: (loads.append(1), load(*a))
+        be.write = lambda *a: (writes.append(a[1]), write(*a))
+        for tok in (5, 6, 7):
+            eng.step(tok)
+        if args:
+            assert len(loads) == 1 and not writes
+            progs, ra = eng._decodes[1]
+            want = arg_words(ra, RunPos.values(7, 2))
+            assert [t.regs.get(R.R_ARG0 + 4 * k, 0) for k in range(8)] == want
+            assert want[7] == 7 * 4 * spec.hidden          # the token's embedding row
+        else:
+            assert len(loads) == 3 and writes
+            with pytest.raises(ConfigMismatch, match="CAPS bit7"):
+                be.start(eng.image.compile_step(3), args=[1])
+        be.close()
+
+
 # ------------------------------------------------------------------------------ streamed logits
 class _IsaCard(FakeTransport):
     """A fake card that computes: RUN runs the loaded program on the ISA simulator over the

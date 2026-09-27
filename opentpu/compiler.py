@@ -61,6 +61,53 @@ class Loop:
         return f"iv{self.id}"
 
 
+class RunVar:
+    """A value known only when the program runs (the token's position, its id). An address may
+    add `c * var` for one (var, c): the host puts c times the value into one of the run's
+    argument registers (docs/isa.md "Arguments"), one per distinct (var, c) of the program
+    (Builder.run_args), so the same program serves every value."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def _aff(self) -> "Affine":
+        return Affine(0, {self: 1})
+
+    def __add__(self, o):
+        return self._aff() + o
+
+    __radd__ = __add__
+
+    def __sub__(self, o):
+        return self._aff() - o
+
+    def __mul__(self, k):
+        return self._aff() * k
+
+    __rmul__ = __mul__
+
+    def __repr__(self):
+        return self.name
+
+
+ARG0 = 8                        # the run's arguments ARG0..7 are R8..R15 at the start
+
+
+def arg_reg(k: int) -> int:
+    """The register of a program's k-th run-time argument (Builder.run_args): from R15 down,
+    as address registers are taken from R1 up."""
+    return 15 - k
+
+
+def arg_words(run_args: list, values: dict) -> list[int]:
+    """The words ARG0..7 of a program's Builder.run_args for these values: argument k,
+    c * var, in ARG(7 - k) (register R15 - k)."""
+    w = [0] * (16 - ARG0)
+    for k, (v, c) in enumerate(run_args):
+        w[arg_reg(k) - ARG0] = (c * values[v.name]) & 0xFFFFFFFF
+    return w
+
+
 class Affine:
     def __init__(self, const: int = 0, terms: dict | None = None):
         self.const = int(const)
@@ -70,7 +117,7 @@ class Affine:
     def of(x) -> "Affine":
         if isinstance(x, Affine):
             return x
-        if isinstance(x, Loop):
+        if isinstance(x, (Loop, RunVar)):
             return x._aff()
         if isinstance(x, (int, np.integer)):
             return Affine(int(x))
@@ -468,6 +515,7 @@ class Builder:
         # body would leave it non-zero for its earlier use in the next iteration)
         self.free_regs = [(r, frozenset()) for r in range(15, 0, -1)]
         self.used_regs: set = set()
+        self.run_args: list = []      # (RunVar, coefficient) of argument k (arg_reg(k))
         self.versions = weakref.WeakKeyDictionary()
         self.tmem_regions: list = []     # (base, end, weakref to the allocation's _Buf)
         self.tmem_peak = 0
@@ -483,25 +531,60 @@ class Builder:
         a = Affine.of(a)
         if a.is_static:
             return 0, a.const
+        run = [(v, c) for v, c in a.terms.items() if isinstance(v, RunVar)]
         for l in a.terms:
-            if not any(lb.loop is l for lb in self.loops):
+            if not isinstance(l, RunVar) and not any(lb.loop is l for lb in self.loops):
                 raise CompileError(f"address uses {l} outside its loop")
+        if len(run) > 1:
+            raise CompileError(f"address {a} adds more than one run-time value")
+        if run:
+            arg = self.arg_reg(*run[0])
+            if len(a.terms) == 1:                   # the argument register itself
+                return arg, a.const
         key = frozenset(a.terms.items())
         if key not in self.regs:
             r = self._spare_for(key)
             if r is None:
                 r = self._free_for(key)
+                if r is not None and run:          # it starts at the argument's value
+                    self._init_before_loops(key, I.addi(r, arg, 0, comment=f"{run[0][1]}*"
+                                                        f"{run[0][0]} (argument)"))
             if r is None:
                 raise CompileError("out of address registers")
             self.regs[key] = r
             self.used_regs.add(r)
         return self.regs[key], a.const
 
+    def arg_reg(self, var: RunVar, c: int) -> int:
+        """The argument register that holds c * var (allocated on first use; it leaves the
+        address registers)."""
+        if (var, c) not in self.run_args:
+            if len(self.run_args) == 16 - ARG0:
+                raise CompileError(f"more than {16 - ARG0} run-time argument values")
+            r = arg_reg(len(self.run_args))
+            if r in self.used_regs:
+                raise CompileError(f"out of address registers: R{r} is taken, argument "
+                                   f"{len(self.run_args)} needs it")
+            self.free_regs = [(f, lt) for f, lt in self.free_regs if f != r]
+            self.run_args.append((var, c))
+        return arg_reg(self.run_args.index((var, c)))
+
+    def _init_before_loops(self, key, ins: I.Instr) -> None:
+        """Put `ins` before the outermost live loop among key's terms (the register must hold
+        its run-time value when that loop starts; the loops step and reset it from there)."""
+        for d, lb in enumerate(self.loops):
+            if (lb.loop, dict(key).get(lb.loop)) in key:
+                items = self.stack[d]
+                items.insert(next(i for i, x in enumerate(items) if x is lb), ins)
+                return
+        raise CompileError("a run-time address outside its loops")    # (a bare argument)
+
     def _spare_for(self, key):
         """A retired register holding a subset of `key` whose missing terms all belong to loops
-        begun after it was retired."""
+        begun after it was retired (a run-time term must be there already)."""
         for i, (terms, live_then, r) in enumerate(self.spare_regs):
-            if terms <= key and not any(id(l) in live_then for l, _ in key - terms):
+            if terms <= key and not any(id(l) in live_then or isinstance(l, RunVar)
+                                        for l, _ in key - terms):
                 del self.spare_regs[i]
                 return r
         return None
@@ -548,6 +631,8 @@ class Builder:
         for terms, r in retired:
             if not terms:
                 self.free_regs.append((r, frozenset(live)))
+            elif all(isinstance(l, RunVar) for l, _ in terms):     # the argument's value
+                self.spare_regs.append((terms, frozenset(live), r))
             elif terms not in self.regs:
                 self.regs[terms] = r
             else:

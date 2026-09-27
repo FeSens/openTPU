@@ -24,6 +24,7 @@ module tb_top;
   logic clk = 1'b0, sys_rst = 1'b1, rst = 1'b1, dump = 1'b0;
   logic ld_start = 1'b0, ld_busy;
   logic [31:0] ld_addr = '0, ld_n = '0;
+  logic [31:0] rinit [8] = '{default: '0};    // +arg0=N .. +arg7=N: R8..R15 at the start
   logic all_halted, any_error;
   logic [31:0] icount [S];
   longint cycles = 0, max_cycles = 50_000_000;
@@ -32,13 +33,20 @@ module tb_top;
              .IMEM_WORDS(IMEM_WORDS), .DRAM_WORDS(DRAM_WORDS), .DRAM_LAT(DRAM_LAT),
              .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .AXI(AXI), .FIFO_DEPTH(FIFO_DEPTH),
              .AXI_BL(AXI_BL)) dut (
-    .clk, .sys_rst, .rst, .ld_start, .ld_addr, .ld_n, .ld_busy, .all_halted, .any_error, .icount,
+    .clk, .sys_rst, .rst, .rinit, .ld_start, .ld_addr, .ld_n, .ld_busy, .all_halted, .any_error, .icount,
     .dump);
 
   always #5 clk = ~clk;
 
   initial begin
     void'($value$plusargs("max_cycles=%d", max_cycles));
+    begin
+      string nm;
+      for (int k = 0; k < 8; k++) begin
+        nm = $sformatf("arg%0d=%%d", k);
+        void'($value$plusargs(nm, rinit[k]));
+      end
+    end
     repeat (3) @(posedge clk);
     sys_rst = 1'b0;
     // +boot: the program sits in DRAM at +boot_addr (bytes), +boot_n instructions; the loader

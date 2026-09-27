@@ -21,10 +21,12 @@ class RtlBackend:
     def read(self, s: int, addr: int, nbytes: int) -> np.ndarray:
         return self.drams[s][addr:addr + nbytes].copy()
 
-    def run(self, programs: list) -> dict:
+    args = True                 # run(programs, args): the run's arguments (R8..R15)
+
+    def run(self, programs: list, args=None) -> dict:
         drams, _, stats = rtlsim.run(self.cfg, programs, self.drams, self.dram_lat,
                                      max_cycles=1 << 40, uarch=self.uarch, axi=self.axi,
-                                     boot=self.boot, stall=self.stall)
+                                     boot=self.boot, stall=self.stall, args=args)
         n = [len(d) for d in self.drams]
         self.drams = [d[:k].copy() for d, k in zip(drams, n)]
         return stats

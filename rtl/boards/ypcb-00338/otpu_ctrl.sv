@@ -24,13 +24,15 @@
 //   0x3C REGMAP    RO  register map version (3)
 //   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, bit2 I2C pins, bit3 DDR_MTS,
 //                      bit4 4-bit MM weights (MM flags WF, docs/isa.md), bit5 column reuse (MM
-//                      PAIR / QACT DUP),
+//                      PAIR / QACT DUP), bit7 the run's arguments (ARG0..7),
 //                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
 //   0x48 BUILD_ID  RO  build parameter (the low 32 bits of the git commit)
 //   0x4C TEMP      RO  bit31 valid, [11:0] XADC die-temperature code
 //   0x50 SNAP      W   latch every free-running counter into its shadow; R: snapshots taken
 //   0x54 DDR_MTS   RO  the DDR3 data rate in MT/s (build parameter; CAPS bit3 when nonzero)
+//   0x60 + 4k      RW  ARG0..ARG7: the run's arguments, R8..R15 when RUN rises (CAPS bit7;
+//                      docs/isa.md "Arguments"); reset 0
 //   0x100 + 8k     RO  free-running counter k's shadow (64 bits, low word first), k =
 //                      UPTIME RUNNING MXU_BUSY MXU_MAC VPU_BUSY QNT_BUSY DMA_BUSY TMEM_DENY
 //                      DRAM_RD DRAM_WR DRAM_WAIT INSTR MXU_STARVE (version 3); cleared by
@@ -83,6 +85,7 @@ module otpu_ctrl #(
   // core
   output logic        run,
   output logic        ld_start,
+  output logic [31:0] arg [8],           // ARG0..7 -> the sequencer's R8..R15
   output logic [31:0] ld_addr,
   output logic [31:0] ld_n,
   input  logic        ld_busy,
@@ -117,7 +120,7 @@ module otpu_ctrl #(
   localparam int NFR = 13;
   localparam logic [31:0] CAPS = {8'd0, 8'($clog2(PQ_WIN)),
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
-                                  2'd0, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
+                                  1'b1, 1'b0, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
                                   TRACE_DEPTH != 0};
 
   logic [63:0] cycles;
@@ -145,6 +148,7 @@ module otpu_ctrl #(
       ld_addr <= '0; ld_n <= '0; scratch <= '0;
       tr_en <= 1'b0; tr_stop <= 1'b0; tr_addr <= '0;
       i2c_lo <= '0;
+      for (int k = 0; k < 8; k++) arg[k] <= '0;
     end else begin
       if (s_bvalid && s_bready) s_bvalid <= 1'b0;
       if (tr_inc) tr_addr <= tr_addr + 1;
@@ -167,6 +171,8 @@ module otpu_ctrl #(
           end
           10'h083: tr_addr <= s_wdata;
           10'h088: i2c_lo <= s_wdata[3:0];
+          10'h018, 10'h019, 10'h01A, 10'h01B, 10'h01C, 10'h01D, 10'h01E, 10'h01F:
+            arg[s_awaddr[4:2]] <= s_wdata;
           default: ;
         endcase
       end
@@ -261,6 +267,8 @@ module otpu_ctrl #(
       10'h013: r_d <= {temp_v, 19'd0, temp};
       10'h014: r_d <= n_snap;
       10'h015: r_d <= 32'(DDR_MTS);
+      10'h018, 10'h019, 10'h01A, 10'h01B, 10'h01C, 10'h01D, 10'h01E, 10'h01F:
+        r_d <= arg[r_a[2:0]];
       10'h080: r_d <= {28'd0, tr_busy, tr_stop, 1'b0, tr_en};
       10'h081: r_d <= tr_count;
       10'h082: r_d <= tr_drop;

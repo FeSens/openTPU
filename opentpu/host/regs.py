@@ -30,6 +30,9 @@ CAP_TRACE, CAP_TEMP, CAP_I2C = 1, 2, 4   # CAPS bit0..2; [15:8] log2 trace depth
 CAP_DDR, R_DDR_MTS = 8, 0x54
 # CAPS bit4: the MXU runs 4-bit weights (MM WF); bit5: column reuse (MM PAIR + QACT DUP)
 CAP_W4, CAP_PAIR = 16, 32
+# CAPS bit7: ARG0..7 (0x60 + 4k) are the run's arguments, R8..R15 at the start (docs/isa.md
+# "Arguments"): one program serves every decode position
+CAP_ARGS, R_ARG0 = 128, 0x60
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset
@@ -64,6 +67,7 @@ def caps(v: int) -> dict:
     return {"trace": bool(v & CAP_TRACE), "temp": bool(v & CAP_TEMP), "i2c": bool(v & CAP_I2C),
             "ddr": bool(v & CAP_DDR), "w4": bool(v & CAP_W4),
             "pair": bool(v & CAP_PAIR),
+            "args": bool(v & CAP_ARGS),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
 

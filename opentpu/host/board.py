@@ -588,6 +588,16 @@ class Board:
         t.reg_write(R_CTRL, CTRL_LOAD)
         t.poll(R_STATUS, ST_LOADING, 0)
 
+    def set_args(self, words) -> None:
+        """The next runs' arguments ARG0..7 (CAPS bit7; R8..R15 at the start): only the words
+        that differ from the last ones written (8 at most)."""
+        last = getattr(self, "_args", None) or [None] * 8
+        for k, w in enumerate(words):
+            w = int(w) & 0xFFFFFFFF
+            if last[k] != w:
+                self.t.reg_write(R.R_ARG0 + 4 * k, w)
+        self._args = [int(w) & 0xFFFFFFFF for w in words]
+
     RUN_OFFS = [R_STATUS, R_CYCLES, R_CYCLES_HI, R_ICOUNT, R.R_B_RD, R.R_B_WR, R.R_A_RD,
                 R.R_A_WR, R.R_B_STALL]
 
@@ -722,15 +732,17 @@ def device_config(info: dict, **kw):
 
 
 # ------------------------------------------------------------------------------ Engine backend
-def sim_config(spec, cap: int, base=None, rows: int | None = None):
+def sim_config(spec, cap: int, base=None, rows: int | None = None, lookup: bool = False):
     """`base` (default board_config()) with the DRAM cut to what the model needs (power of
     two): the image with I/O rows for `rows` tokens per run (default the Engine's
-    PREFILL_ROWS), then the program area. The board model's memory, and the ISA reference
-    that runs the same layout."""
+    PREFILL_ROWS; lookup: with the resident decode's tables, Engine(resident=True)), then the
+    program area. The board model's memory, and the ISA reference that runs the same
+    layout."""
     from opentpu.isasim import board_config
-    from opentpu.llm.qwen3 import PREFILL_ROWS
+    from opentpu.llm.qwen3 import PREFILL_ROWS, has_lookup
     base = base or board_config()
-    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS)
+    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS,
+                       **({"lookup": True} if lookup and has_lookup(spec) else {}))
     need = -(-probe.nbytes // 4096) * 4096 + 4 * base.IMEM_WORDS
     return replace(base, DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
 
@@ -791,6 +803,7 @@ class BoardBackend:
         self.last = None
         self._prep: dict = {}               # id(programs) -> (programs, words), from prepare()
         self._running = None                # the started programs
+        self._resident = None               # (programs, words) in IMEM (start() skips the load)
         self._expect = 0.0                  # the last run's device seconds (the poll's hint)
         # streamed logits (start(stream=...)): the region holding the sentinel, the pieces to
         # mark again once the next run has started, the pieces' completion times last token
@@ -852,7 +865,12 @@ class BoardBackend:
 
     runs_words = True           # start() takes assembled words too (the Engine's worker process)
 
-    def start(self, programs, stream: tuple | None = None) -> None:
+    @property
+    def args(self) -> bool:
+        """The bitstream takes run arguments (CAPS bit7): start(programs, args=words)."""
+        return bool((self.info.get("caps") or {}).get("args"))
+
+    def start(self, programs, stream: tuple | None = None, args=None) -> None:
         """Copy the program to the card, load it and start it (run's first half: the Engine
         compiles the next token's program between start and wait). `programs`: the programs,
         or the program already assembled (uint32 words).
@@ -863,18 +881,30 @@ class BoardBackend:
         run: written here when it does not (the first streamed run, or after anything else
         wrote the region), else the pieces read after the last run are marked again right
         after this start, while the run is still far from its LM head. Needs a transport that
-        allows DMA during a run (`streams`)."""
-        prep = self._prep.pop(id(programs), None)
-        while len(self._prep) > 1:                  # stale entries (discarded compiles)
-            self._prep.pop(next(iter(self._prep)), None)
-        if isinstance(programs, np.ndarray):
-            words = programs
-        else:
-            words = prep[1] if prep is not None and prep[0] is programs else \
-                np.asarray(self.I.assemble(programs[0]), np.uint32)
-        if len(words) > self.cfg.IMEM_WORDS:
-            raise ValueError("program does not fit IMEM")
-        self.board.load_program(self.prog_at, words)
+        allows DMA during a run (`streams`).
+
+        args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit7). The
+        program in IMEM stays there: starting the same `programs` object again (a program
+        that takes its position as arguments) loads nothing."""
+        if args is not None and not self.args:
+            raise ConfigMismatch("this bitstream takes no run arguments (CAPS bit7 clear)")
+        res = self._resident
+        if res is None or res[0] is not programs:
+            prep = self._prep.pop(id(programs), None)
+            while len(self._prep) > 1:              # stale entries (discarded compiles)
+                self._prep.pop(next(iter(self._prep)), None)
+            if isinstance(programs, np.ndarray):
+                words = programs
+            else:
+                words = prep[1] if prep is not None and prep[0] is programs else \
+                    np.asarray(self.I.assemble(programs[0]), np.uint32)
+            if len(words) > self.cfg.IMEM_WORDS:
+                raise ValueError("program does not fit IMEM")
+            self._resident = None
+            self.board.load_program(self.prog_at, words)
+            self._resident = (programs, words)
+        if args is not None:
+            self.board.set_args(list(args) + [0] * (8 - len(args)))
         if stream is not None and self._armed != stream:
             self.board.write(stream[0], np.full(stream[1] // 4, SENTINEL, np.uint32))
             self._armed, self._rearm = stream, []

@@ -35,6 +35,7 @@ module otpu_slice
   input  logic          clk,
   input  logic          sys_rst,
   input  logic          rst,
+  input  logic [31:0]   rinit [8],  // the run's arguments: R8..R15 at the start (otpu_seq)
   // program loader
   input  logic          ld_start,
   input  logic [31:0]   ld_addr,
@@ -99,7 +100,7 @@ module otpu_slice
   seq_ev_t sq_ev;
   otpu_seq #(.IMEM_WORDS(IMEM_WORDS), .SID(SID), .S(S), .D(D), .WIN(WIN)) u_seq (
     .clk, .rst, .ucmd, .ustart, .urel, .urdy, .udone, .halted, .error, .icount, .ev(sq_ev),
-    .im_we, .im_row, .im_data(b_rdata));
+    .rinit, .im_we, .im_row, .im_data(b_rdata));
 
   // ---- program loader
   localparam int IPR = D / 32;

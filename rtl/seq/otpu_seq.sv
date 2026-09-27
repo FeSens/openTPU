@@ -41,6 +41,7 @@ module otpu_seq
   output logic                error,
   output logic [31:0]         icount,
   output seq_ev_t             ev,          // trace and activity events, a cycle late (otpu_pkg)
+  input  logic [31:0]         rinit  [8],  // R8..R15 while in reset: the run's arguments
   // IMEM write port (the loader; used while the slice is held in reset)
   input  logic                im_we,
   input  logic [31:0]         im_row,
@@ -427,7 +428,8 @@ module otpu_seq
       p_v <= 1'b0; s_v <= 1'b0; q_v <= 1'b0; c_v <= 1'b0; lp <= 1'b0;
       icount <= '0;
       sv <= '0; sstarted <= '0; sready <= '0;
-      for (int i = 0; i < 16; i++) R[i] <= '0;
+      for (int i = 0; i < 8; i++) R[i] <= '0;
+      for (int i = 0; i < 8; i++) R[8 + i] <= rinit[i];
       for (int u = 0; u < NUNITS; u++) begin uq_h[u] <= '0; uq_t[u] <= '0; end
       for (int i = 0; i < WIN; i++) sdep[i] <= '0;
     end else begin

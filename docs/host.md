@@ -566,6 +566,39 @@ with one position-independent program per model), the wait for the compile (0.08
 token the per-position compile of LFM2 no longer keeps up on a laptop: the same fix), the
 counters (~0.02 ms), the last chunk's read and the selection (~0.1 ms), Python (~0.1 ms).
 
+**Resident decode.** A decode program now takes the position and the token as run arguments
+(docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit7), so one program serves
+every position of an attention bucket (`Engine(resident=True)`, the default of `otpu-chat` and
+`decode_profile.py`; `--per-position` for the old path):
+
+- Attention spans `blocks` 256-token blocks, the last one masked: the program adds a row of a
+  mask table (`+inf` for the first `cap` entries, then 256 of `-inf`) to its scores at an
+  offset of -4 x position, `min(score, mask)`; a masked score is `-inf`, its exp2 is +0, so
+  the row sums, P.V and the row maximum (VOP RMAX, the same bits as the MM epilogue) are the
+  unmasked columns' (`kernels/attention.Bucket`). One program per 256 positions: compiled once
+  (on the worker process, 16 positions before the bucket is reached) and kept in IMEM.
+- The KV append, the K / V scales and V^T columns, and the RoPE rows are at position x 128, x 4
+  and x 1; LFM2's convolution ring is mirrored (each row stored twice, in 2K rows) so the last K
+  rows are contiguous at ((p + 1) mod K) x row: one argument instead of three
+  (`lfm2._ring_rows`).
+- The token's embedding row and the RoPE cos / sin rows come from tables in the image
+  (`Image(lookup=True)`: the fp32 embedding, cos / sin of every position): the step writes no
+  inputs. For LFM2.5-230M the tables are 256 MiB of the card's 4 GiB.
+- Positions 0 and 1 of LFM2 (the convolution's taps before position 0) and Qwen3.5 (its
+  convolution and DeltaNet programs use R1..R8) keep the per-position programs, and so does a
+  bitstream without CAPS bit7 (`Engine.resident` falls back; the worker processes of
+  `COMPILE_AHEAD` stay for it).
+
+The logits are bit-identical to the per-position programs' (tests: `test_qwen3.py`,
+`test_lfm2.py` from position 0 across the bucket boundaries 256 and 512 on the ISA
+simulator, positions 255 and 256 on the Verilator RTL, LFM2.5-230M fp4 with an int8 head on
+the RTL; the board model with the ARG registers). A step's host work before RUN is then the
+changed ARG words (up to 6 register writes, posted) instead of the x / cos / sin write
+(0.16 ms), the program upload and IMEM load (0.23 ms) and the compile wait (0.08 ms, and at
+long contexts the 16-33 ms trace that no longer keeps up): by the measurements above the
+critical path would be ~0.25 ms per token (counters, the last chunk and the selection,
+Python). This is an *estimate*: it needs a bitstream with the ARG registers, not built yet.
+
 The chat interface draws each token while the card runs the next one: `Chat` hands a token to
 `on_update` from `Engine.step`'s `on_start` hook (called once the run is started), so the
 interface's work does not delay the host work that starts a run. Before, the full-screen

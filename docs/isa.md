@@ -20,6 +20,24 @@ every bit written to TMEM or DRAM.
 Execution is in order. Every instruction completes (all its writes are visible) before the
 next one starts. The MXU prefetches its streamed operand from DRAM internally.
 
+### Arguments
+
+A run starts with `R0..R7` = 0 and `R8..R15` = the run's arguments `ARG0..ARG7`: words the
+host writes before RUN (board: control registers 0x060 + 4k, announced by CAPS bit7,
+docs/observability.md; ISA simulator: `Machine(..., args)` / `load(programs, args)`; RTL
+simulator: `+arg0=..+arg7=`; unwritten arguments are 0). The same program can then serve
+different values: an address is `R[x] + imm`, and `LOOP` runs `R[ra] + w2` times.
+
+The compiler's run-time values (`compiler.RunVar`) use them: an address that adds `c * var`
+reads the argument register holding `c * var` (the host computes the product: there is no
+multiply), or, when it also has loop terms, a register that `ADDI r, R_arg, 0` initializes
+before the outermost of those loops. A program's k-th distinct (var, c) is in `R15 - k`
+(`compiler.arg_reg`, `arg_words`), so address registers grow from `R1` and arguments from
+`R15`. The resident decode programs (qwen3.compile_decode, docs/host.md) take the token id
+and the position this way: LFM2.5-230M uses 6 arguments (token x 4096, position x 128, x 4,
+x 1 and x -4, the convolution ring's row x 2048) and 8 address registers at 16 attention
+blocks.
+
 ## Arithmetic (fp32)
 
 IEEE-754 binary32, round to nearest even, **flush to zero**: denormal inputs are treated as

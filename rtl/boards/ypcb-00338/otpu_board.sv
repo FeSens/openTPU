@@ -173,6 +173,7 @@ module otpu_board #(
   // ---- control
   logic run, ld_start, ld_busy, halted, error, wr_idle, axi_err;
   logic [31:0] ld_addr, ld_n, icount;
+  logic [31:0] arg [8];               // the run's arguments (ARG0..7: R8..R15 at the start)
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_rvalid, b_rtag, b_rdy;
   logic [31:0] a_addr, a_wdata, a_rdata, a_rdata2, b_addr;
   logic [3:0]  a_be, sw_be;
@@ -198,7 +199,7 @@ module otpu_board #(
     .s_bready(s_ctl_bready), .s_araddr(s_ctl_araddr), .s_arvalid(s_ctl_arvalid),
     .s_arready(s_ctl_arready), .s_rdata(s_ctl_rdata), .s_rresp(s_ctl_rresp),
     .s_rvalid(s_ctl_rvalid), .s_rready(s_ctl_rready),
-    .run, .ld_start, .ld_addr, .ld_n, .ld_busy, .halted, .error, .icount, .wr_idle, .axi_err,
+    .run, .ld_start, .arg, .ld_addr, .ld_n, .ld_busy, .halted, .error, .icount, .wr_idle, .axi_err,
     .calib(cal_s2),
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
     .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(b_req && !b_rdy),
@@ -240,7 +241,7 @@ module otpu_board #(
                .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS), .FIFO_DEPTH(FIFO_DEPTH),
                .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL),
                .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN)) u_slice (
-    .clk, .sys_rst(rst), .rst(core_rst), .ld_start, .ld_addr, .ld_n, .ld_busy,
+    .clk, .sys_rst(rst), .rst(core_rst), .rinit(arg), .ld_start, .ld_addr, .ld_n, .ld_busy,
     .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
     .sw_req, .sw_addr, .sw_wdata, .sw_be,

@@ -3,8 +3,9 @@
 LFM2 stacks two kinds of layers, each followed by Qwen3's pre-norm SwiGLU MLP:
   conv   gated short convolution: in_proj -> B, C, x; y = C * conv(B * x), a causal depthwise
          convolution (3 taps per channel, no bias); out_proj. Its state is the last two rows of
-         B * x, kept in fp32 in a 3-slot ring in DRAM (the row of position p in slot p % 3;
-         programs are compiled per position, so the slots are constant addresses).
+         B * x, kept in fp32 in a 3-slot ring in DRAM (the row of position p in slot p % 3),
+         mirrored: each row is stored twice, so the last K rows are contiguous and one
+         address register reaches them at a run-time position (_ring_rows).
   attn   GQA attention with RMSNorm on each q and k head, then RoPE: Qwen3's attention
          (qwen3._attention). The heads are 64 wide, half the MXU depth, so the queries and
          the cached K and V rows are padded with zeros to 128 (qwen3._padded); P.V reads only
@@ -46,6 +47,8 @@ from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
 from ..kernels.mlp import _chunk
 from ..runtime import quantize_rows
+from .qwen3 import (RunPos, _inputs, _lookup_alloc, _lookup_build, _lookup_desc,
+                    compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
                     _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables)
 
@@ -119,8 +122,9 @@ class Spec:
             raise ValueError("model does not map onto this openTPU config: " + "; ".join(bad))
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-              wformat: str = "int8", head_format: str | None = None) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format)
+              wformat: str = "int8", head_format: str | None = None,
+              lookup: bool = False) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup)
 
 
 def plan(kinds) -> list:
@@ -273,7 +277,7 @@ class Image:
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-                 wformat: str = "int8", head_format: str | None = None):
+                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("LFM2 runs one sequence: batch=1")
@@ -306,7 +310,8 @@ class Image:
                      ATTN: {"wq": (self.nq_loc * d, H), "wk": (self.nkv_loc * d, H),
                             "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d), **mlp}}
         cb = _Bump(lb.next)
-        conv = dict(common, taps=cb.alloc(4 * K * self.h_loc), state=cb.alloc(4 * K * self.h_loc))
+        conv = dict(common, taps=cb.alloc(4 * K * self.h_loc),
+                    state=cb.alloc(4 * 2 * K * self.h_loc))         # mirrored (_ring_rows)
         ab = _Bump(lb.next)
         attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
         for kind, bump, L in ((CONV, cb, conv), (ATTN, ab, attn)):
@@ -322,10 +327,11 @@ class Image:
         n_attn = spec.kinds.count(ATTN)
         head = cap * dk + 4 * cap * (dk // D) + dk * cap + 4 * cap
         self.kv_bytes = (n_attn * self.nkv_loc * head                   # KV cache and
-                         + (spec.layers - n_attn) * 4 * K * self.h_loc)  # conv state, per sequence
+                         + (spec.layers - n_attn) * 8 * K * self.h_loc)  # conv state, per sequence
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
+        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -392,9 +398,16 @@ class Image:
                       [r[:, j * C_:(j + 1) * C_] for r in rows(W[p + "feed_forward.w2.weight"], n)])
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
         put_q(self.head, rows(head, self.v_loc), self.head_format)
+        if self.lookup:
+            _lookup_build(put, S, W, spec, self.cap, self.lookup)
         return imgs
 
     # ---- programs
+    def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):
+        """(programs, run_args): lfm2_step at a run-time position (qwen3.compile_decode); the
+        convolutions need lo >= conv_k - 1 (every tap of the state ring is a past token)."""
+        return compile_decode(self, lfm2_step, blocks, lo, block)
+
     def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
         """One program per slice: the decode token at position `pos` (lfm2_step)."""
         return [lfm2_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
@@ -436,7 +449,7 @@ class Image:
                             parts=parts, pw=C, wf=wf)
             if kind == CONV:
                 ns.taps = Tensor(off + lofs["taps"], (K, n), (n, 1))
-                ns.state = Tensor(off + lofs["state"], (K, n), (n, 1))
+                ns.state = Tensor(off + lofs["state"], (2 * K, n), (n, 1))     # _ring_rows
             else:
                 ns.qn = Tensor(off + lofs["qn"], (d,), (1,))
                 ns.kn = Tensor(off + lofs["kn"], (d,), (1,))
@@ -455,23 +468,42 @@ class Image:
             cosr=_tdesc(self.io["cos"], (self.rows, d // 2)),
             sinr=_tdesc(self.io["sin"], (self.rows, d // 2)),
             logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
-            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc)
+            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc,
+            **_lookup_desc(self.lookup, spec, self.cap))
 
 
 # =============================================================================== kernel
+def _ring_rows(K: int, p):
+    """The state ring's rows: (the row holding position p - j, j = 1 .. K-1; the rows B * x of
+    position p is stored to). 2K rows: slot s at rows 1 + s and 1 + s + K (the mirror, not
+    kept for slot K-1), row 0 a scratch row. Rows w + 1 .. w + K, w = (p + 1) mod K, hold
+    positions p-K+1 .. p in order, so at a run-time position (RunPos: its `ring` is w) every
+    row is one register plus a constant; a position given as an int reads the slot rows."""
+    if isinstance(p, RunPos):
+        w = p.ring
+        return [w + K - j for j in range(1, K)], [w, w + K]
+    return ([1 + (p - j) % K for j in range(1, K)],
+            [1 + p % K] + ([1 + p % K + K] if p % K < K - 1 else []))
+
+
 def _conv(x, lw, pos: int, spec: Spec):
     """x + out_proj(C * conv(B * x)) for one token, this slice's channels; returns the new
-    residual (replicated on every slice). B * x is stored to slot pos % K of the state ring;
-    the rows of the K - 1 positions before (those >= 0) are read back from it."""
+    residual (replicated on every slice). B * x is stored to the state ring (_ring_rows); the
+    rows of the K - 1 positions before (those >= 0) are read back from it."""
     K = spec.conv_k
     n = lw.taps.shape[1]
     taps = ol.load(lw.taps)                     # [K, n]; row K-1 weighs the current token
-    prev = [(ol.load(lw.state[(pos - j) % K:(pos - j) % K + 1, :]), taps[K - 1 - j:K - j, :])
-            for j in range(1, min(K, pos + 1))]  # loaded while in_proj streams
+    if isinstance(pos, RunPos) and pos.lo < K - 1:
+        raise ValueError(f"a run-time position needs p >= {K - 1} (conv taps)")
+    prev_rows, put = _ring_rows(K, pos)
+    past = K - 1 if isinstance(pos, RunPos) else min(K - 1, pos)
+    prev = [(ol.load(lw.state[r:r + 1, :]), taps[K - 1 - j:K - j, :])
+            for j, r in zip(range(1, past + 1), prev_rows)]  # loaded while in_proj streams
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), spec.eps))
     bcx = ol.dot(xs, lw.win)                    # [1, 3n]: B, C, x of this slice's channels
     bx = bcx[:, 0:n] * bcx[:, 2 * n:3 * n]
-    ol.store(lw.state[pos % K:pos % K + 1, :], bx)
+    for r in put:
+        ol.store(lw.state[r:r + 1, :], bx)
     y = bx * taps[K - 1:K, :]
     for s, t in prev:
         y = y + s * t
@@ -488,8 +520,7 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK):
     attend over positions 0..pos. Logits for this slice's vocabulary rows go to m.logits.
     """
     spec = m.spec
-    x = ol.load(m.x)
-    c, s_ = ol.load(m.cos), ol.load(m.sin)
+    x, c, s_ = _inputs(m, pos)
 
     def layer(li, kind):
         lw = m.layer(li, kind)
@@ -514,14 +545,13 @@ def _conv_rows(x, lw, p0: int, spec: Spec):
     taps = ol.load(lw.taps)                     # [K, n]; row K-1 weighs the current token
     E = ol.empty([K - 1 + R, n])                # B * x of positions p0-K+1 .. p0+R-1
     for j in range(1, min(K, p0 + 1)):          # the ring's rows before the chunk
-        sl = (p0 - j) % K
-        ol.load(lw.state[sl, :], out=E[K - 1 - j, :])
+        ol.load(lw.state[1 + (p0 - j) % K, :], out=E[K - 1 - j, :])
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), spec.eps))
     bx = E[K - 1:K - 1 + R, :]                  # B * x; B, C, x: this slice's channels
     bx.set(ol.dot(xs, lw.win[0:n, :]) * ol.dot(xs, lw.win[2 * n:3 * n, :]))
     for r in range(max(0, R - K), R):
-        sl = (p0 + r) % K
-        ol.store(lw.state[sl:sl + 1, :], E[K - 1 + r:K + r, :])
+        for sl in _ring_rows(K, p0 + r)[1]:
+            ol.store(lw.state[sl:sl + 1, :], E[K - 1 + r:K + r, :])
     full = max(0, K - 1 - p0)                   # rows before it lack positions < 0
     groups = [(r, r + 1) for r in range(min(full, R))] + ([(full, R)] if full < R else [])
     y = ol.empty([R, n]) if len(groups) > 1 else None

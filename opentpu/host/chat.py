@@ -467,8 +467,9 @@ NOTES = {"max_new": "(stopped at max_new={max_new} tokens · {cmd} or raise --ma
          "stopped": "(interrupted)"}
 
 
-def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None):
-    """(backend, configuration) for Engine."""
+def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None,
+                 lookup: bool = False):
+    """(backend, configuration) for Engine (lookup: room for the resident decode's tables)."""
     if name == "isa":
         return "isa", None
     if name == "board":
@@ -479,7 +480,7 @@ def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None):
         return (lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model)), cfg
     if name == "board-sim":
         from opentpu.host.board import BoardBackend, SimTransport, sim_config
-        cfg = sim_config(spec, cap)
+        cfg = sim_config(spec, cap, lookup=lookup)
         tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2)
         return (lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model)), cfg
     if name == "rtl":
@@ -524,6 +525,10 @@ def main(argv=None):
                     help="core clock, to turn device cycles into tokens/s (default: the "
                          "bitstream's CORE_KHZ, or 100 on a register map 1 bitstream)")
     ap.add_argument("--cap", type=int, default=2048, help="KV cache capacity (tokens)")
+    ap.add_argument("--per-position", action="store_true",
+                    help="compile a decode program per position (the fallback; by default "
+                         "one resident program per 256-token bucket takes the position as a "
+                         "run argument when the bitstream has them, CAPS bit7)")
     ap.add_argument("--prompt", help="ask one question and exit (plain output)")
     ap.add_argument("--plain", action="store_true",
                     help="a line-by-line REPL instead of the full-screen interface")
@@ -551,12 +556,14 @@ def main(argv=None):
     print(f"loading {path.name} onto openTPU ({a.backend}) ...", flush=True)
     from opentpu.host.board import ConfigMismatch
     try:
-        backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, path.name)
+        backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, path.name,
+                                    lookup=not a.per_position)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
     try:
         eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
-                     wformat=a.wformat, head_format=a.head_format)
+                     wformat=a.wformat, head_format=a.head_format,
+                     resident=not a.per_position)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
     sp = sampling(spec, a)

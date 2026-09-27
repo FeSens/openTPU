@@ -52,8 +52,9 @@ from opentpu.llm import load_spec, model_dir  # noqa: E402
 from opentpu.llm import qwen3 as Q  # noqa: E402
 
 COMPUTE = ("sample", "detok", "ui", "status", "compile-wait")    # items timed directly
-KNOWN = ["io-write", "compile-wait", "prog-upload", "imem-load", "start", "counters",
-         "logits-stream", "logits-tail", "logits-read", "status", "sample", "detok", "ui"]
+KNOWN = ["io-write", "args-write", "compile-wait", "prog-upload", "imem-load", "start",
+         "counters", "logits-stream", "logits-tail", "logits-read", "status", "sample", "detok",
+         "ui"]
 
 
 class Profiler:
@@ -158,6 +159,11 @@ def main(argv=None):
                     help="read the logits after the run (no streamed logits)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--fake-ms", type=float, default=80.0)
+    ap.add_argument("--per-position", action="store_true",
+                    help="a decode program per position (default: the resident one when the "
+                         "bitstream takes run arguments)")
+    ap.add_argument("--fake-no-args", action="store_true",
+                    help="--backend fake: a bitstream without run arguments (CAPS bit7)")
     ap.add_argument("--json")
     ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4"],
                     help="weight format of the layers (docs/quant.md)")
@@ -175,15 +181,19 @@ def main(argv=None):
     else:
         from opentpu.host.fake import FakeTransport
         from opentpu.isasim import board_config
-        probe = spec.image(board_config(DRAM_BYTES=1 << 32), a.cap, **wkw)
+        probe = spec.image(board_config(DRAM_BYTES=1 << 32), a.cap, **wkw,
+                           **({"lookup": True} if not a.per_position and Q.has_lookup(spec)
+                              else {}))
         ch = 1 << max(20, (probe.nbytes // 2 + (1 << 20)).bit_length())
         tr = FakeTransport(ch_bytes=ch, run_s=a.fake_ms / 1e3,
-                           cycles=int(a.fake_ms * 1e5), devname=None)
+                           cycles=int(a.fake_ms * 1e5), devname=None,
+                           args=not a.fake_no_args)
         cfg = B.device_config(B.Board(tr, lock=False).info(), DRAM_BYTES=2 * ch)
         backend = lambda c, imgs: B.BoardBackend(c, imgs, transport=tr, model=path.name)  # noqa
     # host steps: their transport operations are filed under them
     P.step(B.BoardBackend, "write", "io-write")
     P.step(B.Board, "load_program", "imem-load")
+    P.step(B.Board, "set_args", "args-write")
     P.step(B.Board, "start", "start")
     P.step(B.Board, "wait", "counters")
     P.step(B.BoardBackend, "_stream_logits", "logits-stream")
@@ -191,6 +201,7 @@ def main(argv=None):
     P.step(B.BoardBackend, "read", "logits-read")
     P.step(runstate.RunnerStatus, "token", "status")
     P.step(Q.Engine, "_program", "compile-wait")
+    P.step(Q.Engine, "_decode", "compile-wait")
     b_write = B.Board.write
 
     def board_write(self, addr, data):                  # the program's DMA in load_program
@@ -203,7 +214,8 @@ def main(argv=None):
             P.stack.pop()
     B.Board.write = board_write
 
-    eng = Q.Engine(spec, Q.load_weights(path), cap=a.cap, cfg=cfg, backend=backend, **wkw)
+    eng = Q.Engine(spec, Q.load_weights(path), cap=a.cap, cfg=cfg, backend=backend, **wkw,
+                   resident=not a.per_position)
     eng.stream_logits = not a.no_stream
     if a.backend == "fake":         # logits the sampler works on as on real ones (no ties)
         import numpy as np

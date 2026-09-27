@@ -123,20 +123,78 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, first, chunk):
     assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[21:], want[21:]))
 
 
-def test_tiny_lfm2_on_board_model(tiny, have_verilator):
+@pytest.mark.parametrize("resident", [False, True])
+def test_tiny_lfm2_on_board_model(tiny, have_verilator, resident):
     """The board model through the host driver, through a full turn of the conv state ring:
-    logits bit-identical to the ISA simulator."""
-    from opentpu.host.board import BoardBackend, SimTransport
+    logits bit-identical to the ISA simulator. Resident: from position 2 on one program, loaded
+    once, takes the token and position in the ARG registers (CAPS bit7)."""
+    from opentpu.host.board import Board, BoardBackend, SimTransport
     _, W, spec = tiny
     cfg = board_config(DRAM_BYTES=1 << 23)
     isa = Engine(spec, W, cap=256, cfg=cfg)
     tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
-    brd = Engine(spec, W, cap=256, cfg=cfg,
+    brd = Engine(spec, W, cap=256, cfg=cfg, resident=resident,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr))
-    for tok in (11, 222, 333, 444):
+    assert brd.resident == resident
+    loads, load = [], Board.load_program
+    brd.backend.board.load_program = lambda *a: (loads.append(1), load(brd.backend.board, *a))
+    for tok in (11, 222, 333, 444, 555):
         a, b = isa.step(tok), brd.step(tok)
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
     assert brd.stats[-1]["cycles"] > 0
+    assert len(loads) == (3 if resident else 5)     # positions 0, 1, then the resident one
+
+
+def test_tiny_resident_decode_is_bit_exact(tiny):
+    """Resident decode (one program per 256-position attention bucket, the token and position
+    as run arguments, the inputs from the image's tables) gives the per-position programs'
+    logits bit for bit: from the conv ring's first positions, after chunked prefills, and
+    across the bucket boundaries 256 and 512; the KV cache and conv state agree too."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 530)]
+    a = Engine(spec, W, cap=768, resident=True)
+    b = Engine(spec, W, cap=768)
+    assert a.resident and not b.resident
+    p = 0
+    for stop, run in ((0, 4), (250, 10), (508, 8)):
+        if stop > p:
+            assert np.array_equal(a.prefill(toks[p:stop]), b.prefill(toks[p:stop]))
+            p = stop
+        for t in toks[p:p + run]:
+            pa = a.pos
+            assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), pa
+        p += run
+    assert sorted(a._decodes) == [1, 2, 3] and not b._decodes
+    ia, ib = a.image, b.image
+    assert (ia.layer0, ia.LS) == (ib.layer0, ib.LS)
+    ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.nbytes].copy() for e in (a, b))
+    for li, k in enumerate(spec.kinds):     # the state rings' scratch rows (_ring_rows)
+        if k == "conv":
+            o = li * ib.LS + ib.lofs["conv"]["state"]
+            ma[o:o + 4 * ib.h_loc] = mb[o:o + 4 * ib.h_loc] = 0
+    assert np.array_equal(ma, mb)
+
+
+def test_tiny_resident_decode_on_rtl(tiny, have_verilator):
+    """The resident decode program on the Verilator RTL (its arguments preset R8..R15) across
+    the bucket boundary: positions 255 (bucket 1, the masked block's last column) and 256
+    (bucket 2) bit-identical to the ISA simulator, DRAM included."""
+    from opentpu.llm.rtl_backend import RtlBackend
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 257)]
+    eng = Engine(spec, W, cap=512, resident=True)
+    eng.prefill(toks[:255])
+    for t in toks[255:257]:
+        n = eng.image.nbytes
+        rtl = RtlBackend(eng.cfg, [s.dram[:n] for s in eng.backend.machine.slices])
+        isa = eng.backend
+        want = eng.step(t)
+        eng.backend, eng.pos = rtl, eng.pos - 1
+        got = eng.step(t)
+        eng.backend = isa
+        assert np.array_equal(want.view(np.uint32), got.view(np.uint32)), eng.pos - 1
+        assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])
+    assert sorted(eng._decodes) == [1, 2]
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/LFM2.5-230M not downloaded")
@@ -145,6 +203,23 @@ def test_lfm2_5_230m_program_fits_board_imem():
     spec = load_spec(REAL)
     img = spec.image(board_config(), 4096)
     assert len(img.compile_step(4095)[0]) <= board_config().IMEM_WORDS // 8
+
+
+@pytest.mark.skipif(not REAL.exists(), reason="models/LFM2.5-230M not downloaded")
+def test_lfm2_5_230m_resident_programs_fit_a_4k_context():
+    """The resident decode programs of a 4K context (16 attention buckets, 4-bit layers on the
+    board's configuration) fit IMEM and the registers: 6 arguments from R15 down, address
+    registers from R1 up."""
+    from opentpu import isa as I
+    from opentpu.llm.qwen3 import device_config
+    spec, kw = load_spec(REAL), dict(wformat="fp4", head_format="int8")
+    cfg = device_config(spec, 4096, lookup=True, MCOLS=2, PAIR=True, **kw)
+    img = spec.image(cfg, 4096, lookup=True, **kw)
+    for blocks in range(1, 17):
+        progs, ra = img.compile_decode(blocks, max(2, (blocks - 1) * 256))
+        assert len(progs[0]) <= cfg.IMEM_WORDS // 8 and len(ra) == 6
+        written = {i.rd for i in progs[0] if i.op in (I.LI, I.ADDI)}
+        assert written <= set(range(1, 16 - len(ra)))       # the arguments stay
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/LFM2.5-230M not downloaded")
@@ -180,20 +255,25 @@ def test_lfm2_5_230m_fp4_int8_head_greedy():
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/LFM2.5-230M not downloaded")
-@pytest.mark.parametrize("wformat,head_format,pair", [("int8", None, False),
-                                                      ("fp4", "int8", True)])
-def test_lfm2_5_230m_token_on_rtl_is_bit_exact(have_verilator, wformat, head_format, pair):
+@pytest.mark.parametrize("wformat,head_format,pair,resident", [
+    ("int8", None, False, False), ("fp4", "int8", True, False), ("fp4", "int8", True, True)])
+def test_lfm2_5_230m_token_on_rtl_is_bit_exact(have_verilator, wformat, head_format, pair,
+                                               resident):
     """Feed part of a prompt on the ISA simulator, then run the next token on the Verilator RTL
     and on the ISA simulator from the same DRAM state: weights, KV cache, conv state and
     logits must agree bit for bit (int8; 4-bit layers with an int8 LM head on the board's
-    MCOLS=2 with column reuse)."""
+    MCOLS=2 with column reuse; that with the resident decode program, whose logits equal the
+    per-position program's)."""
     from opentpu.llm.qwen3 import device_config
     from opentpu.llm.rtl_backend import RtlBackend
     spec = load_spec(REAL)
+    lk = {"lookup": True} if resident else {}
     cfg = device_config(spec, 256, wformat=wformat, head_format=head_format, MCOLS=2,
-                        PAIR=True) if pair else None
-    eng = Engine(spec, load_weights(REAL), cap=256, cfg=cfg, wformat=wformat,
-                 head_format=head_format)
+                        PAIR=True, **lk) if pair else None
+    W = load_weights(REAL)
+    eng = Engine(spec, W, cap=256, cfg=cfg, wformat=wformat, head_format=head_format,
+                 resident=resident)
+    assert eng.resident == resident
     prompt = [1, 6, 6423, 708, 3493, 856, 779, 5706, 803, 4481]
     for t in prompt[:-1]:
         eng.step(t)
@@ -206,3 +286,8 @@ def test_lfm2_5_230m_token_on_rtl_is_bit_exact(have_verilator, wformat, head_for
     assert np.array_equal(want.view(np.uint32), got.view(np.uint32))
     for s in range(eng.cfg.S):
         assert np.array_equal(isa.machine.slices[s].dram[:n], rtl.drams[s][:n])
+    if resident:                            # the per-position programs' logits
+        ref = Engine(spec, W, cap=256, cfg=eng.cfg, wformat=wformat, head_format=head_format)
+        for t in prompt[:-1]:
+            ref.step(t)
+        assert np.array_equal(ref.step(prompt[-1]).view(np.uint32), want.view(np.uint32))

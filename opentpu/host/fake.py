@@ -14,7 +14,8 @@ out of the buffer) and TRACE_DROP = `trace_drop`.
 
 With `i2c` (two fake_i2c.OpenDrainBus, e.g. fake_i2c.card_buses()) CAPS announces the I2C pins
 and I2C_CTRL / I2C_IN drive and read those bus models. With `ddr_mts` CAPS bit3 announces the
-DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams.
+DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams. With
+`args` CAPS bit7 announces the ARG0..7 registers (kept, read back).
 """
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ class FakeTransport:
                  step: int = 1_000_000, trace: list[int] | None = None, trace_extra: int = 0,
                  trace_drop: int = 0, D: int = 128, MCOLS: int = 2, LANES: int = 8,
                  i2c: list | None = None, ddr_mts: int | None = None,
-                 w4: bool = True, pair: bool = False):
+                 w4: bool = True, pair: bool = False, args: bool = False):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.v, self.devname, self.dev = regmap, devname, devname and f"/dev/{devname}"
         self.run_s, self.cycles_per_run = run_s, cycles
@@ -50,6 +51,7 @@ class FakeTransport:
         self.ddr_mts = ddr_mts          # None: a bitstream without the DDR_MTS register
         self.w4 = w4                    # CAPS bit4: the MXU runs 4-bit weights
         self.pair = pair                # CAPS bit5: MM PAIR / QACT DUP
+        self.args = args                # CAPS bit7: ARG0..7 (R_ARG0 + 4k, read back)
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
                      R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0, R.R_I2C_CTRL: 0}
         self.count = {k: 0 for k in R.counters(regmap)}
@@ -124,7 +126,7 @@ class FakeTransport:
         if off == R.R_CAPS:
             return (R.CAP_TRACE | R.CAP_TEMP | (R.CAP_I2C if self.i2c else 0)
                     | (R.CAP_DDR if self.ddr_mts else 0) | (R.CAP_W4 if self.w4 else 0)
-                    | (R.CAP_PAIR if self.pair else 0)
+                    | (R.CAP_PAIR if self.pair else 0) | (R.CAP_ARGS if self.args else 0)
                     | self.trace_log2 << 8 | 6 << 16)
         if off == R.R_CORE_KHZ:
             return self.core_khz

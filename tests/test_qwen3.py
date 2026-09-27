@@ -83,6 +83,24 @@ def test_tiny_4bit_column_reuse(tiny, wformat):
     assert _cos(runs[True], runs[False]).min() > 0.99999
 
 
+def test_tiny_resident_decode_is_bit_exact(tiny):
+    """Resident decode (compile_decode: one program per attention bucket, the token and
+    position as run arguments) gives the per-position programs' logits bit for bit, from
+    position 0 and across the bucket boundary 256, after a chunked prefill."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 262)]
+    a = Engine(spec, W, cap=512, resident=True)
+    b = Engine(spec, W, cap=512)
+    assert a.resident
+    for t in toks[:3]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    assert np.array_equal(a.prefill(toks[3:252]), b.prefill(toks[3:252]))
+    for t in toks[252:]:
+        pa = a.pos
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), pa
+    assert sorted(a._decodes) == [1, 2]
+
+
 def test_tiny_reset_reuses_cache(tiny):
     _, W, spec = tiny
     eng = Engine(spec, W, cap=128)
