@@ -247,7 +247,7 @@ class ChatApp(App):
             yield Static(id="panel")
 
     def on_mount(self) -> None:
-        self._loop = asyncio.get_running_loop()
+        self._ui_loop = asyncio.get_running_loop()
         self.register_theme(THEME)
         self.theme = "otpu"
         self._refresh()
@@ -429,9 +429,9 @@ class ChatApp(App):
                 self._pending = (self._pending[0], turn)
                 return
             self._pending = ([delta], turn)
-        self._loop.call_soon_threadsafe(self.call_next, self._flush)
+        self._ui_loop.call_soon_threadsafe(self.call_next, self._drain)
 
-    def _flush(self) -> None:
+    def _drain(self) -> None:
         with self._lock:
             p, self._pending = self._pending, None
         if p is not None:
@@ -451,7 +451,7 @@ class ChatApp(App):
         self._refresh()
 
     def _done(self, turn: Turn | None) -> None:
-        self._flush()
+        self._drain()
         self._busy = ""
         self._tick()
         if turn is not None:

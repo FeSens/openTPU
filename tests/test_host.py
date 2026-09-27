@@ -764,6 +764,10 @@ def test_chat_tui_shows_the_live_numbers(tmp_path):
     from textual.widgets import OptionList, Static
     assert _meter(10, 100)[1] == "bright_black" and _meter(80, 100)[1] == "#E0A030"
     assert _meter(95, 100) == ("▰" * 8, "#E05050")
+    from textual.app import App                   # e.g. App._flush writes captured prints
+    own = {n for n, v in vars(ChatApp).items() if n[:1] == "_" and n[:2] != "__"
+           and getattr(v, "__qualname__", "").startswith("ChatApp.")}
+    assert own and not own & set(dir(App))
     chat = _stub_chat(n_out=6, max_new=4)
     meta = {"model": "stub", "backend": "board", "device": "/dev/xdma0", "short": "board 100 MHz",
             "bitstream": ["D=128 MCOLS=2 LANES=8", "build 74d48591, 100 MHz"],
