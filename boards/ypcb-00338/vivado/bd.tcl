@@ -99,6 +99,12 @@ set ibuf [create_bd_cell -type ip -vlnv [ip_vlnv util_ds_buf] refclk_buf]
 set_property CONFIG.C_BUF_TYPE {IBUFDSGTE} $ibuf
 connect_bd_intf_net $pcie_refclk [get_bd_intf_pins refclk_buf/CLK_IN_D]
 
+# PCI identity. Device ID 7028 stays: the Xilinx XDMA driver's pci_ids[] and the host's udev
+# rule match it. Class 12 00 00 (processing accelerator) instead of the default 07 00 01 (16450
+# serial port), which made the kernel's 8250_pci probe the card as a UART. The 7-series core's
+# class menu predates class 12h, so the raw class bytes are set (the lookup assistant stays off).
+# Subsystem 10ee:4f54 ("OT") tells this design from other XDMA designs (default 10ee:0007); the
+# revision ID counts host-visible changes of the PCI function.
 set xdma [create_bd_cell -type ip -vlnv [ip_vlnv xdma] xdma_0]
 set_property -dict [list \
   CONFIG.mode_selection {Advanced} \
@@ -108,6 +114,10 @@ set_property -dict [list \
   CONFIG.axisten_freq {125} \
   CONFIG.ref_clk_freq {100_MHz} \
   CONFIG.pf0_device_id {7028} \
+  CONFIG.pf0_class_code_base {12} CONFIG.pf0_class_code_sub {00} \
+  CONFIG.pf0_class_code_interface {00} \
+  CONFIG.pf0_subsystem_vendor_id {10EE} CONFIG.pf0_subsystem_id {4F54} \
+  CONFIG.pf0_revision_id {01} \
   CONFIG.xdma_rnum_chnl {1} CONFIG.xdma_wnum_chnl {1} \
   CONFIG.axilite_master_en {true} CONFIG.axilite_master_size {1} \
   CONFIG.axilite_master_scale {Megabytes} \
@@ -226,5 +236,9 @@ if {[llength [get_bd_nets -of [get_bd_ports device_temp]]] == 0 || \
 foreach {cell want} {rst_core 0 rst_mig_0 1 rst_mig_1 1} {
   set got [get_property CONFIG.C_EXT_RESET_HIGH [get_bd_cells $cell]]
   if {$got != $want} { error "$cell: C_EXT_RESET_HIGH is $got, expected $want" }
+}
+foreach {k want} {pf0_device_id 7028 pf0_class_code 120000 pf0_subsystem_id 4F54 pf0_revision_id 01} {
+  set got [get_property CONFIG.$k [get_bd_cells xdma_0]]
+  if {$got ne $want} { error "xdma_0: $k is $got, expected $want" }
 }
 save_bd_design
