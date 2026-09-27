@@ -171,6 +171,14 @@ def _fake_q(x, D: int = 128):
     return (np.clip(np.rint(xb / s), -127, 127) * s).reshape(sh)
 
 
+def _fake_w(a, D: int, fmt: str = "int8"):
+    """A weight matrix as the device holds it, in float64: int8 per (row, D-block) (_fake_q) or
+    the 4-bit formats of opentpu/quant.py."""
+    if fmt == "int8":
+        return _fake_q(np.asarray(a, np.float64), D)
+    return Q.quantize_w4(a, fmt, D)[2].astype(np.float64)
+
+
 def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "int8",
                     head_format: str | None = None) -> np.ndarray:
     """float64 decode that applies openTPU's quantization points but none of its rounding:
@@ -183,9 +191,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
 
     def w(n):
         if n not in Wq:
-            fmt = (head_format or wformat) if n == head else wformat
-            Wq[n] = _fake_q(np.asarray(W[n], np.float64), D) if fmt == "int8" else \
-                Q.quantize_w4(W[n], fmt, D)[2].astype(np.float64)
+            Wq[n] = _fake_w(W[n], D, (head_format or wformat) if n == head else wformat)
         return Wq[n]
 
     def norm(v, g):

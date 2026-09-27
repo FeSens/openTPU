@@ -231,8 +231,9 @@ bytes streamed, not simulations.
   issuer requests a chunk every second block and a scale word every block; the scale FIFO is
   twice as deep (two words per chunk in flight). The logic depth grows from 4.39 to 4.67 ns (the
   sub-block sum in front of its multiplier; est. 133 -> 126 MHz, the board runs at 100). The MXU
-  pipeline is two stages longer, also for int8: QWEN3_LAT on a two-layer Qwen3 token, +64 cycles
-  (0.25%) on the small MLP kernels of tests/test_perf.py.
+  pipeline is two stages longer, also for int8. That is lost in the noise of a two-layer Qwen3
+  token (1,901,860 cycles against 1,901,880 before, bw 80%), and costs 64 cycles (0.25%) on the
+  small MLP kernels of tests/test_perf.py.
 - **(b)** doubles the MXU's rate for 4-bit weights: two blocks per cycle, so a 4-bit chunk per
   cycle. It needs a second ACT RAM block per cycle (even/odd banks), 128 more DSPs for the
   products at MCOLS = 2, and a different accumulation: two terms per column per cycle cannot

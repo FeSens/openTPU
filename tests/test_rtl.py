@@ -75,12 +75,13 @@ def _images(rng, S):
 
 
 def _scale_words(n, seed=0):
-    """4-bit MM scale words: a bf16 scale in [2^-10, 2^-3) and four multipliers in 0..15 (docs/isa.md,
-    "Weight formats"); a separate generator, so the fuzzers' random streams are unchanged."""
+    """4-bit MM scale words: a bf16 scale in [2^-10, 2^-3) and four multipliers in 0..15
+    (docs/isa.md, "Weight formats"); a separate generator, so that the rest of the fuzzers'
+    random streams do not depend on it."""
     r = np.random.default_rng(seed)
     s = (r.uniform(2.0 ** -10, 2.0 ** -3, n).astype(np.float32).view(np.uint32) >> 16)
     m = r.integers(0, 16, (n, 4)).astype(np.uint32)
-    return (s | (m << (16 + 4 * np.arange(4, dtype=np.uint32))).sum(1).astype(np.uint32)).astype(np.uint32)
+    return (s | (m << (16 + 4 * np.arange(4, dtype=np.uint32))).sum(1)).astype(np.uint32)
 
 
 def _wf(rng):

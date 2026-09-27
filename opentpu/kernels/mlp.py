@@ -7,6 +7,8 @@ def _chunk(f_loc: int, D: int, q: int | None = None) -> int:
     """F-chunk size: about 8 chunks per slice, a multiple of q (default D; 2D for 4-bit W_down,
     whose column slices must start on whole D-byte chunks)."""
     q = q or D
+    if f_loc % q:
+        raise ValueError(f"F per slice {f_loc} is not a multiple of {q}")
     c = max(q, (f_loc // 8) // q * q)
     while f_loc % c:
         c -= q

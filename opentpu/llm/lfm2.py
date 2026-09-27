@@ -46,7 +46,7 @@ from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
 from ..kernels.mlp import _chunk
 from ..runtime import quantize_rows
-from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _lm_head,
+from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
                     _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables)
 
 CONV, ATTN = "conv", "attn"
@@ -194,15 +194,18 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
     return x @ head.T
 
 
-def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128) -> np.ndarray:
+def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "int8",
+                    head_format: str | None = None) -> np.ndarray:
     """float64 decode with openTPU's quantization points and none of its rounding (as
     qwen3.emulated_logits); a zero-padded K or q block quantizes like its head_dim values."""
     d, G, H, K = spec.head_dim, spec.n_q // spec.n_kv, spec.hidden, spec.conv_k
     Wq: dict = {}
 
+    head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+
     def w(n):
-        if n not in Wq:
-            Wq[n] = _fake_q(np.asarray(W[n], np.float64), D)
+        if n not in Wq:        # the weight formats as in Image (wformat, head_format)
+            Wq[n] = _fake_w(W[n], D, (head_format or wformat) if n == head else wformat)
         return Wq[n]
 
     def norm(v, g):
@@ -212,7 +215,6 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128) -> np.ndarray:
     Vc = {i: [] for i in Kc}
     state = {i: [np.zeros(H)] * (K - 1) for i, k in enumerate(spec.kinds) if k == CONV}
     out = []
-    head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
     for pos, tk in enumerate(tokens):
         x = np.asarray(W["model.embed_tokens.weight"][tk], np.float64)
         c, s = rope_tables(spec, pos)

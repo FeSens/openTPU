@@ -308,9 +308,9 @@ module otpu_mxu
     // The DSP post-adders sum positions 2q and 2q+1 (DSP 2q: M + PK, DSP 2q+1: M + that, PREG):
     // pq = E*2^16 + (O + PK), E / O the pair sums of columns 2p / 2p+1, both in [-32512, 32768].
     // O + PK is in [1, 65281], so the fields need no borrow: E = pq[32:16] (signed) and
-    // O + PK = pq[15:0] (unsigned); column 2p+1's group sums start at -(GS/2)*PK. PK is odd (no constant
-    // trailing zeros to trim from the post-adder). An odd last column keeps plain products,
-    // paired in fabric.
+    // O + PK = pq[15:0] (unsigned); column 2p+1's group sums start at -(GS/2)*PK. PK is odd
+    // (no constant trailing zeros to trim from the post-adder). An odd last column keeps plain
+    // products, paired in fabric.
     // pm, pq and pr are packed so they are registers the DSPs absorb (MREG, PREG), not memories
     // that are mapped to fabric flops after DSP packing; signed fields are read through $signed().
     localparam logic [33:0] PK = 34'd32513;

@@ -35,8 +35,8 @@ def test_mlp_small_batch_near_roofline(have_verilator):
     a, _ = mlp_args(np.random.default_rng(0), M=4, H=1024, Fd=2048)
     p = profile(mlp, design_config(), **a)
     # 0.915, was 0.92: the MXU tree is two stages longer for 4-bit weights (a register after the
-    # weight decode, the sub-block multipliers), +64 cycles here (92.1% -> 91.9%); a Qwen3 token
-    # is +0.005%
+    # weight decode, the sub-block multipliers), +64 cycles here (92.1% -> 91.9%); a two-layer
+    # Qwen3 token does not change (-20 cycles of 1.9M)
     assert _eff(p) > 0.915, p.summary()
 
 
