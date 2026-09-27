@@ -76,12 +76,14 @@ def mlp(h, gamma, w_gate, w_up, w_down, out, eps):   # simplified; see kernels/m
         ol.store(out, x + y)
 ```
 
-## Designed by agents
+Because every data movement is an instruction, a trace of a run explains its speed. Lens, the
+profiler, records a run from the RTL, the simulator or the card and opens it in the browser,
+with a roofline, a timeline and per-instruction tables ([docs/lens.md](docs/lens.md)).
 
-The architecture tournament ([docs/tourney.md](docs/tourney.md)) lets LLM agents propose RTL
-changes one component at a time. A change is kept only if it passes every bit-exact test and
-synthesizes smaller or faster. Before the first build, the tournament raised the
-estimated clock of the accelerator logic from 41 to 106 MHz.
+![Lens replaying a Qwen3 decode step on the floorplan](docs/img/lens-floorplan.gif)
+
+*Lens replaying part of a Qwen3 decode step. Colours show what each unit is doing in each
+cycle: busy, waiting on DRAM, or waiting on another instruction.*
 
 ## Try it
 
@@ -106,16 +108,6 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 | `otpu-smi` | temperature, power, DRAM bandwidth and per-unit utilization |
 | `otpu-lens` | record a run and open it in the profiler |
 | `otpu-selftest`, `otpu-diag` | check that the card works |
-
-## See where the cycles go
-
-![Lens replaying a Qwen3 decode step on the floorplan](docs/img/lens-floorplan.gif)
-
-*Lens, the profiler, replaying part of a Qwen3 decode step. Colours show what each unit is
-doing in each cycle: busy, waiting on DRAM, or waiting on another instruction.*
-
-Lens records a run from the RTL, the simulator or the card and opens it in the browser, with a
-roofline, a timeline and per-instruction tables ([docs/lens.md](docs/lens.md)).
 
 ## Where to start reading
 

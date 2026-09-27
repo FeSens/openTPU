@@ -130,7 +130,9 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_burst_a691ea98/otpu.bit`** (primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | a691ea98 (port-B AXI read bursts, MXU_STARVE counter; register map 3) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns, WHS +0.040 ns (omarchy build) |
+| **`build/deploy_prod120_b01b8acb/otpu.bit`** (production, 2026-09-27) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | b01b8ac (fmax fixes; section 5, "Faster DDR3") | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.080 ns, WHS +0.016 ns |
+| `build/deploy_prod1066_b2c7ce43/otpu.bit` (previous production) | `make bit DDR=1066` at 100 MHz | b2c7ce4 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns |
+| `build/deploy_burst_a691ea98/otpu.bit` (older primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | a691ea98 (port-B AXI read bursts, MXU_STARVE counter; register map 3) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns, WHS +0.040 ns (omarchy build) |
 | `build/deploy_r3route_74d4859/otpu.bit` (single-beat reads, 2.4x slower decode) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 74d4859 (chunk FIFO in block RAM, 6 TMEM copies) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.104 ns, WHS +0.038 ns |
 | `build/deploy_default_3c270c9/otpu.bit` (first fallback) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 3c270c9 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.065 ns, WHS +0.038 ns |
 | `build/deploy_m4cl4_550aa35/otpu.bit` (faster prefill) | `make bit MCOLS=4 VPU_CL=4` | 550aa35 (as the primary, 4 MXU columns, 4 composite VPU lanes) | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.086 ns, WHS +0.037 ns |
@@ -138,8 +140,8 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 Start with the primary image; if it misbehaves where the 3c270c9 image does not, the chunk FIFO
 / TMEM change is the suspect (same programs, same cycles in simulation). The 4&4 build is the same instruction set with twice the MXU
-columns (the host picks MCOLS=4 up from VERSION); the v0.4 build is the last resort. All are
-100 MHz core, DDR3-800, PCIe Gen1 x8, register map 2. The RTL changes after ddec900
+columns (the host picks MCOLS=4 up from VERSION); the v0.4 build is the last resort. The rows
+from the burst image down are 100 MHz core, DDR3-800, PCIe Gen1 x8. The RTL changes after ddec900
 (TMEM rotators, LANES=16 option, MXU drain, chunk FIFO in block RAM, 6 TMEM copies) change timing or area only, not results. The
 `.mcs` next to each `.bit` is the BPI flash image of the same build. The self-test's config stage and
 `otpu-smi` print the loaded image's BUILD_ID (the first 8 hex digits of the commit checked out
@@ -438,6 +440,53 @@ The tightest inter-clock paths are inside the MIG: ui_clk to the ISERDES clocks,
 own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds otpu.bit,
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
+
+**Production image (2026-09-27, afternoon): `build/deploy_prod120_b01b8acb`** (branch fmax
+b01b8ac: main 32d900b plus the fmax fixes: fanout caps, the AXI adapter's request queues in LUT
+RAM from r7-apf, registered MXU inputs and ACT RAM writes, a reset register per unit). Core
+clock 120.755 MHz, DDR3-1066, WNS +0.080 ns, WHS +0.016 ns; 158.6K LUT (53.1%), 128.5K FF
+(21.5%), 558 BRAM36 (58.4%); Vivado's power estimate 9.3 W. The directory holds otpu.bit,
+otpu.mcs, otpu.prm, reports/ and build.log; the flash has not been written with it. On the card
+(JTAG load, host of 79f07d7):
+
+- selftest all pass (including RDOT / OUTER / LOG2); `otpu-diag --mem full --soak 20` all pass
+  (platform 9, regs 7, i2c 4, mem 13, isa 93, system 5);
+- Qwen3, LFM2 and Qwen3.5 match the ISA simulator token for token;
+- warm soak: 307 s of continuous Qwen3 decode (12 replies of 256 tokens, 18.92 device tok/s
+  throughout), board temperature 51 -> 55 °C, then `otpu-diag --mem full --soak 20` all pass
+  again and Qwen3 still matches the simulator.
+
+Greedy decode, 64 tokens at a short context (`tools/decode_profile.py`; the host converts cycles
+with the bitstream's CORE_KHZ):
+
+| Model | Mcycles/token | device tok/s | wall tok/s | 100 MHz image (b2c7ce43): Mcycles, device, wall |
+|---|---|---|---|---|
+| Qwen3-0.6B | 6.33 | 19.07 | 17.94 | 6.85, 14.6, 14.1 |
+| LFM2.5-230M | 2.30 | 52.41 | 48.64 (48.15-48.94, 3 runs, host 01246cf) | 2.46, 40.7, 38.5 |
+| Qwen3.5-0.8B | 8.38 | 14.41 | 13.39 | 9.75, 10.3, 9.9 |
+
+The cycles per token also dropped (Qwen3 -7.6%): this image carries r5-dram (MIG
+ROW_BANK_COLUMN and gathered QST writes) and the adapter queues, which b2c7ce43 did not. On LFM2
+the host adds about 1.3 ms per token (logits read 0.4-0.6 ms, sampling 0.2-0.3 ms, the input
+write 0.1-0.2 ms, poll overshoot 0.25 ms); a first single run read 42.8 wall tok/s, which the
+three repeats did not reproduce.
+
+At a long context the host matters more. LFM2 with a ~1,800-token prompt and 94 decode tokens
+(context ~1,900) on this image: device 47.9 tok/s (2.52 Mcycles/token); wall 17.8 tok/s with the
+host of 79f07d7 (the step waits 33.4 ms per token for its program to compile) and 33.3 tok/s with
+the host of 01246cf (longctx; the wait drops to 6.1 ms).
+
+**Not promoted: `deploy_vg125_4b9ab8ad`** (fmax-vg125 4b9ab8a, 125.49 MHz, DDR3-1066, WNS
++0.017 ns, WHS +0.045 ns; the fmax image plus a registered-ahead VPU TMEM grant, "VPU WBUF").
+Selftest, the three models token for token (Qwen3.5 included) and decode (6.36 / 2.31 / 8.42
+Mcycles/token, 19.7 / 54.3 / 14.9 device tok/s) all pass, but `otpu-diag` fails all four RDOT
+programs 20 times out of 20, cold and warm, and after the warm soak also the RDOT / OUTER / LOG2
+system program. Each RDOT result is the one the previous RDOT program should have stored: a
+result one operation late, deterministic, so a logic fault in the WBUF change rather than a
+timing margin. The selftest of that time passed it with a note (it took any RDOT mismatch for a
+bitstream built before RDOT); it now fails wrong RDOT results on register map 3 or later.
+
+The 100 MHz image it replaces:
 
 **Production image (2026-09-27): `build/deploy_prod1066_b2c7ce43`** (main b2c7ce4, DDR3-1066,
 WNS +0.085 ns, PCI class 12 00 00, I2C). On the card: calibration, selftest, `otpu-diag --mem
