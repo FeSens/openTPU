@@ -50,7 +50,7 @@ HINTS = {
              "bitstream (docs/board.md) and the memory voltage; STATUS bit5 = channel 0, "
              "bit6 = channel 1.",
     "scrub": "Writing the DRAM failed or timed out: DMA host->card is broken (dmesg: XDMA "
-             "errors); try the driver in poll mode (XDMA_POLL=1 opentpu/host/setup_pcie.sh).",
+             "errors); try the driver in poll mode (sudo otpu-setup --poll).",
     "regs": "Register writes do not stick: the AXI-Lite path (XDMA BAR0 -> otpu_ctrl) is "
             "broken, or the core clock / reset is not running.",
     "addr": "An address line of that channel is stuck or aliased: DDR3 pinout / MIG address "

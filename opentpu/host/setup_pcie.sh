@@ -30,7 +30,7 @@ XDMA_REPO=https://github.com/Xilinx/dma_ip_drivers
 XDMA_COMMIT=b8466090b4e812e191da9e9305ffb11cb7ace768   # 2026-08-20, driver version 2025.2.0
 VER=b846609.1              # <commit>.<patch level>: the module's "otpu" tag (pcie/xdma-otpu.patch)
 PKG=otpu-xdma
-DEFAULT_POLL=1             # docs/host.md section 2: interrupt vs poll mode, measured
+DEFAULT_POLL=0             # interrupts; docs/host.md section 2 has poll vs interrupts, measured
 OTPU_ID=4f545055           # "OTPU", the ID register at BAR0 offset 0
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -392,7 +392,9 @@ load_driver() {  # (re)load when the loaded module is not the installed one or t
         return 0
       fi
       say "reloading xdma ($why)"
-      modprobe -r xdma || die "cannot unload xdma (lsmod | grep xdma)"
+      local n   # a monitor (otpu-smi) may hold the register node for a moment
+      for n in 1 2 3 4 5 6 7 8 9 10; do modprobe -r xdma 2>/dev/null && break; sleep 0.5; done
+      ! loaded || die "cannot unload xdma: in use (lsmod | grep xdma)"
     fi
   fi
   loaded || modprobe xdma
