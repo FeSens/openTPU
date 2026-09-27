@@ -28,7 +28,6 @@ import concurrent.futures
 import mmap
 import os
 import struct
-import subprocess
 import tempfile
 import time
 from dataclasses import replace
