@@ -51,26 +51,77 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
 
     Top-k runs on the float32 logits: when the k largest are distinct and larger than the
     next one, the candidates and their order are unique, so this gives the picks of the
-    float64 path (_top_k_f64) that it replaces in the common case; any tie falls back to it."""
+    float64 path (_top_k_f64) that it replaces in the common case; any tie falls back to it.
+
+    pick.stream(context) takes the logits in pieces instead, as they arrive from the card
+    (Engine.step(sink=...)): begin(n, dtype), feed(lo, values) for [lo, lo + len(values)) in
+    any order, then result() -> the token id of pick(logits, context). The penalty and the
+    block maxima are applied per piece, so after the last piece only the selection is left.
+    `context` is read at begin()."""
     rng = np.random.default_rng(seed)
     seen = _Seen()
+    block = 64
+
+    class Stream:
+        def __init__(self, context=()):
+            self.context = context
+
+        def begin(self, n: int, dtype=np.float32) -> None:
+            self.buf = np.empty(n, dtype)
+            self.bm = np.empty(-(-n // block), dtype)
+            self.bm_ok = np.zeros(len(self.bm), bool)
+            self.got = 0
+            ctx = self.context
+            self.ix = seen(ctx) if repetition_penalty != 1.0 and len(ctx) else None
+
+        def feed(self, lo: int, v) -> None:
+            hi = lo + len(v)
+            b = self.buf[lo:hi]
+            b[:] = v
+            if self.ix is not None:
+                sel = self.ix[np.searchsorted(self.ix, lo):np.searchsorted(self.ix, hi)]
+                w = self.buf[sel]
+                self.buf[sel] = np.where(w > 0, w / repetition_penalty, w * repetition_penalty)
+            self.got += hi - lo
+            if lo % block == 0 and (hi % block == 0 or hi == len(self.buf)):
+                m = (hi - lo) // block * block      # the piece's block maxima
+                if m:
+                    self.bm[lo // block:(lo + m) // block] = b[:m].reshape(-1, block).max(axis=1)
+                if m < hi - lo:
+                    self.bm[-1] = b[m:].max()
+                self.bm_ok[lo // block:-(-hi // block)] = True
+
+        def result(self) -> int:
+            assert self.got == len(self.buf), "logits missing"
+            logits = self.buf
+            if temperature <= 0:
+                return int(np.argmax(logits))
+            top = None
+            if 0 < top_k < len(logits):
+                if not self.bm_ok.all():            # pieces off the block grid
+                    self._block_max()
+                top = _top_k_f32(logits, top_k, temperature, block, self.bm)
+            idx, z = top if top is not None else _top_k_f64(logits, top_k, temperature)
+            p = np.exp(z - z[0])
+            p /= p.sum()
+            keep = min(len(p), np.searchsorted(np.cumsum(p), top_p) + 1)
+            p = p[:keep] / p[:keep].sum()
+            return int(idx[rng.choice(keep, p=p)])
+
+        def _block_max(self) -> None:
+            n, lg = len(self.buf), self.buf
+            m = n // block * block
+            self.bm[:m // block] = lg[:m].reshape(-1, block).max(axis=1)
+            if m < n:
+                self.bm[-1] = lg[m:].max()
 
     def pick(logits, context=()):
-        if repetition_penalty != 1.0 and len(context):
-            logits = logits.copy()
-            ix = seen(context)
-            v = logits[ix]
-            logits[ix] = np.where(v > 0, v / repetition_penalty, v * repetition_penalty)
-        if temperature <= 0:
-            return int(np.argmax(logits))
-        top = _top_k_f32(logits, top_k, temperature) if 0 < top_k < len(logits) else None
-        idx, z = top if top is not None else _top_k_f64(logits, top_k, temperature)
-        p = np.exp(z - z[0])
-        p /= p.sum()
-        keep = min(len(p), np.searchsorted(np.cumsum(p), top_p) + 1)
-        p = p[:keep] / p[:keep].sum()
-        return int(idx[rng.choice(keep, p=p)])
+        s = Stream(context)
+        s.begin(len(logits), logits.dtype)
+        s.feed(0, logits)
+        return s.result()
 
+    pick.stream = Stream
     return pick
 
 
@@ -84,24 +135,29 @@ def _top_k_f64(logits, top_k: int, temperature: float):
     return idx[order], z[order]
 
 
-def _top_k_f32(logits, k: int, temperature: float, block: int = 64):
+def _top_k_f32(logits, k: int, temperature: float, block: int = 64, bm=None):
     """_top_k_f64 without converting or selecting over the whole vocabulary, or None when a
     tie makes the choice among equal values depend on the selection algorithm (then
     _top_k_f64 decides, as before).
 
-    The k-th largest of the per-block maxima (blocks of `block` logits) is a lower bound t of
-    the k-th largest logit (k blocks each hold a logit >= t), so the top k are among the
-    logits >= t, usually a few times k of them; the selection runs on those. Dividing by the
-    temperature in float64 keeps the order of distinct float32 values, so the unique top k
-    and their order are the ones of _top_k_f64."""
-    m = len(logits) // block * block
-    bm = logits[:m].reshape(-1, block).max(axis=1)
-    if m < len(logits):
-        bm = np.append(bm, logits[m:].max())
+    The k-th largest of the per-block maxima (blocks of `block` logits; `bm` if the caller has
+    them) is a lower bound t of the k-th largest logit (k blocks each hold a logit >= t), so
+    the top k are among the logits >= t, which lie in the blocks whose maximum is >= t:
+    usually a few times k of them; the selection runs on those. Dividing by the temperature
+    in float64 keeps the order of distinct float32 values, so the unique top k and their
+    order are the ones of _top_k_f64."""
+    if bm is None:
+        m = len(logits) // block * block
+        bm = logits[:m].reshape(-1, block).max(axis=1)
+        if m < len(logits):
+            bm = np.append(bm, logits[m:].max())
     if len(bm) <= k or np.isnan(bm).any():
         return None
     t = np.partition(bm, len(bm) - k)[len(bm) - k]
-    cand = np.flatnonzero(logits >= t)          # every logit outside is < t <= the top k
+    blocks = np.flatnonzero(bm >= t)
+    span = (blocks[:, None] * block + np.arange(block)).reshape(-1)
+    span = span[span < len(logits)]
+    cand = span[logits[span] >= t]              # every logit outside is < t <= the top k
     lv = logits[cand]
     if len(cand) > k:
         part = np.argpartition(-lv, k)
@@ -342,11 +398,12 @@ class Chat:
         out, n0, t_first = list(out), len(out), None
         detok = Detok(self.tok, out)
         shown = self.tok.decode(out, skip_special_tokens=True) if out else ""
+        sink = None                          # the next pick, fed while the device runs
         while logits is not None and not turn.end:
             if len(out) - n0 >= self.max_new:
                 turn.end = "max_new"
                 break
-            t = self.pick(logits, self.fed)
+            t = sink.result() if sink is not None else self.pick(logits, self.fed)
             if t in self.eng.spec.eos:
                 turn.end = "eos"
                 break
@@ -355,19 +412,32 @@ class Chat:
             if t_first is None:
                 t_first, turn.ttft_s = now, now - t0
             turn.gen_tokens, turn.decode_s = len(out) - n0, now - t_first
-            delta = detok.add(t)
-            shown += delta
             if self.eng.pos >= self.eng.cap:
                 turn.end = "cap"
             elif stop():
                 turn.end = "stopped"
             if turn.end:
+                delta = detok.add(t)
+                shown += delta
                 on_update(delta, turn)
                 break
-            # the interface gets the token once the card runs the next one: its drawing
-            # overlaps the run instead of the host work that starts it
-            logits = self.eng.step(t, on_start=lambda: on_update(delta, turn))
+
+            def started(t=t):
+                # the token's text and the interface's drawing once the card runs the next
+                # one: they overlap the run instead of delaying its start
+                nonlocal shown
+                delta = detok.add(t)
+                shown += delta
+                on_update(delta, turn)
+            # the sampler takes the logits as they come (the next pick's context includes t)
             self.fed.append(t)
+            stream = getattr(self.pick, "stream", None)
+            sink = stream(self.fed) if stream is not None else None
+            try:
+                logits = self.eng.step(t, on_start=started, sink=sink)
+            except BaseException:
+                self.fed.pop()
+                raise
             turn.decode_steps = len(self.eng.stats) - k1
             turn.decode_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
             turn.context = self.eng.pos

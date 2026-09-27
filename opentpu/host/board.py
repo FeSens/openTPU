@@ -61,6 +61,13 @@ POLL_SPIN = 100e-6              # poll: seconds of back-to-back register reads b
 POLL_MAX_SLEEP = 1e-3           # poll: longest sleep between reads
 STATUS_INTERVAL = 0.25          # BoardBackend: the status file is rewritten at most this often
 POLL_EARLY = 0.5e-3             # poll with an expected wait: wake this much (+ 1%) before it
+# Streamed logits (BoardBackend.start(stream=...)): a word the device never stores marks the
+# logits not written yet (the device's NaN is canonical: 0x7FC00000, or 0xFFC00000 after a sign
+# flip), so the host reads each piece of the LM head's output as soon as it is complete.
+SENTINEL = 0xFFFFFFFF
+STREAM_EARLY = 0.3e-3           # probe a piece this long before it came complete last token
+STREAM_RETRY = 0.1e-3           # probe again after this when it is not complete yet
+STREAM_PROBE = 0.5e-3           # probe interval when no completion time is known yet
 
 
 # ------------------------------------------------------------------------------ address map
@@ -784,6 +791,14 @@ class BoardBackend:
         self._prep: dict = {}               # id(programs) -> (programs, words), from prepare()
         self._running = None                # the started programs
         self._expect = 0.0                  # the last run's device seconds (the poll's hint)
+        # streamed logits (start(stream=...)): the region holding the sentinel, the pieces to
+        # mark again once the next run has started, the pieces' completion times last token
+        self.streams = bool(getattr(self.board.t, "streams", False))
+        self._armed = None                  # (addr, nbytes, piece) filled with SENTINEL
+        self._rearm: list = []
+        self._stream = None                 # the running program's (addr, nbytes, piece)
+        self._due: dict = {}
+        self.last_stream: dict = {}         # the last streamed wait: pieces during the run...
         t = self.board.t
         self.status = RunnerStatus(t.devname, STATUS_INTERVAL, dev=getattr(t, "dev", t.devname),
                                    model=model,
@@ -819,6 +834,9 @@ class BoardBackend:
             self.status.update(dram=self._layout())
 
     def write(self, s: int, addr: int, data: np.ndarray) -> None:
+        a = self._armed
+        if a is not None and addr < a[0] + a[1] and a[0] < addr + np.asarray(data).nbytes:
+            self._armed = None
         self.board.write(addr, data)
 
     def read(self, s: int, addr: int, nbytes: int) -> np.ndarray:
@@ -833,10 +851,18 @@ class BoardBackend:
 
     runs_words = True           # start() takes assembled words too (the Engine's worker process)
 
-    def start(self, programs) -> None:
+    def start(self, programs, stream: tuple | None = None) -> None:
         """Copy the program to the card, load it and start it (run's first half: the Engine
         compiles the next token's program between start and wait). `programs`: the programs,
-        or the program already assembled (uint32 words)."""
+        or the program already assembled (uint32 words).
+
+        stream=(addr, nbytes, piece): the run writes its logits to [addr, addr + nbytes) in
+        pieces of `piece` bytes (the LM head's chunks, late in the run), and wait(feed) hands
+        each piece over as soon as it is complete. The region holds SENTINEL words before the
+        run: written here when it does not (the first streamed run, or after anything else
+        wrote the region), else the pieces read after the last run are marked again right
+        after this start, while the run is still far from its LM head. Needs a transport that
+        allows DMA during a run (`streams`)."""
         prep = self._prep.pop(id(programs), None)
         while len(self._prep) > 1:                  # stale entries (discarded compiles)
             self._prep.pop(next(iter(self._prep)), None)
@@ -848,19 +874,97 @@ class BoardBackend:
         if len(words) > self.cfg.IMEM_WORDS:
             raise ValueError("program does not fit IMEM")
         self.board.load_program(self.prog_at, words)
+        if stream is not None and self._armed != stream:
+            self.board.write(stream[0], np.full(stream[1] // 4, SENTINEL, np.uint32))
+            self._armed, self._rearm = stream, []
+        elif stream is None:
+            self._armed = None                      # the run may write the region
         self.board.start(trace=self.trace)
-        self._running = programs
+        self._running, self._stream = programs, stream
+        for a, n in self._rearm:
+            self.board.write(a, np.full(n // 4, SENTINEL, np.uint32))
+        self._rearm = []
 
-    def wait(self) -> dict:
-        """Wait for the started program; returns its counters (run's second half)."""
+    def wait(self, feed=None) -> dict:
+        """Wait for the started program; returns its counters (run's second half). After a
+        start(stream=...), feed(offset, words) gets every piece of the logits (byte offset in
+        the region, uint32 words), most of them while the run goes on."""
         programs, self._running = self._running, None
-        st = self.board.wait(expect=self._expect)
+        try:
+            if self._stream is not None:
+                self._stream_logits(feed)
+            st = self.board.wait(expect=self._expect)
+            if self._stream is not None:
+                self._stream_tail(feed)
+        except BaseException:
+            self._armed, self._stream = None, None  # the region's state is unknown
+            raise
         khz = self.info["core_khz"]
         self._expect = st["cycles"] / (khz * 1e3) if khz else 0.0
         self.last = (programs, st)
         if self.status is not None:
             self.status.token(st["cycles"], khz, dram=self._layout(True))
         return st
+
+    def _pieces(self):
+        addr, n, piece = self._stream
+        return [(o, min(piece, n - o)) for o in range(0, n, piece)]
+
+    def _stream_logits(self, feed) -> None:
+        """Hand over the pieces before the last one while the run goes on: probe a piece's
+        last beat from STREAM_EARLY before its completion time of the last token (or every
+        STREAM_PROBE), read it once the beat is written, check every word, mark it again.
+        Stops at HALTED; the last piece (written just before it) is left to _stream_tail."""
+        t, b = self.board.t, self.board
+        addr = self._stream[0]
+        pieces, due = self._pieces(), {}
+        t0, i, probes, tries = b._t_run, 0, 0, 0
+        while i < len(pieces) - 1:
+            d = self._due.get(i)
+            while d is not None and (now := time.perf_counter() - t0) < d - STREAM_EARLY:
+                time.sleep(min(d - STREAM_EARLY - now, 1e-3))   # slices: sleeps overshoot
+            if t.reg_read(R_STATUS) & ST_HALTED:
+                break
+            o, k = pieces[i]
+            last = addr + o + k - BEAT                  # the piece's last beat (64-byte aligned)
+            probes += 1
+            tries += 1
+            beat = t.mem_read(last // BEAT % 2, last // (2 * BEAT) * BEAT, BEAT)
+            w = None
+            if not (beat.view(np.uint32) == SENTINEL).any():
+                w = b.read(addr + o, k).view(np.uint32)
+                if (w == SENTINEL).any():               # the beats land out of order: soon
+                    w = None
+            if w is None:
+                time.sleep(STREAM_RETRY if d is not None else STREAM_PROBE)
+                continue
+            feed(o, w)
+            # complete at the first probe: it may have been for a while, so probe earlier
+            # next token; else it came between the last two probes
+            due[i] = d - STREAM_EARLY if tries == 1 and d is not None else \
+                time.perf_counter() - t0
+            b.write(addr + o, np.full(k // 4, SENTINEL, np.uint32))    # the run is past it
+            i, tries = i + 1, 0
+        self._due.update(due)
+        self.last_stream = {"during": i, "pieces": len(pieces), "probes": probes}
+
+    def _stream_tail(self, feed) -> None:
+        """After HALTED: the pieces not handed over yet, in one read."""
+        addr, n, _ = self._stream
+        pieces = self._pieces()
+        i = self.last_stream.get("during", 0)
+        o = pieces[i][0]
+        t0 = time.perf_counter()
+        w = self.board.read(addr + o, n - o).view(np.uint32)
+        if (w == SENTINEL).any():
+            self._armed = None
+            raise RuntimeError("streamed logits: the run left words unwritten (the program "
+                               "does not write the whole logits region, or a marking raced it)")
+        for po, k in pieces[i:]:
+            feed(po, w[(po - o) // 4:(po - o + k) // 4])
+        self._rearm = [(addr + o, n - o)]
+        self._stream = None
+        self.last_stream.update(tail_bytes=n - o, tail_s=time.perf_counter() - t0)
 
     def run(self, programs: list) -> dict:
         self.start(programs)

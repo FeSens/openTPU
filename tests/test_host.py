@@ -13,6 +13,7 @@ import textwrap
 import time
 import types
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -269,6 +270,159 @@ def test_pair_programs_need_a_pair_bitstream(run_dir):
             eng.backend.close()
 
 
+# ------------------------------------------------------------------------------ streamed logits
+class _IsaCard(FakeTransport):
+    """A fake card that computes: RUN runs the loaded program on the ISA simulator over the
+    channel memories. What the run writes shows at once, except [late_addr, +late_n) (the
+    logits): piece i of `piece` bytes shows at run_s * (0.4 + 0.5 * i / pieces), its first
+    half of beats a little before the rest (the beats of one store land out of order)."""
+    streams = True
+
+    def __init__(self, cfg, late, piece, run_s=0.06, **kw):
+        super().__init__(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=run_s, **kw)
+        self.cfg, self.late, self.piece = cfg, late, piece
+        self.pending = []                                     # (time, channel, offset, bytes)
+
+    def _flat(self):
+        from opentpu.host.board import join
+        return join([c for c in self.ch])
+
+    def _apply(self):
+        now = time.perf_counter()
+        keep = []
+        for t, c, off, b in self.pending:
+            if t <= now:
+                self.ch[c][off:off + len(b)] = b
+            else:
+                keep.append((t, c, off, b))
+        self.pending = keep
+
+    def reg_write(self, off, val):
+        from opentpu import isa as I
+        from opentpu.host import regs as R
+        from opentpu.host.board import split
+        from opentpu.isasim import Machine
+        rising = off == R.R_CTRL and val & R.CTRL_RUN and not self.regs[R.R_CTRL] & R.CTRL_RUN
+        super().reg_write(off, val)
+        if not rising:
+            return
+        self._apply()
+        dram = self._flat()
+        a, n = self.regs[R.R_PROG_ADDR], self.regs[R.R_PROG_N]
+        w = dram[a:a + 32 * n].view(np.uint32).reshape(n, 8)
+        m = Machine(self.cfg, [[I.Instr.decode(x) for x in w]], [dram.copy()])
+        m.run()
+        new = m.slices[0].dram
+        la, ln = self.late
+        t0 = self.t_run = time.perf_counter()               # the run starts now
+        new_late = new[la:la + ln].copy()
+        new[la:la + ln] = dram[la:la + ln]                    # the logits come later
+        for c, off, part in split(0, new):
+            self.ch[c][:] = part
+        npieces = -(-ln // self.piece)
+        for i, o in enumerate(range(0, ln, self.piece)):
+            k = min(self.piece, ln - o)
+            t = t0 + self.run_s * (0.4 + 0.5 * i / npieces)
+            buf = np.zeros(-(-k // 128) * 128, np.uint8)
+            buf[:k] = new_late[o:o + k]
+            for j, (c, off, part) in enumerate(split(la + o, buf)):
+                # channel 0's beats a little before channel 1's
+                self.pending.append((t + 0.002 * j, c, off, part[:len(part)]))
+
+    def reg_read(self, off):
+        self._apply()
+        return super().reg_read(off)
+
+    def mem_read(self, ch, off, n, out=None):
+        self._apply()
+        return super().mem_read(ch, off, n, out)
+
+
+def _big_vocab_qwen(V=20000):
+    from opentpu import lens as L
+    spec, W = L._tiny_qwen()
+    spec = replace(spec, vocab=V)
+    W["model.embed_tokens.weight"] = np.random.default_rng(3).normal(
+        0, 0.05, (V, spec.hidden)).astype(np.float32)
+    return spec, W
+
+
+def test_streamed_logits_match_the_isa_simulator(no_cfg_env):
+    """Engine.step on the board backend streams the logits (most pieces while the run goes on,
+    the rest after HALTED): the logits and the sampler's picks are those of the ISA simulator,
+    token after token (the sentinel marking is renewed each run), and a prefill run in between
+    (which writes the logits region itself) makes the next step mark it again."""
+    from opentpu.host.board import sim_config
+    from opentpu.host.chat import sampler
+    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
+    spec, W = _big_vocab_qwen()
+    cfg = sim_config(spec, 256)
+    ref = Engine(spec, W, cap=256, cfg=cfg)
+    piece = 4 * min(HEAD_CHUNK, cfg.TMEM_WORDS // 8)
+    card = _IsaCard(cfg, None, piece)
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    card.late = (eng.image.io["logits"], 4 * spec.vocab)
+    assert eng.backend.streams
+    pa, pb, ctx = sampler(0.7, 20, 0.9, 1, 1.05), sampler(0.7, 20, 0.9, 1, 1.05), [5]
+    t = 5
+    for i in range(6):
+        if i == 3:                                          # a prefill run: no stream
+            want, got = ref.prefill([7, 8]), eng.prefill([7, 8])
+            assert np.array_equal(want.view(np.uint32), got.view(np.uint32))
+            ctx += [7, 8]
+        want = ref.step(t)
+        ctx.append(t)
+        sink = pb.stream(ctx)
+        got = eng.step(t, sink=sink)
+        assert np.array_equal(want.view(np.uint32), got.view(np.uint32))
+        ls = eng.backend.last_stream
+        assert ls["pieces"] == 3 and ls["during"] >= 1 and ls["tail_bytes"] <= 2 * piece, (i, ls, eng.backend._due)
+        t = pa(want, ctx)
+        assert sink.result() == t
+    eng.backend.close()
+
+
+def test_streamed_logits_refuse_an_unwritten_piece(no_cfg_env):
+    """A run that leaves part of the logits region unwritten (here: a card that computes
+    nothing) is an error, not stale logits; the region is marked again on the next start."""
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = _big_vocab_qwen()
+    cfg = sim_config(spec, 256)
+    card = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=0.01)
+    card.streams = True
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    with pytest.raises(RuntimeError, match="left words unwritten"):
+        eng.step(5)
+    assert eng.backend._armed is None
+    eng.stream_logits = False
+    eng.pos = 0
+    assert eng.step(5).view(np.uint32)[0] == 0xFFFFFFFF      # without streaming: what is there
+    eng.backend.close()
+
+
+@pytest.mark.skipif(not (Path(__file__).resolve().parent.parent / "models" / "LFM2.5-230M")
+                    .exists(), reason="models/LFM2.5-230M not downloaded")
+def test_decode_profile_splits_the_critical_path(tmp_path, no_cfg_env):
+    """tools/decode_profile.py on the fake card: the critical path (HALTED seen -> next RUN)
+    is measured per token, split into items, with the transport operations and the reply."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "decode_profile", Path(__file__).resolve().parent.parent / "tools/decode_profile.py")
+    dp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dp)
+    out = tmp_path / "p.json"
+    dp.main(["--backend", "fake", "--model", "lfm2", "--tokens", "6", "--fake-ms", "5",
+             "--greedy", "--json", str(out)])
+    d = json.loads(out.read_text())
+    assert d["steps"] == 6 and len(d["reply_ids"]) == 6 and d["critical_ms"] > 0
+    assert d["ms"]["counters"]["overlapped"] > 3                 # the wait for the 5 ms run
+    assert {"io-write", "imem-load", "prog-upload", "logits-read"} <= set(d["ms"])
+    assert d["ops"]["dma-read"]["bytes"] >= 4 * 65536            # the logits, after the run
+
+
 # ------------------------------------------------------------------------------ status file
 def test_status_file_lifecycle(run_dir):
     from opentpu import lens as L
@@ -316,12 +470,18 @@ def test_runner_status_is_atomic(run_dir):
 
 
 def test_runner_status_min_interval_defers_to_a_timer(run_dir):
+    import threading
     s = RunnerStatus("fake6", min_interval=0.1)
+    writers = []
+    w = s.write
+    s.write = lambda: (writers.append(threading.current_thread()), w())[1]
     for k in range(5):
         s.token(1000 + k, 100_000)
-    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 1   # the first at once
+    time.sleep(0.05)
+    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] >= 1    # at once, and
     time.sleep(0.2)
-    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 5   # then the timer
+    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 5   # the rest later
+    assert writers and threading.main_thread() not in writers  # never on the caller's thread
     s.remove()
 
 # ------------------------------------------------------------------------------ polling
@@ -920,6 +1080,32 @@ def test_sampler_fast_top_k_picks_as_the_float64_path():
                 assert a(lg, ctx) == b(lg, ctx)
     assert fast > 50                                        # the fast path did run
 
+def test_sampler_stream_picks_as_pick():
+    """pick.stream: the logits fed in pieces (any order, on or off the 64-logit block grid, a
+    partial last block) give the picks of pick() on the whole vector, with the same random
+    stream, for greedy and sampled settings with and without the repetition penalty."""
+    from opentpu.host import chat as C
+    rng = np.random.default_rng(11)
+    for V in (1000, 4099, 8192):
+        for T, k, tp, rp in [(0.1, 50, 1.0, 1.05), (0.7, 20, 0.8, 1.0), (0, 50, 1.0, 1.05),
+                             (0.7, 0, 0.9, 1.0), (1.0, 5, 1.0, 1.2)]:
+            a, b, ctx = C.sampler(T, k, tp, 5, rp), C.sampler(T, k, tp, 5, rp), []
+            for step in range(24):
+                lg = (rng.standard_normal(V) * 3).astype(np.float32)
+                if step % 3 == 1:
+                    lg = np.round(lg * 4) / 4                   # ties
+                ctx.append(int(rng.integers(0, V)))
+                cuts = sorted({0, V, *(rng.integers(1, V, 5) if step % 2 else
+                                       range(0, V, 1024))})
+                pieces = list(zip(cuts[:-1], cuts[1:]))
+                rng.shuffle(pieces)
+                s = b.stream(ctx)
+                s.begin(V)
+                for lo, hi in pieces:
+                    s.feed(lo, lg[lo:hi])
+                assert a(lg, ctx) == s.result()
+
+
 # ------------------------------------------------------------------------------ otpu-diag
 def test_diag_sim_registers_and_memory_pass(have_verilator, tmp_path, no_cfg_env):
     from opentpu.host import diag
@@ -992,14 +1178,18 @@ class StubEngine:
         self.backend = types.SimpleNamespace()
         self.cfg = board_config()
 
-    def step(self, t, on_start=None):
+    def step(self, t, on_start=None, sink=None):
         assert self.pos < self.cap, "KV cache full"   # as Engine.step
         if on_start is not None:
             on_start()
         time.sleep(0.002)
         self.pos += 1
         self.stats.append({"cycles": self.cycles})
-        return np.zeros(8, np.float32)
+        logits = np.zeros(8, np.float32)
+        if sink is not None:
+            sink.begin(len(logits))
+            sink.feed(0, logits)
+        return logits
 
     def prefill_chunks(self, tokens):
         tokens = list(tokens)

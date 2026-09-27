@@ -802,7 +802,9 @@ class Engine:
     simulator and the PCIe board driver implement the same interface). Optional backend hooks:
     attach(engine), called once the engine exists; prepare(programs), called on the compile
     thread with every precompiled program (the board assembles it there); start(programs) and
-    wait() -> stats, the two halves of run() (step compiles the next program in between).
+    wait() -> stats, the two halves of run() (step compiles the next program in between);
+    streams (true: start(programs, stream=(addr, nbytes, piece)) and wait(feed) hand the logits
+    over in pieces, most of them during the run; the engine's stream_logits turns it off).
 
     pipeline: step() compiles the next position's program (it depends on the position only,
     not on the token) while the backend runs the current one. Default: on for every backend
@@ -829,6 +831,7 @@ class Engine:
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
         self.poss = [0] * batch
+        self.stream_logits = True           # step(): stream the logits when the backend can
         self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
         self.stats = []
         self.pipeline = backend != "isa" if pipeline is None else bool(pipeline)
@@ -911,10 +914,14 @@ class Engine:
         for s in range(self.batch) if seq is None else [seq]:
             self.poss[s] = 0
 
-    def step(self, token: int, on_start=None) -> np.ndarray:
+    def step(self, token: int, on_start=None, sink=None) -> np.ndarray:
         """Feed one token at the next position; returns the logits [vocab] for the next one.
         on_start() is called once the device runs (host work that can overlap the run: the
-        chat hands the previous token to its interface there)."""
+        chat hands the previous token to its interface there). sink (a sampler's
+        pick.stream(context), chat.sampler) gets the logits too: begin(vocab), then feed(lo,
+        values) per piece -- on a backend that streams them (BoardBackend.streams), most
+        pieces while the run goes on, so the sampler's work on them is off the token's
+        critical path."""
         if self.pos >= self.cap:
             raise RuntimeError("KV cache full")
         io, S = self.image.io, self.cfg.S
@@ -929,23 +936,48 @@ class Engine:
                 self.backend.write(s, a, v)
         progs = self._program(self.pos)
         start = getattr(self.backend, "start", None)
+        v_loc = self.image.v_loc
+        vocab = S * v_loc
+        stream = None
+        if start is not None and S == 1 and self.stream_logits and \
+                getattr(self.backend, "streams", False):
+            piece = 4 * min(HEAD_CHUNK, self.cfg.TMEM_WORDS // 8)     # _lm_head's chunks
+            stream = (io["logits"], 4 * vocab, piece)
+        if sink is not None:
+            sink.begin(vocab)
         if start is None:
             self._prefetch(self.pos + 1)
             if on_start is not None:
                 on_start()
             st = self.backend.run(progs)
-        else:                               # compile while the device runs, not while the
+        elif stream is None:                # compile while the device runs, not while the
             start(progs)                    # host copies the program
             self._prefetch(self.pos + 1)
             if on_start is not None:
                 on_start()
             st = self.backend.wait()
+        else:
+            logits = np.empty(vocab, np.float32)
+
+            def feed(o, w):
+                v = logits[o // 4:o // 4 + len(w)]
+                v[:] = w.view(np.float32)
+                if sink is not None:
+                    sink.feed(o // 4, v)
+            start(progs, stream=stream)
+            self._prefetch(self.pos + 1)
+            if on_start is not None:
+                on_start()
+            st = self.backend.wait(feed)
         self.stats.append(st)
-        v_loc = self.image.v_loc
-        parts = [self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc).view(np.float32)
-                 for s in range(S)]
+        if stream is None:
+            logits = np.concatenate([self.backend.read(s, io["logits"] + 4 * s * v_loc,
+                                                       4 * v_loc).view(np.float32)
+                                     for s in range(S)])
+            if sink is not None:
+                sink.feed(0, logits)
         self.pos += 1
-        return np.concatenate(parts)
+        return logits
 
     def run_rows(self, rows, tokens, logit_rows) -> np.ndarray:
         """One device run over token rows (rows[r] = (sequence, position)); returns the logits
