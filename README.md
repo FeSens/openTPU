@@ -36,6 +36,12 @@ measured with `tools/decode_profile.py`. DRAM reads are estimated: bytes read pe
 by the card's counters on an earlier image, times the decode speed above. More detail in
 [docs/board.md](docs/board.md).*
 
+4-bit weights (FP4 with two-level scales, [docs/quant.md](docs/quant.md)) have run on the card
+too, on a test image that is not production (`fp4f125`, 125.49 MHz, full-rate 4-bit MXU): Qwen3
+at 28.0 tok/s with an int8 LM head and 32.8 tok/s all 4-bit, LFM2 at 77.6 and 94.1 tok/s, each
+token for token equal to the simulator. That image computes RDOT wrong, so Qwen3.5 was not run
+on it.
+
 ## How it works
 
 ```

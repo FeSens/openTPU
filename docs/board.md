@@ -476,6 +476,26 @@ At a long context the host matters more. LFM2 with a ~1,800-token prompt and 94 
 host of 79f07d7 (the step waits 33.4 ms per token for its program to compile) and 33.3 tok/s with
 the host of 01246cf (longctx; the wait drops to 6.1 ms).
 
+**4-bit weights on the card (2026-09-27): `deploy_fp4f125_cf3b6093`** (branch fmax-fp4 cf3b609:
+fp4-rebase 7439b0d with the full-rate 4-bit MXU (PAIR), the fmax fixes and VPU WBUF; 125.49 MHz,
+DDR3-1066, WNS +0.067 ns). Not production: it has vg125's RDOT fault (the four RDOT diag checks
+fail one result late), so Qwen3.5 was not run. Host e16f272 (the compile worker builds the image
+in the engine's weight formats; before it, 4-bit decode programs were compiled as int8 and Qwen3
+fp4 answered '!!!!'). Greedy, 64 tokens (`tools/decode_profile.py`); every configuration matches
+the ISA simulator token for token (`otpu-selftest --model ... --wformat ...`):
+
+| Model | Weights | Mcycles/token | device tok/s | wall tok/s |
+|---|---|---|---|---|
+| Qwen3-0.6B | int8 | 6.36 | 19.72 | 18.61 |
+| Qwen3-0.6B | fp4, int8 LM head | 4.48 | 27.98 | 25.65 |
+| Qwen3-0.6B | fp4 | 3.83 | 32.76 | 29.64 |
+| LFM2.5-230M | int8 | 2.31 | 54.28 | 50.06 |
+| LFM2.5-230M | fp4, int8 LM head | 1.62 | 77.57 | 59.89 |
+| LFM2.5-230M | fp4 | 1.33 | 94.10 | 85.44 |
+
+One run each (the LFM2 int8 row is from the same image an hour earlier, host bbd4886).
+Accuracy of the 4-bit formats is in docs/quant.md.
+
 **Not promoted: `deploy_vg125_4b9ab8ad`** (fmax-vg125 4b9ab8a, 125.49 MHz, DDR3-1066, WNS
 +0.017 ns, WHS +0.045 ns; the fmax image plus a registered-ahead VPU TMEM grant, "VPU WBUF").
 Selftest, the three models token for token (Qwen3.5 included) and decode (6.36 / 2.31 / 8.42
