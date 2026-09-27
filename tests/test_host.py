@@ -468,8 +468,10 @@ def test_smi_json(tmp_path, capsys):
     smi.main(["--dev", "/dev/fake5", "--power-json", str(pj), "-i", "0"],
              open_transport=lambda dev: FakeTransport(devname="fake5"))
     tab = capsys.readouterr().out
-    assert "MAC 50%" in tab and "4.61 GB/s" in tab and f"pid {os.getpid()}" in tab
-    assert "model m0" in tab and "W est." in tab
+    assert "4.61 GB/s" in tab and f" {os.getpid()}  " in tab and " m0 " in tab
+    assert f"{want:.1f}W" in tab and "   50%" in tab            # power, MXU_MAC
+    assert all(len(line) == len(tab.splitlines()[1]) for line in tab.splitlines()
+               if line.startswith(("|", "+")))                # a closed box
     smi.main(["-q", "--dev", "/dev/fake5", "--power-json", str(tmp_path / "none.json")],
              open_transport=lambda dev: FakeTransport(devname="fake5"))
     q = capsys.readouterr().out

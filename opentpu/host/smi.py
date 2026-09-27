@@ -32,13 +32,9 @@ from . import regs as R
 from .board import Board, rates
 from .runstate import devname, read_status
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 ROOT = Path(__file__).resolve().parents[2]
 POWER_JSON = ROOT / "build" / "vivado" / "reports" / "power.json"
-UTIL_SHOW = [("RUNNING", "RUN"), ("MXU_BUSY", "MXU"), ("MXU_MAC", "MAC"), ("VPU_BUSY", "VPU"),
-             ("QNT_BUSY", "QNT"), ("DMA_BUSY", "DMA"), ("TMEM_DENY", "TMEM-deny"),
-             ("DRAM_WAIT", "DRAM-wait")]
-W = 88                                      # table width
 
 
 def find_devices() -> list[str]:
@@ -165,79 +161,140 @@ def query_sim(interval_cycles: int = 0) -> dict:
 
 
 # ------------------------------------------------------------------------------ output
+COLS = (36, 24, 29)                         # the device box's three columns
+W = sum(COLS) + len(COLS) + 1               # table width (91)
+UNITS = [("RUNNING", "RUN"), ("MXU_BUSY", "MXU"), ("MXU_MAC", "MAC"), ("VPU_BUSY", "VPU"),
+         ("QNT_BUSY", "QNT"), ("DMA_BUSY", "DMA")]
+STALLS = [("TMEM_DENY", "TMEM-deny"), ("DRAM_WAIT", "DRAM-wait")]
+
+
 def _mib(n) -> str:
-    return "n/a" if n is None else f"{n / 2**20:,.0f}"
-
-
-def _row(s: str = "") -> str:
-    return "| " + s[:W - 4].ljust(W - 4) + " |"
+    return "n/a" if n is None else f"{n / 2**20:,.0f}MiB"
 
 
 def _pct(x) -> str:
     return "n/a" if x is None else f"{100 * x:.0f}%"
 
 
+def _lr(left: str, right: str, w: int) -> str:
+    """left-aligned and right-aligned text in one cell of inner width w."""
+    return left + right.rjust(max(w - len(left), len(right) + 1))
+
+
+def _cells(cells, widths=COLS) -> str:
+    return "|" + "|".join(" " + str(c)[:w - 2].ljust(w - 2) + " "
+                          for c, w in zip(cells, widths)) + "|"
+
+
+def _rule(ch: str = "-", widths=COLS, edge: str = "+", join: str = "+") -> str:
+    return edge + join.join(ch * w for w in widths) + edge
+
+
+def _full(text: str = "") -> str:
+    return _cells([text], (W - 2,))
+
+
+def _gen(pcie: str | None) -> str:
+    """'2.5 GT/s PCIe x8' -> 'Gen1 x8'."""
+    if not pcie:
+        return "n/a"
+    gen = {"2.5": "Gen1", "5.0": "Gen2", "5": "Gen2", "8.0": "Gen3", "8": "Gen3"}
+    sp, _, wd = pcie.partition(" x")
+    return f"{gen.get(sp.split()[0], sp)} x{wd}" if wd else pcie
+
+
+def bus_id(dev: str) -> str:
+    p = Path(f"/sys/class/xdma/{devname(dev)}_user/device")
+    return p.resolve().name if p.exists() else "n/a"
+
+
 def table(devs: list[dict]) -> str:
-    rule = "+" + "-" * (W - 2) + "+"
-    now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    out = [f"otpu-smi {VERSION}".ljust(W - len(now)) + now, rule]
-    for d in devs:
+    now = _dt.datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+    w1, w2, w3 = (w - 2 for w in COLS)
+    out = [now, _rule("-", (W - 2,)), _full(_lr(f"OTPU-SMI {VERSION}", "openTPU on PCIe (XDMA)",
+                                                  W - 4))]
+    out += [_rule(), _cells([_lr("Dev  Name", "", w1), _lr("Bus-Id", "Link", w2),
+                             _lr("DDR3 calib", "Temp  Power", w3)]),
+            _cells([_lr("Build     Clock    Regmap", "State", w1), _lr("DRAM-Usage", "", w2),
+                    _lr("DRAM-BW", "MXU-Util", w3)]),
+            _rule("=", edge="|")]
+    for n, d in enumerate(devs):
+        dev = f"{n:>3}  "
         if not d["ok"]:
-            out += [_row(f"{d['device']}   link {d['link']}"), rule]
+            out += [_cells([dev + d["device"], bus_id(d["device"]), "link " + d["link"]]), _rule()]
             continue
-        bs = d["bitstream"]
-        mhz = f"{bs['core_mhz']:.1f} MHz" if bs["core_mhz"] else "clock n/a"
-        bid = f"build {bs['build_id']:08x}" if bs["build_id"] is not None else "build n/a"
-        out.append(_row(f"{d['device']:<16} openTPU D={bs['D']} MCOLS={bs['MCOLS']} "
-                        f"LANES={bs['LANES']}  {mhz}  {bid}  regmap v{d['regmap']}"))
+        bs, u = d["bitstream"], d.get("util")
         c0, c1 = d["calib"]
-        link = d["link"] + (f" ({d['pcie']})" if d.get("pcie") else "")
-        temp = "n/a" if d["temp_c"] is None else f"{d['temp_c']:.1f} C"
-        out.append(_row(f"link {link}   DDR3 calib ch0 {'ok' if c0 else 'NO'} "
-                        f"ch1 {'ok' if c1 else 'NO'}   temp {temp}   "
-                        f"{'running' if d.get('running') else 'idle'}"))
+        temp = "n/a" if d["temp_c"] is None else f"{d['temp_c']:.0f}C"
         pw = d.get("power")
-        pws = f"{pw['w']:.2f} W est." if pw else "n/a"
+        pws = f"{pw['w']:.1f}W" if pw else "n/a"
+        out.append(_cells([dev + f"openTPU D={bs['D']} MCOLS={bs['MCOLS']} LANES={bs['LANES']}",
+                           _lr(bus_id(d["device"]), _gen(d.get("pcie")), w2),
+                           _lr(f"ch0 {'ok' if c0 else 'NO'}  ch1 {'ok' if c1 else 'NO'}",
+                               f"{temp}  {pws:>5}", w3)]))
+        bid = f"{bs['build_id']:08x}" if bs["build_id"] is not None else "n/a"
+        mhz = f"{bs['core_mhz']:.0f} MHz" if bs["core_mhz"] else "n/a"
         dr = d.get("dram")
-        drs = "n/a"
-        if dr:
-            drs = f"{_mib(dr['total'] - dr['free'])} / {_mib(dr['total'])} MiB"
-            if dr.get("kv_capacity"):
-                drs += f" (KV {_mib(dr['kv_used'])} / {_mib(dr['kv_capacity'])})"
+        drs = f"{_mib(dr['total'] - dr['free'])} / {_mib(dr['total'])}" if dr else "n/a"
         bw = "n/a" if d.get("dram_gbs") is None else f"{d['dram_gbs']:.2f} GB/s"
-        out.append(_row(f"power {pws}   DRAM {drs}   DRAM bw {bw}"))
-        out.append(rule)
-        u = d.get("util")
-        if u:
-            smp = d["sample"]
-            win = f"{smp['seconds'] * 1e3:.0f} ms" if smp["seconds"] else f"{smp['cycles']} cycles"
-            cell = [f"{lbl} {_pct(u[k])}" for k, lbl in UTIL_SHOW]
-            out.append(_row("util  " + "  ".join(cell[:6])))
-            out.append(_row("stall " + "  ".join(cell[6:]) + f"   IPC {smp['ipc']:.3f}   "
-                            f"over {win}"))
-        else:
-            out.append(_row("util  n/a (register map 1 bitstream: no free-running counters)"))
+        out.append(_cells([_lr(f"{bid}  {mhz:<8} v{d['regmap']}",
+                               "Running" if d.get("running") else "Idle", w1),
+                           _lr(drs, "", w2),
+                           _lr(bw, _pct(u["MXU_BUSY"]) if u else "n/a", w3)]))
+        if dr and dr.get("kv_capacity"):
+            out.append(_cells(["", f"KV {_mib(dr['kv_used'])} / {_mib(dr['kv_capacity'])}", ""]))
+        out.append(_rule())
+
+    # ---- utilization
+    out += ["", _rule("-", (W - 2,))]
+    hdr = f"{'Dev':>3}  " + "".join(f"{lbl:>6}" for _, lbl in UNITS) + "   " + \
+        "".join(f"{lbl:>10}" for _, lbl in STALLS) + f"{'IPC':>7}{'RD/WR GB/s':>14}"
+    out += [_full("Utilization (counters over the sample window)"), _full(hdr),
+            _rule("=", (W - 2,), edge="|")]
+    for n, d in enumerate(devs):
+        u = d.get("util") if d["ok"] else None
+        if not u:
+            out.append(_full(f"{n:>3}  n/a" + ("" if not d["ok"] else
+                             " (register map 1 bitstream: no free-running counters)")))
+            continue
+        smp = d["sample"]
+        win = f"{smp['seconds'] * 1e3:.0f} ms" if smp["seconds"] else f"{smp['cycles']} cycles"
+        rw = "n/a" if d.get("dram_rd_gbs") is None else \
+            f"{d['dram_rd_gbs']:.2f}/{d['dram_wr_gbs']:.2f}"
+        out.append(_full(f"{n:>3}  " + "".join(f"{_pct(u[k]):>6}" for k, _ in UNITS) + "   " +
+                         "".join(f"{_pct(u[k]):>10}" for k, _ in STALLS) +
+                         f"{smp['ipc']:>7.3f}{rw:>14}"))
+        out.append(_full(f"     window {win}"))
         if d.get("run"):
             r = d["run"]
-            out.append(_row(f"run   {r['program']}: {r['cycles']} cycles, "
-                            f"{r['instructions']}/{r['of']} instructions"))
+            out.append(_full(f"     run {r['program']}: {r['cycles']} cycles, "
+                             f"{r['instructions']}/{r['of']} instructions"))
+    out.append(_rule("-", (W - 2,)))
+
+    # ---- processes
+    out += ["", _rule("-", (W - 2,))]
+    ph = f"{'Dev':>3}  {'PID':>7}  {'Process':<30}{'Model':<14}{'Tokens':>7}{'tok/s dev':>11}" \
+         f"{'tok/s wall':>11}"
+    out += [_full("Processes:"), _full(ph), _rule("=", (W - 2,), edge="|")]
+    any_p = False
+    for n, d in enumerate(devs):
         p = d.get("process")
-        if p and not p.get("stale"):
-            argv = p.get("argv") or ["?"]
-            cmd = " ".join([Path(argv[0]).name] + argv[1:])
-            tps = []
-            if p.get("tok_s_wall"):
-                tps.append(f"{p['tok_s_wall']:.2f} tok/s wall")
-            if p.get("tok_s_device"):
-                tps.append(f"device {p['tok_s_device']:.2f} tok/s")
-            out.append(_row(f"pid {p['pid']}  {cmd}"))
-            out.append(_row(f"      model {p.get('model') or '?'}   tokens {p.get('tokens', 0)}   "
-                            + ("   ".join(tps) or "tok/s n/a")))
-        elif p:
-            out.append(_row(f"no process (stale status file from pid {p['pid']})"))
-        else:
-            out.append(_row("no process"))
-        out.append(rule)
+        if not p:
+            continue
+        any_p = True
+        if p.get("stale"):
+            out.append(_full(f"{n:>3}  {p['pid']:>7}  (exited: stale status file)"))
+            continue
+        argv = p.get("argv") or ["?"]
+        cmd = " ".join([Path(argv[0]).name] + argv[1:])
+        cmd = cmd if len(cmd) <= 29 else cmd[:28] + "…"
+        f2 = lambda x: f"{x:.2f}" if x else "n/a"          # noqa: E731
+        out.append(_full(f"{n:>3}  {p['pid']:>7}  {cmd:<30}{(p.get('model') or '?')[:13]:<14}"
+                         f"{p.get('tokens', 0):>7}{f2(p.get('tok_s_device')):>11}"
+                         f"{f2(p.get('tok_s_wall')):>11}"))
+    if not any_p:
+        out.append(_full("  No running processes found"))
+    out.append(_rule("-", (W - 2,)))
     return "\n".join(out)
 
 
