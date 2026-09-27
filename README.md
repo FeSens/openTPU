@@ -25,14 +25,16 @@ The design runs three modern models with their real weights on an Inspur YPCB-00
 (Xilinx Kintex-7 xc7k480t, two DDR3 channels), and the card produces the same tokens as the
 simulator, bit for bit.
 
-| Model | Decode speed |
-|:--|--:|
-| LFM2.5-230M | 52.4 tok/s |
-| Qwen3-0.6B | 19.1 tok/s |
-| Qwen3.5-0.8B | 14.4 tok/s |
+| Model | Decode speed | Cycles per token | DRAM reads | Share of DDR3 peak |
+|:--|--:|--:|--:|--:|
+| LFM2.5-230M | 52.4 tok/s | 2.30 M | 12.4 GB/s | 73% |
+| Qwen3-0.6B | 19.1 tok/s | 6.33 M | 11.8 GB/s | 69% |
+| Qwen3.5-0.8B | 14.4 tok/s | 8.38 M | 11.6 GB/s | 68% |
 
-*Greedy decode on the card at 120.755 MHz with int8 weights, measured with
-`tools/decode_profile.py`. More detail in [docs/board.md](docs/board.md).*
+*Greedy decode on the card at 120.755 MHz with int8 weights and DDR3-1066 (17.1 GB/s peak),
+measured with `tools/decode_profile.py`. DRAM reads are estimated: bytes read per token, counted
+by the card's counters on an earlier image, times the decode speed above. More detail in
+[docs/board.md](docs/board.md).*
 
 ## How it works
 
