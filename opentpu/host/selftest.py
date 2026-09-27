@@ -22,7 +22,11 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
                accelerator (QST bytes, short stores), compared with the ISA simulator bit for bit
   9 vops       RDOT / OUTER / LOG2 (the VPU functions of Qwen3.5's DeltaNet layers) against
                the ISA simulator; a bitstream without them passes with a note, unless --model
-               names Qwen3.5
+               names Qwen3.5. Then otpu-diag's reduction and RDOT / OUTER / LOG2 programs
+               (opchecks.py groups vpu-reduce, vpu-new) back to back, each result read right
+               after its program: a bitstream that has the functions must pass them all (a
+               125 MHz build computed the vops program right but returned the previous
+               program's RDOT result)
  10 model      (with --model) greedy decoding of Qwen3, LFM2 or Qwen3.5 on the card equals the
                ISA simulator, token for token, and the answer to "What is the capital of France?"
 """
@@ -39,6 +43,7 @@ from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
                                  model_check, partial_writes, pattern_test, run_demo,
                                  vops_program)
+from opentpu.host.opchecks import diag_image, op_checks
 
 HINTS = {
     "link": "Is the card enumerated (lspci -d 10ee:), the XDMA driver loaded (lsmod | grep "
@@ -66,7 +71,10 @@ HINTS = {
               "same program on the RTL model (tests/test_board.py) and compare the counters.",
     "vops": "Qwen3.5 needs RDOT / OUTER / LOG2, which bitstreams built before commit ddec900 "
             "lack (they run the program but compute other values): load a bitstream with them "
-            "(docs/board.md, which bitstream to load), or run Qwen3 / LFM2.",
+            "(docs/board.md, which bitstream to load), or run Qwen3 / LFM2. If the vops "
+            "program passes and only the op checks fail, the bitstream itself misbehaves "
+            "(e.g. a core clock without enough timing margin): load a slower build and run "
+            "otpu-diag.",
     "model": "Kernels pass but the model differs: compare per-token logits against "
              "IsaBackend with opentpu.llm.qwen3.Engine; check that the image fits the DRAM.",
 }
@@ -198,7 +206,17 @@ def main(argv=None) -> int:
     def vops():
         ok, msg, _ = run_demo(board, cfg, vops_program())
         if ok:
-            return True, f"RDOT / OUTER / LOG2 ok ({msg})"
+            progs = [(n, p) for g, n, p in op_checks(cfg) if g in ("vpu-reduce", "vpu-new")]
+            bad = []
+            for name, prog in progs:
+                ok2, msg2, _ = run_demo(board, cfg, prog, diag_image())
+                if not ok2:
+                    bad.append(f"{name}: {msg2.split(',')[0]}")
+            if bad:
+                return False, (f"RDOT / OUTER / LOG2 program ok, but {len(bad)} of {len(progs)} "
+                               "reduction / RDOT / OUTER / LOG2 op checks differ: "
+                               + "; ".join(bad[:4]))
+            return True, f"RDOT / OUTER / LOG2 ok ({msg}); {len(progs)} op checks ok"
         from opentpu.llm import load_spec, model_dir
         qwen35 = bool(a.model) and \
             type(load_spec(model_dir(a.model))).__module__.endswith(".qwen35")
