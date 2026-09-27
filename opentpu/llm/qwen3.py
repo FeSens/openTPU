@@ -496,10 +496,13 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
     kh = _rope_padded(rmsnorm(k.reshape(nh, d), kn, eps), c, s_)  # [nkv_loc, d or D]
     vh = _padded(v.reshape(nh, d))
     for j, hh in enumerate(heads):
-        ol.kv_append(kv, hh, pos, kh[j:j + 1, :], vh[j:j + 1, :])
+        ol.kv_append(kv, hh, pos, kh[j:j + 1, :], None)
 
     def queries(j):
         def emit():
+            # the head's V^T append (byte-strided, the quantizer's slowest store) just ahead of
+            # its queries: head j's scores start after K and V_0..V_j, not after all V appends
+            ol.kv_append(kv, heads[j], pos, None, vh[j:j + 1, :])
             return _rope_padded(rmsnorm(qps[j].reshape(G, d), qn, eps), c, s_)
         return emit
 
