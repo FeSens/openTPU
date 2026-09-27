@@ -44,18 +44,30 @@ module otpu_trace
 
   wire stopped = stop && (count[31:LD] != '0);        // count >= DEPTH
 
+  // ------------------------------------------------------------------ P: the slice's events,
+  // registered as they come (with the enable): the sequencer's start events look up the started
+  // slot's ready cycle combinationally (otpu_seq), a 0.27 ns path into S0 at 125.49 MHz
+  perf_t pr;
+  logic  pr_en, pr_any;
+  always_ff @(posedge clk) begin
+    pr <= pf;
+    pr_en <= en;
+    pr_any <= !rst && (pf.sq.d || (|pf.sq.s) || pf.sq.g || (|pf.sq.e) || pf.u_mxu || pf.u_q ||
+                       pf.u_vpu || pf.h || pf.w);
+  end
+
   // ------------------------------------------------------------------ S0: input register
   perf_t      ev;
   logic [5:0] ev_n;                                    // events (trace lines) in ev
   always_ff @(posedge clk) begin
     logic [5:0] n;
-    n = 6'(pf.sq.d) + 6'(pf.sq.g) + 6'(pf.u_mxu) + 6'(pf.u_q) + 6'(pf.u_vpu) + 6'(pf.h) +
-        6'({pf.w, 1'b0});
-    for (int u = 0; u < NUNITS; u++) n = n + 6'(pf.sq.s[u]);
-    for (int i = 0; i < 16; i++) n = n + 6'(pf.sq.e[i]);
-    ev <= pf;
+    n = 6'(pr.sq.d) + 6'(pr.sq.g) + 6'(pr.u_mxu) + 6'(pr.u_q) + 6'(pr.u_vpu) + 6'(pr.h) +
+        6'({pr.w, 1'b0});
+    for (int u = 0; u < NUNITS; u++) n = n + 6'(pr.sq.s[u]);
+    for (int i = 0; i < 16; i++) n = n + 6'(pr.sq.e[i]);
+    ev <= pr;
     ev_n <= n;
-    if (rst || clear || !en || stopped) begin
+    if (rst || clear || !pr_en || stopped) begin
       ev.sq.d <= 1'b0; ev.sq.s <= '0; ev.sq.g <= 1'b0; ev.sq.e <= '0;
       ev.u_mxu <= 1'b0; ev.u_q <= 1'b0; ev.u_vpu <= 1'b0; ev.h <= 1'b0; ev.w <= 1'b0;
     end
@@ -212,7 +224,7 @@ module otpu_trace
     rdata <= rd_q;
   end
 
-  assign busy = ev_any || q_n != 0 || pend != '0 || r_v;
+  assign busy = (pr_any && pr_en) || ev_any || q_n != 0 || pend != '0 || r_v;
 
   always_ff @(posedge clk) begin
     if (rst || clear) begin
