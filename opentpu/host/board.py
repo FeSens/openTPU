@@ -794,7 +794,15 @@ class BoardBackend:
                            getattr(e, "image", None), poss)
 
     def attach(self, engine) -> None:
-        """Called by the Engine once it exists."""
+        """Called by the Engine once it exists. A model image with 4-bit weights needs a
+        bitstream whose MXU runs them (CAPS bit2)."""
+        img = getattr(engine, "image", None)
+        fmts = {getattr(img, "wformat", "int8"), getattr(img, "head_format", "int8")}
+        if fmts != {"int8"} and not (self.info.get("caps") or {}).get("w4"):
+            self.board.close()
+            raise ConfigMismatch("the model image has 4-bit weights and this bitstream's MXU "
+                                 "runs int8 weights only (CAPS bit2 clear): use --wformat int8 "
+                                 "or load a newer bitstream")
         self.engine = engine
         if self.status is not None:
             self.status.update(dram=self._layout())

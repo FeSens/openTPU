@@ -78,7 +78,7 @@ def test_v3_info_snapshot_and_rates():
     b = Board(FakeTransport(devname=None))
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
-    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False,
+    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False, "w4": True,
                          "trace_depth": 4096, "pq_window": 64}
     assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
@@ -213,6 +213,28 @@ def test_selftest_stops_at_config_on_a_stale_environment(no_cfg_env, capsys):
     out = capsys.readouterr().out
     assert "[PASS] link" in out and "[FAIL] config" in out
     assert "MCOLS=4 but OTPU_MCOLS=2" in out and "stopped at stage 'config'" in out
+
+
+def test_4bit_image_needs_a_4bit_bitstream(run_dir):
+    """An Engine with 4-bit weights refuses a bitstream without 4-bit MM support (CAPS bit2)."""
+    from opentpu import lens as L
+    from opentpu.host.board import ConfigMismatch, sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    for w4 in (False, True):
+        t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake5", w4=w4)
+
+        def make():
+            return Engine(spec, W, cap=256, cfg=cfg, wformat="fp4",
+                          backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+        if not w4:
+            with pytest.raises(ConfigMismatch, match="4-bit"):
+                make()
+        else:
+            eng = make()
+            assert eng.backend.info["caps"]["w4"]
+            eng.backend.close()
 
 
 # ------------------------------------------------------------------------------ status file
