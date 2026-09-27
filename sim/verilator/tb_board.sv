@@ -24,6 +24,7 @@ module tb_board;
   parameter int LAT        = 20;
   parameter int CORE_KHZ   = 100000;
   parameter logic [31:0] BUILD_ID = 32'h0B0A_4D00;
+  parameter int DDR_MTS    = 0;
   parameter int TRACE_DEPTH = 16384;
   parameter int TRACE_QD   = 32;
   parameter int PQ_WIN     = 1024;
@@ -62,7 +63,7 @@ module tb_board;
 
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
                .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
-               .BUILD_ID(BUILD_ID), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
+               .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
                .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL)) dut (
     .clk, .rst, .calib(2'b11), .temp(TEMP), .led,
     .i2c_lo, .i2c_pin(~({1'b0, i2c_lo} | i2c_hold)),

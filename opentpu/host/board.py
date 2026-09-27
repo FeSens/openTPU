@@ -360,20 +360,22 @@ class Board:
     # ------------------------------------------------------------------ identity and state
     def info(self) -> dict:
         """D / MCOLS / LANES, STATUS, calibration and, with register map 2: CAPS, CORE_KHZ,
-        BUILD_ID and the die temperature (None where the bitstream lacks them)."""
+        BUILD_ID, the die temperature and the DDR3 data rate (None where the bitstream lacks
+        them)."""
         v, st, rm = self.t.reg_read_many([R.R_VERSION, R_STATUS, R.R_REGMAP])
         d = {"D": v >> 16, "MCOLS": (v >> 8) & 0xFF, "LANES": v & 0xFF, "status": st,
              "calib": [bool(st & ST_CALIB0), bool(st & ST_CALIB1)],
              "calibrated": bool(st & ST_CALIB0) and bool(st & ST_CALIB1),
              "running": bool(st & ST_RUN) and not st & ST_HALTED,
              "regmap": R.regmap(rm), "caps": None, "core_khz": None, "build_id": None,
-             "temp_c": None}
+             "temp_c": None, "ddr_mts": None}
         if d["regmap"] >= 2:
-            cp, khz, bid, tp = self.t.reg_read_many([R.R_CAPS, R.R_CORE_KHZ, R.R_BUILD_ID,
-                                                     R.R_TEMP])
+            cp, khz, bid, tp, mts = self.t.reg_read_many([R.R_CAPS, R.R_CORE_KHZ, R.R_BUILD_ID,
+                                                          R.R_TEMP, R.R_DDR_MTS])
             d.update(caps=R.caps(cp), core_khz=khz or None, build_id=bid,
                      temp_c=round(R.temp_c(tp), 2) if cp & R.CAP_TEMP and tp & R.TEMP_VALID
-                     else None)
+                     else None,
+                     ddr_mts=(mts or None) if cp & R.CAP_DDR else None)
         self._info = d
         return d
 

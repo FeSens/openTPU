@@ -491,7 +491,8 @@ otpu-smi 0.1.0                                                       2026-09-24 
 | `--sim` | the board model (below); `--fake`: an in-memory card with synthetic counters |
 
 Fields: the bitstream (VERSION, CORE_KHZ, BUILD_ID, REGMAP), the link (ID register; the PCIe
-speed and width from sysfs), DDR3 calibration (STATUS bits 5, 6), temperature (TEMP, measured
+speed and width from sysfs), DDR3 speed and calibration (DDR_MTS when CAPS bit3 is set, else plain
+"DDR3"; STATUS bits 5, 6), temperature (TEMP, measured
 by the XADC), the DRAM used / total and the KV cache (from the status file), the DRAM bandwidth
 ((DRAM_RD + DRAM_WR) deltas x 64 B over the UPTIME delta / CORE_KHZ), utilization (the deltas of
 RUNNING, MXU_BUSY, MXU_MAC -- MAC utilization --, VPU_BUSY, QNT_BUSY, DMA_BUSY, TMEM_DENY,

@@ -25,6 +25,7 @@ module otpu_board #(
   parameter logic [31:0] BASE1 = 32'h8000_0000,
   parameter int CORE_KHZ    = 100000,  // the core clock (CORE_KHZ register)
   parameter logic [31:0] BUILD_ID = 32'h0,
+  parameter int DDR_MTS     = 0,       // DDR3 data rate (DDR_MTS register; 0: not given)
   parameter int TRACE_DEPTH = 16384,   // trace records (a power of two; 0: no trace buffer)
   parameter int TRACE_QD    = 32,      // trace capture queue (cycles with events)
   parameter int PQ_WIN      = 1024,    // cycles per P/Q counter window
@@ -188,7 +189,7 @@ module otpu_board #(
   logic [1:0]  arvalid, arready, arid, rvalid, rready, rid, rlast;
 
   otpu_ctrl #(.D(D), .MCOLS(MCOLS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
-              .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
+              .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
               .HAS_I2C(HAS_I2C)) u_ctrl (
     .clk, .rst,
     .s_awaddr(s_ctl_awaddr), .s_awvalid(s_ctl_awvalid), .s_awready(s_ctl_awready),

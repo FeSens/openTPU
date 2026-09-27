@@ -78,8 +78,9 @@ def test_v3_info_snapshot_and_rates():
     b = Board(FakeTransport(devname=None))
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
-    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "trace_depth": 4096,
-                         "pq_window": 64}
+    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False,
+                         "trace_depth": 4096, "pq_window": 64}
+    assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
     assert s1["snaps"] == s0["snaps"] + 1 and s1["UPTIME"] - s0["UPTIME"] == 1_000_000
@@ -89,6 +90,34 @@ def test_v3_info_snapshot_and_rates():
     assert r["seconds"] == pytest.approx(0.01)
     assert r["dram_gbs"] == pytest.approx((RATES["DRAM_RD"] + RATES["DRAM_WR"]) * 1e6 * 64
                                           / 0.01 / 1e9)
+
+
+def test_ddr_rate(monkeypatch, capsys):
+    """DDR_MTS (CAPS bit3) names the DDR3 speed in smi's DDR3 row and the config lines; a
+    bitstream without it (the bit clear, 0xDEADBEEF at 0x54) shows plain "DDR3"."""
+    t = FakeTransport(devname=None, ddr_mts=1066)
+    i = Board(t).info()
+    assert i["caps"]["ddr"] and i["ddr_mts"] == 1066
+    assert "DDR3-1066 ch0 ok  ch1 ok" in smi.table([smi.query(t, "/dev/fake",
+                                                              sleep=lambda s: None)])
+    old = FakeTransport(devname=None)
+    assert old.reg_read(R.R_DDR_MTS) == R.UNMAPPED and Board(old).info()["ddr_mts"] is None
+    row = smi.table([smi.query(old, "/dev/fake", sleep=lambda s: None)])
+    assert "DDR3 ch0 ok  ch1 ok" in row and "DDR3-" not in row
+
+    from opentpu.host import selftest
+
+    def first_two(self, name, fn, stage=selftest.Runner.stage):
+        return stage(self, name, fn) if name in ("link", "config") else None
+    monkeypatch.setattr(selftest.Runner, "stage", first_two)
+    for n, (mts, want) in enumerate(((1300, "core 100 MHz, DDR3-1300, build"),
+                                     (None, "core 100 MHz, build"))):
+        monkeypatch.setattr(selftest, "XdmaTransport",      # selftest keeps its lock: new device
+                            lambda dev, n=n, mts=mts: FakeTransport(devname=f"fake{n}",
+                                                                    ddr_mts=mts))
+        selftest.main([])
+        line = [s for s in capsys.readouterr().out.splitlines() if "[PASS] config" in s][0]
+        assert want in line
 
 
 def test_v2_bitstream_has_no_mxu_starve():
@@ -478,7 +507,7 @@ def test_smi_json(tmp_path, capsys):
     (d,) = json.loads(capsys.readouterr().out)
     assert d["device"] == "/dev/fake5" and d["ok"] and d["regmap"] == 3
     assert d["bitstream"] == {"D": 128, "MCOLS": 2, "LANES": 8, "core_mhz": 100.0,
-                              "build_id": 0x1234ABCD}
+                              "build_id": 0x1234ABCD, "ddr_mts": None}
     assert d["calib"] == [True, True] and d["temp_c"] == pytest.approx(34.45, abs=0.01)
     for k, v in RATES.items():
         if k not in R.EVENTS:

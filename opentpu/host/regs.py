@@ -25,6 +25,9 @@ UNMAPPED = 0xDEADBEEF            # what version 1 returns for a register it does
 R_REGMAP, R_CAPS, R_CORE_KHZ, R_BUILD_ID, R_TEMP, R_SNAP = 0x3C, 0x40, 0x44, 0x48, 0x4C, 0x50
 CAP_TRACE, CAP_TEMP, CAP_I2C = 1, 2, 4   # CAPS bit0..2; [15:8] log2 trace depth,
                                          # [23:16] log2 P/Q window
+# CAPS bit3: DDR_MTS holds the DDR3 data rate the bitstream was built for (MT/s). Older
+# bitstreams leave the bit clear and read 0xDEADBEEF there: the rate is unknown.
+CAP_DDR, R_DDR_MTS = 8, 0x54
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset
@@ -57,6 +60,7 @@ def temp_c(code: int) -> float:
 
 def caps(v: int) -> dict:
     return {"trace": bool(v & CAP_TRACE), "temp": bool(v & CAP_TEMP), "i2c": bool(v & CAP_I2C),
+            "ddr": bool(v & CAP_DDR),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
 
