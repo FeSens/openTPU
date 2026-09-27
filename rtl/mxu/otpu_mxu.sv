@@ -15,10 +15,10 @@
 // value per column is written after the last row (the max order is total: any order is exact).
 //
 // Pipelined for the FPGA clock:
-//   pop | operands | products | +4 | +4 | tree | i2f (2) | *ws (2) | *ascale (2) | pair (4)
+//   pop | operands | products | +4 | +4 | tree | i2f (2) | *ws (2) | *ascale (2) | [pair (4)]
 //   | partial loop (4) | combine
-// (pair: t + the partner column's t under PAIR, else t + 0, which changes nothing downstream: the
-// partial loop starts from +0 + t and a partial is never -0)
+// (pair: PAIR only, t + the partner column's t; other MMs skip its four stages: a command's
+// blocks never share the pipeline with another command's, so the latency may differ by mode)
 // The partial loop is exactly 4 pipeline advances long (one 4-stage adder), so block k meets
 // the partial of block k-4 of the same row. The compute pipeline
 // advances when a chunk is popped, or with a bubble whenever the next chunk would start a new
@@ -518,7 +518,8 @@ module otpu_mxu
 
   // the ACT scale travels with the chunk to the second multiplier (S0 + LDOT + 2 + LM)
   f32_t t1 [MCOLS], t2 [MCOLS], tq [MCOLS], pacc [MCOLS];
-  cm_t  mt_p, mt, mq_p, mq, ma;              // meta at the pair / loop adder inputs, loop outputs
+  cm_t  mt_p, mt, mq_p, mq, mx, ma;          // meta at the pair adder input and output, the loop
+                                             // adder input (mq under PAIR, else mt), its output
   logic [7:0] M0;                            // the command's M (constant while its blocks flow)
   always_ff @(posedge clk) if (en_c) M0 <= c_M;
   // the delay lines into the fp operands end in reset flops (a reset can't go into an SRL, so the
@@ -527,15 +528,17 @@ module otpu_mxu
   always_ff @(posedge clk) if (rst) mt <= '0; else if (en_c) mt <= mt_p;
   otpu_delay #(.W($bits(cm_t)), .N(LA - 1)) u_mq (.clk, .en(en_c), .d(mt), .q(mq_p));
   always_ff @(posedge clk) if (rst) mq <= '0; else if (en_c) mq <= mq_p;
-  otpu_delay #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .en(en_c), .d(mq), .q(ma));
+  assign mx = pr0 ? mq : mt;
+  otpu_delay #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .en(en_c), .d(mx), .q(ma));
   for (genvar j = 0; j < MCOLS; j++) begin : g_col
-    f32_t fb, prev, as_p, asq;
+    f32_t fb, prev, as_p, asq, tx;
     otpu_delay #(.W(32), .N(LDOT + 2 + LM - 1)) u_as (.clk, .en(en_c), .d(as0[j]), .q(as_p));
     always_ff @(posedge clk) if (rst) asq <= '0; else if (en_c) asq <= as_p;
     otpu_fmul #(.LAT(LM)) u_m1 (.clk, .en(en_c), .a(fi[j]), .b(ws6[j]), .y(t1[j]));
     otpu_fmul #(.LAT(LM)) u_m2 (.clk, .en(en_c), .a(t1[j]), .b(asq), .y(t2[j]));
-    // pair: a column that can take a low block (j < MCOLS/2) adds its partner's term, column
-    // j + M, under PAIR when the high block is in the row, else +0; the others wait as long
+    // pair (PAIR): a column that takes a low block (j < M <= MCOLS/2) adds its partner's term,
+    // column j + M's, when the high block is in the row, else +0; the other columns' results are
+    // not used under PAIR
     if (j < MCOLS / 2) begin : g_pair
       f32_t pb;
       always_comb begin
@@ -544,13 +547,15 @@ module otpu_mxu
           if (j + m < MCOLS && mt.o && M0 == 8'(m)) pb = t2[j + m];
       end
       otpu_fadd #(.LAT(LA)) u_pr (.clk, .en(en_c), .a(t2[j]), .b(pb), .y(tq[j]));
+      assign tx = pr0 ? tq[j] : t2[j];
     end else begin : g_nopair
-      otpu_delay #(.W(32), .N(LA)) u_tq (.clk, .en(en_c), .d(t2[j]), .q(tq[j]));
+      assign tq[j] = '0;
+      assign tx = t2[j];
     end
     // partial loop: pacc(block k) = pacc(block k - 4) + t(k), exactly NPART advances
     otpu_delay #(.W(32), .N(NPART - LA)) u_fb (.clk, .en(en_c), .d(pacc[j]), .q(fb));
-    assign prev = mq.first ? F_ZERO : fb;
-    otpu_fadd #(.LAT(LA)) u_acc (.clk, .en(en_c), .a(prev), .b(tq[j]), .y(pacc[j]));
+    assign prev = mx.first ? F_ZERO : fb;
+    otpu_fadd #(.LAT(LA)) u_acc (.clk, .en(en_c), .a(prev), .b(tx), .y(pacc[j]));
   end
 
   // combine a row's final partials: (p0+p2)+(p1+p3). Block k's partial meets its isum_4 partner,
