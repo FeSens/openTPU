@@ -257,8 +257,11 @@ def table(devs: list[dict]) -> str:
             cells = [f"{lbl:<4}{_bar(u[k])} {_pct(u[k]):>4}" for k, lbl in UNITS]
             for i in range(0, len(cells), 3):
                 out.append(_line("     ".join(cells[i:i + 3])))
-            out.append(_line(f"Stalls  TMEM-deny {_pct(u['TMEM_DENY'])}   "
-                             f"DRAM-wait {_pct(u['DRAM_WAIT'])}   IPC {smp['ipc']:.3f}"))
+            idle = max(0.0, u["MXU_BUSY"] - u["MXU_MAC"])
+            out.append(_line(f"Stalls  MXU no-MAC {_pct(idle)} (mostly awaiting weights)   "
+                             f"TMEM-deny {_pct(u['TMEM_DENY'])}   "
+                             f"DRAM-req-wait {_pct(u['DRAM_WAIT'])}"))
+            out.append(_line(f"IPC     {smp['ipc']:.2e}"))
         else:
             out.append(_head("Utilization"))
             out.append(_line("n/a (register map 1 bitstream: no free-running counters)"))
