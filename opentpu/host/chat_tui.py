@@ -311,7 +311,10 @@ class ChatApp(App):
         return w
 
     def _tick(self) -> None:
-        sp = self.query_one("#spinner", Static)
+        found = self.query("#spinner")
+        if not found:                       # the timer can fire once more while the app exits
+            return
+        sp = found.first(Static)
         sp.display = bool(self._busy)
         if not self._busy:
             return
