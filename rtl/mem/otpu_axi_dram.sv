@@ -21,7 +21,11 @@
 // whole latency). A beat's read waits until every older queued beat with the same address has
 // its write response; the queue's writes wait while its reads are still going out (unless it is
 // half full), so the controller sees runs of reads, then runs of writes. A reads that fall in the beat of the previous A read (the MXU's scale stream:
-// 16 scales per beat) reuse it without a DRAM access, until any write is accepted.
+// 16 scales per beat) reuse it without a DRAM access, until any write is accepted. An A read that
+// misses fetches a run of up to APF channel-consecutive beats (one INCR burst, not across 4 KB);
+// the A reads that follow the run in order take its beats without a DRAM access, and a read off
+// the run (or after any write) drops the beats not yet taken. The scale stream thus costs one
+// AXI transaction per APF beats instead of one per beat.
 // Port B reads that follow each other in the address space (a streamed operand) are issued as
 // one burst per channel: a run of queued contiguous reads goes out once it has BL beats, once
 // the next queued request does not continue it (or it would cross a 4 KB page), once no request
@@ -41,6 +45,7 @@ module otpu_axi_dram #(
   parameter int WGATHER = 4,                         // idle cycles before a gathered SW beat goes out
   parameter int RD = 128,                            // B read beats in flight per channel
   parameter int AD = 16,                             // A read beats in flight per channel
+  parameter int APF = 8,                             // A read run (prefetch), beats
   parameter logic [31:0] BASE0 = 32'h0000_0000,
   parameter logic [31:0] BASE1 = 32'h8000_0000
 ) (
@@ -99,6 +104,7 @@ module otpu_axi_dram #(
 );
   initial if (D != 128) $fatal(1, "otpu_axi_dram: D must be 128 (one beat per channel)");
   initial if (BL < 1 || BL > QD || BL > RD || BL > 16) $fatal(1, "otpu_axi_dram: bad BL");
+  initial if (APF < 1 || APF > 8 || APF > AD) $fatal(1, "otpu_axi_dram: bad APF");
   localparam int LW = $clog2(BL + 1);
   localparam int QW = $clog2(QD);
   localparam int RW = $clog2(RD);
@@ -126,6 +132,7 @@ module otpu_axi_dram #(
     logic [3:0]   idx;         // word in the beat
     logic [31:0]  data;
     logic [3:0]   be;
+    logic [3:0]   len;         // read: beats of the run
   } qa_t;
   typedef struct packed {      // a gathered SW beat
     logic [31:0]  addr;
@@ -160,7 +167,8 @@ module otpu_axi_dram #(
   logic         bt_q [OD];                     // LUT RAM
   logic [OW:0]  bt_n;
   logic [OW-1:0] bt_h;
-  typedef struct packed { logic c; logic [3:0] idx; logic reuse; } ao_t;
+  // A reads in order: channel, word, reuse of the last beat, run beats to drop before this one
+  typedef struct packed { logic c; logic [3:0] idx; logic reuse; logic [2:0] drop; } ao_t;
   ao_t          ao_q [OD];
   logic [OW:0]  ao_n;
   logic [OW-1:0] ao_h;
@@ -188,6 +196,15 @@ module otpu_axi_dram #(
   wire a_take = a_req && a_rdy;
   wire a_ch = a_addr[4];
   wire a_reuse = !a_we && al_v && al_beat == a_beat;
+  // A runs per channel: the next channel beat of the run, valid (no write since), beats not
+  // yet taken (in flight or stored)
+  logic [26:0]  pnx [2];
+  logic [1:0]   pv;
+  logic [2:0]   pfl [2];
+  wire  [26:0]  a_cb = a_addr[31:5];              // the channel beat
+  wire  a_hit = !a_we && !a_reuse && pv[a_ch] && a_cb == pnx[a_ch] && pfl[a_ch] != 0;
+  wire  [3:0]   a_len = (7'd64 - {1'b0, a_cb[5:0]} < 7'(APF)) ? 4'(7'd64 - {1'b0, a_cb[5:0]})
+                                                               : 4'(APF);
 
   // ------------------------------------------------------------------ response FIFOs
   logic [RW:0]  rb_n [2], rb_res [2];          // stored; stored + in flight
@@ -212,12 +229,13 @@ module otpu_axi_dram #(
       qb_e[c].addr = chan_addr(b_addr + 32'(16 * c), c[0]);
       qb_e[c].data = b_wdata[512 * c +: 512];
       qb_e[c].wmask = b_we ? b_wmask[16 * c +: 16] : '0;
-      qa_push[c] = a_take && a_ch == c[0] && !a_reuse;
+      qa_push[c] = a_take && a_ch == c[0] && !a_reuse && !a_hit;
       qa_e[c].we = a_we;
       qa_e[c].addr = chan_addr(a_addr, c[0]);
       qa_e[c].idx = a_addr[3:0];
       qa_e[c].data = a_wdata;
       qa_e[c].be = a_be;
+      qa_e[c].len = a_we ? 4'd1 : a_len;
       // the gathered beat goes out: another beat's SW write (room is sure: sw_rdy), or, with
       // no SW write this cycle and room in the queue, full or idle
       qw_push[c] = gv[c] && (sw_take && sw_ch == c[0] ? gb[c].addr != chan_addr(sw_addr, c[0])
@@ -250,7 +268,7 @@ module otpu_axi_dram #(
     assign ha[c] = qam[qa_h[c]];
     assign hw[c] = qwm[qw_h[c]];
     assign rb_head[c] = rbm[rb_h[c]];
-    assign ra_head[c] = ram[ra_h[c]];
+    assign ra_head[c] = ram[AW_'(ra_h[c] + AW_'(aoh.drop))];
   end
 
   // ------------------------------------------------------------------ per-channel issue
@@ -288,7 +306,8 @@ module otpu_axi_dram #(
           ar_b[c] = !arh_a[c] && !arh_w[c];
           run[c] = arh_n[c];
         end else begin
-          ar_a[c] = (qa_n[c] != 0) && !ha[c].we && (ra_res[c] < AD) && (k1r_n[c] < 6'(KD));
+          ar_a[c] = (qa_n[c] != 0) && !ha[c].we && (ra_res[c] <= (AW_ + 1)'(AD - ha[c].len)) &&
+                    (k1r_n[c] < 6'(KD));
           ar_w[c] = !ar_a[c] && (qw_rn[c] != 0) && wpart[c][qw_r[c]] && !w_blk[c] &&
                     (k1r_n[c] < 6'(KD));
           ar_b[c] = !ar_a[c] && !ar_w[c] && (qb_n[c] != 0) && !hb[c].we && go &&
@@ -297,7 +316,7 @@ module otpu_axi_dram #(
       end
       m_arvalid[c] = ar_a[c] || ar_w[c] || ar_b[c];
       m_araddr[c] = ar_a[c] ? ha[c].addr : ar_w[c] ? {wadr[c][qw_r[c]], 6'd0} : hb[c].addr;
-      m_arlen[c] = (ar_a[c] || ar_w[c]) ? 8'd0 : 8'(run[c] - 1);
+      m_arlen[c] = ar_a[c] ? 8'(ha[c].len - 1) : ar_w[c] ? 8'd0 : 8'(run[c] - 1);
       m_arid[c] = ar_a[c] || ar_w[c];
       // the queue's writes wait while its reads still go out (not blocked), unless half full
       w_hold[c] = (qw_rn[c] != 0) && wpart[c][qw_r[c]] && !w_blk[c] && qw_n[c] < (QW + 1)'(QD / 2);
@@ -340,7 +359,7 @@ module otpu_axi_dram #(
   ao_t aoh;
   assign aoh = ao_q[ao_h];
   logic [511:0] a_last;                          // the beat of the last fetched A read
-  wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] != 0);
+  wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] > (AW_ + 1)'(aoh.drop));
   wire [511:0] a_src = aoh.reuse ? a_last : ra_head[aoh.c];
   assign b_rvalid = b_out;
   assign b_rtag = bt_q[bt_h];
@@ -350,7 +369,9 @@ module otpu_axi_dram #(
 
   always_ff @(posedge clk) begin
     if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= b_tag;
-    if (a_take && !a_we) ao_q[OW'(ao_h + ao_n)] <= '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse};
+    if (a_take && !a_we)
+      ao_q[OW'(ao_h + ao_n)] <= '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse,
+                                  drop: (a_reuse || a_hit) ? 3'd0 : pfl[a_ch]};
   end
 
   // ------------------------------------------------------------------ writes outstanding
@@ -373,6 +394,7 @@ module otpu_axi_dram #(
       end
       bt_n <= '0; bt_h <= '0; ao_n <= '0; ao_h <= '0;
       al_v <= 1'b0;
+      pv <= '0; pfl[0] <= '0; pfl[1] <= '0;
       wr_n <= '0; wacc_q <= '0;
       gv <= '0; gage[0] <= '0; gage[1] <= '0;
       aw_done <= '0; w_done <= '0; wcur <= '0;
@@ -425,7 +447,7 @@ module otpu_axi_dram #(
             k1r[c][5'(k1r_h[c] + k1r_n[c])] <= ar_w[c];
             nkr = nkr + 1;
           end
-          if (ar_a[c]) begin popa = 1'b1; rar = rar + 1; end
+          if (ar_a[c]) begin popa = 1'b1; rar = rar + (AW_ + 1)'(ha[c].len); end
           else if (ar_w[c]) begin
             rix[c][QW'(rix_h[c] + rix_n[c])] <= qw_r[c];
             nrx = nrx + 1;
@@ -475,8 +497,10 @@ module otpu_axi_dram #(
               ra_t[c] <= ra_t[c] + 1;
               ran = ran + 1;
             end
-            k1r_h[c] <= k1r_h[c] + 1;
-            nkr = nkr - 1;
+            if (m_rlast[c]) begin                // (an A run is several beats)
+              k1r_h[c] <= k1r_h[c] + 1;
+              nkr = nkr - 1;
+            end
           end else begin
             rb_t[c] <= rb_t[c] + 1;
             rbn = rbn + 1;
@@ -500,9 +524,10 @@ module otpu_axi_dram #(
           rb_h[c] <= rb_h[c] + 1;
           rbn = rbn - 1; rbr = rbr - 1;
         end
-        if (a_out && !aoh.reuse && aoh.c == c[0]) begin
-          ra_h[c] <= ra_h[c] + 1;
-          ran = ran - 1; rar = rar - 1;
+        if (a_out && !aoh.reuse && aoh.c == c[0]) begin    // (and the dropped run beats)
+          ra_h[c] <= ra_h[c] + AW_'(aoh.drop) + 1'b1;
+          ran = ran - (AW_ + 1)'(aoh.drop) - 1'b1;
+          rar = rar - (AW_ + 1)'(aoh.drop) - 1'b1;
         end
         qb_n[c] <= nb; qa_n[c] <= na; qw_n[c] <= nw;
         qw_wb[c] <= nwb; qw_rn[c] <= nrn; rix_n[c] <= nrx; k1r_n[c] <= nkr; k1w_n[c] <= nkw;
@@ -549,6 +574,18 @@ module otpu_axi_dram #(
           gage[c] <= gage[c] + 1;
         end
       end
+      // ---- A runs: a hit takes the next beat, a miss starts a run (dropping the rest)
+      if (a_take && !a_we && !a_reuse) begin
+        if (a_hit) begin
+          pnx[a_ch] <= pnx[a_ch] + 1;
+          pfl[a_ch] <= pfl[a_ch] - 1;
+        end else begin
+          pnx[a_ch] <= a_cb + 1;
+          pfl[a_ch] <= 3'(a_len - 1);
+          pv[a_ch] <= 1'b1;
+        end
+      end
+      if ((b_take && b_we) || (a_take && a_we) || sw_take) pv <= '0;
       if ((b_take && b_we) || (a_take && a_we) || sw_take) al_v <= 1'b0;
       else if (a_take && !a_we) begin
         al_v <= 1'b1;

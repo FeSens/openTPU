@@ -529,6 +529,38 @@ def test_axi_sw_rmw_fuzz(have_verilator, seed):
     assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
 
 
+# The MXU's scale stream (port A, one word per chunk) goes out as runs of up to 8 beats per AXI
+# read; a QST between the MMs rewrites some scales (so a run fetched before it must not be used
+# after it), under random stalls: bit-exact, and far fewer A transactions than scale beats.
+@pytest.mark.parametrize("stall,seed", [(0, 1), (40, 2), (70, 3)])
+def test_axi_scale_runs(have_verilator, stall, seed):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8500 + seed)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    SC, W = 0x20000, 0x40000                       # scales (fp32), weights (int8)
+    img[SC:SC + 4 * 4096] = (rng.random(4096, dtype=np.float32) + 0.5).view(np.uint8)
+    img[:4 * 2 * 4 * D * 4] = rng.standard_normal(2 * 4 * D * 4).astype(np.float32).view(np.uint8)
+    N, KB = 300, 4
+    prog = [I.ld(0, 0, 2 * 4 * D * 4), I.qact(0, 2, 0, KB, 4 * D),
+            I.mm(W, SC, 4096, N, KB, KB * D, N + 2, 2, 0, 4 * KB),
+            # a new scale right after the first MM's (a run fetched then covers it), and an MM
+            # whose scale stream continues there
+            I.qst(4096, 0x30000, SC + 4 * KB * N + 8, 1, 1, D, D, 1, row=True),  # after MM 1
+            I.mm(W, SC + 4 * KB * N, 16384, 40, KB, KB * D, 42, 2, 0, 4 * KB),
+            I.mm(W, SC, 8192, N, KB, KB * D, N + 2, 2, 0, 4 * KB),
+            I.mm(W + KB * D, SC + 4 * 3, 12288, N // 2, KB, KB * D, N, 2, 0, 4 * KB + 4),
+            I.halt()]
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                  seed=seed, uarch=rtlsim.BOARD_UARCH, plusargs=["+axi_dram=1"])
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    ar_a = sum(d["ar_a"] for d in st["axi_detail"])
+    scale_beats = (2 * N + N // 2 + 40) * KB * 4 // 64
+    assert ar_a < scale_beats // 3, (ar_a, scale_beats)
+
+
 def test_tmem_random_traffic(have_verilator):
     """TMEM alone against a reference model; most reads hit the previous cycle's writes, which
     are still in TMEM's registered write stage (the bypass)."""
