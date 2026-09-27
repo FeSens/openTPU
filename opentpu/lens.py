@@ -479,8 +479,8 @@ def _qwen(real: bool, pos: int, board: bool, run_kw: dict, uarch):
         spec, W = _tiny_qwen()
         cap = max(256, pos + 1)
     if board:
-        from .llm.qwen3 import Image
-        probe = Image(spec, board_config(DRAM_BYTES=1 << 40), cap)
+        from .llm.qwen3 import PREFILL_ROWS, Image
+        probe = Image(spec, board_config(DRAM_BYTES=1 << 40), cap, 1, PREFILL_ROWS)
         size = 1 << max(20, (probe.nbytes - 1).bit_length())
         cfg = board_config(DRAM_BYTES=size)
     else:

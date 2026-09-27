@@ -29,7 +29,7 @@ import numpy as np
 
 from .. import fp32 as F
 from .. import language as ol
-from ..compiler import Affine, KVDesc, QTensor, Tensor
+from ..compiler import Affine, CompileError, KVDesc, QTensor, Tensor
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
@@ -516,6 +516,10 @@ def _mlp(x, lw, spec: Spec):
     return ol.all_gather(x[:, mine] + y)
 
 
+# Token rows per device run of a prefill: the I/O area holds this many, and TMEM (64K words)
+# holds the activations of 8 rows of Qwen3-0.6B (Engine.prefill_chunks shrinks a run that does
+# not fit).
+PREFILL_ROWS = 8
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
 
 
@@ -559,13 +563,29 @@ def _runs(rows):
     return out
 
 
-def _attention_rows(x, lw, c, s_, rows, spec: Spec, block: int):
+def _rope_rows_padded(x, c, s_, out=None):
+    """rope_rows(x) on the first 2 * c.cols dimensions of each row (the others pass through),
+    into `out` (a view whose columns beyond x.cols are already zero) or a new tile padded like
+    _padded: the multi-row twin of _rope_padded, bit for bit."""
+    d, D, rd = x.cols, ol.block_size(), 2 * c.cols
+    if out is None:
+        out = ol.zeros([x.rows, -(-d // D) * D]) if d % D else ol.empty(x.shape)
+    rope_rows(x[:, :rd], c, s_, out=out[:, :rd])
+    if rd < d:
+        out[:, rd:d].set(x[:, rd:])
+    return out
+
+
+def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     """x + W_o . attention(x) for R token rows; row r is token position rows[r][1] of sequence
     rows[r][0] (its own KV cache). Every row's K/V is appended first, then each row attends
     over positions 0..pos of its sequence -- for consecutive rows of one sequence (a prefill
     chunk) that is exactly the causal mask. Each projection streams its weights once for all
     R rows (ceil(R / MCOLS) MMs); the (row, KV head) pairs then run as one pipelined
-    flash-attention stream (_attend_heads)."""
+    flash-attention stream (_attend_heads). Per row the arithmetic is _attention's, so the
+    results are bit-identical to R decode steps: heads narrower than D (LFM2) are padded, RoPE
+    may cover part of a head (Qwen3.5), `gated` multiplies the output by sigmoid(W_gate x),
+    and a query group wider than the MXU attends in parts of MCOLS heads."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
     R = len(rows)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
@@ -578,30 +598,35 @@ def _attention_rows(x, lw, c, s_, rows, spec: Spec, block: int):
     nh = len(heads)
     nq = nh * G
     for j, hh in enumerate(heads):
-        kj = rope_rows(rmsnorm(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
-        vj = v[:, j * d:(j + 1) * d]
+        kj = _rope_rows_padded(rmsnorm(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
+        vj = _padded(v[:, j * d:(j + 1) * d])
         for sq, p0, r0, n in _runs(rows):
             ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
         del kj, vj
     del k, v
-    # queries as [R * nq, d]: (row r, KV head j) is the G contiguous rows r*nq + j*G ...
-    Q = ol.empty([R * nq, d])
+    # queries as [R * nq, dk]: (row r, KV head j) is the G contiguous rows r*nq + j*G ...
+    dk = -(-d // ol.block_size()) * ol.block_size()
+    Q = ol.zeros([R * nq, dk]) if dk > d else ol.empty([R * nq, d])
     for h in range(nq):
-        rope_rows(rmsnorm(q[:, h * d:(h + 1) * d], qn, eps), c, s_,
-                  out=Q.row_stride_view(h, R, nq))
+        _rope_rows_padded(rmsnorm(q[:, h * d:(h + 1) * d], qn, eps), c, s_,
+                          out=Q.row_stride_view(h, R, nq))
     del q
-    ent = [(r, j) for r in range(R) for j in range(nh)]
+    mc = min(G, ol.mxu_columns())
+    ent = [(r, j, g0, min(G, g0 + mc)) for r in range(R) for j in range(nh)
+           for g0 in range(0, G, mc)]
     o = ol.empty([R, nq * d])
 
     def emit(i, acc, l):
-        r, j = ent[i]
-        o[r, j * G * d:(j + 1) * G * d].reshape(G, d).set(acc / l[:, None])
+        r, j, g0, g1 = ent[i]
+        o[r, (j * G + g0) * d:(j * G + g1) * d].reshape(g1 - g0, d).set(acc / l[:, None])
 
-    _attend_heads([Q[r * nq + j * G:r * nq + (j + 1) * G, :] for r, j in ent],
-                  [lw.kvs[rows[r][0]] for r, _ in ent], [heads[j] for _, j in ent],
-                  [rows[r][1] + 1 for r, _ in ent], block, scale, depth=ATTN_DEPTH,
+    _attend_heads([Q[r * nq + j * G + g0:r * nq + j * G + g1, :] for r, j, g0, g1 in ent],
+                  [lw.kvs[rows[r][0]] for r, *_ in ent], [heads[j] for _, j, _, _ in ent],
+                  [rows[r][1] + 1 for r, *_ in ent], block, scale, depth=ATTN_DEPTH,
                   emit=emit)
     del Q
+    if gated:                                   # after the heads: o * sigmoid(gate), rounded
+        o.set(o * sigmoid(ol.dot(xs, lw.wgate)))    # as _attention's (acc / l) * sg
     o_all = ol.all_gather(o)                    # [R, n_q*d]
     y = ol.all_gather(ol.dot(o_all, lw.wo))     # [R, H]
     return x + y
@@ -658,8 +683,10 @@ class IsaBackend:
 
 
 class Engine:
-    """Token-by-token decoding on an openTPU backend: Qwen3, or any model whose Spec builds an
-    image with compile_step (LFM2: opentpu.llm.lfm2; Qwen3.5: opentpu.llm.qwen35).
+    """Decoding on an openTPU backend: Qwen3, or any model whose Spec builds an image with
+    compile_step and compile_rows (LFM2: opentpu.llm.lfm2; Qwen3.5: opentpu.llm.qwen35).
+    step() feeds one token per device run; prefill() / prefill_chunks() feed a prompt `rows`
+    tokens per run (default PREFILL_ROWS), bit-identical to feeding it token by token.
 
     backend: "isa" (default), or any object with write/read/run like IsaBackend (the RTL
     simulator and the PCIe board driver implement the same interface). Optional backend hooks:
@@ -674,7 +701,8 @@ class Engine:
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
-                 backend="isa", block: int = ATTN_BLOCK, batch: int = 1, rows: int = 1,
+                 backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
+                 rows: int = PREFILL_ROWS,
                  pipeline: bool | None = None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
@@ -685,6 +713,7 @@ class Engine:
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
         self.poss = [0] * batch
+        self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
         self.stats = []
         self.pipeline = backend != "isa" if pipeline is None else pipeline
         self._pool = None
@@ -757,9 +786,22 @@ class Engine:
         self.pos += 1
         return np.concatenate(parts)
 
-    def run_rows(self, rows, tokens, logit_rows) -> np.ndarray:
+    def _rows_programs(self, rows, logit_rows):
+        """(compile_rows(...), None), or (None, the limit) when the program does not fit:
+        "TMEM" (too many rows) or "IMEM" (attention is unrolled per row, head and block, so
+        the program grows with the context; then the number of instructions)."""
+        try:
+            progs = self.image.compile_rows(rows, logit_rows, self.block)
+        except CompileError as e:
+            if "TMEM" not in str(e):
+                raise
+            return None, "TMEM"
+        n = max(map(len, progs))
+        return (progs, None) if n * 8 <= self.cfg.IMEM_WORDS else (None, n)
+
+    def run_rows(self, rows, tokens, logit_rows, programs=None) -> np.ndarray:
         """One device run over token rows (rows[r] = (sequence, position)); returns the logits
-        of `logit_rows` ([n, vocab])."""
+        of `logit_rows` ([n, vocab]). `programs`: compile_rows(rows, logit_rows), if made."""
         io, S, spec = self.image.io, self.cfg.S, self.spec
         if any(p >= self.cap for _, p in rows):
             raise RuntimeError("KV cache full")
@@ -772,7 +814,7 @@ class Engine:
             self.backend.write(s, io["cos"], cos)
             self.backend.write(s, io["sin"], sin)
         self._drain()
-        st = self.backend.run(self.image.compile_rows(rows, logit_rows, self.block))
+        st = self.backend.run(programs or self.image.compile_rows(rows, logit_rows, self.block))
         st["rows"] = len(rows)
         self.stats.append(st)
         v, v_loc = spec.vocab, self.image.v_loc
@@ -781,29 +823,50 @@ class Engine:
                for r in logit_rows]
         return np.array(out, np.float32).reshape(len(logit_rows), v)
 
-    def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
-        """Feed a prompt to sequence `seq`; returns the logits after its last token.
+    def prefill_chunks(self, tokens, seq: int = 0, chunk: int | None = None):
+        """Feed a prompt to sequence `seq` in device runs of up to `chunk` tokens (default:
+        the image's rows); yields (the tokens of the run, logits) after each run, the logits
+        after the prompt's last token with the last run and None before.
 
-        chunk=1 (the default for a one-row image) runs token by token with the decode kernel;
-        chunk > 1 runs up to `chunk` prompt tokens per device run: their projections share each
-        weight stream, and only the last chunk runs the LM head (for its last token)."""
+        A run of R > 1 tokens is one qwen3_rows program (the model's compile_rows): every
+        weight streams once for the R rows (ceil(R / MCOLS) MMs), each row attends causally
+        over the cache and the rows before it, and only the last run computes logits, for its
+        last row. Per row the arithmetic is the decode kernel's, so the KV cache and logits
+        are bit-identical to feeding the tokens one by one. A run shrinks when its program
+        does not fit TMEM or IMEM (long contexts); a single token runs the decode kernel."""
         tokens = [int(t) for t in tokens]
         chunk = self.rows if chunk is None else max(1, min(chunk, self.rows))
-        if chunk == 1 and seq == 0:
-            logits = None
-            for t in tokens:
-                logits = self.step(t)
-            return logits
+        i = 0
+        while i < len(tokens):
+            n = min(chunk, self._fit_rows, len(tokens) - i)
+            p0, progs = self.poss[seq], None
+            while n > 1:
+                last = i + n == len(tokens)
+                rows = [(seq, p0 + j) for j in range(n)]
+                progs, why = self._rows_programs(rows, [n - 1] if last else [])
+                if progs is not None:
+                    break
+                if why == "TMEM":
+                    n = self._fit_rows = n - 1
+                else:                           # about proportional to the rows
+                    n = min(n - 1, n * self.cfg.IMEM_WORDS // (8 * why))
+            part, rows = tokens[i:i + n], [(seq, p0 + j) for j in range(n)]
+            last = i + n == len(tokens)
+            if n == 1 and seq == 0:
+                lg = self.step(part[0])
+            else:
+                lg = self.run_rows(rows, part, [n - 1] if last else [], progs)
+                lg = lg[0] if last else None
+                self.poss[seq] += n
+            i += n
+            yield part, (lg if last else None)
+
+    def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
+        """Feed a prompt to sequence `seq`; returns the logits after its last token
+        (prefill_chunks; chunk=1 runs token by token with the decode kernel)."""
         logits = None
-        for i in range(0, len(tokens), chunk):
-            part = tokens[i:i + chunk]
-            last = i + chunk >= len(tokens)
-            p0 = self.poss[seq]
-            lg = self.run_rows([(seq, p0 + j) for j in range(len(part))], part,
-                               [len(part) - 1] if last else [])
-            self.poss[seq] += len(part)
-            if last:
-                logits = lg[0]
+        for _, logits in self.prefill_chunks(tokens, seq, chunk):
+            pass
         return logits
 
     def step_batch(self, tokens) -> np.ndarray:
