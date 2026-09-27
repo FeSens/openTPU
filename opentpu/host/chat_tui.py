@@ -159,6 +159,35 @@ def stats_markup(meta: dict, chat: Chat, turn: Turn | None) -> str:
     return "\n".join(L)
 
 
+def stats_inline(meta: dict, chat: Chat, turn: Turn | None) -> str:
+    """/stats in the conversation: the same detail as the panel, one line per group."""
+    eng, t, s = chat.eng, turn, chat.session
+
+    def dev(x):
+        return f" (dev {x:.2f})" if x is not None else ""
+    L = []
+    if t is not None:
+        ttft = "-" if t.ttft_s is None else f"{t.ttft_s:.2f} s"
+        mc = t.mcycles_per_token
+        L.append(f"[b]last turn[/b]  TTFT {ttft} · prefill {t.prefill_tokens} tok "
+                 f"{_rate(t.prefill_tok_s)}{dev(t.prefill_dev_tok_s)} · decode {t.gen_tokens} tok "
+                 f"{_rate(t.decode_tok_s)}{dev(t.decode_dev_tok_s)}"
+                 + ("" if mc is None else f" · {mc:.2f} Mcycles/token"))
+    bar, colour = _meter(eng.pos, eng.cap, 16)
+    L.append(f"[b]context[/b]    {eng.pos} / {eng.cap} tokens "
+             f"({100 * eng.pos / eng.cap:.0f}%)  [{colour}]{bar}[/]" if eng.cap else "")
+    dr = meta.get("dram") and meta["dram"]()
+    if dr:
+        L.append(f"[b]DRAM[/b]       image {_mib(dr['image'])} / {_mib(dr['total'])}"
+                 + (f" · KV {_mib(dr['kv_used'])} / {_mib(dr['kv_capacity'])}"
+                    if dr.get("kv_capacity") else ""))
+    L.append(f"[b]session[/b]    {s.turns} turns · {s.tokens_in} tokens in, {s.tokens_out} out"
+             f" · decode {_rate(s.decode_tok_s)} avg")
+    sp = dict(meta.get("sampling") or {}, think="on" if chat.think else "off")
+    L.append("[b]sampling[/b]   " + " · ".join(f"{k} {v}" for k, v in sp.items()))
+    return "\n".join(L)
+
+
 def welcome(meta: dict) -> Text:
     bits = [meta["model"], meta["backend"], meta["device"]] + list(meta.get("bitstream", []))
     return Text.assemble(("✻ ", ACCENT), ("openTPU chat", "bold"), "\n\n",
@@ -376,7 +405,7 @@ class ChatApp(App):
                 w.remove()
             self._note("⎿ conversation and KV cache cleared")
         elif cmd == "/stats":
-            self._note(stats_markup(self.meta, self.chat, self._turn or self.chat.last),
+            self._note(stats_inline(self.meta, self.chat, self._turn or self.chat.last),
                        "block")
         elif cmd == "/think" and arg in ("on", "off"):
             self.chat.think = arg == "on"

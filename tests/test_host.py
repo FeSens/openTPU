@@ -814,6 +814,6 @@ def test_chat_tui_shows_the_live_numbers(tmp_path):
     assert "⏺ eeee" in r["cut"] and "stopped at max_new=4 tokens · /continue" in r["cut"]
     assert r["popup"]
     assert "⏺ eeeeee" in r["done"] and "max_new=4" not in r["done"]   # the marker is gone
-    assert any("session" in b and "tokens   2 in, 6 out" in b for b in r["stats"])
+    assert any("session" in b and "2 tokens in, 6 out" in b for b in r["stats"])
     assert "DRAM" not in r["panel"] and "KV context" in r["panel"]
     assert (tmp_path / "shot.svg").stat().st_size > 1000
