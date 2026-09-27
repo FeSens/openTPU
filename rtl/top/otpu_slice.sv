@@ -195,8 +195,9 @@ module otpu_slice
   // Each unit's reset is its own register (a reset tree): the slice's reset reaches ~15k flip-
   // flops across the die, and one replicated net from the board ran 8.4 ns routes into the
   // units (the worst core_clk paths at 114 MHz). The units leave reset a cycle after the
-  // sequencer, which starts nothing that early.
-  (* max_fanout = 256 *) logic rst_dma, rst_mxu, rst_q, rst_vpu;
+  // sequencer, which starts nothing that early. max_fanout 64: at 125.49 MHz rst_vpu (256 per
+  // copy) into the VPU lanes' c registers had 0.25 ns slack.
+  (* max_fanout = 64 *) logic rst_dma, rst_mxu, rst_q, rst_vpu;
   always_ff @(posedge clk) begin
     rst_dma <= rst; rst_mxu <= rst; rst_q <= rst; rst_vpu <= rst;
   end

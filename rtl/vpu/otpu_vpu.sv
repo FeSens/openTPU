@@ -952,7 +952,11 @@ module otpu_vpu
   logic [15:0]   fl;
   f32_t          rbuf_q [LANES];
   for (genvar l = 0; l < LANES; l++) begin : g_rbuf
-    f32_t rb [NRB / LANES];
+    // distributed RAM: the flush reads a row sum the cycle after its write (the last row's).
+    // With the write buffer (WBUF) behind the read, Vivado made this a block RAM with fl as its
+    // read-address register, which returns the old word on that collision: every RDOT of at
+    // most LANES rows then wrote its last row sum stale (on the card, not in simulation)
+    (* ram_style = "distributed" *) f32_t rb [NRB / LANES];
     always_ff @(posedge clk)
       if (en && red_act && is_sum && root_v && rdb && rows_done[LW-1:0] == LW'(l))
         rb[rows_done[15:LW]] <= root;
