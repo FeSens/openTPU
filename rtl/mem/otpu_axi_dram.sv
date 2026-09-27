@@ -28,8 +28,12 @@
 // 16 scales per beat) reuse it without a DRAM access, until any write is accepted. An A read that
 // misses fetches a run of up to APF channel-consecutive beats (one INCR burst, not across 4 KB);
 // the A reads that follow the run in order take its beats without a DRAM access, and a read off
-// the run (or after any write) drops the beats not yet taken. The scale stream thus costs one
-// AXI transaction per APF beats instead of one per beat.
+// the run (or after a B or A write) drops the beats not yet taken. An SW write drops the run
+// (and the reused beat) only when it touches them: checked when the write is taken and again
+// when its beat is in memory (a run fetched in between read the old beat), so the QSTs that
+// stream while an MM runs do not cost its scale stream its runs. (A read that depends on a QST
+// comes after the QST is done, i.e. after its writes' responses.) The scale stream thus costs
+// one AXI transaction per APF beats instead of one per beat.
 // Port B reads that follow each other in the address space (a streamed operand) are issued as
 // one burst per channel: a run of queued contiguous reads goes out once it has BL beats, once
 // the next queued request does not continue it (or it would cross a 4 KB page), once no request
@@ -222,6 +226,22 @@ module otpu_axi_dram #(
   logic [2:0]   pfl [2];
   wire  [26:0]  a_cb = a_addr[31:5];              // the channel beat
   wire  a_hit = !a_we && !a_reuse && pv[a_ch] && a_cb == pnx[a_ch] && pfl[a_ch] != 0;
+  // an SW write (taken, or in memory) that touches channel c's run or the reused beat drops them
+  logic [1:0]   sw_kr, sw_ka;
+  logic [25:0]  wadr_f [2];                       // the beat of slot qw_f (its write is done)
+  always_comb begin
+    for (int c = 0; c < 2; c++) begin
+      logic [26:0] tb, lb;
+      logic tk, ld;
+      tb = sw_addr[31:5];                         // the taken write's channel beat
+      lb = 27'(wadr_f[c] - (c ? BASE1[31:6] : BASE0[31:6]));
+      tk = sw_take && sw_ch == c[0];
+      ld = m_bvalid[c] && m_bid[c] && k1w[c][k1w_h[c][KW-1:0]];
+      sw_kr[c] = pv[c] && ((tk && 27'(tb - pnx[c]) < 27'(pfl[c])) ||
+                           (ld && 27'(lb - pnx[c]) < 27'(pfl[c])));
+      sw_ka[c] = al_v && ((tk && al_beat == {tb, c[0]}) || (ld && al_beat == {lb, c[0]}));
+    end
+  end
   wire  [3:0]   a_len = (7'd64 - {1'b0, a_cb[5:0]} < 7'(APF)) ? 4'(7'd64 - {1'b0, a_cb[5:0]})
                                                                : 4'(APF);
 
@@ -283,6 +303,7 @@ module otpu_axi_dram #(
     always_ff @(posedge clk) if (qw_push[c]) wam[WW'(qw_f[c] + qw_n[c])] <= qw_e[c].addr[31:6];
     always_ff @(posedge clk) if (qw_push[c]) whm[WW'(qw_f[c] + qw_n[c])] <= whash(qw_e[c].addr[31:6]);
     assign wadr_r[c] = wam[qw_r[c]];
+    assign wadr_f[c] = wam[qw_f[c]];
     assign wh_r[c] = whm[qw_r[c]];
     assign wh_f[c] = whm[qw_f[c]];
     always_ff @(posedge clk)
@@ -631,8 +652,9 @@ module otpu_axi_dram #(
           pv[a_ch] <= 1'b1;
         end
       end
-      if ((b_take && b_we) || (a_take && a_we) || sw_take) pv <= '0;
-      if ((b_take && b_we) || (a_take && a_we) || sw_take) al_v <= 1'b0;
+      for (int c = 0; c < 2; c++) if (sw_kr[c]) pv[c] <= 1'b0;
+      if ((b_take && b_we) || (a_take && a_we)) pv <= '0;
+      if ((b_take && b_we) || (a_take && a_we) || (|sw_ka)) al_v <= 1'b0;
       else if (a_take && !a_we) begin
         al_v <= 1'b1;
         al_beat <= a_beat;
