@@ -125,6 +125,8 @@ def main(argv=None) -> int:
         msg = f"D={i['D']} MCOLS={i['MCOLS']} LANES={i['LANES']}, register map {i['regmap']}"
         if i["core_khz"]:
             msg += f", core {i['core_khz'] / 1e3:g} MHz"
+        if i["ddr_mts"]:
+            msg += f", DDR3-{i['ddr_mts']}"
         if i["build_id"] is not None:
             msg += f", build {i['build_id']:08x}"
         return True, msg

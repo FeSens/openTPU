@@ -78,8 +78,9 @@ def test_v3_info_snapshot_and_rates():
     b = Board(FakeTransport(devname=None))
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
-    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "trace_depth": 4096,
-                         "pq_window": 64}
+    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False,
+                         "trace_depth": 4096, "pq_window": 64}
+    assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
     assert s1["snaps"] == s0["snaps"] + 1 and s1["UPTIME"] - s0["UPTIME"] == 1_000_000
@@ -89,6 +90,34 @@ def test_v3_info_snapshot_and_rates():
     assert r["seconds"] == pytest.approx(0.01)
     assert r["dram_gbs"] == pytest.approx((RATES["DRAM_RD"] + RATES["DRAM_WR"]) * 1e6 * 64
                                           / 0.01 / 1e9)
+
+
+def test_ddr_rate(monkeypatch, capsys):
+    """DDR_MTS (CAPS bit3) names the DDR3 speed in smi's DDR3 row and the config lines; a
+    bitstream without it (the bit clear, 0xDEADBEEF at 0x54) shows plain "DDR3"."""
+    t = FakeTransport(devname=None, ddr_mts=1066)
+    i = Board(t).info()
+    assert i["caps"]["ddr"] and i["ddr_mts"] == 1066
+    assert "DDR3-1066 ch0 ok  ch1 ok" in smi.table([smi.query(t, "/dev/fake",
+                                                              sleep=lambda s: None)])
+    old = FakeTransport(devname=None)
+    assert old.reg_read(R.R_DDR_MTS) == R.UNMAPPED and Board(old).info()["ddr_mts"] is None
+    row = smi.table([smi.query(old, "/dev/fake", sleep=lambda s: None)])
+    assert "DDR3 ch0 ok  ch1 ok" in row and "DDR3-" not in row
+
+    from opentpu.host import selftest
+
+    def first_two(self, name, fn, stage=selftest.Runner.stage):
+        return stage(self, name, fn) if name in ("link", "config") else None
+    monkeypatch.setattr(selftest.Runner, "stage", first_two)
+    for n, (mts, want) in enumerate(((1300, "core 100 MHz, DDR3-1300, build"),
+                                     (None, "core 100 MHz, build"))):
+        monkeypatch.setattr(selftest, "XdmaTransport",      # selftest keeps its lock: new device
+                            lambda dev, n=n, mts=mts: FakeTransport(devname=f"fake{n}",
+                                                                    ddr_mts=mts))
+        selftest.main([])
+        line = [s for s in capsys.readouterr().out.splitlines() if "[PASS] config" in s][0]
+        assert want in line
 
 
 def test_v2_bitstream_has_no_mxu_starve():
@@ -206,6 +235,7 @@ def test_status_file_lifecycle(run_dir):
     assert lay["free"] == cfg.DRAM_BYTES - (-(-lay["image"] // 4096) * 4096) - lay["program"]
     for tok in (5, 6, 7):
         eng.step(tok)
+    time.sleep(0.3)                             # the last tokens come with the timer's write
     st = read_status("fake3")
     assert st["tokens"] == 3 and st["last_cycles"] == 2_000_000 and not st["stale"]
     assert st["tok_s_device"] == pytest.approx(100e6 / 2e6)
@@ -229,6 +259,16 @@ def test_runner_status_is_atomic(run_dir):
     s.remove()
     assert not (run_dir / "fake4.json").exists()
 
+
+
+def test_runner_status_min_interval_defers_to_a_timer(run_dir):
+    s = RunnerStatus("fake6", min_interval=0.1)
+    for k in range(5):
+        s.token(1000 + k, 100_000)
+    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 1   # the first at once
+    time.sleep(0.2)
+    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 5   # then the timer
+    s.remove()
 
 # ------------------------------------------------------------------------------ polling
 def test_poll_backs_off():
@@ -306,7 +346,7 @@ def test_record_traces_only_the_window(stub_hwtrace):
     wr = t.reg_write
     t.reg_write = lambda off, v: (enables.append(v) if off == R.R_TRACE_CTRL and v & R.TR_ENABLE
                                   else None, wr(off, v))
-    eng = Engine(spec, W, cap=256, cfg=cfg,
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline="thread",
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
     steps = hwlens.run_steps(eng, [3, 4, 5], pos0=2, n=2, keep="first", prompt_len=3)
     assert [p for p, _ in steps] == [2, 3] and len(enables) == 2 and eng.pos == 4
@@ -467,7 +507,7 @@ def test_smi_json(tmp_path, capsys):
     (d,) = json.loads(capsys.readouterr().out)
     assert d["device"] == "/dev/fake5" and d["ok"] and d["regmap"] == 3
     assert d["bitstream"] == {"D": 128, "MCOLS": 2, "LANES": 8, "core_mhz": 100.0,
-                              "build_id": 0x1234ABCD}
+                              "build_id": 0x1234ABCD, "ddr_mts": None}
     assert d["calib"] == [True, True] and d["temp_c"] == pytest.approx(34.45, abs=0.01)
     for k, v in RATES.items():
         if k not in R.EVENTS:
@@ -563,6 +603,121 @@ def test_pipelining_gives_identical_tokens():
     assert np.array_equal(a.step(9).view(np.uint32), b.step(9).view(np.uint32))
 
 
+
+def test_board_compiles_the_next_program_after_starting_the_card():
+    """With a backend that has start / wait (the board), the next position's compile begins
+    only once the program is on the card and running (not while the host copies it)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=0.01)
+    starts, seen = [], []                   # seen: (position compiled, starts before it)
+
+    class Rec(BoardBackend):
+        def start(self, programs):
+            starts.append(1)
+            super().start(programs)
+
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline="thread",
+                 backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    compile_ = eng._compile
+    eng._compile = lambda pos: (seen.append((pos, len(starts))), compile_(pos))[1]
+    for tok in (3, 4, 5):
+        eng.step(tok)
+    eng._drain()
+    # position 0 compiles in line; position p + 1 only after the card started position p
+    assert seen == [(0, 0), (1, 1), (2, 2), (3, 3)]
+    assert eng.backend._expect == pytest.approx(t.cycles_per_run / 100e6)
+    eng.backend.close()
+
+
+
+def test_board_compiles_in_a_worker_process():
+    """The board's default pipeline compiles in a spawned worker process: the words it sends
+    are the in-process assembly of the same position's program (the board-model tests in
+    test_board.py / test_lfm2.py check the logits against the ISA simulator through it)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=0.002)
+    sent = []
+
+    class Rec(BoardBackend):
+        def start(self, programs):
+            sent.append(programs)
+            super().start(programs)
+
+    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    assert eng._procs and eng._ready.result(timeout=60)
+    for tok in (3, 4, 5, 6):
+        eng.step(tok)
+    eng._drain()
+    words = [(p, w) for p, w in enumerate(sent) if isinstance(w, np.ndarray)]
+    assert len(words) >= 3                  # position 0 compiles in line, then the worker
+    for p, w in words:
+        assert np.array_equal(w, np.asarray(I.assemble(eng.image.compile_step(p)[0]),
+                                            np.uint32))
+    eng.backend.close()
+
+def test_board_compiles_prefill_chunks_in_the_worker_process():
+    """Chunked prefill through the worker process: the first chunk compiles in line, the next
+    ones in the worker while the card runs the one before, and after the last chunk the first
+    decode step's program; the words are the in-process assembly of the same programs."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine, fit_chunk
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=0.002)
+    sent = []
+
+    class Rec(BoardBackend):
+        def start(self, programs):
+            sent.append(programs)
+            super().start(programs)
+
+    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    assert eng._procs and eng._ready.result(timeout=60)
+    runs = [len(part) for part, _ in eng.prefill_chunks(list(range(3, 22)))]
+    assert runs == [8, 8, 3] and eng.pos == 19
+    eng.step(5)
+    assert not isinstance(sent[0], np.ndarray)             # compiled in line
+    want = [fit_chunk(eng.image, eng.block, 0, 8, 8, 11, 8)[1],
+            fit_chunk(eng.image, eng.block, 0, 16, 8, 3, 8)[1], eng.image.compile_step(19)]
+    for w, progs in zip(sent[1:], want):
+        assert isinstance(w, np.ndarray)
+        assert np.array_equal(w, np.asarray(I.assemble(progs[0]), np.uint32))
+    eng.backend.close()
+
+
+def test_poll_with_an_expected_wait_sleeps_then_reads_back_to_back():
+    t = FakeTransport(devname=None, run_s=0.05)
+    b = Board(t)
+    t0 = time.perf_counter()
+    b.run(timeout=5, expect=0.05)
+    dt = time.perf_counter() - t0
+    assert 0.05 <= dt < 0.1 and t.reads < 1_000_000   # one sleep, then a short spin
+
+
+def test_detok_streams_the_text_of_a_full_decode():
+    """Chat's incremental detokenization: the deltas add up to decode(all tokens), holding
+    back an incomplete UTF-8 character until the token that completes it."""
+    from opentpu.host.chat import Detok
+
+    class ByteTok:                          # one token per byte (multi-byte characters split)
+        def decode(self, ids, skip_special_tokens=True):
+            return bytes(ids).decode("utf-8", errors="replace")
+    text = "ab ü€ 🎉 end"
+    ids = list(text.encode())
+    d = Detok(ByteTok())
+    deltas = [d.add(i) for i in ids]
+    assert "".join(deltas) == text and not any("\ufffd" in x for x in deltas)
+    assert deltas[ids.index(0xC3)] == ""    # the first byte of ü shows nothing yet
+
 # ------------------------------------------------------------------------------ otpu-lens
 def test_otpu_lens_passthrough(capsys):
     from opentpu.host import hwlens
@@ -624,6 +779,51 @@ def test_chat_sampling_defaults_per_model_and_repetition_penalty():
     pick = sampler(1.0, 3, 1.0, 0)
     assert {pick(np.array([0.0, 0.0, 0.0, -50.0])) for _ in range(200)} == {0, 1, 2}
 
+
+
+def test_sampler_fast_top_k_picks_as_the_float64_path():
+    """The float32 top-k (block-max prefilter) gives the picks of the float64 argpartition
+    path, with ties (which fall back to it), -0 / +0, a growing context and top_k 0."""
+    from opentpu.host import chat as C
+
+    def reference(temperature, top_k, top_p, seed, rp):
+        rng = np.random.default_rng(seed)
+
+        def pick(logits, context=()):
+            if rp != 1.0 and len(context):
+                logits = logits.copy()
+                seen = np.unique(np.asarray(context, np.int64))
+                v = logits[seen]
+                logits[seen] = np.where(v > 0, v / rp, v * rp)
+            if temperature <= 0:
+                return int(np.argmax(logits))
+            idx, z = C._top_k_f64(logits, top_k, temperature)
+            p = np.exp(z - z[0])
+            p /= p.sum()
+            keep = min(len(p), np.searchsorted(np.cumsum(p), top_p) + 1)
+            p = p[:keep] / p[:keep].sum()
+            return int(idx[rng.choice(keep, p=p)])
+        return pick
+
+    rng = np.random.default_rng(7)
+    fast = 0
+    for V in (1000, 4099):                                  # 4099: a partial last block
+        for T, k, tp, rp in [(0.1, 50, 1.0, 1.05), (0.7, 20, 0.8, 1.0), (1.0, 5, 1.0, 1.2),
+                             (0, 50, 1.0, 1.05), (0.7, 0, 0.9, 1.0)]:
+            a, b, ctx = reference(T, k, tp, 3, rp), C.sampler(T, k, tp, 3, rp), []
+            for step in range(40):
+                lg = (rng.standard_normal(V) * 3).astype(np.float32)
+                if step % 4 == 1:
+                    lg = np.round(lg * 4) / 4                   # ties everywhere
+                elif step % 4 == 2:
+                    lg[rng.integers(0, V, 5)] = lg.max()        # a tied maximum
+                elif step % 4 == 3:
+                    lg[rng.integers(0, V, 3)] = -0.0
+                ctx.append(int(rng.integers(0, V)))
+                if T > 0 and k:
+                    fast += C._top_k_f32(lg, k, T) is not None
+                assert a(lg, ctx) == b(lg, ctx)
+    assert fast > 50                                        # the fast path did run
 
 # ------------------------------------------------------------------------------ otpu-diag
 def test_diag_sim_registers_and_memory_pass(have_verilator, tmp_path, no_cfg_env):
@@ -697,8 +897,10 @@ class StubEngine:
         self.backend = types.SimpleNamespace()
         self.cfg = board_config()
 
-    def step(self, t):
+    def step(self, t, on_start=None):
         assert self.pos < self.cap, "KV cache full"   # as Engine.step
+        if on_start is not None:
+            on_start()
         time.sleep(0.002)
         self.pos += 1
         self.stats.append({"cycles": self.cycles})

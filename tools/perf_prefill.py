@@ -4,7 +4,7 @@
                                   [--bw 100] [--lat 30] [--cache FILE] [--validate]
 
 A prompt of P tokens from an empty cache, fed as the Engine does it: token by token with the
-decode kernel (P steps; before chunked prefill) or in chunked prefill runs (Engine._chunk
+decode kernel (P steps; before chunked prefill) or in chunked prefill runs (qwen3.fit_chunk
 picks each run's rows: PREFILL_ROWS, fewer where TMEM or IMEM do not hold them; only the last
 run computes logits, for its last row). Reported: device cycles per prompt token, both ways,
 the speedup, and TTFT at an assumed 100 MHz (device time only, no host time).
@@ -40,7 +40,7 @@ sys.path.insert(0, str(ROOT))
 from opentpu import rtlsim  # noqa: E402
 from opentpu.isasim import board_config  # noqa: E402
 from opentpu.llm import MODELS, load_spec, model_dir  # noqa: E402
-from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, load_weights, rope_tables  # noqa: E402
+from opentpu.llm.qwen3 import PREFILL_ROWS, fit_chunk, load_weights, rope_tables  # noqa: E402
 
 SAMPLES = (0, 120, 240)          # positions where a layer's cost is measured
 
@@ -145,12 +145,9 @@ class Bench:
     def plan(self, P: int) -> list:
         """The Engine's prefill runs for a P-token prompt: [(p0, rows)]."""
         img = self.spec.image(board_config(), self.cap, 1, PREFILL_ROWS)
-        eng = Engine.__new__(Engine)
-        eng.image, eng.cfg, eng.block, eng.backend = img, img.cfg, 256, None
-        eng._fit_rows = PREFILL_ROWS
-        out, p0 = [], 0
+        out, p0, fit = [], 0, PREFILL_ROWS
         while p0 < P:
-            n, _ = eng._chunk(0, p0, PREFILL_ROWS, P - p0)
+            n, _, fit = fit_chunk(img, 256, 0, p0, PREFILL_ROWS, P - p0, fit)
             out.append((p0, n))
             p0 += n
         return out

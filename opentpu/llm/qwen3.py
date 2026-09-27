@@ -691,6 +691,57 @@ class IsaBackend:
         return {"instructions": [s.icount for s in self.machine.slices]}
 
 
+_WORKER: tuple | None = None                # (image, block) in the compile worker process
+
+
+def _worker_init(spec, cfg, cap, batch, rows, block) -> None:
+    global _WORKER
+    _WORKER = (spec.image(cfg, cap, batch, rows), block)
+
+
+def _worker_ready() -> bool:
+    return True
+
+
+def _worker_compile(pos: int) -> np.ndarray:
+    """The worker process: the decode program for `pos`, assembled (one slice)."""
+    from ..isa import assemble
+    image, block = _WORKER
+    return np.asarray(assemble(image.compile_step(pos, block)[0]), np.uint32)
+
+
+def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int):
+    """The worker process: fit_chunk's run, its program assembled (one slice)."""
+    from ..isa import assemble
+    image, block = _WORKER
+    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit)
+    return n, None if progs is None else np.asarray(assemble(progs[0]), np.uint32), fit
+
+
+def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int):
+    """The next prefill run of sequence `seq` at position p0: up to n of the `left` remaining
+    prompt tokens, as many as fit TMEM (at most `fit` rows) and the instruction memory
+    (attention is unrolled per row, head and block: the program grows with the context).
+    Only the prompt's last run computes logits (its last row). Returns (R, compile_rows'
+    programs or None for R = 1, the rows that fit TMEM as far as known)."""
+    imem = image.cfg.IMEM_WORDS
+    n = min(n, fit, left)
+    while n > 1:
+        try:
+            progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
+                                       [n - 1] if n == left else [], block)
+        except CompileError as e:
+            if "TMEM" not in str(e):
+                raise
+            n = fit = n - 1
+            continue
+        size = max(map(len, progs))
+        if size * 8 <= imem:
+            return n, progs, fit
+        n = min(n - 1, n * imem // (8 * size))  # about proportional to the rows
+    return 1, None, fit
+
+
 class Engine:
     """Decoding on an openTPU backend: Qwen3, or any model whose Spec builds an image with
     compile_step and compile_rows (LFM2: opentpu.llm.lfm2; Qwen3.5: opentpu.llm.qwen35).
@@ -700,19 +751,23 @@ class Engine:
     backend: "isa" (default), or any object with write/read/run like IsaBackend (the RTL
     simulator and the PCIe board driver implement the same interface). Optional backend hooks:
     attach(engine), called once the engine exists; prepare(programs), called on the compile
-    thread with every precompiled program (the board assembles it there).
+    thread with every precompiled program (the board assembles it there); start(programs) and
+    wait() -> stats, the two halves of run() (step compiles the next program in between).
 
     pipeline: step() compiles the next position's program (it depends on the position only,
-    not on the token) on a worker thread while the backend runs the current one. Default: on
-    for every backend but "isa" (whose run holds the GIL: nothing to overlap). A precompile is
-    used only for the position it was made for; otherwise it is waited for and dropped (one
-    trace at a time), so results do not change.
+    not on the token) while the backend runs the current one. Default: on for every backend
+    but "isa" (whose run holds the GIL: nothing to overlap). A precompile is used only for the
+    position it was made for; otherwise it is waited for and dropped (one trace at a time), so
+    results do not change. The compile runs in a worker process when the backend runs
+    assembled programs (runs_words: the board) and there is one slice -- a trace is 10-30 ms of
+    Python, and in a thread it would hold the GIL the step's host work needs -- else on a worker
+    thread; pipeline="thread" forces the thread. The process starts with the engine; until it
+    is ready, steps compile in line.
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
                  backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
-                 rows: int = PREFILL_ROWS,
-                 pipeline: bool | None = None):
+                 rows: int = PREFILL_ROWS, pipeline: bool | str | None = None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows)
@@ -724,9 +779,14 @@ class Engine:
         self.poss = [0] * batch
         self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
         self.stats = []
-        self.pipeline = backend != "isa" if pipeline is None else pipeline
+        self.pipeline = backend != "isa" if pipeline is None else bool(pipeline)
+        self._procs = (self.pipeline and pipeline != "thread" and self.cfg.S == 1
+                       and getattr(self.backend, "runs_words", False))
         self._pool = None
+        self._ready = None                  # the worker process's start (process pipeline)
         self._next = None                   # (key, Future of the next run's programs)
+        if self._procs:
+            self._start_pool()
         if hasattr(self.backend, "attach"):
             self.backend.attach(self)
 
@@ -738,32 +798,47 @@ class Engine:
             prep(progs)
         return progs
 
+    def _start_pool(self) -> None:
+        """The compile worker process (spawned: it inherits no device or lock descriptor)."""
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+        self._pool = ProcessPoolExecutor(
+            1, mp_context=mp.get_context("spawn"), initializer=_worker_init,
+            initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block))
+        self._ready = self._pool.submit(_worker_ready)
+
     def _take(self, key, fn, *args):
-        """fn(*args), or the precompiled result when the compile in flight was made for `key`
-        (it is always waited for: one compile at a time)."""
+        """fn(*args), or the precompiled result (programs, or the worker process's assembled
+        words) when the compile in flight was made for `key`. A compile in flight is always
+        waited for (one at a time), except while the worker process still starts."""
         nxt, self._next = self._next, None
-        if nxt is not None:
+        if nxt is not None and (self._ready is None or self._ready.done()):
             res = nxt[1].result()
             if nxt[0] == key:
                 return res
         return fn(*args)
 
-    def _submit(self, key, fn, *args) -> None:
-        """Start fn(*args) on the compile thread (pipeline only), to be taken for `key`."""
+    def _submit(self, key, fn, proc_fn, *args) -> None:
+        """Start the compile for `key` (pipeline only): proc_fn(*args) in the worker process,
+        else fn(*args) on the compile thread."""
         if not self.pipeline:
+            return
+        if self._procs:
+            if self._ready.done():
+                self._next = (key, self._pool.submit(proc_fn, *args))
             return
         if self._pool is None:
             from concurrent.futures import ThreadPoolExecutor
             self._pool = ThreadPoolExecutor(1, thread_name_prefix="otpu-compile")
         self._next = (key, self._pool.submit(fn, *args))
 
-    def _program(self, pos: int) -> list:
+    def _program(self, pos: int):
         """The step program for `pos`: the precompiled one when it is for `pos`."""
         return self._take(("step", pos), self._compile, pos)
 
     def _prefetch(self, pos: int) -> None:
         if pos < self.cap:
-            self._submit(("step", pos), self._compile, pos)
+            self._submit(("step", pos), self._compile, _worker_compile, pos)
 
     def _drain(self) -> None:
         nxt, self._next = self._next, None
@@ -784,39 +859,41 @@ class Engine:
         for s in range(self.batch) if seq is None else [seq]:
             self.poss[s] = 0
 
-    def step(self, token: int) -> np.ndarray:
-        """Feed one token at the next position; returns the logits [vocab] for the next one."""
+    def step(self, token: int, on_start=None) -> np.ndarray:
+        """Feed one token at the next position; returns the logits [vocab] for the next one.
+        on_start() is called once the device runs (host work that can overlap the run: the
+        chat hands the previous token to its interface there)."""
         if self.pos >= self.cap:
             raise RuntimeError("KV cache full")
         io, S = self.image.io, self.cfg.S
         x = F.ftz(self.embed[token].astype(np.float32))
         cos, sin = rope_tables(self.spec, self.pos)
+        if io["cos"] == io["x"] + x.nbytes and io["sin"] == io["cos"] + cos.nbytes:
+            parts = [(io["x"], np.concatenate([x, cos, sin]))]      # one transfer
+        else:
+            parts = [(io["x"], x), (io["cos"], cos), (io["sin"], sin)]
         for s in range(S):
-            self.backend.write(s, io["x"], x)
-            self.backend.write(s, io["cos"], cos)
-            self.backend.write(s, io["sin"], sin)
+            for a, v in parts:
+                self.backend.write(s, a, v)
         progs = self._program(self.pos)
-        self._prefetch(self.pos + 1)
-        st = self.backend.run(progs)
+        start = getattr(self.backend, "start", None)
+        if start is None:
+            self._prefetch(self.pos + 1)
+            if on_start is not None:
+                on_start()
+            st = self.backend.run(progs)
+        else:                               # compile while the device runs, not while the
+            start(progs)                    # host copies the program
+            self._prefetch(self.pos + 1)
+            if on_start is not None:
+                on_start()
+            st = self.backend.wait()
         self.stats.append(st)
         v_loc = self.image.v_loc
         parts = [self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc).view(np.float32)
                  for s in range(S)]
         self.pos += 1
         return np.concatenate(parts)
-
-    def _rows_programs(self, rows, logit_rows):
-        """(compile_rows(...), None), or (None, the limit) when the program does not fit:
-        "TMEM" (too many rows) or "IMEM" (attention is unrolled per row, head and block, so
-        the program grows with the context; then the number of instructions)."""
-        try:
-            progs = self.image.compile_rows(rows, logit_rows, self.block)
-        except CompileError as e:
-            if "TMEM" not in str(e):
-                raise
-            return None, "TMEM"
-        n = max(map(len, progs))
-        return (progs, None) if n * 8 <= self.cfg.IMEM_WORDS else (None, n)
 
     def run_rows(self, rows, tokens, logit_rows) -> np.ndarray:
         """One device run over token rows (rows[r] = (sequence, position)); returns the logits
@@ -846,23 +923,13 @@ class Engine:
                for r in logit_rows]
         return np.array(out, np.float32).reshape(len(logit_rows), v)
 
-    def _chunk(self, seq: int, p0: int, n: int, left: int):
-        """(R, programs) of the next prefill run: up to n of the `left` remaining prompt tokens
-        at positions p0 ..., as many as fit TMEM and IMEM (programs None: R = 1, a step)."""
-        n = min(n, self._fit_rows, left)
-        while n > 1:
-            progs, why = self._rows_programs([(seq, p0 + j) for j in range(n)],
-                                             [n - 1] if n == left else [])
-            if progs is not None:
-                prep = getattr(self.backend, "prepare", None)
-                if prep is not None:
-                    prep(progs)
-                return n, progs
-            if why == "TMEM":
-                n = self._fit_rows = n - 1
-            else:                               # about proportional to the rows
-                n = min(n - 1, n * self.cfg.IMEM_WORDS // (8 * why))
-        return 1, None
+    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int):
+        """fit_chunk, its programs prepared for the backend."""
+        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit)
+        prep = getattr(self.backend, "prepare", None)
+        if progs is not None and prep is not None:
+            prep(progs)
+        return n, progs, fit
 
     def prefill_chunks(self, tokens, seq: int = 0, chunk: int | None = None):
         """Feed a prompt to sequence `seq` in device runs of up to `chunk` tokens (default:
@@ -882,17 +949,18 @@ class Engine:
         i = 0
         while i < len(tokens):
             p0, left = self.poss[seq], len(tokens) - i
-            n, progs = self._take(("rows", seq, p0, chunk, left), self._chunk, seq, p0, chunk,
-                                  left)
+            key = ("rows", seq, p0, chunk, left, self._fit_rows)
+            n, progs, self._fit_rows = self._take(key, self._chunk, *key[1:])
             part, last = tokens[i:i + n], n == left
             if progs is None and seq == 0:
                 lg = self.step(part[0])
             else:
                 rows, lr = [(seq, p0 + j) for j in range(n)], [n - 1] if last else []
-                progs = progs or self.image.compile_rows(rows, lr, self.block)
+                if progs is None:
+                    progs = self.image.compile_rows(rows, lr, self.block)
                 if not last:
-                    self._submit(("rows", seq, p0 + n, chunk, left - n), self._chunk, seq,
-                                 p0 + n, chunk, left - n)
+                    key = ("rows", seq, p0 + n, chunk, left - n, self._fit_rows)
+                    self._submit(key, self._chunk, _worker_chunk, *key[1:])
                 elif seq == 0:
                     self._prefetch(p0 + n)
                 lg = self._run_rows(rows, part, lr, progs)

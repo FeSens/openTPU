@@ -201,7 +201,7 @@ def record_card(a) -> list:
     cap = max(256, -(-(pos0 + a.tokens + 1) // 128) * 128)
     tr = XdmaTransport(a.dev)
     cfg = device_config(Board(tr, lock=False).info())
-    eng = Engine(spec, load_weights(model), cap=cap, cfg=cfg,
+    eng = Engine(spec, load_weights(model), cap=cap, cfg=cfg, pipeline="thread",  # programs
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model.name))
     return _record_engine(eng, ids, pos0, a, f"{model.name} on {a.dev}")
 
@@ -229,7 +229,7 @@ def record_sim(a) -> list:
         cap = max(256, -(-(pos0 + a.tokens + 1) // 128) * 128)
         cfg = sim_config(spec, cap)
         tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2)
-        eng = Engine(spec, W, cap=cap, cfg=cfg,
+        eng = Engine(spec, W, cap=cap, cfg=cfg, pipeline="thread",
                      backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr))
         ids = [int(t) for t in np.random.default_rng(1).integers(0, spec.vocab, pos0 + 1)]
         return _record_engine(eng, ids, pos0, a, "tiny Qwen3 (board model)")

@@ -204,7 +204,10 @@ Gen1 (section 5), so 2.5 GT/s is not a downtrained link. Device ID 7028 is set i
 design (Xilinx's default for a 7-series Gen2 x8 core; 7018 would be Gen1 x8; both are in the
 XDMA driver's table, so the driver binds either way). The block design also sets the class
 (12 00 00, processing accelerator), subsystem 10ee:4f54 and revision 01; bitstreams built
-before that show class 07 00 01 (serial), subsystem 10ee:0007, revision 00.
+before that show class 07 00 01 (serial), subsystem 10ee:0007, revision 00. Verified on the card
+(build b11bb679, 2026-09-27): `lspci -nn` shows `Processing accelerators [1200]: Xilinx
+Corporation Device [10ee:7028] (rev 01)`, subsystem `[10ee:4f54]`, and the driver binds it
+without the serial-port override.
 
 If the device does not appear, warm-reboot the host (the FPGA keeps its configuration across a
 warm reboot, as long as the slot power stays on), or write the flash, then power-cycle. If the
@@ -357,14 +360,10 @@ limit for HR banks on a -2 part at 4:1 with single-rank components
 The same file gives 1500 ps (`tmin_hp_18`) and 1072 ps (`tmin_hp_20`), but those figures are
 for HP banks, where VCCAUX_IO matters, and this board has none.
 
-**DDR3 voltage (unknown).** The MT41K256M8 is DDR3L: it runs at 1.35 V or 1.5 V. The board's
-VDDQ and the banks' VCCO have not been measured. Every build uses 1.5 V (SSTL15), as the
-reverse-engineered MIG project (TiferKing's systest example, DDR3-1066 at 1.5 V, external VREF)
-does. DDR3-800 calibrates with MIG's internal VREF at 0.75 V, VCCO / 2 for 1.5 V. At 1.35 V
-that VREF would sit 75 mV high, and calibration at 800 might still pass. So the evidence for
-1.5 V is only suggestive: a working calibration at 1066 would support it. The direct check is a
-multimeter on a DDR3 decoupling capacitor (VDDQ 1.5 or 1.35 V) and on a bank VREF pin (half of
-it). If the board is at 1.35 V, MIG's limit drops to DDR3-800 and the SSTL15 settings are wrong.
+**DDR3 voltage: 1.5 V (measured).** The MT41K256M8 is DDR3L: it runs at 1.35 V or 1.5 V. The
+board's DDR3 supply was measured at 1.5 V with a multimeter (2026-09-27), which matches every
+build's SSTL15 setting and TiferKing's reverse-engineered MIG project (DDR3-1066 at 1.5 V). MIG's
+limit for these HR banks is therefore DDR3-1066, and DDR3-1066 is in spec on this board.
 
 MIG offers internal VREF only up to 800, so 1066 and up rely on an external VREF. The VREF pins
 of the six DDR3 banks carry no DDR3 signals, which fits an external VREF, but it has not been
@@ -422,13 +421,40 @@ the patch messages of that build.
 | Image | Calibration | selftest | diag memory | Qwen3 decode |
 |---|---|---|---|---|
 | DDR3-800, burst (a691ea98) | ok | all pass | all pass | 8.58 Mcycles/token, 11.65 tok/s, DRAM 7.2 GB/s, MXU_STARVE 37% |
+| DDR3-1066, in spec (a691ea98) | ok (both channels) | all pass | 13 / 13 pass, `--mem full --soak 20` | 6.85 Mcycles/token (-20%) |
 | DDR3-1300, out of spec (819fee49) | ok (both channels) | all pass | 11 / 11 pass | 6.50 Mcycles/token, 15.38 tok/s, DRAM 9.53 GB/s, MXU_STARVE 18% |
 | DDR3-1333, out of spec, patched PHY (254f8388) | ok (both channels) | fails at the DMA bandwidth stage (H2C timeout), then the card leaves the PCIe bus (ID 0xffffffff) | not run | not run |
 
 The 1333 failure followed the selftest's 200 sub-beat host writes, the trigger of the host-write
 hang being bisected (docs/host.md), so it is not yet a clean DDR verdict; the loss of the PCIe
-link is worse than that hang and makes 1333 suspect regardless. DDR3-1300 is not yet qualified:
-the model token checks, the full-memory soak and the ECC correction counters are pending.
+link is worse than that hang and makes 1333 suspect regardless.
+
+DDR3-1300 then passed the model and soak checks (2026-09-27, one run, card at room temperature
+after ~30 minutes of builds and tests): `otpu-diag --mem full --soak 20` all pass (platform 9,
+regs 7, mem 13, isa 93, system 5), and the three models match the ISA simulator token for token:
+
+| Model | Mcycles/token at 1300 | device tok/s | wall tok/s (host of a691ea98) |
+|---|---|---|---|
+| Qwen3-0.6B | 6.50 (800: 8.58) | 15.4 | 13.6 |
+| LFM2-350M | 2.34 (800: 3.14) | 42.7 | 23.5 |
+| Qwen3.5-0.8B | 9.08 (800: 11.88) | 11.0 | 7.5 |
+
+DDR3-1066, inside MIG's range for these banks, passed the same checks the same day (a691ea98,
+WNS +0.107 ns). It gets most of 1300's gain:
+
+| Model | Mcycles/token at 1066 | device tok/s | wall tok/s (host of a691ea98) |
+|---|---|---|---|
+| Qwen3-0.6B | 6.85 | 14.6 | 12.6 |
+| LFM2-350M | 2.46 | 40.7 | 21.8 |
+| Qwen3.5-0.8B | 9.75 | 10.3 | 7.4 |
+
+With the host code of 7f9cec1 (the next program compiles in a worker process after the card
+starts; docs/host.md), `tools/decode_profile.py` on the same image (96-token reply) measures
+wall 38.5 / 14.1 / 9.9 tok/s against device 40.5 / 14.5 / 10.2 for LFM2 / Qwen3 / Qwen3.5: the
+host adds 1.3 / 1.9 / 2.7 ms per token, mostly the logits read and the sampling.
+
+DDR3-1300 is still not qualified: MIG's ECC correction counters were not read (a marginal link corrects
+silently), the warm soak (step 2) was not run, and it is outside MIG's range for these banks.
 
 **Checklist per speed.** Status: *unmeasured* at every speed above 800 until the results are
 filled in here. Load the bitstream over JTAG, not flash (section 2), so a bad one is gone at
@@ -457,10 +483,10 @@ the next power cycle.
 | DDR3 | bitstream | MIG in range | calibration | diag / soak | ECC CE | decode vs 800 |
 |---|---|---|---|---|---|---|
 | 800 | default | yes | passes (2026-09-26) | diag passes (2026-09-26); soak not recorded | not read | baseline |
-| 1066 | `make bit DDR=1066` | yes | unmeasured | unmeasured | unmeasured | unmeasured |
-| 1300 (out of spec) | `make bit DDR=1300` | no (79-155) | unmeasured | unmeasured | unmeasured | unmeasured |
-| 1333 (out of spec) | `make bit DDR=1333` | no (79-155, PHY patched) | unmeasured | unmeasured | unmeasured | unmeasured |
-| 1600 (out of spec) | `make bit DDR=1600` | no (79-155, PHY patched) | unmeasured | unmeasured | unmeasured | unmeasured |
+| 1066 | `make bit DDR=1066` | yes | passes (2026-09-27) | diag + `--mem full --soak 20` pass, cold only | not read | Qwen3 -20% cycles/token, LFM2 -22%, Qwen3.5 -18% |
+| 1300 (out of spec) | `make bit DDR=1300` | no (79-155) | passes (2026-09-27) | diag + `--mem full --soak 20` pass, cold only | not read | Qwen3 -24% cycles/token, LFM2 -25%, Qwen3.5 -24% |
+| 1333 (out of spec) | `make bit DDR=1333` | no (79-155, PHY patched) | passes (2026-09-27) | fails: H2C timeout, card leaves PCIe | not read | not run |
+| 1600 (out of spec) | `make bit DDR=1600` | no (79-155, PHY patched) | not pursued: 1333 already fails | | | |
 
 ## 6. What to check on first build (assumptions made without Vivado)
 
