@@ -15,7 +15,7 @@ out of the buffer) and TRACE_DROP = `trace_drop`.
 With `i2c` (two fake_i2c.OpenDrainBus, e.g. fake_i2c.card_buses()) CAPS announces the I2C pins
 and I2C_CTRL / I2C_IN drive and read those bus models. With `ddr_mts` CAPS bit3 announces the
 DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams. With
-`args` CAPS bit24 announces the ARG0..7 registers (kept, read back).
+`args` CAPS bit25 announces the ARG0..7 registers (kept, read back).
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ class FakeTransport:
         self.w4 = w4                    # CAPS bit4: the MXU runs 4-bit weights
         self.pair = pair                # CAPS bit5: MM PAIR / QACT DUP
         self.dstep = dstep              # CAPS bit6: DSTEP
-        self.args = args                # CAPS bit24: ARG0..7 (R_ARG0 + 4k, read back)
+        self.args = args                # CAPS bit25: ARG0..7 (R_ARG0 + 4k, read back)
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
                      R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0, R.R_I2C_CTRL: 0}
         self.count = {k: 0 for k in R.counters(regmap)}

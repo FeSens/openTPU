@@ -23,7 +23,7 @@ next one starts. The MXU prefetches its streamed operand from DRAM internally.
 ### Arguments
 
 A run starts with `R0..R7` = 0 and `R8..R15` = the run's arguments `ARG0..ARG7`: words the
-host writes before RUN (board: control registers 0x060 + 4k, announced by CAPS bit24,
+host writes before RUN (board: control registers 0x060 + 4k, announced by CAPS bit25,
 docs/observability.md; ISA simulator: `Machine(..., args)` / `load(programs, args)`; RTL
 simulator: `+arg0=..+arg7=`; unwritten arguments are 0). The same program can then serve
 different values: an address is `R[x] + imm`, and `LOOP` runs `R[ra] + w2` times.

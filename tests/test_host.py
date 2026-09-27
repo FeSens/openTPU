@@ -304,7 +304,7 @@ def test_compile_worker_builds_the_engines_image():
 
 
 def test_resident_decode_takes_run_arguments(run_dir):
-    """Engine(resident=True) on a bitstream with run arguments (CAPS bit24): the decode program
+    """Engine(resident=True) on a bitstream with run arguments (CAPS bit25): the decode program
     is loaded once and each step writes the ARG registers only (no inputs, no program); on one
     without them it falls back to per-position programs, and start(args=...) is refused."""
     from opentpu import lens as L
@@ -333,7 +333,7 @@ def test_resident_decode_takes_run_arguments(run_dir):
             assert want[7] == 7 * 4 * spec.hidden          # the token's embedding row
         else:
             assert len(loads) == 3 and writes
-            with pytest.raises(ConfigMismatch, match="CAPS bit24"):
+            with pytest.raises(ConfigMismatch, match="CAPS bit25"):
                 be.start(eng.image.compile_step(3), args=[1])
         be.close()
 

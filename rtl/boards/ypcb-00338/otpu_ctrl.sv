@@ -27,13 +27,13 @@
 //                      PAIR / QACT DUP), bit6 DSTEP (the DMA's DeltaNet head step), bit7
 //                      hashed channel interleave (otpu_axi_dram CHASH),
 //                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles),
-//                      bit24 the run's arguments (ARG0..7)
+//                      bit25 the run's arguments (ARG0..7)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
 //   0x48 BUILD_ID  RO  build parameter (the low 32 bits of the git commit)
 //   0x4C TEMP      RO  bit31 valid, [11:0] XADC die-temperature code
 //   0x50 SNAP      W   latch every free-running counter into its shadow; R: snapshots taken
 //   0x54 DDR_MTS   RO  the DDR3 data rate in MT/s (build parameter; CAPS bit3 when nonzero)
-//   0x60 + 4k      RW  ARG0..ARG7: the run's arguments, R8..R15 when RUN rises (CAPS bit24;
+//   0x60 + 4k      RW  ARG0..ARG7: the run's arguments, R8..R15 when RUN rises (CAPS bit25;
 //                      docs/isa.md "Arguments"); reset 0
 //   0x100 + 8k     RO  free-running counter k's shadow (64 bits, low word first), k =
 //                      UPTIME RUNNING MXU_BUSY MXU_MAC VPU_BUSY QNT_BUSY DMA_BUSY TMEM_DENY
@@ -121,7 +121,7 @@ module otpu_ctrl #(
   input  logic [4:0]  i2c_in
 );
   localparam int NFR = 13;
-  localparam logic [31:0] CAPS = {7'd0, 1'b1, 8'($clog2(PQ_WIN)),
+  localparam logic [31:0] CAPS = {6'd0, 1'b1, 1'b0, 8'($clog2(PQ_WIN)),
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
                                   CHASH, 1'b1, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
                                   TRACE_DEPTH != 0};

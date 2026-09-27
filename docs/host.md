@@ -571,7 +571,7 @@ token the per-position compile of LFM2 no longer keeps up on a laptop: the same 
 counters (~0.02 ms), the last chunk's read and the selection (~0.1 ms), Python (~0.1 ms).
 
 **Resident decode.** A decode program now takes the position and the token as run arguments
-(docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit24), so one program serves
+(docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit25), so one program serves
 every position of an attention bucket (`Engine(resident=True)`, the default of `otpu-chat` and
 `decode_profile.py`; `--per-position` for the old path):
 
@@ -591,7 +591,7 @@ every position of an attention bucket (`Engine(resident=True)`, the default of `
   inputs. For LFM2.5-230M the tables are 256 MiB of the card's 4 GiB.
 - Positions 0 and 1 of LFM2 (the convolution's taps before position 0) and Qwen3.5 (its
   convolution and DeltaNet programs use R1..R8) keep the per-position programs, and so does a
-  bitstream without CAPS bit24 (`Engine.resident` falls back; the worker processes of
+  bitstream without CAPS bit25 (`Engine.resident` falls back; the worker processes of
   `COMPILE_AHEAD` stay for it).
 
 The logits are bit-identical to the per-position programs' (tests: `test_qwen3.py`,

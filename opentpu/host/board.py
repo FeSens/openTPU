@@ -626,7 +626,7 @@ class Board:
         t.poll(R_STATUS, ST_LOADING, 0)
 
     def set_args(self, words) -> None:
-        """The next runs' arguments ARG0..7 (CAPS bit24; R8..R15 at the start): only the words
+        """The next runs' arguments ARG0..7 (CAPS bit25; R8..R15 at the start): only the words
         that differ from the last ones written (8 at most)."""
         last = getattr(self, "_args", None) if getattr(self.t, "keeps_state", True) else None
         last = last or [None] * 8
@@ -913,7 +913,7 @@ class BoardBackend:
 
     @property
     def args(self) -> bool:
-        """The bitstream takes run arguments (CAPS bit24): start(programs, args=words)."""
+        """The bitstream takes run arguments (CAPS bit25): start(programs, args=words)."""
         return bool((self.info.get("caps") or {}).get("args"))
 
     def start(self, programs, stream: tuple | None = None, args=None) -> None:
@@ -929,12 +929,12 @@ class BoardBackend:
         after this start, while the run is still far from its LM head. Needs a transport that
         allows DMA during a run (`streams`).
 
-        args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit24). The
+        args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit25). The
         program in IMEM stays there: starting the same `programs` object again (a program
         that takes its position as arguments) loads nothing, on a transport that keeps the
         device's state between runs (not SimTransport: it loads again)."""
         if args is not None and not self.args:
-            raise ConfigMismatch("this bitstream takes no run arguments (CAPS bit24 clear)")
+            raise ConfigMismatch("this bitstream takes no run arguments (CAPS bit25 clear)")
         res = self._resident
         if res is None or res[0] is not programs or not getattr(self.board.t, "keeps_state",
                                                                   True):

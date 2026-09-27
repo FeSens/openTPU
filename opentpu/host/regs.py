@@ -34,9 +34,9 @@ CAP_W4, CAP_PAIR, CAP_DSTEP = 16, 32, 64
 # CAPS bit7: CHASH, the hashed channel interleave (rtl/mem/otpu_axi_dram.sv): chunk m's two
 # beats swap channels when m has odd parity. Older bitstreams: plain interleave.
 CAP_CHASH = 0x80
-# CAPS bit24: ARG0..7 (0x60 + 4k) are the run's arguments, R8..R15 at the start (docs/isa.md
+# CAPS bit25: ARG0..7 (0x60 + 4k) are the run's arguments, R8..R15 at the start (docs/isa.md
 # "Arguments"): one program serves every decode position
-CAP_ARGS, R_ARG0 = 1 << 24, 0x60
+CAP_ARGS, R_ARG0 = 1 << 25, 0x60
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset

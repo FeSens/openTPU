@@ -127,7 +127,7 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, first, chunk):
 def test_tiny_lfm2_on_board_model(tiny, have_verilator, resident):
     """The board model through the host driver, through a full turn of the conv state ring:
     logits bit-identical to the ISA simulator. Resident: from position 2 on one program takes
-    the token and position in the ARG registers (CAPS bit24)."""
+    the token and position in the ARG registers (CAPS bit25)."""
     from opentpu.host.board import Board, BoardBackend, SimTransport
     _, W, spec = tiny
     cfg = board_config(DRAM_BYTES=1 << 23)

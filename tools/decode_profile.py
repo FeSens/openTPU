@@ -163,7 +163,7 @@ def main(argv=None):
                     help="a decode program per position (default: the resident one when the "
                          "bitstream takes run arguments)")
     ap.add_argument("--fake-no-args", action="store_true",
-                    help="--backend fake: a bitstream without run arguments (CAPS bit24)")
+                    help="--backend fake: a bitstream without run arguments (CAPS bit25)")
     ap.add_argument("--json")
     ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4"],
                     help="weight format of the layers (docs/quant.md)")
