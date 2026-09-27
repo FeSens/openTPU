@@ -296,11 +296,15 @@ class Slice:
         rows, KB = w[3] & 0xFFFF, w[3] >> 16
         srs, drs, es = w[4], w[5], w[6]
         row_mode = bool(ins.flags & I.F_ROW)
+        half = bool(ins.flags & I.F_HALF)
+        if half and not row_mode:
+            raise SimError("QST: HALF needs ROW mode")
         q, s = self._quant_groups(src, rows, KB, srs, row_mode)
-        baddr = dst + np.arange(rows)[:, None] * drs + np.arange(KB * cfg.D)[None, :] * es
+        ne = KB * cfg.D // 2 if half else KB * cfg.D   # HALF: the row's first half only
+        baddr = dst + np.arange(rows)[:, None] * drs + np.arange(ne)[None, :] * es
         if np.any(baddr < 0) or np.any(baddr >= cfg.DRAM_BYTES):
             raise SimError("QST: byte address out of range")
-        self.dram[baddr] = q.view(np.uint8)
+        self.dram[baddr] = q[:, :ne].view(np.uint8)
         if row_mode:
             self.m32[self._widx(sdst + 4 * np.arange(rows))] = s[:, 0].view(np.uint32)
         else:
