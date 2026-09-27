@@ -246,10 +246,10 @@ module otpu_mxu
   // ws6 feeds the first fp multiplier's B operand: a reset flop, never an SRL tap
   always_ff @(posedge clk) if (rst) ws6 <= '0; else if (en_c) ws6 <= ws5;
 
-  // dot-product latency S0 -> s4 (the tree: 4 register levels)
+  // dot-product latency S0 -> s4 (the tree: operand registers, then 4 register levels)
   localparam int NG = D / CL;
   localparam int TL = (NG <= 1) ? 0 : (NG <= 4) ? 1 : (NG <= 16) ? 2 : 3;
-  localparam int LDOT = (IMPL == 0) ? 4 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
+  localparam int LDOT = (IMPL == 0) ? 5 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
 
   // ---- S1 .. S4: the exact integer dot products of the chunk with every column's ACT block;
   // s4 (with m4, ws4) is the chunk's result LDOT - 4 cycles after S0 + 4.
@@ -271,19 +271,28 @@ module otpu_mxu
     logic [D-1:0][15:0]                         pr;
     logic [D/2-1:0][16:0]                       prq;
     logic signed [19:0] s3 [MCOLS][D/16];
+    // the operands registered once more (the DSPs' A/D and B input registers): the ACT RAM's
+    // block RAM output (1.8 ns clock-to-out) no longer runs through the pre-adder and the
+    // multiplier in the cycle it is read (the worst core_clk paths at 114 MHz)
+    logic [MCOLS*D*8-1:0] ar;
+    logic [D*8-1:0]       wr;
+    cm_t                  mr;
+    f32_t                 wsr;
     always_ff @(posedge clk) if (en_c) begin
+      ar <= a0; wr <= w0;
+      mr <= m0; wsr <= ws0;
       for (int p = 0; p < MCOLS / 2; p++) begin
         for (int i = 0; i < D; i++) begin
           logic signed [24:0] pa;
-          pa = $signed({a0[(2*p*D + i)*8 +: 8], 16'b0}) + 25'($signed(a0[((2*p+1)*D + i)*8 +: 8]));
-          pm[p][i] <= 34'(pa) * 34'($signed(w0[i*8 +: 8]));
+          pa = $signed({ar[(2*p*D + i)*8 +: 8], 16'b0}) + 25'($signed(ar[((2*p+1)*D + i)*8 +: 8]));
+          pm[p][i] <= 34'(pa) * 34'($signed(wr[i*8 +: 8]));
         end
         for (int q = 0; q < D / 2; q++)
           pq[p][q] <= pm[p][2*q+1] + (pm[p][2*q] + PK);
       end
       if (MCOLS % 2 == 1) begin
         for (int i = 0; i < D; i++)
-          pr[i] <= 16'(int'($signed(a0[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(w0[i*8 +: 8])));
+          pr[i] <= 16'(int'($signed(ar[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(wr[i*8 +: 8])));
         for (int q = 0; q < D / 2; q++)
           prq[q] <= 17'($signed(pr[2*q])) + 17'($signed(pr[2*q+1]));
       end
@@ -305,7 +314,7 @@ module otpu_mxu
           s4[j] <= t;
         end
       end
-      m1 <= m0; ws1 <= ws0;
+      m1 <= mr; ws1 <= wsr;
       m2 <= m1; ws2 <= ws1;
       m3 <= m2; ws3 <= ws2;
       m4 <= m3; ws4 <= ws3;
