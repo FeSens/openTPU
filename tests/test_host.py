@@ -694,6 +694,47 @@ def test_board_compiles_prefill_chunks_in_the_worker_process():
     eng.backend.close()
 
 
+def test_compile_worker_exits_with_its_parent(tmp_path):
+    """A parent that dies without shutting the pool down (killed, os._exit) takes its compile
+    worker with it (the worker would otherwise wait for work forever)."""
+    script = tmp_path / "child.py"
+    script.write_text(textwrap.dedent(f"""
+        import os, sys
+        sys.path.insert(0, {ROOT!r})
+        from opentpu import lens as L
+        from opentpu.host.board import BoardBackend, sim_config
+        from opentpu.host.fake import FakeTransport
+        from opentpu.llm.qwen3 import Engine
+
+        if __name__ == "__main__":
+            spec, W = L._tiny_qwen()
+            cfg = sim_config(spec, 256)
+            t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None)
+            eng = Engine(spec, W, cap=256, cfg=cfg,
+                         backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+            eng._ready.result()
+            print(*eng._pool._processes, flush=True)
+            os._exit(0)
+    """))
+    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
+                         timeout=120)
+    pids = [int(p) for p in out.stdout.split()]
+    assert pids, out.stderr
+    deadline = time.time() + 10
+    alive = pids
+    while alive and time.time() < deadline:
+        time.sleep(0.2)
+        alive = [p for p in alive if _alive(p)]
+    assert not alive
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
 def test_poll_with_an_expected_wait_sleeps_then_reads_back_to_back():
     t = FakeTransport(devname=None, run_s=0.05)
     b = Board(t)

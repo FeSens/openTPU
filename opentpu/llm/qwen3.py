@@ -697,6 +697,22 @@ _WORKER: tuple | None = None                # (image, block) in the compile work
 def _worker_init(spec, cfg, cap, batch, rows, block) -> None:
     global _WORKER
     _WORKER = (spec.image(cfg, cap, batch, rows), block)
+    _exit_with_parent()
+
+
+def _exit_with_parent() -> None:
+    """A worker whose parent died (killed, or os._exit) would wait for work forever: it holds
+    its own end of the task pipe, so it never sees EOF. A watcher thread ends it."""
+    import os
+    import threading
+    import time
+    parent = os.getppid()
+
+    def watch():
+        while os.getppid() == parent:
+            time.sleep(1.0)
+        os._exit(0)
+    threading.Thread(target=watch, daemon=True, name="otpu-parent-watch").start()
 
 
 def _worker_ready() -> bool:
