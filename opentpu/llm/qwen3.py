@@ -767,8 +767,8 @@ def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int):
 
 def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int):
     """The next prefill run of sequence `seq` at position p0: up to n of the `left` remaining
-    prompt tokens, as many as fit TMEM (at most `fit` rows) and the instruction memory
-    (attention is unrolled per row, head and block: the program grows with the context).
+    prompt tokens, as many as fit TMEM and ACT RAM (at most `fit` rows) and the instruction
+    memory (attention is unrolled per row, head and block: the program grows with the context).
     Only the prompt's last run computes logits (its last row). Returns (R, compile_rows'
     programs or None for R = 1, the rows that fit TMEM as far as known)."""
     imem = image.cfg.IMEM_WORDS
@@ -778,7 +778,7 @@ def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int)
             progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
                                        [n - 1] if n == left else [], block)
         except CompileError as e:
-            if "TMEM" not in str(e):
+            if "TMEM" not in str(e) and "ACT RAM full" not in str(e):
                 raise
             n = fit = n - 1
             continue

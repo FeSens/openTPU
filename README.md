@@ -126,10 +126,10 @@ The machine is deliberately simple:
   16-entry window and tracks what each one reads and writes. An instruction starts as soon as
   nothing older conflicts with it, so the units overlap on their own.
 - **Numerics.** Weights, MXU activations and the KV cache are int8 with an fp32 scale per
-  block. Weights can also be 4-bit (FP4 or int4 elements with a two-level scale per block),
-  about half the DRAM bytes per token; see [docs/quant.md](docs/quant.md). Everything else is fp32 with round-to-nearest-even and flush-to-zero. exp2, recip
-  and rsqrt are fixed sequences of adds and multiplies, so Python, the simulator and the RTL
-  agree bit for bit.
+  block; weights can also be 4-bit (FP4 or int4 elements with a two-level scale per block,
+  about half the DRAM bytes per token: [docs/quant.md](docs/quant.md)). Everything else is
+  fp32 with round-to-nearest-even and flush-to-zero. exp2, recip and rsqrt are fixed sequences
+  of adds and multiplies, so Python, the simulator and the RTL agree bit for bit.
 - **Decode is memory-bound.** A token streams every weight from DRAM once, so most of the
   performance work is about keeping DRAM busy.
 

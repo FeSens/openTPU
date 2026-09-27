@@ -191,11 +191,13 @@ def bandwidth(transport, nbytes: int) -> tuple[float, float]:
     return w, r
 
 
-def model_check(t, cfg, model: str, tokens: int, sim: bool) -> tuple[bool, str]:
+def model_check(t, cfg, model: str, tokens: int, sim: bool, wformat: str = "int8",
+                head_format: str | None = None) -> tuple[bool, str]:
     """Greedy decoding of "What is the capital of France?" on the card (transport t, its
     configuration cfg) against the ISA simulator, token for token; the prompt runs in chunks
     (Engine.prefill_chunks) on both. sim: t is a small board
-    model; the model gets its own, sized to the model's DRAM."""
+    model; the model gets its own, sized to the model's DRAM. wformat / head_format: the
+    weight formats of the layers and of the LM head (Engine)."""
     from opentpu.llm import load_spec, model_dir
     from opentpu.llm.qwen3 import Engine, load_weights
     from transformers import AutoTokenizer
@@ -212,9 +214,11 @@ def model_check(t, cfg, model: str, tokens: int, sim: bool) -> tuple[bool, str]:
     cap = 256
     rcfg = sim_config(spec, cap, cfg)                     # same layout, DRAM sized to the model
     tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if sim else t
+    fmt = {"wformat": wformat, "head_format": head_format}
     dev = Engine(spec, W, cap=cap, cfg=rcfg if sim else cfg,
-                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tq, model=path.name))
-    ref = Engine(spec, W, cap=cap, cfg=rcfg)
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tq, model=path.name),
+                 **fmt)
+    ref = Engine(spec, W, cap=cap, cfg=rcfg, **fmt)
     t0 = time.time()
     got = dev.generate(ids, max_new=tokens)
     dt = time.time() - t0

@@ -849,9 +849,12 @@ class Builder:
         # column reuse: a tile of at most MCOLS/2 rows is written twice (no extra cycles), so a
         # 4-bit MM can feed the odd K-blocks to the second half of the columns
         pair = self.cfg.PAIR and 2 * x.rows <= self.cfg.MCOLS
+        st = Stationary(x, chunks, KB, owners, pair)
         for m0 in builtins.range(0, x.rows, self.cfg.MCOLS):
             mc = min(self.cfg.MCOLS, x.rows - m0)
             ab, owner = self.act_alloc(KB)
+            for k in builtins.range(ab, ab + KB):   # live now: the next chunk must not take it
+                self.act_live[k] = weakref.ref(st)
             self.emit(I.qact(src + m0 * rs, mc, ab, KB, rs, cscale=cs,
                              rscale=None if rsc is None else rsc + m0, dup=pair,
                              comment="quantize -> ACT" + (" x col scale" if cs is not None else "")
@@ -859,11 +862,7 @@ class Builder:
                              + (" dup" if pair else "")))
             chunks.append((ab, mc))
             owners.append(owner)
-        st = Stationary(x, chunks, KB, owners, pair)
         st.loop = self.loops[-1].loop if self.loops else None     # created in this loop body
-        for ab, _ in chunks:
-            for k in builtins.range(ab, ab + KB):
-                self.act_live[k] = weakref.ref(st)
         return st
 
     def fuse_cscale(self, x: Tile):
