@@ -22,7 +22,8 @@ module otpu_top
   parameter int MXU_CL     = 16,
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer
-  parameter int AXI        = 0
+  parameter int AXI        = 0,
+  parameter int AXI_BL     = 8        // AXI adapter: port B read burst, beats (timing only)
 ) (
   input  logic          clk,
   input  logic          sys_rst,
@@ -75,7 +76,7 @@ module otpu_top
       logic [1:0][63:0] wstrb;
       logic [1:0][1:0] bresp, rresp;
       logic axi_err;
-      otpu_axi_dram #(.D(D)) u_adapt (
+      otpu_axi_dram #(.D(D), .BL(AXI_BL)) u_adapt (
         .clk, .rst(sys_rst),
         .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
         .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,

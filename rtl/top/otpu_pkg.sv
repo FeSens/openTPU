@@ -287,6 +287,7 @@ package otpu_pkg;
   typedef struct packed {
     seq_ev_t                 sq;
     logic                    mac;       // the MXU consumed a weight chunk
+    logic                    starve;    // the MXU had chunks to consume but none had arrived
     logic                    deny;      // a unit with TMEM requests was not granted
     logic                    u_mxu;     // MXU instruction ended: starve, bp, frz, deny
     logic [3:0][31:0]        u_mxu_v;   // [0] starve ... [3] deny

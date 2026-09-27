@@ -426,20 +426,21 @@ def test_axi_read_bursts(have_verilator, stall, arc):
 
 
 def test_axi_burst_throughput(have_verilator):
-    """A long load at a cost of 16 cycles per read transaction: single-beat reads would take 16
-    cycles per chunk; in bursts the load keeps the pace it has with no cost (4 cycles per chunk,
-    TMEM's 8 lanes)."""
+    """A long load at a cost of 16 cycles per read transaction: single-beat reads (AXI_BL=1) take
+    16 cycles per chunk; in bursts the load keeps the pace it has with no cost (4 cycles per
+    chunk, TMEM's 8 lanes)."""
     cfg = Config(S=1, D=128, ACT_BLOCKS=16)
     n = 2000 * cfg.D // 4
     prog = [I.ld(0, 0, n), I.halt()]
     img = np.random.default_rng(8100).integers(0, 256, 1 << 20, dtype=np.uint8)
     cyc = {}
-    for arc in (0, 16):
+    for arc, bl in ((0, 8), (16, 8), (16, 1)):
         _, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=0,
-                                  arc=arc, uarch=rtlsim.BOARD_UARCH)
+                                  arc=arc, uarch={**rtlsim.BOARD_UARCH, "AXI_BL": bl})
         assert np.array_equal(tmems[0][:n], img[:4 * n].view("<u4"))
-        cyc[arc] = st["cycles"]
-    assert cyc[16] < 1.1 * cyc[0], cyc
+        cyc[arc, bl] = st["cycles"]
+    assert cyc[16, 8] < 1.1 * cyc[0, 8], cyc
+    assert cyc[16, 1] > 3 * cyc[0, 8], cyc
 
 
 def test_tmem_random_traffic(have_verilator):

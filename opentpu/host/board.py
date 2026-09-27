@@ -276,9 +276,9 @@ def rates(a: dict, b: dict, core_khz: int | None) -> dict:
     (beats x 64 B over the device time, which needs CORE_KHZ) and instructions per cycle."""
     dt = b["UPTIME"] - a["UPTIME"]
     sec = dt / (core_khz * 1e3) if core_khz else None
-    d = {k: b[k] - a[k] for k in R.COUNTERS}
+    d = {k: b[k] - a[k] for k in R.COUNTERS if k in a and k in b}
     out = {"cycles": dt, "seconds": sec,
-           "util": {k: d[k] / dt if dt else 0.0 for k in R.COUNTERS
+           "util": {k: d[k] / dt if dt else 0.0 for k in d
                     if k not in R.EVENTS and k != "UPTIME"},
            "dram_beats": d["DRAM_RD"] + d["DRAM_WR"],
            "ipc": d["INSTR"] / dt if dt else 0.0,
@@ -341,20 +341,24 @@ class Board:
     def v2(self) -> bool:
         return (self._info or self.info())["regmap"] >= 2
 
-    SNAP_OFFS = [o + k for o in R.COUNTERS.values() for k in (0, 4)] + [R.R_SNAP]
+    @staticmethod
+    def snap_offs(regmap: int) -> list[int]:
+        """The registers a snapshot reads: the map's counter shadows (low, high), then SNAP."""
+        return [o + k for o in R.counters(regmap).values() for k in (0, 4)] + [R.R_SNAP]
 
     def snapshot(self) -> dict | None:
         """SNAP, then the free-running counters' shadows (one consistent instant): {name: count}
         plus "snaps" (SNAP's read value). None on a register map 1 bitstream."""
         if not self.v2:
             return None
+        rm = (self._info or self.info())["regmap"]
         self.t.reg_write(R.R_SNAP, 1)
-        return self.snap_dict(self.t.reg_read_many(self.SNAP_OFFS))
+        return self.snap_dict(self.t.reg_read_many(self.snap_offs(rm)), rm)
 
     @staticmethod
-    def snap_dict(v: list[int]) -> dict:
-        """Values read at SNAP_OFFS -> {counter: 64-bit count, "snaps": n}."""
-        d = {n: v[2 * i] | v[2 * i + 1] << 32 for i, n in enumerate(R.COUNTERS)}
+    def snap_dict(v: list[int], regmap: int) -> dict:
+        """Values read at snap_offs(regmap) -> {counter: 64-bit count, "snaps": n}."""
+        d = {n: v[2 * i] | v[2 * i + 1] << 32 for i, n in enumerate(R.counters(regmap))}
         d["snaps"] = v[-1]
         return d
 

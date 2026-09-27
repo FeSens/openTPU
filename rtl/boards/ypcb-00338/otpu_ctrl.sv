@@ -1,5 +1,5 @@
 // Host control registers (AXI4-Lite slave, reached from the host through the PCIe bridge's
-// BAR). All in the core clock domain. Register map version 2 (docs/observability.md: the
+// BAR). All in the core clock domain. Register map version 3 (docs/observability.md: the
 // contract with the host); 12 address bits are decoded (the map repeats every 4 KiB).
 //
 //   0x00 ID        RO  0x4F545055 ("OTPU")
@@ -21,7 +21,7 @@
 //   0x30 SW_WR     RO  scalar (QST) write requests taken
 //   0x34 B_STALL   RO  cycles a port B request waited for the memory
 //   0x38 SCRATCH   RW  (host bring-up test)
-//   0x3C REGMAP    RO  register map version (2)
+//   0x3C REGMAP    RO  register map version (3)
 //   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, [15:8] log2(trace depth),
 //                      [23:16] log2(P/Q window cycles)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
@@ -30,7 +30,8 @@
 //   0x50 SNAP      W   latch every free-running counter into its shadow; R: snapshots taken
 //   0x100 + 8k     RO  free-running counter k's shadow (64 bits, low word first), k =
 //                      UPTIME RUNNING MXU_BUSY MXU_MAC VPU_BUSY QNT_BUSY DMA_BUSY TMEM_DENY
-//                      DRAM_RD DRAM_WR DRAM_WAIT INSTR; cleared by reset only
+//                      DRAM_RD DRAM_WR DRAM_WAIT INSTR MXU_STARVE (version 3); cleared by
+//                      reset only
 //   0x200 TRACE_CTRL RW  bit0 ENABLE (record while RUN), bit1 CLEAR (write 1), bit2 STOP_WHEN_FULL,
 //                        bit3 BUSY (read only: events not yet in the buffer)
 //   0x204 TRACE_COUNT RO records written since the clear (saturating)
@@ -87,6 +88,7 @@ module otpu_ctrl #(
   input  logic [11:0] temp,
   // activity for the free-running counters (any registered or combinational source)
   input  logic        mxu_busy, mxu_mac, vpu_busy, qnt_busy, dma_busy, tmem_deny,
+  input  logic        mxu_starve,        // the MXU streams a command and has no chunk
   input  logic [1:0]  dram_rd, dram_wr,  // 64-byte beats this cycle
   input  logic        dram_wait,
   input  logic [1:0]  instr,             // instructions retired this cycle
@@ -100,7 +102,7 @@ module otpu_ctrl #(
   input  logic        tr_busy,
   input  logic [63:0] tr_rdata
 );
-  localparam int NFR = 12;
+  localparam int NFR = 13;
   localparam logic [31:0] CAPS = {8'd0, 8'($clog2(PQ_WIN)),
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
                                   6'd0, HAS_TEMP, TRACE_DEPTH != 0};
@@ -188,6 +190,7 @@ module otpu_ctrl #(
     fr_inc[9]  <= dram_wr;
     fr_inc[10] <= 2'(dram_wait);
     fr_inc[11] <= instr;
+    fr_inc[12] <= 2'(mxu_starve);
     if (rst) begin
       for (int k = 0; k < NFR; k++) begin fr[k] <= '0; fr_s[k] <= '0; fr_inc[k] <= '0; end
       n_snap <= '0;
@@ -236,7 +239,7 @@ module otpu_ctrl #(
       10'h00C: r_d <= n_awr;
       10'h00D: r_d <= n_bst;
       10'h00E: r_d <= scratch;
-      10'h00F: r_d <= 32'd2;
+      10'h00F: r_d <= 32'd3;
       10'h010: r_d <= CAPS;
       10'h011: r_d <= 32'(CORE_KHZ);
       10'h012: r_d <= BUILD_ID;

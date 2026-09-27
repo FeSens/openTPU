@@ -233,7 +233,8 @@ buffer); `opentpu/host/regs.py` has the same as constants. The driver's sequence
 6. `CTRL = 0`. `STATUS.ERROR` (illegal instruction) and `STATUS.AXI_ERR` (a DRAM access got an
    error response) make the driver raise.
 
-**Version 1 and version 2 bitstreams.** `Board.info()` reads REGMAP. A version 1 bitstream has
+**Version 1, 2 and 3 bitstreams.** `Board.info()` reads REGMAP. Version 3 adds the MXU_STARVE
+counter: on a version 2 bitstream the snapshots, `rates()` and `otpu-smi` leave it out. A version 1 bitstream has
 no such register (it reads `0xDEADBEEF`, or 0): the driver then never touches the version 2
 offsets (version 1 decodes 8 address bits, so 0x100 and up alias onto the low registers).
 Everything but the counters, the trace and the temperature works: `snapshot()` returns None,
@@ -283,12 +284,12 @@ shown as stale.
 $ otpu-smi
 otpu-smi 0.1.0                                                       2026-09-24 08:08:46
 +--------------------------------------------------------------------------------------+
-| /dev/xdma0       openTPU D=128 MCOLS=2 LANES=8  100.0 MHz  build 1234abcd  regmap v2 |
+| /dev/xdma0       openTPU D=128 MCOLS=2 LANES=8  100.0 MHz  build 1234abcd  regmap v3 |
 | link ok (2.5 GT/s PCIe x8)   DDR3 calib ch0 ok ch1 ok   temp 34.5 C   running        |
 | power 4.63 W est.   DRAM 900 / 4,096 MiB (KV 12 / 224)   DRAM bw 4.61 GB/s           |
 +--------------------------------------------------------------------------------------+
 | util  RUN 80%  MXU 60%  MAC 50%  VPU 12%  QNT 5%  DMA 3%                             |
-| stall TMEM-deny 1%  DRAM-wait 20%   IPC 0.005   over 200 ms                          |
+| stall TMEM-deny 1%  DRAM-wait 20%  MXU-starve 8%   IPC 0.005   over 200 ms           |
 | pid 53814  otpu-chat --backend board                                                 |
 |       model Qwen3-0.6B   tokens 57   12.10 tok/s wall   device 17.86 tok/s           |
 +--------------------------------------------------------------------------------------+
@@ -308,8 +309,8 @@ Fields: the bitstream (VERSION, CORE_KHZ, BUILD_ID, REGMAP), the link (ID regist
 speed and width from sysfs), DDR3 calibration (STATUS bits 5, 6), temperature (TEMP, measured
 by the XADC), the DRAM used / total and the KV cache (from the status file), the DRAM bandwidth
 ((DRAM_RD + DRAM_WR) deltas x 64 B over the UPTIME delta / CORE_KHZ), utilization (the deltas of
-RUNNING, MXU_BUSY, MXU_MAC -- MAC utilization --, VPU_BUSY, QNT_BUSY, DMA_BUSY, TMEM_DENY and
-DRAM_WAIT over the UPTIME delta, between two SNAPs) and the owning process.
+RUNNING, MXU_BUSY, MXU_MAC -- MAC utilization --, VPU_BUSY, QNT_BUSY, DMA_BUSY, TMEM_DENY,
+DRAM_WAIT and, with register map 3, MXU_STARVE over the UPTIME delta, between two SNAPs) and the owning process.
 
 **Power** is an estimate (the card cannot measure it): fixed + sum over units of the unit's
 dynamic power x its utilization, from Vivado's `report_power` of the build. `build.tcl` writes

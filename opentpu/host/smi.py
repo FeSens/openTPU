@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[2]
 POWER_JSON = ROOT / "build" / "vivado" / "reports" / "power.json"
 UTIL_SHOW = [("RUNNING", "RUN"), ("MXU_BUSY", "MXU"), ("MXU_MAC", "MAC"), ("VPU_BUSY", "VPU"),
              ("QNT_BUSY", "QNT"), ("DMA_BUSY", "DMA"), ("TMEM_DENY", "TMEM-deny"),
-             ("DRAM_WAIT", "DRAM-wait")]
+             ("DRAM_WAIT", "DRAM-wait"), ("MXU_STARVE", "MXU-starve")]
 W = 88                                      # table width
 
 
@@ -140,7 +140,7 @@ def query_sim(interval_cycles: int = 0) -> dict:
     snap = []
     if b.v2:
         t.reg_write(R.R_SNAP, 1)
-        snap.append([t.queue_read(o) for o in Board.SNAP_OFFS])
+        snap.append([t.queue_read(o) for o in Board.snap_offs(i["regmap"])])
     if interval_cycles:
         t.wait_cycles(interval_cycles)
     else:
@@ -149,7 +149,7 @@ def query_sim(interval_cycles: int = 0) -> dict:
         t.poll(R.R_STATUS, R.ST_HALTED, R.ST_HALTED)
     if b.v2:
         t.reg_write(R.R_SNAP, 1)
-        snap.append([t.queue_read(o) for o in Board.SNAP_OFFS])
+        snap.append([t.queue_read(o) for o in Board.snap_offs(i["regmap"])])
     run = [t.queue_read(o) for o in (R.R_CYCLES, R.R_CYCLES_HI, R.R_ICOUNT)]
     t.flush()
     if not interval_cycles:
@@ -157,7 +157,7 @@ def query_sim(interval_cycles: int = 0) -> dict:
         d["run"] = {"program": "checks.demo_program", "cycles": v[0] | v[1] << 32,
                     "instructions": v[2], "of": len(prog)}
     if b.v2:
-        s0, s1 = (Board.snap_dict([t.results[k] for k in ix]) for ix in snap)
+        s0, s1 = (Board.snap_dict([t.results[k] for k in ix], i["regmap"]) for ix in snap)
         _derive(d, s0, s1, i["core_khz"])
     else:
         d.update(counters=None, util=None, sample=None, dram_gbs=None)
@@ -211,7 +211,7 @@ def table(devs: list[dict]) -> str:
         if u:
             smp = d["sample"]
             win = f"{smp['seconds'] * 1e3:.0f} ms" if smp["seconds"] else f"{smp['cycles']} cycles"
-            cell = [f"{lbl} {_pct(u[k])}" for k, lbl in UTIL_SHOW]
+            cell = [f"{lbl} {_pct(u[k])}" for k, lbl in UTIL_SHOW if k in u]
             out.append(_row("util  " + "  ".join(cell[:6])))
             out.append(_row("stall " + "  ".join(cell[6:]) + f"   IPC {smp['ipc']:.3f}   "
                             f"over {win}"))

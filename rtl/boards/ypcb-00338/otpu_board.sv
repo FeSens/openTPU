@@ -26,7 +26,8 @@ module otpu_board #(
   parameter logic [31:0] BUILD_ID = 32'h0,
   parameter int TRACE_DEPTH = 16384,   // trace records (a power of two; 0: no trace buffer)
   parameter int TRACE_QD    = 32,      // trace capture queue (cycles with events)
-  parameter int PQ_WIN      = 1024     // cycles per P/Q counter window
+  parameter int PQ_WIN      = 1024,    // cycles per P/Q counter window
+  parameter int AXI_BL      = 8        // port B read burst, beats (1: single-beat reads)
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
@@ -188,7 +189,8 @@ module otpu_board #(
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
     .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(b_req && !b_rdy),
     .temp_v, .temp(temp_q),
-    .mxu_busy(pf.sq.busy[U_MXU]), .mxu_mac(pf.mac), .vpu_busy(pf.sq.busy[U_VPU]),
+    .mxu_busy(pf.sq.busy[U_MXU]), .mxu_mac(pf.mac), .mxu_starve(pf.starve),
+    .vpu_busy(pf.sq.busy[U_VPU]),
     .qnt_busy(pf.sq.busy[U_Q]), .dma_busy(pf.sq.busy[U_DMA]), .tmem_deny(pf.deny),
     .dram_rd(2'(rvalid[0] && rready[0]) + 2'(rvalid[1] && rready[1])),
     .dram_wr(2'(wvalid[0] && wready[0]) + 2'(wvalid[1] && wready[1])),
@@ -244,7 +246,7 @@ module otpu_board #(
   logic [1:0][511:0] wdata, rdata;
   logic [1:0][63:0]  wstrb;
   logic [1:0][1:0]   bresp, rresp;
-  otpu_axi_dram #(.D(D), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
+  otpu_axi_dram #(.D(D), .BL(AXI_BL), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
     .clk, .rst,
     .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
