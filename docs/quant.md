@@ -22,8 +22,9 @@ In short:
   peak bandwidth), 1.27x at 80% and 1.02x at 100%. At high DRAM rates the MXU's one block per
   cycle becomes the limit (21.5 tokens/s at an assumed 100 MHz).
 - **Accuracy cost.** On these small models (0.2 to 0.8 B parameters) 4-bit weights cost
-  noticeably more than int8: on Qwen3-0.6B perplexity goes from 23.5 to 28.3 on our book sample
-  (int8: 23.5), and the next-token distribution moves by a mean KL of 0.19 nats (int8: 0.007).
+  noticeably more than int8: on Qwen3-0.6B the perplexity of our book sample is 28.3, against
+  23.5 in fp32 and int8, and the next-token distribution moves by a mean KL of 0.19 nats (int8:
+  0.007).
   Keeping the LM head or the attention projections in int8 recovers part of it (below).
 
 Everything here is measured in simulation or estimated with yosys. Nothing has run on the card.
@@ -282,16 +283,17 @@ quantizers (`quantize_w4`, `quantize_mxu`) and the reference formats of the surv
 
 ## Measured speed (simulated)
 
-Qwen3-0.6B decode, one sequence at context 128, from `tools/bench_llm.py --batches 1 --ctx 128`
+Qwen3-0.6B decode, one sequence at context 128, from `tools/bench_llm.py --bw 25,80,100
+--batches 1 --ctx 128 --wformat fp4 [--head-format int8]`
 (the RTL of the board configuration, MCOLS = 2, the AXI memory path at `bw` percent of peak
 bandwidth; random weights, since the timing does not depend on them). Cycles per token; tokens
 per second at an assumed 100 MHz, without host time.
 
 | bw | int8 | fp4 | fp4, int8 LM head |
 |---:|---:|---:|---:|
-| 25% | 19,766,594 (5.06 tok/s) | 10,453,874 (9.57 tok/s, 1.89x) | 12,886,087 (7.76 tok/s, 1.53x) |
-| 80% | 6,201,475 (16.13 tok/s) | 4,890,475 (20.45 tok/s, 1.27x) | 5,247,960 (19.06 tok/s, 1.18x) |
-| 100% | 4,978,229 (20.09 tok/s) | 4,888,951 (20.45 tok/s, 1.02x) | 4,932,311 (20.27 tok/s, 1.01x) |
+| 25% | 19,766,322 (5.06 tok/s) | 10,454,570 (9.57 tok/s, 1.89x) | 12,886,700 (7.76 tok/s, 1.53x) |
+| 80% | 6,198,609 (16.13 tok/s) | 4,888,972 (20.45 tok/s, 1.27x) | 5,245,838 (19.06 tok/s, 1.18x) |
+| 100% | 4,977,860 (20.09 tok/s) | 4,887,335 (20.46 tok/s, 1.02x) | 4,930,877 (20.28 tok/s, 1.01x) |
 
 At 25% the 4-bit token is DRAM-bound (97% of the DRAM roofline); at 80% and 100% it runs at the
 MXU's one block per cycle (95% of that bound). On the card, where the int8 token takes 20.7 M
