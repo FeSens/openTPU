@@ -216,7 +216,7 @@ def test_selftest_stops_at_config_on_a_stale_environment(no_cfg_env, capsys):
 
 
 def test_4bit_image_needs_a_4bit_bitstream(run_dir):
-    """An Engine with 4-bit weights refuses a bitstream without 4-bit MM support (CAPS bit2)."""
+    """An Engine with 4-bit weights refuses a bitstream without 4-bit MM support (CAPS bit4)."""
     from opentpu import lens as L
     from opentpu.host.board import ConfigMismatch, sim_config
     from opentpu.llm.qwen3 import Engine
