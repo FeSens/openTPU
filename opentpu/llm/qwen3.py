@@ -664,7 +664,8 @@ class Engine:
     backend: "isa" (default), or any object with write/read/run like IsaBackend (the RTL
     simulator and the PCIe board driver implement the same interface). Optional backend hooks:
     attach(engine), called once the engine exists; prepare(programs), called on the compile
-    thread with every precompiled program (the board assembles it there).
+    thread with every precompiled program (the board assembles it there); start(programs) and
+    wait() -> stats, the two halves of run() (step compiles the next program in between).
 
     pipeline: step() compiles the next position's program (it depends on the position only,
     not on the token) on a worker thread while the backend runs the current one. Default: on
@@ -743,13 +744,22 @@ class Engine:
         io, S = self.image.io, self.cfg.S
         x = F.ftz(self.embed[token].astype(np.float32))
         cos, sin = rope_tables(self.spec, self.pos)
+        if io["cos"] == io["x"] + x.nbytes and io["sin"] == io["cos"] + cos.nbytes:
+            parts = [(io["x"], np.concatenate([x, cos, sin]))]      # one transfer
+        else:
+            parts = [(io["x"], x), (io["cos"], cos), (io["sin"], sin)]
         for s in range(S):
-            self.backend.write(s, io["x"], x)
-            self.backend.write(s, io["cos"], cos)
-            self.backend.write(s, io["sin"], sin)
+            for a, v in parts:
+                self.backend.write(s, a, v)
         progs = self._program(self.pos)
-        self._prefetch(self.pos + 1)
-        st = self.backend.run(progs)
+        start = getattr(self.backend, "start", None)
+        if start is None:
+            self._prefetch(self.pos + 1)
+            st = self.backend.run(progs)
+        else:                               # compile while the device runs, not while the
+            start(progs)                    # host copies the program
+            self._prefetch(self.pos + 1)
+            st = self.backend.wait()
         self.stats.append(st)
         v_loc = self.image.v_loc
         parts = [self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc).view(np.float32)

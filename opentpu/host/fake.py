@@ -137,6 +137,6 @@ class FakeTransport:
     def reg_read_many(self, offs):
         return [self.reg_read(o) for o in offs]
 
-    def poll(self, off, mask, val, timeout=600.0):
+    def poll(self, off, mask, val, timeout=600.0, expect=0.0):
         from .board import XdmaTransport
-        return XdmaTransport.poll(self, off, mask, val, timeout)
+        return XdmaTransport.poll(self, off, mask, val, timeout, expect)

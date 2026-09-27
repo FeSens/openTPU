@@ -142,6 +142,31 @@ class Turn:
                 f"{mc}; context {self.context}/{self.cap}{end}]")
 
 
+class Detok:
+    """Incremental detokenization: add(token) -> the text it adds to the reply. Each call
+    decodes only the tokens since the last emitted text, from one token earlier (the prefix):
+    new text = decode(prefix..) minus decode(prefix..read), which keeps the spaces and merges
+    that depend on the token before. Text that ends in an incomplete UTF-8 sequence (U+FFFD)
+    is held back until the rest of the character arrives."""
+
+    def __init__(self, tok, ids=()):
+        """ids: the reply so far (resume), already shown."""
+        self.tok, self.ids = tok, list(ids)
+        self.prefix, self.read = max(0, len(self.ids) - 1), len(self.ids)
+
+    def _dec(self, ids) -> str:
+        return self.tok.decode(ids, skip_special_tokens=True)
+
+    def add(self, t: int) -> str:
+        self.ids.append(t)
+        before = self._dec(self.ids[self.prefix:self.read])
+        now = self._dec(self.ids[self.prefix:])
+        if len(now) > len(before) and not now.endswith("\ufffd"):
+            self.prefix, self.read = self.read, len(self.ids)
+            return now[len(before):]
+        return ""
+
+
 @dataclass
 class Session:
     turns: int = 0
@@ -199,7 +224,9 @@ class Chat:
 
     def ask(self, text: str, on_update=None, stop=lambda: False) -> tuple[str, Turn]:
         """One turn. on_update(delta_text, turn) after every prefill step (delta "") and every
-        generated token; stop() is polled between steps (the reply so far is kept)."""
+        generated token (Detok: text that ends in an incomplete character comes with a later
+        token, or in one last call after the reply); stop() is polled between steps (the reply
+        so far is kept)."""
         on_update = on_update or (lambda delta, turn: None)
         t0 = time.perf_counter()
         turn = Turn(clock_mhz=self.clock_mhz, cap=self.eng.cap, context=self.eng.pos)
@@ -252,7 +279,8 @@ class Chat:
         """Generate after `out` (the reply so far) from `logits`; returns the whole reply."""
         k1 = len(self.eng.stats)
         out, n0, t_first = list(out), len(out), None
-        shown = self.tok.decode(out, skip_special_tokens=True)
+        detok = Detok(self.tok, out)
+        shown = self.tok.decode(out, skip_special_tokens=True) if out else ""
         while logits is not None and not turn.end:
             if len(out) - n0 >= self.max_new:
                 turn.end = "max_new"
@@ -266,8 +294,8 @@ class Chat:
             if t_first is None:
                 t_first, turn.ttft_s = now, now - t0
             turn.gen_tokens, turn.decode_s = len(out) - n0, now - t_first
-            text_now = self.tok.decode(out, skip_special_tokens=True)
-            delta, shown = text_now[len(shown):], text_now
+            delta = detok.add(t)
+            shown += delta
             on_update(delta, turn)
             if self.eng.pos >= self.eng.cap:
                 turn.end = "cap"
@@ -278,11 +306,14 @@ class Chat:
             logits = self.eng.step(t)
             self.fed.append(t)
             turn.decode_steps = len(self.eng.stats) - k1
-            turn.decode_cycles = self._cycles(k1)
+            turn.decode_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
             turn.context = self.eng.pos
         self._next = logits if turn.end == "max_new" else None
         self._reply = out
-        return shown
+        reply = self.tok.decode(out, skip_special_tokens=True)
+        if len(reply) > len(shown) and reply.startswith(shown):
+            on_update(reply[len(shown):], turn)       # a held-back incomplete character
+        return reply
 
     def ask_plain(self, text: str | None, stream=sys.stdout) -> str:
         """ask() (resume() for None) printing the reply as it streams, then the turn's
