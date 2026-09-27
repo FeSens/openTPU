@@ -23,6 +23,7 @@ from opentpu.runtime import compile_kernel
 from test_kernels import attn_args, mlp_args
 
 R_REGMAP, R_CAPS, R_CORE_KHZ, R_BUILD_ID, R_TEMP, R_SNAP = 0x3C, 0x40, 0x44, 0x48, 0x4C, 0x50
+R_DDR_MTS = 0x54
 COUNTERS = ["UPTIME", "RUNNING", "MXU_BUSY", "MXU_MAC", "VPU_BUSY", "QNT_BUSY", "DMA_BUSY",
             "TMEM_DENY", "DRAM_RD", "DRAM_WR", "DRAM_WAIT", "INSTR", "MXU_STARVE"]
 TB_BUILD_ID, TB_TEMP = 0x0B0A4D00, 0xA1A        # tb_board.sv
@@ -73,18 +74,18 @@ def run_traced(t: SimTransport, img, prog: list, trace_ctrl: int = TRACE_ENABLE,
 # ------------------------------------------------------------------------------ registers
 def test_register_map(have_verilator):
     t = SimTransport(ch_bytes=1 << 20, params={"TRACE_DEPTH": 1024, "PQ_WIN": 256,
-                                               "CORE_KHZ": 75294})
+                                               "CORE_KHZ": 75294, "DDR_MTS": 1066})
     t.reg_write(R_SCRATCH, 0x1234_5678)
     t.reg_write(R_TRACE_CTRL, TRACE_ENABLE | TRACE_STOP_WHEN_FULL)
     t.reg_write(R_TRACE_ADDR, 77)
-    ident, ver, regmap, caps, khz, bid, temp, snap, scr, tctl, taddr, bad = t.reg_read_many(
-        [0x0, R_VERSION, R_REGMAP, R_CAPS, R_CORE_KHZ, R_BUILD_ID, R_TEMP, R_SNAP, R_SCRATCH,
-         R_TRACE_CTRL, R_TRACE_ADDR, 0x0FC])
+    ident, ver, regmap, caps, khz, bid, temp, snap, mts, scr, tctl, taddr, bad = t.reg_read_many(
+        [0x0, R_VERSION, R_REGMAP, R_CAPS, R_CORE_KHZ, R_BUILD_ID, R_TEMP, R_SNAP, R_DDR_MTS,
+         R_SCRATCH, R_TRACE_CTRL, R_TRACE_ADDR, 0x0FC])
     assert ident == 0x4F545055
     assert ver == (CFG.D << 16) | (CFG.MCOLS << 8) | CFG.LANES
     assert regmap == 3
-    assert caps == (8 << 16) | (10 << 8) | 0b111    # log2 256, log2 1024, i2c, temp, trace
-    assert khz == 75294 and bid == TB_BUILD_ID
+    assert caps == (8 << 16) | (10 << 8) | 0b1111   # log2 256, log2 1024, ddr, i2c, temp, trace
+    assert khz == 75294 and bid == TB_BUILD_ID and mts == 1066
     assert temp == (1 << 31) | TB_TEMP
     assert 44.5 < TB_TEMP * 503.975 / 4096 - 273.15 < 45.5
     assert snap == 0 and scr == 0x1234_5678 and taddr == 77
@@ -94,9 +95,9 @@ def test_register_map(have_verilator):
 
 def test_register_map_board_defaults(have_verilator):
     t = SimTransport(ch_bytes=1 << 20)
-    caps, khz = t.reg_read_many([R_CAPS, R_CORE_KHZ])
+    caps, khz, mts = t.reg_read_many([R_CAPS, R_CORE_KHZ, R_DDR_MTS])
     assert caps == (10 << 16) | (14 << 8) | 0b111         # 1024-cycle windows, 16384 records
-    assert khz == 100000
+    assert khz == 100000 and mts == 0                     # no DDR_MTS given: CAPS bit3 clear
 
 
 def test_i2c_pins(have_verilator):

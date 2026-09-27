@@ -53,7 +53,7 @@ source $here/bd.tcl
 make_wrapper -files [get_files otpu_bd.bd] -top
 add_files -norecurse [glob $out/otpu.gen/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v]
 set_property top otpu_fpga_top [current_fileset]
-set_property generic "MCOLS=$MCOLS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID" [current_fileset]
+set_property generic "MCOLS=$MCOLS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DDR_MTS=$DDR_SPEED" [current_fileset]
 
 # ---- constraints
 add_files -fileset constrs_1 -norecurse [list \

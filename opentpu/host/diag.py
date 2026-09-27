@@ -311,6 +311,8 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
         msg = f"D={i['D']} MCOLS={i['MCOLS']} LANES={i['LANES']}, register map {i['regmap']}"
         if i["core_khz"]:
             msg += f", core {i['core_khz'] / 1e3:g} MHz"
+        if i["ddr_mts"]:
+            msg += f", DDR3-{i['ddr_mts']}"
         if i["build_id"] is not None:
             msg += f", build {i['build_id']:08x}"
         return True, msg, {"info": {k: v for k, v in i.items() if k != "caps"}}
@@ -400,6 +402,8 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
                     bad.append(f"CORE_KHZ {v[4]}")
                 if i["caps"]["trace"] and not 8 <= (v[3] >> 8 & 0xFF) <= 16:
                     bad.append(f"CAPS {v[3]:#x}")
+                if i["caps"]["ddr"] and not 300 <= (i["ddr_mts"] or 0) <= 2133:
+                    bad.append(f"DDR_MTS {i['ddr_mts']}")
                 if v[7] != R.UNMAPPED:
                     bad.append(f"undefined offset 0xFFC reads {v[7]:#x}, want 0xdeadbeef")
             if v[6] & ~0xFF:

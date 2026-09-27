@@ -74,7 +74,7 @@ def query(t, dev: str, interval: float = 0.2, prev: dict | None = None,
     d.update(regmap=i["regmap"],
              bitstream={"D": i["D"], "MCOLS": i["MCOLS"], "LANES": i["LANES"],
                         "core_mhz": i["core_khz"] / 1e3 if i["core_khz"] else None,
-                        "build_id": i["build_id"]},
+                        "build_id": i["build_id"], "ddr_mts": i["ddr_mts"]},
              calib=i["calib"], status=i["status"], running=i["running"], caps=i["caps"],
              temp_c=i["temp_c"])
     if b.v2:
@@ -157,7 +157,7 @@ def query_sim(interval_cycles: int = 0) -> dict:
     d.update(regmap=i["regmap"],
              bitstream={"D": i["D"], "MCOLS": i["MCOLS"], "LANES": i["LANES"],
                         "core_mhz": i["core_khz"] / 1e3 if i["core_khz"] else None,
-                        "build_id": i["build_id"]},
+                        "build_id": i["build_id"], "ddr_mts": i["ddr_mts"]},
              calib=i["calib"], status=i["status"], running=False, caps=i["caps"],
              temp_c=i["temp_c"], process=None, dram=None, power=None, measured=None)
     prog = demo_program()
@@ -243,6 +243,11 @@ def bus_id(dev: str) -> str:
     return p.resolve().name if p.exists() else "n/a"
 
 
+def ddr_name(mts: int | None) -> str:
+    """"DDR3-1066" from the bitstream's DDR_MTS register, "DDR3" when it does not have one."""
+    return f"DDR3-{mts}" if mts else "DDR3"
+
+
 def table(devs: list[dict]) -> str:
     now = _dt.datetime.now().strftime("%a %b %d %H:%M:%S %Y")
     out = [_lr(f"otpu-smi {VERSION}", now, W)]
@@ -261,7 +266,8 @@ def table(devs: list[dict]) -> str:
                        f"{bid}   {mhz}", f"regmap v{d['regmap']}"))
         temp = "n/a" if d["temp_c"] is None else f"{d['temp_c']:.0f} °C"
         out.append(_kv("Link", _gen(d.get("pcie")),
-                       f"DDR3 ch0 {'ok' if c0 else 'FAIL'}  ch1 {'ok' if c1 else 'FAIL'}",
+                       f"{ddr_name(bs.get('ddr_mts'))} ch0 {'ok' if c0 else 'FAIL'}  "
+                       f"ch1 {'ok' if c1 else 'FAIL'}",
                        f"Temp {temp}"))
         pw, ms = d.get("power"), d.get("measured") or {}
         if ms.get("w") is not None:
