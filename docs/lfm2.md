@@ -127,6 +127,75 @@ Qwen3-0.6B about 600 MB.
 DRAM: the image is 233 MiB at a 256-token KV capacity and 276 MiB at 2048, of which the KV
 cache and conv state are 25 MiB (Qwen3-0.6B: 703 MiB at 2048).
 
+### 4-bit weights on the DDR3 bank model
+
+Everything in this section is **simulated**: one decode token of the full model at position 128
+(cache capacity 256), on the Verilator RTL of the board configuration with column reuse
+(`OTPU_PAIR=1`: every 4-bit layer MM a full-rate PAIR MM, [quant.md](quant.md)), against the
+DDR3 bank model calibrated on the card at DDR3-1066 (`tools/perf_qwen.py --model lfm2 --ddr
+1066 --mhz F`; the model came within 4% of the card at DDR3-800, [board.md](board.md) section
+4). Tokens/s are the simulated cycles at the given clock, without host time. DRAM and port
+efficiency are defined in [board.md](board.md) ("DRAM efficiency"). "fp4 + int8 head" is 4-bit
+layers with an int8 LM head (`--wformat fp4 --head-format int8`, `otpu-chat --wformat fp4
+--head-format int8`): 158 MB moved per token, of which the head is 69 MB.
+
+| weights | RTL | core clock | Mcycles/token | port eff. | DRAM eff. | tok/s (device) |
+|---|---|---:|---:|---:|---:|---:|
+| int8 | this branch | 100 MHz | 2.071 | 90.2% | 67.6% | 48.3 |
+| fp4 | this branch | 100 MHz | 1.180 | 82.3% | 61.7% | 84.8 |
+| fp4 + int8 head | this branch, before the V^T move | 100 MHz | 1.442 | 85.5% | 64.1% | 69.3 |
+| fp4 + int8 head | this branch | 100 MHz | 1.428 | 86.3% | 64.7% | 70.0 |
+| fp4 + int8 head | + r6/r7 adapter (r7-apf a10203a), before the V^T move | 100 MHz | 1.321 | 93.3% | 70.0% | 75.7 |
+| fp4 + int8 head | + r6/r7, before the V^T move | 116 MHz | 1.330 | 92.7% | 80.7% | 87.2 |
+| fp4 + int8 head | + r6/r7, before the V^T move | 125 MHz | 1.334 | 92.4% | 86.6% | 93.7 |
+| fp4 + int8 head | + r6/r7 | 116 MHz | 1.312 | 94.0% | 81.7% | 88.4 |
+| fp4 | + r6/r7, before the V^T move | 116 MHz | 1.067 | 90.9% | 79.1% | 108.7 |
+
+"The V^T move": `qwen3._attention` (which LFM2's attention layers use) appends every KV head's
+K first and each head's V^T together with its queries, so the quantizer's slow V^T appends (a
+byte into each of the head's cache rows, one ECC read-modify-write each) overlap the heads
+before it instead of holding all queries back. The values are the same, so decode stays bit
+exact; it also takes Qwen3-0.6B from 5.792 to 5.739 Mcycles (int8) and 3.465 to 3.410 (fp4),
+same conditions at 100 MHz.
+
+Where the cycles go (fp4 + int8 head, r6/r7, 116 MHz, 1.312 Mcycles): the LM head 548K (99%
+of its byte roofline), the MLPs 461K (99%), the conv blocks 146K (97%), attention 157K (58%:
+91K of bytes). The core-port roofline of the token is 1.233 Mcycles; the DDR3 peak alone would
+allow 1.073. Nearly all the loss is in the attention layers: the quantizer runs the cache
+appends (8 K appends of ~350 cycles and 8 V^T appends of 1.3-2K cycles per layer) in order,
+ahead of each head's query and P quantizations, and the MXU waits on them (MXU gaps after
+the attention QACTs: ~29K cycles per token). The rest is the dependency chain at each layer
+boundary and conv out_proj (~30K together).
+
+**What 88 tokens/s (wall) needs.** At 88 tok/s a token has 11.36 ms. The host adds 1.3 ms per
+token today (measured on the card for the int8 image, [board.md](board.md) section 4: mostly
+the logits read and the per-token register and DMA traffic; the host's own computation,
+sampling included, is ~0.1 ms, measured on a Mac). With the int8 head at 116 MHz the device
+alone takes 11.31 ms (simulated), so the host would have to add nothing. What closes it, largest
+first (all *estimates*):
+
+1. RTL: the adapter's write queue at 64 entries (stream r7-apf's next step): V^T appends
+   ~200 cycles, the append chain hidden under the Q projections: attention ~157K -> ~100K,
+   about -55K cycles (-4%): ~1.26 Mcycles, ~92 tok/s device at 116 MHz.
+2. Clock: 116 -> 125 MHz scales tokens/s with the clock (the cycles grow 0.3%): ~99 tok/s
+   device with item 1.
+3. Host per-token time (1.3 ms -> <= 0.5 ms): one program per model instead of one per
+   position (no program copy and IMEM load per token), fewer register reads per token, the
+   logits read cut to the part the sampler needs (the LM head MMs already produce their row
+   maxima: read those first, then only the blocks that can hold the top-k); to be split up
+   with `tools/decode_profile.py` on the card first.
+4. Compiler + layout: one QST for all heads' K appends (and V^T), with the per-head scale
+   arrays interleaved by position (a QST writes its scales contiguously): about -2K cycles
+   per attention layer, -1% per token.
+5. Format: a 4-bit LM head instead of int8 moves 34 MB less per token: 1.067 Mcycles and 108.7
+   tok/s device at 116 MHz (before the V^T move), which reaches 88 wall with today's host.
+   Accuracy ([quant.md](quant.md), emulation, book text): ppl 33.16 (KL 0.159) against 32.92
+   (KL 0.146) with the int8 head, int8 everywhere 29.05 (0.003).
+
+With items 1 and 3 the int8-head configuration projects to ~92 tok/s device and ~88 wall at
+116 MHz (0.5 ms of host per token), and ~99 device / ~94 wall at 125 MHz, where DRAM efficiency
+is ~91% of the DDR3-1066 peak. Past that the core port, not the DDR3, is the limit.
+
 ## Tests
 
 `tests/test_lfm2.py`:
