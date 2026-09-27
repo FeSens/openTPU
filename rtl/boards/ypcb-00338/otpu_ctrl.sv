@@ -25,7 +25,7 @@
 //   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, bit2 I2C pins, bit3 DDR_MTS,
 //                      bit4 4-bit MM weights (MM flags WF, docs/isa.md), bit5 column reuse (MM
 //                      PAIR / QACT DUP), bit6 DSTEP (the DMA's DeltaNet head step), bit7
-//                      hashed channel interleave (otpu_axi_dram CHASH),
+//                      hashed channel interleave (otpu_axi_dram CHASH), bit24 ACT_ROWS,
 //                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles),
 //                      bit25 the run's arguments (ARG0..7)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
@@ -33,6 +33,7 @@
 //   0x4C TEMP      RO  bit31 valid, [11:0] XADC die-temperature code
 //   0x50 SNAP      W   latch every free-running counter into its shadow; R: snapshots taken
 //   0x54 DDR_MTS   RO  the DDR3 data rate in MT/s (build parameter; CAPS bit3 when nonzero)
+//   0x58 ACT_ROWS  RO  ACT RAM rows: the most rows of one MM (build parameter; CAPS bit24)
 //   0x60 + 4k      RW  ARG0..ARG7: the run's arguments, R8..R15 when RUN rises (CAPS bit25;
 //                      docs/isa.md "Arguments"); reset 0
 //   0x100 + 8k     RO  free-running counter k's shadow (64 bits, low word first), k =
@@ -56,6 +57,7 @@ module otpu_ctrl #(
   parameter int D     = 128,
   parameter int MCOLS = 2,
   parameter int LANES = 8,
+  parameter int ACT_ROWS = MCOLS,
   parameter int CORE_KHZ = 100000,
   parameter logic [31:0] BUILD_ID = 32'h0,
   parameter int DDR_MTS = 0,             // DDR3 data rate (MT/s); 0: not given
@@ -121,7 +123,7 @@ module otpu_ctrl #(
   input  logic [4:0]  i2c_in
 );
   localparam int NFR = 13;
-  localparam logic [31:0] CAPS = {6'd0, 1'b1, 1'b0, 8'($clog2(PQ_WIN)),
+  localparam logic [31:0] CAPS = {8'd3, 8'($clog2(PQ_WIN)),       // bit24 ACT_ROWS, bit25 ARG
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
                                   CHASH, 1'b1, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
                                   TRACE_DEPTH != 0};
@@ -270,6 +272,7 @@ module otpu_ctrl #(
       10'h013: r_d <= {temp_v, 19'd0, temp};
       10'h014: r_d <= n_snap;
       10'h015: r_d <= 32'(DDR_MTS);
+      10'h016: r_d <= 32'(ACT_ROWS);
       10'h018, 10'h019, 10'h01A, 10'h01B, 10'h01C, 10'h01D, 10'h01E, 10'h01F:
         r_d <= arg[r_a[2:0]];
       10'h080: r_d <= {28'd0, tr_busy, tr_stop, 1'b0, tr_en};

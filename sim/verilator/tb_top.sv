@@ -5,6 +5,7 @@ module tb_top;
   parameter int D          = 32;
   parameter int MCOLS      = 8;
   parameter int ACT_BLOCKS = 64;
+  parameter int ACT_ROWS   = MCOLS;
   parameter int TMEM_WORDS = 1 << 16;
   parameter int IMEM_WORDS = 1 << 16;
   parameter int DRAM_WORDS = 1 << 18;
@@ -29,7 +30,7 @@ module tb_top;
   logic [31:0] icount [S];
   longint cycles = 0, max_cycles = 50_000_000;
 
-  otpu_top #(.S(S), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
+  otpu_top #(.S(S), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .ACT_ROWS(ACT_ROWS), .TMEM_WORDS(TMEM_WORDS),
              .IMEM_WORDS(IMEM_WORDS), .DRAM_WORDS(DRAM_WORDS), .DRAM_LAT(DRAM_LAT),
              .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .AXI(AXI), .FIFO_DEPTH(FIFO_DEPTH),
              .AXI_BL(AXI_BL)) dut (

@@ -373,6 +373,7 @@ class SimTransport:
         cfg = board_config()                        # OTPU_MCOLS / OTPU_LANES: the "bitstream"
         # VPU_CL and ULANES as the bitstream builds them (make bit: VPU_CL 2, ULANES 8)
         p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": cfg.MCOLS, "LANES": cfg.LANES,
+             "ACT_ROWS": cfg.act_rows,
              "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8)}
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
@@ -476,7 +477,7 @@ class Board:
              "calibrated": bool(st & ST_CALIB0) and bool(st & ST_CALIB1),
              "running": bool(st & ST_RUN) and not st & ST_HALTED,
              "regmap": R.regmap(rm), "caps": None, "core_khz": None, "build_id": None,
-             "temp_c": None, "ddr_mts": None}
+             "temp_c": None, "ddr_mts": None, "act_rows": (v >> 8) & 0xFF}
         if d["regmap"] >= 2:
             cp, khz, bid, tp, mts = self.t.reg_read_many([R.R_CAPS, R.R_CORE_KHZ, R.R_BUILD_ID,
                                                           R.R_TEMP, R.R_DDR_MTS])
@@ -484,6 +485,8 @@ class Board:
                      temp_c=round(R.temp_c(tp), 2) if cp & R.CAP_TEMP and tp & R.TEMP_VALID
                      else None,
                      ddr_mts=(mts or None) if cp & R.CAP_DDR else None)
+            if cp & R.CAP_ACT:
+                d["act_rows"] = self.t.reg_read(R.R_ACT_ROWS)
         self._info = d
         return d
 
@@ -765,8 +768,10 @@ def device_config(info: dict, **kw):
             raise ConfigMismatch(f"the bitstream {'has' if have else 'lacks'} {what} but "
                                  f"OTPU_{k}={env}: unset OTPU_{k} (the host follows the "
                                  f"bitstream)")
+    rows = info.get("act_rows") or 0              # 0: MCOLS rows (no MM replay)
     cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair,
-                          "DSTEP": dstep, **kw})
+                          "DSTEP": dstep, "ACT_ROWS": rows if rows > info["MCOLS"] else 0,
+                          **kw})
     if info["D"] != cfg.D:
         raise ConfigMismatch(f"the bitstream has D={info['D']}, the board configuration "
                              f"D={cfg.D}: not a YPCB-00338 openTPU build")
@@ -829,7 +834,8 @@ class BoardBackend:
         self.board = Board(transport)
         self.board.scrub()
         info = self.info = self.board.info()
-        if (info["D"], info["MCOLS"], info["LANES"]) != (cfg.D, cfg.MCOLS, cfg.LANES):
+        if (info["D"], info["MCOLS"], info["LANES"], info.get("act_rows") or info["MCOLS"]) != \
+                (cfg.D, cfg.MCOLS, cfg.LANES, cfg.act_rows):
             self.board.close()
             raise ConfigMismatch(f"the bitstream is D={info['D']} MCOLS={info['MCOLS']} "
                                  f"LANES={info['LANES']}, the configuration D={cfg.D} "

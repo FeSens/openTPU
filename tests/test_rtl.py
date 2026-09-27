@@ -130,7 +130,7 @@ def _random_program(rng, cfg: Config, n_ops=40):
                 dst = fresh(rows * drs)
             prog.append(I.vop(func, dst, a, b, rows, cols, drs, ars, brs, bmode, imm))
         elif kind == "qact_mm":
-            M, KB = int(rng.integers(1, cfg.MCOLS + 1)), int(rng.integers(1, 5))
+            M, KB = int(rng.integers(1, cfg.act_rows + 1)), int(rng.integers(1, 5))
             ab = int(rng.integers(0, cfg.ACT_BLOCKS - KB + 1))
             srs = KB * D + int(rng.integers(0, 4))
             M = min(M, 4096 // srs)               # D = 128: the rows fit the input region
@@ -160,9 +160,10 @@ def _random_program(rng, cfg: Config, n_ops=40):
             else:
                 out, acc = fresh(M * N + M), False
                 mm_outs.append((out, M, N))
-            asc = pick_src(M) if (unit and acc and rng.integers(2)) else None
+            small = M <= cfg.MCOLS                  # RMAX and ASCALE need M <= MCOLS
+            asc = pick_src(M) if (small and unit and acc and rng.integers(2)) else None
             prog.append(I.mm(sa, ssa, out, N, KB, rs, N, M, ab, srs_s, unit=unit, acc=acc,
-                             rmax=bool(rng.integers(2)), ascale=asc, wf=wf, pair=pair))
+                             rmax=small and bool(rng.integers(2)), ascale=asc, wf=wf, pair=pair))
             src.append((out, M * N))
         elif kind == "qst":
             rows, KB = int(rng.integers(1, 4)), int(rng.integers(1, 4))
@@ -220,6 +221,22 @@ def test_fuzz_two_slices(have_verilator, seed):
     for s in range(2):
         assert np.array_equal(drams[s], m.slices[s].dram), f"slice {s} DRAM"
         assert np.array_equal(tmems[s], m.slices[s].tmem), f"slice {s} TMEM"
+
+
+@pytest.mark.parametrize("mcols,rows,seed", [(2, 8, 0), (2, 8, 1), (4, 8, 2), (2, 6, 3),
+                                              (4, 16, 4)])
+def test_fuzz_mm_replay(have_verilator, mcols, rows, seed):
+    """ACT RAM rows beyond the MXU columns (ACT_ROWS): an MM of M > MCOLS rows replays each
+    streamed chunk for every group of MCOLS rows; the results are the ISA's."""
+    rng = np.random.default_rng(3000 + seed)
+    cfg = Config(S=1, MCOLS=mcols, ACT_ROWS=rows)
+    prog = _random_program(rng, cfg, n_ops=60)
+    assert any(i.op == I.MM and (i.w[5] >> 16) & 0xFF > mcols for i in prog)
+    imgs = _images(rng, 1)
+    m = Machine(cfg, [prog], [i.copy() for i in imgs]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [i.copy() for i in imgs])
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
 
 
 @pytest.mark.parametrize("lanes", [4, 16])

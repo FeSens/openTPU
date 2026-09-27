@@ -533,8 +533,9 @@ class Bcast:
 
 
 class Stationary:
-    """A tile quantized into ACT RAM blocks [ab, ab+KB) for up to MCOLS rows. `pair`: its rows
-    are also in ACT rows M..2M-1 (QACT DUP), so 4-bit MMs run at full rate (MM PAIR)."""
+    """A tile quantized into ACT RAM blocks [ab, ab+KB), in chunks of up to ACT_ROWS rows.
+    `pair`: its rows are also in ACT rows M..2M-1 (QACT DUP), so 4-bit MMs run at full rate
+    (MM PAIR)."""
 
     def __init__(self, src: Tile, chunks: list, KB: int, owners: list, pair: bool = False):
         self.src, self.chunks, self.KB, self.owners = src, chunks, KB, owners
@@ -1006,11 +1007,12 @@ class Builder:
             src, rs, cs, rsc = fused
         chunks, owners = [], []
         # column reuse: a tile of at most MCOLS/2 rows is written twice (no extra cycles), so a
-        # 4-bit MM can feed the odd K-blocks to the second half of the columns
+        # 4-bit MM can feed the odd K-blocks to the second half of the columns. A taller tile
+        # (up to ACT_ROWS rows) replays the streamed chunks instead: PAIR would not be faster
         pair = self.cfg.PAIR and 2 * x.rows <= self.cfg.MCOLS
         st = Stationary(x, chunks, KB, owners, pair)
-        for m0 in builtins.range(0, x.rows, self.cfg.MCOLS):
-            mc = min(self.cfg.MCOLS, x.rows - m0)
+        for m0 in builtins.range(0, x.rows, self.cfg.act_rows):
+            mc = min(self.cfg.act_rows, x.rows - m0)
             ab, owner = self.act_alloc(KB)
             for k in builtins.range(ab, ab + KB):   # live now: the next chunk must not take it
                 self.act_live[k] = weakref.ref(st)
@@ -1219,9 +1221,9 @@ class Builder:
         if acc_scale is not None:
             if acc_scale.shape != (M,):
                 raise CompileError(f"dot: acc_scale shape {acc_scale.shape} != {(M,)}")
-            if len(st.chunks) != 1:
+            if len(st.chunks) != 1 or M > self.cfg.MCOLS:
                 raise CompileError("dot(acc_scale=...) needs M <= MCOLS")
-        if rowmax and (len(st.chunks) != 1 or len(out.shape) != 2
+        if rowmax and (len(st.chunks) != 1 or M > self.cfg.MCOLS or len(out.shape) != 2
                        or getattr(out, "spare", 0) < M or out.rs < N):
             raise CompileError("dot(rowmax=True) needs M <= MCOLS and an output tile from "
                                "ol.empty/zeros/full (they reserve the row-max area)")
@@ -1241,7 +1243,7 @@ class Builder:
             self.emit(ins)
             m0 += mc
         self.bump_version(out.buf)
-        if (acc is None and len(st.chunks) == 1 and len(out.shape) == 2
+        if (acc is None and len(st.chunks) == 1 and M <= self.cfg.MCOLS and len(out.shape) == 2
                 and getattr(out, "spare", 0) >= M and out.rs >= N):
             out.mm_src = (ins, self.versions.get(out.buf, 0), M, ors)
         return out

@@ -27,6 +27,12 @@ class Config:
     LANES: int = 8           # VPU lanes == TMEM banks (timing only; results do not depend on it)
     PAIR: bool = False       # MM PAIR / QACT DUP: 4-bit MMs of M <= MCOLS/2 rows at full rate
     DSTEP: bool = False      # the DMA runs DSTEP (Gated DeltaNet head steps on DRAM state)
+    ACT_ROWS: int = 0        # ACT RAM rows == max stationary rows of one MM (0: MCOLS); more
+    #                          than MCOLS: the MXU replays each streamed chunk (docs/isa.md, MM)
+
+    @property
+    def act_rows(self) -> int:
+        return self.ACT_ROWS or self.MCOLS
 
 
 def design_config(**kw) -> Config:
@@ -44,10 +50,13 @@ def board_config(**kw) -> Config:
     OTPU_MCOLS in the environment selects the MXU column count (default 2; make -C
     boards/ypcb-00338 bit MCOLS=4), OTPU_LANES the VPU lanes / TMEM banks (default 8; bit
     LANES=16; timing only, the programs do not change), OTPU_PAIR=1 column reuse (MM PAIR /
-    QACT DUP), OTPU_DSTEP=1 the DMA's DSTEP. They configure the simulators and the board
-    model; on the card, opentpu.host.board.device_config takes them from the bitstream."""
+    QACT DUP), OTPU_DSTEP=1 the DMA's DSTEP, OTPU_ACT_ROWS the ACT RAM rows (default MCOLS;
+    more: the MXU replays each weight chunk for MCOLS rows at a time). They configure the
+    simulators and the board model; on the card, opentpu.host.board.device_config takes them
+    from the bitstream."""
     base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 2)), ACT_BLOCKS=128,
-                LANES=int(os.environ.get("OTPU_LANES", 8)), TMEM_WORDS=1 << 16,
+                LANES=int(os.environ.get("OTPU_LANES", 8)),
+                ACT_ROWS=int(os.environ.get("OTPU_ACT_ROWS", 0)), TMEM_WORDS=1 << 16,
                 IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32,
                 PAIR=bool(int(os.environ.get("OTPU_PAIR", 0))),
                 DSTEP=bool(int(os.environ.get("OTPU_DSTEP", 0))))
@@ -67,8 +76,8 @@ class Slice:
         if dram is not None:
             self.dram[: len(dram)] = dram
         self.tmem = np.zeros(cfg.TMEM_WORDS, dtype=np.uint32)
-        self.act = np.zeros((cfg.MCOLS, cfg.ACT_BLOCKS * cfg.D), dtype=np.int8)
-        self.ascale = np.zeros((cfg.MCOLS, cfg.ACT_BLOCKS), dtype=np.float32)
+        self.act = np.zeros((cfg.act_rows, cfg.ACT_BLOCKS * cfg.D), dtype=np.int8)
+        self.ascale = np.zeros((cfg.act_rows, cfg.ACT_BLOCKS), dtype=np.float32)
         self.R = [0] * 16
         self.pc = 0
         self.stack: list[list[int]] = []
@@ -227,8 +236,12 @@ class Slice:
         unit, accf = bool(ins.flags & I.F_UNIT), bool(ins.flags & I.F_ACC)
         pair = bool(ins.flags & I.F_PAIR)
         R = 2 * M if pair else M                          # ACT rows read
-        if not (0 < R <= cfg.MCOLS) or ab + KB > cfg.ACT_BLOCKS:
+        if not (0 < R <= cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("MM: M or ACT RAM range out of bounds")
+        if M > cfg.MCOLS and ins.flags & (I.F_RMAX | I.F_ASCALE):
+            raise SimError("MM: RMAX and ASCALE need M <= MCOLS")
+        if pair and R > cfg.MCOLS:
+            raise SimError("MM: PAIR needs 2*M <= MCOLS")
         wf = (ins.flags >> I.WF_SHIFT) & 3
         if wf not in (I.W8, I.W4I, I.W4F):
             raise SimError("MM: bad weight format")
@@ -313,7 +326,7 @@ class Slice:
         rows, ab, KB = w[1] & 0xFF, (w[1] >> 8) & 0xFF, w[1] >> 16
         srs = w[2]
         dup = bool(ins.flags & I.F_DUP)
-        if (2 * rows if dup else rows) > cfg.MCOLS or ab + KB > cfg.ACT_BLOCKS:
+        if (2 * rows > cfg.MCOLS if dup else rows > cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("QACT out of ACT RAM bounds")
         cs = (w[3] & 0xFFFFFFFF) if ins.flags & I.F_CSCALE else None
         rsc = (w[4] & 0xFFFFFFFF) if ins.flags & I.F_RSCALE else None

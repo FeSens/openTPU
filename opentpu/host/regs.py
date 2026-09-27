@@ -34,6 +34,8 @@ CAP_W4, CAP_PAIR, CAP_DSTEP = 16, 32, 64
 # CAPS bit7: CHASH, the hashed channel interleave (rtl/mem/otpu_axi_dram.sv): chunk m's two
 # beats swap channels when m has odd parity. Older bitstreams: plain interleave.
 CAP_CHASH = 0x80
+# CAPS bit24: ACT_ROWS holds the ACT RAM rows (the most rows of one MM; older bitstreams: MCOLS)
+CAP_ACT, R_ACT_ROWS = 1 << 24, 0x58
 # CAPS bit25: ARG0..7 (0x60 + 4k) are the run's arguments, R8..R15 at the start (docs/isa.md
 # "Arguments"): one program serves every decode position
 CAP_ARGS, R_ARG0 = 1 << 25, 0x60
@@ -71,7 +73,7 @@ def caps(v: int) -> dict:
     return {"trace": bool(v & CAP_TRACE), "temp": bool(v & CAP_TEMP), "i2c": bool(v & CAP_I2C),
             "ddr": bool(v & CAP_DDR), "w4": bool(v & CAP_W4),
             "pair": bool(v & CAP_PAIR), "dstep": bool(v & CAP_DSTEP),
-            "chash": bool(v & CAP_CHASH),
+            "chash": bool(v & CAP_CHASH), "act_rows": bool(v & CAP_ACT),
             "args": bool(v & CAP_ARGS),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
