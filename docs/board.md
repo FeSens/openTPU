@@ -295,6 +295,28 @@ DRAM reads while running: 7.2 GB/s (Qwen3), 7.6 GB/s (LFM2), against 3.0 before.
 the MXU waits for weight chunks) is still 37% (Qwen3) / 26% (LFM2): DRAM-800 efficiency and the
 request pipeline are the next limit. LFM2 runs 65% of the token time; the rest is the host.
 
+DRAM address map and gathered QST writes (build e58ecb65, DDR3-800, measured 2026-09-27): the
+MIG address map is ROW_BANK_COLUMN (it was BANK_ROW_COLUMN, which put everything below 256 MB of a
+channel in bank 0, so every switch between the weight stream, the scale reads and the KV cache
+was a precharge + activate), and the AXI adapter gathers the quantizer's byte stores into whole
+64-byte beats (a partial-strobe write is an ECC read-modify-write in the MIG). `otpu-selftest`
+passes every stage for all three models, token for token, and `otpu-diag --mem full` passes
+(126 checks). Counters over each model run (while RUNNING):
+
+| Model | device Mcycles / token | before (a691ea98) | DRAM reads while running | MXU_STARVE | model projection |
+|---|---|---|---|---|---|
+| Qwen3-0.6B | 6.49 | 8.58 | 9.56 GB/s (75% of 12.8) | 20.5% (37%) | 6.13 (-25%) |
+| LFM2.5-230M | 2.33 | 3.14 | 10.19 GB/s (80%) | 17.5% (26%) | 2.20 (-27%) |
+| Qwen3.5-0.8B | 8.44 | 11.88 | 9.55 GB/s (75%) | 26.2% | not run |
+
+The projection comes from the DDR3 bank model in the AXI memory simulation
+(`sim/verilator/otpu_axi_mem.sv`, `+axi_dram=1`; `tools/perf_qwen.py --dram brc|rbc`): open rows
+per bank, tRCD / tRP / tRAS / tRC, refresh, turnarounds and the ECC read-modify-write, with three
+parameters fitted to the a691ea98 measurements (tRP = tRCD = 3 controller cycles, a
+read-modify-write holds the channel 23 cycles, 4 cycles per AXI read transaction). Fitted, it
+reproduces a691ea98 at 8.22 (Qwen3) and 3.00 (LFM2) Mcycles, 4% under the card; the -25% / -27%
+it projected for this build came out -24% / -26% on the card.
+
 Before the burst fix: Decode runs at ~3.2x the simulated cycles: the counters show the MXU starved (MXU_BUSY 94%,
 MXU_MAC 21%, DRAM_WAIT 0.1%) and DRAM reads at 3.0 GB/s (0.23 beats / cycle / channel). Port B
 issues single-beat 64-byte AXI reads (SmartConnect ports MAX_BURST_LENGTH 1); the per-transaction

@@ -443,6 +443,33 @@ def test_axi_burst_throughput(have_verilator):
     assert cyc[16, 1] > 3 * cyc[0, 8], cyc
 
 
+# QST stores go out as single bytes (one byte-enabled word per cycle). The AXI adapter gathers
+# an SW beat until another beat is written or it has been idle, so a contiguous store (a K row)
+# costs one write per 64-byte beat and no ECC read-modify-write on the board; a strided store (a
+# transposed V column) still writes a beat per byte. Results bit-exact under random stalls.
+@pytest.mark.parametrize("stall", [0, 40])
+def test_axi_sw_write_gather(have_verilator, stall):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8200 + stall)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * 3 * D * 4] = rng.standard_normal(4 * 3 * D).astype(np.float32).view(np.uint8)
+    prog = [I.ld(0, 0, 4 * 3 * D),                                        # rows to quantize
+            I.qst(0, 0x40000, 0x48000, 2, 2, 2 * D, 2 * D, 1),            # contiguous, 2 rows
+            I.qst(2 * 2 * D, 0x50000 + 3, 0x70000, 1, 1, D, 1, 512, row=True),  # strided
+            I.qst(0, 0x60010, 0x68004, 1, 1, D, D, 1),                    # unaligned start
+            I.ld(0x40000, 1024, 4 * D), I.halt()]
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                  seed=3, uarch=rtlsim.BOARD_UARCH, plusargs=["+axi_dram=1"])
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    rmw = sum(d["rmw_a"] for d in st["axi_detail"])
+    # partial beats: the strided store's 128 bytes, the scales (4 + 1 + 1 beats), the unaligned
+    # store's first and last beats
+    assert 128 <= rmw <= 128 + 6 + 2, st["axi_detail"]
+
+
 def test_tmem_random_traffic(have_verilator):
     """TMEM alone against a reference model; most reads hit the previous cycle's writes, which
     are still in TMEM's registered write stage (the bypass)."""
