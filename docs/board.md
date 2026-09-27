@@ -28,6 +28,9 @@ cd boards/ypcb-00338
 make lint          # offline: MIG pin check, Tcl syntax, XDC vs top ports, Verilator lint
 make bit           # = ./run_vivado.sh 800 -> build/vivado/otpu.bit, otpu.mcs, reports/
 make bit DDR=1066  # DDR3-1066 (533 MHz, MIG ui_clk 133 MHz) once 800 works
+make bit DDR=1300  # DDR3-1300 / 1333 / 1600: OUT OF SPEC (outside MIG's range for these HR
+                   # banks; 1333 and 1600 also patch MIG's PHY). Experiments only, never a
+                   # default; see "Faster DDR3" in section 5
 make bit CORE_MHZ=80   # accelerator clock fallback when 100 MHz does not close (800/D MHz, D in 1/8 steps)
 make bit MCOLS=4   # 4 MXU columns: ~1.7x prefill and batched decode, ~67% LUT (the host
                    # reads MCOLS and LANES from the bitstream's VERSION register)
@@ -305,12 +308,12 @@ so the 8250 driver probes the card: a udev rule sets `driver_override=xdma` (now
 
 | Clock | Frequency | Source | Drives |
 |---|---|---|---|
-| sys_clk_50 | 50 MHz | AA28 oscillator | MMCM (VCO 800 MHz) |
-| core_clk | 100 MHz | MMCM /8 | accelerator, control registers, interconnect core side |
-| clk_200 | 200 MHz | MMCM /4 | MIG reference (IDELAYCTRL); MIG system clock at DDR3-800 |
-| clk_267 | 266.667 MHz | MMCM /3 | MIG system clock at DDR3-1066 |
-| ui_clk0/1 | 100 MHz (133 MHz at 1066) | MIG | MIG AXI side, 512 bit |
-| DDR3 CK | 400 MHz (533 MHz) | MIG PLL | memory |
+| sys_clk_50 | 50 MHz | AA28 oscillator | MMCM (VCO 800 MHz; 1000 MHz at DDR3-1333) |
+| core_clk | 100 MHz | MMCM /8 (/10) | accelerator, control registers, interconnect core side |
+| clk_200 | 200 MHz | MMCM /4 (/5) | MIG reference (IDELAYCTRL); MIG system clock at DDR3-800, 1300, 1600 |
+| clk_mig | VCO / 3 | MMCM /3 | MIG system clock at DDR3-1066 (266.667 MHz) and 1333 (333.333 MHz) |
+| ui_clk0/1 | 100 MHz (133 / 162.5 / 167 / 200 at 1066 / 1300 / 1333 / 1600) | MIG | MIG AXI side, 512 bit |
+| DDR3 CK | 400 MHz (533 / 650 / 667 / 800) | MIG PLL | memory |
 | axi_aclk | 125 MHz | XDMA | PCIe AXI side, 128 bit (Gen1 x8) |
 
 Decode is DRAM-bound: every token streams all weights once. The accelerator consumes one
@@ -320,6 +323,9 @@ Decode is DRAM-bound: every token streams all weights once. The accelerator cons
 |---|---|---|---|---|
 | 800 (default) | 6.4 GB/s | 12.8 GB/s | >= 100 MHz | 100 MHz |
 | 1066 | 8.5 GB/s | 17.1 GB/s | >= 133 MHz | 133 MHz |
+| 1300 (out of spec) | 10.4 GB/s | 20.8 GB/s | >= 163 MHz | 162.5 MHz |
+| 1333 (out of spec) | 10.7 GB/s | 21.3 GB/s | >= 167 MHz | 167 MHz |
+| 1600 (out of spec) | 12.8 GB/s | 25.6 GB/s | >= 200 MHz | 200 MHz |
 
 So the fmax each part must clear to stay at the roofline at DDR3-800: core_clk >= 100 MHz
 (accelerator, otpu_axi_dram, control), MIG ui_clk 100 MHz (fixed by the MIG), SmartConnect
@@ -329,6 +335,132 @@ deep prefetch absorbs; a core clock above 100 MHz buys nothing at DDR3-800. Host
 per token are small (program ~40 KB, logits 600 KB): the one-time weight upload (~820 MB) takes
 ~0.5-0.7 s at Gen1 x8 (2 GB/s). Gen1 rather than Gen2: at Gen2 the PCIe block runs a
 500 MHz user clock whose IP-placed paths missed timing by ~0.1 ns (Vivado 2026.1, 80 MHz build).
+
+### Faster DDR3
+
+The core takes at most 12.8 GB/s (one 128-byte chunk per 100 MHz cycle, a 512-bit port per
+channel), so a faster DDR3 helps only up to that point. It lets the controllers keep the port
+full despite refresh, row misses and ECC read-modify-write: the simulated benchmark gains
+16.1 -> 20.0 tok/s going from 80 % to 100 % of the chunk rate (Qwen3-0.6B, batch 1). Going past
+12.8 GB/s needs a wider path: [wide_dram.md](wide_dram.md).
+
+**What MIG allows on this board.** The DDR3 channels are on banks 11-18, which on the
+xc7k480t-ffg1156 are HR banks (no DCI; MIG terminates with `IN_TERM UNTUNED_SPLIT_50`). MIG's
+limit for HR banks on a -2 part at 4:1 with single-rank components
+(`mig_7series_v4_2/data/dlib/7series/ddr3_sdram/time_periods.xml`, `tmin_hr`) is:
+
+| DDR3 voltage | min tCK | max data rate |
+|---|---|---|
+| 1.5 V | 1875 ps | DDR3-1066 |
+| 1.35 V (DDR3L) | 2500 ps | DDR3-800 |
+
+The same file gives 1500 ps (`tmin_hp_18`) and 1072 ps (`tmin_hp_20`), but those figures are
+for HP banks, where VCCAUX_IO matters, and this board has none.
+
+**DDR3 voltage (unknown).** The MT41K256M8 is DDR3L: it runs at 1.35 V or 1.5 V. The board's
+VDDQ and the banks' VCCO have not been measured. Every build uses 1.5 V (SSTL15), as the
+reverse-engineered MIG project (TiferKing's systest example, DDR3-1066 at 1.5 V, external VREF)
+does. DDR3-800 calibrates with MIG's internal VREF at 0.75 V, VCCO / 2 for 1.5 V. At 1.35 V
+that VREF would sit 75 mV high, and calibration at 800 might still pass. So the evidence for
+1.5 V is only suggestive: a working calibration at 1066 would support it. The direct check is a
+multimeter on a DDR3 decoupling capacitor (VDDQ 1.5 or 1.35 V) and on a bank VREF pin (half of
+it). If the board is at 1.35 V, MIG's limit drops to DDR3-800 and the SSTL15 settings are wrong.
+
+MIG offers internal VREF only up to 800, so 1066 and up rely on an external VREF. The VREF pins
+of the six DDR3 banks carry no DDR3 signals, which fits an external VREF, but it has not been
+measured.
+
+MIG's messages when it imports the generated .prj (Vivado 2026.1, mig_7series 4.2):
+
+- 1066: `[Mig7series 79-144] Invalid Input Clock Period 266.667. Setting to nearest possible
+  Input Clock Period value 266.666.` It is a rounding only, and the configuration is supported.
+- 1300 (tCK 1538 ps), 1333 (1500 ps), 1600 (1250 ps): `CRITICAL WARNING: [Mig7series 79-155]
+  Memory Time Period (1500 ps) (666.666687 Mhz) is not supported for MIG. There has been a change
+  in the allowed frequency ranges as described in Answer Record 67179. Instantiate and customize
+  a new instance of MIG for your design.` (the 1333 text; 1300 and 1600 differ only in the
+  period).
+- Input clocks. At 1300, 200 MHz is rounded to 200.06 (79-144), with the PLL at x13/2. At 1333,
+  200 MHz is rejected (79-144, "nearest possible ... 205.128"), so the MMCM runs at a VCO of
+  1000 MHz and gives MIG 333.333 MHz, accepted as is (PLL x4). At 1600, 200 MHz is accepted
+  (PLL x8).
+
+79-155 is a critical warning, not an error. MIG still generates the controller: CL 9 / CWL 7 at
+1300 and 1333, CL 11 / CWL 8 at 1600, tRFC 160 ns.
+
+**The PHY patch at 1333 and 1600.** For tCK <= 1500 ps, MIG's byte group
+(`mig_7series_v4_2_ddr_byte_group_io.v`: `IDELAY_FINEDELAY_USE = (TCK > 1500) ? "FALSE" :
+"TRUE"`) instantiates IDELAYE2_FINEDELAY. In this design that stays a black box, and the first
+DDR3-1333 build stopped in opt_design with 146 x `DRC INBB-3 ... of type
+otpu_bd_mig_1_0_IDELAYE2_FINEDELAY has undefined contents` (measured, 2026-09-27). So for those
+two speeds, `vivado/build.tcl` rewrites that line in the generated MIG sources to use the plain
+IDELAYE2, the primitive MIG itself uses above 1500 ps, and prints `CRITICAL WARNING: [openTPU]
+... MIG PHY patched to IDELAYE2 (out of spec)`. The read-capture delay line then has the coarse
+IDELAY taps only, without the fine-delay steps MIG expects at these speeds. DDR3-1300 needs no
+patch, so it is the fastest setting MIG itself builds.
+
+All three run the HR I/O and the PHY beyond what AMD characterizes. Nothing in them changes a
+voltage, so the risk is only that calibration fails or that data goes bad, and a power cycle
+undoes a JTAG load. Only the card can show whether they calibrate, and whether the data stays
+correct as the die warms. Their deploy directories carry `_oos` (out of spec) in the name.
+
+**Builds** (measured, Vivado 2026.1 on omarchy, 2026-09-27; MCOLS=2, core 100 MHz). All timing
+constraints are met:
+
+| DDR3 | commit | WNS / WHS | core_clk slack | MIG ui_clk (clk_pll_i) slack | deploy directory |
+|---|---|---|---|---|---|
+| 1300 (out of spec) | 819fee49 | +0.032 / +0.044 ns | +0.032 ns | +0.060 / +0.105 ns (6.154 ns) | `build/deploy_ddr1300_oos_819fee49` |
+| 1333 (out of spec, PHY patched) | 254f8388 | +0.088 / +0.043 ns | +0.094 ns | +0.102 / +0.091 ns (6.000 ns) | `build/deploy_ddr1333_oos_254f8388` |
+
+The tightest inter-clock paths are inside the MIG: ui_clk to the ISERDES clocks, +0.088 to
++0.094 ns. The SmartConnect crossings are not among the worst. In the 1333 build MIG adds its
+own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds otpu.bit,
+otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
+the patch messages of that build.
+
+**Measured on the card (2026-09-27, JTAG loads, host code of a691ea98).**
+
+| Image | Calibration | selftest | diag memory | Qwen3 decode |
+|---|---|---|---|---|
+| DDR3-800, burst (a691ea98) | ok | all pass | all pass | 8.58 Mcycles/token, 11.65 tok/s, DRAM 7.2 GB/s, MXU_STARVE 37% |
+| DDR3-1300, out of spec (819fee49) | ok (both channels) | all pass | 11 / 11 pass | 6.50 Mcycles/token, 15.38 tok/s, DRAM 9.53 GB/s, MXU_STARVE 18% |
+| DDR3-1333, out of spec, patched PHY (254f8388) | ok (both channels) | fails at the DMA bandwidth stage (H2C timeout), then the card leaves the PCIe bus (ID 0xffffffff) | not run | not run |
+
+The 1333 failure followed the selftest's 200 sub-beat host writes, the trigger of the host-write
+hang being bisected (docs/host.md), so it is not yet a clean DDR verdict; the loss of the PCIe
+link is worse than that hang and makes 1333 suspect regardless. DDR3-1300 is not yet qualified:
+the model token checks, the full-memory soak and the ECC correction counters are pending.
+
+**Checklist per speed.** Status: *unmeasured* at every speed above 800 until the results are
+filled in here. Load the bitstream over JTAG, not flash (section 2), so a bad one is gone at
+the next power cycle.
+
+1. **Calibration.** `otpu-diag` rows "DDR3 calibration channel 0/1" (STATUS bits 5 and 6), and
+   `otpu-smi`. A channel that does not calibrate within 5 s fails there; everything after it is
+   skipped.
+2. **Memory tests.** `otpu-diag --json diag_ddr<speed>.json` (walking bits, address bits, random
+   blocks, partial writes per channel, and the interleave). Then run
+   `otpu-diag --mem full --soak 10` (march C- over 4 GiB and repeated kernels), once cold and once
+   after 10+ minutes of `otpu-chat`, since timing margins shrink as the die warms.
+   `otpu-smi` shows the temperature.
+3. **ECC corrections.** Single-bit errors are corrected silently, so a marginal link can pass
+   every test. Read MIG's correctable-error counter (UG586 AXI ECC registers: CE_CNT at offset
+   0x0C, so BAR0 0x1000C for channel 0 and 0x2000C for channel 1; unverified on this card)
+   before and after the soak. It should stay 0.
+4. **Bandwidth.** The DMA test is PCIe-bound (~1 GB/s) and does not show DDR3 speed. Use the
+   accelerator instead: `otpu-selftest --model qwen3 --tokens 32` and `otpu-smi` during
+   `otpu-chat`. Compare device Mcycles/token, DRAM read GB/s and MXU_STARVE against the
+   DDR3-800 bitstream of the same commit. The 800 figure is the baseline; the speed-up is
+   bounded by 12.8 GB/s.
+5. **Correctness.** `otpu-selftest --model qwen3` must still match the ISA simulator token for
+   token.
+
+| DDR3 | bitstream | MIG in range | calibration | diag / soak | ECC CE | decode vs 800 |
+|---|---|---|---|---|---|---|
+| 800 | default | yes | passes (2026-09-26) | diag passes (2026-09-26); soak not recorded | not read | baseline |
+| 1066 | `make bit DDR=1066` | yes | unmeasured | unmeasured | unmeasured | unmeasured |
+| 1300 (out of spec) | `make bit DDR=1300` | no (79-155) | unmeasured | unmeasured | unmeasured | unmeasured |
+| 1333 (out of spec) | `make bit DDR=1333` | no (79-155, PHY patched) | unmeasured | unmeasured | unmeasured | unmeasured |
+| 1600 (out of spec) | `make bit DDR=1600` | no (79-155, PHY patched) | unmeasured | unmeasured | unmeasured | unmeasured |
 
 ## 6. What to check on first build (assumptions made without Vivado)
 

@@ -381,6 +381,21 @@ embedding/RoPE writes, the 0.6 MiB logits read and the poll's wake-up).
 
 ## 8. Device lock, status file and otpu-smi
 
+**Waiting for the card.** A runner that finds the card in use fails with `DeviceBusy` at once,
+unless `OTPU_LOCK_WAIT=<seconds>` is set: then it waits for the lock (every openTPU tool: chat,
+selftest, diag, scripts using `Board`). Steps that are not openTPU tools but must not overlap a
+run (a JTAG reload, a driver reload, a rescan) go through `otpu-lock -- <command>`, which holds
+the same lock around the command:
+
+```sh
+OTPU_LOCK_WAIT=3600 otpu-selftest --model lfm2
+otpu-lock -- sh -c 'openFPGALoader -c digilent_hs2 build/deploy_burst_a691ea98/otpu.bit && sudo otpu-setup --rescan'
+```
+
+Do not wait for the card with `pgrep -f` loops: the pattern appears in the waiting shell's own
+command line, and in other waiters', so they match each other and wait forever (seen at bring-up).
+
+
 **Lock.** Anything that runs programs or writes the card's DRAM (`Board`, `BoardBackend`,
 `otpu-selftest`, `otpu-chat`, `otpu-lens record`) takes an exclusive `flock` on
 `/tmp/otpu/<dev>.lock` (`<dev>` = `xdma0` for `/dev/xdma0`; `OTPU_RUN_DIR` moves the directory)
