@@ -106,17 +106,25 @@ def _round_scale(s: np.ndarray, kind: str, tensor_scale: float) -> np.ndarray:
     raise ValueError(kind)
 
 
+def e2m1_code(x: np.ndarray) -> np.ndarray:
+    """E2M1 magnitude code of |x| (0..7): round to nearest, ties to the even code, saturating.
+    The same as round_to_grid(x, E2M1), as seven compares (fast on large arrays)."""
+    a = np.abs(x)
+    return ((a > 0.25).astype(np.int8) + (a >= 0.75) + (a > 1.25) + (a >= 1.75) + (a > 2.5)
+            + (a >= 3.5) + (a > 5.0))
+
+
 def _elem(x: np.ndarray, grid: str) -> np.ndarray:
     """Quantize scaled elements to the element grid; returns the dequantized element values."""
     if grid == "int4":
         return np.clip(np.rint(x), -7, 7)
     if grid == "e2m1":
-        return np.sign(x) * E2M1[round_to_grid(x, E2M1)]
+        return np.sign(x) * E2M1[e2m1_code(x)]
     raise ValueError(grid)
 
 
 QMAX = {"int4": 7.0, "e2m1": E2M1_MAX}
-SEARCH = np.linspace(0.62, 1.12, 26)          # scale candidates, x the round-to-nearest scale
+SEARCH = np.linspace(0.64, 1.12, 13)          # scale candidates, x the round-to-nearest scale
 
 
 def quant_block(W: np.ndarray, g: int, grid: str, scale: str, search: bool = False,
@@ -277,7 +285,7 @@ def quantize_w4(W: np.ndarray, fmt: str, D: int = 128, search: bool = True):
     if grid == "int4":
         code = np.rint(x).astype(np.int64) & 15
     else:
-        mag = round_to_grid(x, E2M1)                                 # exact grid points
+        mag = e2m1_code(x)                                           # exact grid points
         code = mag | np.where(np.signbit(x) & (mag != 0), 8, 0)
         S = S * np.float32(0.5)                                      # codes are 2x the value
     code = code.reshape(N, K)

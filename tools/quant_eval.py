@@ -69,7 +69,10 @@ MIXED = {"head8": {r"lm_head": I8},
          "attn8": {r"lm_head": I8, r"self_attn|linear_attn|\.conv\.|attention": I8}}
 BASE_DEFAULT = ["int8", "int4-g128-fp32", "int4-g128-fp32-s", "int4-g64-fp16", "int4-g32-fp16",
                 "int4-g32-fp16-s", "int4-g32-e8m0", "int4-g32-e4m3", "e2m1-g128-fp32",
-                "e2m1-g128-fp32-s", "mxfp4", "mxfp4-ceil", "mxfp4-s", "nvfp4", "nvfp4-s"]
+                "e2m1-g128-fp32-s", "mxfp4", "mxfp4-ceil", "mxfp4-s", "nvfp4", "nvfp4-s",
+                "int4k", "int4k-s", "e2m1k", "e2m1k-s",
+                "mxfp4-s+head8", "nvfp4-s+head8", "int4k-s+head8", "e2m1k-s+head8",
+                "e2m1k-s+ends8", "e2m1k-s+down8", "e2m1k-s+attn8"]
 
 
 def config(name: str):
@@ -111,9 +114,10 @@ def main() -> None:
     ap.add_argument("--no-a8", action="store_true", help="weights only (fp32 activations)")
     ap.add_argument("--gen", type=int, default=40, help="greedy tokens per prompt")
     ap.add_argument("--json", default=None, help="append results to this JSON file")
+    ap.add_argument("--threads", type=int, default=8)
     a = ap.parse_args()
     torch.set_grad_enabled(False)
-    torch.set_num_threads(8)
+    torch.set_num_threads(a.threads)
 
     path = model_dir(a.model)
     tok = transformers.AutoTokenizer.from_pretrained(path)
