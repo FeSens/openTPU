@@ -1088,7 +1088,7 @@ class Builder:
         return out
 
     def store_quantized(self, x: Tile, dst: Affine, sdst: Affine, drs: int, es: int,
-                        row_scale: bool) -> None:
+                        row_scale: bool, half: bool = False) -> None:
         D = self.cfg.D
         if x.cols % D:
             raise CompileError("quantized stores need a multiple of D elements per row")
@@ -1096,7 +1096,7 @@ class Builder:
         rc, simm = self.addr(sdst)
         rs = x.rs if len(x.shape) == 2 else x.cols
         self.emit(I.qst(x.base, dimm, simm, x.rows, x.cols // D, rs, drs, es, row=row_scale,
-                        rb=rb, rc=rc, comment="quantized store"))
+                        half=half, rb=rb, rc=rc, comment="quantized store"))
 
     def all_gather(self, x: Tile, S: int) -> Tile:
         x = self.materialize(x)

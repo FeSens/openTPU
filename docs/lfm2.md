@@ -127,6 +127,35 @@ Qwen3-0.6B about 600 MB.
 DRAM: the image is 233 MiB at a 256-token KV capacity and 276 MiB at 2048, of which the KV
 cache and conv state are 25 MiB (Qwen3-0.6B: 703 MiB at 2048).
 
+### Decode attention at DDR3-1066 (2026-09-27)
+
+Simulated on the RTL with the DDR3-1066 bank model (`tools/perf_qwen.py --model lfm2 --layers 0
+--pos 128 --dram rbc --lat 38 --arc 4`, DDR3-1066 timings, `OTPU_PAIR=1`, fp4 layers, int8 LM
+head; core clock as the `+axi_tpc/+axi_tpu` ratio; no host time). Before, the six attention
+layers took 328 K cycles for 11.7 MB (28% of their bytes): each V^T append (a byte per
+dimension, stride = the cache capacity) cost ~4.8 K cycles of controller read-modify-writes, and
+the query QACTs queued behind all 16 appends on the quantizer.
+
+| | 100 MHz | 116 MHz | attention (116 MHz) |
+|---|---:|---:|---:|
+| fp4-rebase + ddr-attn (152f9d4) | 1,480,447 (67.5 tok/s) | 1,491,387 (77.8 tok/s) | 328,087 |
+| + r7-apf (adapter RMW, 64-beat SW queue, fast QST passes) | 1,303,606 (76.7) | 1,307,072 (88.7) | 143,795 |
+| + V appends per head, QST `HALF` | 1,284,746 (77.8) | 1,287,048 (**90.1**) | 124,757 |
+| same, fp4 LM head | 1,022,385 (97.8) | 1,024,680 (113.2) | |
+
+- **QST `HALF`** (docs/isa.md): a V^T append of a 64-wide head writes its 64 real rows, not the
+  128 of its padded tile (P.V never reads the padding): half the byte-strided writes.
+- **The V^T appends move into the head pipeline** (`_attention`): the K appends go first, and
+  head j's V append is emitted with its queries, so head j's scores wait for V_0..V_j, not for
+  all eight. Qwen3 gains 0.5% (int8) / 0.9% (fp4); Qwen3.5 is unchanged.
+- Tried and dropped: one Q MM for all heads instead of one per KV head (+1.9 K cycles), the
+  pipeline's `ahead` 1..7 (within 0.4%).
+
+At 116 MHz the token is now at 95.8% of the core port's roofline (157.8 MB); the DRAM
+efficiency is 83%. The attention layers still take 125 K cycles for 91 K of bytes: the Q
+projections stream at ~70% while the V^T read-modify-writes share the DRAM, and each head's
+softmax chain adds ~0.7 K cycles after them.
+
 ## Tests
 
 `tests/test_lfm2.py`:

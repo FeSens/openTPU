@@ -170,8 +170,9 @@ def _random_program(rng, cfg: Config, n_ops=40):
             drs = KB * D * es + int(rng.integers(0, 8))
             srs = KB * D
             sdst = (scratch + rows * drs + 64 + 3) // 4 * 4
+            row = bool(rng.integers(2))
             prog.append(I.qst(pick_src(rows * srs), scratch, sdst, rows, KB,
-                              srs, drs, es, row=bool(rng.integers(2))))
+                              srs, drs, es, row=row, half=row and bool(rng.integers(2))))
             scratch = sdst + 4 * rows * KB + 64
             scratch = (scratch + 3) // 4 * 4
         elif kind == "ldst":
@@ -308,8 +309,9 @@ def _hazard_program(rng, cfg: Config, n_ops=60):
                 sdst = SCR + 4 * int(rng.integers(0, 2048))
                 if sdst + 4 * rows * KB <= dst or sdst >= dst + span:
                     break
+            row = bool(rng.integers(2))
             prog.append(I.qst(region(rows * KB * D), dst, sdst, rows, KB, KB * D, drs, es,
-                              row=bool(rng.integers(2))))
+                              row=row, half=row and bool(rng.integers(2))))
         elif kind == "ld":
             n = int(rng.integers(1, 80))
             prog.append(I.ld(DATA + 4 * int(rng.integers(0, 2048)), region(n), n))
@@ -546,8 +548,9 @@ def test_axi_sw_rmw_fuzz(have_verilator, seed):
             span = (rows - 1) * drs + (D - 1) * es + 1
             dst = REG + int(rng.integers(0, SZ - span))
             sdst = REG + SZ + 4 * int(rng.integers(0, 256))       # scales: their own area
+            row = bool(rng.integers(2))
             prog.append(I.qst(4 * D * int(rng.integers(0, 6)), dst, sdst, rows, 1, D, drs, es,
-                              row=bool(rng.integers(2))))
+                              row=row, half=row and bool(rng.integers(2))))
         else:
             n = 4 * int(rng.integers(1, 64))
             prog.append(I.ld(REG + 4 * int(rng.integers(0, SZ // 4 - n)), t, n))

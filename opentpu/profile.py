@@ -99,7 +99,8 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
     if op == I.QST:
         rows, KB = w[3] & 0xFFFF, w[3] >> 16
         n = rows * KB * D
-        return "QST", f"{rows}x{KB * D} -> DRAM int8", -(-n // L) + n, 0, n + rows * KB
+        nw = n // 2 if ins.flags & I.F_HALF else n     # HALF: the rows' first halves written
+        return "QST", f"{rows}x{KB * D} -> DRAM int8", -(-n // L) + nw, 0, nw + rows * KB
     if op == I.VOP:
         rows, cols = w[3] & 0xFFFF, w[3] >> 16
         func = (w[5] >> 16) & 0xFF

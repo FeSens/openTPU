@@ -24,6 +24,7 @@ WFORMATS = {"int8": W8, "int4": W4I, "fp4": W4F}
 F_PAIR = 0x40                   # MM, 4-bit only: column reuse, two K-blocks per cycle and row
 F_ROW, F_CSCALE, F_RSCALE = 0x1, 0x2, 0x4   # QACT (QST: F_ROW)
 F_DUP = 0x8                     # QACT: also write the rows to ACT rows rows..2*rows-1 (PAIR)
+F_HALF = 0x2                    # QST, ROW mode: write only the first half of each row
 
 # VOP functions
 V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_OUTER = 0, 1, 2, 3, 4, 5, 6
@@ -171,9 +172,11 @@ def qact(src, rows, ab, kb, srs, row=False, cscale=None, rscale=None, dup=False,
                  comment=comment)
 
 
-def qst(src, dst, sdst, rows, kb, srs, drs, es, row=False, ra=0, rb=0, rc=0, comment=""):
+def qst(src, dst, sdst, rows, kb, srs, drs, es, row=False, half=False, ra=0, rb=0, rc=0,
+        comment=""):
     assert 0 < rows < 65536 and 0 < kb < 65536
-    return Instr(QST, ra=ra, rb=rb, rc=rc, flags=F_ROW if row else 0,
+    assert row or not half, "QST HALF needs ROW mode"
+    return Instr(QST, ra=ra, rb=rb, rc=rc, flags=(F_ROW if row else 0) | (F_HALF if half else 0),
                  w=_w(src, dst, sdst, rows | (kb << 16), srs, drs, es), comment=comment)
 
 

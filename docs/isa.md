@@ -177,7 +177,10 @@ in the same cycles, the operand layout of `MM PAIR` ("Column reuse").
 (element stride, bytes). Flag bit0 `ROW`.
 Element `c` of row `r` goes to byte `dst + r*drs + c*es`. Scales: per block to
 `sdst + (r*KB + k)*4`; in `ROW` mode one scale per row to `sdst + r*4`. The data and scale ranges of
-one QST must not overlap.
+one QST must not overlap. Flag bit1 `HALF` (`ROW` mode only): the scale is still the whole row's,
+but only elements `c < KB*D/2` are written (a V^T append of a head half as wide as its padded row,
+LFM2's 64 of 128, then writes its 64 real rows instead of 128 byte-strided ones; a quantizer
+without `HALF` writes the zero padding too, which nothing reads).
 
 ### VOP
 

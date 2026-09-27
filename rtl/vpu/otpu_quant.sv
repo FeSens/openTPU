@@ -165,6 +165,7 @@ module otpu_quant
   logic [15:0] rows, KB;
   logic [7:0]  ab;
   logic [31:0] G;                            // elements per group
+  logic [31:0] GW;                           // ... read in pass 1 (QST HALF: the first half)
   logic [31:0] groups;                       // rows * groups per row
   // cycles an instruction was frozen by the TMEM grant, for the profiler: the condition is
   // registered (st_c) and summed a cycle late, off the grant path; the count is st_frz + st_c
@@ -191,7 +192,8 @@ module otpu_quant
   // elements per read: QST pass 1 one byte (or one word) per cycle, everything else LANES
   wire [31:0] ew = (is_st && pass) ? (wide ? 32'd4 : 32'd1) : 32'(LANES);
   wire [31:0] bstep = wide ? 32'd4 : es;      // QST pass 1: badr per read
-  wire rlast = (e + ew >= G);
+  wire [31:0] Gr = pass ? GW : G;            // the elements of this pass
+  wire rlast = (e + ew >= Gr);
   wire riss = busy && !rd_done && !rd_wait &&
               (!strm || (e != 0) || (bst[rbuf] == B_FREE));
 
@@ -213,7 +215,7 @@ module otpu_quant
     t_ren = '0; t_raddr = '0; t_ren2 = '0; t_raddr2 = '0; t_ren3 = 1'b0; t_raddr3 = '0;
     if (riss) begin
       for (int l = 0; l < LANES; l++) begin
-        if (32'(l) < ew && e + 32'(l) < G) begin
+        if (32'(l) < ew && e + 32'(l) < Gr) begin
           t_ren[l] = 1'b1;
           t_raddr[l] = grp_src + e + 32'(l);
           if (csf) begin
@@ -510,6 +512,8 @@ module otpu_quant
         drs  <= cmd.w6;
         es   <= cmd.w7;
         G    <= cmd.flags[0] ? 32'(cmd.w4[31:16]) * D : D;
+        // HALF (ROW mode): the scale is the whole row's, pass 1 writes its first half
+        GW   <= cmd.flags[0] ? (32'(cmd.w4[31:16]) * D) >> (cmd.flags[1] ? 1 : 0) : D;
         groups <= 32'(cmd.w4[15:0]) * (cmd.flags[0] ? 32'd1 : 32'(cmd.w4[31:16]));
       end else begin
         rows <= 16'(cmd.w2[7:0]);
@@ -517,6 +521,7 @@ module otpu_quant
         KB   <= cmd.w2[31:16];
         srs  <= cmd.w3;
         G    <= cmd.flags[0] ? 32'(cmd.w2[31:16]) * D : D;
+        GW   <= cmd.flags[0] ? 32'(cmd.w2[31:16]) * D : D;
         groups <= 32'(cmd.w2[7:0]) * (cmd.flags[0] ? 32'd1 : 32'(cmd.w2[31:16]));
       end
       r <= '0; g <= '0; e <= '0; gi <= '0; rel <= '0;
@@ -549,7 +554,7 @@ module otpu_quant
         m0.last <= rlast;
         m0.row <= r;
         m0.grp <= g;
-        for (int l = 0; l < LANES; l++) m0.mask[l] <= (32'(l) < ew && e + 32'(l) < G);
+        for (int l = 0; l < LANES; l++) m0.mask[l] <= (32'(l) < ew && e + 32'(l) < Gr);
         m0.glast <= rlast && (gi + 1 == groups);
         if (strm && e == 0) begin
           bst[rbuf] <= B_FILL;
