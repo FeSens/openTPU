@@ -1,0 +1,6 @@
+# openTPU card (installed by opentpu/host/setup_pcie.sh): the XDMA driver binds it.
+# Bitstreams with PCI revision 00 report class 07 00 01 (16450 serial port), so the kernel's
+# 8250_pci probes them too; driver_override leaves the card to xdma. The second line matches
+# revision 01 on (class 12 00 00, subsystem 10ee:4f54) by the subsystem ID, whatever the device ID.
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10ee", ATTR{device}=="0x7028", ATTR{driver_override}="xdma", RUN{builtin}+="kmod load xdma"
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10ee", ATTR{subsystem_vendor}=="0x10ee", ATTR{subsystem_device}=="0x4f54", ATTR{driver_override}="xdma", RUN{builtin}+="kmod load xdma"

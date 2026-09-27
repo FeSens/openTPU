@@ -174,7 +174,7 @@ def diagnose(rows: list[Row]) -> list[str]:
     st = {r.name: r.status for r in rows}
     if st.get("ID register") == FAIL:
         hints.append("no openTPU answers on BAR0: link down, bitstream not loaded, or the "
-                     "card was reprogrammed after enumeration (rescan: setup_pcie.sh --rescan)")
+                     "card was reprogrammed after enumeration (otpu-setup --rescan)")
     if st.get("PCIe link") == FAIL:
         hints.append("PCIe below Gen1 x8: lane order / GT placement (board.md section 6.3), "
                      "or the slot's width")
@@ -599,7 +599,7 @@ def main(argv=None, open_transport=None) -> int:
         for r in rows:
             print(f"  [{r.status}] {r.section:<8} {r.name:<44} {r.msg}")
         hints = diagnose(rows) + ["no device nodes: load the XDMA driver "
-                                  "(opentpu/host/setup_pcie.sh; docs/host.md)"]
+                                  "(otpu-setup; otpu-setup --check says what is missing)"]
     else:
         try:
             rows, hints = run(a, t, dev, a.sim)
