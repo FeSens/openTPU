@@ -27,8 +27,10 @@ def test_mlp_decode_at_roofline(have_verilator):
     p = profile(mlp, design_config(), **a)
     # 0.945, was 0.95: the timing registers added for the board (VPU/quantizer inputs and
     # writes, MXU combine operands) add a fixed few cycles per instruction -- 95.1% -> 95.0% on
-    # this small kernel, for 41 -> 83 MHz (est.) on the full board; a Qwen3 token is unchanged
-    assert _eff(p) > 0.945, p.summary()
+    # this small kernel, for 41 -> 83 MHz (est.) on the full board; a Qwen3 token is unchanged.
+    # 0.94, was 0.945: the VPU write buffer (done a cycle after the last write) and the MXU row
+    # register before its FIFO, for 125 MHz: 26082 -> 26114 cycles (94.5% -> 94.4%)
+    assert _eff(p) > 0.94, p.summary()
 
 
 def test_mlp_small_batch_near_roofline(have_verilator):
