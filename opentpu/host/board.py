@@ -392,9 +392,8 @@ class SimTransport:
                 self.ch[c].view("<u4").astype(">u4").tofile(d / f"ch{c}.bin")
             (d / "host.txt").write_text("\n".join(self.script) + "\n")
             self.script, self.nreads = [], 0
-            r = subprocess.run([str(exe), f"+dir={d}", f"+axi_stall={self.stall}",
-                                f"+axi_seed={self.seed}", *self.plusargs],
-                               capture_output=True, text=True)
+            r = rtlsim.run_sim([str(exe), f"+dir={d}", f"+axi_stall={self.stall}",
+                                f"+axi_seed={self.seed}", *self.plusargs])
             out = self.out = r.stdout + r.stderr
             if "DONE" not in out:
                 raise RuntimeError(f"board simulation failed:\n{out[-3000:]}")

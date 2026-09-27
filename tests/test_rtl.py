@@ -698,3 +698,38 @@ def test_run_arguments_start_in_r8_to_r15(have_verilator, boot):
                           np.tile(dram[1024:1024 + 128], 3))   # 3 iterations
     got = rtlsim.run(cfg, [prog], [dram.copy()], args=args, boot=boot)[0][0][:1 << 16]
     assert np.array_equal(want, got)
+
+
+def test_simulator_child_dies_with_its_parent(tmp_path):
+    """rtlsim.run_sim: a simulator whose Python parent is killed (SIGKILL: no finally, no
+    atexit) is killed within ~1 s by its watchdog shell, instead of running on under launchd;
+    a timeout kills its process group."""
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+    from opentpu import rtlsim
+    with pytest.raises(subprocess.TimeoutExpired):
+        rtlsim.run_sim(["sleep", "30"], timeout=0.3)
+    pidf = tmp_path / "pid"
+    code = (f"import os, sys; sys.path.insert(0, {str(Path(__file__).resolve().parent.parent)!r});"
+            "from opentpu import rtlsim; "
+            f"rtlsim.run_sim(['sh', '-c', 'echo $$ > {pidf}; exec sleep 60'])")
+    parent = subprocess.Popen([sys.executable, "-c", code])
+    for _ in range(100):
+        if pidf.exists() and pidf.read_text().strip():
+            break
+        time.sleep(0.05)
+    child = int(pidf.read_text())
+    os.kill(parent.pid, signal.SIGKILL)
+    parent.wait()
+    for _ in range(60):
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    os.kill(child, signal.SIGKILL)
+    raise AssertionError("the simulator outlived its parent")
