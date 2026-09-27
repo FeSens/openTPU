@@ -9,7 +9,12 @@
 //
 // Port B: chunk reads and word-masked chunk writes. Port A: single-word reads and byte-enabled
 // word writes. Port SW: byte-enabled word writes (the quantizer's QST stores), independent of A
-// so that they never hold up the MXU's scale reads. A reads that fall in the beat of the previous A read (the MXU's scale stream:
+// so that they never hold up the MXU's scale reads. SW writes gather per channel in a one-beat
+// buffer: writes to the same beat merge, and the beat goes out as one AXI write when a write to
+// another beat arrives, when all its bytes are written, or after WGATHER cycles without an SW
+// write (the board's controller does a partial-strobe write as a read-modify-write for ECC, so a
+// QST's byte stream costs one write per beat, not per byte). wr_idle stays low while a beat is
+// gathered, so a QST still completes only once its writes are in memory. A reads that fall in the beat of the previous A read (the MXU's scale stream:
 // 16 scales per beat) reuse it without a DRAM access, until any write is accepted.
 // Port B reads that follow each other in the address space (a streamed operand) are issued as
 // one burst per channel: a run of queued contiguous reads goes out once it has BL beats, once
@@ -27,6 +32,7 @@ module otpu_axi_dram #(
   parameter int QD = 16,                             // request queue depth per channel and port
   parameter int BL = 8,                              // port B read burst, beats (max)
   parameter int GATHER = 4,                          // idle cycles before a short burst goes out
+  parameter int WGATHER = 4,                         // idle cycles before a gathered SW beat goes out
   parameter int RD = 128,                            // B read beats in flight per channel
   parameter int AD = 16,                             // A read beats in flight per channel
   parameter logic [31:0] BASE0 = 32'h0000_0000,
@@ -115,13 +121,22 @@ module otpu_axi_dram #(
     logic [31:0]  data;
     logic [3:0]   be;
   } qa_t;
+  typedef struct packed {      // a gathered SW beat
+    logic [31:0]  addr;
+    logic [511:0] data;
+    logic [63:0]  strb;
+  } qw_t;
 
   logic [QW:0] qb_n [2];
   logic [QW-1:0] qb_h [2];
   logic [QW:0] qa_n [2];
   logic [QW-1:0] qa_h [2];
-  logic [QW:0] qw_n [2];                    // port SW writes
+  logic [QW:0] qw_n [2];                    // port SW writes (gathered beats)
   logic [QW-1:0] qw_h [2];
+  // SW gather buffers (see the top): valid, beat, bytes written, cycles since the last merge
+  logic [1:0]   gv;
+  qw_t          gb [2];
+  logic [2:0]   gage [2];
 
   // order of B reads (tags) and of A reads (channel, word, reuse)
   logic         bt_q [OD];                     // LUT RAM
@@ -166,9 +181,11 @@ module otpu_axi_dram #(
   // (per channel; written in their own processes so they map to LUT RAM)
   logic [1:0]   qb_push, qa_push, qw_push;
   qb_t          qb_e [2];
-  qa_t          qa_e [2], qw_e [2];
+  qa_t          qa_e [2];
+  qw_t          qw_e [2];
   qb_t          hb [2];
-  qa_t          ha [2], hw [2];
+  qa_t          ha [2];
+  qw_t          hw [2];
   logic [511:0] rb_head [2], ra_head [2];
   always_comb begin
     for (int c = 0; c < 2; c++) begin
@@ -183,12 +200,11 @@ module otpu_axi_dram #(
       qa_e[c].idx = a_addr[3:0];
       qa_e[c].data = a_wdata;
       qa_e[c].be = a_be;
-      qw_push[c] = sw_take && sw_ch == c[0];
-      qw_e[c].we = 1'b1;
-      qw_e[c].addr = chan_addr(sw_addr, c[0]);
-      qw_e[c].idx = sw_addr[3:0];
-      qw_e[c].data = sw_wdata;
-      qw_e[c].be = sw_be;
+      // the gathered beat goes out: another beat's SW write (room is sure: sw_rdy), or, with
+      // no SW write this cycle and room in the queue, full or idle
+      qw_push[c] = gv[c] && (sw_take && sw_ch == c[0] ? gb[c].addr != chan_addr(sw_addr, c[0])
+                   : qw_n[c] < QD && (&gb[c].strb || gage[c] >= 3'(WGATHER)));
+      qw_e[c] = gb[c];
     end
   end
   always_ff @(posedge clk)
@@ -196,7 +212,7 @@ module otpu_axi_dram #(
   for (genvar c = 0; c < 2; c++) begin : g_mem
     qb_t          qbm [QD];
     qa_t          qam [QD];
-    qa_t          qwm [QD];
+    qw_t          qwm [QD];
     logic [511:0] rbm [RD];
     logic [511:0] ram [AD];
     always_ff @(posedge clk) begin
@@ -261,14 +277,17 @@ module otpu_axi_dram #(
         w_a[c] = !w_w[c] && (qa_n[c] != 0) && ha[c].we;
         w_b[c] = !w_w[c] && !w_a[c] && (qb_n[c] != 0) && hb[c].we;
       end
-      hs[c] = w_w[c] ? hw[c] : ha[c];
+      hs[c] = ha[c];
       m_awvalid[c] = (w_w[c] || w_a[c] || w_b[c]) && !aw_done[c];
       m_wvalid[c] = (w_w[c] || w_a[c] || w_b[c]) && !w_done[c];
-      m_awaddr[c] = (w_w[c] || w_a[c]) ? hs[c].addr : hb[c].addr;
+      m_awaddr[c] = w_w[c] ? hw[c].addr : w_a[c] ? hs[c].addr : hb[c].addr;
       m_awid[c] = w_w[c] || w_a[c];
       m_wdata[c] = '0;
       m_wstrb[c] = '0;
-      if (w_w[c] || w_a[c]) begin
+      if (w_w[c]) begin
+        m_wdata[c] = hw[c].data;
+        m_wstrb[c] = hw[c].strb;
+      end else if (w_a[c]) begin
         m_wdata[c][32 * hs[c].idx +: 32] = hs[c].data;
         m_wstrb[c][4 * hs[c].idx +: 4] = hs[c].be;
       end else begin
@@ -303,8 +322,8 @@ module otpu_axi_dram #(
   // (folded into wr_n a cycle late, off the rdy -> take path). A B response comes after its W
   // handshake, so at least a cycle after the accept: wr_n never goes negative
   logic [15:0] wr_n;
-  logic [3:0]  wacc_q;
-  assign wr_idle = (wr_n == 0) && (wacc_q == '0);
+  logic [4:0]  wacc_q;
+  assign wr_idle = (wr_n == 0) && (wacc_q == '0) && (gv == '0);
 
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -317,6 +336,7 @@ module otpu_axi_dram #(
       bt_n <= '0; bt_h <= '0; ao_n <= '0; ao_h <= '0;
       al_v <= 1'b0;
       wr_n <= '0; wacc_q <= '0;
+      gv <= '0; gage[0] <= '0; gage[1] <= '0;
       aw_done <= '0; w_done <= '0; wcur <= '0;
       arh <= '0; lb_rd <= 1'b0;
       qi[0] <= '0; qi[1] <= '0;
@@ -328,9 +348,9 @@ module otpu_axi_dram #(
       // take strobes, not the queue pushes: an A write is never a reuse and goes to exactly one
       // channel, as does an SW write, so a_reuse and the channel decode stay off this path
       logic signed [4:0] wn;
-      wn = 5'(wacc_q[0]) + 5'(wacc_q[1]) + 5'(wacc_q[2]) + 5'(wacc_q[3]) -
+      wn = 5'(wacc_q[0]) + 5'(wacc_q[1]) + 5'(wacc_q[2]) + 5'(wacc_q[3]) + 5'(wacc_q[4]) -
            5'(m_bvalid[0]) - 5'(m_bvalid[1]);
-      wacc_q <= {sw_take, a_take && a_we,
+      wacc_q <= {qw_push[1], qw_push[0], a_take && a_we,
                  b_take && b_we && b_wmask[31:16] != 0,
                  b_take && b_we && b_wmask[15:0]  != 0};
       for (int c = 0; c < 2; c++) begin
@@ -425,6 +445,27 @@ module otpu_axi_dram #(
         lb_nx <= b_addr + 32'(D / 4);
       end
       // ---- A beat reuse: the beat of the last A read, forgotten on any write
+      // ---- SW gather: merge into the beat, or start a new one (the old one was pushed)
+      for (int c = 0; c < 2; c++) begin
+        if (sw_take && sw_ch == c[0]) begin
+          logic same;
+          same = gv[c] && gb[c].addr == chan_addr(sw_addr, c[0]);
+          gv[c] <= 1'b1;
+          gage[c] <= '0;
+          gb[c].addr <= chan_addr(sw_addr, c[0]);
+          for (int k = 0; k < 64; k++) begin
+            logic hit;
+            hit = sw_addr[3:0] == 4'(k / 4) && sw_be[k % 4];
+            gb[c].data[8 * k +: 8] <= hit ? sw_wdata[8 * (k % 4) +: 8]
+                                     : same ? gb[c].data[8 * k +: 8] : 8'h00;
+            gb[c].strb[k] <= hit || (same && gb[c].strb[k]);
+          end
+        end else if (qw_push[c]) begin
+          gv[c] <= 1'b0;
+        end else if (gv[c] && gage[c] != '1) begin
+          gage[c] <= gage[c] + 1;
+        end
+      end
       if ((b_take && b_we) || (a_take && a_we) || sw_take) al_v <= 1'b0;
       else if (a_take && !a_we) begin
         al_v <= 1'b1;

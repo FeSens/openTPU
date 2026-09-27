@@ -32,9 +32,13 @@ Pieces:
   emulated_logits   float64 decode with openTPU's quantization points (see qwen3)
   Image             per-slice DRAM layout: equal-size layer blocks of either kind
   qwen35_step       the ol kernel for one decode token
+  qwen35_rows       R consecutive prompt tokens per device run (chunked prefill,
+                    qwen3.Engine.prefill_chunks): the projections stream once for the R rows,
+                    each DeltaNet state is loaded once and updated row after row, qwen3's row
+                    attention
 
-Weights, activations and the KV cache use Qwen3's W8A8 scheme; decoding runs on qwen3.Engine,
-one token per device run.
+Weights, activations and the KV cache use Qwen3's W8A8 scheme; decoding runs on qwen3.Engine
+(one sequence: no batched decode).
 """
 from __future__ import annotations
 
@@ -56,8 +60,8 @@ from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
 from ..runtime import quantize_rows
 from .lfm2 import plan, run_layers
-from .qwen3 import (ATTN_BLOCK, _attention, _Bump, _fake_q, _lm_head, _mlp, _qdesc, _tdesc,
-                    rope_tables)
+from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _lm_head,
+                    _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables)
 
 LIN, ATTN = "linear", "attn"
 
@@ -311,19 +315,20 @@ class Image:
     and then the convolution ring, the recurrent state (per head [dv, dk] fp32, transposed) and
     the per-head constants. An attention block holds the q/k
     norms, the projections (the gate rows of q_proj as their own matrix) and this slice's KV
-    heads with room for `cap` tokens.
+    heads with room for `cap` tokens. The I/O area holds `rows` token rows (x, cos, sin,
+    logits) for chunked prefill.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1):
         spec.check(cfg)
-        if batch != 1 or rows != 1:
-            raise ValueError("Qwen3.5 runs one token per device run: batch=1, rows=1")
+        if batch != 1:
+            raise ValueError("Qwen3.5 runs one sequence: batch=1")
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
         S, D = cfg.S, cfg.D
         H, d, F_, K = spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
         dk, dv = spec.lin_dk, spec.lin_dv
-        self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, 1
+        self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, rows
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
         self.nl = spec.lin_heads // S                   # DeltaNet heads of one slice
@@ -331,10 +336,12 @@ class Image:
         self.R = self.C + dv                            # projected rows per head (and z)
         self.plan = plan(spec.kinds)
         b = _Bump()
-        self.io = {"x": b.alloc(4 * H), "cos": b.alloc(2 * spec.rope_dim),
-                   "sin": b.alloc(2 * spec.rope_dim), "gf": b.alloc(4 * H),
-                   "logits": b.alloc(4 * spec.vocab),
-                   "hs": b.alloc(4 * 2 * self.nl)}     # per pair: decays of a, b; betas
+        self.io = {"x": b.alloc(4 * H * rows), "cos": b.alloc(2 * spec.rope_dim * rows),
+                   "sin": b.alloc(2 * spec.rope_dim * rows), "gf": b.alloc(4 * H),
+                   "logits": b.alloc(4 * spec.vocab * rows),
+                   "hs": b.alloc(4 * 2 * self.nl),     # per pair: decays of a, b; betas
+                   "gr": b.alloc(4 * 2 * self.nl * rows),  # chunked prefill, per row: decays,
+                   "on": b.alloc(4 * 4 * spec.lin_dv * rows)}  # betas; a head group's outputs
         self.layer0 = b.next
         lb = _Bump()                                    # offsets inside one layer block
         common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
@@ -477,7 +484,16 @@ class Image:
                 for s in range(self.cfg.S)]
 
     def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
-        raise NotImplementedError("Qwen3.5 runs one token per device run (Engine.step)")
+        """One program per slice: consecutive positions of the sequence at once
+        (qwen35_rows)."""
+        if len(rows) > self.rows:
+            raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
+        if any(r != (0, rows[0][1] + i) for i, r in enumerate(rows)):
+            raise ValueError("Qwen3.5 rows must be consecutive positions of sequence 0")
+        return [qwen35_rows.trace(self.cfg, s, {"m": self.descriptors(s), "p0": rows[0][1],
+                                                "R": len(rows), "logit_rows": list(logit_rows),
+                                                "block": block}).finish()
+                for s in range(self.cfg.S)]
 
     # ---- kernel descriptors
     def descriptors(self, sid: int) -> SimpleNamespace:
@@ -510,6 +526,7 @@ class Image:
                 ns.kn = Tensor(off + lofs["kn"], (d,), (1,))
                 ns.kv = KVDesc({sid + j * cfg.S: {k: off + v for k, v in r.items()}
                                 for j, r in enumerate(lofs["kv"])}, self.cap, d, D, cfg.S, sid)
+                ns.kvs = [ns.kv]
             return ns
 
         return SimpleNamespace(
@@ -517,7 +534,13 @@ class Image:
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (spec.rope_dim // 2,)),
             sin=_tdesc(self.io["sin"], (spec.rope_dim // 2,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
+            xr=_tdesc(self.io["x"], (self.rows, H)),
+            cosr=_tdesc(self.io["cos"], (self.rows, spec.rope_dim // 2)),
+            sinr=_tdesc(self.io["sin"], (self.rows, spec.rope_dim // 2)),
+            logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
             hs=_tdesc(self.io["hs"], (nl // 2, 4)),
+            gr=_tdesc(self.io["gr"], (self.rows, 2 * nl)),
+            on=_tdesc(self.io["on"], (self.rows, self.og * dv)),
             head=_qdesc(*self.head, self.v_loc, H, D), v_loc=self.v_loc)
 
 
@@ -756,3 +779,139 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
 
     run_layers(m.plan, layer)
     _lm_head(x, m, spec)
+
+
+def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
+    """_deltanet for R consecutive positions p0 .. p0+R-1 at once. The projections stream once
+    for the R rows, pair of heads by pair; the convolution runs over the pair's rows before
+    it in the chunk and its ring; each head's state is loaded once, updated and read row after
+    row (the recurrence is sequential in the tokens), and stored once. Per row every value is
+    computed by _deltanet's operations in its order, and out_proj accumulates over the same
+    head groups (the last one in pairs when og = 4), so the result is bit-identical.
+
+    The recurrence is unrolled over the rows, so the pairs run as hardware loops (a loop over
+    the head groups but the last, each a loop over its pairs; then the last group's pairs),
+    or the program would not fit IMEM. TMEM addresses are static: the per-head decays and
+    betas go through `gr` in DRAM ([R, 2nl]: the decays, then the betas of each row), and a
+    group's normed outputs through `on` ([R, og * dv]) before its out_proj."""
+    eps, K, R = spec.eps, spec.conv_k, x.rows
+    dk, dv = spec.lin_dk, spec.lin_dv
+    nl, C = lw.state.shape[0], 2 * dk + dv
+    RH, og = C + dv, lw.wout.shape[1] // dv             # RH: projected rows per head
+    NP, ng, gp = nl // 2, nl // og, og // 2             # pairs, head groups, pairs per group
+    TP = 2 * K * C                                      # taps words of a pair (then its ring)
+    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
+    ab = ol.dot(xs, lw.wab)                             # [R, 2nl]: a, then b, of each head
+    alog, dtb = ol.load(lw.alog), ol.load(lw.dtb)
+    for r in range(R):
+        dr, br = gates(ab[r, 0:nl], ab[r, nl:2 * nl], alog, dtb)
+        ol.store(gr[r, 0:nl], dr)
+        ol.store(gr[r, nl:2 * nl], br)
+        del dr, br
+    del ab, alog, dtb
+    gn = ol.load(lw.gn)
+    y = ol.zeros([R, spec.hidden])
+    St = ol.empty([dv * dk]).reshape(dv, dk)
+    w = ol.empty([dv])
+    ONp = ol.empty([R, 2 * dv])                         # normed, gated o of a pair per row
+    GD, GB = ol.empty([R, 2]), ol.empty([R, 2])         # decays, betas of the pair's heads
+    full = max(0, K - 1 - p0)                           # rows before it lack positions < 0
+    rgroups = [(r, r + 1) for r in range(min(full, R))] + ([(full, R)] if full < R else [])
+    split = og == 4 and NP > 1                          # _deltanet's last group, in pairs
+
+    def flush(g, ON, c0, c1):
+        """y += ON . out_proj columns [c0, c1) of head group g (heads of dv columns)."""
+        ol.dot(ON, lw.wout[g * spec.hidden:(g + 1) * spec.hidden, c0 * dv:c1 * dv], acc=y)
+
+    def head(h, X, Z, taps, a):
+        """Head h, head a of its pair (whose q k v rows are in X, z in Z) -> ONp[:, a]."""
+        U = ol.empty([R, C])
+        for r0, r1 in rgroups:                          # the convolution, as _deltanet's conv
+            t = min(K - 1, p0 + r0)
+            cur = X[K - 1 + r0:K - 1 + r1, a * C:(a + 1) * C]
+            if t == 0:
+                U[r0:r1, :].set(cur * taps[a * K + K - 1, :][None, :])
+                continue
+            u = cur * taps[a * K + K - 1, :][None, :]
+            for j in range(1, t):
+                u = u + X[K - 1 + r0 - j:K - 1 + r1 - j, a * C:(a + 1) * C] * \
+                    taps[a * K + K - 1 - j, :][None, :]
+            U[r0:r1, :].set(u + X[K - 1 + r0 - t:K - 1 + r1 - t, a * C:(a + 1) * C] *
+                            taps[a * K + K - 1 - t, :][None, :])
+            del u
+        U.set(silu(U))
+        Qn = l2norm_rows(U[:, 0:dk], dk ** -0.5)
+        Kn = l2norm_rows(U[:, dk:2 * dk])
+        GZ = silu(Z[:, a * dv:(a + 1) * dv])
+        if p0:
+            ol.load(lw.state[h], out=St)
+        else:
+            St.set(0.0)
+        O = ol.empty([R, dv])
+        for r in range(R):                              # the recurrence, token by token
+            dh, bh = GD[r, a:a + 1], GB[r, a:a + 1]
+            w.set(St @ Kn[r, :])
+            w.set((U[r, 2 * dk:C] - w * dh) * bh)
+            ol.outer(w, Kn[r, :], acc=St, decay=dh)
+            O[r, :].set(St @ Qn[r, :])
+        ol.store(lw.state[h], St)
+        ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
+
+    def pair(p):
+        """Pair p (an int or a loop expression) -> ONp."""
+        for r in range(R):
+            ol.load(gr[r, 2 * p:2 * p + 2], out=GD[r, :])
+            ol.load(gr[r, nl + 2 * p:nl + 2 * p + 2], out=GB[r, :])
+        taps = ol.load(lw.cv[p, 0:TP]).reshape(2 * K, C)    # rows (head, tap)
+        X = ol.empty([K - 1 + R, 2 * C])                # q k v of a, of b: positions p0-K+1 ..
+        for j in range(1, min(K, p0 + 1)):              # ... from the ring
+            sl = TP + (p0 - j) % K * 2 * C
+            ol.load(lw.cv[p, sl:sl + 2 * C], out=X[K - 1 - j, :])
+        ol.dot(xs, lw.wh[p * 2 * RH:p * 2 * RH + 2 * C, :], out=X[K - 1:K - 1 + R, :])
+        Z = ol.dot(xs, lw.wh[p * 2 * RH + 2 * C:(p + 1) * 2 * RH, :])   # z of a, of b
+        for r in range(max(0, R - K), R):
+            sl = TP + (p0 + r) % K * 2 * C
+            ol.store(lw.cv[p, sl:sl + 2 * C], X[K - 1 + r, :])
+        for a in range(2):
+            head(2 * p + a, X, Z, taps, a)
+
+    def loop(n):
+        """ol.range(n), or the single index 0 unrolled."""
+        return ol.range(n) if n > 1 else range(n)
+
+    for g in loop(ng - 1 if split else ng):             # whole groups
+        if gp == 1:
+            pair(g)
+            flush(g, ONp, 0, 2)
+            continue
+        for q in loop(gp):
+            pair(g * gp + q)
+            ol.store(on[:, q * 2 * dv:(q + 1) * 2 * dv], ONp)
+        flush(g, ol.load(on), 0, og)
+    if split:                                           # the last group, pair by pair
+        for q in loop(gp):
+            pair((ng - 1) * gp + q)
+            flush(ng - 1, ONp, 2 * q, 2 * q + 2)
+    return x + ol.all_reduce(y)
+
+
+@ol.jit
+def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK):
+    """R prompt tokens at positions p0 .. p0+R-1 at once: their embeddings m.xr and RoPE
+    tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
+    empty). Bit-identical to R qwen35_step runs."""
+    spec = m.spec
+    rows = [(0, p0 + r) for r in range(R)]
+    x = ol.load(m.xr[0:R, :])
+    c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+
+    def layer(li, kind):
+        lw = m.layer(li, kind)
+        if kind == LIN:
+            x.set(_deltanet_rows(x, lw, p0, spec, m.gr[0:R, :], m.on[0:R, :]))
+        else:
+            x.set(_attention_rows(x, lw, c, s_, rows, spec, block, gated=True))
+        x.set(_mlp(x, lw, spec))
+
+    run_layers(m.plan, layer)
+    _lm_head_rows(x, m, spec, logit_rows)

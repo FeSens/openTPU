@@ -80,10 +80,38 @@ def test_tiny_reset_reuses_cache_and_conv_state(tiny):
     assert all(np.array_equal(x, y) for x, y in zip(a, b))
 
 
-def test_one_token_per_run_only(tiny):
+def test_one_sequence_only(tiny):
     _, W, spec = tiny
-    with pytest.raises(ValueError, match="one token per device run"):
+    with pytest.raises(ValueError, match="one sequence"):
         Engine(spec, W, cap=128, batch=2)
+
+
+def _layers_dram(eng):
+    """The layer blocks (weights, KV cache, conv state) of every slice: all but the I/O area."""
+    img = eng.image
+    return [s.dram[img.layer0:img.nbytes] for s in eng.backend.machine.slices]
+
+
+@pytest.mark.parametrize("first,chunk", [(0, 4), (1, 3), (2, 8)])
+def test_tiny_chunked_prefill_is_bit_exact(tiny, first, chunk):
+    """Prefill in chunks (the convolution over the chunk's rows and the ring, causal attention
+    over the cache and the chunk; a chunk may start at position 0, 1 or 2, before the ring is
+    full) gives the same logits, KV cache and conv state as token-by-token decode, and
+    decoding continues identically."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 23)]
+    ref = Engine(spec, W, cap=256)
+    want = [ref.step(t) for t in toks]
+    eng = Engine(spec, W, cap=256)
+    for t in toks[:first]:
+        eng.step(t)
+    got = eng.prefill(toks[first:21], chunk=chunk)
+    assert np.array_equal(got.view(np.uint32), want[20].view(np.uint32)) and eng.pos == 21
+    assert eng.stats[first]["rows"] == chunk
+    ref21 = Engine(spec, W, cap=256)
+    ref21.prefill(toks[:21], chunk=1)
+    assert all(np.array_equal(a, b) for a, b in zip(_layers_dram(eng), _layers_dram(ref21)))
+    assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[21:], want[21:]))
 
 
 def test_tiny_lfm2_on_board_model(tiny, have_verilator):

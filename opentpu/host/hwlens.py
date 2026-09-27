@@ -31,6 +31,7 @@ from pathlib import Path
 
 import numpy as np
 
+from opentpu.host.runstate import busy_exits
 from opentpu import lens as L
 from opentpu import rtlsim
 
@@ -261,6 +262,7 @@ def record_sim(a) -> list:
 PASS = ("open", "html", "info", "list")
 
 
+@busy_exits
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] in PASS:

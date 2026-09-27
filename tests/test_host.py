@@ -573,8 +573,8 @@ def test_smi_no_device(capsys):
 
 # ------------------------------------------------------------------------------ pipelining
 def test_pipelining_gives_identical_tokens():
-    """The Engine compiles position p + 1 while the backend runs p: same programs, same
-    logits, same tokens as compiling in line."""
+    """The Engine compiles the next run (a prefill chunk, or position p + 1) while the backend
+    runs the current one: same programs, same logits, same tokens as compiling in line."""
     from opentpu import lens as L
     from opentpu.llm.qwen3 import Engine, IsaBackend
     spec, W = L._tiny_qwen()
@@ -592,9 +592,10 @@ def test_pipelining_gives_identical_tokens():
     a = Engine(spec, W, cap=256)                              # ISA, no pipeline
     b = Engine(spec, W, cap=256, backend=Slow)                # pipelined
     assert not a.pipeline and b.pipeline
-    prompt = [11, 222, 333, 44]
+    prompt = [11, 222, 333, 44, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     assert a.generate(prompt, max_new=5) == b.generate(prompt, max_new=5)
-    assert Slow.prepared >= 8
+    assert [st.get("rows") for st in b.stats] == [8, 8, 3] + [None] * 5
+    assert Slow.prepared >= len(b.stats)                     # every run's program
     for tok in (7, 8):                                        # logits, bit for bit
         assert np.array_equal(a.step(tok).view(np.uint32), b.step(tok).view(np.uint32))
     a.reset()
@@ -661,6 +662,78 @@ def test_board_compiles_in_a_worker_process():
         assert np.array_equal(w, np.asarray(I.assemble(eng.image.compile_step(p)[0]),
                                             np.uint32))
     eng.backend.close()
+
+def test_board_compiles_prefill_chunks_in_the_worker_process():
+    """Chunked prefill through the worker process: the first chunk compiles in line, the next
+    ones in the worker while the card runs the one before, and after the last chunk the first
+    decode step's program; the words are the in-process assembly of the same programs."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine, fit_chunk
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=0.002)
+    sent = []
+
+    class Rec(BoardBackend):
+        def start(self, programs):
+            sent.append(programs)
+            super().start(programs)
+
+    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    assert eng._procs and eng._ready.result(timeout=60)
+    runs = [len(part) for part, _ in eng.prefill_chunks(list(range(3, 22)))]
+    assert runs == [8, 8, 3] and eng.pos == 19
+    eng.step(5)
+    assert not isinstance(sent[0], np.ndarray)             # compiled in line
+    want = [fit_chunk(eng.image, eng.block, 0, 8, 8, 11, 8)[1],
+            fit_chunk(eng.image, eng.block, 0, 16, 8, 3, 8)[1], eng.image.compile_step(19)]
+    for w, progs in zip(sent[1:], want):
+        assert isinstance(w, np.ndarray)
+        assert np.array_equal(w, np.asarray(I.assemble(progs[0]), np.uint32))
+    eng.backend.close()
+
+
+def test_compile_worker_exits_with_its_parent(tmp_path):
+    """A parent that dies without shutting the pool down (killed, os._exit) takes its compile
+    worker with it (the worker would otherwise wait for work forever)."""
+    script = tmp_path / "child.py"
+    script.write_text(textwrap.dedent(f"""
+        import os, sys
+        sys.path.insert(0, {ROOT!r})
+        from opentpu import lens as L
+        from opentpu.host.board import BoardBackend, sim_config
+        from opentpu.host.fake import FakeTransport
+        from opentpu.llm.qwen3 import Engine
+
+        if __name__ == "__main__":
+            spec, W = L._tiny_qwen()
+            cfg = sim_config(spec, 256)
+            t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None)
+            eng = Engine(spec, W, cap=256, cfg=cfg,
+                         backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+            eng._ready.result()
+            print(*eng._pool._processes, flush=True)
+            os._exit(0)
+    """))
+    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
+                         timeout=120)
+    pids = [int(p) for p in out.stdout.split()]
+    assert pids, out.stderr
+    deadline = time.time() + 10
+    alive = pids
+    while alive and time.time() < deadline:
+        time.sleep(0.2)
+        alive = [p for p in alive if _alive(p)]
+    assert not alive
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 def test_poll_with_an_expected_wait_sleeps_then_reads_back_to_back():
     t = FakeTransport(devname=None, run_s=0.05)
@@ -856,7 +929,8 @@ def test_diag_hints_from_the_pattern_of_failures():
 
 # ------------------------------------------------------------------------------ otpu-chat TUI
 class StubEngine:
-    """Engine stand-in: one step per token, a fixed cycle count per step."""
+    """Engine stand-in: one step per token, a prompt up to 4 tokens per run, a fixed cycle
+    count per run."""
 
     def __init__(self, cap=64, cycles=2_000_000):
         self.spec = types.SimpleNamespace(eos={0})
@@ -872,6 +946,16 @@ class StubEngine:
         self.pos += 1
         self.stats.append({"cycles": self.cycles})
         return np.zeros(8, np.float32)
+
+    def prefill_chunks(self, tokens):
+        tokens = list(tokens)
+        for i in range(0, len(tokens), 4):
+            part = tokens[i:i + 4]
+            assert self.pos + len(part) <= self.cap, "KV cache full"
+            time.sleep(0.002)
+            self.pos += len(part)
+            self.stats.append({"cycles": self.cycles})
+            yield part, (np.zeros(8, np.float32) if i + 4 >= len(tokens) else None)
 
     def reset(self):
         self.pos = 0
@@ -900,7 +984,8 @@ def test_chat_turn_metrics_and_plain_line():
     reply, t = chat.ask("hi")
     assert reply == "eeeeee" and t.prefill_tokens == 2 and t.gen_tokens == 6 and t.end == "eos"
     assert t.decode_steps == 6 and t.context == 8 and t.ttft_s > 0
-    assert t.prefill_dev_tok_s == pytest.approx(50.0) and t.decode_dev_tok_s == pytest.approx(50.0)
+    assert t.prefill_dev_tok_s == pytest.approx(100.0)       # both prompt tokens in one run
+    assert t.decode_dev_tok_s == pytest.approx(50.0)
     assert t.mcycles_per_token == pytest.approx(2.0) and t.decode_tok_s > 0
     line = t.line()
     assert line.startswith("[TTFT ") and "prefill 2 tokens" in line and "(device 50.0)" in line
@@ -1028,6 +1113,19 @@ def test_setup_pcie_package():
     assert r.returncode == 0 and "--rescan" in r.stdout and "set -euo" not in r.stdout
 
 
+def test_busy_card_is_one_line_not_a_traceback(tmp_path, monkeypatch, capsys):
+    """otpu-selftest / -diag / -chat / -lens on a card another process holds: one line on stderr
+    naming the holder and OTPU_LOCK_WAIT, exit status 3."""
+    from opentpu.host import runstate as rs
+    from opentpu.host import selftest
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    held = rs.DeviceLock("xdmaB")
+    assert selftest.main(["--dev", str(tmp_path / "xdmaB")]) == 3
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1 and "in use by process" in err[0] and "OTPU_LOCK_WAIT" in err[0]
+    held.release()
+
+
 def test_xdma_transport_locks_before_opening(tmp_path, monkeypatch):
     """A transport waiting for a busy card holds no file on it (a rescan by the holder would be
     refused): the lock comes first, so a busy device raises DeviceBusy, not an open error."""
@@ -1062,3 +1160,51 @@ def test_device_lock_waits_for_a_busy_card(tmp_path, monkeypatch):
     code = ("from opentpu.host import runstate as rs; rs.DeviceLock('w0', wait=0); "
             "print('inner ok')")                     # a tool inside otpu-lock: no second lock
     assert rs.hold_main(["--dev", "/dev/w0", "--", sys.executable, "-c", code]) == 0
+
+
+def test_board_pipelined_dma(monkeypatch):
+    """Large Board.write / read on a card run the DMA calls in a worker thread, piece by piece
+    (board.PIPE); the bytes and the interleave are the same as the one-call path."""
+    from opentpu.host import board
+    monkeypatch.setattr(board, "PIPE", 1024)
+
+    class Threaded(FakeTransport):
+        threaded = True
+    b = Board(Threaded(ch_bytes=1 << 16), check=False, lock=False)
+    ref = Board(FakeTransport(ch_bytes=1 << 16), check=False, lock=False)
+    data = np.random.default_rng(3).integers(0, 256, 10_000, dtype=np.uint8)
+    for bb in (b, ref):
+        bb.write(640, data)
+    assert np.array_equal(b.t.ch[0], ref.t.ch[0]) and np.array_equal(b.t.ch[1], ref.t.ch[1])
+    assert np.array_equal(b.read(640, len(data)), data)
+    assert np.array_equal(b.read(600, 5000), ref.read(600, 5000))
+    b.close()
+
+
+def test_xdma_transport_writes_whole_beats(tmp_path, monkeypatch):
+    """XdmaTransport sends only whole 64-byte beats (sub-beat DMA writes can wedge the card):
+    an unaligned range is widened and its edge beats merged on the host; placement bounces
+    keep the bytes. Driven against a sparse file in place of the XDMA device nodes."""
+    from opentpu.host import board
+    f = tmp_path / "card"
+    f.write_bytes(b"")
+    os.truncate(f, 1 << 16)
+    fd = os.open(f, os.O_RDWR)
+    t = board.XdmaTransport.__new__(board.XdmaTransport)
+    t.h2c = t.c2h = fd
+    writes = []
+    pw = os.pwrite
+
+    def logged(fd_, mv, off):
+        writes.append((off, len(mv)))
+        return pw(fd_, mv, off)
+    monkeypatch.setattr(board.os, "pwrite", logged)
+    ref = np.random.default_rng(5).integers(0, 256, 4096, dtype=np.uint8)
+    t.mem_write(0, 0, ref)
+    for off, n in ((70, 5), (130, 63), (1000, 200), (4000, 96), (64, 64)):
+        d = np.arange(n, dtype=np.uint8) + 1
+        t.mem_write(0, off, d)
+        ref[off:off + n] = d
+    assert all(o % 64 == 0 and n % 64 == 0 for o, n in writes)
+    assert np.array_equal(t.mem_read(0, 0, 4096), ref)
+    os.close(fd)

@@ -41,6 +41,31 @@ def test_nested_loops_affine_addresses():
     assert np.array_equal(r.outputs["out"], xs.reshape(6, 4).sum(0))
 
 
+def test_register_freed_inside_a_loop_is_not_reused_with_that_loops_terms():
+    """A register freed after an inner loop (value 0 again) must not take an address that
+    also depends on an enclosing loop: that loop's step would leave it non-zero for the
+    register's earlier use in the next iteration."""
+    @ol.jit
+    def k(x, out):
+        acc = ol.zeros([4])
+        for i in ol.range(3):
+            for j in ol.range(2):                   # an address of j only
+                acc.set(acc * 2.0 + ol.load(x[j * 4:j * 4 + 4]))
+            for j in ol.range(2):                   # addresses of i and j
+                acc.set(acc * 3.0 + ol.load(x[8 + i * 8 + j * 4:8 + i * 8 + j * 4 + 4]))
+        ol.store(out, acc)
+
+    xs = (np.arange(32, dtype=np.float32) % 5) - 2
+    want = np.zeros(4, np.float32)
+    for i in range(3):
+        for j in range(2):
+            want = want * 2 + xs[j * 4:j * 4 + 4]
+        for j in range(2):
+            want = want * 3 + xs[8 + i * 8 + j * 4:8 + i * 8 + j * 4 + 4]
+    r = launch(k, Config(), x=Input(xs), out=Output((4,)))
+    assert np.array_equal(r.outputs["out"], want)
+
+
 def test_views_broadcast_and_division():
     @ol.jit
     def k(x, v, out):

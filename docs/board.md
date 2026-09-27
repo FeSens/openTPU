@@ -26,8 +26,9 @@ device: use a paid license or AMD's 30-day evaluation license (see "License" bel
 ```sh
 cd boards/ypcb-00338
 make lint          # offline: MIG pin check, Tcl syntax, XDC vs top ports, Verilator lint
-make bit           # = ./run_vivado.sh 800 -> build/vivado/otpu.bit, otpu.mcs, reports/
-make bit DDR=1066  # DDR3-1066 (533 MHz, MIG ui_clk 133 MHz) once 800 works
+make bit           # = ./run_vivado.sh 1066 -> build/vivado/otpu.bit, otpu.mcs, reports/
+                   # DDR3-1066 (533 MHz, MIG ui_clk 133 MHz): the default and production speed
+make bit DDR=800   # DDR3-800, the bring-up speed
 make bit DDR=1300  # DDR3-1300 / 1333 / 1600: OUT OF SPEC (outside MIG's range for these HR
                    # banks; 1333 and 1600 also patch MIG's PHY). Experiments only, never a
                    # default; see "Faster DDR3" in section 5
@@ -294,6 +295,28 @@ DRAM reads while running: 7.2 GB/s (Qwen3), 7.6 GB/s (LFM2), against 3.0 before.
 the MXU waits for weight chunks) is still 37% (Qwen3) / 26% (LFM2): DRAM-800 efficiency and the
 request pipeline are the next limit. LFM2 runs 65% of the token time; the rest is the host.
 
+DRAM address map and gathered QST writes (build e58ecb65, DDR3-800, measured 2026-09-27): the
+MIG address map is ROW_BANK_COLUMN (it was BANK_ROW_COLUMN, which put everything below 256 MB of a
+channel in bank 0, so every switch between the weight stream, the scale reads and the KV cache
+was a precharge + activate), and the AXI adapter gathers the quantizer's byte stores into whole
+64-byte beats (a partial-strobe write is an ECC read-modify-write in the MIG). `otpu-selftest`
+passes every stage for all three models, token for token, and `otpu-diag --mem full` passes
+(126 checks). Counters over each model run (while RUNNING):
+
+| Model | device Mcycles / token | before (a691ea98) | DRAM reads while running | MXU_STARVE | model projection |
+|---|---|---|---|---|---|
+| Qwen3-0.6B | 6.49 | 8.58 | 9.56 GB/s (75% of 12.8) | 20.5% (37%) | 6.13 (-25%) |
+| LFM2.5-230M | 2.33 | 3.14 | 10.19 GB/s (80%) | 17.5% (26%) | 2.20 (-27%) |
+| Qwen3.5-0.8B | 8.44 | 11.88 | 9.55 GB/s (75%) | 26.2% | not run |
+
+The projection comes from the DDR3 bank model in the AXI memory simulation
+(`sim/verilator/otpu_axi_mem.sv`, `+axi_dram=1`; `tools/perf_qwen.py --dram brc|rbc`): open rows
+per bank, tRCD / tRP / tRAS / tRC, refresh, turnarounds and the ECC read-modify-write, with three
+parameters fitted to the a691ea98 measurements (tRP = tRCD = 3 controller cycles, a
+read-modify-write holds the channel 23 cycles, 4 cycles per AXI read transaction). Fitted, it
+reproduces a691ea98 at 8.22 (Qwen3) and 3.00 (LFM2) Mcycles, 4% under the card; the -25% / -27%
+it projected for this build came out -24% / -26% on the card.
+
 Before the burst fix: Decode runs at ~3.2x the simulated cycles: the counters show the MXU starved (MXU_BUSY 94%,
 MXU_MAC 21%, DRAM_WAIT 0.1%) and DRAM reads at 3.0 GB/s (0.23 beats / cycle / channel). Port B
 issues single-beat 64-byte AXI reads (SmartConnect ports MAX_BURST_LENGTH 1); the per-transaction
@@ -416,6 +439,11 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
+**Production image (2026-09-27): `build/deploy_prod1066_b2c7ce43`** (main b2c7ce4, DDR3-1066,
+WNS +0.085 ns, PCI class 12 00 00, I2C). On the card: calibration, selftest, `otpu-diag --mem
+full --soak 20` all pass (127 checks), and Qwen3 / LFM2 / Qwen3.5 match the ISA simulator token
+for token at 6.85 / 2.46 / 9.75 Mcycles/token.
+
 **Measured on the card (2026-09-27, JTAG loads, host code of a691ea98).**
 
 | Image | Calibration | selftest | diag memory | Qwen3 decode |
@@ -486,7 +514,7 @@ the next power cycle.
 | 1066 | `make bit DDR=1066` | yes | passes (2026-09-27) | diag + `--mem full --soak 20` pass, cold only | not read | Qwen3 -20% cycles/token, LFM2 -22%, Qwen3.5 -18% |
 | 1300 (out of spec) | `make bit DDR=1300` | no (79-155) | passes (2026-09-27) | diag + `--mem full --soak 20` pass, cold only | not read | Qwen3 -24% cycles/token, LFM2 -25%, Qwen3.5 -24% |
 | 1333 (out of spec) | `make bit DDR=1333` | no (79-155, PHY patched) | passes (2026-09-27) | fails: H2C timeout, card leaves PCIe | not read | not run |
-| 1600 (out of spec) | `make bit DDR=1600` | no (79-155, PHY patched) | unmeasured | unmeasured | unmeasured | unmeasured |
+| 1600 (out of spec) | `make bit DDR=1600` | no (79-155, PHY patched) | not pursued: 1333 already fails | | | |
 
 ## 6. What to check on first build (assumptions made without Vivado)
 

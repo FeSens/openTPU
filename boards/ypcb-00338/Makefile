@@ -6,7 +6,8 @@
 #   make program    JTAG load (openFPGALoader; BIT=path, default build/vivado/otpu.bit); make program-vivado with Vivado's hw_server
 #   make flash      write the BPI flash (permanent; MCS=path, default build/vivado/otpu.mcs)
 ROOT := $(abspath ../..)
-DDR ?= 800
+DDR ?= 1066
+# DDR: 1066 is the fastest in spec for these HR banks at 1.5 V (docs/board.md section 5)
 # CORE_MHZ: accelerator clock (80 or 75 if 100 does not close timing)
 # MCOLS: MXU columns, 2 or 4 (the host reads it from the bitstream's VERSION register)
 # VPU_CL: VPU lanes with exp2/recip/rsqrt, 2 or 4 (timing only: the programs do not change)
