@@ -252,7 +252,9 @@ A bitstream without it leaves CAPS bit6 clear; the compiler then emits the VOP s
 
 The board's datapath (`rtl/dma/otpu_dstep.sv`) takes 8 state words per cycle: a head of
 128 x 128 is 2,048 cycles of datapath plus about 200 of fill and pipeline, against 1,024
-cycles of port-B chunks (64 KiB read, 64 KiB written).
+cycles of port-B chunks (64 KiB read, 64 KiB written). The DMA reads the state 16 chunks at a
+time and writes it back in runs of 16 gathered chunks (DRAM bursts; timing only). Only an
+8-lane DMA (W = 8) has DSTEP.
 
 ### GATHER
 

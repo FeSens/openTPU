@@ -122,8 +122,7 @@ module otpu_dma
   logic [GW-1:0] og;                                 // gathered updated segments (<= NG)
   logic [$clog2(NG)-1:0] gt;                         // next gather slot
   (* max_fanout = 64 *) logic [$clog2(NGC)-1:0] gh;  // the chunk to write next
-  (* ram_style = "distributed" *) logic [W*32-1:0] gb [SPC][NGC];   // [segment][chunk]
-  logic [W*32-1:0] y_p;
+  logic [W*32-1:0] y_p, gq [SPC];                   // gq[p]: segment p of chunk gh
   logic         y_v, o_v;
   logic [31:0]  y_d [W], in_d [W], fdat [W], o_d;
   logic [31:0]  ob [W][CBD];
@@ -142,8 +141,14 @@ module otpu_dma
   wire  ds_wr_nx = (og_nx >= GW'(SPC)) &&
                    (ds_wr || (!ds_rr_nx && (og_nx >= GW'(RUN * SPC) || ds_left == 0)));
   assign ds_wreq = ds_wr;
-  always_ff @(posedge clk)
-    if (is_ds && pe && y_v) gb[32'(gt) % SPC][32'(gt) / SPC] <= y_p;
+  // the gather: one simple dual-port RAM per segment position (write: the segment from the
+  // datapath at chunk gt / SPC; read: chunk gh)
+  for (genvar p = 0; p < SPC; p++) begin : g_gb
+    (* ram_style = "distributed" *) logic [W*32-1:0] gb [NGC];
+    always_ff @(posedge clk)
+      if (pe && y_v && 32'(gt) % SPC == p) gb[32'(gt) / SPC] <= y_p;
+    assign gq[p] = gb[gh];
+  end
   always_comb
     for (int l = 0; l < W; l++) begin
       y_p[32 * l +: 32] = y_d[l];
@@ -250,7 +255,7 @@ module otpu_dma
       for (int p = 0; p < SPC; p++)
         for (int l = 0; l < W; l++) begin
           b_wmask[p * W + l] = 1'b1;
-          b_wdata[32 * (p * W + l) +: 32] = gb[p][gh][32 * l +: 32];
+          b_wdata[32 * (p * W + l) +: 32] = gq[p][32 * l +: 32];
         end
     end
     if (ds_fill)

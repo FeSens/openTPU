@@ -275,23 +275,28 @@ post, the gates) stay on the VPU, pair by pair. Results are bit-identical to the
 (`tests/test_qwen35.py::test_tiny_dstep_is_bit_exact`, the RTL token test with and without it).
 
 Simulated on the Verilator RTL (not measured on the card): fp4 body, int8 LM head, `OTPU_PAIR=1`,
-the DDR3-1066 bank model (`tools/perf_qwen.py --model qwen35 --wformat fp4 --head-format int8
---dram rbc --lat 38 --arc 4` and the `+axi_t*` timings), context 9:
+the card-calibrated DDR3-1066 bank model with the core at 120 MHz (the `perf_qwen --ddr 1066
+--mhz 120` preset: `--dram rbc --lat 36 --arc 4`, `+axi_tpc=8333 +axi_tpu=7505 +axi_trp=3
++axi_trcd=3 +axi_tras=5 +axi_trc=7 +axi_trfc=22 +axi_trefi=1039 +axi_trmw=28`), context 9:
 
-| | one DeltaNet layer (`--layers 1`) | VPU busy in it | full token | DeltaNet, 18 layers | useful-bytes efficiency | tok/s at 100 MHz |
+| | one DeltaNet layer (`--layers 1`) | VPU busy in it | full token | DeltaNet, 18 layers | useful-bytes efficiency | tok/s at 120 MHz (projected) |
 |---|---:|---:|---:|---:|---:|---:|
-| VOP path | 156,562 | 154,618 | 6,347,403 | 2,788,865 | 70.4% | 15.8 |
-| DSTEP | 103,194 | 25,931 | 5,447,452 | 1,879,783 | 81.8% | 18.4 |
+| VOP path | ~156 K | ~155 K | 6,317,654 | 2,814,558 | 70.5% | 19.0 |
+| DSTEP, a chunk at a time | 100,113 | 25,638 | | | | |
+| DSTEP, DRAM runs of 16 chunks | 76,164 | 22,500 | 4,876,920 | 1,367,372 | 91.4% | **24.6** |
 
-The layer's useful bytes need 61.8 K cycles, so the mixer is at 59.9% of its roofline (39.5%
-before). What is left: DSTEP's datapath takes 8 words per cycle (2,048 cycles per head, 32.8 K
-per layer, twice the state's port-B time), the DSTEPs share port B with the projections the MXU
-streams, and the prep / post small ops still run as a dependency chain between them.
+The layer's useful bytes need 61.8 K cycles: the mixer is at 81.1% of its roofline (39.5% on the
+VOP path). DSTEP first requested the state one chunk at a time between the MXU's weight
+bursts: every read was its own AXI transaction (4 cycles of fixed cost each) and every write a
+read / write turnaround. With the reads issued 16 chunks at a time and the writes once 16 chunks
+are gathered, one layer went from 100.1 K to 76.2 K cycles. With ideal memory (no bank model)
+the layer takes 66.2 K, so the rest of the gap is DRAM (row misses between the weight stream and
+the state); the small ops between the DSTEPs are worth at most the last 4 K.
 
-Resources (Vivado 2026.1, otpu_dma out of context, xc7k480t-2, 120 MHz, placed and routed):
-otpu_dma goes from 1,940 LUT / 1,917 FF / 14.5 BRAM36 / 0 DSP (WNS +0.705 ns) to 28,333 LUT /
-29,853 FF / 30 BRAM36 / 70 DSP (WNS +0.257 ns, register to register +0.367 ns). Not yet in a
-full bitstream build.
+Resources (yosys estimate, `tools/synth/run.py otpu_dma`): otpu_dma 33.2 K LUT, 24.8 K FF, 70 DSP,
+18.5 BRAM36. Vivado out of context at 120 MHz (placed and routed, the chunk-at-a-time
+version): 28,333 LUT / 29,853 FF / 30 BRAM36 / 70 DSP, WNS +0.257 ns (otpu_dma without DSTEP:
+1,940 LUT, 14.5 BRAM36, WNS +0.705 ns). Not yet in a full bitstream build.
 
 ## What limits it
 
