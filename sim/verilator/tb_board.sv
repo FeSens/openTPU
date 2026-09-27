@@ -30,6 +30,7 @@ module tb_board;
   parameter int TRACE_QD   = 32;
   parameter int PQ_WIN     = 1024;
   parameter int AXI_BL     = 8;
+  parameter bit DSTEP      = 1'b1;
   parameter logic [11:0] TEMP = 12'hA1A;  // the XADC code of 45 C
 
   logic clk = 1'b0, rst = 1'b1, dump = 1'b0;
@@ -65,7 +66,7 @@ module tb_board;
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
                .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
-               .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL)) dut (
+               .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL), .DSTEP(DSTEP)) dut (
     .clk, .rst, .calib(2'b11), .temp(TEMP), .led,
     .i2c_lo, .i2c_pin(~({1'b0, i2c_lo} | i2c_hold)),
     .s_ctl_awaddr(awaddr), .s_ctl_awvalid(awvalid), .s_ctl_awready(awready),

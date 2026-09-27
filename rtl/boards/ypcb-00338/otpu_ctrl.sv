@@ -65,7 +65,8 @@ module otpu_ctrl #(
   parameter int PQ_WIN = 1024,           // the trace's P/Q window (cycles)
   parameter bit HAS_TEMP = 1'b1,
   parameter bit HAS_I2C = 1'b1,          // CAPS bit2: the I2C pins are wired (otpu_fpga_top)
-  parameter bit CHASH = 1'b0             // CAPS bit7: the hashed channel interleave (otpu_axi_dram)
+  parameter bit CHASH = 1'b0,            // CAPS bit7: the hashed channel interleave (otpu_axi_dram)
+  parameter bit DSTEP = 1'b1             // CAPS bit6: the DMA runs DSTEP
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -125,7 +126,7 @@ module otpu_ctrl #(
   localparam int NFR = 13;
   localparam logic [31:0] CAPS = {8'd3, 8'($clog2(PQ_WIN)),       // bit24 ACT_ROWS, bit25 ARG
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
-                                  CHASH, 1'b1, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
+                                  CHASH, DSTEP, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
                                   TRACE_DEPTH != 0};
 
   logic [63:0] cycles;

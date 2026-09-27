@@ -32,7 +32,8 @@ module otpu_board #(
   parameter int PQ_WIN      = 1024,    // cycles per P/Q counter window
   parameter int AXI_BL      = 8,       // port B read burst, beats (1: single-beat reads)
   parameter bit HAS_I2C     = 1'b1,    // the I2C pins are wired (CAPS bit2)
-  parameter bit CHASH       = 1'b1     // hashed channel interleave (otpu_axi_dram; CAPS bit7)
+  parameter bit CHASH       = 1'b1,    // hashed channel interleave (otpu_axi_dram; CAPS bit7)
+  parameter bit DSTEP       = 1'b1     // the DMA's DSTEP datapath (CAPS bit6; 0 leaves it out)
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
@@ -193,7 +194,7 @@ module otpu_board #(
 
   otpu_ctrl #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
               .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
-              .HAS_I2C(HAS_I2C), .CHASH(CHASH)) u_ctrl (
+              .HAS_I2C(HAS_I2C), .CHASH(CHASH), .DSTEP(DSTEP)) u_ctrl (
     .clk, .rst,
     .s_awaddr(s_ctl_awaddr), .s_awvalid(s_ctl_awvalid), .s_awready(s_ctl_awready),
     .s_wdata(s_ctl_wdata), .s_wstrb(s_ctl_wstrb), .s_wvalid(s_ctl_wvalid),
@@ -244,7 +245,8 @@ module otpu_board #(
   otpu_slice #(.SID(0), .S(1), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .ACT_ROWS(ACT_ROWS),
                .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS), .FIFO_DEPTH(FIFO_DEPTH),
                .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL),
-               .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN)) u_slice (
+               .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN),
+               .HAS_DSTEP(DSTEP)) u_slice (
     .clk, .sys_rst(rst), .rst(core_rst), .rinit(arg), .ld_start, .ld_addr, .ld_n, .ld_busy,
     .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,

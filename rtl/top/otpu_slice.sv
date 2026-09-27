@@ -31,7 +31,8 @@ module otpu_slice
   parameter int MXU_CL     = 16,      // cascade chain length
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with the composite functions
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer (<= LANES)
-  parameter int PQ_WIN     = 64       // cycles per P/Q counter window (+bucket= in simulation)
+  parameter int PQ_WIN     = 64,      // cycles per P/Q counter window (+bucket= in simulation)
+  parameter bit HAS_DSTEP  = 1'b1     // the DMA's DSTEP datapath (otpu_dma)
 ) (
   input  logic          clk,
   input  logic          sys_rst,
@@ -200,7 +201,7 @@ module otpu_slice
     rst_dma <= rst; rst_mxu <= rst; rst_q <= rst; rst_vpu <= rst;
   end
 
-  otpu_dma #(.D(D), .LANES(LANES)) u_dma (
+  otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_DSTEP)) u_dma (
     .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
     .b_req(dma_breq), .b_gnt(b_rdy), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
     .b_addr(dma_baddr), .b_rvalid(b_rvalid && b_rtag), .b_rdata, .wr_idle,

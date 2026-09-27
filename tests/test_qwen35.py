@@ -2,6 +2,7 @@
 TMEM, gated attention with 256-wide heads and partial RoPE) against Hugging Face transformers.
 A tiny random model always runs; the real Qwen3.5-0.8B runs when its checkpoint is in
 models/Qwen3.5-0.8B."""
+import dataclasses
 from pathlib import Path
 
 import numpy as np
@@ -170,6 +171,24 @@ def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep):
         a, b = isa.step(tok), brd.step(tok)
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
     assert brd.stats[-1]["cycles"] > 0
+
+
+def test_tiny_qwen35_on_a_board_without_dstep(tiny, have_verilator):
+    """A bitstream built with DSTEP=0 (the DMA's DSTEP datapath left out) reports CAPS bit6 = 0;
+    the host configuration then has no DSTEP and the model runs on VOPs, bit-identical."""
+    from opentpu.host.board import Board, BoardBackend, SimTransport, device_config
+    _, W, spec = tiny
+    tr = SimTransport(ch_bytes=(1 << 24) // 2, stall=20, seed=5, params={"DSTEP": 0})
+    info = Board(tr).info()
+    assert not info["caps"]["dstep"] and info["caps"]["pair"]
+    cfg = dataclasses.replace(device_config(info), DRAM_BYTES=1 << 24)
+    assert not cfg.DSTEP
+    isa = Engine(spec, W, cap=256, cfg=cfg)
+    brd = Engine(spec, W, cap=256, cfg=cfg,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr))
+    for tok in (11, 222, 333):
+        a, b = isa.step(tok), brd.step(tok)
+        assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3.5-0.8B not downloaded")

@@ -27,7 +27,8 @@ module otpu_dma
 #(
   parameter int D     = 32,
   parameter int LANES = 8,
-  parameter int DEPTH = 128                           // LD chunk buffer (a power of two)
+  parameter int DEPTH = 128,                          // LD chunk buffer (a power of two)
+  parameter bit HAS_DSTEP = 1'b1                      // the DSTEP datapath (0: none, ~30K LUT)
 ) (
   input  logic                    clk,
   input  logic                    rst,
@@ -158,7 +159,7 @@ module otpu_dma
 
   // the datapath is built for 8 lanes (its isum_64 partial loop needs 64 / W > the adder's
   // latency); other widths have no DSTEP (the compiler emits the VOP sequence)
-  if (W == 8) begin : g_ds
+  if (W == 8 && HAS_DSTEP) begin : g_ds
     otpu_dstep #(.LANES(W)) u_ds (
       .clk, .rst, .init(start), .ns(ds_ns),
       .fq(fr_k == 3'd1), .fk(fr_k == 3'd2), .fv(fr_k == 3'd3), .fe(fr_k == 3'd4),
@@ -173,7 +174,7 @@ module otpu_dma
     end
 `ifndef SYNTHESIS
     always_ff @(posedge clk)
-      if (!rst && is_ds) $fatal(1, "otpu_dma: DSTEP needs W = 8 (W = %0d)", W);
+      if (!rst && is_ds) $fatal(1, "otpu_dma: no DSTEP here (W = %0d, HAS_DSTEP = %0d)", W, HAS_DSTEP);
 `endif
   end
 
