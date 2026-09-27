@@ -155,7 +155,7 @@ def _quant_rows(W, g, grid, scale, search, rule, ts):
         cands = [_round_scale(amax * m / qmax, scale, ts) for m in mul]
     best_s = best_q = best_e = None
     for s in cands:
-        s = np.where(amax == 0, 1.0, s)
+        s = np.where((amax == 0) | (s == 0), 1.0, s)          # a scale that underflowed: all 0
         q = _elem(xb / s[..., None], grid) * s[..., None]
         e = ((q - xb) ** 2).sum(-1)
         if best_e is None:

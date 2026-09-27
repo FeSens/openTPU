@@ -10,7 +10,7 @@ is its layout, and changing layout is an instruction.
 | Layout | Where | Created by | Consumed by |
 |---|---|---|---|
 | `Tensor` | DRAM fp32, row-major with a row stride | runtime `Input`/`Output` | `ol.load`, `ol.store` |
-| `QTensor` | DRAM int8 rows plus fp32 block scales | runtime `Weight`, KV cache views | the streamed operand of `ol.dot` |
+| `QTensor` | DRAM int8 rows plus fp32 block scales (or 4-bit rows plus scale words, `wf`; docs/quant.md) | runtime `Weight`, KV cache views | the streamed operand of `ol.dot` |
 | `Tile` | TMEM fp32, base + shape + row stride | load, VPU ops, dot | VPU ops, quantize, store |
 | `Stationary` | ACT RAM int8 rows plus scales | `ol.quantize` | the stationary operand of `ol.dot` |
 | `Bcast` | a view of a 1-D tile as a column or row | `v[:, None]`, `v[None, :]` | VPU B-operand modes |

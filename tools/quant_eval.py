@@ -1,7 +1,8 @@
 """Accuracy of weight quantization formats (opentpu/quant.py) on the real checkpoints.
 
     python3 tools/quant_eval.py [--model qwen3|lfm2|qwen35] [--configs NAME ...] [--no-a8]
-                                [--gen 40] [--json out.json]
+                                [--gen 40] [--json out.json] [--threads 8]
+    python3 tools/quant_eval.py --report out.json ...     (markdown tables of saved results)
 
 Runs the Hugging Face model in fp32 (PyTorch, CPU) with every matmul weight that openTPU streams
 through the MXU (each nn.Linear of the decoder with K % 128 == 0, and the LM head; embeddings stay
@@ -103,7 +104,30 @@ def fake_q8(x, D: int = 128):
     return (torch.clamp(torch.round(xb / s), -127, 127) * s).reshape(sh)
 
 
+def report(paths) -> str:
+    """Markdown tables (one per model) of results saved with --json."""
+    out = []
+    for p in paths:
+        rows = json.loads(Path(p).read_text())
+        ref = next(r for r in rows if "ref" in r)
+        out += [f"**{ref['model']}** (fp32 reference: ppl {ref['ref']['ppl0']:.2f} / "
+                f"{ref['ref']['ppl1']:.2f})", "",
+                "| config | bits/w | MB | weight err | ppl book | ppl isa.md | KL | top-1 text | "
+                "top-1 greedy |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        for r in rows:
+            if "ref" in r:
+                continue
+            out.append(f"| {r['config']} | {r['bits']:.2f} | {r['MB']:.0f} | {r['werr']:.4f} | "
+                       f"{r['ppl0']:.2f} | {r['ppl1']:.2f} | {r['kl']:.3f} | "
+                       f"{(r['top1_t0'] + r['top1_t1']) / 2:.3f} | {r['top1_gen']:.3f} |")
+        out.append("")
+    return "\n".join(out)
+
+
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "--report":
+        print(report(sys.argv[2:]))
+        return
     import torch
     import transformers
     from opentpu.llm import model_dir

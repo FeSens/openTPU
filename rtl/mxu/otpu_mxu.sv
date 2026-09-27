@@ -293,11 +293,11 @@ module otpu_mxu
   // ws6 feeds the first fp multiplier's B operand: a reset flop, never an SRL tap
   always_ff @(posedge clk) if (rst) ws6 <= '0; else if (en_c) ws6 <= ws5;
 
-  // dot-product latency S0 -> s4 (the tree: 7 register levels: operands (the decoded weights),
-  // products, pairs, groups, sub-blocks, times their multipliers, block sum)
+  // dot-product latency S0 -> s4 (the tree: 6 register levels: operands (the decoded weights),
+  // products, pairs, groups, sub-blocks times their multipliers, block sum)
   localparam int NG = D / CL;
   localparam int TL = (NG <= 1) ? 0 : (NG <= 4) ? 1 : (NG <= 16) ? 2 : 3;
-  localparam int LDOT = (IMPL == 0) ? 7 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
+  localparam int LDOT = (IMPL == 0) ? 6 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
 
   // ---- S1 .. S4: the exact integer dot products of the chunk with every column's ACT block;
   // s4 (with m4, ws4) is the chunk's result LDOT cycles after S0.
@@ -308,7 +308,7 @@ module otpu_mxu
     // The DSP post-adders sum positions 2q and 2q+1 (DSP 2q: M + PK, DSP 2q+1: M + that, PREG):
     // pq = E*2^16 + (O + PK), E / O the pair sums of columns 2p / 2p+1, both in [-32512, 32768].
     // O + PK is in [1, 65281], so the fields need no borrow: E = pq[32:16] (signed) and
-    // O + PK = pq[15:0] (unsigned); column 2p+1's sub-block sums start at -(D/8)*PK. PK is odd (no constant
+    // O + PK = pq[15:0] (unsigned); column 2p+1's group sums start at -(GS/2)*PK. PK is odd (no constant
     // trailing zeros to trim from the post-adder). An odd last column keeps plain products,
     // paired in fabric.
     // pm, pq and pr are packed so they are registers the DSPs absorb (MREG, PREG), not memories
@@ -322,10 +322,10 @@ module otpu_mxu
     localparam int GS = (D / 4 < 16) ? D / 4 : 16;
     localparam int NG3 = D / GS, GPB = NG3 / 4;
     logic signed [19:0] s3 [MCOLS][NG3];
-    logic [SW-1:0] u [MCOLS][4], v [MCOLS][4];
-    logic [15:0] mbz, mb1, mb2, mb3, mb4;
-    cm_t  mz, mt4, mt5;
-    f32_t wz, wt4, wt5;
+    logic [SW-1:0] v [MCOLS][4];
+    logic [15:0] mbz, mb1, mb2, mb3;
+    cm_t  mz, mt4;
+    f32_t wz, wt4;
     // the operands registered once more (the multipliers' input registers): the weight decode
     // sits between the chunk FIFO's read register and here, not in front of the multipliers
     logic [MCOLS*D*8-1:0] ar;
@@ -350,23 +350,22 @@ module otpu_mxu
       end
       for (int j = 0; j < MCOLS; j++) begin
         for (int g = 0; g < NG3; g++) begin
+          // column 2p+1's pair fields carry +PK each: the group sum starts at -(GS/2)*PK
           logic signed [19:0] t;
-          t = '0;
+          t = (j % 2 == 1) ? 20'(-(GS / 2 * int'(PK))) : '0;
           for (int k = 0; k < GS / 2; k++)
             if (j % 2 == 1) t = t + 20'(pq[j/2][GS/2*g+k][15:0]);
             else if (j + 1 < MCOLS) t = t + 20'($signed(pq[j/2][GS/2*g+k][32:16]));
             else t = t + 20'($signed(prq[GS/2*g+k]));
           s3[j][g] <= t;
         end
-        // sub-block sums (column 2p+1's carry a bias of (D/8)*PK each), then times their
-        // multipliers, then the block sum. SW bits: the bias and partial sums may wrap, the final
-        // sum is exact (|sum| < 2^(SW-1) in both formats)
+        // sub-block sums times their multipliers (a DSP pre-adder and multiplier), then the
+        // block sum; exact in SW bits (|sum| < 2^(SW-1) in every format)
         for (int b = 0; b < 4; b++) begin
           logic [SW-1:0] t;
-          t = (j % 2 == 1) ? SW'(-(D / 8 * int'(PK))) : '0;
+          t = '0;
           for (int g = 0; g < GPB; g++) t = t + SW'(s3[j][b*GPB + g]);
-          u[j][b] <= t;
-          v[j][b] <= SW'(u[j][b] * SW'(mb4[4*b +: 4]));
+          v[j][b] <= SW'(t * SW'(mb3[4*b +: 4]));
         end
         begin
           logic [SW-1:0] t;
@@ -379,9 +378,8 @@ module otpu_mxu
       m1 <= mz; ws1 <= wz; mb1 <= mbz;
       m2 <= m1; ws2 <= ws1; mb2 <= mb1;
       m3 <= m2; ws3 <= ws2; mb3 <= mb2;
-      mt4 <= m3; wt4 <= ws3; mb4 <= mb3;
-      mt5 <= mt4; wt5 <= wt4;
-      m4 <= mt5; ws4 <= wt5;
+      mt4 <= m3; wt4 <= ws3;
+      m4 <= mt4; ws4 <= wt4;
     end
   end else begin : g_casc
     // Systolic accumulate chains (DSP48 A*B + PCIN cascades): the D positions form NG = D / CL

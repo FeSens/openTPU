@@ -93,7 +93,8 @@ you can see in the trace, so a profile can usually tell you why something is slo
 ```
 
 - **Numerics.** Weights, MXU activations and the KV cache are int8 with one fp32 scale per D
-  elements. Everything else is fp32 with round-to-nearest-even and flush-to-zero. exp2, recip
+  elements. Weights can also be 4-bit (FP4 or int4 elements with a two-level scale per D
+  elements), about half the DRAM bytes per token; see [docs/quant.md](docs/quant.md). Everything else is fp32 with round-to-nearest-even and flush-to-zero. exp2, recip
   and rsqrt are fixed sequences of adds and multiplies, so Python, the simulator and the RTL
   agree bit for bit (they do not agree bit for bit with PyTorch).
 - **Concurrency.** The sequencer issues one instruction per cycle into a 16-entry window and
