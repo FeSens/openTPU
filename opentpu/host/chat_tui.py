@@ -227,7 +227,7 @@ class ChatApp(App):
         self._t_submit = 0.0
         self._turn: Turn | None = None   # the turn running (or the last one)
         self._reply: Reply | None = None
-        self._text = ""
+        self._stream = None             # the reply's MarkdownStream while it runs
         self._marker: Static | None = None
         self._lock = threading.Lock()
         self._pending: tuple[list[str], Turn] | None = None   # tokens not yet shown
@@ -248,6 +248,7 @@ class ChatApp(App):
 
     def on_mount(self) -> None:
         self._ui_loop = asyncio.get_running_loop()
+        self.query_one("#log", VerticalScroll).anchor()    # follow the end as replies grow
         self.register_theme(THEME)
         self.theme = "otpu"
         self._refresh()
@@ -270,10 +271,11 @@ class ChatApp(App):
         if panel.display:
             panel.update(stats_markup(self.meta, self.chat, turn))
 
-    def _add(self, w) -> None:
+    def _add(self, w):
         log = self.query_one("#log", VerticalScroll)
-        log.mount(w)
+        mounted = log.mount(w)
         log.scroll_end(animate=False)
+        return mounted
 
     def _note(self, text: str, cls: str = "note") -> Static:
         w = Static(text, classes=cls, markup=cls == "block")
@@ -361,7 +363,7 @@ class ChatApp(App):
         self._t_submit = time.perf_counter()
         self._turn = None
         if text is not None:
-            self._reply, self._text = None, ""
+            self._reply = None
         self._tick()
         self._generate(text)
 
@@ -431,27 +433,30 @@ class ChatApp(App):
             self._pending = ([delta], turn)
         self._ui_loop.call_soon_threadsafe(self.call_next, self._drain)
 
-    def _drain(self) -> None:
+    async def _drain(self) -> None:
         with self._lock:
             p, self._pending = self._pending, None
         if p is not None:
-            self._update("".join(p[0]), p[1])
+            await self._update("".join(p[0]), p[1])
 
-    def _update(self, delta: str, turn: Turn) -> None:
+    async def _update(self, delta: str, turn: Turn) -> None:
         self._turn = turn
         if turn.gen_tokens and self._busy == "prefill":
             self._busy = "decode"
         if delta:
             if self._reply is None:
                 self._reply = Reply()
-                self._add(self._reply)
-            self._text += delta
-            self._reply.md.update(self._text)
-            self.query_one("#log", VerticalScroll).scroll_end(animate=False)
+                await self._add(self._reply)          # before the first write reaches it
+            if self._stream is None:        # appends, re-parsing only the last block
+                self._stream = Markdown.get_stream(self._reply.md)
+            await self._stream.write(delta)
         self._refresh()
 
-    def _done(self, turn: Turn | None) -> None:
-        self._drain()
+    async def _done(self, turn: Turn | None) -> None:
+        await self._drain()
+        if self._stream is not None:
+            await self._stream.stop()
+            self._stream = None
         self._busy = ""
         self._tick()
         if turn is not None:
