@@ -426,6 +426,17 @@ instead of decoding the whole reply every token. What is left, ~1.8 ms (LFM2) an
 (Qwen3) per token, is mostly the logits read and the sampling over the vocabulary; reading
 only an on-device argmax would save ~0.4-0.6 ms of it for greedy decoding only.
 
+Sampling selects the top k on the float32 logits: the k-th largest of the 64-logit block
+maxima bounds the k-th largest logit from below, so the selection runs on the few logits above
+it, and only those are converted to float64. When the k largest are distinct and above the
+next one the result is unique, so the picks are those of the float64 argpartition it replaces;
+any tie falls back to that path (`tests/test_host.py` compares the picks). Measured on the
+card (build a691ea98, burst image), ms per token for the sampling, before / after: LFM2
+0.66 / 0.47, Qwen3 0.67 / 0.44, Qwen3.5 1.13 / 0.51 (wall tok/s 30.20 / 30.54, 11.14 / 11.14,
+8.18 / 8.22). In isolation the new selection takes 0.10 / 0.16 / 0.27 ms on the PC above; in the
+chat loop the logits are freshly read from the card, and the rest of the sampler (the
+repetition penalty, the choice) adds to it.
+
 The chat interface draws each token while the card runs the next one: `Chat` hands a token to
 `on_update` from `Engine.step`'s `on_start` hook (called once the run is started), so the
 interface's work does not delay the host work that starts a run. Before, the full-screen
