@@ -48,6 +48,17 @@ def test_tiny_matches_hf(tiny):
     assert _cos(dev[:12], emu).min() > 0.9995
 
 
+@pytest.mark.parametrize("wformat", ["int4", "fp4"])
+def test_tiny_4bit_follows_emulation(tiny, wformat):
+    """4-bit weights: the device follows the float64 emulation of the same 4-bit weights."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 12)]
+    eng = Engine(spec, W, cap=256, wformat=wformat)
+    dev = np.array([eng.step(t) for t in toks])
+    emu = emulated_logits(spec, W, toks, wformat=wformat)
+    assert _cos(dev, emu).min() > 0.9995
+
+
 def test_tiny_reset_reuses_cache(tiny):
     _, W, spec = tiny
     eng = Engine(spec, W, cap=128)
@@ -74,12 +85,32 @@ def test_qwen3_0_6b_greedy_matches_hf():
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3-0.6B not downloaded")
-def test_qwen3_0_6b_token_on_rtl_is_bit_exact():
+def test_qwen3_0_6b_fp4_greedy():
+    """Qwen3-0.6B with 4-bit (E2M1, two-level scales) layer weights and an int8 LM head on the
+    ISA simulator: the greedy answer is still right, and every generated token is the argmax of
+    the float64 emulation of the same 4-bit weights (the device follows the quantized math)."""
+    tok = transformers.AutoTokenizer.from_pretrained(REAL)
+    msgs = [{"role": "user", "content": "What is the capital of France? Answer in one sentence."}]
+    ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
+                                  tokenize=True)
+    ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
+    spec, W = Spec.from_hf(REAL), load_weights(REAL)
+    eng = Engine(spec, W, cap=256, wformat="fp4", head_format="int8")
+    got = eng.generate(ids, max_new=8)
+    assert tok.decode(got).startswith("The capital of France is Paris.")
+    emu = emulated_logits(spec, W, ids + got[:-1], wformat="fp4", head_format="int8")
+    assert emu[len(ids) - 1:].argmax(-1).tolist() == got
+
+
+@pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3-0.6B not downloaded")
+@pytest.mark.parametrize("wformat,head_format", [("int8", None), ("fp4", "int8")])
+def test_qwen3_0_6b_token_on_rtl_is_bit_exact(wformat, head_format):
     """Feed part of a prompt on the ISA simulator, then run the next token on the Verilator RTL
     and on the ISA simulator from the same DRAM state: weights, KV cache and logits must agree
-    bit for bit."""
+    bit for bit (int8 weights, and 4-bit layers with an int8 LM head)."""
     from opentpu.llm.rtl_backend import RtlBackend
-    eng = Engine(Spec.from_hf(REAL), load_weights(REAL), cap=256)
+    eng = Engine(Spec.from_hf(REAL), load_weights(REAL), cap=256, wformat=wformat,
+                 head_format=head_format)
     prompt = [151644, 872, 198, 3838, 374, 279, 6722, 315, 9625, 30]
     for t in prompt[:-1]:
         eng.step(t)

@@ -119,7 +119,10 @@ def main():
     p = parse(st["trace"], cfg, progs, path.name)
     p.cycles = st["cycles"]
     rl = p.roofline()
-    ideal = rl["bound"] * 100 / a.bw
+    # port B (chunks) runs at bw; port A (one scale word per block, from buffered beats) and the
+    # MXU (one block per cycle) do not: 4-bit weights stream two blocks per chunk
+    ps = rl["per_slice"][0]
+    ideal = max(ps["portb"] * 100 / a.bw, ps["porta"])
     print(f"layers={spec.layers} pos={a.pos} bw={a.bw}% lat={a.lat}: {p.cycles} cycles "
           f"({wall:.0f}s sim), roofline {rl['bound']} chunks -> {ideal:.0f} cycles at this "
           f"bandwidth, efficiency {100 * ideal / p.cycles:.1f}%")
