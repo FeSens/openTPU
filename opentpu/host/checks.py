@@ -191,7 +191,8 @@ def bandwidth(transport, nbytes: int) -> tuple[float, float]:
 
 def model_check(t, cfg, model: str, tokens: int, sim: bool) -> tuple[bool, str]:
     """Greedy decoding of "What is the capital of France?" on the card (transport t, its
-    configuration cfg) against the ISA simulator, token for token. sim: t is a small board
+    configuration cfg) against the ISA simulator, token for token; the prompt runs in chunks
+    (Engine.prefill_chunks) on both. sim: t is a small board
     model; the model gets its own, sized to the model's DRAM."""
     from opentpu.llm import load_spec, model_dir
     from opentpu.llm.qwen3 import Engine, load_weights
@@ -217,8 +218,11 @@ def model_check(t, cfg, model: str, tokens: int, sim: bool) -> tuple[bool, str]:
     dt = time.time() - t0
     want = ref.generate(ids, max_new=tokens)
     text = tok.decode(got, skip_special_tokens=True)
-    cyc = np.mean([s["cycles"] for s in dev.stats])
+    pre = [s for s in dev.stats if "rows" in s]         # the prompt's multi-token runs
+    pre_cyc = sum(s["cycles"] for s in pre) / max(1, sum(s["rows"] for s in pre))
+    one = [s["cycles"] for s in dev.stats if "rows" not in s]
     ok = got == want
-    return ok, (f"{text!r}; {len(dev.stats)} tokens, {cyc / 1e6:.2f} Mcycles/token, "
-                f"{len(dev.stats) / dt:.2f} tok/s wall" +
+    return ok, (f"{text!r}; prompt of {len(ids)} tokens in {len(pre)} runs of up to "
+                f"{dev.rows}, {pre_cyc / 1e6:.2f} Mcycles/token; {len(one)} one-token runs, "
+                f"{np.mean(one) / 1e6:.2f} Mcycles/token; {dt:.1f} s wall" +
                 ("" if ok else f"; ISA simulator says {tok.decode(want)!r}"))

@@ -532,8 +532,8 @@ def test_smi_no_device(capsys):
 
 # ------------------------------------------------------------------------------ pipelining
 def test_pipelining_gives_identical_tokens():
-    """The Engine compiles position p + 1 while the backend runs p: same programs, same
-    logits, same tokens as compiling in line."""
+    """The Engine compiles the next run (a prefill chunk, or position p + 1) while the backend
+    runs the current one: same programs, same logits, same tokens as compiling in line."""
     from opentpu import lens as L
     from opentpu.llm.qwen3 import Engine, IsaBackend
     spec, W = L._tiny_qwen()
@@ -551,9 +551,10 @@ def test_pipelining_gives_identical_tokens():
     a = Engine(spec, W, cap=256)                              # ISA, no pipeline
     b = Engine(spec, W, cap=256, backend=Slow)                # pipelined
     assert not a.pipeline and b.pipeline
-    prompt = [11, 222, 333, 44]
+    prompt = [11, 222, 333, 44, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     assert a.generate(prompt, max_new=5) == b.generate(prompt, max_new=5)
-    assert Slow.prepared >= 8
+    assert [st.get("rows") for st in b.stats] == [8, 8, 3] + [None] * 5
+    assert Slow.prepared >= len(b.stats)                     # every run's program
     for tok in (7, 8):                                        # logits, bit for bit
         assert np.array_equal(a.step(tok).view(np.uint32), b.step(tok).view(np.uint32))
     a.reset()
@@ -686,7 +687,8 @@ def test_diag_hints_from_the_pattern_of_failures():
 
 # ------------------------------------------------------------------------------ otpu-chat TUI
 class StubEngine:
-    """Engine stand-in: one step per token, a fixed cycle count per step."""
+    """Engine stand-in: one step per token, a prompt up to 4 tokens per run, a fixed cycle
+    count per run."""
 
     def __init__(self, cap=64, cycles=2_000_000):
         self.spec = types.SimpleNamespace(eos={0})
@@ -700,6 +702,16 @@ class StubEngine:
         self.pos += 1
         self.stats.append({"cycles": self.cycles})
         return np.zeros(8, np.float32)
+
+    def prefill_chunks(self, tokens):
+        tokens = list(tokens)
+        for i in range(0, len(tokens), 4):
+            part = tokens[i:i + 4]
+            assert self.pos + len(part) <= self.cap, "KV cache full"
+            time.sleep(0.002)
+            self.pos += len(part)
+            self.stats.append({"cycles": self.cycles})
+            yield part, (np.zeros(8, np.float32) if i + 4 >= len(tokens) else None)
 
     def reset(self):
         self.pos = 0
@@ -728,7 +740,8 @@ def test_chat_turn_metrics_and_plain_line():
     reply, t = chat.ask("hi")
     assert reply == "eeeeee" and t.prefill_tokens == 2 and t.gen_tokens == 6 and t.end == "eos"
     assert t.decode_steps == 6 and t.context == 8 and t.ttft_s > 0
-    assert t.prefill_dev_tok_s == pytest.approx(50.0) and t.decode_dev_tok_s == pytest.approx(50.0)
+    assert t.prefill_dev_tok_s == pytest.approx(100.0)       # both prompt tokens in one run
+    assert t.decode_dev_tok_s == pytest.approx(50.0)
     assert t.mcycles_per_token == pytest.approx(2.0) and t.decode_tok_s > 0
     line = t.line()
     assert line.startswith("[TTFT ") and "prefill 2 tokens" in line and "(device 50.0)" in line

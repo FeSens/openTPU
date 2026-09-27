@@ -726,7 +726,7 @@ class Engine:
         self.stats = []
         self.pipeline = backend != "isa" if pipeline is None else pipeline
         self._pool = None
-        self._next = None                   # (pos, Future of its compiled programs)
+        self._next = None                   # (key, Future of the next run's programs)
         if hasattr(self.backend, "attach"):
             self.backend.attach(self)
 
@@ -738,22 +738,32 @@ class Engine:
             prep(progs)
         return progs
 
-    def _program(self, pos: int) -> list:
-        """The step program for `pos`: the precompiled one when it is for `pos`."""
+    def _take(self, key, fn, *args):
+        """fn(*args), or the precompiled result when the compile in flight was made for `key`
+        (it is always waited for: one compile at a time)."""
         nxt, self._next = self._next, None
         if nxt is not None:
-            progs = nxt[1].result()             # always wait: one compile at a time
-            if nxt[0] == pos:
-                return progs
-        return self._compile(pos)
+            res = nxt[1].result()
+            if nxt[0] == key:
+                return res
+        return fn(*args)
 
-    def _prefetch(self, pos: int) -> None:
-        if not self.pipeline or pos >= self.cap:
+    def _submit(self, key, fn, *args) -> None:
+        """Start fn(*args) on the compile thread (pipeline only), to be taken for `key`."""
+        if not self.pipeline:
             return
         if self._pool is None:
             from concurrent.futures import ThreadPoolExecutor
             self._pool = ThreadPoolExecutor(1, thread_name_prefix="otpu-compile")
-        self._next = (pos, self._pool.submit(self._compile, pos))
+        self._next = (key, self._pool.submit(fn, *args))
+
+    def _program(self, pos: int) -> list:
+        """The step program for `pos`: the precompiled one when it is for `pos`."""
+        return self._take(("step", pos), self._compile, pos)
+
+    def _prefetch(self, pos: int) -> None:
+        if pos < self.cap:
+            self._submit(("step", pos), self._compile, pos)
 
     def _drain(self) -> None:
         nxt, self._next = self._next, None
@@ -808,9 +818,14 @@ class Engine:
         n = max(map(len, progs))
         return (progs, None) if n * 8 <= self.cfg.IMEM_WORDS else (None, n)
 
-    def run_rows(self, rows, tokens, logit_rows, programs=None) -> np.ndarray:
+    def run_rows(self, rows, tokens, logit_rows) -> np.ndarray:
         """One device run over token rows (rows[r] = (sequence, position)); returns the logits
-        of `logit_rows` ([n, vocab]). `programs`: compile_rows(rows, logit_rows), if made."""
+        of `logit_rows` ([n, vocab])."""
+        self._drain()
+        return self._run_rows(rows, tokens, logit_rows,
+                              self.image.compile_rows(rows, logit_rows, self.block))
+
+    def _run_rows(self, rows, tokens, logit_rows, programs) -> np.ndarray:
         io, S, spec = self.image.io, self.cfg.S, self.spec
         if any(p >= self.cap for _, p in rows):
             raise RuntimeError("KV cache full")
@@ -822,8 +837,7 @@ class Engine:
             self.backend.write(s, io["x"], x)
             self.backend.write(s, io["cos"], cos)
             self.backend.write(s, io["sin"], sin)
-        self._drain()
-        st = self.backend.run(programs or self.image.compile_rows(rows, logit_rows, self.block))
+        st = self.backend.run(programs)
         st["rows"] = len(rows)
         self.stats.append(st)
         v, v_loc = spec.vocab, self.image.v_loc
@@ -831,6 +845,24 @@ class Engine:
                                                  4 * v_loc).view(np.float32) for s in range(S)])
                for r in logit_rows]
         return np.array(out, np.float32).reshape(len(logit_rows), v)
+
+    def _chunk(self, seq: int, p0: int, n: int, left: int):
+        """(R, programs) of the next prefill run: up to n of the `left` remaining prompt tokens
+        at positions p0 ..., as many as fit TMEM and IMEM (programs None: R = 1, a step)."""
+        n = min(n, self._fit_rows, left)
+        while n > 1:
+            progs, why = self._rows_programs([(seq, p0 + j) for j in range(n)],
+                                             [n - 1] if n == left else [])
+            if progs is not None:
+                prep = getattr(self.backend, "prepare", None)
+                if prep is not None:
+                    prep(progs)
+                return n, progs
+            if why == "TMEM":
+                n = self._fit_rows = n - 1
+            else:                               # about proportional to the rows
+                n = min(n - 1, n * self.cfg.IMEM_WORDS // (8 * why))
+        return 1, None
 
     def prefill_chunks(self, tokens, seq: int = 0, chunk: int | None = None):
         """Feed a prompt to sequence `seq` in device runs of up to `chunk` tokens (default:
@@ -842,29 +874,28 @@ class Engine:
         over the cache and the rows before it, and only the last run computes logits, for its
         last row. Per row the arithmetic is the decode kernel's, so the KV cache and logits
         are bit-identical to feeding the tokens one by one. A run shrinks when its program
-        does not fit TMEM or IMEM (long contexts); a single token runs the decode kernel."""
+        does not fit TMEM or IMEM (long contexts); a single token runs the decode kernel.
+        With the pipeline, the next run's program (after the last run: the first decode
+        step's) is compiled while the device runs the current one."""
         tokens = [int(t) for t in tokens]
         chunk = self.rows if chunk is None else max(1, min(chunk, self.rows))
         i = 0
         while i < len(tokens):
-            n = min(chunk, self._fit_rows, len(tokens) - i)
-            p0, progs = self.poss[seq], None
-            while n > 1:
-                last = i + n == len(tokens)
-                rows = [(seq, p0 + j) for j in range(n)]
-                progs, why = self._rows_programs(rows, [n - 1] if last else [])
-                if progs is not None:
-                    break
-                if why == "TMEM":
-                    n = self._fit_rows = n - 1
-                else:                           # about proportional to the rows
-                    n = min(n - 1, n * self.cfg.IMEM_WORDS // (8 * why))
-            part, rows = tokens[i:i + n], [(seq, p0 + j) for j in range(n)]
-            last = i + n == len(tokens)
-            if n == 1 and seq == 0:
+            p0, left = self.poss[seq], len(tokens) - i
+            n, progs = self._take(("rows", seq, p0, chunk, left), self._chunk, seq, p0, chunk,
+                                  left)
+            part, last = tokens[i:i + n], n == left
+            if progs is None and seq == 0:
                 lg = self.step(part[0])
             else:
-                lg = self.run_rows(rows, part, [n - 1] if last else [], progs)
+                rows, lr = [(seq, p0 + j) for j in range(n)], [n - 1] if last else []
+                progs = progs or self.image.compile_rows(rows, lr, self.block)
+                if not last:
+                    self._submit(("rows", seq, p0 + n, chunk, left - n), self._chunk, seq,
+                                 p0 + n, chunk, left - n)
+                elif seq == 0:
+                    self._prefetch(p0 + n)
+                lg = self._run_rows(rows, part, lr, progs)
                 lg = lg[0] if last else None
                 self.poss[seq] += n
             i += n
