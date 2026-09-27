@@ -977,8 +977,26 @@ def test_diag_hints_from_the_pattern_of_failures():
     h = diagnose(rows(mxu=PASS, vpu=PASS, dma=PASS, **{"vpu-new": FAIL}))
     assert h == ["only RDOT / OUTER / LOG2 fail: a bitstream built before ddec900 (Qwen3 and "
                  "LFM2 run; Qwen3.5 does not)"]
+    h = diagnose(rows(mxu=PASS, vpu=PASS, dma=PASS, **{"vpu-new": FAIL}), regmap=3)
+    assert len(h) == 1 and "on a bitstream that has them (register map 3)" in h[0]
     h = diagnose(rows(mxu=FAIL, vpu=FAIL, dma=FAIL, control=FAIL))
     assert h[0].startswith("every program fails")
+
+
+@pytest.mark.parametrize("regmap,need,ok,text", [
+    (3, False, False, "on a bitstream that has them (register map 3)"),
+    (3, True, False, "on a bitstream that has them"),
+    (2, False, True, "note: RDOT / OUTER / LOG2 differ"),
+    (2, True, False, "a bitstream built before them (register map 2)")])
+def test_selftest_vops_stage_fails_wrong_results_on_a_bitstream_that_has_them(
+        regmap, need, ok, text):
+    """otpu-selftest's vops stage on FakeTransport, whose DRAM keeps its stale contents where
+    the program should have stored results (as the vg125 bitstream's late RDOT did on the card):
+    a failure on register map 3, a note on an older bitstream unless Qwen3.5 needs them."""
+    from opentpu.host.checks import vops_check
+    b = Board(FakeTransport(devname=None, regmap=regmap, ch_bytes=1 << 23), lock=False)
+    got_ok, msg = vops_check(b, device_config(b.info(), DRAM_BYTES=2 << 23), need=need)
+    assert got_ok is ok and text in msg and "differ from the ISA simulator" in msg
 
 
 # ------------------------------------------------------------------------------ otpu-chat TUI
