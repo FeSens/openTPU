@@ -199,8 +199,9 @@ ABS and COPY pass a signalling NaN through where the simulator returns the canon
 ## 6. Chat
 
 ```sh
-otpu-chat --backend board                      # interactive
-otpu-chat --backend board --prompt "Why is the sky blue?"
+otpu-chat --backend board                      # the full-screen interface
+otpu-chat --backend board --plain              # a line-by-line REPL instead
+otpu-chat --backend board --prompt "Why is the sky blue?"   # one-shot, plain output
 otpu-chat --backend board --clock-mhz 100      # override the core clock (v1 bitstreams)
 otpu-chat --backend board --model lfm2         # LFM2.5-230M instead of Qwen3-0.6B
 otpu-chat --backend board --model qwen35       # Qwen3.5-0.8B (needs RDOT / OUTER / LOG2 in the bitstream)
@@ -209,10 +210,50 @@ otpu-chat --backend board --model qwen35       # Qwen3.5-0.8B (needs RDOT / OUTE
 The first call writes the model image (at the default `--cap 2048`: 0.69 GiB for Qwen3-0.6B,
 0.27 GiB for LFM2.5-230M, 0.77 GiB for Qwen3.5-0.8B) to the card; every token then writes the
 embedding row and the token's program (a few tens of KiB), runs, and reads the logits (0.58 MiB
-for Qwen3, 0.25 MiB for LFM2, 0.95 MiB for Qwen3.5). After each answer the tool prints wall-clock tokens/s and the device's own
-cycles per token (from the CYCLES register), converted with the bitstream's CORE_KHZ register
-(register map 2) or `--clock-mhz` (default 100 on a register map 1 bitstream). While it runs,
-`otpu-smi` shows the process, the model, the DRAM in use and tokens/s.
+for Qwen3, 0.25 MiB for LFM2, 0.95 MiB for Qwen3.5).
+
+**The interface** (Textual, `opentpu/host/chat_tui.py`) keeps the terminal's own background
+and one accent colour. The conversation is a single column: a header box with the model,
+backend, device, bitstream and clock, then each prompt after a dim `>` and each reply after a
+`⏺`, streamed token by token and rendered as Markdown. While a reply runs, a spinner line above
+the input shows the phase (`Prefilling… 12/21 tok · 1.4s`, then `Decoding… 87 tok · 7.6
+tok/s`). Under the input box one status line is always visible (LFM2.5-230M on the card,
+second turn of a chat, build 74d48591, measured 2026-09-26):
+
+```
+LFM2.5-230M · board 100 MHz │ TTFT 2.66s │ prefill 10.2 tok/s (dev 13.0) │ decode 7.9 tok/s (dev 12.9) · 7.73 Mcyc/tok │ ctx 105/2048 ▱▱▱▱▱▱▱▱ 5%
+```
+
+TTFT is submit to the first generated token; prefill and decode are tokens/s on the wall clock
+and, on the card, on the device (the CYCLES of the steps at the bitstream's CORE_KHZ, or
+`--clock-mhz`); the context meter turns amber over 75 % and red over 90 %. In a narrow terminal
+the line drops the model, then the prefill device rate and Mcycles/token, then the prefill; the
+context stays. On the ISA backend the numbers are wall time only.
+
+Enter sends, Esc stops the reply (what was generated stays in the history and the KV cache),
+Ctrl-S shows or hides a side panel with the detail, Ctrl-C or Ctrl-D quits. Typing `/` opens
+the commands (up / down, Tab completes, Enter runs): `/help`, `/continue` (a reply cut at
+`--max-new`, default 1024, goes on where it stopped), `/reset` (forget the conversation and the
+KV cache), `/stats` (the detail inline: the last turn, DRAM for the image and the KV cache, the
+session's turns, tokens in and out and average decode tok/s, the sampling), `/think on|off`
+(thinking mode; the history is re-fed on the next turn), `/quit`.
+
+The KV cache holds `--cap` tokens (default 2048) and the engine has no sliding window. A reply
+that fills the cache stops with "context full"; a message that no longer fits is refused
+without touching the cache; `/reset` starts over. The plain REPL takes `/continue` and `/reset`
+too.
+
+Prefill here is the tokens a turn adds: the KV cache keeps every earlier turn, so a turn feeds
+only what the chat template appended since (all of it again when the template rewrote the
+history, e.g. after `/think`). Decode tok/s counts the tokens after the first, over the time
+since the first. `--plain` and `--prompt` print the same numbers after each reply (LFM2.5-230M
+on the card, build 74d48591, measured 2026-09-26):
+
+```
+[TTFT 2.14s; prefill 21 tokens, 9.90 (device 13.0) tok/s; decode 25 tokens, 9.57 (device 13.0) tok/s, 7.72 Mcycles/token at 100 MHz; context 46/2048]
+```
+
+While a chat runs, `otpu-smi` shows the process, the model, the DRAM in use and tokens/s.
 
 `--backend board-sim` runs the same driver against the Verilator board model (bit-exact, but
 minutes per token for the real model; use it with small models).
@@ -234,8 +275,8 @@ buffer); `opentpu/host/regs.py` has the same as constants. The driver's sequence
    error response) make the driver raise.
 
 **Version 1, 2 and 3 bitstreams.** `Board.info()` reads REGMAP. Version 3 adds the MXU_STARVE
-counter: on a version 2 bitstream the snapshots, `rates()` and `otpu-smi` leave it out. A version 1 bitstream has
-no such register (it reads `0xDEADBEEF`, or 0): the driver then never touches the version 2
+counter (`otpu-smi`: "MXU-starve" in the stalls line); on a version 2 bitstream the snapshots,
+`rates()` and `otpu-smi` leave it out. A version 1 bitstream has no such register (it reads `0xDEADBEEF`, or 0): the driver then never touches the version 2
 offsets (version 1 decodes 8 address bits, so 0x100 and up alias onto the low registers).
 Everything but the counters, the trace and the temperature works: `snapshot()` returns None,
 `otpu-smi` shows utilization / power / temperature as n/a, `otpu-lens record` falls back to
@@ -284,12 +325,12 @@ shown as stale.
 $ otpu-smi
 otpu-smi 0.1.0                                                       2026-09-24 08:08:46
 +--------------------------------------------------------------------------------------+
-| /dev/xdma0       openTPU D=128 MCOLS=2 LANES=8  100.0 MHz  build 1234abcd  regmap v3 |
+| /dev/xdma0       openTPU D=128 MCOLS=2 LANES=8  100.0 MHz  build 1234abcd  regmap v2 |
 | link ok (2.5 GT/s PCIe x8)   DDR3 calib ch0 ok ch1 ok   temp 34.5 C   running        |
 | power 4.63 W est.   DRAM 900 / 4,096 MiB (KV 12 / 224)   DRAM bw 4.61 GB/s           |
 +--------------------------------------------------------------------------------------+
 | util  RUN 80%  MXU 60%  MAC 50%  VPU 12%  QNT 5%  DMA 3%                             |
-| stall TMEM-deny 1%  DRAM-wait 20%  MXU-starve 8%   IPC 0.005   over 200 ms           |
+| stall TMEM-deny 1%  DRAM-wait 20%   IPC 0.005   over 200 ms                          |
 | pid 53814  otpu-chat --backend board                                                 |
 |       model Qwen3-0.6B   tokens 57   12.10 tok/s wall   device 17.86 tok/s           |
 +--------------------------------------------------------------------------------------+
@@ -310,7 +351,8 @@ speed and width from sysfs), DDR3 calibration (STATUS bits 5, 6), temperature (T
 by the XADC), the DRAM used / total and the KV cache (from the status file), the DRAM bandwidth
 ((DRAM_RD + DRAM_WR) deltas x 64 B over the UPTIME delta / CORE_KHZ), utilization (the deltas of
 RUNNING, MXU_BUSY, MXU_MAC -- MAC utilization --, VPU_BUSY, QNT_BUSY, DMA_BUSY, TMEM_DENY,
-DRAM_WAIT and, with register map 3, MXU_STARVE over the UPTIME delta, between two SNAPs) and the owning process.
+DRAM_WAIT and, with register map 3, MXU_STARVE over the UPTIME delta, between two SNAPs) and
+the owning process.
 
 **Power** is an estimate (the card cannot measure it): fixed + sum over units of the unit's
 dynamic power x its utilization, from Vivado's `report_power` of the build. `build.tcl` writes

@@ -484,8 +484,10 @@ def test_smi_json(tmp_path, capsys):
     smi.main(["--dev", "/dev/fake5", "--power-json", str(pj), "-i", "0"],
              open_transport=lambda dev: FakeTransport(devname="fake5"))
     tab = capsys.readouterr().out
-    assert "MAC 50%" in tab and "4.61 GB/s" in tab and f"pid {os.getpid()}" in tab
-    assert "model m0" in tab and "W est." in tab
+    assert "4.61 GB/s" in tab and f"PID {os.getpid()}" in tab and "Model m0" in tab
+    assert f"{want:.1f}W" in tab and "MAC █████░░░░░  50%" in tab
+    assert all(len(line) == len(tab.splitlines()[1]) for line in tab.splitlines()
+               if line[:1] in "│╭├╰")                          # a closed box
     smi.main(["-q", "--dev", "/dev/fake5", "--power-json", str(tmp_path / "none.json")],
              open_transport=lambda dev: FakeTransport(devname="fake5"))
     q = capsys.readouterr().out
@@ -680,3 +682,154 @@ def test_diag_hints_from_the_pattern_of_failures():
                  "LFM2 run; Qwen3.5 does not)"]
     h = diagnose(rows(mxu=FAIL, vpu=FAIL, dma=FAIL, control=FAIL))
     assert h[0].startswith("every program fails")
+
+
+# ------------------------------------------------------------------------------ otpu-chat TUI
+class StubEngine:
+    """Engine stand-in: one step per token, a fixed cycle count per step."""
+
+    def __init__(self, cap=64, cycles=2_000_000):
+        self.spec = types.SimpleNamespace(eos={0})
+        self.cap, self.pos, self.stats, self.cycles = cap, 0, [], cycles
+        self.backend = types.SimpleNamespace()
+        self.cfg = board_config()
+
+    def step(self, t):
+        assert self.pos < self.cap, "KV cache full"   # as Engine.step
+        time.sleep(0.002)
+        self.pos += 1
+        self.stats.append({"cycles": self.cycles})
+        return np.zeros(8, np.float32)
+
+    def reset(self):
+        self.pos = 0
+
+
+class StubTok:
+    """One token per letter (a = 1 ... z = 26): the template of a longer history extends the
+    shorter one's, as a real chat template does."""
+
+    def apply_chat_template(self, history, add_generation_prompt, enable_thinking, tokenize):
+        return [ord(c) - 96 for m in history for c in m["content"]]
+
+    def decode(self, ids, skip_special_tokens=True):
+        return "".join(chr(96 + i) for i in ids)
+
+
+def _stub_chat(n_out=6, clock=100.0, max_new=32, cap=64):
+    from opentpu.host.chat import Chat
+    seq = iter([5] * n_out + [0] * 100)
+    return Chat(StubEngine(cap=cap), StubTok(), False, lambda logits, ctx: next(seq), max_new,
+                clock_mhz=clock)
+
+
+def test_chat_turn_metrics_and_plain_line():
+    chat = _stub_chat()
+    reply, t = chat.ask("hi")
+    assert reply == "eeeeee" and t.prefill_tokens == 2 and t.gen_tokens == 6 and t.end == "eos"
+    assert t.decode_steps == 6 and t.context == 8 and t.ttft_s > 0
+    assert t.prefill_dev_tok_s == pytest.approx(50.0) and t.decode_dev_tok_s == pytest.approx(50.0)
+    assert t.mcycles_per_token == pytest.approx(2.0) and t.decode_tok_s > 0
+    line = t.line()
+    assert line.startswith("[TTFT ") and "prefill 2 tokens" in line and "(device 50.0)" in line
+    assert "decode 6 tokens" in line and "context 8/64" in line
+    reply, t2 = chat.ask("again")                 # the KV cache keeps the first turn
+    assert not t2.restarted and t2.prefill_tokens == 5 and t2.gen_tokens == 0
+    assert chat.session.turns == 2 and chat.session.tokens_in == 7
+    chat.reset()                                  # /reset forgets history and KV
+    assert chat.eng.pos == 0 and chat.history == [] and chat.fed == []
+    _, t = _stub_chat(clock=0.0).ask("hi")        # no device clock (ISA): wall numbers only
+    assert t.mcycles_per_token is None and t.decode_dev_tok_s is None
+    assert "device" not in t.line() and "Mcycles" not in t.line()
+
+
+def test_chat_max_new_resume_and_cap():
+    chat = _stub_chat(n_out=10, max_new=4)
+    reply, t = chat.ask("hi")
+    assert reply == "eeee" and t.end == "max_new" and chat.can_resume
+    assert "stopped at max_new" in t.line()
+    reply, t = chat.resume()                      # the same reply grows
+    assert reply == "eeeeeeee" and t.end == "max_new" and t.prefill_tokens == 0 and t.ttft_s is None
+    assert chat.history[-1] == {"role": "assistant", "content": "eeeeeeee"}
+    reply, t = chat.resume()
+    assert reply == "eeeeeeeeee" and t.end == "eos" and not chat.can_resume
+    assert chat.eng.pos == len(chat.fed) == 12
+    chat = _stub_chat(n_out=100, cap=10)          # the reply fills the KV cache
+    reply, t = chat.ask("hi")
+    assert t.end == "cap" and chat.eng.pos == 10 and "context full" in t.line()
+    pos, n_hist = chat.eng.pos, len(chat.history)
+    reply, t = chat.ask("more")                   # does not fit: refused, the cache is kept
+    assert t.end == "cap" and reply == "" and t.prefill_tokens == 0
+    assert chat.eng.pos == pos and len(chat.history) == n_hist
+
+
+def _shot(app) -> str:
+    import io
+
+    from rich.console import Console
+    c = Console(width=app.size.width, height=app.size.height, file=io.StringIO(), record=True)
+    c.print(app.screen._compositor.render_update(full=True))
+    return c.export_text(styles=False)
+
+
+def test_chat_tui_shows_the_live_numbers(tmp_path):
+    pytest.importorskip("textual")
+    import asyncio
+
+    from opentpu.host.chat_tui import ChatApp, _meter, status_line
+    from textual.widgets import OptionList, Static
+    assert _meter(10, 100)[1] == "bright_black" and _meter(80, 100)[1] == "#E0A030"
+    assert _meter(95, 100) == ("▰" * 8, "#E05050")
+    from textual.app import App                   # e.g. App._flush writes captured prints
+    own = {n for n, v in vars(ChatApp).items() if n[:1] == "_" and n[:2] != "__"
+           and getattr(v, "__qualname__", "").startswith("ChatApp.")}
+    assert own and not own & set(dir(App))
+    chat = _stub_chat(n_out=6, max_new=4)
+    meta = {"model": "stub", "backend": "board", "device": "/dev/xdma0", "short": "board 100 MHz",
+            "bitstream": ["D=128 MCOLS=2 LANES=8", "build 74d48591, 100 MHz"],
+            "sampling": {"temperature": 0.7}, "dram": None}
+
+    async def wait(app, pilot):
+        for _ in range(300):
+            await pilot.pause(0.02)
+            if not app._busy:
+                return
+
+    async def go():
+        app = ChatApp(chat, meta)
+        async with app.run_test(size=(170, 40)) as pilot:
+            await pilot.pause(0.1)
+            r = {"welcome": _shot(app)}
+            await pilot.press(*"hi", "enter")
+            await wait(app, pilot)
+            await pilot.pause(0.1)
+            r["status"] = str(app.query_one("#status", Static).render())
+            r["cut"] = _shot(app)
+            await pilot.press(*"/co")                 # the popup, Enter takes /continue
+            r["popup"] = app.query_one("#cmds", OptionList).display
+            await pilot.press("enter")
+            await wait(app, pilot)
+            await pilot.pause(0.1)
+            r["done"] = _shot(app)
+            await pilot.press(*"/st", "enter")
+            await pilot.pause(0.1)
+            r["stats"] = [str(w.render()) for w in app.query(".block")]
+            await pilot.press("ctrl+s")
+            await pilot.pause(0.1)
+            r["panel"] = str(app.query_one("#panel", Static).render())
+            app.save_screenshot(str(tmp_path / "shot.svg"))
+            return r
+    r = asyncio.run(go())
+    assert "openTPU chat" in r["welcome"] and "74d48591" in r["welcome"]
+    assert "palette" not in r["welcome"] and "esc interrupt" in r["welcome"]
+    s = r["status"]
+    assert "stub · board 100 MHz" in s and "TTFT" in s and "decode" in s and "(dev 50.0)" in s
+    assert "2.00 Mcyc/tok" in s and "ctx 6/64" in s
+    narrow = str(status_line(meta, chat, chat.last, 70))   # drops the rest, keeps the context
+    assert len(narrow) <= 70 and "decode" in narrow and "ctx 8/64" in narrow
+    assert "⏺ eeee" in r["cut"] and "stopped at max_new=4 tokens · /continue" in r["cut"]
+    assert r["popup"]
+    assert "⏺ eeeeee" in r["done"] and "max_new=4" not in r["done"]   # the marker is gone
+    assert any("session" in b and "2 tokens in, 6 out" in b for b in r["stats"])
+    assert "DRAM" not in r["panel"] and "KV context" in r["panel"]
+    assert (tmp_path / "shot.svg").stat().st_size > 1000

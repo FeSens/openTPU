@@ -32,13 +32,9 @@ from . import regs as R
 from .board import Board, rates
 from .runstate import devname, read_status
 
-VERSION = "0.1.0"
+VERSION = "0.2.1"
 ROOT = Path(__file__).resolve().parents[2]
 POWER_JSON = ROOT / "build" / "vivado" / "reports" / "power.json"
-UTIL_SHOW = [("RUNNING", "RUN"), ("MXU_BUSY", "MXU"), ("MXU_MAC", "MAC"), ("VPU_BUSY", "VPU"),
-             ("QNT_BUSY", "QNT"), ("DMA_BUSY", "DMA"), ("TMEM_DENY", "TMEM-deny"),
-             ("DRAM_WAIT", "DRAM-wait"), ("MXU_STARVE", "MXU-starve")]
-W = 88                                      # table width
 
 
 def find_devices() -> list[str]:
@@ -102,7 +98,21 @@ def _derive(d: dict, s0: dict, s1: dict, core_khz: int | None) -> None:
     d["dram_rd_gbs"], d["dram_wr_gbs"] = r["dram_rd_gbs"], r["dram_wr_gbs"]
 
 
+def power_report(d: dict, power_json=POWER_JSON) -> Path | None:
+    """The Vivado power report for the loaded bitstream: power_json when it is not the default,
+    else the saved build whose directory names the bitstream's BUILD_ID
+    (build/deploy_*_<sha7>/reports/power.json), else the last build's."""
+    if power_json and Path(power_json) != POWER_JSON:
+        return Path(power_json)
+    bid = (d.get("bitstream") or {}).get("build_id")
+    if bid is not None:
+        for f in sorted(ROOT.glob(f"build/*{bid:08x}"[:-1] + "*/reports/power.json")):
+            return f
+    return POWER_JSON if POWER_JSON.exists() else None
+
+
 def _power(d: dict, power_json) -> dict | None:
+    power_json = power_report(d, power_json)
     pj = P.load(power_json) if power_json else None
     if pj is None or not d.get("util"):
         return None
@@ -165,80 +175,138 @@ def query_sim(interval_cycles: int = 0) -> dict:
 
 
 # ------------------------------------------------------------------------------ output
+W = 88                                      # table width
+UNITS = [("RUNNING", "RUN"), ("MXU_BUSY", "MXU"), ("MXU_MAC", "MAC"), ("VPU_BUSY", "VPU"),
+         ("QNT_BUSY", "QNT"), ("DMA_BUSY", "DMA")]
+
+
 def _mib(n) -> str:
     return "n/a" if n is None else f"{n / 2**20:,.0f}"
-
-
-def _row(s: str = "") -> str:
-    return "| " + s[:W - 4].ljust(W - 4) + " |"
 
 
 def _pct(x) -> str:
     return "n/a" if x is None else f"{100 * x:.0f}%"
 
 
+def _bar(x: float, n: int = 10) -> str:
+    k = max(0, min(n, round(x * n)))
+    return "█" * k + "░" * (n - k)
+
+
+def _line(text: str = "") -> str:
+    return "│ " + text[:W - 4].ljust(W - 4) + " │"
+
+
+def _head(title: str, first: bool = False) -> str:
+    l, r = ("╭", "╮") if first else ("├", "┤")
+    t = f"─ {title} " if title else ""
+    return l + t + "─" * (W - 2 - len(t)) + r
+
+
+def _kv(*pairs, widths=(32, 29)) -> str:
+    """'Label  value' cells in columns: the first label is the row's name (11 wide)."""
+    name, *cells = pairs
+    out = f"{name:<11}"
+    for i, c in enumerate(cells):
+        out += c.ljust(widths[i]) if i < len(widths) else c
+    return _line(out.rstrip())
+
+
+def _gen(pcie: str | None) -> str:
+    """'2.5 GT/s PCIe x8' -> 'PCIe Gen1 x8'."""
+    if not pcie:
+        return "PCIe n/a"
+    gen = {"2.5": "Gen1", "5.0": "Gen2", "5": "Gen2", "8.0": "Gen3", "8": "Gen3"}
+    sp, _, wd = pcie.partition(" x")
+    return f"PCIe {gen.get(sp.split()[0], sp)} x{wd}" if wd else pcie
+
+
+def bus_id(dev: str) -> str:
+    p = Path(f"/sys/class/xdma/{devname(dev)}_user/device")
+    return p.resolve().name if p.exists() else "n/a"
+
+
 def table(devs: list[dict]) -> str:
-    rule = "+" + "-" * (W - 2) + "+"
-    now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    out = [f"otpu-smi {VERSION}".ljust(W - len(now)) + now, rule]
-    for d in devs:
+    now = _dt.datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+    out = [_lr(f"otpu-smi {VERSION}", now, W)]
+    for n, d in enumerate(devs):
+        bid = bus_id(d["device"])
+        out.append(_head(f"Device {n} · {d['device']}" + (f" · {bid}" if bid != "n/a" else ""),
+                         first=True))
         if not d["ok"]:
-            out += [_row(f"{d['device']}   link {d['link']}"), rule]
+            out += [_kv("Link", d["link"]), "╰" + "─" * (W - 2) + "╯"]
             continue
-        bs = d["bitstream"]
-        mhz = f"{bs['core_mhz']:.1f} MHz" if bs["core_mhz"] else "clock n/a"
-        bid = f"build {bs['build_id']:08x}" if bs["build_id"] is not None else "build n/a"
-        out.append(_row(f"{d['device']:<16} openTPU D={bs['D']} MCOLS={bs['MCOLS']} "
-                        f"LANES={bs['LANES']}  {mhz}  {bid}  regmap v{d['regmap']}"))
+        bs, u = d["bitstream"], d.get("util")
         c0, c1 = d["calib"]
-        link = d["link"] + (f" ({d['pcie']})" if d.get("pcie") else "")
-        temp = "n/a" if d["temp_c"] is None else f"{d['temp_c']:.1f} C"
-        out.append(_row(f"link {link}   DDR3 calib ch0 {'ok' if c0 else 'NO'} "
-                        f"ch1 {'ok' if c1 else 'NO'}   temp {temp}   "
-                        f"{'running' if d.get('running') else 'idle'}"))
+        bid = f"build {bs['build_id']:08x}" if bs["build_id"] is not None else "build n/a"
+        mhz = f"{bs['core_mhz']:.0f} MHz" if bs["core_mhz"] else "clock n/a"
+        out.append(_kv("Bitstream", f"D={bs['D']} MCOLS={bs['MCOLS']} LANES={bs['LANES']}",
+                       f"{bid}   {mhz}", f"regmap v{d['regmap']}"))
+        temp = "n/a" if d["temp_c"] is None else f"{d['temp_c']:.0f} °C"
+        out.append(_kv("Link", _gen(d.get("pcie")),
+                       f"DDR3 ch0 {'ok' if c0 else 'FAIL'}  ch1 {'ok' if c1 else 'FAIL'}",
+                       f"Temp {temp}"))
         pw = d.get("power")
-        pws = f"{pw['w']:.2f} W est." if pw else "n/a"
+        out.append(_kv("State", "Running" if d.get("running") else "Idle", "",
+                       f"Power ~{pw['w']:.1f}W" if pw else "Power n/a"))
         dr = d.get("dram")
-        drs = "n/a"
         if dr:
-            drs = f"{_mib(dr['total'] - dr['free'])} / {_mib(dr['total'])} MiB"
+            used = dr["total"] - dr["free"]
+            kv = ""
             if dr.get("kv_capacity"):
-                drs += f" (KV {_mib(dr['kv_used'])} / {_mib(dr['kv_capacity'])})"
-        bw = "n/a" if d.get("dram_gbs") is None else f"{d['dram_gbs']:.2f} GB/s"
-        out.append(_row(f"power {pws}   DRAM {drs}   DRAM bw {bw}"))
-        out.append(rule)
-        u = d.get("util")
+                kv = (f"KV {_bar(dr['kv_used'] / dr['kv_capacity'], 8)} "
+                      f"{_mib(dr['kv_used'])} / {_mib(dr['kv_capacity'])} MiB")
+            out.append(_kv("DRAM", f"{_bar(used / dr['total'], 8)} {_mib(used)} / "
+                           f"{_mib(dr['total'])} MiB", kv))
+        else:
+            out.append(_kv("DRAM", "n/a (no process status)"))
+        if d.get("dram_gbs") is not None:
+            out.append(_kv("DRAM BW", f"{d['dram_gbs']:.2f} GB/s",
+                           f"read {d['dram_rd_gbs']:.2f}  write {d['dram_wr_gbs']:.2f} GB/s"))
+        # ---- utilization
         if u:
             smp = d["sample"]
             win = f"{smp['seconds'] * 1e3:.0f} ms" if smp["seconds"] else f"{smp['cycles']} cycles"
-            cell = [f"{lbl} {_pct(u[k])}" for k, lbl in UTIL_SHOW if k in u]
-            out.append(_row("util  " + "  ".join(cell[:6])))
-            out.append(_row("stall " + "  ".join(cell[6:]) + f"   IPC {smp['ipc']:.3f}   "
-                            f"over {win}"))
+            out.append(_head(f"Utilization over {win}"))
+            cells = [f"{lbl:<4}{_bar(u[k])} {_pct(u[k]):>4}" for k, lbl in UNITS]
+            for i in range(0, len(cells), 3):
+                out.append(_line("     ".join(cells[i:i + 3])))
+            idle = max(0.0, u["MXU_BUSY"] - u["MXU_MAC"])
+            # MXU_STARVE (register map 3): the part of no-MAC spent with no weight chunk
+            why = (f"MXU-starve {_pct(u['MXU_STARVE'])}" if "MXU_STARVE" in u
+                   else "mostly awaiting weights")
+            out.append(_line(f"Stalls  MXU no-MAC {_pct(idle)} ({why})   "
+                             f"TMEM-deny {_pct(u['TMEM_DENY'])}   "
+                             f"DRAM-req-wait {_pct(u['DRAM_WAIT'])}"))
+            out.append(_line(f"IPC     {smp['ipc']:.2e}"))
         else:
-            out.append(_row("util  n/a (register map 1 bitstream: no free-running counters)"))
+            out.append(_head("Utilization"))
+            out.append(_line("n/a (register map 1 bitstream: no free-running counters)"))
         if d.get("run"):
             r = d["run"]
-            out.append(_row(f"run   {r['program']}: {r['cycles']} cycles, "
-                            f"{r['instructions']}/{r['of']} instructions"))
+            out.append(_line(f"Run  {r['program']}: {r['cycles']} cycles, "
+                             f"{r['instructions']}/{r['of']} instructions"))
+        # ---- process
+        out.append(_head("Process"))
         p = d.get("process")
-        if p and not p.get("stale"):
+        if not p:
+            out.append(_line("No running process"))
+        elif p.get("stale"):
+            out.append(_line(f"pid {p['pid']} exited (stale status file)"))
+        else:
             argv = p.get("argv") or ["?"]
             cmd = " ".join([Path(argv[0]).name] + argv[1:])
-            tps = []
-            if p.get("tok_s_wall"):
-                tps.append(f"{p['tok_s_wall']:.2f} tok/s wall")
-            if p.get("tok_s_device"):
-                tps.append(f"device {p['tok_s_device']:.2f} tok/s")
-            out.append(_row(f"pid {p['pid']}  {cmd}"))
-            out.append(_row(f"      model {p.get('model') or '?'}   tokens {p.get('tokens', 0)}   "
-                            + ("   ".join(tps) or "tok/s n/a")))
-        elif p:
-            out.append(_row(f"no process (stale status file from pid {p['pid']})"))
-        else:
-            out.append(_row("no process"))
-        out.append(rule)
+            f2 = lambda x: f"{x:.2f}" if x else "n/a"          # noqa: E731
+            out.append(_line(f"PID {p['pid']}   {cmd}"))
+            out.append(_line(f"Model {p.get('model') or '?'}   tokens {p.get('tokens', 0)}   "
+                             f"{f2(p.get('tok_s_device'))} tok/s device   "
+                             f"{f2(p.get('tok_s_wall'))} tok/s wall"))
+        out.append("╰" + "─" * (W - 2) + "╯")
     return "\n".join(out)
+
+
+def _lr(left: str, right: str, w: int) -> str:
+    return left + right.rjust(max(w - len(left), len(right) + 1))
 
 
 def details(d: dict) -> str:

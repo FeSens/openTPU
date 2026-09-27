@@ -64,7 +64,7 @@ transition may see it in the next snapshot).
 | 0x138 | TMEM_DENY | some unit with a TMEM request was not granted (any of the P line's fm fq fv fc) |
 | 0x140 | DRAM_RD | events: 64-byte beats read from DRAM (R handshakes, both channels; a port B read is 2 beats, a port A read 1, an A read that reuses the previous beat 0) |
 | 0x148 | DRAM_WR | events: 64-byte beats written to DRAM (W handshakes, both channels; a port B write is 1 beat per channel its word mask touches, a QST word write 1) |
-| 0x150 | DRAM_WAIT | a slice DRAM request (port A, B or the QST port) was waiting for the memory (not accepted) |
+| 0x150 | DRAM_WAIT | a slice DRAM request (port A, B or the QST port) was not accepted. Request backpressure only: the DRAM adapter queues up to RD reads per channel, so this stays near 0 even when the MXU starves for read data (then MXU_BUSY - MXU_MAC is large; measured on the card: 94% vs 21% for Qwen3) |
 | 0x158 | INSTR | events: instructions retired (as ICOUNT: over one run the difference equals ICOUNT) |
 | 0x160 | MXU_STARVE | (version 3) the MXU is streaming a command's weight chunks and none has arrived: its chunk FIFO is empty (the Q line's ms). It excludes the MXU's compute-only and drain cycles |
 

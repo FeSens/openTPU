@@ -140,16 +140,18 @@ RW_PATTERNS = ([0, 0xFFFFFFFF, 0xA5A5_5A5A, 0x5A5A_A5A5] + [1 << k for k in rang
                + [0xFFFFFFFF ^ (1 << k) for k in range(32)])
 
 
-def reg_patterns(t, off: int, mask: int = 0xFFFFFFFF) -> tuple:
-    vals = [v & mask for v in RW_PATTERNS]
+def reg_patterns(t, off: int) -> tuple:
+    """RW_PATTERNS through a 32-bit read / write register (its value restored: SCRATCH holds
+    Board.scrub's marker)."""
+    vals = RW_PATTERNS
     was = t.reg_read(off)
     got = _rw(t, off, vals)
-    t.reg_write(off, was)                               # SCRATCH holds Board.scrub's marker
-    bad = [(v, g) for v, g in zip(vals, got) if g & mask != v]
+    t.reg_write(off, was)
+    bad = [(v, g) for v, g in zip(vals, got) if g != v]
     stuck1 = stuck0 = 0
     for v, g in bad:
-        stuck1 |= g & ~v & mask
-        stuck0 |= v & ~g & mask
+        stuck1 |= g & ~v
+        stuck0 |= v & ~g
     if not bad:
         return True, f"{len(vals)} patterns"
     return False, (f"{len(bad)} of {len(vals)} patterns wrong (bits read 1 when written 0: "
@@ -359,11 +361,10 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     # ---- registers
     if "regs" in want:
         print("regs", flush=True)
-        for name, off, mask in (("SCRATCH", R.R_SCRATCH, 0xFFFFFFFF),
-                                ("PROG_ADDR", R.R_PROG_ADDR, 0xFFFFFFFF),
-                                ("PROG_N", R.R_PROG_N, 0xFFFFFFFF)):
-            d.check("regs", f"{name} read / write", lambda off=off, mask=mask:
-                    reg_patterns(t, off, mask), [link])
+        for name, off in (("SCRATCH", R.R_SCRATCH), ("PROG_ADDR", R.R_PROG_ADDR),
+                          ("PROG_N", R.R_PROG_N)):
+            d.check("regs", f"{name} read / write", lambda off=off: reg_patterns(t, off),
+                    [link])
 
         def trace_regs():
             i = ctx["info"]

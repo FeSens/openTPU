@@ -1,12 +1,18 @@
 """otpu-chat: chat with Qwen3 (or LFM2, or Qwen3.5) running on openTPU.
 
     otpu-chat                                 # ISA simulator (~3 s/token on a laptop)
+    otpu-chat --plain                         # a plain REPL instead of the full-screen one
     otpu-chat --model lfm2                    # LFM2.5-230M instead of Qwen3-0.6B
     otpu-chat --model qwen35                  # Qwen3.5-0.8B (text only)
     otpu-chat --backend board                 # the FPGA over PCIe (opentpu/host/board.py)
     otpu-chat --backend board-sim             # the Verilator board model (very slow)
     otpu-chat --prompt "Why is the sky blue?" # one-shot
     otpu-chat --think                         # Qwen3 thinking mode
+
+The interactive mode is a full-screen interface (opentpu/host/chat_tui.py): the conversation,
+and under the input a status line with TTFT, prefill and decode tokens/s (wall and device) and
+the KV context, updated while the reply streams; /stats adds DRAM, session totals and sampling.
+--plain and --prompt print the same numbers as one line per reply.
 
 The model runs token by token on the device; the host only tokenizes, looks up the embedding
 row, applies the chat template and samples from the logits. The KV cache stays in device DRAM
@@ -19,6 +25,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -71,61 +78,229 @@ def sampling(spec, args) -> dict:
     return d
 
 
+@dataclass
+class Turn:
+    """The numbers of one reply. Wall times are seconds from the submit; device numbers come
+    from the engine's per-step cycles at `clock_mhz` (0: no device clock, wall only).
+    Prefill: the prompt tokens fed this turn (the KV cache keeps the earlier turns). TTFT:
+    submit -> first generated token. Decode: the tokens after the first, over the time since
+    the first. `end`: why the reply ended ("eos", "max_new", "cap": the KV cache is full,
+    "stopped": by the user; "" while it runs)."""
+    clock_mhz: float = 0.0
+    cap: int = 0
+    prefill_total: int = 0            # the prompt tokens this turn has to feed
+    prefill_tokens: int = 0           # ... fed so far
+    prefill_s: float = 0.0
+    prefill_cycles: int = 0
+    ttft_s: float | None = None
+    gen_tokens: int = 0
+    decode_s: float = 0.0             # first -> latest generated token
+    decode_steps: int = 0             # device steps after the prefill
+    decode_cycles: int = 0
+    context: int = 0                  # KV positions filled
+    restarted: bool = False           # the template changed the history: KV rebuilt
+    end: str = ""
+
+    def _dev(self, n: int, cycles: int) -> float | None:
+        return n * self.clock_mhz * 1e6 / cycles if self.clock_mhz and cycles else None
+
+    @property
+    def prefill_tok_s(self) -> float | None:
+        return self.prefill_tokens / self.prefill_s if self.prefill_s else None
+
+    @property
+    def prefill_dev_tok_s(self) -> float | None:
+        return self._dev(self.prefill_tokens, self.prefill_cycles)
+
+    @property
+    def decode_tok_s(self) -> float | None:
+        return (self.gen_tokens - 1) / self.decode_s if self.gen_tokens > 1 and self.decode_s \
+            else None
+
+    @property
+    def decode_dev_tok_s(self) -> float | None:
+        return self._dev(self.decode_steps, self.decode_cycles)
+
+    @property
+    def mcycles_per_token(self) -> float | None:
+        return self.decode_cycles / self.decode_steps / 1e6 \
+            if self.clock_mhz and self.decode_cycles and self.decode_steps else None
+
+    def line(self) -> str:
+        """The plain-mode summary: TTFT, prefill tok/s, decode tok/s, context."""
+        def r(x, dev):
+            return "n/a" if x is None else f"{x:.2f}" + ("" if dev is None else
+                                                         f" (device {dev:.1f})")
+        ttft = "n/a" if self.ttft_s is None else f"{self.ttft_s:.2f}s"
+        mc = "" if self.mcycles_per_token is None else \
+            f", {self.mcycles_per_token:.2f} Mcycles/token at {self.clock_mhz:.0f} MHz"
+        end = {"max_new": ", stopped at max_new", "cap": ", context full",
+               "stopped": ", stopped"}.get(self.end, "")
+        return (f"[TTFT {ttft}; prefill {self.prefill_tokens} tokens, "
+                f"{r(self.prefill_tok_s, self.prefill_dev_tok_s)} tok/s; decode "
+                f"{self.gen_tokens} tokens, {r(self.decode_tok_s, self.decode_dev_tok_s)} tok/s"
+                f"{mc}; context {self.context}/{self.cap}{end}]")
+
+
+@dataclass
+class Session:
+    turns: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    decode_s: float = 0.0
+    decode_tokens: int = 0            # tokens counted in decode_s (the first of a turn is not)
+
+    def add(self, t: Turn) -> None:
+        self.turns += 1
+        self.tokens_in += t.prefill_tokens
+        self.tokens_out += t.gen_tokens
+        if t.gen_tokens > 1:
+            self.decode_s += t.decode_s
+            self.decode_tokens += t.gen_tokens - 1
+
+    @property
+    def decode_tok_s(self) -> float | None:
+        return self.decode_tokens / self.decode_s if self.decode_s else None
+
+
 class Chat:
+    """A conversation on an Engine: the KV cache keeps every fed token across turns, so a turn
+    feeds only what the chat template added since (when the template rewrites the history, it
+    starts over). The engine has no sliding window: a message that does not fit in the cache
+    is refused (end "cap", nothing fed) and a reply that fills it stops; /reset starts over."""
+
     def __init__(self, engine: Engine, tok, think: bool, pick, max_new: int,
                  clock_mhz: float = 0.0):
         self.eng, self.tok, self.think, self.pick, self.max_new = engine, tok, think, pick, max_new
         self.clock_mhz = clock_mhz
         self.history: list[dict] = []
         self.fed: list[int] = []            # tokens whose K/V are in the device cache
+        self.session = Session()
+        self.last: Turn | None = None
+        self._next = None                   # logits after a reply cut at max_new (resume())
+        self._reply: list[int] = []         # the last reply's tokens
 
     def _template(self, add_prompt=True) -> list[int]:
         ids = self.tok.apply_chat_template(self.history, add_generation_prompt=add_prompt,
                                            enable_thinking=self.think, tokenize=True)
         return list(ids["input_ids"] if hasattr(ids, "keys") else ids)
 
-    def ask(self, text: str, stream=sys.stdout) -> str:
+    def reset(self) -> None:
+        """Forget the conversation and the KV cache."""
+        self.history, self.fed, self._next = [], [], None
+        self.eng.reset()
+
+    @property
+    def can_resume(self) -> bool:
+        return self._next is not None
+
+    def _cycles(self, k0: int, k1: int | None = None) -> int:
+        return int(sum(st.get("cycles", 0) for st in self.eng.stats[k0:k1] if st))
+
+    def ask(self, text: str, on_update=None, stop=lambda: False) -> tuple[str, Turn]:
+        """One turn. on_update(delta_text, turn) after every prefill step (delta "") and every
+        generated token; stop() is polled between steps (the reply so far is kept)."""
+        on_update = on_update or (lambda delta, turn: None)
+        t0 = time.perf_counter()
+        turn = Turn(clock_mhz=self.clock_mhz, cap=self.eng.cap, context=self.eng.pos)
         self.history.append({"role": "user", "content": text})
         ids = self._template()
+        if len(ids) >= self.eng.cap:         # no room for the prompt and a reply token
+            self.history.pop()
+            turn.end = "cap"
+            return "", turn
+        self._next = None
         n = len(self.fed)
         if ids[:n] != self.fed:              # template rewrote history: start over
             self.eng.reset()
-            self.fed, n = [], 0
-        t0 = time.time()
+            self.fed, n, turn.restarted = [], 0, True
+        turn.prefill_total = len(ids) - n
+        k0 = len(self.eng.stats)
         logits = None
         for t in ids[n:]:
+            if stop():
+                turn.end = "stopped"
+                break
             logits = self.eng.step(t)
             self.fed.append(t)
-        t1 = time.time()
-        out, shown = [], ""
-        for _ in range(self.max_new):
+            turn.prefill_tokens += 1
+            turn.prefill_s = time.perf_counter() - t0
+            turn.prefill_cycles = self._cycles(k0)
+            turn.context = self.eng.pos
+            on_update("", turn)
+        reply = self._decode(logits, [], turn, t0, on_update, stop)
+        self.history.append({"role": "assistant", "content": reply})
+        self.session.add(turn)
+        self.last = turn
+        return reply, turn
+
+    def resume(self, on_update=None, stop=lambda: False) -> tuple[str, Turn]:
+        """Continue the last reply where max_new cut it (can_resume): the same reply grows
+        by up to max_new tokens more."""
+        assert self.can_resume, "no reply to continue"
+        on_update = on_update or (lambda delta, turn: None)
+        turn = Turn(clock_mhz=self.clock_mhz, cap=self.eng.cap, context=self.eng.pos)
+        logits, self._next = self._next, None
+        reply = self._decode(logits, self._reply, turn, time.perf_counter(), on_update, stop)
+        turn.ttft_s = None                   # its first token was already computed: no TTFT
+        self.history[-1]["content"] = reply
+        self.session.add(turn)
+        self.last = turn
+        return reply, turn
+
+    def _decode(self, logits, out: list[int], turn: Turn, t0: float, on_update, stop) -> str:
+        """Generate after `out` (the reply so far) from `logits`; returns the whole reply."""
+        k1 = len(self.eng.stats)
+        out, n0, t_first = list(out), len(out), None
+        shown = self.tok.decode(out, skip_special_tokens=True)
+        while logits is not None and not turn.end:
+            if len(out) - n0 >= self.max_new:
+                turn.end = "max_new"
+                break
             t = self.pick(logits, self.fed)
             if t in self.eng.spec.eos:
+                turn.end = "eos"
                 break
             out.append(t)
+            now = time.perf_counter()
+            if t_first is None:
+                t_first, turn.ttft_s = now, now - t0
+            turn.gen_tokens, turn.decode_s = len(out) - n0, now - t_first
             text_now = self.tok.decode(out, skip_special_tokens=True)
-            stream.write(text_now[len(shown):])
-            stream.flush()
-            shown = text_now
+            delta, shown = text_now[len(shown):], text_now
+            on_update(delta, turn)
             if self.eng.pos >= self.eng.cap:
+                turn.end = "cap"
+                break
+            if stop():
+                turn.end = "stopped"
                 break
             logits = self.eng.step(t)
             self.fed.append(t)
-        t2 = time.time()
-        stream.write("\n")
-        n_pre, n_gen = len(ids) - n, len(out)
-        dev = ""
-        cyc = [st.get("cycles", 0) for st in self.eng.stats[-max(n_gen, 1):] if st]
-        if cyc and self.clock_mhz:
-            c = float(np.mean(cyc))
-            dev = (f", device {c / 1e6:.2f} Mcycles/token = "
-                   f"{self.clock_mhz * 1e6 / c:.1f} tok/s at {self.clock_mhz:.0f} MHz")
-        stream.write(f"[{n_pre} prompt tokens in {t1 - t0:.1f}s, {n_gen} tokens in "
-                     f"{t2 - t1:.1f}s ({n_gen / max(t2 - t1, 1e-9):.2f} tok/s){dev}, "
-                     f"context {self.eng.pos}/{self.eng.cap}]\n")
-        reply = self.tok.decode(out, skip_special_tokens=True)
-        self.history.append({"role": "assistant", "content": reply})
+            turn.decode_steps = len(self.eng.stats) - k1
+            turn.decode_cycles = self._cycles(k1)
+            turn.context = self.eng.pos
+        self._next = logits if turn.end == "max_new" else None
+        self._reply = out
+        return shown
+
+    def ask_plain(self, text: str | None, stream=sys.stdout) -> str:
+        """ask() (resume() for None) printing the reply as it streams, then the turn's
+        numbers."""
+        def show(delta, turn):
+            stream.write(delta)
+            stream.flush()
+        reply, turn = self.ask(text, show) if text is not None else self.resume(show)
+        stream.write("\n" + turn.line() + "\n")
+        if turn.end in NOTES:
+            stream.write(NOTES[turn.end].format(max_new=self.max_new, cap=turn.cap,
+                                                cmd="/continue") + "\n")
         return reply
+
+
+NOTES = {"max_new": "(stopped at max_new={max_new} tokens · {cmd} or raise --max-new)",
+         "cap": "(context full at {cap} tokens · /reset to start a new conversation)",
+         "stopped": "(interrupted)"}
 
 
 def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None):
@@ -149,6 +324,31 @@ def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None):
     raise SystemExit(f"unknown backend {name}")
 
 
+def panel_meta(eng, backend: str, dev: str, model: str, sp: dict, max_new: int,
+               clock_mhz: float = 0.0) -> dict:
+    """What the interface shows about the model, the device and the sampling."""
+    info = getattr(eng.backend, "info", None)
+    meta = {"model": model, "backend": backend, "sampling": {**sp, "max_new": max_new},
+            "device": {"board": dev, "board-sim": "Verilator board model"}.get(
+                backend, "ISA simulator (host)"), "dram": None,
+            "short": f"{backend} {clock_mhz:g} MHz" if clock_mhz else backend}
+    c = eng.cfg
+    if info:
+        meta["bitstream"] = [f"D={info['D']} MCOLS={info['MCOLS']} LANES={info['LANES']}",
+                             "build " + ("n/a" if info["build_id"] is None
+                                         else f"{info['build_id']:08x}")
+                             + (f", {info['core_khz'] / 1e3:g} MHz" if info["core_khz"]
+                                else "")]
+    else:
+        meta["bitstream"] = [f"D={c.D} MCOLS={c.MCOLS} (simulated)"]
+    if hasattr(eng.backend, "image_bytes"):
+        from opentpu.host.board import dram_layout
+        be = eng.backend
+        meta["dram"] = lambda: dram_layout(c, be.image_bytes, be.prog_at, eng.image,
+                                           list(eng.poss))
+    return meta
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="otpu-chat", description=__doc__.split("\n")[0])
     ap.add_argument("--model", default="qwen3",
@@ -159,7 +359,9 @@ def main(argv=None):
                     help="core clock, to turn device cycles into tokens/s (default: the "
                          "bitstream's CORE_KHZ, or 100 on a register map 1 bitstream)")
     ap.add_argument("--cap", type=int, default=2048, help="KV cache capacity (tokens)")
-    ap.add_argument("--prompt", help="ask one question and exit")
+    ap.add_argument("--prompt", help="ask one question and exit (plain output)")
+    ap.add_argument("--plain", action="store_true",
+                    help="a line-by-line REPL instead of the full-screen interface")
     ap.add_argument("--think", action="store_true", help="enable Qwen3 / Qwen3.5 thinking mode")
     ap.add_argument("--greedy", action="store_true")
     ap.add_argument("--temperature", type=float,
@@ -170,7 +372,7 @@ def main(argv=None):
     ap.add_argument("--top-p", type=float)
     ap.add_argument("--repetition-penalty", type=float)
     ap.add_argument("--seed", type=int)
-    ap.add_argument("--max-new", type=int, default=256)
+    ap.add_argument("--max-new", type=int, default=1024, help="tokens per reply at most")
     a = ap.parse_args(argv)
     from transformers import AutoTokenizer
     path = model_dir(a.model)
@@ -192,9 +394,14 @@ def main(argv=None):
         clock = a.clock_mhz or (khz / 1e3 if khz else 100.0)
     chat = Chat(eng, tok, a.think, pick, a.max_new, clock_mhz=clock)
     if a.prompt:
-        chat.ask(a.prompt)
+        chat.ask_plain(a.prompt)
         return
-    print("type a message (empty line or Ctrl-D to quit)")
+    if not a.plain:
+        from opentpu.host.chat_tui import ChatApp
+        ChatApp(chat, panel_meta(eng, a.backend, a.dev, path.name,
+                                 dict(sp, greedy=a.greedy), a.max_new, clock)).run()
+        return
+    print("type a message (/continue, /reset; empty line or Ctrl-D to quit)")
     while True:
         try:
             text = input("\n> ").strip()
@@ -202,7 +409,12 @@ def main(argv=None):
             break
         if not text:
             break
-        chat.ask(text)
+        if text == "/reset":
+            chat.reset()
+        elif text == "/continue":
+            chat.ask_plain(None) if chat.can_resume else print("nothing to continue")
+        else:
+            chat.ask_plain(text)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "openTPU: thin LLM inference accelerator -- SystemVerilog RTL, ISA simulator, Triton-style language and compiler"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-dependencies = ["numpy"]
+dependencies = ["numpy", "textual"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
