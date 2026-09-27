@@ -232,10 +232,11 @@ generated stays in the history and the KV cache), Ctrl-C or Ctrl-D quits. Comman
 Prefill here is the tokens a turn adds: the KV cache keeps every earlier turn, so a turn feeds
 only what the chat template appended since (all of it again when the template rewrote the
 history, e.g. after `/think`). Decode tok/s counts the tokens after the first, over the time
-since the first. `--plain` and `--prompt` print the same numbers after each reply:
+since the first. `--plain` and `--prompt` print the same numbers after each reply (LFM2.5-230M
+on the card, build 74d48591, measured 2026-09-26):
 
 ```
-[TTFT 1.32s; prefill 16 tokens, 12.10 (device 12.8) tok/s; decode 42 tokens, 9.11 (device 12.8) tok/s, 7.80 Mcycles/token at 100 MHz; context 58/2048]
+[TTFT 2.14s; prefill 21 tokens, 9.90 (device 13.0) tok/s; decode 25 tokens, 9.57 (device 13.0) tok/s, 7.72 Mcycles/token at 100 MHz; context 46/2048]
 ```
 
 While a chat runs, `otpu-smi` shows the process, the model, the DRAM in use and tokens/s.
