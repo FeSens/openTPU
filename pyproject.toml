@@ -16,9 +16,10 @@ otpu-smi = "opentpu.host.smi:main"
 otpu-selftest = "opentpu.host.selftest:main"
 otpu-diag = "opentpu.host.diag:main"
 otpu-chat = "opentpu.host.chat:main"
+otpu-setup = "opentpu.host.pcie_setup:main"
 
 [tool.setuptools.packages.find]
 include = ["opentpu*"]
 
 [tool.setuptools.package-data]
-opentpu = ["lens_app.html", "host/setup_pcie.sh"]
+opentpu = ["lens_app.html", "host/setup_pcie.sh", "host/pcie/*"]

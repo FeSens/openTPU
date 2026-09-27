@@ -56,7 +56,7 @@
 - **Build switches:**
   - `make bit CORE_MHZ=80` (or 75, 90): a slower accelerator clock if 100 MHz does not close.
   - `make bit MCOLS=4`: faster prefill and batched decode. The host reads MCOLS from the bitstream.
-- **Host:** `opentpu/host/setup_pcie.sh` covers the XDMA driver, udev, rescan after JTAG and the ID check.
+- **Host:** `otpu-setup` (`opentpu/host/setup_pcie.sh`) installs the XDMA driver (DKMS), the udev rules and the driver options, rescans after JTAG, checks the ID register; `otpu-setup --check` reports the state.
 - **Vivado front-end audit:** no construct that is sure to break the build. The risky ones were fixed.
 
 ## Today, in order
@@ -74,7 +74,7 @@
    - Then look at `timing_worst.rpt`. By the yosys estimate the limit is now inside the quantizer (its writer into the ACT RAM). The next cross-unit limit is the TMEM arbiter: a combinational grant that drives the units' clock enables in the same cycle.
    - The structural fix for the arbiter is to arbitrate one cycle ahead (registered grants).
 4. **Program and bring up:**
-   - `make program`, then `opentpu/host/setup_pcie.sh --rescan` on the PC.
+   - `make program`, then `sudo otpu-setup --rescan` on the PC.
    - `otpu-selftest`, then `--model qwen3`.
    - `otpu-chat --backend board`.
 5. **First things to check on hardware** (docs/board.md section 6):

@@ -1,0 +1,38 @@
+--- a/XDMA/linux-kernel/xdma/Makefile
++++ b/XDMA/linux-kernel/xdma/Makefile
+@@ -16,18 +16,19 @@
+ 
+ $(warning XVC_FLAGS: $(XVC_FLAGS).)
+ 
+-topdir := $(shell cd $(src)/.. && pwd)
++# this directory's parent, from the Makefile's own path: $(src) is relative on kernels >= 6.13
++topdir := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))..)
+ 
+ TARGET_MODULE:=xdma
+ 
+-EXTRA_CFLAGS := -I$(topdir)/include $(XVC_FLAGS)
++ccflags-y := -I$(topdir)/include $(XVC_FLAGS)
+ ifeq ($(DEBUG),1)
+-	EXTRA_CFLAGS += -D__LIBXDMA_DEBUG__
++	ccflags-y += -D__LIBXDMA_DEBUG__
+ endif
+ ifneq ($(config_bar_num),)
+-	EXTRA_CFLAGS += -DXDMA_CONFIG_BAR_NUM=$(config_bar_num)
++	ccflags-y += -DXDMA_CONFIG_BAR_NUM=$(config_bar_num)
+ endif
+-#EXTRA_CFLAGS += -DINTERNAL_TESTING
++#ccflags-y += -DINTERNAL_TESTING
+ 
+ ifneq ($(KERNELRELEASE),)
+ 	$(TARGET_MODULE)-objs := libxdma.o xdma_cdev.o cdev_ctrl.o cdev_events.o cdev_sgdma.o cdev_xvc.o cdev_bypass.o xdma_mod.o xdma_thread.o
+--- a/XDMA/linux-kernel/xdma/xdma_mod.c
++++ b/XDMA/linux-kernel/xdma/xdma_mod.c
+@@ -41,6 +41,8 @@
+ MODULE_DESCRIPTION(DRV_MODULE_DESC);
+ MODULE_VERSION(DRV_MODULE_VERSION);
+ MODULE_LICENSE("Dual BSD/GPL");
++/* openTPU build (opentpu/host/pcie/xdma-otpu.patch): setup_pcie.sh checks this tag */
++MODULE_INFO(otpu, "b846609.1");
+ 
+ /* SECTION: Module global variables */
+ static int xpdev_cnt;

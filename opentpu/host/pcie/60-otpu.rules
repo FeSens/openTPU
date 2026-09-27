@@ -1,0 +1,8 @@
+# openTPU (installed by opentpu/host/setup_pcie.sh): non-root access.
+# The card's register file and data DMA channels. xdma*_control, _xvc and _bypass stay root-only:
+# _control programs the DMA engines, which can then write anywhere in host memory.
+KERNEL=="xdma[0-9]*_user|xdma[0-9]*_h2c_[0-9]*|xdma[0-9]*_c2h_[0-9]*|xdma[0-9]*_events_[0-9]*", MODE="0666"
+# JTAG cables: FTDI FT232H (Digilent HS2 style, openFPGALoader -c digilent_hs2) and the Xilinx
+# Platform Cable USB II (03fd:0013 before its firmware is loaded, 03fd:0008 after).
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6014", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="03fd", MODE="0666"

@@ -817,3 +817,24 @@ def test_chat_tui_shows_the_live_numbers(tmp_path):
     assert any("session" in b and "2 tokens in, 6 out" in b for b in r["stats"])
     assert "DRAM" not in r["panel"] and "KV context" in r["panel"]
     assert (tmp_path / "shot.svg").stat().st_size > 1000
+
+
+def test_setup_pcie_package():
+    """otpu-setup's script and files ship together and agree: the module tag the patch adds is
+    the version the script checks for, the dkms.conf is a template, the rules match the card."""
+    import re
+    from opentpu.host import pcie_setup
+    host = os.path.join(ROOT, "opentpu", "host")
+    script = open(pcie_setup.SCRIPT).read()
+    ver = re.search(r"^VER=(\S+)", script, re.M).group(1)
+    commit = re.search(r"^XDMA_COMMIT=([0-9a-f]{40})", script, re.M).group(1)
+    patch = open(os.path.join(host, "pcie", "xdma-otpu.patch")).read()
+    assert f'MODULE_INFO(otpu, "{ver}");' in patch and ver.startswith(commit[:7])
+    assert '"@VERSION@"' in open(os.path.join(host, "pcie", "dkms.conf")).read()
+    rules = open(os.path.join(host, "pcie", "59-otpu-xdma.rules")).read()
+    assert 'ATTR{device}=="0x7028"' in rules and 'ATTR{subsystem_device}=="0x4f54"' in rules
+    bd = open(os.path.join(ROOT, "boards", "ypcb-00338", "vivado", "bd.tcl")).read()
+    assert "CONFIG.pf0_device_id {7028}" in bd and "CONFIG.pf0_subsystem_id {4F54}" in bd
+    subprocess.run(["bash", "-n", str(pcie_setup.SCRIPT)], check=True)
+    r = subprocess.run(["bash", str(pcie_setup.SCRIPT), "--help"], capture_output=True, text=True)
+    assert r.returncode == 0 and "--rescan" in r.stdout and "set -euo" not in r.stdout

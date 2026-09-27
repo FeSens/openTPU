@@ -9,6 +9,8 @@ its tools.
     checks     bring-up checks
     smi        otpu-smi         selftest   otpu-selftest
     hwlens     otpu-lens        chat       otpu-chat
+    pcie_setup otpu-setup (setup_pcie.sh and its files in pcie/: driver, udev rules)
 
-The kernel side is the stock Xilinx XDMA driver (docs/host.md).
+The kernel side is the Xilinx XDMA driver at a pinned commit plus pcie/xdma-otpu.patch,
+installed by otpu-setup (docs/host.md).
 """
