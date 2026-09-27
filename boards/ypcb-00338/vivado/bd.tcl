@@ -55,11 +55,16 @@ set m_ctl [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl
 set_property -dict [list CONFIG.PROTOCOL AXI4LITE CONFIG.DATA_WIDTH 32 CONFIG.ADDR_WIDTH 32 \
   CONFIG.HAS_BURST 0 CONFIG.HAS_LOCK 0 CONFIG.HAS_PROT 0 CONFIG.HAS_CACHE 0 CONFIG.HAS_QOS 0 \
   CONFIG.HAS_REGION 0] $m_ctl
+# The accelerator's masters: port B reads in bursts of up to 8 beats (otpu_axi_dram.sv; single
+# beats cost about 4 core cycles each in SmartConnect and the MIG's AXI front end, a quarter of
+# the channel), writes single-beat. Up to 64 reads outstanding: the adapter keeps at most 128 B
+# beats and 16 A beats in flight per channel, i.e. 32 transactions in full bursts, and the
+# headroom keeps short bursts and single A reads from being throttled
 foreach p {S_AXI_M0 S_AXI_M1} {
   set s [create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:aximm_rtl:1.0 $p]
   set_property -dict [list CONFIG.PROTOCOL AXI4 CONFIG.DATA_WIDTH 512 CONFIG.ADDR_WIDTH 32 \
     CONFIG.ID_WIDTH 1 CONFIG.HAS_REGION 0 CONFIG.NUM_READ_OUTSTANDING 64 \
-    CONFIG.NUM_WRITE_OUTSTANDING 16 CONFIG.MAX_BURST_LENGTH 1 CONFIG.FREQ_HZ $CORE_HZ] $s
+    CONFIG.NUM_WRITE_OUTSTANDING 16 CONFIG.MAX_BURST_LENGTH 8 CONFIG.FREQ_HZ $CORE_HZ] $s
 }
 set_property CONFIG.ASSOCIATED_BUSIF {M_AXI_CTL:S_AXI_M0:S_AXI_M1} [get_bd_ports core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_rstn} [get_bd_ports core_clk]

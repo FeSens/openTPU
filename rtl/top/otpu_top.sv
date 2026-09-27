@@ -70,6 +70,7 @@ module otpu_top
       logic [1:0] awvalid, awready, awid, wvalid, wready, bvalid, bready, bid;
       logic [1:0] arvalid, arready, arid, rvalid, rready, rid, rlast;
       logic [1:0][31:0] awaddr, araddr;
+      logic [1:0][7:0] arlen;
       logic [1:0][511:0] wdata, rdata;
       logic [1:0][63:0] wstrb;
       logic [1:0][1:0] bresp, rresp;
@@ -83,7 +84,7 @@ module otpu_top
         .m_awvalid(awvalid), .m_awready(awready), .m_awaddr(awaddr), .m_awid(awid),
         .m_wvalid(wvalid), .m_wready(wready), .m_wdata(wdata), .m_wstrb(wstrb),
         .m_bvalid(bvalid), .m_bready(bready), .m_bid(bid), .m_bresp(bresp),
-        .m_arvalid(arvalid), .m_arready(arready), .m_araddr(araddr), .m_arid(arid),
+        .m_arvalid(arvalid), .m_arready(arready), .m_araddr(araddr), .m_arlen(arlen), .m_arid(arid),
         .m_rvalid(rvalid), .m_rready(rready), .m_rid(rid), .m_rdata(rdata), .m_rresp(rresp),
         .m_rlast(rlast), .err(axi_err));
       otpu_axi_mem #(.WORDS(DRAM_WORDS), .LAT(DRAM_LAT), .SID(s)) u_mem (
@@ -91,7 +92,7 @@ module otpu_top
         .s_awvalid(awvalid), .s_awready(awready), .s_awaddr(awaddr), .s_awid(awid),
         .s_wvalid(wvalid), .s_wready(wready), .s_wdata(wdata), .s_wstrb(wstrb),
         .s_bvalid(bvalid), .s_bready(bready), .s_bid(bid), .s_bresp(bresp),
-        .s_arvalid(arvalid), .s_arready(arready), .s_araddr(araddr), .s_arid(arid),
+        .s_arvalid(arvalid), .s_arready(arready), .s_araddr(araddr), .s_arlen(arlen), .s_arid(arid),
         .s_rvalid(rvalid), .s_rready(rready), .s_rid(rid), .s_rdata(rdata), .s_rresp(rresp),
         .s_rlast(rlast), .dump);
     end

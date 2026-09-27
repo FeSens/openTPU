@@ -62,6 +62,8 @@ def main():
     ap.add_argument("--bw", type=int, default=100)
     ap.add_argument("--lat", type=int, default=30)
     ap.add_argument("--stall", type=int, default=0)
+    ap.add_argument("--arc", type=int, default=0,
+                    help="cycles per AXI read transaction and channel (the board's is about 4)")
     ap.add_argument("--block", type=int, default=None, help="attention block (tokens)")
     ap.add_argument("--depth", type=int, default=None, help="attention score blocks in flight")
     ap.add_argument("--check", action="store_true", help="compare with the ISA simulator")
@@ -94,7 +96,7 @@ def main():
     progs = img.compile_step(a.pos, *([a.block] if a.block else []))
     t = time.time()
     drams, _, st = rtlsim.run(cfg, progs, [dram], trace=True, uarch=rtlsim.BOARD_UARCH,
-                              axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat,
+                              axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat, arc=a.arc,
                               max_cycles=1 << 40)
     wall = time.time() - t
     p = parse(st["trace"], cfg, progs, path.name)
@@ -104,6 +106,11 @@ def main():
     print(f"layers={spec.layers} pos={a.pos} bw={a.bw}% lat={a.lat}: {p.cycles} cycles "
           f"({wall:.0f}s sim), roofline {rl['bound']} chunks -> {ideal:.0f} cycles at this "
           f"bandwidth, efficiency {100 * ideal / p.cycles:.1f}%")
+    ar = st.get("axi_reads", [])
+    if ar:
+        print("AXI reads per channel (transactions, beats, beats/transaction): " +
+              ", ".join(f"{n}, {b}, {b / max(n, 1):.2f}" for n, b in ar) +
+              f"; arc={a.arc}")
     # useful-bytes roofline: weights + their fp32 block scales + KV + activations, at D bytes
     # per cycle (both channels at 100%)
     D = cfg.D

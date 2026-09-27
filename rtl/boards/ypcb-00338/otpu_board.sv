@@ -240,6 +240,7 @@ module otpu_board #(
 
   // ---- memory
   logic [1:0][31:0]  awaddr, araddr;
+  logic [1:0][7:0]   arlen;
   logic [1:0][511:0] wdata, rdata;
   logic [1:0][63:0]  wstrb;
   logic [1:0][1:0]   bresp, rresp;
@@ -252,12 +253,14 @@ module otpu_board #(
     .m_awvalid(awvalid), .m_awready(awready), .m_awaddr(awaddr), .m_awid(awid),
     .m_wvalid(wvalid), .m_wready(wready), .m_wdata(wdata), .m_wstrb(wstrb),
     .m_bvalid(bvalid), .m_bready(bready), .m_bid(bid), .m_bresp(bresp),
-    .m_arvalid(arvalid), .m_arready(arready), .m_araddr(araddr), .m_arid(arid),
+    .m_arvalid(arvalid), .m_arready(arready), .m_araddr(araddr), .m_arlen(arlen), .m_arid(arid),
     .m_rvalid(rvalid), .m_rready(rready), .m_rid(rid), .m_rdata(rdata), .m_rresp(rresp),
     .m_rlast(rlast), .err(axi_err));
 
-  // single-beat, 64-byte, incrementing, normal non-cacheable bufferable
-  assign {m0_axi_awlen, m1_axi_awlen, m0_axi_arlen, m1_axi_arlen} = '0;
+  // 64-byte beats, incrementing, normal non-cacheable bufferable; writes single-beat, reads
+  // in bursts (port B runs, up to 8 beats)
+  assign {m0_axi_awlen, m1_axi_awlen} = '0;
+  assign {m1_axi_arlen, m0_axi_arlen} = arlen;
   assign {m0_axi_awsize, m1_axi_awsize, m0_axi_arsize, m1_axi_arsize} = {4{3'd6}};
   assign {m0_axi_awburst, m1_axi_awburst, m0_axi_arburst, m1_axi_arburst} = {4{2'b01}};
   assign {m0_axi_awlock, m1_axi_awlock, m0_axi_arlock, m1_axi_arlock} = '0;

@@ -42,6 +42,7 @@ module tb_board;
   // AXI channels
   logic [1:0] awv, awr, awi, wv, wr, bv, br, bi, arv, arr, ari, rv, rr, ri, rl;
   logic [1:0][31:0] awa, ara;
+  logic [1:0][7:0] arl;
   logic [1:0][511:0] wd, rd;
   logic [1:0][63:0] ws;
   logic [1:0][1:0] bre, rre;
@@ -68,7 +69,7 @@ module tb_board;
     .m0_axi_wstrb(ws[0]), .m0_axi_wlast(unusedl[1]), .m0_axi_wvalid(wv[0]),
     .m0_axi_wready(wr[0]), .m0_axi_bid(bi[0]), .m0_axi_bresp(bre[0]), .m0_axi_bvalid(bv[0]),
     .m0_axi_bready(br[0]), .m0_axi_arid(ari[0]), .m0_axi_araddr(ara[0]),
-    .m0_axi_arlen(unused8[1]), .m0_axi_arsize(unused3[2]), .m0_axi_arburst(unused2[1]),
+    .m0_axi_arlen(arl[0]), .m0_axi_arsize(unused3[2]), .m0_axi_arburst(unused2[1]),
     .m0_axi_arlock(unusedl[2]), .m0_axi_arcache(unused4[2]), .m0_axi_arprot(unused3[3]),
     .m0_axi_arqos(unused4[3]), .m0_axi_arvalid(arv[0]), .m0_axi_arready(arr[0]),
     .m0_axi_rid(ri[0]), .m0_axi_rdata(rd[0]), .m0_axi_rresp(rre[0]), .m0_axi_rlast(rl[0]),
@@ -80,7 +81,7 @@ module tb_board;
     .m1_axi_wstrb(ws[1]), .m1_axi_wlast(unusedl[4]), .m1_axi_wvalid(wv[1]),
     .m1_axi_wready(wr[1]), .m1_axi_bid(bi[1]), .m1_axi_bresp(bre[1]), .m1_axi_bvalid(bv[1]),
     .m1_axi_bready(br[1]), .m1_axi_arid(ari[1]), .m1_axi_araddr(ara[1]),
-    .m1_axi_arlen(unused8[3]), .m1_axi_arsize(unused3[6]), .m1_axi_arburst(unused2[3]),
+    .m1_axi_arlen(arl[1]), .m1_axi_arsize(unused3[6]), .m1_axi_arburst(unused2[3]),
     .m1_axi_arlock(unusedl[5]), .m1_axi_arcache(unused4[6]), .m1_axi_arprot(unused3[7]),
     .m1_axi_arqos(unused4[7]), .m1_axi_arvalid(arv[1]), .m1_axi_arready(arr[1]),
     .m1_axi_rid(ri[1]), .m1_axi_rdata(rd[1]), .m1_axi_rresp(rre[1]), .m1_axi_rlast(rl[1]),
@@ -91,7 +92,7 @@ module tb_board;
     .s_awvalid(awv), .s_awready(awr), .s_awaddr(awa), .s_awid(awi),
     .s_wvalid(wv), .s_wready(wr), .s_wdata(wd), .s_wstrb(ws),
     .s_bvalid(bv), .s_bready(br), .s_bid(bi), .s_bresp(bre),
-    .s_arvalid(arv), .s_arready(arr), .s_araddr(ara), .s_arid(ari),
+    .s_arvalid(arv), .s_arready(arr), .s_araddr(ara), .s_arlen(arl), .s_arid(ari),
     .s_rvalid(rv), .s_rready(rr), .s_rid(ri), .s_rdata(rd), .s_rresp(rre), .s_rlast(rl),
     .dump);
 

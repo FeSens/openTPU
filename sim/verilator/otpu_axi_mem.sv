@@ -1,10 +1,14 @@
-// Simulation model of the board memory: two AXI4 slave channels (512-bit, single-beat
-// transactions) in front of one logical DRAM image with the 64-byte channel interleave of
+// Simulation model of the board memory: two AXI4 slave channels (512-bit; single-beat writes,
+// INCR read bursts, which must not cross 4 KB) in front of one logical DRAM image with the 64-byte channel interleave of
 // otpu_axi_dram. Every ready is randomly withheld and every response randomly delayed (seed
 // +axi_seed=N, stall probability +axi_stall=percent), so the slice sees variable latency and
 // backpressure; reads and writes are not ordered against each other, as in a real controller.
 // Bandwidth: +axi_bw=P limits each channel to P percent of one 64-byte beat per cycle (reads and
-// writes together; 100 = no limit); +axi_lat=N overrides the minimum latency.
+// writes together; 100 = no limit); +axi_lat=N overrides the minimum latency. +axi_arc=N: a
+// cost per read transaction, as the board's interconnect and controller have: a read's data
+// starts no sooner than N cycles after the previous read's on its channel (0 = none; single
+// 64-byte reads then reach at most 1/N beats per cycle). The final dump prints each channel's
+// read transactions and beats (AXI ch<c> ar=<n> beats=<n>).
 // Images load from dram_<SID>.bin and dump to dram_out_<SID>.bin, as otpu_dram. With PHYS = 1
 // the files are the channels' own memories instead, as the host sees them: ch<c>.bin (big-endian
 // words, as $fread reads) in, ch<c>_out.bin (little-endian) out, WORDS / 2 words each.
@@ -33,6 +37,7 @@ module otpu_axi_mem #(
   input  logic [1:0]            s_arvalid,
   output logic [1:0]            s_arready,
   input  logic [1:0][31:0]      s_araddr,
+  input  logic [1:0][7:0]       s_arlen,
   input  logic [1:0]            s_arid,
   output logic [1:0]            s_rvalid,
   input  logic [1:0]            s_rready,
@@ -46,6 +51,8 @@ module otpu_axi_mem #(
   int stall = 0;
   int bw = 100;
   int lat = LAT;
+  int arc = 0;
+  longint n_ar [2], n_rb [2];
   longint cyc = 0;
 
   function automatic int beat_word(input logic [31:0] addr, input int c);
@@ -57,7 +64,7 @@ module otpu_axi_mem #(
     return ($urandom % 100) < stall;
   endfunction
 
-  typedef struct { longint t; logic id; logic [31:0] addr; } rq_t;
+  typedef struct { longint t; logic id; logic [31:0] addr; int len; } rq_t;
   typedef struct { longint t; logic id; } bq_t;
   rq_t rq [2][$];
   bq_t bq [2][$];
@@ -71,6 +78,8 @@ module otpu_axi_mem #(
   for (genvar c = 0; c < 2; c++) begin : g_ch
     logic arr, awr, wr, rv, bv;
     int cr = 0;                          // bandwidth credit (100 = one beat)
+    int ri = 0;                          // the head read's next beat
+    longint art = 0;                     // the last read's earliest data (transaction cost)
     always_ff @(posedge clk) begin
       arr <= !rnd_stall();
       awr <= !rnd_stall();
@@ -82,11 +91,13 @@ module otpu_axi_mem #(
     // R: the head read, once its time has come (in order per channel)
     always_comb begin
       s_rvalid[c] = 1'b0; s_rid[c] = 1'b0; s_rdata[c] = '0;
-      s_rresp[c] = 2'b00; s_rlast[c] = 1'b1;
+      s_rresp[c] = 2'b00; s_rlast[c] = 1'b0;
       if (rv) begin
         s_rvalid[c] = 1'b1;
         s_rid[c] = rq[c][0].id;
-        for (int k = 0; k < 16; k++) s_rdata[c][32 * k +: 32] = mem[beat_word(rq[c][0].addr, c) + k];
+        s_rlast[c] = ri == rq[c][0].len - 1;
+        for (int k = 0; k < 16; k++)
+          s_rdata[c][32 * k +: 32] = mem[beat_word(rq[c][0].addr + 32'(64 * ri), c) + k];
       end
       s_bvalid[c] = bv;
       s_bid[c] = bv ? bq[c][0].id : 1'b0;
@@ -96,11 +107,21 @@ module otpu_axi_mem #(
       if (rst) begin
         rq[c].delete(); bq[c].delete(); aw_a[c].delete(); aw_i[c].delete();
         w_d[c].delete(); w_s[c].delete();
-        rv <= 1'b0; bv <= 1'b0;
+        rv <= 1'b0; bv <= 1'b0; ri = 0; art = 0;
       end else begin
         if (s_arvalid[c] && s_arready[c]) begin
-          if (beat_word(s_araddr[c], c) + 16 > WORDS) $fatal(1, "AXI read beyond memory");
-          rq[c].push_back('{cyc + lat + ($urandom % 8), s_arid[c], s_araddr[c]});
+          longint t;
+          int n;
+          n = int'(s_arlen[c]) + 1;
+          if (s_araddr[c][5:0] != 0) $fatal(1, "AXI read not beat aligned");
+          if ((s_araddr[c] & 32'hfff) + 32'(64 * n) > 32'h1000) $fatal(1, "AXI read burst crosses 4 KB");
+          if (beat_word(s_araddr[c], c) + 32 * (n - 1) + 16 > WORDS) $fatal(1, "AXI read beyond memory");
+          t = cyc + lat + ($urandom % 8);
+          if (art + arc > t) t = art + arc;
+          art = t;
+          rq[c].push_back('{t, s_arid[c], s_araddr[c], n});
+          n_ar[c]++;
+          n_rb[c] += n;
         end
         if (s_awvalid[c] && s_awready[c]) begin
           aw_a[c].push_back(s_awaddr[c]);
@@ -123,7 +144,12 @@ module otpu_axi_mem #(
           void'(aw_a[c].pop_front()); void'(aw_i[c].pop_front());
           void'(w_d[c].pop_front()); void'(w_s[c].pop_front());
         end
-        if (rv && s_rready[c]) void'(rq[c].pop_front());
+        if (rv && s_rready[c]) begin
+          if (ri == rq[c][0].len - 1) begin
+            void'(rq[c].pop_front());
+            ri = 0;
+          end else ri++;
+        end
         if (bv && s_bready[c]) void'(bq[c].pop_front());
         // next cycle's responses (the queues above are already updated)
         if (rq[c].size() != 0 && rq[c][0].t <= cyc && !rnd_stall() && cr >= 100) begin
@@ -144,6 +170,8 @@ module otpu_axi_mem #(
     void'($value$plusargs("axi_stall=%d", stall));
     void'($value$plusargs("axi_bw=%d", bw));
     void'($value$plusargs("axi_lat=%d", lat));
+    void'($value$plusargs("axi_arc=%d", arc));
+    n_ar = '{0, 0}; n_rb = '{0, 0};
     begin
       int seed;
       if ($value$plusargs("axi_seed=%d", seed)) void'($urandom(seed));
@@ -171,6 +199,7 @@ module otpu_axi_mem #(
     end
   end
   always @(posedge clk) if (dump) begin
+    for (int c = 0; c < 2; c++) $display("AXI ch%0d ar=%0d beats=%0d", c, n_ar[c], n_rb[c]);
     if (PHYS == 0) begin
       fd = $fopen($sformatf("%s/dram_out_%0d.bin", dir, SID), "wb");
       for (int i = 0; i < WORDS; i++) $fwrite(fd, "%u", mem[i]);

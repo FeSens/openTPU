@@ -107,7 +107,8 @@ MEMORY = {"AXI": os.environ.get("OTPU_AXI", "0") == "1",
           "STALL": int(os.environ.get("OTPU_STALL", "20")),
           "SEED": int(os.environ.get("OTPU_SEED", "1")),
           "BW": int(os.environ.get("OTPU_BW", "100")),        # percent of a beat/cycle/channel
-          "LAT": int(os.environ.get("OTPU_LAT", "20"))}
+          "LAT": int(os.environ.get("OTPU_LAT", "20")),
+          "ARC": int(os.environ.get("OTPU_ARC", "0"))}     # cycles per AXI read transaction
 
 
 def top_params(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = False,
@@ -143,7 +144,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         keep: Path | None = None, trace: bool = False, uarch: dict | None = None,
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
         seed: int | None = None, bw: int | None = None, lat: int | None = None,
-        plusargs: list | None = None):
+        arc: int | None = None, plusargs: list | None = None):
     """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats)."""
     from . import isa as I
     axi = MEMORY["AXI"] if axi is None else axi
@@ -182,7 +183,8 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     if axi:
         args += [f"+axi_stall={stall}", f"+axi_seed={seed}",
                  f"+axi_bw={MEMORY['BW'] if bw is None else bw}",
-                 f"+axi_lat={MEMORY['LAT'] if lat is None else lat}"]
+                 f"+axi_lat={MEMORY['LAT'] if lat is None else lat}",
+                 f"+axi_arc={MEMORY['ARC'] if arc is None else arc}"]
     if boot:
         args += ["+boot", f"+boot_addr={at}", f"+boot_n={max(len(p) for p in progs) // 8}"]
     r = subprocess.run(args,
@@ -207,6 +209,9 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
             drams[s][at:at + 4 * len(progs[s])] = 0
     tmems = [_read_hex(tmp / f"tmem_{s}.hex", cfg.TMEM_WORDS) for s in range(cfg.S)]
     stats = {"cycles": cycles, "instructions": icounts}
+    if axi:                            # per channel: AXI read transactions and beats
+        stats["axi_reads"] = [(int(a), int(b)) for a, b in
+                              re.findall(r"AXI ch\d ar=(\d+) beats=(\d+)", out)]
     if trace:
         stats["trace"] = out
     return drams, tmems, stats

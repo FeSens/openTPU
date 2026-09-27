@@ -399,6 +399,49 @@ def test_dma_alignment_stress(have_verilator, D, lanes, axi, stall):
     assert np.array_equal(drams[0], m.slices[0].dram)
 
 
+# Port B streams leave the AXI adapter as read bursts (up to 8 beats per channel). Long loads
+# that start and end mid-burst and cross 4 KB channel pages (the memory model stops on a burst
+# that crosses one), a store read back at once, backpressure and a per-transaction cost: results
+# bit-exact, and the streams mostly in full bursts.
+@pytest.mark.parametrize("stall,arc", [(0, 4), (50, 4), (30, 0)])
+def test_axi_read_bursts(have_verilator, stall, arc):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    CW, PAGE = cfg.D // 4, 2 * 4096                 # a 4 KB page on each channel
+    loads = [(PAGE - 3 * cfg.D, 40 * CW + 5), (3 * PAGE + 5 * cfg.D + 28, 70 * CW + 3),
+             (5 * PAGE - cfg.D, 2 * CW), (7 * PAGE + 12, 1)]
+    prog, t = [], 0
+    for a, n in loads:
+        prog.append(I.ld(a, t, n))
+        t += n
+    prog += [I.st(9 * PAGE - 4 * cfg.D + 8, 100, 9 * CW), I.ld(9 * PAGE - 4 * cfg.D, t, 12 * CW),
+             I.halt()]
+    img = np.random.default_rng(8000).integers(0, 256, 1 << 20, dtype=np.uint8)
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                  seed=stall + 11, arc=arc, uarch=rtlsim.BOARD_UARCH)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    (ar0, b0), (ar1, b1) = st["axi_reads"]
+    assert (b0 + b1) / (ar0 + ar1) > 4, st["axi_reads"]
+
+
+def test_axi_burst_throughput(have_verilator):
+    """A long load at a cost of 16 cycles per read transaction: single-beat reads would take 16
+    cycles per chunk; in bursts the load keeps the pace it has with no cost (4 cycles per chunk,
+    TMEM's 8 lanes)."""
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    n = 2000 * cfg.D // 4
+    prog = [I.ld(0, 0, n), I.halt()]
+    img = np.random.default_rng(8100).integers(0, 256, 1 << 20, dtype=np.uint8)
+    cyc = {}
+    for arc in (0, 16):
+        _, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=0,
+                                  arc=arc, uarch=rtlsim.BOARD_UARCH)
+        assert np.array_equal(tmems[0][:n], img[:4 * n].view("<u4"))
+        cyc[arc] = st["cycles"]
+    assert cyc[16] < 1.1 * cyc[0], cyc
+
+
 def test_tmem_random_traffic(have_verilator):
     """TMEM alone against a reference model; most reads hit the previous cycle's writes, which
     are still in TMEM's registered write stage (the bypass)."""
