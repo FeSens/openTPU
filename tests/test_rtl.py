@@ -529,6 +529,38 @@ def test_axi_sw_rmw_fuzz(have_verilator, seed):
     assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
 
 
+# A transposed V append (8 KV heads x 128 values, each value to its own beat: element stride =
+# the cache capacity) on the calibrated DDR3 model: every beat is a read-modify-write, and the
+# SW queue (WQD beats per channel) keeps enough of them in flight that the appends cost about
+# the channel's read transactions. All the beats of one token fall on one channel (the rows are
+# chunk aligned). Also with the interconnect's outstanding-transaction limits (vivado/bd.tcl).
+@pytest.mark.parametrize("limits", [[], ["+axi_rout=64", "+axi_wout=64"]])
+def test_axi_vt_append_throughput(have_verilator, limits):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D, CAP, H = cfg.D, 256, 8
+    rng = np.random.default_rng(8500)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * H * D] = rng.standard_normal(H * D).astype(np.float32).view(np.uint8)
+    plus = limits + ["+axi_dram=1", "+axi_map=1", "+axi_arc=4", "+axi_tpc=16", "+axi_tpu=15",
+                     "+axi_trp=3", "+axi_trcd=3", "+axi_tras=5", "+axi_trc=7", "+axi_trfc=22",
+                     "+axi_trefi=1040", "+axi_trmw=29"]
+    cyc = []
+    for n in (1, 4):
+        prog = [I.ld(0, 0, 4 * H * D)]
+        prog += [I.qst(0, 0x20000 + t, 0xE0000 + 64 * t, H, 1, D, D * CAP, CAP) for t in range(n)]
+        prog.append(I.halt())
+        m = Machine(cfg, [prog], [img.copy()]).run()
+        drams, _, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, lat=38,
+                                  uarch=rtlsim.BOARD_UARCH, plusargs=plus)
+        assert np.array_equal(drams[0], m.slices[0].dram)
+        assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
+        cyc.append(st["cycles"])
+    # 1024 read-modify-writes on one channel, a read transaction per 4 cycles: ~4.1K cycles;
+    # with a 16-deep SW queue this was ~7.7K
+    per = (cyc[1] - cyc[0]) / 3
+    assert per < 5300, cyc
+
+
 # The MXU's scale stream (port A, one word per chunk) goes out as runs of up to 8 beats per AXI
 # read; a QST between the MMs rewrites some scales (so a run fetched before it must not be used
 # after it), under random stalls: bit-exact, and far fewer A transactions than scale beats.
