@@ -603,7 +603,17 @@ changed ARG words (up to 6 register writes, posted) instead of the x / cos / sin
 (0.16 ms), the program upload and IMEM load (0.23 ms) and the compile wait (0.08 ms, and at
 long contexts the 16-33 ms trace that no longer keeps up): by the measurements above the
 critical path would be ~0.25 ms per token (counters, the last chunk and the selection,
-Python). This is an *estimate*: it needs a bitstream with the ARG registers, not built yet.
+Python). This is an *estimate*: it needs a bitstream with the ARG registers, not built yet. On
+`FakeTransport` (its DMA is a memory copy, so it shows the Python side only; LFM2.5-230M fp4 /
+int8 head, 48 tokens, an 11 ms run, the Mac above) `decode_profile.py` measures 0.215 ms of
+critical path per token against 0.245 with `--per-position`.
+
+The price is on the device: the bucket's last block is computed in full, masked, so early in
+a bucket attention does up to 255 columns more than a per-position program. LFM2.5-230M, fp4
+with an int8 head, DDR3-1066 bank model at 116 MHz, position 9 (the worst case), simulated:
+1,289,001 cycles against 1,260,820 (+2.2%, 90.0 against 92.0 tok/s device); at a bucket's end
+the two meet. Against the ~0.5 ms of host time per token it removes (4% of an 11 ms token)
+it is a gain at every position.
 
 The chat interface draws each token while the card runs the next one: `Chat` hands a token to
 `on_update` from `Engine.step`'s `on_start` hook (called once the run is started), so the

@@ -78,14 +78,16 @@ def test_register_map(have_verilator):
     t.reg_write(R_SCRATCH, 0x1234_5678)
     t.reg_write(R_TRACE_CTRL, TRACE_ENABLE | TRACE_STOP_WHEN_FULL)
     t.reg_write(R_TRACE_ADDR, 77)
-    ident, ver, regmap, caps, khz, bid, temp, snap, mts, scr, tctl, taddr, bad = t.reg_read_many(
-        [0x0, R_VERSION, R_REGMAP, R_CAPS, R_CORE_KHZ, R_BUILD_ID, R_TEMP, R_SNAP, R_DDR_MTS,
-         R_SCRATCH, R_TRACE_CTRL, R_TRACE_ADDR, 0x0FC])
+    t.reg_write(0x60 + 4 * 3, 0xCAFE_F00D)                    # ARG3
+    ident, ver, regmap, caps, khz, bid, temp, snap, mts, scr, tctl, taddr, bad, a3, a4 = \
+        t.reg_read_many([0x0, R_VERSION, R_REGMAP, R_CAPS, R_CORE_KHZ, R_BUILD_ID, R_TEMP, R_SNAP,
+                         R_DDR_MTS, R_SCRATCH, R_TRACE_CTRL, R_TRACE_ADDR, 0x0FC, 0x6C, 0x70])
     assert ident == 0x4F545055
     assert ver == (CFG.D << 16) | (CFG.MCOLS << 8) | CFG.LANES
     assert regmap == 3
-    # log2 256, log2 1024; chash, DSTEP, PAIR, 4-bit, ddr, i2c, temp, trace
-    assert caps == (8 << 16) | (10 << 8) | 0x80 | 0b1111111
+    # run arguments; log2 256, log2 1024; chash, DSTEP, PAIR, 4-bit, ddr, i2c, temp, trace
+    assert caps == (1 << 24) | (8 << 16) | (10 << 8) | 0x80 | 0b1111111
+    assert a3 == 0xCAFE_F00D and a4 == 0                      # ARG3 kept, ARG4 reset
     assert khz == 75294 and bid == TB_BUILD_ID and mts == 1066
     assert temp == (1 << 31) | TB_TEMP
     assert 44.5 < TB_TEMP * 503.975 / 4096 - 273.15 < 45.5
@@ -97,8 +99,8 @@ def test_register_map(have_verilator):
 def test_register_map_board_defaults(have_verilator):
     t = SimTransport(ch_bytes=1 << 20)
     caps, khz, mts = t.reg_read_many([R_CAPS, R_CORE_KHZ, R_DDR_MTS])
-    # 1024-cycle windows, 16384 records; chash, DSTEP, PAIR, 4-bit, temp, trace
-    assert caps == (10 << 16) | (14 << 8) | 0x80 | 0b1110111
+    # run arguments, 1024-cycle windows, 16384 records; chash, DSTEP, PAIR, 4-bit, temp, trace
+    assert caps == (1 << 24) | (10 << 16) | (14 << 8) | 0x80 | 0b1110111
     assert khz == 100000 and mts == 0                     # no DDR_MTS given: CAPS bit3 clear
 
 

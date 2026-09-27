@@ -80,7 +80,8 @@ def test_v3_info_snapshot_and_rates():
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
     assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False, "w4": True,
-                         "pair": False, "dstep": False, "chash": False, "trace_depth": 4096,
+                         "pair": False, "dstep": False, "chash": False, "args": False,
+                         "trace_depth": 4096,
                          "pq_window": 64}
     assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
@@ -482,7 +483,9 @@ def test_streamed_logits_refuse_an_unwritten_piece(no_cfg_env):
                     .exists(), reason="models/LFM2.5-230M not downloaded")
 def test_decode_profile_splits_the_critical_path(tmp_path, no_cfg_env):
     """tools/decode_profile.py on the fake card: the critical path (HALTED seen -> next RUN)
-    is measured per token, split into items, with the transport operations and the reply."""
+    is measured per token, split into items, with the transport operations and the reply.
+    The decode is resident (the fake announces run arguments): each step writes the ARG
+    registers, no inputs."""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "decode_profile", Path(__file__).resolve().parent.parent / "tools/decode_profile.py")
@@ -494,7 +497,7 @@ def test_decode_profile_splits_the_critical_path(tmp_path, no_cfg_env):
     d = json.loads(out.read_text())
     assert d["steps"] == 6 and len(d["reply_ids"]) == 6 and d["critical_ms"] > 0
     assert d["ms"]["counters"]["overlapped"] > 3                 # the wait for the 5 ms run
-    assert {"io-write", "imem-load", "prog-upload", "logits-read"} <= set(d["ms"])
+    assert {"args-write", "logits-read"} <= set(d["ms"]) and "io-write" not in d["ms"]
     assert d["ops"]["dma-read"]["bytes"] >= 4 * 65536            # the logits, after the run
 
 
