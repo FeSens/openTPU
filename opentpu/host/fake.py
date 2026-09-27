@@ -1,7 +1,8 @@
 """FakeTransport: an in-memory card for tests and demos (otpu-smi --fake).
 
-It implements the register protocol the driver uses -- register map 2 (or 1, regmap=1: 8-bit
-address decode, 0xDEADBEEF for registers v1 does not have) -- over two channel memories in RAM.
+It implements the register protocol the driver uses -- register map 3 (or 2: no MXU_STARVE; or
+1, regmap=1: 8-bit address decode, 0xDEADBEEF for registers v1 does not have) -- over two
+channel memories in RAM.
 It computes nothing: a run takes `run_s` seconds of wall time (HALTED rises then), reports
 `cycles` and retires PROG_N instructions; the DRAM keeps what the host wrote.
 
@@ -21,13 +22,13 @@ from . import regs as R
 
 RATES = {"RUNNING": 0.80, "MXU_BUSY": 0.60, "MXU_MAC": 0.50, "VPU_BUSY": 0.12,
          "QNT_BUSY": 0.05, "DMA_BUSY": 0.03, "TMEM_DENY": 0.01, "DRAM_RD": 0.70,
-         "DRAM_WR": 0.02, "DRAM_WAIT": 0.20, "INSTR": 0.005}
+         "DRAM_WR": 0.02, "DRAM_WAIT": 0.20, "INSTR": 0.005, "MXU_STARVE": 0.08}
 
 
 class FakeTransport:
     batched = False
 
-    def __init__(self, ch_bytes: int = 1 << 20, regmap: int = 2, devname: str | None = "fake0",
+    def __init__(self, ch_bytes: int = 1 << 20, regmap: int = 3, devname: str | None = "fake0",
                  run_s: float = 0.0, cycles: int = 1_000_000, core_khz: int = 100_000,
                  build_id: int = 0x1234ABCD, temp_code: int = 0x9C4, trace_log2: int = 12,
                  step: int = 1_000_000, trace: list[int] | None = None, trace_extra: int = 0,
@@ -41,7 +42,7 @@ class FakeTransport:
         self.version = D << 16 | MCOLS << 8 | LANES
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
                      R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0}
-        self.count = {k: 0 for k in R.COUNTERS}
+        self.count = {k: 0 for k in R.counters(regmap)}
         self.shadow = dict(self.count)
         self.snaps = 0
         self.t_run = None               # wall time RUN rose
@@ -105,7 +106,7 @@ class FakeTransport:
         if off in (R.R_B_RD, R.R_B_WR, R.R_A_RD, R.R_A_WR, R.R_B_STALL):
             return 0
         if off == R.R_REGMAP:
-            return 2
+            return self.v
         if off == R.R_CAPS:
             return R.CAP_TRACE | R.CAP_TEMP | self.trace_log2 << 8 | 6 << 16
         if off == R.R_CORE_KHZ:
@@ -116,7 +117,7 @@ class FakeTransport:
             return R.TEMP_VALID | self.temp_code
         if off == R.R_SNAP:
             return self.snaps
-        for k, o in R.COUNTERS.items():
+        for k, o in R.counters(self.v).items():
             if off in (o, o + 4):
                 v = self.shadow[k]
                 return v & 0xFFFFFFFF if off == o else v >> 32

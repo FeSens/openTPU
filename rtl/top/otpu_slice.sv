@@ -459,6 +459,7 @@ module otpu_slice
   always_comb begin
     pf.sq = sq_ev;
     pf.mac = ap_r[4];
+    pf.starve = aq_r[2];
     pf.deny = |ap_r[8:5];
     pf.u_mxu = mxu_u;
     pf.u_mxu_v = mxu_uv;

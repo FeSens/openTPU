@@ -150,7 +150,7 @@ def query_sim(interval_cycles: int = 0) -> dict:
     snap = []
     if b.v2:
         t.reg_write(R.R_SNAP, 1)
-        snap.append([t.queue_read(o) for o in Board.SNAP_OFFS])
+        snap.append([t.queue_read(o) for o in Board.snap_offs(i["regmap"])])
     if interval_cycles:
         t.wait_cycles(interval_cycles)
     else:
@@ -159,7 +159,7 @@ def query_sim(interval_cycles: int = 0) -> dict:
         t.poll(R.R_STATUS, R.ST_HALTED, R.ST_HALTED)
     if b.v2:
         t.reg_write(R.R_SNAP, 1)
-        snap.append([t.queue_read(o) for o in Board.SNAP_OFFS])
+        snap.append([t.queue_read(o) for o in Board.snap_offs(i["regmap"])])
     run = [t.queue_read(o) for o in (R.R_CYCLES, R.R_CYCLES_HI, R.R_ICOUNT)]
     t.flush()
     if not interval_cycles:
@@ -167,7 +167,7 @@ def query_sim(interval_cycles: int = 0) -> dict:
         d["run"] = {"program": "checks.demo_program", "cycles": v[0] | v[1] << 32,
                     "instructions": v[2], "of": len(prog)}
     if b.v2:
-        s0, s1 = (Board.snap_dict([t.results[k] for k in ix]) for ix in snap)
+        s0, s1 = (Board.snap_dict([t.results[k] for k in ix], i["regmap"]) for ix in snap)
         _derive(d, s0, s1, i["core_khz"])
     else:
         d.update(counters=None, util=None, sample=None, dram_gbs=None)
@@ -272,7 +272,10 @@ def table(devs: list[dict]) -> str:
             for i in range(0, len(cells), 3):
                 out.append(_line("     ".join(cells[i:i + 3])))
             idle = max(0.0, u["MXU_BUSY"] - u["MXU_MAC"])
-            out.append(_line(f"Stalls  MXU no-MAC {_pct(idle)} (mostly awaiting weights)   "
+            # MXU_STARVE (register map 3): the part of no-MAC spent with no weight chunk
+            why = (f"MXU-starve {_pct(u['MXU_STARVE'])}" if "MXU_STARVE" in u
+                   else "mostly awaiting weights")
+            out.append(_line(f"Stalls  MXU no-MAC {_pct(idle)} ({why})   "
                              f"TMEM-deny {_pct(u['TMEM_DENY'])}   "
                              f"DRAM-req-wait {_pct(u['DRAM_WAIT'])}"))
             out.append(_line(f"IPC     {smp['ipc']:.2e}"))

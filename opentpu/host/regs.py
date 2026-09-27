@@ -4,7 +4,8 @@ Byte offsets from BAR0, 32-bit registers. Version 1 bitstreams implement 0x00..0
 decode 8 address bits: an unknown register reads 0xDEADBEEF, and an offset >= 0x100 aliases
 into 0x00..0xFF (so the counters and the trace registers must not be read before REGMAP says
 2). REGMAP (0x3C) reads 0xDEADBEEF on version 1; 0 is treated the same (a map with the
-register tied off).
+register tied off). Version 3 adds the MXU_STARVE counter; a version 2 bitstream reads
+0xDEADBEEF there, so the host reads only counters(regmap).
 """
 from __future__ import annotations
 
@@ -28,7 +29,10 @@ TEMP_VALID = 1 << 31
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset
 COUNTERS = {"UPTIME": 0x100, "RUNNING": 0x108, "MXU_BUSY": 0x110, "MXU_MAC": 0x118,
             "VPU_BUSY": 0x120, "QNT_BUSY": 0x128, "DMA_BUSY": 0x130, "TMEM_DENY": 0x138,
-            "DRAM_RD": 0x140, "DRAM_WR": 0x148, "DRAM_WAIT": 0x150, "INSTR": 0x158}
+            "DRAM_RD": 0x140, "DRAM_WR": 0x148, "DRAM_WAIT": 0x150, "INSTR": 0x158,
+            "MXU_STARVE": 0x160}
+COUNTER_SINCE = {"MXU_STARVE": 3}           # the register map version that added a counter;
+                                            # the others are version 2
 EVENTS = ("DRAM_RD", "DRAM_WR", "INSTR")    # count events, not cycles
 DRAM_BEAT = 64                              # bytes per DRAM_RD / DRAM_WR event
 
@@ -48,6 +52,11 @@ def caps(v: int) -> dict:
     return {"trace": bool(v & CAP_TRACE), "temp": bool(v & CAP_TEMP),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
+
+
+def counters(regmap: int) -> dict:
+    """The free-running counters a register map version has ({} before version 2)."""
+    return {k: o for k, o in COUNTERS.items() if regmap >= COUNTER_SINCE.get(k, 2)}
 
 
 def regmap(v: int) -> int:

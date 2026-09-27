@@ -74,20 +74,36 @@ def test_lock_held_by_another_process(run_dir):
 
 
 # ------------------------------------------------------------------------------ register map
-def test_v2_info_snapshot_and_rates():
+def test_v3_info_snapshot_and_rates():
     b = Board(FakeTransport(devname=None))
     i = b.info()
-    assert i["regmap"] == 2 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
+    assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
     assert i["caps"] == {"trace": True, "temp": True, "trace_depth": 4096, "pq_window": 64}
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
     assert s1["snaps"] == s0["snaps"] + 1 and s1["UPTIME"] - s0["UPTIME"] == 1_000_000
     r = rates(s0, s1, i["core_khz"])
-    for k in ("RUNNING", "MXU_MAC", "DRAM_WAIT"):
+    for k in ("RUNNING", "MXU_MAC", "DRAM_WAIT", "MXU_STARVE"):
         assert r["util"][k] == pytest.approx(RATES[k])
     assert r["seconds"] == pytest.approx(0.01)
     assert r["dram_gbs"] == pytest.approx((RATES["DRAM_RD"] + RATES["DRAM_WR"]) * 1e6 * 64
                                           / 0.01 / 1e9)
+
+
+def test_v2_bitstream_has_no_mxu_starve():
+    """A register map 2 bitstream: no MXU_STARVE (it would read 0xDEADBEEF); the rest works."""
+    t = FakeTransport(regmap=2, devname=None)
+    assert t.reg_read(R.COUNTERS["MXU_STARVE"]) == R.UNMAPPED
+    b = Board(t)
+    assert b.info()["regmap"] == 2
+    s0, s1 = b.snapshot(), b.snapshot()
+    assert "MXU_STARVE" not in s1 and s1["INSTR"] > s0["INSTR"]
+    r = rates(s0, s1, 100_000)
+    assert "MXU_STARVE" not in r["util"] and r["util"]["MXU_MAC"] == pytest.approx(RATES["MXU_MAC"])
+    d = smi.query(t, "/dev/fake", sleep=lambda s: None)
+    assert d["regmap"] == 2 and "MXU-starve" not in smi.table([d])
+    assert "MXU-starve" in smi.table([smi.query(FakeTransport(devname=None), "/dev/fake",
+                                                sleep=lambda s: None)])
 
 
 def test_v1_bitstream_fallback():
@@ -448,7 +464,7 @@ def test_smi_json(tmp_path, capsys):
                   open_transport=lambda dev: FakeTransport(devname="fake5"))
     assert rc == 0
     (d,) = json.loads(capsys.readouterr().out)
-    assert d["device"] == "/dev/fake5" and d["ok"] and d["regmap"] == 2
+    assert d["device"] == "/dev/fake5" and d["ok"] and d["regmap"] == 3
     assert d["bitstream"] == {"D": 128, "MCOLS": 2, "LANES": 8, "core_mhz": 100.0,
                               "build_id": 0x1234ABCD}
     assert d["calib"] == [True, True] and d["temp_c"] == pytest.approx(34.45, abs=0.01)

@@ -386,7 +386,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
             if i["MCOLS"] not in (2, 4) or i["LANES"] not in (8, 16):
                 bad.append(f"VERSION {v[1]:#x}")
             if i["regmap"] >= 2:
-                if v[2] != 2:
+                if v[2] not in (2, 3):
                     bad.append(f"REGMAP {v[2]}")
                 if not 10_000 <= v[4] <= 300_000:
                     bad.append(f"CORE_KHZ {v[4]}")
@@ -418,10 +418,11 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
                 return SKIP, "register map 1: no free-running counters"
             s0, s1 = snapshots(b, t)
             du = s1["UPTIME"] - s0["UPTIME"]
-            over = [k for k in R.COUNTERS if k not in R.EVENTS and k != "UPTIME"
+            ks = R.counters(ctx["info"]["regmap"])
+            over = [k for k in ks if k not in R.EVENTS and k != "UPTIME"
                     and s1[k] - s0[k] > du]
             ok = du > 0 and s1["snaps"] == s0["snaps"] + 1 and not over and all(
-                s1[k] >= s0[k] for k in R.COUNTERS)
+                s1[k] >= s0[k] for k in ks)
             return ok, (f"UPTIME +{du}, SNAP {s0['snaps']} -> {s1['snaps']}"
                         + (f"; above UPTIME: {over}" if over else ""))
         d.check("regs", "SNAP and the free-running counters", counters,
@@ -502,14 +503,15 @@ def snapshots(b, t) -> tuple[dict, dict]:
         s0 = b.snapshot()
         time.sleep(0.01)
         return s0, b.snapshot()
+    rm = (b._info or b.info())["regmap"]
     idx = []
     for k in range(2):
         if k:
             t.wait_cycles(1000)
         t.reg_write(R.R_SNAP, 1)
-        idx.append([t.queue_read(o) for o in b.SNAP_OFFS])
+        idx.append([t.queue_read(o) for o in b.snap_offs(rm)])
     t.flush()
-    return tuple(b.snap_dict([t.results[i] for i in ix]) for ix in idx)
+    return tuple(b.snap_dict([t.results[i] for i in ix], rm) for ix in idx)
 
 
 def cycle_check(b, t, info, sim: bool) -> tuple:

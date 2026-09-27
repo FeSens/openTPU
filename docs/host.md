@@ -350,8 +350,9 @@ buffer); `opentpu/host/regs.py` has the same as constants. The driver's sequence
 6. `CTRL = 0`. `STATUS.ERROR` (illegal instruction) and `STATUS.AXI_ERR` (a DRAM access got an
    error response) make the driver raise.
 
-**Version 1 and version 2 bitstreams.** `Board.info()` reads REGMAP. A version 1 bitstream has
-no such register (it reads `0xDEADBEEF`, or 0): the driver then never touches the version 2
+**Version 1, 2 and 3 bitstreams.** `Board.info()` reads REGMAP. Version 3 adds the MXU_STARVE
+counter (`otpu-smi`: "MXU-starve" in the stalls line); on a version 2 bitstream the snapshots,
+`rates()` and `otpu-smi` leave it out. A version 1 bitstream has no such register (it reads `0xDEADBEEF`, or 0): the driver then never touches the version 2
 offsets (version 1 decodes 8 address bits, so 0x100 and up alias onto the low registers).
 Everything but the counters, the trace and the temperature works: `snapshot()` returns None,
 `otpu-smi` shows utilization / power / temperature as n/a, `otpu-lens record` falls back to
@@ -425,8 +426,9 @@ Fields: the bitstream (VERSION, CORE_KHZ, BUILD_ID, REGMAP), the link (ID regist
 speed and width from sysfs), DDR3 calibration (STATUS bits 5, 6), temperature (TEMP, measured
 by the XADC), the DRAM used / total and the KV cache (from the status file), the DRAM bandwidth
 ((DRAM_RD + DRAM_WR) deltas x 64 B over the UPTIME delta / CORE_KHZ), utilization (the deltas of
-RUNNING, MXU_BUSY, MXU_MAC -- MAC utilization --, VPU_BUSY, QNT_BUSY, DMA_BUSY, TMEM_DENY and
-DRAM_WAIT over the UPTIME delta, between two SNAPs) and the owning process.
+RUNNING, MXU_BUSY, MXU_MAC -- MAC utilization --, VPU_BUSY, QNT_BUSY, DMA_BUSY, TMEM_DENY,
+DRAM_WAIT and, with register map 3, MXU_STARVE over the UPTIME delta, between two SNAPs) and
+the owning process.
 
 **Power** is an estimate (the card cannot measure it): fixed + sum over units of the unit's
 dynamic power x its utilization, from Vivado's `report_power` of the build. `build.tcl` writes

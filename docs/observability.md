@@ -6,9 +6,11 @@ register is 32 bits. The control block decodes 12 address bits (4 KiB; the map r
 the 64 KiB BAR). Reads answer a few cycles after the address (the data path is registered);
 undefined offsets read 0xDEADBEEF.
 
-## Register map (version 2)
+## Register map (version 3)
 
-The version 1 registers keep their offsets.
+The version 1 registers keep their offsets. Version 3 adds one free-running counter,
+MXU_STARVE (0x160); everything else is as in version 2. A version 2 bitstream reads 0xDEADBEEF
+at 0x160, so the host reads the counters its REGMAP has (`opentpu/host/regs.py`, `counters()`).
 
 | Offset | Name | Access | Meaning |
 |---|---|---|---|
@@ -26,7 +28,7 @@ The version 1 registers keep their offsets.
 | 0x030 | SW_WR | RO | scalar (QST) write requests taken (run) |
 | 0x034 | B_STALL | RO | cycles a port B request waited (run) |
 | 0x038 | SCRATCH | RW | host bring-up test |
-| 0x03C | REGMAP | RO | register map version (2) |
+| 0x03C | REGMAP | RO | register map version (3; 2 before MXU_STARVE) |
 | 0x040 | CAPS | RO | bit0 trace buffer present, bit1 temperature present, [15:8] log2(trace depth), [23:16] log2(P/Q window cycles) |
 | 0x044 | CORE_KHZ | RO | accelerator clock in kHz (a build parameter; the host turns cycles into time with it) |
 | 0x048 | BUILD_ID | RO | a build parameter: the first 8 hex digits of the git commit |
@@ -45,7 +47,7 @@ model (`sim/verilator/tb_board.sv`) reports CORE_KHZ 100000, BUILD_ID 0x0B0A4D00
 These are never cleared by CLEAR, only by the core reset (the bitstream load; the core reset
 follows the clock generator's lock, not PCIe PERST). They are 64 bits; the host reads the
 shadows (low word at the offset, high word at +4) after writing SNAP. Utilization is the
-difference between two snapshots divided by the UPTIME difference. All twelve are latched in the
+difference between two snapshots divided by the UPTIME difference. All thirteen are latched in the
 same cycle, so a snapshot is consistent. The units' signals reach the counters through a
 register: an event is counted one or two cycles after it happens (a snapshot taken right at a
 transition may see it in the next snapshot).
@@ -64,6 +66,13 @@ transition may see it in the next snapshot).
 | 0x148 | DRAM_WR | events: 64-byte beats written to DRAM (W handshakes, both channels; a port B write is 1 beat per channel its word mask touches, a QST word write 1) |
 | 0x150 | DRAM_WAIT | a slice DRAM request (port A, B or the QST port) was not accepted. Request backpressure only: the DRAM adapter queues up to RD reads per channel, so this stays near 0 even when the MXU starves for read data (then MXU_BUSY - MXU_MAC is large; measured on the card: 94% vs 21% for Qwen3) |
 | 0x158 | INSTR | events: instructions retired (as ICOUNT: over one run the difference equals ICOUNT) |
+| 0x160 | MXU_STARVE | (version 3) the MXU is streaming a command's weight chunks and none has arrived: its chunk FIFO is empty (the Q line's ms). It excludes the MXU's compute-only and drain cycles |
+
+DRAM_WAIT counts only requests the memory has not yet accepted. The memory can take requests
+and still return data too slowly (on the card, single-beat AXI reads reached about a quarter
+of a channel's bandwidth, with DRAM_WAIT near 0). MXU_STARVE sees that case: MXU_BUSY minus
+MXU_MAC minus MXU_STARVE is roughly the MXU's own time (TMEM arbitration, drain, waiting for
+its operands).
 
 The program loader's reads (LOAD) count in DRAM_RD and DRAM_WAIT too; RUNNING over one run
 equals the run's CYCLES.

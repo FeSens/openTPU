@@ -1,5 +1,5 @@
 """Observability on the board model (sim/verilator/tb_board.sv; docs/observability.md): the
-version 2 register map, the free-running activity counters and their snapshots, and the
+version 3 register map, the free-running activity counters and their snapshots, and the
 hardware trace -- whose records, decoded by opentpu/hwtrace.py, must give exactly the trace
 lines the simulator prints (+trace) for the same run.
 """
@@ -23,7 +23,7 @@ from test_kernels import attn_args, mlp_args
 
 R_REGMAP, R_CAPS, R_CORE_KHZ, R_BUILD_ID, R_TEMP, R_SNAP = 0x3C, 0x40, 0x44, 0x48, 0x4C, 0x50
 COUNTERS = ["UPTIME", "RUNNING", "MXU_BUSY", "MXU_MAC", "VPU_BUSY", "QNT_BUSY", "DMA_BUSY",
-            "TMEM_DENY", "DRAM_RD", "DRAM_WR", "DRAM_WAIT", "INSTR"]
+            "TMEM_DENY", "DRAM_RD", "DRAM_WR", "DRAM_WAIT", "INSTR", "MXU_STARVE"]
 TB_BUILD_ID, TB_TEMP = 0x0B0A4D00, 0xA1A        # tb_board.sv
 LINE = re.compile(r"^T\d+ [DSGEUHPQ] ")
 CFG = board_config(DRAM_BYTES=1 << 22)
@@ -81,7 +81,7 @@ def test_register_map(have_verilator):
          R_TRACE_CTRL, R_TRACE_ADDR, 0x0FC])
     assert ident == 0x4F545055
     assert ver == (CFG.D << 16) | (CFG.MCOLS << 8) | CFG.LANES
-    assert regmap == 2
+    assert regmap == 3
     assert caps == (8 << 16) | (10 << 8) | 0b11          # log2 256, log2 1024, trace, temp
     assert khz == 75294 and bid == TB_BUILD_ID
     assert temp == (1 << 31) | TB_TEMP
@@ -148,7 +148,9 @@ def test_counter_snapshots_bracket_a_run(have_verilator):
     assert brd == (4096 + 1024) // (CFG.D // 4) and bwr == brd  # a request per chunk
     assert d["DRAM_RD"] == 2 * brd and d["DRAM_WR"] == 2 * bwr
     assert d["DMA_BUSY"] > 0 and d["MXU_BUSY"] == d["MXU_MAC"] == d["VPU_BUSY"] == 0
-    assert 0 < d["DRAM_WAIT"] < cyc                      # the AXI model stalls (30%)
+    # the AXI model stalls (30%), but the adapter's 16-entry request queues take every DMA
+    # request at once (DRAM_WAIT counts only requests not taken; see test_mxu_starve_counter)
+    assert 0 <= d["DRAM_WAIT"] < cyc
     # the demo: every unit, the MXU consumes its 32 chunks
     t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=3, params={"TRACE_DEPTH": 1024})
     d, cyc, ic, brd, bwr, nsnap = _deltas(t, demo_program(), demo_image())
@@ -157,6 +159,26 @@ def test_counter_snapshots_bracket_a_run(have_verilator):
     assert d["INSTR"] == ic == len(demo_program())
     assert d["DRAM_RD"] >= 2 * brd and d["DRAM_WR"] >= bwr
     assert d["TMEM_DENY"] >= 0
+
+
+def test_mxu_starve_counter(have_verilator):
+    """MXU_STARVE: cycles the MXU streams a command and no chunk has arrived. Under a cost of 4
+    cycles per AXI read transaction (as on the card), single-beat reads (AXI_BL=1) starve the
+    MXU for a large part of its busy time, while DRAM_WAIT stays 0 (the adapter takes every
+    request; the data comes late), as on the card. Read bursts remove the starved cycles and
+    shorten the run."""
+    cfg, img, prog = _kernel("mlp")
+    c, cyc = {}, {}
+    for bl in (1, 8):
+        t = SimTransport(ch_bytes=cfg.DRAM_BYTES, stall=0, plusargs=["+axi_arc=4"],
+                         params={"TRACE_DEPTH": 1024, "AXI_BL": bl})
+        r = run_traced(t, img, prog, trace_ctrl=0, snap=True)
+        assert r["status"] & ST_HALTED
+        c[bl], cyc[bl] = r["counters"], r["cycles"]
+        assert c[bl]["MXU_BUSY"] >= c[bl]["MXU_STARVE"]
+    assert c[1]["MXU_STARVE"] > c[1]["MXU_BUSY"] // 4 and c[1]["DRAM_WAIT"] == 0, c[1]
+    assert c[8]["MXU_STARVE"] < c[1]["MXU_STARVE"] // 4, (c[1], c[8])
+    assert cyc[8] < 0.75 * cyc[1], cyc
 
 
 # ------------------------------------------------------------------------------ trace

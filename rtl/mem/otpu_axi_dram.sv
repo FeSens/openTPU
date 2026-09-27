@@ -1,5 +1,5 @@
 // Slice DRAM ports (as otpu_dram) on two AXI4 memory channels (the board's two DDR3
-// controllers), 512-bit data, one 64-byte beat per transaction.
+// controllers), 512-bit data: 64-byte beats, port B reads in INCR bursts of up to BL beats.
 //
 // Address map: the slice's byte address space is interleaved over the channels in 64-byte
 // beats: logical beat b = addr / 64 lives on channel b % 2 at BASE[b % 2] + (b / 2) * 64. A
@@ -11,13 +11,22 @@
 // word writes. Port SW: byte-enabled word writes (the quantizer's QST stores), independent of A
 // so that they never hold up the MXU's scale reads. A reads that fall in the beat of the previous A read (the MXU's scale stream:
 // 16 scales per beat) reuse it without a DRAM access, until any write is accepted.
+// Port B reads that follow each other in the address space (a streamed operand) are issued as
+// one burst per channel: a run of queued contiguous reads goes out once it has BL beats, once
+// the next queued request does not continue it (or it would cross a 4 KB page), once no request
+// has arrived for GATHER cycles, or at once when no B read is in flight on the channel. A
+// burst's beats reserve response room together, so the beats in flight stay within RD (each
+// transaction has a fixed cost in the interconnect and the controller: single-beat reads
+// reached about a quarter of the channel's bandwidth on the board).
 // Requests are taken when req && rdy; rdy depends on registered state only. Reads return in
 // order per port (the B tag with its data). Responses never back up: a read beat is issued on
 // AXI only when its response FIFO has room reserved. wr_idle: every accepted write has its
 // AXI write response.
 module otpu_axi_dram #(
   parameter int D = 128,
-  parameter int QD = 4,                              // request queue depth per channel and port
+  parameter int QD = 16,                             // request queue depth per channel and port
+  parameter int BL = 8,                              // port B read burst, beats (max)
+  parameter int GATHER = 4,                          // idle cycles before a short burst goes out
   parameter int RD = 128,                            // B read beats in flight per channel
   parameter int AD = 16,                             // A read beats in flight per channel
   parameter logic [31:0] BASE0 = 32'h0000_0000,
@@ -66,6 +75,7 @@ module otpu_axi_dram #(
   output logic [1:0]            m_arvalid,
   input  logic [1:0]            m_arready,
   output logic [1:0][31:0]      m_araddr,
+  output logic [1:0][7:0]       m_arlen,
   output logic [1:0]            m_arid,
   input  logic [1:0]            m_rvalid,
   output logic [1:0]            m_rready,
@@ -76,6 +86,8 @@ module otpu_axi_dram #(
   output logic                  err         // sticky: an AXI error response
 );
   initial if (D != 128) $fatal(1, "otpu_axi_dram: D must be 128 (one beat per channel)");
+  initial if (BL < 1 || BL > QD || BL > RD || BL > 16) $fatal(1, "otpu_axi_dram: bad BL");
+  localparam int LW = $clog2(BL + 1);
   localparam int QW = $clog2(QD);
   localparam int RW = $clog2(RD);
   localparam int AW_ = $clog2(AD);
@@ -119,6 +131,15 @@ module otpu_axi_dram #(
   ao_t          ao_q [OD];
   logic [OW:0]  ao_n;
   logic [OW-1:0] ao_h;
+
+  // B read runs: qc marks a queued B read that continues the one queued before it (the next
+  // chunk, same 4 KB page on the channels: a channel page is 64 chunks, b_addr[10:5]);
+  // lb_rd / lb_nx: the last taken B request was a read, and the chunk that would continue it
+  logic [QD-1:0] qc [2];
+  logic         lb_rd;
+  logic [31:0]  lb_nx;
+  wire          b_cont = !b_we && lb_rd && b_addr == lb_nx && b_addr[10:5] != 0;
+  logic [2:0]   qi [2];                         // cycles since the last B push (saturating)
 
   // A beat reuse
   logic         al_v;
@@ -170,6 +191,8 @@ module otpu_axi_dram #(
       qw_e[c].be = sw_be;
     end
   end
+  always_ff @(posedge clk)
+    for (int c = 0; c < 2; c++) if (qb_push[c]) qc[c][QW'(qb_h[c] + qb_n[c])] <= b_cont;
   for (genvar c = 0; c < 2; c++) begin : g_mem
     qb_t          qbm [QD];
     qa_t          qam [QD];
@@ -194,17 +217,39 @@ module otpu_axi_dram #(
 
   // ------------------------------------------------------------------ per-channel issue
   logic [1:0] ar_b, ar_a, w_b, w_a, w_w;         // this cycle's AR / write source
+  logic [LW-1:0] run [2];                        // B reads queued at the head, contiguous
+  logic [1:0] arh, arh_a;                        // an AR shown and not taken: held (A or B)
+  logic [LW-1:0] arh_n [2];                      // the held B burst's beats
   logic [1:0] aw_done, w_done;                   // current write head: halves already taken
   logic [1:0] wsrc [2];                          // current write's source: 0 qb, 1 qa, 2 qw
   logic [1:0] wcur;                              // a write is in progress
   qa_t hs [2];
   always_comb begin
     for (int c = 0; c < 2; c++) begin
-      // reads: A first (rare), then B; each needs reserved response room
-      ar_a[c] = (qa_n[c] != 0) && !ha[c].we && (ra_res[c] < AD);
-      ar_b[c] = !ar_a[c] && (qb_n[c] != 0) && !hb[c].we && (rb_res[c] < RD);
+      // reads: A first (rare), then B; each needs reserved response room. A B read waits for
+      // its run to fill (see the top); an AR shown on the bus stays as it is until taken
+      begin
+        logic stop, go;
+        run[c] = LW'(1);
+        stop = 1'b0;
+        for (int k = 1; k < BL; k++)
+          if (!stop && (QW + 1)'(k) < qb_n[c] && qc[c][QW'(qb_h[c] + QW'(k))]) run[c] = LW'(k + 1);
+          else stop = 1'b1;
+        go = run[c] == LW'(BL) || (QW + 1)'(run[c]) < qb_n[c] || qi[c] >= 3'(GATHER) ||
+             rb_res[c] == 0;
+        if (arh[c]) begin
+          ar_a[c] = arh_a[c];
+          ar_b[c] = !arh_a[c];
+          run[c] = arh_n[c];
+        end else begin
+          ar_a[c] = (qa_n[c] != 0) && !ha[c].we && (ra_res[c] < AD);
+          ar_b[c] = !ar_a[c] && (qb_n[c] != 0) && !hb[c].we && go &&
+                    rb_res[c] <= (RW + 1)'(RD - run[c]);
+        end
+      end
       m_arvalid[c] = ar_a[c] || ar_b[c];
       m_araddr[c] = ar_a[c] ? ha[c].addr : hb[c].addr;
+      m_arlen[c] = ar_a[c] ? 8'd0 : 8'(run[c] - 1);
       m_arid[c] = ar_a[c];
       // writes: the head write of qw, qa or qb (kept until both AW and W are taken)
       if (wcur[c]) begin
@@ -273,6 +318,8 @@ module otpu_axi_dram #(
       al_v <= 1'b0;
       wr_n <= '0; wacc_q <= '0;
       aw_done <= '0; w_done <= '0; wcur <= '0;
+      arh <= '0; lb_rd <= 1'b0;
+      qi[0] <= '0; qi[1] <= '0;
       wsrc[0] <= '0; wsrc[1] <= '0;
       err <= 1'b0;
     end else begin
@@ -291,9 +338,10 @@ module otpu_axi_dram #(
         logic [RW:0] rbn, rbr;
         logic [AW_:0] ran, rar;
         logic popb, popa, popw;
+        logic [LW-1:0] popn;
         nb = qb_n[c]; na = qa_n[c]; nw = qw_n[c];
         rbn = rb_n[c]; rbr = rb_res[c]; ran = ra_n[c]; rar = ra_res[c];
-        popb = 1'b0; popa = 1'b0; popw = 1'b0;
+        popb = 1'b0; popa = 1'b0; popw = 1'b0; popn = LW'(1);
         // ---- accept
         if (qb_push[c]) begin
           nb = nb + 1;
@@ -307,8 +355,13 @@ module otpu_axi_dram #(
         // ---- AR
         if (m_arvalid[c] && m_arready[c]) begin
           if (ar_a[c]) begin popa = 1'b1; rar = rar + 1; end
-          else begin popb = 1'b1; rbr = rbr + 1; end
+          else begin popb = 1'b1; popn = run[c]; rbr = rbr + (RW + 1)'(run[c]); end
         end
+        arh[c] <= m_arvalid[c] && !m_arready[c];
+        arh_a[c] <= ar_a[c];
+        arh_n[c] <= run[c];
+        if (qb_push[c]) qi[c] <= '0;
+        else if (qi[c] != '1) qi[c] <= qi[c] + 1;
         // ---- AW / W (a write leaves its queue once both are taken)
         if (w_w[c] || w_a[c] || w_b[c]) begin
           logic awd, wd;
@@ -322,7 +375,7 @@ module otpu_axi_dram #(
             wsrc[c] <= w_w[c] ? 2'd2 : w_a[c] ? 2'd1 : 2'd0;
           end
         end
-        if (popb) begin qb_h[c] <= qb_h[c] + 1; nb = nb - 1; end
+        if (popb) begin qb_h[c] <= qb_h[c] + QW'(popn); nb = nb - (QW + 1)'(popn); end
         if (popa) begin qa_h[c] <= qa_h[c] + 1; na = na - 1; end
         if (popw) begin qw_h[c] <= qw_h[c] + 1; nw = nw - 1; end
         // ---- R
@@ -365,6 +418,11 @@ module otpu_axi_dram #(
           if (!aoh.reuse) a_last <= ra_head[aoh.c];
         end
         bt_n <= btn; ao_n <= aon;
+      end
+      // ---- B runs: the last taken B request
+      if (b_take) begin
+        lb_rd <= !b_we;
+        lb_nx <= b_addr + 32'(D / 4);
       end
       // ---- A beat reuse: the beat of the last A read, forgotten on any write
       if ((b_take && b_we) || (a_take && a_we) || sw_take) al_v <= 1'b0;
