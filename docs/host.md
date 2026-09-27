@@ -212,22 +212,36 @@ The first call writes the model image (at the default `--cap 2048`: 0.69 GiB for
 embedding row and the token's program (a few tens of KiB), runs, and reads the logits (0.58 MiB
 for Qwen3, 0.25 MiB for LFM2, 0.95 MiB for Qwen3.5).
 
-**The interface** (Textual, `opentpu/host/chat_tui.py`): the conversation streams token by
-token on the left (the replies rendered as Markdown), the input line is at the bottom, and a
-panel on the right is updated live while a reply streams:
+**The interface** (Textual, `opentpu/host/chat_tui.py`) keeps the terminal's own background
+and one accent colour. The conversation is a single column: a header box with the model,
+backend, device, bitstream and clock, then each prompt after a dim `>` and each reply after a
+`⏺`, streamed token by token and rendered as Markdown. While a reply runs, a spinner line above
+the input shows the phase (`Prefilling… 12/21 tok · 1.4s`, then `Decoding… 87 tok · 7.6
+tok/s`). Under the input box one status line is always visible (LFM2.5-230M on the card,
+second turn of a chat, build 74d48591, measured 2026-09-26):
 
-- model, backend, device, the bitstream's D / MCOLS / LANES, build and clock;
-- the last turn: TTFT (submit to the first generated token), prefill tokens and tok/s, decode
-  tokens and tok/s, each as wall time and, on the card, as device time (the CYCLES of the steps
-  at the bitstream's CORE_KHZ, or `--clock-mhz`), and Mcycles per decode token;
-- the KV context as a bar and used / capacity;
-- DRAM (image and KV cache), the session's totals (turns, tokens in and out, average decode
-  tok/s) and the sampling settings.
+```
+LFM2.5-230M · board 100 MHz │ TTFT 2.66s │ prefill 10.2 tok/s (dev 13.0) │ decode 7.9 tok/s (dev 12.9) · 7.73 Mcyc/tok │ ctx 105/2048 ▱▱▱▱▱▱▱▱ 5%
+```
 
-On the ISA backend the numbers are wall time only. Enter sends, Esc stops the reply (what was
-generated stays in the history and the KV cache), Ctrl-C or Ctrl-D quits. Commands: `/reset`
-(forget the conversation and the KV cache), `/stats` (the session summary in the conversation),
-`/think on|off` (thinking mode; the history is re-fed on the next turn), `/help`.
+TTFT is submit to the first generated token; prefill and decode are tokens/s on the wall clock
+and, on the card, on the device (the CYCLES of the steps at the bitstream's CORE_KHZ, or
+`--clock-mhz`); the context meter turns amber over 75 % and red over 90 %. In a narrow terminal
+the line drops the model, then the prefill device rate and Mcycles/token, then the prefill; the
+context stays. On the ISA backend the numbers are wall time only.
+
+Enter sends, Esc stops the reply (what was generated stays in the history and the KV cache),
+Ctrl-S shows or hides a side panel with the detail, Ctrl-C or Ctrl-D quits. Typing `/` opens
+the commands (up / down, Tab completes, Enter runs): `/help`, `/continue` (a reply cut at
+`--max-new`, default 1024, goes on where it stopped), `/reset` (forget the conversation and the
+KV cache), `/stats` (the detail inline: the last turn, DRAM for the image and the KV cache, the
+session's turns, tokens in and out and average decode tok/s, the sampling), `/think on|off`
+(thinking mode; the history is re-fed on the next turn), `/quit`.
+
+The KV cache holds `--cap` tokens (default 2048) and the engine has no sliding window. A reply
+that fills the cache stops with "context full"; a message that no longer fits is refused
+without touching the cache; `/reset` starts over. The plain REPL takes `/continue` and `/reset`
+too.
 
 Prefill here is the tokens a turn adds: the KV cache keeps every earlier turn, so a turn feeds
 only what the chat template appended since (all of it again when the template rewrote the

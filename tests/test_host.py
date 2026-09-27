@@ -679,6 +679,7 @@ class StubEngine:
         self.cfg = board_config()
 
     def step(self, t):
+        assert self.pos < self.cap, "KV cache full"   # as Engine.step
         time.sleep(0.002)
         self.pos += 1
         self.stats.append({"cycles": self.cycles})
@@ -699,17 +700,17 @@ class StubTok:
         return "".join(chr(96 + i) for i in ids)
 
 
-def _stub_chat(n_out=6, clock=100.0):
+def _stub_chat(n_out=6, clock=100.0, max_new=32, cap=64):
     from opentpu.host.chat import Chat
     seq = iter([5] * n_out + [0] * 100)
-    return Chat(StubEngine(), StubTok(), False, lambda logits, ctx: next(seq), 32,
+    return Chat(StubEngine(cap=cap), StubTok(), False, lambda logits, ctx: next(seq), max_new,
                 clock_mhz=clock)
 
 
 def test_chat_turn_metrics_and_plain_line():
     chat = _stub_chat()
     reply, t = chat.ask("hi")
-    assert reply == "eeeeee" and t.prefill_tokens == 2 and t.gen_tokens == 6
+    assert reply == "eeeeee" and t.prefill_tokens == 2 and t.gen_tokens == 6 and t.end == "eos"
     assert t.decode_steps == 6 and t.context == 8 and t.ttft_s > 0
     assert t.prefill_dev_tok_s == pytest.approx(50.0) and t.decode_dev_tok_s == pytest.approx(50.0)
     assert t.mcycles_per_token == pytest.approx(2.0) and t.decode_tok_s > 0
@@ -719,7 +720,6 @@ def test_chat_turn_metrics_and_plain_line():
     reply, t2 = chat.ask("again")                 # the KV cache keeps the first turn
     assert not t2.restarted and t2.prefill_tokens == 5 and t2.gen_tokens == 0
     assert chat.session.turns == 2 and chat.session.tokens_in == 7
-    chat.think = True                             # a template change is not an issue here;
     chat.reset()                                  # /reset forgets history and KV
     assert chat.eng.pos == 0 and chat.history == [] and chat.fed == []
     _, t = _stub_chat(clock=0.0).ask("hi")        # no device clock (ISA): wall numbers only
@@ -727,34 +727,93 @@ def test_chat_turn_metrics_and_plain_line():
     assert "device" not in t.line() and "Mcycles" not in t.line()
 
 
+def test_chat_max_new_resume_and_cap():
+    chat = _stub_chat(n_out=10, max_new=4)
+    reply, t = chat.ask("hi")
+    assert reply == "eeee" and t.end == "max_new" and chat.can_resume
+    assert "stopped at max_new" in t.line()
+    reply, t = chat.resume()                      # the same reply grows
+    assert reply == "eeeeeeee" and t.end == "max_new" and t.prefill_tokens == 0 and t.ttft_s is None
+    assert chat.history[-1] == {"role": "assistant", "content": "eeeeeeee"}
+    reply, t = chat.resume()
+    assert reply == "eeeeeeeeee" and t.end == "eos" and not chat.can_resume
+    assert chat.eng.pos == len(chat.fed) == 12
+    chat = _stub_chat(n_out=100, cap=10)          # the reply fills the KV cache
+    reply, t = chat.ask("hi")
+    assert t.end == "cap" and chat.eng.pos == 10 and "context full" in t.line()
+    pos, n_hist = chat.eng.pos, len(chat.history)
+    reply, t = chat.ask("more")                   # does not fit: refused, the cache is kept
+    assert t.end == "cap" and reply == "" and t.prefill_tokens == 0
+    assert chat.eng.pos == pos and len(chat.history) == n_hist
+
+
+def _shot(app) -> str:
+    import io
+
+    from rich.console import Console
+    c = Console(width=app.size.width, height=app.size.height, file=io.StringIO(), record=True)
+    c.print(app.screen._compositor.render_update(full=True))
+    return c.export_text(styles=False)
+
+
 def test_chat_tui_shows_the_live_numbers(tmp_path):
     pytest.importorskip("textual")
     import asyncio
 
-    from opentpu.host.chat_tui import ChatApp
-    from textual.widgets import Static
-    chat = _stub_chat()
-    meta = {"model": "stub", "backend": "board", "device": "/dev/xdma0",
+    from opentpu.host.chat_tui import ChatApp, _meter, status_line
+    from textual.widgets import OptionList, Static
+    assert _meter(10, 100)[1] == "bright_black" and _meter(80, 100)[1] == "#E0A030"
+    assert _meter(95, 100) == ("▰" * 8, "#E05050")
+    from textual.app import App                   # e.g. App._flush writes captured prints
+    own = {n for n, v in vars(ChatApp).items() if n[:1] == "_" and n[:2] != "__"
+           and getattr(v, "__qualname__", "").startswith("ChatApp.")}
+    assert own and not own & set(dir(App))
+    chat = _stub_chat(n_out=6, max_new=4)
+    meta = {"model": "stub", "backend": "board", "device": "/dev/xdma0", "short": "board 100 MHz",
             "bitstream": ["D=128 MCOLS=2 LANES=8", "build 74d48591, 100 MHz"],
             "sampling": {"temperature": 0.7}, "dram": None}
 
+    async def wait(app, pilot):
+        for _ in range(300):
+            await pilot.pause(0.02)
+            if not app._busy:
+                return
+
     async def go():
         app = ChatApp(chat, meta)
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=(170, 40)) as pilot:
+            await pilot.pause(0.1)
+            r = {"welcome": _shot(app)}
             await pilot.press(*"hi", "enter")
-            for _ in range(200):
-                await pilot.pause(0.02)
-                if chat.last is not None and not app._busy:
-                    break
-            panel = str(app.query_one("#stats", Static).render())
-            screen = app.export_screenshot()
-            await pilot.press(*"/stats", "enter")
-            await pilot.pause(0.05)
-            notes = [str(w.render()) for w in app.query(".note")]
-            return panel, screen, notes
-    panel, screen, notes = asyncio.run(go())
-    assert any("session: 1 turns, 2 tokens in, 6 out" in n for n in notes)
-    assert "TTFT" in panel and "decode   6 tok" in panel and "device 50.00 tok/s" in panel
-    assert "8 / 64 tokens" in panel and "2.00 Mcycles/token" in panel
-    assert "eeeeee" in screen and "session:" not in screen
-    (tmp_path / "shot.svg").write_text(screen)
+            await wait(app, pilot)
+            await pilot.pause(0.1)
+            r["status"] = str(app.query_one("#status", Static).render())
+            r["cut"] = _shot(app)
+            await pilot.press(*"/co")                 # the popup, Enter takes /continue
+            r["popup"] = app.query_one("#cmds", OptionList).display
+            await pilot.press("enter")
+            await wait(app, pilot)
+            await pilot.pause(0.1)
+            r["done"] = _shot(app)
+            await pilot.press(*"/st", "enter")
+            await pilot.pause(0.1)
+            r["stats"] = [str(w.render()) for w in app.query(".block")]
+            await pilot.press("ctrl+s")
+            await pilot.pause(0.1)
+            r["panel"] = str(app.query_one("#panel", Static).render())
+            app.save_screenshot(str(tmp_path / "shot.svg"))
+            return r
+    r = asyncio.run(go())
+    assert "openTPU chat" in r["welcome"] and "74d48591" in r["welcome"]
+    assert "palette" not in r["welcome"] and "esc interrupt" in r["welcome"]
+    s = r["status"]
+    assert "stub · board 100 MHz" in s and "TTFT" in s and "decode" in s and "(dev 50.0)" in s
+    assert "2.00 Mcyc/tok" in s and "ctx 6/64" in s
+    narrow = str(status_line(meta, chat, chat.last, 70))   # drops the rest, keeps the context
+    assert len(narrow) <= 70 and "decode" in narrow and "ctx 8/64" in narrow
+    assert "⏺ eeee" in r["cut"] and "stopped at max_new=4 tokens · /continue" in r["cut"]
+    assert r["popup"]
+    assert "⏺ eeeeee" in r["done"] and "max_new=4" not in r["done"]   # the marker is gone
+    assert any("session" in b and "2 tokens in, 6 out" in b for b in r["stats"])
+    assert "DRAM" not in r["panel"] and "KV context" in r["panel"]
+    assert (tmp_path / "shot.svg").stat().st_size > 1000
