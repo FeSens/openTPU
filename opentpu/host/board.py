@@ -6,9 +6,10 @@ The card exposes, through the XDMA bridge:
   - the control registers (rtl/boards/ypcb-00338/otpu_ctrl.sv; map in regs.py and
     docs/observability.md) on BAR0, /dev/xdma0_user.
 
-The accelerator addresses one logical DRAM interleaved over the channels in 64-byte beats
-(logical beat b lives on channel b % 2 at BASE[b % 2] + (b // 2) * 64; rtl/mem/otpu_axi_dram.sv).
-This driver applies the same map, so the host works with logical addresses only.
+The accelerator addresses one logical DRAM interleaved over the channels in 64-byte beats:
+logical beat b of chunk m = b // 2 lives at BASE[c] + m * 64 on channel c = b % 2, or, on a
+bitstream with CAPS.chash, c = (b % 2) ^ parity(m) (rtl/mem/otpu_axi_dram.sv). This driver
+applies the same map, so the host works with logical addresses only.
 
 BoardBackend implements the Engine backend interface (write / read / run, plus prepare and
 attach), so `Engine(..., cfg=device_config(board.info()), backend=BoardBackend)` runs Qwen3,
@@ -64,20 +65,43 @@ POLL_EARLY = 0.5e-3             # poll with an expected wait: wake this much (+ 
 
 
 # ------------------------------------------------------------------------------ address map
-def split(addr: int, data: np.ndarray) -> list[tuple[int, int, np.ndarray]]:
+def swapped(addr: int, n: int) -> np.ndarray:
+    """CHASH: which of the n chunks from logical `addr` (chunk aligned) have their halves
+    swapped between the channels (the parity of the chunk index)."""
+    m = np.arange(addr // (2 * BEAT), addr // (2 * BEAT) + n, dtype=np.uint64)
+    for s in (32, 16, 8, 4, 2, 1):
+        m ^= m >> np.uint64(s)
+    return (m & np.uint64(1)).astype(bool)
+
+
+def hash_swap(addr: int, v: np.ndarray) -> None:
+    """Chunks [n, 2, BEAT] at logical `addr`: swap the halves CHASH swaps, in place (its own
+    inverse: logical order <-> channel order)."""
+    p = swapped(addr, len(v))
+    v[p] = v[p][:, ::-1]
+
+
+def split(addr: int, data: np.ndarray, chash: bool = False) -> list[tuple[int, int, np.ndarray]]:
     """Logical bytes at `addr` -> [(channel, channel offset, bytes)], beat-aligned pieces
     merged into one contiguous run per channel. `addr` and len(data) must be multiples of
     2 * BEAT (the caller widens unaligned ranges)."""
     assert addr % (2 * BEAT) == 0 and len(data) % (2 * BEAT) == 0
     v = data.reshape(-1, 2, BEAT)
+    if chash:
+        v = v.copy()
+        hash_swap(addr, v)
     off = addr // 2
     return [(c, off, np.ascontiguousarray(v[:, c, :]).reshape(-1)) for c in (0, 1)]
 
 
-def join(parts: list[np.ndarray]) -> np.ndarray:
-    """Inverse of split: the two channels' contiguous runs -> logical bytes."""
+def join(parts: list[np.ndarray], addr: int = 0, chash: bool = False) -> np.ndarray:
+    """Inverse of split: the two channels' contiguous runs (from logical `addr`) -> logical
+    bytes."""
     a, b = (p.reshape(-1, BEAT) for p in parts)
-    return np.stack([a, b], axis=1).reshape(-1)
+    v = np.stack([a, b], axis=1)
+    if chash:
+        hash_swap(addr, v)
+    return v.reshape(-1)
 
 
 # ------------------------------------------------------------------------------ transports
@@ -455,6 +479,12 @@ class Board:
         return d
 
     @property
+    def chash(self) -> bool:
+        """The bitstream hashes the channel interleave (CAPS bit7)."""
+        c = (self._info or self.info())["caps"]
+        return bool(c and c.get("chash"))
+
+    @property
     def v2(self) -> bool:
         return (self._info or self.info())["regmap"] >= 2
 
@@ -486,7 +516,8 @@ class Board:
             return
         a0 = addr // (2 * BEAT) * (2 * BEAT)
         a1 = -(-(addr + len(data)) // (2 * BEAT)) * (2 * BEAT)
-        if a0 != addr or a1 != addr + len(data):        # widen: read-modify-write the edges
+        own = a0 != addr or a1 != addr + len(data)      # data is our own buffer
+        if own:                                         # widen: read-modify-write the edges
             buf = np.empty(a1 - a0, np.uint8)
             head, tail = addr - a0, a1 - addr - len(data)
             if head:
@@ -495,6 +526,9 @@ class Board:
                 buf[-2 * BEAT:] = self.read(a1 - 2 * BEAT, 2 * BEAT)
             buf[head:head + len(data)] = data
             data = buf
+        if self.chash:                                  # channel order (a copy)
+            data = data if own else data.copy()
+            hash_swap(a0, data.reshape(-1, 2, BEAT))
         if not (getattr(self.t, "threaded", False) and len(data) > PIPE):
             for c, off, part in split(a0, data):
                 self.t.mem_write(c, off, part)
@@ -565,6 +599,8 @@ class Board:
                 for c, part in enumerate(fut.result()):
                     out[rows, c, :] = part.reshape(-1, BEAT)
                 fut = nxt
+        if self.chash:                                  # channel order -> logical
+            hash_swap(a0, out)
         flat = out.reshape(-1)
         return flat if (a0, a1) == (addr, addr + n) else flat[addr - a0:addr - a0 + n].copy()
 

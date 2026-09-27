@@ -15,8 +15,12 @@ What the host sees:
 
 The card's AXI address map: DDR3 channel 0 at `0x0000_0000`, channel 1 at `0x8000_0000`,
 2 GiB each. The accelerator sees one 4 GiB logical DRAM interleaved over the two channels in
-64-byte beats (logical beat *b* is on channel *b* % 2 at offset (*b* // 2) * 64).
-`opentpu/host/board.py` applies that map, so everything above it uses logical addresses.
+64-byte beats: logical beat *b* of chunk *m* = *b* // 2 is at offset *m* * 64 on channel
+*b* % 2, or, on a bitstream with CAPS bit7 (CHASH), on channel (*b* % 2) XOR parity(*m*): each
+128-byte chunk still has one beat on each channel, but the chunks with an odd number of set
+bits have them swapped, so a column at a power-of-two stride (the transposed V cache: one byte
+per cache row) is spread over both channels instead of loading one. `opentpu/host/board.py`
+reads CAPS and applies the map, so everything above it uses logical addresses.
 
 The host software is the package `opentpu/host` (userspace; the kernel side is the Xilinx
 XDMA driver, installed by `otpu-setup`). `pip install -e .` installs its commands:

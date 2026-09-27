@@ -30,7 +30,8 @@ module otpu_board #(
   parameter int TRACE_QD    = 32,      // trace capture queue (cycles with events)
   parameter int PQ_WIN      = 1024,    // cycles per P/Q counter window
   parameter int AXI_BL      = 8,       // port B read burst, beats (1: single-beat reads)
-  parameter bit HAS_I2C     = 1'b1     // the I2C pins are wired (CAPS bit2)
+  parameter bit HAS_I2C     = 1'b1,    // the I2C pins are wired (CAPS bit2)
+  parameter bit CHASH       = 1'b1     // hashed channel interleave (otpu_axi_dram; CAPS bit7)
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
@@ -190,7 +191,7 @@ module otpu_board #(
 
   otpu_ctrl #(.D(D), .MCOLS(MCOLS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
               .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
-              .HAS_I2C(HAS_I2C)) u_ctrl (
+              .HAS_I2C(HAS_I2C), .CHASH(CHASH)) u_ctrl (
     .clk, .rst,
     .s_awaddr(s_ctl_awaddr), .s_awvalid(s_ctl_awvalid), .s_awready(s_ctl_awready),
     .s_wdata(s_ctl_wdata), .s_wstrb(s_ctl_wstrb), .s_wvalid(s_ctl_wvalid),
@@ -261,7 +262,7 @@ module otpu_board #(
   logic [1:0][511:0] wdata, rdata;
   logic [1:0][63:0]  wstrb;
   logic [1:0][1:0]   bresp, rresp;
-  otpu_axi_dram #(.D(D), .BL(AXI_BL), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
+  otpu_axi_dram #(.D(D), .BL(AXI_BL), .CHASH(CHASH), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
     .clk, .rst,
     .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,

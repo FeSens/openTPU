@@ -23,6 +23,7 @@
 //   0x38 SCRATCH   RW  (host bring-up test)
 //   0x3C REGMAP    RO  register map version (3)
 //   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, bit2 I2C pins, bit3 DDR_MTS,
+//                      bit7 hashed channel interleave (otpu_axi_dram CHASH),
 //                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
 //   0x48 BUILD_ID  RO  build parameter (the low 32 bits of the git commit)
@@ -56,7 +57,8 @@ module otpu_ctrl #(
   parameter int TRACE_DEPTH = 16384,     // 0: no trace buffer
   parameter int PQ_WIN = 1024,           // the trace's P/Q window (cycles)
   parameter bit HAS_TEMP = 1'b1,
-  parameter bit HAS_I2C = 1'b1           // CAPS bit2: the I2C pins are wired (otpu_fpga_top)
+  parameter bit HAS_I2C = 1'b1,          // CAPS bit2: the I2C pins are wired (otpu_fpga_top)
+  parameter bit CHASH = 1'b0             // CAPS bit7: the hashed channel interleave (otpu_axi_dram)
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -115,7 +117,7 @@ module otpu_ctrl #(
   localparam int NFR = 13;
   localparam logic [31:0] CAPS = {8'd0, 8'($clog2(PQ_WIN)),
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
-                                  4'd0, DDR_MTS != 0, HAS_I2C, HAS_TEMP, TRACE_DEPTH != 0};
+                                  CHASH, 3'd0, DDR_MTS != 0, HAS_I2C, HAS_TEMP, TRACE_DEPTH != 0};
 
   logic [63:0] cycles;
   logic [31:0] n_brd, n_bwr, n_ard, n_awr, n_bst, scratch;

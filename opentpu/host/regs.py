@@ -28,6 +28,9 @@ CAP_TRACE, CAP_TEMP, CAP_I2C = 1, 2, 4   # CAPS bit0..2; [15:8] log2 trace depth
 # CAPS bit3: DDR_MTS holds the DDR3 data rate the bitstream was built for (MT/s). Older
 # bitstreams leave the bit clear and read 0xDEADBEEF there: the rate is unknown.
 CAP_DDR, R_DDR_MTS = 8, 0x54
+# CAPS bit7: CHASH, the hashed channel interleave (rtl/mem/otpu_axi_dram.sv): chunk m's two
+# beats swap channels when m has odd parity. Older bitstreams: plain interleave.
+CAP_CHASH = 0x80
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset
@@ -61,6 +64,7 @@ def temp_c(code: int) -> float:
 def caps(v: int) -> dict:
     return {"trace": bool(v & CAP_TRACE), "temp": bool(v & CAP_TEMP), "i2c": bool(v & CAP_I2C),
             "ddr": bool(v & CAP_DDR),
+            "chash": bool(v & CAP_CHASH),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
 

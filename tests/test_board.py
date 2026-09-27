@@ -8,6 +8,7 @@ results bit for bit.
 import numpy as np
 import pytest
 
+from opentpu.host import regs as R
 from opentpu.host.board import BASE, BEAT, Board, BoardBackend, SimTransport, join, split
 from opentpu.host.checks import (address_lines, channel_patterns, masked_program, partial_writes,
                                  pattern_test, run_demo, vops_program)
@@ -17,10 +18,16 @@ from opentpu.isasim import board_config
 
 # ------------------------------------------------------------------------------ address map
 class MemTransport:
-    """Two channel memories in RAM (no registers): exercises Board.read/write only."""
+    """Two channel memories in RAM and the identity registers (CAPS: CHASH or not): exercises
+    Board.read/write only."""
 
-    def __init__(self, ch_bytes=1 << 16):
+    def __init__(self, ch_bytes=1 << 16, chash=False):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
+        self.regs = {R.R_VERSION: 128 << 16 | 2 << 8 | 8, R.R_REGMAP: 3,
+                     R.R_CAPS: R.CAP_CHASH if chash else 0}
+
+    def reg_read_many(self, offs):
+        return [self.regs.get(o, 0) for o in offs]
 
     def mem_write(self, c, off, data):
         self.ch[c][off:off + len(data)] = data
@@ -43,10 +50,31 @@ def test_split_matches_the_rtl_interleave():
     assert BASE == (0, 0x8000_0000)
 
 
+def test_split_hashed_interleave():
+    """CHASH: logical beat b of chunk m = b // 2 is on channel (b % 2) ^ parity(m), at channel
+    offset m * 64 (otpu_axi_dram.sv), so a column at a power-of-two chunk stride is spread
+    over both channels."""
+    data = np.arange(64 * BEAT, dtype=np.uint32).astype(np.uint8)
+    parts = split(512, data, chash=True)
+    for c, off, part in parts:
+        assert off == 256
+        for k in range(len(part) // BEAT):
+            m = 512 // (2 * BEAT) + k
+            b = 2 * m + (c ^ (bin(m).count("1") & 1))
+            assert np.array_equal(part[k * BEAT:(k + 1) * BEAT],
+                                  data[(b - 8) * BEAT:(b - 7) * BEAT])
+    assert np.array_equal(join([p for _, _, p in parts], 512, chash=True), data)
+    # beat 0 of every 4th chunk (a 512-byte stride) from an aligned start: rows 2j and 2j + 1
+    # on different channels, so the column is spread evenly
+    chans = [bin(m).count("1") & 1 for m in range(0, 256, 4)]
+    assert all(x != y for x, y in zip(chans[0::2], chans[1::2]))
+
+
+@pytest.mark.parametrize("chash", [False, True])
 @pytest.mark.parametrize("addr,n", [(0, 128), (4, 8), (60, 8), (100, 300), (127, 1), (1000, 2000)])
-def test_unaligned_read_modify_write(addr, n):
+def test_unaligned_read_modify_write(addr, n, chash):
     rng = np.random.default_rng(addr + n)
-    t = MemTransport()
+    t = MemTransport(chash=chash)
     b = Board(t, check=False)
     ref = rng.integers(0, 256, 1 << 14).astype(np.uint8)
     b.write(0, ref)
@@ -57,7 +85,7 @@ def test_unaligned_read_modify_write(addr, n):
     assert np.array_equal(b.read(addr, n), new)
     # the channels hold the interleave
     for beat in range(len(ref) // BEAT):
-        c, off = beat % 2, (beat // 2) * BEAT
+        c, off = beat % 2 ^ (chash and bin(beat // 2).count("1") & 1), (beat // 2) * BEAT
         assert np.array_equal(t.ch[c][off:off + BEAT], ref[beat * BEAT:(beat + 1) * BEAT])
 
 
