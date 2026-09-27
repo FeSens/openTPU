@@ -570,6 +570,22 @@ with one position-independent program per model), the wait for the compile (0.08
 token the per-position compile of LFM2 no longer keeps up on a laptop: the same fix), the
 counters (~0.02 ms), the last chunk's read and the selection (~0.1 ms), Python (~0.1 ms).
 
+**Poll outliers** (card, host-path bc132ba: ~1 ms per Qwen3 token as poll overshoot in half
+the runs, or as critical time in the counters in one streamed run per pair). The poll's
+expected time was the last run's CYCLES / CORE_KHZ; a run a little longer than that (past the
+0.1 ms spin) was seen only after the next 1 ms sleep, and one that ended before the wake-up was
+seen at the wake-up; after the streamed wait had seen HALTED itself, the poll still slept until
+the expected end. Now: the sleeps past the expected end are 1/32 of the lateness (at least
+20 us, at most 1 ms); the expected time is CYCLES / CORE_KHZ times the smoothed ratio of the
+seen run times to it (raised only by a halt seen by back-to-back reads that saw the run going
+just before, lowered by any); a halt the streamed wait saw skips the sleep; the wake-up sleep
+halves its way to the target (a 50 ms sleep overshoots 2-3 ms on macOS). Measured on
+`FakeTransport` (`decode_profile.py --backend fake --fake-skew F [--fake-stream]`: CYCLES a
+fraction F off the wall time; the fake writes its logits piece by piece), Qwen3's 53 ms run
+on the loaded Mac, HALTED seen after the run's end: 0.00-0.02 ms without streaming (before:
+3.2-3.7 ms, most of it the macOS sleep overshoot) and 0.07-0.18 ms streamed, at F = +0.25% and
+-2%. Not yet on the card.
+
 **Resident decode.** A decode program now takes the position and the token as run arguments
 (docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit25), so one program serves
 every position of an attention bucket (`Engine(resident=True)`, the default of `otpu-chat` and

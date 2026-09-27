@@ -159,6 +159,12 @@ def main(argv=None):
                     help="read the logits after the run (no streamed logits)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--fake-ms", type=float, default=80.0)
+    ap.add_argument("--fake-stream", action="store_true",
+                    help="--backend fake: streamed logits (the fake writes them piece by piece "
+                         "in the run's second half)")
+    ap.add_argument("--fake-skew", type=float, default=0.0,
+                    help="--backend fake: its CYCLES say a run this fraction longer than its "
+                         "wall time (a CORE_KHZ off the real clock; negative: shorter)")
     ap.add_argument("--per-position", action="store_true",
                     help="a decode program per position (default: the resident one when the "
                          "bitstream takes run arguments)")
@@ -186,7 +192,7 @@ def main(argv=None):
                               else {}))
         ch = 1 << max(20, (probe.nbytes // 2 + (1 << 20)).bit_length())
         tr = FakeTransport(ch_bytes=ch, run_s=a.fake_ms / 1e3,
-                           cycles=int(a.fake_ms * 1e5), devname=None,
+                           cycles=int(a.fake_ms * (1 + a.fake_skew) * 1e5), devname=None,
                            args=not a.fake_no_args)
         cfg = B.device_config(B.Board(tr, lock=False).info(), DRAM_BYTES=2 * ch)
         backend = lambda c, imgs: B.BoardBackend(c, imgs, transport=tr, model=path.name)  # noqa
@@ -221,6 +227,10 @@ def main(argv=None):
         import numpy as np
         lg = np.random.default_rng(0).normal(0, 3, eng.image.v_loc).astype(np.float32)
         eng.backend.board.write(eng.image.io["logits"], lg)
+        if a.fake_stream:           # the run writes its logits (all at the halt): streamed
+            tr.streams = eng.backend.streams = True
+            tr.logits = (eng.image.io["logits"], 4 * eng.image.v_loc,
+                         4 * min(Q.HEAD_CHUNK, eng.cfg.TMEM_WORDS // 8))
     khz = (getattr(eng.backend, "info", {}) or {}).get("core_khz") or 100_000
     P.instrument_transport(eng.backend.board.t)
     sp = C.sampling(spec, argparse.Namespace())

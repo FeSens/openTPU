@@ -60,6 +60,7 @@ class FakeTransport:
         self.shadow = dict(self.count)
         self.snaps = 0
         self.t_run = None               # wall time RUN rose
+        self._wrote = 0                 # logits pieces written by this run
         self.runs = 0
         self.reads = 0                  # register reads (poll cost)
 
@@ -68,14 +69,33 @@ class FakeTransport:
         self.ch[ch][off:off + len(data)] = data
 
     def mem_read(self, ch, off, n, out=None):
+        self._halted()                  # the run's logits pieces land
         if out is None:
             return self.ch[ch][off:off + n].copy()
         out[:] = self.ch[ch][off:off + n]
         return out
 
     # ---- registers
+    streams = False             # DMA during a run (BoardBackend's streamed logits): set with
+    logits = None               # (addr, nbytes, piece): the run writes the region piece by
+    #                             piece, piece i at run_s * (0.5 + 0.5 * (i + 1) / pieces) (an
+    #                             LM head in the run's second half; the last one at the halt)
+
     def _halted(self) -> bool:
-        return self.t_run is not None and time.perf_counter() - self.t_run >= self.run_s
+        now = time.perf_counter()
+        if self.logits is not None and self.t_run is not None:
+            from .board import split
+            a, n, piece = self.logits
+            k = -(-n // piece)
+            while self._wrote < k and now - self.t_run >= self.run_s * (
+                    0.5 + 0.5 * (self._wrote + 1) / k):
+                o = self._wrote * piece
+                m = min(piece, n - o)
+                vals = (np.arange(o // 4, (o + m) // 4, dtype=np.float32) % 997 * 1e-3)
+                for c, off, b in split(a + o, vals.view(np.uint8)):
+                    self.ch[c][off:off + len(b)] = b
+                self._wrote += 1
+        return self.t_run is not None and now - self.t_run >= self.run_s
 
     def reg_write(self, off, val):
         if self.v < 2:
@@ -85,6 +105,7 @@ class FakeTransport:
         if off == R.R_CTRL:
             if val & R.CTRL_RUN and not self.regs[R.R_CTRL] & R.CTRL_RUN:
                 self.t_run = time.perf_counter()
+                self._wrote = 0
                 self.runs += 1
             elif not val & R.CTRL_RUN:
                 self.t_run = None
