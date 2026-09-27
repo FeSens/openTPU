@@ -5,7 +5,10 @@
 //
 // Block RAM: one memory per row, BLOCKS words of D bytes with byte write enables. The read is
 // registered (the MXU's first pipeline register) and advances with `ren`; a read of a block
-// written at the same edge returns the old bytes.
+// written at the same edge returns the old bytes. Writes are registered (bytes in place, row
+// selects) and land a cycle after they are presented: the quantizer's write path (its grant,
+// the lane placement) ends in a flip-flop, not at the block RAM pins spread over the die. The
+// quantizer reports done a cycle after its last write.
 module otpu_actram #(
   parameter int D      = 32,
   parameter int MCOLS  = 8,
@@ -31,32 +34,45 @@ module otpu_actram #(
   localparam int RW = (MCOLS > 1) ? $clog2(MCOLS) : 1;
   initial if (D % LANES != 0) $fatal(1, "otpu_actram: LANES must divide D");
 
-  // the write, as a block address, byte enables and bytes in place
-  wire [BW-1:0]   wb = w_idx[DW +: BW];
-  logic [D-1:0]   wbe;
-  logic [D*8-1:0] wd;
-  always_comb begin
-    wbe = '0;
-    wd = '0;
+  // the write, as a block address, byte enables and bytes in place (registered), and the
+  // scale write (registered)
+  logic [BW-1:0]    wb;
+  logic [D-1:0]     wbe;
+  logic [D*8-1:0]   wd;
+  logic [MCOLS-1:0] wsel, ssel;
+  logic [BW-1:0]    sb;
+  logic [31:0]      sd;
+  always_ff @(posedge clk) begin
+    wb <= w_idx[DW +: BW];
+    wbe <= '0;
+    wd <= '0;
     for (int l = 0; l < LANES; l++) begin
-      wbe[w_idx[DW-1:0] + DW'(l)] = we[l];
-      wd[8 * (w_idx[DW-1:0] + DW'(l)) +: 8] = w_data[l];
+      wbe[w_idx[DW-1:0] + DW'(l)] <= we[l];
+      wd[8 * (w_idx[DW-1:0] + DW'(l)) +: 8] <= w_data[l];
     end
+    for (int j = 0; j < MCOLS; j++) begin
+      wsel[j] <= (w_row[RW-1:0] == RW'(j)) && (|we);
+      ssel[j] <= swe && s_row[RW-1:0] == RW'(j);
+    end
+    sb <= s_blk[BW-1:0];
+    sd <= s_data;
   end
+`ifndef SYNTHESIS
+  initial begin wsel = '0; ssel = '0; end
+`endif
 
   for (genvar j = 0; j < MCOLS; j++) begin : g_row
     logic [D*8-1:0] act [BLOCKS];
     logic [31:0]    asc [BLOCKS];
     logic [D*8-1:0] rd;
     logic [31:0]    rs;
-    wire  sel = (w_row[RW-1:0] == RW'(j));
     always_ff @(posedge clk) begin
       for (int b = 0; b < D; b++)
-        if (sel && wbe[b]) act[wb][8 * b +: 8] <= wd[8 * b +: 8];
+        if (wsel[j] && wbe[b]) act[wb][8 * b +: 8] <= wd[8 * b +: 8];
       if (ren) rd <= act[r_blk[BW-1:0]];
     end
     always_ff @(posedge clk) begin
-      if (swe && s_row[RW-1:0] == RW'(j)) asc[s_blk[BW-1:0]] <= s_data;
+      if (ssel[j]) asc[sb] <= sd;
       if (ren) rs <= asc[r_blk[BW-1:0]];
     end
     assign r_data[j*D*8 +: D*8] = rd;

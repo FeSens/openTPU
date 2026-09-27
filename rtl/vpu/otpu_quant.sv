@@ -456,8 +456,12 @@ module otpu_quant
   end
 
   // ------------------------------------------------------------------ sequencing
+  // done is reported a cycle after the instruction's last ACT RAM write: the ACT RAM registers
+  // its writes (they land a cycle later), so a dependent MM never reads a block before it
+  logic done_w;
+  always_ff @(posedge clk) done <= !rst && done_w;
   always_ff @(posedge clk) begin
-    done <= 1'b0;
+    done_w <= 1'b0;
     pf_u <= 1'b0;
     st_c <= busy && !gnt;
     st_frz <= st_frz + 32'(st_c);
@@ -470,7 +474,7 @@ module otpu_quant
       if (wr_idle) begin
         ackw <= 1'b0;
         busy <= 1'b0;
-        done <= 1'b1;
+        done_w <= 1'b1;
       end
     end else if (start) begin
       logic qst;
@@ -510,7 +514,7 @@ module otpu_quant
       st_frz <= '0;
       if ((qst ? cmd.w4[15:0] : 16'(cmd.w2[7:0])) == 0 || (qst ? cmd.w4[31:16] : cmd.w2[31:16]) == 0) begin
         rd_done <= 1'b1;
-        done <= 1'b1;
+        done_w <= 1'b1;
       end else begin
         rd_done <= 1'b0;
         busy <= 1'b1;
@@ -603,7 +607,7 @@ module otpu_quant
         ackw <= 1'b1;                              // the last write is taken this cycle
       end else if (fin) begin
         busy <= 1'b0;
-        done <= 1'b1;
+        done_w <= 1'b1;
         pf_u <= 1'b1;
         pf_frz <= st_frz + 32'(st_c);
       end
