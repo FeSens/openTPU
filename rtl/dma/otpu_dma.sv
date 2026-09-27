@@ -108,7 +108,7 @@ module otpu_dma
   // ---- ST: the segment read last cycle, pending in t_rdata (its position, lanes, chunk, and
   // whether it ends its chunk), and the chunk gathered so far
   logic                   st_pend, pl;
-  int                     pp;
+  (* max_fanout = 64 *) int pp;   // selects every data bit of b_wdata: replicated
   logic [W-1:0]           pm;
   logic [31:0]            pc;
   logic [CW-1:0][31:0]    cb;
