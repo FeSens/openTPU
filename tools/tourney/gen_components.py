@@ -47,7 +47,7 @@ C = {
         extra=["tests/test_rtl.py::test_attention_layer_rtl[1]",
                "tests/test_rtl.py::test_scoreboard_stress_single_slice[3]"]),
     "otpu_vpu": dict(
-        files=["rtl/vpu/otpu_vpu.sv"], top="otpu_vpu",
+        files=["rtl/vpu/otpu_vtree.sv", "rtl/vpu/otpu_vpu.sv"], top="otpu_vpu",
         params=dict(LANES=8, SID=0),
         desc="VPU: elementwise fp32 ops on LANES lanes (split lanes: CL composite lanes with 10 "
              "multiply-add slots for EXP2/RECIP/RSQRT/LOG2, simple lanes with 1 slot; slot 0 is "
