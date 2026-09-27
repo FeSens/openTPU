@@ -8,8 +8,9 @@
 // Per-block QACT (the common case) streams: each block is read once into one of NB block
 // buffers while its amax folds; the scale unit takes one amax per cycle, and the writer
 // quantizes the buffers in order. ROW-mode QACT and QST read each group twice (pass 0 finds
-// amax, pass 1 quantizes); QST writes one byte per cycle to DRAM port A, preceded by the
-// group's scale word.
+// amax, pass 1 quantizes). QST's pass 0 reads LANES elements per cycle; pass 1 writes one byte
+// per cycle to DRAM port A, or a whole word (four bytes) per cycle when the store is contiguous
+// (element stride 1) and the group starts word aligned; the group's scale word goes first.
 // Everything advances only on cycles the TMEM grant is given.
 
 // N-cycle delay line (N >= 2) like otpu_delay, but its last stage has a synchronous reset: a
@@ -152,6 +153,7 @@ module otpu_quant
   localparam int QL = 2 * LM + 1;           // prescale latency (with its input register)
   localparam f32_t F_NZ = 32'h8000_0000;
   initial if (D % LANES != 0) $fatal(1, "otpu_quant: LANES must divide D");
+  initial if (LANES < 4) $fatal(1, "otpu_quant: QST word writes need LANES >= 4");
 
   wire en = gnt;
 
@@ -178,12 +180,15 @@ module otpu_quant
   logic [31:0] badr, bgrp, brs;              // QST byte address dst + r*drs + rel*es (mod 2^32)
                                              // at (r, rel) / the group's start / rel = 0
   logic        pass;                         // two-pass: 0 amax, 1 quantize
+  logic        wide;                         // QST pass 1: four contiguous bytes (a word) per cycle
   logic        rd_wait;                      // two-pass: waiting for the scale
   logic        rd_done;
   logic [1:0]  bst [NB];                     // 0 free, 1 filling, 2 full (awaiting scale), 3 scaled
   localparam logic [1:0] B_FREE = 2'd0, B_FILL = 2'd1, B_FULL = 2'd2, B_SCL = 2'd3;
   wire [BI-1:0] rbuf = gi[BI-1:0];
-  wire [31:0] ew = is_st ? 32'd1 : 32'(LANES);
+  // elements per read: QST pass 1 one byte (or one word) per cycle, everything else LANES
+  wire [31:0] ew = (is_st && pass) ? (wide ? 32'd4 : 32'd1) : 32'(LANES);
+  wire [31:0] bstep = wide ? 32'd4 : es;      // QST pass 1: badr per read
   wire rlast = (e + ew >= G);
   wire riss = busy && !rd_done && !rd_wait &&
               (!strm || (e != 0) || (bst[rbuf] == B_FREE));
@@ -426,8 +431,13 @@ module otpu_quant
         a_req = 1'b1;
         a_we = 1'b1;
         a_addr = wqd.baddr >> 2;
-        a_wdata = {4{qb[0]}};
-        a_be = 4'b0001 << wqd.baddr[1:0];
+        if (wqd.mask[1]) begin                    // a word (wide: the group is word aligned)
+          a_wdata = {qb[3], qb[2], qb[1], qb[0]};
+          a_be = 4'hF;
+        end else begin
+          a_wdata = {4{qb[0]}};
+          a_be = 4'b0001 << wqd.baddr[1:0];
+        end
       end else begin
         act_row = wqd.row;
         act_idx = wqd.idx;
@@ -502,7 +512,7 @@ module otpu_quant
       r <= '0; g <= '0; e <= '0; gi <= '0; rel <= '0;
       badr <= cmd.w2; bgrp <= cmd.w2; brs <= cmd.w2;     // QST dst (unused by QACT)
       row_src <= cmd.w1; grp_src <= cmd.w1;
-      pass <= 1'b0; rd_wait <= 1'b0;
+      pass <= 1'b0; rd_wait <= 1'b0; wide <= 1'b0;
       saddr <= cmd.w3;
       for (int b = 0; b < NB; b++) bst[b] <= B_FREE;
       wsel <= '0; wc <= '0; wdone <= '0;
@@ -536,26 +546,29 @@ module otpu_quant
           brow[rbuf] <= r;
           bblk[rbuf] <= g;
         end
-        // badr follows rel (QST: ew = 1, so rel + ew is badr + es)
+        // badr follows rel in QST's pass 1 (rel + ew is badr + bstep; pass 0 leaves it to the
+        // re-read below)
         if (!rlast) begin
           e <= e + ew;
           rel <= rel + ew;
-          badr <= badr + es;
+          badr <= badr + bstep;
         end else if (!strm && !pass) begin        // two-pass: wait for the scale, re-read
           rd_wait <= 1'b1;
           e <= '0;
           rel <= rel - e;
           badr <= bgrp;
+          wide <= is_st && es == 32'd1 && bgrp[1:0] == 2'd0;
         end else begin                             // next group
           e <= '0;
           gi <= gi + 1;
           pass <= 1'b0;
+          wide <= 1'b0;
           if (gi + 1 == groups) rd_done <= 1'b1;
           if (G == D && g + 1 < 32'(KB)) begin
             g <= g + 1;
             rel <= rel + ew;
-            badr <= badr + es;
-            bgrp <= badr + es;
+            badr <= badr + bstep;
+            bgrp <= badr + bstep;
             grp_src <= grp_src + D;
           end else begin
             g <= '0;
