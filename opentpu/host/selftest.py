@@ -38,7 +38,7 @@ from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST
                                 ST_CALIB1, Board, SimTransport, XdmaTransport, device_config)
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
                                  model_check, partial_writes, pattern_test, run_demo,
-                                 vops_program)
+                                 vops_check)
 
 HINTS = {
     "link": "Is the card enumerated (lspci -d 10ee:), the XDMA driver loaded (lsmod | grep "
@@ -64,7 +64,10 @@ HINTS = {
                  "LnkSta should be 2.5GT/s x8).",
     "kernel": "The accelerator computed something different from the ISA simulator: run the "
               "same program on the RTL model (tests/test_board.py) and compare the counters.",
-    "vops": "Qwen3.5 needs RDOT / OUTER / LOG2, which bitstreams built before commit ddec900 "
+    "vops": "On register map 3 or later the VPU computes RDOT / OUTER / LOG2 wrong: run "
+            "otpu-diag (the vpu-new group) and the same programs on the board model "
+            "(tests/test_board.py). Older maps: Qwen3.5 needs them, which bitstreams built "
+            "before commit ddec900 "
             "lack (they run the program but compute other values): load a bitstream with them "
             "(docs/board.md, which bitstream to load), or run Qwen3 / LFM2.",
     "model": "Kernels pass but the model differs: compare per-token logits against "
@@ -200,15 +203,10 @@ def main(argv=None) -> int:
                      f"a_writes={st2['a_writes']})")
 
     def vops():
-        ok, msg, _ = run_demo(board, cfg, vops_program())
-        if ok:
-            return True, f"RDOT / OUTER / LOG2 ok ({msg})"
         from opentpu.llm import load_spec, model_dir
         qwen35 = bool(a.model) and \
             type(load_spec(model_dir(a.model))).__module__.endswith(".qwen35")
-        msg = (f"RDOT / OUTER / LOG2 differ from the ISA simulator ({msg.split(',')[0]}), "
-               "most likely a bitstream built before them")
-        return (False, msg) if qwen35 else (True, f"note: {msg}: Qwen3 and LFM2 only")
+        return vops_check(board, cfg, need=qwen35)
 
     def model():
         return model_check(t, cfg, a.model, a.tokens, a.sim, a.wformat, a.head_format)

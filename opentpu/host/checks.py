@@ -75,6 +75,22 @@ def vops_program() -> list:
     ]
 
 
+def vops_check(board, cfg, need: bool = False) -> tuple[bool, str]:
+    """otpu-selftest's vops stage: vops_program() against the ISA simulator. Wrong results fail
+    on a bitstream that has the functions (register map >= VOPS_SINCE), and on an older one
+    only when `need` (a Qwen3.5 model check follows); an older one passes with a note."""
+    from .regs import VOPS_SINCE
+    ok, msg, _ = run_demo(board, cfg, vops_program())
+    if ok:
+        return True, f"RDOT / OUTER / LOG2 ok ({msg})"
+    rm = board.info()["regmap"]
+    msg = f"RDOT / OUTER / LOG2 differ from the ISA simulator ({msg.split(',')[0]})"
+    if rm >= VOPS_SINCE:
+        return False, f"{msg} on a bitstream that has them (register map {rm})"
+    msg += f", a bitstream built before them (register map {rm})"
+    return (False, msg) if need else (True, f"note: {msg}: Qwen3 and LFM2 only")
+
+
 def run_demo(board, cfg, prog: list | None = None,
              img: np.ndarray | None = None) -> tuple[bool, str, dict]:
     """Run a program (default: the demo) on the board and on the ISA simulator, from the same

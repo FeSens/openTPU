@@ -174,7 +174,7 @@ def _groups(rows: list[Row], section: str) -> dict:
     return g
 
 
-def diagnose(rows: list[Row]) -> list[str]:
+def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
     hints = []
     st = {r.name: r.status for r in rows}
     if st.get("ID register") == FAIL:
@@ -219,7 +219,11 @@ def diagnose(rows: list[Row]) -> list[str]:
         hints.append("every program fails: program load / sequencer, core clock or reset, or "
                      "DRAM (see the memory section)")
     elif fails:
-        if fails == {"vpu-new"}:
+        if fails == {"vpu-new"} and (regmap or 0) >= R.VOPS_SINCE:
+            hints.append(f"only RDOT / OUTER / LOG2 fail, on a bitstream that has them "
+                         f"(register map {regmap}): a VPU fault in those functions (Qwen3.5 "
+                         "computes wrong values; Qwen3 and LFM2 do not use them)")
+        elif fails == {"vpu-new"}:
             hints.append("only RDOT / OUTER / LOG2 fail: a bitstream built before ddec900 "
                          "(Qwen3 and LFM2 run; Qwen3.5 does not)")
         if "control" in fails:
@@ -511,7 +515,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
         print("model", flush=True)
         d.check("model", f"model {a.model}", lambda: model_check(t, ctx["cfg"], a.model,
                                                                   a.tokens, sim), core)
-    return d.rows, diagnose(d.rows)
+    return d.rows, diagnose(d.rows, (ctx["info"] or {}).get("regmap"))
 
 
 def _describe(dev: dict) -> str:

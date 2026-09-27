@@ -291,7 +291,8 @@ def test_compile_worker_builds_the_engines_image():
     from opentpu.llm import qwen3 as Q
     spec, W = L._tiny_qwen()
     eng = Q.Engine(spec, W, cap=256, wformat="fp4", head_format="int8", resident=True)
-    Q._worker_init(spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block, eng._wkw)
+    Q._worker_init(spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block, "fp4", "int8",
+                   True)
     try:
         assert np.array_equal(Q._worker_compile(5), I.assemble(eng.image.compile_step(5)[0]))
         words, ra = Q._worker_decode(1, 0)
@@ -945,10 +946,12 @@ def test_board_compiles_the_next_program_after_starting_the_card():
 
 
 
-def test_board_compiles_in_a_worker_process():
+@pytest.mark.parametrize("wformat,head_format", [("int8", None), ("fp4", "int8"), ("fp4", None)])
+def test_board_compiles_in_a_worker_process(wformat, head_format):
     """The board's default pipeline compiles in a spawned worker process: the words it sends
     are the in-process assembly of the same position's program (the board-model tests in
-    test_board.py / test_lfm2.py check the logits against the ISA simulator through it)."""
+    test_board.py / test_lfm2.py check the logits against the ISA simulator through it), for
+    4-bit images too (the worker once built an int8 image: int8 MMs over 4-bit weights)."""
     from opentpu import lens as L
     from opentpu.host.board import sim_config
     from opentpu.llm.qwen3 import Engine
@@ -962,7 +965,8 @@ def test_board_compiles_in_a_worker_process():
             sent.append(programs)
             super().start(programs)
 
-    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t),
+                 wformat=wformat, head_format=head_format)
     assert eng._procs and eng._ready.result(timeout=60)
     for tok in (3, 4, 5, 6):
         eng.step(tok)
@@ -974,7 +978,8 @@ def test_board_compiles_in_a_worker_process():
                                             np.uint32))
     eng.backend.close()
 
-def test_board_compiles_prefill_chunks_in_the_worker_process():
+@pytest.mark.parametrize("wformat", ["int8", "fp4"])
+def test_board_compiles_prefill_chunks_in_the_worker_process(wformat):
     """Chunked prefill through the worker process: the first chunk compiles in line, the next
     ones in the worker while the card runs the one before, and after the last chunk the first
     decode step's program; the words are the in-process assembly of the same programs."""
@@ -991,7 +996,8 @@ def test_board_compiles_prefill_chunks_in_the_worker_process():
             sent.append(programs)
             super().start(programs)
 
-    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t),
+                 wformat=wformat)
     assert eng._procs and eng._ready.result(timeout=60)
     runs = [len(part) for part, _ in eng.prefill_chunks(list(range(3, 22)))]
     assert runs == [8, 8, 3] and eng.pos == 19
@@ -1260,8 +1266,26 @@ def test_diag_hints_from_the_pattern_of_failures():
     h = diagnose(rows(mxu=PASS, vpu=PASS, dma=PASS, **{"vpu-new": FAIL}))
     assert h == ["only RDOT / OUTER / LOG2 fail: a bitstream built before ddec900 (Qwen3 and "
                  "LFM2 run; Qwen3.5 does not)"]
+    h = diagnose(rows(mxu=PASS, vpu=PASS, dma=PASS, **{"vpu-new": FAIL}), regmap=3)
+    assert len(h) == 1 and "on a bitstream that has them (register map 3)" in h[0]
     h = diagnose(rows(mxu=FAIL, vpu=FAIL, dma=FAIL, control=FAIL))
     assert h[0].startswith("every program fails")
+
+
+@pytest.mark.parametrize("regmap,need,ok,text", [
+    (3, False, False, "on a bitstream that has them (register map 3)"),
+    (3, True, False, "on a bitstream that has them"),
+    (2, False, True, "note: RDOT / OUTER / LOG2 differ"),
+    (2, True, False, "a bitstream built before them (register map 2)")])
+def test_selftest_vops_stage_fails_wrong_results_on_a_bitstream_that_has_them(
+        regmap, need, ok, text):
+    """otpu-selftest's vops stage on FakeTransport, whose DRAM keeps its stale contents where
+    the program should have stored results (as the vg125 bitstream's late RDOT did on the card):
+    a failure on register map 3, a note on an older bitstream unless Qwen3.5 needs them."""
+    from opentpu.host.checks import vops_check
+    b = Board(FakeTransport(devname=None, regmap=regmap, ch_bytes=1 << 23), lock=False)
+    got_ok, msg = vops_check(b, device_config(b.info(), DRAM_BYTES=2 << 23), need=need)
+    assert got_ok is ok and text in msg and "differ from the ISA simulator" in msg
 
 
 # ------------------------------------------------------------------------------ otpu-chat TUI

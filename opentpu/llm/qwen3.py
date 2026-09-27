@@ -836,11 +836,13 @@ class IsaBackend:
 _WORKER: tuple | None = None                # (image, block) in the compile worker process
 
 
-def _worker_init(spec, cfg, cap, batch, rows, block, wkw: dict) -> None:
-    """The worker's image: the engine's layout (weight formats and lookup tables included:
-    its programs must address the same image)."""
+def _worker_init(spec, cfg, cap, batch, rows, block, wformat, head_format,
+                 lookup: bool = False) -> None:
+    """The worker's image: the engine's layout (weight formats, and the resident decode's
+    lookup tables: its programs must address the same image)."""
     global _WORKER
-    _WORKER = (spec.image(cfg, cap, batch, rows, **wkw), block)
+    _WORKER = (spec.image(cfg, cap, batch, rows, wformat, head_format,
+                          **({"lookup": True} if lookup else {})), block)
     _exit_with_parent()
 
 
@@ -958,7 +960,6 @@ class Engine:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
-        self._wkw = wkw                     # the image's formats (the worker processes')
         self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
@@ -999,7 +1000,8 @@ class Engine:
         self._pool = ProcessPoolExecutor(
             self._ahead, mp_context=mp.get_context("spawn"), initializer=_worker_init,
             initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block,
-                      self._wkw))
+                      self.image.wformat, self.image.head_format,
+                      bool(getattr(self.image, "lookup", None))))
         self._ready = self._pool.submit(_worker_ready)
 
     def _take(self, key, fn, *args):

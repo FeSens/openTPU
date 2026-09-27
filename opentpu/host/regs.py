@@ -84,6 +84,11 @@ def counters(regmap: int) -> dict:
     return {k: o for k, o in COUNTERS.items() if regmap >= COUNTER_SINCE.get(k, 2)}
 
 
+# RDOT / OUTER / LOG2 (ddec900) predate register map 3 (3281a7b): a bitstream reporting map 3
+# or later has them, so wrong results there are a fault, not an old bitstream
+VOPS_SINCE = 3
+
+
 def regmap(v: int) -> int:
     """REGMAP register value -> map version (1 when the register is missing)."""
     return 1 if v in (UNMAPPED, 0) else v
