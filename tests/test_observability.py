@@ -10,6 +10,7 @@ import pytest
 
 from opentpu.host.board import (CTRL_CLEAR, CTRL_RUN, R_B_RD, R_B_WR, R_CTRL, R_CYCLES, R_CYCLES_HI,
                         R_ICOUNT, R_SCRATCH, R_STATUS, R_VERSION, ST_HALTED, Board, SimTransport)
+from opentpu.host import regs as R
 from opentpu.host.checks import PROG_AT, demo_image, demo_program
 from opentpu import isa as I
 from opentpu.hwtrace import (R_TRACE_ADDR, R_TRACE_COUNT, R_TRACE_CTRL, R_TRACE_DROP,
@@ -82,7 +83,7 @@ def test_register_map(have_verilator):
     assert ident == 0x4F545055
     assert ver == (CFG.D << 16) | (CFG.MCOLS << 8) | CFG.LANES
     assert regmap == 3
-    assert caps == (8 << 16) | (10 << 8) | 0b11          # log2 256, log2 1024, trace, temp
+    assert caps == (8 << 16) | (10 << 8) | 0b111    # log2 256, log2 1024, i2c, temp, trace
     assert khz == 75294 and bid == TB_BUILD_ID
     assert temp == (1 << 31) | TB_TEMP
     assert 44.5 < TB_TEMP * 503.975 / 4096 - 273.15 < 45.5
@@ -94,8 +95,26 @@ def test_register_map(have_verilator):
 def test_register_map_board_defaults(have_verilator):
     t = SimTransport(ch_bytes=1 << 20)
     caps, khz = t.reg_read_many([R_CAPS, R_CORE_KHZ])
-    assert caps == (10 << 16) | (14 << 8) | 0b11          # 1024-cycle windows, 16384 records
+    assert caps == (10 << 16) | (14 << 8) | 0b111         # 1024-cycle windows, 16384 records
     assert khz == 100000
+
+
+def test_i2c_pins(have_verilator):
+    """I2C_CTRL drives lines low, I2C_IN reads them back through the synchronizers; lines held
+    low from outside (+i2c_hold) read low while released. Reset leaves every line released."""
+    t = SimTransport(ch_bytes=1 << 20, plusargs=["+i2c_hold=18"])   # SDA1 and ALERT0 held
+    first = [t.queue_read(o) for o in (R.R_I2C_CTRL, R.R_I2C_IN)]
+    got = []
+    for v in (0b0001, 0b0110, 0b1111, 0):
+        t.reg_write(R.R_I2C_CTRL, v)
+        t.wait_cycles(4)
+        got.append((t.queue_read(R.R_I2C_CTRL), t.queue_read(R.R_I2C_IN)))
+    t.flush()
+    res = t.results
+    assert [res[i] for i in first] == [0, 0b00111]
+    held = 0b11000
+    assert [(res[a], res[b]) for a, b in got] == [
+        (v, 0b11111 & ~(v | held)) for v in (0b0001, 0b0110, 0b1111, 0)]
 
 
 # ------------------------------------------------------------------------------ counters

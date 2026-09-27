@@ -78,7 +78,8 @@ def test_v3_info_snapshot_and_rates():
     b = Board(FakeTransport(devname=None))
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
-    assert i["caps"] == {"trace": True, "temp": True, "trace_depth": 4096, "pq_window": 64}
+    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "trace_depth": 4096,
+                         "pq_window": 64}
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
     assert s1["snaps"] == s0["snaps"] + 1 and s1["UPTIME"] - s0["UPTIME"] == 1_000_000

@@ -29,8 +29,9 @@ XDMA driver, installed by `otpu-setup`). `pip install -e .` installs its command
 | `otpu-diag` | the full hardware diagnostic: every check, no stopping, a works / does-not-work matrix (section 5) |
 | `otpu-chat` | chat with Qwen3, LFM2 or Qwen3.5 on the card (section 6) |
 | `otpu-lens` | Lens profiles from the card's hardware trace ([lens.md](lens.md)) |
+| `otpu-i2c` | the card's I2C buses, read only: `scan`, `read`, `pmbus-dump`, `levels` ([observability.md](observability.md#i2c-pins)) |
 
-Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens>` does the same.
+Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens|i2c>` does the same.
 
 ## 1. Requirements
 
@@ -193,6 +194,7 @@ Stages, in order (it stops at the first failure and prints a hint):
 | config | reads D / MCOLS / LANES from VERSION and builds the host configuration from them (`device_config`); fails when `OTPU_MCOLS` / `OTPU_LANES` are set to other values, or D is not 128 |
 | calib | both DDR3 controllers calibrated (STATUS bits 5, 6) |
 | regs | SCRATCH register write / read |
+| i2c | with CAPS.i2c: scan the LM73 bus and the PCIe SMBus (one-byte read probes, 0x08-0x77), identify the LM73 (ID 0x0190, temperature), TI INA2xx current monitors and PMBus devices (revision, MFR_ID / MFR_MODEL, READ_* telemetry); a line that stays low FAILs. Read only (`opentpu/host/i2c.py`). The result is saved for `otpu-smi`'s measured power. SKIP on the board model and without the I2C pins |
 | addr | walking address bits and random patterns on each channel (raw channel addresses) |
 | pattern | random data through the channel interleave, unaligned edges, the top of DRAM; sub-beat host writes (partial byte strobes) |
 | bandwidth | host -> card and card -> host DMA rate |
@@ -337,8 +339,8 @@ minutes per token for the real model; use it with small models).
 ## 7. Control registers
 
 [observability.md](observability.md) has the register map (version 2: the version 1 registers
-plus REGMAP, CAPS, CORE_KHZ, BUILD_ID, TEMP, SNAP, the free-running counters and the trace
-buffer); `opentpu/host/regs.py` has the same as constants. The driver's sequence per token
+plus REGMAP, CAPS, CORE_KHZ, BUILD_ID, TEMP, SNAP, the free-running counters, the trace
+buffer and the I2C pins); `opentpu/host/regs.py` has the same as constants. The driver's sequence per token
 (`opentpu/host/board.py`, `Board.load_program` and `Board.run`):
 
 1. write the program into DRAM (logical address right after the model image), `CTRL = 0`;

@@ -22,8 +22,8 @@
 //   0x34 B_STALL   RO  cycles a port B request waited for the memory
 //   0x38 SCRATCH   RW  (host bring-up test)
 //   0x3C REGMAP    RO  register map version (3)
-//   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, [15:8] log2(trace depth),
-//                      [23:16] log2(P/Q window cycles)
+//   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, bit2 I2C pins,
+//                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
 //   0x48 BUILD_ID  RO  build parameter (the low 32 bits of the git commit)
 //   0x4C TEMP      RO  bit31 valid, [11:0] XADC die-temperature code
@@ -39,6 +39,10 @@
 //   0x20C TRACE_ADDR RW  the record to read
 //   0x210 TRACE_LO   RO  its bits [31:0]
 //   0x214 TRACE_HI   RO  its bits [63:32]; reading it increments TRACE_ADDR
+//   0x220 I2C_CTRL   RW  open-drain pins, 1 = drive low, 0 = release: bit0 SCL0, bit1 SDA0
+//                        (LM73 sensor bus), bit2 SCL1, bit3 SDA1 (PCIe edge SMBus); reset 0
+//   0x224 I2C_IN     RO  the pin levels (synchronized by otpu_board): bit0 SCL0, bit1 SDA0,
+//                        bit2 SCL1, bit3 SDA1, bit4 ALERT0 (LM73 ALERT, active low)
 // Reads answer three cycles after the address is taken (a registered address, a registered
 // multiplexer, the data register), which also gives the trace RAM time after TRACE_ADDR moves.
 module otpu_ctrl #(
@@ -49,7 +53,8 @@ module otpu_ctrl #(
   parameter logic [31:0] BUILD_ID = 32'h0,
   parameter int TRACE_DEPTH = 16384,     // 0: no trace buffer
   parameter int PQ_WIN = 1024,           // the trace's P/Q window (cycles)
-  parameter bit HAS_TEMP = 1'b1
+  parameter bit HAS_TEMP = 1'b1,
+  parameter bit HAS_I2C = 1'b1           // CAPS bit2: the I2C pins are wired (otpu_fpga_top)
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -100,12 +105,15 @@ module otpu_ctrl #(
   input  logic [31:0] tr_count,
   input  logic [31:0] tr_drop,
   input  logic        tr_busy,
-  input  logic [63:0] tr_rdata
+  input  logic [63:0] tr_rdata,
+  // I2C pins (the host bit-bangs them: opentpu/host/i2c.py)
+  output logic [3:0]  i2c_lo,
+  input  logic [4:0]  i2c_in
 );
   localparam int NFR = 13;
   localparam logic [31:0] CAPS = {8'd0, 8'($clog2(PQ_WIN)),
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
-                                  6'd0, HAS_TEMP, TRACE_DEPTH != 0};
+                                  5'd0, HAS_I2C, HAS_TEMP, TRACE_DEPTH != 0};
 
   logic [63:0] cycles;
   logic [31:0] n_brd, n_bwr, n_ard, n_awr, n_bst, scratch;
@@ -131,6 +139,7 @@ module otpu_ctrl #(
       s_bvalid <= 1'b0;
       ld_addr <= '0; ld_n <= '0; scratch <= '0;
       tr_en <= 1'b0; tr_stop <= 1'b0; tr_addr <= '0;
+      i2c_lo <= '0;
     end else begin
       if (s_bvalid && s_bready) s_bvalid <= 1'b0;
       if (tr_inc) tr_addr <= tr_addr + 1;
@@ -152,6 +161,7 @@ module otpu_ctrl #(
             tr_stop <= s_wdata[2];
           end
           10'h083: tr_addr <= s_wdata;
+          10'h088: i2c_lo <= s_wdata[3:0];
           default: ;
         endcase
       end
@@ -251,6 +261,8 @@ module otpu_ctrl #(
       10'h083: r_d <= tr_addr;
       10'h084: r_d <= tr_rdata[31:0];
       10'h085: r_d <= tr_rdata[63:32];
+      10'h088: r_d <= {28'd0, i2c_lo};
+      10'h089: r_d <= {27'd0, i2c_in};
       default:
         if (r_a[9:6] == 4'h1 && r_a[5:1] < 5'(NFR))
           r_d <= r_a[0] ? fr_s[r_a[5:1]][63:32] : fr_s[r_a[5:1]][31:0];

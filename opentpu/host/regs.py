@@ -23,7 +23,8 @@ UNMAPPED = 0xDEADBEEF            # what version 1 returns for a register it does
 
 # ---- version 2
 R_REGMAP, R_CAPS, R_CORE_KHZ, R_BUILD_ID, R_TEMP, R_SNAP = 0x3C, 0x40, 0x44, 0x48, 0x4C, 0x50
-CAP_TRACE, CAP_TEMP = 1, 2       # CAPS bit0, bit1; [15:8] log2 trace depth, [23:16] log2 P/Q window
+CAP_TRACE, CAP_TEMP, CAP_I2C = 1, 2, 4   # CAPS bit0..2; [15:8] log2 trace depth,
+                                         # [23:16] log2 P/Q window
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset
@@ -42,6 +43,12 @@ R_TRACE_ADDR, R_TRACE_LO, R_TRACE_HI = 0x20C, 0x210, 0x214
 TR_ENABLE, TR_CLEAR, TR_STOP_WHEN_FULL = 1, 2, 4
 TR_BUSY = 8                      # TRACE_CTRL bit3 (read only): events not yet in the buffer
 
+# I2C pins (CAPS bit2; opentpu/host/i2c.py): I2C_CTRL bit 2b drives bus b's SCL low, bit 2b+1
+# its SDA (1 = low, 0 = released); I2C_IN reads the levels the same way, plus ALERT0 at bit4.
+# Bus 0 is the LM73 sensor's, bus 1 the PCIe edge connector's SMBus.
+R_I2C_CTRL, R_I2C_IN = 0x220, 0x224
+I2C_ALERT0 = 1 << 4              # I2C_IN: the LM73's ALERT pin (active low)
+
 
 def temp_c(code: int) -> float:
     """XADC die-temperature code (12 bits) -> degrees Celsius (UG480)."""
@@ -49,7 +56,7 @@ def temp_c(code: int) -> float:
 
 
 def caps(v: int) -> dict:
-    return {"trace": bool(v & CAP_TRACE), "temp": bool(v & CAP_TEMP),
+    return {"trace": bool(v & CAP_TRACE), "temp": bool(v & CAP_TEMP), "i2c": bool(v & CAP_I2C),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
 
