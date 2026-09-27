@@ -127,7 +127,7 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, first, chunk):
 def test_tiny_lfm2_on_board_model(tiny, have_verilator, resident):
     """The board model through the host driver, through a full turn of the conv state ring:
     logits bit-identical to the ISA simulator. Resident: from position 2 on one program, loaded
-    once, takes the token and position in the ARG registers (CAPS bit7)."""
+    once, takes the token and position in the ARG registers (CAPS bit24)."""
     from opentpu.host.board import Board, BoardBackend, SimTransport
     _, W, spec = tiny
     cfg = board_config(DRAM_BYTES=1 << 23)
@@ -291,3 +291,24 @@ def test_lfm2_5_230m_token_on_rtl_is_bit_exact(have_verilator, wformat, head_for
         for t in prompt[:-1]:
             ref.step(t)
         assert np.array_equal(ref.step(prompt[-1]).view(np.uint32), want.view(np.uint32))
+
+
+def test_tiny_vt_tiles_bit_exact(tiny, monkeypatch):
+    """A 512-token cache holds V^T in tiles of 256 tokens (compiler.KVDesc): a prefill chunk
+    across the tile edge, then decode past it, give the same logits bit for bit as the plain
+    [d, cap] layout."""
+    import opentpu.compiler as C
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 264)]
+
+    def run():
+        eng = Engine(spec, W, cap=512)
+        eng.step(toks[0])
+        out = [eng.prefill(toks[1:257], chunk=8)]          # rows 249..256 cross the edge
+        out += [eng.step(t) for t in toks[257:]]
+        return out
+    assert C.vt_tile(512) == 256
+    tiled = run()
+    monkeypatch.setattr(C, "VT_TILE", 1 << 30)
+    plain = run()
+    assert all(np.array_equal(a.view(np.uint32), b.view(np.uint32)) for a, b in zip(tiled, plain))

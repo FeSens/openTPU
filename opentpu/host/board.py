@@ -6,9 +6,10 @@ The card exposes, through the XDMA bridge:
   - the control registers (rtl/boards/ypcb-00338/otpu_ctrl.sv; map in regs.py and
     docs/observability.md) on BAR0, /dev/xdma0_user.
 
-The accelerator addresses one logical DRAM interleaved over the channels in 64-byte beats
-(logical beat b lives on channel b % 2 at BASE[b % 2] + (b // 2) * 64; rtl/mem/otpu_axi_dram.sv).
-This driver applies the same map, so the host works with logical addresses only.
+The accelerator addresses one logical DRAM interleaved over the channels in 64-byte beats:
+logical beat b of chunk m = b // 2 lives at BASE[c] + m * 64 on channel c = b % 2, or, on a
+bitstream with CAPS.chash, c = (b % 2) ^ parity(m) (rtl/mem/otpu_axi_dram.sv). This driver
+applies the same map, so the host works with logical addresses only.
 
 BoardBackend implements the Engine backend interface (write / read / run, plus prepare and
 attach), so `Engine(..., cfg=device_config(board.info()), backend=BoardBackend)` runs Qwen3,
@@ -71,20 +72,43 @@ STREAM_PROBE = 0.5e-3           # probe interval when no completion time is know
 
 
 # ------------------------------------------------------------------------------ address map
-def split(addr: int, data: np.ndarray) -> list[tuple[int, int, np.ndarray]]:
+def swapped(addr: int, n: int) -> np.ndarray:
+    """CHASH: which of the n chunks from logical `addr` (chunk aligned) have their halves
+    swapped between the channels (the parity of the chunk index)."""
+    m = np.arange(addr // (2 * BEAT), addr // (2 * BEAT) + n, dtype=np.uint64)
+    for s in (32, 16, 8, 4, 2, 1):
+        m ^= m >> np.uint64(s)
+    return (m & np.uint64(1)).astype(bool)
+
+
+def hash_swap(addr: int, v: np.ndarray) -> None:
+    """Chunks [n, 2, BEAT] at logical `addr`: swap the halves CHASH swaps, in place (its own
+    inverse: logical order <-> channel order)."""
+    p = swapped(addr, len(v))
+    v[p] = v[p][:, ::-1]
+
+
+def split(addr: int, data: np.ndarray, chash: bool = False) -> list[tuple[int, int, np.ndarray]]:
     """Logical bytes at `addr` -> [(channel, channel offset, bytes)], beat-aligned pieces
     merged into one contiguous run per channel. `addr` and len(data) must be multiples of
     2 * BEAT (the caller widens unaligned ranges)."""
     assert addr % (2 * BEAT) == 0 and len(data) % (2 * BEAT) == 0
     v = data.reshape(-1, 2, BEAT)
+    if chash:
+        v = v.copy()
+        hash_swap(addr, v)
     off = addr // 2
     return [(c, off, np.ascontiguousarray(v[:, c, :]).reshape(-1)) for c in (0, 1)]
 
 
-def join(parts: list[np.ndarray]) -> np.ndarray:
-    """Inverse of split: the two channels' contiguous runs -> logical bytes."""
+def join(parts: list[np.ndarray], addr: int = 0, chash: bool = False) -> np.ndarray:
+    """Inverse of split: the two channels' contiguous runs (from logical `addr`) -> logical
+    bytes."""
     a, b = (p.reshape(-1, BEAT) for p in parts)
-    return np.stack([a, b], axis=1).reshape(-1)
+    v = np.stack([a, b], axis=1)
+    if chash:
+        hash_swap(addr, v)
+    return v.reshape(-1)
 
 
 # ------------------------------------------------------------------------------ transports
@@ -463,6 +487,12 @@ class Board:
         return d
 
     @property
+    def chash(self) -> bool:
+        """The bitstream hashes the channel interleave (CAPS bit7)."""
+        c = (self._info or self.info())["caps"]
+        return bool(c and c.get("chash"))
+
+    @property
     def v2(self) -> bool:
         return (self._info or self.info())["regmap"] >= 2
 
@@ -494,7 +524,8 @@ class Board:
             return
         a0 = addr // (2 * BEAT) * (2 * BEAT)
         a1 = -(-(addr + len(data)) // (2 * BEAT)) * (2 * BEAT)
-        if a0 != addr or a1 != addr + len(data):        # widen: read-modify-write the edges
+        own = a0 != addr or a1 != addr + len(data)      # data is our own buffer
+        if own:                                         # widen: read-modify-write the edges
             buf = np.empty(a1 - a0, np.uint8)
             head, tail = addr - a0, a1 - addr - len(data)
             if head:
@@ -503,6 +534,9 @@ class Board:
                 buf[-2 * BEAT:] = self.read(a1 - 2 * BEAT, 2 * BEAT)
             buf[head:head + len(data)] = data
             data = buf
+        if self.chash:                                  # channel order (a copy)
+            data = data if own else data.copy()
+            hash_swap(a0, data.reshape(-1, 2, BEAT))
         if not (getattr(self.t, "threaded", False) and len(data) > PIPE):
             for c, off, part in split(a0, data):
                 self.t.mem_write(c, off, part)
@@ -573,6 +607,8 @@ class Board:
                 for c, part in enumerate(fut.result()):
                     out[rows, c, :] = part.reshape(-1, BEAT)
                 fut = nxt
+        if self.chash:                                  # channel order -> logical
+            hash_swap(a0, out)
         flat = out.reshape(-1)
         return flat if (a0, a1) == (addr, addr + n) else flat[addr - a0:addr - a0 + n].copy()
 
@@ -589,7 +625,7 @@ class Board:
         t.poll(R_STATUS, ST_LOADING, 0)
 
     def set_args(self, words) -> None:
-        """The next runs' arguments ARG0..7 (CAPS bit7; R8..R15 at the start): only the words
+        """The next runs' arguments ARG0..7 (CAPS bit24; R8..R15 at the start): only the words
         that differ from the last ones written (8 at most)."""
         last = getattr(self, "_args", None) or [None] * 8
         for k, w in enumerate(words):
@@ -708,9 +744,9 @@ class ConfigMismatch(RuntimeError):
 
 def device_config(info: dict, **kw):
     """The board_config of the bitstream that `info` (Board.info()) describes: MCOLS and LANES
-    come from its VERSION register and PAIR from CAPS bit5, so the card needs no OTPU_MCOLS /
-    OTPU_LANES / OTPU_PAIR. When one is set in the environment it must name the bitstream's
-    value (ConfigMismatch otherwise). Keyword arguments set other fields (DRAM_BYTES)."""
+    come from its VERSION register, PAIR from CAPS bit5 and DSTEP from bit6, so the card needs
+    no OTPU_MCOLS / OTPU_LANES / OTPU_PAIR / OTPU_DSTEP. When one is set in the environment it
+    must name the bitstream's value (ConfigMismatch otherwise). Keyword arguments set other fields (DRAM_BYTES)."""
     from opentpu.isasim import board_config
     for k in ("MCOLS", "LANES"):
         env = os.environ.get(f"OTPU_{k}")
@@ -718,13 +754,17 @@ def device_config(info: dict, **kw):
             raise ConfigMismatch(f"the bitstream was built with {k}={info[k]} but OTPU_{k}={env}"
                                  f": unset OTPU_{k} (the host follows the bitstream) or load "
                                  f"a {k}={env} bitstream")
-    pair = bool((info.get("caps") or {}).get("pair"))
-    env = os.environ.get("OTPU_PAIR")
-    if env is not None and bool(int(env)) != pair:
-        raise ConfigMismatch(f"the bitstream {'has' if pair else 'lacks'} column reuse (CAPS "
-                             f"bit5) but OTPU_PAIR={env}: unset OTPU_PAIR (the host follows the "
-                             f"bitstream)")
-    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair, **kw})
+    caps = info.get("caps") or {}
+    pair, dstep = bool(caps.get("pair")), bool(caps.get("dstep"))
+    for k, have, what in (("PAIR", pair, "column reuse (CAPS bit5)"),
+                          ("DSTEP", dstep, "DSTEP (CAPS bit6)")):
+        env = os.environ.get(f"OTPU_{k}")
+        if env is not None and bool(int(env)) != have:
+            raise ConfigMismatch(f"the bitstream {'has' if have else 'lacks'} {what} but "
+                                 f"OTPU_{k}={env}: unset OTPU_{k} (the host follows the "
+                                 f"bitstream)")
+    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair,
+                          "DSTEP": dstep, **kw})
     if info["D"] != cfg.D:
         raise ConfigMismatch(f"the bitstream has D={info['D']}, the board configuration "
                              f"D={cfg.D}: not a YPCB-00338 openTPU build")
@@ -843,6 +883,10 @@ class BoardBackend:
             self.board.close()
             raise ConfigMismatch("the programs use column reuse (MM PAIR / QACT DUP) and this "
                                  "bitstream lacks it (CAPS bit5 clear): use device_config")
+        if self.cfg.DSTEP and not caps.get("dstep"):
+            self.board.close()
+            raise ConfigMismatch("the programs use DSTEP and this bitstream lacks it (CAPS bit6 "
+                                 "clear): use device_config")
         self.engine = engine
         if self.status is not None:
             self.status.update(dram=self._layout())
@@ -867,7 +911,7 @@ class BoardBackend:
 
     @property
     def args(self) -> bool:
-        """The bitstream takes run arguments (CAPS bit7): start(programs, args=words)."""
+        """The bitstream takes run arguments (CAPS bit24): start(programs, args=words)."""
         return bool((self.info.get("caps") or {}).get("args"))
 
     def start(self, programs, stream: tuple | None = None, args=None) -> None:
@@ -883,11 +927,11 @@ class BoardBackend:
         after this start, while the run is still far from its LM head. Needs a transport that
         allows DMA during a run (`streams`).
 
-        args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit7). The
+        args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit24). The
         program in IMEM stays there: starting the same `programs` object again (a program
         that takes its position as arguments) loads nothing."""
         if args is not None and not self.args:
-            raise ConfigMismatch("this bitstream takes no run arguments (CAPS bit7 clear)")
+            raise ConfigMismatch("this bitstream takes no run arguments (CAPS bit24 clear)")
         res = self._resident
         if res is None or res[0] is not programs:
             prep = self._prep.pop(id(programs), None)

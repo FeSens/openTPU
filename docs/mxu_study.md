@@ -134,3 +134,101 @@ compare registered its MXU logic delay is 6.19 ns, the same as MCOLS 2 and the o
   tree as the default; the cascade stays behind `MXU_IMPL=1` for a Vivado trial at MCOLS 8.
 - Two products per DSP48E1 is not usable exactly on a cascade (see above), so the DSP ceiling is
   one product per DSP: MCOLS <= 14 on this part, before the rest of the slice's 146 DSPs.
+
+## The core-side ceiling at DDR3-1066: port width, clock, VPU (2026-09-27)
+
+Question: with 4-bit full-rate weights (MM PAIR), what keeps decode from running at the speed of
+the DRAM, and which change lifts it? Targets: 80% DRAM efficiency, LFM2.5-230M at 88+ tok/s and
+Qwen3.5-0.8B at 24+ tok/s.
+
+**The ceilings.** DDR3-1066 on two x64 channels peaks at 17.07 GB/s. The slice takes at most one
+128-byte chunk per core cycle (two 512-bit AXI beats, one per channel, both at core_clk; the
+smartconnect crosses to the MIG's 133 MHz ui_clk). So the core port carries 128 B x f: 12.8 GB/s
+(75% of the DRAM peak) at 100 MHz, 14.8 GB/s (87%) at 116 MHz, and matches the DRAM only at
+133 MHz. At 100 MHz, 80% DRAM efficiency is out of reach whatever else is done.
+
+**What the DRAM gives a streaming phase.** With the core as fast as the controller (the model's
+`+axi_tpc=1 +axi_tpu=1`), the weight-streaming phases reach 88-92% of the DRAM peak (LM head
+92.0%, MLP 88.7-90.4%, conv 88.4%): refresh, row switches and the port-A scale reads cost the
+rest. That is the most a wider or faster core port can buy.
+
+### Measured on the RTL (simulated)
+
+`tools/perf_qwen.py --layers 0 --pos 128 --dram rbc --lat 38 --arc 4` with the DDR3-1066 timings
+(`+axi_trp=3 +axi_trcd=3 +axi_tras=5 +axi_trc=7 +axi_trfc=22 +axi_trefi=1040 +axi_trmw=29`),
+`OTPU_PAIR=1`, fp4 layers; the core clock enters as the ratio `+axi_tpc/+axi_tpu` (4/3 = 100 MHz,
+23/20 = 116 MHz, 1/1 = 133 MHz). tok/s = cycles at that clock, no host time. DRAM efficiency =
+useful bytes per token / (token time x 17.07 GB/s). L16: `OTPU_LANES=16 OTPU_ULANES=8
+OTPU_VPU_CL=2`. Branch `port` at 152f9d4 (fp4-rebase with main's ddr-attn).
+
+| model, weights / LM head | core | Mcycles/token | tok/s | DRAM eff. | core port busy |
+|---|---|---:|---:|---:|---:|
+| LFM2, fp4 / int8 | 100 MHz | 1.480 | 67.5 | 62.4% | 83.3% |
+| LFM2, fp4 / int8 | 116 MHz | 1.491 | 77.8 | 71.9% | 82.6% |
+| LFM2, fp4 / int8 | 133 MHz | 1.610 | 82.8 | 76.6% | 76.6% |
+| LFM2, fp4 / fp4 | 100 MHz | 1.218 | 82.1 | 59.8% | 79.7% |
+| LFM2, fp4 / fp4 | 116 MHz | 1.231 | **94.2** | 68.6% | 78.8% |
+| LFM2, fp4 / int8, L16 | 116 MHz | 1.480 | 78.4 | 72.4% | 83.3% |
+| Qwen3.5, fp4 / int8 | 100 MHz | 6.236 | 16.0 | 53.7% | 71.6% |
+| Qwen3.5, fp4 / int8 | 116 MHz | 6.271 | 18.5 | 62.0% | 71.3% |
+| Qwen3.5, fp4 / int8 | 133 MHz | 6.589 | 20.2 | 67.8% | 67.8% |
+| Qwen3.5, fp4 / fp4 | 116 MHz | 5.285 | 21.9 | 57.2% | 65.7% |
+| Qwen3.5, fp4 / int8, L16 | 116 MHz | 5.486 | 21.1 | 70.9% | 81.5% |
+| Qwen3.5, fp4 / fp4, L16 | 100 MHz | 4.405 | 22.7 | 59.2% | 78.9% |
+| Qwen3.5, fp4 / fp4, L16 | 116 MHz | 4.500 | **25.8** | 67.2% | 77.2% |
+
+Where the cycles go (116 MHz):
+
+- **LFM2**: the MM phases (MLP, conv, LM head) run at 97-99% of the core port. The 6 attention
+  layers take 328 K cycles for 11.7 MB, 28% of their bytes: small MMs in a dependency chain,
+  with MXU gaps after each QACT (one of 28 K cycles at the first `attention.py` block). That is
+  the loss that keeps LFM2 under 80%: without it the token would be ~1.0 M cycles (~85%).
+- **Qwen3.5**: the DeltaNet mixer takes 2.78 M cycles for 142 MB (40% of its bytes) with the VPU
+  busy 97% of it: at fp4 its weights halve but the state passes do not. With 16 lanes it drops
+  to 2.00 M (56%). Then it is no longer VPU-throughput-bound: removing the second RDOT pass
+  altogether (a timing-only experiment, wrong results) saves 344 K cycles at 8 lanes but 8 K
+  at 16. At 16 lanes one DeltaNet layer (110 K cycles, roofline 62 K) spends most of its VPU
+  time in the latency of ~200 small ops per layer (VOP.mul: 51.6 K busy cycles for 4.2 K of
+  work), and OUTER runs at half rate beside the state loads' TMEM writes.
+
+### Options, ranked
+
+Gains are projections from the table above (simulated cycles), resources from yosys
+(`tools/synth/sta.sh`, logic only) or the fp4pair Vivado synthesis (191.6 K LUT, 283 DSP,
+550 RAMB36 + 22 RAMB18: 64% / 15% / 59% of the xc7k480t).
+
+1. **fp4 LM head** (d, fewer bytes; no hardware). LFM2 -34 MB/token: 77.8 -> 94.2 tok/s at
+   116 MHz, 82.1 at 100. Qwen3.5 -127 MB: 18.5 -> 21.9 (25.8 with L16). The only change that
+   reaches both tok/s targets; its cost is accuracy (docs/quant.md: the head is the most
+   sensitive matrix), which is a product decision.
+2. **Core clock >= 114 MHz** (a; the fmax branch). Needed for 80% DRAM efficiency at all with a
+   128-byte port (87% ceiling at 116, 75% at 100); +15% tok/s over 100 MHz on every model.
+3. **VPU 16 lanes** (existing `make bit LANES=16`, the MXU and quantizer stay on 8). Qwen3.5
+   -12.5% cycles (fp4 layers, either head); LFM2 -0.7%. yosys: VPU 29.5 K -> 58.3 K LUT, 68 ->
+   132 DSP, logic 4.39 -> 5.02 ns; TMEM (board ports) 12.1 K -> 35.7 K LUT; DMA and coll +1.5 K:
+   about +54 K LUT in yosys terms (the earlier "+21 K" estimate is too low). On today's 64% that
+   is ~80% of the part: a routing and fmax risk at 114 MHz.
+4. **The LFM2 attention chain and the Qwen3.5 DeltaNet small ops** (compiler scheduling). They
+   are what separates both models from 80% once the port is fast enough: ~240 K cycles of
+   LFM2's 1.23 M and ~0.9 M of Qwen3.5's 4.5 M (at L16).
+5. **A 256-byte weight path** (b). Two chunks per cycle: a 1024-bit AXI port per channel at
+   core_clk (the smartconnect downsizes to the MIG's 512 bits and crosses clocks), port-B read
+   data and the chunk FIFO 2048 bits wide (same RAMB36 count at half the depth), and an MXU
+   whose two DSP pairs each take their own chunk at M = 1 (MCOLS = 4 hardware; 4-bit: the
+   column-reuse split in each pair, four K-blocks per cycle and a 4-way fp32 sum; int8: one
+   block per pair, two per cycle), QACT writing each row four times, and a 16-byte scale read.
+   It moves the MM phases from the core's 128 B/cycle to the DRAM's 88-92%: at 116 MHz that is
+   +4-5% on the MM phases (86% -> ~90% of peak); at 100 MHz, +21% (LFM2 fp4 ~94 tok/s at
+   100 MHz, Qwen3.5 fp4 / L16 ~25). Cost, estimated: MXU +13-15 K LUT, +130 DSP (the second DSP
+   pair per column pair; docs/quant.md's proxy: +6.1 K LUT per extra block datapath), ACT RAM
+   +32 RAMB36, smartconnect 1024-bit ports +5-10 K LUT, adapter +3 K: ~+25-35 K LUT. Worth it
+   only if the clock stays near 100 MHz: at 114+ it is the smallest gain on this list per LUT.
+6. **A split clock** (c): the adapter or the MXU stream at the MIG's 133 MHz. On its own it
+   gains nothing: the ceiling is the chunks the MXU consumes per core cycle, not the clock of the
+   AXI side. It only makes sense as the CDC half of option 5, and the smartconnect already
+   provides that crossing.
+
+**Recommendation.** Keep the 128-byte port and get the clock to 114-116 MHz (2); decide the fp4
+LM head (1); build LANES=16 only after a Vivado run shows it fits at that clock (3); put the
+next compiler effort into LFM2's attention chain and Qwen3.5's DeltaNet small-op latency (4).
+The 256-byte path (5) is the fallback if the clock cannot leave 100 MHz.

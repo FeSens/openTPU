@@ -28,6 +28,15 @@ Layout transitions are the data movement:
 | `ol.all_reduce(x)` | `GATHER` + `VOP` adds | every slice gets the sum of all slices' `x` |
 | `ol.kv_append(kv, h, pos, k, v)` | two `QST` | TMEM fp32 to DRAM int8 in the cache layouts |
 
+The KV cache (`compiler.KVDesc`): K token-major `[cap, d]` with block scales; V transposed,
+`[d, cap]`, stored in tiles of 256 tokens (`VT_TILE`, the attention block) when the capacity is
+a multiple of 256: tile *i* holds tokens 256*i .. 256*i + 255 of every row, `[d, 256]`
+contiguous. P.V of one attention block then streams one contiguous 32 KB tile in full bursts
+(untiled, each of its 128 rows was a separate 256-byte piece, cap bytes apart), and a token's
+append writes bytes 256 apart at any capacity. An attention block must divide the tile; a
+V^T column slice stays within one tile (`QTensor.padded_cols` lets an MM's zero-weighted
+padding run past it).
+
 `dot(a[M, K], w[N, K])` computes `a @ w.T`. The stationary side has at most 8 rows, so a
 decode token, a GQA query group or a softmax probability block fits in one pass. Each weight
 byte is read from DRAM exactly once per `dot`. The optional arguments map to MM epilogue flags:

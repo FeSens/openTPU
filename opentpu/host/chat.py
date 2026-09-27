@@ -528,7 +528,7 @@ def main(argv=None):
     ap.add_argument("--per-position", action="store_true",
                     help="compile a decode program per position (the fallback; by default "
                          "one resident program per 256-token bucket takes the position as a "
-                         "run argument when the bitstream has them, CAPS bit7)")
+                         "run argument when the bitstream has them, CAPS bit24)")
     ap.add_argument("--prompt", help="ask one question and exit (plain output)")
     ap.add_argument("--plain", action="store_true",
                     help="a line-by-line REPL instead of the full-screen interface")

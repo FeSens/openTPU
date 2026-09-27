@@ -15,8 +15,12 @@ What the host sees:
 
 The card's AXI address map: DDR3 channel 0 at `0x0000_0000`, channel 1 at `0x8000_0000`,
 2 GiB each. The accelerator sees one 4 GiB logical DRAM interleaved over the two channels in
-64-byte beats (logical beat *b* is on channel *b* % 2 at offset (*b* // 2) * 64).
-`opentpu/host/board.py` applies that map, so everything above it uses logical addresses.
+64-byte beats: logical beat *b* of chunk *m* = *b* // 2 is at offset *m* * 64 on channel
+*b* % 2, or, on a bitstream with CAPS bit7 (CHASH), on channel (*b* % 2) XOR parity(*m*): each
+128-byte chunk still has one beat on each channel, but the chunks with an odd number of set
+bits have them swapped, so a column at a power-of-two stride (the transposed V cache: one byte
+per cache row) is spread over both channels instead of loading one. `opentpu/host/board.py`
+reads CAPS and applies the map, so everything above it uses logical addresses.
 
 The host software is the package `opentpu/host` (userspace; the kernel side is the Xilinx
 XDMA driver, installed by `otpu-setup`). `pip install -e .` installs its commands:
@@ -567,7 +571,7 @@ token the per-position compile of LFM2 no longer keeps up on a laptop: the same 
 counters (~0.02 ms), the last chunk's read and the selection (~0.1 ms), Python (~0.1 ms).
 
 **Resident decode.** A decode program now takes the position and the token as run arguments
-(docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit7), so one program serves
+(docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit24), so one program serves
 every position of an attention bucket (`Engine(resident=True)`, the default of `otpu-chat` and
 `decode_profile.py`; `--per-position` for the old path):
 
@@ -586,7 +590,7 @@ every position of an attention bucket (`Engine(resident=True)`, the default of `
   inputs. For LFM2.5-230M the tables are 256 MiB of the card's 4 GiB.
 - Positions 0 and 1 of LFM2 (the convolution's taps before position 0) and Qwen3.5 (its
   convolution and DeltaNet programs use R1..R8) keep the per-position programs, and so does a
-  bitstream without CAPS bit7 (`Engine.resident` falls back; the worker processes of
+  bitstream without CAPS bit24 (`Engine.resident` falls back; the worker processes of
   `COMPILE_AHEAD` stay for it).
 
 The logits are bit-identical to the per-position programs' (tests: `test_qwen3.py`,

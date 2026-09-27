@@ -37,8 +37,8 @@ from . import isa as I
 from . import rtlsim
 
 UNITS = ["DMA", "MXU", "QUANT", "VPU", "COLL"]
-OPNAMES = {I.LD: "LD", I.ST: "ST", I.MM: "MM", I.QACT: "QACT", I.QST: "QST", I.VOP: "VOP",
-           I.GATHER: "GATHER", I.BAR: "BAR"}
+OPNAMES = {I.LD: "LD", I.ST: "ST", I.DSTEP: "DSTEP", I.MM: "MM", I.QACT: "QACT", I.QST: "QST",
+           I.VOP: "VOP", I.GATHER: "GATHER", I.BAR: "BAR"}
 VFUNCS = {I.V_ADD: "add", I.V_SUB: "sub", I.V_RSUB: "rsub", I.V_MUL: "mul", I.V_MAX: "max",
           I.V_MIN: "min", I.V_COPY: "copy", I.V_EXP2: "exp2", I.V_RECIP: "recip",
           I.V_RSQRT: "rsqrt", I.V_ABS: "abs", I.V_FILL: "fill", I.V_EXP2SUB: "exp2sub",
@@ -107,6 +107,12 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
         # one TMEM segment per cycle; each D-byte chunk once on port B (chunk-aligned count)
         n = w[2]
         return OPNAMES[op], f"{n} words", -(-n // burst), -(-n // (D // 4)), 0
+    if op == I.DSTEP:
+        # DSTEP_LANES state words per cycle; every state chunk read (unless zero) and written
+        rows, cols = w[3] & 0xFFFF, w[3] >> 16
+        n = -(-rows * cols * 4 // D)
+        return ("DSTEP", f"{rows}x{cols}{' zero' if ins.flags & I.F_DZERO else ''}",
+                -(-rows * cols // I.DSTEP_LANES), n if ins.flags & I.F_DZERO else 2 * n, 0)
     if op == I.MM:
         N, KB, M = w[3] & 0xFFFF, w[3] >> 16, (w[5] >> 16) & 0xFF
         acc = " +acc" if ins.flags & I.F_ACC else ""
@@ -126,7 +132,8 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
     if op == I.QST:
         rows, KB = w[3] & 0xFFFF, w[3] >> 16
         n = rows * KB * D
-        return "QST", f"{rows}x{KB * D} -> DRAM int8", -(-n // L) + n, 0, n + rows * KB
+        nw = n // 2 if ins.flags & I.F_HALF else n     # HALF: the rows' first halves written
+        return "QST", f"{rows}x{KB * D} -> DRAM int8", -(-n // L) + nw, 0, nw + rows * KB
     if op == I.VOP:
         rows, cols = w[3] & 0xFFFF, w[3] >> 16
         func = (w[5] >> 16) & 0xFF
@@ -301,7 +308,8 @@ def parse(trace: str, cfg, programs, name: str = "") -> Profile:
             slot, pc, op = int(kv["s"]), int(kv["pc"]), int(kv["op"], 16)
             ins = programs[s][pc]
             nm, det, work, pb, pa = _describe(ins, cfg)
-            unit = {I.LD: 0, I.ST: 0, I.MM: 1, I.QACT: 2, I.QST: 2, I.VOP: 3}.get(op, 4)
+            unit = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.MM: 1, I.QACT: 2, I.QST: 2,
+                    I.VOP: 3}.get(op, 4)
             r = Rec(s, counts[s], pc, op, unit, c, name=nm, detail=det, comment=ins.comment,
                     work=work, portb=pb, porta=pa)
             counts[s] += 1

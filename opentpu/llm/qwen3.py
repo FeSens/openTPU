@@ -538,23 +538,28 @@ def _rope_padded(x, c, s_):
 class RunPos:
     """The decode position as a run-time value (docs/isa.md "Arguments"): one program serves
     every position p of a bucket, lo <= p < blocks * block, whose attention spans `blocks`
-    blocks (the last one masked: attention.Bucket). The token's embedding and RoPE rows come
-    from the image's tables (Image(lookup=True)) at the token id and the position; the KV cache
-    appends at the position; ring is (p + 1) mod K, the first row of the last K in a mirrored
-    K-row state ring (LFM2's convolutions: lfm2._ring_rows). values(token, p, K) and
-    compiler.arg_words give the argument words of a program's run_args."""
+    blocks (the last one masked: attention.Bucket). The program sees p as t0 + tpos, t0 =
+    (blocks - 1) * block the bucket's first position and tpos = p - t0 < block the run-time
+    value (so the V^T append stays in its 256-token tile: compiler.tile_split). The token's
+    embedding and RoPE rows come from the image's tables (Image(lookup=True)) at the token id
+    and the position; the KV cache appends at the position; ring is (p + 1) mod K, the first
+    row of the last K in a mirrored K-row state ring (LFM2's convolutions: lfm2._ring_rows).
+    values(token, p, K, block) and compiler.arg_words give the argument words of a program's
+    run_args."""
 
-    pos, tok = RunVar("pos"), RunVar("tok")
-    ring = RunVar("ring")
+    tok, ring = RunVar("tok"), RunVar("ring")
 
     def __init__(self, blocks: int, block: int, lo: int, zmask: int, cap: int):
         self.blocks, self.block, self.lo = blocks, block, lo
-        # the mask row of a block at t0 starts at entry cap - 1 - p + t0 of the table
-        self.bucket = Bucket(blocks, Affine(zmask + 4 * (cap - 1)) + self.pos * -4)
+        self.t0 = (blocks - 1) * block
+        self.tpos = RunVar("tpos", bound=min(block, cap - self.t0))
+        self.pos = self.tpos + self.t0
+        # the mask row of a block at t0' starts at entry cap - 1 - p + t0' of the table
+        self.bucket = Bucket(blocks, Affine(zmask + 4 * (cap - 1 - self.t0)) + self.tpos * -4)
 
     @staticmethod
-    def values(token: int, p: int, K: int = 1) -> dict:
-        return {"pos": p, "tok": token, "ring": (p + 1) % K}
+    def values(token: int, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:
+        return {"tpos": p % block, "tok": token, "ring": (p + 1) % K}
 
 
 def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = False):
@@ -592,9 +597,8 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
 
     def queries(j):
         def emit():
-            # the V^T append (one byte into each of d cache rows: slow) goes with the head's
-            # queries, so the quantizer's appends spread over the heads' attention pipeline
-            # instead of holding every head's queries behind all of them
+            # the head's V^T append (byte-strided, the quantizer's slowest store) just ahead of
+            # its queries: head j's scores start after K and V_0..V_j, not after all V appends
             ol.kv_append(kv, heads[j], kpos, None, vh[j:j + 1, :])
             return _rope_padded(rmsnorm(qps[j].reshape(G, d), qn, eps), c, s_)
         return emit
@@ -832,10 +836,11 @@ class IsaBackend:
 _WORKER: tuple | None = None                # (image, block) in the compile worker process
 
 
-def _worker_init(spec, cfg, cap, batch, rows, block, lookup: bool = False) -> None:
+def _worker_init(spec, cfg, cap, batch, rows, block, wkw: dict) -> None:
+    """The worker's image: the engine's layout (weight formats and lookup tables included:
+    its programs must address the same image)."""
     global _WORKER
-    _WORKER = (spec.image(cfg, cap, batch, rows, **({"lookup": True} if lookup else {})),
-               block)
+    _WORKER = (spec.image(cfg, cap, batch, rows, **wkw), block)
     _exit_with_parent()
 
 
@@ -953,6 +958,7 @@ class Engine:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
+        self._wkw = wkw                     # the image's formats (the worker processes')
         self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
@@ -993,7 +999,7 @@ class Engine:
         self._pool = ProcessPoolExecutor(
             self._ahead, mp_context=mp.get_context("spawn"), initializer=_worker_init,
             initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block,
-                      bool(getattr(self.image, "lookup", None))))
+                      self._wkw))
         self._ready = self._pool.submit(_worker_ready)
 
     def _take(self, key, fn, *args):
@@ -1104,7 +1110,8 @@ class Engine:
         else:                               # the token and position as run arguments
             progs, ra = dec
             kw = {"args": arg_words(ra, RunPos.values(int(token), self.pos,
-                                                      getattr(self.spec, "conv_k", 1)))}
+                                                      getattr(self.spec, "conv_k", 1),
+                                                      self.block))}
         start = getattr(self.backend, "start", None)
         v_loc = self.image.v_loc
         vocab = S * v_loc

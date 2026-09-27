@@ -58,6 +58,12 @@ class _Head:
             self.blocks = [(i * block, block) for i in range(nfull)] + \
                 ([(nfull * block, tail)] if tail else [])
         self.groups = max(0, (nfull + 1 - depth) // depth)
+        if self.VT.tiles is not None:            # V^T in tiles of tb tokens (KVDesc)
+            tb = self.VT.tiles[0]
+            if tb % block:
+                raise ol.CompileError(f"attention block {block} must divide the V^T tile {tb}")
+            if (depth * block) % tb:             # a loop step must be whole tiles
+                self.groups = 0
 
 
 def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = None,
@@ -116,7 +122,8 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
             pp = ol.zeros([G, npad])
             pp[:, :n].set(p * vs[None, :])
             pq = ol.quantize(pp)
-        ol.dot(pq, st.VT[:, t0:t0 + npad], acc=st.acc, acc_scale=alpha)  # acc*alpha + P.V
+        vt = st.VT.padded_cols(0, st.VT.shape[0], t0, npad, n)             # zero-padded P
+        ol.dot(pq, vt, acc=st.acc, acc_scale=alpha)                         # acc*alpha + P.V
         st.m.set(m_new)                                           # the next block needs m first
         st.l.set(st.l * alpha + ol.sum(p, axis=1))                # off the critical path
 

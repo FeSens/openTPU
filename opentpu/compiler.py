@@ -65,10 +65,11 @@ class RunVar:
     """A value known only when the program runs (the token's position, its id). An address may
     add `c * var` for one (var, c): the host puts c times the value into one of the run's
     argument registers (docs/isa.md "Arguments"), one per distinct (var, c) of the program
-    (Builder.run_args), so the same program serves every value."""
+    (Builder.run_args), so the same program serves every value. bound: the value is below it
+    (a V^T append at a run-time token stays in its tile: tile_split)."""
 
-    def __init__(self, name: str):
-        self.name = name
+    def __init__(self, name: str, bound: int | None = None):
+        self.name, self.bound = name, bound
 
     def _aff(self) -> "Affine":
         return Affine(0, {self: 1})
@@ -208,6 +209,9 @@ class QTensor:
     only be sliced into whole parts.
     `wf`: the element format (isa.W8; or W4I / W4F: 4-bit elements, D/2 bytes per D-block, and
     a two-level scale word per D-block, docs/isa.md "Weight formats").
+    `tiles`: (tb, tstride): the columns are stored in tiles of tb (each tile rows x tb, row
+    stride rs = tb, tiles tstride bytes apart; int8, unscaled: the V^T cache). A column slice
+    must stay within one tile.
     """
     data: Affine
     scale: Affine | None
@@ -218,6 +222,22 @@ class QTensor:
     parts: tuple | None = None
     pw: int = 0
     wf: int = 0
+    tiles: tuple | None = None
+
+    def padded_cols(self, r0, nr: int, c0, nc: int, valid: int) -> "QTensor":
+        """Rows [r0, r0+nr), columns [c0, c0+nc) of which the first `valid` are real (the rest
+        pad an MM operand to whole D-blocks: the caller weights them 0). In a tiled matrix
+        the real columns must stay within one tile; the padding may run past it (into the
+        next row, then read with weight 0)."""
+        if self.tiles is None:
+            return self[r0:Affine.of(r0) + nr, c0:Affine.of(c0) + nc]
+        tb, tstride = self.tiles
+        q, r = tile_split(c0, tb)
+        if r + valid > tb:
+            raise CompileError(f"a column slice of a tiled matrix must stay within one tile "
+                               f"of {tb} (columns {c0} + {valid})")
+        return QTensor(self.data + q * tstride + Affine.of(r0) * self.rs + r, None, (nr, nc),
+                       self.rs, 0, self.D)
 
     def __getitem__(self, key) -> "QTensor":
         if not isinstance(key, tuple):
@@ -239,6 +259,8 @@ class QTensor:
         nr, nc = (r1 - r0).static(), (c1 - c0).static()
         if nc % self.D:
             raise CompileError("QTensor column slices must be multiples of D")
+        if self.tiles is not None:
+            return self.padded_cols(r0, nr, c0, nc, nc)
         if self.wf == I.W8:
             data = self.data + r0 * self.rs + c0
         else:                     # 4-bit rows stream whole D-byte chunks of two D-blocks
@@ -249,12 +271,56 @@ class QTensor:
         return QTensor(data, scale, (nr, nc), self.rs, self.srs, self.D, wf=self.wf)
 
 
+VT_TILE = 256          # V^T cache tile (tokens): the attention block (qwen3.ATTN_BLOCK)
+
+
+def vt_tile(cap: int) -> int:
+    """Tokens per V^T tile for a cache of `cap` tokens (cap itself: one tile, untiled)."""
+    return VT_TILE if cap % VT_TILE == 0 else cap
+
+
+def tile_split(t: Affine, tb: int) -> tuple:
+    """t = q * tb + r with r static (0 <= r < tb): (q, r). A loop-dependent t needs its loop
+    terms to be multiples of tb. Run-time terms (RunVar) go to r, which is then an Affine: they
+    need a bound that keeps r below tb."""
+    t = Affine.of(t)
+    run = {v: c for v, c in t.terms.items() if isinstance(v, RunVar)}
+    if run:
+        q, r = tile_split(Affine(t.const, {v: c for v, c in t.terms.items() if v not in run}),
+                          tb)
+        if any(v.bound is None or c < 0 for v, c in run.items()) or \
+                r + sum(c * (v.bound - 1) for v, c in run.items()) >= tb:
+            raise CompileError(f"token index {t} may cross a tile of {tb}")
+        return q, Affine(r, run)
+    r = t.const % tb
+    try:
+        return (t - r).div_exact(tb), r
+    except CompileError:
+        raise CompileError(f"token index {t} does not split into tiles of {tb}") from None
+
+
+def vt_tiled(vt: np.ndarray) -> np.ndarray:
+    """A V^T [d, cap] in its DRAM order (tiles of vt_tile(cap) tokens, see KVDesc), flat."""
+    d, cap = vt.shape
+    tb = vt_tile(cap)
+    return np.ascontiguousarray(vt.reshape(d, cap // tb, tb).transpose(1, 0, 2)).reshape(-1)
+
+
+def vt_untiled(flat: np.ndarray, d: int, cap: int) -> np.ndarray:
+    """Inverse of vt_tiled: DRAM bytes -> V^T [d, cap]."""
+    tb = vt_tile(cap)
+    return flat.reshape(cap // tb, d, tb).transpose(1, 0, 2).reshape(d, cap)
+
+
 class KVDesc:
     """Per-slice view of a KV cache whose heads are dealt round-robin over slices.
 
     Layout per head: K token-major int8 [cap, d] + scales [cap, d/D]; V^T dim-major int8
-    [d, cap]; one V scale per token [cap] (folded into P before P.V). With head_dim < D the
-    rows are zero-padded to d = D and dv = head_dim: P.V reads only the first dv rows of V^T.
+    [d, cap] in tiles of tb = vt_tile(cap) tokens: tile i holds tokens [i*tb, (i+1)*tb) of every
+    row, [d, tb] contiguous (so P.V of an attention block streams one contiguous tile, and a
+    token's column stays within a few DRAM rows at any capacity); one V scale per token [cap]
+    (folded into P before P.V). With head_dim < D the rows are zero-padded to d = D and
+    dv = head_dim: P.V reads only the first dv rows of V^T.
     """
 
     def __init__(self, heads: dict, cap: int, d: int, D: int, S: int, sid: int,
@@ -277,7 +343,15 @@ class KVDesc:
 
     def vt(self, h: int) -> QTensor:
         e = self._h(h)
-        return QTensor(Affine.of(e["vt"]), None, (self.dv, self.cap), self.cap, 0, self.D)
+        tb = vt_tile(self.cap)
+        return QTensor(Affine.of(e["vt"]), None, (self.dv, self.cap), tb, 0, self.D,
+                       tiles=(tb, self.d * tb) if tb < self.cap else None)
+
+    def vt_column(self, h: int, t) -> Affine:
+        """The address of token t's byte in V^T row 0 (the next rows are vt(h).rs apart)."""
+        tb = vt_tile(self.cap)
+        q, r = tile_split(t, tb)
+        return Affine.of(self._h(h)["vt"]) + q * (self.d * tb) + r
 
     def vscale(self, h: int) -> Tensor:
         e = self._h(h)
@@ -1066,6 +1140,33 @@ class Builder:
         self.bump_version(acc.buf)
         return acc
 
+    def deltanet_step(self, state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile,
+                      o: Tile, zero: bool = False) -> None:
+        """DSTEP: one Gated DeltaNet head step on the fp32 state `state` [rows, cols] in DRAM,
+        updated in place; qk = [q | k] (2 * cols words), v [rows], decay and beta [1] tiles
+        (beta after decay), o [rows] written (docs/isa.md). `zero`: the state starts at +0."""
+        if not self.cfg.DSTEP:
+            raise CompileError("deltanet_step needs Config.DSTEP (the DMA's DSTEP)")
+        if len(state.shape) != 2 or state.strides != (state.shape[1], 1):
+            raise CompileError("deltanet_step: the state must be a row-major [rows, cols] tensor")
+        rows, cols = state.shape
+        if not (0 < rows <= I.DSTEP_MAX_ROWS) or cols % 64 or not (0 < cols <= 256):
+            raise CompileError("deltanet_step: rows 1..256, cols 64, 128, 192 or 256")
+        for t, n, what in ((qk, 2 * cols, "qk"), (v, rows, "v"), (decay, 1, "decay"),
+                           (beta, 1, "beta"), (o, rows, "o")):
+            if not isinstance(t, Tile) or len(t.shape) != 1 or t.cols != n:
+                raise CompileError(f"deltanet_step: {what} must be a 1-D tile of {n}")
+        gs = beta.base - decay.base
+        if not 0 < gs < 1 << 16:
+            raise CompileError("deltanet_step: beta must follow decay in TMEM")
+        self.check_live(qk, v, decay, beta, o)
+        if Affine.of(state.base).is_static and Affine.of(state.base).const % self.cfg.D:
+            raise CompileError("deltanet_step: the state must be DRAM-chunk aligned")
+        ra, imm = self.addr(state.base)
+        self.emit(I.dstep(imm, qk.base, v.base, rows, cols, decay.base, gs, o.base, zero=zero,
+                          ra=ra, comment="dstep"))
+        self.bump_version(o.buf)
+
     def fuse_mm_rmax(self, x: Tile):
         """max(s, axis=1) of a dot output nothing has touched since: set RMAX on that MM and
         return the maxima it writes after the tile's last row."""
@@ -1146,7 +1247,7 @@ class Builder:
         return out
 
     def store_quantized(self, x: Tile, dst: Affine, sdst: Affine, drs: int, es: int,
-                        row_scale: bool) -> None:
+                        row_scale: bool, half: bool = False) -> None:
         D = self.cfg.D
         if x.cols % D:
             raise CompileError("quantized stores need a multiple of D elements per row")
@@ -1154,7 +1255,7 @@ class Builder:
         rc, simm = self.addr(sdst)
         rs = x.rs if len(x.shape) == 2 else x.cols
         self.emit(I.qst(x.base, dimm, simm, x.rows, x.cols // D, rs, drs, es, row=row_scale,
-                        rb=rb, rc=rc, comment="quantized store"))
+                        half=half, rb=rb, rc=rc, comment="quantized store"))
 
     def all_gather(self, x: Tile, S: int) -> Tile:
         x = self.materialize(x)

@@ -84,8 +84,8 @@ def test_register_map(have_verilator):
     assert ident == 0x4F545055
     assert ver == (CFG.D << 16) | (CFG.MCOLS << 8) | CFG.LANES
     assert regmap == 3
-    # log2 256, log2 1024; PAIR, 4-bit, ddr, i2c, temp, trace
-    assert caps == (8 << 16) | (10 << 8) | 0b111111
+    # log2 256, log2 1024; chash, DSTEP, PAIR, 4-bit, ddr, i2c, temp, trace
+    assert caps == (8 << 16) | (10 << 8) | 0x80 | 0b1111111
     assert khz == 75294 and bid == TB_BUILD_ID and mts == 1066
     assert temp == (1 << 31) | TB_TEMP
     assert 44.5 < TB_TEMP * 503.975 / 4096 - 273.15 < 45.5
@@ -97,8 +97,8 @@ def test_register_map(have_verilator):
 def test_register_map_board_defaults(have_verilator):
     t = SimTransport(ch_bytes=1 << 20)
     caps, khz, mts = t.reg_read_many([R_CAPS, R_CORE_KHZ, R_DDR_MTS])
-    # 1024-cycle windows, 16384 records; PAIR, 4-bit, temp, trace
-    assert caps == (10 << 16) | (14 << 8) | 0b110111
+    # 1024-cycle windows, 16384 records; chash, DSTEP, PAIR, 4-bit, temp, trace
+    assert caps == (10 << 16) | (14 << 8) | 0x80 | 0b1110111
     assert khz == 100000 and mts == 0                     # no DDR_MTS given: CAPS bit3 clear
 
 
@@ -276,7 +276,7 @@ def test_decoder_skips_cut_groups():
 def test_trace_ring_and_stop_when_full(have_verilator):
     """A ring smaller than the trace keeps the last records (a suffix of the lines); with
     STOP_WHEN_FULL it keeps the first DEPTH records (a prefix)."""
-    depth = 256
+    depth = 128                                   # the demo writes ~320 records: the ring wraps
     for ctrl in (TRACE_ENABLE, TRACE_ENABLE | TRACE_STOP_WHEN_FULL):
         t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=3,
                          plusargs=["+trace", "+bucket=64"], params={"TRACE_DEPTH": depth})
