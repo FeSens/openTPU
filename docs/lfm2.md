@@ -174,16 +174,16 @@ sampling included, is ~0.1 ms, measured on a Mac). With the int8 head at 116 MHz
 alone takes 11.31 ms (simulated), so the host would have to add nothing. What closes it, largest
 first (all *estimates*):
 
-1. RTL: the adapter's write queue at 64 entries (stream r7-apf's next step): V^T appends
-   ~200 cycles, the append chain hidden under the Q projections: attention ~157K -> ~100K,
-   about -55K cycles (-4%): ~1.26 Mcycles, ~92 tok/s device at 116 MHz.
+1. RTL: faster V^T appends. The adapter's write queue at 64 entries was measured on r7-apf
+   (simulated): an append 7.7K -> 4.9K cycles, with QST's own floor at ~2.35K cycles per KiB, so
+   the rest needs the V^T channel layout and the QST path. Attention at its byte roofline would
+   save ~65K cycles (-5%): ~1.25 Mcycles, ~93 tok/s device at 116 MHz (*estimate*).
 2. Clock: 116 -> 125 MHz scales tokens/s with the clock (the cycles grow 0.3%): ~99 tok/s
    device with item 1.
-3. Host per-token time (1.3 ms -> <= 0.5 ms): one program per model instead of one per
-   position (no program copy and IMEM load per token), fewer register reads per token, the
-   logits read cut to the part the sampler needs (the LM head MMs already produce their row
-   maxima: read those first, then only the blocks that can hold the top-k); to be split up
-   with `tools/decode_profile.py` on the card first.
+3. Host per-token time (1.3 ms -> <= 0.5 ms): the logits are now read and sampled while the
+   run goes on, all but the last chunk ([host.md](host.md), "Streamed logits"); one program
+   per model instead of one per position removes the program copy, the IMEM load and the
+   compile wait. `tools/host_path_card.py` measures what is left on the card.
 4. Compiler + layout: one QST for all heads' K appends (and V^T), with the per-head scale
    arrays interleaved by position (a QST writes its scales contiguously): about -2K cycles
    per attention layer, -1% per token.
@@ -192,9 +192,9 @@ first (all *estimates*):
    Accuracy ([quant.md](quant.md), emulation, book text): ppl 33.16 (KL 0.159) against 32.92
    (KL 0.146) with the int8 head, int8 everywhere 29.05 (0.003).
 
-With items 1 and 3 the int8-head configuration projects to ~92 tok/s device and ~88 wall at
-116 MHz (0.5 ms of host per token), and ~99 device / ~94 wall at 125 MHz, where DRAM efficiency
-is ~91% of the DDR3-1066 peak. Past that the core port, not the DDR3, is the limit.
+With items 1 and 3 the int8-head configuration projects to ~93 tok/s device and ~88 wall at
+116 MHz (0.5 ms of host per token), and ~100 device / ~95 wall at 125 MHz, where DRAM efficiency
+is ~92% of the DDR3-1066 peak. Past that the core port, not the DDR3, is the limit.
 
 ## Tests
 

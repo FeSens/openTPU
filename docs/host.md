@@ -512,6 +512,59 @@ card (build a691ea98, burst image), ms per token for the sampling, before / afte
 chat loop the logits are freshly read from the card, and the rest of the sampler (the
 repetition penalty, the choice) adds to it.
 
+**Streamed logits.** What the host does between seeing HALTED and writing RUN for the next token
+is the token's critical path: the card idles meanwhile. Reading the whole logits vector and
+sampling from it after the run were most of it (0.41 + 0.47-0.65 ms for LFM2 above). The LM
+head writes the logits in chunks of 8,192 (32 KiB), one after the other, in the last part of
+the run (25-40% of an LFM2 token, simulated), so the host now takes each chunk while the run
+goes on (`BoardBackend.start(stream=...)` / `wait(feed)`, `Engine.step(sink=...)`):
+
+- Before the run the logits region holds a word the device never stores, 0xFFFFFFFF (its NaN
+  is canonical: 0x7FC00000, or 0xFFC00000 after a sign flip). A chunk is complete when none of
+  its words is left: the host probes the chunk's last beat (one 64-byte read), then reads the
+  chunk and checks every word, and writes the marker back into it (the run is past it).
+- The probes start 0.3 ms before the time the same chunk was seen complete in the last token
+  (every 0.5 ms on the first), and retry every 0.1 ms; a chunk already complete at its first
+  probe moves its time 0.3 ms earlier, so the schedule follows the run both ways. The waits are
+  sleeps of at most 1 ms (a long sleep overshoots: 38% on macOS). HALTED ends the loop; the last
+  chunk (written just before the halt) and any other still pending are read in one read after
+  it, and marked again right after the next token's RUN (its LM head is milliseconds away).
+- The sampler takes each chunk as it comes (`pick.stream(context)`, chat.sampler): the
+  repetition penalty and the 64-logit block maxima of the top-k prefilter are applied per chunk,
+  so after the halt only the selection is left (21-31 us against 44-108 us for the whole
+  vector on the Mac, the models' defaults). The picks are those of `pick(logits, context)`
+  exactly, with the same random stream (tests/test_host.py).
+- A run that leaves a word of the region unwritten is an error, not stale logits; a run that
+  is not a streamed decode step (a prefill, a batch) makes the next step mark the whole region
+  again (256 KiB for LFM2, before its RUN). Transports without DMA during a run (the board
+  model) read the logits after the run as before; `Engine.stream_logits = False` turns it off.
+
+This DMA during a run is new on the card: the whole path is tested against a fake card that
+runs the ISA simulator and reveals the logits late, chunk by chunk (bit-exact logits and the
+same picks over prefill and decode), but not yet on the card.
+
+The token's text and the interface's drawing now go after the next RUN (`on_start`), and the
+status file is rewritten only by its timer thread, never from the token's critical path.
+
+**Measuring it.** `tools/decode_profile.py` measures the critical path directly: from HALTED
+seen to the next RUN written, per token, split into its steps, every transport operation
+(DMA write / read, register read / write, the HALTED poll) filed under the step it serves and
+as critical or overlapped (`--no-stream` for the old read; `--json` adds the reply's token ids).
+The tool's own timers add a few microseconds per operation. `tools/host_path_card.py` is the
+card session: for each model, greedy with and without streaming (the replies must be the same
+tokens) and sampled with and without, then one table per model:
+
+```sh
+OTPU_LOCK_WAIT=600 python3 tools/host_path_card.py --models lfm2,qwen3 --tokens 96
+OTPU_LOCK_WAIT=600 python3 tools/host_path_card.py --models lfm2 -- --wformat fp4 --head-format int8
+```
+
+What is left on the critical path after streaming, by the measurements above (*estimate* until
+the card run): the x / cos / sin write (0.16 ms), the program upload and IMEM load (0.23 ms, gone
+with one position-independent program per model), the wait for the compile (0.08 ms; at a 12 ms
+token the per-position compile of LFM2 no longer keeps up on a laptop: the same fix), the
+counters (~0.02 ms), the last chunk's read and the selection (~0.1 ms), Python (~0.1 ms).
+
 The chat interface draws each token while the card runs the next one: `Chat` hands a token to
 `on_update` from `Engine.step`'s `on_start` hook (called once the run is started), so the
 interface's work does not delay the host work that starts a run. Before, the full-screen
