@@ -210,23 +210,23 @@ module otpu_axi_dram #(
   always_ff @(posedge clk)
     for (int c = 0; c < 2; c++) if (qb_push[c]) qc[c][QW'(qb_h[c] + qb_n[c])] <= b_cont;
   for (genvar c = 0; c < 2; c++) begin : g_mem
-    qb_t          qbm [QD];
-    qa_t          qam [QD];
-    qw_t          qwm [QD];
+    // flat vectors: Vivado builds a RAM of structs from registers (qbm and qwm were ~37K
+    // flip-flops and their read multiplexers, in the congested corner by the memory ports)
+    logic [$bits(qb_t)-1:0] qbm [QD];
+    logic [$bits(qa_t)-1:0] qam [QD];
+    logic [$bits(qw_t)-1:0] qwm [QD];
     logic [511:0] rbm [RD];
     logic [511:0] ram [AD];
-    always_ff @(posedge clk) begin
-      if (qb_push[c]) qbm[QW'(qb_h[c] + qb_n[c])] <= qb_e[c];
-      if (qa_push[c]) qam[QW'(qa_h[c] + qa_n[c])] <= qa_e[c];
-      if (qw_push[c]) qwm[QW'(qw_h[c] + qw_n[c])] <= qw_e[c];
-    end
+    always_ff @(posedge clk) if (qb_push[c]) qbm[QW'(qb_h[c] + qb_n[c])] <= qb_e[c];
+    always_ff @(posedge clk) if (qa_push[c]) qam[QW'(qa_h[c] + qa_n[c])] <= qa_e[c];
+    always_ff @(posedge clk) if (qw_push[c]) qwm[QW'(qw_h[c] + qw_n[c])] <= qw_e[c];
     always_ff @(posedge clk)
       if (m_rvalid[c] && !m_rid[c]) rbm[rb_t[c]] <= m_rdata[c];
     always_ff @(posedge clk)
       if (m_rvalid[c] && m_rid[c]) ram[ra_t[c]] <= m_rdata[c];
-    assign hb[c] = qbm[qb_h[c]];
-    assign ha[c] = qam[qa_h[c]];
-    assign hw[c] = qwm[qw_h[c]];
+    assign hb[c] = qb_t'(qbm[qb_h[c]]);
+    assign ha[c] = qa_t'(qam[qa_h[c]]);
+    assign hw[c] = qw_t'(qwm[qw_h[c]]);
     assign rb_head[c] = rbm[rb_h[c]];
     assign ra_head[c] = ram[ra_h[c]];
   end
