@@ -46,6 +46,17 @@ if {!$impl_only} {
   launch_runs synth_1 -jobs $jobs
   wait_on_run synth_1
   if {[get_property PROGRESS [get_runs synth_1]] != "100%"} { error "synthesis failed" }
+  # A memory that synthesis turned into a block RAM with a registered read address (Synth
+  # 8-6430) returns the old word when a write and a read of one address meet, where the RTL's
+  # asynchronous read returns the new one: the simulation no longer describes the hardware
+  # (the VPU's RDOT row buffer did this and wrote stale sums on the card). Stop the build.
+  set fh [open $out/otpu.runs/synth_1/runme.log]; set slog [read $fh]; close $fh
+  set coll [regexp -all -inline {Synth 8-6430\] The Block RAM "[^"]*"} $slog]
+  if {[llength $coll]} {
+    error "synthesis made asynchronous-read memories block RAMs with a read-address register\
+           (collisions differ from the RTL): [join $coll {; }] -- give them\
+           (* ram_style = \"distributed\" *)"
+  }
   open_run synth_1
   report_utilization -hierarchical -hierarchical_depth 4 -file $out/reports/synth_util_hier.rpt
   report_timing_summary -max_paths 20 -file $out/reports/synth_timing.rpt
