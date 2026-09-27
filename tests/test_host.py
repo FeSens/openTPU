@@ -857,6 +857,21 @@ def test_setup_pcie_package():
     assert r.returncode == 0 and "--rescan" in r.stdout and "set -euo" not in r.stdout
 
 
+def test_xdma_transport_locks_before_opening(tmp_path, monkeypatch):
+    """A transport waiting for a busy card holds no file on it (a rescan by the holder would be
+    refused): the lock comes first, so a busy device raises DeviceBusy, not an open error."""
+    from opentpu.host import runstate as rs
+    from opentpu.host.board import XdmaTransport
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    held = rs.DeviceLock("xdmaT")
+    with pytest.raises(rs.DeviceBusy):
+        XdmaTransport(str(tmp_path / "xdmaT"))
+    held.release()
+    with pytest.raises(FileNotFoundError):          # free: now it opens (no such device here)
+        XdmaTransport(str(tmp_path / "xdmaT"))
+    rs.DeviceLock("xdmaT", wait=0).release()        # and the failed open released the lock
+
+
 def test_device_lock_waits_for_a_busy_card(tmp_path, monkeypatch):
     """OTPU_LOCK_WAIT: a second runner waits for the lock instead of failing at once; it gets the
     lock once the first releases it, and still fails with DeviceBusy when the wait runs out."""
