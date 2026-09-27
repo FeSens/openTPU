@@ -422,6 +422,7 @@ the patch messages of that build.
 | Image | Calibration | selftest | diag memory | Qwen3 decode |
 |---|---|---|---|---|
 | DDR3-800, burst (a691ea98) | ok | all pass | all pass | 8.58 Mcycles/token, 11.65 tok/s, DRAM 7.2 GB/s, MXU_STARVE 37% |
+| DDR3-1066, in spec (a691ea98) | ok (both channels) | all pass | 13 / 13 pass, `--mem full --soak 20` | 6.85 Mcycles/token (-20%) |
 | DDR3-1300, out of spec (819fee49) | ok (both channels) | all pass | 11 / 11 pass | 6.50 Mcycles/token, 15.38 tok/s, DRAM 9.53 GB/s, MXU_STARVE 18% |
 | DDR3-1333, out of spec, patched PHY (254f8388) | ok (both channels) | fails at the DMA bandwidth stage (H2C timeout), then the card leaves the PCIe bus (ID 0xffffffff) | not run | not run |
 
@@ -439,7 +440,16 @@ regs 7, mem 13, isa 93, system 5), and the three models match the ISA simulator 
 | LFM2-350M | 2.34 (800: 3.14) | 42.7 | 23.5 |
 | Qwen3.5-0.8B | 9.08 (800: 11.88) | 11.0 | 7.5 |
 
-It is still not qualified: MIG's ECC correction counters were not read (a marginal link corrects
+DDR3-1066, inside MIG's range for these banks, passed the same checks the same day (a691ea98,
+WNS +0.107 ns). It gets most of 1300's gain:
+
+| Model | Mcycles/token at 1066 | device tok/s | wall tok/s (host of a691ea98) |
+|---|---|---|---|
+| Qwen3-0.6B | 6.85 | 14.6 | 12.6 |
+| LFM2-350M | 2.46 | 40.7 | 21.8 |
+| Qwen3.5-0.8B | 9.75 | 10.3 | 7.4 |
+
+DDR3-1300 is still not qualified: MIG's ECC correction counters were not read (a marginal link corrects
 silently), the warm soak (step 2) was not run, and it is outside MIG's range for these banks.
 
 **Checklist per speed.** Status: *unmeasured* at every speed above 800 until the results are
@@ -469,7 +479,7 @@ the next power cycle.
 | DDR3 | bitstream | MIG in range | calibration | diag / soak | ECC CE | decode vs 800 |
 |---|---|---|---|---|---|---|
 | 800 | default | yes | passes (2026-09-26) | diag passes (2026-09-26); soak not recorded | not read | baseline |
-| 1066 | `make bit DDR=1066` | yes | unmeasured | unmeasured | unmeasured | unmeasured |
+| 1066 | `make bit DDR=1066` | yes | passes (2026-09-27) | diag + `--mem full --soak 20` pass, cold only | not read | Qwen3 -20% cycles/token, LFM2 -22%, Qwen3.5 -18% |
 | 1300 (out of spec) | `make bit DDR=1300` | no (79-155) | passes (2026-09-27) | diag + `--mem full --soak 20` pass, cold only | not read | Qwen3 -24% cycles/token, LFM2 -25%, Qwen3.5 -24% |
 | 1333 (out of spec) | `make bit DDR=1333` | no (79-155, PHY patched) | passes (2026-09-27) | fails: H2C timeout, card leaves PCIe | not read | not run |
 | 1600 (out of spec) | `make bit DDR=1600` | no (79-155, PHY patched) | unmeasured | unmeasured | unmeasured | unmeasured |
