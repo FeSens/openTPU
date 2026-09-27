@@ -66,6 +66,11 @@ def main():
                     help="cycles per AXI read transaction and channel (the board's is about 4)")
     ap.add_argument("--bl", type=int, default=8,
                     help="AXI read burst, beats (1: single-beat reads, as before bursts)")
+    ap.add_argument("--dram", choices=["off", "brc", "rbc"], default="off",
+                    help="DDR3 bank / row timing (otpu_axi_mem.sv) with the MIG's address map "
+                         "BANK_ROW_COLUMN or ROW_BANK_COLUMN (replaces --bw)")
+    ap.add_argument("--plus", action="append", default=[],
+                    help="extra simulator argument, e.g. --plus +axi_trfc=26 (repeatable)")
     ap.add_argument("--block", type=int, default=None, help="attention block (tokens)")
     ap.add_argument("--depth", type=int, default=None, help="attention score blocks in flight")
     ap.add_argument("--check", action="store_true", help="compare with the ISA simulator")
@@ -100,7 +105,10 @@ def main():
     drams, _, st = rtlsim.run(cfg, progs, [dram], trace=True,
                               uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl},
                               axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat, arc=a.arc,
-                              max_cycles=1 << 40)
+                              max_cycles=1 << 40,
+                              plusargs=([] if a.dram == "off" else
+                                        ["+axi_dram=1", f"+axi_map={int(a.dram == 'rbc')}"])
+                              + a.plus)
     wall = time.time() - t
     p = parse(st["trace"], cfg, progs, path.name)
     p.cycles = st["cycles"]
@@ -113,7 +121,17 @@ def main():
     if ar:
         print("AXI reads per channel (transactions, beats, beats/transaction): " +
               ", ".join(f"{n}, {b}, {b / max(n, 1):.2f}" for n, b in ar) +
-              f"; arc={a.arc} bl={a.bl}")
+              f"; arc={a.arc} bl={a.bl} dram={a.dram}")
+    b = p.buckets[0]
+    if b.get("ms") is not None:
+        mxb = sum(b.get("mx", []))
+        print(f"MXU starved (chunk FIFO empty while streaming, the card's MXU_STARVE) "
+              f"{sum(b['ms'])} cycles = {100 * sum(b['ms']) / p.cycles:.1f}%; MAC "
+              f"{100 * mxb / p.cycles:.1f}%; DRAM read beats/cycle/channel "
+              f"{sum(n for _, n in ar) / 2 / p.cycles:.3f}")
+    for c, d in enumerate(st.get("axi_detail", [])):
+        print(f"  ch{c}: port A reads {d['ar_a']}, DDR3 row opens {d['row_miss']}, "
+              f"read-modify-writes {d['rmw']} (port A / QST {d['rmw_a']})")
     # useful-bytes roofline: weights + their fp32 block scales + KV + activations, at D bytes
     # per cycle (both channels at 100%)
     D = cfg.D
