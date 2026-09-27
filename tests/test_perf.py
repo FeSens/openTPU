@@ -56,3 +56,16 @@ def test_attention_layer_near_roofline(have_verilator):
     a["block"] = 128
     p = profile(attention_layer, cfg, **a)
     assert _eff(p) > 0.88, p.summary()
+
+
+def test_dram_efficiency_definition():
+    from opentpu.profile import ddr3_peak, ddr3_plusargs, dram_efficiency
+    assert ddr3_peak(3200 / 3) == pytest.approx(17.0667e9, rel=1e-4)
+    # a token that moves 128 B per 100 MHz cycle at DDR3-1066 uses 75% of the DDR3 peak
+    assert dram_efficiency(128 * 1000, 1000, 3200 / 3, 100) == pytest.approx(0.75)
+    a = dict(x[len("+axi_"):].split("=") for x in ddr3_plusargs(3200 / 3, 100)[2:])
+    # the timings the model was calibrated with (DDR3-1066, 100 MHz core: ui_clk 133 MHz)
+    assert {k: int(v) for k, v in a.items()} == dict(
+        tpc=10000, tpu=7500, trp=3, trcd=3, tras=5, trc=7, trfc=22, trefi=1040, trmw=23)
+    a = dict(x[len("+axi_"):].split("=") for x in ddr3_plusargs(800, 100)[2:])
+    assert (int(a["tras"]), int(a["trc"]), int(a["trfc"]), int(a["trefi"])) == (4, 6, 16, 780)

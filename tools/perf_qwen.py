@@ -2,14 +2,19 @@
 
     python3 tools/perf_qwen.py [--model qwen3|lfm2|qwen35|DIR] [--layers N] [--pos P]
                                [--bw 100] [--check] [--wformat int8|int4|fp4]
-                               [--head-format int8|int4|fp4]
+                               [--head-format int8|int4|fp4] [--ddr 1066 [--mhz 100]]
 
 Uses the real weights (models/Qwen3-0.6B, or --model lfm2: models/LFM2.5-230M, --model qwen35:
 models/Qwen3.5-0.8B), optionally only the first N layers (the LM head is always complete).
-Prints cycles, the DRAM roofline (port-B chunk transfers: weights, KV, LD/ST chunks), the
-useful-bytes roofline, efficiency, tokens/s at an assumed 100 MHz, the cycles per phase of the
-token (DeltaNet, attention, MLP, LM head) with their bytes, MM time per kernel source line, and
-the MXU idle gaps with their causes.
+Prints cycles, the core-port roofline (port-B chunk transfers: weights, KV, LD/ST chunks; port
+A; the MXU's own rate), the useful-bytes roofline, the DRAM efficiency, tokens/s at --mhz, the
+cycles per phase of the token (DeltaNet, attention, MLP, LM head) with their bytes, MM time per
+kernel source line, and the MXU idle gaps with their causes.
+
+--ddr MTS: the DDR3 bank model calibrated on the card (opentpu.profile.ddr3_plusargs; ROW_BANK_
+COLUMN, 4 cycles per AXI read transaction, 300 ns latency) at DDR3-MTS with the core at --mhz
+(the MIG's ui_clk is MTS / 8). DRAM efficiency = the token's DRAM bytes (weights, scales, KV,
+I/O, reads and writes) / (its time x the DDR3 peak, 16 bytes x MTS: 17.07 GB/s at 1066).
 """
 from __future__ import annotations
 
@@ -30,7 +35,7 @@ from opentpu import rtlsim  # noqa: E402
 from opentpu.isasim import Machine, board_config  # noqa: E402
 from opentpu.llm import MODELS, load_spec, model_dir  # noqa: E402
 from opentpu.llm.qwen3 import load_weights, rope_tables  # noqa: E402
-from opentpu.profile import parse  # noqa: E402
+from opentpu.profile import ddr3_peak, ddr3_plusargs, dram_efficiency, parse  # noqa: E402
 
 
 # kernel functions that name a phase of the token (the innermost one on an instruction's source
@@ -61,7 +66,8 @@ def main():
     ap.add_argument("--cap", type=int, default=None,
                     help="KV cache capacity (tokens); default: the multiple of 256 above pos")
     ap.add_argument("--bw", type=int, default=100)
-    ap.add_argument("--lat", type=int, default=30)
+    ap.add_argument("--lat", type=int, default=None, help="read latency, core cycles "
+                    "(default 30; with --ddr 300 ns)")
     ap.add_argument("--stall", type=int, default=0)
     ap.add_argument("--arc", type=int, default=0,
                     help="cycles per AXI read transaction and channel (the board's is about 4)")
@@ -70,6 +76,10 @@ def main():
     ap.add_argument("--dram", choices=["off", "brc", "rbc"], default="off",
                     help="DDR3 bank / row timing (otpu_axi_mem.sv) with the MIG's address map "
                          "BANK_ROW_COLUMN or ROW_BANK_COLUMN (replaces --bw)")
+    ap.add_argument("--ddr", type=float, default=None,
+                    help="DDR3 MT/s of the calibrated bank model (800, 1066, 1300; sets "
+                         "--dram rbc --arc 4 and the timings)")
+    ap.add_argument("--mhz", type=float, default=100.0, help="core clock (tokens/s; --ddr)")
     ap.add_argument("--plus", action="append", default=[],
                     help="extra simulator argument, e.g. --plus +axi_trfc=26 (repeatable)")
     ap.add_argument("--block", type=int, default=None, help="attention block (tokens)")
@@ -82,6 +92,14 @@ def main():
     ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"],
                     help="weight format of the LM head (default: --wformat)")
     a = ap.parse_args()
+    plus = list(a.plus)
+    if a.ddr:
+        a.ddr = {1066: 3200 / 3, 1333: 4000 / 3}.get(int(a.ddr), a.ddr)
+        plus = ddr3_plusargs(a.ddr, a.mhz)[2:] + plus
+        a.dram = "rbc" if a.dram == "off" else a.dram
+        a.arc = a.arc or 4
+        a.lat = a.lat if a.lat is not None else round(0.3 * a.mhz)
+    a.lat = 30 if a.lat is None else a.lat
     path = model_dir(a.model)
     spec = load_spec(path)
     if a.layers:
@@ -114,7 +132,7 @@ def main():
                               max_cycles=1 << 40,
                               plusargs=([] if a.dram == "off" else
                                         ["+axi_dram=1", f"+axi_map={int(a.dram == 'rbc')}"])
-                              + a.plus)
+                              + plus)
     wall = time.time() - t
     p = parse(st["trace"], cfg, progs, path.name)
     p.cycles = st["cycles"]
@@ -122,10 +140,11 @@ def main():
     # port B (chunks) runs at bw; port A (one scale word per block, from buffered beats) and the
     # MXU (one block per cycle) do not: 4-bit weights stream two blocks per chunk
     ps = rl["per_slice"][0]
-    ideal = max(ps["portb"] * 100 / a.bw, ps["porta"])
+    ideal = max(ps["portb"] * 100 / a.bw, ps["porta_cycles"], ps["mxu"])
     print(f"layers={spec.layers} pos={a.pos} bw={a.bw}% lat={a.lat}: {p.cycles} cycles "
-          f"({wall:.0f}s sim), roofline {rl['bound']} chunks -> {ideal:.0f} cycles at this "
-          f"bandwidth, efficiency {100 * ideal / p.cycles:.1f}%")
+          f"({wall:.0f}s sim), core-port roofline {ideal:.0f} cycles (port B {ps['portb']} "
+          f"chunks, port A {ps['porta_cycles']}, MXU {ps['mxu']}), "
+          f"efficiency {100 * ideal / p.cycles:.1f}%")
     ar = st.get("axi_reads", [])
     if ar:
         print("AXI reads per channel (transactions, beats, beats/transaction): " +
@@ -155,10 +174,15 @@ def main():
 
     useful = sum(nbytes(r) for r in p.recs)
     ub = useful / D * 100 / a.bw
-    print(f"useful bytes {useful} -> {ub:.0f} cycles at this bandwidth: "
-          f"efficiency {100 * ub / p.cycles:.1f}%")
-    print(f"at an assumed 100 MHz: {p.cycles / 1e5:.1f} ms/token, {1e8 / p.cycles:.1f} tok/s "
-          f"(simulated cycles, no host time)")
+    print(f"useful bytes {useful} -> {ub:.0f} cycles at {D} B/cycle x {a.bw}% (the core's "
+          f"port): efficiency {100 * ub / p.cycles:.1f}%")
+    if a.ddr:
+        print(f"DRAM efficiency {100 * dram_efficiency(useful, p.cycles, a.ddr, a.mhz):.1f}% "
+              f"(DDR3-{a.ddr:.0f} peak {ddr3_peak(a.ddr) / 1e9:.2f} GB/s = "
+              f"{ddr3_peak(a.ddr) / a.mhz / 1e6:.1f} B per core cycle at {a.mhz:g} MHz; "
+              f"{useful / p.cycles * a.mhz / 1e3:.2f} GB/s moved)")
+    print(f"at {a.mhz:g} MHz: {p.cycles / a.mhz / 1e3:.2f} ms/token, "
+          f"{a.mhz * 1e6 / p.cycles:.1f} tok/s (simulated cycles, no host time)")
     print(p.summary())
     print(f"phases: cycles, share, useful bytes -> cycles at {a.bw}% (their roofline), "
           f"VPU busy, MXU busy")

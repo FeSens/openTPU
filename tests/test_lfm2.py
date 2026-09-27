@@ -162,12 +162,38 @@ def test_lfm2_5_230m_greedy_matches_hf():
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/LFM2.5-230M not downloaded")
-def test_lfm2_5_230m_token_on_rtl_is_bit_exact(have_verilator):
+def test_lfm2_5_230m_fp4_int8_head_greedy():
+    """LFM2.5-230M with 4-bit layer weights and an int8 LM head on the board's MCOLS=2 with
+    column reuse (every layer MM a full-rate PAIR MM), on the ISA simulator: the greedy answer
+    is still right, and every generated token is the argmax of the float64 emulation of the
+    same weights."""
+    from opentpu.llm.qwen3 import device_config
+    tok = transformers.AutoTokenizer.from_pretrained(REAL)
+    ids = _chat_ids(tok, "What is the capital of France? Answer in one sentence.")
+    spec, W = load_spec(REAL), load_weights(REAL)
+    cfg = device_config(spec, 256, wformat="fp4", head_format="int8", MCOLS=2, PAIR=True)
+    eng = Engine(spec, W, cap=256, cfg=cfg, wformat="fp4", head_format="int8")
+    got = eng.generate(ids, max_new=8)
+    assert "Paris" in tok.decode(got)
+    emu = emulated_logits(spec, W, ids + got[:-1], wformat="fp4", head_format="int8")
+    assert emu[len(ids) - 1:].argmax(-1).tolist() == got
+
+
+@pytest.mark.skipif(not REAL.exists(), reason="models/LFM2.5-230M not downloaded")
+@pytest.mark.parametrize("wformat,head_format,pair", [("int8", None, False),
+                                                      ("fp4", "int8", True)])
+def test_lfm2_5_230m_token_on_rtl_is_bit_exact(have_verilator, wformat, head_format, pair):
     """Feed part of a prompt on the ISA simulator, then run the next token on the Verilator RTL
     and on the ISA simulator from the same DRAM state: weights, KV cache, conv state and
-    logits must agree bit for bit."""
+    logits must agree bit for bit (int8; 4-bit layers with an int8 LM head on the board's
+    MCOLS=2 with column reuse)."""
+    from opentpu.llm.qwen3 import device_config
     from opentpu.llm.rtl_backend import RtlBackend
-    eng = Engine(load_spec(REAL), load_weights(REAL), cap=256)
+    spec = load_spec(REAL)
+    cfg = device_config(spec, 256, wformat=wformat, head_format=head_format, MCOLS=2,
+                        PAIR=True) if pair else None
+    eng = Engine(spec, load_weights(REAL), cap=256, cfg=cfg, wformat=wformat,
+                 head_format=head_format)
     prompt = [1, 6, 6423, 708, 3493, 856, 779, 5706, 803, 4481]
     for t in prompt[:-1]:
         eng.step(t)
