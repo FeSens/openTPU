@@ -69,6 +69,8 @@ class DeviceLock:
         OTPU_LOCK_WAIT, else 0). Waiting polls the lock, so it is fair only in the sense that
         whoever tries when it is free gets it."""
         self.name = name
+        if os.environ.get("OTPU_LOCK_HELD") == name:    # inside `otpu-lock -- CMD`: it holds it
+            return
         if wait is None:
             wait = float(os.environ.get("OTPU_LOCK_WAIT", "0") or 0)
         deadline = time.monotonic() + wait
@@ -192,8 +194,9 @@ def read_status(name: str) -> dict | None:
 def hold_main(argv=None) -> int:
     """otpu-lock [--dev /dev/xdma0] [--wait SEC] -- CMD...: run CMD while holding the device lock
     (for steps that are not openTPU tools but must not overlap a run: a JTAG reload, a driver
-    reload, a rescan). CMD itself must not open the card through Board (it would wait for the
-    lock this process holds)."""
+    reload, a rescan), or a sequence of runs that must not be interleaved with others (a reload,
+    then tests on the new image). openTPU tools inside CMD run under this lock
+    (OTPU_LOCK_HELD)."""
     import argparse
     import subprocess
     ap = argparse.ArgumentParser(prog="otpu-lock", description=hold_main.__doc__.split("\n")[0])
@@ -205,7 +208,7 @@ def hold_main(argv=None) -> int:
     if not cmd:
         ap.error("no command")
     lock = DeviceLock(devname(a.dev), wait=a.wait)
-    try:
-        return subprocess.call(cmd)
+    try:           # openTPU tools inside CMD run under this lock instead of waiting for it
+        return subprocess.call(cmd, env={**os.environ, "OTPU_LOCK_HELD": devname(a.dev)})
     finally:
         lock.release()

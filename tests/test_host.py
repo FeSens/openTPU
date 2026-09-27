@@ -872,3 +872,6 @@ def test_device_lock_waits_for_a_busy_card(tmp_path, monkeypatch):
         rs.DeviceLock("w0", wait=1)
     second.release()
     assert rs.hold_main(["--dev", "/dev/w0", "--wait", "1", "--", "true"]) == 0
+    code = ("from opentpu.host import runstate as rs; rs.DeviceLock('w0', wait=0); "
+            "print('inner ok')")                     # a tool inside otpu-lock: no second lock
+    assert rs.hold_main(["--dev", "/dev/w0", "--", sys.executable, "-c", code]) == 0
