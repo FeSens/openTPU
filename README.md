@@ -6,51 +6,53 @@ it, a small kernel language and compiler, and host software for a Kintex-7 PCIe 
 is to learn about hardware, software and ISA performance work by changing one layer and
 measuring what happens to the cycles.
 
-It is a prototype. It runs in simulation. It has not run on the FPGA yet: the Vivado build
-(synthesis, place and route, timing) has not been done, and nothing below has been checked on
-hardware.
+It runs on real hardware: an Inspur YPCB-00338 PCIe card (Xilinx Kintex-7 xc7k480t, two DDR3
+SODIMM channels) in a Linux PC, decoding Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B with their
+real weights, token for token identical to the bit-exact simulator.
 
-![Lens replaying a Qwen3 decode step on the floorplan, 100 cycles per second](docs/img/lens-floorplan.gif)
+![otpu-chat on LFM2.5-230M with otpu-smi watching the card](docs/img/card-chat-smi.gif)
 
-*Lens replaying part of a Qwen3 decode step from an RTL simulation of the board configuration,
-at 100 cycles per second. The dashes are data moving. The colours show what each unit is doing
-in that cycle: busy, stalled on DRAM, lost TMEM arbitration, or waiting on a dependency.*
+*`otpu-chat` (left) running LFM2.5-230M on the card, and `otpu-smi` (right) watching it. While
+the reply decodes the card is running 84% of the time and reads 8.15 GB/s from DRAM; the status
+line ends at 35.4 tok/s on the wall clock, 40.5 tok/s on the device. Screen recording,
+2026-09-27, production image `b2c7ce43`. (The prompt's typo "ROme" is answered as a company by
+this 230M-parameter model; the accelerator reproduces the model, mistakes included.)*
 
-## What works, and what doesn't yet
+## Measured on the card
 
-Works, in simulation:
+Production image `deploy_prod1066_b2c7ce43` (2026-09-27): core clock 100 MHz, DDR3-1066 on both
+channels, PCIe Gen1 x8, int8 weights, 2 MXU columns, 8 vector lanes. Greedy decode at a short
+context, measured with `tools/decode_profile.py`:
 
-- **Qwen3-0.6B with its real weights** on the instruction-set simulator. It runs in int8, so
-  its output differs slightly from Hugging Face's fp32 model because of quantization error
-  (see [Accuracy](#accuracy)).
-- **LFM2.5-230M**, Liquid AI's hybrid of short-convolution and attention layers, the same way
-  (`otpu-chat --model lfm2`). Its 64-wide heads are zero-padded to the 128-deep matrix unit and
-  its convolution state lives in DRAM; no ISA or RTL change was needed. See
-  [docs/lfm2.md](docs/lfm2.md).
-- **Qwen3.5-0.8B**, whose main layer is a Gated DeltaNet (linear attention with a 128 x 128
-  fp32 state per head), the same way (`otpu-chat --model qwen35`). The 1 MiB of state per layer
-  streams through the scratchpad head by head and the recurrence runs on the vector unit
-  (RDOT, OUTER). See [docs/qwen35.md](docs/qwen35.md).
-- **RTL vs simulator.** The Verilator RTL ends with exactly the same memory contents as the
-  simulator on the kernel tests, on a full Qwen3-0.6B token (6.38 M cycles), and on random
-  programs where instructions keep conflicting over the same memory, which checks that the
-  hardware keeps them in the right order while running units in parallel.
-- **Board model.** A Verilator testbench of the board (`sim/verilator/tb_board.sv`) runs the
-  bring-up and Qwen3 decode through the same host driver the card will use.
+| Model | Mcycles / token | Device tok/s | Wall tok/s | DRAM read per token | DRAM bandwidth used (derived) |
+|---|---|---|---|---|---|
+| LFM2.5-230M | 2.46 | 40.7 | 38.5 | ~234 MB | ~9.5 GB/s |
+| Qwen3-0.6B | 6.85 | 14.6 | 14.1 | ~600 MB | ~8.8 GB/s |
+| Qwen3.5-0.8B | 9.75 | 10.3 | 9.9 | ~819 MB | ~8.4 GB/s |
 
-Not done or not verified:
+"Device" counts only the cycles the accelerator runs; "wall" adds the host (the next token's
+program compiles in a worker process while the card runs, so the host costs 1.3 to 2.7 ms per
+token, mostly reading the logits and sampling). The bandwidth column is bytes per token times
+device tok/s. DDR3-1066's peak is 17.1 GB/s over both channels, and the core takes at most one
+128-byte chunk per cycle (12.8 GB/s at 100 MHz), so decode runs at about half the DRAM's peak
+and 65-74% of what the core can take in: that gap is what the current work goes after.
 
-- **No hardware run.** No bitstream has been built.
-- **Clock speed is an estimate.** 106 MHz is a rough estimate from yosys, not from Vivado; it
-  still has to be validated by a real build.
-- **Tokens per second are projections.** They are simulated cycles divided by an assumed
-  clock (100 MHz) and DRAM efficiency (80%), without host time.
-- **The board model skips the hardest parts of the physical integration.** DDR3 calibration
-  always succeeds, the DDR3 controllers are replaced by an AXI memory model, and PCIe, the
-  clocks and the resets are not simulated. Expect problems to show up when it first runs on
-  a real board.
-- **The host tools** (`otpu-smi`, `otpu-lens`, ...) have only run against the board model and
-  a fake device.
+On the same image, the three models match the ISA simulator token for token, `otpu-selftest`
+passes, and `otpu-diag --mem full --soak 20` passes all 127 checks. Prefill runs the prompt in
+chunks of rows that share each weight pass (bit-identical to token-by-token decode); the
+recording above shows a short LFM2 prompt at TTFT 0.26 s and 54.3 prompt tok/s on the wall
+clock (one observation, not a benchmark).
+
+The build: Vivado 2026.1, all timing constraints met at 100 MHz (WNS +0.085 ns). 163K LUT
+(54.6%), 147K FF (24.6%), 558 BRAM36 (58.4%), 283 DSP48 (14.7%) of the xc7k480t, including the
+XDMA and two MIG DDR3 controllers. Vivado's power estimate is 9.0 W (low confidence; the card
+has no power monitor). Bring-up, clocking and the DDR3 speed qualification are in
+[docs/board.md](docs/board.md); the host side in [docs/host.md](docs/host.md).
+
+Not done yet: the image is loaded over JTAG (the flash still holds an older image, so a power
+cycle loads that); DDR3 ECC error counters are not read; clocks above 100 MHz and 4-bit weights
+are being built and tested but are not in the production image, and no number above depends
+on them.
 
 ## How it's built
 
@@ -133,9 +135,9 @@ res = launch(mlp, Config(S=2), backend="rtl",            # or "isa"
              w_down=Weight(Wd, 0), out=Output((M, H)), eps=1e-6)
 ```
 
-## Measured numbers
+## Simulated kernel numbers
 
-All from Verilator RTL simulation of the board configuration (1 slice, 128-deep MXU with 2
+The card numbers are above. These come from Verilator RTL simulation of the board configuration (1 slice, 128-deep MXU with 2
 columns, 8 vector lanes, 16-entry window) on Qwen3-0.6B's shapes (hidden 1024, MLP 3072, 16
 query heads, 8 KV heads of 128). "Of roofline" is the kernel's cycles compared with the cycles
 needed just to move its bytes over the simulated DRAM port, which is idealized; it says
@@ -153,19 +155,10 @@ busy almost every cycle (100% and 99% at context 1024) while DRAM streams only 6
 time. The matrix unit spends that time on per-row work between streams, and the vector unit
 on the softmax. That is the obvious next thing to improve.
 
-One Qwen3-0.6B decode token at the board configuration (1 slice, 2 MXU columns, 8 lanes, AXI
-memory path) takes about 6.4 M cycles. At an assumed 100 MHz that would be about 15 tokens/s
-before host overhead. That is a projection, not a measurement.
-
-LFM2.5-230M streams less than half as many bytes per token. Measured on the same RTL
-configuration at 80% DRAM bandwidth and a 128-token context, a token takes 2.37 M cycles (96%
-of the DRAM roofline), which would be about 42 tokens/s at 100 MHz, again a projection
-([docs/lfm2.md](docs/lfm2.md)).
-
-Qwen3.5-0.8B streams about 820 MB per token, but its DeltaNet recurrence runs on the vector
-unit, which does not keep up with DRAM: measured on the same configuration (80%, context 128)
-a token takes 9.13 M cycles, 88% of the DRAM roofline, about 11 tokens/s at 100 MHz (a
-projection). The recurrence is 37% of it ([docs/qwen35.md](docs/qwen35.md)).
+Per-model breakdowns (which phase of the token spends the cycles, and against which roofline)
+are in [docs/lfm2.md](docs/lfm2.md) and [docs/qwen35.md](docs/qwen35.md). Qwen3.5's DeltaNet
+recurrence runs on the vector unit and does not keep up with DRAM; it is the largest single
+gap left in that model.
 
 ## Accuracy
 
@@ -193,9 +186,15 @@ come from the quantization and not from a bug.
 
 ## Lens
 
+![Lens replaying a Qwen3 decode step on the floorplan, 100 cycles per second](docs/img/lens-floorplan.gif)
+
+*Lens replaying part of a Qwen3 decode step from an RTL simulation of the board configuration,
+at 100 cycles per second. The dashes are data moving. The colours show what each unit is doing
+in that cycle: busy, stalled on DRAM, lost TMEM arbitration, or waiting on a dependency.*
+
 Lens is the profiler. It records a run (an RTL cycle trace, a simulator run, or, on the card,
 the hardware trace buffer) and opens it in the browser: an overview with the roofline and where
-the DRAM cycles went, a zoomable timeline, the floorplan replay above, and per-instruction and
+the DRAM cycles went, a zoomable timeline, the floorplan replay, and per-instruction and
 per-source-line tables.
 
 ```
@@ -203,7 +202,7 @@ python3 -m opentpu.lens record mlp attn -o run.otpuprof
 python3 -m opentpu.lens open run.otpuprof
 ```
 
-On the board model, the hardware trace buffer rebuilds the same trace lines the simulator
+On the card (`otpu-lens`) and on the board model, the hardware trace buffer rebuilds the same trace lines the simulator
 prints, and a test checks that they match. See [docs/lens.md](docs/lens.md) and
 [docs/observability.md](docs/observability.md).
 
@@ -225,8 +224,8 @@ component at a time. Each round:
 The first overnight run tried 96 changes across six components and kept 38. With some manual
 fixes between units, the yosys estimate for the accelerator logic went from 41 MHz to 106 MHz
 and from 132K to 82K LUT. These are yosys estimates for the accelerator and its control logic
-only. They leave out the PCIe and DDR3 controllers, which add roughly 45K LUT more, and they
-say nothing certain about what Vivado will achieve after place and route. The logs and patches
+only. Vivado then closed the whole board at 100 MHz on its first builds (see
+[Measured on the card](#measured-on-the-card)). The logs and patches
 are in `tools/tourney/runs/`, and [docs/tourney.md](docs/tourney.md) explains how to run it.
 
 ```
@@ -236,25 +235,24 @@ make tourney-report COMP=otpu_vpu      # REPORT.md and a progress plot
 
 ## The board
 
-The target is a YPCB-00338 card with an xc7k480t, two DDR3 SODIMM channels through MIG, and
-PCIe through XDMA. [docs/board.md](docs/board.md) has the build and bring-up steps, and
-[docs/status.md](docs/status.md) has the current state.
+The card is a YPCB-00338 with an xc7k480t, two DDR3 SODIMM channels through MIG, and PCIe
+through XDMA. [docs/board.md](docs/board.md) has the build (`make bit` in
+`boards/ypcb-00338`), JTAG loading and bring-up steps.
 
-Current yosys estimate for the accelerator and control logic (with the hardware trace buffer):
-85.6K LUT, 42.4K FF, 267 DSP, 635 BRAM36. Adding the vendor IP gives roughly 130K LUT, about
-44% of the part. The first Vivado run will replace these estimates.
-
-The host software runs on top of the stock Xilinx XDMA driver:
+The host software runs on top of the stock Xilinx XDMA driver (`sudo otpu-setup` installs it
+and rescans the bus after a JTAG load). The tools that run programs take a lock on the card, so a
+second one waits (`OTPU_LOCK_WAIT`) or names the holder; `otpu-smi` only reads counters and
+runs alongside them:
 
 ```
 otpu-selftest            registers, DRAM patterns, kernels, then a model (--sim for the board model)
 otpu-diag                every hardware check without stopping: a works / does-not-work matrix
 otpu-chat                chat with Qwen3-0.6B (or --model lfm2: LFM2.5-230M, qwen35: Qwen3.5-0.8B)
-otpu-smi                 temperature, estimated power, DRAM use, per-unit utilization
+otpu-smi                 temperature, estimated power, DRAM use and bandwidth, per-unit utilization and stalls
 otpu-lens                record a hardware trace and open it in Lens
 ```
 
-Temperature comes from the FPGA's XADC. Power is only an estimate: Vivado's per-unit power
+Temperature comes from the FPGA's XADC and the board's LM73 sensor over I2C. Power is only an estimate: Vivado's per-unit power
 report scaled by the utilization counters.
 
 ## Running the tests
