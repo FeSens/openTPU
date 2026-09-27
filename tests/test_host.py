@@ -854,3 +854,21 @@ def test_setup_pcie_package():
     subprocess.run(["bash", "-n", str(pcie_setup.SCRIPT)], check=True)
     r = subprocess.run(["bash", str(pcie_setup.SCRIPT), "--help"], capture_output=True, text=True)
     assert r.returncode == 0 and "--rescan" in r.stdout and "set -euo" not in r.stdout
+
+
+def test_device_lock_waits_for_a_busy_card(tmp_path, monkeypatch):
+    """OTPU_LOCK_WAIT: a second runner waits for the lock instead of failing at once; it gets the
+    lock once the first releases it, and still fails with DeviceBusy when the wait runs out."""
+    import threading
+    from opentpu.host import runstate as rs
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    first = rs.DeviceLock("w0")
+    with pytest.raises(rs.DeviceBusy):
+        rs.DeviceLock("w0", wait=0)
+    threading.Timer(0.5, first.release).start()
+    monkeypatch.setenv("OTPU_LOCK_WAIT", "5")
+    second = rs.DeviceLock("w0")                    # waits ~0.5 s, then holds it
+    with pytest.raises(rs.DeviceBusy):
+        rs.DeviceLock("w0", wait=1)
+    second.release()
+    assert rs.hold_main(["--dev", "/dev/w0", "--wait", "1", "--", "true"]) == 0

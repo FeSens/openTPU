@@ -64,8 +64,28 @@ class DeviceLock:
 
     fd: int | None = None
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, wait: float | None = None):
+        """wait: seconds to wait for a busy device before DeviceBusy (default: the environment's
+        OTPU_LOCK_WAIT, else 0). Waiting polls the lock, so it is fair only in the sense that
+        whoever tries when it is free gets it."""
         self.name = name
+        if wait is None:
+            wait = float(os.environ.get("OTPU_LOCK_WAIT", "0") or 0)
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                self._take(name)
+                return
+            except DeviceBusy as e:
+                if time.monotonic() >= deadline:
+                    raise
+                if not getattr(self, "_told", False):
+                    print(f"otpu: {e}; waiting up to {wait:.0f}s (OTPU_LOCK_WAIT)",
+                          file=sys.stderr, flush=True)
+                    self._told = True
+                time.sleep(1.0)
+
+    def _take(self, name: str) -> None:
         d = run_dir()
         d.mkdir(parents=True, exist_ok=True)
         try:
@@ -167,3 +187,25 @@ def read_status(name: str) -> dict | None:
         return None
     d["stale"] = not pid_alive(int(d.get("pid", 0) or 0))
     return d
+
+
+def hold_main(argv=None) -> int:
+    """otpu-lock [--dev /dev/xdma0] [--wait SEC] -- CMD...: run CMD while holding the device lock
+    (for steps that are not openTPU tools but must not overlap a run: a JTAG reload, a driver
+    reload, a rescan). CMD itself must not open the card through Board (it would wait for the
+    lock this process holds)."""
+    import argparse
+    import subprocess
+    ap = argparse.ArgumentParser(prog="otpu-lock", description=hold_main.__doc__.split("\n")[0])
+    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--wait", type=float, default=3600.0, help="seconds to wait for the lock")
+    ap.add_argument("cmd", nargs=argparse.REMAINDER)
+    a = ap.parse_args(argv)
+    cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
+    if not cmd:
+        ap.error("no command")
+    lock = DeviceLock(devname(a.dev), wait=a.wait)
+    try:
+        return subprocess.call(cmd)
+    finally:
+        lock.release()
