@@ -44,7 +44,7 @@ module otpu_axi_dram #(
   parameter int GATHER = 4,                          // idle cycles before a short burst goes out
   parameter int WGATHER = 4,                         // idle cycles before a gathered SW beat goes out
   parameter int RD = 128,                            // B read beats in flight per channel
-  parameter int AD = 16,                             // A read beats in flight per channel
+  parameter int AD = 32,                             // A read beats in flight per channel
   parameter int APF = 8,                             // A read run (prefetch), beats
   parameter logic [31:0] BASE0 = 32'h0000_0000,
   parameter logic [31:0] BASE1 = 32'h8000_0000
