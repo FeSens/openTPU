@@ -1072,6 +1072,19 @@ def test_setup_pcie_package():
     assert r.returncode == 0 and "--rescan" in r.stdout and "set -euo" not in r.stdout
 
 
+def test_busy_card_is_one_line_not_a_traceback(tmp_path, monkeypatch, capsys):
+    """otpu-selftest / -diag / -chat / -lens on a card another process holds: one line on stderr
+    naming the holder and OTPU_LOCK_WAIT, exit status 3."""
+    from opentpu.host import runstate as rs
+    from opentpu.host import selftest
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    held = rs.DeviceLock("xdmaB")
+    assert selftest.main(["--dev", str(tmp_path / "xdmaB")]) == 3
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1 and "in use by process" in err[0] and "OTPU_LOCK_WAIT" in err[0]
+    held.release()
+
+
 def test_xdma_transport_locks_before_opening(tmp_path, monkeypatch):
     """A transport waiting for a busy card holds no file on it (a rescan by the holder would be
     refused): the lock comes first, so a busy device raises DeviceBusy, not an open error."""

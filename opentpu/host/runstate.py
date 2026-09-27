@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import atexit
 import errno
+import functools
 import fcntl
 import json
 import os
@@ -40,8 +41,21 @@ class DeviceBusy(RuntimeError):
     def __init__(self, name: str, pid: int | None, cmd: str = ""):
         self.pid = pid
         who = f"process {pid}" + (f" ({cmd})" if cmd else "") if pid else "another process"
-        super().__init__(f"{name} is in use by {who}: stop it, or wait "
-                         f"(lock {run_dir() / (name + '.lock')})")
+        super().__init__(f"{name} is in use by {who}: stop it, or wait for it with "
+                         f"OTPU_LOCK_WAIT=<seconds> (lock {run_dir() / (name + '.lock')})")
+
+
+def busy_exits(main):
+    """A command's main(): a busy card ends it with one line on stderr and exit status 3
+    instead of a traceback."""
+    @functools.wraps(main)
+    def run(*args, **kw):
+        try:
+            return main(*args, **kw)
+        except DeviceBusy as e:
+            print(f"{Path(sys.argv[0]).name}: {e}", file=sys.stderr)
+            return 3
+    return run
 
 
 def _cmdline(pid: int) -> str:

@@ -33,6 +33,7 @@ import sys
 import time
 import traceback
 
+from opentpu.host.runstate import busy_exits
 from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST_CALIB0,
                                 ST_CALIB1, Board, SimTransport, XdmaTransport, device_config)
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
@@ -92,6 +93,7 @@ class Runner:
         return ok
 
 
+@busy_exits
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-selftest", description=__doc__.split("\n")[0])
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")

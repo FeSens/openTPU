@@ -37,6 +37,7 @@ from pathlib import Path
 
 import numpy as np
 
+from opentpu.host.runstate import busy_exits
 from . import i2c as I2C
 from . import memtest as M
 from . import power as P
@@ -644,6 +645,7 @@ def soak(b, cfg, img, n: int) -> tuple:
     return not fails, msg, {"fails": fails}
 
 
+@busy_exits
 def main(argv=None, open_transport=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-diag", description=__doc__.split("\n")[0])
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")

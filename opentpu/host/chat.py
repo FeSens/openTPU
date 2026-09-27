@@ -30,6 +30,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from opentpu.host.runstate import busy_exits
 from opentpu.llm import MODELS, load_spec, model_dir
 from opentpu.llm.qwen3 import Engine, load_weights
 
@@ -442,6 +443,7 @@ def panel_meta(eng, backend: str, dev: str, model: str, sp: dict, max_new: int,
     return meta
 
 
+@busy_exits
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="otpu-chat", description=__doc__.split("\n")[0])
     ap.add_argument("--model", default="qwen3",
