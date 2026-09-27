@@ -88,10 +88,40 @@ def test_tiny_reset_clears_state_and_conv_ring(tiny):
     assert all(np.array_equal(x, y) for x, y in zip(a, b))
 
 
-def test_one_token_per_run_only(tiny):
+def test_one_sequence_only(tiny):
     _, W, spec = tiny
-    with pytest.raises(ValueError, match="one token per device run"):
+    with pytest.raises(ValueError, match="one sequence"):
         Engine(spec, W, cap=128, batch=2)
+
+
+def _layers_dram(eng):
+    """The layer blocks (weights, KV cache, conv ring, DeltaNet state): all but the I/O area."""
+    img = eng.image
+    return [s.dram[img.layer0:img.nbytes] for s in eng.backend.machine.slices]
+
+
+@pytest.mark.parametrize("config,first,chunk", [("design", 0, 5), ("design", 2, 8),
+                                                ("board", 1, 4)])
+def test_tiny_chunked_prefill_is_bit_exact(tiny, config, first, chunk):
+    """Prefill in chunks (the DeltaNet recurrence row after row on a state loaded once per
+    chunk, the convolution over the chunk and the ring from positions 0, 1 or 2 on, gated
+    row attention; board: query groups split over the 2-column MXU) gives the same logits,
+    KV cache, conv ring and DeltaNet state as token-by-token decode."""
+    _, W, spec = tiny
+    cfg = board_config(DRAM_BYTES=1 << 24) if config == "board" else None
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 19)]
+    ref = Engine(spec, W, cap=256, cfg=cfg)
+    want = [ref.step(t) for t in toks]
+    eng = Engine(spec, W, cap=256, cfg=cfg)
+    for t in toks[:first]:
+        eng.step(t)
+    got = eng.prefill(toks[first:17], chunk=chunk)
+    assert np.array_equal(got.view(np.uint32), want[16].view(np.uint32)) and eng.pos == 17
+    assert eng.stats[first]["rows"] == chunk
+    ref17 = Engine(spec, W, cap=256, cfg=cfg)
+    ref17.prefill(toks[:17], chunk=1)
+    assert all(np.array_equal(a, b) for a, b in zip(_layers_dram(eng), _layers_dram(ref17)))
+    assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[17:], want[17:]))
 
 
 def test_tiny_qwen35_on_board_model(tiny, have_verilator):

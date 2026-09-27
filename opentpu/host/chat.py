@@ -14,8 +14,9 @@ and under the input a status line with TTFT, prefill and decode tokens/s (wall a
 the KV context, updated while the reply streams; /stats adds DRAM, session totals and sampling.
 --plain and --prompt print the same numbers as one line per reply.
 
-The model runs token by token on the device; the host only tokenizes, looks up the embedding
-row, applies the chat template and samples from the logits. The KV cache stays in device DRAM
+The model runs on the device, the prompt several tokens per run (Engine.prefill_chunks) and
+the reply token by token; the host only tokenizes, looks up the embedding rows, applies the
+chat template and samples from the logits. The KV cache stays in device DRAM
 across turns; only the new turn's tokens are fed. On the card the tool holds the device lock
 and publishes its status (model, DRAM, tokens/s) for otpu-smi; the next token's program is
 compiled while the card runs the current one (Engine pipelining).
@@ -281,12 +282,12 @@ class Chat:
         return self._next is not None
 
     def ask(self, text: str, on_update=None, stop=lambda: False) -> tuple[str, Turn]:
-        """One turn. on_update(delta_text, turn) for every prefill step (delta "") and every
+        """One turn. on_update(delta_text, turn) after every prefill run (delta "") and for every
         generated token (Detok: text that ends in an incomplete character comes with a later
-        token, or in one last call after the reply). Each call comes once the card runs the
-        next step (Engine.step's on_start), so the interface draws during the run, not while
-        the host starts it; after the prefill and at the end of the reply it comes at once.
-        stop() is polled between steps (the reply so far is kept)."""
+        token, or in one last call after the reply). A generated token's call comes once the
+        card runs the next step (Engine.step's on_start), so the interface draws during the
+        run, not while the host starts it; at the end of the reply it comes at once. stop()
+        is polled between runs (the reply so far is kept)."""
         on_update = on_update or (lambda delta, turn: None)
         t0 = time.perf_counter()
         turn = Turn(clock_mhz=self.clock_mhz, cap=self.eng.cap, context=self.eng.pos)
@@ -304,18 +305,16 @@ class Chat:
         turn.prefill_total = len(ids) - n
         k0 = len(self.eng.stats)
         logits = None
-        for t in ids[n:]:
-            if stop():
-                turn.end = "stopped"
-                break
-            # the previous step's numbers go to the interface while the card runs this one
-            logits = self.eng.step(t, on_start=lambda: on_update("", turn))
-            self.fed.append(t)
-            turn.prefill_tokens += 1
+        for part, logits in self.eng.prefill_chunks(ids[n:]):   # up to Engine.rows per run
+            self.fed += part
+            turn.prefill_tokens += len(part)
             turn.prefill_s = time.perf_counter() - t0
             turn.prefill_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
             turn.context = self.eng.pos
-        on_update("", turn)
+            on_update("", turn)
+            if stop() and len(self.fed) < len(ids):
+                turn.end = "stopped"
+                break
         reply = self._decode(logits, [], turn, t0, on_update, stop)
         self.history.append({"role": "assistant", "content": reply})
         self.session.add(turn)

@@ -29,7 +29,7 @@ import numpy as np
 
 from .. import fp32 as F
 from .. import language as ol
-from ..compiler import Affine, KVDesc, QTensor, Tensor
+from ..compiler import Affine, CompileError, KVDesc, QTensor, Tensor
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
@@ -516,6 +516,10 @@ def _mlp(x, lw, spec: Spec):
     return ol.all_gather(x[:, mine] + y)
 
 
+# Token rows per device run of a prefill: the I/O area holds this many, and TMEM (64K words)
+# holds the activations of 8 rows of Qwen3-0.6B (Engine.prefill_chunks shrinks a run that does
+# not fit).
+PREFILL_ROWS = 8
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
 
 
@@ -559,13 +563,29 @@ def _runs(rows):
     return out
 
 
-def _attention_rows(x, lw, c, s_, rows, spec: Spec, block: int):
+def _rope_rows_padded(x, c, s_, out=None):
+    """rope_rows(x) on the first 2 * c.cols dimensions of each row (the others pass through),
+    into `out` (a view whose columns beyond x.cols are already zero) or a new tile padded like
+    _padded: the multi-row twin of _rope_padded, bit for bit."""
+    d, D, rd = x.cols, ol.block_size(), 2 * c.cols
+    if out is None:
+        out = ol.zeros([x.rows, -(-d // D) * D]) if d % D else ol.empty(x.shape)
+    rope_rows(x[:, :rd], c, s_, out=out[:, :rd])
+    if rd < d:
+        out[:, rd:d].set(x[:, rd:])
+    return out
+
+
+def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     """x + W_o . attention(x) for R token rows; row r is token position rows[r][1] of sequence
     rows[r][0] (its own KV cache). Every row's K/V is appended first, then each row attends
     over positions 0..pos of its sequence -- for consecutive rows of one sequence (a prefill
     chunk) that is exactly the causal mask. Each projection streams its weights once for all
     R rows (ceil(R / MCOLS) MMs); the (row, KV head) pairs then run as one pipelined
-    flash-attention stream (_attend_heads)."""
+    flash-attention stream (_attend_heads). Per row the arithmetic is _attention's, so the
+    results are bit-identical to R decode steps: heads narrower than D (LFM2) are padded, RoPE
+    may cover part of a head (Qwen3.5), `gated` multiplies the output by sigmoid(W_gate x),
+    and a query group wider than the MXU attends in parts of MCOLS heads."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
     R = len(rows)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
@@ -578,30 +598,37 @@ def _attention_rows(x, lw, c, s_, rows, spec: Spec, block: int):
     nh = len(heads)
     nq = nh * G
     for j, hh in enumerate(heads):
-        kj = rope_rows(rmsnorm(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
-        vj = v[:, j * d:(j + 1) * d]
+        kj = _rope_rows_padded(rmsnorm(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
+        vj = _padded(v[:, j * d:(j + 1) * d])
         for sq, p0, r0, n in _runs(rows):
             ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
         del kj, vj
     del k, v
-    # queries as [R * nq, d]: (row r, KV head j) is the G contiguous rows r*nq + j*G ...
-    Q = ol.empty([R * nq, d])
+    # queries as [R * nq, dk]: (row r, KV head j) is the G contiguous rows r*nq + j*G ...
+    dk = -(-d // ol.block_size()) * ol.block_size()
+    Q = ol.zeros([R * nq, dk]) if dk > d else ol.empty([R * nq, d])
     for h in range(nq):
-        rope_rows(rmsnorm(q[:, h * d:(h + 1) * d], qn, eps), c, s_,
-                  out=Q.row_stride_view(h, R, nq))
+        _rope_rows_padded(rmsnorm(q[:, h * d:(h + 1) * d], qn, eps), c, s_,
+                          out=Q.row_stride_view(h, R, nq))
     del q
-    ent = [(r, j) for r in range(R) for j in range(nh)]
+    mc = min(G, ol.mxu_columns())
+    ent = [(r, j, g0, min(G, g0 + mc)) for r in range(R) for j in range(nh)
+           for g0 in range(0, G, mc)]
     o = ol.empty([R, nq * d])
 
     def emit(i, acc, l):
-        r, j = ent[i]
-        o[r, j * G * d:(j + 1) * G * d].reshape(G, d).set(acc / l[:, None])
+        r, j, g0, g1 = ent[i]
+        o[r, (j * G + g0) * d:(j * G + g1) * d].reshape(g1 - g0, d).set(acc / l[:, None])
 
-    _attend_heads([Q[r * nq + j * G:r * nq + (j + 1) * G, :] for r, j in ent],
-                  [lw.kvs[rows[r][0]] for r, _ in ent], [heads[j] for _, j in ent],
-                  [rows[r][1] + 1 for r, _ in ent], block, scale, depth=ATTN_DEPTH,
+    _attend_heads([Q[r * nq + j * G + g0:r * nq + j * G + g1, :] for r, j, g0, g1 in ent],
+                  [lw.kvs[rows[r][0]] for r, *_ in ent], [heads[j] for _, j, _, _ in ent],
+                  [rows[r][1] + 1 for r, *_ in ent], block, scale, depth=ATTN_DEPTH,
                   emit=emit)
     del Q
+    if gated:                                   # after the heads: o * sigmoid(gate), rounded
+        for h0 in range(0, nq, mc):             # as _attention's (acc / l) * sg; mc heads at
+            cols = slice(h0 * d, min(nq, h0 + mc) * d)      # a time (TMEM)
+            o[:, cols].set(o[:, cols] * sigmoid(ol.dot(xs, lw.wgate[cols, :])))
     o_all = ol.all_gather(o)                    # [R, n_q*d]
     y = ol.all_gather(ol.dot(o_all, lw.wo))     # [R, H]
     return x + y
@@ -612,7 +639,7 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK):
     """R token rows at once (rows[r] = (sequence, position)): the rows' embeddings m.xr and
     RoPE tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
     empty: a prefill chunk that is not the last one skips the LM head)."""
-    spec, sid = m.spec, ol.program_id()
+    spec = m.spec
     R = len(rows)
     x = ol.load(m.xr[0:R, :])
     c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
@@ -620,8 +647,15 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK):
         lw = m.layer(li)
         x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
         x.set(_mlp(x, lw, spec))
+    _lm_head_rows(x, m, spec, logit_rows)
+
+
+def _lm_head_rows(x, m, spec, logit_rows):
+    """Final norm and this slice's vocabulary rows of the LM head for the rows `logit_rows`
+    of x (a contiguous range, or empty: nothing) -> m.logitsr."""
     if not logit_rows:
         return
+    sid = ol.program_id()
     a, e = logit_rows[0], logit_rows[-1] + 1
     xs = ol.quantize(rmsnorm(x[a:e, :], ol.load(m.g_final), spec.eps))
     chunk = min(HEAD_CHUNK, ol.tmem_words() // (8 * (e - a)))
@@ -676,9 +710,43 @@ def _worker_compile(pos: int) -> np.ndarray:
     return np.asarray(assemble(image.compile_step(pos, block)[0]), np.uint32)
 
 
+def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int):
+    """The worker process: fit_chunk's run, its program assembled (one slice)."""
+    from ..isa import assemble
+    image, block = _WORKER
+    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit)
+    return n, None if progs is None else np.asarray(assemble(progs[0]), np.uint32), fit
+
+
+def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int):
+    """The next prefill run of sequence `seq` at position p0: up to n of the `left` remaining
+    prompt tokens, as many as fit TMEM (at most `fit` rows) and the instruction memory
+    (attention is unrolled per row, head and block: the program grows with the context).
+    Only the prompt's last run computes logits (its last row). Returns (R, compile_rows'
+    programs or None for R = 1, the rows that fit TMEM as far as known)."""
+    imem = image.cfg.IMEM_WORDS
+    n = min(n, fit, left)
+    while n > 1:
+        try:
+            progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
+                                       [n - 1] if n == left else [], block)
+        except CompileError as e:
+            if "TMEM" not in str(e):
+                raise
+            n = fit = n - 1
+            continue
+        size = max(map(len, progs))
+        if size * 8 <= imem:
+            return n, progs, fit
+        n = min(n - 1, n * imem // (8 * size))  # about proportional to the rows
+    return 1, None, fit
+
+
 class Engine:
-    """Token-by-token decoding on an openTPU backend: Qwen3, or any model whose Spec builds an
-    image with compile_step (LFM2: opentpu.llm.lfm2; Qwen3.5: opentpu.llm.qwen35).
+    """Decoding on an openTPU backend: Qwen3, or any model whose Spec builds an image with
+    compile_step and compile_rows (LFM2: opentpu.llm.lfm2; Qwen3.5: opentpu.llm.qwen35).
+    step() feeds one token per device run; prefill() / prefill_chunks() feed a prompt `rows`
+    tokens per run (default PREFILL_ROWS), bit-identical to feeding it token by token.
 
     backend: "isa" (default), or any object with write/read/run like IsaBackend (the RTL
     simulator and the PCIe board driver implement the same interface). Optional backend hooks:
@@ -698,8 +766,8 @@ class Engine:
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
-                 backend="isa", block: int = ATTN_BLOCK, batch: int = 1, rows: int = 1,
-                 pipeline: bool | str | None = None):
+                 backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
+                 rows: int = PREFILL_ROWS, pipeline: bool | str | None = None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows)
@@ -709,13 +777,14 @@ class Engine:
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
         self.poss = [0] * batch
+        self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
         self.stats = []
         self.pipeline = backend != "isa" if pipeline is None else bool(pipeline)
         self._procs = (self.pipeline and pipeline != "thread" and self.cfg.S == 1
                        and getattr(self.backend, "runs_words", False))
         self._pool = None
         self._ready = None                  # the worker process's start (process pipeline)
-        self._next = None                   # (pos, Future of its compiled programs)
+        self._next = None                   # (key, Future of the next run's programs)
         if self._procs:
             self._start_pool()
         if hasattr(self.backend, "attach"):
@@ -738,27 +807,38 @@ class Engine:
             initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block))
         self._ready = self._pool.submit(_worker_ready)
 
-    def _program(self, pos: int):
-        """The step program for `pos` (programs, or the assembled words from the worker
-        process): the precompiled one when it is for `pos`."""
+    def _take(self, key, fn, *args):
+        """fn(*args), or the precompiled result (programs, or the worker process's assembled
+        words) when the compile in flight was made for `key`. A compile in flight is always
+        waited for (one at a time), except while the worker process still starts."""
         nxt, self._next = self._next, None
         if nxt is not None and (self._ready is None or self._ready.done()):
-            progs = nxt[1].result()             # always wait: one compile at a time
-            if nxt[0] == pos:
-                return progs
-        return self._compile(pos)               # (a process still starting: not waited for)
+            res = nxt[1].result()
+            if nxt[0] == key:
+                return res
+        return fn(*args)
 
-    def _prefetch(self, pos: int) -> None:
-        if not self.pipeline or pos >= self.cap:
+    def _submit(self, key, fn, proc_fn, *args) -> None:
+        """Start the compile for `key` (pipeline only): proc_fn(*args) in the worker process,
+        else fn(*args) on the compile thread."""
+        if not self.pipeline:
             return
         if self._procs:
             if self._ready.done():
-                self._next = (pos, self._pool.submit(_worker_compile, pos))
+                self._next = (key, self._pool.submit(proc_fn, *args))
             return
         if self._pool is None:
             from concurrent.futures import ThreadPoolExecutor
             self._pool = ThreadPoolExecutor(1, thread_name_prefix="otpu-compile")
-        self._next = (pos, self._pool.submit(self._compile, pos))
+        self._next = (key, self._pool.submit(fn, *args))
+
+    def _program(self, pos: int):
+        """The step program for `pos`: the precompiled one when it is for `pos`."""
+        return self._take(("step", pos), self._compile, pos)
+
+    def _prefetch(self, pos: int) -> None:
+        if pos < self.cap:
+            self._submit(("step", pos), self._compile, _worker_compile, pos)
 
     def _drain(self) -> None:
         nxt, self._next = self._next, None
@@ -818,6 +898,11 @@ class Engine:
     def run_rows(self, rows, tokens, logit_rows) -> np.ndarray:
         """One device run over token rows (rows[r] = (sequence, position)); returns the logits
         of `logit_rows` ([n, vocab])."""
+        self._drain()
+        return self._run_rows(rows, tokens, logit_rows,
+                              self.image.compile_rows(rows, logit_rows, self.block))
+
+    def _run_rows(self, rows, tokens, logit_rows, programs) -> np.ndarray:
         io, S, spec = self.image.io, self.cfg.S, self.spec
         if any(p >= self.cap for _, p in rows):
             raise RuntimeError("KV cache full")
@@ -829,8 +914,7 @@ class Engine:
             self.backend.write(s, io["x"], x)
             self.backend.write(s, io["cos"], cos)
             self.backend.write(s, io["sin"], sin)
-        self._drain()
-        st = self.backend.run(self.image.compile_rows(rows, logit_rows, self.block))
+        st = self.backend.run(programs)
         st["rows"] = len(rows)
         self.stats.append(st)
         v, v_loc = spec.vocab, self.image.v_loc
@@ -839,29 +923,58 @@ class Engine:
                for r in logit_rows]
         return np.array(out, np.float32).reshape(len(logit_rows), v)
 
-    def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
-        """Feed a prompt to sequence `seq`; returns the logits after its last token.
+    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int):
+        """fit_chunk, its programs prepared for the backend."""
+        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit)
+        prep = getattr(self.backend, "prepare", None)
+        if progs is not None and prep is not None:
+            prep(progs)
+        return n, progs, fit
 
-        chunk=1 (the default for a one-row image) runs token by token with the decode kernel;
-        chunk > 1 runs up to `chunk` prompt tokens per device run: their projections share each
-        weight stream, and only the last chunk runs the LM head (for its last token)."""
+    def prefill_chunks(self, tokens, seq: int = 0, chunk: int | None = None):
+        """Feed a prompt to sequence `seq` in device runs of up to `chunk` tokens (default:
+        the image's rows); yields (the tokens of the run, logits) after each run, the logits
+        after the prompt's last token with the last run and None before.
+
+        A run of R > 1 tokens is one qwen3_rows program (the model's compile_rows): every
+        weight streams once for the R rows (ceil(R / MCOLS) MMs), each row attends causally
+        over the cache and the rows before it, and only the last run computes logits, for its
+        last row. Per row the arithmetic is the decode kernel's, so the KV cache and logits
+        are bit-identical to feeding the tokens one by one. A run shrinks when its program
+        does not fit TMEM or IMEM (long contexts); a single token runs the decode kernel.
+        With the pipeline, the next run's program (after the last run: the first decode
+        step's) is compiled while the device runs the current one."""
         tokens = [int(t) for t in tokens]
         chunk = self.rows if chunk is None else max(1, min(chunk, self.rows))
-        if chunk == 1 and seq == 0:
-            logits = None
-            for t in tokens:
-                logits = self.step(t)
-            return logits
+        i = 0
+        while i < len(tokens):
+            p0, left = self.poss[seq], len(tokens) - i
+            key = ("rows", seq, p0, chunk, left, self._fit_rows)
+            n, progs, self._fit_rows = self._take(key, self._chunk, *key[1:])
+            part, last = tokens[i:i + n], n == left
+            if progs is None and seq == 0:
+                lg = self.step(part[0])
+            else:
+                rows, lr = [(seq, p0 + j) for j in range(n)], [n - 1] if last else []
+                if progs is None:
+                    progs = self.image.compile_rows(rows, lr, self.block)
+                if not last:
+                    key = ("rows", seq, p0 + n, chunk, left - n, self._fit_rows)
+                    self._submit(key, self._chunk, _worker_chunk, *key[1:])
+                elif seq == 0:
+                    self._prefetch(p0 + n)
+                lg = self._run_rows(rows, part, lr, progs)
+                lg = lg[0] if last else None
+                self.poss[seq] += n
+            i += n
+            yield part, (lg if last else None)
+
+    def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
+        """Feed a prompt to sequence `seq`; returns the logits after its last token
+        (prefill_chunks; chunk=1 runs token by token with the decode kernel)."""
         logits = None
-        for i in range(0, len(tokens), chunk):
-            part = tokens[i:i + chunk]
-            last = i + chunk >= len(tokens)
-            p0 = self.poss[seq]
-            lg = self.run_rows([(seq, p0 + j) for j in range(len(part))], part,
-                               [len(part) - 1] if last else [])
-            self.poss[seq] += len(part)
-            if last:
-                logits = lg[0]
+        for _, logits in self.prefill_chunks(tokens, seq, chunk):
+            pass
         return logits
 
     def step_batch(self, tokens) -> np.ndarray:

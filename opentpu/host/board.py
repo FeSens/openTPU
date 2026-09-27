@@ -590,13 +590,15 @@ def device_config(info: dict, **kw):
 
 
 # ------------------------------------------------------------------------------ Engine backend
-def sim_config(spec, cap: int, base=None):
+def sim_config(spec, cap: int, base=None, rows: int | None = None):
     """`base` (default board_config()) with the DRAM cut to what the model needs (power of
-    two): the image, then the program area. The board model's memory, and the ISA reference
+    two): the image with I/O rows for `rows` tokens per run (default the Engine's
+    PREFILL_ROWS), then the program area. The board model's memory, and the ISA reference
     that runs the same layout."""
     from opentpu.isasim import board_config
+    from opentpu.llm.qwen3 import PREFILL_ROWS
     base = base or board_config()
-    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap)
+    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS)
     need = -(-probe.nbytes // 4096) * 4096 + 4 * base.IMEM_WORDS
     return replace(base, DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
 
