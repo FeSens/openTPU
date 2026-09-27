@@ -427,8 +427,20 @@ the patch messages of that build.
 
 The 1333 failure followed the selftest's 200 sub-beat host writes, the trigger of the host-write
 hang being bisected (docs/host.md), so it is not yet a clean DDR verdict; the loss of the PCIe
-link is worse than that hang and makes 1333 suspect regardless. DDR3-1300 is not yet qualified:
-the model token checks, the full-memory soak and the ECC correction counters are pending.
+link is worse than that hang and makes 1333 suspect regardless.
+
+DDR3-1300 then passed the model and soak checks (2026-09-27, one run, card at room temperature
+after ~30 minutes of builds and tests): `otpu-diag --mem full --soak 20` all pass (platform 9,
+regs 7, mem 13, isa 93, system 5), and the three models match the ISA simulator token for token:
+
+| Model | Mcycles/token at 1300 | device tok/s | wall tok/s (host of a691ea98) |
+|---|---|---|---|
+| Qwen3-0.6B | 6.50 (800: 8.58) | 15.4 | 13.6 |
+| LFM2-350M | 2.34 (800: 3.14) | 42.7 | 23.5 |
+| Qwen3.5-0.8B | 9.08 (800: 11.88) | 11.0 | 7.5 |
+
+It is still not qualified: MIG's ECC correction counters were not read (a marginal link corrects
+silently), the warm soak (step 2) was not run, and it is outside MIG's range for these banks.
 
 **Checklist per speed.** Status: *unmeasured* at every speed above 800 until the results are
 filled in here. Load the bitstream over JTAG, not flash (section 2), so a bad one is gone at
@@ -458,8 +470,8 @@ the next power cycle.
 |---|---|---|---|---|---|---|
 | 800 | default | yes | passes (2026-09-26) | diag passes (2026-09-26); soak not recorded | not read | baseline |
 | 1066 | `make bit DDR=1066` | yes | unmeasured | unmeasured | unmeasured | unmeasured |
-| 1300 (out of spec) | `make bit DDR=1300` | no (79-155) | unmeasured | unmeasured | unmeasured | unmeasured |
-| 1333 (out of spec) | `make bit DDR=1333` | no (79-155, PHY patched) | unmeasured | unmeasured | unmeasured | unmeasured |
+| 1300 (out of spec) | `make bit DDR=1300` | no (79-155) | passes (2026-09-27) | diag + `--mem full --soak 20` pass, cold only | not read | Qwen3 -24% cycles/token, LFM2 -25%, Qwen3.5 -24% |
+| 1333 (out of spec) | `make bit DDR=1333` | no (79-155, PHY patched) | passes (2026-09-27) | fails: H2C timeout, card leaves PCIe | not read | not run |
 | 1600 (out of spec) | `make bit DDR=1600` | no (79-155, PHY patched) | unmeasured | unmeasured | unmeasured | unmeasured |
 
 ## 6. What to check on first build (assumptions made without Vivado)
