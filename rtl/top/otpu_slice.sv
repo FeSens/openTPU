@@ -87,10 +87,6 @@ module otpu_slice
 );
   localparam int BW = $clog2(LANES);
   localparam int P_MXU = 0, P_DMA = 1, P_Q = 2, P_VA = 3, P_VB = 4, P_Q3 = 5, P_Q2 = 6, P_COLL = 7, NRP = 8;
-  // the board build (TMEM replicated per read port, RPB >= NRP * LANES: reads never conflict;
-  // WPB = 1): the arbiter only masks write banks (see the arbiter), and the VPU's grant only
-  // takes its buffered writes (otpu_vpu WBUF)
-  localparam bit ARB_MASK = (RPB >= NRP * LANES) && (WPB == 1);
   localparam int W_DMA = 0, W_MXU = 1, W_COLL = 2, W_VPU = 3, NWP = 4;
   localparam int G_DMA = 0, G_COLL = 1, G_MXU = 2, G_Q = 3, G_VPU = 4, NG = 5;
 
@@ -149,7 +145,6 @@ module otpu_slice
   assign coll_rdata = r_data[P_COLL];
   // the units' TMEM requests
   logic [LANES-1:0]        dma_ren, dma_wen, va_ren, vb_ren, v_wen;
-  logic                    v_ren;   // the VPU's lanes take their read data this cycle
   logic [LANES-1:0][31:0]  dma_raddr, dma_waddr, dma_wdata, va_raddr, vb_raddr, v_waddr, v_wdata;
   logic [ULANES-1:0]       mxu_ren, mxu_wen, q_ren, q_ren2;
   logic [ULANES-1:0][31:0] mxu_raddr, mxu_waddr, mxu_wdata, q_raddr, q_raddr2;
@@ -230,9 +225,9 @@ module otpu_slice
     .a_req(q_areq), .a_we(q_awe), .a_addr(q_aaddr), .a_wdata(q_awdata), .a_be(q_abe),
     .pf_u(q_u), .pf_frz(q_frz));
 
-  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK)) u_vpu (
+  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID)) u_vpu (
     .clk, .rst(rst_vpu), .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
-    .gnt(gnt[G_VPU]), .ren(v_ren),
+    .gnt(gnt[G_VPU]),
     .ta_en(va_ren), .ta_addr(va_raddr), .ta_data(r_data[P_VA]),
     .tb_en(vb_ren), .tb_addr(vb_raddr), .tb_data(r_data[P_VB]),
     .tw_en(v_wen), .tw_addr(v_waddr), .tw_data(v_wdata), .pf_u(v_u), .pf_frz(v_frz));
@@ -287,9 +282,10 @@ module otpu_slice
   endfunction
 
   // The board build (TMEM replicated per read port, RPB >= NRP * LANES: reads never conflict;
-  // WPB = 1; ARB_MASK) only needs write-bank masks: a unit is granted when no bank it writes was taken by
+  // WPB = 1) only needs write-bank masks: a unit is granted when no bank it writes was taken by
   // a higher-priority unit this cycle (a unit's own lanes write distinct banks). Shallow logic,
   // no counters. Other configurations count reads and writes per bank.
+  localparam bit ARB_MASK = (RPB >= NRP * LANES) && (WPB == 1);
   logic [NG-1:0] gnt_m, gnt_c;
   logic          cgl_m, cgl_c;
   // Each group's write-bank mask, the pairwise conflicts between groups (in parallel), then
@@ -340,8 +336,7 @@ module otpu_slice
     w_gnt[W_COLL] = gnt[G_COLL];
     if (!gnt[G_MXU])  begin r_en[P_MXU] = '0; w_en[W_MXU] = '0; end
     if (!gnt[G_Q])    begin r_en[P_Q] = '0; r_en[P_Q2] = '0; r_en[P_Q3] = '0; end
-    if (!v_ren)       begin r_en[P_VA] = '0; r_en[P_VB] = '0; end
-    if (!gnt[G_VPU])  w_en[W_VPU] = '0;
+    if (!gnt[G_VPU])  begin r_en[P_VA] = '0; r_en[P_VB] = '0; w_en[W_VPU] = '0; end
     if (!gnt[G_COLL]) begin r_en[P_COLL] = '0; w_en[W_COLL] = '0; end
   end
 

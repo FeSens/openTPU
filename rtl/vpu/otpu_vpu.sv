@@ -37,21 +37,14 @@
 // first). The other reductions write each row sum as it comes out.
 //
 // Everything (reads, lane pipelines, the tree, writes) advances on cycles the TMEM grant is
-// given; nothing stalls. With WBUF (the board) the grant only takes the head of a two-entry
-// write buffer, and everything else advances on a registered enable: there is room in the
-// buffer for the cycle's writes.
+// given; nothing stalls.
 module otpu_vpu
   import otpu_pkg::*;
   import otpu_fp::*;
 #(
   parameter int LANES = 8,
   parameter int CL    = (LANES >= 8) ? LANES / 4 : 1,   // lanes with the composite functions
-  parameter int SID   = 0,
-  // WBUF: the TMEM grant only takes writes from a two-entry write buffer, and the pipeline
-  // advances on a registered enable (buffer room) -- for arbiters whose grant depends only on
-  // the VPU's writes (the board's: every read port has its own TMEM copy). 0: everything
-  // advances on the grant itself.
-  parameter bit WBUF  = 0
+  parameter int SID   = 0
 ) (
   input  logic                    clk,
   input  logic                    rst,
@@ -59,10 +52,7 @@ module otpu_vpu
   input  cmd_t                    cmd,
   output logic                    rdy,
   output logic                    done,
-  input  logic                    gnt,        // TMEM grant: hold everything when low (WBUF:
-                                               // the head write is taken)
-  output logic                    ren,        // the lanes take the read data (WBUF: the
-                                               // registered enable; else the grant)
+  input  logic                    gnt,        // TMEM grant: hold everything when low
   output logic [LANES-1:0]        ta_en,
   output logic [LANES-1:0][31:0]  ta_addr,
   input  logic [LANES-1:0][31:0]  ta_data,
@@ -191,11 +181,7 @@ module otpu_vpu
   wire  busy = issuing || red_act || ew_n != 0;
 
 
-  // the pipeline enable: the grant, or (WBUF) the write buffer's room, registered. The enable
-  // reaches every pipeline register of the lanes and the tree (~21k loads on the board), so it
-  // must not come from the arbiter in the same cycle.
-  logic en;
-  assign ren = en;
+  wire en = gnt;
 
   // ------------------------------------------------------------------ issue
   logic [LANES-1:0] imask;
@@ -970,60 +956,16 @@ module otpu_vpu
   for (genvar l = 0; l < LANES; l++) begin : g_twa
     assign tw_addr[l] = 32'(tw_a[l]);
   end
-  if (!WBUF) begin : g_wdir
-    assign en = gnt;
-    always_ff @(posedge clk) begin
-      if (rst) begin
-        tw_en <= '0;
-        done <= 1'b0; dpend <= 1'b0;
-      end else begin
-        if (gnt) begin
-          tw_en <= cw_en; tw_a <= cw_addr; tw_data <= cw_data;
-        end
-        done <= (done_i || dpend) && gnt;
-        dpend <= (done_i || dpend) && !gnt;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      tw_en <= '0;
+      done <= 1'b0; dpend <= 1'b0;
+    end else begin
+      if (gnt) begin
+        tw_en <= cw_en; tw_a <= cw_addr; tw_data <= cw_data;
       end
-    end
-  end else begin : g_wbuf
-    // Two slots, written at the tail and presented at the head (pointers, no data moves: the
-    // grant only reaches the pointers and the count). An enabled cycle pushes its writes (if
-    // any) with the pending done; `done` follows the pop of the entry that carries it. The
-    // enable for the next cycle is room for a push even if the head is not taken then.
-    typedef struct packed {
-      logic [LANES-1:0]         en;
-      logic [LANES-1:0][AW-1:0] a;
-      logic [LANES-1:0][31:0]   d;
-      logic                     dn;
-    } wb_t;
-    wb_t        wq [2];
-    logic       wh, wt;                          // head, tail slot
-    logic [1:0] wn;                              // entries
-    (* max_fanout = 64 *) logic en_r;
-    assign en = en_r;
-    wire  pdn  = done_i || dpend;
-    wire  push = en && ((|cw_en) || pdn);
-    wire  pop  = (wn != 0) && gnt;
-    wire  [1:0] wn_nx = wn + 2'(push) - 2'(pop);
-    wb_t  hd;
-    assign hd = wq[wh];
-    always_comb begin
-      tw_en = (wn != 0) ? hd.en : '0;
-      tw_a = hd.a;
-      tw_data = hd.d;
-    end
-    always_ff @(posedge clk) if (push) wq[wt] <= '{en: cw_en, a: cw_addr, d: cw_data, dn: pdn};
-    always_ff @(posedge clk) begin
-      if (rst) begin
-        wh <= 1'b0; wt <= 1'b0; wn <= '0; en_r <= 1'b0;
-        done <= 1'b0; dpend <= 1'b0;
-      end else begin
-        if (push) wt <= ~wt;
-        if (pop) wh <= ~wh;
-        wn <= wn_nx;
-        en_r <= (wn_nx < 2);
-        done <= pop && hd.dn;
-        dpend <= pdn && !en;
-      end
+      done <= (done_i || dpend) && gnt;
+      dpend <= (done_i || dpend) && !gnt;
     end
   end
   always_comb begin
