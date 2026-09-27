@@ -748,6 +748,51 @@ def test_chat_sampling_defaults_per_model_and_repetition_penalty():
     assert {pick(np.array([0.0, 0.0, 0.0, -50.0])) for _ in range(200)} == {0, 1, 2}
 
 
+
+def test_sampler_fast_top_k_picks_as_the_float64_path():
+    """The float32 top-k (block-max prefilter) gives the picks of the float64 argpartition
+    path, with ties (which fall back to it), -0 / +0, a growing context and top_k 0."""
+    from opentpu.host import chat as C
+
+    def reference(temperature, top_k, top_p, seed, rp):
+        rng = np.random.default_rng(seed)
+
+        def pick(logits, context=()):
+            if rp != 1.0 and len(context):
+                logits = logits.copy()
+                seen = np.unique(np.asarray(context, np.int64))
+                v = logits[seen]
+                logits[seen] = np.where(v > 0, v / rp, v * rp)
+            if temperature <= 0:
+                return int(np.argmax(logits))
+            idx, z = C._top_k_f64(logits, top_k, temperature)
+            p = np.exp(z - z[0])
+            p /= p.sum()
+            keep = min(len(p), np.searchsorted(np.cumsum(p), top_p) + 1)
+            p = p[:keep] / p[:keep].sum()
+            return int(idx[rng.choice(keep, p=p)])
+        return pick
+
+    rng = np.random.default_rng(7)
+    fast = 0
+    for V in (1000, 4099):                                  # 4099: a partial last block
+        for T, k, tp, rp in [(0.1, 50, 1.0, 1.05), (0.7, 20, 0.8, 1.0), (1.0, 5, 1.0, 1.2),
+                             (0, 50, 1.0, 1.05), (0.7, 0, 0.9, 1.0)]:
+            a, b, ctx = reference(T, k, tp, 3, rp), C.sampler(T, k, tp, 3, rp), []
+            for step in range(40):
+                lg = (rng.standard_normal(V) * 3).astype(np.float32)
+                if step % 4 == 1:
+                    lg = np.round(lg * 4) / 4                   # ties everywhere
+                elif step % 4 == 2:
+                    lg[rng.integers(0, V, 5)] = lg.max()        # a tied maximum
+                elif step % 4 == 3:
+                    lg[rng.integers(0, V, 3)] = -0.0
+                ctx.append(int(rng.integers(0, V)))
+                if T > 0 and k:
+                    fast += C._top_k_f32(lg, k, T) is not None
+                assert a(lg, ctx) == b(lg, ctx)
+    assert fast > 50                                        # the fast path did run
+
 # ------------------------------------------------------------------------------ otpu-diag
 def test_diag_sim_registers_and_memory_pass(have_verilator, tmp_path, no_cfg_env):
     from opentpu.host import diag

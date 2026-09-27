@@ -45,22 +45,24 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
             repetition_penalty: float = 1.0):
     """pick(logits, context) -> token id. The repetition penalty (as Hugging Face's) divides
     the positive logits and multiplies the negative ones of every token in `context`; it
-    applies to greedy decoding (temperature 0) too."""
+    applies to greedy decoding (temperature 0) too.
+
+    Top-k runs on the float32 logits: when the k largest are distinct and larger than the
+    next one, the candidates and their order are unique, so this gives the picks of the
+    float64 path (_top_k_f64) that it replaces in the common case; any tie falls back to it."""
     rng = np.random.default_rng(seed)
+    seen = _Seen()
 
     def pick(logits, context=()):
         if repetition_penalty != 1.0 and len(context):
             logits = logits.copy()
-            seen = np.unique(np.asarray(context, np.int64))
-            v = logits[seen]
-            logits[seen] = np.where(v > 0, v / repetition_penalty, v * repetition_penalty)
+            ix = seen(context)
+            v = logits[ix]
+            logits[ix] = np.where(v > 0, v / repetition_penalty, v * repetition_penalty)
         if temperature <= 0:
             return int(np.argmax(logits))
-        z = logits.astype(np.float64) / temperature
-        idx = np.argpartition(-z, top_k)[:top_k] if top_k else np.arange(len(z))
-        z = z[idx]
-        order = np.argsort(-z)
-        idx, z = idx[order], z[order]
+        top = _top_k_f32(logits, top_k, temperature) if 0 < top_k < len(logits) else None
+        idx, z = top if top is not None else _top_k_f64(logits, top_k, temperature)
         p = np.exp(z - z[0])
         p /= p.sum()
         keep = min(len(p), np.searchsorted(np.cumsum(p), top_p) + 1)
@@ -68,6 +70,65 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
         return int(idx[rng.choice(keep, p=p)])
 
     return pick
+
+
+def _top_k_f64(logits, top_k: int, temperature: float):
+    """(indices, logits / temperature in float64), the top_k largest in descending order
+    (all of them for top_k 0)."""
+    z = logits.astype(np.float64) / temperature
+    idx = np.argpartition(-z, top_k)[:top_k] if top_k else np.arange(len(z))
+    z = z[idx]
+    order = np.argsort(-z)
+    return idx[order], z[order]
+
+
+def _top_k_f32(logits, k: int, temperature: float, block: int = 64):
+    """_top_k_f64 without converting or selecting over the whole vocabulary, or None when a
+    tie makes the choice among equal values depend on the selection algorithm (then
+    _top_k_f64 decides, as before).
+
+    The k-th largest of the per-block maxima (blocks of `block` logits) is a lower bound t of
+    the k-th largest logit (k blocks each hold a logit >= t), so the top k are among the
+    logits >= t, usually a few times k of them; the selection runs on those. Dividing by the
+    temperature in float64 keeps the order of distinct float32 values, so the unique top k
+    and their order are the ones of _top_k_f64."""
+    m = len(logits) // block * block
+    bm = logits[:m].reshape(-1, block).max(axis=1)
+    if m < len(logits):
+        bm = np.append(bm, logits[m:].max())
+    if len(bm) <= k or np.isnan(bm).any():
+        return None
+    t = np.partition(bm, len(bm) - k)[len(bm) - k]
+    cand = np.flatnonzero(logits >= t)          # every logit outside is < t <= the top k
+    lv = logits[cand]
+    if len(cand) > k:
+        part = np.argpartition(-lv, k)
+        nxt = lv[part[k]]
+        cand, lv = cand[part[:k]], lv[part[:k]]
+    else:
+        nxt = None
+    order = np.argsort(-lv)
+    lv = lv[order]
+    if (nxt is not None and not lv[-1] > nxt) or np.any(lv[1:] == lv[:-1]):
+        return None
+    return cand[order], lv.astype(np.float64) / temperature
+
+
+class _Seen:
+    """The distinct token ids of a context list that only grows (Chat.fed), kept up to date
+    with the tokens appended since the last call instead of converting the whole list."""
+
+    def __init__(self):
+        self.ctx, self.n, self.ids = None, 0, np.zeros(0, np.int64)
+
+    def __call__(self, context) -> np.ndarray:
+        if context is not self.ctx or len(context) < self.n:
+            self.ctx, self.n, self.ids = context, 0, np.zeros(0, np.int64)
+        if len(context) > self.n:
+            new = np.asarray(context[self.n:], np.int64)
+            self.ids = np.union1d(self.ids, new)
+            self.n = len(context)
+        return self.ids
 
 
 def sampling(spec, args) -> dict:
