@@ -1,6 +1,6 @@
 # Create the Vivado project for openTPU on the YPCB-00338.
 #   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL] [LANES]
-# DDR_SPEED: 800 (default) or 1066. OUT_DIR: default ../../../build/vivado (repository build/).
+# DDR_SPEED: 800 (default), 1066, 1333 or 1600. OUT_DIR: default ../../../build/vivado (repository build/).
 # BUILD_ID: 8 hex digits for the BUILD_ID register (default: the first 8 hex digits of the
 # repository's git commit, else 0).
 

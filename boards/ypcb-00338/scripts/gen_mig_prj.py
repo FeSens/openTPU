@@ -11,7 +11,7 @@ so MIG runs with the data mask disabled and ECC enabled: partial AXI writes (the
 writes single bytes and masked words) are then done by MIG as read-modify-write. Without ECC
 MIG would ignore write strobes and corrupt neighbouring bytes.
 
-  python3 gen_mig_prj.py [--check] [--speed 800|1066] [--no-ecc]
+  python3 gen_mig_prj.py [--check] [--speed 800|1066|1333|1600] [--vccaux-io 1.8|2.0] [--no-ecc]
 
 --check only prints the byte-group analysis (bank / byte group of every DQ, DQS pin; derived
 from the xc7k480t-ffg1156 IOB site map in xc7k480t_ffg1156_iob.txt, extracted from the openXC7
@@ -28,9 +28,17 @@ HERE = Path(__file__).resolve().parent
 CONS = HERE.parent / "constraints"
 OUT = HERE.parent / "vivado" / "mig"
 
-SPEEDS = {  # DDR3 data rate -> (tCK ps, MIG PHY input clock MHz)
-    800: (2500, 200.0),     # 400 MHz CK, 4:1 -> ui_clk 100 MHz
-    1066: (1875, 266.667),  # 533 MHz CK, 4:1 -> ui_clk 133 MHz (needs a 266.667 MHz input)
+# DDR3 data rate -> (tCK ps, MIG PHY input clock MHz, CL, CWL, VCCAUX_IO V). CL / CWL: the
+# MT41K256M8-125 speed bins (1066: CL7/CWL6, 1333: CL9/CWL7, 1600: CL11/CWL8; tRFC 160 ns for
+# 2 Gb at every speed). VCCAUX_IO: MIG's limit for a -2 FFG part, HP banks, 1.5 V components,
+# 4:1 (mig_7series_v4_2 data/dlib/7series/time_periods.csv): tCK >= 1500 ps at 1.8 V, >= 1072
+# ps at 2.0 V. DDR3-1600 is only valid with VCCAUX_IO at 2.0 V, a board supply the YPCB-00338's
+# is not known to have (docs/board.md, "Faster DDR3").
+SPEEDS = {
+    800: (2500, 200.0, 6, 5, "1.8V"),      # 400 MHz CK, 4:1 -> ui_clk 100 MHz
+    1066: (1875, 266.667, 7, 6, "1.8V"),   # 533 MHz CK -> ui_clk 133 MHz (266.667 MHz input)
+    1333: (1500, 200.0, 9, 7, "1.8V"),     # 667 MHz CK -> ui_clk 167 MHz (PLL x20/3)
+    1600: (1250, 200.0, 11, 8, "2.0V"),    # 800 MHz CK -> ui_clk 200 MHz (PLL x8)
 }
 
 
@@ -85,8 +93,9 @@ def pin_xdc(ch: int, pins: dict) -> str:
     return "\n".join(out) + "\n"
 
 
-def prj(ch: int, pins: dict, speed: int, ecc: bool) -> str:
-    tck, fin = SPEEDS[speed]
+def prj(ch: int, pins: dict, speed: int, ecc: bool, vccaux_io: str | None = None) -> str:
+    tck, fin, cl, cwl, vaux = SPEEDS[speed]
+    vaux = vccaux_io or vaux
     width = 72 if ecc else 64
     pin_lines = []
     for name, pad in sorted(pins.items()):
@@ -121,7 +130,7 @@ def prj(ch: int, pins: dict, speed: int, ecc: bool) -> str:
     <Controller number="0" >
         <MemoryDevice>DDR3_SDRAM/Components/MT41K256M8XX-125</MemoryDevice>
         <TimePeriod>{tck}</TimePeriod>
-        <VccAuxIO>1.8V</VccAuxIO>
+        <VccAuxIO>{vaux}</VccAuxIO>
         <PHYRatio>4:1</PHYRatio>
         <InputClkFreq>{fin:.3f}</InputClkFreq>
         <UIExtraClocks>0</UIExtraClocks>
@@ -161,7 +170,7 @@ def prj(ch: int, pins: dict, speed: int, ecc: bool) -> str:
         </TimingParameters>
         <mrBurstLength name="Burst Length" >8 - Fixed</mrBurstLength>
         <mrBurstType name="Read Burst Type and Length" >Sequential</mrBurstType>
-        <mrCasLatency name="CAS Latency" >{6 if speed == 800 else 7}</mrCasLatency>
+        <mrCasLatency name="CAS Latency" >{cl}</mrCasLatency>
         <mrMode name="Mode" >Normal</mrMode>
         <mrDllReset name="DLL Reset" >No</mrDllReset>
         <mrPdMode name="DLL control for precharge PD" >Slow Exit</mrPdMode>
@@ -175,7 +184,7 @@ def prj(ch: int, pins: dict, speed: int, ecc: bool) -> str:
         <emrDQS name="TDQS enable" >Enabled</emrDQS>
         <emrRDQS name="Qoff" >Output Buffer Enabled</emrRDQS>
         <mr2PartialArraySelfRefresh name="Partial-Array Self Refresh" >Full Array</mr2PartialArraySelfRefresh>
-        <mr2CasWriteLatency name="CAS write latency" >{5 if speed == 800 else 6}</mr2CasWriteLatency>
+        <mr2CasWriteLatency name="CAS write latency" >{cwl}</mr2CasWriteLatency>
         <mr2AutoSelfRefresh name="Auto Self Refresh" >Enabled</mr2AutoSelfRefresh>
         <mr2SelfRefreshTempRange name="High Temparature Self Refresh Rate" >Normal</mr2SelfRefreshTempRange>
         <mr2RTTWR name="RTT_WR - Dynamic On Die Termination (ODT)" >Dynamic ODT off</mr2RTTWR>
@@ -196,6 +205,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--speed", type=int, default=800, choices=sorted(SPEEDS))
+    ap.add_argument("--vccaux-io", choices=("1.8V", "2.0V"),
+                    help="override the speed's VCCAUX_IO (to test MIG's limits)")
     ap.add_argument("--no-ecc", action="store_true",
                     help="64-bit without ECC: only safe if the board has DM pins (it does not)")
     a = ap.parse_args()
@@ -217,7 +228,7 @@ def main():
         if a.check:
             continue
         OUT.mkdir(parents=True, exist_ok=True)
-        (OUT / f"mig_ddr3_ch{ch}.prj").write_text(prj(ch, pins, a.speed, not a.no_ecc))
+        (OUT / f"mig_ddr3_ch{ch}.prj").write_text(prj(ch, pins, a.speed, not a.no_ecc, a.vccaux_io))
         (OUT / f"mig_ddr3_ch{ch}_pins.xdc").write_text(pin_xdc(ch, pins))
         print(f"  wrote {OUT / f'mig_ddr3_ch{ch}.prj'}")
 

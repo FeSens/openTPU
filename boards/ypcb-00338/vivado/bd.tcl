@@ -12,12 +12,13 @@
 # Clock plan (50 MHz board oscillator, AA28 -> MMCM, VCO 800 MHz):
 #   core_clk   100.000 MHz  accelerator, control, interconnect core side (CORE_MHZ: 800 / D,
 #                           D a multiple of 1/8, e.g. 80 / 75.3 / 66.7 as a timing fallback)
-#   clk_200    200.000 MHz  MIG reference (IDELAYCTRL) and, for DDR3-800, MIG system clock
+#   clk_200    200.000 MHz  MIG reference (IDELAYCTRL) and MIG system clock for DDR3-800,
+#                           1333 and 1600 (the MIG's PLL multiplies it to the memory clock)
 #   clk_267    266.667 MHz  MIG system clock for DDR3-1066 (DDR_SPEED=1066)
-#   ui_clk0/1  100 / 133 MHz  MIG user clocks (4:1 of 400 / 533 MHz)
+#   ui_clk0/1  100 / 133 / 167 / 200 MHz  MIG user clocks (4:1 of 400 / 533 / 667 / 800 MHz)
 #   axi_aclk   125 MHz      XDMA (Gen1 x8, 128-bit)
 #
-# Variables (set before sourcing): DDR_SPEED (800 | 1066), MIG_DIR (dir of the .prj files).
+# Variables (set before sourcing): DDR_SPEED (800 | 1066 | 1333 | 1600), MIG_DIR (dir of the .prj files).
 
 if {![info exists DDR_SPEED]} { set DDR_SPEED 800 }
 if {![info exists MIG_DIR]} { set MIG_DIR [file normalize [file dirname [info script]]/mig] }
