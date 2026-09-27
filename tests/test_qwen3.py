@@ -131,13 +131,19 @@ def test_qwen3_0_6b_fp4_greedy(pair):
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3-0.6B not downloaded")
-@pytest.mark.parametrize("wformat,head_format", [("int8", None), ("fp4", "int8")])
-def test_qwen3_0_6b_token_on_rtl_is_bit_exact(wformat, head_format):
+@pytest.mark.parametrize("wformat,head_format,pair", [("int8", None, False),
+                                                      ("fp4", "int8", False),
+                                                      ("fp4", None, True)])
+def test_qwen3_0_6b_token_on_rtl_is_bit_exact(wformat, head_format, pair):
     """Feed part of a prompt on the ISA simulator, then run the next token on the Verilator RTL
     and on the ISA simulator from the same DRAM state: weights, KV cache and logits must agree
-    bit for bit (int8 weights, and 4-bit layers with an int8 LM head)."""
+    bit for bit (int8 weights; 4-bit layers with an int8 LM head; everything 4-bit on the
+    board's MCOLS=2 with column reuse)."""
     from opentpu.llm.rtl_backend import RtlBackend
-    eng = Engine(Spec.from_hf(REAL), load_weights(REAL), cap=256, wformat=wformat,
+    spec = Spec.from_hf(REAL)
+    cfg = device_config(spec, 256, wformat=wformat, head_format=head_format, MCOLS=2,
+                        PAIR=True) if pair else None
+    eng = Engine(spec, load_weights(REAL), cap=256, cfg=cfg, wformat=wformat,
                  head_format=head_format)
     prompt = [151644, 872, 198, 3838, 374, 279, 6722, 315, 9625, 30]
     for t in prompt[:-1]:

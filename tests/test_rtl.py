@@ -146,9 +146,13 @@ def _random_program(rng, cfg: Config, n_ops=40):
             rb = KB * D if wf == I.W8 else -(-KB // 2) * D           # 4-bit: two blocks a chunk
             rs = rb + D * int(rng.integers(0, 2))
             sa = INT8 + D * int(rng.integers(0, (32768 - N * rs) // D + 1))   # D aligned
-            srs_s = 4 * KB + 4 * int(rng.integers(0, 2))
+            # PAIR (column reuse): its scale pairs are 8-byte aligned; rows M..2M-1 may hold
+            # a DUP copy or whatever an earlier QACT left
+            pair = wf != I.W8 and 2 * M <= cfg.MCOLS and rng.integers(2 if dup else 4) == 0
+            al = 8 if pair else 4
+            srs_s = al * -(-4 * KB // al) + al * int(rng.integers(0, 2))
             ssa = (SCALES if wf == I.W8 else SCALES4) + \
-                4 * int(rng.integers(0, (4096 - N * srs_s) // 4))
+                al * int(rng.integers(0, (4096 - N * srs_s) // al))
             unit = bool(rng.integers(2))
             reuse = [o for o in mm_outs if o[1:] == (M, N)]
             if reuse and rng.integers(2):
@@ -158,7 +162,7 @@ def _random_program(rng, cfg: Config, n_ops=40):
                 mm_outs.append((out, M, N))
             asc = pick_src(M) if (unit and acc and rng.integers(2)) else None
             prog.append(I.mm(sa, ssa, out, N, KB, rs, N, M, ab, srs_s, unit=unit, acc=acc,
-                             rmax=bool(rng.integers(2)), ascale=asc, wf=wf))
+                             rmax=bool(rng.integers(2)), ascale=asc, wf=wf, pair=pair))
             src.append((out, M * N))
         elif kind == "qst":
             rows, KB = int(rng.integers(1, 4)), int(rng.integers(1, 4))
@@ -284,13 +288,16 @@ def _hazard_program(rng, cfg: Config, n_ops=60):
             wf = _wf(rng)
             rs = KB * D if wf == I.W8 else -(-KB // 2) * D
             sa = SCR + D * int(rng.integers(0, 4096 // D))                   # D aligned
-            ssa = (SCALES if wf == I.W8 else SCALES4) + 4 * int(rng.integers(0, 256))
+            pair = wf != I.W8 and 2 * M <= cfg.MCOLS and rng.integers(2 if dup else 4) == 0
+            al = 8 if pair else 4                 # PAIR: 8-byte aligned scale pairs
+            ssa = (SCALES if wf == I.W8 else SCALES4) + al * int(rng.integers(0, 1024 // al))
             ors = N + int(rng.integers(0, 2))
             out = region(M * ors + M)
             unit, acc = bool(rng.integers(2)), bool(rng.integers(2))
             asc = region(M) if (unit and acc and rng.integers(2)) else None
-            prog.append(I.mm(sa, ssa, out, N, KB, rs, ors, M, int(rng.integers(0, 8)), 4 * KB,
-                             unit=unit, acc=acc, rmax=bool(rng.integers(2)), ascale=asc, wf=wf))
+            prog.append(I.mm(sa, ssa, out, N, KB, rs, ors, M, int(rng.integers(0, 8)),
+                             al * -(-4 * KB // al), unit=unit, acc=acc, rmax=bool(rng.integers(2)),
+                             ascale=asc, wf=wf, pair=pair))
         elif kind == "qst":
             rows, KB = int(rng.integers(1, 3)), int(rng.integers(1, 3))
             es = int(rng.integers(1, 3))
@@ -506,13 +513,22 @@ def test_tmem_random_traffic(have_verilator):
 
 
 # ------------------------------------------------------------------ 4-bit weights
-@pytest.mark.parametrize("fmt,S,D", [("int4", 2, 32), ("fp4", 2, 32), ("fp4", 1, 128),
-                                     ("int4", 1, 128)])
-def test_mlp_4bit_rtl(have_verilator, fmt, S, D):
-    """The MLP with 4-bit weights (real quantizer output, odd and even block counts per row)."""
-    H, Fd = (256, 512) if D == 128 else (96, 256)
-    args, want = mlp_args(np.random.default_rng(9), M=3, H=H, Fd=Fd)
+@pytest.mark.parametrize("fmt,S,D,pair", [("int4", 2, 32, False), ("fp4", 2, 32, False),
+                                          ("fp4", 1, 128, False), ("int4", 1, 128, False),
+                                          ("fp4", 1, 128, True), ("int4", 1, 128, True)])
+def test_mlp_4bit_rtl(have_verilator, fmt, S, D, pair):
+    """The MLP with 4-bit weights (real quantizer output, odd and even block counts per row).
+    pair: one row at the board's MCOLS=2 with column reuse (QACT DUP, MM PAIR); H = 384 gives
+    gate / up an odd block count, whose dense scale rows (12 bytes) are not 8-byte aligned, so
+    those two stay half rate and only W_down runs PAIR (odd-KB PAIR is in the fuzzers)."""
+    H, Fd = (384 if pair else 256, 512) if D == 128 else (96, 256)
+    args, want = mlp_args(np.random.default_rng(9), M=1 if pair else 3, H=H, Fd=Fd)
     for k in ("w_gate", "w_up", "w_down"):
         args[k].fmt = fmt
-    ri, rr = both(mlp, Config(S=S, D=D, ACT_BLOCKS=16), **args)
+    cfg = Config(S=S, D=D, ACT_BLOCKS=16, MCOLS=2, PAIR=True) if pair else \
+        Config(S=S, D=D, ACT_BLOCKS=16)
+    if pair:
+        mms = [p for p in compile_kernel(mlp, cfg, **args)[0].programs[0] if p.op == I.MM]
+        assert any(p.flags & I.F_PAIR for p in mms)
+    ri, rr = both(mlp, cfg, **args)
     assert rel(rr.outputs["out"], want) < 0.1
