@@ -87,6 +87,10 @@ module otpu_slice
 );
   localparam int BW = $clog2(LANES);
   localparam int P_MXU = 0, P_DMA = 1, P_Q = 2, P_VA = 3, P_VB = 4, P_Q3 = 5, P_Q2 = 6, P_COLL = 7, NRP = 8;
+  // the board build (TMEM replicated per read port, RPB >= NRP * LANES: reads never conflict;
+  // WPB = 1): the arbiter only masks write banks (see the arbiter), and the VPU's grant only
+  // takes its buffered writes (otpu_vpu WBUF)
+  localparam bit ARB_MASK = (RPB >= NRP * LANES) && (WPB == 1);
   localparam int W_DMA = 0, W_MXU = 1, W_COLL = 2, W_VPU = 3, NWP = 4;
   localparam int G_DMA = 0, G_COLL = 1, G_MXU = 2, G_Q = 3, G_VPU = 4, NG = 5;
 
@@ -145,6 +149,7 @@ module otpu_slice
   assign coll_rdata = r_data[P_COLL];
   // the units' TMEM requests
   logic [LANES-1:0]        dma_ren, dma_wen, va_ren, vb_ren, v_wen;
+  logic                    v_ren;   // the VPU's lanes take their read data this cycle
   logic [LANES-1:0][31:0]  dma_raddr, dma_waddr, dma_wdata, va_raddr, vb_raddr, v_waddr, v_wdata;
   logic [ULANES-1:0]       mxu_ren, mxu_wen, q_ren, q_ren2;
   logic [ULANES-1:0][31:0] mxu_raddr, mxu_waddr, mxu_wdata, q_raddr, q_raddr2;
@@ -187,8 +192,17 @@ module otpu_slice
   logic [3:0][31:0] mxu_uv;
   logic [31:0] q_frz, v_frz;
 
+  // Each unit's reset is its own register (a reset tree): the slice's reset reaches ~15k flip-
+  // flops across the die, and one replicated net from the board ran 8.4 ns routes into the
+  // units (the worst core_clk paths at 114 MHz). The units leave reset a cycle after the
+  // sequencer, which starts nothing that early.
+  (* max_fanout = 256 *) logic rst_dma, rst_mxu, rst_q, rst_vpu;
+  always_ff @(posedge clk) begin
+    rst_dma <= rst; rst_mxu <= rst; rst_q <= rst; rst_vpu <= rst;
+  end
+
   otpu_dma #(.D(D), .LANES(LANES)) u_dma (
-    .clk, .rst, .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
+    .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
     .b_req(dma_breq), .b_gnt(b_rdy), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
     .b_addr(dma_baddr), .b_rvalid(b_rvalid && b_rtag), .b_rdata, .wr_idle,
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rdata(r_data[P_DMA]),
@@ -196,7 +210,7 @@ module otpu_slice
 
   otpu_mxu #(.D(D), .MCOLS(MCOLS), .DEPTH(FIFO_DEPTH), .LANES(ULANES), .IMPL(MXU_IMPL),
              .CL(MXU_CL), .SID(SID)) u_mxu (
-    .clk, .rst, .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
+    .clk, .rst(rst_mxu), .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
     .computing(mxu_pop), .pf_level(mxu_level), .pf_starve(mxu_starve), .pf_block(mxu_block),
     .pf_u(mxu_u), .pf_uv(mxu_uv),
     .act_blk(act_rblk), .act_blk2(act_rblk2), .act_hi(act_rhi), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
@@ -207,7 +221,7 @@ module otpu_slice
     .t_wen(mxu_wen), .t_waddr(mxu_waddr), .t_wdata(mxu_wdata), .t_gnt(gnt[G_MXU]));
 
   otpu_quant #(.D(D), .LANES(ULANES), .SID(SID)) u_quant (
-    .clk, .rst, .start(ustart[U_Q]), .cmd(ucmd[U_Q]), .rdy(r_q), .done(d_q), .gnt(gnt[G_Q]),
+    .clk, .rst(rst_q), .start(ustart[U_Q]), .cmd(ucmd[U_Q]), .rdy(r_q), .done(d_q), .gnt(gnt[G_Q]),
     .t_ren(q_ren), .t_raddr(q_raddr), .t_rdata(r_data[P_Q][ULANES-1:0]),
     .t_ren2(q_ren2), .t_raddr2(q_raddr2), .t_rdata2(r_data[P_Q2][ULANES-1:0]),
     .t_ren3(q3_en), .t_raddr3(q3_addr), .t_rdata3(r_data[P_Q3][0]),
@@ -216,9 +230,9 @@ module otpu_slice
     .a_req(q_areq), .a_we(q_awe), .a_addr(q_aaddr), .a_wdata(q_awdata), .a_be(q_abe),
     .pf_u(q_u), .pf_frz(q_frz));
 
-  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID)) u_vpu (
-    .clk, .rst, .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
-    .gnt(gnt[G_VPU]),
+  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK)) u_vpu (
+    .clk, .rst(rst_vpu), .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
+    .gnt(gnt[G_VPU]), .ren(v_ren),
     .ta_en(va_ren), .ta_addr(va_raddr), .ta_data(r_data[P_VA]),
     .tb_en(vb_ren), .tb_addr(vb_raddr), .tb_data(r_data[P_VB]),
     .tw_en(v_wen), .tw_addr(v_waddr), .tw_data(v_wdata), .pf_u(v_u), .pf_frz(v_frz));
@@ -273,10 +287,9 @@ module otpu_slice
   endfunction
 
   // The board build (TMEM replicated per read port, RPB >= NRP * LANES: reads never conflict;
-  // WPB = 1) only needs write-bank masks: a unit is granted when no bank it writes was taken by
+  // WPB = 1; ARB_MASK) only needs write-bank masks: a unit is granted when no bank it writes was taken by
   // a higher-priority unit this cycle (a unit's own lanes write distinct banks). Shallow logic,
   // no counters. Other configurations count reads and writes per bank.
-  localparam bit ARB_MASK = (RPB >= NRP * LANES) && (WPB == 1);
   logic [NG-1:0] gnt_m, gnt_c;
   logic          cgl_m, cgl_c;
   // Each group's write-bank mask, the pairwise conflicts between groups (in parallel), then
@@ -327,7 +340,8 @@ module otpu_slice
     w_gnt[W_COLL] = gnt[G_COLL];
     if (!gnt[G_MXU])  begin r_en[P_MXU] = '0; w_en[W_MXU] = '0; end
     if (!gnt[G_Q])    begin r_en[P_Q] = '0; r_en[P_Q2] = '0; r_en[P_Q3] = '0; end
-    if (!gnt[G_VPU])  begin r_en[P_VA] = '0; r_en[P_VB] = '0; w_en[W_VPU] = '0; end
+    if (!v_ren)       begin r_en[P_VA] = '0; r_en[P_VB] = '0; end
+    if (!gnt[G_VPU])  w_en[W_VPU] = '0;
     if (!gnt[G_COLL]) begin r_en[P_COLL] = '0; w_en[W_COLL] = '0; end
   end
 

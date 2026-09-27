@@ -137,10 +137,14 @@ module otpu_tmem #(
   end
 
   // ---- the registered write stage: this cycle's selected writes land next cycle (pw_*); the
-  // data of the writes landing now is kept one more cycle (pd) for the reads that bypass them
-  logic [LANES-1:0][WPB-1:0]         pw_v;
-  logic [LANES-1:0][WPB-1:0][IW-1:0] pw_a;
-  logic [LANES-1:0][WPB-1:0][31:0]   pw_d, pd;
+  // data of the writes landing now is kept one more cycle (pd) for the reads that bypass them.
+  // Each pw bit reaches every copy of its bank (the copies' block RAMs spread over the die):
+  // synthesis replicates the registers so each copy gets nearby ones (one copy's net to the
+  // block RAM address pins was the worst core_clk path at 120 MHz, 0 logic levels)
+  (* max_fanout = 16 *) logic [LANES-1:0][WPB-1:0]         pw_v;
+  (* max_fanout = 16 *) logic [LANES-1:0][WPB-1:0][IW-1:0] pw_a;
+  (* max_fanout = 16 *) logic [LANES-1:0][WPB-1:0][31:0]   pw_d;
+  logic [LANES-1:0][WPB-1:0][31:0]                         pd;
   always_ff @(posedge clk) begin
     pw_v <= bw_v;
     pw_a <= bw_a;
