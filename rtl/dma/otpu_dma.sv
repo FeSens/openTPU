@@ -13,8 +13,11 @@
 //       q | k, v, the decay and beta are first read from TMEM into the datapath (otpu_dstep);
 //       then the state's chunks are requested like an LD's and their segments fed to the
 //       datapath, one per cycle, and the updated segments gathered into chunks and written
-//       back (two chunk registers; a write goes before a read request); finally o goes to
-//       TMEM through the write register. The datapath advances with `pe`, a register: a
+//       back; finally o goes to TMEM through the write register. The DRAM sees runs: the
+//       state's reads go out RUN chunks at a time (one burst per channel) and the writes once
+//       RUN chunks are gathered (NGC-chunk gather), so a read / write turnaround and a read
+//       transaction's fixed cost are paid per run, not per chunk; a run of one kind never
+//       starts inside a run of the other. The datapath advances with `pe`, a register: a
 //       cycle it may take a segment (or, after the last one, a bubble) needs a segment in the
 //       buffer and room for two more updated segments.
 // The DRAM port may refuse a request (b_gnt low) and read data may take any time to return (in
@@ -82,7 +85,11 @@ module otpu_dma
   logic [PW-1:0] wp, rp;               // buffer slot of the next chunk received / delivered
   logic ds_wreq, ds_eat;                                    // DSTEP: a chunk write; a chunk used
   wire ld_act = busy && !is_st && !ackw;
-  wire ld_req = ld_act && (cleft != 0) && (occ != (PW+1)'(DEPTH));
+  localparam int RUN = 16;                            // DSTEP: chunks per DRAM read / write run
+  logic ds_rr;                                        // DSTEP: inside a read run
+  logic [$clog2(RUN)-1:0] ds_rc;                      // ... its chunks issued
+  wire ld_req = ld_act && (cleft != 0) && (occ != (PW+1)'(DEPTH)) &&
+                (!is_ds || ds_rr || (!ds_wreq && occ <= (PW+1)'(DEPTH - RUN)));
   wire ld_iss = ld_req && b_gnt && !ds_wreq;
   wire ld_dv  = ld_act && (sleft != 0) && (cnt != 0);       // deliver the segment at sw
   wire ld_eat = (ld_dv && seg_end) || ds_eat;               // ... which frees its chunk's slot
@@ -95,7 +102,9 @@ module otpu_dma
     lb_q <= lb[rp];
   end
   // ---- DSTEP
-  localparam int NG = 2 * SPC;                       // output gather: two chunks of segments
+  localparam int NGC = 2 * RUN;                      // output gather (chunks)
+  localparam int NG = NGC * SPC;                     // ... in segments
+  localparam int GW = $clog2(NG) + 1;
   localparam int CBD = 256 / W;                      // column / row buffers per lane
   logic [31:0]  ds_qa, ds_va, ds_ga, ds_gs, ds_oa, ds_wb;
   logic [5:0]   ds_ns;                               // segments per state row
@@ -110,22 +119,34 @@ module otpu_dma
   logic [$clog2(SPC > 1 ? SPC : 2)-1:0] ds_pos, pe_pos;   // segment within the chunk at rp
   (* max_fanout = 64 *) logic pe;
   logic         pe_in, pe_zero;
-  logic [3:0]   og;                                  // gathered updated segments (<= NG)
+  logic [GW-1:0] og;                                 // gathered updated segments (<= NG)
   logic [$clog2(NG)-1:0] gt;                         // next gather slot
-  logic         gh;                                  // the chunk to write next
-  logic [31:0]  gb [NG][W];
+  (* max_fanout = 64 *) logic [$clog2(NGC)-1:0] gh;  // the chunk to write next
+  (* ram_style = "distributed" *) logic [W*32-1:0] gb [SPC][NGC];   // [segment][chunk]
+  logic [W*32-1:0] y_p;
   logic         y_v, o_v;
   logic [31:0]  y_d [W], in_d [W], fdat [W], o_d;
   logic [31:0]  ob [W][CBD];
   logic [7:0]   oi;                                  // o segment written to TMEM next
-  wire  ds_room = ({1'b0, og} + 5'(pe && y_v)) <= 5'(NG - 1);
+  wire  ds_room = ({1'b0, og} + (GW+1)'(pe && y_v)) <= (GW+1)'(NG - 1);
   wire  ds_take = ds_run && (ds_left != 0) && (ds_zero || cnt != 0) && ds_room;
   wire  ds_flushed = (ds_ycnt == ds_nseg) && (ds_ocnt == ds_rows);
   wire  ds_drain = ds_run && (ds_left == 0) && !ds_flushed && ds_room;
   assign ds_eat = ds_take && !ds_zero && (32'(ds_pos) == SPC - 1);
-  assign ds_wreq = is_ds && (og >= 4'(SPC));
+  // a registered request (it selects the 1024-bit write data: replicated, no decode on the
+  // path); it follows og, which only counts during a DSTEP
+  (* max_fanout = 64 *) logic ds_wr;
+  wire  [GW-1:0] og_nx = og + GW'(pe && y_v) - ((ds_wreq && b_gnt) ? GW'(SPC) : GW'(0));
+  wire  ds_rr_nx = ds_rr && !(ld_iss && (32'(ds_rc) == RUN - 1 || cleft == 1));
+  // a write run: once RUN chunks are in (or the stream has ended), then while chunks are in
+  wire  ds_wr_nx = (og_nx >= GW'(SPC)) &&
+                   (ds_wr || (!ds_rr_nx && (og_nx >= GW'(RUN * SPC) || ds_left == 0)));
+  assign ds_wreq = ds_wr;
+  always_ff @(posedge clk)
+    if (is_ds && pe && y_v) gb[32'(gt) % SPC][32'(gt) / SPC] <= y_p;
   always_comb
     for (int l = 0; l < W; l++) begin
+      y_p[32 * l +: 32] = y_d[l];
       in_d[l] = pe_zero ? 32'd0 : lb_q[32 * (32'(pe_pos) * W + l) +: 32];
       fdat[l] = t_rdata[l];
     end
@@ -229,7 +250,7 @@ module otpu_dma
       for (int p = 0; p < SPC; p++)
         for (int l = 0; l < W; l++) begin
           b_wmask[p * W + l] = 1'b1;
-          b_wdata[32 * (p * W + l) +: 32] = gb[32'(gh) * SPC + p][l];
+          b_wdata[32 * (p * W + l) +: 32] = gb[p][gh][32 * l +: 32];
         end
     end
     if (ds_fill)
@@ -276,6 +297,8 @@ module otpu_dma
       busy <= 1'b0;
       st_pend <= 1'b0;
       ackw <= 1'b0;
+      ds_wr <= 1'b0;
+      ds_rr <= 1'b0;
     end else if (start && cmd.op == OP_DSTEP) begin
       logic [31:0] a;
       logic [8:0]  rows;
@@ -299,7 +322,8 @@ module otpu_dma
       ds_ycnt <= '0; ds_ocnt <= '0; ds_wch <= '0;
       ds_nq <= 8'(ns); ds_nv <= nv; fk <= '0; fn <= 8'(2 * ns) + nv + 8'd2;
       ds_fill <= 1'b1; ds_run <= 1'b0; ds_out <= 1'b0;
-      og <= '0; gt <= '0; gh <= 1'b0; ds_pos <= '0; oi <= '0;
+      og <= '0; gt <= '0; gh <= '0; ds_pos <= '0; oi <= '0; ds_wr <= 1'b0;
+      ds_rr <= 1'b0; ds_rc <= '0;
       st_pend <= 1'b0;
       ackw <= 1'b0;
       busy <= 1'b1;
@@ -349,15 +373,18 @@ module otpu_dma
         end
         // the updated segments into the gather, a chunk out per write
         if (pe && y_v) begin
-          gb[gt] <= y_d;
           gt <= gt + 1'b1;
           ds_ycnt <= ds_ycnt + 1'b1;
         end
         if (ds_wreq && b_gnt) begin
-          gh <= ~gh;
+          gh <= gh + 1'b1;
           ds_wch <= ds_wch + 1'b1;
         end
-        og <= og + 4'(pe && y_v) - ((ds_wreq && b_gnt) ? 4'(SPC) : 4'd0);
+        og <= og_nx;
+        ds_wr <= ds_wr_nx;
+        // a read run: starts with a request when RUN slots are free, ends after RUN chunks
+        if (ld_iss) ds_rc <= (32'(ds_rc) == RUN - 1) ? '0 : ds_rc + 1'b1;
+        ds_rr <= ds_rr_nx || (ld_iss && !ds_rr && RUN > 1 && cleft != 1);
         if (pe && o_v) begin
           ob[ds_ocnt % W][ds_ocnt / W] <= o_d;
           ds_ocnt <= ds_ocnt + 1'b1;
