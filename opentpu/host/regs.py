@@ -28,7 +28,8 @@ CAP_TRACE, CAP_TEMP, CAP_I2C = 1, 2, 4   # CAPS bit0..2; [15:8] log2 trace depth
 # CAPS bit3: DDR_MTS holds the DDR3 data rate the bitstream was built for (MT/s). Older
 # bitstreams leave the bit clear and read 0xDEADBEEF there: the rate is unknown.
 CAP_DDR, R_DDR_MTS = 8, 0x54
-CAP_W4 = 16                               # CAPS bit4: the MXU runs 4-bit weights (MM WF)
+# CAPS bit4: the MXU runs 4-bit weights (MM WF); bit5: column reuse (MM PAIR + QACT DUP)
+CAP_W4, CAP_PAIR = 16, 32
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset
@@ -62,6 +63,7 @@ def temp_c(code: int) -> float:
 def caps(v: int) -> dict:
     return {"trace": bool(v & CAP_TRACE), "temp": bool(v & CAP_TEMP), "i2c": bool(v & CAP_I2C),
             "ddr": bool(v & CAP_DDR), "w4": bool(v & CAP_W4),
+            "pair": bool(v & CAP_PAIR),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
 

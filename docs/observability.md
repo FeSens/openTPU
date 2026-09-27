@@ -33,7 +33,7 @@ DDR3 speed as unknown.
 | 0x034 | B_STALL | RO | cycles a port B request waited (run) |
 | 0x038 | SCRATCH | RW | host bring-up test |
 | 0x03C | REGMAP | RO | register map version (3; 2 before MXU_STARVE) |
-| 0x040 | CAPS | RO | bit0 trace buffer present, bit1 temperature present, bit2 I2C pins present, bit3 DDR_MTS present, bit4 the MXU runs 4-bit weights (docs/quant.md), [15:8] log2(trace depth), [23:16] log2(P/Q window cycles) |
+| 0x040 | CAPS | RO | bit0 trace buffer present, bit1 temperature present, bit2 I2C pins present, bit3 DDR_MTS present, bit4 the MXU runs 4-bit weights (docs/quant.md), bit5 column reuse: MM PAIR / QACT DUP (docs/isa.md), [15:8] log2(trace depth), [23:16] log2(P/Q window cycles) |
 | 0x044 | CORE_KHZ | RO | accelerator clock in kHz (a build parameter; the host turns cycles into time with it) |
 | 0x048 | BUILD_ID | RO | a build parameter: the first 8 hex digits of the git commit |
 | 0x04C | TEMP | RO | bit31 valid, [11:0] the XADC die-temperature code (from the block design's XADC, shared with the MIGs; °C = code × 503.975 / 4096 − 273.15). Valid once channel 0 is calibrated and has reported a non-zero code |

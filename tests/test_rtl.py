@@ -133,10 +133,14 @@ def _random_program(rng, cfg: Config, n_ops=40):
             M, KB = int(rng.integers(1, cfg.MCOLS + 1)), int(rng.integers(1, 5))
             ab = int(rng.integers(0, cfg.ACT_BLOCKS - KB + 1))
             srs = KB * D + int(rng.integers(0, 4))
+            M = min(M, 4096 // srs)               # D = 128: the rows fit the input region
             cs = pick_src(KB * D) if rng.integers(3) == 0 else None
             rsc = pick_src(M) if rng.integers(3) == 0 else None
+            dup = 2 * M <= cfg.MCOLS and rng.integers(3) == 0
             prog.append(I.qact(pick_src(M * srs), M, ab, KB, srs, row=bool(rng.integers(2)),
-                               cscale=cs, rscale=rsc))
+                               cscale=cs, rscale=rsc, dup=dup))
+            if dup and rng.integers(2):
+                M *= 2                            # the MM reads the copies too
             N = int(rng.integers(1, 24))
             wf = _wf(rng)
             rb = KB * D if wf == I.W8 else -(-KB // 2) * D           # 4-bit: two blocks a chunk
@@ -271,8 +275,11 @@ def _hazard_program(rng, cfg: Config, n_ops=60):
             srs = KB * D + int(rng.integers(0, 3))
             cs = region(KB * D) if rng.integers(3) == 0 else None
             rsc = region(M) if rng.integers(3) == 0 else None
+            dup = 2 * M <= cfg.MCOLS and rng.integers(3) == 0
             prog.append(I.qact(region(M * srs), M, ab, KB, srs, row=bool(rng.integers(2)),
-                               cscale=cs, rscale=rsc))
+                               cscale=cs, rscale=rsc, dup=dup))
+            if dup and rng.integers(2):
+                M *= 2                            # the MM reads the copies too
             N = int(rng.integers(1, 20))
             wf = _wf(rng)
             rs = KB * D if wf == I.W8 else -(-KB // 2) * D

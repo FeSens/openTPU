@@ -97,8 +97,8 @@ row's maximum: `T[out + M*ors + j] = fold(max, y[j][0..N-1])`, folded from `n = 
 `UNIT` and `ACC`; `ssa` is then the TMEM address of M per-row factors and the old accumulator
 is rescaled first: `y = T[out + j*ors + n] * T[ssa + j] + acc[j]` -- the flash-attention
 correction step, done in the MXU epilogue), bits 5:4 `WF`, the streamed weights' format (below;
-0 = int8). The streamed rows are D-byte aligned (`sa` and `rs` are multiples of D): the MXU
-streams whole D-byte DRAM chunks.
+0 = int8), bit6 `PAIR` (4-bit weights at full rate, "Column reuse"). The streamed rows are
+D-byte aligned (`sa` and `rs` are multiples of D): the MXU streams whole D-byte DRAM chunks.
 
 ```
 for n in 0..N-1:
@@ -136,6 +136,26 @@ With `UNIT`, `ws = 1.0` and every `m_b = 1`. opentpu/quant.py makes these matric
 docs/quant.md compares the formats. The stationary operand (ACT RAM), the KV cache and QST stay
 int8.
 
+#### Column reuse
+
+A 4-bit MM takes one block per cycle, half a streamed chunk. Flag bit6 `PAIR` (4-bit `WF` only,
+`2*M <= MCOLS`) lets it take a whole chunk per cycle when the operand has at most MCOLS/2 rows:
+the idle columns `M..2M-1` take the odd blocks. Output row `j` gets its even blocks from ACT
+row `j` and its odd blocks from ACT row `j + M` (which `QACT DUP` fills with the same row), and
+the two terms of a chunk are added before the sums:
+
+```
+t[r][k]  as above, for ACT rows r < 2M
+p[j][c]  = t[j][2c] + (2c+1 < KB ? t[j+M][2c+1] : +0)       c < ceil(KB/2)
+acc[j]   = isum_4(p[j][0..ceil(KB/2)-1])
+```
+
+The streamed rows and scales are the same as without `PAIR`: chunk `c` holds blocks `2c` and
+`2c+1`, whose scale words are adjacent (`ssa + n*srs + 8c`) and are read as one 8-byte pair, so
+without `UNIT` both `ssa` and `srs` are multiples of 8 (with KB odd the scale rows are padded; the
+last chunk's second word is read and ignored). ACC, RMAX and ASCALE are unchanged and write M
+rows. The results differ from a `PAIR`-less MM only in fp32 rounding (the sum order).
+
 ### QACT
 
 `src = R[ra]+w1` (TMEM words), `rows = w2[7:0]`, `ab = w2[15:8]`, `KB = w2[31:16]`,
@@ -146,6 +166,8 @@ Flag bit2 `RSCALE`: every element is first multiplied by a per-row factor `T[w5 
 both, `x = (T[src + r*srs + c] * T[w5 + r]) * T[w4 + c]` (RMSNorm's `x * r * gamma`).
 For each row `r < rows` and block `k < KB`: quantize `T[src + r*srs + k*D + i]`, write
 `ACT[r][(ab+k)*D + i] = q[i]`, `ASCALE[r][ab+k] = s`.
+Flag bit3 `DUP` (`2*rows <= MCOLS`): row `r + rows` receives the same bytes and scales as row `r`
+in the same cycles, the operand layout of `MM PAIR` ("Column reuse").
 
 ### QST
 

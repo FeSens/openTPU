@@ -81,9 +81,11 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
         wf = (ins.flags >> I.WF_SHIFT) & 3
         if wf == I.W8:
             return "MM", f"{M}x{KB * D} . {N}x{KB * D}^T{acc}", N * KB, N * KB, scales
-        # 4-bit: one block per cycle, two blocks per streamed chunk
-        return ("MM", f"{M}x{KB * D} . {N}x{KB * D}^T {'int4' if wf == I.W4I else 'fp4'}{acc}",
-                N * KB, N * -(-KB // 2), scales)
+        # 4-bit: one block per cycle, two blocks per streamed chunk; PAIR: one chunk per cycle
+        pair = bool(ins.flags & I.F_PAIR)
+        return ("MM", f"{M}x{KB * D} . {N}x{KB * D}^T {'int4' if wf == I.W4I else 'fp4'}"
+                      f"{' pair' if pair else ''}{acc}",
+                N * (-(-KB // 2) if pair else KB), N * -(-KB // 2), scales)
     if op == I.QACT:
         rows, KB = w[1] & 0xFF, w[1] >> 16
         n = rows * KB * D

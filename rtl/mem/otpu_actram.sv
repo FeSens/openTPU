@@ -1,7 +1,9 @@
 // ACT RAM: the MXU's stationary operand. MCOLS rows x BLOCKS blocks x D int8, plus one fp32
 // scale per (row, block). The quantizer writes up to LANES consecutive bytes (and one scale) per
-// cycle; its byte index is LANES aligned, so the bytes sit in one block. The MXU reads one block
-// of every row per cycle: block r_blk, or r_blk2 for the rows in r_hi (MM PAIR: the odd blocks).
+// cycle; its byte index is LANES aligned, so the bytes sit in one block. With `w_dup` (QACT DUP)
+// the bytes and the scale also go to row w_row + w_off (w_off: the QACT's row count). The MXU
+// reads one block of every row per cycle: block r_blk, or r_blk2 for the rows in r_hi (MM PAIR:
+// the odd blocks).
 //
 // Block RAM: one memory per row, BLOCKS words of D bytes with byte write enables. The read is
 // registered (the MXU's first pipeline register) and advances with `ren`; a read of a block
@@ -17,6 +19,8 @@ module otpu_actram #(
   input  logic [7:0]             w_row,
   input  logic [31:0]            w_idx,       // byte index within the row: block*D + i
   input  logic [LANES-1:0][7:0]  w_data,
+  input  logic                   w_dup,
+  input  logic [7:0]             w_off,
   input  logic                   swe,
   input  logic [7:0]             s_row,
   input  logic [15:0]            s_blk,
@@ -51,7 +55,8 @@ module otpu_actram #(
     logic [31:0]    asc [BLOCKS];
     logic [D*8-1:0] rd;
     logic [31:0]    rs;
-    wire  sel = (w_row[RW-1:0] == RW'(j));
+    wire  sel = (w_row[RW-1:0] == RW'(j)) || (w_dup && RW'(w_row + w_off) == RW'(j));
+    wire  ssel = (s_row[RW-1:0] == RW'(j)) || (w_dup && RW'(s_row + w_off) == RW'(j));
     wire [BW-1:0] rb = r_hi[j] ? r_blk2[BW-1:0] : r_blk[BW-1:0];
     always_ff @(posedge clk) begin
       for (int b = 0; b < D; b++)
@@ -59,7 +64,7 @@ module otpu_actram #(
       if (ren) rd <= act[rb];
     end
     always_ff @(posedge clk) begin
-      if (swe && s_row[RW-1:0] == RW'(j)) asc[s_blk[BW-1:0]] <= s_data;
+      if (swe && ssel) asc[s_blk[BW-1:0]] <= s_data;
       if (ren) rs <= asc[rb];
     end
     assign r_data[j*D*8 +: D*8] = rd;

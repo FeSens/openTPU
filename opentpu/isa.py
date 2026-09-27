@@ -21,7 +21,9 @@ F_UNIT, F_ACC, F_RMAX, F_ASCALE = 0x1, 0x2, 0x4, 0x8     # MM
 WF_SHIFT = 4
 W8, W4I, W4F = 0, 1, 2          # int8 + fp32 scale | int4 / E2M1 + two-level scale word
 WFORMATS = {"int8": W8, "int4": W4I, "fp4": W4F}
+F_PAIR = 0x40                   # MM, 4-bit only: column reuse, two K-blocks per cycle and row
 F_ROW, F_CSCALE, F_RSCALE = 0x1, 0x2, 0x4   # QACT (QST: F_ROW)
+F_DUP = 0x8                     # QACT: also write the rows to ACT rows rows..2*rows-1 (PAIR)
 
 # VOP functions
 V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_OUTER = 0, 1, 2, 3, 4, 5, 6
@@ -120,29 +122,34 @@ def st(dram, tmem, nwords, ra=0, rb=0, comment=""):
 
 
 def mm(sa, ssa, out, n, kb, rs, ors, m, ab, srs, unit=False, acc=False, rmax=False,
-       ascale=None, wf=W8, ra=0, rb=0, rc=0, comment=""):
+       ascale=None, wf=W8, pair=False, ra=0, rb=0, rc=0, comment=""):
     """MM. With `ascale` (a TMEM address; needs unit and acc) the old accumulator is first
     multiplied by a per-row factor: y = T[out] * T[ascale + j] + a.w (the flash-attention
     rescale, done in the MXU epilogue). The address travels in the (unused) scale field.
-    `wf`: the streamed weights' format (W8, W4I, W4F)."""
+    `wf`: the streamed weights' format (W8, W4I, W4F). `pair` (4-bit only): column reuse,
+    ACT row j + m carries the odd K-blocks of row j and both terms of a chunk are summed
+    before the partial sums (docs/isa.md, "Column reuse")."""
     assert 0 < n < 65536 and 0 < kb < 65536 and 0 < m < 256 and 0 <= ab < 256 and ors < 65536
     assert wf in (W8, W4I, W4F)
+    assert not pair or wf != W8, "PAIR needs 4-bit weights"
     if ascale is not None:
         assert unit and acc, "ASCALE needs UNIT and ACC"
         ssa = ascale
     fl = (F_UNIT if unit else 0) | (F_ACC if acc else 0) | (F_RMAX if rmax else 0) | \
-        (F_ASCALE if ascale is not None else 0) | (wf << WF_SHIFT)
+        (F_ASCALE if ascale is not None else 0) | (F_PAIR if pair else 0) | (wf << WF_SHIFT)
     return Instr(MM, ra=ra, rb=rb, rc=rc, flags=fl,
                  w=_w(sa, ssa, out, n | (kb << 16), rs, ors | (m << 16) | (ab << 24), srs),
                  comment=comment)
 
 
-def qact(src, rows, ab, kb, srs, row=False, cscale=None, rscale=None, ra=0, comment=""):
+def qact(src, rows, ab, kb, srs, row=False, cscale=None, rscale=None, dup=False, ra=0,
+         comment=""):
     """QACT. `cscale`/`rscale`: TMEM addresses of a per-column / per-row factor applied before
-    quantization, x' = (x * T[rscale + r]) * T[cscale + c]."""
+    quantization, x' = (x * T[rscale + r]) * T[cscale + c]. `dup`: ACT row r + rows receives
+    a copy of row r in the same cycles (the odd K-blocks' column of an MM PAIR)."""
     assert 0 < rows < 256 and 0 <= ab < 256 and 0 < kb < 65536
     fl = (F_ROW if row else 0) | (F_CSCALE if cscale is not None else 0) | \
-        (F_RSCALE if rscale is not None else 0)
+        (F_RSCALE if rscale is not None else 0) | (F_DUP if dup else 0)
     return Instr(QACT, ra=ra, flags=fl,
                  w=_w(src, rows | (ab << 8) | (kb << 16), srs, cscale or 0, rscale or 0),
                  comment=comment)

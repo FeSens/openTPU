@@ -690,9 +690,9 @@ class ConfigMismatch(RuntimeError):
 
 def device_config(info: dict, **kw):
     """The board_config of the bitstream that `info` (Board.info()) describes: MCOLS and LANES
-    come from its VERSION register, so the card needs no OTPU_MCOLS / OTPU_LANES. When either
-    is set in the environment it must name the bitstream's value (ConfigMismatch otherwise).
-    Keyword arguments set other fields (DRAM_BYTES)."""
+    come from its VERSION register and PAIR from CAPS bit5, so the card needs no OTPU_MCOLS /
+    OTPU_LANES / OTPU_PAIR. When one is set in the environment it must name the bitstream's
+    value (ConfigMismatch otherwise). Keyword arguments set other fields (DRAM_BYTES)."""
     from opentpu.isasim import board_config
     for k in ("MCOLS", "LANES"):
         env = os.environ.get(f"OTPU_{k}")
@@ -700,7 +700,13 @@ def device_config(info: dict, **kw):
             raise ConfigMismatch(f"the bitstream was built with {k}={info[k]} but OTPU_{k}={env}"
                                  f": unset OTPU_{k} (the host follows the bitstream) or load "
                                  f"a {k}={env} bitstream")
-    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], **kw})
+    pair = bool((info.get("caps") or {}).get("pair"))
+    env = os.environ.get("OTPU_PAIR")
+    if env is not None and bool(int(env)) != pair:
+        raise ConfigMismatch(f"the bitstream {'has' if pair else 'lacks'} column reuse (CAPS "
+                             f"bit5) but OTPU_PAIR={env}: unset OTPU_PAIR (the host follows the "
+                             f"bitstream)")
+    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair, **kw})
     if info["D"] != cfg.D:
         raise ConfigMismatch(f"the bitstream has D={info['D']}, the board configuration "
                              f"D={cfg.D}: not a YPCB-00338 openTPU build")
@@ -798,11 +804,16 @@ class BoardBackend:
         bitstream whose MXU runs them (CAPS bit4)."""
         img = getattr(engine, "image", None)
         fmts = {getattr(img, "wformat", "int8"), getattr(img, "head_format", "int8")}
-        if fmts != {"int8"} and not (self.info.get("caps") or {}).get("w4"):
+        caps = self.info.get("caps") or {}
+        if fmts != {"int8"} and not caps.get("w4"):
             self.board.close()
             raise ConfigMismatch("the model image has 4-bit weights and this bitstream's MXU "
                                  "runs int8 weights only (CAPS bit4 clear): use --wformat int8 "
                                  "or load a newer bitstream")
+        if self.cfg.PAIR and not caps.get("pair"):
+            self.board.close()
+            raise ConfigMismatch("the programs use column reuse (MM PAIR / QACT DUP) and this "
+                                 "bitstream lacks it (CAPS bit5 clear): use device_config")
         self.engine = engine
         if self.status is not None:
             self.status.update(dram=self._layout())
