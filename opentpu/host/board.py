@@ -126,6 +126,7 @@ class XdmaTransport:
     dma=False opens only the register BAR (monitors: no DMA channel is touched)."""
     ecc = True                  # the card's DRAM needs Board.scrub after configuration
     threaded = True             # Board may run the DMA calls in a worker thread (Board.write/read)
+    streams = True              # DMA while the accelerator runs (BoardBackend streamed logits)
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
         self.dev, self.devname = dev, Path(dev).name

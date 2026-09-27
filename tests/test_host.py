@@ -383,6 +383,14 @@ def test_streamed_logits_match_the_isa_simulator(no_cfg_env):
     eng.backend.close()
 
 
+def test_streamed_logits_are_on_for_the_card_only():
+    """The card's transport streams the logits; the board model (one simulation per flush)
+    and the plain fake (it computes nothing) read them after the run."""
+    from opentpu.host.board import SimTransport, XdmaTransport
+    assert XdmaTransport.streams and not getattr(SimTransport, "streams", False)
+    assert not getattr(FakeTransport, "streams", False)
+
+
 def test_streamed_logits_refuse_an_unwritten_piece(no_cfg_env):
     """A run that leaves part of the logits region unwritten (here: a card that computes
     nothing) is an error, not stale logits; the region is marked again on the next start."""
