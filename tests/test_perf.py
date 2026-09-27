@@ -34,7 +34,8 @@ def test_mlp_decode_at_roofline(have_verilator):
 def test_mlp_small_batch_near_roofline(have_verilator):
     a, _ = mlp_args(np.random.default_rng(0), M=4, H=1024, Fd=2048)
     p = profile(mlp, design_config(), **a)
-    assert _eff(p) > 0.92, p.summary()
+    # 0.915: the MXU result registered before its FIFO (one more cycle per MM), 92.0 -> 91.9%
+    assert _eff(p) > 0.915, p.summary()
 
 
 @pytest.mark.parametrize("Hq,Hkv,T", [(16, 4, 1024), (6, 1, 2048)])
