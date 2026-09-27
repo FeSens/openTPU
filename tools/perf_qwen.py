@@ -52,6 +52,47 @@ def _src(ins, depth=1):
     return f"{Path(s[0]).name}:{s[1]} {s[2]}"
 
 
+def _gap_table(p, progs, pbytes, bpc):
+    """Per phase: cycles, roofline (useful bytes at bpc bytes per cycle) and the excess, and the
+    phase's cycles split by the MXU's state (MAC / starved: chunk FIFO empty / blocked: chunks
+    but no MAC (scales or the drain) / no MM streaming) and port B's idle cycles. A 64-cycle
+    counter window goes to the phase whose run (as Profile.phases charges them) holds its end."""
+    runs, done = [], 0
+    for r in sorted(p.slice_recs(0), key=lambda r: r.idx):
+        if r.end > done:
+            ph = _phase(progs[0][r.pc])
+            if runs and runs[-1][2] == ph:
+                runs[-1][1] = r.end
+            else:
+                runs.append([done, r.end, ph])
+            done = r.end
+    b = p.buckets[0]
+    acc = defaultdict(lambda: defaultdict(int))
+    k = 0
+    for i, c in enumerate(b["c"]):
+        while k + 1 < len(runs) and runs[k][1] < c:
+            k += 1
+        t = acc[runs[k][2] if runs else "other"]
+        n = b["n"][i]
+        t["n"] += n
+        t["mac"] += b["mx"][i]
+        t["starve"] += b["ms"][i]
+        t["block"] += b["mb"][i]
+        t["bidle"] += n - b["bm"][i] - b["bd"][i]
+    cyc = p.phases(lambda r: _phase(progs[0][r.pc]))
+    print("gap table: cycles, roofline, excess; MXU MAC / starved / blocked / no MM; "
+          "port B idle")
+    rows = []
+    for ph, v in cyc.items():
+        rl = pbytes[ph] / bpc
+        t = acc[ph]
+        idle = t["n"] - t["mac"] - t["starve"] - t["block"]
+        rows.append((v["cycles"] - rl, ph, v["cycles"], rl, t, idle))
+    for ex, ph, cy, rl, t, idle in sorted(rows, key=lambda x: -x[0]):
+        print(f"  {ph:12s} {cy:9d} {rl:9.0f} {ex:+9.0f}   MAC {t['mac']:8d}  starved "
+              f"{t['starve']:7d}  blocked {t['block']:7d}  no MM {idle:7d}   B idle {t['bidle']:8d}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="qwen3",
@@ -81,6 +122,9 @@ def main():
                     help="weight format of the layers (opentpu/quant.py)")
     ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"],
                     help="weight format of the LM head (default: --wformat)")
+    ap.add_argument("--gaps", action="store_true",
+                    help="per phase: the cycles above its roofline, split by what the MXU and "
+                         "port B did (64-cycle windows)")
     a = ap.parse_args()
     path = model_dir(a.model)
     spec = load_spec(path)
@@ -171,6 +215,8 @@ def main():
         print(f"  {k:12s} {v['cycles']:9d} {100 * v['cycles'] / p.cycles:5.1f}%  "
               f"{pb[k]:10d} B -> {rl_ph:9.0f} ({100 * rl_ph / max(1, v['cycles']):5.1f}%)  "
               f"VPU {v['VPU']:9d}  MXU {v['MXU']:9d}")
+    if a.gaps:
+        _gap_table(p, progs, pb, D * a.bw / 100)
     ph = defaultdict(lambda: [0, 0, 0])
     for r in p.recs:
         if r.op != I.MM or r.end < 0:
