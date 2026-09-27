@@ -308,6 +308,7 @@ class SimTransport:
 
     batched = True
     devname = None              # private to this process: no device lock
+    keeps_state = False         # IMEM and the ARG registers start from reset every flush
 
     def __init__(self, ch_bytes: int = 1 << 24, stall: int = 20, seed: int = 1,
                  params: dict | None = None, plusargs: list | None = None):
@@ -627,7 +628,8 @@ class Board:
     def set_args(self, words) -> None:
         """The next runs' arguments ARG0..7 (CAPS bit24; R8..R15 at the start): only the words
         that differ from the last ones written (8 at most)."""
-        last = getattr(self, "_args", None) or [None] * 8
+        last = getattr(self, "_args", None) if getattr(self.t, "keeps_state", True) else None
+        last = last or [None] * 8
         for k, w in enumerate(words):
             w = int(w) & 0xFFFFFFFF
             if last[k] != w:
@@ -929,11 +931,13 @@ class BoardBackend:
 
         args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit24). The
         program in IMEM stays there: starting the same `programs` object again (a program
-        that takes its position as arguments) loads nothing."""
+        that takes its position as arguments) loads nothing, on a transport that keeps the
+        device's state between runs (not SimTransport: it loads again)."""
         if args is not None and not self.args:
             raise ConfigMismatch("this bitstream takes no run arguments (CAPS bit24 clear)")
         res = self._resident
-        if res is None or res[0] is not programs:
+        if res is None or res[0] is not programs or not getattr(self.board.t, "keeps_state",
+                                                                  True):
             prep = self._prep.pop(id(programs), None)
             while len(self._prep) > 1:              # stale entries (discarded compiles)
                 self._prep.pop(next(iter(self._prep)), None)

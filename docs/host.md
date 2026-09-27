@@ -581,8 +581,9 @@ every position of an attention bucket (`Engine(resident=True)`, the default of `
   the row sums, P.V and the row maximum (VOP RMAX, the same bits as the MM epilogue) are the
   unmasked columns' (`kernels/attention.Bucket`). One program per 256 positions: compiled once
   (on the worker process, 16 positions before the bucket is reached) and kept in IMEM.
-- The KV append, the K / V scales and V^T columns, and the RoPE rows are at position x 128, x 4
-  and x 1; LFM2's convolution ring is mirrored (each row stored twice, in 2K rows) so the last K
+- The program sees the position as t0 + tpos, t0 the bucket's first position and tpos < 256
+  the argument (so a V^T append stays in its 256-token tile). The KV append, the K / V scales
+  and V^T columns, and the RoPE rows are at tpos x 128, x 4 and x 1; LFM2's convolution ring is mirrored (each row stored twice, in 2K rows) so the last K
   rows are contiguous at ((p + 1) mod K) x row: one argument instead of three
   (`lfm2._ring_rows`).
 - The token's embedding row and the RoPE cos / sin rows come from tables in the image
@@ -596,7 +597,8 @@ every position of an attention bucket (`Engine(resident=True)`, the default of `
 The logits are bit-identical to the per-position programs' (tests: `test_qwen3.py`,
 `test_lfm2.py` from position 0 across the bucket boundaries 256 and 512 on the ISA
 simulator, positions 255 and 256 on the Verilator RTL, LFM2.5-230M fp4 with an int8 head on
-the RTL; the board model with the ARG registers). A step's host work before RUN is then the
+the RTL; the board model with the ARG registers, where each run is a fresh simulation, so it
+loads the program every run; `FakeTransport` counts one load). A step's host work before RUN is then the
 changed ARG words (up to 6 register writes, posted) instead of the x / cos / sin write
 (0.16 ms), the program upload and IMEM load (0.23 ms) and the compile wait (0.08 ms, and at
 long contexts the 16-33 ms trace that no longer keeps up): by the measurements above the

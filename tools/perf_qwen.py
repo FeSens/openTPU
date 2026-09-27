@@ -151,6 +151,9 @@ def main():
     ap.add_argument("--block", type=int, default=None, help="attention block (tokens)")
     ap.add_argument("--depth", type=int, default=None, help="attention score blocks in flight")
     ap.add_argument("--check", action="store_true", help="compare with the ISA simulator")
+    ap.add_argument("--resident", action="store_true",
+                    help="the resident decode program of pos's bucket (run arguments, inputs "
+                         "from the image's tables; qwen3.compile_decode)")
     ap.add_argument("--timeline", help="print the instructions of dynamic index range A:B")
     ap.add_argument("--idle", action="store_true", help="list DRAM-idle stretches (64-cycle windows)")
     ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"],
@@ -180,7 +183,8 @@ def main():
     if a.pos + R - 1 >= a.cap:
         ap.error(f"--pos {a.pos} needs --cap above it (the KV write would land past the cache)")
     W = load_weights(path)
-    wkw = dict(wformat=a.wformat, head_format=a.head_format, rows=R)
+    wkw = dict(wformat=a.wformat, head_format=a.head_format, rows=R,
+               **({"lookup": True} if a.resident else {}))
     mk = {"MCOLS": a.mcols} if a.mcols else {}
     need = spec.image(board_config(DRAM_BYTES=1 << 40, **mk), a.cap, **wkw).nbytes
     cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()), **mk)
@@ -197,17 +201,25 @@ def main():
     if a.depth:
         import opentpu.llm.qwen3 as Q
         Q.ATTN_DEPTH = a.depth
+    args = None
     if a.rows:
         lr = {"last": [R - 1], "all": list(range(R)), "none": []}[a.logits]
         progs = img.compile_rows([(0, a.pos + r) for r in range(R)], lr,
                                  *([a.block] if a.block else []))
+    elif a.resident:
+        from opentpu.compiler import arg_words
+        from opentpu.llm.qwen3 import ATTN_BLOCK, RunPos
+        blk, K = a.block or ATTN_BLOCK, getattr(spec, "conv_k", 1)
+        b = a.pos // blk + 1
+        progs, ra = img.compile_decode(b, max((b - 1) * blk, K - 1), blk)
+        args = arg_words(ra, RunPos.values(791, a.pos, K, blk))
     else:
         progs = img.compile_step(a.pos, *([a.block] if a.block else []))
     t = time.time()
     drams, _, st = rtlsim.run(cfg, progs, [dram], trace=True,
                               uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl},
                               axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat, arc=a.arc,
-                              max_cycles=1 << 40,
+                              max_cycles=1 << 40, args=args,
                               plusargs=([] if a.dram == "off" else
                                         ["+axi_dram=1", f"+axi_map={int(a.dram == 'rbc')}"])
                               + plus)
@@ -324,7 +336,7 @@ def main():
             print(f"  idle {run[2]:6d} in [{run[0]}, {run[1]}]")
         print(f"  port-B idle cycles total {tot}")
     if a.check:
-        m = Machine(cfg, [progs[0]], [dram.copy()])
+        m = Machine(cfg, [progs[0]], [dram.copy()], args)
         m.run()
         ok = np.array_equal(m.slices[0].dram[:img.nbytes], drams[0][:img.nbytes])
         print("bit-exact vs ISA:", ok)

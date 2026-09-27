@@ -34,9 +34,9 @@ multiply), or, when it also has loop terms, a register that `ADDI r, R_arg, 0` i
 before the outermost of those loops. A program's k-th distinct (var, c) is in `R15 - k`
 (`compiler.arg_reg`, `arg_words`), so address registers grow from `R1` and arguments from
 `R15`. The resident decode programs (qwen3.compile_decode, docs/host.md) take the token id
-and the position this way: LFM2.5-230M uses 6 arguments (token x 4096, position x 128, x 4,
-x 1 and x -4, the convolution ring's row x 2048) and 8 address registers at 16 attention
-blocks.
+and the position this way: LFM2.5-230M uses 6 arguments (token x 4096; the position within
+its 256-token bucket x 128, x 4, x 1 and x -4; the convolution ring's row x 2048) and at most
+8 address registers (up to 16 attention blocks).
 
 ## Arithmetic (fp32)
 

@@ -126,8 +126,8 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, first, chunk):
 @pytest.mark.parametrize("resident", [False, True])
 def test_tiny_lfm2_on_board_model(tiny, have_verilator, resident):
     """The board model through the host driver, through a full turn of the conv state ring:
-    logits bit-identical to the ISA simulator. Resident: from position 2 on one program, loaded
-    once, takes the token and position in the ARG registers (CAPS bit24)."""
+    logits bit-identical to the ISA simulator. Resident: from position 2 on one program takes
+    the token and position in the ARG registers (CAPS bit24)."""
     from opentpu.host.board import Board, BoardBackend, SimTransport
     _, W, spec = tiny
     cfg = board_config(DRAM_BYTES=1 << 23)
@@ -142,7 +142,9 @@ def test_tiny_lfm2_on_board_model(tiny, have_verilator, resident):
         a, b = isa.step(tok), brd.step(tok)
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
     assert brd.stats[-1]["cycles"] > 0
-    assert len(loads) == (3 if resident else 5)     # positions 0, 1, then the resident one
+    assert len(loads) == 5          # SimTransport: every run is a fresh simulation (loads again)
+    if resident:
+        assert sorted(brd._decodes) == [1] and brd.backend._resident[0] is brd._decodes[1][0]
 
 
 def test_tiny_resident_decode_is_bit_exact(tiny):
