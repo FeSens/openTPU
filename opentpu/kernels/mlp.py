@@ -3,11 +3,15 @@ from .. import language as ol
 from .lib import rmsnorm, silu
 
 
-def _chunk(f_loc: int, D: int) -> int:
-    """F-chunk size: about 8 chunks per slice, a multiple of D."""
-    c = max(D, (f_loc // 8) // D * D)
+def _chunk(f_loc: int, D: int, q: int | None = None) -> int:
+    """F-chunk size: about 8 chunks per slice, a multiple of q (default D; 2D for 4-bit W_down,
+    whose column slices must start on whole D-byte chunks)."""
+    q = q or D
+    if f_loc % q:
+        raise ValueError(f"F per slice {f_loc} is not a multiple of {q}")
+    c = max(q, (f_loc // 8) // q * q)
     while f_loc % c:
-        c -= D
+        c -= q
     return c
 
 
@@ -19,7 +23,8 @@ def swiglu_down(xs, w_gate, w_up, w_down, chunk=None):
     """
     S = ol.num_programs()
     f_loc = w_gate.shape[0]
-    C = chunk or _chunk(f_loc, ol.block_size())
+    D = ol.block_size()
+    C = chunk or _chunk(f_loc, D, D if w_down.wf == 0 else 2 * D)
     starts = list(range(0, f_loc, C))
 
     def gate_up(c0):

@@ -2,6 +2,7 @@
 
     python3 tools/decode_profile.py --model lfm2 [--backend board | fake] [--tokens 64]
                                     [--prompt "..."] [--greedy] [--json out.json]
+                                    [--wformat int8|fp4|int4] [--head-format int8|fp4|int4]
 
 Runs one Chat turn (plain mode, the reply printed to /dev/null) on the card (--backend
 board) or on FakeTransport (--backend fake: a card that computes nothing and halts after
@@ -139,6 +140,10 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--fake-ms", type=float, default=80.0)
     ap.add_argument("--json")
+    ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4"],
+                    help="weight format of the layers (docs/quant.md)")
+    ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
+                    help="weight format of the LM head (default: --wformat)")
     a = ap.parse_args(argv)
     from transformers import AutoTokenizer
     path = model_dir(a.model)
@@ -157,7 +162,8 @@ def main(argv=None):
                            cycles=int(a.fake_ms * 1e5), devname=None)
         cfg = B.device_config(B.Board(tr, lock=False).info(), DRAM_BYTES=2 * ch)
         backend = lambda c, imgs: B.BoardBackend(c, imgs, transport=tr, model=path.name)  # noqa
-    eng = Q.Engine(spec, Q.load_weights(path), cap=a.cap, cfg=cfg, backend=backend)
+    eng = Q.Engine(spec, Q.load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
+                   wformat=a.wformat, head_format=a.head_format)
     khz[0] = (getattr(eng.backend, "info", {}) or {}).get("core_khz") or 100_000
     sp = C.sampling(spec, argparse.Namespace())
     pick = C.sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,
@@ -197,7 +203,8 @@ def main(argv=None):
     # nested: _program and the backend calls happen inside step; step excludes sample/detok/ui
     per["other"] = 1e3 * wall / n - sum(per.get(k, 0) for k in known)
     bid = (getattr(eng.backend, "info", {}) or {}).get("build_id")
-    print(f"{path.name} on {a.backend}" + ("" if bid is None else f" (build {bid:08x})")
+    fmt = a.wformat + (f", head {a.head_format}" if a.head_format else "")
+    print(f"{path.name} ({fmt}) on {a.backend}" + ("" if bid is None else f" (build {bid:08x})")
           + f": {n} decode steps, prompt fed "
           f"{step0['n']} tokens; program {T['prog-bytes'] / max(n, 1) / 1024:.1f} KiB/token")
     print(f"{'item':<16} {'ms/token':>9}")
@@ -208,7 +215,8 @@ def main(argv=None):
     print(f"wall {n / wall:.2f} tok/s, device {n * khz[0] * 1e3 / cyc:.2f} tok/s "
           f"({cyc / n / 1e6:.2f} Mcycles/token)")
     if a.json:
-        Path(a.json).write_text(json.dumps({"model": path.name, "steps": n, "ms": per,
+        Path(a.json).write_text(json.dumps({"model": path.name, "wformat": a.wformat,
+                                            "head_format": a.head_format, "steps": n, "ms": per,
                                             "wall_tok_s": n / wall, "build_id": bid,
                                             "dev_tok_s": n * khz[0] * 1e3 / cyc}, indent=1))
     eng._drain()

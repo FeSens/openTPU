@@ -12,6 +12,7 @@ import numpy as np
 
 from . import fp32 as F
 from . import isa as I
+from . import quant as Q
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class Config:
     DRAM_BYTES: int = 1 << 20
     IMEM_WORDS: int = 1 << 16   # 8 words per instruction
     LANES: int = 8           # VPU lanes == TMEM banks (timing only; results do not depend on it)
+    PAIR: bool = False       # MM PAIR / QACT DUP: 4-bit MMs of M <= MCOLS/2 rows at full rate
     ACT_ROWS: int = 0        # ACT RAM rows == max stationary rows of one MM (0: MCOLS); more
     #                          than MCOLS: the MXU replays each streamed chunk (docs/isa.md, MM)
 
@@ -46,14 +48,15 @@ def board_config(**kw) -> Config:
     64K-word TMEM, 128 ACT RAM blocks (K <= 16384), 4K-instruction IMEM, 4 GiB DRAM.
     OTPU_MCOLS in the environment selects the MXU column count (default 2; make -C
     boards/ypcb-00338 bit MCOLS=4), OTPU_LANES the VPU lanes / TMEM banks (default 8; bit
-    LANES=16; timing only, the programs do not change), OTPU_ACT_ROWS the ACT RAM rows
-    (default MCOLS; more: the MXU replays each weight chunk for MCOLS rows at a time). They
-    configure the simulators and the board model; on the card,
-    opentpu.host.board.device_config takes them from the bitstream."""
+    LANES=16; timing only, the programs do not change), OTPU_PAIR=1 column reuse (MM PAIR /
+    QACT DUP), OTPU_ACT_ROWS the ACT RAM rows (default MCOLS; more: the MXU replays each weight
+    chunk for MCOLS rows at a time). They configure the simulators and the board model; on the
+    card, opentpu.host.board.device_config takes them from the bitstream."""
     base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 2)), ACT_BLOCKS=128,
                 LANES=int(os.environ.get("OTPU_LANES", 8)),
                 ACT_ROWS=int(os.environ.get("OTPU_ACT_ROWS", 0)), TMEM_WORDS=1 << 16,
-                IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32)
+                IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32,
+                PAIR=bool(int(os.environ.get("OTPU_PAIR", 0))))
     base.update(kw)
     return Config(**base)
 
@@ -196,26 +199,62 @@ class Slice:
         ors, M, ab = w[5] & 0xFFFF, (w[5] >> 16) & 0xFF, w[5] >> 24
         srs = w[6]
         unit, accf = bool(ins.flags & I.F_UNIT), bool(ins.flags & I.F_ACC)
-        if not (0 < M <= cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
+        pair = bool(ins.flags & I.F_PAIR)
+        R = 2 * M if pair else M                          # ACT rows read
+        if not (0 < R <= cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("MM: M or ACT RAM range out of bounds")
         if M > cfg.MCOLS and ins.flags & (I.F_RMAX | I.F_ASCALE):
             raise SimError("MM: RMAX and ASCALE need M <= MCOLS")
-        if sa % D or rs % D or sa + (N - 1) * rs + KB * D > cfg.DRAM_BYTES:
+        if pair and R > cfg.MCOLS:
+            raise SimError("MM: PAIR needs 2*M <= MCOLS")
+        wf = (ins.flags >> I.WF_SHIFT) & 3
+        if wf not in (I.W8, I.W4I, I.W4F):
+            raise SimError("MM: bad weight format")
+        if pair and wf == I.W8:
+            raise SimError("MM: PAIR needs 4-bit weights")
+        if pair and not unit and (ssa % 8 or srs % 8):
+            raise SimError("MM: PAIR reads a chunk's two scale words at once: ssa and srs must "
+                           "be multiples of 8")
+        bpb = D if wf == I.W8 else D // 2                 # streamed bytes per K-block
+        if sa % D or rs % D or sa + (N - 1) * rs + -(-KB * bpb // D) * D > cfg.DRAM_BYTES:
             raise SimError("MM: streamed rows must be D-byte aligned and in range")
-        wv = np.lib.stride_tricks.as_strided(self.dram[sa:].view(np.int8), (N, KB, D),
-                                             (rs, D, 1))                 # [N, KB, D], no copy
+        wv = np.lib.stride_tricks.as_strided(self.dram[sa:], (N, KB, bpb),
+                                             (rs, bpb, 1))               # [N, KB, bpb], no copy
         if unit:
-            ws = np.ones((N, KB), dtype=np.float32)
+            wsw = None
         else:
             wsi = self._widx(ssa + np.arange(N)[:, None] * srs + 4 * np.arange(KB)[None, :])
-            ws = self.m32[wsi].view(np.float32)
-        act = self.act[:M, ab * D:(ab + KB) * D].reshape(M, KB, D)
-        # exact int32 block dot products (|sum| <= D * 127 * 128), computed via float64 BLAS
-        isum = np.einsum("jki,nki->jnk", act.astype(np.float64), wv.astype(np.float64),
-                         optimize=True).astype(np.int64)                   # [M, N, KB]
-        t = F.mul(F.i2f(isum), ws[None, :, :])                            # [M, N, KB]
-        t = F.mul(t, self.ascale[:M, ab:ab + KB][:, None, :])
-        acc = F.interleaved_sum(t.reshape(M * N, KB), F.MM_PARTIALS).reshape(M, N)
+            wsw = self.m32[wsi]
+        act = self.act[:R, ab * D:(ab + KB) * D].reshape(R, KB, D).astype(np.float64)
+        if wf == I.W8:
+            ws = np.ones((N, KB), np.float32) if unit else wsw.view(np.float32)
+            # exact int32 block dot products (|sum| <= D * 127 * 128), via float64 BLAS
+            isum = np.einsum("jki,nki->jnk", act, wv.view(np.int8).astype(np.float64),
+                             optimize=True).astype(np.int64)               # [M, N, KB]
+        else:
+            # 4-bit: integer elements, four sub-block sums scaled by their multipliers m_b
+            # (exact: |isum| <= 15 * D * 127 * 12 < 2^24), then the block's bf16 scale
+            w = Q.DEC["int4" if wf == I.W4I else "fp4"][Q.unpack4(wv)].astype(np.float64)
+            if unit:
+                ws = np.ones((N, KB), np.float32)
+                mb = np.ones((N, KB, Q.NSUB))
+            else:
+                ws = F.ftz((wsw << np.uint32(16)).view(np.float32))
+                mb = np.stack([(wsw >> np.uint32(16 + 4 * b)) & np.uint32(15)
+                               for b in range(Q.NSUB)], -1).astype(np.float64)
+            sub = np.einsum("jkbi,nkbi->jnkb", act.reshape(R, KB, Q.NSUB, D // Q.NSUB),
+                            w.reshape(N, KB, Q.NSUB, D // Q.NSUB), optimize=True)
+            isum = np.einsum("jnkb,nkb->jnk", sub, mb).astype(np.int64)   # [R, N, KB]
+        t = F.mul(F.i2f(isum), ws[None, :, :])                            # [R, N, KB]
+        t = F.mul(t, self.ascale[:R, ab:ab + KB][:, None, :])
+        if pair:
+            # column reuse: row j's even blocks from ACT row j, its odd blocks from ACT row
+            # j + M; the two terms of a chunk are added (+0 for a missing odd block) first
+            ev, od = t[:M, :, 0::2], t[M:, :, 1::2]
+            if od.shape[2] < ev.shape[2]:
+                od = np.concatenate([od, np.zeros((M, N, 1), np.float32)], axis=2)
+            t = F.add(ev, od)
+        acc = F.interleaved_sum(t.reshape(M * N, t.shape[2]), F.MM_PARTIALS).reshape(M, N)
         idx = out + np.arange(M)[:, None] * ors + np.arange(N)[None, :]
         if ins.flags & I.F_ASCALE:                 # y = old * alpha[j] + acc
             if not (unit and accf):
@@ -251,13 +290,15 @@ class Slice:
         src = (self.reg(ins.ra) + w[0]) & 0xFFFFFFFF
         rows, ab, KB = w[1] & 0xFF, (w[1] >> 8) & 0xFF, w[1] >> 16
         srs = w[2]
-        if rows > cfg.act_rows or ab + KB > cfg.ACT_BLOCKS:
+        dup = bool(ins.flags & I.F_DUP)
+        if (2 * rows > cfg.MCOLS if dup else rows > cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("QACT out of ACT RAM bounds")
         cs = (w[3] & 0xFFFFFFFF) if ins.flags & I.F_CSCALE else None
         rsc = (w[4] & 0xFFFFFFFF) if ins.flags & I.F_RSCALE else None
         q, s = self._quant_groups(src, rows, KB, srs, bool(ins.flags & I.F_ROW), cs, rsc)
-        self.act[:rows, ab * cfg.D:(ab + KB) * cfg.D] = q
-        self.ascale[:rows, ab:ab + KB] = s
+        for r0 in ((0, rows) if dup else (0,)):     # DUP: rows r and r + rows, same bytes
+            self.act[r0:r0 + rows, ab * cfg.D:(ab + KB) * cfg.D] = q
+            self.ascale[r0:r0 + rows, ab:ab + KB] = s
 
     def _qst(self, ins: I.Instr) -> None:
         cfg, w = self.cfg, ins.w

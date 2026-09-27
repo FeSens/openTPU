@@ -15,8 +15,8 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
   5 addr       walking address bits and random patterns on each channel (raw channel
                addresses: bottom, middle, top)
   6 pattern    random data through the 64-byte channel interleave, unaligned edges, the top
-               of DRAM (logical addresses near 4 GiB); sub-beat host writes on each channel
-               (partial byte strobes: read-modify-write in the controller, no DDR3 DM pins)
+               of DRAM (logical addresses near 4 GiB); sub-beat host updates on each channel
+               (merged into whole beats on the host: XdmaTransport.mem_write)
   7 bandwidth  host <-> card DMA rate
   8 kernel     a program using every unit, and one of partial DRAM writes from the
                accelerator (QST bytes, short stores), compared with the ISA simulator bit for bit
@@ -33,6 +33,7 @@ import sys
 import time
 import traceback
 
+from opentpu.host.runstate import busy_exits
 from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST_CALIB0,
                                 ST_CALIB1, Board, SimTransport, XdmaTransport, device_config)
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
@@ -92,6 +93,7 @@ class Runner:
         return ok
 
 
+@busy_exits
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-selftest", description=__doc__.split("\n")[0])
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")
@@ -99,6 +101,10 @@ def main(argv=None) -> int:
     ap.add_argument("--model",
                     help="qwen3, lfm2, qwen35 or a checkpoint directory: the model stage")
     ap.add_argument("--tokens", type=int, default=8, help="tokens to generate in the model stage")
+    ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4"],
+                    help="weight format of the model stage's layers")
+    ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
+                    help="weight format of the model stage's LM head (default: --wformat)")
     ap.add_argument("--bw-mib", type=int, default=512, help="bandwidth test size (MiB)")
     a = ap.parse_args(argv)
 
@@ -205,7 +211,7 @@ def main(argv=None) -> int:
         return (False, msg) if qwen35 else (True, f"note: {msg}: Qwen3 and LFM2 only")
 
     def model():
-        return model_check(t, cfg, a.model, a.tokens, a.sim)
+        return model_check(t, cfg, a.model, a.tokens, a.sim, a.wformat, a.head_format)
 
     r.stage("link", link)
     r.stage("config", config)

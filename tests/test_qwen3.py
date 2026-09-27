@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from opentpu.llm.qwen3 import (Engine, Spec, emulated_logits, load_weights, reference_logits,
-                               rope_tables)
+from opentpu.llm.qwen3 import (Engine, Spec, device_config, emulated_logits, load_weights,
+                                reference_logits, rope_tables)
 
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
@@ -49,6 +49,40 @@ def test_tiny_matches_hf(tiny):
     assert _cos(dev[:12], emu).min() > 0.9995
 
 
+@pytest.mark.parametrize("wformat", ["int4", "fp4"])
+def test_tiny_4bit_follows_emulation(tiny, wformat):
+    """4-bit weights: the device follows the float64 emulation of the same 4-bit weights."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 12)]
+    eng = Engine(spec, W, cap=256, wformat=wformat)
+    dev = np.array([eng.step(t) for t in toks])
+    emu = emulated_logits(spec, W, toks, wformat=wformat)
+    assert _cos(dev, emu).min() > 0.9995
+
+
+@pytest.mark.parametrize("wformat", ["int4", "fp4"])
+def test_tiny_4bit_column_reuse(tiny, wformat):
+    """Column reuse (MCOLS=2, PAIR): every 4-bit decode MM runs PAIR on a QACT DUP operand;
+    the logits follow the emulation and differ from the half-rate MXU in fp32 rounding only."""
+    from opentpu import isa as I
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 12)]
+    runs = {}
+    for pair in (False, True):
+        cfg = device_config(spec, 256, wformat=wformat, MCOLS=2, PAIR=pair)
+        eng = Engine(spec, W, cap=256, cfg=cfg, wformat=wformat)
+        runs[pair] = np.array([eng.step(t) for t in toks])
+        prog = eng.backend.machine.slices[0].prog
+        mm4 = [p for p in prog if p.op == I.MM and (p.flags >> I.WF_SHIFT) & 3]
+        assert mm4 and all(bool(p.flags & I.F_PAIR) == pair for p in mm4)
+        # the attention's query groups (two rows) fill both columns: no DUP
+        assert all(bool(p.flags & I.F_DUP) == (pair and p.w[1] & 0xFF == 1)
+                   for p in prog if p.op == I.QACT)
+    emu = emulated_logits(spec, W, toks, wformat=wformat)
+    assert _cos(runs[True], emu).min() > 0.9995
+    assert _cos(runs[True], runs[False]).min() > 0.99999
+
+
 def test_tiny_reset_reuses_cache(tiny):
     _, W, spec = tiny
     eng = Engine(spec, W, cap=128)
@@ -75,12 +109,42 @@ def test_qwen3_0_6b_greedy_matches_hf():
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3-0.6B not downloaded")
-def test_qwen3_0_6b_token_on_rtl_is_bit_exact():
+@pytest.mark.parametrize("pair", [False, True])
+def test_qwen3_0_6b_fp4_greedy(pair):
+    """Qwen3-0.6B with 4-bit (E2M1, two-level scales) layer weights and an int8 LM head on the
+    ISA simulator: the greedy answer is still right, and every generated token is the argmax of
+    the float64 emulation of the same 4-bit weights (the device follows the quantized math).
+    pair: the board's MCOLS=2 with column reuse (full-rate 4-bit MMs)."""
+    tok = transformers.AutoTokenizer.from_pretrained(REAL)
+    msgs = [{"role": "user", "content": "What is the capital of France? Answer in one sentence."}]
+    ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
+                                  tokenize=True)
+    ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
+    spec, W = Spec.from_hf(REAL), load_weights(REAL)
+    cfg = device_config(spec, 256, wformat="fp4", head_format="int8", MCOLS=2, PAIR=True) \
+        if pair else None
+    eng = Engine(spec, W, cap=256, cfg=cfg, wformat="fp4", head_format="int8")
+    got = eng.generate(ids, max_new=8)
+    assert tok.decode(got).startswith("The capital of France is Paris.")
+    emu = emulated_logits(spec, W, ids + got[:-1], wformat="fp4", head_format="int8")
+    assert emu[len(ids) - 1:].argmax(-1).tolist() == got
+
+
+@pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3-0.6B not downloaded")
+@pytest.mark.parametrize("wformat,head_format,pair", [("int8", None, False),
+                                                      ("fp4", "int8", False),
+                                                      ("fp4", None, True)])
+def test_qwen3_0_6b_token_on_rtl_is_bit_exact(wformat, head_format, pair):
     """Feed part of a prompt on the ISA simulator, then run the next token on the Verilator RTL
     and on the ISA simulator from the same DRAM state: weights, KV cache and logits must agree
-    bit for bit."""
+    bit for bit (int8 weights; 4-bit layers with an int8 LM head; everything 4-bit on the
+    board's MCOLS=2 with column reuse)."""
     from opentpu.llm.rtl_backend import RtlBackend
-    eng = Engine(Spec.from_hf(REAL), load_weights(REAL), cap=256)
+    spec = Spec.from_hf(REAL)
+    cfg = device_config(spec, 256, wformat=wformat, head_format=head_format, MCOLS=2,
+                        PAIR=True) if pair else None
+    eng = Engine(spec, load_weights(REAL), cap=256, cfg=cfg, wformat=wformat,
+                 head_format=head_format)
     prompt = [151644, 872, 198, 3838, 374, 279, 6722, 315, 9625, 30]
     for t in prompt[:-1]:
         eng.step(t)
@@ -151,19 +215,22 @@ def test_qwen3_0_6b_chunked_prefill_and_batch_match_hf():
     assert got[1] == Engine(spec, W, cap=256).generate(prompts[1], max_new=6)
 
 
-@pytest.mark.parametrize("mcols", [2, 4])
-def test_tiny_prefill_chunk_with_mm_replay_on_rtl(tiny, have_verilator, mcols):
+@pytest.mark.parametrize("mcols,wformat", [(2, "int8"), (4, "int8"), (2, "fp4")])
+def test_tiny_prefill_chunk_with_mm_replay_on_rtl(tiny, have_verilator, mcols, wformat):
     """An 8-row prefill run at the board configuration with 8 ACT RAM rows (each projection is
     one MM that replays every weight chunk for 8 / MCOLS groups) on the RTL's board memory
-    path: DRAM and TMEM equal the ISA simulator's, and the logits equal decode's."""
+    path: DRAM and TMEM equal the ISA simulator's, and the logits equal decode's. fp4: 4-bit
+    layers (two blocks a replayed chunk) with an int8 head, on a PAIR board (decode rows pair,
+    the 8-row MMs replay)."""
     from opentpu import rtlsim
     from opentpu.isasim import Machine, board_config
     _, W, spec = tiny
+    wkw = dict(wformat=wformat, head_format="int8") if wformat != "int8" else {}
     toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 11)]
-    ref = Engine(spec, W, cap=256)
+    ref = Engine(spec, W, cap=256, **wkw)
     want = ref.prefill(toks, chunk=1)
-    cfg = board_config(MCOLS=mcols, ACT_ROWS=8, DRAM_BYTES=1 << 24)
-    eng = Engine(spec, W, cap=256, cfg=cfg)
+    cfg = board_config(MCOLS=mcols, ACT_ROWS=8, DRAM_BYTES=1 << 24, PAIR=wformat != "int8")
+    eng = Engine(spec, W, cap=256, cfg=cfg, **wkw)
     eng.prefill(toks[:3])                         # a cache to attend over
     rows = [(0, 3 + j) for j in range(8)]
     progs = eng.image.compile_rows(rows, [7])

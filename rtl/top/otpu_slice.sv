@@ -57,6 +57,7 @@ module otpu_slice
   output logic [3:0]    sw_be,
   input  logic          a_rvalid,
   input  logic [31:0]   a_rdata,
+  input  logic [31:0]   a_rdata2,   // the other word of a_rdata's 8-byte pair (MM PAIR scales)
   output logic          b_req,
   output logic          b_tag,
   output logic          b_we,
@@ -153,17 +154,20 @@ module otpu_slice
   logic [ULANES-1:0]      act_we;
   logic [ULANES-1:0][7:0] act_data;
   logic                   asc_we;
-  logic [7:0]             act_row, asc_row;
+  logic [7:0]             act_row, asc_row, act_off;
+  logic                   act_dup;
   logic [31:0]            act_idx, asc_data;
-  logic [15:0]            asc_blk, act_rblk;
+  logic [15:0]            asc_blk, act_rblk, act_rblk2;
+  logic [MCOLS-1:0]       act_rhi;
   logic [7:0]             act_rgrp;
   logic                   act_ren;
   logic [MCOLS*D*8-1:0]   act_rdata;
   logic [MCOLS*32-1:0]    act_rscale;
   otpu_actram #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES)) u_act (
-    .clk, .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data), .swe(asc_we),
+    .clk, .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data), .w_dup(act_dup),
+    .w_off(act_off), .swe(asc_we),
     .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_blk(act_rblk),
-    .r_grp(act_rgrp),
+    .r_blk2(act_rblk2), .r_hi(act_rhi), .r_grp(act_rgrp),
     .r_data(act_rdata), .r_scale(act_rscale));
 
   // ---- units
@@ -197,8 +201,8 @@ module otpu_slice
     .clk, .rst, .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
     .computing(mxu_pop), .pf_level(mxu_level), .pf_starve(mxu_starve), .pf_block(mxu_block),
     .pf_u(mxu_u), .pf_uv(mxu_uv),
-    .act_blk(act_rblk), .act_grp(act_rgrp), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
-    .a_req(mxu_areq), .a_addr(mxu_aaddr), .a_gnt(mxu_agnt), .a_rvalid, .a_rdata,
+    .act_blk(act_rblk), .act_blk2(act_rblk2), .act_hi(act_rhi), .act_grp(act_rgrp), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
+    .a_req(mxu_areq), .a_addr(mxu_aaddr), .a_gnt(mxu_agnt), .a_rvalid, .a_rdata, .a_rdata2,
     .b_req(mxu_breq), .b_addr(mxu_baddr), .b_gnt(mxu_bgnt), .b_rvalid(b_rvalid && !b_rtag),
     .b_rdata,
     .t_ren(mxu_ren), .t_raddr(mxu_raddr), .t_rdata(r_data[P_MXU][ULANES-1:0]),
@@ -209,7 +213,7 @@ module otpu_slice
     .t_ren(q_ren), .t_raddr(q_raddr), .t_rdata(r_data[P_Q][ULANES-1:0]),
     .t_ren2(q_ren2), .t_raddr2(q_raddr2), .t_rdata2(r_data[P_Q2][ULANES-1:0]),
     .t_ren3(q3_en), .t_raddr3(q3_addr), .t_rdata3(r_data[P_Q3][0]),
-    .act_we, .act_row, .act_idx, .act_data, .asc_we, .asc_row, .asc_blk, .asc_data,
+    .act_we, .act_row, .act_idx, .act_data, .act_dup, .act_off, .asc_we, .asc_row, .asc_blk, .asc_data,
     .a_want(q_awant), .wr_idle,
     .a_req(q_areq), .a_we(q_awe), .a_addr(q_aaddr), .a_wdata(q_awdata), .a_be(q_abe),
     .pf_u(q_u), .pf_frz(q_frz));

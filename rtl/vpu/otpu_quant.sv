@@ -128,6 +128,8 @@ module otpu_quant
   output logic [7:0]              act_row,
   output logic [31:0]             act_idx,
   output logic [LANES-1:0][7:0]   act_data,
+  output logic                    act_dup,    // QACT DUP: also rows act_row + act_off
+  output logic [7:0]              act_off,
   output logic                    asc_we,
   output logic [7:0]              asc_row,
   output logic [15:0]             asc_blk,
@@ -156,7 +158,7 @@ module otpu_quant
   wire en = gnt;
 
   // ------------------------------------------------------------------ command
-  logic        busy, is_st, rowm, csf, rsf, strm, ackw;
+  logic        busy, is_st, rowm, csf, rsf, strm, ackw, dup;
   logic [31:0] csb, rsb, sdst, srs, drs, es;
   logic [15:0] rows, KB;
   logic [7:0]  ab;
@@ -417,6 +419,9 @@ module otpu_quant
   // a DRAM write is waiting (independent of the grant, which the slice derives from it)
   assign a_want = (busy && !ackw && wqd.v && wqd.st) || st_scale_w;
 
+  assign act_dup = dup;
+  assign act_off = rows[7:0];
+
   always_comb begin
     act_we = '0; act_row = '0; act_idx = '0; act_data = '0;
     asc_we = 1'b0; asc_row = '0; asc_blk = '0; asc_data = '0;
@@ -482,6 +487,7 @@ module otpu_quant
       rsf   <= !qst && cmd.flags[2];
       rsb   <= cmd.w5;
       strm  <= !qst && !cmd.flags[0];
+      dup   <= !qst && cmd.flags[3];
       if (qst) begin
         sdst <= cmd.w3;
         rows <= cmd.w4[15:0];

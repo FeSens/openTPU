@@ -213,6 +213,11 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     if axi:                            # per channel: AXI read transactions and beats
         stats["axi_reads"] = [(int(a), int(b)) for a, b in
                               re.findall(r"AXI ch\d ar=(\d+) beats=(\d+)", out)]
+        # and the port A reads among them, DDR3 row opens and read-modify-writes (+axi_dram)
+        # (of them from port A / QST: rmw_a)
+        stats["axi_detail"] = [dict(zip(("ar_a", "row_miss", "rmw", "rmw_a"), map(int, m)))
+                               for m in re.findall(r"AXI ch\d .*ar_a=(\d+) row_miss=(\d+) "
+                                                   r"rmw=(\d+) rmw_a=(\d+)", out)]
     if trace:
         stats["trace"] = out
     return drams, tmems, stats

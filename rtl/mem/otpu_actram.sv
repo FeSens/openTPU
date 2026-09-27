@@ -1,8 +1,10 @@
 // ACT RAM: the MXU's stationary operand. ROWS rows x BLOCKS blocks x D int8, plus one fp32
 // scale per (row, block). The quantizer writes up to LANES consecutive bytes (and one scale) per
-// cycle; its byte index is LANES aligned, so the bytes sit in one block. The MXU reads one block
-// of MCOLS rows per cycle: rows g*MCOLS .. g*MCOLS+MCOLS-1 of group `r_grp` (ROWS > MCOLS: the
-// MXU replays a weight chunk for each group of an MM).
+// cycle; its byte index is LANES aligned, so the bytes sit in one block. With `w_dup` (QACT DUP)
+// the bytes and the scale also go to row w_row + w_off (w_off: the QACT's row count; DUP rows
+// stay below MCOLS). The MXU reads one block of MCOLS rows per cycle: rows g*MCOLS ..
+// g*MCOLS+MCOLS-1 of group `r_grp` (ROWS > MCOLS: the MXU replays a weight chunk for each group
+// of an MM), block r_blk, or r_blk2 for the rows in r_hi (MM PAIR: the odd blocks).
 //
 // Block RAM: one memory per column j (rows j, j+MCOLS, ...), GROUPS*BLOCKS words of D bytes
 // with byte write enables, group-major. The read is registered (the MXU's first pipeline
@@ -20,19 +22,22 @@ module otpu_actram #(
   input  logic [7:0]             w_row,
   input  logic [31:0]            w_idx,       // byte index within the row: block*D + i
   input  logic [LANES-1:0][7:0]  w_data,
+  input  logic                   w_dup,
+  input  logic [7:0]             w_off,
   input  logic                   swe,
   input  logic [7:0]             s_row,
   input  logic [15:0]            s_blk,
   input  logic [31:0]            s_data,
   input  logic                   ren,
   input  logic [15:0]            r_blk,
+  input  logic [15:0]            r_blk2,
+  input  logic [MCOLS-1:0]       r_hi,
   input  logic [7:0]             r_grp,
   output wire  [MCOLS*D*8-1:0]   r_data,      // row j at [j*D*8 +: D*8], byte i at [+8i]
   output wire  [MCOLS*32-1:0]    r_scale
 );
   localparam int BW = $clog2(BLOCKS);
   localparam int DW = $clog2(D);
-  localparam int RW = (MCOLS > 1) ? $clog2(MCOLS) : 1;
   localparam int GROUPS = ROWS / MCOLS;
   localparam int GW = (GROUPS > 1) ? $clog2(GROUPS) : 1;
   initial if (D % LANES != 0) $fatal(1, "otpu_actram: LANES must divide D");
@@ -45,7 +50,8 @@ module otpu_actram #(
   function automatic logic [GW+BW-1:0] wa(input logic [7:0] r, input logic [BW-1:0] b);
     return (GROUPS > 1) ? {GW'(int'(r) / MCOLS), b} : (GW+BW)'(b);
   endfunction
-  wire [GW+BW-1:0] ra = (GROUPS > 1) ? {r_grp[GW-1:0], r_blk[BW-1:0]} : (GW+BW)'(r_blk[BW-1:0]);
+  wire [7:0] w_row2 = w_row + w_off;          // the DUP copy's row
+  wire [7:0] s_row2 = s_row + w_off;
 
   // the write, as a block address, byte enables and bytes in place
   wire [BW-1:0]   wb = w_idx[DW +: BW];
@@ -65,14 +71,21 @@ module otpu_actram #(
     logic [31:0]    asc [GROUPS*BLOCKS];
     logic [D*8-1:0] rd;
     logic [31:0]    rs;
-    wire  sel = (col(w_row) == j);
+    wire  sel1 = (col(w_row) == j);
+    wire  sel = sel1 || (w_dup && col(w_row2) == j);
+    wire  ssel1 = (col(s_row) == j);
+    wire  ssel = ssel1 || (w_dup && col(s_row2) == j);
+    wire [GW+BW-1:0] waddr = sel1 ? wa(w_row, wb) : wa(w_row2, wb);
+    wire [GW+BW-1:0] saddr = ssel1 ? wa(s_row, s_blk[BW-1:0]) : wa(s_row2, s_blk[BW-1:0]);
+    wire [BW-1:0] rb = r_hi[j] ? r_blk2[BW-1:0] : r_blk[BW-1:0];
+    wire [GW+BW-1:0] ra = (GROUPS > 1) ? {r_grp[GW-1:0], rb} : (GW+BW)'(rb);
     always_ff @(posedge clk) begin
       for (int b = 0; b < D; b++)
-        if (sel && wbe[b]) act[wa(w_row, wb)][8 * b +: 8] <= wd[8 * b +: 8];
+        if (sel && wbe[b]) act[waddr][8 * b +: 8] <= wd[8 * b +: 8];
       if (ren) rd <= act[ra];
     end
     always_ff @(posedge clk) begin
-      if (swe && col(s_row) == j) asc[wa(s_row, s_blk[BW-1:0])] <= s_data;
+      if (swe && ssel) asc[saddr] <= s_data;
       if (ren) rs <= asc[ra];
     end
     assign r_data[j*D*8 +: D*8] = rd;

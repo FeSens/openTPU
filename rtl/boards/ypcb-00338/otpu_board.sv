@@ -175,7 +175,7 @@ module otpu_board #(
   logic run, ld_start, ld_busy, halted, error, wr_idle, axi_err;
   logic [31:0] ld_addr, ld_n, icount;
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_rvalid, b_rtag, b_rdy;
-  logic [31:0] a_addr, a_wdata, a_rdata, b_addr;
+  logic [31:0] a_addr, a_wdata, a_rdata, a_rdata2, b_addr;
   logic [3:0]  a_be, sw_be;
   logic        sw_req, sw_rdy;
   logic [31:0] sw_addr, sw_wdata;
@@ -243,7 +243,7 @@ module otpu_board #(
                .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN)) u_slice (
     .clk, .sys_rst(rst), .rst(core_rst), .ld_start, .ld_addr, .ld_n, .ld_busy,
     .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
-    .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
+    .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
     .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
     .coll_req, .coll_cmd, .coll_ack,
@@ -264,7 +264,7 @@ module otpu_board #(
   logic [1:0][1:0]   bresp, rresp;
   otpu_axi_dram #(.D(D), .BL(AXI_BL), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
     .clk, .rst,
-    .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
+    .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
     .wr_idle,

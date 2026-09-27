@@ -23,6 +23,7 @@ the temperature: info() reports regmap 1 and snapshot() returns None.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import mmap
 import os
 import struct
@@ -47,7 +48,15 @@ CH_BYTES = 1 << 31              # 2 GiB per channel
 DMA_CHUNK = 8 << 20             # bytes per XDMA read/write call: the driver pins the call's user
                                 # pages and builds one descriptor list for them; 8 MiB bounds that
                                 # (2048 pages) while the per-call cost (~20 us) stays < 1% of the
-                                # transfer (8 MiB at ~3 GB/s is 2.7 ms)
+                                # transfer (8 MiB at 1.7 GB/s is 4.9 ms)
+# Host buffer placement for full DMA speed, measured on the card (docs/host.md section 2,
+# "DMA and buffer placement"): with d = host address - card address,
+#   writes (h2c) need d % 64 == 0, else 0.77 GB/s instead of 1.7;
+#   reads (c2h) need d % 4096 in [32, 4064], else 1.16 GB/s instead of 1.65 (so a page-aligned
+#   buffer read from a page-aligned card address is the slow case).
+# d % 4096 == DMA_PLACE satisfies both. Buffers that do not are bounced through a staging buffer.
+DMA_PLACE = 2048
+PIPE = 2 * DMA_CHUNK            # Board.write / read: logical bytes per pipelined piece
 POLL_SPIN = 100e-6              # poll: seconds of back-to-back register reads before sleeping
 POLL_MAX_SLEEP = 1e-3           # poll: longest sleep between reads
 STATUS_INTERVAL = 0.25          # BoardBackend: the status file is rewritten at most this often
@@ -85,10 +94,31 @@ def _readinto(fd: int, mv: memoryview, off: int) -> int:
     return len(b)
 
 
+def _addr(a: np.ndarray) -> int:
+    return a.__array_interface__["data"][0]
+
+
+def _write_ok(ptr: int, card: int) -> bool:
+    return (ptr - card) % 64 == 0
+
+
+def _read_ok(ptr: int, card: int) -> bool:
+    return 32 <= (ptr - card) % 4096 <= 4064
+
+
+def placed(n: int, card: int) -> np.ndarray:
+    """n bytes of fresh host memory at DMA_PLACE from the card address `card` (mod 4096): full
+    DMA speed both ways (see DMA_PLACE)."""
+    m = mmap.mmap(-1, n + 4096)
+    p = (card + DMA_PLACE) % 4096
+    return np.frombuffer(m, np.uint8, n, p)
+
+
 class XdmaTransport:
     """The card through the Xilinx XDMA driver (dma_ip_drivers/XDMA/linux-kernel).
     dma=False opens only the register BAR (monitors: no DMA channel is touched)."""
     ecc = True                  # the card's DRAM needs Board.scrub after configuration
+    threaded = True             # Board may run the DMA calls in a worker thread (Board.write/read)
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
         self.dev, self.devname = dev, Path(dev).name
@@ -128,22 +158,63 @@ class XdmaTransport:
             self._otpu_lock.release()
             self._otpu_lock = None
 
+    def _stage(self, n: int, card: int) -> np.ndarray:
+        """A slice of the persistent staging buffer, placed for `card` (see DMA_PLACE)."""
+        if getattr(self, "_stage_buf", None) is None:
+            self._stage_buf = np.frombuffer(mmap.mmap(-1, DMA_CHUNK + 8192), np.uint8)
+        p = (card + DMA_PLACE) % 4096
+        return self._stage_buf[p:p + n]
+
     def mem_write(self, ch: int, off: int, data: np.ndarray) -> None:
-        mv = memoryview(np.ascontiguousarray(data, np.uint8)).cast("B")
-        pos = 0
-        while pos < len(mv):
-            n = os.pwrite(self.h2c, mv[pos:pos + DMA_CHUNK], BASE[ch] + off + pos)
+        """Whole 64-byte beats only: a range that does not start and end on a beat boundary is
+        widened, its edge beats read and merged here. Sub-beat host writes (partial strobes, a
+        read-modify-write in the ECC controller) can wedge the card's write path for good
+        (docs/host.md, "Sub-beat writes")."""
+        a = np.ascontiguousarray(data, np.uint8).reshape(-1)
+        if len(a) == 0:
+            return
+        if off % BEAT or len(a) % BEAT:
+            o0, o1 = off // BEAT * BEAT, -(-(off + len(a)) // BEAT) * BEAT
+            buf = self.mem_read(ch, o0, BEAT) if o1 - o0 == BEAT else None
+            if buf is None:
+                buf = np.empty(o1 - o0, np.uint8)
+                buf[:BEAT] = self.mem_read(ch, o0, BEAT)
+                buf[-BEAT:] = self.mem_read(ch, o1 - BEAT, BEAT)
+            buf[off - o0:off - o0 + len(a)] = a
+            a, off = buf, o0
+        base, pos = BASE[ch] + off, 0
+        while pos < len(a):
+            k = min(DMA_CHUNK, len(a) - pos)
+            src = a[pos:pos + k]
+            if not _write_ok(_addr(src), base + pos):       # bounce: 0.77 -> 1.7 GB/s
+                st = self._stage(k, base + pos)
+                st[:] = src
+                src = st
+            n = os.pwrite(self.h2c, memoryview(src), base + pos)
             if n <= 0:
                 raise IOError("XDMA h2c write failed")
             pos += n
 
     def mem_read(self, ch: int, off: int, n: int, out: np.ndarray | None = None) -> np.ndarray:
-        """n bytes of channel `ch` at `off`, DMA'd straight into `out` (or a new buffer)."""
-        buf = np.empty(n, np.uint8) if out is None else out
+        """n bytes of channel `ch` at `off`, DMA'd into `out` (or a new buffer placed for full
+        speed); an `out` that is placed badly (see DMA_PLACE) gets them through the staging
+        buffer."""
+        base = BASE[ch] + off
+        if out is None:     # small reads are latency-bound: no mmap for them
+            buf = placed(n, base) if n >= 64 << 10 else np.empty(n, np.uint8)
+        else:
+            buf = out
         mv = memoryview(buf).cast("B")
+        direct = n < 64 << 10 or _read_ok(_addr(buf), base)
         pos = 0
         while pos < n:
-            k = _readinto(self.c2h, mv[pos:pos + min(DMA_CHUNK, n - pos)], BASE[ch] + off + pos)
+            want = min(DMA_CHUNK, n - pos)
+            if direct:
+                k = _readinto(self.c2h, mv[pos:pos + want], base + pos)
+            else:
+                st = self._stage(want, base + pos)
+                k = _readinto(self.c2h, memoryview(st), base + pos)
+                mv[pos:pos + k] = memoryview(st)[:k]
             if k <= 0:
                 raise IOError("XDMA c2h read failed")
             pos += k
@@ -339,6 +410,7 @@ class Board:
         self._info = None
         self._trace = None              # (depth, keep_first) of a started traced run
         self._t_run = 0.0               # when the started run began (perf_counter)
+        self._pool = None           # the DMA worker thread (large reads / writes on the card)
         if check:
             ident = self.t.reg_read(R_ID)
             if ident != ID_OTPU:
@@ -347,6 +419,9 @@ class Board:
 
     def close(self) -> None:
         """Release the device lock (for every Board on this transport)."""
+        if self._pool is not None:
+            self._pool.shutdown()
+            self._pool = None
         if self.lock is not None:
             self.lock.release()
             self.t._otpu_lock = None
@@ -423,8 +498,31 @@ class Board:
                 buf[-2 * BEAT:] = self.read(a1 - 2 * BEAT, 2 * BEAT)
             buf[head:head + len(data)] = data
             data = buf
-        for c, off, part in split(a0, data):
-            self.t.mem_write(c, off, part)
+        if not (getattr(self.t, "threaded", False) and len(data) > PIPE):
+            for c, off, part in split(a0, data):
+                self.t.mem_write(c, off, part)
+            return
+        # pieces of PIPE bytes: the worker DMAs piece i while this thread splits piece i + 1
+        # into the other pair of buffers (placed for full DMA speed, see DMA_PLACE)
+        h = PIPE // 2
+        slots = [[placed(h, BASE[c] + a0 // 2) for c in (0, 1)] for _ in range(2)]
+        ex, prev = self._worker(), None
+        for i, pos in enumerate(range(0, len(data), PIPE)):
+            v = data[pos:pos + PIPE].reshape(-1, 2, BEAT)
+            parts = []
+            for c in (0, 1):
+                buf = slots[i % 2][c][:len(v) * BEAT]
+                np.copyto(buf.reshape(-1, BEAT), v[:, c, :])
+                parts.append((c, a0 // 2 + i * h, buf))
+            if prev is not None:
+                prev.result()
+            prev = ex.submit(lambda ps: [self.t.mem_write(*p) for p in ps], parts)
+        prev.result()
+
+    def _worker(self) -> concurrent.futures.ThreadPoolExecutor:
+        if self._pool is None:
+            self._pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="otpu-dma")
+        return self._pool
 
     def scrub(self, force: bool = False) -> bool:
         """Write the whole DRAM once per configuration. The DDR3 controllers run with ECC, and
@@ -436,7 +534,7 @@ class Board:
             return False
         if not force and self.t.reg_read(R.R_SCRATCH) == R.DRAM_INIT:
             return False
-        z = np.zeros(64 << 20, np.uint8)
+        z = placed(64 << 20, 0)             # zeros, placed: no bounce copies
         for c in (0, 1):
             for off in range(0, CH_BYTES, len(z)):
                 self.t.mem_write(c, off, z)
@@ -448,8 +546,28 @@ class Board:
         a1 = -(-(addr + n) // (2 * BEAT)) * (2 * BEAT)
         half = (a1 - a0) // 2
         out = np.empty((half // BEAT, 2, BEAT), np.uint8)
-        for c in (0, 1):                                # each channel's run, interleaved
-            out[:, c, :] = self.t.mem_read(c, a0 // 2, half).reshape(-1, BEAT)
+        if not (getattr(self.t, "threaded", False) and 2 * half > PIPE):
+            for c in (0, 1):                            # each channel's run, interleaved
+                out[:, c, :] = self.t.mem_read(c, a0 // 2, half).reshape(-1, BEAT)
+        else:
+            # pieces of PIPE / 2 bytes per channel: the worker reads piece i + 1 into one pair of
+            # buffers while this thread interleaves piece i from the other pair
+            h = PIPE // 2
+            slots = [[placed(h, BASE[c] + a0 // 2) for c in (0, 1)] for _ in range(2)]
+
+            def get(i: int):
+                k = min(h, half - i * h)
+                return [self.t.mem_read(c, a0 // 2 + i * h, k, slots[i % 2][c][:k]) for c in (0, 1)]
+
+            npieces = -(-half // h)
+            ex = self._worker()
+            fut = ex.submit(get, 0)
+            for i in range(npieces):
+                nxt = ex.submit(get, i + 1) if i + 1 < npieces else None
+                rows = slice(i * h // BEAT, (i * h + h) // BEAT)
+                for c, part in enumerate(fut.result()):
+                    out[rows, c, :] = part.reshape(-1, BEAT)
+                fut = nxt
         flat = out.reshape(-1)
         return flat if (a0, a1) == (addr, addr + n) else flat[addr - a0:addr - a0 + n].copy()
 
@@ -575,9 +693,9 @@ class ConfigMismatch(RuntimeError):
 
 def device_config(info: dict, **kw):
     """The board_config of the bitstream that `info` (Board.info()) describes: MCOLS and LANES
-    come from its VERSION register, so the card needs no OTPU_MCOLS / OTPU_LANES. When either
-    is set in the environment it must name the bitstream's value (ConfigMismatch otherwise).
-    Keyword arguments set other fields (DRAM_BYTES)."""
+    come from its VERSION register and PAIR from CAPS bit5, so the card needs no OTPU_MCOLS /
+    OTPU_LANES / OTPU_PAIR. When one is set in the environment it must name the bitstream's
+    value (ConfigMismatch otherwise). Keyword arguments set other fields (DRAM_BYTES)."""
     from opentpu.isasim import board_config
     for k in ("MCOLS", "LANES"):
         env = os.environ.get(f"OTPU_{k}")
@@ -585,8 +703,14 @@ def device_config(info: dict, **kw):
             raise ConfigMismatch(f"the bitstream was built with {k}={info[k]} but OTPU_{k}={env}"
                                  f": unset OTPU_{k} (the host follows the bitstream) or load "
                                  f"a {k}={env} bitstream")
+    pair = bool((info.get("caps") or {}).get("pair"))
+    env = os.environ.get("OTPU_PAIR")
+    if env is not None and bool(int(env)) != pair:
+        raise ConfigMismatch(f"the bitstream {'has' if pair else 'lacks'} column reuse (CAPS "
+                             f"bit5) but OTPU_PAIR={env}: unset OTPU_PAIR (the host follows the "
+                             f"bitstream)")
     rows = info.get("act_rows") or 0              # 0: MCOLS rows (no MM replay)
-    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"],
+    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair,
                           "ACT_ROWS": rows if rows > info["MCOLS"] else 0, **kw})
     if info["D"] != cfg.D:
         raise ConfigMismatch(f"the bitstream has D={info['D']}, the board configuration "
@@ -682,7 +806,20 @@ class BoardBackend:
                            getattr(e, "image", None), poss)
 
     def attach(self, engine) -> None:
-        """Called by the Engine once it exists."""
+        """Called by the Engine once it exists. A model image with 4-bit weights needs a
+        bitstream whose MXU runs them (CAPS bit4)."""
+        img = getattr(engine, "image", None)
+        fmts = {getattr(img, "wformat", "int8"), getattr(img, "head_format", "int8")}
+        caps = self.info.get("caps") or {}
+        if fmts != {"int8"} and not caps.get("w4"):
+            self.board.close()
+            raise ConfigMismatch("the model image has 4-bit weights and this bitstream's MXU "
+                                 "runs int8 weights only (CAPS bit4 clear): use --wformat int8 "
+                                 "or load a newer bitstream")
+        if self.cfg.PAIR and not caps.get("pair"):
+            self.board.close()
+            raise ConfigMismatch("the programs use column reuse (MM PAIR / QACT DUP) and this "
+                                 "bitstream lacks it (CAPS bit5 clear): use device_config")
         self.engine = engine
         if self.status is not None:
             self.status.update(dram=self._layout())

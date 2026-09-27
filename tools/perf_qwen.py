@@ -1,7 +1,8 @@
 """Profile one decode token on the RTL at the board configuration (AXI memory path).
 
     python3 tools/perf_qwen.py [--model qwen3|lfm2|qwen35|DIR] [--layers N] [--pos P]
-                               [--bw 100] [--check]
+                               [--bw 100] [--check] [--wformat int8|int4|fp4]
+                               [--head-format int8|int4|fp4]
 
 Uses the real weights (models/Qwen3-0.6B, or --model lfm2: models/LFM2.5-230M, --model qwen35:
 models/Qwen3.5-0.8B), optionally only the first N layers (the LM head is always complete).
@@ -36,7 +37,8 @@ from opentpu.profile import parse  # noqa: E402
 # stack wins)
 PHASE_NAMES = {"head_step": "DeltaNet", "_deltanet": "DeltaNet", "_pair_segment": "DeltaNet",
                "_attention": "attention", "_attend_heads": "attention", "_conv": "conv",
-               "_mlp": "MLP", "swiglu_down": "MLP", "_lm_head": "LM head"}
+               "_mlp": "MLP", "swiglu_down": "MLP", "_lm_head": "LM head",
+               "_attention_rows": "attention", "qwen3_rows": "LM head"}
 
 
 def _phase(ins):
@@ -66,46 +68,81 @@ def main():
                     help="cycles per AXI read transaction and channel (the board's is about 4)")
     ap.add_argument("--bl", type=int, default=8,
                     help="AXI read burst, beats (1: single-beat reads, as before bursts)")
+    ap.add_argument("--dram", choices=["off", "brc", "rbc"], default="off",
+                    help="DDR3 bank / row timing (otpu_axi_mem.sv) with the MIG's address map "
+                         "BANK_ROW_COLUMN or ROW_BANK_COLUMN (replaces --bw)")
+    ap.add_argument("--plus", action="append", default=[],
+                    help="extra simulator argument, e.g. --plus +axi_trfc=26 (repeatable)")
+    ap.add_argument("--rows", type=int, default=0,
+                    help="R token rows at positions pos .. pos+R-1 of one sequence in one program "
+                         "(qwen3_rows: a prefill chunk or a speculative verify pass); 0: the "
+                         "decode step")
+    ap.add_argument("--logits", choices=["last", "all", "none"], default="last",
+                    help="--rows: which rows get logits (prefill: last or none; verify: all)")
+    ap.add_argument("--mcols", type=int, default=None, help="MXU columns (default OTPU_MCOLS or 2)")
     ap.add_argument("--block", type=int, default=None, help="attention block (tokens)")
     ap.add_argument("--depth", type=int, default=None, help="attention score blocks in flight")
     ap.add_argument("--check", action="store_true", help="compare with the ISA simulator")
     ap.add_argument("--timeline", help="print the instructions of dynamic index range A:B")
     ap.add_argument("--idle", action="store_true", help="list DRAM-idle stretches (64-cycle windows)")
+    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"],
+                    help="weight format of the layers (opentpu/quant.py)")
+    ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"],
+                    help="weight format of the LM head (default: --wformat)")
     a = ap.parse_args()
     path = model_dir(a.model)
     spec = load_spec(path)
     if a.layers:
         spec = dataclasses.replace(spec, **({"kinds": spec.kinds[:a.layers]}
                                             if hasattr(spec, "kinds") else {"layers": a.layers}))
+    R = max(1, a.rows)
     if a.cap is None:
-        a.cap = 256 * (a.pos // 256 + 1)
-    if a.pos >= a.cap:
+        a.cap = 256 * ((a.pos + R - 1) // 256 + 1)
+    if a.pos + R - 1 >= a.cap:
         ap.error(f"--pos {a.pos} needs --cap above it (the KV write would land past the cache)")
     W = load_weights(path)
-    need = spec.image(board_config(DRAM_BYTES=1 << 40), a.cap).nbytes
-    cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()))
-    img = spec.image(cfg, a.cap)
+    wkw = dict(wformat=a.wformat, head_format=a.head_format, rows=R)
+    mk = {"MCOLS": a.mcols} if a.mcols else {}
+    need = spec.image(board_config(DRAM_BYTES=1 << 40, **mk), a.cap, **wkw).nbytes
+    cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()), **mk)
+    img = spec.image(cfg, a.cap, **wkw)
     dram = img.build(W)[0]
-    # this token's inputs (the KV cache before pos stays zero: timing does not depend on it)
-    emb = np.asarray(W["model.embed_tokens.weight"][791], np.float32)
-    c, s = rope_tables(spec, a.pos)
+    # the rows' inputs (the KV cache before pos stays zero: timing does not depend on it)
+    emb = np.stack([np.asarray(W["model.embed_tokens.weight"][791 + r], np.float32)
+                    for r in range(R)])
+    tabs = [rope_tables(spec, a.pos + r) for r in range(R)]
+    c, s = np.stack([t[0] for t in tabs]), np.stack([t[1] for t in tabs])
     for key, v in (("x", emb), ("cos", c), ("sin", s)):
-        b = np.ascontiguousarray(v, np.float32).view(np.uint8)
+        b = np.ascontiguousarray(v, np.float32).view(np.uint8).ravel()
         dram[img.io[key]:img.io[key] + b.size] = b
     if a.depth:
         import opentpu.llm.qwen3 as Q
         Q.ATTN_DEPTH = a.depth
-    progs = img.compile_step(a.pos, *([a.block] if a.block else []))
+    if a.rows:
+        lr = {"last": [R - 1], "all": list(range(R)), "none": []}[a.logits]
+        progs = img.compile_rows([(0, a.pos + r) for r in range(R)], lr,
+                                 *([a.block] if a.block else []))
+    else:
+        progs = img.compile_step(a.pos, *([a.block] if a.block else []))
     t = time.time()
     drams, _, st = rtlsim.run(cfg, progs, [dram], trace=True,
                               uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl},
                               axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat, arc=a.arc,
-                              max_cycles=1 << 40)
+                              max_cycles=1 << 40,
+                              plusargs=([] if a.dram == "off" else
+                                        ["+axi_dram=1", f"+axi_map={int(a.dram == 'rbc')}"])
+                              + a.plus)
     wall = time.time() - t
     p = parse(st["trace"], cfg, progs, path.name)
     p.cycles = st["cycles"]
     rl = p.roofline()
-    ideal = rl["bound"] * 100 / a.bw
+    # port B (chunks) runs at bw; port A (one scale word per block, from buffered beats) and the
+    # MXU (one block per cycle) do not: 4-bit weights stream two blocks per chunk
+    ps = rl["per_slice"][0]
+    ideal = max(ps["portb"] * 100 / a.bw, ps["porta"])
+    if a.rows:
+        print(f"rows={R} (positions {a.pos}..{a.pos + R - 1}, logits {a.logits}) "
+              f"MCOLS={cfg.MCOLS}: {p.cycles / R:.0f} cycles per row")
     print(f"layers={spec.layers} pos={a.pos} bw={a.bw}% lat={a.lat}: {p.cycles} cycles "
           f"({wall:.0f}s sim), roofline {rl['bound']} chunks -> {ideal:.0f} cycles at this "
           f"bandwidth, efficiency {100 * ideal / p.cycles:.1f}%")
@@ -113,7 +150,18 @@ def main():
     if ar:
         print("AXI reads per channel (transactions, beats, beats/transaction): " +
               ", ".join(f"{n}, {b}, {b / max(n, 1):.2f}" for n, b in ar) +
-              f"; arc={a.arc} bl={a.bl}")
+              f"; arc={a.arc} bl={a.bl} dram={a.dram}")
+    b = p.buckets[0]
+    if b.get("ms") is not None:
+        mxb = sum(b.get("mx", []))
+        print(f"MXU starved (chunk FIFO empty while streaming, the card's MXU_STARVE) "
+              f"{sum(b['ms'])} cycles = {100 * sum(b['ms']) / p.cycles:.1f}%; blocked (chunks "
+              f"but no MAC) {100 * sum(b.get('mb', [])) / p.cycles:.1f}%; MAC "
+              f"{100 * mxb / p.cycles:.1f}%; DRAM read beats/cycle/channel "
+              f"{sum(n for _, n in ar) / 2 / p.cycles:.3f}")
+    for c, d in enumerate(st.get("axi_detail", [])):
+        print(f"  ch{c}: port A reads {d['ar_a']}, DDR3 row opens {d['row_miss']}, "
+              f"read-modify-writes {d['rmw']} (port A / QST {d['rmw_a']})")
     # useful-bytes roofline: weights + their fp32 block scales + KV + activations, at D bytes
     # per cycle (both channels at 100%)
     D = cfg.D

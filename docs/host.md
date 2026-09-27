@@ -148,6 +148,81 @@ hang with XDMA timeouts in `dmesg` on some other PC (interrupts not delivered), 
 The table comes from `tools/dma_bench.py` (latency, bandwidth, CPU), `otpu-selftest` and
 `otpu-diag` run in each mode.
 
+The bandwidth rows were measured before the buffer placement fix below. Then, whether a
+write ran at 1.7 or 0.77 GB/s depended on where the benchmark's buffer happened to land in
+memory, not on the mode.
+
+**DMA and buffer placement.** At PCIe Gen1 x8 the DMA runs at 1.7 GB/s for writes and 1.65 GB/s
+for reads from 1 MiB per call up; below that the per-call cost dominates (64 KiB: 1.3 /
+1.0 GB/s, 4 KiB: 0.27 / 0.28 GB/s). Whether a transfer gets that speed depends on where the
+host buffer sits relative to the card address, d = host address - card address (measured
+with 8 MiB transfers, 2026-09-27, interrupt mode, no IOMMU on this PC):
+
+| d | write (h2c) | read (c2h) |
+|---|---|---|
+| d % 64 != 0 (e.g. 16, 32, 48) | 0.77 GB/s | 1.16 GB/s at d % 4096 = 16 or 4080; 1.6 GB/s at 32, 48 |
+| d % 4096 = 0 (page-aligned buffer, page-aligned card address) | 1.70 GB/s | 1.16 GB/s |
+| d % 64 = 0 and 32 <= d % 4096 <= 4064 | 1.70 GB/s | 1.62-1.69 GB/s |
+
+The size, the chunking (one 8 MiB call vs 8 x 1 MiB) and the card offset alone make no
+difference. The slow cases are what ordinary buffers hit: a large NumPy array starts 16 bytes
+past a page boundary (glibc's mmap chunk header), so every write through it ran at 0.77 GB/s,
+and so did `Board.scrub` and every weight upload. That was the anomaly: `tools/dma_bench.py`
+showed 8 MiB writes at 1.7 GB/s and 1 or 64 MiB ones at 0.77 GB/s only because its 8 MiB
+buffer happened to land differently. `XdmaTransport` now puts its buffers at d % 4096 = 2048
+(`board.DMA_PLACE`): reads it allocates are placed that way; writes and reads from a buffer
+that is placed badly go through a persistent staging buffer (a copy runs at ~20 GB/s).
+`Board.write` / `Board.read` of more than 16 MiB split the data into the two channels' placed
+buffers in pieces and run the DMA in a worker thread, overlapping the interleave copies with
+the transfer. Measured with the same scripts before and after (build 74d48591; the "after"
+column repeated on the burst build a691ea98 gave the same numbers within 2%):
+
+| | before | after |
+|---|---|---|
+| `Board.scrub` (4 GiB) | 5.55 s (0.77 GB/s) | 2.55 s (1.68 GB/s) |
+| `Board.write`, 263 MB (the LFM2.5-230M weight image) | 0.40 s (0.65 GB/s) | 0.18 s (1.50 GB/s) |
+| `Board.read`, 263 MB | 0.31 s (0.84 GB/s) | 0.17 s (1.51 GB/s) |
+| `tools/dma_bench.py` 64 MiB write / read (transport) | 0.77 / 1.16 GB/s | 1.50 / 1.45 GB/s |
+
+The rest of the gap to 1.7 GB/s is host work that is not overlapped: first-touch page faults
+of new buffers and the staging copy on the transport path. The PC has no IOMMU enabled (no
+DMAR / IOMMU groups), so address translation plays no part in these numbers.
+
+**Sub-beat writes.** A host DMA write shorter than a 64-byte beat, or not aligned to one,
+can wedge the card's write path until the FPGA is reloaded: the XDMA host->card engine stays
+BUSY, every later write times out (errno 110, `timed out` in dmesg) and a driver reload or
+`otpu-setup --rescan` does not clear it. Reads and registers keep working. Bisected on the card
+(burst build a691ea98, 2026-09-27, one JTAG reload + scrub per case) down to two writes:
+
+| case (channel 0, then a 4 KiB write) | result |
+|---|---|
+| A = 20 B at 0x100c9d, then B = 2 B at 0x100caf (same beat 0x100c80) | hangs |
+| B, then A | hangs |
+| A, then A again | hangs |
+| A alone (then two 4 KiB writes) | passes |
+| A then B on channel 1 | hangs |
+| 0x100cac 31 B, then B | passes |
+| aligned start: 49 B at 0x100c80, then 48 B at 0x100c80 | passes |
+| aligned start: 49 B at 0x100c80, then 17 B at 0x100ca0 | passes |
+| six 4-byte writes to 16-byte-aligned words of the same beat | passes |
+| the same sequences from a host buffer at another 16-byte phase | hang the same way |
+
+So the trigger is two sub-beat writes to the same beat with unaligned start addresses (the
+XDMA's 128-bit master issues them as short bursts from an unaligned AWADDR, which the
+SmartConnect widens to 512 bits for the MIG), followed by any write. It does not depend on
+the host buffer placement. The selftest's 200 random sub-beat writes hit it on some builds
+and buffer layouts (it stopped the DDR3-1333 qualification and these bisection runs), not on
+others.
+
+The fix is on the host: `XdmaTransport.mem_write` sends only whole 64-byte beats. A range
+that does not start and end on a beat boundary is widened, its edge beats read and merged on
+the host (`Board.write` already widened to 128 bytes). The selftest's and diag's sub-beat
+checks now test that merge. The accelerator's own partial writes (QST bytes, masked stores
+through `rtl/mem/otpu_axi_dram.sv`) are single 512-bit beats from a 64-byte-aligned address
+(AWLEN 0, AWSIZE 6) with only the strobes varying: the aligned-start cases above, which pass,
+are the closest the host can come to that shape, and the kernel stage's masked writes and every
+model run have never hung. The accelerator path is very likely safe, not proven.
+
 **IOMMU.** If DMA transfers fail on a machine with the IOMMU on, boot with `iommu=pt` (Intel:
 `intel_iommu=on iommu=pt`).
 
@@ -251,7 +326,7 @@ the failing checks with their details and the diagnosis. Exit code 1 on any FAIL
 |---|---|
 | platform | PCIe link speed and width (sysfs; expected 2.5 GT/s x8), XDMA module and device nodes, ID, VERSION -> configuration, BUILD_ID and CORE_KHZ, calibration of each channel, STATUS ERROR / AXI_ERR (cleared with CLEAR if left by an earlier run), die temperature, the power estimate from `power.json` (an estimate, INFO) |
 | regs | SCRATCH, PROG_ADDR, PROG_N, TRACE_ADDR: 68 write / read patterns each (walking 1, walking 0, all 0 / 1, checkerboards; stuck bits named); TRACE_CTRL bits; read-only registers: sane values (VERSION, REGMAP, CAPS, CORE_KHZ, 0xDEADBEEF on an undefined offset) and ignoring writes; SNAP and the free-running counters |
-| mem | per channel (raw channel addresses): walking 1 and walking 0 over the 512 bits of a beat, walking address bits (aliasing named), 16 random blocks spread over the channel, 200 partial (byte-strobe) writes, DMA bandwidth each way; the interleave through the accelerator's address map; with `--mem full` a march C- over every byte with address-in-address data (progress line; errors per byte lane, DQ bit and address bit) |
+| mem | per channel (raw channel addresses): walking 1 and walking 0 over the 512 bits of a beat, walking address bits (aliasing named), 16 random blocks spread over the channel, 200 sub-beat updates (merged into whole beats on the host, see section 2), DMA bandwidth each way; the interleave through the accelerator's address map; with `--mem full` a march C- over every byte with address-in-address data (progress line; errors per byte lane, DQ bit and address bit) |
 | isa | one program per instruction variant (`opentpu/host/opchecks.py`, 93 at MCOLS=2), each compared with the ISA simulator bit for bit: NOP, HALT, LI / ADDI, LOOP (nested, count from a register, count 0), BAR; LD / ST aligned, unaligned, short, register offsets; MM plain, UNIT, ACC, RMAX, ACC+RMAX, UNIT+ACC+ASCALE, M=1, another ACT block, a row stride, register operands; QACT ROW / CSCALE / RSCALE; QST dense, strided, ROW; GATHER; every VOP function under each legal broadcast mode (FULL / ROW / COL / SCALAR for the binary ones and RDOT), OUTER with each decay mode; the composite and simple functions on edge values (zeros, denormals, the largest floats, infinities) |
 | system | the all-units demo, the masked-write and the RDOT / OUTER / LOG2 programs; the cycle counters (a NOP loop of n and 2n iterations: CYCLES grows, on the card agrees with the wall time at CORE_KHZ and with UPTIME); `--soak N` |
 | model | `--model`: greedy decoding against the ISA simulator, as otpu-selftest |

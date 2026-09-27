@@ -37,7 +37,8 @@ class FakeTransport:
                  build_id: int = 0x1234ABCD, temp_code: int = 0x9C4, trace_log2: int = 12,
                  step: int = 1_000_000, trace: list[int] | None = None, trace_extra: int = 0,
                  trace_drop: int = 0, D: int = 128, MCOLS: int = 2, LANES: int = 8,
-                 i2c: list | None = None, ddr_mts: int | None = None):
+                 i2c: list | None = None, ddr_mts: int | None = None,
+                 w4: bool = True, pair: bool = False):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.v, self.devname, self.dev = regmap, devname, devname and f"/dev/{devname}"
         self.run_s, self.cycles_per_run = run_s, cycles
@@ -47,6 +48,8 @@ class FakeTransport:
         self.version = D << 16 | MCOLS << 8 | LANES
         self.i2c = i2c
         self.ddr_mts = ddr_mts          # None: a bitstream without the DDR_MTS register
+        self.w4 = w4                    # CAPS bit4: the MXU runs 4-bit weights
+        self.pair = pair                # CAPS bit5: MM PAIR / QACT DUP
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
                      R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0, R.R_I2C_CTRL: 0}
         self.count = {k: 0 for k in R.counters(regmap)}
@@ -120,7 +123,8 @@ class FakeTransport:
             return self.v
         if off == R.R_CAPS:
             return (R.CAP_TRACE | R.CAP_TEMP | (R.CAP_I2C if self.i2c else 0)
-                    | (R.CAP_DDR if self.ddr_mts else 0)
+                    | (R.CAP_DDR if self.ddr_mts else 0) | (R.CAP_W4 if self.w4 else 0)
+                    | (R.CAP_PAIR if self.pair else 0)
                     | self.trace_log2 << 8 | 6 << 16)
         if off == R.R_CORE_KHZ:
             return self.core_khz
