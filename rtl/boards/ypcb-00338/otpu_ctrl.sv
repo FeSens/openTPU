@@ -24,14 +24,15 @@
 //   0x3C REGMAP    RO  register map version (3)
 //   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, bit2 I2C pins, bit3 DDR_MTS,
 //                      bit4 4-bit MM weights (MM flags WF, docs/isa.md), bit5 column reuse (MM
-//                      PAIR / QACT DUP), bit6 ACT_ROWS,
+//                      PAIR / QACT DUP), bit6 DSTEP (the DMA's DeltaNet head step), bit7
+//                      hashed channel interleave (otpu_axi_dram CHASH), bit24 ACT_ROWS,
 //                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
 //   0x48 BUILD_ID  RO  build parameter (the low 32 bits of the git commit)
 //   0x4C TEMP      RO  bit31 valid, [11:0] XADC die-temperature code
 //   0x50 SNAP      W   latch every free-running counter into its shadow; R: snapshots taken
 //   0x54 DDR_MTS   RO  the DDR3 data rate in MT/s (build parameter; CAPS bit3 when nonzero)
-//   0x58 ACT_ROWS  RO  ACT RAM rows: the most rows of one MM (build parameter; CAPS bit6)
+//   0x58 ACT_ROWS  RO  ACT RAM rows: the most rows of one MM (build parameter; CAPS bit24)
 //   0x100 + 8k     RO  free-running counter k's shadow (64 bits, low word first), k =
 //                      UPTIME RUNNING MXU_BUSY MXU_MAC VPU_BUSY QNT_BUSY DMA_BUSY TMEM_DENY
 //                      DRAM_RD DRAM_WR DRAM_WAIT INSTR MXU_STARVE (version 3); cleared by
@@ -60,7 +61,8 @@ module otpu_ctrl #(
   parameter int TRACE_DEPTH = 16384,     // 0: no trace buffer
   parameter int PQ_WIN = 1024,           // the trace's P/Q window (cycles)
   parameter bit HAS_TEMP = 1'b1,
-  parameter bit HAS_I2C = 1'b1           // CAPS bit2: the I2C pins are wired (otpu_fpga_top)
+  parameter bit HAS_I2C = 1'b1,          // CAPS bit2: the I2C pins are wired (otpu_fpga_top)
+  parameter bit CHASH = 1'b0             // CAPS bit7: the hashed channel interleave (otpu_axi_dram)
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -117,9 +119,9 @@ module otpu_ctrl #(
   input  logic [4:0]  i2c_in
 );
   localparam int NFR = 13;
-  localparam logic [31:0] CAPS = {8'd0, 8'($clog2(PQ_WIN)),
+  localparam logic [31:0] CAPS = {8'd1, 8'($clog2(PQ_WIN)),       // bit24 ACT_ROWS
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
-                                  1'b0, 1'b1, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
+                                  CHASH, 1'b1, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
                                   TRACE_DEPTH != 0};
 
   logic [63:0] cycles;

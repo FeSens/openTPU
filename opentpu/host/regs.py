@@ -28,10 +28,14 @@ CAP_TRACE, CAP_TEMP, CAP_I2C = 1, 2, 4   # CAPS bit0..2; [15:8] log2 trace depth
 # CAPS bit3: DDR_MTS holds the DDR3 data rate the bitstream was built for (MT/s). Older
 # bitstreams leave the bit clear and read 0xDEADBEEF there: the rate is unknown.
 CAP_DDR, R_DDR_MTS = 8, 0x54
-# CAPS bit4: the MXU runs 4-bit weights (MM WF); bit5: column reuse (MM PAIR + QACT DUP)
-CAP_W4, CAP_PAIR = 16, 32
-# CAPS bit6: ACT_ROWS holds the ACT RAM rows (the most rows of one MM; older bitstreams: MCOLS)
-CAP_ACT, R_ACT_ROWS = 64, 0x58
+# CAPS bit4: the MXU runs 4-bit weights (MM WF); bit5: column reuse (MM PAIR + QACT DUP);
+# bit6: DSTEP (the DMA's Gated DeltaNet head step, docs/isa.md)
+CAP_W4, CAP_PAIR, CAP_DSTEP = 16, 32, 64
+# CAPS bit7: CHASH, the hashed channel interleave (rtl/mem/otpu_axi_dram.sv): chunk m's two
+# beats swap channels when m has odd parity. Older bitstreams: plain interleave.
+CAP_CHASH = 0x80
+# CAPS bit24: ACT_ROWS holds the ACT RAM rows (the most rows of one MM; older bitstreams: MCOLS)
+CAP_ACT, R_ACT_ROWS = 1 << 24, 0x58
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset
@@ -65,7 +69,8 @@ def temp_c(code: int) -> float:
 def caps(v: int) -> dict:
     return {"trace": bool(v & CAP_TRACE), "temp": bool(v & CAP_TEMP), "i2c": bool(v & CAP_I2C),
             "ddr": bool(v & CAP_DDR), "w4": bool(v & CAP_W4),
-            "pair": bool(v & CAP_PAIR), "act_rows": bool(v & CAP_ACT),
+            "pair": bool(v & CAP_PAIR), "dstep": bool(v & CAP_DSTEP),
+            "chash": bool(v & CAP_CHASH), "act_rows": bool(v & CAP_ACT),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
 

@@ -79,7 +79,8 @@ def test_v3_info_snapshot_and_rates():
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
     assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False, "w4": True,
-                         "pair": False, "act_rows": False, "trace_depth": 4096, "pq_window": 64}
+                         "pair": False, "dstep": False, "chash": False, "act_rows": False,
+                         "trace_depth": 4096, "pq_window": 64}
     assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
@@ -160,7 +161,7 @@ def test_v1_bitstream_fallback():
 # ------------------------------------------------------------------------------ configuration
 @pytest.fixture
 def no_cfg_env(monkeypatch):
-    for k in ("OTPU_MCOLS", "OTPU_LANES", "OTPU_PAIR"):
+    for k in ("OTPU_MCOLS", "OTPU_LANES", "OTPU_PAIR", "OTPU_DSTEP"):
         monkeypatch.delenv(k, raising=False)
     return monkeypatch
 
@@ -192,6 +193,17 @@ def test_device_config_takes_column_reuse_from_caps(no_cfg_env):
         with pytest.raises(ConfigMismatch, match="OTPU_PAIR"):
             device_config(info)
         no_cfg_env.delenv("OTPU_PAIR")
+
+
+def test_device_config_takes_dstep_from_caps(no_cfg_env):
+    """CAPS bit6 (DSTEP) sets Config.DSTEP; OTPU_DSTEP must agree with it."""
+    for dstep in (False, True):
+        info = Board(FakeTransport(devname=None, dstep=dstep)).info()
+        assert info["caps"]["dstep"] == dstep and device_config(info).DSTEP == dstep
+        no_cfg_env.setenv("OTPU_DSTEP", str(int(not dstep)))
+        with pytest.raises(ConfigMismatch, match="OTPU_DSTEP"):
+            device_config(info)
+        no_cfg_env.delenv("OTPU_DSTEP")
 
 
 def test_board_backend_rejects_another_configuration(no_cfg_env):
@@ -267,6 +279,26 @@ def test_pair_programs_need_a_pair_bitstream(run_dir):
         else:
             eng = make()
             eng.backend.close()
+
+
+def test_dstep_programs_need_a_dstep_bitstream(run_dir):
+    """Programs compiled with DSTEP refuse a bitstream without it (CAPS bit6)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = replace(sim_config(spec, 256), DSTEP=True)
+    for dstep in (False, True):
+        t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake6", dstep=dstep)
+
+        def make():
+            return Engine(spec, W, cap=256, cfg=cfg,
+                          backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+        if not dstep:
+            with pytest.raises(ConfigMismatch, match="DSTEP"):
+                make()
+        else:
+            make().backend.close()
 
 
 # ------------------------------------------------------------------------------ status file
@@ -1072,6 +1104,63 @@ def test_chat_max_new_resume_and_cap():
     reply, t = chat.ask("more")                   # does not fit: refused, the cache is kept
     assert t.end == "cap" and reply == "" and t.prefill_tokens == 0
     assert chat.eng.pos == pos and len(chat.history) == n_hist
+
+
+def test_chat_tui_reply_parts_split_at_whole_blocks():
+    pytest.importorskip("textual")
+    from opentpu.host.chat_tui import Reply
+    r = Reply()
+    r.PART_BLOCKS = 2
+    r.text = "a\n\nb\n\n"
+    assert r.split("c") == 0                      # after a blank line, the text at hand
+    assert r.split("\n") is None                  # what follows is not known yet
+    r.text = "a\n\nb"
+    assert r.split("\n\nc") == 2 and r.split("\n\n  c") is None   # not an indented continuation
+    r.text = "a\n\n```\nx\n\n"
+    assert r.split("y\n```\n\nz") == len("y\n```\n\n")   # not inside the code fence
+    r.text = "a\n\nb"
+    assert r.split("c") is None
+    r.PART_BLOCKS = 99
+    assert r.split("\n\nc") is None              # a short reply stays one part
+
+
+def test_chat_tui_long_reply_in_parts_reads_the_same():
+    pytest.importorskip("textual")
+    import asyncio
+
+    from opentpu.host.chat import Turn
+    from opentpu.host.chat_tui import ChatApp
+    from textual.widgets import Markdown
+    from textual.widgets._markdown import MarkdownFence
+    blocks = []
+    for i in range(12):
+        blocks += [f"## Part {i}", f"Paragraph {i}.", "```\nx = 1\n\ny = 2\n```",
+                   "- item\n\n  continued"]
+    text = "\n\n".join(blocks) + "\n"
+    pieces = [text[i:i + 3] for i in range(0, len(text), 3)]
+    meta = {"model": "stub", "backend": "board", "device": "d", "short": "x",
+            "bitstream": ["a", "b"], "sampling": {}, "dram": None}
+
+    async def go():
+        app = ChatApp(_stub_chat(), meta)
+        async with app.run_test(size=(100, 500)) as pilot:
+            await pilot.pause(0.1)
+            turn = Turn(clock_mhz=100, cap=64, context=0)
+            for p in pieces:
+                app._post(p, turn)
+                await asyncio.sleep(0)
+            await app._done(None)
+            await pilot.pause(0.2)
+            parts = list(app.query(".reply Markdown").results(Markdown))
+            fences = [f for m in parts for f in m.query(MarkdownFence)]
+            return len(parts), [f.code for f in fences], _shot(app)
+    n, codes, shot = asyncio.run(go())
+    assert n >= 2                                 # 48 blocks, parts of Reply.PART_BLOCKS
+    assert codes == ["x = 1\n\ny = 2"] * 12       # no fence cut at its blank line
+    lines = [ln.strip() for ln in shot.splitlines()]
+    i = lines.index("Part 3")                     # one blank line between blocks, as before
+    assert lines[i - 2:i + 3] == ["continued", "", "Part 3", "", "Paragraph 3."]
+    assert "⏺ Part 0" in lines and all(f"Part {i}" in lines for i in range(1, 12))
 
 
 def _shot(app) -> str:

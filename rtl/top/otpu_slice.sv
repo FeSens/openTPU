@@ -189,8 +189,17 @@ module otpu_slice
   logic [3:0][31:0] mxu_uv;
   logic [31:0] q_frz, v_frz;
 
+  // Each unit's reset is its own register (a reset tree): the slice's reset reaches ~15k flip-
+  // flops across the die, and one replicated net from the board ran 8.4 ns routes into the
+  // units (the worst core_clk paths at 114 MHz). The units leave reset a cycle after the
+  // sequencer, which starts nothing that early.
+  (* max_fanout = 256 *) logic rst_dma, rst_mxu, rst_q, rst_vpu;
+  always_ff @(posedge clk) begin
+    rst_dma <= rst; rst_mxu <= rst; rst_q <= rst; rst_vpu <= rst;
+  end
+
   otpu_dma #(.D(D), .LANES(LANES)) u_dma (
-    .clk, .rst, .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
+    .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
     .b_req(dma_breq), .b_gnt(b_rdy), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
     .b_addr(dma_baddr), .b_rvalid(b_rvalid && b_rtag), .b_rdata, .wr_idle,
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rdata(r_data[P_DMA]),
@@ -198,7 +207,7 @@ module otpu_slice
 
   otpu_mxu #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .DEPTH(FIFO_DEPTH), .LANES(ULANES), .IMPL(MXU_IMPL),
              .CL(MXU_CL), .SID(SID)) u_mxu (
-    .clk, .rst, .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
+    .clk, .rst(rst_mxu), .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
     .computing(mxu_pop), .pf_level(mxu_level), .pf_starve(mxu_starve), .pf_block(mxu_block),
     .pf_u(mxu_u), .pf_uv(mxu_uv),
     .act_blk(act_rblk), .act_blk2(act_rblk2), .act_hi(act_rhi), .act_grp(act_rgrp), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
@@ -209,7 +218,7 @@ module otpu_slice
     .t_wen(mxu_wen), .t_waddr(mxu_waddr), .t_wdata(mxu_wdata), .t_gnt(gnt[G_MXU]));
 
   otpu_quant #(.D(D), .LANES(ULANES), .SID(SID)) u_quant (
-    .clk, .rst, .start(ustart[U_Q]), .cmd(ucmd[U_Q]), .rdy(r_q), .done(d_q), .gnt(gnt[G_Q]),
+    .clk, .rst(rst_q), .start(ustart[U_Q]), .cmd(ucmd[U_Q]), .rdy(r_q), .done(d_q), .gnt(gnt[G_Q]),
     .t_ren(q_ren), .t_raddr(q_raddr), .t_rdata(r_data[P_Q][ULANES-1:0]),
     .t_ren2(q_ren2), .t_raddr2(q_raddr2), .t_rdata2(r_data[P_Q2][ULANES-1:0]),
     .t_ren3(q3_en), .t_raddr3(q3_addr), .t_rdata3(r_data[P_Q3][0]),
@@ -219,7 +228,7 @@ module otpu_slice
     .pf_u(q_u), .pf_frz(q_frz));
 
   otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID)) u_vpu (
-    .clk, .rst, .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
+    .clk, .rst(rst_vpu), .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
     .gnt(gnt[G_VPU]),
     .ta_en(va_ren), .ta_addr(va_raddr), .ta_data(r_data[P_VA]),
     .tb_en(vb_ren), .tb_addr(vb_raddr), .tb_data(r_data[P_VB]),

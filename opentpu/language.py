@@ -202,6 +202,21 @@ def outer(x: Tile, y: Tile, acc: Tile | None = None, decay: Tile | None = None) 
     return current().outer(x, y, acc, decay)
 
 
+def deltanet_step(state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile, o: Tile,
+                  zero: bool = False) -> None:
+    """One Gated DeltaNet head step in the DMA (DSTEP, Config.DSTEP): the fp32 state [rows,
+    cols] in DRAM is updated in place, row by row, kv = S[r] . k, d = (v[r] - kv * decay) *
+    beta, S[r] = S[r] * decay + d * k, o[r] = S[r] . q, with qk = [q | k]. Bit-identical to
+    the RDOT, MUL, SUB, MUL, OUTER, RDOT the VPU would run on the loaded state. `zero`: the
+    state starts at +0 and is not read (the first token)."""
+    current().deltanet_step(state, qk, v, decay, beta, o, zero)
+
+
+def has_dstep() -> bool:
+    """The DMA runs DSTEP (Config.DSTEP; CAPS bit7 on the card)."""
+    return current().cfg.DSTEP
+
+
 # ---- control
 def range(n: int):  # noqa: A001
     """Hardware loop. The body is traced once; carry values across iterations with `.set()`."""
@@ -221,17 +236,24 @@ def static_range(*args):
 
 
 # ---- KV cache
-def kv_append(kv: KVDesc, h: int, pos, k: Tile, v: Tile) -> None:
-    """Quantize and append rows of k, v ([n, d]) at token position `pos` of KV head `h`.
+def kv_append(kv: KVDesc, h: int, pos, k: Tile | None, v: Tile | None) -> None:
+    """Quantize and append rows of k, v ([n, d]) at token position `pos` of KV head `h` (either
+    may be None: only the other is appended).
 
     K rows are written token-major with per-block scales; V is written transposed (one byte per
     dimension, stride = capacity) with one scale per token.
     """
     b = current()
     pos = Affine.of(pos)
-    kd = kv.k(h)
-    b.store_quantized(k, kd.data + pos * kd.rs, kd.scale + pos * kd.srs, kd.rs, 1,
-                      row_scale=False)
+    if k is not None:
+        kd = kv.k(h)
+        b.store_quantized(k, kd.data + pos * kd.rs, kd.scale + pos * kd.srs, kd.rs, 1,
+                          row_scale=False)
+    if v is None:
+        return
     vt = kv.vt(h)
     vs = kv.vscale(h)
-    b.store_quantized(v, vt.data + pos, vs.base + pos * 4, 1, vt.rs, row_scale=True)
+    # a head half as wide as its padded row (LFM2: 64 of D = 128) writes only its own V^T rows:
+    # P.V never reads the padding rows, and each transposed byte is a separate DRAM write
+    half = v.cols == 2 * kv.dv
+    b.store_quantized(v, vt.data + pos, vs.base + pos * 4, 1, vt.rs, row_scale=True, half=half)

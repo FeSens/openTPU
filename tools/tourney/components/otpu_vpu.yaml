@@ -3,6 +3,7 @@ description: 'VPU: elementwise fp32 ops on LANES lanes (split lanes: CL composit
   slots for EXP2/RECIP/RSQRT/LOG2, simple lanes with 1 slot; slot 0 is a*b + c*e for OUTER, with per-lane
   column buffers), RMAX, RSUM/RSSQ/RDOT (isum_64 partial loop and folding trees; RDOT buffers its row sums).'
 allowed:
+- rtl/vpu/otpu_vtree.sv
 - rtl/vpu/otpu_vpu.sv
 synth:
   parts:
@@ -15,6 +16,7 @@ synth:
     - rtl/vpu/otpu_fp.sv
     - rtl/vpu/otpu_fpipe.sv
     - rtl/top/otpu_pkg.sv
+    - rtl/vpu/otpu_vtree.sv
     - rtl/vpu/otpu_vpu.sv
 target_mhz: 110
 tests:

@@ -766,6 +766,158 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     return x + ol.all_reduce(y)
 
 
+def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
+    """_deltanet on a DMA that runs DSTEP (Config.DSTEP): each head's recurrence is one DSTEP,
+    which streams the head's fp32 state from DRAM through the DMA's datapath and back (RDOT,
+    MUL, SUB, MUL, OUTER, RDOT bit for bit), so the state never enters TMEM and the VPU keeps
+    only the small vector work. The same results as _deltanet, word for word.
+
+    Per pair p (buffers t = p % 2), in program order:
+
+        MXU  projections of pair p+2
+        DMA  DSTEP(a), DSTEP(b) of pair p (their q | k, v, decay and beta from pair p's prep)
+        VPU  prep(p+1) beside them, then post(p) (the gated RMSNorm of pair p's o)
+        MXU  out_proj of the head group pair p completes
+        DMA  pair p+2's taps and convolution rows, its gates
+
+    The per-pair buffers come in two sets by parity, o included."""
+    eps, K = spec.eps, spec.conv_k
+    dk, dv = spec.lin_dk, spec.lin_dv
+    nl, C = lw.state.shape[0], 2 * dk + dv
+    R, NP, og = C + dv, nl // 2, lw.wout.shape[1] // dv
+    TP = 2 * K * C
+    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
+    ab = ol.dot(xs, lw.wab)
+    decay, beta = gates(ab[0, 0:nl], ab[0, nl:2 * nl], ol.load(lw.alog), ol.load(lw.dtb))
+    eb = ol.empty([4 * NP]).reshape(NP, 4)
+    eb[:, 0:2].set(decay.reshape(NP, 2))
+    eb[:, 2:4].set(beta.reshape(NP, 2))
+    ol.store(hs, eb)
+    del decay, beta, eb
+    prevs = [(pos - j) % K for j in range(1, min(K, pos + 1))]
+
+    def pairs(n, w):
+        return [ol.empty([2 * w]).reshape(2, w) for _ in range(n)]
+
+    P = [ol.empty([1, 2 * R]) for _ in range(2)]
+    CV = ol.empty([2 * TP])
+    U, GZ, QK, O = pairs(2, C), pairs(2, dv), pairs(2, 2 * dk), pairs(2, dv)
+    EB = [ol.empty([4]) for _ in range(2)]
+    ON = ol.empty([og * dv]).reshape(og, dv)
+    y = ol.zeros([1, spec.hidden])
+    gn = ol.load(lw.gn)
+
+    def project(p, t, split=False):
+        cuts = ((0, C), (C, 2 * C), (2 * C, 2 * R)) if split else ((0, 2 * C), (2 * C, 2 * R))
+        for c0, c1 in cuts:
+            ol.dot(xs, lw.wh[p * 2 * R + c0:p * 2 * R + c1, :], out=P[t][:, c0:c1])
+
+    def fetch_cv(p):
+        ol.load(lw.cv[p, :], out=CV)
+
+    def fetch_eb(p, t):
+        ol.load(hs[p, :], out=EB[t])
+
+    def conv(p, t, j=None):
+        a, n = (0, 2) if j is None else (j, 1)
+        pre = P[t][0, a * C:(a + n) * C]
+        s0 = TP + (pos % K) * 2 * C + a * C
+        ol.store(lw.cv[p, s0:s0 + n * C], pre)
+        taps = CV[0:TP].reshape(2 * K, C)
+
+        def tap(i):
+            return taps.row_stride_view(i, 2, K) if n == 2 else taps[a * K + i:a * K + i + 1, :]
+        terms = [(pre.reshape(n, C), K - 1)] + [
+            (CV[TP + s * 2 * C + a * C:TP + s * 2 * C + (a + n) * C].reshape(n, C), K - 2 - i)
+            for i, s in enumerate(prevs)]
+        out = U[t][a:a + n, :]
+        if len(terms) == 1:
+            out.set(terms[0][0] * tap(K - 1))
+            return
+        u = terms[0][0] * tap(terms[0][1])
+        for xx, i in terms[1:-1]:
+            u = u + xx * tap(i)
+        xx, i = terms[-1]
+        out.set(u + xx * tap(i))
+
+    def gatez(t):
+        GZ[t].set(silu(P[t][0, 2 * C:2 * R].reshape(2, dv)))
+
+    def qk(t, j=None):
+        """SiLU of the convolved q, k, v (in place), then the L2-normed q and k into QK[t]."""
+        a, n = (0, 2) if j is None else (j, 1)
+        u = U[t][a:a + n, :]
+        u.set(silu(u))
+        QK[t][a:a + n, 0:dk].set(l2norm_rows(u[:, 0:dk], dk ** -0.5))
+        QK[t][a:a + n, dk:2 * dk].set(l2norm_rows(u[:, dk:2 * dk]))
+
+    def prep(p, t):
+        conv(p, t)
+        qk(t)
+        gatez(t)
+
+    def post(t):
+        r0 = 2 * t if og == 4 else 0
+        ON[r0:r0 + 2, :].set(rmsnorm(O[t], gn, eps) * GZ[t])
+
+    def flush(g, k=None):
+        c0, c1 = (0, og) if k is None else (2 * k, 2 * k + 2)
+        ol.dot(ON[c0:c1, :].reshape(1, (c1 - c0) * dv),
+               lw.wout[g * spec.hidden:(g + 1) * spec.hidden, c0 * dv:c1 * dv], acc=y)
+
+    def dstep(h, t, j):
+        ol.deltanet_step(lw.state[h], QK[t][j, :], U[t][j, 2 * dk:C], EB[t][j:j + 1],
+                         EB[t][2 + j:3 + j], O[t][j, :], zero=(pos == 0))
+
+    def group(p):
+        return p // (og // 2) if (p + 1) % (og // 2) == 0 else None
+
+    def _pair_segment(p, t, last1, last2, g=None):
+        """Pair p (buffers t); last1: no pair p+1, last2: no pair p+2; g: the head group pair
+        p completes."""
+        first = isinstance(p, int) and p == 0
+        if not last2 and not first:
+            project(p + 2, t)
+        dstep(2 * p, t, 0)
+        if first:                               # head b's prep, after head a's start
+            conv(0, 0, 1)
+            qk(0, 1)
+            gatez(0)
+            if not last2:
+                project(2, 0)
+            if not last1:
+                fetch_cv(1)
+                fetch_eb(1, 1)
+        dstep(2 * p + 1, t, 1)
+        if not last1:
+            prep(p + 1, 1 - t)
+        post(t)
+        if og == 4 and isinstance(p, int) and p >= NP - 2:
+            flush((NP - 1) // 2, p - (NP - 2))  # the last group pair by pair, as _deltanet
+        elif g is not None:
+            flush(g)
+        if not last2:
+            fetch_cv(p + 2)
+            fetch_eb(p + 2, t)
+
+    project(0, 0, split=True)
+    fetch_cv(0)
+    fetch_eb(0, 0)
+    conv(0, 0, 0)
+    qk(0, 0)
+    if NP > 1:
+        project(1, 1)
+    _pair_segment(0, 0, NP == 1, NP <= 2, group(0))
+    n_it = max(0, (NP - 3) // 2)
+    if n_it:
+        for i in ol.range(n_it):
+            _pair_segment(2 * i + 1, 1, False, False, i if og == 4 else 2 * i + 1)
+            _pair_segment(2 * i + 2, 0, False, False, None if og == 4 else 2 * i + 2)
+    for p in range(1 + 2 * n_it, NP):
+        _pair_segment(p, p % 2, p + 1 >= NP, p + 2 >= NP, group(p))
+    return x + ol.all_reduce(y)
+
+
 @ol.jit
 def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
     """One decode token at position `pos`: x (the token's embedding) -> logits.
@@ -782,7 +934,8 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
     def layer(li, kind):
         lw = m.layer(li, kind)
         if kind == LIN:
-            x.set(_deltanet(x, lw, pos, spec, m.hs))
+            dn = _deltanet_dstep if ol.has_dstep() else _deltanet
+            x.set(dn(x, lw, pos, spec, m.hs))
         else:
             x.set(_attention(x, lw, c, s_, pos, spec, block, gated=True))
         x.set(_mlp(x, lw, spec))
