@@ -664,14 +664,20 @@ class BoardBackend:
         self._prep[id(programs)] = (programs, np.asarray(self.I.assemble(programs[0]),
                                                          np.uint32))
 
-    def start(self, programs: list) -> None:
+    runs_words = True           # start() takes assembled words too (the Engine's worker process)
+
+    def start(self, programs) -> None:
         """Copy the program to the card, load it and start it (run's first half: the Engine
-        compiles the next token's program between start and wait)."""
+        compiles the next token's program between start and wait). `programs`: the programs,
+        or the program already assembled (uint32 words)."""
         prep = self._prep.pop(id(programs), None)
         while len(self._prep) > 1:                  # stale entries (discarded compiles)
             self._prep.pop(next(iter(self._prep)), None)
-        words = prep[1] if prep is not None and prep[0] is programs else \
-            np.asarray(self.I.assemble(programs[0]), np.uint32)
+        if isinstance(programs, np.ndarray):
+            words = programs
+        else:
+            words = prep[1] if prep is not None and prep[0] is programs else \
+                np.asarray(self.I.assemble(programs[0]), np.uint32)
         if len(words) > self.cfg.IMEM_WORDS:
             raise ValueError("program does not fit IMEM")
         self.board.load_program(self.prog_at, words)

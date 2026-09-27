@@ -657,6 +657,25 @@ class IsaBackend:
         return {"instructions": [s.icount for s in self.machine.slices]}
 
 
+_WORKER: tuple | None = None                # (image, block) in the compile worker process
+
+
+def _worker_init(spec, cfg, cap, batch, rows, block) -> None:
+    global _WORKER
+    _WORKER = (spec.image(cfg, cap, batch, rows), block)
+
+
+def _worker_ready() -> bool:
+    return True
+
+
+def _worker_compile(pos: int) -> np.ndarray:
+    """The worker process: the decode program for `pos`, assembled (one slice)."""
+    from ..isa import assemble
+    image, block = _WORKER
+    return np.asarray(assemble(image.compile_step(pos, block)[0]), np.uint32)
+
+
 class Engine:
     """Token-by-token decoding on an openTPU backend: Qwen3, or any model whose Spec builds an
     image with compile_step (LFM2: opentpu.llm.lfm2; Qwen3.5: opentpu.llm.qwen35).
@@ -668,15 +687,19 @@ class Engine:
     wait() -> stats, the two halves of run() (step compiles the next program in between).
 
     pipeline: step() compiles the next position's program (it depends on the position only,
-    not on the token) on a worker thread while the backend runs the current one. Default: on
-    for every backend but "isa" (whose run holds the GIL: nothing to overlap). A precompile is
-    used only for the position it was made for; otherwise it is waited for and dropped (one
-    trace at a time), so results do not change.
+    not on the token) while the backend runs the current one. Default: on for every backend
+    but "isa" (whose run holds the GIL: nothing to overlap). A precompile is used only for the
+    position it was made for; otherwise it is waited for and dropped (one trace at a time), so
+    results do not change. The compile runs in a worker process when the backend runs
+    assembled programs (runs_words: the board) and there is one slice -- a trace is 10-30 ms of
+    Python, and in a thread it would hold the GIL the step's host work needs -- else on a worker
+    thread; pipeline="thread" forces the thread. The process starts with the engine; until it
+    is ready, steps compile in line.
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
                  backend="isa", block: int = ATTN_BLOCK, batch: int = 1, rows: int = 1,
-                 pipeline: bool | None = None):
+                 pipeline: bool | str | None = None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows)
@@ -687,9 +710,14 @@ class Engine:
             self.cfg, images)
         self.poss = [0] * batch
         self.stats = []
-        self.pipeline = backend != "isa" if pipeline is None else pipeline
+        self.pipeline = backend != "isa" if pipeline is None else bool(pipeline)
+        self._procs = (self.pipeline and pipeline != "thread" and self.cfg.S == 1
+                       and getattr(self.backend, "runs_words", False))
         self._pool = None
+        self._ready = None                  # the worker process's start (process pipeline)
         self._next = None                   # (pos, Future of its compiled programs)
+        if self._procs:
+            self._start_pool()
         if hasattr(self.backend, "attach"):
             self.backend.attach(self)
 
@@ -701,17 +729,31 @@ class Engine:
             prep(progs)
         return progs
 
-    def _program(self, pos: int) -> list:
-        """The step program for `pos`: the precompiled one when it is for `pos`."""
+    def _start_pool(self) -> None:
+        """The compile worker process (spawned: it inherits no device or lock descriptor)."""
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+        self._pool = ProcessPoolExecutor(
+            1, mp_context=mp.get_context("spawn"), initializer=_worker_init,
+            initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block))
+        self._ready = self._pool.submit(_worker_ready)
+
+    def _program(self, pos: int):
+        """The step program for `pos` (programs, or the assembled words from the worker
+        process): the precompiled one when it is for `pos`."""
         nxt, self._next = self._next, None
-        if nxt is not None:
+        if nxt is not None and (self._ready is None or self._ready.done()):
             progs = nxt[1].result()             # always wait: one compile at a time
             if nxt[0] == pos:
                 return progs
-        return self._compile(pos)
+        return self._compile(pos)               # (a process still starting: not waited for)
 
     def _prefetch(self, pos: int) -> None:
         if not self.pipeline or pos >= self.cap:
+            return
+        if self._procs:
+            if self._ready.done():
+                self._next = (pos, self._pool.submit(_worker_compile, pos))
             return
         if self._pool is None:
             from concurrent.futures import ThreadPoolExecutor

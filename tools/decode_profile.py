@@ -14,7 +14,9 @@ board) or on FakeTransport (--backend fake: a card that computes nothing and hal
                 the run), status (the status file), logits-read (DMA + unpack), sample,
                 detok, ui (the on_update callback), and "other" (the step's wall time not in
                 any of these);
-  compile thread  trace (compile_step) and assemble (prepare), overlapped with the run.
+  compile thread  trace (compile_step) and assemble (prepare), overlapped with the run; with
+                the Engine's worker process (the board's default) the compile is not in this
+                process and only wait-compile shows.
 
 Prints the mean per decode token (the first generated token and the prefill are excluded)
 and wall vs device tokens/s.
@@ -194,7 +196,9 @@ def main(argv=None):
              "status", "logits-read", "sample", "detok", "ui"]
     # nested: _program and the backend calls happen inside step; step excludes sample/detok/ui
     per["other"] = 1e3 * wall / n - sum(per.get(k, 0) for k in known)
-    print(f"{path.name} on {a.backend}: {n} decode steps, prompt fed "
+    bid = (getattr(eng.backend, "info", {}) or {}).get("build_id")
+    print(f"{path.name} on {a.backend}" + ("" if bid is None else f" (build {bid:08x})")
+          + f": {n} decode steps, prompt fed "
           f"{step0['n']} tokens; program {T['prog-bytes'] / max(n, 1) / 1024:.1f} KiB/token")
     print(f"{'item':<16} {'ms/token':>9}")
     for k in known + ["run.device", "run.overshoot", "other", "trace", "assemble", "step"]:
@@ -205,7 +209,7 @@ def main(argv=None):
           f"({cyc / n / 1e6:.2f} Mcycles/token)")
     if a.json:
         Path(a.json).write_text(json.dumps({"model": path.name, "steps": n, "ms": per,
-                                            "wall_tok_s": n / wall,
+                                            "wall_tok_s": n / wall, "build_id": bid,
                                             "dev_tok_s": n * khz[0] * 1e3 / cyc}, indent=1))
     eng._drain()
     eng.backend.close()
