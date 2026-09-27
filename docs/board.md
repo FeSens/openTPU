@@ -126,7 +126,8 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_r3route_74d4859/otpu.bit`** (primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 74d4859 (chunk FIFO in block RAM, 6 TMEM copies) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.104 ns, WHS +0.038 ns |
+| **`build/deploy_burst_a691ea98/otpu.bit`** (primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | a691ea98 (port-B AXI read bursts, MXU_STARVE counter; register map 3) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns, WHS +0.040 ns (omarchy build) |
+| `build/deploy_r3route_74d4859/otpu.bit` (single-beat reads, 2.4x slower decode) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 74d4859 (chunk FIFO in block RAM, 6 TMEM copies) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.104 ns, WHS +0.038 ns |
 | `build/deploy_default_3c270c9/otpu.bit` (first fallback) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 3c270c9 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.065 ns, WHS +0.038 ns |
 | `build/deploy_m4cl4_550aa35/otpu.bit` (faster prefill) | `make bit MCOLS=4 VPU_CL=4` | 550aa35 (as the primary, 4 MXU columns, 4 composite VPU lanes) | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.086 ns, WHS +0.037 ns |
 | `build/vivado_100mhz_gen1_met/otpu.bit` (fallback) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | v0.4 (6587cb4) | D=128 MCOLS=2 LANES=8 | no | Qwen3, LFM2 | met, WNS +0.082 ns |
@@ -144,9 +145,9 @@ at build time: `74d48591` for the primary, `3c270c93` for the first fallback, `5
 
 ```sh
 cd boards/ypcb-00338
-make program BIT=../../build/deploy_r3route_74d4859/otpu.bit         # openFPGALoader (5 retries)
-make program-vivado BIT=$PWD/../../build/deploy_r3route_74d4859/otpu.bit   # Vivado hw_manager
-make flash MCS=../../build/deploy_r3route_74d4859/otpu.mcs          # permanent: BPI flash
+make program BIT=../../build/deploy_burst_a691ea98/otpu.bit         # openFPGALoader (5 retries)
+make program-vivado BIT=$PWD/../../build/deploy_burst_a691ea98/otpu.bit   # Vivado hw_manager
+make flash MCS=../../build/deploy_burst_a691ea98/otpu.mcs          # permanent: BPI flash
 ```
 
 Without `BIT=` / `MCS=` the scripts take `build/vivado/otpu.bit` / `otpu.mcs` (the last build).
@@ -274,7 +275,20 @@ ISA simulator token for token for all three models ("The capital of France is Pa
 | LFM2.5-230M | 7.71 | 13.0 | 2.35 |
 | Qwen3.5-0.8B | 25.91 | 3.9 | 8.41 |
 
-Decode runs at ~3.2x the simulated cycles: the counters show the MXU starved (MXU_BUSY 94%,
+Burst reads (build a691ea98, measured 2026-09-27; port-B reads as INCR bursts of up to 8 beats per
+channel): every model still equals the ISA simulator token for token.
+
+| Model | device Mcycles / token | tok/s at 100 MHz | selftest wall tok/s | before (74d48591) |
+|---|---|---|---|---|
+| Qwen3-0.6B | 8.58 | 11.65 | 9.75 | 20.66 |
+| LFM2.5-230M | 3.14 | 31.8 | 20.40 | 7.71 |
+| Qwen3.5-0.8B | 11.88 | 8.42 | 6.58 | 25.91 |
+
+DRAM reads while running: 7.2 GB/s (Qwen3), 7.6 GB/s (LFM2), against 3.0 before. MXU_STARVE (cycles
+the MXU waits for weight chunks) is still 37% (Qwen3) / 26% (LFM2): DRAM-800 efficiency and the
+request pipeline are the next limit. LFM2 runs 65% of the token time; the rest is the host.
+
+Before the burst fix: Decode runs at ~3.2x the simulated cycles: the counters show the MXU starved (MXU_BUSY 94%,
 MXU_MAC 21%, DRAM_WAIT 0.1%) and DRAM reads at 3.0 GB/s (0.23 beats / cycle / channel). Port B
 issues single-beat 64-byte AXI reads (SmartConnect ports MAX_BURST_LENGTH 1); the per-transaction
 cost in SmartConnect and the MIG AXI front end, which the simulated DRAM does not charge, caps the
