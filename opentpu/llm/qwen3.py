@@ -474,10 +474,12 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
 
     Schedule (the MXU streams weights in program order, so what sits between two MMs in the
     stream overlaps them): K, V and then Q (one MM per KV head's query group) are projected
-    first, back to back, and the K / V norms, RoPE and cache appends run while Q streams. Each
-    head's query preparation follows in the attention pipeline (_attend_heads). The Q MMs come
-    before the appends and queries in program order so that the sequencer's window, which
-    the slow V^T appends fill, never holds the MXU's next MM back.
+    first, back to back, and the K / V norms, RoPE and K appends run while Q streams. Each
+    head's V^T append and query preparation follow in the attention pipeline (_attend_heads),
+    so the quantizer's slow V^T appends (a byte into each of d cache rows) overlap the heads
+    before it instead of holding all queries back. The Q MMs come before the appends and
+    queries in program order so that the sequencer's window, which the appends fill, never
+    holds the MXU's next MM back.
 
     A query group of more heads than the MXU has columns attends in parts of MCOLS heads, each
     streaming the KV head again. `gated` (Qwen3.5): lw.wgate projects a gate per query
@@ -496,10 +498,14 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
     kh = _rope_padded(rmsnorm(k.reshape(nh, d), kn, eps), c, s_)  # [nkv_loc, d or D]
     vh = _padded(v.reshape(nh, d))
     for j, hh in enumerate(heads):
-        ol.kv_append(kv, hh, pos, kh[j:j + 1, :], vh[j:j + 1, :])
+        ol.kv_append(kv, hh, pos, kh[j:j + 1, :], None)
 
     def queries(j):
         def emit():
+            # the V^T append (one byte into each of d cache rows: slow) goes with the head's
+            # queries, so the quantizer's appends spread over the heads' attention pipeline
+            # instead of holding every head's queries behind all of them
+            ol.kv_append(kv, heads[j], pos, None, vh[j:j + 1, :])
             return _rope_padded(rmsnorm(qps[j].reshape(G, d), qn, eps), c, s_)
         return emit
 

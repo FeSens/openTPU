@@ -221,17 +221,20 @@ def static_range(*args):
 
 
 # ---- KV cache
-def kv_append(kv: KVDesc, h: int, pos, k: Tile, v: Tile) -> None:
-    """Quantize and append rows of k, v ([n, d]) at token position `pos` of KV head `h`.
+def kv_append(kv: KVDesc, h: int, pos, k: Tile | None, v: Tile | None) -> None:
+    """Quantize and append rows of k, v ([n, d]) at token position `pos` of KV head `h` (either
+    may be None: only the other is appended).
 
     K rows are written token-major with per-block scales; V is written transposed (one byte per
     dimension, stride = capacity) with one scale per token.
     """
     b = current()
     pos = Affine.of(pos)
-    kd = kv.k(h)
-    b.store_quantized(k, kd.data + pos * kd.rs, kd.scale + pos * kd.srs, kd.rs, 1,
-                      row_scale=False)
-    vt = kv.vt(h)
-    vs = kv.vscale(h)
-    b.store_quantized(v, vt.data + pos, vs.base + pos * 4, 1, vt.rs, row_scale=True)
+    if k is not None:
+        kd = kv.k(h)
+        b.store_quantized(k, kd.data + pos * kd.rs, kd.scale + pos * kd.srs, kd.rs, 1,
+                          row_scale=False)
+    if v is not None:
+        vt = kv.vt(h)
+        vs = kv.vscale(h)
+        b.store_quantized(v, vt.data + pos, vs.base + pos * 4, 1, vt.rs, row_scale=True)
