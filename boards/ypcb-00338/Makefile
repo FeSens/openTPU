@@ -1,6 +1,6 @@
 # openTPU on the Inspur YPCB-00338.
 #   make lint       offline: MIG pin check, Tcl syntax, XDC ports vs the top, Verilator lint
-#   make mig        regenerate the MIG .prj files and DDR3 pin XDC (DDR=800|1066|1333|1600)
+#   make mig        regenerate the MIG .prj files and DDR3 pin XDC (DDR=800|1066|1300)
 #   make bit        Vivado batch build (MCOLS=2|4, VPU_CL=2|4, LANES=8|16, CORE_MHZ=100|80|75) -> build/vivado/otpu.bit (VIVADO_DOCKER=image for Docker)
 #   make impl       rerun implementation only on the existing project (constraint changes)
 #   make program    JTAG load (openFPGALoader; BIT=path, default build/vivado/otpu.bit); make program-vivado with Vivado's hw_server

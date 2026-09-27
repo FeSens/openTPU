@@ -1,6 +1,6 @@
 # Create the Vivado project for openTPU on the YPCB-00338.
 #   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL] [LANES]
-# DDR_SPEED: 800 (default), 1066, 1333 or 1600. OUT_DIR: default ../../../build/vivado (repository build/).
+# DDR_SPEED: 800 (default), 1066 or 1300. OUT_DIR: default ../../../build/vivado (repository build/).
 # BUILD_ID: 8 hex digits for the BUILD_ID register (default: the first 8 hex digits of the
 # repository's git commit, else 0).
 
@@ -19,9 +19,8 @@ if {$BUILD_ID eq ""} {
 }
 if {![regexp {^[0-9a-fA-F]{1,8}$} $BUILD_ID]} { set BUILD_ID 0 }
 # the core clock the block design makes (bd.tcl: CORE_MHZ rounded to the MMCM's 1/8 divider
-# steps of its VCO, 1000 MHz for DDR3-1333, else 800), for the CORE_KHZ register
-set VCO [expr {$DDR_SPEED == 1333 ? 1000 : 800}]
-set CORE_KHZ [expr {round($VCO * 1000.0 / (round(double($VCO) / $CORE_MHZ * 8) / 8.0))}]
+# steps), for the CORE_KHZ register
+set CORE_KHZ [expr {round(800000.0 / (round(800.0 / $CORE_MHZ * 8) / 8.0))}]
 puts "CORE_KHZ $CORE_KHZ, BUILD_ID $BUILD_ID"
 set MIG_DIR $here/mig
 

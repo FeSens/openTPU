@@ -11,7 +11,7 @@ so MIG runs with the data mask disabled and ECC enabled: partial AXI writes (the
 writes single bytes and masked words) are then done by MIG as read-modify-write. Without ECC
 MIG would ignore write strobes and corrupt neighbouring bytes.
 
-  python3 gen_mig_prj.py [--check] [--speed 800|1066|1333|1600] [--no-ecc]
+  python3 gen_mig_prj.py [--check] [--speed 800|1066|1300] [--no-ecc]
 
 --check only prints the byte-group analysis (bank / byte group of every DQ, DQS pin; derived
 from the xc7k480t-ffg1156 IOB site map in xc7k480t_ffg1156_iob.txt, extracted from the openXC7
@@ -31,13 +31,14 @@ OUT = HERE.parent / "vivado" / "mig"
 # DDR3 data rate -> (tCK ps, MIG PHY input clock MHz, CL, CWL). CL / CWL: the MT41K256M8-125
 # speed bins (tRFC 160 ns for 2 Gb at every speed). The DDR3 banks (11-18) are HR banks: MIG's
 # limit for a -2 FFG part, 1.5 V components, 4:1 is tCK >= 1875 ps (mig_7series_v4_2
-# data/dlib/7series/ddr3_sdram/time_periods.xml, tmin_hr), so 1333 and 1600 are outside it:
-# MIG generates them with critical warning [Mig7series 79-155] (docs/board.md, "Faster DDR3").
+# data/dlib/7series/ddr3_sdram/time_periods.xml, tmin_hr); faster ones get critical warning
+# [Mig7series 79-155] but are generated. At tCK <= 1500 ps (1333, 1600) MIG's PHY uses
+# IDELAYE2_FINEDELAY, which this design cannot build (black box, DRC INBB-3 in opt_design), so
+# the fastest buildable setting is 1300 (tCK 1538 ps). See docs/board.md, "Faster DDR3".
 SPEEDS = {
     800: (2500, 200.0, 6, 5),       # 400 MHz CK, 4:1 -> ui_clk 100 MHz
-    1066: (1875, 266.667, 7, 6),    # 533 MHz CK -> ui_clk 133 MHz (MMCM VCO 800 / 3)
-    1333: (1500, 333.333, 9, 7),    # 667 MHz CK -> ui_clk 167 MHz (MMCM VCO 1000 / 3); out of spec
-    1600: (1250, 200.0, 11, 8),     # 800 MHz CK -> ui_clk 200 MHz; out of spec
+    1066: (1875, 266.667, 7, 6),    # 533 MHz CK -> ui_clk 133 MHz (266.667 MHz input)
+    1300: (1538, 200.0, 9, 7),      # 650 MHz CK -> ui_clk 162.5 MHz (PLL x13/2); out of MIG's range
 }
 
 
