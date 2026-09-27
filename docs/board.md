@@ -452,6 +452,11 @@ WNS +0.107 ns). It gets most of 1300's gain:
 | LFM2-350M | 2.46 | 40.7 | 21.8 |
 | Qwen3.5-0.8B | 9.75 | 10.3 | 7.4 |
 
+With the host code of 7f9cec1 (the next program compiles in a worker process after the card
+starts; docs/host.md), `tools/decode_profile.py` on the same image (96-token reply) measures
+wall 38.5 / 14.1 / 9.9 tok/s against device 40.5 / 14.5 / 10.2 for LFM2 / Qwen3 / Qwen3.5: the
+host adds 1.3 / 1.9 / 2.7 ms per token, mostly the logits read and the sampling.
+
 DDR3-1300 is still not qualified: MIG's ECC correction counters were not read (a marginal link corrects
 silently), the warm soak (step 2) was not run, and it is outside MIG's range for these banks.
 
