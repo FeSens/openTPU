@@ -42,7 +42,8 @@ from opentpu.profile import ddr3_peak, ddr3_plusargs, dram_efficiency, parse  # 
 # stack wins)
 PHASE_NAMES = {"head_step": "DeltaNet", "_deltanet": "DeltaNet", "_pair_segment": "DeltaNet",
                "_attention": "attention", "_attend_heads": "attention", "_conv": "conv",
-               "_mlp": "MLP", "swiglu_down": "MLP", "_lm_head": "LM head"}
+               "_mlp": "MLP", "swiglu_down": "MLP", "_lm_head": "LM head",
+               "_attention_rows": "attention", "qwen3_rows": "LM head"}
 
 
 def _phase(ins):
@@ -82,6 +83,13 @@ def main():
     ap.add_argument("--mhz", type=float, default=100.0, help="core clock (tokens/s; --ddr)")
     ap.add_argument("--plus", action="append", default=[],
                     help="extra simulator argument, e.g. --plus +axi_trfc=26 (repeatable)")
+    ap.add_argument("--rows", type=int, default=0,
+                    help="R token rows at positions pos .. pos+R-1 of one sequence in one program "
+                         "(qwen3_rows: a prefill chunk or a speculative verify pass); 0: the "
+                         "decode step")
+    ap.add_argument("--logits", choices=["last", "all", "none"], default="last",
+                    help="--rows: which rows get logits (prefill: last or none; verify: all)")
+    ap.add_argument("--mcols", type=int, default=None, help="MXU columns (default OTPU_MCOLS or 2)")
     ap.add_argument("--block", type=int, default=None, help="attention block (tokens)")
     ap.add_argument("--depth", type=int, default=None, help="attention score blocks in flight")
     ap.add_argument("--check", action="store_true", help="compare with the ISA simulator")
@@ -105,26 +113,35 @@ def main():
     if a.layers:
         spec = dataclasses.replace(spec, **({"kinds": spec.kinds[:a.layers]}
                                             if hasattr(spec, "kinds") else {"layers": a.layers}))
+    R = max(1, a.rows)
     if a.cap is None:
-        a.cap = 256 * (a.pos // 256 + 1)
-    if a.pos >= a.cap:
+        a.cap = 256 * ((a.pos + R - 1) // 256 + 1)
+    if a.pos + R - 1 >= a.cap:
         ap.error(f"--pos {a.pos} needs --cap above it (the KV write would land past the cache)")
     W = load_weights(path)
-    wkw = dict(wformat=a.wformat, head_format=a.head_format)
-    need = spec.image(board_config(DRAM_BYTES=1 << 40), a.cap, **wkw).nbytes
-    cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()))
+    wkw = dict(wformat=a.wformat, head_format=a.head_format, rows=R)
+    mk = {"MCOLS": a.mcols} if a.mcols else {}
+    need = spec.image(board_config(DRAM_BYTES=1 << 40, **mk), a.cap, **wkw).nbytes
+    cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()), **mk)
     img = spec.image(cfg, a.cap, **wkw)
     dram = img.build(W)[0]
-    # this token's inputs (the KV cache before pos stays zero: timing does not depend on it)
-    emb = np.asarray(W["model.embed_tokens.weight"][791], np.float32)
-    c, s = rope_tables(spec, a.pos)
+    # the rows' inputs (the KV cache before pos stays zero: timing does not depend on it)
+    emb = np.stack([np.asarray(W["model.embed_tokens.weight"][791 + r], np.float32)
+                    for r in range(R)])
+    tabs = [rope_tables(spec, a.pos + r) for r in range(R)]
+    c, s = np.stack([t[0] for t in tabs]), np.stack([t[1] for t in tabs])
     for key, v in (("x", emb), ("cos", c), ("sin", s)):
-        b = np.ascontiguousarray(v, np.float32).view(np.uint8)
+        b = np.ascontiguousarray(v, np.float32).view(np.uint8).ravel()
         dram[img.io[key]:img.io[key] + b.size] = b
     if a.depth:
         import opentpu.llm.qwen3 as Q
         Q.ATTN_DEPTH = a.depth
-    progs = img.compile_step(a.pos, *([a.block] if a.block else []))
+    if a.rows:
+        lr = {"last": [R - 1], "all": list(range(R)), "none": []}[a.logits]
+        progs = img.compile_rows([(0, a.pos + r) for r in range(R)], lr,
+                                 *([a.block] if a.block else []))
+    else:
+        progs = img.compile_step(a.pos, *([a.block] if a.block else []))
     t = time.time()
     drams, _, st = rtlsim.run(cfg, progs, [dram], trace=True,
                               uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl},
@@ -141,6 +158,9 @@ def main():
     # MXU (one block per cycle) do not: 4-bit weights stream two blocks per chunk
     ps = rl["per_slice"][0]
     ideal = max(ps["portb"] * 100 / a.bw, ps["porta_cycles"], ps["mxu"])
+    if a.rows:
+        print(f"rows={R} (positions {a.pos}..{a.pos + R - 1}, logits {a.logits}) "
+              f"MCOLS={cfg.MCOLS}: {p.cycles / R:.0f} cycles per row")
     print(f"layers={spec.layers} pos={a.pos} bw={a.bw}% lat={a.lat}: {p.cycles} cycles "
           f"({wall:.0f}s sim), core-port roofline {ideal:.0f} cycles (port B {ps['portb']} "
           f"chunks, port A {ps['porta_cycles']}, MXU {ps['mxu']}), "
