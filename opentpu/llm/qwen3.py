@@ -637,7 +637,7 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK):
     """R token rows at once (rows[r] = (sequence, position)): the rows' embeddings m.xr and
     RoPE tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
     empty: a prefill chunk that is not the last one skips the LM head)."""
-    spec, sid = m.spec, ol.program_id()
+    spec = m.spec
     R = len(rows)
     x = ol.load(m.xr[0:R, :])
     c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
@@ -645,8 +645,15 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK):
         lw = m.layer(li)
         x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
         x.set(_mlp(x, lw, spec))
+    _lm_head_rows(x, m, spec, logit_rows)
+
+
+def _lm_head_rows(x, m, spec, logit_rows):
+    """Final norm and this slice's vocabulary rows of the LM head for the rows `logit_rows`
+    of x (a contiguous range, or empty: nothing) -> m.logitsr."""
     if not logit_rows:
         return
+    sid = ol.program_id()
     a, e = logit_rows[0], logit_rows[-1] + 1
     xs = ol.quantize(rmsnorm(x[a:e, :], ol.load(m.g_final), spec.eps))
     chunk = min(HEAD_CHUNK, ol.tmem_words() // (8 * (e - a)))
