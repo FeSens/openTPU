@@ -723,9 +723,9 @@ class IsaBackend:
 _WORKER: tuple | None = None                # (image, block) in the compile worker process
 
 
-def _worker_init(spec, cfg, cap, batch, rows, block) -> None:
+def _worker_init(spec, cfg, cap, batch, rows, block, wformat, head_format) -> None:
     global _WORKER
-    _WORKER = (spec.image(cfg, cap, batch, rows), block)
+    _WORKER = (spec.image(cfg, cap, batch, rows, wformat, head_format), block)
     _exit_with_parent()
 
 
@@ -854,7 +854,8 @@ class Engine:
         from concurrent.futures import ProcessPoolExecutor
         self._pool = ProcessPoolExecutor(
             self._ahead, mp_context=mp.get_context("spawn"), initializer=_worker_init,
-            initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block))
+            initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block,
+                      self.image.wformat, self.image.head_format))
         self._ready = self._pool.submit(_worker_ready)
 
     def _take(self, key, fn, *args):

@@ -688,10 +688,12 @@ def test_board_compiles_the_next_program_after_starting_the_card():
 
 
 
-def test_board_compiles_in_a_worker_process():
+@pytest.mark.parametrize("wformat,head_format", [("int8", None), ("fp4", "int8"), ("fp4", None)])
+def test_board_compiles_in_a_worker_process(wformat, head_format):
     """The board's default pipeline compiles in a spawned worker process: the words it sends
     are the in-process assembly of the same position's program (the board-model tests in
-    test_board.py / test_lfm2.py check the logits against the ISA simulator through it)."""
+    test_board.py / test_lfm2.py check the logits against the ISA simulator through it), for
+    4-bit images too (the worker once built an int8 image: int8 MMs over 4-bit weights)."""
     from opentpu import lens as L
     from opentpu.host.board import sim_config
     from opentpu.llm.qwen3 import Engine
@@ -705,7 +707,8 @@ def test_board_compiles_in_a_worker_process():
             sent.append(programs)
             super().start(programs)
 
-    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t),
+                 wformat=wformat, head_format=head_format)
     assert eng._procs and eng._ready.result(timeout=60)
     for tok in (3, 4, 5, 6):
         eng.step(tok)
@@ -717,7 +720,8 @@ def test_board_compiles_in_a_worker_process():
                                             np.uint32))
     eng.backend.close()
 
-def test_board_compiles_prefill_chunks_in_the_worker_process():
+@pytest.mark.parametrize("wformat", ["int8", "fp4"])
+def test_board_compiles_prefill_chunks_in_the_worker_process(wformat):
     """Chunked prefill through the worker process: the first chunk compiles in line, the next
     ones in the worker while the card runs the one before, and after the last chunk the first
     decode step's program; the words are the in-process assembly of the same programs."""
@@ -734,7 +738,8 @@ def test_board_compiles_prefill_chunks_in_the_worker_process():
             sent.append(programs)
             super().start(programs)
 
-    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t),
+                 wformat=wformat)
     assert eng._procs and eng._ready.result(timeout=60)
     runs = [len(part) for part, _ in eng.prefill_chunks(list(range(3, 22)))]
     assert runs == [8, 8, 3] and eng.pos == 19
