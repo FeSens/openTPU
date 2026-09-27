@@ -26,7 +26,9 @@
 // +axi_trc +axi_trtp +axi_trefi +axi_trfc +axi_tturn (controller cycles); +axi_tpc / +axi_tpu the
 // core and controller clock periods in ticks (4 / 4 at DDR3-800, 4 / 3 at DDR3-1066: ui_clk
 // 133 MHz, one beat per 0.75 core cycles). What-if: +axi_afree=1 serves port A reads (arid 1)
-// without touching the DDR3 timing.
+// without touching the DDR3 timing. +axi_rout=N / +axi_wout=N: at most N read / write
+// transactions outstanding per channel (AR / AW accepted, last R / B not yet sent; 0 = no
+// limit), as the interconnect's NUM_READ_OUTSTANDING / NUM_WRITE_OUTSTANDING (vivado/bd.tcl).
 // Images load from dram_<SID>.bin and dump to dram_out_<SID>.bin, as otpu_dram. With PHYS = 1
 // the files are the channels' own memories instead, as the host sees them: ch<c>.bin (big-endian
 // words, as $fread reads) in, ch<c>_out.bin (little-endian) out, WORDS / 2 words each.
@@ -77,6 +79,7 @@ module otpu_axi_mem #(
   int trmw = 12;                         // core cycles
   int tpc = 4, tpu = 4;                  // ticks per core / controller cycle
   int afree = 0;                         // what-if: port A reads cost the DRAM nothing
+  int rout = 0, wout = 0;                // outstanding transaction limits (0: none)
   longint n_rmw_a [2];
   longint cyc = 0;
 
@@ -160,8 +163,9 @@ module otpu_axi_mem #(
       awr <= !rnd_stall();
       wr  <= !rnd_stall();
     end
-    assign s_arready[c] = arr;
-    assign s_awready[c] = awr;
+    int nw_out = 0;                      // writes accepted (AW), response not yet taken
+    assign s_arready[c] = arr && (rout == 0 || rq[c].size() < rout);
+    assign s_awready[c] = awr && (wout == 0 || nw_out < wout);
     assign s_wready[c] = wr;
     // R: the head read, once its time has come (in order per channel)
     always_comb begin
@@ -181,7 +185,7 @@ module otpu_axi_mem #(
       if (rst) begin
         rq[c].delete(); bq[c].delete(); aw_a[c].delete(); aw_i[c].delete(); rdq[c].delete();
         w_d[c].delete(); w_s[c].delete();
-        rv <= 1'b0; bv <= 1'b0; ri = 0; art = 0; aa = 0;
+        rv <= 1'b0; bv <= 1'b0; ri = 0; art = 0; aa = 0; nw_out = 0;
         rbt[c].delete(); bus[c] = 0; nref[c] = trefi * tpu; wdir[c] = 1'b0;
         for (int k = 0; k < 8; k++) begin orow[c][k] = -1; tact[c][k] = -1000; tcol[c][k] = -1000; end
       end else begin
@@ -215,6 +219,8 @@ module otpu_axi_mem #(
           n_rb[c] += n;
           if (s_arid[c]) n_ara[c]++;
         end
+        if (s_awvalid[c] && s_awready[c]) nw_out = nw_out + 1;
+        if (bv && s_bready[c]) nw_out = nw_out - 1;
         if (s_awvalid[c] && s_awready[c]) begin
           aw_a[c].push_back(s_awaddr[c]);
           aw_i[c].push_back(s_awid[c]);
@@ -295,6 +301,8 @@ module otpu_axi_mem #(
     void'($value$plusargs("axi_tpc=%d", tpc));
     void'($value$plusargs("axi_tpu=%d", tpu));
     void'($value$plusargs("axi_afree=%d", afree));
+    void'($value$plusargs("axi_rout=%d", rout));
+    void'($value$plusargs("axi_wout=%d", wout));
     n_ar = '{0, 0}; n_rb = '{0, 0}; n_ara = '{0, 0}; n_miss = '{0, 0}; n_rmw = '{0, 0}; n_rmw_a = '{0, 0};
     begin
       int seed;
