@@ -126,7 +126,8 @@ def main():
     if b.get("ms") is not None:
         mxb = sum(b.get("mx", []))
         print(f"MXU starved (chunk FIFO empty while streaming, the card's MXU_STARVE) "
-              f"{sum(b['ms'])} cycles = {100 * sum(b['ms']) / p.cycles:.1f}%; MAC "
+              f"{sum(b['ms'])} cycles = {100 * sum(b['ms']) / p.cycles:.1f}%; blocked (chunks "
+              f"but no MAC) {100 * sum(b.get('mb', [])) / p.cycles:.1f}%; MAC "
               f"{100 * mxb / p.cycles:.1f}%; DRAM read beats/cycle/channel "
               f"{sum(n for _, n in ar) / 2 / p.cycles:.3f}")
     for c, d in enumerate(st.get("axi_detail", [])):

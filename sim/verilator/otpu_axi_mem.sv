@@ -21,7 +21,10 @@
 // (the MIG's ECC): its write waits +axi_trmw cycles after the read. Address map +axi_map=0 BANK_ROW_COLUMN (the MIG's default: the bank is the
 // top 3 bits of the channel's 2 GB, so a 256 MB region is one bank) or 1 ROW_BANK_COLUMN
 // (consecutive 8 KB rows rotate over the 8 banks). Times: +axi_trcd +axi_trp +axi_tras
-// +axi_trc +axi_trtp +axi_trefi +axi_trfc +axi_tturn (cycles).
+// +axi_trc +axi_trtp +axi_trefi +axi_trfc +axi_tturn (controller cycles); +axi_tpc / +axi_tpu the
+// core and controller clock periods in ticks (4 / 4 at DDR3-800, 4 / 3 at DDR3-1066: ui_clk
+// 133 MHz, one beat per 0.75 core cycles). What-if: +axi_afree=1 serves port A reads (arid 1)
+// without touching the DDR3 timing.
 // Images load from dram_<SID>.bin and dump to dram_out_<SID>.bin, as otpu_dram. With PHYS = 1
 // the files are the channels' own memories instead, as the host sees them: ch<c>.bin (big-endian
 // words, as $fread reads) in, ch<c>_out.bin (little-endian) out, WORDS / 2 words each.
@@ -69,7 +72,9 @@ module otpu_axi_mem #(
   // DDR3 model (see the top)
   int dram = 0, amap = 0;
   int trcd = 2, trp = 2, tras = 4, trc = 6, trtp = 1, trefi = 780, trfc = 16, tturn = 2;
-  int trmw = 12;
+  int trmw = 12;                         // core cycles
+  int tpc = 4, tpu = 4;                  // ticks per core / controller cycle
+  int afree = 0;                         // what-if: port A reads cost the DRAM nothing
   longint n_rmw_a [2];
   longint cyc = 0;
 
@@ -88,42 +93,45 @@ module otpu_axi_mem #(
   bit     wdir [2];
   int     orow [2][8];
   longint tact [2][8], tcol [2][8];
-  // the cycle a beat's column command goes out (and the controller's state after it)
+  // the core cycle a beat's column command goes out (and the controller's state after it). The
+  // controller runs in ticks: tpc per core cycle, tpu per controller (ui_clk) cycle, and the DDR3
+  // times are in controller cycles (DDR3-800: 4 / 4, ui_clk = core clock; DDR3-1066: 4 / 3)
   function automatic longint dram_slot(input int c, input logic [31:0] addr, input bit wr,
-                                       input longint arrive);
+                                       input longint arrive_cyc);
     logic [31:0] off;
     int bk, row;
-    longint t;
+    longint t, arrive;
+    arrive = arrive_cyc * tpc;
     off = addr - (c ? BASE1 : BASE0);
     if (amap == 0) begin bk = int'(off[30:28]); row = int'(off[27:13]); end
     else           begin bk = int'(off[15:13]); row = int'(off[30:16]); end
     t = arrive > bus[c] ? arrive : bus[c];
     while (t >= nref[c]) begin
       if (bus[c] < nref[c]) bus[c] = nref[c];
-      bus[c] = bus[c] + trfc;
-      for (int k = 0; k < 8; k++) begin orow[c][k] = -1; tact[c][k] = bus[c] - trc; end
-      nref[c] = nref[c] + trefi;
+      bus[c] = bus[c] + trfc * tpu;
+      for (int k = 0; k < 8; k++) begin orow[c][k] = -1; tact[c][k] = bus[c] - trc * tpu; end
+      nref[c] = nref[c] + trefi * tpu;
       t = arrive > bus[c] ? arrive : bus[c];
     end
-    if (wr != wdir[c]) begin t = t + tturn; wdir[c] = wr; end
+    if (wr != wdir[c]) begin t = t + tturn * tpu; wdir[c] = wr; end
     if (orow[c][bk] != row) begin
       longint tp, ta;
-      if (orow[c][bk] < 0) tp = arrive - trp;
+      if (orow[c][bk] < 0) tp = arrive - trp * tpu;
       else begin
-        tp = tcol[c][bk] + trtp;
-        if (tact[c][bk] + tras > tp) tp = tact[c][bk] + tras;
+        tp = tcol[c][bk] + trtp * tpu;
+        if (tact[c][bk] + tras * tpu > tp) tp = tact[c][bk] + tras * tpu;
         if (arrive > tp) tp = arrive;
       end
-      ta = tp + trp;
-      if (tact[c][bk] + trc > ta) ta = tact[c][bk] + trc;
+      ta = tp + trp * tpu;
+      if (tact[c][bk] + trc * tpu > ta) ta = tact[c][bk] + trc * tpu;
       orow[c][bk] = row;
       tact[c][bk] = ta;
-      if (ta + trcd > t) t = ta + trcd;
+      if (ta + trcd * tpu > t) t = ta + trcd * tpu;
       n_miss[c]++;
     end
     tcol[c][bk] = t;
-    bus[c] = t + 1;
-    return t;
+    bus[c] = t + tpu;
+    return (t + tpc - 1) / tpc;
   endfunction
 
   typedef struct { longint t; logic id; logic [31:0] addr; int len; } rq_t;
@@ -172,8 +180,8 @@ module otpu_axi_mem #(
         rq[c].delete(); bq[c].delete(); aw_a[c].delete(); aw_i[c].delete();
         w_d[c].delete(); w_s[c].delete();
         rv <= 1'b0; bv <= 1'b0; ri = 0; art = 0; aa = 0;
-        rbt[c].delete(); bus[c] = 0; nref[c] = trefi; wdir[c] = 1'b0;
-        for (int k = 0; k < 8; k++) begin orow[c][k] = -1; tact[c][k] = -100; tcol[c][k] = -100; end
+        rbt[c].delete(); bus[c] = 0; nref[c] = trefi * tpu; wdir[c] = 1'b0;
+        for (int k = 0; k < 8; k++) begin orow[c][k] = -1; tact[c][k] = -1000; tcol[c][k] = -1000; end
       end else begin
         if (s_arvalid[c] && s_arready[c]) begin
           longint t;
@@ -191,7 +199,9 @@ module otpu_axi_mem #(
             longint a;
             a = (aa + arc > cyc) ? aa + arc : cyc;
             aa = a;
-            for (int i = 0; i < n; i++) rbt[c].push_back(dram_slot(c, s_araddr[c] + 32'(64 * i), 1'b0, a) + lat);
+            for (int i = 0; i < n; i++)
+              rbt[c].push_back((afree != 0 && s_arid[c] ? a + i
+                                : dram_slot(c, s_araddr[c] + 32'(64 * i), 1'b0, a)) + lat);
           end
           rq[c].push_back('{t, s_arid[c], s_araddr[c], n});
           n_ar[c]++;
@@ -270,6 +280,9 @@ module otpu_axi_mem #(
     void'($value$plusargs("axi_trfc=%d", trfc));
     void'($value$plusargs("axi_tturn=%d", tturn));
     void'($value$plusargs("axi_trmw=%d", trmw));
+    void'($value$plusargs("axi_tpc=%d", tpc));
+    void'($value$plusargs("axi_tpu=%d", tpu));
+    void'($value$plusargs("axi_afree=%d", afree));
     n_ar = '{0, 0}; n_rb = '{0, 0}; n_ara = '{0, 0}; n_miss = '{0, 0}; n_rmw = '{0, 0}; n_rmw_a = '{0, 0};
     begin
       int seed;
