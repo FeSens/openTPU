@@ -417,6 +417,19 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
+**Measured on the card (2026-09-27, JTAG loads, host code of a691ea98).**
+
+| Image | Calibration | selftest | diag memory | Qwen3 decode |
+|---|---|---|---|---|
+| DDR3-800, burst (a691ea98) | ok | all pass | all pass | 8.58 Mcycles/token, 11.65 tok/s, DRAM 7.2 GB/s, MXU_STARVE 37% |
+| DDR3-1300, out of spec (819fee49) | ok (both channels) | all pass | 11 / 11 pass | 6.50 Mcycles/token, 15.38 tok/s, DRAM 9.53 GB/s, MXU_STARVE 18% |
+| DDR3-1333, out of spec, patched PHY (254f8388) | ok (both channels) | fails at the DMA bandwidth stage (H2C timeout), then the card leaves the PCIe bus (ID 0xffffffff) | not run | not run |
+
+The 1333 failure followed the selftest's 200 sub-beat host writes, the trigger of the host-write
+hang being bisected (docs/host.md), so it is not yet a clean DDR verdict; the loss of the PCIe
+link is worse than that hang and makes 1333 suspect regardless. DDR3-1300 is not yet qualified:
+the model token checks, the full-memory soak and the ECC correction counters are pending.
+
 **Checklist per speed.** Status: *unmeasured* at every speed above 800 until the results are
 filled in here. Load the bitstream over JTAG, not flash (section 2), so a bad one is gone at
 the next power cycle.
