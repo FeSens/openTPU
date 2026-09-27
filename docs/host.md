@@ -199,8 +199,9 @@ ABS and COPY pass a signalling NaN through where the simulator returns the canon
 ## 6. Chat
 
 ```sh
-otpu-chat --backend board                      # interactive
-otpu-chat --backend board --prompt "Why is the sky blue?"
+otpu-chat --backend board                      # the full-screen interface
+otpu-chat --backend board --plain              # a line-by-line REPL instead
+otpu-chat --backend board --prompt "Why is the sky blue?"   # one-shot, plain output
 otpu-chat --backend board --clock-mhz 100      # override the core clock (v1 bitstreams)
 otpu-chat --backend board --model lfm2         # LFM2.5-230M instead of Qwen3-0.6B
 otpu-chat --backend board --model qwen35       # Qwen3.5-0.8B (needs RDOT / OUTER / LOG2 in the bitstream)
@@ -209,10 +210,36 @@ otpu-chat --backend board --model qwen35       # Qwen3.5-0.8B (needs RDOT / OUTE
 The first call writes the model image (at the default `--cap 2048`: 0.69 GiB for Qwen3-0.6B,
 0.27 GiB for LFM2.5-230M, 0.77 GiB for Qwen3.5-0.8B) to the card; every token then writes the
 embedding row and the token's program (a few tens of KiB), runs, and reads the logits (0.58 MiB
-for Qwen3, 0.25 MiB for LFM2, 0.95 MiB for Qwen3.5). After each answer the tool prints wall-clock tokens/s and the device's own
-cycles per token (from the CYCLES register), converted with the bitstream's CORE_KHZ register
-(register map 2) or `--clock-mhz` (default 100 on a register map 1 bitstream). While it runs,
-`otpu-smi` shows the process, the model, the DRAM in use and tokens/s.
+for Qwen3, 0.25 MiB for LFM2, 0.95 MiB for Qwen3.5).
+
+**The interface** (Textual, `opentpu/host/chat_tui.py`): the conversation streams token by
+token on the left (the replies rendered as Markdown), the input line is at the bottom, and a
+panel on the right is updated live while a reply streams:
+
+- model, backend, device, the bitstream's D / MCOLS / LANES, build and clock;
+- the last turn: TTFT (submit to the first generated token), prefill tokens and tok/s, decode
+  tokens and tok/s, each as wall time and, on the card, as device time (the CYCLES of the steps
+  at the bitstream's CORE_KHZ, or `--clock-mhz`), and Mcycles per decode token;
+- the KV context as a bar and used / capacity;
+- DRAM (image and KV cache), the session's totals (turns, tokens in and out, average decode
+  tok/s) and the sampling settings.
+
+On the ISA backend the numbers are wall time only. Enter sends, Esc stops the reply (what was
+generated stays in the history and the KV cache), Ctrl-C or Ctrl-D quits. Commands: `/reset`
+(forget the conversation and the KV cache), `/stats` (the session summary in the conversation),
+`/think on|off` (thinking mode; the history is re-fed on the next turn), `/help`.
+
+Prefill here is the tokens a turn adds: the KV cache keeps every earlier turn, so a turn feeds
+only what the chat template appended since (all of it again when the template rewrote the
+history, e.g. after `/think`). Decode tok/s counts the tokens after the first, over the time
+since the first. `--plain` and `--prompt` print the same numbers after each reply (LFM2.5-230M
+on the card, build 74d48591, measured 2026-09-26):
+
+```
+[TTFT 2.14s; prefill 21 tokens, 9.90 (device 13.0) tok/s; decode 25 tokens, 9.57 (device 13.0) tok/s, 7.72 Mcycles/token at 100 MHz; context 46/2048]
+```
+
+While a chat runs, `otpu-smi` shows the process, the model, the DRAM in use and tokens/s.
 
 `--backend board-sim` runs the same driver against the Verilator board model (bit-exact, but
 minutes per token for the real model; use it with small models).

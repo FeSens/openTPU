@@ -666,3 +666,95 @@ def test_diag_hints_from_the_pattern_of_failures():
                  "LFM2 run; Qwen3.5 does not)"]
     h = diagnose(rows(mxu=FAIL, vpu=FAIL, dma=FAIL, control=FAIL))
     assert h[0].startswith("every program fails")
+
+
+# ------------------------------------------------------------------------------ otpu-chat TUI
+class StubEngine:
+    """Engine stand-in: one step per token, a fixed cycle count per step."""
+
+    def __init__(self, cap=64, cycles=2_000_000):
+        self.spec = types.SimpleNamespace(eos={0})
+        self.cap, self.pos, self.stats, self.cycles = cap, 0, [], cycles
+        self.backend = types.SimpleNamespace()
+        self.cfg = board_config()
+
+    def step(self, t):
+        time.sleep(0.002)
+        self.pos += 1
+        self.stats.append({"cycles": self.cycles})
+        return np.zeros(8, np.float32)
+
+    def reset(self):
+        self.pos = 0
+
+
+class StubTok:
+    """One token per letter (a = 1 ... z = 26): the template of a longer history extends the
+    shorter one's, as a real chat template does."""
+
+    def apply_chat_template(self, history, add_generation_prompt, enable_thinking, tokenize):
+        return [ord(c) - 96 for m in history for c in m["content"]]
+
+    def decode(self, ids, skip_special_tokens=True):
+        return "".join(chr(96 + i) for i in ids)
+
+
+def _stub_chat(n_out=6, clock=100.0):
+    from opentpu.host.chat import Chat
+    seq = iter([5] * n_out + [0] * 100)
+    return Chat(StubEngine(), StubTok(), False, lambda logits, ctx: next(seq), 32,
+                clock_mhz=clock)
+
+
+def test_chat_turn_metrics_and_plain_line():
+    chat = _stub_chat()
+    reply, t = chat.ask("hi")
+    assert reply == "eeeeee" and t.prefill_tokens == 2 and t.gen_tokens == 6
+    assert t.decode_steps == 6 and t.context == 8 and t.ttft_s > 0
+    assert t.prefill_dev_tok_s == pytest.approx(50.0) and t.decode_dev_tok_s == pytest.approx(50.0)
+    assert t.mcycles_per_token == pytest.approx(2.0) and t.decode_tok_s > 0
+    line = t.line()
+    assert line.startswith("[TTFT ") and "prefill 2 tokens" in line and "(device 50.0)" in line
+    assert "decode 6 tokens" in line and "context 8/64" in line
+    reply, t2 = chat.ask("again")                 # the KV cache keeps the first turn
+    assert not t2.restarted and t2.prefill_tokens == 5 and t2.gen_tokens == 0
+    assert chat.session.turns == 2 and chat.session.tokens_in == 7
+    chat.think = True                             # a template change is not an issue here;
+    chat.reset()                                  # /reset forgets history and KV
+    assert chat.eng.pos == 0 and chat.history == [] and chat.fed == []
+    _, t = _stub_chat(clock=0.0).ask("hi")        # no device clock (ISA): wall numbers only
+    assert t.mcycles_per_token is None and t.decode_dev_tok_s is None
+    assert "device" not in t.line() and "Mcycles" not in t.line()
+
+
+def test_chat_tui_shows_the_live_numbers(tmp_path):
+    pytest.importorskip("textual")
+    import asyncio
+
+    from opentpu.host.chat_tui import ChatApp
+    from textual.widgets import Static
+    chat = _stub_chat()
+    meta = {"model": "stub", "backend": "board", "device": "/dev/xdma0",
+            "bitstream": ["D=128 MCOLS=2 LANES=8", "build 74d48591, 100 MHz"],
+            "sampling": {"temperature": 0.7}, "dram": None}
+
+    async def go():
+        app = ChatApp(chat, meta)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press(*"hi", "enter")
+            for _ in range(200):
+                await pilot.pause(0.02)
+                if chat.last is not None and not app._busy:
+                    break
+            panel = str(app.query_one("#stats", Static).render())
+            screen = app.export_screenshot()
+            await pilot.press(*"/stats", "enter")
+            await pilot.pause(0.05)
+            notes = [str(w.render()) for w in app.query(".note")]
+            return panel, screen, notes
+    panel, screen, notes = asyncio.run(go())
+    assert any("session: 1 turns, 2 tokens in, 6 out" in n for n in notes)
+    assert "TTFT" in panel and "decode   6 tok" in panel and "device 50.00 tok/s" in panel
+    assert "8 / 64 tokens" in panel and "2.00 Mcycles/token" in panel
+    assert "eeeeee" in screen and "session:" not in screen
+    (tmp_path / "shot.svg").write_text(screen)
