@@ -28,6 +28,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from .. import fp32 as F
+from .. import quant as Q
 from .. import language as ol
 from ..compiler import Affine, CompileError, KVDesc, QTensor, Tensor
 from ..isasim import Config, Machine, design_config
@@ -35,7 +36,7 @@ from ..kernels.attention import _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid
 from ..kernels.mlp import _chunk, swiglu_down
-from ..runtime import ALIGN, quantize_rows
+from ..runtime import ALIGN
 
 
 # =============================================================================== model spec
@@ -89,8 +90,9 @@ class Spec:
         if bad:
             raise ValueError("model does not map onto this openTPU config: " + "; ".join(bad))
 
-    def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1) -> "Image":
-        return Image(self, cfg, cap, batch, rows)
+    def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
+              wformat: str = "int8", head_format: str | None = None) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format)
 
 
 def load_weights(model_dir) -> dict:
@@ -169,16 +171,21 @@ def _fake_q(x, D: int = 128):
     return (np.clip(np.rint(xb / s), -127, 127) * s).reshape(sh)
 
 
-def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128) -> np.ndarray:
+def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "int8",
+                    head_format: str | None = None) -> np.ndarray:
     """float64 decode that applies openTPU's quantization points but none of its rounding:
-    int8 weights and matmul inputs per D-block, int8 K (per token, D-block) and V (per token),
-    int8 P (per D tokens). Separates quantization error from kernel bugs."""
+    int8 (or 4-bit: `wformat`, `head_format` as in Image) weights, int8 matmul inputs per
+    D-block, int8 K (per token, D-block) and V (per token), int8 P (per D tokens). Separates
+    quantization error from kernel bugs."""
     d, G = spec.head_dim, spec.n_q // spec.n_kv
     Wq: dict = {}
+    head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
 
     def w(n):
         if n not in Wq:
-            Wq[n] = _fake_q(np.asarray(W[n], np.float64), D)
+            fmt = (head_format or wformat) if n == head else wformat
+            Wq[n] = _fake_q(np.asarray(W[n], np.float64), D) if fmt == "int8" else \
+                Q.quantize_w4(W[n], fmt, D)[2].astype(np.float64)
         return Wq[n]
 
     def norm(v, g):
@@ -187,7 +194,6 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128) -> np.ndarray:
     Kc = [[] for _ in range(spec.layers)]
     Vc = [[] for _ in range(spec.layers)]
     out = []
-    head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
     for pos, tk in enumerate(tokens):
         x = np.asarray(W["model.embed_tokens.weight"][tk], np.float64)
         c, s = rope_tables(spec, pos)
@@ -242,8 +248,9 @@ class _Bump:
         return a
 
 
-def _qdesc(daddr: int, saddr: int, n: int, k: int, D: int) -> QTensor:
-    return QTensor(Affine(daddr), Affine(saddr), (n, k), k, 4 * (k // D), D)
+def _qdesc(daddr: int, saddr: int, n: int, k: int, D: int, fmt: str = "int8") -> QTensor:
+    return QTensor(Affine(daddr), Affine(saddr), (n, k), Q.row_bytes(k, fmt, D), 4 * (k // D), D,
+                   wf=Q.mxu_wf(fmt))
 
 
 def _tdesc(addr: int, shape) -> Tensor:
@@ -260,17 +267,24 @@ class Image:
 
     [ I/O: x_in, cos, sin | final norm | logits ] [ layer 0 block ] ... [ layer L-1 block ]
     [ LM head rows of this slice ]. A layer block holds the norms, this slice's rows of every
-    projection (int8 + scales) and this slice's KV heads with room for `cap` tokens, for each
-    of `batch` sequences. The I/O area holds `rows` token rows (x, cos, sin, logits).
+    projection (quantized + scales) and this slice's KV heads with room for `cap` tokens, for
+    each of `batch` sequences. The I/O area holds `rows` token rows (x, cos, sin, logits).
+
+    Weight formats (opentpu/quant.py): `wformat` for the layers' projections, `head_format`
+    (default: the same) for the LM head: "int8", or 4-bit "int4" / "fp4". The KV cache and the
+    activations stay int8.
     """
 
-    def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1):
+    def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
+                 wformat: str = "int8", head_format: str | None = None):
         spec.check(cfg)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
         S, D = cfg.S, cfg.D
         H, d, F_ = spec.hidden, spec.head_dim, spec.ffn
         self.spec, self.cfg, self.cap = spec, cfg, cap
+        self.wformat, self.head_format = wformat, head_format or wformat
+        rb = lambda k: Q.row_bytes(k, wformat, D)                       # noqa: E731
         self.batch, self.rows = batch, rows
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
@@ -286,11 +300,12 @@ class Image:
                      "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d),
                      "wg": (self.f_loc, H), "wu": (self.f_loc, H)}
         for name, (n, k) in self.mats.items():
-            L[name] = (lb.alloc(n * k), lb.alloc(4 * n * (k // D)))
+            L[name] = (lb.alloc(n * rb(k)), lb.alloc(4 * n * (k // D)))
         # W_down in column parts of the MLP's F chunk: each down MM streams one part, whose
         # scales are then contiguous (with row-major scales every row would cost a DRAM beat)
-        self.dchunk = _chunk(self.f_loc, D)
-        L["wd"] = [(lb.alloc(self.h_loc * self.dchunk), lb.alloc(4 * self.h_loc * (self.dchunk // D)))
+        self.dchunk = _chunk(self.f_loc, D, D if wformat == "int8" else 2 * D)
+        L["wd"] = [(lb.alloc(self.h_loc * rb(self.dchunk)),
+                    lb.alloc(4 * self.h_loc * (self.dchunk // D)))
                    for _ in range(F_ // self.dchunk)]
         L["kvs"] = [[{"k": lb.alloc(cap * d), "ks": lb.alloc(4 * cap * (d // D)),
                       "vt": lb.alloc(d * cap), "vs": lb.alloc(4 * cap)}
@@ -300,7 +315,8 @@ class Image:
         head = cap * d + 4 * cap * (d // D) + d * cap + 4 * cap   # k, k scales, v^T, v scales
         self.kv_bytes = spec.layers * self.nkv_loc * head         # per sequence
         b.next = self.layer0 + spec.layers * self.LS
-        self.head = (b.alloc(self.v_loc * H), b.alloc(4 * self.v_loc * (H // D)))
+        self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
+                     b.alloc(4 * self.v_loc * (H // D)))
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -317,9 +333,9 @@ class Image:
             v = np.ascontiguousarray(a).view(np.uint8).reshape(-1)
             imgs[s][addr:addr + v.size] = v
 
-        def put_q(addr_pair, parts):
+        def put_q(addr_pair, parts, fmt=self.wformat):
             for s, p in enumerate(parts):
-                q, sc = quantize_rows(p, D)
+                q, sc = Q.quantize_mxu(p, fmt, D)
                 put(s, addr_pair[0], q)
                 put(s, addr_pair[1], sc)
 
@@ -356,7 +372,7 @@ class Image:
                       [r[:, j * C:(j + 1) * C] for r in rows(W[p + "mlp.down_proj.weight"],
                                                               self.h_loc)])
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
-        put_q(self.head, rows(head, self.v_loc))
+        put_q(self.head, rows(head, self.v_loc), self.head_format)
         return imgs
 
     # ---- programs
@@ -390,14 +406,17 @@ class Image:
                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
                 qn=Tensor(off + lofs["qn"], (d,), (1,)),
                 kn=Tensor(off + lofs["kn"], (d,), (1,)))
+            fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             for name, (n, k) in self.mats.items():
                 da, sa = lofs[name]
-                setattr(ns, name, QTensor(off + da, off + sa, (n, k), k, 4 * (k // D), D))
+                setattr(ns, name, QTensor(off + da, off + sa, (n, k), Q.row_bytes(k, fm, D),
+                                          4 * (k // D), D, wf=wf))
             C, n = self.dchunk, self.h_loc
-            parts = tuple(QTensor(off + da, off + sa, (n, C), C, 4 * (C // D), D)
+            rc = Q.row_bytes(C, fm, D)
+            parts = tuple(QTensor(off + da, off + sa, (n, C), rc, 4 * (C // D), D, wf=wf)
                           for da, sa in lofs["wd"])
-            ns.wd = QTensor(parts[0].data, parts[0].scale, (n, spec.ffn), C, 4 * (C // D), D,
-                            parts=parts, pw=C)
+            ns.wd = QTensor(parts[0].data, parts[0].scale, (n, spec.ffn), rc, 4 * (C // D), D,
+                            parts=parts, pw=C, wf=wf)
             ns.kvs = [KVDesc({sid + j * cfg.S: {k: off + v for k, v in r.items()}
                               for j, r in enumerate(heads)}, self.cap, d, D, cfg.S, sid)
                       for heads in lofs["kvs"]]
@@ -413,7 +432,7 @@ class Image:
             cosr=_tdesc(self.io["cos"], (self.rows, d // 2)),
             sinr=_tdesc(self.io["sin"], (self.rows, d // 2)),
             logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
-            head=_qdesc(*self.head, self.v_loc, H, D), v_loc=self.v_loc)
+            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc)
 
 
 # =============================================================================== kernel
@@ -666,9 +685,11 @@ def _lm_head_rows(x, m, spec, logit_rows):
 
 
 # =============================================================================== engine
-def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, **kw) -> Config:
+def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: str = "int8",
+                  head_format: str | None = None, **kw) -> Config:
     """The design configuration with DRAM sized for this model (power of two MiB)."""
-    probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows)
+    probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows, wformat,
+                       head_format)
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
 
@@ -783,11 +804,13 @@ class Engine:
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
                  backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
-                 rows: int = PREFILL_ROWS, pipeline: bool | str | None = None):
+                 rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
+                 wformat: str = "int8", head_format: str | None = None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
-        self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows)
-        self.image = spec.image(self.cfg, cap, batch, self.rows)
+        wkw = dict(wformat=wformat, head_format=head_format)
+        self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
+        self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
         self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(

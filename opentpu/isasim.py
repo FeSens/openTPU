@@ -12,6 +12,7 @@ import numpy as np
 
 from . import fp32 as F
 from . import isa as I
+from . import quant as Q
 
 
 @dataclass(frozen=True)
@@ -189,19 +190,39 @@ class Slice:
         unit, accf = bool(ins.flags & I.F_UNIT), bool(ins.flags & I.F_ACC)
         if not (0 < M <= cfg.MCOLS) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("MM: M or ACT RAM range out of bounds")
-        if sa % D or rs % D or sa + (N - 1) * rs + KB * D > cfg.DRAM_BYTES:
+        wf = (ins.flags >> I.WF_SHIFT) & 3
+        if wf not in (I.W8, I.W4I, I.W4F):
+            raise SimError("MM: bad weight format")
+        bpb = D if wf == I.W8 else D // 2                 # streamed bytes per K-block
+        if sa % D or rs % D or sa + (N - 1) * rs + -(-KB * bpb // D) * D > cfg.DRAM_BYTES:
             raise SimError("MM: streamed rows must be D-byte aligned and in range")
-        wv = np.lib.stride_tricks.as_strided(self.dram[sa:].view(np.int8), (N, KB, D),
-                                             (rs, D, 1))                 # [N, KB, D], no copy
+        wv = np.lib.stride_tricks.as_strided(self.dram[sa:], (N, KB, bpb),
+                                             (rs, bpb, 1))               # [N, KB, bpb], no copy
         if unit:
-            ws = np.ones((N, KB), dtype=np.float32)
+            wsw = None
         else:
             wsi = self._widx(ssa + np.arange(N)[:, None] * srs + 4 * np.arange(KB)[None, :])
-            ws = self.m32[wsi].view(np.float32)
-        act = self.act[:M, ab * D:(ab + KB) * D].reshape(M, KB, D)
-        # exact int32 block dot products (|sum| <= D * 127 * 128), computed via float64 BLAS
-        isum = np.einsum("jki,nki->jnk", act.astype(np.float64), wv.astype(np.float64),
-                         optimize=True).astype(np.int64)                   # [M, N, KB]
+            wsw = self.m32[wsi]
+        act = self.act[:M, ab * D:(ab + KB) * D].reshape(M, KB, D).astype(np.float64)
+        if wf == I.W8:
+            ws = np.ones((N, KB), np.float32) if unit else wsw.view(np.float32)
+            # exact int32 block dot products (|sum| <= D * 127 * 128), via float64 BLAS
+            isum = np.einsum("jki,nki->jnk", act, wv.view(np.int8).astype(np.float64),
+                             optimize=True).astype(np.int64)               # [M, N, KB]
+        else:
+            # 4-bit: integer elements, four sub-block sums scaled by their multipliers m_b
+            # (exact: |isum| <= 15 * D * 127 * 12 < 2^24), then the block's bf16 scale
+            w = Q.DEC["int4" if wf == I.W4I else "fp4"][Q.unpack4(wv)].astype(np.float64)
+            if unit:
+                ws = np.ones((N, KB), np.float32)
+                mb = np.ones((N, KB, Q.NSUB))
+            else:
+                ws = F.ftz((wsw << np.uint32(16)).view(np.float32))
+                mb = np.stack([(wsw >> np.uint32(16 + 4 * b)) & np.uint32(15)
+                               for b in range(Q.NSUB)], -1).astype(np.float64)
+            sub = np.einsum("jkbi,nkbi->jnkb", act.reshape(M, KB, Q.NSUB, D // Q.NSUB),
+                            w.reshape(N, KB, Q.NSUB, D // Q.NSUB), optimize=True)
+            isum = np.einsum("jnkb,nkb->jnk", sub, mb).astype(np.int64)   # [M, N, KB]
         t = F.mul(F.i2f(isum), ws[None, :, :])                            # [M, N, KB]
         t = F.mul(t, self.ascale[:M, ab:ab + KB][:, None, :])
         acc = F.interleaved_sum(t.reshape(M * N, KB), F.MM_PARTIALS).reshape(M, N)

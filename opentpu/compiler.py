@@ -159,6 +159,8 @@ class QTensor:
     `parts`: the matrix is stored as separate column slices of width `pw` (each with its own
     contiguous rows and scales, so a column-slice MM streams contiguous scales); it can then
     only be sliced into whole parts.
+    `wf`: the element format (isa.W8; or W4I / W4F: 4-bit elements, D/2 bytes per D-block, and
+    a two-level scale word per D-block, docs/isa.md "Weight formats").
     """
     data: Affine
     scale: Affine | None
@@ -168,6 +170,7 @@ class QTensor:
     D: int
     parts: tuple | None = None
     pw: int = 0
+    wf: int = 0
 
     def __getitem__(self, key) -> "QTensor":
         if not isinstance(key, tuple):
@@ -189,11 +192,14 @@ class QTensor:
         nr, nc = (r1 - r0).static(), (c1 - c0).static()
         if nc % self.D:
             raise CompileError("QTensor column slices must be multiples of D")
-        data = self.data + r0 * self.rs + c0
+        if self.wf == I.W8:
+            data = self.data + r0 * self.rs + c0
+        else:                     # 4-bit rows stream whole D-byte chunks of two D-blocks
+            data = self.data + r0 * self.rs + c0.div_exact(2 * self.D) * self.D
         scale = None
         if self.scale is not None:
             scale = self.scale + r0 * self.srs + c0.div_exact(self.D) * 4
-        return QTensor(data, scale, (nr, nc), self.rs, self.srs, self.D)
+        return QTensor(data, scale, (nr, nc), self.rs, self.srs, self.D, wf=self.wf)
 
 
 class KVDesc:
@@ -1031,7 +1037,7 @@ class Builder:
         m0 = 0
         for ab, mc in st.chunks:
             ins = I.mm(sa, ssa, out.base + m0 * ors, N, st.KB, w.rs, ors, mc, ab, w.srs,
-                       unit=w.scale is None, acc=acc is not None, rmax=rowmax,
+                       unit=w.scale is None, acc=acc is not None, rmax=rowmax, wf=w.wf,
                        ascale=acc_scale.base if acc_scale is not None else None, ra=ra, rb=rb,
                        comment=f"mm {M}x{K} . {N}x{K}^T" + (" +rowmax" if rowmax else "")
                        + (" acc*=scale" if acc_scale is not None else ""))

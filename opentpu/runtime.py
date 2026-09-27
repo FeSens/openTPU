@@ -2,7 +2,8 @@
 
 Host arguments:
   Input(a)            fp32 array replicated into every slice's DRAM   -> Tensor
-  Weight(w, shard=0)  fp32 [N, K] quantized to int8 + per-D-block scales, optionally sharded
+  Weight(w, shard=0, fmt="int8")  fp32 [N, K] quantized to int8 + per-D-block scales (or 4-bit:
+                      fmt="int4" | "fp4"), optionally sharded
                       over slices by rows (shard=0) or columns (shard=1) -> QTensor
   Output(shape)       fp32 result; the kernel `store`s into it          -> Tensor
   KVCache(k, v, cap)  [Hkv, T, d] K/V, quantized, heads round-robin over slices -> KVDesc
@@ -16,6 +17,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import fp32 as F
+from . import quant as Q
 from .compiler import Affine, Compiled, KVDesc, Kernel, QTensor, Tensor
 from .isasim import Config, Machine
 
@@ -33,13 +35,18 @@ class Output:
 
 
 class Weight:
-    def __init__(self, array, shard: int | None = None):
+    """`fmt`: "int8" (int8 + fp32 scale per D-block), "int4" or "fp4" (4-bit elements with a
+    two-level scale word per D-block; opentpu/quant.py, docs/isa.md "Weight formats")."""
+
+    def __init__(self, array, shard: int | None = None, fmt: str = "int8"):
         a = np.asarray(array, dtype=np.float32)
         if a.ndim != 2:
             raise ValueError("Weight must be 2-D [N, K]")
         if shard not in (None, 0, 1):
             raise ValueError("Weight shard must be None, 0 (rows) or 1 (columns)")
-        self.array, self.shard = a, shard
+        if fmt not in ("int8", "int4", "fp4"):
+            raise ValueError("Weight fmt must be int8, int4 or fp4")
+        self.array, self.shard, self.fmt = a, shard, fmt
 
 
 class KVCache:
@@ -122,14 +129,16 @@ def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
             else:
                 n_loc, parts = N, [a.array] * S
             KB = K // D
-            daddr = dram.alloc(n_loc * K)
+            rs = Q.row_bytes(K, a.fmt, D)
+            daddr = dram.alloc(n_loc * rs)
             saddr = dram.alloc(4 * n_loc * KB)
             for s, p in enumerate(parts):
-                q, sc = quantize_rows(p, D)
+                q, sc = Q.quantize_mxu(p, a.fmt, D)
                 dram.put(s, daddr, q)
                 dram.put(s, saddr, sc)
             layout.params[name] = (a, (daddr, saddr))
-            desc = QTensor(Affine(daddr), Affine(saddr), (n_loc, K), K, 4 * KB, D)
+            desc = QTensor(Affine(daddr), Affine(saddr), (n_loc, K), rs, 4 * KB, D,
+                           wf=Q.mxu_wf(a.fmt))
             for s in range(S):
                 bound[s][name] = desc
         elif isinstance(a, KVCache):

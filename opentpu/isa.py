@@ -17,6 +17,10 @@ OPNAMES = {NOP: "NOP", HALT: "HALT", LI: "LI", ADDI: "ADDI", LOOP: "LOOP", BAR: 
 
 # MM / QACT / QST flags
 F_UNIT, F_ACC, F_RMAX, F_ASCALE = 0x1, 0x2, 0x4, 0x8     # MM
+# MM weight format, flags[5:4] (docs/isa.md "Weight formats")
+WF_SHIFT = 4
+W8, W4I, W4F = 0, 1, 2          # int8 + fp32 scale | int4 / E2M1 + two-level scale word
+WFORMATS = {"int8": W8, "int4": W4I, "fp4": W4F}
 F_ROW, F_CSCALE, F_RSCALE = 0x1, 0x2, 0x4   # QACT (QST: F_ROW)
 
 # VOP functions
@@ -116,16 +120,18 @@ def st(dram, tmem, nwords, ra=0, rb=0, comment=""):
 
 
 def mm(sa, ssa, out, n, kb, rs, ors, m, ab, srs, unit=False, acc=False, rmax=False,
-       ascale=None, ra=0, rb=0, rc=0, comment=""):
+       ascale=None, wf=W8, ra=0, rb=0, rc=0, comment=""):
     """MM. With `ascale` (a TMEM address; needs unit and acc) the old accumulator is first
     multiplied by a per-row factor: y = T[out] * T[ascale + j] + a.w (the flash-attention
-    rescale, done in the MXU epilogue). The address travels in the (unused) scale field."""
+    rescale, done in the MXU epilogue). The address travels in the (unused) scale field.
+    `wf`: the streamed weights' format (W8, W4I, W4F)."""
     assert 0 < n < 65536 and 0 < kb < 65536 and 0 < m < 256 and 0 <= ab < 256 and ors < 65536
+    assert wf in (W8, W4I, W4F)
     if ascale is not None:
         assert unit and acc, "ASCALE needs UNIT and ACC"
         ssa = ascale
     fl = (F_UNIT if unit else 0) | (F_ACC if acc else 0) | (F_RMAX if rmax else 0) | \
-        (F_ASCALE if ascale is not None else 0)
+        (F_ASCALE if ascale is not None else 0) | (wf << WF_SHIFT)
     return Instr(MM, ra=ra, rb=rb, rc=rc, flags=fl,
                  w=_w(sa, ssa, out, n | (kb << 16), rs, ors | (m << 16) | (ab << 24), srs),
                  comment=comment)
