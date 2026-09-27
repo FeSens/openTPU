@@ -12,11 +12,14 @@ DDR ?= 1066
 # MCOLS: MXU columns, 2 or 4 (the host reads it from the bitstream's VERSION register)
 # VPU_CL: VPU lanes with exp2/recip/rsqrt, 2 or 4 (timing only: the programs do not change)
 # LANES: VPU lanes / TMEM banks, 8 or 16 (timing only; the host reads it from VERSION)
+# ACT_ROWS: ACT RAM rows, the most rows of one MM (default MCOLS; 8: prefill's 8-row MMs stream
+#   each weight once, the MXU replaying it per MCOLS rows)
 # BUILD_ID: the BUILD_ID register (8 hex digits; default: the git commit)
 CORE_MHZ ?= 100
 MCOLS ?= 2
 VPU_CL ?= 2
 LANES ?= 8
+ACT_ROWS ?= $(MCOLS)
 RTL := $(addprefix $(ROOT)/rtl/, vpu/otpu_fp.sv vpu/otpu_fpipe.sv top/otpu_pkg.sv \
   mem/otpu_tmem.sv mem/otpu_axi_dram.sv mem/otpu_actram.sv seq/otpu_seq.sv dma/otpu_dma.sv \
   mxu/otpu_mxu.sv vpu/otpu_quant.sv vpu/otpu_vpu.sv top/otpu_coll.sv top/otpu_slice.sv \
@@ -29,11 +32,11 @@ mig:
 lint: mig
 	python3 scripts/check_offline.py
 	verilator --lint-only -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDSIGNAL \
-	  -Wno-UNUSEDPARAM -DSYNTHESIS --top-module otpu_fpga_top -GMCOLS=$(MCOLS) -GVPU_CL=$(VPU_CL) -GLANES=$(LANES) $(RTL) \
+	  -Wno-UNUSEDPARAM -DSYNTHESIS --top-module otpu_fpga_top -GMCOLS=$(MCOLS) -GACT_ROWS=$(ACT_ROWS) -GVPU_CL=$(VPU_CL) -GLANES=$(LANES) $(RTL) \
 	  sim/otpu_bd_wrapper_stub.sv $(ROOT)/rtl/boards/ypcb-00338/otpu_fpga_top.sv
 
 bit:
-	MCOLS=$(MCOLS) VPU_CL=$(VPU_CL) LANES=$(LANES) CORE_MHZ=$(CORE_MHZ) $(if $(BUILD_ID),BUILD_ID=$(BUILD_ID)) ./run_vivado.sh $(DDR)
+	MCOLS=$(MCOLS) ACT_ROWS=$(ACT_ROWS) VPU_CL=$(VPU_CL) LANES=$(LANES) CORE_MHZ=$(CORE_MHZ) $(if $(BUILD_ID),BUILD_ID=$(BUILD_ID)) ./run_vivado.sh $(DDR)
 
 impl:
 	STEP=impl ./run_vivado.sh $(DDR)

@@ -189,7 +189,7 @@ module otpu_board #(
   logic [1:0]  awvalid, awready, awid, wvalid, wready, bvalid, bready, bid;
   logic [1:0]  arvalid, arready, arid, rvalid, rready, rid, rlast;
 
-  otpu_ctrl #(.D(D), .MCOLS(MCOLS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
+  otpu_ctrl #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
               .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
               .HAS_I2C(HAS_I2C)) u_ctrl (
     .clk, .rst,

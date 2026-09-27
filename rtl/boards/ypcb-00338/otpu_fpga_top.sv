@@ -18,6 +18,7 @@
 
 module otpu_fpga_top #(
   parameter int MCOLS = 2,                  // MXU columns (activation rows per weight chunk)
+  parameter int ACT_ROWS = MCOLS,           // ACT RAM rows (> MCOLS: MM replay, one weight pass)
   parameter int VPU_CL = 2,                 // VPU lanes with the composite functions (exp2, ...)
   parameter int LANES = 8,                  // VPU lanes / TMEM banks (8 or 16)
   parameter int ULANES = 8,                 // TMEM lanes of the MXU and the quantizer
@@ -139,7 +140,7 @@ module otpu_fpga_top #(
   IOBUF u_iob_sda1 (.IO(smb_sda),  .I(1'b0), .T(!i2c_lo[3]), .O(i2c_lvl[3]));
 
   logic [2:0] board_led;
-  otpu_board #(.MCOLS(MCOLS), .VPU_CL(VPU_CL), .LANES(LANES), .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS)) u_board (
+  otpu_board #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .LANES(LANES), .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS)) u_board (
     .clk(core_clk), .rst(core_rst), .calib, .temp(device_temp), .led(board_led),
     .i2c_lo, .i2c_pin({lm73_alert_n, i2c_lvl}),
     .s_ctl_awaddr(ctl_awaddr[11:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),
