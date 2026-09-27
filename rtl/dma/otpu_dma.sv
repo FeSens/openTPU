@@ -16,7 +16,7 @@ module otpu_dma
 #(
   parameter int D     = 32,
   parameter int LANES = 8,
-  parameter int DEPTH = 32                            // LD chunk buffer (a power of two)
+  parameter int DEPTH = 128                           // LD chunk buffer (a power of two)
 ) (
   input  logic                    clk,
   input  logic                    rst,
