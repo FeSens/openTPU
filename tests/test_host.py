@@ -1105,6 +1105,63 @@ def test_chat_max_new_resume_and_cap():
     assert chat.eng.pos == pos and len(chat.history) == n_hist
 
 
+def test_chat_tui_reply_parts_split_at_whole_blocks():
+    pytest.importorskip("textual")
+    from opentpu.host.chat_tui import Reply
+    r = Reply()
+    r.PART_BLOCKS = 2
+    r.text = "a\n\nb\n\n"
+    assert r.split("c") == 0                      # after a blank line, the text at hand
+    assert r.split("\n") is None                  # what follows is not known yet
+    r.text = "a\n\nb"
+    assert r.split("\n\nc") == 2 and r.split("\n\n  c") is None   # not an indented continuation
+    r.text = "a\n\n```\nx\n\n"
+    assert r.split("y\n```\n\nz") == len("y\n```\n\n")   # not inside the code fence
+    r.text = "a\n\nb"
+    assert r.split("c") is None
+    r.PART_BLOCKS = 99
+    assert r.split("\n\nc") is None              # a short reply stays one part
+
+
+def test_chat_tui_long_reply_in_parts_reads_the_same():
+    pytest.importorskip("textual")
+    import asyncio
+
+    from opentpu.host.chat import Turn
+    from opentpu.host.chat_tui import ChatApp
+    from textual.widgets import Markdown
+    from textual.widgets._markdown import MarkdownFence
+    blocks = []
+    for i in range(12):
+        blocks += [f"## Part {i}", f"Paragraph {i}.", "```\nx = 1\n\ny = 2\n```",
+                   "- item\n\n  continued"]
+    text = "\n\n".join(blocks) + "\n"
+    pieces = [text[i:i + 3] for i in range(0, len(text), 3)]
+    meta = {"model": "stub", "backend": "board", "device": "d", "short": "x",
+            "bitstream": ["a", "b"], "sampling": {}, "dram": None}
+
+    async def go():
+        app = ChatApp(_stub_chat(), meta)
+        async with app.run_test(size=(100, 500)) as pilot:
+            await pilot.pause(0.1)
+            turn = Turn(clock_mhz=100, cap=64, context=0)
+            for p in pieces:
+                app._post(p, turn)
+                await asyncio.sleep(0)
+            await app._done(None)
+            await pilot.pause(0.2)
+            parts = list(app.query(".reply Markdown").results(Markdown))
+            fences = [f for m in parts for f in m.query(MarkdownFence)]
+            return len(parts), [f.code for f in fences], _shot(app)
+    n, codes, shot = asyncio.run(go())
+    assert n >= 2                                 # 48 blocks, parts of Reply.PART_BLOCKS
+    assert codes == ["x = 1\n\ny = 2"] * 12       # no fence cut at its blank line
+    lines = [ln.strip() for ln in shot.splitlines()]
+    i = lines.index("Part 3")                     # one blank line between blocks, as before
+    assert lines[i - 2:i + 3] == ["continued", "", "Part 3", "", "Paragraph 3."]
+    assert "⏺ Part 0" in lines and all(f"Part {i}" in lines for i in range(1, 12))
+
+
 def _shot(app) -> str:
     import io
 

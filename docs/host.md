@@ -459,12 +459,13 @@ per-call cost stays under 1% of the transfer).
 
 **Pipelining.** A token's program depends on its position only, so `Engine.step` compiles
 position p + 1 while the card runs p (`Engine(..., pipeline=None)`: on for every backend but
-the ISA simulator). A precompile made for another position (after `reset`, or `run_rows`) is
-waited for and dropped. Results are unchanged (`tests/test_host.py`, and the board-model tests
+the ISA simulator); on the board, two worker processes keep p + 1 and p + 2 in flight
+(`COMPILE_AHEAD`), so a compile may take up to two device runs. A precompile made for another
+position (after `reset`, or `run_rows`) is waited for and dropped. Results are unchanged (`tests/test_host.py`, and the board-model tests
 compare the logits with the ISA simulator's bit for bit).
 
-On the board the compile runs in a worker process (spawned when the engine starts; until it is
-up, steps compile in line) and sends back the assembled words, and `Engine.step` hands it
+On the board the compile runs in worker processes (spawned when the engine starts; until they
+are up, steps compile in line) and sends back the assembled words, and `Engine.step` hands it
 position p + 1 only after `BoardBackend.start` has copied program p to the card and started
 it. Both matter because a compile is 10-30 ms of Python on the PC above (Qwen3-0.6B ~11 ms,
 LFM2.5-230M ~20-30 ms), and in a thread of the same process it holds the GIL: started before
@@ -516,6 +517,32 @@ The chat interface draws each token while the card runs the next one: `Chat` han
 `on_update` from `Engine.step`'s `on_start` hook (called once the run is started), so the
 interface's work does not delay the host work that starts a run. Before, the full-screen
 interface took ~5 ms per LFM2 token from the generation thread.
+
+**Long contexts.** Two host costs grew with the context, and at ~1900 tokens LFM2 decoded at
+14.8 tok/s on the wall against 37.2 on the device (reported on the card). Both reproduce
+without the card, on `FakeTransport` with a 27 ms run (37.0 tok/s device) on the PC above
+while two Vivado builds ran on it (load ~10 on 16 threads):
+
+- The decode program grows with the position: attention's hardware loop covers whole groups of
+  three 256-token blocks and the rest is unrolled, so LFM2's program goes from 837 to 1518
+  instructions (26 to 47 KiB) at position 1900 and its trace from 16 to 30-33 ms, longer than
+  the 27 ms run. With one worker process the step waited 11-21 ms for it (`decode_profile.py
+  --backend fake`, plain mode: 20.4-25.9 tok/s); with two in flight, 3 ms (32.7-32.9 tok/s).
+  Qwen3 (26 ms of trace against a 68 ms run) and Qwen3.5 (56 against 97 ms) had room.
+- The interface's work per token grew with the reply. Textual's Markdown lays out and
+  restyles its blocks on every append, and a style rule on `:first-child` / `:last-child`
+  made each mounted block restyle all its siblings, so one long reply cost 20 ms of CPU per
+  token at its start and 78 ms after 1600 tokens; sharing the GIL, the decode loop fell to
+  11 tok/s. Now a reply is Markdown in parts of 16 blocks (a new part starts at a blank line
+  outside a code fence, where the text goes on unindented, so the reply reads the same), the
+  first and last margins are inline styles (Textual's style cache does not track those
+  pseudo-classes, which also left stale margins), the one-line widgets update without a
+  layout of the screen, and the interface thread's CPU is held to 10% of the time between
+  updates (`ChatApp.UI_SHARE`): past it, an update waits and takes several tokens at once.
+
+A 1000-token prompt and a 900-token reply in the interface (context 1898), fake card as above:
+15.4 tok/s wall before, 31.8 after (CPU per token 48 ms, now 7 ms); at short context plain
+mode goes 34.4 -> 35.7 tok/s. Not yet re-measured on the card.
 
 ## 8. Device lock, status file and otpu-smi
 

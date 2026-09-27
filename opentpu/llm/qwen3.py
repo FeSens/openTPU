@@ -546,6 +546,7 @@ def _mlp(x, lw, spec: Spec):
 # holds the activations of 8 rows of Qwen3-0.6B (Engine.prefill_chunks shrinks a run that does
 # not fit).
 PREFILL_ROWS = 8
+COMPILE_AHEAD = 2    # decode programs compiled ahead by the worker processes (Engine)
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
 
 
@@ -764,8 +765,8 @@ def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int):
 
 def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int):
     """The next prefill run of sequence `seq` at position p0: up to n of the `left` remaining
-    prompt tokens, as many as fit TMEM (at most `fit` rows) and the instruction memory
-    (attention is unrolled per row, head and block: the program grows with the context).
+    prompt tokens, as many as fit TMEM and ACT RAM (at most `fit` rows) and the instruction
+    memory (attention is unrolled per row, head and block: the program grows with the context).
     Only the prompt's last run computes logits (its last row). Returns (R, compile_rows'
     programs or None for R = 1, the rows that fit TMEM as far as known)."""
     imem = image.cfg.IMEM_WORDS
@@ -775,7 +776,7 @@ def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int)
             progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
                                        [n - 1] if n == left else [], block)
         except CompileError as e:
-            if "TMEM" not in str(e):
+            if "TMEM" not in str(e) and "ACT RAM full" not in str(e):
                 raise
             n = fit = n - 1
             continue
@@ -830,7 +831,10 @@ class Engine:
                        and getattr(self.backend, "runs_words", False))
         self._pool = None
         self._ready = None                  # the worker process's start (process pipeline)
-        self._next = None                   # (key, Future of the next run's programs)
+        self._next = []                     # [(key, Future of a coming run's programs)]
+        # decode programs precompiled ahead: two worker processes, so a compile can take
+        # two device runs (LFM2 at 1900 tokens: 30 ms of trace on a busy host, 27 ms run)
+        self._ahead = COMPILE_AHEAD if self._procs else 1
         if self._procs:
             self._start_pool()
         if hasattr(self.backend, "attach"):
@@ -849,18 +853,19 @@ class Engine:
         import multiprocessing as mp
         from concurrent.futures import ProcessPoolExecutor
         self._pool = ProcessPoolExecutor(
-            1, mp_context=mp.get_context("spawn"), initializer=_worker_init,
+            self._ahead, mp_context=mp.get_context("spawn"), initializer=_worker_init,
             initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block))
         self._ready = self._pool.submit(_worker_ready)
 
     def _take(self, key, fn, *args):
         """fn(*args), or the precompiled result (programs, or the worker process's assembled
-        words) when the compile in flight was made for `key`. A compile in flight is always
-        waited for (one at a time), except while the worker process still starts."""
-        nxt, self._next = self._next, None
-        if nxt is not None and (self._ready is None or self._ready.done()):
-            res = nxt[1].result()
-            if nxt[0] == key:
+        words) when a compile in flight was made for `key`; the ones queued before it, or all
+        of them when none is for `key`, are waited for and dropped (the worker processes
+        start with no compile queued)."""
+        while self._next:
+            k, fut = self._next.pop(0)
+            res = fut.result()
+            if k == key:
                 return res
         return fn(*args)
 
@@ -871,25 +876,28 @@ class Engine:
             return
         if self._procs:
             if self._ready.done():
-                self._next = (key, self._pool.submit(proc_fn, *args))
+                self._next.append((key, self._pool.submit(proc_fn, *args)))
             return
         if self._pool is None:
             from concurrent.futures import ThreadPoolExecutor
             self._pool = ThreadPoolExecutor(1, thread_name_prefix="otpu-compile")
-        self._next = (key, self._pool.submit(fn, *args))
+        self._next.append((key, self._pool.submit(fn, *args)))
 
     def _program(self, pos: int):
         """The step program for `pos`: the precompiled one when it is for `pos`."""
         return self._take(("step", pos), self._compile, pos)
 
     def _prefetch(self, pos: int) -> None:
-        if pos < self.cap:
-            self._submit(("step", pos), self._compile, _worker_compile, pos)
+        """Precompile the steps at pos .. pos + ahead - 1 (those not in flight yet)."""
+        queued = {k for k, _ in self._next}
+        for p in range(pos, min(pos + self._ahead, self.cap)):
+            if ("step", p) not in queued:
+                self._submit(("step", p), self._compile, _worker_compile, p)
 
     def _drain(self) -> None:
-        nxt, self._next = self._next, None
-        if nxt is not None:
-            nxt[1].result()
+        nxt, self._next = self._next, []
+        for _, fut in nxt:
+            fut.result()
 
     @property
     def pos(self) -> int:
