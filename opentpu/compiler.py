@@ -982,6 +982,33 @@ class Builder:
         self.bump_version(acc.buf)
         return acc
 
+    def deltanet_step(self, state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile,
+                      o: Tile, zero: bool = False) -> None:
+        """DSTEP: one Gated DeltaNet head step on the fp32 state `state` [rows, cols] in DRAM,
+        updated in place; qk = [q | k] (2 * cols words), v [rows], decay and beta [1] tiles
+        (beta after decay), o [rows] written (docs/isa.md). `zero`: the state starts at +0."""
+        if not self.cfg.DSTEP:
+            raise CompileError("deltanet_step needs Config.DSTEP (the DMA's DSTEP)")
+        if len(state.shape) != 2 or state.strides != (state.shape[1], 1):
+            raise CompileError("deltanet_step: the state must be a row-major [rows, cols] tensor")
+        rows, cols = state.shape
+        if not (0 < rows <= I.DSTEP_MAX_ROWS) or cols % 64 or not (0 < cols <= 256):
+            raise CompileError("deltanet_step: rows 1..256, cols 64, 128, 192 or 256")
+        for t, n, what in ((qk, 2 * cols, "qk"), (v, rows, "v"), (decay, 1, "decay"),
+                           (beta, 1, "beta"), (o, rows, "o")):
+            if not isinstance(t, Tile) or len(t.shape) != 1 or t.cols != n:
+                raise CompileError(f"deltanet_step: {what} must be a 1-D tile of {n}")
+        gs = beta.base - decay.base
+        if not 0 < gs < 1 << 16:
+            raise CompileError("deltanet_step: beta must follow decay in TMEM")
+        self.check_live(qk, v, decay, beta, o)
+        if Affine.of(state.base).is_static and Affine.of(state.base).const % self.cfg.D:
+            raise CompileError("deltanet_step: the state must be DRAM-chunk aligned")
+        ra, imm = self.addr(state.base)
+        self.emit(I.dstep(imm, qk.base, v.base, rows, cols, decay.base, gs, o.base, zero=zero,
+                          ra=ra, comment="dstep"))
+        self.bump_version(o.buf)
+
     def fuse_mm_rmax(self, x: Tile):
         """max(s, axis=1) of a dot output nothing has touched since: set RMAX on that MM and
         return the maxima it writes after the tile's last row."""

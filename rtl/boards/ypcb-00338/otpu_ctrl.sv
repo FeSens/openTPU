@@ -24,7 +24,7 @@
 //   0x3C REGMAP    RO  register map version (3)
 //   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, bit2 I2C pins, bit3 DDR_MTS,
 //                      bit4 4-bit MM weights (MM flags WF, docs/isa.md), bit5 column reuse (MM
-//                      PAIR / QACT DUP),
+//                      PAIR / QACT DUP), bit6 DSTEP (the DMA's DeltaNet head step),
 //                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
 //   0x48 BUILD_ID  RO  build parameter (the low 32 bits of the git commit)
@@ -117,7 +117,7 @@ module otpu_ctrl #(
   localparam int NFR = 13;
   localparam logic [31:0] CAPS = {8'd0, 8'($clog2(PQ_WIN)),
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
-                                  2'd0, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
+                                  1'b0, 1'b1, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
                                   TRACE_DEPTH != 0};
 
   logic [63:0] cycles;

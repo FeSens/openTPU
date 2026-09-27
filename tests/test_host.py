@@ -79,7 +79,7 @@ def test_v3_info_snapshot_and_rates():
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
     assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False, "w4": True,
-                         "pair": False, "trace_depth": 4096, "pq_window": 64}
+                         "pair": False, "dstep": False, "trace_depth": 4096, "pq_window": 64}
     assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
@@ -160,7 +160,7 @@ def test_v1_bitstream_fallback():
 # ------------------------------------------------------------------------------ configuration
 @pytest.fixture
 def no_cfg_env(monkeypatch):
-    for k in ("OTPU_MCOLS", "OTPU_LANES", "OTPU_PAIR"):
+    for k in ("OTPU_MCOLS", "OTPU_LANES", "OTPU_PAIR", "OTPU_DSTEP"):
         monkeypatch.delenv(k, raising=False)
     return monkeypatch
 
@@ -192,6 +192,17 @@ def test_device_config_takes_column_reuse_from_caps(no_cfg_env):
         with pytest.raises(ConfigMismatch, match="OTPU_PAIR"):
             device_config(info)
         no_cfg_env.delenv("OTPU_PAIR")
+
+
+def test_device_config_takes_dstep_from_caps(no_cfg_env):
+    """CAPS bit6 (DSTEP) sets Config.DSTEP; OTPU_DSTEP must agree with it."""
+    for dstep in (False, True):
+        info = Board(FakeTransport(devname=None, dstep=dstep)).info()
+        assert info["caps"]["dstep"] == dstep and device_config(info).DSTEP == dstep
+        no_cfg_env.setenv("OTPU_DSTEP", str(int(not dstep)))
+        with pytest.raises(ConfigMismatch, match="OTPU_DSTEP"):
+            device_config(info)
+        no_cfg_env.delenv("OTPU_DSTEP")
 
 
 def test_board_backend_rejects_another_configuration(no_cfg_env):
@@ -267,6 +278,26 @@ def test_pair_programs_need_a_pair_bitstream(run_dir):
         else:
             eng = make()
             eng.backend.close()
+
+
+def test_dstep_programs_need_a_dstep_bitstream(run_dir):
+    """Programs compiled with DSTEP refuse a bitstream without it (CAPS bit6)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = replace(sim_config(spec, 256), DSTEP=True)
+    for dstep in (False, True):
+        t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake6", dstep=dstep)
+
+        def make():
+            return Engine(spec, W, cap=256, cfg=cfg,
+                          backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+        if not dstep:
+            with pytest.raises(ConfigMismatch, match="DSTEP"):
+                make()
+        else:
+            make().backend.close()
 
 
 # ------------------------------------------------------------------------------ status file

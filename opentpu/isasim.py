@@ -26,6 +26,7 @@ class Config:
     IMEM_WORDS: int = 1 << 16   # 8 words per instruction
     LANES: int = 8           # VPU lanes == TMEM banks (timing only; results do not depend on it)
     PAIR: bool = False       # MM PAIR / QACT DUP: 4-bit MMs of M <= MCOLS/2 rows at full rate
+    DSTEP: bool = False      # the DMA runs DSTEP (Gated DeltaNet head steps on DRAM state)
 
 
 def design_config(**kw) -> Config:
@@ -43,12 +44,13 @@ def board_config(**kw) -> Config:
     OTPU_MCOLS in the environment selects the MXU column count (default 2; make -C
     boards/ypcb-00338 bit MCOLS=4), OTPU_LANES the VPU lanes / TMEM banks (default 8; bit
     LANES=16; timing only, the programs do not change), OTPU_PAIR=1 column reuse (MM PAIR /
-    QACT DUP). They configure the simulators and the board model; on the card,
-    opentpu.host.board.device_config takes them from the bitstream."""
+    QACT DUP), OTPU_DSTEP=1 the DMA's DSTEP. They configure the simulators and the board
+    model; on the card, opentpu.host.board.device_config takes them from the bitstream."""
     base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 2)), ACT_BLOCKS=128,
                 LANES=int(os.environ.get("OTPU_LANES", 8)), TMEM_WORDS=1 << 16,
                 IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32,
-                PAIR=bool(int(os.environ.get("OTPU_PAIR", 0))))
+                PAIR=bool(int(os.environ.get("OTPU_PAIR", 0))),
+                DSTEP=bool(int(os.environ.get("OTPU_DSTEP", 0))))
     base.update(kw)
     return Config(**base)
 
@@ -169,6 +171,8 @@ class Slice:
             wi = self._widx(d + 4 * np.arange(n))
             self.m32[wi] = self.tmem[self._tidx(t + np.arange(n))]
             return
+        if op == I.DSTEP:
+            return self._dstep(ins)
         if op == I.MM:
             return self._mm(ins)
         if op == I.QACT:
@@ -178,6 +182,36 @@ class Slice:
         if op == I.VOP:
             return self._vop(ins)
         raise SimError(f"slice {self.sid}: bad opcode {op:#x} at pc {self.pc}")
+
+    def _dstep(self, ins: I.Instr) -> None:
+        """DSTEP: every input (q, k, v, e, beta and each state row) is read before the row's
+        results are written; o is written last."""
+        w = ins.w
+        d = (self.reg(ins.ra) + w[0]) & 0xFFFFFFFF
+        qk = (self.reg(ins.rb) + w[1]) & 0xFFFFFFFF
+        v = (self.reg(ins.rc) + w[2]) & 0xFFFFFFFF
+        rows, cols = w[3] & 0xFFFF, w[3] >> 16
+        g, o, gs = w[4], w[5], w[6]
+        if not (0 < rows <= I.DSTEP_MAX_ROWS) or cols % 64 or not (0 < cols <= 256):
+            raise SimError("DSTEP: rows must be 1..256, cols 64, 128, 192 or 256")
+        if d % self.cfg.D:
+            raise SimError("DSTEP: the state must be DRAM-chunk aligned")
+        q = self.tget(qk + np.arange(cols))[None, :]
+        k = self.tget(qk + cols + np.arange(cols))[None, :]
+        vv = self.tget(v + np.arange(rows))
+        e = self.tget(np.array([g]))
+        beta = self.tget(np.array([g + gs]))
+        wi = self._widx(d + 4 * np.arange(rows * cols))
+        if ins.flags & I.F_DZERO:
+            S = np.zeros((rows, cols), np.float32)
+        else:
+            S = self.m32[wi].view(np.float32).reshape(rows, cols)
+        kv = F.rdot(S, k)
+        dd = F.mul(F.sub(vv, F.mul(kv, e)), beta)
+        S = F.outer(S, e[None, :], dd[:, None], k)
+        oo = F.rdot(S, q)
+        self.m32[wi] = F.f32(S).reshape(-1).view(np.uint32)
+        self.tput(o + np.arange(rows), oo)
 
     # ---------------------------------------------------------------- MXU
     def _mm(self, ins: I.Instr) -> None:

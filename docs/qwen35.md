@@ -265,6 +265,34 @@ Default board (MCOLS=2, VPU_CL=2), context 128, measured:
   context 128 (80%).
 - Attention, MLP and LM head are what they were for Qwen3: at 99-100% of their bytes.
 
+### DSTEP: the head step in the DMA
+
+With `Config.DSTEP` (CAPS bit6, `OTPU_DSTEP=1` for the simulators) `_deltanet_dstep` replaces
+each head's LD, RDOT, MUL, SUB, MUL, OUTER, RDOT and ST with one DSTEP ([isa.md](isa.md)): the
+DMA streams the head's state from DRAM through its datapath and back, so the VPU no longer makes
+the 3 state passes and TMEM no longer takes the 16K-word state loads. The small ops (prep,
+post, the gates) stay on the VPU, pair by pair. Results are bit-identical to the VOP path
+(`tests/test_qwen35.py::test_tiny_dstep_is_bit_exact`, the RTL token test with and without it).
+
+Simulated on the Verilator RTL (not measured on the card): fp4 body, int8 LM head, `OTPU_PAIR=1`,
+the DDR3-1066 bank model (`tools/perf_qwen.py --model qwen35 --wformat fp4 --head-format int8
+--dram rbc --lat 38 --arc 4` and the `+axi_t*` timings), context 9:
+
+| | one DeltaNet layer (`--layers 1`) | VPU busy in it | full token | DeltaNet, 18 layers | useful-bytes efficiency | tok/s at 100 MHz |
+|---|---:|---:|---:|---:|---:|---:|
+| VOP path | 156,562 | 154,618 | 6,347,403 | 2,788,865 | 70.4% | 15.8 |
+| DSTEP | 103,194 | 25,931 | 5,447,452 | 1,879,783 | 81.8% | 18.4 |
+
+The layer's useful bytes need 61.8 K cycles, so the mixer is at 59.9% of its roofline (39.5%
+before). What is left: DSTEP's datapath takes 8 words per cycle (2,048 cycles per head, 32.8 K
+per layer, twice the state's port-B time), the DSTEPs share port B with the projections the MXU
+streams, and the prep / post small ops still run as a dependency chain between them.
+
+Resources (Vivado 2026.1, otpu_dma out of context, xc7k480t-2, 120 MHz, placed and routed):
+otpu_dma goes from 1,940 LUT / 1,917 FF / 14.5 BRAM36 / 0 DSP (WNS +0.705 ns) to 28,333 LUT /
+29,853 FF / 30 BRAM36 / 70 DSP (WNS +0.257 ns, register to register +0.367 ns). Not yet in a
+full bitstream build.
+
 ## What limits it
 
 These are the limits of the ISA and the RTL for this model, found while mapping it; the numbers

@@ -77,6 +77,7 @@ module otpu_seq
   // which overlaps nothing (b.lo < 0 is false) -- exactly ov()'s v terms. Routing (fp_seg):
   //   LD:     d[0] = rd0          t[0] = wr0 W
   //   ST:     d[0] = wr0 (dw)     t[0] = rd0
+  //   DSTEP:  d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2
   //   MM:     d = rd0, rd1        t[0] = wr0 W, t[1] = wr1 W (RMAX), t2 = rd3 (ASCALE), a = rd2
   //   QACT:                       t[0] = rd0, t[1] = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
   //   QST:    d = wr0, wr1 (dw)   t[0] = rd0
@@ -131,6 +132,10 @@ module otpu_seq
       end
       OP_ST: begin
         s.dw = 1'b1; s.d[0] = r32(f.wr[0]); t0 = f.rd[0];
+      end
+      OP_DSTEP: begin
+        s.dw = 1'b1; s.d[0] = r32(f.wr[0]);
+        t0 = f.wr[1]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1]; t3 = f.rd[2];
       end
       OP_MM: begin
         s.d[0] = r32(f.rd[0]); s.d[1] = r32(f.rd[1]);

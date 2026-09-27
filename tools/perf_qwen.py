@@ -36,6 +36,7 @@ from opentpu.profile import parse  # noqa: E402
 # kernel functions that name a phase of the token (the innermost one on an instruction's source
 # stack wins)
 PHASE_NAMES = {"head_step": "DeltaNet", "_deltanet": "DeltaNet", "_pair_segment": "DeltaNet",
+               "_deltanet_dstep": "DeltaNet",
                "_attention": "attention", "_attend_heads": "attention", "_conv": "conv",
                "_mlp": "MLP", "swiglu_down": "MLP", "_lm_head": "LM head"}
 
@@ -151,6 +152,8 @@ def main():
             return r.portb * D + r.porta * 4
         if r.op in (I.LD, I.ST):
             return 4 * progs[0][r.pc].w[2]
+        if r.op == I.DSTEP:
+            return r.portb * D
         return r.porta if r.op == I.QST else 0
 
     useful = sum(nbytes(r) for r in p.recs)

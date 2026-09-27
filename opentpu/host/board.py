@@ -690,9 +690,9 @@ class ConfigMismatch(RuntimeError):
 
 def device_config(info: dict, **kw):
     """The board_config of the bitstream that `info` (Board.info()) describes: MCOLS and LANES
-    come from its VERSION register and PAIR from CAPS bit5, so the card needs no OTPU_MCOLS /
-    OTPU_LANES / OTPU_PAIR. When one is set in the environment it must name the bitstream's
-    value (ConfigMismatch otherwise). Keyword arguments set other fields (DRAM_BYTES)."""
+    come from its VERSION register, PAIR from CAPS bit5 and DSTEP from bit6, so the card needs
+    no OTPU_MCOLS / OTPU_LANES / OTPU_PAIR / OTPU_DSTEP. When one is set in the environment it
+    must name the bitstream's value (ConfigMismatch otherwise). Keyword arguments set other fields (DRAM_BYTES)."""
     from opentpu.isasim import board_config
     for k in ("MCOLS", "LANES"):
         env = os.environ.get(f"OTPU_{k}")
@@ -700,13 +700,17 @@ def device_config(info: dict, **kw):
             raise ConfigMismatch(f"the bitstream was built with {k}={info[k]} but OTPU_{k}={env}"
                                  f": unset OTPU_{k} (the host follows the bitstream) or load "
                                  f"a {k}={env} bitstream")
-    pair = bool((info.get("caps") or {}).get("pair"))
-    env = os.environ.get("OTPU_PAIR")
-    if env is not None and bool(int(env)) != pair:
-        raise ConfigMismatch(f"the bitstream {'has' if pair else 'lacks'} column reuse (CAPS "
-                             f"bit5) but OTPU_PAIR={env}: unset OTPU_PAIR (the host follows the "
-                             f"bitstream)")
-    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair, **kw})
+    caps = info.get("caps") or {}
+    pair, dstep = bool(caps.get("pair")), bool(caps.get("dstep"))
+    for k, have, what in (("PAIR", pair, "column reuse (CAPS bit5)"),
+                          ("DSTEP", dstep, "DSTEP (CAPS bit6)")):
+        env = os.environ.get(f"OTPU_{k}")
+        if env is not None and bool(int(env)) != have:
+            raise ConfigMismatch(f"the bitstream {'has' if have else 'lacks'} {what} but "
+                                 f"OTPU_{k}={env}: unset OTPU_{k} (the host follows the "
+                                 f"bitstream)")
+    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair,
+                          "DSTEP": dstep, **kw})
     if info["D"] != cfg.D:
         raise ConfigMismatch(f"the bitstream has D={info['D']}, the board configuration "
                              f"D={cfg.D}: not a YPCB-00338 openTPU build")
@@ -814,6 +818,10 @@ class BoardBackend:
             self.board.close()
             raise ConfigMismatch("the programs use column reuse (MM PAIR / QACT DUP) and this "
                                  "bitstream lacks it (CAPS bit5 clear): use device_config")
+        if self.cfg.DSTEP and not caps.get("dstep"):
+            self.board.close()
+            raise ConfigMismatch("the programs use DSTEP and this bitstream lacks it (CAPS bit6 "
+                                 "clear): use device_config")
         self.engine = engine
         if self.status is not None:
             self.status.update(dram=self._layout())

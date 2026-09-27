@@ -67,7 +67,8 @@ C = {
                "tests/test_rtl.py::test_lane_count_does_not_change_results[16]",
                "tests/test_rtl.py::test_scoreboard_stress_two_slices[0]"]),
     "otpu_dma": dict(
-        files=["rtl/dma/otpu_dma.sv"], top="otpu_dma",
+        files=["rtl/vpu/otpu_vtree.sv", "rtl/dma/otpu_dstep.sv", "rtl/dma/otpu_dma.sv"],
+        top="otpu_dma",
         params=dict(D=128, LANES=8),
         desc="DMA: LD/ST between DRAM port B (chunk-aligned requests, backpressure, variable "
              "latency) and TMEM: each chunk requested once (LD chunk buffer, ST gather), one W-word segment per cycle on TMEM; ST completes on write acknowledge.",

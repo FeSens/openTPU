@@ -85,7 +85,7 @@ def test_register_map(have_verilator):
     assert ver == (CFG.D << 16) | (CFG.MCOLS << 8) | CFG.LANES
     assert regmap == 3
     # log2 256, log2 1024; PAIR, 4-bit, ddr, i2c, temp, trace
-    assert caps == (8 << 16) | (10 << 8) | 0b111111
+    assert caps == (8 << 16) | (10 << 8) | 0b1111111
     assert khz == 75294 and bid == TB_BUILD_ID and mts == 1066
     assert temp == (1 << 31) | TB_TEMP
     assert 44.5 < TB_TEMP * 503.975 / 4096 - 273.15 < 45.5
@@ -98,7 +98,7 @@ def test_register_map_board_defaults(have_verilator):
     t = SimTransport(ch_bytes=1 << 20)
     caps, khz, mts = t.reg_read_many([R_CAPS, R_CORE_KHZ, R_DDR_MTS])
     # 1024-cycle windows, 16384 records; PAIR, 4-bit, temp, trace
-    assert caps == (10 << 16) | (14 << 8) | 0b110111
+    assert caps == (10 << 16) | (14 << 8) | 0b1110111
     assert khz == 100000 and mts == 0                     # no DDR_MTS given: CAPS bit3 clear
 
 
