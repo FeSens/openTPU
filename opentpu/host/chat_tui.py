@@ -195,15 +195,69 @@ def welcome(meta: dict) -> Text:
 
 
 class Reply(Horizontal):
-    """An assistant turn: the accent bullet, the Markdown indented beside it."""
+    """An assistant turn: the accent bullet, the Markdown indented beside it.
+
+    The Markdown comes in parts of about PART_BLOCKS blocks: Textual's Markdown lays out and
+    restyles its blocks on every append, so in one widget a long reply makes each token cost
+    more than the last, and the decode loop, which shares the GIL, slows down (docs/host.md,
+    long contexts). A new part starts at a blank line outside a code fence where the text goes
+    on unindented, so every part is whole Markdown and the reply reads the same."""
+
+    PART_BLOCKS = 16
 
     def __init__(self):
         super().__init__(classes="reply")
-        self.md = Markdown("")
+        self.md = Markdown("")          # the last part, the one that grows
+        self.text = ""                  # its Markdown source
+        self._end = None                # (the last block, its margin) while trimmed
 
     def compose(self) -> ComposeResult:
         yield Static("⏺", classes="bullet")
-        yield self.md
+        with Vertical(classes="parts"):
+            yield self.md
+
+    def new_part(self):
+        """Start the next part (awaitable: mounted)."""
+        self.md, self.text = Markdown(""), ""
+        return self.query_one(".parts", Vertical).mount(self.md)
+
+    def trim(self, end: bool = False) -> None:
+        """No margin above a part's first block (beside the bullet, or after the part
+        before it, whose last block keeps its margin), and none below the reply's last block
+        once it ends (`end`); undone when the reply continues. Inline styles: Textual's style
+        cache does not track :first-child / :last-child, which would leave stale margins
+        (and make every block mounted restyle all its siblings)."""
+        blocks = self.md.children
+        if blocks and blocks[0].styles.margin.top:
+            m = blocks[0].styles.margin
+            blocks[0].styles.margin = (0, m.right, m.bottom, m.left)
+        if self._end is not None and not (end and blocks and self._end[0] is blocks[-1]):
+            self._end[0].styles.margin = self._end[1]
+            self._end = None
+        if end and blocks and self._end is None:
+            m = blocks[-1].styles.margin
+            self._end = (blocks[-1], m)
+            blocks[-1].styles.margin = (m.top, m.right, 0, m.left)
+
+    def split(self, delta: str) -> int | None:
+        """Where in `delta` the next part should start (None: not in it): past PART_BLOCKS
+        blocks, after a blank line, with the text after it at hand and not indented, and
+        not inside a code fence."""
+        text = self.text + delta
+        if text.count("\n\n") < self.PART_BLOCKS:
+            return None
+        i = max(len(self.text) - 2, 0)
+        while (i := text.find("\n\n", i)) >= 0:
+            j = i + 2
+            while j < len(text) and text[j] == "\n":
+                j += 1
+            if j == len(text):
+                return None             # what follows is not known yet
+            fences = sum(ln.lstrip().startswith(("```", "~~~")) for ln in text[:j].splitlines())
+            if text[j] not in " \t" and fences % 2 == 0 and j >= len(self.text):
+                return j - len(self.text)
+            i = j
+        return None
 
 
 class ChatApp(App):
@@ -217,11 +271,10 @@ class ChatApp(App):
     .user {{ margin: 0 0 1 0; }}
     .reply {{ height: auto; margin: 0 0 1 0; }}
     .bullet {{ width: 2; color: {ACCENT}; }}
+    .parts {{ width: 1fr; height: auto; }}
     .reply Markdown {{ width: 1fr; margin: 0; padding: 0; background: ansi_default; }}
     MarkdownH1 {{ content-align: left top; }}
     MarkdownHeader {{ margin: 1 0 1 0; }}
-    .reply Markdown > *:first-child {{ margin-top: 0; }}
-    .reply Markdown > *:last-child {{ margin-bottom: 0; }}
     MarkdownFence {{ border-left: outer {GREY}; padding: 0 1; margin: 0 0 1 0; }}
     MarkdownFence > Label {{ padding: 0; }}
     .note {{ color: {GREY}; margin: 0 0 1 2; }}
@@ -246,6 +299,7 @@ class ChatApp(App):
                 Binding("down", "cmd_move(1)", show=False, priority=True),
                 Binding("tab", "cmd_complete", show=False, priority=True)]
     ENABLE_COMMAND_PALETTE = False
+    UI_SHARE = 0.1                      # of one core for the interface while a reply streams
     TITLE = "otpu-chat"
 
     def __init__(self, chat: Chat, meta: dict):
@@ -261,6 +315,7 @@ class ChatApp(App):
         self._lock = threading.Lock()
         self._pending: tuple[list[str], Turn] | None = None   # tokens not yet shown
         self._frame = 0
+        self._keys = None
 
     def compose(self) -> ComposeResult:
         with Horizontal():
@@ -277,6 +332,7 @@ class ChatApp(App):
 
     def on_mount(self) -> None:
         self._ui_loop = asyncio.get_running_loop()
+        self._ui_t, self._ui_cpu = time.perf_counter(), time.thread_time()   # the last update
         self.register_theme(THEME)
         self.theme = "otpu"
         self._refresh()
@@ -292,9 +348,14 @@ class ChatApp(App):
         turn = self._turn or self.chat.last
         width = self.query_one("#bar").size.width              # the content area
         line = status_line(self.meta, self.chat, turn, width)
-        self.query_one("#status", Static).update(line)
+        # one line of a fixed size: no layout of the screen (the log can hold thousands of
+        # widgets); the key hints change width, so they lay out only when they change
+        self.query_one("#status", Static).update(line, layout=False)
         room = width - line.cell_len - 2
-        self.query_one("#keys", Static).update(next(k for k in KEYS if len(k) <= max(room, 0)))
+        keys = next(k for k in KEYS if len(k) <= max(room, 0))
+        if keys != self._keys:
+            self._keys = keys
+            self.query_one("#keys", Static).update(keys)
         panel = self.query_one("#panel", Static)
         if panel.display:
             panel.update(stats_markup(self.meta, self.chat, turn))
@@ -330,7 +391,7 @@ class ChatApp(App):
         else:
             what = f"Working… {time.perf_counter() - self._t_submit:.1f}s"
         sp.update(Text.assemble((SPIN[self._frame % len(SPIN)] + " ", ACCENT), (what, ACCENT),
-                                (" · esc to interrupt", DIM)))
+                                (" · esc to interrupt", DIM)), layout=False)   # one line
 
     # ---- input and the command popup
     def _matches(self, value: str) -> list[str]:
@@ -465,6 +526,17 @@ class ChatApp(App):
         self._ui_loop.call_soon_threadsafe(self.call_next, self._drain)
 
     async def _drain(self) -> None:
+        """Show the queued tokens. The interface thread's CPU time (drawing, and the layout of
+        every widget in the log, which grows with the conversation) is held to UI_SHARE of the
+        time since the last update: past that, the update waits and takes more tokens at once,
+        so the decode loop, which needs the GIL between runs, keeps its pace."""
+        now, cpu = time.perf_counter(), time.thread_time()
+        wait = (cpu - self._ui_cpu) / self.UI_SHARE - (now - self._ui_t)
+        if wait > 0:
+            await asyncio.sleep(wait)
+            if not self.query("#log"):      # the app closed meanwhile
+                return
+        self._ui_t, self._ui_cpu = time.perf_counter(), time.thread_time()
         with self._lock:
             p, self._pending = self._pending, None
         if p is not None:
@@ -478,9 +550,21 @@ class ChatApp(App):
             if self._reply is None:
                 self._reply = Reply()
                 await self._add(self._reply)          # before the first write reaches it
+            if (k := self._reply.split(delta)) is not None:   # the next part
+                if self._stream is not None:
+                    await self._stream.write(delta[:k])
+                    await self._stream.stop()
+                    self._stream = None
+                else:
+                    await self._reply.md.append(delta[:k])
+                self._reply.trim()              # its blocks are all mounted now
+                await self._reply.new_part()
+                delta = delta[k:]
             if self._stream is None:        # appends, re-parsing only the last block
                 self._stream = Markdown.get_stream(self._reply.md)
             await self._stream.write(delta)
+            self._reply.text += delta
+            self._reply.trim()
             self.query_one("#log", VerticalScroll).scroll_end(animate=False)
         self._refresh()
 
@@ -489,6 +573,8 @@ class ChatApp(App):
         if self._stream is not None:
             await self._stream.stop()
             self._stream = None
+        if self._reply is not None:
+            self._reply.trim(end=True)
         self._busy = ""
         self._tick()
         if turn is not None:

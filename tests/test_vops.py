@@ -238,6 +238,82 @@ def test_gated_deltanet_step_isa(fused):
     assert np.max(np.abs(r["out"] - ow)) < 1e-5 * np.abs(ow).max()
 
 
+# ------------------------------------------------------------------------------------ DSTEP
+def _dstep_case(rng, rows, cols, special=False):
+    """A state in DRAM at 0x1000 and the per-head vectors in TMEM: q|k at 100, v at 700, e and
+    beta at 1000 and 1002 (the decay/beta layout of qwen35's gate tile)."""
+    St = (_special(rng, rows * cols) if special else
+          f(0.3 * rng.standard_normal(rows * cols))).reshape(rows, cols)
+    qk = _special(rng, 2 * cols) if special else f(rng.standard_normal(2 * cols))
+    v = _special(rng, rows) if special else f(rng.standard_normal(rows))
+    eb = f([rng.uniform(0.2, 1.0), 0.0, rng.uniform(0.0, 1.0)])
+    dram = np.zeros(1 << 20, np.uint8)
+    dram[0x1000:0x1000 + St.nbytes] = St.view(np.uint8).reshape(-1)
+    return dram, {100: qk, 700: v, 1000: eb}
+
+
+def _run_dram(prog, dram, tmem_init, cfg):
+    m = Machine(cfg, [prog], [dram])
+    for addr, v in tmem_init.items():
+        m.slices[0].tput(addr + np.arange(v.size), f(v).reshape(-1))
+    return m.run().slices[0]
+
+
+def _dstep_as_vops(rows, cols):
+    """The sequence DSTEP replaces (qwen35 before it): LD, RDOT, MUL, SUB, MUL, OUTER, RDOT, ST."""
+    St, w, t, s2 = 20000, 3000, 3300, 3600
+    return [I.ld(0x1000, St, rows * cols),
+            I.vop(I.V_RDOT, w, St, 100 + cols, rows, cols, 1, cols, 0, I.B_COL),
+            I.vop(I.V_MUL, t, w, 1000, 1, rows, 0, rows, 0, I.B_ROW),
+            I.vop(I.V_SUB, s2, 700, t, 1, rows, 0, rows, rows, I.B_FULL),
+            I.vop(I.V_MUL, w, s2, 1002, 1, rows, 0, rows, 0, I.B_ROW),
+            I.outer(St, 1000, w, 100 + cols, rows, cols, cols, 1, "scalar"),
+            I.vop(I.V_RDOT, 4000, St, 100, rows, cols, 1, cols, 0, I.B_COL),
+            I.st(0x1000, St, rows * cols), I.halt()]
+
+
+@pytest.mark.parametrize("rows,cols,special", [(128, 128, False), (64, 128, True),
+                                               (7, 64, True), (256, 64, False), (32, 256, True),
+                                               (3, 192, True)])
+def test_dstep_is_the_vop_sequence(rows, cols, special):
+    """DSTEP computes exactly what RDOT, MUL, SUB, MUL, OUTER, RDOT compute, bit for bit."""
+    cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20)
+    dram, tm = _dstep_case(np.random.default_rng(rows * 1000 + cols), rows, cols, special)
+    a = _run_dram(_dstep_as_vops(rows, cols), dram, tm, cfg)
+    b = _run_dram([I.dstep(0x1000, 100, 700, rows, cols, 1000, 2, 4000), I.halt()], dram, tm,
+                  cfg)
+    n = rows * cols * 4
+    assert np.array_equal(a.dram[0x1000:0x1000 + n], b.dram[0x1000:0x1000 + n])
+    assert np.array_equal(a.tmem[4000:4000 + rows], b.tmem[4000:4000 + rows])
+
+
+def test_dstep_float64():
+    """Against the recurrence in float64: S = e S + beta (v - e S k) k^T, o = S q."""
+    rows, cols = 128, 128
+    cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20)
+    dram, tm = _dstep_case(np.random.default_rng(3), rows, cols)
+    s = _run_dram([I.dstep(0x1000, 100, 700, rows, cols, 1000, 2, 4000), I.halt()], dram, tm,
+                  cfg)
+    S = dram[0x1000:0x1000 + rows * cols * 4].view(np.float32).reshape(rows, cols).astype(float)
+    q, k = tm[100][:cols].astype(float), tm[100][cols:].astype(float)
+    v, e, beta = tm[700].astype(float), float(tm[1000][0]), float(tm[1000][2])
+    d = beta * (v - e * (S @ k))
+    S = e * S + np.outer(d, k)
+    got = s.dram[0x1000:0x1000 + rows * cols * 4].view(np.float32).reshape(rows, cols)
+    assert np.max(np.abs(got - S)) < 1e-5 * np.abs(S).max()
+    o = s.tget(4000 + np.arange(rows))
+    assert np.max(np.abs(o - S @ q)) < 1e-5 * np.abs(S @ q).max()
+
+
+def test_dstep_errors():
+    cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20)
+    for ins in (I.dstep(0x1000, 100, 700, 4, 96, 1000, 2, 4000),     # cols not a multiple of 64
+                I.dstep(0x1040, 100, 700, 4, 64, 1000, 2, 4000),     # state not chunk aligned
+                I.dstep(0x1000, 100, 700, 257, 64, 1000, 2, 4000)):  # more than 256 rows
+        with pytest.raises(SimError, match="DSTEP"):
+            _run_dram([ins, I.halt()], None, {}, cfg)
+
+
 # ------------------------------------------------------------------------ RTL vs ISA simulator
 def _special(rng, n):
     """Normals with +-0, denormals (flushed), +-inf and a few huge values."""
@@ -341,3 +417,54 @@ def test_vops_rtl_bit_exact(have_verilator, lanes, uarch, seed):
     bad = np.nonzero(tmems[0] != m.slices[0].tmem)[0]
     assert len(bad) == 0, f"{len(bad)} TMEM words differ, first at {bad[:8]}"
     assert np.array_equal(drams[0], m.slices[0].dram)
+
+
+def _dstep_rtl_program(rng, n_steps=6):
+    """DSTEPs on a few DRAM states (odd rows, 64..256 columns, the zero flag) with their inputs
+    LDed into TMEM just before (RAW), VOPs reading o right after, the same state stepped twice
+    in a row (the DRAM RAW), an input overwritten right after the DSTEP (WAR) and an ST of TMEM
+    between them."""
+    NDATA = 4096
+    prog = [I.ld(0, 0, NDATA)]
+    state, o, st = 0x10000, 8000, 0xE0000
+    heads = []
+    for _ in range(3):
+        rows = int(rng.choice([1, 7, 64, 128, 129, 256]))
+        cols = int(rng.choice([64, 128, 192, 256]))
+        heads.append((state, rows, cols))
+        state += -(-rows * cols * 4 // 128) * 128 + 128 * int(rng.integers(0, 3))
+    for i in range(n_steps):
+        d, rows, cols = heads[int(rng.integers(len(heads)))] if i else heads[0]
+        qk, v, g = 5000 + 8 * i, 6000 + 2 * i, 7000 + 4 * i
+        gs = int(rng.integers(1, 3))
+        prog += [I.ld(4 * int(rng.integers(0, NDATA - 2 * cols)), qk, 2 * cols),
+                 I.ld(4 * int(rng.integers(0, NDATA - rows)), v, rows),
+                 I.vop(I.V_FILL, g, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, float(rng.uniform(.2, 1))),
+                 I.vop(I.V_FILL, g + gs, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR,
+                       float(rng.uniform(0, 1)))]
+        prog.append(I.dstep(d, qk, v, rows, cols, g, gs, o, zero=bool(rng.integers(4) == 0)))
+        prog += [I.vop(I.V_MUL, o + 300, o, o, 1, rows, 0, rows, rows, I.B_FULL),
+                 I.vop(I.V_FILL, qk, 0, 0, 1, 2 * cols, 0, 0, 0, I.B_SCALAR, 3.0)]
+        if rng.integers(2):
+            prog.append(I.st(st, o, rows))
+            st += 4 * rows + 64
+        o += 600
+    prog.append(I.halt())
+    return prog
+
+
+@pytest.mark.parametrize("uarch,seed", [({}, 0), ("board", 1), ("board", 2)])
+def test_dstep_rtl_bit_exact(have_verilator, uarch, seed):
+    cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20, DSTEP=True)
+    uarch = dict(rtlsim.BOARD_UARCH) if uarch == "board" else uarch
+    r = np.random.default_rng(900 + seed)
+    prog = _dstep_rtl_program(r)
+    img = np.zeros(1 << 20, np.uint8)
+    img[:4 * 4096] = (_special(r, 4096) if seed else f(r.standard_normal(4096))).view(np.uint8)
+    img[0x10000:0x10000 + 4 * 65536] = f(0.3 * r.standard_normal(65536)).view(np.uint8)
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], uarch=uarch)
+    bad = np.nonzero(tmems[0] != m.slices[0].tmem)[0]
+    assert len(bad) == 0, f"{len(bad)} TMEM words differ, first at {bad[:8]}"
+    bad = np.nonzero(drams[0] != m.slices[0].dram)[0]
+    assert len(bad) == 0, f"{len(bad)} DRAM bytes differ, first at {bad[:8]}"

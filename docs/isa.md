@@ -79,6 +79,7 @@ Every instruction is 8 x 32-bit words `w0..w7`.
 | 0x05 | BAR | wait until every slice has reached a `BAR` |
 | 0x10 | LD | DRAM -> TMEM, `n = w3` words: `T[R[rb]+w2+i] = M32[R[ra]+w1+4i]` |
 | 0x11 | ST | TMEM -> DRAM: `M32[R[ra]+w1+4i] = T[R[rb]+w2+i]` for `i < w3` |
+| 0x12 | DSTEP | one Gated DeltaNet head step on a DRAM state, run by the DMA (see below; `Config.DSTEP`, CAPS bit6) |
 | 0x20 | MM | see below |
 | 0x21 | QACT | quantize TMEM rows into ACT RAM |
 | 0x22 | QST | quantize TMEM rows into DRAM bytes |
@@ -223,6 +224,37 @@ Dv(c)), mul(B(r), Cv(c)))`: two rounded products, then a rounded add. B must be 
 bit 1 (DONE; `a` is not read). The `a` field holds the decay address: A is dst itself (`ars` is
 not used). `cols <= 256`. `Cv` and `Dv` are read before anything is written, so they may overlap
 dst; `B(r)` is read with every element and must not be written by an earlier element.
+
+### DSTEP
+
+One Gated DeltaNet head step, run by the DMA on a fp32 state that stays in DRAM: the DMA
+streams the state `St [rows, cols]` (row-major, the transposed state: rows are the value
+dimension) from DRAM through its datapath and writes it back in place, so the state never
+enters TMEM. `dram = R[ra]+w1` (bytes, chunk aligned), `qk = R[rb]+w2`, `v = R[rc]+w3`,
+`rows = w4[15:0]` (1..256), `cols = w4[31:16]` (64, 128, 192 or 256), `g = w5`, `o = w6`,
+`gs = w7`; flag bit 0 (ZERO): the state is taken as 0 and not read (position 0). With
+`q = T[qk + c]`, `k = T[qk + cols + c]`, `v(r) = T[v + r]`, `e = T[g]`, `beta = T[g + gs]`:
+
+```
+kv = RDOT(St, k)                       isum_64 row dots, as the VOP
+d  = MUL(SUB(v, MUL(kv, e)), beta)
+St = OUTER(St, e, d, k)                add(mul(St, e), mul(d(r), k(c))), in place in DRAM
+o  = RDOT(St, q)                       T[o + r]
+```
+
+bit for bit the VOP sequence RDOT, MUL, SUB, MUL, OUTER (DSCALAR), RDOT it replaces
+(`tests/test_vops.py::test_dstep_is_the_vop_sequence`). Every input is read before anything is
+written; `o` is written last. The scoreboard footprint: DRAM `[dram, dram + 4 rows cols)` written,
+TMEM `[qk, qk + 2 cols)`, `[v, v + rows)` and `{g, g + gs}` read, `[o, o + rows)` written.
+A bitstream without it leaves CAPS bit6 clear; the compiler then emits the VOP sequence
+(`Config.DSTEP = False`, the default of `board_config`; the host takes it from CAPS through
+`device_config`).
+
+The board's datapath (`rtl/dma/otpu_dstep.sv`) takes 8 state words per cycle: a head of
+128 x 128 is 2,048 cycles of datapath plus about 200 of fill and pipeline, against 1,024
+cycles of port-B chunks (64 KiB read, 64 KiB written). The DMA reads the state 16 chunks at a
+time and writes it back in runs of 16 gathered chunks (DRAM bursts; timing only). Only an
+8-lane DMA (W = 8) has DSTEP.
 
 ### GATHER
 

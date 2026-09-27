@@ -202,6 +202,21 @@ def outer(x: Tile, y: Tile, acc: Tile | None = None, decay: Tile | None = None) 
     return current().outer(x, y, acc, decay)
 
 
+def deltanet_step(state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile, o: Tile,
+                  zero: bool = False) -> None:
+    """One Gated DeltaNet head step in the DMA (DSTEP, Config.DSTEP): the fp32 state [rows,
+    cols] in DRAM is updated in place, row by row, kv = S[r] . k, d = (v[r] - kv * decay) *
+    beta, S[r] = S[r] * decay + d * k, o[r] = S[r] . q, with qk = [q | k]. Bit-identical to
+    the RDOT, MUL, SUB, MUL, OUTER, RDOT the VPU would run on the loaded state. `zero`: the
+    state starts at +0 and is not read (the first token)."""
+    current().deltanet_step(state, qk, v, decay, beta, o, zero)
+
+
+def has_dstep() -> bool:
+    """The DMA runs DSTEP (Config.DSTEP; CAPS bit7 on the card)."""
+    return current().cfg.DSTEP
+
+
 # ---- control
 def range(n: int):  # noqa: A001
     """Hardware loop. The body is traced once; carry values across iterations with `.set()`."""

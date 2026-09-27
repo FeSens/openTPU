@@ -135,12 +135,33 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, config, first, chunk):
     assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[17:], want[17:]))
 
 
-def test_tiny_qwen35_on_board_model(tiny, have_verilator):
+@pytest.mark.parametrize("config", ["design", "board"])
+def test_tiny_dstep_is_bit_exact(tiny, config):
+    """DSTEP (the DMA streams each DeltaNet head's state through its datapath) gives the same
+    logits, DeltaNet state, conv ring and KV cache as the VPU's RDOT / OUTER passes, word for
+    word, from position 0 on; chunked prefill (the VPU path) continues from its state."""
+    import dataclasses
+    from opentpu.isasim import design_config
+    _, W, spec = tiny
+    base = board_config(DRAM_BYTES=1 << 24) if config == "board" else design_config()
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 9)]
+    ref = Engine(spec, W, cap=256, cfg=base)
+    eng = Engine(spec, W, cap=256, cfg=dataclasses.replace(base, DSTEP=True))
+    assert any(i.op == 0x12 for i in eng.image.compile_step(1)[0])
+    for t in toks[:6]:
+        assert np.array_equal(ref.step(t).view(np.uint32), eng.step(t).view(np.uint32))
+    assert all(np.array_equal(a, b) for a, b in zip(_layers_dram(eng), _layers_dram(ref)))
+    a, b = ref.prefill(toks[6:], chunk=3), eng.prefill(toks[6:], chunk=3)
+    assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
+
+
+@pytest.mark.parametrize("dstep", [False, True])
+def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep):
     """The board model through the host driver, through a full turn of the convolution ring:
-    logits bit-identical to the ISA simulator."""
+    logits bit-identical to the ISA simulator (with and without DSTEP)."""
     from opentpu.host.board import BoardBackend, SimTransport
     _, W, spec = tiny
-    cfg = board_config(DRAM_BYTES=1 << 24)
+    cfg = board_config(DRAM_BYTES=1 << 24, DSTEP=dstep)
     isa = Engine(spec, W, cap=256, cfg=cfg)
     tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
     brd = Engine(spec, W, cap=256, cfg=cfg,
@@ -175,13 +196,16 @@ def test_qwen35_0_8b_greedy_matches_hf():
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3.5-0.8B not downloaded")
-def test_qwen35_0_8b_token_on_rtl_is_bit_exact(have_verilator):
+@pytest.mark.parametrize("dstep", [False, True])
+def test_qwen35_0_8b_token_on_rtl_is_bit_exact(have_verilator, dstep):
     """Feed part of a prompt on the ISA simulator (board configuration), then run the next
     token on the Verilator RTL and on the ISA simulator from the same DRAM state: weights, KV
-    cache, convolution ring, DeltaNet state and logits must agree bit for bit."""
+    cache, convolution ring, DeltaNet state and logits must agree bit for bit (with and
+    without DSTEP)."""
     from opentpu.llm.rtl_backend import RtlBackend
     spec = load_spec(REAL)
-    eng = Engine(spec, load_weights(REAL), cap=256, cfg=board_config(DRAM_BYTES=1 << 30))
+    eng = Engine(spec, load_weights(REAL), cap=256,
+                 cfg=board_config(DRAM_BYTES=1 << 30, DSTEP=dstep))
     prompt = [760, 6511, 314, 9338, 369]            # "The capital of France is"
     for t in prompt[:-1]:
         eng.step(t)
