@@ -2,10 +2,14 @@
 on the right (model and device, the last turn's TTFT / prefill / decode rates, the KV context,
 DRAM, session totals, sampling).
 
-Generation runs in a worker thread and reports through call_from_thread, so the interface
-never blocks; Esc stops a reply. /reset, /stats, /think on|off, /help.
+Generation runs in a worker thread. It hands each token to the interface without waiting for
+it (the tokens that arrive while the interface draws are merged into one update), so neither
+side blocks the other; Esc stops a reply. /reset, /stats, /think on|off, /help.
 """
 from __future__ import annotations
+
+import asyncio
+import threading
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -23,7 +27,8 @@ def _rate(x, unit="tok/s") -> str:
 
 
 def _mib(n: int) -> str:
-    return f"{n / 2**20:,.0f} MiB"
+    m = n / 2**20
+    return f"{m:,.0f} MiB" if m >= 10 else f"{m:.2f} MiB"
 
 
 def stats_markup(meta: dict, chat: Chat, turn: Turn | None, busy: str = "") -> str:
@@ -95,6 +100,8 @@ class ChatApp(App):
         self._busy = ""
         self._reply = ""
         self._md: Markdown | None = None
+        self._lock = threading.Lock()
+        self._pending: tuple[list[str], Turn] | None = None   # tokens not yet shown
 
     def compose(self) -> ComposeResult:
         with Horizontal():
@@ -105,6 +112,7 @@ class ChatApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._loop = asyncio.get_running_loop()
         self.sub_title = f"{self.meta['model']} on {self.meta['backend']}"
         self._note(HELP)
         self._refresh()
@@ -170,12 +178,28 @@ class ChatApp(App):
     @work(thread=True, exclusive=True)
     def _generate(self, text: str) -> None:
         try:
-            _, turn = self.chat.ask(text, lambda d, t: self.call_from_thread(self._update, d, t),
-                                    stop=lambda: self._stop)
+            _, turn = self.chat.ask(text, self._post, stop=lambda: self._stop)
         except Exception as e:                                      # noqa: BLE001
             self.call_from_thread(self._note, f"error: {type(e).__name__}: {e}")
             turn = None
         self.call_from_thread(self._done, turn)
+
+    def _post(self, delta: str, turn: Turn) -> None:
+        """From the worker: queue the token and schedule one flush if none is pending.
+        (call_from_thread would wait for the interface to draw, on every token.)"""
+        with self._lock:
+            if self._pending is not None:
+                self._pending[0].append(delta)
+                self._pending = (self._pending[0], turn)
+                return
+            self._pending = ([delta], turn)
+        self._loop.call_soon_threadsafe(self.call_next, self._flush)
+
+    def _flush(self) -> None:
+        with self._lock:
+            p, self._pending = self._pending, None
+        if p is not None:
+            self._update("".join(p[0]), p[1])
 
     def _update(self, delta: str, turn: Turn) -> None:
         self.chat.last = turn
@@ -188,6 +212,7 @@ class ChatApp(App):
         self._refresh()
 
     def _done(self, turn: Turn | None) -> None:
+        self._flush()
         self._busy = ""
         if turn is not None and turn.stopped:
             self._note("(stopped)")
