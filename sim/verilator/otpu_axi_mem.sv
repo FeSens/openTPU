@@ -2,7 +2,9 @@
 // INCR read bursts, which must not cross 4 KB) in front of one logical DRAM image with the 64-byte channel interleave of
 // otpu_axi_dram. Every ready is randomly withheld and every response randomly delayed (seed
 // +axi_seed=N, stall probability +axi_stall=percent), so the slice sees variable latency and
-// backpressure; reads and writes are not ordered against each other, as in a real controller.
+// backpressure; reads and writes are not ordered against each other, as in a real controller:
+// a read returns the memory as it was when its AR was accepted, and a write lands when its
+// response goes out.
 // Bandwidth: +axi_bw=P limits each channel to P percent of one 64-byte beat per cycle (reads and
 // writes together; 100 = no limit); +axi_lat=N overrides the minimum latency. +axi_arc=N: a
 // cost per read transaction, as the board's interconnect and controller have: a read's data
@@ -24,7 +26,9 @@
 // +axi_trc +axi_trtp +axi_trefi +axi_trfc +axi_tturn (controller cycles); +axi_tpc / +axi_tpu the
 // core and controller clock periods in ticks (4 / 4 at DDR3-800, 4 / 3 at DDR3-1066: ui_clk
 // 133 MHz, one beat per 0.75 core cycles). What-if: +axi_afree=1 serves port A reads (arid 1)
-// without touching the DDR3 timing.
+// without touching the DDR3 timing. +axi_rout=N / +axi_wout=N: at most N read / write
+// transactions outstanding per channel (AR / AW accepted, last R / B not yet sent; 0 = no
+// limit), as the interconnect's NUM_READ_OUTSTANDING / NUM_WRITE_OUTSTANDING (vivado/bd.tcl).
 // Images load from dram_<SID>.bin and dump to dram_out_<SID>.bin, as otpu_dram. With PHYS = 1
 // the files are the channels' own memories instead, as the host sees them: ch<c>.bin (big-endian
 // words, as $fread reads) in, ch<c>_out.bin (little-endian) out, WORDS / 2 words each.
@@ -75,6 +79,7 @@ module otpu_axi_mem #(
   int trmw = 12;                         // core cycles
   int tpc = 4, tpu = 4;                  // ticks per core / controller cycle
   int afree = 0;                         // what-if: port A reads cost the DRAM nothing
+  int rout = 0, wout = 0;                // outstanding transaction limits (0: none)
   longint n_rmw_a [2];
   longint cyc = 0;
 
@@ -136,7 +141,8 @@ module otpu_axi_mem #(
 
   typedef struct { longint t; logic id; logic [31:0] addr; int len; } rq_t;
   longint rbt [2][$];                    // DDR3 model: each read beat's data time
-  typedef struct { longint t; logic id; } bq_t;
+  typedef struct { longint t; logic id; int b; logic [511:0] d; logic [63:0] s; } bq_t;
+  logic [511:0] rdq [2][$];              // each read beat's data, taken when its AR is accepted
   rq_t rq [2][$];
   bq_t bq [2][$];
   logic [31:0] aw_a [2][$];
@@ -157,8 +163,9 @@ module otpu_axi_mem #(
       awr <= !rnd_stall();
       wr  <= !rnd_stall();
     end
-    assign s_arready[c] = arr;
-    assign s_awready[c] = awr;
+    int nw_out = 0;                      // writes accepted (AW), response not yet taken
+    assign s_arready[c] = arr && (rout == 0 || rq[c].size() < rout);
+    assign s_awready[c] = awr && (wout == 0 || nw_out < wout);
     assign s_wready[c] = wr;
     // R: the head read, once its time has come (in order per channel)
     always_comb begin
@@ -168,8 +175,7 @@ module otpu_axi_mem #(
         s_rvalid[c] = 1'b1;
         s_rid[c] = rq[c][0].id;
         s_rlast[c] = ri == rq[c][0].len - 1;
-        for (int k = 0; k < 16; k++)
-          s_rdata[c][32 * k +: 32] = mem[beat_word(rq[c][0].addr + 32'(64 * ri), c) + k];
+        s_rdata[c] = rdq[c][0];
       end
       s_bvalid[c] = bv;
       s_bid[c] = bv ? bq[c][0].id : 1'b0;
@@ -177,9 +183,9 @@ module otpu_axi_mem #(
     end
     always_ff @(posedge clk) begin
       if (rst) begin
-        rq[c].delete(); bq[c].delete(); aw_a[c].delete(); aw_i[c].delete();
+        rq[c].delete(); bq[c].delete(); aw_a[c].delete(); aw_i[c].delete(); rdq[c].delete();
         w_d[c].delete(); w_s[c].delete();
-        rv <= 1'b0; bv <= 1'b0; ri = 0; art = 0; aa = 0;
+        rv <= 1'b0; bv <= 1'b0; ri = 0; art = 0; aa = 0; nw_out = 0;
         rbt[c].delete(); bus[c] = 0; nref[c] = trefi * tpu; wdir[c] = 1'b0;
         for (int k = 0; k < 8; k++) begin orow[c][k] = -1; tact[c][k] = -1000; tcol[c][k] = -1000; end
       end else begin
@@ -204,10 +210,17 @@ module otpu_axi_mem #(
                                 : dram_slot(c, s_araddr[c] + 32'(64 * i), 1'b0, a)) + lat);
           end
           rq[c].push_back('{t, s_arid[c], s_araddr[c], n});
+          for (int i = 0; i < n; i++) begin
+            logic [511:0] d;
+            for (int k = 0; k < 16; k++) d[32 * k +: 32] = mem[beat_word(s_araddr[c] + 32'(64 * i), c) + k];
+            rdq[c].push_back(d);
+          end
           n_ar[c]++;
           n_rb[c] += n;
           if (s_arid[c]) n_ara[c]++;
         end
+        if (s_awvalid[c] && s_awready[c]) nw_out = nw_out + 1;
+        if (bv && s_bready[c]) nw_out = nw_out - 1;
         if (s_awvalid[c] && s_awready[c]) begin
           aw_a[c].push_back(s_awaddr[c]);
           aw_i[c].push_back(s_awid[c]);
@@ -234,20 +247,25 @@ module otpu_axi_mem #(
           end
           b = beat_word(aw_a[c][0], c);
           if (b + 16 > WORDS) $fatal(1, "AXI write beyond memory");
-          for (int k = 0; k < 64; k++)
-            if (w_s[c][0][k]) mem[b + k / 4][8 * (k % 4) +: 8] <= w_d[c][0][8 * k +: 8];
-          bq[c].push_back('{tw + lat + ($urandom % 8), aw_i[c][0]});
+          // the write lands in memory when its response goes out: a read accepted before
+          // then may or may not see it, as in a real controller (here: never)
+          bq[c].push_back('{tw + lat + ($urandom % 8), aw_i[c][0], b, w_d[c][0], w_s[c][0]});
           void'(aw_a[c].pop_front()); void'(aw_i[c].pop_front());
           void'(w_d[c].pop_front()); void'(w_s[c].pop_front());
         end
         if (rv && s_rready[c]) begin
           if (dram != 0) void'(rbt[c].pop_front());
+          void'(rdq[c].pop_front());
           if (ri == rq[c][0].len - 1) begin
             void'(rq[c].pop_front());
             ri = 0;
           end else ri++;
         end
-        if (bv && s_bready[c]) void'(bq[c].pop_front());
+        if (bv && s_bready[c]) begin
+          for (int k = 0; k < 64; k++)
+            if (bq[c][0].s[k]) mem[bq[c][0].b + k / 4][8 * (k % 4) +: 8] <= bq[c][0].d[8 * k +: 8];
+          void'(bq[c].pop_front());
+        end
         // next cycle's responses (the queues above are already updated)
         if (rq[c].size() != 0 && (dram != 0 ? rbt[c][0] <= cyc : rq[c][0].t <= cyc) &&
             !rnd_stall() && cr >= 100) begin
@@ -283,6 +301,8 @@ module otpu_axi_mem #(
     void'($value$plusargs("axi_tpc=%d", tpc));
     void'($value$plusargs("axi_tpu=%d", tpu));
     void'($value$plusargs("axi_afree=%d", afree));
+    void'($value$plusargs("axi_rout=%d", rout));
+    void'($value$plusargs("axi_wout=%d", wout));
     n_ar = '{0, 0}; n_rb = '{0, 0}; n_ara = '{0, 0}; n_miss = '{0, 0}; n_rmw = '{0, 0}; n_rmw_a = '{0, 0};
     begin
       int seed;

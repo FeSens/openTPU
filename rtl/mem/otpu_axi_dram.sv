@@ -14,8 +14,22 @@
 // another beat arrives, when all its bytes are written, or after WGATHER cycles without an SW
 // write (the board's controller does a partial-strobe write as a read-modify-write for ECC, so a
 // QST's byte stream costs one write per beat, not per byte). wr_idle stays low while a beat is
-// gathered, so a QST still completes only once its writes are in memory. A reads that fall in the beat of the previous A read (the MXU's scale stream:
-// 16 scales per beat) reuse it without a DRAM access, until any write is accepted.
+// gathered, so a QST still completes only once its writes are in memory. Gathered beats go out
+// in order through one queue per channel; a beat with bytes missing (a transposed V column: one
+// byte per beat) first reads its beat (AXI ID 1, as port A) and is written whole, so the
+// controller never does its own ECC read-modify-write (which holds the channel for the read's
+// whole latency). The queue holds WQD beats per channel, so that the reads of a transposed V
+// column's beats overlap (a slot lives from its push to its write response: about a read and a
+// write latency). A beat's read waits until every older queued beat with the same address has
+// its write response: a counter per bucket (a hash of the beat address) counts the live beats
+// past the read point, and a read waits while its bucket's count is not zero (a collision only
+// delays it). The queue's writes wait while its reads are still going out (unless it is half
+// full), so the controller sees runs of reads, then runs of writes. A reads that fall in the beat of the previous A read (the MXU's scale stream:
+// 16 scales per beat) reuse it without a DRAM access, until any write is accepted. An A read that
+// misses fetches a run of up to APF channel-consecutive beats (one INCR burst, not across 4 KB);
+// the A reads that follow the run in order take its beats without a DRAM access, and a read off
+// the run (or after any write) drops the beats not yet taken. The scale stream thus costs one
+// AXI transaction per APF beats instead of one per beat.
 // Port B reads that follow each other in the address space (a streamed operand) are issued as
 // one burst per channel: a run of queued contiguous reads goes out once it has BL beats, once
 // the next queued request does not continue it (or it would cross a 4 KB page), once no request
@@ -30,11 +44,13 @@
 module otpu_axi_dram #(
   parameter int D = 128,
   parameter int QD = 16,                             // request queue depth per channel and port
+  parameter int WQD = 64,                            // SW (gathered beat) queue depth per channel
   parameter int BL = 8,                              // port B read burst, beats (max)
   parameter int GATHER = 4,                          // idle cycles before a short burst goes out
   parameter int WGATHER = 4,                         // idle cycles before a gathered SW beat goes out
   parameter int RD = 128,                            // B read beats in flight per channel
-  parameter int AD = 16,                             // A read beats in flight per channel
+  parameter int AD = 32,                             // A read beats in flight per channel
+  parameter int APF = 8,                             // A read run (prefetch), beats
   parameter logic [31:0] BASE0 = 32'h0000_0000,
   parameter logic [31:0] BASE1 = 32'h8000_0000
 ) (
@@ -94,12 +110,22 @@ module otpu_axi_dram #(
 );
   initial if (D != 128) $fatal(1, "otpu_axi_dram: D must be 128 (one beat per channel)");
   initial if (BL < 1 || BL > QD || BL > RD || BL > 16) $fatal(1, "otpu_axi_dram: bad BL");
+  initial if (APF < 1 || APF > 8 || APF > AD) $fatal(1, "otpu_axi_dram: bad APF");
   localparam int LW = $clog2(BL + 1);
   localparam int QW = $clog2(QD);
+  localparam int WW = $clog2(WQD);
+  localparam int NH = 64;                            // SW hazard buckets (see w_blk)
+  localparam int HW = $clog2(NH);
   localparam int RW = $clog2(RD);
   localparam int AW_ = $clog2(AD);
   localparam int OD = 2 * RD;                        // B tags / A order entries in flight (2^k)
   localparam int OW = $clog2(OD);
+
+  // the hazard bucket of a beat (channel address bits 31:6): an XOR fold, so that the strided
+  // beats of a transposed V column spread over the buckets
+  function automatic logic [5:0] whash(input logic [25:0] a);
+    return a[5:0] ^ a[11:6] ^ a[17:12] ^ a[23:18] ^ {4'd0, a[25:24]};
+  endfunction
 
   function automatic logic [31:0] chan_addr(input logic [31:0] word_addr, input logic c);
     logic [31:0] beat;
@@ -121,6 +147,7 @@ module otpu_axi_dram #(
     logic [3:0]   idx;         // word in the beat
     logic [31:0]  data;
     logic [3:0]   be;
+    logic [3:0]   len;         // read: beats of the run
   } qa_t;
   typedef struct packed {      // a gathered SW beat
     logic [31:0]  addr;
@@ -132,8 +159,24 @@ module otpu_axi_dram #(
   logic [QW-1:0] qb_h [2];
   logic [QW:0] qa_n [2];
   logic [QW-1:0] qa_h [2];
-  logic [QW:0] qw_n [2];                    // port SW writes (gathered beats)
-  logic [QW-1:0] qw_h [2];
+  // port SW (gathered beats): live entries (until their write response) from qw_f; qw_h the
+  // next to write, qw_r the next whose read is due (qw_wb written, qw_rn from qw_r on)
+  logic [WW:0] qw_n [2], qw_wb [2], qw_rn [2];
+  logic [WW-1:0] qw_f [2], qw_h [2], qw_r [2];
+  logic [WQD-1:0] wpart [2], wgot [2];      // per slot: bytes missing; its read data is in
+  // read-after-write hazards: whb counts, per bucket (a hash of the beat), the live entries past
+  // the read point (from qw_f up to qw_r: read, or whole); wnz: whb != 0
+  logic [WW:0]  whb [2][NH];
+  logic [NH-1:0] wnz [2];
+  // ID 1 in flight, in order per channel: reads (A 0 / SW-queue 1) and writes (A 0 / queue 1);
+  // rix: the slots of the queue's reads in flight
+  localparam int KD = 2 ** $clog2(AD + WQD);
+  localparam int KW = $clog2(KD);
+  logic [KD-1:0] k1r [2], k1w [2];
+  logic [KW:0]  k1r_h [2], k1r_n [2], k1w_h [2], k1w_n [2];
+  logic [WW-1:0] rix_o [2];                      // rix at rix_h: the oldest SW read's slot
+  logic [WW-1:0] rix_h [2];
+  logic [WW:0]  rix_n [2];
   // SW gather buffers (see the top): valid, beat, bytes written, cycles since the last merge
   logic [1:0]   gv;
   qw_t          gb [2];
@@ -143,8 +186,10 @@ module otpu_axi_dram #(
   logic         bt_q [OD];                     // LUT RAM
   logic [OW:0]  bt_n;
   logic [OW-1:0] bt_h;
-  typedef struct packed { logic c; logic [3:0] idx; logic reuse; } ao_t;
+  // A reads in order: channel, word, reuse of the last beat, run beats to drop before this one
+  typedef struct packed { logic c; logic [3:0] idx; logic reuse; logic [2:0] drop; } ao_t;
   ao_t          ao_q [OD];
+  ao_t          aoh;                           // the oldest A read
   logic [OW:0]  ao_n;
   logic [OW-1:0] ao_h;
 
@@ -164,13 +209,22 @@ module otpu_axi_dram #(
 
   assign b_rdy = (qb_n[0] < QD) && (qb_n[1] < QD) && (bt_n < OD);
   assign a_rdy = (qa_n[0] < QD) && (qa_n[1] < QD) && (ao_n < OD);
-  assign sw_rdy = (qw_n[0] < QD) && (qw_n[1] < QD);
+  assign sw_rdy = (qw_n[0] < WQD) && (qw_n[1] < WQD);
   wire sw_take = sw_req && sw_rdy;
   wire sw_ch = sw_addr[4];
   wire b_take = b_req && b_rdy;
   wire a_take = a_req && a_rdy;
   wire a_ch = a_addr[4];
   wire a_reuse = !a_we && al_v && al_beat == a_beat;
+  // A runs per channel: the next channel beat of the run, valid (no write since), beats not
+  // yet taken (in flight or stored)
+  logic [26:0]  pnx [2];
+  logic [1:0]   pv;
+  logic [2:0]   pfl [2];
+  wire  [26:0]  a_cb = a_addr[31:5];              // the channel beat
+  wire  a_hit = !a_we && !a_reuse && pv[a_ch] && a_cb == pnx[a_ch] && pfl[a_ch] != 0;
+  wire  [3:0]   a_len = (7'd64 - {1'b0, a_cb[5:0]} < 7'(APF)) ? 4'(7'd64 - {1'b0, a_cb[5:0]})
+                                                               : 4'(APF);
 
   // ------------------------------------------------------------------ response FIFOs
   logic [RW:0]  rb_n [2], rb_res [2];          // stored; stored + in flight
@@ -181,13 +235,16 @@ module otpu_axi_dram #(
   // ------------------------------------------------------------------ queue and FIFO memories
   // (per channel; written in their own processes so they map to LUT RAM)
   logic [1:0]   qb_push, qa_push, qw_push;
+  logic [1:0]   ar_w;                            // the SW queue's read of a partial beat
   qb_t          qb_e [2];
   qa_t          qa_e [2];
   qw_t          qw_e [2];
   qb_t          hb [2];
   qa_t          ha [2];
   qw_t          hw [2];
-  logic [511:0] rb_head [2], ra_head [2];
+  logic [25:0]  wadr_r [2];                        // the beat of slot qw_r
+  logic [HW-1:0] wh_r [2], wh_f [2];               // the buckets of slots qw_r and qw_f
+  logic [511:0] rb_head [2], ra_head [2], wr_head [2];
   always_comb begin
     for (int c = 0; c < 2; c++) begin
       qb_push[c] = b_take && (!b_we || b_wmask[16 * c +: 16] != 0);
@@ -195,47 +252,64 @@ module otpu_axi_dram #(
       qb_e[c].addr = chan_addr(b_addr + 32'(16 * c), c[0]);
       qb_e[c].data = b_wdata[512 * c +: 512];
       qb_e[c].wmask = b_we ? b_wmask[16 * c +: 16] : '0;
-      qa_push[c] = a_take && a_ch == c[0] && !a_reuse;
+      qa_push[c] = a_take && a_ch == c[0] && !a_reuse && !a_hit;
       qa_e[c].we = a_we;
       qa_e[c].addr = chan_addr(a_addr, c[0]);
       qa_e[c].idx = a_addr[3:0];
       qa_e[c].data = a_wdata;
       qa_e[c].be = a_be;
+      qa_e[c].len = a_we ? 4'd1 : a_len;
       // the gathered beat goes out: another beat's SW write (room is sure: sw_rdy), or, with
       // no SW write this cycle and room in the queue, full or idle
       qw_push[c] = gv[c] && (sw_take && sw_ch == c[0] ? gb[c].addr != chan_addr(sw_addr, c[0])
-                   : qw_n[c] < QD && (&gb[c].strb || gage[c] >= 3'(WGATHER)));
+                   : qw_n[c] < WQD && (&gb[c].strb || gage[c] >= 3'(WGATHER)));
       qw_e[c] = gb[c];
     end
   end
   always_ff @(posedge clk)
     for (int c = 0; c < 2; c++) if (qb_push[c]) qc[c][QW'(qb_h[c] + qb_n[c])] <= b_cont;
   for (genvar c = 0; c < 2; c++) begin : g_mem
-    qb_t          qbm [QD];
-    qa_t          qam [QD];
-    qw_t          qwm [QD];
+    // flat vectors: Vivado builds a RAM of structs from registers (qbm and qwm were ~37K
+    // flip-flops and their read multiplexers, in the congested corner by the memory ports)
+    logic [$bits(qb_t)-1:0] qbm [QD];
+    logic [$bits(qa_t)-1:0] qam [QD];
+    logic [$bits(qw_t)-1:0] qwm [WQD];
+    logic [25:0] wam [WQD];                 // per slot: the beat (address bits 31:6)
+    logic [HW-1:0] whm [WQD];               // per slot: its hazard bucket
     logic [511:0] rbm [RD];
     logic [511:0] ram [AD];
-    always_ff @(posedge clk) begin
-      if (qb_push[c]) qbm[QW'(qb_h[c] + qb_n[c])] <= qb_e[c];
-      if (qa_push[c]) qam[QW'(qa_h[c] + qa_n[c])] <= qa_e[c];
-      if (qw_push[c]) qwm[QW'(qw_h[c] + qw_n[c])] <= qw_e[c];
-    end
+    always_ff @(posedge clk) if (qb_push[c]) qbm[QW'(qb_h[c] + qb_n[c])] <= qb_e[c];
+    always_ff @(posedge clk) if (qa_push[c]) qam[QW'(qa_h[c] + qa_n[c])] <= qa_e[c];
+    always_ff @(posedge clk) if (qw_push[c]) qwm[WW'(qw_f[c] + qw_n[c])] <= qw_e[c];
+    always_ff @(posedge clk) if (qw_push[c]) wam[WW'(qw_f[c] + qw_n[c])] <= qw_e[c].addr[31:6];
+    always_ff @(posedge clk) if (qw_push[c]) whm[WW'(qw_f[c] + qw_n[c])] <= whash(qw_e[c].addr[31:6]);
+    assign wadr_r[c] = wam[qw_r[c]];
+    assign wh_r[c] = whm[qw_r[c]];
+    assign wh_f[c] = whm[qw_f[c]];
     always_ff @(posedge clk)
       if (m_rvalid[c] && !m_rid[c]) rbm[rb_t[c]] <= m_rdata[c];
+    logic [WW-1:0] rixm [WQD];              // the slots of the queue's reads in flight
     always_ff @(posedge clk)
-      if (m_rvalid[c] && m_rid[c]) ram[ra_t[c]] <= m_rdata[c];
-    assign hb[c] = qbm[qb_h[c]];
-    assign ha[c] = qam[qa_h[c]];
-    assign hw[c] = qwm[qw_h[c]];
+      if (m_arvalid[c] && m_arready[c] && ar_w[c]) rixm[WW'(rix_h[c] + rix_n[c])] <= qw_r[c];
+    assign rix_o[c] = rixm[rix_h[c]];
+    logic [511:0] wrm [WQD];                // the queue's read data, per slot
+    always_ff @(posedge clk)
+      if (m_rvalid[c] && m_rid[c] && !k1r[c][k1r_h[c][KW-1:0]]) ram[ra_t[c]] <= m_rdata[c];
+    always_ff @(posedge clk)
+      if (m_rvalid[c] && m_rid[c] && k1r[c][k1r_h[c][KW-1:0]]) wrm[rix_o[c]] <= m_rdata[c];
+    assign wr_head[c] = wrm[qw_h[c]];
+    assign hb[c] = qb_t'(qbm[qb_h[c]]);
+    assign ha[c] = qa_t'(qam[qa_h[c]]);
+    assign hw[c] = qw_t'(qwm[qw_h[c]]);
     assign rb_head[c] = rbm[rb_h[c]];
-    assign ra_head[c] = ram[ra_h[c]];
+    assign ra_head[c] = ram[AW_'(ra_h[c] + AW_'(aoh.drop))];
   end
 
   // ------------------------------------------------------------------ per-channel issue
   logic [1:0] ar_b, ar_a, w_b, w_a, w_w;         // this cycle's AR / write source
   logic [LW-1:0] run [2];                        // B reads queued at the head, contiguous
-  logic [1:0] arh, arh_a;                        // an AR shown and not taken: held (A or B)
+  logic [1:0] arh, arh_a, arh_w;                 // an AR shown and not taken: held (A, SW, B)
+  logic [1:0] w_blk, w_hold;                     // its read waits (same beat older); writes wait
   logic [LW-1:0] arh_n [2];                      // the held B burst's beats
   logic [1:0] aw_done, w_done;                   // current write head: halves already taken
   logic [1:0] wsrc [2];                          // current write's source: 0 qb, 1 qa, 2 qw
@@ -254,28 +328,38 @@ module otpu_axi_dram #(
           else stop = 1'b1;
         go = run[c] == LW'(BL) || (QW + 1)'(run[c]) < qb_n[c] || qi[c] >= 3'(GATHER) ||
              rb_res[c] == 0;
+        // the SW queue's next partial beat: blocked while an older live entry may have its
+        // address (one in its bucket; a hash collision only delays the read)
+        w_blk[c] = wnz[c][wh_r[c]];
         if (arh[c]) begin
           ar_a[c] = arh_a[c];
-          ar_b[c] = !arh_a[c];
+          ar_w[c] = arh_w[c];
+          ar_b[c] = !arh_a[c] && !arh_w[c];
           run[c] = arh_n[c];
         end else begin
-          ar_a[c] = (qa_n[c] != 0) && !ha[c].we && (ra_res[c] < AD);
-          ar_b[c] = !ar_a[c] && (qb_n[c] != 0) && !hb[c].we && go &&
+          ar_a[c] = (qa_n[c] != 0) && !ha[c].we && (ra_res[c] <= (AW_ + 1)'(AD - ha[c].len)) &&
+                    (k1r_n[c] < (KW + 1)'(KD));
+          ar_w[c] = !ar_a[c] && (qw_rn[c] != 0) && wpart[c][qw_r[c]] && !w_blk[c] &&
+                    (k1r_n[c] < (KW + 1)'(KD));
+          ar_b[c] = !ar_a[c] && !ar_w[c] && (qb_n[c] != 0) && !hb[c].we && go &&
                     rb_res[c] <= (RW + 1)'(RD - run[c]);
         end
       end
-      m_arvalid[c] = ar_a[c] || ar_b[c];
-      m_araddr[c] = ar_a[c] ? ha[c].addr : hb[c].addr;
-      m_arlen[c] = ar_a[c] ? 8'd0 : 8'(run[c] - 1);
-      m_arid[c] = ar_a[c];
+      m_arvalid[c] = ar_a[c] || ar_w[c] || ar_b[c];
+      m_araddr[c] = ar_a[c] ? ha[c].addr : ar_w[c] ? {wadr_r[c], 6'd0} : hb[c].addr;
+      m_arlen[c] = ar_a[c] ? 8'(ha[c].len - 1) : ar_w[c] ? 8'd0 : 8'(run[c] - 1);
+      m_arid[c] = ar_a[c] || ar_w[c];
+      // the queue's writes wait while its reads still go out (not blocked), unless half full
+      w_hold[c] = (qw_rn[c] != 0) && wpart[c][qw_r[c]] && !w_blk[c] && qw_n[c] < (WW + 1)'(WQD / 2);
       // writes: the head write of qw, qa or qb (kept until both AW and W are taken)
       if (wcur[c]) begin
         w_w[c] = (wsrc[c] == 2'd2);
         w_a[c] = (wsrc[c] == 2'd1);
         w_b[c] = (wsrc[c] == 2'd0);
       end else begin
-        w_w[c] = (qw_n[c] != 0);
-        w_a[c] = !w_w[c] && (qa_n[c] != 0) && ha[c].we;
+        w_w[c] = (qw_n[c] != qw_wb[c]) && (!wpart[c][qw_h[c]] || wgot[c][qw_h[c]]) &&
+                 !w_hold[c] && (k1w_n[c] < (KW + 1)'(KD));
+        w_a[c] = !w_w[c] && (qa_n[c] != 0) && ha[c].we && (k1w_n[c] < (KW + 1)'(KD));
         w_b[c] = !w_w[c] && !w_a[c] && (qb_n[c] != 0) && hb[c].we;
       end
       hs[c] = ha[c];
@@ -286,8 +370,9 @@ module otpu_axi_dram #(
       m_wdata[c] = '0;
       m_wstrb[c] = '0;
       if (w_w[c]) begin
-        m_wdata[c] = hw[c].data;
-        m_wstrb[c] = hw[c].strb;
+        for (int k = 0; k < 64; k++)
+          m_wdata[c][8 * k +: 8] = hw[c].strb[k] ? hw[c].data[8 * k +: 8] : wr_head[c][8 * k +: 8];
+        m_wstrb[c] = '1;
       end else if (w_a[c]) begin
         m_wdata[c][32 * hs[c].idx +: 32] = hs[c].data;
         m_wstrb[c][4 * hs[c].idx +: 4] = hs[c].be;
@@ -302,10 +387,9 @@ module otpu_axi_dram #(
 
   // ------------------------------------------------------------------ merge
   wire b_out = (bt_n != 0) && (rb_n[0] != 0) && (rb_n[1] != 0);
-  ao_t aoh;
   assign aoh = ao_q[ao_h];
   logic [511:0] a_last;                          // the beat of the last fetched A read
-  wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] != 0);
+  wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] > (AW_ + 1)'(aoh.drop));
   wire [511:0] a_src = aoh.reuse ? a_last : ra_head[aoh.c];
   assign b_rvalid = b_out;
   assign b_rtag = bt_q[bt_h];
@@ -316,7 +400,9 @@ module otpu_axi_dram #(
 
   always_ff @(posedge clk) begin
     if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= b_tag;
-    if (a_take && !a_we) ao_q[OW'(ao_h + ao_n)] <= '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse};
+    if (a_take && !a_we)
+      ao_q[OW'(ao_h + ao_n)] <= '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse,
+                                  drop: (a_reuse || a_hit) ? 3'd0 : pfl[a_ch]};
   end
 
   // ------------------------------------------------------------------ writes outstanding
@@ -331,16 +417,20 @@ module otpu_axi_dram #(
     if (rst) begin
       for (int c = 0; c < 2; c++) begin
         qb_n[c] <= '0; qb_h[c] <= '0; qa_n[c] <= '0; qa_h[c] <= '0;
-        qw_n[c] <= '0; qw_h[c] <= '0;
+        qw_n[c] <= '0; qw_h[c] <= '0; qw_f[c] <= '0; qw_r[c] <= '0; qw_wb[c] <= '0;
+        qw_rn[c] <= '0; rix_h[c] <= '0; rix_n[c] <= '0; wnz[c] <= '0;
+        for (int k = 0; k < NH; k++) whb[c][k] <= '0;
+        k1r_h[c] <= '0; k1r_n[c] <= '0; k1w_h[c] <= '0; k1w_n[c] <= '0;
         rb_n[c] <= '0; rb_res[c] <= '0; rb_h[c] <= '0; rb_t[c] <= '0;
         ra_n[c] <= '0; ra_res[c] <= '0; ra_h[c] <= '0; ra_t[c] <= '0;
       end
       bt_n <= '0; bt_h <= '0; ao_n <= '0; ao_h <= '0;
       al_v <= 1'b0;
+      pv <= '0; pfl[0] <= '0; pfl[1] <= '0;
       wr_n <= '0; wacc_q <= '0;
       gv <= '0; gage[0] <= '0; gage[1] <= '0;
       aw_done <= '0; w_done <= '0; wcur <= '0;
-      arh <= '0; lb_rd <= 1'b0;
+      arh <= '0; arh_w <= '0; lb_rd <= 1'b0;
       qi[0] <= '0; qi[1] <= '0;
       wsrc[0] <= '0; wsrc[1] <= '0;
       err <= 1'b0;
@@ -356,14 +446,20 @@ module otpu_axi_dram #(
                  b_take && b_we && b_wmask[31:16] != 0,
                  b_take && b_we && b_wmask[15:0]  != 0};
       for (int c = 0; c < 2; c++) begin
-        logic [QW:0] nb, na, nw;
+        logic [QW:0] nb, na;
+        logic [WW:0] nw;
         logic [RW:0] rbn, rbr;
         logic [AW_:0] ran, rar;
         logic popb, popa, popw;
         logic [LW-1:0] popn;
+        logic [WW:0] nwb, nrn, nrx;
+        logic [KW:0] nkr, nkw;
+        logic hinc, hdec;
         nb = qb_n[c]; na = qa_n[c]; nw = qw_n[c];
+        nwb = qw_wb[c]; nrn = qw_rn[c]; nrx = rix_n[c]; nkr = k1r_n[c]; nkw = k1w_n[c];
         rbn = rb_n[c]; rbr = rb_res[c]; ran = ra_n[c]; rar = ra_res[c];
         popb = 1'b0; popa = 1'b0; popw = 1'b0; popn = LW'(1);
+        hinc = 1'b0; hdec = 1'b0;
         // ---- accept
         if (qb_push[c]) begin
           nb = nb + 1;
@@ -372,15 +468,38 @@ module otpu_axi_dram #(
           na = na + 1;
         end
         if (qw_push[c]) begin
+          logic [WW-1:0] t;
+          t = WW'(qw_f[c] + qw_n[c]);
+          wpart[c][t] <= !(&qw_e[c].strb);
+          wgot[c][t] <= 1'b0;
           nw = nw + 1;
+          nrn = nrn + 1;
         end
         // ---- AR
         if (m_arvalid[c] && m_arready[c]) begin
-          if (ar_a[c]) begin popa = 1'b1; rar = rar + 1; end
+          if (ar_a[c] || ar_w[c]) begin
+            k1r[c][KW'(k1r_h[c] + k1r_n[c])] <= ar_w[c];
+            nkr = nkr + 1;
+          end
+          if (ar_a[c]) begin popa = 1'b1; rar = rar + (AW_ + 1)'(ha[c].len); end
+          else if (ar_w[c]) begin
+            nrx = nrx + 1;
+            qw_r[c] <= qw_r[c] + 1;
+            nrn = nrn - 1;
+          end
           else begin popb = 1'b1; popn = run[c]; rbr = rbr + (RW + 1)'(run[c]); end
         end
+        // a whole beat needs no read (ar_w is never shown for one): it passes the read point at
+        // once, so before its write (and response) can come
+        if (qw_rn[c] != 0 && !wpart[c][qw_r[c]]) begin
+          qw_r[c] <= qw_r[c] + 1;
+          nrn = nrn - 1;
+        end
+        // (from ar_w, not m_arvalid: off the B run path)
+        hinc = (ar_w[c] && m_arready[c]) || (qw_rn[c] != 0 && !wpart[c][qw_r[c]]);
         arh[c] <= m_arvalid[c] && !m_arready[c];
         arh_a[c] <= ar_a[c];
+        arh_w[c] <= ar_w[c];
         arh_n[c] <= run[c];
         if (qb_push[c]) qi[c] <= '0;
         else if (qi[c] != '1) qi[c] <= qi[c] + 1;
@@ -391,6 +510,10 @@ module otpu_axi_dram #(
           wd = w_done[c] || (m_wvalid[c] && m_wready[c]);
           if (awd && wd) begin
             if (w_w[c]) popw = 1'b1; else if (w_a[c]) popa = 1'b1; else popb = 1'b1;
+            if (w_w[c] || w_a[c]) begin
+              k1w[c][KW'(k1w_h[c] + k1w_n[c])] <= w_w[c];
+              nkw = nkw + 1;
+            end
             aw_done[c] <= 1'b0; w_done[c] <= 1'b0; wcur[c] <= 1'b0;
           end else begin
             aw_done[c] <= awd; w_done[c] <= wd; wcur[c] <= 1'b1;
@@ -399,13 +522,23 @@ module otpu_axi_dram #(
         end
         if (popb) begin qb_h[c] <= qb_h[c] + QW'(popn); nb = nb - (QW + 1)'(popn); end
         if (popa) begin qa_h[c] <= qa_h[c] + 1; na = na - 1; end
-        if (popw) begin qw_h[c] <= qw_h[c] + 1; nw = nw - 1; end
+        if (popw) begin qw_h[c] <= qw_h[c] + 1; nwb = nwb + 1; end
         // ---- R
         if (m_rvalid[c]) begin
           if (m_rresp[c][1]) err <= 1'b1;
           if (m_rid[c]) begin
-            ra_t[c] <= ra_t[c] + 1;
-            ran = ran + 1;
+            if (k1r[c][k1r_h[c][KW-1:0]]) begin  // the SW queue's read: its slot has the data
+              wgot[c][rix_o[c]] <= 1'b1;
+              rix_h[c] <= rix_h[c] + 1;
+              nrx = nrx - 1;
+            end else begin
+              ra_t[c] <= ra_t[c] + 1;
+              ran = ran + 1;
+            end
+            if (m_rlast[c]) begin                // (an A run is several beats)
+              k1r_h[c] <= k1r_h[c] + 1;
+              nkr = nkr - 1;
+            end
           end else begin
             rb_t[c] <= rb_t[c] + 1;
             rbn = rbn + 1;
@@ -414,17 +547,38 @@ module otpu_axi_dram #(
         // ---- B
         if (m_bvalid[c]) begin
           if (m_bresp[c][1]) err <= 1'b1;
+          if (m_bid[c]) begin
+            if (k1w[c][k1w_h[c][KW-1:0]]) begin  // the SW queue's oldest write is done
+              qw_f[c] <= qw_f[c] + 1;
+              hdec = 1'b1;
+              nw = nw - 1;
+              nwb = nwb - 1;
+            end
+            k1w_h[c] <= k1w_h[c] + 1;
+            nkw = nkw - 1;
+          end
         end
         // ---- merge pops
         if (b_out) begin
           rb_h[c] <= rb_h[c] + 1;
           rbn = rbn - 1; rbr = rbr - 1;
         end
-        if (a_out && !aoh.reuse && aoh.c == c[0]) begin
-          ra_h[c] <= ra_h[c] + 1;
-          ran = ran - 1; rar = rar - 1;
+        if (a_out && !aoh.reuse && aoh.c == c[0]) begin    // (and the dropped run beats)
+          ra_h[c] <= ra_h[c] + AW_'(aoh.drop) + 1'b1;
+          ran = ran - (AW_ + 1)'(aoh.drop) - 1'b1;
+          rar = rar - (AW_ + 1)'(aoh.drop) - 1'b1;
+        end
+        // ---- hazard buckets: slot qw_r passes the read point, slot qw_f's write is done
+        if (hinc && !(hdec && wh_f[c] == wh_r[c])) begin
+          whb[c][wh_r[c]] <= whb[c][wh_r[c]] + 1'b1;
+          wnz[c][wh_r[c]] <= 1'b1;
+        end
+        if (hdec && !(hinc && wh_f[c] == wh_r[c])) begin
+          whb[c][wh_f[c]] <= whb[c][wh_f[c]] - 1'b1;
+          wnz[c][wh_f[c]] <= whb[c][wh_f[c]] != (WW + 1)'(1);
         end
         qb_n[c] <= nb; qa_n[c] <= na; qw_n[c] <= nw;
+        qw_wb[c] <= nwb; qw_rn[c] <= nrn; rix_n[c] <= nrx; k1r_n[c] <= nkr; k1w_n[c] <= nkw;
         rb_n[c] <= rbn; rb_res[c] <= rbr; ra_n[c] <= ran; ra_res[c] <= rar;
       end
       wr_n <= wr_n + {{11{wn[4]}}, wn};
@@ -468,6 +622,18 @@ module otpu_axi_dram #(
           gage[c] <= gage[c] + 1;
         end
       end
+      // ---- A runs: a hit takes the next beat, a miss starts a run (dropping the rest)
+      if (a_take && !a_we && !a_reuse) begin
+        if (a_hit) begin
+          pnx[a_ch] <= pnx[a_ch] + 1;
+          pfl[a_ch] <= pfl[a_ch] - 1;
+        end else begin
+          pnx[a_ch] <= a_cb + 1;
+          pfl[a_ch] <= 3'(a_len - 1);
+          pv[a_ch] <= 1'b1;
+        end
+      end
+      if ((b_take && b_we) || (a_take && a_we) || sw_take) pv <= '0;
       if ((b_take && b_we) || (a_take && a_we) || sw_take) al_v <= 1'b0;
       else if (a_take && !a_we) begin
         al_v <= 1'b1;

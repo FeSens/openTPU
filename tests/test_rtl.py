@@ -479,8 +479,9 @@ def test_axi_burst_throughput(have_verilator):
 
 # QST stores go out as single bytes (one byte-enabled word per cycle). The AXI adapter gathers
 # an SW beat until another beat is written or it has been idle, so a contiguous store (a K row)
-# costs one write per 64-byte beat and no ECC read-modify-write on the board; a strided store (a
-# transposed V column) still writes a beat per byte. Results bit-exact under random stalls.
+# costs one write per 64-byte beat; a beat left partial (a transposed V column: one byte per
+# beat) is read and written whole. No write reaches the memory with a partial strobe (the board's
+# controller would do an ECC read-modify-write). Results bit-exact under random stalls.
 @pytest.mark.parametrize("stall", [0, 40])
 def test_axi_sw_write_gather(have_verilator, stall):
     cfg = Config(S=1, D=128, ACT_BLOCKS=16)
@@ -498,10 +499,132 @@ def test_axi_sw_write_gather(have_verilator, stall):
                                   seed=3, uarch=rtlsim.BOARD_UARCH, plusargs=["+axi_dram=1"])
     assert np.array_equal(drams[0], m.slices[0].dram)
     assert np.array_equal(tmems[0], m.slices[0].tmem)
-    rmw = sum(d["rmw_a"] for d in st["axi_detail"])
-    # partial beats: the strided store's 128 bytes, the scales (4 + 1 + 1 beats), the unaligned
-    # store's first and last beats
-    assert 128 <= rmw <= 128 + 6 + 2, st["axi_detail"]
+    # the adapter reads every partial beat (the strided store's 128 bytes, the scales, the
+    # unaligned store's first and last beats) and writes it whole: no controller RMW
+    assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
+
+
+# The same beat left partial twice in one QST (row 0 writes the even bytes, row 1 the odd ones)
+# and again by the next QST: each read of the beat must see the writes queued before it.
+@pytest.mark.parametrize("stall,seed", [(0, 1), (30, 2), (60, 3), (80, 4)])
+def test_axi_sw_partial_beat_order(have_verilator, stall, seed):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8300 + seed)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * 4 * D * 4] = rng.standard_normal(4 * 4 * D).astype(np.float32).view(np.uint8)
+    prog = [I.ld(0, 0, 4 * 4 * D),
+            I.qst(0, 0x40000, 0x48000, 2, 1, D, 1, 2),                   # interleaved rows
+            I.qst(2 * D, 0x40100, 0x48040, 2, 1, D, 3, 2),               # overlaps the first
+            I.qst(0, 0x50001, 0x58000, 4, 1, D, 2, 64, row=True),         # strided, 4 rows
+            I.ld(0x40000, 1024, 3 * D), I.ld(0x50000, 2048, 64 * D), I.halt()]
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                  seed=seed, lat=400, uarch=rtlsim.BOARD_UARCH, plusargs=["+axi_dram=1"])
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
+
+
+# Random QSTs (strides 1..130 bytes, so beats are left partial or whole, and later stores revisit
+# the beats of earlier ones) into a 32 KB region, interleaved with loads of it, under random
+# stalls and long write latencies: every read sees every store before it.
+@pytest.mark.parametrize("seed", range(8))
+def test_axi_sw_rmw_fuzz(have_verilator, seed):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8400 + seed)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * 8 * D * 4] = rng.standard_normal(8 * 4 * D).astype(np.float32).view(np.uint8)
+    REG, SZ = 0x40000, 0x8000                         # the stores' 32 KB region
+    prog, t = [I.ld(0, 0, 8 * 4 * D)], 8 * 4 * D
+    for _ in range(14):
+        if rng.integers(3):
+            rows = int(rng.integers(1, 3))
+            es = int(rng.choice([1, 1, 2, 3, 64, 65, 130]))
+            drs = int(rng.integers(1, 3 * D))
+            span = (rows - 1) * drs + (D - 1) * es + 1
+            dst = REG + int(rng.integers(0, SZ - span))
+            sdst = REG + SZ + 4 * int(rng.integers(0, 256))       # scales: their own area
+            prog.append(I.qst(4 * D * int(rng.integers(0, 6)), dst, sdst, rows, 1, D, drs, es,
+                              row=bool(rng.integers(2))))
+        else:
+            n = 4 * int(rng.integers(1, 64))
+            prog.append(I.ld(REG + 4 * int(rng.integers(0, SZ // 4 - n)), t, n))
+            t += n
+    prog += [I.ld(REG, t, 4096), I.halt()]                   # (and the DRAM image compares)
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True,
+                                  stall=int(rng.integers(0, 70)), seed=seed,
+                                  lat=int(rng.choice([20, 120, 400])), uarch=rtlsim.BOARD_UARCH,
+                                  plusargs=["+axi_dram=1"])
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
+
+
+# A transposed V append (8 KV heads x 128 values, each value to its own beat: element stride =
+# the cache capacity) on the calibrated DDR3 model: every beat is a read-modify-write, and the
+# SW queue (WQD beats per channel) keeps enough of them in flight that the appends cost about
+# the channel's read transactions. All the beats of one token fall on one channel (the rows are
+# chunk aligned). Also with the interconnect's outstanding-transaction limits (vivado/bd.tcl).
+@pytest.mark.parametrize("limits", [[], ["+axi_rout=64", "+axi_wout=64"]])
+def test_axi_vt_append_throughput(have_verilator, limits):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D, CAP, H = cfg.D, 256, 8
+    rng = np.random.default_rng(8500)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * H * D] = rng.standard_normal(H * D).astype(np.float32).view(np.uint8)
+    plus = limits + ["+axi_dram=1", "+axi_map=1", "+axi_arc=4", "+axi_tpc=16", "+axi_tpu=15",
+                     "+axi_trp=3", "+axi_trcd=3", "+axi_tras=5", "+axi_trc=7", "+axi_trfc=22",
+                     "+axi_trefi=1040", "+axi_trmw=29"]
+    cyc = []
+    for n in (1, 4):
+        prog = [I.ld(0, 0, 4 * H * D)]
+        prog += [I.qst(0, 0x20000 + t, 0xE0000 + 64 * t, H, 1, D, D * CAP, CAP) for t in range(n)]
+        prog.append(I.halt())
+        m = Machine(cfg, [prog], [img.copy()]).run()
+        drams, _, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, lat=38,
+                                  uarch=rtlsim.BOARD_UARCH, plusargs=plus)
+        assert np.array_equal(drams[0], m.slices[0].dram)
+        assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
+        cyc.append(st["cycles"])
+    # 1024 read-modify-writes on one channel, a read transaction per 4 cycles: ~4.1K cycles;
+    # with a 16-deep SW queue this was ~7.7K
+    per = (cyc[1] - cyc[0]) / 3
+    assert per < 5300, cyc
+
+
+# The MXU's scale stream (port A, one word per chunk) goes out as runs of up to 8 beats per AXI
+# read; a QST between the MMs rewrites some scales (so a run fetched before it must not be used
+# after it), under random stalls: bit-exact, and far fewer A transactions than scale beats.
+@pytest.mark.parametrize("stall,seed", [(0, 1), (40, 2), (70, 3)])
+def test_axi_scale_runs(have_verilator, stall, seed):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8500 + seed)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    SC, W = 0x20000, 0x40000                       # scales (fp32), weights (int8)
+    img[SC:SC + 4 * 4096] = (rng.random(4096, dtype=np.float32) + 0.5).view(np.uint8)
+    img[:4 * 2 * 4 * D * 4] = rng.standard_normal(2 * 4 * D * 4).astype(np.float32).view(np.uint8)
+    N, KB = 300, 4
+    prog = [I.ld(0, 0, 2 * 4 * D * 4), I.qact(0, 2, 0, KB, 4 * D),
+            I.mm(W, SC, 4096, N, KB, KB * D, N + 2, 2, 0, 4 * KB),
+            # a new scale right after the first MM's (a run fetched then covers it), and an MM
+            # whose scale stream continues there
+            I.qst(4096, 0x30000, SC + 4 * KB * N + 8, 1, 1, D, D, 1, row=True),  # after MM 1
+            I.mm(W, SC + 4 * KB * N, 16384, 40, KB, KB * D, 42, 2, 0, 4 * KB),
+            I.mm(W, SC, 8192, N, KB, KB * D, N + 2, 2, 0, 4 * KB),
+            I.mm(W + KB * D, SC + 4 * 3, 12288, N // 2, KB, KB * D, N, 2, 0, 4 * KB + 4),
+            I.halt()]
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                  seed=seed, uarch=rtlsim.BOARD_UARCH, plusargs=["+axi_dram=1"])
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    ar_a = sum(d["ar_a"] for d in st["axi_detail"])
+    scale_beats = (2 * N + N // 2 + 40) * KB * 4 // 64
+    assert ar_a < scale_beats // 3, (ar_a, scale_beats)
 
 
 def test_tmem_random_traffic(have_verilator):

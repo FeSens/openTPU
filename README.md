@@ -1,86 +1,114 @@
 # openTPU
 
-openTPU is a small inference accelerator for LLM decode, written to be read and changed. It
-covers the whole stack: SystemVerilog RTL, an instruction set and a bit-exact simulator for
-it, a small kernel language and compiler, and host software for a Kintex-7 PCIe card. The goal
-is to learn about hardware, software and ISA performance work by changing one layer and
-measuring what happens to the cycles.
+**A small LLM inference accelerator you can read end to end, and that runs on a real FPGA.**
 
-It is a prototype. It runs in simulation. It has not run on the FPGA yet: the Vivado build
-(synthesis, place and route, timing) has not been done, and nothing below has been checked on
-hardware.
+openTPU is the whole stack of an accelerator in one repository: SystemVerilog RTL, an
+instruction set with a bit-exact simulator, a small kernel language and compiler, and host
+software for a Kintex-7 PCIe card. It is built to be learned from and changed: pick a layer,
+change it, and measure what happens to the cycles.
 
-![Lens replaying a Qwen3 decode step on the floorplan, 100 cycles per second](docs/img/lens-floorplan.gif)
+Today it chats with Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B on an Inspur YPCB-00338 card
+(Xilinx xc7k480t, two DDR3 channels), with real weights, and produces the same tokens as the
+simulator, bit for bit.
 
-*Lens replaying part of a Qwen3 decode step from an RTL simulation of the board configuration,
-at 100 cycles per second. The dashes are data moving. The colours show what each unit is doing
-in that cycle: busy, stalled on DRAM, lost TMEM arbitration, or waiting on a dependency.*
+![otpu-chat on LFM2.5-230M with otpu-smi watching the card](docs/img/card-chat-smi.gif)
 
-## What works, and what doesn't yet
+*Left: `otpu-chat` running LFM2.5-230M on the card. Right: `otpu-smi` watching it: 84% busy and
+8.15 GB/s from DRAM while the reply decodes, about 40 tok/s on the device. (The small model
+reads the typo "ROme" as a company. The card runs the model faithfully, mistakes included.)*
 
-Works, in simulation:
+## Where it stands
 
-- **Qwen3-0.6B with its real weights** on the instruction-set simulator. It runs in int8, so
-  its output differs slightly from Hugging Face's fp32 model because of quantization error
-  (see [Accuracy](#accuracy)).
-- **LFM2.5-230M**, Liquid AI's hybrid of short-convolution and attention layers, the same way
-  (`otpu-chat --model lfm2`). Its 64-wide heads are zero-padded to the 128-deep matrix unit and
-  its convolution state lives in DRAM; no ISA or RTL change was needed. See
-  [docs/lfm2.md](docs/lfm2.md).
-- **Qwen3.5-0.8B**, whose main layer is a Gated DeltaNet (linear attention with a 128 x 128
-  fp32 state per head), the same way (`otpu-chat --model qwen35`). The 1 MiB of state per layer
-  streams through the scratchpad head by head and the recurrence runs on the vector unit
-  (RDOT, OUTER). See [docs/qwen35.md](docs/qwen35.md).
-- **RTL vs simulator.** The Verilator RTL ends with exactly the same memory contents as the
-  simulator on the kernel tests, on a full Qwen3-0.6B token (6.38 M cycles), and on random
-  programs where instructions keep conflicting over the same memory, which checks that the
-  hardware keeps them in the right order while running units in parallel.
-- **Board model.** A Verilator testbench of the board (`sim/verilator/tb_board.sv`) runs the
-  bring-up and Qwen3 decode through the same host driver the card will use.
+Measured on the card with the current production bitstream (2026-09-27): 100 MHz core clock,
+DDR3-1066, PCIe Gen1 x8, int8 weights.
 
-Not done or not verified:
+| Model | Decode, on the device | Decode, wall clock | Cycles per token |
+|---|---|---|---|
+| LFM2.5-230M | 40.7 tok/s | 38.5 tok/s | 2.46 M |
+| Qwen3-0.6B | 14.6 tok/s | 14.1 tok/s | 6.85 M |
+| Qwen3.5-0.8B | 10.3 tok/s | 9.9 tok/s | 9.75 M |
 
-- **No hardware run.** No bitstream has been built.
-- **Clock speed is an estimate.** 106 MHz is a rough estimate from yosys, not from Vivado; it
-  still has to be validated by a real build.
-- **Tokens per second are projections.** They are simulated cycles divided by an assumed
-  clock (100 MHz) and DRAM efficiency (80%), without host time.
-- **The board model skips the hardest parts of the physical integration.** DDR3 calibration
-  always succeeds, the DDR3 controllers are replaced by an AXI memory model, and PCIe, the
-  clocks and the resets are not simulated. Expect problems to show up when it first runs on
-  a real board.
-- **The host tools** (`otpu-smi`, `otpu-lens`, ...) have only run against the board model and
-  a fake device.
+- **Correct:** all three models match the simulator token for token. The self-test passes, and
+  so do all 127 hardware checks of `otpu-diag --mem full --soak 20`.
+- **The build:** Vivado closes timing at 100 MHz with 55% of the LUTs and 15% of the DSPs,
+  including the PCIe and DDR3 controllers.
+- **Honest gaps:** decode moves about 8.4 to 9.5 GB/s of the DDR3's 17.1 GB/s peak, so about
+  half the memory bandwidth is still on the table. The bitstream is loaded over JTAG, since the
+  flash still holds an older image.
 
-## How it's built
+Work in progress, not yet in these numbers: 4-bit weights, a faster clock, and a more
+efficient DRAM path (see [Open problems](#open-problems)).
 
-```
- kernels (opentpu/kernels)          mlp, attention, a full Qwen3 layer      <- written in `ol`
-        |  @ol.jit, traced once per slice (SPMD)
- language + compiler                opentpu/language.py, opentpu/compiler.py
-        |  layouts, affine loop addressing, fusion peepholes, bank-aware strides
- ISA (docs/isa.md)                  opentpu/isa.py         8 x 32-bit words per instruction
-        |                                       \
- bit-exact ISA simulator            RTL (SystemVerilog, rtl/) under Verilator
- opentpu/isasim.py      <== same DRAM + TMEM bits ==>   rtl/top/otpu_top.sv
-        |                                                       |
- host runtime + CLI (opentpu/host)  ---- PCIe (XDMA) ---->  board: rtl/boards/ypcb-00338
+## Try it
+
+Everything except the card runs on a laptop.
+
+```sh
+pip install -e .                      # numpy, textual
+pip install pytest torch transformers # for the tests and the models
+python3 -m pytest -q                  # RTL tests also need Verilator 5 (they skip without it)
 ```
 
-Each layer is tested against the one below it. Kernels are checked against float64 numpy
-references. The simulator's fp32 arithmetic is checked against a Python model of the RTL's
-fp units. The RTL has to produce the same DRAM and TMEM bits as the simulator.
+Chat with a model on the simulator. It gives the same tokens as the card, at a few seconds
+per token instead of a few tens of milliseconds:
 
-The machine is deliberately simple: a matrix unit that streams weights from DRAM, a vector
-unit, a quantizer, a DMA engine and a collective unit for multi-slice runs. The on-chip
-memories are explicit, and there are hardware loops. Every data movement is an instruction
-you can see in the trace, so a profile can usually tell you why something is slow.
+```sh
+hf download LiquidAI/LFM2.5-230M --local-dir models/LFM2.5-230M
+otpu-chat --model lfm2 --backend isa
+```
+
+With a card: build the bitstream (`make bit` in [`boards/ypcb-00338`](boards/ypcb-00338)), load
+it over JTAG, then `sudo otpu-setup`, `otpu-selftest` and `otpu-chat --backend board`.
+[docs/board.md](docs/board.md) walks through it, including what went wrong along the way.
+
+| Command | What it does |
+|---|---|
+| `otpu-chat` | chat with Qwen3-0.6B, `--model lfm2` or `--model qwen35` |
+| `otpu-smi` | temperature, estimated power, DRAM use and bandwidth, per-unit utilization and stalls |
+| `otpu-lens` | record the card's hardware trace and open it in the profiler |
+| `otpu-selftest` | registers, DRAM patterns, kernels, then a model |
+| `otpu-diag` | every hardware check, as a works / does-not-work matrix |
+| `otpu-setup` | installs the XDMA driver and rescans PCIe after a JTAG load |
+
+The tools that run programs take a lock on the card, so a second one waits or tells you who
+holds it. `otpu-smi` only reads counters and runs alongside them.
+
+## How it works
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 320}}}%%
+flowchart TD
+    K["<b>Kernels</b> in <code>ol</code><br/>mlp, attention, full model layers"]
+    C["<b>Language + compiler</b><br/>layouts, affine loop addressing, fusion"]
+    I["<b>ISA</b><br/>8 x 32-bit words per instruction"]
+    subgraph X ["same DRAM and TMEM bits, checked by the tests"]
+        direction LR
+        S["<b>ISA simulator</b><br/>Python, bit-exact"]
+        R["<b>RTL</b><br/>SystemVerilog, Verilator"]
+    end
+    B["<b>FPGA card</b><br/>YPCB-00338, Kintex-7 xc7k480t"]
+    H["<b>Host runtime + CLI</b><br/>otpu-chat, otpu-smi, otpu-lens"]
+
+    K -- "@ol.jit, traced once per slice" --> C
+    C --> I
+    I --> X
+    X -- "Vivado bitstream" --> B
+    B <-- "PCIe (XDMA)" --> H
+```
+
+Each layer is tested against the one below it. Kernels are checked against float64 numpy.
+The simulator's fp32 arithmetic is checked against a Python model of the RTL's fp units. The
+RTL must end every test with exactly the same DRAM and TMEM contents as the simulator: on
+kernels, on whole model tokens, and on random programs built to make instructions fight over
+the same memory.
+
+The machine is deliberately simple:
 
 ```
             host: program images, DRAM images in, DRAM out
                                   |
  +--------------------------------v-------------------------------------+  x S slices
- | SEQ  1 instr/cycle into a 16-slot scoreboard; 16 regs, LOOP, addr regs|
+ | SEQ  1 instr/cycle, 16-slot scoreboard; 16 regs, LOOP, addr regs     |
  |   +--> DMA (LD/ST)      DRAM burst port                              |
  |   +--> MXU (MM)         1 streamed D-byte int8 row/cycle from DRAM   |
  |   |      x M <= 8 stationary rows from ACT RAM, block scales, fp32   |
@@ -92,20 +120,18 @@ you can see in the trace, so a profile can usually tell you why something is slo
  +----------------------------------------------------------------------+
 ```
 
-- **Numerics.** Weights, MXU activations and the KV cache are int8 with one fp32 scale per D
-  elements. Weights can also be 4-bit (FP4 or int4 elements with a two-level scale per D
-  elements), about half the DRAM bytes per token; see [docs/quant.md](docs/quant.md). Everything else is fp32 with round-to-nearest-even and flush-to-zero. exp2, recip
+- **Every data movement is an instruction.** Nothing is hidden in a cache, so a trace can
+  usually tell you why something is slow.
+- **Concurrency without a scheduler.** The sequencer issues one instruction per cycle into a
+  16-entry window and tracks what each one reads and writes. An instruction starts as soon as
+  nothing older conflicts with it, so the units overlap on their own.
+- **Numerics.** Weights, MXU activations and the KV cache are int8 with an fp32 scale per
+  block. Weights can also be 4-bit (FP4 or int4 elements with a two-level scale per block),
+  about half the DRAM bytes per token; see [docs/quant.md](docs/quant.md). Everything else is fp32 with round-to-nearest-even and flush-to-zero. exp2, recip
   and rsqrt are fixed sequences of adds and multiplies, so Python, the simulator and the RTL
-  agree bit for bit (they do not agree bit for bit with PyTorch).
-- **Concurrency.** The sequencer issues one instruction per cycle into a 16-entry window and
-  tracks what each instruction reads and writes. An instruction starts when nothing older
-  conflicts with it, so the units overlap without the compiler scheduling them.
-- **Attention** is flash attention with an online softmax, software-pipelined so q·Kᵀ for the
-  next block streams while the softmax of the current one runs. **MLP** streams gate and up
-  for the next chunk while the VPU computes SiLU.
-
-Details: [design spec](docs/superpowers/specs/2026-09-23-opentpu-design.md),
-[docs/isa.md](docs/isa.md), [docs/compiler.md](docs/compiler.md).
+  agree bit for bit.
+- **Decode is memory-bound.** A token streams every weight from DRAM once, so most of the
+  performance work is about keeping DRAM busy.
 
 ## Writing a kernel
 
@@ -133,159 +159,105 @@ res = launch(mlp, Config(S=2), backend="rtl",            # or "isa"
              w_down=Weight(Wd, 0), out=Output((M, H)), eps=1e-6)
 ```
 
-## Measured numbers
+## Seeing where the cycles go
 
-All from Verilator RTL simulation of the board configuration (1 slice, 128-deep MXU with 2
-columns, 8 vector lanes, 16-entry window) on Qwen3-0.6B's shapes (hidden 1024, MLP 3072, 16
-query heads, 8 KV heads of 128). "Of roofline" is the kernel's cycles compared with the cycles
-needed just to move its bytes over the simulated DRAM port, which is idealized; it says
-nothing about real DDR3 behaviour.
+![Lens replaying a Qwen3 decode step on the floorplan, 100 cycles per second](docs/img/lens-floorplan.gif)
 
-| Workload | Cycles | Of roofline |
-|---|---|---|
-| MLP decode | 75,282 | 98.4% |
-| Flash attention, context 1024 | 27,835 | 64.4% |
-| Flash attention, context 4096 | 104,571 | 67.1% |
-| Full attention layer (norm, QKV, RoPE, KV append, attention, output), position 1023 | 81,362 | 82.3% |
+*Lens replaying part of a Qwen3 decode step at 100 cycles per second. The dashes are data
+moving. The colours show what each unit is doing in that cycle: busy, stalled on DRAM, lost
+arbitration, or waiting on a dependency.*
 
-The MLP is limited by DRAM. Attention is not: the matrix unit and the vector unit are both
-busy almost every cycle (100% and 99% at context 1024) while DRAM streams only 64% of the
-time. The matrix unit spends that time on per-row work between streams, and the vector unit
-on the softmax. That is the obvious next thing to improve.
+Lens is the profiler. It records a run from the RTL, the simulator or the card's hardware
+trace buffer, and opens it in the browser. You get the roofline, where the DRAM cycles went,
+a zoomable timeline, this floorplan replay, and per-instruction and per-source-line tables.
 
-One Qwen3-0.6B decode token at the board configuration (1 slice, 2 MXU columns, 8 lanes, AXI
-memory path) takes about 6.4 M cycles. At an assumed 100 MHz that would be about 15 tokens/s
-before host overhead. That is a projection, not a measurement.
-
-LFM2.5-230M streams less than half as many bytes per token. Measured on the same RTL
-configuration at 80% DRAM bandwidth and a 128-token context, a token takes 2.37 M cycles (96%
-of the DRAM roofline), which would be about 42 tokens/s at 100 MHz, again a projection
-([docs/lfm2.md](docs/lfm2.md)).
-
-Qwen3.5-0.8B streams about 820 MB per token, but its DeltaNet recurrence runs on the vector
-unit, which does not keep up with DRAM: measured on the same configuration (80%, context 128)
-a token takes 9.13 M cycles, 88% of the DRAM roofline, about 11 tokens/s at 100 MHz (a
-projection). The recurrence is 37% of it ([docs/qwen35.md](docs/qwen35.md)).
-
-## Accuracy
-
-The kernels are checked against float64 numpy references, and the full model against Hugging
-Face's fp32 Qwen3-0.6B. Greedy continuations of 16 tokens from eight short raw prompts, ISA
-simulator vs Hugging Face (`python3 tools/compare_hf.py --emulate`):
-
-| Prompt | Same for 16 tokens? | First different token | HF's rank of the device's token | HF logit gap |
-|---|---|---|---|---|
-| `A prime number larger than 100 is` | no | 2 | 2 | 0.15 |
-| `The capital of France is` | no | 6 | 2 | 0.02 |
-| `def fibonacci(n):` | yes | | | |
-| `Water boils at` | no | 6 | 3 | 0.74 |
-| `The quick brown fox` | no | 11 | 2 | 0.40 |
-| `In 1969, the first person to walk on the moon was` | no | 3 | 2 | 0.49 |
-| `The largest planet in the solar system is` | yes | | | |
-| `import numpy as np` | no | 2 | 2 | 0.08 |
-
-2 of 8 match exactly; the others drift apart after 1 to 10 tokens. That is expected: the
-model runs in W8A8, meaning weights (W) and the activations fed to the matrix unit (A) are
-stored as 8-bit integers instead of 32-bit floats. The rounding shifts the scores slightly, so
-when two candidate tokens are nearly tied the device can pick the other one. A float64 model
-with the same 8-bit rounding picks the same tokens as the device where we checked, which shows the differences
-come from the quantization and not from a bug.
-
-## Lens
-
-Lens is the profiler. It records a run (an RTL cycle trace, a simulator run, or, on the card,
-the hardware trace buffer) and opens it in the browser: an overview with the roofline and where
-the DRAM cycles went, a zoomable timeline, the floorplan replay above, and per-instruction and
-per-source-line tables.
-
-```
+```sh
 python3 -m opentpu.lens record mlp attn -o run.otpuprof
 python3 -m opentpu.lens open run.otpuprof
 ```
 
-On the board model, the hardware trace buffer rebuilds the same trace lines the simulator
-prints, and a test checks that they match. See [docs/lens.md](docs/lens.md) and
-[docs/observability.md](docs/observability.md).
+## Learning your way around
 
-## The auto-arch tournament
+A suggested reading order:
 
-Part of the RTL was tuned by an automated hill climb, `tools/tourney`, in the style of
-[auto-arch-tournament](https://github.com/FeSens/auto-arch-tournament). It works on one
-component at a time. Each round:
+1. **[docs/isa.md](docs/isa.md)**: the instruction set. It is short, and everything else is
+   built on it.
+2. **[`opentpu/kernels`](opentpu/kernels) and [docs/compiler.md](docs/compiler.md)**: how a
+   kernel becomes instructions.
+3. **[`opentpu/isasim.py`](opentpu/isasim.py)**: the reference semantics, in Python. When the
+   RTL and the simulator disagree, this is the spec.
+4. **[`rtl/`](rtl)**: the hardware, unit by unit, starting from
+   [`rtl/top/otpu_top.sv`](rtl/top/otpu_top.sv).
+5. **[docs/lfm2.md](docs/lfm2.md), [docs/qwen35.md](docs/qwen35.md),
+   [docs/benchmarks.md](docs/benchmarks.md)**: whole models, where their cycles go, and their
+   rooflines.
+6. **[docs/board.md](docs/board.md) and [docs/host.md](docs/host.md)**: the physical card:
+   clocks, DDR3 and PCIe bring-up, the driver and the tools.
+7. **[docs/lens.md](docs/lens.md) and [docs/observability.md](docs/observability.md)**: the
+   profiler and the hardware counters.
+8. **[docs/tourney.md](docs/tourney.md)**: the automated architecture tournament. LLM agents
+   propose RTL changes, and a change is kept only if it passes every bit-exact test and
+   synthesizes smaller or faster. Before the first Vivado build, it took the accelerator
+   logic's yosys estimate from 41 to 106 MHz.
 
-1. A few LLM agents read the current version of the component, its critical path and a log
-   of what earlier rounds tried.
-2. Each writes a hypothesis ("register the TMEM read data in front of the prescale
-   multiplier"), and another agent implements it in its own worktree.
-3. Each candidate must pass lint, the bit-exact RTL-vs-simulator tests on two
-   micro-architectures, a Qwen3 decode cycle-count check and the kernel performance tests.
-4. It is synthesized with yosys and kept only if it is smaller at the same estimated speed,
-   or faster at the same size.
+## Open problems
 
-The first overnight run tried 96 changes across six components and kept 38. With some manual
-fixes between units, the yosys estimate for the accelerator logic went from 41 MHz to 106 MHz
-and from 132K to 82K LUT. These are yosys estimates for the accelerator and its control logic
-only. They leave out the PCIe and DDR3 controllers, which add roughly 45K LUT more, and they
-say nothing certain about what Vivado will achieve after place and route. The logs and patches
-are in `tools/tourney/runs/`, and [docs/tourney.md](docs/tourney.md) explains how to run it.
+Good places to dig in, roughly in order of how much they matter for speed:
 
-```
-make tourney COMP=otpu_vpu N=5 K=2     # 5 rounds, 2 candidates per round
-make tourney-report COMP=otpu_vpu      # REPORT.md and a progress plot
-```
+- **DRAM efficiency.** Decode uses about half of the DDR3 bandwidth. The AXI adapter, request
+  batching and the KV-cache write path are where the rest is lost.
+- **4-bit weights.** A 4-bit MXU mode (4.25 bits per weight) is in progress. It roughly halves
+  the bytes per token, for a small accuracy cost that is measured per model.
+- **Clock speed.** The core runs at 100 MHz. The critical paths are known (TMEM arbitration,
+  long routes across the die), and builds at 112 to 116 MHz are close to closing timing.
+- **Qwen3.5's DeltaNet recurrence** runs on the vector unit and cannot keep up with DRAM.
+- **Prefill** shares each weight pass across several prompt rows; the MXU could do more per
+  pass.
+- **Production polish:** writing the image to flash, reading the DDR3 ECC counters, and
+  host overhead at long contexts.
 
-## The board
+## Contributing
 
-The target is a YPCB-00338 card with an xc7k480t, two DDR3 SODIMM channels through MIG, and
-PCIe through XDMA. [docs/board.md](docs/board.md) has the build and bring-up steps, and
-[docs/status.md](docs/status.md) has the current state.
+Issues and pull requests are welcome, from typo fixes to new units. A few house rules keep
+the project trustworthy:
 
-Current yosys estimate for the accelerator and control logic (with the hardware trace buffer):
-85.6K LUT, 42.4K FF, 267 DSP, 635 BRAM36. Adding the vendor IP gives roughly 130K LUT, about
-44% of the part. The first Vivado run will replace these estimates.
+- **Bit-exact or it didn't happen.** A change to the ISA, the simulator or the RTL must keep
+  `python3 -m pytest -q` passing, including RTL against simulator.
+- **Measure, then claim.** A performance number in a commit or a doc says how it was measured
+  (on the card, in RTL simulation, or from a model) and is re-measured before it is quoted.
+  Projections are labelled as projections.
+- **Keep it readable.** Code and docs are meant to be learned from. A clear explanation of why
+  something is the way it is counts as much as the change itself.
 
-The host software runs on top of the stock Xilinx XDMA driver:
+No card? Most of the work (compiler, simulator, RTL, profiler, models) needs only Python and
+Verilator.
 
-```
-otpu-selftest            registers, DRAM patterns, kernels, then a model (--sim for the board model)
-otpu-diag                every hardware check without stopping: a works / does-not-work matrix
-otpu-chat                chat with Qwen3-0.6B (or --model lfm2: LFM2.5-230M, qwen35: Qwen3.5-0.8B)
-otpu-smi                 temperature, estimated power, DRAM use, per-unit utilization
-otpu-lens                record a hardware trace and open it in Lens
-```
-
-Temperature comes from the FPGA's XADC. Power is only an estimate: Vivado's per-unit power
-report scaled by the utilization counters.
-
-## Running the tests
-
-You need Python 3.11+, numpy and pytest. The RTL tests also need Verilator 5 and skip
-themselves without it. The Qwen3, LFM2 and Qwen3.5 tests need `torch` and `transformers`;
-their real-model tests need the checkpoints in `models/Qwen3-0.6B`, `models/LFM2.5-230M` and
-`models/Qwen3.5-0.8B`.
-
-```
-python3 -m pytest -q
-```
+## Tests
 
 | Suite | What it checks |
 |---|---|
 | `test_fp.py` | RTL fp units vs the Python fp32 model on 245K vectors |
-| `test_isa.py` | Instruction semantics, loops, collectives, hazard detection |
-| `test_compiler.py` | Layouts, loop addressing, broadcasts, fusion safety |
+| `test_isa.py`, `test_vops.py` | instruction semantics, loops, collectives, hazards; the recurrence ops (RDOT, OUTER, LOG2) |
+| `test_compiler.py` | layouts, loop addressing, broadcasts, fusion safety |
 | `test_kernels.py` | MLP and attention on the simulator vs float64 references |
-| `test_rtl.py` | Identical DRAM and TMEM on the RTL and the simulator, kernels and random programs |
-| `test_perf.py` | Lower bounds on kernel efficiency on the RTL (MLP > 94.5%, attention > 60%) |
-| `test_board.py`, `test_host.py`, `test_observability.py` | The board model through the host driver |
-| `test_qwen3.py` | Qwen3 vs Hugging Face (tiny random model; one prompt on the real one) and one real token on the RTL |
-| `test_lfm2.py` | The same for LFM2, plus a tiny LFM2 on the board model |
-| `test_qwen35.py` | The same for Qwen3.5 (DeltaNet and gated attention), plus a tiny Qwen3.5 on the board model |
+| `test_rtl.py` | identical DRAM and TMEM on the RTL and the simulator: kernels and random programs |
+| `test_perf.py` | lower bounds on kernel efficiency on the RTL |
+| `test_board.py`, `test_host.py`, `test_observability.py`, `test_i2c.py` | the board model and the card's I2C through the host driver |
+| `test_qwen3.py`, `test_lfm2.py`, `test_qwen35.py` | each model vs Hugging Face, and real tokens on the RTL |
+| `test_lens.py`, `test_tourney.py` | the profiler and the tournament harness |
 
-## Known simplifications
+The real-model tests need the checkpoints in `models/` (`hf download Qwen/Qwen3-0.6B
+--local-dir models/Qwen3-0.6B`, and the same for `LiquidAI/LFM2.5-230M` and
+`Qwen/Qwen3.5-0.8B`).
 
-- QST writes one byte per cycle.
-- The MXU dot product is behavioural in simulation; on the FPGA it maps to DSP48 cascades.
-- MAX and MIN on NaN inputs are undefined.
+## Accuracy
+
+The models run in W8A8: the weights and the activations fed to the matrix unit are 8-bit
+integers. Against Hugging Face's fp32 Qwen3-0.6B, greedy continuations stay identical for a
+while, then drift apart where two candidate tokens are nearly tied. On eight short prompts, 2
+of 8 match for all 16 tokens, and every first difference is Hugging Face's second or third
+choice (`python3 tools/compare_hf.py --emulate`). A float64 model with the same 8-bit rounding
+picks the device's tokens, so the differences come from quantization, not from bugs.
 
 ## License
 
