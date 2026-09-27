@@ -190,4 +190,6 @@ one on both I2C buses. `otpu-smi` reports:
   "Power 21.5W measured". The first query scans the buses and saves what it found to
   `/tmp/otpu/<device>.i2c.json` (`otpu-i2c scan` and `otpu-diag` refresh it); later ones read
   only those devices. `--no-i2c` skips the buses.
-- **Power, estimated** otherwise, shown as "Power ~5.1W estimate": static + Σ over units of (that unit's dynamic power × its measured utilization). The per-unit powers come from the Vivado build's `report_power`, written as JSON to `build/vivado/reports/power.json`. Without that file, power shows as n/a.
+- **Power, estimated** otherwise. On the YPCB-00338 it is always the estimate: the first
+  card scan (2026-09-27, build b11bb679) found only the LM73 at 0x4a on bus 0 (43.00 C board
+  temperature) and nothing on the SMBus, so the card has no readable power monitor. Shown as "Power ~5.1W estimate": static + Σ over units of (that unit's dynamic power × its measured utilization). The per-unit powers come from the Vivado build's `report_power`, written as JSON to `build/vivado/reports/power.json`. Without that file, power shows as n/a.

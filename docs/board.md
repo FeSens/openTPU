@@ -204,7 +204,10 @@ Gen1 (section 5), so 2.5 GT/s is not a downtrained link. Device ID 7028 is set i
 design (Xilinx's default for a 7-series Gen2 x8 core; 7018 would be Gen1 x8; both are in the
 XDMA driver's table, so the driver binds either way). The block design also sets the class
 (12 00 00, processing accelerator), subsystem 10ee:4f54 and revision 01; bitstreams built
-before that show class 07 00 01 (serial), subsystem 10ee:0007, revision 00.
+before that show class 07 00 01 (serial), subsystem 10ee:0007, revision 00. Verified on the card
+(build b11bb679, 2026-09-27): `lspci -nn` shows `Processing accelerators [1200]: Xilinx
+Corporation Device [10ee:7028] (rev 01)`, subsystem `[10ee:4f54]`, and the driver binds it
+without the serial-port override.
 
 If the device does not appear, warm-reboot the host (the FPGA keeps its configuration across a
 warm reboot, as long as the slot power stays on), or write the flash, then power-cycle. If the
