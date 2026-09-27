@@ -276,7 +276,7 @@ def test_decoder_skips_cut_groups():
 def test_trace_ring_and_stop_when_full(have_verilator):
     """A ring smaller than the trace keeps the last records (a suffix of the lines); with
     STOP_WHEN_FULL it keeps the first DEPTH records (a prefix)."""
-    depth = 256
+    depth = 128                                   # the demo writes ~320 records: the ring wraps
     for ctrl in (TRACE_ENABLE, TRACE_ENABLE | TRACE_STOP_WHEN_FULL):
         t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=3,
                          plusargs=["+trace", "+bucket=64"], params={"TRACE_DEPTH": depth})
