@@ -90,6 +90,22 @@ def _gap_table(p, progs, pbytes, bpc):
     for ex, ph, cy, rl, t, idle in sorted(rows, key=lambda x: -x[0]):
         print(f"  {ph:12s} {cy:9d} {rl:9.0f} {ex:+9.0f}   MAC {t['mac']:8d}  starved "
               f"{t['starve']:7d}  blocked {t['block']:7d}  no MM {idle:7d}   B idle {t['bidle']:8d}")
+    # the MXU's starved / blocked windows by MM source line (the MM consuming at the window's end)
+    mms = sorted((r for r in p.slice_recs(0) if r.op == I.MM and r.end >= 0),
+                 key=lambda r: max(r.start, r.release))
+    by = defaultdict(lambda: [0, 0, 0])
+    k = 0
+    for i, c in enumerate(b["c"]):
+        while k + 1 < len(mms) and max(mms[k + 1].start, mms[k + 1].release) <= c:
+            k += 1
+        if mms and max(mms[k].start, mms[k].release) <= c <= mms[k].end + b["n"][i]:
+            t = by[_src(progs[0][mms[k].pc], 0)]
+            t[0] += b["ms"][i]
+            t[1] += b["mb"][i]
+            t[2] += b["mx"][i]
+    print("  MXU starved / blocked / MAC by MM source (top 8 by starved + blocked)")
+    for src, (ms, mb, mx) in sorted(by.items(), key=lambda x: -(x[1][0] + x[1][1]))[:8]:
+        print(f"    {src:50s} starved {ms:7d}  blocked {mb:7d}  MAC {mx:8d}")
 
 
 def main():
