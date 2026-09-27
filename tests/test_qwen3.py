@@ -213,3 +213,24 @@ def test_qwen3_0_6b_chunked_prefill_and_batch_match_hf():
                                do_sample=False)[0, len(ids):].tolist()
         assert got[s] == want[:len(got[s])] and len(got[s]) >= 5
     assert got[1] == Engine(spec, W, cap=256).generate(prompts[1], max_new=6)
+
+
+def test_tiny_vt_tiles_bit_exact(tiny, monkeypatch):
+    """A 512-token cache holds V^T in tiles of 256 tokens (compiler.KVDesc): a prefill chunk
+    across the tile edge, then decode past it, give the same logits bit for bit as the plain
+    [d, cap] layout."""
+    import opentpu.compiler as C
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 264)]
+
+    def run():
+        eng = Engine(spec, W, cap=512, rows=8)
+        eng.step(toks[0])
+        out = [eng.prefill(toks[1:257], chunk=8)]          # rows 249..256 cross the edge
+        out += [eng.step(t) for t in toks[257:]]
+        return out
+    assert C.vt_tile(512) == 256
+    tiled = run()
+    monkeypatch.setattr(C, "VT_TILE", 1 << 30)
+    plain = run()
+    assert all(np.array_equal(a.view(np.uint32), b.view(np.uint32)) for a, b in zip(tiled, plain))

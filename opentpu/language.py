@@ -24,7 +24,7 @@ import sys
 
 from . import isa as I
 from .compiler import (TEMP_RC_FN, Affine, Bcast, CompileError, KVDesc, QTensor, Stationary,
-                       Tensor, Tile, current, jit)
+                       Tensor, Tile, current, jit, tile_split)
 
 __all__ = ["jit", "program_id", "num_programs", "block_size", "tmem_words", "mxu_columns",
            "load", "store", "dot", "quantize", "exp2", "log2", "recip", "rsqrt", "abs", "maximum",
@@ -241,7 +241,7 @@ def kv_append(kv: KVDesc, h: int, pos, k: Tile | None, v: Tile | None) -> None:
     may be None: only the other is appended).
 
     K rows are written token-major with per-block scales; V is written transposed (one byte per
-    dimension, stride = capacity) with one scale per token.
+    dimension, stride = the V^T tile, see KVDesc) with one scale per token.
     """
     b = current()
     pos = Affine.of(pos)
@@ -256,4 +256,11 @@ def kv_append(kv: KVDesc, h: int, pos, k: Tile | None, v: Tile | None) -> None:
     # a head half as wide as its padded row (LFM2: 64 of D = 128) writes only its own V^T rows:
     # P.V never reads the padding rows, and each transposed byte is a separate DRAM write
     half = v.cols == 2 * kv.dv
-    b.store_quantized(v, vt.data + pos, vs.base + pos * 4, 1, vt.rs, row_scale=True, half=half)
+    # V^T is stored in tiles of vt.rs tokens (KVDesc): one store per tile the rows reach
+    t, r0 = pos, 0
+    while r0 < v.rows:
+        n = min(v.rows - r0, vt.rs - tile_split(t, vt.rs)[1])
+        vr = v if n == v.rows else v[r0:r0 + n, :]
+        b.store_quantized(vr, kv.vt_column(h, t), vs.base + t * 4, 1, vt.rs, row_scale=True,
+                          half=half)
+        t, r0 = t + n, r0 + n

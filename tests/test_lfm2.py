@@ -180,3 +180,24 @@ def test_lfm2_5_230m_token_on_rtl_is_bit_exact(have_verilator):
     assert np.array_equal(want.view(np.uint32), got.view(np.uint32))
     for s in range(eng.cfg.S):
         assert np.array_equal(isa.machine.slices[s].dram[:n], rtl.drams[s][:n])
+
+
+def test_tiny_vt_tiles_bit_exact(tiny, monkeypatch):
+    """A 512-token cache holds V^T in tiles of 256 tokens (compiler.KVDesc): a prefill chunk
+    across the tile edge, then decode past it, give the same logits bit for bit as the plain
+    [d, cap] layout."""
+    import opentpu.compiler as C
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 264)]
+
+    def run():
+        eng = Engine(spec, W, cap=512)
+        eng.step(toks[0])
+        out = [eng.prefill(toks[1:257], chunk=8)]          # rows 249..256 cross the edge
+        out += [eng.step(t) for t in toks[257:]]
+        return out
+    assert C.vt_tile(512) == 256
+    tiled = run()
+    monkeypatch.setattr(C, "VT_TILE", 1 << 30)
+    plain = run()
+    assert all(np.array_equal(a.view(np.uint32), b.view(np.uint32)) for a, b in zip(tiled, plain))
