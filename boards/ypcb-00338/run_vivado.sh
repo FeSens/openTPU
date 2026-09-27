@@ -7,6 +7,7 @@
 #   LANES=16 ./run_vivado.sh              # 16 VPU lanes / TMEM banks
 #   CORE_MHZ=80 ./run_vivado.sh           # slower core clock when 100 MHz does not close
 #   VIVADO_DOCKER=image ./run_vivado.sh   # Docker (e.g. Apple Silicon with Rosetta), see docs/board.md
+#   VIVADO_AS_USER=1                      # Docker on Linux: run as the calling user (see run())
 #   STEP=impl ./run_vivado.sh             # rerun implementation only (keeps project and synthesis)
 #   IMPL_STRATEGY=Performance_Explore     # a stronger implementation strategy (with bit or impl)
 #   The xc7k480t needs a paid or 30-day evaluation license, node-locked to a MAC address. In Docker
@@ -32,13 +33,21 @@ python3 "$here/scripts/gen_mig_prj.py" --speed "$speed"
 run() {  # run a Vivado Tcl script with arguments
   local script="$1"; shift
   if [[ -n "${VIVADO_DOCKER:-}" ]]; then
+    # VIVADO_AS_USER=1: run as the calling user (a Linux host whose files Docker does not remap:
+    # the .lic is often mode 600), with the image's entrypoint bypassed
+    local as_user=() shell=(bash)
+    if [[ -n "${VIVADO_AS_USER:-}" ]]; then
+      as_user=(--user "$(id -u):$(id -g)" -e "HOME=$out/.home" --entrypoint bash); shell=()
+      mkdir -p "$out/.home"
+    fi
     docker run --rm \
       -v "$root:$root" -w "$root" \
       ${VIVADO_MAC:+--mac-address "$VIVADO_MAC"} \
       ${XILINXD_LICENSE_FILE:+-v "$XILINXD_LICENSE_FILE:$XILINXD_LICENSE_FILE:ro" -e "XILINXD_LICENSE_FILE=$XILINXD_LICENSE_FILE"} \
       ${VIVADO_MOUNT:+-v "$VIVADO_MOUNT"} \
+      ${as_user[@]+"${as_user[@]}"} \
       "$VIVADO_DOCKER" \
-      bash -lc "source ${VIVADO_SETTINGS:-/tools/Xilinx/Vivado/2026.1/settings64.sh} && \
+      ${shell[@]+"${shell[@]}"} -lc "source ${VIVADO_SETTINGS:-/tools/Xilinx/Vivado/2026.1/settings64.sh} && \
                 vivado -mode batch -nojournal -log $out/$(basename "$script" .tcl).log \
                 -source $script -tclargs $*"
   else
