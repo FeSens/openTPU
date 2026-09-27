@@ -3,6 +3,7 @@
     python3 tools/bench_llm.py [--bw 80,100] [--batches 1,2,4,8] [--ctx 128,512,1024]
                                [--prompts 32,128,512] [--chunk 8] [--mcols 2] [--lanes 8]
                                [--validate] [--jobs 6] [--json out.json]
+                               [--wformat int8|int4|fp4] [--head-format int8|int4|fp4]
 
 Model: Qwen3-0.6B shapes (models/Qwen3-0.6B/config.json if present). Timing on this machine is
 data-independent (no data-dependent latencies or skips), so the model image holds random
@@ -31,6 +32,10 @@ bound / measured. "MXU-stream" is this MXU's own bound: an MM holds MCOLS rows a
 its weights from DRAM, so R rows stream every weight ceil(R / MCOLS) times (prefill: per
 chunk).
 
+--wformat / --head-format: the weight format of the layers / the LM head (opentpu/quant.py; the
+roofline counts their bytes, and the MXU-stream bound also counts the MXU's rate of one D-block
+of weights per cycle, which bounds 4-bit decode once DRAM delivers more than D/2 bytes a cycle).
+
 MCOLS (MXU stationary rows, <= LANES) and LANES are configuration overrides for MXU studies.
 Programs that exceed the board's 4K-instruction IMEM (large batch x long context: attention is
 unrolled per row, KV head and block) are run with a larger IMEM and flagged "imem".
@@ -53,6 +58,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from opentpu import quant as Q  # noqa: E402
 from opentpu import rtlsim  # noqa: E402
 from opentpu.isasim import board_config  # noqa: E402
 from opentpu.llm.qwen3 import Image, Spec, rope_tables  # noqa: E402
@@ -93,7 +99,8 @@ def random_weights(spec: Spec, seed: int = 0) -> dict:
 
 
 # ------------------------------------------------------------------------------ roofline
-def roofline(spec: Spec, cfg, rows: list, head_rows: int, bw: int) -> dict:
+def roofline(spec: Spec, cfg, rows: list, head_rows: int, bw: int, wformat: str = "int8",
+             head_format: str | None = None) -> dict:
     """Ideal cycles of one device run over `rows` = [(seq, pos)] (all layers) plus an LM head
     over `head_rows` rows: DRAM-bound (every weight byte once, each sequence's KV cache once)
     vs compute-bound (MCOLS x D MACs per cycle)."""
@@ -101,8 +108,9 @@ def roofline(spec: Spec, cfg, rows: list, head_rows: int, bw: int) -> dict:
     mats = [(spec.n_q * d, H), (spec.n_kv * d, H), (spec.n_kv * d, H), (H, spec.n_q * d),
             (spec.ffn, H), (spec.ffn, H), (H, spec.ffn)]
     params = sum(n * k for n, k in mats)
-    wbytes = sum(n * k + 4 * n * (k // D) for n, k in mats)
-    hbytes = spec.vocab * H + 4 * spec.vocab * (H // D) if head_rows else 0
+    wbytes = sum(n * Q.row_bytes(k, wformat, D) + 4 * n * (k // D) for n, k in mats)
+    hbytes = spec.vocab * Q.row_bytes(H, head_format or wformat, D) + \
+        4 * spec.vocab * (H // D) if head_rows else 0
     ctx = {}
     for sq, p in rows:                      # tokens of each sequence's cache read this run
         ctx[sq] = max(ctx.get(sq, 0), p + 1)
@@ -115,8 +123,10 @@ def roofline(spec: Spec, cfg, rows: list, head_rows: int, bw: int) -> dict:
     # this MXU: each MM holds MCOLS rows and streams its weights from DRAM, so R rows stream
     # every weight ceil(R / MCOLS) times
     passes = -(-len(rows) // cfg.MCOLS)
-    stream = (spec.layers * (passes * wbytes + kvbytes) +
-              -(-head_rows // cfg.MCOLS) * hbytes) / (D * bw / 100)
+    hpasses = -(-head_rows // cfg.MCOLS)
+    stream = (spec.layers * (passes * wbytes + kvbytes) + hpasses * hbytes) / (D * bw / 100)
+    # ... and at most one D-block of weights per cycle (4-bit: D/2 bytes)
+    stream = max(stream, (spec.layers * passes * params + hpasses * spec.vocab * H) / D)
     return {"dram": dram, "compute": comp, "bound": max(dram, comp),
             "kind": "DRAM" if dram >= comp else "compute", "stream": max(stream, comp)}
 
@@ -124,8 +134,10 @@ def roofline(spec: Spec, cfg, rows: list, head_rows: int, bw: int) -> dict:
 # ------------------------------------------------------------------------------ RTL runs
 class Bench:
     def __init__(self, spec: Spec, cfg_kw: dict, cap: int, batch: int, rows: int, bw: list,
-                 lat: int, jobs: int, verbose: bool = True):
+                 lat: int, jobs: int, verbose: bool = True, wformat: str = "int8",
+                 head_format: str | None = None):
         self.spec, self.cfg_kw, self.cap, self.batch, self.rows = spec, cfg_kw, cap, batch, rows
+        self.wkw = dict(wformat=wformat, head_format=head_format)
         self.bws, self.lat, self.jobs, self.verbose = bw, lat, jobs, verbose
         self.images = {}        # layers -> (Image, dram image)
         self.progs = {}
@@ -137,7 +149,8 @@ class Bench:
         spec = dataclasses.replace(self.spec, layers=layers)
         batch, rows = (self.batch, self.rows) if layers < self.spec.layers else (2, 2)
         cap = self.cap if layers < self.spec.layers else self.full_cap
-        probe = Image(spec, board_config(DRAM_BYTES=1 << 40, **self.cfg_kw), cap, batch, rows)
+        probe = Image(spec, board_config(DRAM_BYTES=1 << 40, **self.cfg_kw), cap, batch, rows,
+                      **self.wkw)
         kw = dict(self.cfg_kw)
         if imem:
             kw["IMEM_WORDS"] = imem
@@ -152,7 +165,7 @@ class Bench:
             W = self.W
             if layers > 2:
                 W = random_weights(spec)
-            img = Image(spec, cfg, cap, batch, rows)
+            img = Image(spec, cfg, cap, batch, rows, **self.wkw)
             dram = img.build(W)[0]
             x = np.asarray(W["model.embed_tokens.weight"][791:791 + rows], np.float32)
             b = np.ascontiguousarray(x).view(np.uint8).reshape(-1)
@@ -227,7 +240,8 @@ class Bench:
     def key(self, job) -> str:
         layers = job[0]
         return repr((job, sorted(self.cfg_kw.items()), self.lat, self.cfg(layers)[2:],
-                     rtlsim.BOARD_UARCH))
+                     rtlsim.BOARD_UARCH) + ((self.wkw,) if self.wkw["wformat"] != "int8" or
+                                            self.wkw["head_format"] not in (None, "int8") else ()))
 
     def run_all(self, jobs):
         """Run the jobs (in parallel); results already in the cache file are reused."""
@@ -301,7 +315,8 @@ def analyse(a, spec, res):
     cfg = board_config(**cfg_overrides(a))
     out = {"decode": [], "prefill": [], "head": {}, "config": {
         "MCOLS": cfg.MCOLS, "LANES": cfg.LANES, "D": cfg.D, "chunk": C, "lat": a.lat,
-        "f_MHz": F_MHZ, "uarch": rtlsim.BOARD_UARCH}}
+        "f_MHz": F_MHZ, "uarch": rtlsim.BOARD_UARCH, "wformat": a.wformat,
+        "head_format": a.head_format or a.wformat}}
     for bw in a.bw:
         ctx0 = a.ctx[0]
         head = {}
@@ -325,7 +340,8 @@ def analyse(a, spec, res):
                     layer = c2["cycles"] - c1["cycles"]
                     fixed = c1["cycles"] - layer
                     step = fixed + L * layer + head[b]
-                rl = roofline(spec, cfg, [(s, ctx) for s in range(b)], b, bw)
+                rl = roofline(spec, cfg, [(s, ctx) for s in range(b)], b, bw, a.wformat,
+                              a.head_format)
                 out["decode"].append({
                     "bw": bw, "b": b, "ctx": ctx, "layer": layer, "fixed": fixed,
                     "step": step, "tok_s": b * F_MHZ * 1e6 / step,
@@ -350,9 +366,11 @@ def analyse(a, spec, res):
             tot = float(sum(np.interp(p0, xs, ys) for p0 in starts)) + head[1]
             # the chunked schedule's own bound: weights streamed once per chunk
             rl_c = sum(roofline(spec, cfg, [(0, p0 + i) for i in range(min(C, P - p0))],
-                                1 if p0 == starts[-1] else 0, bw)["stream"] for p0 in starts)
+                                1 if p0 == starts[-1] else 0, bw, a.wformat,
+                                a.head_format)["stream"] for p0 in starts)
             # ideal prefill: the whole prompt in one pass (weights once) vs compute
-            ideal = roofline(spec, cfg, [(0, i) for i in range(P)], 1, bw)
+            ideal = roofline(spec, cfg, [(0, i) for i in range(P)], 1, bw, a.wformat,
+                             a.head_format)
             out["prefill"].append({
                 "bw": bw, "P": P, "chunks": len(starts), "cycles": tot,
                 "tok_s": P * F_MHZ * 1e6 / tot, "ttft_ms": tot / (F_MHZ * 1e3),
@@ -379,7 +397,8 @@ def cfg_overrides(a) -> dict:
 def report(out) -> str:
     c = out["config"]
     s = [f"Qwen3-0.6B on the RTL, board config MCOLS={c['MCOLS']} LANES={c['LANES']} "
-         f"D={c['D']}, {c['f_MHz']} MHz, AXI lat {c['lat']}, prefill chunk {c['chunk']}", "",
+         f"D={c['D']}, {c['f_MHz']} MHz, AXI lat {c['lat']}, prefill chunk {c['chunk']}, "
+         f"weights {c['wformat']} (LM head {c['head_format']})", "",
          "Decode (tokens/s over all sequences; roofline = max(DRAM, compute))",
          "| bw | b | ctx | cycles/step | ms/step | tok/s | roofline tok/s | bound | achieved "
          "| MXU-stream bound tok/s | achieved |",
@@ -423,6 +442,8 @@ def main():
     ap.add_argument("--validate", action="store_true",
                     help="also run the full model once (b=1 decode at the first ctx, first bw)")
     ap.add_argument("--jobs", type=int, default=6)
+    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"])
+    ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"])
     ap.add_argument("--json", help="write the results here")
     ap.add_argument("--cache", help="RTL result cache (JSON), reused when the RTL/kernels "
                     "are unchanged -- delete it after changing either")
@@ -431,7 +452,8 @@ def main():
     kw = cfg_overrides(a)
     rows = max(max(a.batches), a.chunk)
     cap = -(-(max(a.ctx + [max(a.prompts)]) + rows + 1) // 128) * 128
-    bench = Bench(spec, kw, cap, max(a.batches), rows, a.bw, a.lat, a.jobs)
+    bench = Bench(spec, kw, cap, max(a.batches), rows, a.bw, a.lat, a.jobs,
+                  wformat=a.wformat, head_format=a.head_format)
     bench.full_cap = -(-(a.ctx[0] + 2) // 128) * 128
     bench.cache = a.cache
     jobs = plan(a, spec)

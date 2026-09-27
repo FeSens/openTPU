@@ -231,15 +231,21 @@ module otpu_mxu
   // 4-bit elements: nibble i of the chunk half; int4 two's complement, E2M1 as twice its value
   // ({0, 1, 2, 3, 4, 6, 8, 12}, sign in bit 3)
   function automatic logic [7:0] dec4(input logic [3:0] c, input logic fp);
-    logic [7:0] mag;
     if (!fp) return {{4{c[3]}}, c};
-    case (c[2:0])
-      3'd5: mag = 8'd6;
-      3'd6: mag = 8'd8;
-      3'd7: mag = 8'd12;
-      default: mag = 8'(c[2:0]);
+    case (c)
+      4'd5: return 8'd6;
+      4'd6: return 8'd8;
+      4'd7: return 8'd12;
+      4'd8: return 8'd0;
+      4'd9: return -8'sd1;
+      4'd10: return -8'sd2;
+      4'd11: return -8'sd3;
+      4'd12: return -8'sd4;
+      4'd13: return -8'sd6;
+      4'd14: return -8'sd8;
+      4'd15: return -8'sd12;
+      default: return 8'(c);
     endcase
-    return c[3] ? -mag : mag;
   endfunction
   always_comb
     for (int i = 0; i < D; i++)
@@ -287,11 +293,11 @@ module otpu_mxu
   // ws6 feeds the first fp multiplier's B operand: a reset flop, never an SRL tap
   always_ff @(posedge clk) if (rst) ws6 <= '0; else if (en_c) ws6 <= ws5;
 
-  // dot-product latency S0 -> s4 (the tree: 6 register levels: products, pairs, groups,
-  // sub-blocks, times their multipliers, block sum)
+  // dot-product latency S0 -> s4 (the tree: 7 register levels: operands (the decoded weights),
+  // products, pairs, groups, sub-blocks, times their multipliers, block sum)
   localparam int NG = D / CL;
   localparam int TL = (NG <= 1) ? 0 : (NG <= 4) ? 1 : (NG <= 16) ? 2 : 3;
-  localparam int LDOT = (IMPL == 0) ? 6 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
+  localparam int LDOT = (IMPL == 0) ? 7 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
 
   // ---- S1 .. S4: the exact integer dot products of the chunk with every column's ACT block;
   // s4 (with m4, ws4) is the chunk's result LDOT cycles after S0.
@@ -317,22 +323,28 @@ module otpu_mxu
     localparam int NG3 = D / GS, GPB = NG3 / 4;
     logic signed [19:0] s3 [MCOLS][NG3];
     logic [SW-1:0] u [MCOLS][4], v [MCOLS][4];
-    logic [15:0] mb1, mb2, mb3, mb4;
-    cm_t  mt4, mt5;
-    f32_t wt4, wt5;
+    logic [15:0] mbz, mb1, mb2, mb3, mb4;
+    cm_t  mz, mt4, mt5;
+    f32_t wz, wt4, wt5;
+    // the operands registered once more (the multipliers' input registers): the weight decode
+    // sits between the chunk FIFO's read register and here, not in front of the multipliers
+    logic [MCOLS*D*8-1:0] ar;
+    logic [D*8-1:0]       wr;
     always_ff @(posedge clk) if (en_c) begin
+      ar <= a0;
+      wr <= wd0;
       for (int p = 0; p < MCOLS / 2; p++) begin
         for (int i = 0; i < D; i++) begin
           logic signed [24:0] pa;
-          pa = $signed({a0[(2*p*D + i)*8 +: 8], 16'b0}) + 25'($signed(a0[((2*p+1)*D + i)*8 +: 8]));
-          pm[p][i] <= 34'(pa) * 34'($signed(wd0[i*8 +: 8]));
+          pa = $signed({ar[(2*p*D + i)*8 +: 8], 16'b0}) + 25'($signed(ar[((2*p+1)*D + i)*8 +: 8]));
+          pm[p][i] <= 34'(pa) * 34'($signed(wr[i*8 +: 8]));
         end
         for (int q = 0; q < D / 2; q++)
           pq[p][q] <= pm[p][2*q+1] + (pm[p][2*q] + PK);
       end
       if (MCOLS % 2 == 1) begin
         for (int i = 0; i < D; i++)
-          pr[i] <= 16'(int'($signed(a0[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(wd0[i*8 +: 8])));
+          pr[i] <= 16'(int'($signed(ar[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(wr[i*8 +: 8])));
         for (int q = 0; q < D / 2; q++)
           prq[q] <= 17'($signed(pr[2*q])) + 17'($signed(pr[2*q+1]));
       end
@@ -363,7 +375,8 @@ module otpu_mxu
           s4[j] <= $signed(t);
         end
       end
-      m1 <= m0; ws1 <= ws0; mb1 <= mb0;
+      mz <= m0; wz <= ws0; mbz <= mb0;
+      m1 <= mz; ws1 <= wz; mb1 <= mbz;
       m2 <= m1; ws2 <= ws1; mb2 <= mb1;
       m3 <= m2; ws3 <= ws2; mb3 <= mb2;
       mt4 <= m3; wt4 <= ws3; mb4 <= mb3;

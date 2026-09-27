@@ -96,8 +96,9 @@ row's maximum: `T[out + M*ors + j] = fold(max, y[j][0..N-1])`, folded from `n = 
 `RMAX` VOP; the softmax row max comes for free from the MXU epilogue), bit3 `ASCALE` (needs
 `UNIT` and `ACC`; `ssa` is then the TMEM address of M per-row factors and the old accumulator
 is rescaled first: `y = T[out + j*ors + n] * T[ssa + j] + acc[j]` -- the flash-attention
-correction step, done in the MXU epilogue). The streamed rows are D-byte aligned (`sa` and `rs`
-are multiples of D): the MXU streams whole D-byte DRAM chunks.
+correction step, done in the MXU epilogue), bits 5:4 `WF`, the streamed weights' format (below;
+0 = int8). The streamed rows are D-byte aligned (`sa` and `rs` are multiples of D): the MXU
+streams whole D-byte DRAM chunks.
 
 ```
 for n in 0..N-1:
@@ -112,6 +113,28 @@ for n in 0..N-1:
     y = acc[j];  if ACC: y = T[out + j*ors + n] + acc[j]
     T[out + j*ors + n] = y
 ```
+
+#### Weight formats
+
+`WF = 0` (int8) is the loop above. `WF = 1` (int4) and `WF = 2` (FP4, E2M1) stream 4-bit
+elements, two per byte: block `k` of row `n` is the `D/2` bytes at `sa + n*rs + k*D/2`
+(two blocks per D-byte chunk; a row's last chunk is half used when KB is odd), element `i` in
+the low nibble of byte `i/2` for even `i`, the high nibble for odd `i`. A nibble `c` is the
+integer `w = c - 16*c[3]` (int4, -8..7) or, for E2M1, twice its value: `c[2:0]` in
+{0, 1, 2, 3, 4, 6, 8, 12} with `c[3]` the sign (so a stored E2M1 matrix carries half its
+scale). Each block has one scale word `sw = M32[ssa + n*srs + 4k]`, two-level: `ws = bf16(sw[15:0])`
+(the fp32 with bits `sw[15:0] << 16`) and four unsigned multipliers `m_b = sw[16+4b +: 4]`, one
+per sub-block `b` of `D/4` elements. The block's integer is the exact
+
+```
+isum = sum_b m_b * sum_{i in b} ACT[j][(ab+k)*D + i] * w[i]      (|isum| < 2^22 at D = 128)
+```
+
+and everything after it (`i2f`, `* ws`, `* ASCALE`, the sums, ACC, RMAX, ASCALE) is as for int8.
+With `UNIT`, `ws = 1.0` and every `m_b = 1`. opentpu/quant.py makes these matrices
+(`quantize_w4`: `ws` a bf16 block scale, `m_b` in 1..15 chosen to minimize the squared error) and
+docs/quant.md compares the formats. The stationary operand (ACT RAM), the KV cache and QST stay
+int8.
 
 ### QACT
 
