@@ -156,6 +156,9 @@ module otpu_mxu
   (* ram_style = "block" *) logic [31:0]    f_scale [DEPTH];
   logic [PW-1:0]  f_head, f_tail, s_head, s_tail;
   logic [PW:0]    f_count, s_count;
+  // FIFO read addresses, kept equal to (last group ? head : head + ck) by the pops: a register,
+  // so no adder sits in front of the block RAM address (entry k of the row)
+  logic [PW-1:0]  f_rd, s_rd;
 
   // ================================================================== consumer control
   logic [15:0] ck;
@@ -170,9 +173,15 @@ module otpu_mxu
   wire f_av     = (c_G == 8'd1) ? (f_count != 0) : (cg != 0 || 32'(f_count) > 32'(ck));
   wire s_av     = (c_G == 8'd1) ? (s_count != 0) : (cg != 0 || 32'(s_count) > 32'(ck));
   wire pop      = more && f_av && (c_unit || s_av) && (ck != 0 || rows_live < RF);
-  wire [PW-1:0] f_rd = last_g ? f_head : f_head + PW'(ck);    // FIFO read: entry k of the row
-  wire [PW-1:0] s_rd = last_g ? s_head : s_head + PW'(ck);
   wire en_c     = pop || !(more && ck != 0);       // freeze only in the middle of a row
+`ifndef SYNTHESIS
+  always @(posedge clk) if (!rst && more) begin
+    if (f_rd != (last_g ? f_head : f_head + PW'(ck)))
+      $fatal(1, "otpu_mxu: FIFO read address %0d, head %0d, k %0d", f_rd, f_head, ck);
+    if (!c_unit && s_rd != (last_g ? s_head : s_head + PW'(ck)))
+      $fatal(1, "otpu_mxu: scale read address %0d, head %0d, k %0d", s_rd, s_head, ck);
+  end
+`endif
   wire want_iss = i_act && (occ < (PW+1)'(DEPTH));
   wire go_iss   = want_iss && b_gnt && (i_unit || a_gnt);
 
@@ -653,8 +662,8 @@ module otpu_mxu
       i_act <= 1'b0;
       q_h <= 1'b0; q_n <= '0;
       occ <= '0;
-      f_head <= '0; f_tail <= '0; f_count <= '0;
-      s_head <= '0; s_tail <= '0; s_count <= '0;
+      f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
+      s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
       ck <= '0; cg <= '0; dg <= '0; c_left <= '0; rows_live <= '0;
       rf_h <= '0; rf_t <= '0; rf_n <= '0;
       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
@@ -748,6 +757,9 @@ module otpu_mxu
           if (!c_unit) s_head <= s_head + 1;
           c_left <= c_left - 1;
         end
+        // the next read: the next entry, or back to the head for the row's next group
+        f_rd <= (last_k && !last_g) ? f_head : f_rd + 1;
+        if (!c_unit) s_rd <= (last_k && !last_g) ? s_head : s_rd + 1;
         if (ck == 0) rl = rl + 1;
         ck <= last_k ? '0 : ck + 1;
         if (last_k) cg <= last_g ? '0 : cg + 1;
