@@ -152,15 +152,37 @@ make flash MCS=../../build/deploy_r3route_74d4859/otpu.mcs          # permanent:
 Without `BIT=` / `MCS=` the scripts take `build/vivado/otpu.bit` / `otpu.mcs` (the last build).
 `program.sh` takes the same file as its argument (`./program.sh [--vivado|--flash] [file]`).
 
-- **openFPGALoader** (macOS or Linux) with a Xilinx Platform Cable USB II: the JTAG chain has an
-  Inspur CPLD (IDCODE 0x10931093) in front of the FPGA; `program.sh` declares it
-  (`--misc-device`, `--index-chain 0`). The cable needs its FX2 firmware on every plug-in
-  (`XUSB_FIRMWARE`, default the inspur-adventures copy). See the `ypcb-00338` / `xpcu-macos`
-  skills for the macOS cable quirks; after "Unable to read constant" on every attempt, replug.
+- **openFPGALoader** (macOS or Linux), with either cable:
+  - an FTDI FT232H adapter (Digilent HS2 style, USB 0403:6014): `CABLE=digilent_hs2 make
+    program`. On the development PC this cable's chain shows the FPGA alone (`openFPGALoader
+    -c digilent_hs2 --detect`: index 0, IDCODE 0x23751093, xc7k480t); `program.sh`'s CPLD
+    declaration is then unused and `--index-chain 0` is the FPGA. The loads at first light
+    were done with this cable (`openFPGALoader -c digilent_hs2`).
+  - a Xilinx Platform Cable USB II (the default): the JTAG chain has an Inspur CPLD
+    (IDCODE 0x10931093) in front of the FPGA, which `program.sh` declares (`--misc-device`,
+    `--index-chain 0`). The cable needs its FX2 firmware on every plug-in (`XUSB_FIRMWARE`,
+    default the inspur-adventures copy). See the `ypcb-00338` / `xpcu-macos` skills for the
+    macOS cable quirks; after "Unable to read constant" on every attempt, replug.
+
+  On Linux, `otpu-setup` installs the udev rule that lets a normal user open either cable.
+  Arch: the `openfpgaloader` package (1.1.1 on the development PC; when the mirror lacks it,
+  from archive.archlinux.org). Ubuntu 24.04 packages 0.12.0 and 22.04 none: build it from
+  source (github.com/trabucayre/openFPGALoader) for a current version with the BPI bridge.
 - **Vivado hardware manager** (`--vivado`): runs `vivado -mode batch` on the machine with the
   cable (hw_server local). Give it an absolute path.
 
 Programming over JTAG does not survive a power cycle; the flash does.
+
+### Write the flash (boot without JTAG)
+
+`make flash MCS=...` (`program.sh --flash`) writes the `.mcs` of a build into the card's BPI
+flash through the FPGA: openFPGALoader first loads its `bpiOverJtag_xc7k480tffg1156` bridge
+(shipped with openFPGALoader 1.1.1 on the development PC), which replaces the running design,
+so stop every program using the card first. After a power cycle the FPGA configures from flash
+in time for enumeration: no JTAG and no rescan. Until then the card boots the image already in
+flash: on the development PC that image enumerates as 10ee:7028 with class 05 80 00 and a 2 MiB
+64-bit BAR (from dmesg at boot), is not openTPU, and `otpu-setup --check` says so. Not done on
+the card yet: the flash still holds that image.
 
 ### After programming: PCIe
 
@@ -169,41 +191,41 @@ to rescan after loading. With the card in the Linux PC (powered by it) and the J
 it, program, then on the PC:
 
 ```sh
-opentpu/host/setup_pcie.sh --rescan      # remove + rescan the device, (re)load the driver, ID check
-# or by hand:
-sudo sh -c 'echo 1 > /sys/bus/pci/rescan'
-lspci -d 10ee: -nn -vv    # expect: [10ee:7028], LnkSta: Speed 2.5GT/s, Width x8
+sudo otpu-setup --rescan     # remove + rescan the card, bind the driver, read the ID register
+otpu-setup --check           # the whole host setup, the card and the link
 ```
 
 Expect the link at Gen1 x8 (2.5 GT/s, `LnkCap` also 2.5GT/s x8): the XDMA is configured for
 Gen1 (section 5), so 2.5 GT/s is not a downtrained link. Device ID 7028 is set in the block
-design (Xilinx's default for a 7-series Gen2 x8 core, 7018 would be Gen1 x8; both are in the
-XDMA driver's table, so the driver binds either way).
+design (Xilinx's default for a 7-series Gen2 x8 core; 7018 would be Gen1 x8; both are in the
+XDMA driver's table, so the driver binds either way). The block design also sets the class
+(12 00 00, processing accelerator), subsystem 10ee:4f54 and revision 01; bitstreams built
+before that show class 07 00 01 (serial), subsystem 10ee:0007, revision 00.
 
 If the device does not appear, warm-reboot the host (the FPGA keeps its configuration across a
-warm reboot, as long as the slot power stays on) -- or write the flash (`make flash`), then
-power-cycle: the FPGA configures from flash at power-up in time for enumeration. If the link
-trains at a lower width, check `LnkSta` and the PCIe placement note in section 6.
+warm reboot, as long as the slot power stays on), or write the flash, then power-cycle. If the
+link trains at a lower width, check `LnkSta` and the PCIe placement note in section 6.
 
-## 3. Host driver (Linux PC)
+## 3. Host setup and bring-up checklist
 
-`opentpu/host/setup_pcie.sh` does all of this ([host.md](host.md) sections 2-3). By hand:
+`otpu-setup` does the host side ([host.md](host.md) sections 2-3: the XDMA driver with DKMS,
+the udev rules, the driver options). On a new PC, in order:
 
-```sh
-git clone https://github.com/Xilinx/dma_ip_drivers
-cd dma_ip_drivers/XDMA/linux-kernel/xdma && make && sudo make install   # to /lib/modules/$(uname -r)/xdma
-sudo modprobe xdma                     # XDMA_POLL=1 setup_pcie.sh / modprobe xdma poll_mode=1: no interrupts
-ls /dev/xdma0_*                        # xdma0_user, xdma0_h2c_0, xdma0_c2h_0, ...
-```
+1. `pip install -e . torch transformers safetensors` (the `otpu-*` commands) and the
+   checkpoints in `models/` (`Qwen3-0.6B`, `LFM2.5-230M`, `Qwen3.5-0.8B`).
+2. `sudo otpu-setup`: builds and installs the driver, installs the rules. Once per PC, and
+   again after a kernel upgrade if DKMS is not installed.
+3. Load the bitstream: `make program` (JTAG), then `sudo otpu-setup --rescan`; or, once the
+   flash holds it, just power up.
+4. `otpu-setup --check`: exits 0 with "all in place" when driver, rules, card, link, device
+   nodes and the ID register are right; otherwise it names what is not.
+5. `otpu-selftest`, then `otpu-diag` and chat (section 4).
 
 `/dev/xdma0_user` is BAR0 (the control registers), `/dev/xdma0_h2c_0` / `_c2h_0` move data
 to / from the DDR3 at the file offset = AXI address (MIG0 at 0, MIG1 at 0x8000_0000). The
 accelerator's logical DRAM is interleaved over the two channels in 64-byte beats;
 opentpu/host/board.py applies the map (never write the channels directly except in the
 self-test).
-
-Python on the host: `pip install -e . torch transformers safetensors` (the `otpu-*`
-commands), and the checkpoints in `models/` (`Qwen3-0.6B`, `LFM2.5-230M`, `Qwen3.5-0.8B`).
 
 ## 4. Self-test, diagnostic, then chat
 
@@ -262,8 +284,8 @@ Found at bring-up, fixed in the host (558a4bf): the DRAM must be written once af
 (ECC: a read of a never-written beat hangs; `Board.scrub`, ~6 s, done by every tool), register
 access must be single 32-bit loads / stores, and DMA reads must not use `preadv` (the XDMA driver's
 asynchronous read_iter crashes kernel 7.1). The XDMA's PCI class code is "serial controller",
-so the 8250 driver probes the card: a udev rule sets `driver_override=xdma` (a class code in
-bd.tcl is the real fix, pending).
+so the 8250 driver probes the card: a udev rule sets `driver_override=xdma` (now installed by
+`otpu-setup`; bd.tcl sets class 12 00 00 from the next build on).
 
 ## 5. Clocks and the roofline
 

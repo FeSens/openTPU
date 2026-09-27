@@ -18,11 +18,12 @@ The card's AXI address map: DDR3 channel 0 at `0x0000_0000`, channel 1 at `0x800
 64-byte beats (logical beat *b* is on channel *b* % 2 at offset (*b* // 2) * 64).
 `opentpu/host/board.py` applies that map, so everything above it uses logical addresses.
 
-The host software is the package `opentpu/host` (userspace; the kernel side is the stock
-Xilinx XDMA driver). `pip install -e .` installs its commands:
+The host software is the package `opentpu/host` (userspace; the kernel side is the Xilinx
+XDMA driver, installed by `otpu-setup`). `pip install -e .` installs its commands:
 
 | Command | What it does |
 |---|---|
+| `otpu-setup` | the PC's setup: XDMA driver, udev rules, rescan after JTAG (sections 2-3) |
 | `otpu-smi` | the cards' state, like nvidia-smi (section 8) |
 | `otpu-selftest` | staged bring-up (section 4) |
 | `otpu-diag` | the full hardware diagnostic: every check, no stopping, a works / does-not-work matrix (section 5) |
@@ -35,7 +36,8 @@ Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens>` does th
 
 - A Linux x86-64 PC with a free x8 (or x16) PCIe slot. The card takes power from the slot;
   make sure the slot provides enough power and there is airflow over the heatsink.
-- Kernel headers for the running kernel (`linux-headers-$(uname -r)`), `gcc`, `make`, `git`.
+- Kernel headers for the running kernel, `gcc`, `make`, `git`, `patch`, and preferably DKMS
+  (section 2 lists the packages).
 - Python 3.10+ with `numpy`; for the model also `torch`, `transformers`, `safetensors`.
 - This repository, and the models in `models/` (Hugging Face checkpoints, e.g.
   `huggingface-cli download Qwen/Qwen3-0.6B --local-dir models/Qwen3-0.6B`; likewise
@@ -44,58 +46,132 @@ Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens>` does th
   Leave `OTPU_MCOLS` / `OTPU_LANES` unset (they configure the simulators); when set, they must
   match the bitstream or the tools stop, naming both values.
 
-## 2. Build and load the XDMA driver
+## 2. Install the driver: otpu-setup
 
-`opentpu/host/setup_pcie.sh` does sections 2 and 3 in one go (finds the card, builds and loads the
-driver, adds the udev rule, reads the ID register); `opentpu/host/setup_pcie.sh --rescan` after JTAG
-programming. The manual steps:
+`sudo otpu-setup` (the script `opentpu/host/setup_pcie.sh`, shipped in the package) sets up
+the PC once; re-running it is safe, it changes only what differs:
+
+- the Xilinx XDMA driver from `dma_ip_drivers` at a pinned commit (b846609, driver version
+  2025.2.0) with `opentpu/host/pcie/xdma-otpu.patch`: a Makefile fix for kernels >= 6.13
+  (`$(src)` is relative there, and `EXTRA_CFLAGS` is ignored) and an `otpu` module tag that
+  `--check` reads. Source in `/usr/src/otpu-xdma-b846609.1`.
+- with DKMS installed, the module is a DKMS package (`otpu-xdma`), rebuilt at every kernel
+  upgrade; without DKMS it goes to `/lib/modules/$(uname -r)/updates/xdma.ko`, and after a
+  kernel upgrade you re-run `sudo otpu-setup` (`otpu-setup --check` reports the missing module).
+- the name clash: the kernel ships its own `xdma` module (`drivers/dma/xilinx`, AMD's platform
+  DMA driver for Alveo cards, not a PCI driver for this card). Ours, in `updates/`, takes
+  precedence (depmod's search order). DKMS also moves the kernel's file aside into
+  `/var/lib/dkms/otpu-xdma/original_module` and puts it back at `--uninstall`.
+- udev rules (`opentpu/host/pcie/*.rules`, installed in `/etc/udev/rules.d/`):
+  `59-otpu-xdma.rules` sets `driver_override=xdma` on the card and loads the driver;
+  `60-otpu.rules` gives non-root access to `/dev/xdma*_user`, `_h2c_*`, `_c2h_*`, `_events_*`
+  and to the JTAG cables (FT232H 0403:6014, Platform Cable USB II 03fd:*). `/dev/xdma*_control`,
+  `_xvc` and `_bypass` stay root-only: `_control` programs the DMA engines, which can then
+  write anywhere in host memory.
+- the driver's completion mode in `/etc/modprobe.d/otpu-xdma.conf` (see below).
+- then it loads the driver, binds the card and reads the ID register ("OTPU").
 
 ```sh
-git clone https://github.com/Xilinx/dma_ip_drivers
-cd dma_ip_drivers/XDMA/linux-kernel/xdma
-make
-sudo make install            # or: sudo insmod xdma.ko
-sudo modprobe xdma           # after make install
-ls /dev/xdma0_*              # xdma0_user, xdma0_h2c_0, xdma0_c2h_0, xdma0_control, ...
+pip install -e .                 # the otpu-* commands, otpu-setup included
+sudo otpu-setup                  # install / update (otpu-setup asks for sudo itself)
+otpu-setup --check               # what is installed and working; exit 1 if anything is not
+sudo otpu-setup --rescan         # after a JTAG load (section 3)
+sudo otpu-setup --uninstall      # remove it all again
+otpu-setup --help                # the other options: --poll, --irq, --no-dkms, --src DIR
 ```
 
-The driver only binds to the PCI IDs in its table (`xdma/xdma_mod.c`, `pci_ids[]`). The block
-design keeps Xilinx's default vendor ID `10ee` and the default XDMA device ID; if `lspci`
-shows an ID that is not in the table, add it there and rebuild the driver.
-
-Non-root access: a udev rule, e.g. `/etc/udev/rules.d/60-xdma.rules`:
+The driver is never unloaded under a running program: if the card is in use, the install
+says so and the new module or mode takes effect at the next `--rescan` or reboot.
+`otpu-setup --check` on the development PC after a fresh install and `--rescan` (Arch Linux,
+kernel 7.1.4, 2026-09-27; kernel and JTAG lines left out):
 
 ```
-KERNEL=="xdma[0-9]*", MODE="0666"
+== driver module
+   ok    /lib/modules/7.1.4-arch1-1/updates/dkms/xdma.ko.zst (openTPU build b846609.1)
+   ok    DKMS: otpu-xdma/b846609.1, 7.1.4-arch1-1, x86_64: installed (Original modules exist)
+   ok    loaded, poll_mode=0 (interrupts)
+== configuration
+   ok    /etc/udev/rules.d/59-otpu-xdma.rules
+   ok    /etc/udev/rules.d/60-otpu.rules
+   ok    /etc/modprobe.d/otpu-xdma.conf: poll_mode=0
+== card 0000:01:00.0: [10ee:7028] subsystem 10ee:0007 revision 00
+   ok    class 0x070001: 16450 serial port (bitstream before the PCI identity change; ...)
+   ok    link 2.5 GT/s PCIe x8 (the design: Gen1 x8)
+   ok    bound to xdma
+   ok    /dev/xdma0_{user,h2c_0,c2h_0} usable by bonetto
+   ok    ID register 0x4f545055 (OTPU)
+
+all in place
 ```
 
-then `sudo udevadm control --reload && sudo udevadm trigger` (or reload the driver).
+**Distributions.** Arch: `pacman -S base-devel linux-headers dkms` (the headers of your
+kernel flavor, e.g. `linux-lts-headers`). Debian / Ubuntu: `apt install build-essential
+linux-headers-$(uname -r) dkms`. With Secure Boot on, the kernel only loads signed modules:
+DKMS signs with its own key (`/var/lib/dkms/mok.pub`), which you enroll once with
+`sudo mokutil --import /var/lib/dkms/mok.pub` and a reboot. Tested: Arch Linux with kernel
+7.1.4 (install, DKMS, card). Build only, in containers without a card: Ubuntu 24.04 (headers
+6.8.0-142, gcc 13) and 22.04 (5.15.0-194, gcc 11), both the plain build and the DKMS install.
 
-If DMA transfers fail on a machine with the IOMMU on, boot with `iommu=pt` (Intel:
-`intel_iommu=on iommu=pt`). If DMA calls hang and `dmesg` shows XDMA timeouts, the interrupts
-do not arrive: reload in poll mode, `sudo modprobe -r xdma; sudo modprobe xdma poll_mode=1`
-(`XDMA_POLL=1 opentpu/host/setup_pcie.sh`).
+**PCI identity.** Bitstreams built before the PCI identity change in `bd.tcl` report class
+07 00 01 (a 16450 serial port) with subsystem 10ee:0007 and revision 00. For those, the kernel's
+8250_pci driver probes the card first (seen in dmesg as `serial 0000:01:00.0: enabling device`)
+and fails, and the udev rule then hands the card to xdma. Newer bitstreams report class
+12 00 00 (processing accelerator), subsystem 10ee:4f54 and revision 01, which no other driver
+claims. The device ID stays 7028 in both, as in the driver's `pci_ids[]`.
+
+**Poll or interrupt mode.** The driver waits for a DMA transfer to finish either by interrupt
+(`poll_mode=0`, the default) or by polling the engine's write-back status from its completion
+threads (`poll_mode=1`). Bring-up ran in poll mode because a 64-byte read timed out in
+interrupt mode. That turned out to be the ECC scrub (a read of never-written DRAM hangs; see
+board.md, "First light"), not the interrupts. Measured on the card (build 74d48591, Arch
+Linux 7.1.4, 2026-09-27; the driver takes one MSI vector):
+
+| | interrupts (`poll_mode=0`) | polling (`poll_mode=1`) |
+|---|---|---|
+| `otpu-selftest` | all PASS | all PASS |
+| `otpu-diag` | 124 PASS, 1 SKIP (power: no report) | 124 PASS, 1 SKIP |
+| `otpu-diag --mem full --soak 10` (5.6 min) | 127 PASS, 1 SKIP | not run |
+| model stage, 32 tokens: LFM2.5-230M / Qwen3-0.6B | 10.26 / 4.57 tok/s wall | 10.28 / 4.60 tok/s wall |
+| 64 B DMA write / read, median per call | 11.7 / 11.3 us | 6.7 / 6.2 us |
+| 4 KiB write / read | 14.7 / 13.7 us | 9.8 / 8.7 us |
+| 64 KiB write / read | 95.5 / 49.5 us | 89.7 / 44.4 us |
+| 8 MiB write / read | 1.69 / 1.63 GB/s | 1.76 / 1.66 GB/s |
+| 64 MiB write / read | 0.77 / 1.15 GB/s | 0.77 / 1.17 GB/s |
+| CPU during 64 MiB transfers (process + driver threads) | 0.03 / 0.04 cores | 0.98 / 1.01 cores |
+| XDMA timeouts / errors in dmesg | 0 | 0 |
+
+Interrupts cost about 5 us more per transfer and nothing measurable in tokens/s; polling
+keeps a CPU core busy for as long as a transfer runs. So the default is interrupts. If DMA calls
+hang with XDMA timeouts in `dmesg` on some other PC (interrupts not delivered), switch with
+`sudo otpu-setup --poll` (and back with `--irq`); it reloads the driver when the card is idle.
+The table comes from `tools/dma_bench.py` (latency, bandwidth, CPU), `otpu-selftest` and
+`otpu-diag` run in each mode.
+
+**IOMMU.** If DMA transfers fail on a machine with the IOMMU on, boot with `iommu=pt` (Intel:
+`intel_iommu=on iommu=pt`).
 
 ## 3. Check the card on the bus
 
 The card must be configured before the PC enumerates the bus: either boot the PC with the
-bitstream already in the card's configuration flash, or program over JTAG and then rescan:
+bitstream already in the card's configuration flash (`make flash`, [board.md](board.md)
+section 2), or program over JTAG and then rescan:
 
 ```sh
-lspci -d 10ee: -nn                   # the card: "... Xilinx ... [10ee:7028]"
+sudo otpu-setup --rescan             # remove the card, rescan, bind xdma, read the ID register
+lspci -d 10ee: -nn                   # the card: "... [10ee:7028]"
 sudo lspci -d 10ee: -vv | grep -E "LnkCap|LnkSta|Region"
 #   LnkCap/LnkSta: Speed 2.5GT/s, Width x8  <- Gen1 x8 is the design (not a downtrained link);
 #                                             fewer lanes cost DMA bandwidth only
 #   Region 0: Memory at ... [size=1M]   <- BAR0, the control registers (AXI-Lite master, 1 MiB)
 #   Region 1: Memory at ... [size=64K]  <- the XDMA's own registers (the driver uses them)
-# after JTAG programming, without a reboot:
-echo 1 | sudo tee /sys/bus/pci/devices/0000:XX:00.0/remove
-echo 1 | sudo tee /sys/bus/pci/rescan
-sudo rmmod xdma; sudo modprobe xdma   # the driver must re-probe the new function
 ```
 
-A quick register check without Python: `sudo dd if=/dev/xdma0_user bs=4 count=1 2>/dev/null |
-xxd` must print `55 50 54 4f` ("OTPU", the ID register at offset 0, little-endian).
+`--rescan` refuses while a program has the card open (it would pull the device out from
+under it). It re-adds the card with the kernel's automatic probing off, so the 8250 driver
+never touches a serial-class bitstream, and binds xdma itself.
+
+A quick register check without Python: `dd if=/dev/xdma0_user bs=4 count=1 2>/dev/null | xxd`
+must print `55 50 54 4f` ("OTPU", the ID register at offset 0, little-endian).
 
 ## 4. Self-test
 
@@ -134,7 +210,7 @@ The self-test prints a hint under the failing stage; in more detail:
 
 | Stage | First things to check |
 |---|---|
-| link | `lspci -d 10ee:` lists the card? If not: rescan after JTAG (`setup_pcie.sh --rescan`) or reboot. Listed but `/dev/xdma0_user` missing: `lsmod \| grep xdma`, `dmesg \| grep -i xdma`. ID `0xffffffff`: the link dropped (the FPGA was reprogrammed after enumeration: rescan). Another ID: a bitstream without openTPU, or the AXI-Lite path in the block design |
+| link | `lspci -d 10ee:` lists the card? If not: rescan after JTAG (`sudo otpu-setup --rescan`) or reboot. Listed but `/dev/xdma0_user` missing: `lsmod \| grep xdma`, `dmesg \| grep -i xdma`. ID `0xffffffff`: the link dropped (the FPGA was reprogrammed after enumeration: rescan). Another ID: a bitstream without openTPU, or the AXI-Lite path in the block design |
 | config | The message names the bitstream's value and the environment's: `unset OTPU_MCOLS OTPU_LANES`, or load the bitstream built for them (board.md, "Which bitstream to load") |
 | calib | A DDR3 channel did not calibrate: STATUS bit 5 = channel 0, bit 6 = channel 1 (`otpu-smi` shows both). One channel only: its byte lanes / pinout (board.md section 6.2). Both: the 200 MHz reference clock, or the memory supply |
 | regs | SCRATCH does not hold writes: the AXI-Lite write path, or core_clk / reset not running (the heartbeat LED) |
@@ -384,8 +460,10 @@ host tests (`tests/test_host.py`) and `otpu-smi --fake` use it.
 
 | Symptom | Likely cause |
 |---|---|
-| no `10ee:` device in `lspci` | card not configured at enumeration: flash the bitstream, or program over JTAG and rescan; check the PERST# / refclk constraints of the bitstream |
-| `/dev/xdma0_*` missing | driver not loaded, or the device ID is not in `pci_ids[]` |
+| no `10ee:` device in `lspci` | card not configured at enumeration: flash the bitstream, or program over JTAG and `sudo otpu-setup --rescan`; check the PERST# / refclk constraints of the bitstream |
+| ID register reads `0xffffffff` right after a JTAG load | the PC still has the old configuration: `sudo otpu-setup --rescan` |
+| after a kernel upgrade no `/dev/xdma*` | no DKMS: re-run `sudo otpu-setup` |
+| `/dev/xdma0_*` missing | driver not loaded or not bound: `otpu-setup --check` says which |
 | ID register reads `0xffffffff` | BAR not mapped / link down (`lspci -vv` shows `!` flags or `Region 0: ... [disabled]`) |
 | ID reads something else | wrong bitstream, or the AXI-Lite interconnect in the block design does not reach `otpu_ctrl` |
 | calib fails | MIG pinout, memory clock or DDR3 voltage; see board.md |

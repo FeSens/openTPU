@@ -4,7 +4,7 @@
 #   ./program.sh [bitfile]                 # openFPGALoader (macOS/Linux), Xilinx Platform Cable
 #   ./program.sh --vivado [bitfile]        # Vivado hardware manager (hw_server on this machine)
 #   ./program.sh --flash [mcsfile]         # write the BPI flash (permanent; loads at power-up)
-#   CABLE=ft232 ./program.sh ...           # another openFPGALoader cable (FT232H adapter)
+#   CABLE=digilent_hs2 ./program.sh ...    # FTDI FT232H adapter (0403:6014) instead
 #
 # The card's JTAG chain has an Inspur CPLD (IDCODE 0x10931093) before the FPGA, hence
 # --misc-device / --index-chain. The Platform Cable USB II needs its firmware (xusb_xp2.hex)
@@ -59,4 +59,4 @@ close_hw_manager
 EOF
     vivado -mode batch -nojournal -nolog -source "$tcl" ;;
 esac
-echo "programmed. PCIe: rescan on the host now (docs/board.md, 'After programming')."
+echo "programmed. PCIe: on the host PC now: sudo otpu-setup --rescan (docs/board.md, 'After programming')"
