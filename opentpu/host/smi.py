@@ -98,7 +98,21 @@ def _derive(d: dict, s0: dict, s1: dict, core_khz: int | None) -> None:
     d["dram_rd_gbs"], d["dram_wr_gbs"] = r["dram_rd_gbs"], r["dram_wr_gbs"]
 
 
+def power_report(d: dict, power_json=POWER_JSON) -> Path | None:
+    """The Vivado power report for the loaded bitstream: power_json when it is not the default,
+    else the saved build whose directory names the bitstream's BUILD_ID
+    (build/deploy_*_<sha7>/reports/power.json), else the last build's."""
+    if power_json and Path(power_json) != POWER_JSON:
+        return Path(power_json)
+    bid = (d.get("bitstream") or {}).get("build_id")
+    if bid is not None:
+        for f in sorted(ROOT.glob(f"build/*{bid:08x}"[:-1] + "*/reports/power.json")):
+            return f
+    return POWER_JSON if POWER_JSON.exists() else None
+
+
 def _power(d: dict, power_json) -> dict | None:
+    power_json = power_report(d, power_json)
     pj = P.load(power_json) if power_json else None
     if pj is None or not d.get("util"):
         return None
