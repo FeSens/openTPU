@@ -9,12 +9,13 @@
 # Address map (every master): MIG0 at 0x0000_0000, MIG1 at 0x8000_0000, 2 GiB each -- the map
 # of opentpu/host/board.py and rtl/mem/otpu_axi_dram.sv.
 #
-# Clock plan (50 MHz board oscillator, AA28 -> MMCM, VCO 800 MHz):
-#   core_clk   100.000 MHz  accelerator, control, interconnect core side (CORE_MHZ: 800 / D,
+# Clock plan (50 MHz board oscillator, AA28 -> MMCM, VCO 800 MHz; 1000 MHz for DDR3-1333):
+#   core_clk   100.000 MHz  accelerator, control, interconnect core side (CORE_MHZ: VCO / D,
 #                           D a multiple of 1/8, e.g. 80 / 75.3 / 66.7 as a timing fallback)
-#   clk_200    200.000 MHz  MIG reference (IDELAYCTRL) and MIG system clock for DDR3-800,
-#                           1333 and 1600 (the MIG's PLL multiplies it to the memory clock)
-#   clk_267    266.667 MHz  MIG system clock for DDR3-1066 (DDR_SPEED=1066)
+#   clk_200    200.000 MHz  MIG reference (IDELAYCTRL) and MIG system clock for DDR3-800 and
+#                           1600 (the MIG's PLL multiplies it to the memory clock)
+#   clk_mig    VCO / 3      MIG system clock for DDR3-1066 (266.667 MHz) and 1333 (333.333 MHz),
+#                           the input periods MIG accepts for them
 #   ui_clk0/1  100 / 133 / 167 / 200 MHz  MIG user clocks (4:1 of 400 / 533 / 667 / 800 MHz)
 #   axi_aclk   125 MHz      XDMA (Gen1 x8, 128-bit)
 #
@@ -35,9 +36,10 @@ current_bd_design otpu_bd
 
 # core clock: CORE_MHZ (from create_project.tcl) rounded to the MMCM's 1/8 divider steps
 if {![info exists CORE_MHZ]} { set CORE_MHZ 100 }
-set CORE_DIV [expr {round(800.0 / $CORE_MHZ * 8) / 8.0}]
-set CORE_MHZ_ACT [format %.3f [expr {800.0 / $CORE_DIV}]]
-set CORE_HZ [expr {round(800.0e6 / $CORE_DIV)}]
+set VCO [expr {$DDR_SPEED == 1333 ? 1000 : 800}]
+set CORE_DIV [expr {round(double($VCO) / $CORE_MHZ * 8) / 8.0}]
+set CORE_MHZ_ACT [format %.3f [expr {double($VCO) / $CORE_DIV}]]
+set CORE_HZ [expr {round($VCO * 1.0e6 / $CORE_DIV)}]
 puts "core_clk: $CORE_MHZ_ACT MHz (MMCM divide $CORE_DIV)"
 
 # ------------------------------------------------------------------ external ports
@@ -79,11 +81,12 @@ set_property -dict [list \
   CONFIG.USE_RESET {false} CONFIG.USE_LOCKED {true} \
   CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $CORE_MHZ_ACT \
   CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000} \
-  CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {266.667} \
-  CONFIG.NUM_OUT_CLKS {3} CONFIG.MMCM_DIVCLK_DIVIDE {1} CONFIG.MMCM_CLKFBOUT_MULT_F {16.000} \
-  CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV CONFIG.MMCM_CLKOUT1_DIVIDE {4} \
+  CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ [format %.3f [expr {$VCO / 3.0}]] \
+  CONFIG.NUM_OUT_CLKS {3} CONFIG.MMCM_DIVCLK_DIVIDE {1} \
+  CONFIG.MMCM_CLKFBOUT_MULT_F [format %.3f [expr {$VCO / 50.0}]] \
+  CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV CONFIG.MMCM_CLKOUT1_DIVIDE [expr {$VCO / 200}] \
   CONFIG.MMCM_CLKOUT2_DIVIDE {3} \
-  CONFIG.CLK_OUT1_PORT {core_clk} CONFIG.CLK_OUT2_PORT {clk_200} CONFIG.CLK_OUT3_PORT {clk_267} \
+  CONFIG.CLK_OUT1_PORT {core_clk} CONFIG.CLK_OUT2_PORT {clk_200} CONFIG.CLK_OUT3_PORT {clk_mig} \
 ] $clk
 connect_bd_net [get_bd_ports sys_clk_50] [get_bd_pins clk_wiz_0/clk_in1]
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_ports core_clk]
@@ -130,7 +133,7 @@ set_property NAME pcie_mgt [get_bd_intf_ports -of [get_bd_intf_nets -of [get_bd_
 connect_bd_net [get_bd_pins xdma_0/user_lnk_up] [get_bd_ports pcie_link_up]
 
 # ------------------------------------------------------------------ DDR3: two MIGs
-set sysclk [expr {$DDR_SPEED == 1066 ? "clk_wiz_0/clk_267" : "clk_wiz_0/clk_200"}]
+set sysclk [expr {$DDR_SPEED in {1066 1333} ? "clk_wiz_0/clk_mig" : "clk_wiz_0/clk_200"}]
 foreach ch {0 1} {
   set mig [create_bd_cell -type ip -vlnv [ip_vlnv mig_7series] mig_$ch]
   set dir [get_property IP_DIR [get_ips [get_property CONFIG.Component_Name $mig]]]

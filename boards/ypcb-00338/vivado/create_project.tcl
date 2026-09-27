@@ -19,8 +19,9 @@ if {$BUILD_ID eq ""} {
 }
 if {![regexp {^[0-9a-fA-F]{1,8}$} $BUILD_ID]} { set BUILD_ID 0 }
 # the core clock the block design makes (bd.tcl: CORE_MHZ rounded to the MMCM's 1/8 divider
-# steps), for the CORE_KHZ register
-set CORE_KHZ [expr {round(800000.0 / (round(800.0 / $CORE_MHZ * 8) / 8.0))}]
+# steps of its VCO, 1000 MHz for DDR3-1333, else 800), for the CORE_KHZ register
+set VCO [expr {$DDR_SPEED == 1333 ? 1000 : 800}]
+set CORE_KHZ [expr {round($VCO * 1000.0 / (round(double($VCO) / $CORE_MHZ * 8) / 8.0))}]
 puts "CORE_KHZ $CORE_KHZ, BUILD_ID $BUILD_ID"
 set MIG_DIR $here/mig
 
