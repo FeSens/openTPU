@@ -26,8 +26,9 @@ device: use a paid license or AMD's 30-day evaluation license (see "License" bel
 ```sh
 cd boards/ypcb-00338
 make lint          # offline: MIG pin check, Tcl syntax, XDC vs top ports, Verilator lint
-make bit           # = ./run_vivado.sh 800 -> build/vivado/otpu.bit, otpu.mcs, reports/
-make bit DDR=1066  # DDR3-1066 (533 MHz, MIG ui_clk 133 MHz) once 800 works
+make bit           # = ./run_vivado.sh 1066 -> build/vivado/otpu.bit, otpu.mcs, reports/
+                   # DDR3-1066 (533 MHz, MIG ui_clk 133 MHz): the default and production speed
+make bit DDR=800   # DDR3-800, the bring-up speed
 make bit DDR=1300  # DDR3-1300 / 1333 / 1600: OUT OF SPEC (outside MIG's range for these HR
                    # banks; 1333 and 1600 also patch MIG's PHY). Experiments only, never a
                    # default; see "Faster DDR3" in section 5
@@ -415,6 +416,11 @@ The tightest inter-clock paths are inside the MIG: ui_clk to the ISERDES clocks,
 own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds otpu.bit,
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
+
+**Production image (2026-09-27): `build/deploy_prod1066_b2c7ce43`** (main b2c7ce4, DDR3-1066,
+WNS +0.085 ns, PCI class 12 00 00, I2C). On the card: calibration, selftest, `otpu-diag --mem
+full --soak 20` all pass (127 checks), and Qwen3 / LFM2 / Qwen3.5 match the ISA simulator token
+for token at 6.85 / 2.46 / 9.75 Mcycles/token.
 
 **Measured on the card (2026-09-27, JTAG loads, host code of a691ea98).**
 
