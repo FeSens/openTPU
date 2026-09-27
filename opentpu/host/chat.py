@@ -142,6 +142,31 @@ class Turn:
                 f"{mc}; context {self.context}/{self.cap}{end}]")
 
 
+class Detok:
+    """Incremental detokenization: add(token) -> the text it adds to the reply. Each call
+    decodes only the tokens since the last emitted text, from one token earlier (the prefix):
+    new text = decode(prefix..) minus decode(prefix..read), which keeps the spaces and merges
+    that depend on the token before. Text that ends in an incomplete UTF-8 sequence (U+FFFD)
+    is held back until the rest of the character arrives."""
+
+    def __init__(self, tok, ids=()):
+        """ids: the reply so far (resume), already shown."""
+        self.tok, self.ids = tok, list(ids)
+        self.prefix, self.read = max(0, len(self.ids) - 1), len(self.ids)
+
+    def _dec(self, ids) -> str:
+        return self.tok.decode(ids, skip_special_tokens=True)
+
+    def add(self, t: int) -> str:
+        self.ids.append(t)
+        before = self._dec(self.ids[self.prefix:self.read])
+        now = self._dec(self.ids[self.prefix:])
+        if len(now) > len(before) and not now.endswith("\ufffd"):
+            self.prefix, self.read = self.read, len(self.ids)
+            return now[len(before):]
+        return ""
+
+
 @dataclass
 class Session:
     turns: int = 0
@@ -194,12 +219,13 @@ class Chat:
     def can_resume(self) -> bool:
         return self._next is not None
 
-    def _cycles(self, k0: int, k1: int | None = None) -> int:
-        return int(sum(st.get("cycles", 0) for st in self.eng.stats[k0:k1] if st))
-
     def ask(self, text: str, on_update=None, stop=lambda: False) -> tuple[str, Turn]:
-        """One turn. on_update(delta_text, turn) after every prefill step (delta "") and every
-        generated token; stop() is polled between steps (the reply so far is kept)."""
+        """One turn. on_update(delta_text, turn) for every prefill step (delta "") and every
+        generated token (Detok: text that ends in an incomplete character comes with a later
+        token, or in one last call after the reply). Each call comes once the card runs the
+        next step (Engine.step's on_start), so the interface draws during the run, not while
+        the host starts it; after the prefill and at the end of the reply it comes at once.
+        stop() is polled between steps (the reply so far is kept)."""
         on_update = on_update or (lambda delta, turn: None)
         t0 = time.perf_counter()
         turn = Turn(clock_mhz=self.clock_mhz, cap=self.eng.cap, context=self.eng.pos)
@@ -221,13 +247,14 @@ class Chat:
             if stop():
                 turn.end = "stopped"
                 break
-            logits = self.eng.step(t)
+            # the previous step's numbers go to the interface while the card runs this one
+            logits = self.eng.step(t, on_start=lambda: on_update("", turn))
             self.fed.append(t)
             turn.prefill_tokens += 1
             turn.prefill_s = time.perf_counter() - t0
-            turn.prefill_cycles = self._cycles(k0)
+            turn.prefill_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
             turn.context = self.eng.pos
-            on_update("", turn)
+        on_update("", turn)
         reply = self._decode(logits, [], turn, t0, on_update, stop)
         self.history.append({"role": "assistant", "content": reply})
         self.session.add(turn)
@@ -252,7 +279,8 @@ class Chat:
         """Generate after `out` (the reply so far) from `logits`; returns the whole reply."""
         k1 = len(self.eng.stats)
         out, n0, t_first = list(out), len(out), None
-        shown = self.tok.decode(out, skip_special_tokens=True)
+        detok = Detok(self.tok, out)
+        shown = self.tok.decode(out, skip_special_tokens=True) if out else ""
         while logits is not None and not turn.end:
             if len(out) - n0 >= self.max_new:
                 turn.end = "max_new"
@@ -266,23 +294,28 @@ class Chat:
             if t_first is None:
                 t_first, turn.ttft_s = now, now - t0
             turn.gen_tokens, turn.decode_s = len(out) - n0, now - t_first
-            text_now = self.tok.decode(out, skip_special_tokens=True)
-            delta, shown = text_now[len(shown):], text_now
-            on_update(delta, turn)
+            delta = detok.add(t)
+            shown += delta
             if self.eng.pos >= self.eng.cap:
                 turn.end = "cap"
-                break
-            if stop():
+            elif stop():
                 turn.end = "stopped"
+            if turn.end:
+                on_update(delta, turn)
                 break
-            logits = self.eng.step(t)
+            # the interface gets the token once the card runs the next one: its drawing
+            # overlaps the run instead of the host work that starts it
+            logits = self.eng.step(t, on_start=lambda: on_update(delta, turn))
             self.fed.append(t)
             turn.decode_steps = len(self.eng.stats) - k1
-            turn.decode_cycles = self._cycles(k1)
+            turn.decode_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
             turn.context = self.eng.pos
         self._next = logits if turn.end == "max_new" else None
         self._reply = out
-        return shown
+        reply = self.tok.decode(out, skip_special_tokens=True)
+        if len(reply) > len(shown) and reply.startswith(shown):
+            on_update(reply[len(shown):], turn)       # a held-back incomplete character
+        return reply
 
     def ask_plain(self, text: str | None, stream=sys.stdout) -> str:
         """ask() (resume() for None) printing the reply as it streams, then the turn's

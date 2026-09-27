@@ -4,7 +4,8 @@
                               (Board, BoardBackend, otpu-selftest, otpu-chat, otpu-lens record);
                               it holds the owner's pid (read to name it in the error)
     /tmp/otpu/<device>.json   the runner's status (RunnerStatus), rewritten atomically after
-                              every token and removed at exit; otpu-smi reads it
+                              every token (or at most every min_interval seconds) and removed
+                              at exit; otpu-smi reads it
 
 <device> is the device node's basename (xdma0 for /dev/xdma0). OTPU_RUN_DIR moves the
 directory (tests). Monitors never lock: they only read registers.
@@ -22,6 +23,7 @@ import fcntl
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -131,11 +133,19 @@ class RunnerStatus:
     dram: {total, image, weights, kv_capacity, kv_used, program, free} (bytes),
     tokens (device runs so far), last_cycles, tok_s_device (CORE_KHZ / last_cycles),
     tok_s_wall (over the last WALL_WINDOW runs, host work included), updated (unix time).
+
+    min_interval: token() rewrites the file at most this often (seconds); a token that comes
+    sooner is written by a timer when the interval is up, so the file is never behind for
+    longer. The rewrite is off the token's critical path (0.2-0.5 ms on the card's host).
     """
 
     WALL_WINDOW = 8
 
-    def __init__(self, name: str, **fields):
+    def __init__(self, name: str, min_interval: float = 0.0, **fields):
+        self.min_interval = min_interval
+        self._lock = threading.Lock()
+        self._timer: threading.Timer | None = None
+        self._tok_written = -1e9            # perf_counter of the last write after a token
         self.path = run_dir() / f"{name}.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.data = {"pid": os.getpid(), "argv": list(sys.argv), "start": time.time(),
@@ -161,15 +171,31 @@ class RunnerStatus:
         if len(self._ends) > 1:
             d["tok_s_wall"] = (len(self._ends) - 1) / max(self._ends[-1] - self._ends[0], 1e-9)
         d.update(fields)
+        wait = self.min_interval - (time.perf_counter() - self._tok_written)
+        if wait <= 0:
+            self._tok_written = time.perf_counter()
+            self.write()
+        elif self._timer is None:
+            self._timer = threading.Timer(wait, self._flush)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def _flush(self) -> None:
+        self._timer = None
+        self._tok_written = time.perf_counter()
         self.write()
 
     def write(self) -> None:
-        self.data["updated"] = time.time()
-        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(self.data))
-        os.replace(tmp, self.path)          # readers see the old file or the new, never half
+        with self._lock:
+            self.data["updated"] = time.time()
+            tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(self.data))
+            os.replace(tmp, self.path)      # readers see the old file or the new, never half
 
     def remove(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
         try:
             cur = json.loads(self.path.read_text())
             if cur.get("pid") == os.getpid():

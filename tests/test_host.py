@@ -206,6 +206,7 @@ def test_status_file_lifecycle(run_dir):
     assert lay["free"] == cfg.DRAM_BYTES - (-(-lay["image"] // 4096) * 4096) - lay["program"]
     for tok in (5, 6, 7):
         eng.step(tok)
+    time.sleep(0.3)                             # the last tokens come with the timer's write
     st = read_status("fake3")
     assert st["tokens"] == 3 and st["last_cycles"] == 2_000_000 and not st["stale"]
     assert st["tok_s_device"] == pytest.approx(100e6 / 2e6)
@@ -229,6 +230,16 @@ def test_runner_status_is_atomic(run_dir):
     s.remove()
     assert not (run_dir / "fake4.json").exists()
 
+
+
+def test_runner_status_min_interval_defers_to_a_timer(run_dir):
+    s = RunnerStatus("fake6", min_interval=0.1)
+    for k in range(5):
+        s.token(1000 + k, 100_000)
+    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 1   # the first at once
+    time.sleep(0.2)
+    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 5   # then the timer
+    s.remove()
 
 # ------------------------------------------------------------------------------ polling
 def test_poll_backs_off():
@@ -306,7 +317,7 @@ def test_record_traces_only_the_window(stub_hwtrace):
     wr = t.reg_write
     t.reg_write = lambda off, v: (enables.append(v) if off == R.R_TRACE_CTRL and v & R.TR_ENABLE
                                   else None, wr(off, v))
-    eng = Engine(spec, W, cap=256, cfg=cfg,
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline="thread",
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
     steps = hwlens.run_steps(eng, [3, 4, 5], pos0=2, n=2, keep="first", prompt_len=3)
     assert [p for p, _ in steps] == [2, 3] and len(enables) == 2 and eng.pos == 4
@@ -562,6 +573,90 @@ def test_pipelining_gives_identical_tokens():
     assert np.array_equal(a.step(9).view(np.uint32), b.step(9).view(np.uint32))
 
 
+
+def test_board_compiles_the_next_program_after_starting_the_card():
+    """With a backend that has start / wait (the board), the next position's compile begins
+    only once the program is on the card and running (not while the host copies it)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=0.01)
+    starts, seen = [], []                   # seen: (position compiled, starts before it)
+
+    class Rec(BoardBackend):
+        def start(self, programs):
+            starts.append(1)
+            super().start(programs)
+
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline="thread",
+                 backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    compile_ = eng._compile
+    eng._compile = lambda pos: (seen.append((pos, len(starts))), compile_(pos))[1]
+    for tok in (3, 4, 5):
+        eng.step(tok)
+    eng._drain()
+    # position 0 compiles in line; position p + 1 only after the card started position p
+    assert seen == [(0, 0), (1, 1), (2, 2), (3, 3)]
+    assert eng.backend._expect == pytest.approx(t.cycles_per_run / 100e6)
+    eng.backend.close()
+
+
+
+def test_board_compiles_in_a_worker_process():
+    """The board's default pipeline compiles in a spawned worker process: the words it sends
+    are the in-process assembly of the same position's program (the board-model tests in
+    test_board.py / test_lfm2.py check the logits against the ISA simulator through it)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=0.002)
+    sent = []
+
+    class Rec(BoardBackend):
+        def start(self, programs):
+            sent.append(programs)
+            super().start(programs)
+
+    eng = Engine(spec, W, cap=256, cfg=cfg, backend=lambda c, imgs: Rec(c, imgs, transport=t))
+    assert eng._procs and eng._ready.result(timeout=60)
+    for tok in (3, 4, 5, 6):
+        eng.step(tok)
+    eng._drain()
+    words = [(p, w) for p, w in enumerate(sent) if isinstance(w, np.ndarray)]
+    assert len(words) >= 3                  # position 0 compiles in line, then the worker
+    for p, w in words:
+        assert np.array_equal(w, np.asarray(I.assemble(eng.image.compile_step(p)[0]),
+                                            np.uint32))
+    eng.backend.close()
+
+def test_poll_with_an_expected_wait_sleeps_then_reads_back_to_back():
+    t = FakeTransport(devname=None, run_s=0.05)
+    b = Board(t)
+    t0 = time.perf_counter()
+    b.run(timeout=5, expect=0.05)
+    dt = time.perf_counter() - t0
+    assert 0.05 <= dt < 0.1 and t.reads < 1_000_000   # one sleep, then a short spin
+
+
+def test_detok_streams_the_text_of_a_full_decode():
+    """Chat's incremental detokenization: the deltas add up to decode(all tokens), holding
+    back an incomplete UTF-8 character until the token that completes it."""
+    from opentpu.host.chat import Detok
+
+    class ByteTok:                          # one token per byte (multi-byte characters split)
+        def decode(self, ids, skip_special_tokens=True):
+            return bytes(ids).decode("utf-8", errors="replace")
+    text = "ab ü€ 🎉 end"
+    ids = list(text.encode())
+    d = Detok(ByteTok())
+    deltas = [d.add(i) for i in ids]
+    assert "".join(deltas) == text and not any("\ufffd" in x for x in deltas)
+    assert deltas[ids.index(0xC3)] == ""    # the first byte of ü shows nothing yet
+
 # ------------------------------------------------------------------------------ otpu-lens
 def test_otpu_lens_passthrough(capsys):
     from opentpu.host import hwlens
@@ -695,8 +790,10 @@ class StubEngine:
         self.backend = types.SimpleNamespace()
         self.cfg = board_config()
 
-    def step(self, t):
+    def step(self, t, on_start=None):
         assert self.pos < self.cap, "KV cache full"   # as Engine.step
+        if on_start is not None:
+            on_start()
         time.sleep(0.002)
         self.pos += 1
         self.stats.append({"cycles": self.cycles})
