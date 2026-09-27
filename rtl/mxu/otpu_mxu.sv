@@ -154,8 +154,8 @@ module otpu_mxu
   logic [31:0] q_jo [2][MCOLS];            // j * ors
   logic [7:0]  q_G [2];                     // groups: ceil(M / MCOLS)
   logic [MW-1:0] q_Ml [2];                  // rows of the last group
-  logic [31:0] q_gs [2], q_gb [2];          // drain address steps: to the next group
-                                            // (MCOLS * ors), from the last to the next row
+  logic [31:0] q_gs [2];                    // drain address step to the next group
+                                            // (MCOLS * ors)
   logic        q_h;
   logic [1:0]  q_n;
 
@@ -640,6 +640,7 @@ module otpu_mxu
 
   // ================================================================== drain
   // lanes this cycle: results dj .. dj+ncnt-1 of the head row, stopping at a bank conflict
+  logic [31:0] drow [MCOLS];                 // replay: dad of the head row's group 0
   logic [31:0] dad [MCOLS];                  // head row's TMEM addresses: out + n + j * ors,
                                              // kept incrementally (no adder between the drain's
                                              // lane pick and the arbiter)
@@ -889,7 +890,6 @@ module otpu_mxu
           q_G[qi]  <= 8'(g);
           q_Ml[qi] <= MW'(int'(cmd.w6[23:16]) - (g - 1) * MCOLS);
           q_gs[qi] <= 32'(MCOLS) * 32'(cmd.w6[15:0]);
-          q_gb[qi] <= 32'(g - 1) * 32'(MCOLS) * 32'(cmd.w6[15:0]) - 32'd1;
         end
         qn = qn + 1;
         if (cmd.w4[15:0] != 0 && cmd.w4[31:16] != 0) begin
@@ -979,7 +979,10 @@ module otpu_mxu
             dj <= '0;
             if (dg + 8'd1 == c_G) begin             // the next weight row, group 0
               dg <= '0;
-              for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] - q_gb[q_h];
+              for (int j = 0; j < MCOLS; j++) begin
+                dad[j] <= drow[j] + 32'd1;
+                drow[j] <= drow[j] + 32'd1;
+              end
             end else begin                          // the next group of this row
               dg <= dg + 8'd1;
               for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + q_gs[q_h];
@@ -1034,9 +1037,12 @@ module otpu_mxu
         // the next head's chunk count: the queued entry, or a command accepted this cycle
         c_left <= (q_n == 2'd2) ? q_total[~q_h] : (start ? cmd_total : '0);
         dj <= '0;
-        for (int j = 0; j < MCOLS; j++)
+        for (int j = 0; j < MCOLS; j++) begin
           dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
                                            : q_out[~q_h] + q_jo[~q_h][j];
+          drow[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
+                                            : q_out[~q_h] + q_jo[~q_h][j];
+        end
         mx_done <= 1'b0; mx_have <= '0;
         al_st <= 2'd0; al_i <= '0; mx_i <= '0;
         pf_u <= 1'b1;
@@ -1046,7 +1052,10 @@ module otpu_mxu
       end
       // the head's output base (set when a command becomes head)
       if (start && q_n == 0) begin
-        for (int j = 0; j < MCOLS; j++) dad[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+        for (int j = 0; j < MCOLS; j++) begin
+          dad[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+          drow[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+        end
       end
       q_n <= qn;
     end
