@@ -367,6 +367,20 @@ voltage, so the risk is only that calibration fails or that data goes bad, and a
 undoes a JTAG load. Only the card can show whether they calibrate, and whether the data stays
 correct as the die warms. Their deploy directories carry `_oos` (out of spec) in the name.
 
+**Builds** (measured, Vivado 2026.1 on omarchy, 2026-09-27; MCOLS=2, core 100 MHz). All timing
+constraints are met:
+
+| DDR3 | commit | WNS / WHS | core_clk slack | MIG ui_clk (clk_pll_i) slack | deploy directory |
+|---|---|---|---|---|---|
+| 1300 (out of spec) | 819fee49 | +0.032 / +0.044 ns | +0.032 ns | +0.060 / +0.105 ns (6.154 ns) | `build/deploy_ddr1300_oos_819fee49` |
+| 1333 (out of spec, PHY patched) | 254f8388 | +0.088 / +0.043 ns | +0.094 ns | +0.102 / +0.091 ns (6.000 ns) | `build/deploy_ddr1333_oos_254f8388` |
+
+The tightest inter-clock paths are inside the MIG: ui_clk to the ISERDES clocks, +0.088 to
++0.094 ns. The SmartConnect crossings are not among the worst. In the 1333 build MIG adds its
+own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds otpu.bit,
+otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
+the patch messages of that build.
+
 **Checklist per speed.** Status: *unmeasured* at every speed above 800 until the results are
 filled in here. Load the bitstream over JTAG, not flash (section 2), so a bad one is gone at
 the next power cycle.
