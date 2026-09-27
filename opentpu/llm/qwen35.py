@@ -339,7 +339,9 @@ class Image:
         self.io = {"x": b.alloc(4 * H * rows), "cos": b.alloc(2 * spec.rope_dim * rows),
                    "sin": b.alloc(2 * spec.rope_dim * rows), "gf": b.alloc(4 * H),
                    "logits": b.alloc(4 * spec.vocab * rows),
-                   "hs": b.alloc(4 * 2 * self.nl)}     # per pair: decays of a, b; betas
+                   "hs": b.alloc(4 * 2 * self.nl),     # per pair: decays of a, b; betas
+                   "gr": b.alloc(4 * 2 * self.nl * rows),  # chunked prefill, per row: decays,
+                   "on": b.alloc(4 * 4 * spec.lin_dv * rows)}  # betas; a head group's outputs
         self.layer0 = b.next
         lb = _Bump()                                    # offsets inside one layer block
         common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
@@ -537,6 +539,8 @@ class Image:
             sinr=_tdesc(self.io["sin"], (self.rows, spec.rope_dim // 2)),
             logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
             hs=_tdesc(self.io["hs"], (nl // 2, 4)),
+            gr=_tdesc(self.io["gr"], (self.rows, 2 * nl)),
+            on=_tdesc(self.io["on"], (self.rows, self.og * dv)),
             head=_qdesc(*self.head, self.v_loc, H, D), v_loc=self.v_loc)
 
 
@@ -777,95 +781,117 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
     _lm_head(x, m, spec)
 
 
-def _deltanet_rows(x, lw, p0: int, spec: Spec):
+def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     """_deltanet for R consecutive positions p0 .. p0+R-1 at once. The projections stream once
     for the R rows, pair of heads by pair; the convolution runs over the pair's rows before
     it in the chunk and its ring; each head's state is loaded once, updated and read row after
     row (the recurrence is sequential in the tokens), and stored once. Per row every value is
     computed by _deltanet's operations in its order, and out_proj accumulates over the same
-    head groups (the last one in pairs when og = 4), so the result is bit-identical."""
+    head groups (the last one in pairs when og = 4), so the result is bit-identical.
+
+    The recurrence is unrolled over the rows, so the pairs run as hardware loops (a loop over
+    the head groups but the last, each a loop over its pairs; then the last group's pairs),
+    or the program would not fit IMEM. TMEM addresses are static: the per-head decays and
+    betas go through `gr` in DRAM ([R, 2nl]: the decays, then the betas of each row), and a
+    group's normed outputs through `on` ([R, og * dv]) before its out_proj."""
     eps, K, R = spec.eps, spec.conv_k, x.rows
     dk, dv = spec.lin_dk, spec.lin_dv
     nl, C = lw.state.shape[0], 2 * dk + dv
-    RH, NP, og = C + dv, nl // 2, lw.wout.shape[1] // dv   # RH: projected rows per head
+    RH, og = C + dv, lw.wout.shape[1] // dv             # RH: projected rows per head
+    NP, ng, gp = nl // 2, nl // og, og // 2             # pairs, head groups, pairs per group
     TP = 2 * K * C                                      # taps words of a pair (then its ring)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     ab = ol.dot(xs, lw.wab)                             # [R, 2nl]: a, then b, of each head
     alog, dtb = ol.load(lw.alog), ol.load(lw.dtb)
-    decay, beta = ol.empty([R, nl]), ol.empty([R, nl])
     for r in range(R):
         dr, br = gates(ab[r, 0:nl], ab[r, nl:2 * nl], alog, dtb)
-        decay[r, :].set(dr)
-        beta[r, :].set(br)
+        ol.store(gr[r, 0:nl], dr)
+        ol.store(gr[r, nl:2 * nl], br)
         del dr, br
     del ab, alog, dtb
     gn = ol.load(lw.gn)
     y = ol.zeros([R, spec.hidden])
     St = ol.empty([dv * dk]).reshape(dv, dk)
     w = ol.empty([dv])
-    ON = ol.empty([R, og * dv])                         # normed, gated o of og heads per row
+    ONp = ol.empty([R, 2 * dv])                         # normed, gated o of a pair per row
+    GD, GB = ol.empty([R, 2]), ol.empty([R, 2])         # decays, betas of the pair's heads
     full = max(0, K - 1 - p0)                           # rows before it lack positions < 0
     rgroups = [(r, r + 1) for r in range(min(full, R))] + ([(full, R)] if full < R else [])
     split = og == 4 and NP > 1                          # _deltanet's last group, in pairs
 
-    def flush(g, c0, c1):
-        ol.dot(ON[:, c0 * dv:c1 * dv], lw.wout[g * spec.hidden:(g + 1) * spec.hidden,
-                                               c0 * dv:c1 * dv], acc=y)
+    def flush(g, ON, c0, c1):
+        """y += ON . out_proj columns [c0, c1) of head group g (heads of dv columns)."""
+        ol.dot(ON, lw.wout[g * spec.hidden:(g + 1) * spec.hidden, c0 * dv:c1 * dv], acc=y)
 
-    for p in range(NP):
-        CV = ol.load(lw.cv[p, :])                       # taps (rows (head, tap)), ring slots
+    def head(h, X, Z, taps, a):
+        """Head h, head a of its pair (whose q k v rows are in X, z in Z) -> ONp[:, a]."""
+        U = ol.empty([R, C])
+        for r0, r1 in rgroups:                          # the convolution, as _deltanet's conv
+            t = min(K - 1, p0 + r0)
+            cur = X[K - 1 + r0:K - 1 + r1, a * C:(a + 1) * C]
+            if t == 0:
+                U[r0:r1, :].set(cur * taps[a * K + K - 1, :][None, :])
+                continue
+            u = cur * taps[a * K + K - 1, :][None, :]
+            for j in range(1, t):
+                u = u + X[K - 1 + r0 - j:K - 1 + r1 - j, a * C:(a + 1) * C] * \
+                    taps[a * K + K - 1 - j, :][None, :]
+            U[r0:r1, :].set(u + X[K - 1 + r0 - t:K - 1 + r1 - t, a * C:(a + 1) * C] *
+                            taps[a * K + K - 1 - t, :][None, :])
+            del u
+        U.set(silu(U))
+        Qn = l2norm_rows(U[:, 0:dk], dk ** -0.5)
+        Kn = l2norm_rows(U[:, dk:2 * dk])
+        GZ = silu(Z[:, a * dv:(a + 1) * dv])
+        if p0:
+            ol.load(lw.state[h], out=St)
+        else:
+            St.set(0.0)
+        O = ol.empty([R, dv])
+        for r in range(R):                              # the recurrence, token by token
+            dh, bh = GD[r, a:a + 1], GB[r, a:a + 1]
+            w.set(St @ Kn[r, :])
+            w.set((U[r, 2 * dk:C] - w * dh) * bh)
+            ol.outer(w, Kn[r, :], acc=St, decay=dh)
+            O[r, :].set(St @ Qn[r, :])
+        ol.store(lw.state[h], St)
+        ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
+
+    def pair(p):
+        """Pair p (an int or a loop expression) -> ONp."""
+        for r in range(R):
+            ol.load(gr[r, 2 * p:2 * p + 2], out=GD[r, :])
+            ol.load(gr[r, nl + 2 * p:nl + 2 * p + 2], out=GB[r, :])
+        taps = ol.load(lw.cv[p, 0:TP]).reshape(2 * K, C)    # rows (head, tap)
         X = ol.empty([K - 1 + R, 2 * C])                # q k v of a, of b: positions p0-K+1 ..
-        for j in range(1, min(K, p0 + 1)):
+        for j in range(1, min(K, p0 + 1)):              # ... from the ring
             sl = TP + (p0 - j) % K * 2 * C
-            X[K - 1 - j, :].set(CV[sl:sl + 2 * C])
+            ol.load(lw.cv[p, sl:sl + 2 * C], out=X[K - 1 - j, :])
         ol.dot(xs, lw.wh[p * 2 * RH:p * 2 * RH + 2 * C, :], out=X[K - 1:K - 1 + R, :])
         Z = ol.dot(xs, lw.wh[p * 2 * RH + 2 * C:(p + 1) * 2 * RH, :])   # z of a, of b
         for r in range(max(0, R - K), R):
             sl = TP + (p0 + r) % K * 2 * C
             ol.store(lw.cv[p, sl:sl + 2 * C], X[K - 1 + r, :])
-        taps = CV[0:TP].reshape(2 * K, C)
         for a in range(2):
-            h = 2 * p + a
-            U = ol.empty([R, C])
-            for r0, r1 in rgroups:                      # the convolution, as _deltanet's conv
-                t = min(K - 1, p0 + r0)
-                cur = X[K - 1 + r0:K - 1 + r1, a * C:(a + 1) * C]
-                if t == 0:
-                    U[r0:r1, :].set(cur * taps[a * K + K - 1, :][None, :])
-                    continue
-                u = cur * taps[a * K + K - 1, :][None, :]
-                for j in range(1, t):
-                    u = u + X[K - 1 + r0 - j:K - 1 + r1 - j, a * C:(a + 1) * C] * \
-                        taps[a * K + K - 1 - j, :][None, :]
-                U[r0:r1, :].set(u + X[K - 1 + r0 - t:K - 1 + r1 - t, a * C:(a + 1) * C] *
-                                taps[a * K + K - 1 - t, :][None, :])
-                del u
-            U.set(silu(U))
-            Qn = l2norm_rows(U[:, 0:dk], dk ** -0.5)
-            Kn = l2norm_rows(U[:, dk:2 * dk])
-            GZ = silu(Z[:, a * dv:(a + 1) * dv])
-            if p0:
-                ol.load(lw.state[h], out=St)
-            else:
-                St.set(0.0)
-            O = ol.empty([R, dv])
-            for r in range(R):                          # the recurrence, token by token
-                dh, bh = decay[r, h:h + 1], beta[r, h:h + 1]
-                w.set(St @ Kn[r, :])
-                w.set((U[r, 2 * dk:C] - w * dh) * bh)
-                ol.outer(w, Kn[r, :], acc=St, decay=dh)
-                O[r, :].set(St @ Qn[r, :])
-            ol.store(lw.state[h], St)
-            c = h % og
-            ON[:, c * dv:(c + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
-            del U, Qn, Kn, GZ, O
-            g = h // og
-            if split and g == nl // og - 1:
-                if c % 2:
-                    flush(g, c - 1, c + 1)
-            elif c == og - 1:
-                flush(g, 0, og)
-        del CV, X, Z, taps
+            head(2 * p + a, X, Z, taps, a)
+
+    def loop(n):
+        """ol.range(n), or the single index 0 unrolled."""
+        return ol.range(n) if n > 1 else range(n)
+
+    for g in loop(ng - 1 if split else ng):             # whole groups
+        if gp == 1:
+            pair(g)
+            flush(g, ONp, 0, 2)
+            continue
+        for q in loop(gp):
+            pair(g * gp + q)
+            ol.store(on[:, q * 2 * dv:(q + 1) * 2 * dv], ONp)
+        flush(g, ol.load(on), 0, og)
+    if split:                                           # the last group, pair by pair
+        for q in loop(gp):
+            pair((ng - 1) * gp + q)
+            flush(ng - 1, ONp, 2 * q, 2 * q + 2)
     return x + ol.all_reduce(y)
 
 
@@ -882,7 +908,7 @@ def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK):
     def layer(li, kind):
         lw = m.layer(li, kind)
         if kind == LIN:
-            x.set(_deltanet_rows(x, lw, p0, spec))
+            x.set(_deltanet_rows(x, lw, p0, spec, m.gr[0:R, :], m.on[0:R, :]))
         else:
             x.set(_attention_rows(x, lw, c, s_, rows, spec, block, gated=True))
         x.set(_mlp(x, lw, spec))

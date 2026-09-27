@@ -626,7 +626,9 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
                   emit=emit)
     del Q
     if gated:                                   # after the heads: o * sigmoid(gate), rounded
-        o.set(o * sigmoid(ol.dot(xs, lw.wgate)))    # as _attention's (acc / l) * sg
+        for h0 in range(0, nq, mc):             # as _attention's (acc / l) * sg; mc heads at
+            cols = slice(h0 * d, min(nq, h0 + mc) * d)      # a time (TMEM)
+            o[:, cols].set(o[:, cols] * sigmoid(ol.dot(xs, lw.wgate[cols, :])))
     o_all = ol.all_gather(o)                    # [R, n_q*d]
     y = ol.all_gather(ol.dot(o_all, lw.wo))     # [R, H]
     return x + y

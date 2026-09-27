@@ -455,7 +455,10 @@ class Builder:
         # (terms, loops live when retired, register). One may take a new key that adds terms
         # of loops begun since (those are 0 at the loop start and stepped from then on).
         self.spare_regs: list = []
-        self.free_regs = list(range(15, 0, -1))
+        # free registers (value 0), each with the loops that were live when it was freed: it
+        # may not take an address with terms of those loops (their step at the end of the
+        # body would leave it non-zero for its earlier use in the next iteration)
+        self.free_regs = [(r, frozenset()) for r in range(15, 0, -1)]
         self.used_regs: set = set()
         self.versions = weakref.WeakKeyDictionary()
         self.tmem_regions: list = []     # (base, end, weakref to the allocation's _Buf)
@@ -479,9 +482,9 @@ class Builder:
         if key not in self.regs:
             r = self._spare_for(key)
             if r is None:
-                if not self.free_regs:
-                    raise CompileError("out of address registers")
-                r = self.free_regs.pop()
+                r = self._free_for(key)
+            if r is None:
+                raise CompileError("out of address registers")
             self.regs[key] = r
             self.used_regs.add(r)
         return self.regs[key], a.const
@@ -492,6 +495,15 @@ class Builder:
         for i, (terms, live_then, r) in enumerate(self.spare_regs):
             if terms <= key and not any(id(l) in live_then for l, _ in key - terms):
                 del self.spare_regs[i]
+                return r
+        return None
+
+    def _free_for(self, key):
+        """A free register that may hold `key`: freed while none of its loops was live."""
+        for i in builtins.range(len(self.free_regs) - 1, -1, -1):
+            r, live_then = self.free_regs[i]
+            if not any(id(l) in live_then for l, _ in key):
+                del self.free_regs[i]
                 return r
         return None
 
@@ -527,7 +539,7 @@ class Builder:
         # after the reset a retired register holds its outer-loop terms only
         for terms, r in retired:
             if not terms:
-                self.free_regs.append(r)
+                self.free_regs.append((r, frozenset(live)))
             elif terms not in self.regs:
                 self.regs[terms] = r
             else:
