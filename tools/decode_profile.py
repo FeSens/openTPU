@@ -1,26 +1,34 @@
 """Where the host time of one decode token goes: a timeline of otpu-chat's decode loop.
 
     python3 tools/decode_profile.py --model lfm2 [--backend board | fake] [--tokens 64]
-                                    [--prompt "..."] [--greedy] [--json out.json]
+                                    [--prompt "..."] [--greedy] [--no-stream] [--json out.json]
                                     [--wformat int8|fp4|int4] [--head-format int8|fp4|int4]
 
 Runs one Chat turn (plain mode, the reply printed to /dev/null) on the card (--backend
 board) or on FakeTransport (--backend fake: a card that computes nothing and halts after
---fake-ms; the host path only), with timers around every piece of the per-token work:
+--fake-ms; the host path only, without streamed logits).
 
-  main thread   io-write (x / cos / sin), wait-compile (the step waits for the precompiled
-                program), prog-upload (program DMA), imem-load (LOAD .. not LOADING), run
-                (Board.start .. HALTED seen, split into device = CYCLES / CORE_KHZ and overshoot =
-                the rest: poll wake-up and PCIe round trips), counters (register reads after
-                the run), status (the status file), logits-read (DMA + unpack), sample,
-                detok, ui (the on_update callback), and "other" (the step's wall time not in
-                any of these);
-  compile thread  trace (compile_step) and assemble (prepare), overlapped with the run; with
-                the Engine's worker process (the board's default) the compile is not in this
-                process and only wait-compile shows.
+The number that matters is the host's critical path per token: from the moment the host sees
+HALTED to the moment it writes RUN for the next token (the card idles in between). The rest of
+the host's work overlaps a run. Every transport operation (DMA write / read, register read /
+write, the HALTED poll with its sleeps) is timed and filed under the host step it serves, as
+"critical" (between HALTED and RUN) or "overlapped" (while the card runs):
 
-Prints the mean per decode token (the first generated token and the prefill are excluded)
-and wall vs device tokens/s.
+  io-write        x / cos / sin of the next token (BoardBackend.write)
+  prog-upload     the program's DMA to the program area (inside Board.load_program)
+  imem-load       LOAD .. not LOADING (Board.load_program's registers and poll)
+  start           CLEAR, RUN (and the trace registers)
+  counters        the HALTED poll and the counter registers after it (Board.wait); its critical
+                  part starts when the run ends: the poll's wake-up and the register reads
+  logits-stream   the logits pieces read while the card runs (streamed logits) and their
+                  sentinel re-marking; logits-tail: what is read after HALTED
+  logits-read     the logits read after HALTED without streaming (--no-stream)
+  sample, detok, ui, status   host computation (no transport)
+  compile-wait    the step waiting for the precompiled program (Engine._program)
+  other           the critical window's time not in any item above
+
+Prints the mean per decode token (the first generated token and the prefill are excluded),
+the transport operations per token (count, bytes, time) and wall vs device tokens/s.
 """
 from __future__ import annotations
 
@@ -33,99 +41,108 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-import numpy as np
-
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from opentpu.host import board as B  # noqa: E402
 from opentpu.host import chat as C  # noqa: E402
+from opentpu.host import regs as R  # noqa: E402
 from opentpu.host import runstate  # noqa: E402
 from opentpu.llm import load_spec, model_dir  # noqa: E402
 from opentpu.llm import qwen3 as Q  # noqa: E402
 
-T = defaultdict(float)            # label -> seconds (while `on`)
-N = defaultdict(int)
-on = threading.Event()
+COMPUTE = ("sample", "detok", "ui", "status", "compile-wait")    # items timed directly
+KNOWN = ["io-write", "compile-wait", "prog-upload", "imem-load", "start", "counters",
+         "logits-stream", "logits-tail", "logits-read", "status", "sample", "detok", "ui"]
 
 
-def timed(owner, name: str, label: str):
-    f = getattr(owner, name)
+class Profiler:
+    """Per-token accounting. `stack` holds the host step being run (the innermost wins); the
+    outermost transport operation of a call chain adds its time to [step][critical or
+    overlapped] and to ops[op] (calls, bytes, seconds); the COMPUTE steps add their own time."""
 
-    def w(*a, **k):
-        t0 = time.perf_counter()
-        try:
-            return f(*a, **k)
-        finally:
-            if on.is_set():
-                T[label] += time.perf_counter() - t0
-                N[label] += 1
-    setattr(owner, name, w)
-    return w
+    def __init__(self):
+        self.on = threading.Event()
+        self.t = defaultdict(lambda: [0.0, 0.0])        # item -> [critical, overlapped] s
+        self.ops = defaultdict(lambda: [0, 0, 0.0])     # op -> [calls, bytes, seconds]
+        self.stack = ["other"]
+        self.depth = 0                                  # transport operations in progress
+        self.running = False                            # between RUN and HALTED seen
+        self.t_halt = self.t_run = None
+        self.crit, self.windows = 0.0, 0                # sum of HALTED seen -> next RUN
+        self.runs = []                                  # RUN written -> HALTED seen, s
 
+    def add(self, item, dt, running=None):
+        if self.on.is_set():
+            self.t[item][int(self.running if running is None else running)] += dt
 
-def instrument(khz_box: list) -> None:
-    timed(Q.Engine, "_program", "wait-compile")
-    timed(Q.Engine, "step", "step")
-    timed(B.BoardBackend, "prepare", "assemble")
-    timed(B.BoardBackend, "write", "io-write")
-    timed(B.BoardBackend, "read", "logits-read")
-    timed(runstate.RunnerStatus, "token", "status")
+    def step(self, owner, name, item):
+        """Time owner.name as host step `item`."""
+        f, prof = getattr(owner, name), self
 
+        def w(*a, **k):
+            prof.stack.append(item)
+            t0, run0 = time.perf_counter(), prof.running
+            try:
+                return f(*a, **k)
+            finally:
+                prof.stack.pop()
+                if item in COMPUTE:
+                    prof.add(item, time.perf_counter() - t0, run0)
+        setattr(owner, name, w)
 
-    def load_program(self, addr, words):
-        words = np.asarray(words, "<u4")
-        t0 = time.perf_counter()
-        self.write(addr, words.view(np.uint8))
-        t1 = time.perf_counter()
-        t = self.t
-        t.reg_write(B.R_CTRL, 0)
-        t.reg_write(B.R_PROG_ADDR, addr)
-        t.reg_write(B.R_PROG_N, len(words) // 8)
-        t.reg_write(B.R_CTRL, B.CTRL_LOAD)
-        t.poll(B.R_STATUS, B.ST_LOADING, 0)
-        t2 = time.perf_counter()
-        if on.is_set():
-            T["prog-upload"] += t1 - t0
-            T["imem-load"] += t2 - t1
-            T["prog-bytes"] += 4 * len(words)
-    B.Board.load_program = load_program
+    def op(self, t, name, op, nbytes=None, after=None):
+        """Time transport method t.name as operation `op`; after(args, result) runs last."""
+        f, prof = getattr(t, name), self
 
-    t_run = [0.0]
+        def w(*a, **k):
+            prof.depth += 1
+            t0, run0 = time.perf_counter(), prof.running
+            try:
+                r = f(*a, **k)
+            finally:
+                prof.depth -= 1
+            dt = time.perf_counter() - t0
+            if after is not None:                       # HALTED seen / RUN written: first
+                after(a, r)
+            if prof.depth == 0 and prof.on.is_set():
+                o = prof.ops[op]
+                o[0] += 1
+                o[1] += nbytes(a) if nbytes else 0
+                o[2] += dt
+                if run0 and not prof.running:           # HALTED seen inside: split the time
+                    prof.add(prof.stack[-1], prof.t_halt - t0, True)
+                    prof.add(prof.stack[-1], time.perf_counter() - prof.t_halt, False)
+                else:
+                    prof.add(prof.stack[-1], dt, run0)
+            return r
+        setattr(t, name, w)
 
-    def start_(self, trace=None):
-        t_run[0] = time.perf_counter()
-        self.t.reg_write(B.R_CTRL, B.CTRL_CLEAR)
-        self.t.reg_write(B.R_CTRL, B.CTRL_RUN)
+    def instrument_transport(self, t):
+        prof = self
 
-    def wait(self, timeout=600.0, expect=0.0):
-        t = self.t
-        if expect:
-            expect = max(expect - (time.perf_counter() - t_run[0]), 1e-9)
-            t.poll(B.R_STATUS, B.ST_HALTED, B.ST_HALTED, timeout, expect)
-        else:                               # the driver before the expect hint
-            t.poll(B.R_STATUS, B.ST_HALTED, B.ST_HALTED, timeout)
-        t1 = time.perf_counter()
-        vals = t.reg_read_many(self.RUN_OFFS)
-        t2 = time.perf_counter()
-        st, lo, hi = vals[:3]
-        cyc = lo | hi << 32
-        t.reg_write(B.R_CTRL, 0)
-        if on.is_set():
-            dev = cyc / (khz_box[0] * 1e3)
-            T["run"] += t1 - t_run[0]
-            T["run.device"] += dev
-            T["run.overshoot"] += t1 - t_run[0] - dev
-            T["counters"] += t2 - t1
-        return {"cycles": cyc, "instructions": [vals[3]], "b_reads": vals[4],
-                "b_writes": vals[5], "a_reads": vals[6], "a_writes": vals[7],
-                "b_stall": vals[8], "status": st}
-    B.Board.start, B.Board.wait = start_, wait
+        def run_written(a, r):
+            off, val = a[0], a[1]
+            if off == R.R_CTRL and val & R.CTRL_RUN:
+                now = time.perf_counter()
+                if prof.on.is_set() and prof.t_halt is not None:
+                    prof.crit += now - prof.t_halt
+                    prof.windows += 1
+                prof.t_halt, prof.t_run, prof.running = None, now, True
 
-    def run(self, timeout=600.0, trace=None, expect=0.0):     # a Board without start / wait
-        start_(self, trace)
-        return wait(self, timeout, expect)
-    B.Board.run = run
+        def status_read(a, r):
+            if prof.running and (
+                    (a[0] == R.R_STATUS and r & R.ST_HALTED) or           # reg_read
+                    (len(a) > 2 and a[0] == R.R_STATUS and a[1] & R.ST_HALTED)):  # poll
+                prof.t_halt, prof.running = time.perf_counter(), False
+                if prof.on.is_set():
+                    prof.runs.append(prof.t_halt - prof.t_run)
+        self.op(t, "mem_write", "dma-write", lambda a: len(a[2]))
+        self.op(t, "mem_read", "dma-read", lambda a: a[2])
+        self.op(t, "reg_write", "reg-write", after=run_written)
+        self.op(t, "reg_read", "reg-read", after=status_read)
+        self.op(t, "reg_read_many", "reg-read-many")
+        self.op(t, "poll", "poll", after=status_read)
 
 
 def main(argv=None):
@@ -137,6 +154,8 @@ def main(argv=None):
     ap.add_argument("--cap", type=int, default=2048)
     ap.add_argument("--prompt", default="Write a short story about a lighthouse keeper.")
     ap.add_argument("--greedy", action="store_true")
+    ap.add_argument("--no-stream", action="store_true",
+                    help="read the logits after the run (no streamed logits)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--fake-ms", type=float, default=80.0)
     ap.add_argument("--json")
@@ -149,76 +168,147 @@ def main(argv=None):
     path = model_dir(a.model)
     tok = AutoTokenizer.from_pretrained(path)
     spec = load_spec(path)
-    khz = [100_000]
-    instrument(khz)
+    P = Profiler()
+    wkw = dict(wformat=a.wformat, head_format=a.head_format)
     if a.backend == "board":
         backend, cfg = C.make_backend("board", spec, a.cap, a.dev, path.name)
     else:
         from opentpu.host.fake import FakeTransport
         from opentpu.isasim import board_config
-        probe = spec.image(board_config(DRAM_BYTES=1 << 32), a.cap)
+        probe = spec.image(board_config(DRAM_BYTES=1 << 32), a.cap, **wkw)
         ch = 1 << max(20, (probe.nbytes // 2 + (1 << 20)).bit_length())
         tr = FakeTransport(ch_bytes=ch, run_s=a.fake_ms / 1e3,
                            cycles=int(a.fake_ms * 1e5), devname=None)
         cfg = B.device_config(B.Board(tr, lock=False).info(), DRAM_BYTES=2 * ch)
         backend = lambda c, imgs: B.BoardBackend(c, imgs, transport=tr, model=path.name)  # noqa
-    eng = Q.Engine(spec, Q.load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
-                   wformat=a.wformat, head_format=a.head_format)
-    khz[0] = (getattr(eng.backend, "info", {}) or {}).get("core_khz") or 100_000
+    # host steps: their transport operations are filed under them
+    P.step(B.BoardBackend, "write", "io-write")
+    P.step(B.Board, "load_program", "imem-load")
+    P.step(B.Board, "start", "start")
+    P.step(B.Board, "wait", "counters")
+    P.step(B.BoardBackend, "_stream_logits", "logits-stream")
+    P.step(B.BoardBackend, "_stream_tail", "logits-tail")
+    P.step(B.BoardBackend, "read", "logits-read")
+    P.step(runstate.RunnerStatus, "token", "status")
+    P.step(Q.Engine, "_program", "compile-wait")
+    b_write = B.Board.write
+
+    def board_write(self, addr, data):                  # the program's DMA in load_program
+        if P.stack[-1] != "imem-load":
+            return b_write(self, addr, data)
+        P.stack.append("prog-upload")
+        try:
+            return b_write(self, addr, data)
+        finally:
+            P.stack.pop()
+    B.Board.write = board_write
+
+    eng = Q.Engine(spec, Q.load_weights(path), cap=a.cap, cfg=cfg, backend=backend, **wkw)
+    eng.stream_logits = not a.no_stream
+    if a.backend == "fake":         # logits the sampler works on as on real ones (no ties)
+        import numpy as np
+        lg = np.random.default_rng(0).normal(0, 3, eng.image.v_loc).astype(np.float32)
+        eng.backend.board.write(eng.image.io["logits"], lg)
+    khz = (getattr(eng.backend, "info", {}) or {}).get("core_khz") or 100_000
+    P.instrument_transport(eng.backend.board.t)
     sp = C.sampling(spec, argparse.Namespace())
     pick = C.sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,
                      sp["repetition_penalty"])
+    step0 = {}
 
-    # the trace (compile_step) of every Image class
-    img_cls = type(eng.image)
-    timed(img_cls, "compile_step", "trace")
-    def pick_t(logits, ctx=()):
-        if not on.is_set() and "t" not in step0:    # the first pick: the prefill is done
-            on.set()
+    def first():                                        # the first pick: the prefill is done
+        if "t" not in step0:
             step0["t"] = time.perf_counter()
-            step0["n"] = len(eng.stats)             # the prefill steps
+            step0["n"] = len(eng.stats)
+            P.t_halt = P.t_halt or time.perf_counter()
+            P.on.set()
+
+    def timed_pick(logits, ctx=()):
+        first()
         t0 = time.perf_counter()
         r = pick(logits, ctx)
-        if on.is_set():
-            T["sample"] += time.perf_counter() - t0
+        P.add("sample", time.perf_counter() - t0)
         return r
-    step0 = {}
-    chat = C.Chat(eng, tok, False, pick_t, a.tokens, clock_mhz=khz[0] / 1e3)
-    timed(tok, "decode", "detok")
+
+    class TimedStream:                                  # pick.stream, its work timed
+        def __init__(self, ctx):
+            self.s = pick.stream(ctx)
+
+        def begin(self, n, *x):
+            self.s.begin(n, *x)
+
+        def feed(self, lo, v):
+            t0 = time.perf_counter()
+            self.s.feed(lo, v)
+            P.add("sample", time.perf_counter() - t0)
+
+        def result(self):
+            first()
+            t0 = time.perf_counter()
+            r = self.s.result()
+            P.add("sample", time.perf_counter() - t0)
+            return r
+    timed_pick.stream = TimedStream
+    chat = C.Chat(eng, tok, False, timed_pick, a.tokens, clock_mhz=khz / 1e3)
+    dec = tok.decode
+
+    def decode(*x, **k):
+        t0 = time.perf_counter()
+        try:
+            return dec(*x, **k)
+        finally:
+            P.add("detok", time.perf_counter() - t0)
+    tok.decode = decode
     sink = io.StringIO()
 
     def upd(delta, turn):
         t0 = time.perf_counter()
         sink.write(delta)
-        if on.is_set():
-            T["ui"] += time.perf_counter() - t0
+        P.add("ui", time.perf_counter() - t0)
     chat.ask(a.prompt, upd)
-    on.clear()
+    P.on.clear()
     wall = time.perf_counter() - step0["t"]
     n = len(eng.stats) - step0["n"]
     cyc = sum(s["cycles"] for s in eng.stats[step0["n"]:])
-    per = {k: 1e3 * v / n for k, v in T.items() if k != "prog-bytes"}
-    known = ["io-write", "wait-compile", "prog-upload", "imem-load", "run", "counters",
-             "status", "logits-read", "sample", "detok", "ui"]
-    # nested: _program and the backend calls happen inside step; step excludes sample/detok/ui
-    per["other"] = 1e3 * wall / n - sum(per.get(k, 0) for k in known)
+    dev_ms = 1e3 * cyc / n / (khz * 1e3)
+    per = {k: (1e3 * v[0] / n, 1e3 * v[1] / n) for k, v in P.t.items()}
+    crit = 1e3 * P.crit / max(P.windows, 1)
+    crit_known = sum(per.get(k, (0, 0))[0] for k in KNOWN)
     bid = (getattr(eng.backend, "info", {}) or {}).get("build_id")
     fmt = a.wformat + (f", head {a.head_format}" if a.head_format else "")
-    print(f"{path.name} ({fmt}) on {a.backend}" + ("" if bid is None else f" (build {bid:08x})")
-          + f": {n} decode steps, prompt fed "
-          f"{step0['n']} tokens; program {T['prog-bytes'] / max(n, 1) / 1024:.1f} KiB/token")
-    print(f"{'item':<16} {'ms/token':>9}")
-    for k in known + ["run.device", "run.overshoot", "other", "trace", "assemble", "step"]:
+    streamed = eng.stream_logits and getattr(eng.backend, "streams", False)
+    print(f"{path.name} ({fmt}, {'streamed logits' if streamed else 'no stream'}) on "
+          f"{a.backend}" + ("" if bid is None else f" (build {bid:08x})")
+          + f": {n} decode steps, prompt fed {step0['n']} tokens")
+    print(f"{'ms per token':<15} {'critical':>9} {'overlapped':>11}")
+    for k in KNOWN:
         if k in per:
-            print(f"{k:<16} {per[k]:9.2f}" + ("   (compile thread)" if k in ("trace", "assemble")
-                                               else ""))
-    print(f"wall {n / wall:.2f} tok/s, device {n * khz[0] * 1e3 / cyc:.2f} tok/s "
-          f"({cyc / n / 1e6:.2f} Mcycles/token)")
+            print(f"{k:<15} {per[k][0]:9.3f} {per[k][1]:11.3f}")
+    print(f"{'other':<15} {max(0.0, crit - crit_known):9.3f}")
+    over = 1e3 * sum(P.runs) / max(len(P.runs), 1) - dev_ms
+    print(f"host critical path (HALTED seen -> next RUN): {crit:.3f} ms/token over "
+          f"{P.windows} tokens; device {dev_ms:.3f} ms/token; HALTED seen {over:.3f} ms after "
+          f"the run's end (poll overshoot)")
+    print("transport per token: " + ", ".join(
+        f"{k} {v[0] / n:.1f}x {v[1] / n / 1024:.1f} KiB {1e3 * v[2] / n:.3f} ms"
+        for k, v in sorted(P.ops.items())))
+    ls = getattr(eng.backend, "last_stream", None) if streamed else None
+    if ls:
+        print(f"streamed logits (last token): {ls.get('during')} of {ls.get('pieces')} pieces "
+              f"during the run, {ls.get('probes')} probes, then "
+              f"{ls.get('tail_bytes', 0) / 1024:.0f} KiB in {1e3 * ls.get('tail_s', 0):.3f} ms")
+    print(f"wall {n / wall:.2f} tok/s, device {n * khz * 1e3 / cyc:.2f} tok/s "
+          f"({cyc / n / 1e6:.3f} Mcycles/token)")
     if a.json:
-        Path(a.json).write_text(json.dumps({"model": path.name, "wformat": a.wformat,
-                                            "head_format": a.head_format, "steps": n, "ms": per,
-                                            "wall_tok_s": n / wall, "build_id": bid,
-                                            "dev_tok_s": n * khz[0] * 1e3 / cyc}, indent=1))
+        Path(a.json).write_text(json.dumps({
+            "model": path.name, "wformat": a.wformat, "head_format": a.head_format,
+            "streamed": streamed, "steps": n, "build_id": bid,
+            "ms": {k: {"critical": c, "overlapped": o} for k, (c, o) in per.items()},
+            "critical_ms": crit, "device_ms": dev_ms, "overshoot_ms": over,
+            "ops": {k: {"calls": v[0] / n, "bytes": v[1] / n, "ms": 1e3 * v[2] / n}
+                    for k, v in P.ops.items()},
+            "wall_tok_s": n / wall, "dev_tok_s": n * khz * 1e3 / cyc,
+            "reply_ids": [int(x) for x in chat._reply]}, indent=1))
     eng._drain()
     eng.backend.close()
 
