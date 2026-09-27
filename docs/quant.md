@@ -12,11 +12,14 @@ In short:
   it comes close to NVFP4 (4.5 bits) and is clearly better than MXFP4 (4.25 bits): mean KL to
   the fp32 model 0.19 / 0.16 / 0.12 (Qwen3-0.6B / LFM2.5-230M / Qwen3.5-0.8B), NVFP4
   0.15 / 0.14 / 0.10, MXFP4 0.27 / 0.27 / 0.19.
-- **Hardware.** The MXU reads a 128-byte chunk as two 128-element blocks and consumes them in
-  two cycles, at the same MAC width as int8. The scale word goes through the existing scale
-  stream (one 32-bit word per block, as for int8). The multipliers are applied to exact integer
-  sub-block sums, so the arithmetic stays bit exact. Cost in yosys: +2.2K LUTs, +8 DSPs, +1
-  BRAM36 on the MXU (of 299K LUTs and 1,920 DSPs on the xc7k480t).
+- **Hardware.** The MXU reads a 128-byte chunk as two 128-element blocks. By default it
+  consumes them in two cycles, at the same MAC width as int8. With column reuse (`MM PAIR`,
+  decode and other MMs of at most MCOLS/2 rows) the idle MXU columns take the second block, so
+  a 4-bit chunk goes through in one cycle: 256 MACs per cycle per row with the same 128 DSPs,
+  twice today's rate. The multipliers are applied to exact integer sub-block sums, so the
+  arithmetic stays bit exact. Cost on the MXU, Vivado synthesis (out of context, xc7k480t):
+  column reuse is +4.6K LUTs, +1.2K FFs, +2 BRAM tiles and no DSPs over the half-rate MXU,
+  which itself was +2.2K LUTs over int8 in yosys.
 - **Speed (simulated).** Qwen3-0.6B decode on the RTL of the board configuration: 1.89x fewer
   cycles per token at a DRAM rate close to what the card delivers today (the model at 25% of
   peak bandwidth), 1.27x at 80% and 1.02x at 100%. At high DRAM rates the MXU's one block per
@@ -27,7 +30,8 @@ In short:
   0.007).
   Keeping the LM head or the attention projections in int8 recovers part of it (below).
 
-Everything here is measured in simulation or estimated with yosys. Nothing has run on the card.
+Everything here is measured in simulation or in synthesis (yosys, Vivado). Nothing has run on
+the card.
 
 ## Formats
 
@@ -243,11 +247,46 @@ bytes streamed, not simulations.
 - **(c)** avoids the DSPs (E2M1 x int8 is a shift and add: a, 3a, shifted), but 256 LUT
   products cost three times the fabric of (b), and it only works for E2M1 elements.
 
-Winner: **(a)**. The card's DRAM delivers about 30 bytes per cycle today (20.7 M cycles per
-Qwen3 token measured; the simulator at 25% bandwidth, 32 bytes per cycle, gives 19.8 M), well
-below the 64 bytes per cycle at which (a) saturates. There (a) gets the whole 2x of the bytes
-for 2K LUTs. (b) is the upgrade once the DRAM path delivers more than half its peak; at 80% it
-would take 4-bit decode from 1.27x to about 1.9x.
+First winner: **(a)**. When it was built the card's DRAM delivered about 30 bytes per cycle
+(20.7 M cycles per Qwen3 token measured; the simulator at 25% bandwidth, 32 bytes per cycle,
+gives 19.8 M), well below the 64 bytes per cycle at which (a) saturates. There (a) gets the whole
+2x of the bytes for 2K LUTs. Once the DRAM path delivers more than half its peak (DDR3-1066 at
+80% is 136 bytes per 100 MHz cycle), (a) is the limit, and the full-rate MXU below replaces (b).
+
+### Full rate by column reuse (built)
+
+Decode multiplies one activation row by every weight, so an MXU with MCOLS = 2 leaves its
+second column idle. `MM PAIR` (docs/isa.md, "Column reuse") gives that column the chunk's second
+block: column 0 takes block 2c against ACT row 0, column 1 block 2c+1 against ACT row 1, which
+`QACT DUP` fills with the same activation row in the same cycles. The two terms are added in
+fp32 and then accumulated as usual, so an MM of at most MCOLS/2 rows consumes a whole 4-bit chunk
+per cycle. What changed in the MXU (rtl/mxu/otpu_mxu.sv):
+
+- **The products.** One DSP48 makes both columns' products: today (a0*2^16 + a1) * w with a
+  shared weight. Under PAIR the columns have different weights (the low and the high nibble), so
+  the 18-bit B operand packs both: B = wl*2^13 + wh (|w| <= 12). The product holds a0*wl at bit
+  29 and a1*wh at bit 0, and the two cross terms in between (under 2^28 for a pair of positions,
+  so the fields separate exactly after the post-adder, with an offset of 2^28 + 2^12). The group
+  sums pick their field by a mux. No new DSPs.
+- **The scales.** Each column takes its own block's weight scale and sub-block multipliers. The
+  two scale words of a chunk are adjacent in DRAM and port A now returns the other word of an
+  8-byte pair with each read (`a_rdata2`), so there is still one scale request per chunk; the
+  scale FIFO is 64 bits wide.
+- **The ACT RAM.** Rows at or past M read block ab+2c+1, the others ab+2c: a per-row read
+  address.
+- **The pair adder.** One fp32 adder (4 stages) per low column before the partial loop; only
+  PAIR MMs pass through it, so int8 and half-rate MMs keep their latency.
+
+Vivado synthesis of the MXU alone (out of context, xc7k480t-2, the board's parameters, 10 ns
+clock; post-synthesis, no placement):
+
+| MXU | LUT | FF | DSP | BRAM tiles | WNS (post-synthesis) |
+|---|---:|---:|---:|---:|---:|
+| half rate (a) | 11,880 | 9,060 | 142 | 30.5 | +5.33 ns |
+| (a) + column reuse | 16,437 | 10,224 | 142 | 32.5 | +5.11 ns |
+
+The extra 4.6K LUTs are mostly the packed B operand, the field muxes and the wider post-adder
+result; the pair adder is about 0.5K (yosys). The whole design uses about 53% of the LUTs.
 
 Why not the other scale formats in hardware:
 
@@ -266,7 +305,10 @@ chunk, the element 2i in the low nibble); the scale word of block k is where the
 int8 row would be, `ssa + n*srs + 4k`: bits 15:0 the bf16 scale, bits 16+4b the multiplier of
 sub-block b. Rows are chunk aligned, so a column slice of a 4-bit matrix must start at an even
 block (the compiler checks this; W_down is chunked in multiples of 256 columns). Activations
-(`QACT`), the KV cache and `QST` stay int8: this is W4A8.
+(`QACT`), the KV cache and `QST` stay int8: this is W4A8. `MM` flag bit6 `PAIR` and `QACT` flag
+bit3 `DUP` are column reuse (docs/isa.md, "Column reuse"); `PAIR` reads a chunk's two scale words
+as one 8-byte pair, so `ssa` and `srs` are multiples of 8 (the compiler falls back to half rate
+otherwise, e.g. a matrix with an odd block count and dense scale rows).
 
 ## Using it
 
@@ -277,7 +319,8 @@ eng = Engine(spec, W, wformat="fp4", head_format="int8")   # LM head int8
 ```
 
 `wformat` is `"int8"` (default), `"fp4"` or `"int4"`; the Qwen3, LFM2 and Qwen3.5 images all
-take it. For kernels, `runtime.Weight(w, shard, fmt="fp4")`. `opentpu/quant.py` has the
+take it. `Config.PAIR` (a bitstream with CAPS bit5; `OTPU_PAIR=1` for the simulators) makes
+the compiler use column reuse for every 4-bit MM of at most MCOLS/2 rows. For kernels, `runtime.Weight(w, shard, fmt="fp4")`. `opentpu/quant.py` has the
 quantizers (`quantize_w4`, `quantize_mxu`) and the reference formats of the survey.
 `tools/bench_llm.py` and `tools/perf_qwen.py` take `--wformat` and `--head-format`.
 
@@ -310,13 +353,18 @@ cycles, we expect about the 25% column; this is a projection until it runs there
 - `tests/test_qwen3.py`: a tiny Qwen3 at 4 bits follows its float64 emulation; Qwen3-0.6B with
   FP4 layers and an int8 head answers the France question correctly on the ISA simulator, each
   token the argmax of the emulation; and one Qwen3-0.6B FP4 token on the RTL is bit exact
-  against the ISA simulator (weights, KV cache, logits).
+  against the ISA simulator (weights, KV cache, logits), with an int8 LM head at half rate and
+  all 4-bit with column reuse at MCOLS = 2.
+- Column reuse: tests/test_pair.py (ddr) holds the ISA simulator to a scalar model of the
+  definition; the RTL fuzzers draw PAIR MMs (with and without a DUP operand, odd and even block
+  counts); a 4-bit MLP runs PAIR on the RTL at the board's D = 128, MCOLS = 2.
 
 ## Not done
 
 - No run on the card; the speeds above are simulated.
 - The MXU's DSP cascade variant (`IMPL = 1`, a timing study option) does not support 4-bit
   weights; the simulation stops if it meets one.
-- Option (b), for when the DRAM path delivers more than half of its peak.
+- Column reuse needs a free column: MMs of more than MCOLS/2 rows (prefill chunks, batched
+  decode) run at half rate.
 - Calibration-based quantization (GPTQ, AWQ) and importing MXFP4 / NVFP4 checkpoints. An MXFP4
   block converts exactly only when its four scales span at most 2^3, and NVFP4 not in general.

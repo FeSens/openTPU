@@ -3,7 +3,7 @@
     python3 tools/bench_llm.py [--bw 80,100] [--batches 1,2,4,8] [--ctx 128,512,1024]
                                [--prompts 32,128,512] [--chunk 8] [--mcols 2] [--lanes 8]
                                [--validate] [--jobs 6] [--json out.json]
-                               [--wformat int8|int4|fp4] [--head-format int8|int4|fp4]
+                               [--wformat int8|int4|fp4] [--head-format int8|int4|fp4] [--pair]
 
 Model: Qwen3-0.6B shapes (models/Qwen3-0.6B/config.json if present). Timing on this machine is
 data-independent (no data-dependent latencies or skips), so the model image holds random
@@ -34,7 +34,8 @@ chunk).
 
 --wformat / --head-format: the weight format of the layers / the LM head (opentpu/quant.py; the
 roofline counts their bytes, and the MXU-stream bound also counts the MXU's rate of one D-block
-of weights per cycle, which bounds 4-bit decode once DRAM delivers more than D/2 bytes a cycle).
+of weights per cycle, which bounds 4-bit decode once DRAM delivers more than D/2 bytes a cycle;
+--pair: two D-blocks a cycle for 4-bit MMs of at most MCOLS/2 rows, the MXU's column reuse).
 
 MCOLS (MXU stationary rows, <= LANES) and LANES are configuration overrides for MXU studies.
 Programs that exceed the board's 4K-instruction IMEM (large batch x long context: attention is
@@ -125,8 +126,12 @@ def roofline(spec: Spec, cfg, rows: list, head_rows: int, bw: int, wformat: str 
     passes = -(-len(rows) // cfg.MCOLS)
     hpasses = -(-head_rows // cfg.MCOLS)
     stream = (spec.layers * (passes * wbytes + kvbytes) + hpasses * hbytes) / (D * bw / 100)
-    # ... and at most one D-block of weights per cycle (4-bit: D/2 bytes)
-    stream = max(stream, (spec.layers * passes * params + hpasses * spec.vocab * H) / D)
+    # ... and at most one D-block of weights per cycle (4-bit: D/2 bytes), two for a 4-bit MM
+    # with column reuse (PAIR: at most MCOLS/2 rows)
+    def rate(fmt, r):
+        return 2 if cfg.PAIR and fmt != "int8" and 2 * min(r, cfg.MCOLS) <= cfg.MCOLS else 1
+    stream = max(stream, spec.layers * passes * params / (D * rate(wformat, len(rows))) +
+                 hpasses * spec.vocab * H / (D * rate(head_format or wformat, head_rows)))
     return {"dram": dram, "compute": comp, "bound": max(dram, comp),
             "kind": "DRAM" if dram >= comp else "compute", "stream": max(stream, comp)}
 
@@ -388,6 +393,8 @@ def cfg_overrides(a) -> dict:
         kw["MCOLS"] = a.mcols
     if a.lanes:
         kw["LANES"] = a.lanes
+    if a.pair:
+        kw["PAIR"] = True
     mc, ln = kw.get("MCOLS", board_config().MCOLS), kw.get("LANES", board_config().LANES)
     if mc > ln:
         raise SystemExit(f"MCOLS {mc} must be <= LANES {ln}")
@@ -439,6 +446,8 @@ def main():
     ap.add_argument("--chunk", type=int, default=8, help="prefill rows per device run (<= 8)")
     ap.add_argument("--mcols", type=int, default=None, help="override MCOLS (<= LANES)")
     ap.add_argument("--lanes", type=int, default=None, help="override LANES")
+    ap.add_argument("--pair", action="store_true",
+                    help="column reuse: 4-bit MMs of <= MCOLS/2 rows at full rate (MM PAIR)")
     ap.add_argument("--validate", action="store_true",
                     help="also run the full model once (b=1 decode at the first ctx, first bw)")
     ap.add_argument("--jobs", type=int, default=6)
