@@ -242,6 +242,7 @@ class Chat:
         turn = Turn(clock_mhz=self.clock_mhz, cap=self.eng.cap, context=self.eng.pos)
         logits, self._next = self._next, None
         reply = self._decode(logits, self._reply, turn, time.perf_counter(), on_update, stop)
+        turn.ttft_s = None                   # its first token was already computed: no TTFT
         self.history[-1]["content"] = reply
         self.session.add(turn)
         self.last = turn

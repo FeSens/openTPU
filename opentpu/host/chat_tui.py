@@ -248,7 +248,6 @@ class ChatApp(App):
 
     def on_mount(self) -> None:
         self._ui_loop = asyncio.get_running_loop()
-        self.query_one("#log", VerticalScroll).anchor()    # follow the end as replies grow
         self.register_theme(THEME)
         self.theme = "otpu"
         self._refresh()
@@ -450,6 +449,7 @@ class ChatApp(App):
             if self._stream is None:        # appends, re-parsing only the last block
                 self._stream = Markdown.get_stream(self._reply.md)
             await self._stream.write(delta)
+            self.query_one("#log", VerticalScroll).scroll_end(animate=False)
         self._refresh()
 
     async def _done(self, turn: Turn | None) -> None:

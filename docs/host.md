@@ -217,10 +217,11 @@ and one accent colour. The conversation is a single column: a header box with th
 backend, device, bitstream and clock, then each prompt after a dim `>` and each reply after a
 `⏺`, streamed token by token and rendered as Markdown. While a reply runs, a spinner line above
 the input shows the phase (`Prefilling… 12/21 tok · 1.4s`, then `Decoding… 87 tok · 7.6
-tok/s`). Under the input box one status line is always visible:
+tok/s`). Under the input box one status line is always visible (LFM2.5-230M on the card,
+second turn of a chat, build 74d48591, measured 2026-09-26):
 
 ```
-LFM2.5-230M · board 100 MHz │ TTFT 1.64s │ prefill 8.6 tok/s (dev 12.1) │ decode 7.8 tok/s (dev 12.1) · 8.26 Mcyc/tok │ ctx 1823/2048 ▰▰▰▰▰▰▰▱ 89%
+LFM2.5-230M · board 100 MHz │ TTFT 2.66s │ prefill 10.2 tok/s (dev 13.0) │ decode 7.9 tok/s (dev 12.9) · 7.73 Mcyc/tok │ ctx 105/2048 ▱▱▱▱▱▱▱▱ 5%
 ```
 
 TTFT is submit to the first generated token; prefill and decode are tokens/s on the wall clock

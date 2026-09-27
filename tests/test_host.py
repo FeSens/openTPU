@@ -733,7 +733,7 @@ def test_chat_max_new_resume_and_cap():
     assert reply == "eeee" and t.end == "max_new" and chat.can_resume
     assert "stopped at max_new" in t.line()
     reply, t = chat.resume()                      # the same reply grows
-    assert reply == "eeeeeeee" and t.end == "max_new" and t.prefill_tokens == 0
+    assert reply == "eeeeeeee" and t.end == "max_new" and t.prefill_tokens == 0 and t.ttft_s is None
     assert chat.history[-1] == {"role": "assistant", "content": "eeeeeeee"}
     reply, t = chat.resume()
     assert reply == "eeeeeeeeee" and t.end == "eos" and not chat.can_resume
