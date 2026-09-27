@@ -448,10 +448,11 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
     (replicated on every slice).
 
     Schedule (the MXU streams weights in program order, so what sits between two MMs in the
-    stream overlaps them): K and V are projected first and their norms, RoPE and cache appends
-    run while the Q projection streams; Q is projected one KV head's query group at a time,
-    interleaved with the attention of the heads before it (_attend_heads), so each head's
-    query preparation and softmax hide behind the next heads' Q weights.
+    stream overlaps them): K, V and then Q (one MM per KV head's query group) are projected
+    first, back to back, and the K / V norms, RoPE and cache appends run while Q streams. Each
+    head's query preparation follows in the attention pipeline (_attend_heads). The Q MMs come
+    before the appends and queries in program order so that the sequencer's window, which
+    the slow V^T appends fill, never holds the MXU's next MM back.
 
     A query group of more heads than the MXU has columns attends in parts of MCOLS heads, each
     streaming the KV head again. `gated` (Qwen3.5): lw.wgate projects a gate per query
@@ -466,6 +467,7 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
     scale = ol.LOG2E / math.sqrt(d)
     heads = list(kv.owned_heads(spec.n_kv))
     nh = len(heads)
+    qps = [ol.dot(xs, lw.wq[j * G * d:(j + 1) * G * d, :]) for j in range(nh)]  # [1, G*d]
     kh = _rope_padded(rmsnorm(k.reshape(nh, d), kn, eps), c, s_)  # [nkv_loc, d or D]
     vh = _padded(v.reshape(nh, d))
     for j, hh in enumerate(heads):
@@ -473,8 +475,7 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
 
     def queries(j):
         def emit():
-            qj = ol.dot(xs, lw.wq[j * G * d:(j + 1) * G * d, :])  # [1, G*d]
-            return _rope_padded(rmsnorm(qj.reshape(G, d), qn, eps), c, s_)
+            return _rope_padded(rmsnorm(qps[j].reshape(G, d), qn, eps), c, s_)
         return emit
 
     mc = min(G, ol.mxu_columns())
@@ -697,6 +698,22 @@ _WORKER: tuple | None = None                # (image, block) in the compile work
 def _worker_init(spec, cfg, cap, batch, rows, block) -> None:
     global _WORKER
     _WORKER = (spec.image(cfg, cap, batch, rows), block)
+    _exit_with_parent()
+
+
+def _exit_with_parent() -> None:
+    """A worker whose parent died (killed, or os._exit) would wait for work forever: it holds
+    its own end of the task pipe, so it never sees EOF. A watcher thread ends it."""
+    import os
+    import threading
+    import time
+    parent = os.getppid()
+
+    def watch():
+        while os.getppid() == parent:
+            time.sleep(1.0)
+        os._exit(0)
+    threading.Thread(target=watch, daemon=True, name="otpu-parent-watch").start()
 
 
 def _worker_ready() -> bool:

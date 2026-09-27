@@ -37,6 +37,7 @@ from pathlib import Path
 
 import numpy as np
 
+from opentpu.host.runstate import busy_exits
 from . import i2c as I2C
 from . import memtest as M
 from . import power as P
@@ -460,7 +461,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
                     lambda c=c: res(M.address_bits(t, c, ch_bytes)), need, g)
             d.check("mem", f"channel {c} random blocks",
                     lambda c=c: res(M.random_blocks(t, c, ch_bytes)), need, g)
-            d.check("mem", f"channel {c} partial (byte-strobe) writes",
+            d.check("mem", f"channel {c} sub-beat updates (host merge)",
                     lambda c=c: partial_writes(t, c, base=ch_bytes // 2), need, g)
             if sim:
                 d.check("mem", f"channel {c} DMA bandwidth",
@@ -644,6 +645,7 @@ def soak(b, cfg, img, n: int) -> tuple:
     return not fails, msg, {"fails": fails}
 
 
+@busy_exits
 def main(argv=None, open_transport=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-diag", description=__doc__.split("\n")[0])
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")
