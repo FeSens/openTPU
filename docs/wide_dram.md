@@ -20,6 +20,10 @@ At DDR3-800 the channels deliver less than the core can consume, because refresh
 ECC read-modify-write take their share. From DDR3-1066 up, the controllers can keep the 128-byte
 path full, and the core becomes the limit.
 
+MIG supports only DDR3-1066 on this board. The DDR3 sits on HR banks, and MIG gives critical
+warning 79-155 for 1333 and 1600 (docs/board.md, "Faster DDR3"). Rows 1333 and 1600 describe
+out-of-spec operation that the card may or may not sustain.
+
 The simulated benchmark shows what that step is worth. `docs/benchmarks.md` runs Qwen3-0.6B at
 batch 1 and ctx 128. At 80 % of the 128-byte peak it decodes 16.1 tok/s, and at 100 % it decodes
 20.0 tok/s (*simulated*). So DDR3-1066 or 1333 with today's RTL is worth up to about +24 % on
@@ -85,6 +89,13 @@ code, in front of the products. So one widened MXU serves two uses:
 The ~2x rows assume decode stays DRAM-bound and that the per-token vector work (VPU, attention)
 does not grow with it. At batch 1 that work is a small share of the cycles, which is what
 `docs/benchmarks.md` implies.
+
+### 4. If 1600 does not work
+
+Within MIG's range, DDR3-1066 peaks at 17.1 GB/s, roughly 13-14.5 GB/s in practice
+(*estimate*). A 256-byte int8 path would then gain only ~5-15 % over the 128-byte one. The 2x
+comes from 4-bit weights on today's 128-byte path, so the MXU widening is worth doing either way.
+The AXI widening is worth doing only if the card runs DDR3-1333 or 1600 reliably.
 
 ## Suggested order
 
