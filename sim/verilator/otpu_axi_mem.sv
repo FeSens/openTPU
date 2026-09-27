@@ -1,6 +1,6 @@
 // Simulation model of the board memory: two AXI4 slave channels (512-bit; single-beat writes,
 // INCR read bursts, which must not cross 4 KB) in front of one logical DRAM image with the 64-byte channel interleave of
-// otpu_axi_dram. Every ready is randomly withheld and every response randomly delayed (seed
+// otpu_axi_dram (with its CHASH: the chunk halves swapped by the chunk index's parity). Every ready is randomly withheld and every response randomly delayed (seed
 // +axi_seed=N, stall probability +axi_stall=percent), so the slice sees variable latency and
 // backpressure; reads and writes are not ordered against each other, as in a real controller:
 // a read returns the memory as it was when its AR was accepted, and a write lands when its
@@ -37,6 +37,7 @@ module otpu_axi_mem #(
   parameter int PHYS  = 0,
   parameter int LAT   = 20,              // minimum read / write-response latency
   parameter int SID   = 0,
+  parameter bit CHASH = 1'b1,            // otpu_axi_dram's address map
   parameter logic [31:0] BASE0 = 32'h0000_0000,
   parameter logic [31:0] BASE1 = 32'h8000_0000
 ) (
@@ -83,10 +84,14 @@ module otpu_axi_mem #(
   longint n_rmw_a [2];
   longint cyc = 0;
 
+  // the logical beat of channel c's beat m
+  function automatic int lbeat(input logic [31:0] m, input int c);
+    return int'(m * 2 + (c[0] ^ (CHASH && ^m)));
+  endfunction
   function automatic int beat_word(input logic [31:0] addr, input int c);
     logic [31:0] off;
     off = addr - (c ? BASE1 : BASE0);
-    return int'(((off >> 6) * 2 + c) * 16);
+    return lbeat(off >> 6, c) * 16;
   endfunction
   function automatic bit rnd_stall();
     return ($urandom % 100) < stall;
@@ -317,7 +322,7 @@ module otpu_axi_mem #(
           $fclose(fd);
         end
       end else begin
-        // channel c word j (beat j / 16) is logical beat 2 * (j / 16) + c
+        // channel c word j (beat j / 16) is logical beat lbeat(j / 16, c)
         for (int c = 0; c < 2; c++) begin
           for (int i = 0; i < WORDS / 2; i++) chm[i] = '0;
           fd = $fopen($sformatf("%s/ch%0d.bin", dir, c), "rb");
@@ -325,7 +330,7 @@ module otpu_axi_mem #(
             nread = $fread(chm, fd);
             $fclose(fd);
           end
-          for (int j = 0; j < WORDS / 2; j++) mem[(2 * (j / 16) + c) * 16 + j % 16] = chm[j];
+          for (int j = 0; j < WORDS / 2; j++) mem[lbeat(j / 16, c) * 16 + j % 16] = chm[j];
         end
       end
     end
@@ -341,7 +346,7 @@ module otpu_axi_mem #(
     end else begin
       for (int c = 0; c < 2; c++) begin
         fd = $fopen($sformatf("%s/ch%0d_out.bin", dir, c), "wb");
-        for (int j = 0; j < WORDS / 2; j++) $fwrite(fd, "%u", mem[(2 * (j / 16) + c) * 16 + j % 16]);
+        for (int j = 0; j < WORDS / 2; j++) $fwrite(fd, "%u", mem[lbeat(j / 16, c) * 16 + j % 16]);
         $fclose(fd);
       end
     end

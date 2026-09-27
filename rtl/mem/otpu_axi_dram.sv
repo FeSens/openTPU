@@ -2,10 +2,13 @@
 // controllers), 512-bit data: 64-byte beats, port B reads in INCR bursts of up to BL beats.
 //
 // Address map: the slice's byte address space is interleaved over the channels in 64-byte
-// beats: logical beat b = addr / 64 lives on channel b % 2 at BASE[b % 2] + (b / 2) * 64. A
-// D = 128-byte chunk (port B; requests are chunk aligned) is therefore one beat on each
-// channel, and a streamed operand uses both channels evenly. The host applies the same map
-// when it fills and reads the memory (opentpu/host/board.py).
+// beats: logical beat b = addr / 64 (chunk m = b / 2) lives at BASE[c] + m * 64 on channel
+// c = b % 2, or with CHASH on c = (b % 2) ^ parity(m). A D = 128-byte chunk (port B; requests
+// are chunk aligned) is therefore one beat on each channel, and a streamed operand uses both
+// channels evenly. CHASH swaps the chunks' halves by the parity of the chunk index, so the beats
+// at a power-of-two stride of chunks (a transposed V's column: one byte per cache row) fall
+// half on each channel (rows 2j and 2j + 1 on different ones) instead of all on one. The host applies the same map when it fills and
+// reads the memory (opentpu/host/board.py; CAPS bit7 = CHASH).
 //
 // Port B: chunk reads and word-masked chunk writes. Port A: single-word reads and byte-enabled
 // word writes. Port SW: byte-enabled word writes (the quantizer's QST stores), independent of A
@@ -28,8 +31,12 @@
 // 16 scales per beat) reuse it without a DRAM access, until any write is accepted. An A read that
 // misses fetches a run of up to APF channel-consecutive beats (one INCR burst, not across 4 KB);
 // the A reads that follow the run in order take its beats without a DRAM access, and a read off
-// the run (or after any write) drops the beats not yet taken. The scale stream thus costs one
-// AXI transaction per APF beats instead of one per beat.
+// the run (or after a B or A write) drops the beats not yet taken. An SW write drops the run
+// (and the reused beat) only when it touches them: checked when the write is taken and again
+// when its beat is in memory (a run fetched in between read the old beat), so the QSTs that
+// stream while an MM runs do not cost its scale stream its runs. (A read that depends on a QST
+// comes after the QST is done, i.e. after its writes' responses.) The scale stream thus costs
+// one AXI transaction per APF beats instead of one per beat.
 // Port B reads that follow each other in the address space (a streamed operand) are issued as
 // one burst per channel: a run of queued contiguous reads goes out once it has BL beats, once
 // the next queued request does not continue it (or it would cross a 4 KB page), once no request
@@ -45,6 +52,7 @@ module otpu_axi_dram #(
   parameter int D = 128,
   parameter int QD = 16,                             // request queue depth per channel and port
   parameter int WQD = 64,                            // SW (gathered beat) queue depth per channel
+  parameter bit CHASH = 1'b1,                        // address map: see the top
   parameter int BL = 8,                              // port B read burst, beats (max)
   parameter int GATHER = 4,                          // idle cycles before a short burst goes out
   parameter int WGATHER = 4,                         // idle cycles before a gathered SW beat goes out
@@ -127,6 +135,11 @@ module otpu_axi_dram #(
     return a[5:0] ^ a[11:6] ^ a[17:12] ^ a[23:18] ^ {4'd0, a[25:24]};
   endfunction
 
+  // the channel of a word address's beat
+  function automatic logic chan_of(input logic [31:0] word_addr);
+    return word_addr[4] ^ (CHASH && ^word_addr[31:5]);
+  endfunction
+
   function automatic logic [31:0] chan_addr(input logic [31:0] word_addr, input logic c);
     logic [31:0] beat;
     beat = word_addr >> 4;
@@ -183,7 +196,7 @@ module otpu_axi_dram #(
   logic [2:0]   gage [2];
 
   // order of B reads (tags) and of A reads (channel, word, reuse)
-  logic         bt_q [OD];                     // LUT RAM
+  logic [1:0]   bt_q [OD];                     // LUT RAM: tag, halves swapped (CHASH)
   logic [OW:0]  bt_n;
   logic [OW-1:0] bt_h;
   // A reads in order: channel, word, reuse of the last beat, run beats to drop before this one
@@ -211,10 +224,11 @@ module otpu_axi_dram #(
   assign a_rdy = (qa_n[0] < QD) && (qa_n[1] < QD) && (ao_n < OD);
   assign sw_rdy = (qw_n[0] < WQD) && (qw_n[1] < WQD);
   wire sw_take = sw_req && sw_rdy;
-  wire sw_ch = sw_addr[4];
+  wire sw_ch = chan_of(sw_addr);
   wire b_take = b_req && b_rdy;
   wire a_take = a_req && a_rdy;
-  wire a_ch = a_addr[4];
+  wire a_ch = chan_of(a_addr);
+  wire b_sw = CHASH && ^b_addr[31:5];              // the chunk's high half is on channel 0
   wire a_reuse = !a_we && al_v && al_beat == a_beat;
   // A runs per channel: the next channel beat of the run, valid (no write since), beats not
   // yet taken (in flight or stored)
@@ -223,6 +237,23 @@ module otpu_axi_dram #(
   logic [2:0]   pfl [2];
   wire  [26:0]  a_cb = a_addr[31:5];              // the channel beat
   wire  a_hit = !a_we && !a_reuse && pv[a_ch] && a_cb == pnx[a_ch] && pfl[a_ch] != 0;
+  // an SW write (taken, or in memory) that touches channel c's run or the reused beat drops them
+  logic [1:0]   sw_kr, sw_ka;
+  logic [25:0]  wadr_f [2];                       // the beat of slot qw_f (its write is done)
+  always_comb begin
+    for (int c = 0; c < 2; c++) begin
+      logic [26:0] tb, lb;
+      logic tk, ld;
+      tb = sw_addr[31:5];                         // the taken write's channel beat
+      lb = 27'(wadr_f[c] - (c ? BASE1[31:6] : BASE0[31:6]));
+      tk = sw_take && sw_ch == c[0];
+      ld = m_bvalid[c] && m_bid[c] && k1w[c][k1w_h[c][KW-1:0]];
+      sw_kr[c] = pv[c] && ((tk && 27'(tb - pnx[c]) < 27'(pfl[c])) ||
+                           (ld && 27'(lb - pnx[c]) < 27'(pfl[c])));
+      sw_ka[c] = al_v && ((tk && al_beat == {tb, sw_addr[4]}) ||
+                          (ld && al_beat == {lb, c[0] ^ (CHASH && ^lb)}));
+    end
+  end
   wire  [3:0]   a_len = (7'd64 - {1'b0, a_cb[5:0]} < 7'(APF)) ? 4'(7'd64 - {1'b0, a_cb[5:0]})
                                                                : 4'(APF);
 
@@ -247,11 +278,12 @@ module otpu_axi_dram #(
   logic [511:0] rb_head [2], ra_head [2], wr_head [2];
   always_comb begin
     for (int c = 0; c < 2; c++) begin
-      qb_push[c] = b_take && (!b_we || b_wmask[16 * c +: 16] != 0);
+      // channel c holds the chunk's half c ^ b_sw
+      qb_push[c] = b_take && (!b_we || b_wmask[16 * (c ^ b_sw) +: 16] != 0);
       qb_e[c].we = b_we;
-      qb_e[c].addr = chan_addr(b_addr + 32'(16 * c), c[0]);
-      qb_e[c].data = b_wdata[512 * c +: 512];
-      qb_e[c].wmask = b_we ? b_wmask[16 * c +: 16] : '0;
+      qb_e[c].addr = chan_addr(b_addr, c[0]);
+      qb_e[c].data = b_wdata[512 * (c ^ b_sw) +: 512];
+      qb_e[c].wmask = b_we ? b_wmask[16 * (c ^ b_sw) +: 16] : '0;
       qa_push[c] = a_take && a_ch == c[0] && !a_reuse && !a_hit;
       qa_e[c].we = a_we;
       qa_e[c].addr = chan_addr(a_addr, c[0]);
@@ -284,6 +316,7 @@ module otpu_axi_dram #(
     always_ff @(posedge clk) if (qw_push[c]) wam[WW'(qw_f[c] + qw_n[c])] <= qw_e[c].addr[31:6];
     always_ff @(posedge clk) if (qw_push[c]) whm[WW'(qw_f[c] + qw_n[c])] <= whash(qw_e[c].addr[31:6]);
     assign wadr_r[c] = wam[qw_r[c]];
+    assign wadr_f[c] = wam[qw_f[c]];
     assign wh_r[c] = whm[qw_r[c]];
     assign wh_f[c] = whm[qw_f[c]];
     always_ff @(posedge clk)
@@ -392,14 +425,15 @@ module otpu_axi_dram #(
   wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] > (AW_ + 1)'(aoh.drop));
   wire [511:0] a_src = aoh.reuse ? a_last : ra_head[aoh.c];
   assign b_rvalid = b_out;
-  assign b_rtag = bt_q[bt_h];
-  assign b_rdata = {rb_head[1], rb_head[0]};
+  wire [1:0] bth = bt_q[bt_h];
+  assign b_rtag = bth[0];
+  assign b_rdata = bth[1] ? {rb_head[0], rb_head[1]} : {rb_head[1], rb_head[0]};
   assign a_rvalid = a_out;
   assign a_rdata = a_src[32 * aoh.idx +: 32];
   assign a_rdata2 = a_src[32 * (aoh.idx ^ 4'd1) +: 32];
 
   always_ff @(posedge clk) begin
-    if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= b_tag;
+    if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= {b_sw, b_tag};
     if (a_take && !a_we)
       ao_q[OW'(ao_h + ao_n)] <= '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse,
                                   drop: (a_reuse || a_hit) ? 3'd0 : pfl[a_ch]};
@@ -633,8 +667,9 @@ module otpu_axi_dram #(
           pv[a_ch] <= 1'b1;
         end
       end
-      if ((b_take && b_we) || (a_take && a_we) || sw_take) pv <= '0;
-      if ((b_take && b_we) || (a_take && a_we) || sw_take) al_v <= 1'b0;
+      for (int c = 0; c < 2; c++) if (sw_kr[c]) pv[c] <= 1'b0;
+      if ((b_take && b_we) || (a_take && a_we)) pv <= '0;
+      if ((b_take && b_we) || (a_take && a_we) || (|sw_ka)) al_v <= 1'b0;
       else if (a_take && !a_we) begin
         al_v <= 1'b1;
         al_beat <= a_beat;

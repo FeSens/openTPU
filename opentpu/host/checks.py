@@ -117,9 +117,10 @@ def pattern_test(board, regions: list[tuple[int, int]], seed: int = 1) -> tuple[
         got = board.read(a, n)
         bad = np.nonzero(got != d)[0]
         if len(bad):
+            b = (a + int(bad[0])) // 64
+            ch = b % 2 ^ (board.chash and bin(b // 2).count("1") & 1)
             return False, (f"region {a:#x}+{n:#x}: {len(bad)} bytes wrong, first at "
-                           f"{a + int(bad[0]):#x} (logical beat {(a + int(bad[0])) // 64}, "
-                           f"channel {((a + int(bad[0])) // 64) % 2})")
+                           f"{a + int(bad[0]):#x} (logical beat {b}, channel {ch})")
     return True, f"{len(regions)} regions, {sum(n for _, n in regions)} bytes"
 
 
