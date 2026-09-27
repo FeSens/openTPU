@@ -238,6 +238,33 @@ passes every check that the model can run. What the model cannot show: MIG calib
 controllers' read-modify-write of partial writes (the model applies byte strobes directly),
 PCIe, the DMA rate and the real DRAM latency.
 
+### First light (measured on the card, 2026-09-26)
+
+Build 74d48591 (the primary image), Arch Linux 7.1 host, Xilinx dma_ip_drivers XDMA (poll mode),
+Digilent FT232H JTAG cable (`openFPGALoader -c digilent_hs2`; this cable's chain shows the FPGA
+alone). PCIe Gen1 x8; both DDR3 channels calibrate. `otpu-selftest` passes every stage and
+`otpu-diag` every check (124, including the 93 instruction variants). Greedy decoding equals the
+ISA simulator token for token for all three models ("The capital of France is Paris."):
+
+| Model | device Mcycles / token | tok/s at 100 MHz | simulated (bw 80, ctx 128) |
+|---|---|---|---|
+| Qwen3-0.6B | 20.66 | 4.8 | 6.20 |
+| LFM2.5-230M | 7.71 | 13.0 | 2.35 |
+| Qwen3.5-0.8B | 25.91 | 3.9 | 8.41 |
+
+Decode runs at ~3.2x the simulated cycles: the counters show the MXU starved (MXU_BUSY 94%,
+MXU_MAC 21%, DRAM_WAIT 0.1%) and DRAM reads at 3.0 GB/s (0.23 beats / cycle / channel). Port B
+issues single-beat 64-byte AXI reads (SmartConnect ports MAX_BURST_LENGTH 1); the per-transaction
+cost in SmartConnect and the MIG AXI front end, which the simulated DRAM does not charge, caps the
+rate. Fix in progress: burst reads on port B. Host DMA: 0.78 GB/s host -> card, 1.12 GB/s back.
+
+Found at bring-up, fixed in the host (558a4bf): the DRAM must be written once after configuration
+(ECC: a read of a never-written beat hangs; `Board.scrub`, ~6 s, done by every tool), register
+access must be single 32-bit loads / stores, and DMA reads must not use `preadv` (the XDMA driver's
+asynchronous read_iter crashes kernel 7.1). The XDMA's PCI class code is "serial controller",
+so the 8250 driver probes the card: a udev rule sets `driver_override=xdma` (a class code in
+bd.tcl is the real fix, pending).
+
 ## 5. Clocks and the roofline
 
 | Clock | Frequency | Source | Drives |
