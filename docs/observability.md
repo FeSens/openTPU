@@ -12,6 +12,10 @@ The version 1 registers keep their offsets. Version 3 adds one free-running coun
 MXU_STARVE (0x160); everything else is as in version 2. A version 2 bitstream reads 0xDEADBEEF
 at 0x160, so the host reads the counters its REGMAP has (`opentpu/host/regs.py`, `counters()`).
 
+DDR_MTS (0x054) came later without a version bump, because CAPS bit3 announces it. On a
+bitstream built before it, the bit is clear and 0x054 reads 0xDEADBEEF, and the host reports the
+DDR3 speed as unknown.
+
 | Offset | Name | Access | Meaning |
 |---|---|---|---|
 | 0x000 | ID | RO | 0x4F545055 ("OTPU") |
@@ -29,18 +33,23 @@ at 0x160, so the host reads the counters its REGMAP has (`opentpu/host/regs.py`,
 | 0x034 | B_STALL | RO | cycles a port B request waited (run) |
 | 0x038 | SCRATCH | RW | host bring-up test |
 | 0x03C | REGMAP | RO | register map version (3; 2 before MXU_STARVE) |
-| 0x040 | CAPS | RO | bit0 trace buffer present, bit1 temperature present, [15:8] log2(trace depth), [23:16] log2(P/Q window cycles) |
+| 0x040 | CAPS | RO | bit0 trace buffer present, bit1 temperature present, bit2 I2C pins present, bit3 DDR_MTS present, [15:8] log2(trace depth), [23:16] log2(P/Q window cycles) |
 | 0x044 | CORE_KHZ | RO | accelerator clock in kHz (a build parameter; the host turns cycles into time with it) |
 | 0x048 | BUILD_ID | RO | a build parameter: the first 8 hex digits of the git commit |
 | 0x04C | TEMP | RO | bit31 valid, [11:0] the XADC die-temperature code (from the block design's XADC, shared with the MIGs; °C = code × 503.975 / 4096 − 273.15). Valid once channel 0 is calibrated and has reported a non-zero code |
 | 0x050 | SNAP | W / R | write (any value): latch every free-running counter into its shadow at once; read: number of snapshots taken |
+| 0x054 | DDR_MTS | RO | a build parameter: the DDR3 data rate the MIGs were generated for, in MT/s (800, 1066, 1300, ...; `make bit DDR=`). Valid when CAPS bit3 is set |
 
 Build parameters (`make -C boards/ypcb-00338 bit`): CORE_KHZ is computed from CORE_MHZ the way
 the block design rounds it (the MMCM divides 800 MHz in steps of 1/8: 100 → 100000, 80 →
 80000, 75 → 75294); BUILD_ID is the first 8 hex digits of the git commit the bitstream was
-built from (`git rev-parse HEAD`; 0 if unknown; `make bit BUILD_ID=...` overrides). The board
-model (`sim/verilator/tb_board.sv`) reports CORE_KHZ 100000, BUILD_ID 0x0B0A4D00 and TEMP code
-0xA1A (45 °C).
+built from (`git rev-parse HEAD`; 0 if unknown; `make bit BUILD_ID=...` overrides). DDR_MTS is
+the `DDR=` speed of the build (the nominal rate: 1066 for DDR3-1066). It tells apart two
+bitstreams of one commit built at different DDR3 speeds, which BUILD_ID cannot. `otpu-smi`
+shows it in the DDR3 row ("DDR3-1066 ch0 ok ch1 ok"), and the config lines of `otpu-selftest`
+and `otpu-diag` show it too. The board model (`sim/verilator/tb_board.sv`) reports CORE_KHZ
+100000, BUILD_ID 0x0B0A4D00, TEMP code 0xA1A (45 °C) and no DDR_MTS (parameter 0, CAPS bit3
+clear).
 
 ### Free-running counters
 
@@ -92,6 +101,26 @@ The trace buffer records the slice's trace events -- the lines the simulator pri
 | 0x20C | TRACE_ADDR | RW | index of the record to read (taken modulo DEPTH) |
 | 0x210 | TRACE_LO | RO | bits [31:0] of the record at TRACE_ADDR |
 | 0x214 | TRACE_HI | RO | bits [63:32]; reading it increments TRACE_ADDR |
+
+### I2C pins
+
+Two I2C buses reach the FPGA (pins from the vendor XDC): bus 0 is the LM73 temperature
+sensor's (SCL N24, SDA N25, ALERT P25), bus 1 the PCIe edge connector's SMBus (SCL R26, SDA
+R27), which the host's own SMBus controller may also drive. The RTL has no I2C master: the
+host bit-bangs the lines through two registers (`opentpu/host/i2c.py`). Each line is open
+drain: an IOBUF that drives 0 or floats, with the weak internal pull-up as a backup to the
+board's.
+
+| Offset | Name | Access | Meaning |
+|---|---|---|---|
+| 0x220 | I2C_CTRL | RW | 1 drives the line low, 0 releases it: bit0 SCL0, bit1 SDA0, bit2 SCL1, bit3 SDA1. Reset: 0 (every line released) |
+| 0x224 | I2C_IN | RO | the pin levels, two flip-flops from the pins: bit0 SCL0, bit1 SDA0, bit2 SCL1, bit3 SDA1, bit4 ALERT0 (the LM73's ALERT, active low) |
+
+A bitstream that never writes I2C_CTRL leaves the pins as an unconnected design would. The
+host's master only reads: a transaction writes at most a command code (a register pointer)
+before a repeated START, never data, so it cannot change a regulator's settings (the
+module's docstring lists the rules). Processes share the buses through an flock on
+`/tmp/otpu/<device>.i2c.lock`.
 
 With STOP_WHEN_FULL = 0 the buffer is a ring. The oldest record is at index
 TRACE_COUNT mod DEPTH when TRACE_COUNT > DEPTH, otherwise at index 0. With STOP_WHEN_FULL = 1
@@ -161,6 +190,15 @@ Monitors never take the lock. They only read registers, and use SNAP for consist
 
 ## Power
 
-The card has no current sensing the accelerator can read. `otpu-smi` reports:
-- **Temperature**, measured (TEMP).
-- **Power, estimated.** static + Σ over units of (that unit's dynamic power × its measured utilization). The per-unit powers come from the Vivado build's `report_power`, written as JSON to `build/vivado/reports/power.json`. Without that file, power shows as n/a.
+No public document names the card's regulators or says whether any of them can report its
+power on a bus the FPGA reaches. `otpu-diag` (section i2c) and `otpu-i2c scan` look for
+one on both I2C buses. `otpu-smi` reports:
+- **Temperature**, measured: the die (TEMP) and, when the LM73 answers, the board ("Board").
+- **Power, measured**, when a PMBus device on the card's I2C buses reports it: the sum over
+  those devices of READ_PIN, else READ_POUT, else READ_VOUT × READ_IOUT, shown as
+  "Power 21.5W measured". The first query scans the buses and saves what it found to
+  `/tmp/otpu/<device>.i2c.json` (`otpu-i2c scan` and `otpu-diag` refresh it); later ones read
+  only those devices. `--no-i2c` skips the buses.
+- **Power, estimated** otherwise. On the YPCB-00338 it is always the estimate: the first
+  card scan (2026-09-27, build b11bb679) found only the LM73 at 0x4a on bus 0 (43.00 C board
+  temperature) and nothing on the SMBus, so the card has no readable power monitor. Shown as "Power ~5.1W estimate": static + Σ over units of (that unit's dynamic power × its measured utilization). The per-unit powers come from the Vivado build's `report_power`, written as JSON to `build/vivado/reports/power.json`. Without that file, power shows as n/a.

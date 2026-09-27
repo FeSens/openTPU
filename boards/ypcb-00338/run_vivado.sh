@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the openTPU bitstream for the YPCB-00338 in Vivado batch mode, natively or in Docker.
 #
-#   ./run_vivado.sh [800|1066]            # native: `vivado` on PATH (x86-64 Linux / Windows WSL)
+#   ./run_vivado.sh [800|1066|1300|1333|1600] # native: `vivado` on PATH (x86-64 Linux / Windows WSL)
 #   MCOLS=4 ./run_vivado.sh               # 4 MXU columns (faster prefill / batched decode)
 #   VPU_CL=4 ./run_vivado.sh              # 4 VPU lanes with exp2/recip/rsqrt (faster softmax)
 #   LANES=16 ./run_vivado.sh              # 16 VPU lanes / TMEM banks

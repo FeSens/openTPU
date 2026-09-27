@@ -4,7 +4,8 @@
                               (Board, BoardBackend, otpu-selftest, otpu-chat, otpu-lens record);
                               it holds the owner's pid (read to name it in the error)
     /tmp/otpu/<device>.json   the runner's status (RunnerStatus), rewritten atomically after
-                              every token and removed at exit; otpu-smi reads it
+                              every token (or at most every min_interval seconds) and removed
+                              at exit; otpu-smi reads it
 
 <device> is the device node's basename (xdma0 for /dev/xdma0). OTPU_RUN_DIR moves the
 directory (tests). Monitors never lock: they only read registers.
@@ -22,6 +23,7 @@ import fcntl
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -64,8 +66,30 @@ class DeviceLock:
 
     fd: int | None = None
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, wait: float | None = None):
+        """wait: seconds to wait for a busy device before DeviceBusy (default: the environment's
+        OTPU_LOCK_WAIT, else 0). Waiting polls the lock, so it is fair only in the sense that
+        whoever tries when it is free gets it."""
         self.name = name
+        if os.environ.get("OTPU_LOCK_HELD") == name:    # inside `otpu-lock -- CMD`: it holds it
+            return
+        if wait is None:
+            wait = float(os.environ.get("OTPU_LOCK_WAIT", "0") or 0)
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                self._take(name)
+                return
+            except DeviceBusy as e:
+                if time.monotonic() >= deadline:
+                    raise
+                if not getattr(self, "_told", False):
+                    print(f"otpu: {e}; waiting up to {wait:.0f}s (OTPU_LOCK_WAIT)",
+                          file=sys.stderr, flush=True)
+                    self._told = True
+                time.sleep(1.0)
+
+    def _take(self, name: str) -> None:
         d = run_dir()
         d.mkdir(parents=True, exist_ok=True)
         try:
@@ -109,11 +133,19 @@ class RunnerStatus:
     dram: {total, image, weights, kv_capacity, kv_used, program, free} (bytes),
     tokens (device runs so far), last_cycles, tok_s_device (CORE_KHZ / last_cycles),
     tok_s_wall (over the last WALL_WINDOW runs, host work included), updated (unix time).
+
+    min_interval: token() rewrites the file at most this often (seconds); a token that comes
+    sooner is written by a timer when the interval is up, so the file is never behind for
+    longer. The rewrite is off the token's critical path (0.2-0.5 ms on the card's host).
     """
 
     WALL_WINDOW = 8
 
-    def __init__(self, name: str, **fields):
+    def __init__(self, name: str, min_interval: float = 0.0, **fields):
+        self.min_interval = min_interval
+        self._lock = threading.Lock()
+        self._timer: threading.Timer | None = None
+        self._tok_written = -1e9            # perf_counter of the last write after a token
         self.path = run_dir() / f"{name}.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.data = {"pid": os.getpid(), "argv": list(sys.argv), "start": time.time(),
@@ -139,15 +171,31 @@ class RunnerStatus:
         if len(self._ends) > 1:
             d["tok_s_wall"] = (len(self._ends) - 1) / max(self._ends[-1] - self._ends[0], 1e-9)
         d.update(fields)
+        wait = self.min_interval - (time.perf_counter() - self._tok_written)
+        if wait <= 0:
+            self._tok_written = time.perf_counter()
+            self.write()
+        elif self._timer is None:
+            self._timer = threading.Timer(wait, self._flush)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def _flush(self) -> None:
+        self._timer = None
+        self._tok_written = time.perf_counter()
         self.write()
 
     def write(self) -> None:
-        self.data["updated"] = time.time()
-        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(self.data))
-        os.replace(tmp, self.path)          # readers see the old file or the new, never half
+        with self._lock:
+            self.data["updated"] = time.time()
+            tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(self.data))
+            os.replace(tmp, self.path)      # readers see the old file or the new, never half
 
     def remove(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
         try:
             cur = json.loads(self.path.read_text())
             if cur.get("pid") == os.getpid():
@@ -167,3 +215,26 @@ def read_status(name: str) -> dict | None:
         return None
     d["stale"] = not pid_alive(int(d.get("pid", 0) or 0))
     return d
+
+
+def hold_main(argv=None) -> int:
+    """otpu-lock [--dev /dev/xdma0] [--wait SEC] -- CMD...: run CMD while holding the device lock
+    (for steps that are not openTPU tools but must not overlap a run: a JTAG reload, a driver
+    reload, a rescan), or a sequence of runs that must not be interleaved with others (a reload,
+    then tests on the new image). openTPU tools inside CMD run under this lock
+    (OTPU_LOCK_HELD)."""
+    import argparse
+    import subprocess
+    ap = argparse.ArgumentParser(prog="otpu-lock", description=hold_main.__doc__.split("\n")[0])
+    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--wait", type=float, default=3600.0, help="seconds to wait for the lock")
+    ap.add_argument("cmd", nargs=argparse.REMAINDER)
+    a = ap.parse_args(argv)
+    cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
+    if not cmd:
+        ap.error("no command")
+    lock = DeviceLock(devname(a.dev), wait=a.wait)
+    try:           # openTPU tools inside CMD run under this lock instead of waiting for it
+        return subprocess.call(cmd, env={**os.environ, "OTPU_LOCK_HELD": devname(a.dev)})
+    finally:
+        lock.release()

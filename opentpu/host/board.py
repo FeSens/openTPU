@@ -50,6 +50,8 @@ DMA_CHUNK = 8 << 20             # bytes per XDMA read/write call: the driver pin
                                 # transfer (8 MiB at ~3 GB/s is 2.7 ms)
 POLL_SPIN = 100e-6              # poll: seconds of back-to-back register reads before sleeping
 POLL_MAX_SLEEP = 1e-3           # poll: longest sleep between reads
+STATUS_INTERVAL = 0.25          # BoardBackend: the status file is rewritten at most this often
+POLL_EARLY = 0.5e-3             # poll with an expected wait: wake this much (+ 1%) before it
 
 
 # ------------------------------------------------------------------------------ address map
@@ -90,15 +92,41 @@ class XdmaTransport:
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
         self.dev, self.devname = dev, Path(dev).name
-        self.h2c = os.open(f"{dev}_h2c_0", os.O_WRONLY) if dma else -1
-        self.c2h = os.open(f"{dev}_c2h_0", os.O_RDONLY) if dma else -1
-        fd = os.open(f"{dev}_user", os.O_RDWR | os.O_SYNC)
+        # The device lock comes before any open: a process waiting for its turn
+        # (OTPU_LOCK_WAIT) must hold no file on the card, or `otpu-setup --rescan` of the
+        # holder, which refuses while the device is open, is blocked by the queue.
+        self._otpu_lock = DeviceLock(self.devname) if dma else None
+        self.h2c = self.c2h = -1
+        try:
+            if dma:
+                self.h2c = os.open(f"{dev}_h2c_0", os.O_WRONLY)
+                self.c2h = os.open(f"{dev}_c2h_0", os.O_RDONLY)
+            fd = os.open(f"{dev}_user", os.O_RDWR | os.O_SYNC)
+        except BaseException:
+            self.close()
+            raise
         self.regs = mmap.mmap(fd, 4096, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
         os.close(fd)
         # One 32-bit load / store per register access. A slice of the mmap is copied byte by
         # byte (CPython 3.14): four 1-byte AXI-Lite writes, and otpu_ctrl, which takes the
         # whole word on every write, would keep only the last byte.
         self.words = memoryview(self.regs).cast("I")
+
+    def close(self) -> None:
+        """Close the device files and release the lock (the transport is unusable after)."""
+        if getattr(self, "words", None) is not None:
+            self.words.release()
+            self.words = None
+        if getattr(self, "regs", None) is not None:
+            self.regs.close()
+            self.regs = None
+        for name in ("h2c", "c2h"):
+            if getattr(self, name, -1) >= 0:
+                os.close(getattr(self, name))
+                setattr(self, name, -1)
+        if self._otpu_lock is not None:
+            self._otpu_lock.release()
+            self._otpu_lock = None
 
     def mem_write(self, ch: int, off: int, data: np.ndarray) -> None:
         mv = memoryview(np.ascontiguousarray(data, np.uint8)).cast("B")
@@ -130,14 +158,24 @@ class XdmaTransport:
     def reg_read_many(self, offs: list[int]) -> list[int]:
         return [self.reg_read(o) for o in offs]
 
-    def poll(self, off: int, mask: int, val: int, timeout: float = 600.0) -> int:
+    def poll(self, off: int, mask: int, val: int, timeout: float = 600.0,
+             expect: float = 0.0) -> int:
         """Wait until (reg & mask) == val. Back-to-back reads (~1 us each over PCIe) for the
         first POLL_SPIN seconds catch short waits (program loads) without a sleep's latency;
         then sleeps of elapsed/32, at most POLL_MAX_SLEEP: the wake-up comes at most ~3% of
         the run late (a Qwen3-0.6B token is ~50 ms: <= 1 ms, 2%), the register is read about
         32 ln(T / 100 us) + T / 1 ms times instead of T / 1 us, and the sleeps release the
-        GIL to the thread compiling the next token's program (Engine pipelining)."""
+        GIL to the thread compiling the next token's program (Engine pipelining).
+
+        expect: the wait the caller expects (seconds; the previous token's device time). The
+        poll then sleeps once until POLL_EARLY before it and reads back to back from there to
+        POLL_SPIN past it, so a run that ends on time is seen within a register read; a longer
+        one falls back to the sleeps above."""
         t0 = time.perf_counter()
+        early = POLL_EARLY + expect / 100
+        if expect > early:
+            time.sleep(expect - early)
+        spin = max(expect, 0.0) + POLL_SPIN
         while True:
             r = self.reg_read(off)
             if r & mask == val:
@@ -145,7 +183,7 @@ class XdmaTransport:
             el = time.perf_counter() - t0
             if el > timeout:
                 raise TimeoutError(f"register {off:#x} = {r:#x}, waiting for {val:#x}/{mask:#x}")
-            if el > POLL_SPIN:
+            if el > spin:
                 time.sleep(min(POLL_MAX_SLEEP, el / 32))
 
 
@@ -212,7 +250,7 @@ class SimTransport:
         self.flush()
         return [self.results[i] for i in idx]
 
-    def poll(self, off: int, mask: int, val: int, timeout: float = 0) -> int:
+    def poll(self, off: int, mask: int, val: int, timeout: float = 0, expect: float = 0) -> int:
         self.script.append(f"P {off:x} {mask:x} {val:x}")
         return val
 
@@ -298,6 +336,8 @@ class Board:
         self.t = transport or XdmaTransport()
         self.lock = _lock(self.t) if lock else None
         self._info = None
+        self._trace = None              # (depth, keep_first) of a started traced run
+        self._t_run = 0.0               # when the started run began (perf_counter)
         if check:
             ident = self.t.reg_read(R_ID)
             if ident != ID_OTPU:
@@ -320,20 +360,22 @@ class Board:
     # ------------------------------------------------------------------ identity and state
     def info(self) -> dict:
         """D / MCOLS / LANES, STATUS, calibration and, with register map 2: CAPS, CORE_KHZ,
-        BUILD_ID and the die temperature (None where the bitstream lacks them)."""
+        BUILD_ID, the die temperature and the DDR3 data rate (None where the bitstream lacks
+        them)."""
         v, st, rm = self.t.reg_read_many([R.R_VERSION, R_STATUS, R.R_REGMAP])
         d = {"D": v >> 16, "MCOLS": (v >> 8) & 0xFF, "LANES": v & 0xFF, "status": st,
              "calib": [bool(st & ST_CALIB0), bool(st & ST_CALIB1)],
              "calibrated": bool(st & ST_CALIB0) and bool(st & ST_CALIB1),
              "running": bool(st & ST_RUN) and not st & ST_HALTED,
              "regmap": R.regmap(rm), "caps": None, "core_khz": None, "build_id": None,
-             "temp_c": None}
+             "temp_c": None, "ddr_mts": None}
         if d["regmap"] >= 2:
-            cp, khz, bid, tp = self.t.reg_read_many([R.R_CAPS, R.R_CORE_KHZ, R.R_BUILD_ID,
-                                                     R.R_TEMP])
+            cp, khz, bid, tp, mts = self.t.reg_read_many([R.R_CAPS, R.R_CORE_KHZ, R.R_BUILD_ID,
+                                                          R.R_TEMP, R.R_DDR_MTS])
             d.update(caps=R.caps(cp), core_khz=khz or None, build_id=bid,
                      temp_c=round(R.temp_c(tp), 2) if cp & R.CAP_TEMP and tp & R.TEMP_VALID
-                     else None)
+                     else None,
+                     ddr_mts=(mts or None) if cp & R.CAP_DDR else None)
         self._info = d
         return d
 
@@ -423,33 +465,53 @@ class Board:
     RUN_OFFS = [R_STATUS, R_CYCLES, R_CYCLES_HI, R_ICOUNT, R.R_B_RD, R.R_B_WR, R.R_A_RD,
                 R.R_A_WR, R.R_B_STALL]
 
-    def run(self, timeout: float = 600.0, trace: dict | None = None) -> dict:
+    def run(self, timeout: float = 600.0, trace: dict | None = None,
+            expect: float = 0.0) -> dict:
         """Run the loaded program until it halts; returns the counters.
 
         trace={"keep": "first" | "last"} records the run in the trace buffer (register map 2
         with CAPS.trace): STOP_WHEN_FULL keeps the first DEPTH records, the ring the last. It
         adds stats["trace"]: records (uint64, oldest first), count (TRACE_COUNT), drop
         (TRACE_DROP: events the capture queue lost), depth, keep, wrapped (the ring overwrote
-        records) and lost (records written but not in the buffer: count - depth, or 0)."""
+        records) and lost (records written but not in the buffer: count - depth, or 0).
+        expect: the run's expected wall time in seconds, a hint for the poll (Transport.poll).
+
+        start() and wait() are the two halves: the host can work between them while the card
+        runs (the transport must not be used in between)."""
+        self.start(trace)
+        return self.wait(timeout, expect)
+
+    def start(self, trace: dict | None = None) -> None:
+        """Start the loaded program (run's first half)."""
         t = self.t
-        depth, keep_first = 0, True
+        self._trace = None
         if trace is not None:
             i = self._info or self.info()
             if i["regmap"] < 2 or not i["caps"]["trace"]:
                 raise RuntimeError("this bitstream has no trace buffer (register map "
                                    f"{i['regmap']}{'' if i['regmap'] < 2 else ', CAPS.trace = 0'})")
-            depth = i["caps"]["trace_depth"]
             keep_first = trace.get("keep", "first") == "first"
+            self._trace = (i["caps"]["trace_depth"], keep_first)
             t.reg_write(R.R_TRACE_CTRL, R.TR_CLEAR)
             t.reg_write(R.R_TRACE_CTRL, R.TR_ENABLE | (R.TR_STOP_WHEN_FULL if keep_first else 0))
         t.reg_write(R_CTRL, CTRL_CLEAR)
         t.reg_write(R_CTRL, CTRL_RUN)
-        t.poll(R_STATUS, ST_HALTED, ST_HALTED, timeout)
-        if trace is not None:           # the last cycles' events still drain into the buffer
+        self._t_run = time.perf_counter()
+
+    def wait(self, timeout: float = 600.0, expect: float = 0.0) -> dict:
+        """Wait for the started program to halt; returns the counters (run's second half).
+        expect counts from the start (the host's work in between is taken off)."""
+        t = self.t
+        if expect:
+            expect = max(expect - (time.perf_counter() - self._t_run), 1e-9)
+        traced = self._trace is not None
+        depth, keep_first = self._trace or (0, True)
+        t.poll(R_STATUS, ST_HALTED, ST_HALTED, timeout, expect)
+        if traced:                      # the last cycles' events still drain into the buffer
             t.poll(R.R_TRACE_CTRL, R.TR_BUSY, 0, timeout)
-        offs = self.RUN_OFFS + ([R.R_TRACE_COUNT, R.R_TRACE_DROP] if trace is not None else [])
+        offs = self.RUN_OFFS + ([R.R_TRACE_COUNT, R.R_TRACE_DROP] if traced else [])
         raw = None
-        if trace is not None and getattr(t, "batched", False):
+        if traced and getattr(t, "batched", False):
             # the board model: one simulation, so the whole buffer is read after the counters
             # (the count is not known before the flush)
             idx = [t.queue_read(o) for o in offs]
@@ -465,7 +527,7 @@ class Board:
         stats = {"cycles": lo | hi << 32, "instructions": [ic], "b_reads": brd,
                  "b_writes": bwr, "a_reads": ard, "a_writes": awr, "b_stall": bst,
                  "status": st}
-        if trace is not None:
+        if traced:
             stats["trace"] = self._trace_out(vals[9], vals[10], depth, keep_first, raw)
             t.reg_write(R.R_TRACE_CTRL, 0)
         t.reg_write(R_CTRL, 0)
@@ -528,13 +590,15 @@ def device_config(info: dict, **kw):
 
 
 # ------------------------------------------------------------------------------ Engine backend
-def sim_config(spec, cap: int, base=None):
+def sim_config(spec, cap: int, base=None, rows: int | None = None):
     """`base` (default board_config()) with the DRAM cut to what the model needs (power of
-    two): the image, then the program area. The board model's memory, and the ISA reference
+    two): the image with I/O rows for `rows` tokens per run (default the Engine's
+    PREFILL_ROWS), then the program area. The board model's memory, and the ISA reference
     that runs the same layout."""
     from opentpu.isasim import board_config
+    from opentpu.llm.qwen3 import PREFILL_ROWS
     base = base or board_config()
-    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap)
+    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS)
     need = -(-probe.nbytes // 4096) * 4096 + 4 * base.IMEM_WORDS
     return replace(base, DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
 
@@ -562,6 +626,8 @@ class BoardBackend:
     the program area right after the image and loaded into IMEM, then run.
 
     prepare(programs) assembles ahead of time (the Engine calls it on its compile thread);
+    start(programs) and wait() split run(programs), so the Engine compiles the next program
+    while the card runs (and not while the host copies the program);
     attach(engine) lets the status file follow the engine's KV cache; `trace` (None, or run()'s
     trace options) records the following runs in the trace buffer; `last` is (programs, stats)
     of the latest run. With a device transport it holds the device lock and publishes
@@ -592,8 +658,11 @@ class BoardBackend:
         self.trace: dict | None = None
         self.last = None
         self._prep: dict = {}               # id(programs) -> (programs, words), from prepare()
+        self._running = None                # the started programs
+        self._expect = 0.0                  # the last run's device seconds (the poll's hint)
         t = self.board.t
-        self.status = RunnerStatus(t.devname, dev=getattr(t, "dev", t.devname), model=model,
+        self.status = RunnerStatus(t.devname, STATUS_INTERVAL, dev=getattr(t, "dev", t.devname),
+                                   model=model,
                                    core_khz=info["core_khz"], dram=self._layout()) \
             if status and self.board.lock is not None else None
         self.board.write(0, img)
@@ -625,20 +694,40 @@ class BoardBackend:
         self._prep[id(programs)] = (programs, np.asarray(self.I.assemble(programs[0]),
                                                          np.uint32))
 
-    def run(self, programs: list) -> dict:
+    runs_words = True           # start() takes assembled words too (the Engine's worker process)
+
+    def start(self, programs) -> None:
+        """Copy the program to the card, load it and start it (run's first half: the Engine
+        compiles the next token's program between start and wait). `programs`: the programs,
+        or the program already assembled (uint32 words)."""
         prep = self._prep.pop(id(programs), None)
         while len(self._prep) > 1:                  # stale entries (discarded compiles)
             self._prep.pop(next(iter(self._prep)), None)
-        words = prep[1] if prep is not None and prep[0] is programs else \
-            np.asarray(self.I.assemble(programs[0]), np.uint32)
+        if isinstance(programs, np.ndarray):
+            words = programs
+        else:
+            words = prep[1] if prep is not None and prep[0] is programs else \
+                np.asarray(self.I.assemble(programs[0]), np.uint32)
         if len(words) > self.cfg.IMEM_WORDS:
             raise ValueError("program does not fit IMEM")
         self.board.load_program(self.prog_at, words)
-        st = self.board.run(trace=self.trace)
+        self.board.start(trace=self.trace)
+        self._running = programs
+
+    def wait(self) -> dict:
+        """Wait for the started program; returns its counters (run's second half)."""
+        programs, self._running = self._running, None
+        st = self.board.wait(expect=self._expect)
+        khz = self.info["core_khz"]
+        self._expect = st["cycles"] / (khz * 1e3) if khz else 0.0
         self.last = (programs, st)
         if self.status is not None:
-            self.status.token(st["cycles"], self.info["core_khz"], dram=self._layout(True))
+            self.status.token(st["cycles"], khz, dram=self._layout(True))
         return st
+
+    def run(self, programs: list) -> dict:
+        self.start(programs)
+        return self.wait()
 
     def close(self) -> None:
         if self.status is not None:

@@ -20,8 +20,12 @@ Pieces:
                     hardware loop over (conv, attn) pairs steps one address register
   lfm2_step         the ol kernel for one decode token
 
+  lfm2_rows         R consecutive prompt tokens per device run (chunked prefill,
+                    qwen3.Engine.prefill_chunks): the convolution over the chunk's rows and
+                    the ring, qwen3's row attention
+
 Weights, activations and the KV cache use Qwen3's W8A8 scheme, and decoding runs on
-qwen3.Engine, one token per device run (no batched decode or chunked prefill).
+qwen3.Engine (one sequence: no batched decode).
 """
 from __future__ import annotations
 
@@ -41,8 +45,8 @@ from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
 from ..kernels.mlp import _chunk
 from ..runtime import quantize_rows
-from .qwen3 import (ATTN_BLOCK, _attention, _Bump, _fake_q, _lm_head, _mlp, _qdesc, _tdesc,
-                    rope_tables)
+from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _lm_head,
+                    _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables)
 
 CONV, ATTN = "conv", "attn"
 
@@ -260,25 +264,27 @@ class Image:
     [ LM head rows of this slice ]. All layer blocks have one size: both kinds start with the
     norms and this slice's MLP rows; a conv block then holds the taps, the state ring and this
     slice's rows of in_proj (its channels of B, C and x) and out_proj; an attention block holds
-    the q/k norms, the projections and this slice's KV heads with room for `cap` tokens.
+    the q/k norms, the projections and this slice's KV heads with room for `cap` tokens. The
+    I/O area holds `rows` token rows (x, cos, sin, logits) for chunked prefill.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1):
         spec.check(cfg)
-        if batch != 1 or rows != 1:
-            raise ValueError("LFM2 runs one token per device run: batch=1, rows=1")
+        if batch != 1:
+            raise ValueError("LFM2 runs one sequence: batch=1")
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
         S, D = cfg.S, cfg.D
         H, d, F_, K = spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
-        self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, 1
+        self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, rows
         self.dk = -(-d // D) * D                        # cached K row / query width
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
         self.plan = plan(spec.kinds)
         b = _Bump()
-        self.io = {"x": b.alloc(4 * H), "cos": b.alloc(2 * d), "sin": b.alloc(2 * d),
-                   "gf": b.alloc(4 * H), "logits": b.alloc(4 * spec.vocab)}
+        R = rows
+        self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * d * R), "sin": b.alloc(2 * d * R),
+                   "gf": b.alloc(4 * H), "logits": b.alloc(4 * spec.vocab * R)}
         self.layer0 = b.next
         lb = _Bump()                                    # offsets inside one layer block
         common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
@@ -388,7 +394,15 @@ class Image:
                 for s in range(self.cfg.S)]
 
     def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
-        raise NotImplementedError("LFM2 runs one token per device run (Engine.step)")
+        """One program per slice: consecutive positions of the sequence at once (lfm2_rows)."""
+        if len(rows) > self.rows:
+            raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
+        if any(r != (0, rows[0][1] + i) for i, r in enumerate(rows)):
+            raise ValueError("LFM2 rows must be consecutive positions of sequence 0")
+        return [lfm2_rows.trace(self.cfg, s, {"m": self.descriptors(s), "p0": rows[0][1],
+                                              "R": len(rows), "logit_rows": list(logit_rows),
+                                              "block": block}).finish()
+                for s in range(self.cfg.S)]
 
     # ---- kernel descriptors
     def descriptors(self, sid: int) -> SimpleNamespace:
@@ -418,6 +432,7 @@ class Image:
                 ns.kv = KVDesc({sid + j * cfg.S: {k: off + v for k, v in r.items()}
                                 for j, r in enumerate(lofs["kv"])}, self.cap, self.dk, D, cfg.S,
                                sid, dv=d)
+                ns.kvs = [ns.kv]
             return ns
 
         return SimpleNamespace(
@@ -425,6 +440,10 @@ class Image:
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (d // 2,)),
             sin=_tdesc(self.io["sin"], (d // 2,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
+            xr=_tdesc(self.io["x"], (self.rows, H)),
+            cosr=_tdesc(self.io["cos"], (self.rows, d // 2)),
+            sinr=_tdesc(self.io["sin"], (self.rows, d // 2)),
+            logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
             head=_qdesc(*self.head, self.v_loc, H, D), v_loc=self.v_loc)
 
 
@@ -471,6 +490,63 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK):
 
     run_layers(m.plan, layer)
     _lm_head(x, m, spec)
+
+
+def _conv_rows(x, lw, p0: int, spec: Spec):
+    """_conv for R consecutive positions p0 .. p0+R-1 at once: in_proj streams once for the R
+    rows (B and x first, C after the convolution: TMEM would not hold all three), and row r
+    convolves over the rows before it in the chunk and the ring (positions
+    before p0). The same products and sums per row as _conv, in the same order, so the result
+    is bit-identical; the ring ends up holding the chunk's last K rows, each in its slot."""
+    K, R = spec.conv_k, x.rows
+    n = lw.taps.shape[1]
+    taps = ol.load(lw.taps)                     # [K, n]; row K-1 weighs the current token
+    E = ol.empty([K - 1 + R, n])                # B * x of positions p0-K+1 .. p0+R-1
+    for j in range(1, min(K, p0 + 1)):          # the ring's rows before the chunk
+        sl = (p0 - j) % K
+        ol.load(lw.state[sl, :], out=E[K - 1 - j, :])
+    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), spec.eps))
+    bx = E[K - 1:K - 1 + R, :]                  # B * x; B, C, x: this slice's channels
+    bx.set(ol.dot(xs, lw.win[0:n, :]) * ol.dot(xs, lw.win[2 * n:3 * n, :]))
+    for r in range(max(0, R - K), R):
+        sl = (p0 + r) % K
+        ol.store(lw.state[sl:sl + 1, :], E[K - 1 + r:K + r, :])
+    full = max(0, K - 1 - p0)                   # rows before it lack positions < 0
+    groups = [(r, r + 1) for r in range(min(full, R))] + ([(full, R)] if full < R else [])
+    y = ol.empty([R, n]) if len(groups) > 1 else None
+    for r0, r1 in groups:
+        acc = bx[r0:r1, :] * taps[K - 1, :][None, :]
+        for j in range(1, min(K - 1, p0 + r0) + 1):
+            acc = acc + E[K - 1 + r0 - j:K - 1 + r1 - j, :] * taps[K - 1 - j, :][None, :]
+        if y is None:
+            y = acc
+        else:
+            y[r0:r1, :].set(acc)
+    del E, bx, acc, taps
+    y_all = ol.all_gather(y * ol.dot(xs, lw.win[n:2 * n, :]))  # [R, H]
+    return x + ol.all_gather(ol.dot(y_all, lw.wout))
+
+
+@ol.jit
+def lfm2_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK):
+    """R prompt tokens at positions p0 .. p0+R-1 at once: their embeddings m.xr and RoPE
+    tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
+    empty). Bit-identical to R lfm2_step runs."""
+    spec = m.spec
+    rows = [(0, p0 + r) for r in range(R)]
+    x = ol.load(m.xr[0:R, :])
+    c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+
+    def layer(li, kind):
+        lw = m.layer(li, kind)
+        if kind == CONV:
+            x.set(_conv_rows(x, lw, p0, spec))
+        else:
+            x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
+        x.set(_mlp(x, lw, spec))
+
+    run_layers(m.plan, layer)
+    _lm_head_rows(x, m, spec, logit_rows)
 
 
 def run_layers(runs, layer) -> None:

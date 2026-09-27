@@ -1,6 +1,6 @@
 // Lint-only stand-in for the Vivado-generated block design wrapper (boards/ypcb-00338/vivado/
 // bd.tcl): the ports Vivado will generate, no behaviour. Used by `make lint` to check
-// otpu_fpga_top offline; Vivado builds with the real otpu_bd_wrapper.v.
+// otpu_fpga_top offline; Vivado builds with the real otpu_bd_wrapper.v (and the unisim IOBUF).
 module otpu_bd_wrapper (
   input  logic        sys_clk_50,
   input  logic        pcie_refclk_clk_p, pcie_refclk_clk_n, pcie_perstn,
@@ -44,4 +44,10 @@ module otpu_bd_wrapper (
   `STUB_S(S_AXI_M1)
 );
 `undef STUB_S
+endmodule
+
+// The Xilinx IOBUF primitive (unisim) as otpu_fpga_top uses it: T = 1 floats the pad.
+module IOBUF (inout wire IO, input logic I, input logic T, output logic O);
+  assign IO = T ? 1'bz : I;
+  assign O = IO;
 endmodule

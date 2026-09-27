@@ -295,9 +295,25 @@ are measured where given.
 - **MCOLS=2** splits the 4-head query groups: each KV head is read twice (1.2 MB at context 128,
   6.4 MB at 1023).
 
-Not attempted: batched decode and chunked prefill (Qwen3's `qwen3_rows`). Qwen3.5 runs one
-token per device run (`Engine.step`); the prompt is fed token by token. The state is kept per
-sequence in the layer block, so batching would need a state per sequence.
+**Chunked prefill** (`qwen35_rows`, run by `Engine.prefill_chunks`): a prompt runs up to 6
+tokens per device run (7 fit TMEM at position 0 only), and every projection streams once for
+the run's rows.
+- DeltaNet: the pairs' projections cover all rows; each row's convolution reads the rows
+  before it in the chunk and the ring. Each head's state is loaded once per run, updated and
+  read row after row (the recurrence stays sequential in the tokens), and stored once, so the
+  state traffic is paid once per run instead of once per token. out_proj accumulates over the
+  same head groups as the decode kernel, the last one in pairs.
+- The recurrence is unrolled over the rows, so the pairs run as hardware loops (the head
+  groups but the last, each a loop over its pairs, then the last group's pairs). TMEM
+  addresses are static, so the per-head decays and betas, and a group's outputs before its
+  out_proj, go through small I/O areas in DRAM (`gr`, `on`).
+- Attention: Qwen3's row attention with the output gate, partial RoPE and query groups split
+  over a 2-column MXU.
+- The KV cache, ring, DeltaNet state and logits are bit-identical to feeding the tokens one by
+  one (`tests/test_qwen35.py`, design and board configurations).
+
+Not attempted: batched decode. The state is kept per sequence in the layer block, so batching
+would need a state per sequence.
 
 ## Tests
 

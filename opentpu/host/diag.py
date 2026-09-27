@@ -6,6 +6,7 @@
     otpu-diag --model qwen3               # plus the model check of otpu-selftest
     otpu-diag --json diag.json            # the report as JSON too
     otpu-diag --only mem,isa              # platform plus some sections
+    otpu-diag --only i2c                  # platform plus the I2C bus scan
     otpu-diag --sim                       # the board model (memory tests scaled to it)
 
 Unlike otpu-selftest it does not stop at the first failure: it runs every check whose
@@ -14,7 +15,9 @@ works / does-not-work matrix per section and diagnosis hints from the pattern of
 The exit code is 1 when any check failed.
 
 Sections: platform (PCIe, driver, ID, configuration, calibration, STATUS errors, temperature,
-power estimate), regs (read/write patterns, read-only sanity), mem (per channel: walking 1 / 0
+power estimate), regs (read/write patterns, read-only sanity), i2c (with CAPS.i2c: scan the
+LM73 bus and the PCIe SMBus, identify the LM73, TI current monitors and PMBus devices; read
+only, opentpu/host/i2c.py), mem (per channel: walking 1 / 0
 data bits, address bits, random blocks, partial writes, DMA bandwidth; the interleave; --mem
 full: march C-), isa (one program per instruction variant, opentpu/host/opchecks.py, bit for
 bit against the ISA simulator), system (the demo, masked-write and vops programs, the cycle
@@ -34,6 +37,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import i2c as I2C
 from . import memtest as M
 from . import power as P
 from . import regs as R
@@ -43,7 +47,7 @@ from .checks import (PROG_AT, masked_program, model_check, partial_writes, patte
 from .opchecks import diag_image, op_checks
 
 PASS, FAIL, SKIP, INFO = "PASS", "FAIL", "SKIP", "INFO"
-SECTIONS = ("platform", "regs", "mem", "isa", "system", "model")
+SECTIONS = ("platform", "regs", "i2c", "mem", "isa", "system", "model")
 POWER_JSON = Path(__file__).resolve().parents[2] / "build" / "vivado" / "reports" / "power.json"
 
 
@@ -61,9 +65,9 @@ class Row:
 class Diag:
     """Runs checks, records a Row for each and prints a line per check."""
 
-    def __init__(self, out=sys.stdout):
+    def __init__(self, out=None):
         self.rows: list[Row] = []
-        self.out = out
+        self.out = out or sys.stdout            # looked up now: tests replace sys.stdout
 
     def status(self, name: str) -> str | None:
         for r in reversed(self.rows):
@@ -237,6 +241,10 @@ def diagnose(rows: list[Row]) -> list[str]:
         if "vpu-edge" in fails and not fails & {"vpu", "vpu-composite"}:
             hints.append("only edge values differ: flush-to-zero / inf / NaN handling in the "
                          "RTL against opentpu/fp32.py")
+    for r in rows:
+        if r.section == "i2c" and r.status == FAIL:
+            hints.append(f"{r.name}: {r.msg} -> a line without its pull-up, a device holding it, "
+                         "or the pin assignment (constraints/otpu_top.xdc)")
     soak = [r for r in rows if r.name.startswith("soak") and r.status == FAIL]
     if soak:
         hints.append("intermittent failures under repetition: timing margin (WNS), "
@@ -303,6 +311,8 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
         msg = f"D={i['D']} MCOLS={i['MCOLS']} LANES={i['LANES']}, register map {i['regmap']}"
         if i["core_khz"]:
             msg += f", core {i['core_khz'] / 1e3:g} MHz"
+        if i["ddr_mts"]:
+            msg += f", DDR3-{i['ddr_mts']}"
         if i["build_id"] is not None:
             msg += f", build {i['build_id']:08x}"
         return True, msg, {"info": {k: v for k, v in i.items() if k != "caps"}}
@@ -392,6 +402,8 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
                     bad.append(f"CORE_KHZ {v[4]}")
                 if i["caps"]["trace"] and not 8 <= (v[3] >> 8 & 0xFF) <= 16:
                     bad.append(f"CAPS {v[3]:#x}")
+                if i["caps"]["ddr"] and not 300 <= (i["ddr_mts"] or 0) <= 2133:
+                    bad.append(f"DDR_MTS {i['ddr_mts']}")
                 if v[7] != R.UNMAPPED:
                     bad.append(f"undefined offset 0xFFC reads {v[7]:#x}, want 0xdeadbeef")
             if v[6] & ~0xFF:
@@ -427,6 +439,11 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
                         + (f"; above UPTIME: {over}" if over else ""))
         d.check("regs", "SNAP and the free-running counters", counters,
                 ["configuration (VERSION)"])
+
+    # ---- I2C
+    if "i2c" in want:
+        print("i2c", flush=True)
+        i2c_checks(d, t, ctx, sim)
 
     # ---- memory
     if "mem" in want:
@@ -494,6 +511,66 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
         d.check("model", f"model {a.model}", lambda: model_check(t, ctx["cfg"], a.model,
                                                                   a.tokens, sim), core)
     return d.rows, diagnose(d.rows)
+
+
+def _describe(dev: dict) -> str:
+    k, a = dev["kind"], f"{dev['addr']:#04x}"
+    if k == "lm73":
+        return f"{a} LM73 {dev['temp_c']:.1f} C"
+    if k == "ina":
+        return f"{a} {dev['model']} (bus {dev['vbus']:.2f} V, shunt {dev['shunt_uv']:.0f} uV)"
+    if k in ("pmbus", "pmbus?"):
+        name = " ".join(x for x in (dev["mfr_id"], dev["mfr_model"]) if x) or "?"
+        p = (dev.get("telemetry") or {}).get("power")
+        return (f"{a} PMBus {name}" + ("" if k == "pmbus" else " (unconfirmed)")
+                + (f" {p['w']:.2f} W ({p['how']})" if p else ""))
+    return f"{a} {k}"
+
+
+def i2c_checks(d: Diag, t, ctx: dict, sim: bool) -> None:
+    """Scan both I2C buses and identify what answers (read only); the result is saved for
+    otpu-smi's measured power (i2c.save_discovery)."""
+    def pins():
+        if sim:
+            return SKIP, "the board model has no I2C devices (test_observability checks the pins)"
+        i = ctx["info"]
+        if i["regmap"] < 2 or not i["caps"]["i2c"]:
+            return SKIP, "no I2C pins in this bitstream (CAPS bit2)"
+        return True, "CAPS.i2c: I2C_CTRL / I2C_IN present"
+    d.check("i2c", "I2C pins", pins, ["configuration (VERSION)"])
+    disc = {"version": 1, "time": time.time(), "buses": {}}
+    labels = {"sensor": "LM73 bus (N24 / N25)", "smbus": "PCIe SMBus (R26 / R27)"}
+    for name in I2C.BUSES:
+        def scan(name=name):
+            r = I2C.discover(t, [name])["buses"][name]
+            disc["buses"][name] = r
+            if not r["ok"]:
+                return False, r["error"]
+            devs = r["devices"]
+            return True, (f"{len(devs)} device{'s' * (len(devs) != 1)}: "
+                          + ", ".join(_describe(x) for x in devs) if devs
+                          else "no device answers"), {"devices": devs}
+        d.check("i2c", f"{labels[name]} scan", scan, ["I2C pins"])
+
+    def lm73():
+        found = [x for r in disc["buses"].values() for x in r["devices"] if x["kind"] == "lm73"]
+        if not found:
+            return INFO, "no LM73 (ID 0x0190) at 0x48-0x4E"
+        return True, "; ".join(_describe(x) for x in found)
+    d.check("i2c", "LM73 temperature sensor", lm73, ["I2C pins"])
+
+    def pmbus():
+        I2C.save_discovery(t, disc)
+        pw = I2C.power_devices(disc)
+        other = [x for r in disc["buses"].values() for x in r["devices"]
+                 if x["kind"] in ("pmbus?", "ina")]
+        msg = (f"{len(pw)} PMBus device{'s' * (len(pw) != 1)} report{'s' * (len(pw) == 1)} "
+               "power: otpu-smi shows it as measured" if pw
+               else "none reports power: otpu-smi keeps the estimate")
+        if other:
+            msg += "; also " + ", ".join(_describe(x) for x in other)
+        return INFO, msg
+    d.check("i2c", "power monitors (PMBus)", pmbus, ["I2C pins"])
 
 
 def snapshots(b, t) -> tuple[dict, dict]:

@@ -50,8 +50,19 @@ Nothing new was needed in the ISA or the RTL. The shared kernel code gained two 
 generalizations: `KVDesc` takes a V width (`dv`), and `qwen3._attention` pads heads narrower
 than D. For Qwen3 both are no-ops: its programs are bit-identical to before.
 
-**Limit:** LFM2 runs one token per device run (`Engine.step`). Batched decode and chunked
-prefill (`qwen3_rows`) are not implemented for it; the prompt is fed token by token.
+**Chunked prefill** (`lfm2_rows`, run by `Engine.prefill_chunks`): a prompt runs up to 8
+tokens per device run, and every weight streams once for the run's rows.
+- A conv layer projects B and x for all rows, then convolves each row over the rows before it
+  in the chunk and over the ring (the positions before the chunk). C is projected after the
+  convolution: TMEM does not hold all three for 8 rows. The ring ends up holding the chunk's
+  last rows, each in its slot.
+- An attention layer uses Qwen3's row attention (`qwen3._attention_rows`), which pads the
+  64-wide heads as `_attention` does.
+- Per row the operations and their order are the decode kernel's, so the KV cache, the ring and
+  the logits are bit-identical to feeding the tokens one by one (`tests/test_lfm2.py`, and the
+  real model on the ISA simulator).
+
+**Limit:** batched decode (several sequences) is not implemented for LFM2.
 
 ## Accuracy
 

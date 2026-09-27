@@ -14,8 +14,9 @@ and under the input a status line with TTFT, prefill and decode tokens/s (wall a
 the KV context, updated while the reply streams; /stats adds DRAM, session totals and sampling.
 --plain and --prompt print the same numbers as one line per reply.
 
-The model runs token by token on the device; the host only tokenizes, looks up the embedding
-row, applies the chat template and samples from the logits. The KV cache stays in device DRAM
+The model runs on the device, the prompt several tokens per run (Engine.prefill_chunks) and
+the reply token by token; the host only tokenizes, looks up the embedding rows, applies the
+chat template and samples from the logits. The KV cache stays in device DRAM
 across turns; only the new turn's tokens are fed. On the card the tool holds the device lock
 and publishes its status (model, DRAM, tokens/s) for otpu-smi; the next token's program is
 compiled while the card runs the current one (Engine pipelining).
@@ -45,22 +46,24 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
             repetition_penalty: float = 1.0):
     """pick(logits, context) -> token id. The repetition penalty (as Hugging Face's) divides
     the positive logits and multiplies the negative ones of every token in `context`; it
-    applies to greedy decoding (temperature 0) too."""
+    applies to greedy decoding (temperature 0) too.
+
+    Top-k runs on the float32 logits: when the k largest are distinct and larger than the
+    next one, the candidates and their order are unique, so this gives the picks of the
+    float64 path (_top_k_f64) that it replaces in the common case; any tie falls back to it."""
     rng = np.random.default_rng(seed)
+    seen = _Seen()
 
     def pick(logits, context=()):
         if repetition_penalty != 1.0 and len(context):
             logits = logits.copy()
-            seen = np.unique(np.asarray(context, np.int64))
-            v = logits[seen]
-            logits[seen] = np.where(v > 0, v / repetition_penalty, v * repetition_penalty)
+            ix = seen(context)
+            v = logits[ix]
+            logits[ix] = np.where(v > 0, v / repetition_penalty, v * repetition_penalty)
         if temperature <= 0:
             return int(np.argmax(logits))
-        z = logits.astype(np.float64) / temperature
-        idx = np.argpartition(-z, top_k)[:top_k] if top_k else np.arange(len(z))
-        z = z[idx]
-        order = np.argsort(-z)
-        idx, z = idx[order], z[order]
+        top = _top_k_f32(logits, top_k, temperature) if 0 < top_k < len(logits) else None
+        idx, z = top if top is not None else _top_k_f64(logits, top_k, temperature)
         p = np.exp(z - z[0])
         p /= p.sum()
         keep = min(len(p), np.searchsorted(np.cumsum(p), top_p) + 1)
@@ -68,6 +71,65 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
         return int(idx[rng.choice(keep, p=p)])
 
     return pick
+
+
+def _top_k_f64(logits, top_k: int, temperature: float):
+    """(indices, logits / temperature in float64), the top_k largest in descending order
+    (all of them for top_k 0)."""
+    z = logits.astype(np.float64) / temperature
+    idx = np.argpartition(-z, top_k)[:top_k] if top_k else np.arange(len(z))
+    z = z[idx]
+    order = np.argsort(-z)
+    return idx[order], z[order]
+
+
+def _top_k_f32(logits, k: int, temperature: float, block: int = 64):
+    """_top_k_f64 without converting or selecting over the whole vocabulary, or None when a
+    tie makes the choice among equal values depend on the selection algorithm (then
+    _top_k_f64 decides, as before).
+
+    The k-th largest of the per-block maxima (blocks of `block` logits) is a lower bound t of
+    the k-th largest logit (k blocks each hold a logit >= t), so the top k are among the
+    logits >= t, usually a few times k of them; the selection runs on those. Dividing by the
+    temperature in float64 keeps the order of distinct float32 values, so the unique top k
+    and their order are the ones of _top_k_f64."""
+    m = len(logits) // block * block
+    bm = logits[:m].reshape(-1, block).max(axis=1)
+    if m < len(logits):
+        bm = np.append(bm, logits[m:].max())
+    if len(bm) <= k or np.isnan(bm).any():
+        return None
+    t = np.partition(bm, len(bm) - k)[len(bm) - k]
+    cand = np.flatnonzero(logits >= t)          # every logit outside is < t <= the top k
+    lv = logits[cand]
+    if len(cand) > k:
+        part = np.argpartition(-lv, k)
+        nxt = lv[part[k]]
+        cand, lv = cand[part[:k]], lv[part[:k]]
+    else:
+        nxt = None
+    order = np.argsort(-lv)
+    lv = lv[order]
+    if (nxt is not None and not lv[-1] > nxt) or np.any(lv[1:] == lv[:-1]):
+        return None
+    return cand[order], lv.astype(np.float64) / temperature
+
+
+class _Seen:
+    """The distinct token ids of a context list that only grows (Chat.fed), kept up to date
+    with the tokens appended since the last call instead of converting the whole list."""
+
+    def __init__(self):
+        self.ctx, self.n, self.ids = None, 0, np.zeros(0, np.int64)
+
+    def __call__(self, context) -> np.ndarray:
+        if context is not self.ctx or len(context) < self.n:
+            self.ctx, self.n, self.ids = context, 0, np.zeros(0, np.int64)
+        if len(context) > self.n:
+            new = np.asarray(context[self.n:], np.int64)
+            self.ids = np.union1d(self.ids, new)
+            self.n = len(context)
+        return self.ids
 
 
 def sampling(spec, args) -> dict:
@@ -142,6 +204,31 @@ class Turn:
                 f"{mc}; context {self.context}/{self.cap}{end}]")
 
 
+class Detok:
+    """Incremental detokenization: add(token) -> the text it adds to the reply. Each call
+    decodes only the tokens since the last emitted text, from one token earlier (the prefix):
+    new text = decode(prefix..) minus decode(prefix..read), which keeps the spaces and merges
+    that depend on the token before. Text that ends in an incomplete UTF-8 sequence (U+FFFD)
+    is held back until the rest of the character arrives."""
+
+    def __init__(self, tok, ids=()):
+        """ids: the reply so far (resume), already shown."""
+        self.tok, self.ids = tok, list(ids)
+        self.prefix, self.read = max(0, len(self.ids) - 1), len(self.ids)
+
+    def _dec(self, ids) -> str:
+        return self.tok.decode(ids, skip_special_tokens=True)
+
+    def add(self, t: int) -> str:
+        self.ids.append(t)
+        before = self._dec(self.ids[self.prefix:self.read])
+        now = self._dec(self.ids[self.prefix:])
+        if len(now) > len(before) and not now.endswith("\ufffd"):
+            self.prefix, self.read = self.read, len(self.ids)
+            return now[len(before):]
+        return ""
+
+
 @dataclass
 class Session:
     turns: int = 0
@@ -194,12 +281,13 @@ class Chat:
     def can_resume(self) -> bool:
         return self._next is not None
 
-    def _cycles(self, k0: int, k1: int | None = None) -> int:
-        return int(sum(st.get("cycles", 0) for st in self.eng.stats[k0:k1] if st))
-
     def ask(self, text: str, on_update=None, stop=lambda: False) -> tuple[str, Turn]:
-        """One turn. on_update(delta_text, turn) after every prefill step (delta "") and every
-        generated token; stop() is polled between steps (the reply so far is kept)."""
+        """One turn. on_update(delta_text, turn) after every prefill run (delta "") and for every
+        generated token (Detok: text that ends in an incomplete character comes with a later
+        token, or in one last call after the reply). A generated token's call comes once the
+        card runs the next step (Engine.step's on_start), so the interface draws during the
+        run, not while the host starts it; at the end of the reply it comes at once. stop()
+        is polled between runs (the reply so far is kept)."""
         on_update = on_update or (lambda delta, turn: None)
         t0 = time.perf_counter()
         turn = Turn(clock_mhz=self.clock_mhz, cap=self.eng.cap, context=self.eng.pos)
@@ -217,17 +305,16 @@ class Chat:
         turn.prefill_total = len(ids) - n
         k0 = len(self.eng.stats)
         logits = None
-        for t in ids[n:]:
-            if stop():
-                turn.end = "stopped"
-                break
-            logits = self.eng.step(t)
-            self.fed.append(t)
-            turn.prefill_tokens += 1
+        for part, logits in self.eng.prefill_chunks(ids[n:]):   # up to Engine.rows per run
+            self.fed += part
+            turn.prefill_tokens += len(part)
             turn.prefill_s = time.perf_counter() - t0
-            turn.prefill_cycles = self._cycles(k0)
+            turn.prefill_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
             turn.context = self.eng.pos
             on_update("", turn)
+            if stop() and len(self.fed) < len(ids):
+                turn.end = "stopped"
+                break
         reply = self._decode(logits, [], turn, t0, on_update, stop)
         self.history.append({"role": "assistant", "content": reply})
         self.session.add(turn)
@@ -252,7 +339,8 @@ class Chat:
         """Generate after `out` (the reply so far) from `logits`; returns the whole reply."""
         k1 = len(self.eng.stats)
         out, n0, t_first = list(out), len(out), None
-        shown = self.tok.decode(out, skip_special_tokens=True)
+        detok = Detok(self.tok, out)
+        shown = self.tok.decode(out, skip_special_tokens=True) if out else ""
         while logits is not None and not turn.end:
             if len(out) - n0 >= self.max_new:
                 turn.end = "max_new"
@@ -266,23 +354,28 @@ class Chat:
             if t_first is None:
                 t_first, turn.ttft_s = now, now - t0
             turn.gen_tokens, turn.decode_s = len(out) - n0, now - t_first
-            text_now = self.tok.decode(out, skip_special_tokens=True)
-            delta, shown = text_now[len(shown):], text_now
-            on_update(delta, turn)
+            delta = detok.add(t)
+            shown += delta
             if self.eng.pos >= self.eng.cap:
                 turn.end = "cap"
-                break
-            if stop():
+            elif stop():
                 turn.end = "stopped"
+            if turn.end:
+                on_update(delta, turn)
                 break
-            logits = self.eng.step(t)
+            # the interface gets the token once the card runs the next one: its drawing
+            # overlaps the run instead of the host work that starts it
+            logits = self.eng.step(t, on_start=lambda: on_update(delta, turn))
             self.fed.append(t)
             turn.decode_steps = len(self.eng.stats) - k1
-            turn.decode_cycles = self._cycles(k1)
+            turn.decode_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
             turn.context = self.eng.pos
         self._next = logits if turn.end == "max_new" else None
         self._reply = out
-        return shown
+        reply = self.tok.decode(out, skip_special_tokens=True)
+        if len(reply) > len(shown) and reply.startswith(shown):
+            on_update(reply[len(shown):], turn)       # a held-back incomplete character
+        return reply
 
     def ask_plain(self, text: str | None, stream=sys.stdout) -> str:
         """ask() (resume() for None) printing the reply as it streams, then the turn's

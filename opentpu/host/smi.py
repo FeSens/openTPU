@@ -1,8 +1,8 @@
 """otpu-smi: the state of openTPU cards, like nvidia-smi.
 
     otpu-smi                      one table per device (/dev/xdma*): bitstream, link, DDR3
-                                  calibration, temperature, estimated power, DRAM, utilization
-                                  over a short interval, the owning process
+                                  calibration, temperature, power (measured or estimated),
+                                  DRAM, utilization over a short interval, the owning process
     otpu-smi -l 1                 again every second (utilization over each second)
     otpu-smi --json               the same as JSON (a list, one object per device)
     otpu-smi -q                   every detail, raw counters included
@@ -16,6 +16,11 @@ into their shadows without disturbing anything), never takes the device lock, an
 runner's status file for the process, the model, DRAM use and tokens/s. Utilization is the
 counter delta between two SNAPs over the UPTIME delta. On a register map 1 bitstream the
 counters, the temperature and the power estimate are n/a.
+
+Power is measured when the bitstream has the I2C pins (CAPS.i2c) and a PMBus device on the
+card's I2C buses reports it (opentpu/host/i2c.py: read-only transactions under the I2C lock;
+the first query scans the buses, later ones reuse <run dir>/<dev>.i2c.json). Otherwise it is
+the estimate from Vivado's power report, marked "~ ... estimate". --no-i2c skips the buses.
 """
 from __future__ import annotations
 
@@ -54,7 +59,7 @@ def pcie_link(dev: str) -> str | None:
 
 # ------------------------------------------------------------------------------ sampling
 def query(t, dev: str, interval: float = 0.2, prev: dict | None = None,
-          power_json=POWER_JSON, sleep=time.sleep) -> dict:
+          power_json=POWER_JSON, sleep=time.sleep, i2c: bool = True) -> dict:
     """One device's state. Utilization over `interval` seconds (two snapshots), or since
     `prev` (the "counters" of an earlier query) when given."""
     b = Board(t, check=False, lock=False)
@@ -69,7 +74,7 @@ def query(t, dev: str, interval: float = 0.2, prev: dict | None = None,
     d.update(regmap=i["regmap"],
              bitstream={"D": i["D"], "MCOLS": i["MCOLS"], "LANES": i["LANES"],
                         "core_mhz": i["core_khz"] / 1e3 if i["core_khz"] else None,
-                        "build_id": i["build_id"]},
+                        "build_id": i["build_id"], "ddr_mts": i["ddr_mts"]},
              calib=i["calib"], status=i["status"], running=i["running"], caps=i["caps"],
              temp_c=i["temp_c"])
     if b.v2:
@@ -84,7 +89,19 @@ def query(t, dev: str, interval: float = 0.2, prev: dict | None = None,
     d["process"] = st
     d["dram"] = st["dram"] if st and not st.get("stale") else None
     d["power"] = _power(d, power_json)
+    d["measured"] = _measured(t, i["caps"]) if i2c else None
     return d
+
+
+def _measured(t, caps: dict | None) -> dict | None:
+    """Board power (PMBus) and temperature (LM73) over I2C, or None without the I2C pins."""
+    if not caps or not caps.get("i2c"):
+        return None
+    from . import i2c as I2C
+    try:
+        return I2C.measured(t)
+    except OSError:
+        return None
 
 
 def _derive(d: dict, s0: dict, s1: dict, core_khz: int | None) -> None:
@@ -140,9 +157,9 @@ def query_sim(interval_cycles: int = 0) -> dict:
     d.update(regmap=i["regmap"],
              bitstream={"D": i["D"], "MCOLS": i["MCOLS"], "LANES": i["LANES"],
                         "core_mhz": i["core_khz"] / 1e3 if i["core_khz"] else None,
-                        "build_id": i["build_id"]},
+                        "build_id": i["build_id"], "ddr_mts": i["ddr_mts"]},
              calib=i["calib"], status=i["status"], running=False, caps=i["caps"],
-             temp_c=i["temp_c"], process=None, dram=None, power=None)
+             temp_c=i["temp_c"], process=None, dram=None, power=None, measured=None)
     prog = demo_program()
     if not interval_cycles:
         b.write(0, demo_image())
@@ -226,6 +243,11 @@ def bus_id(dev: str) -> str:
     return p.resolve().name if p.exists() else "n/a"
 
 
+def ddr_name(mts: int | None) -> str:
+    """"DDR3-1066" from the bitstream's DDR_MTS register, "DDR3" when it does not have one."""
+    return f"DDR3-{mts}" if mts else "DDR3"
+
+
 def table(devs: list[dict]) -> str:
     now = _dt.datetime.now().strftime("%a %b %d %H:%M:%S %Y")
     out = [_lr(f"otpu-smi {VERSION}", now, W)]
@@ -244,11 +266,17 @@ def table(devs: list[dict]) -> str:
                        f"{bid}   {mhz}", f"regmap v{d['regmap']}"))
         temp = "n/a" if d["temp_c"] is None else f"{d['temp_c']:.0f} °C"
         out.append(_kv("Link", _gen(d.get("pcie")),
-                       f"DDR3 ch0 {'ok' if c0 else 'FAIL'}  ch1 {'ok' if c1 else 'FAIL'}",
+                       f"{ddr_name(bs.get('ddr_mts'))} ch0 {'ok' if c0 else 'FAIL'}  "
+                       f"ch1 {'ok' if c1 else 'FAIL'}",
                        f"Temp {temp}"))
-        pw = d.get("power")
-        out.append(_kv("State", "Running" if d.get("running") else "Idle", "",
-                       f"Power ~{pw['w']:.1f}W" if pw else "Power n/a"))
+        pw, ms = d.get("power"), d.get("measured") or {}
+        if ms.get("w") is not None:
+            ptxt = f"Power {ms['w']:.1f}W measured"
+        else:
+            ptxt = f"Power ~{pw['w']:.1f}W estimate" if pw else "Power n/a"
+        bt = ms.get("board_temp_c")
+        out.append(_kv("State", "Running" if d.get("running") else "Idle", ptxt,
+                       f"Board {bt:.0f} °C" if bt is not None else ""))
         dr = d.get("dram")
         if dr:
             used = dr["total"] - dr["free"]
@@ -337,7 +365,8 @@ def _jsonable(d):
 # ------------------------------------------------------------------------------ CLI
 def main(argv=None, open_transport=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-smi", description="openTPU card status: bitstream, "
-                                 "link, temperature, power (estimated), DRAM, utilization, "
+                                 "link, temperature, power (measured or estimated), DRAM, "
+                                 "utilization, "
                                  "process.")
     ap.add_argument("--dev", action="append", help="XDMA device prefix, e.g. /dev/xdma0 "
                     "(repeatable; default: every /dev/xdma*_user)")
@@ -353,6 +382,8 @@ def main(argv=None, open_transport=None) -> int:
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")
     ap.add_argument("--sim-idle", type=int, metavar="CYCLES", default=0,
                     help="--sim: sample an idle window of CYCLES instead of a program run")
+    ap.add_argument("--no-i2c", action="store_true",
+                    help="do not read the board's I2C sensors (measured power, board temperature)")
     ap.add_argument("--fake", action="store_true",
                     help="an in-memory card with synthetic counters (demo)")
     a = ap.parse_args(argv)
@@ -397,7 +428,7 @@ def _loop(a, devs, open_transport, emit) -> int:
         for dev in devs:
             try:
                 t = ts.get(dev) or ts.setdefault(dev, open_transport(dev))
-                d = query(t, dev, a.interval, prev.get(dev), a.power_json)
+                d = query(t, dev, a.interval, prev.get(dev), a.power_json, i2c=not a.no_i2c)
                 prev[dev] = d.get("counters")
             except OSError as e:
                 d = {"device": dev, "ok": False, "link": f"cannot open ({e.strerror or e})"}

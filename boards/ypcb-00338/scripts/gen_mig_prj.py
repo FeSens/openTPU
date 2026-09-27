@@ -11,7 +11,7 @@ so MIG runs with the data mask disabled and ECC enabled: partial AXI writes (the
 writes single bytes and masked words) are then done by MIG as read-modify-write. Without ECC
 MIG would ignore write strobes and corrupt neighbouring bytes.
 
-  python3 gen_mig_prj.py [--check] [--speed 800|1066] [--no-ecc] [--addr-map MAP]
+  python3 gen_mig_prj.py [--check] [--speed 800|1066|1300|1333|1600] [--no-ecc] [--addr-map MAP]
 
 Address map: ROW_BANK_COLUMN (default): consecutive 8 KB rows rotate over the 8 banks, so the
 streams of a decode step (weights, their scales, the KV cache, activations) mostly sit in
@@ -35,9 +35,19 @@ HERE = Path(__file__).resolve().parent
 CONS = HERE.parent / "constraints"
 OUT = HERE.parent / "vivado" / "mig"
 
-SPEEDS = {  # DDR3 data rate -> (tCK ps, MIG PHY input clock MHz)
-    800: (2500, 200.0),     # 400 MHz CK, 4:1 -> ui_clk 100 MHz
-    1066: (1875, 266.667),  # 533 MHz CK, 4:1 -> ui_clk 133 MHz (needs a 266.667 MHz input)
+# DDR3 data rate -> (tCK ps, MIG PHY input clock MHz, CL, CWL). CL / CWL: the MT41K256M8-125
+# speed bins (tRFC 160 ns for 2 Gb at every speed). The DDR3 banks (11-18) are HR banks: MIG's
+# limit for a -2 FFG part, 1.5 V components, 4:1 is tCK >= 1875 ps (mig_7series_v4_2
+# data/dlib/7series/ddr3_sdram/time_periods.xml, tmin_hr). Faster settings are out of spec: MIG
+# generates them with critical warning [Mig7series 79-155]. At tCK <= 1500 ps (1333, 1600) MIG's
+# PHY also asks for IDELAYE2_FINEDELAY, which does not build here; vivado/build.tcl patches it
+# to IDELAYE2. See docs/board.md, "Faster DDR3".
+SPEEDS = {
+    800: (2500, 200.0, 6, 5),       # 400 MHz CK, 4:1 -> ui_clk 100 MHz
+    1066: (1875, 266.667, 7, 6),    # 533 MHz CK -> ui_clk 133 MHz (MMCM VCO 800 / 3)
+    1300: (1538, 200.0, 9, 7),      # 650 MHz CK -> ui_clk 162.5 MHz (PLL x13/2); out of spec
+    1333: (1500, 333.333, 9, 7),    # 667 MHz CK -> ui_clk 167 MHz (MMCM VCO 1000 / 3); out of spec
+    1600: (1250, 200.0, 11, 8),     # 800 MHz CK -> ui_clk 200 MHz (PLL x8); out of spec
 }
 
 
@@ -93,7 +103,7 @@ def pin_xdc(ch: int, pins: dict) -> str:
 
 
 def prj(ch: int, pins: dict, speed: int, ecc: bool, addr_map: str) -> str:
-    tck, fin = SPEEDS[speed]
+    tck, fin, cl, cwl = SPEEDS[speed]
     width = 72 if ecc else 64
     pin_lines = []
     for name, pad in sorted(pins.items()):
@@ -168,7 +178,7 @@ def prj(ch: int, pins: dict, speed: int, ecc: bool, addr_map: str) -> str:
         </TimingParameters>
         <mrBurstLength name="Burst Length" >8 - Fixed</mrBurstLength>
         <mrBurstType name="Read Burst Type and Length" >Sequential</mrBurstType>
-        <mrCasLatency name="CAS Latency" >{6 if speed == 800 else 7}</mrCasLatency>
+        <mrCasLatency name="CAS Latency" >{cl}</mrCasLatency>
         <mrMode name="Mode" >Normal</mrMode>
         <mrDllReset name="DLL Reset" >No</mrDllReset>
         <mrPdMode name="DLL control for precharge PD" >Slow Exit</mrPdMode>
@@ -182,7 +192,7 @@ def prj(ch: int, pins: dict, speed: int, ecc: bool, addr_map: str) -> str:
         <emrDQS name="TDQS enable" >Enabled</emrDQS>
         <emrRDQS name="Qoff" >Output Buffer Enabled</emrRDQS>
         <mr2PartialArraySelfRefresh name="Partial-Array Self Refresh" >Full Array</mr2PartialArraySelfRefresh>
-        <mr2CasWriteLatency name="CAS write latency" >{5 if speed == 800 else 6}</mr2CasWriteLatency>
+        <mr2CasWriteLatency name="CAS write latency" >{cwl}</mr2CasWriteLatency>
         <mr2AutoSelfRefresh name="Auto Self Refresh" >Enabled</mr2AutoSelfRefresh>
         <mr2SelfRefreshTempRange name="High Temparature Self Refresh Rate" >Normal</mr2SelfRefreshTempRange>
         <mr2RTTWR name="RTT_WR - Dynamic On Die Termination (ODT)" >Dynamic ODT off</mr2RTTWR>

@@ -3,7 +3,8 @@
 // (AXI4-Lite slave). Everything runs on the core clock; the block design's interconnect does
 // the clock and width conversion to the memory controllers and the PCIe bridge. The control
 // block also holds the free-running activity counters and reads out the hardware trace
-// (otpu_trace; docs/observability.md).
+// (otpu_trace; docs/observability.md); it also drives the I2C pins low when the host asks and
+// reads their levels back (the host bit-bangs I2C).
 module otpu_board #(
   parameter int D          = 128,
   parameter int MCOLS      = 2,
@@ -24,16 +25,21 @@ module otpu_board #(
   parameter logic [31:0] BASE1 = 32'h8000_0000,
   parameter int CORE_KHZ    = 100000,  // the core clock (CORE_KHZ register)
   parameter logic [31:0] BUILD_ID = 32'h0,
+  parameter int DDR_MTS     = 0,       // DDR3 data rate (DDR_MTS register; 0: not given)
   parameter int TRACE_DEPTH = 16384,   // trace records (a power of two; 0: no trace buffer)
   parameter int TRACE_QD    = 32,      // trace capture queue (cycles with events)
   parameter int PQ_WIN      = 1024,    // cycles per P/Q counter window
-  parameter int AXI_BL      = 8        // port B read burst, beats (1: single-beat reads)
+  parameter int AXI_BL      = 8,       // port B read burst, beats (1: single-beat reads)
+  parameter bit HAS_I2C     = 1'b1     // the I2C pins are wired (CAPS bit2)
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
   input  logic [1:0]   calib,          // memory controllers calibrated (any clock domain)
   input  logic [11:0]  temp,           // XADC die-temperature code (any clock domain, slow)
   output logic [2:0]   led,
+  // ---- I2C pins (otpu_fpga_top's IOBUFs): 1 drives the line low; the levels (any clock)
+  output logic [3:0]   i2c_lo,         // SCL0 SDA0 (LM73 bus), SCL1 SDA1 (PCIe SMBus)
+  input  logic [4:0]   i2c_pin,        // the same four lines, then ALERT0 (LM73, active low)
   // ---- control: AXI4-Lite slave
   input  logic [11:0]  s_ctl_awaddr,
   input  logic         s_ctl_awvalid,
@@ -157,6 +163,13 @@ module otpu_board #(
     end
   end
 
+  // ---- I2C pin levels: two flip-flops each (the host samples them at microsecond pace)
+  (* ASYNC_REG = "TRUE" *) logic [4:0] i2c_s1, i2c_s2;
+  always_ff @(posedge clk) begin
+    i2c_s1 <= i2c_pin;
+    i2c_s2 <= i2c_s1;
+  end
+
   // ---- control
   logic run, ld_start, ld_busy, halted, error, wr_idle, axi_err;
   logic [31:0] ld_addr, ld_n, icount;
@@ -176,7 +189,8 @@ module otpu_board #(
   logic [1:0]  arvalid, arready, arid, rvalid, rready, rid, rlast;
 
   otpu_ctrl #(.D(D), .MCOLS(MCOLS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
-              .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1)) u_ctrl (
+              .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
+              .HAS_I2C(HAS_I2C)) u_ctrl (
     .clk, .rst,
     .s_awaddr(s_ctl_awaddr), .s_awvalid(s_ctl_awvalid), .s_awready(s_ctl_awready),
     .s_wdata(s_ctl_wdata), .s_wstrb(s_ctl_wstrb), .s_wvalid(s_ctl_wvalid),
@@ -196,7 +210,8 @@ module otpu_board #(
     .dram_wr(2'(wvalid[0] && wready[0]) + 2'(wvalid[1] && wready[1])),
     .dram_wait((b_req && !b_rdy) || (a_req && !a_rdy) || (sw_req && !sw_rdy)),
     .instr(pf.sq.ret),
-    .tr_en, .tr_stop, .tr_clear, .tr_addr, .tr_count, .tr_drop, .tr_busy, .tr_rdata);
+    .tr_en, .tr_stop, .tr_clear, .tr_addr, .tr_count, .tr_drop, .tr_busy, .tr_rdata,
+    .i2c_lo, .i2c_in(i2c_s2));
 
   // ---- hardware trace
   if (TRACE_DEPTH != 0) begin : g_trace

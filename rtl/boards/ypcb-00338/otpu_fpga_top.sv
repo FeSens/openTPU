@@ -22,11 +22,18 @@ module otpu_fpga_top #(
   parameter int LANES = 8,                  // VPU lanes / TMEM banks (8 or 16)
   parameter int ULANES = 8,                 // TMEM lanes of the MXU and the quantizer
   parameter int CORE_KHZ = 100000,          // core_clk as the block design makes it (CORE_KHZ register)
-  parameter logic [31:0] BUILD_ID = 32'h0   // the git commit (BUILD_ID register)
+  parameter logic [31:0] BUILD_ID = 32'h0,  // the git commit (BUILD_ID register)
+  parameter int DDR_MTS = 0                 // the DDR3 data rate the MIGs run (DDR_MTS register)
 ) (
   // board
   input  logic        SYS_CLK,              // 50 MHz, AA28
   output logic [2:0]  led,                  // P30 red, M30 green, N30 yellow
+  // I2C, open drain (otpu_ctrl I2C_CTRL / I2C_IN; the host bit-bangs them)
+  inout  wire         lm73_scl,             // N24  the LM73 temperature sensor's bus
+  inout  wire         lm73_sda,             // N25
+  input  logic        lm73_alert_n,         // P25
+  inout  wire         smb_scl,              // R26  the PCIe edge connector's SMBus
+  inout  wire         smb_sda,              // R27
   // PCIe Gen2 x8
   input  logic        pcie_refclk_clk_p,    // J8 (MGTREFCLK)
   input  logic        pcie_refclk_clk_n,
@@ -124,9 +131,17 @@ module otpu_fpga_top #(
   logic core_rst;
   always_ff @(posedge core_clk) core_rst <= !core_rstn;
 
+  // I2C: each line released (high-Z, pulled up) unless its I2C_CTRL bit drives it low
+  logic [3:0] i2c_lo, i2c_lvl;
+  IOBUF u_iob_scl0 (.IO(lm73_scl), .I(1'b0), .T(!i2c_lo[0]), .O(i2c_lvl[0]));
+  IOBUF u_iob_sda0 (.IO(lm73_sda), .I(1'b0), .T(!i2c_lo[1]), .O(i2c_lvl[1]));
+  IOBUF u_iob_scl1 (.IO(smb_scl),  .I(1'b0), .T(!i2c_lo[2]), .O(i2c_lvl[2]));
+  IOBUF u_iob_sda1 (.IO(smb_sda),  .I(1'b0), .T(!i2c_lo[3]), .O(i2c_lvl[3]));
+
   logic [2:0] board_led;
-  otpu_board #(.MCOLS(MCOLS), .VPU_CL(VPU_CL), .LANES(LANES), .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID)) u_board (
+  otpu_board #(.MCOLS(MCOLS), .VPU_CL(VPU_CL), .LANES(LANES), .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS)) u_board (
     .clk(core_clk), .rst(core_rst), .calib, .temp(device_temp), .led(board_led),
+    .i2c_lo, .i2c_pin({lm73_alert_n, i2c_lvl}),
     .s_ctl_awaddr(ctl_awaddr[11:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),
     .s_ctl_wdata(ctl_wdata), .s_ctl_wstrb(ctl_wstrb), .s_ctl_wvalid(ctl_wvalid),
     .s_ctl_wready(ctl_wready), .s_ctl_bresp(ctl_bresp), .s_ctl_bvalid(ctl_bvalid),

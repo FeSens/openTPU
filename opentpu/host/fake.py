@@ -11,6 +11,10 @@ and RATES x step to the others, so two snapshots give exactly RATES as utilizati
 bandwidth of (DRAM_RD + DRAM_WR rates) x 64 B x CORE_KHZ). The trace buffer serves `trace`
 (a list of 64-bit records) with TRACE_COUNT = len(trace) + `trace_extra` (records that fell
 out of the buffer) and TRACE_DROP = `trace_drop`.
+
+With `i2c` (two fake_i2c.OpenDrainBus, e.g. fake_i2c.card_buses()) CAPS announces the I2C pins
+and I2C_CTRL / I2C_IN drive and read those bus models. With `ddr_mts` CAPS bit3 announces the
+DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams.
 """
 from __future__ import annotations
 
@@ -32,7 +36,8 @@ class FakeTransport:
                  run_s: float = 0.0, cycles: int = 1_000_000, core_khz: int = 100_000,
                  build_id: int = 0x1234ABCD, temp_code: int = 0x9C4, trace_log2: int = 12,
                  step: int = 1_000_000, trace: list[int] | None = None, trace_extra: int = 0,
-                 trace_drop: int = 0, D: int = 128, MCOLS: int = 2, LANES: int = 8):
+                 trace_drop: int = 0, D: int = 128, MCOLS: int = 2, LANES: int = 8,
+                 i2c: list | None = None, ddr_mts: int | None = None):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.v, self.devname, self.dev = regmap, devname, devname and f"/dev/{devname}"
         self.run_s, self.cycles_per_run = run_s, cycles
@@ -40,8 +45,10 @@ class FakeTransport:
         self.trace_log2, self.step = trace_log2, step
         self.trace, self.trace_extra, self.trace_drop = list(trace or []), trace_extra, trace_drop
         self.version = D << 16 | MCOLS << 8 | LANES
+        self.i2c = i2c
+        self.ddr_mts = ddr_mts          # None: a bitstream without the DDR_MTS register
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
-                     R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0}
+                     R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0, R.R_I2C_CTRL: 0}
         self.count = {k: 0 for k in R.counters(regmap)}
         self.shadow = dict(self.count)
         self.snaps = 0
@@ -82,6 +89,10 @@ class FakeTransport:
             return
         if off == R.R_TRACE_CTRL and val & R.TR_CLEAR:
             return
+        if off == R.R_I2C_CTRL and self.i2c:
+            val &= 0xF
+            for k, bus in enumerate(self.i2c):
+                bus.drive(bool(val >> 2 * k & 1), bool(val >> 2 * k & 2))
         self.regs[off] = val & 0xFFFFFFFF
 
     def reg_read(self, off):
@@ -108,15 +119,25 @@ class FakeTransport:
         if off == R.R_REGMAP:
             return self.v
         if off == R.R_CAPS:
-            return R.CAP_TRACE | R.CAP_TEMP | self.trace_log2 << 8 | 6 << 16
+            return (R.CAP_TRACE | R.CAP_TEMP | (R.CAP_I2C if self.i2c else 0)
+                    | (R.CAP_DDR if self.ddr_mts else 0)
+                    | self.trace_log2 << 8 | 6 << 16)
         if off == R.R_CORE_KHZ:
             return self.core_khz
         if off == R.R_BUILD_ID:
             return self.build_id
+        if off == R.R_DDR_MTS and self.ddr_mts:
+            return self.ddr_mts
         if off == R.R_TEMP:
             return R.TEMP_VALID | self.temp_code
         if off == R.R_SNAP:
             return self.snaps
+        if off == R.R_I2C_IN and self.i2c:
+            v = R.I2C_ALERT0
+            for k, bus in enumerate(self.i2c):
+                scl, sda = bus.read()
+                v |= (scl | sda << 1) << 2 * k
+            return v
         for k, o in R.counters(self.v).items():
             if off in (o, o + 4):
                 v = self.shadow[k]
@@ -137,6 +158,6 @@ class FakeTransport:
     def reg_read_many(self, offs):
         return [self.reg_read(o) for o in offs]
 
-    def poll(self, off, mask, val, timeout=600.0):
+    def poll(self, off, mask, val, timeout=600.0, expect=0.0):
         from .board import XdmaTransport
-        return XdmaTransport.poll(self, off, mask, val, timeout)
+        return XdmaTransport.poll(self, off, mask, val, timeout, expect)

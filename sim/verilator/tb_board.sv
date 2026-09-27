@@ -8,6 +8,8 @@
 //   C <cycles>                wait
 // Numbers are hex. At the end the channel memories are dumped (ch0_out.bin, ch1_out.bin).
 // +trace prints the slice's trace lines (as tb_top; the hardware trace records the same events).
+// The I2C pins are four open-drain lines with pull-ups and nothing else on them; +i2c_hold=<hex>
+// holds lines low from the outside (bits 0..3 as I2C_CTRL, bit4 ALERT0).
 module tb_board;
   parameter int WORDS      = 1 << 20;     // logical memory words (both channels)
   parameter int D          = 128;
@@ -22,6 +24,7 @@ module tb_board;
   parameter int LAT        = 20;
   parameter int CORE_KHZ   = 100000;
   parameter logic [31:0] BUILD_ID = 32'h0B0A_4D00;
+  parameter int DDR_MTS    = 0;
   parameter int TRACE_DEPTH = 16384;
   parameter int TRACE_QD   = 32;
   parameter int PQ_WIN     = 1024;
@@ -53,11 +56,17 @@ module tb_board;
   logic [3:0] unused4 [12];
   logic       unusedl [6];
 
+  // I2C: wired AND of the board's drive-low bits and the outside's holds, pulled up
+  logic [3:0] i2c_lo;
+  logic [4:0] i2c_hold = '0;
+  initial void'($value$plusargs("i2c_hold=%h", i2c_hold));
+
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
                .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
-               .BUILD_ID(BUILD_ID), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
+               .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
                .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL)) dut (
     .clk, .rst, .calib(2'b11), .temp(TEMP), .led,
+    .i2c_lo, .i2c_pin(~({1'b0, i2c_lo} | i2c_hold)),
     .s_ctl_awaddr(awaddr), .s_ctl_awvalid(awvalid), .s_ctl_awready(awready),
     .s_ctl_wdata(wdata), .s_ctl_wstrb(4'hF), .s_ctl_wvalid(wvalid), .s_ctl_wready(wready),
     .s_ctl_bresp(bresp), .s_ctl_bvalid(bvalid), .s_ctl_bready(bready),
