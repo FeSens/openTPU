@@ -15,8 +15,8 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
   5 addr       walking address bits and random patterns on each channel (raw channel
                addresses: bottom, middle, top)
   6 pattern    random data through the 64-byte channel interleave, unaligned edges, the top
-               of DRAM (logical addresses near 4 GiB); sub-beat host writes on each channel
-               (partial byte strobes: read-modify-write in the controller, no DDR3 DM pins)
+               of DRAM (logical addresses near 4 GiB); sub-beat host updates on each channel
+               (merged into whole beats on the host: XdmaTransport.mem_write)
   7 bandwidth  host <-> card DMA rate
   8 kernel     a program using every unit, and one of partial DRAM writes from the
                accelerator (QST bytes, short stores), compared with the ISA simulator bit for bit

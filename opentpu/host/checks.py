@@ -137,9 +137,11 @@ def channel_patterns(transport, ch: int, ch_bytes: int, seed: int = 2) -> tuple[
 
 
 def partial_writes(transport, ch: int, base: int = 1 << 20, seed: int = 3) -> tuple[bool, str]:
-    """Sub-beat host writes (1..63 bytes at odd offsets) into a filled region of one channel:
-    the DMA engine sends them with partial byte strobes, which the memory controller turns into
-    read-modify-writes (no DDR3 data-mask pins on this board)."""
+    """Sub-beat host updates (1..63 bytes at odd offsets) into a filled region of one channel.
+    The card transport merges each into whole 64-byte beats on the host (XdmaTransport.mem_write):
+    sub-beat DMA writes, which the ECC controller would turn into read-modify-writes, can wedge
+    the card's write path. The controller's byte-strobe path is exercised by the accelerator's
+    masked writes (the kernel stage)."""
     rng = np.random.default_rng(seed + ch)
     ref = rng.integers(0, 256, 4096).astype(np.uint8)
     transport.mem_write(ch, base, ref)
