@@ -406,7 +406,7 @@ class Bcast:
 
 
 class Stationary:
-    """A tile quantized into ACT RAM blocks [ab, ab+KB) for up to MCOLS rows."""
+    """A tile quantized into ACT RAM blocks [ab, ab+KB), in chunks of up to ACT_ROWS rows."""
 
     def __init__(self, src: Tile, chunks: list, KB: int, owners: list):
         self.src, self.chunks, self.KB, self.owners = src, chunks, KB, owners
@@ -838,8 +838,8 @@ class Builder:
         if fused is not None:
             src, rs, cs, rsc = fused
         chunks, owners = [], []
-        for m0 in builtins.range(0, x.rows, self.cfg.MCOLS):
-            mc = min(self.cfg.MCOLS, x.rows - m0)
+        for m0 in builtins.range(0, x.rows, self.cfg.act_rows):
+            mc = min(self.cfg.act_rows, x.rows - m0)
             ab, owner = self.act_alloc(KB)
             self.emit(I.qact(src + m0 * rs, mc, ab, KB, rs, cscale=cs,
                              rscale=None if rsc is None else rsc + m0,
@@ -1022,9 +1022,9 @@ class Builder:
         if acc_scale is not None:
             if acc_scale.shape != (M,):
                 raise CompileError(f"dot: acc_scale shape {acc_scale.shape} != {(M,)}")
-            if len(st.chunks) != 1:
+            if len(st.chunks) != 1 or M > self.cfg.MCOLS:
                 raise CompileError("dot(acc_scale=...) needs M <= MCOLS")
-        if rowmax and (len(st.chunks) != 1 or len(out.shape) != 2
+        if rowmax and (len(st.chunks) != 1 or M > self.cfg.MCOLS or len(out.shape) != 2
                        or getattr(out, "spare", 0) < M or out.rs < N):
             raise CompileError("dot(rowmax=True) needs M <= MCOLS and an output tile from "
                                "ol.empty/zeros/full (they reserve the row-max area)")
@@ -1038,7 +1038,7 @@ class Builder:
             self.emit(ins)
             m0 += mc
         self.bump_version(out.buf)
-        if (acc is None and len(st.chunks) == 1 and len(out.shape) == 2
+        if (acc is None and len(st.chunks) == 1 and M <= self.cfg.MCOLS and len(out.shape) == 2
                 and getattr(out, "spare", 0) >= M and out.rs >= N):
             out.mm_src = (ins, self.versions.get(out.buf, 0), M, ors)
         return out

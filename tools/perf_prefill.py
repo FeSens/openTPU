@@ -92,7 +92,8 @@ class Bench:
     def cycles(self, n: int, kind: str, p0: int, rows: int = 1, head: bool = True) -> int:
         """Cycles of one run of the n-layer prefix: a decode step at p0 ("step") or `rows`
         prompt rows at p0 .. ("rows"; logits for the last one with `head`)."""
-        key = f"{self.path.name}|{os.environ.get('OTPU_MCOLS', '2')}|{self.bw}|" \
+        key = f"{self.path.name}|{os.environ.get('OTPU_MCOLS', '2')}|" \
+              f"{os.environ.get('OTPU_ACT_ROWS', '0')}|{self.bw}|" \
               f"{self.lat}|{n}|{kind}|{p0}|{rows}|{head}"
         if key in self.results:
             return self.results[key]
@@ -169,7 +170,8 @@ def main():
     ns = [n for pl in plans.values() for _, n in pl]
     bench.R = max(set(ns), key=ns.count)       # the usual run: interpolated; others measured
     print(f"{bench.path.name}: {len(_kinds(bench.spec))} layers, prefill rows {bench.R} "
-          f"(MCOLS={board_config().MCOLS}), bw {a.bw}%, lat {a.lat}; simulated RTL cycles")
+          f"(MCOLS={board_config().MCOLS}, ACT_ROWS={board_config().act_rows}), bw {a.bw}%, "
+          f"lat {a.lat}; simulated RTL cycles")
     rows = []
     for P in prompts:
         dec = sum(bench.model_cost("step", p, 1, True) for p in range(P))

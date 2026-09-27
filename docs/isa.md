@@ -10,11 +10,14 @@ every bit written to TMEM or DRAM.
   instruction memory, a private DRAM, a TMEM, an ACT RAM, an MXU, a VPU and a quantizer.
   Slices share nothing except the collective unit (`GATHER`, `BAR`).
 - `D` = MXU depth = quantization block size (bytes / int8 elements). Default 32 in tests,
-  128 in the design. `MCOLS` = MXU columns = max stationary rows (8).
+  128 in the design. `MCOLS` = MXU columns (8). `ACT_ROWS` = ACT RAM rows =
+  max stationary rows of one MM (at least MCOLS; default MCOLS). With `ACT_ROWS > MCOLS` the MXU
+  consumes each streamed chunk once per group of MCOLS rows ("replay"): one DRAM pass serves all
+  M rows, at ceil(M / MCOLS) cycles per chunk. Results do not depend on MCOLS or ACT_ROWS.
 - **DRAM**: byte addressed, little endian, accessed as 32-bit words. All word accesses and all
   MXU chunk reads must be 4-byte aligned. Only `QST` writes single bytes.
 - **TMEM**: 32-bit word addressed. Holds fp32 values (raw IEEE bits).
-- **ACT RAM**: `MCOLS` rows x `ACT_BLOCKS` blocks x `D` int8, plus one fp32 scale per
+- **ACT RAM**: `ACT_ROWS` rows x `ACT_BLOCKS` blocks x `D` int8, plus one fp32 scale per
   (row, block). Written only by `QACT`, read only by `MM`.
 
 Execution is in order. Every instruction completes (all its writes are visible) before the
@@ -97,7 +100,9 @@ row's maximum: `T[out + M*ors + j] = fold(max, y[j][0..N-1])`, folded from `n = 
 `UNIT` and `ACC`; `ssa` is then the TMEM address of M per-row factors and the old accumulator
 is rescaled first: `y = T[out + j*ors + n] * T[ssa + j] + acc[j]` -- the flash-attention
 correction step, done in the MXU epilogue). The streamed rows are D-byte aligned (`sa` and `rs`
-are multiples of D): the MXU streams whole D-byte DRAM chunks.
+are multiples of D): the MXU streams whole D-byte DRAM chunks. `0 < M <= ACT_ROWS`; RMAX and ASCALE need
+`M <= MCOLS`, and an MM with `M > MCOLS` needs `KB` <= the MXU's chunk FIFO depth (the board:
+1024; a replayed row stays in the FIFO until its last group).
 
 ```
 for n in 0..N-1:
@@ -115,8 +120,8 @@ for n in 0..N-1:
 
 ### QACT
 
-`src = R[ra]+w1` (TMEM words), `rows = w2[7:0]`, `ab = w2[15:8]`, `KB = w2[31:16]`,
-`srs = w3` (source row stride, words). Flag bit0 `ROW`: one scale per row instead of per block.
+`src = R[ra]+w1` (TMEM words), `rows = w2[7:0]` (at most ACT_ROWS), `ab = w2[15:8]`,
+`KB = w2[31:16]`, `srs = w3` (source row stride, words). Flag bit0 `ROW`: one scale per row instead of per block.
 Flag bit1 `CSCALE`: every element is first multiplied by a per-column scale,
 `x = T[src + r*srs + c] * T[w4 + c]` (this folds V's per-token scale into P for free).
 Flag bit2 `RSCALE`: every element is first multiplied by a per-row factor `T[w5 + r]`. With

@@ -114,6 +114,7 @@ MEMORY = {"AXI": os.environ.get("OTPU_AXI", "0") == "1",
 def top_params(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = False,
                dram_bytes: int | None = None) -> dict:
     p = {"S": cfg.S, "D": cfg.D, "MCOLS": cfg.MCOLS, "ACT_BLOCKS": cfg.ACT_BLOCKS,
+         "ACT_ROWS": cfg.act_rows,
          "TMEM_WORDS": cfg.TMEM_WORDS, "IMEM_WORDS": cfg.IMEM_WORDS,
          "DRAM_WORDS": (dram_bytes or cfg.DRAM_BYTES) // 4, "DRAM_LAT": dram_lat,
          "LANES": cfg.LANES,

@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from opentpu.llm.qwen3 import Engine, Spec, emulated_logits, load_weights, reference_logits
+from opentpu.llm.qwen3 import (Engine, Spec, emulated_logits, load_weights, reference_logits,
+                               rope_tables)
 
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
@@ -148,3 +149,36 @@ def test_qwen3_0_6b_chunked_prefill_and_batch_match_hf():
                                do_sample=False)[0, len(ids):].tolist()
         assert got[s] == want[:len(got[s])] and len(got[s]) >= 5
     assert got[1] == Engine(spec, W, cap=256).generate(prompts[1], max_new=6)
+
+
+@pytest.mark.parametrize("mcols", [2, 4])
+def test_tiny_prefill_chunk_with_mm_replay_on_rtl(tiny, have_verilator, mcols):
+    """An 8-row prefill run at the board configuration with 8 ACT RAM rows (each projection is
+    one MM that replays every weight chunk for 8 / MCOLS groups) on the RTL's board memory
+    path: DRAM and TMEM equal the ISA simulator's, and the logits equal decode's."""
+    from opentpu import rtlsim
+    from opentpu.isasim import Machine, board_config
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 11)]
+    ref = Engine(spec, W, cap=256)
+    want = ref.prefill(toks, chunk=1)
+    cfg = board_config(MCOLS=mcols, ACT_ROWS=8, DRAM_BYTES=1 << 24)
+    eng = Engine(spec, W, cap=256, cfg=cfg)
+    eng.prefill(toks[:3])                         # a cache to attend over
+    rows = [(0, 3 + j) for j in range(8)]
+    progs = eng.image.compile_rows(rows, [7])
+    assert any(i.op == 0x20 and (i.w[5] >> 16) & 0xFF == 8 for i in progs[0])
+    x = eng.embed[toks[3:]]
+    io = eng.image.io
+    cs = [np.stack(a).astype(np.float32) for a in zip(*[rope_tables(spec, p) for _, p in rows])]
+    dram = eng.backend.machine.slices[0].dram.copy()
+    for k, v in (("x", x), ("cos", cs[0]), ("sin", cs[1])):
+        b = np.ascontiguousarray(v, np.float32).view(np.uint8).reshape(-1)
+        dram[io[k]:io[k] + b.size] = b
+    m = Machine(cfg, progs, [dram.copy()]).run()
+    drams, tmems, _ = rtlsim.run(cfg, progs, [dram.copy()], uarch=rtlsim.BOARD_UARCH, axi=True,
+                                 boot=True)
+    assert np.array_equal(drams[0][:eng.image.nbytes], m.slices[0].dram[:eng.image.nbytes])
+    v = spec.vocab
+    lg = drams[0][io["logits"] + 4 * 7 * v:io["logits"] + 4 * 8 * v].view(np.float32)
+    assert np.array_equal(lg, want)

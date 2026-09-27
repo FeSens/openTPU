@@ -24,6 +24,12 @@ class Config:
     DRAM_BYTES: int = 1 << 20
     IMEM_WORDS: int = 1 << 16   # 8 words per instruction
     LANES: int = 8           # VPU lanes == TMEM banks (timing only; results do not depend on it)
+    ACT_ROWS: int = 0        # ACT RAM rows == max stationary rows of one MM (0: MCOLS); more
+    #                          than MCOLS: the MXU replays each streamed chunk (docs/isa.md, MM)
+
+    @property
+    def act_rows(self) -> int:
+        return self.ACT_ROWS or self.MCOLS
 
 
 def design_config(**kw) -> Config:
@@ -40,10 +46,13 @@ def board_config(**kw) -> Config:
     64K-word TMEM, 128 ACT RAM blocks (K <= 16384), 4K-instruction IMEM, 4 GiB DRAM.
     OTPU_MCOLS in the environment selects the MXU column count (default 2; make -C
     boards/ypcb-00338 bit MCOLS=4), OTPU_LANES the VPU lanes / TMEM banks (default 8; bit
-    LANES=16; timing only, the programs do not change). They configure the simulators and the
-    board model; on the card, opentpu.host.board.device_config takes both from the bitstream."""
+    LANES=16; timing only, the programs do not change), OTPU_ACT_ROWS the ACT RAM rows
+    (default MCOLS; more: the MXU replays each weight chunk for MCOLS rows at a time). They
+    configure the simulators and the board model; on the card,
+    opentpu.host.board.device_config takes them from the bitstream."""
     base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 2)), ACT_BLOCKS=128,
-                LANES=int(os.environ.get("OTPU_LANES", 8)), TMEM_WORDS=1 << 16,
+                LANES=int(os.environ.get("OTPU_LANES", 8)),
+                ACT_ROWS=int(os.environ.get("OTPU_ACT_ROWS", 0)), TMEM_WORDS=1 << 16,
                 IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32)
     base.update(kw)
     return Config(**base)
@@ -61,8 +70,8 @@ class Slice:
         if dram is not None:
             self.dram[: len(dram)] = dram
         self.tmem = np.zeros(cfg.TMEM_WORDS, dtype=np.uint32)
-        self.act = np.zeros((cfg.MCOLS, cfg.ACT_BLOCKS * cfg.D), dtype=np.int8)
-        self.ascale = np.zeros((cfg.MCOLS, cfg.ACT_BLOCKS), dtype=np.float32)
+        self.act = np.zeros((cfg.act_rows, cfg.ACT_BLOCKS * cfg.D), dtype=np.int8)
+        self.ascale = np.zeros((cfg.act_rows, cfg.ACT_BLOCKS), dtype=np.float32)
         self.R = [0] * 16
         self.pc = 0
         self.stack: list[list[int]] = []
@@ -187,8 +196,10 @@ class Slice:
         ors, M, ab = w[5] & 0xFFFF, (w[5] >> 16) & 0xFF, w[5] >> 24
         srs = w[6]
         unit, accf = bool(ins.flags & I.F_UNIT), bool(ins.flags & I.F_ACC)
-        if not (0 < M <= cfg.MCOLS) or ab + KB > cfg.ACT_BLOCKS:
+        if not (0 < M <= cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("MM: M or ACT RAM range out of bounds")
+        if M > cfg.MCOLS and ins.flags & (I.F_RMAX | I.F_ASCALE):
+            raise SimError("MM: RMAX and ASCALE need M <= MCOLS")
         if sa % D or rs % D or sa + (N - 1) * rs + KB * D > cfg.DRAM_BYTES:
             raise SimError("MM: streamed rows must be D-byte aligned and in range")
         wv = np.lib.stride_tricks.as_strided(self.dram[sa:].view(np.int8), (N, KB, D),
@@ -240,7 +251,7 @@ class Slice:
         src = (self.reg(ins.ra) + w[0]) & 0xFFFFFFFF
         rows, ab, KB = w[1] & 0xFF, (w[1] >> 8) & 0xFF, w[1] >> 16
         srs = w[2]
-        if rows > cfg.MCOLS or ab + KB > cfg.ACT_BLOCKS:
+        if rows > cfg.act_rows or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("QACT out of ACT RAM bounds")
         cs = (w[3] & 0xFFFFFFFF) if ins.flags & I.F_CSCALE else None
         rsc = (w[4] & 0xFFFFFFFF) if ins.flags & I.F_RSCALE else None
