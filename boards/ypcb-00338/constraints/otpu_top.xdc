@@ -14,6 +14,24 @@ set_property PACKAGE_PIN N30 [get_ports {led[2]}]
 set_property IOSTANDARD LVCMOS18 [get_ports {led[*]}]
 set_false_path -to [get_ports {led[*]}]
 
+# ---------------------------------------------------------------- I2C (open drain)
+# Two buses the host bit-bangs through otpu_ctrl's I2C_CTRL / I2C_IN (opentpu/host/i2c.py):
+# the LM73 temperature sensor's bus (SCL N24, SDA N25, ALERT P25) and the PCIe edge
+# connector's SMBus (SCL R26, SDA R27), shared with the host's SMBus master. Pins from the
+# vendor XDC; the board's pull-ups are not documented, so the weak internal PULLUP is a
+# backup. The pins are released (high-Z) unless the host sets a drive-low bit.
+set_property PACKAGE_PIN N24 [get_ports lm73_scl]
+set_property PACKAGE_PIN N25 [get_ports lm73_sda]
+set_property PACKAGE_PIN P25 [get_ports lm73_alert_n]
+set_property PACKAGE_PIN R26 [get_ports smb_scl]
+set_property PACKAGE_PIN R27 [get_ports smb_sda]
+set_property IOSTANDARD LVCMOS18 [get_ports {lm73_scl lm73_sda lm73_alert_n smb_scl smb_sda}]
+set_property PULLUP true [get_ports {lm73_scl lm73_sda lm73_alert_n smb_scl smb_sda}]
+set_property DRIVE 4 [get_ports {lm73_scl lm73_sda smb_scl smb_sda}]
+set_property SLEW SLOW [get_ports {lm73_scl lm73_sda smb_scl smb_sda}]
+set_false_path -to [get_ports {lm73_scl lm73_sda smb_scl smb_sda}]
+set_false_path -from [get_ports {lm73_scl lm73_sda lm73_alert_n smb_scl smb_sda}]
+
 # ---------------------------------------------------------------- PCIe
 # Reference clock (100 MHz from the slot) on MGTREFCLK0_116 (J8). The lanes are on GT banks 116
 # and 115: lane 0..3 = TX F2 H2 K2 M2 = MGTXTXP3..0_116, lane 4..7 = N4 P2 T2 U4 =
@@ -37,11 +55,12 @@ set_property PULLUP true [get_ports pcie_perstn]
 set_false_path -from [get_ports pcie_perstn]
 
 # ---------------------------------------------------------------- clock domain crossings
-# The accelerator synchronizes the calibration flags and the die-temperature code itself (2
-# flip-flops per bit, ASYNC_REG; the temperature is taken only when two samples agree);
-# everything else crosses in the SmartConnects, which carry their own constraints.
+# The accelerator synchronizes the calibration flags, the die-temperature code and the I2C
+# pin levels itself (2 flip-flops per bit, ASYNC_REG; the temperature is taken only when two
+# samples agree); everything else crosses in the SmartConnects, which carry their own constraints.
 set_false_path -to [get_cells -hier -filter {NAME =~ *u_board/cal_s1_reg*}]
 set_false_path -to [get_cells -hier -filter {NAME =~ *u_board/tmp_s1_reg*}]
+set_false_path -to [get_cells -hier -filter {NAME =~ *u_board/i2c_s1_reg*}]
 
 # The MIGs' system clock comes from the MMCM on the 50 MHz pin (same I/O column as the DDR3
 # banks) through the CMT backbone. If placement reports "sub-optimal placement for a clock-

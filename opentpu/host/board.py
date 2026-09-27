@@ -90,15 +90,41 @@ class XdmaTransport:
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
         self.dev, self.devname = dev, Path(dev).name
-        self.h2c = os.open(f"{dev}_h2c_0", os.O_WRONLY) if dma else -1
-        self.c2h = os.open(f"{dev}_c2h_0", os.O_RDONLY) if dma else -1
-        fd = os.open(f"{dev}_user", os.O_RDWR | os.O_SYNC)
+        # The device lock comes before any open: a process waiting for its turn
+        # (OTPU_LOCK_WAIT) must hold no file on the card, or `otpu-setup --rescan` of the
+        # holder, which refuses while the device is open, is blocked by the queue.
+        self._otpu_lock = DeviceLock(self.devname) if dma else None
+        self.h2c = self.c2h = -1
+        try:
+            if dma:
+                self.h2c = os.open(f"{dev}_h2c_0", os.O_WRONLY)
+                self.c2h = os.open(f"{dev}_c2h_0", os.O_RDONLY)
+            fd = os.open(f"{dev}_user", os.O_RDWR | os.O_SYNC)
+        except BaseException:
+            self.close()
+            raise
         self.regs = mmap.mmap(fd, 4096, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
         os.close(fd)
         # One 32-bit load / store per register access. A slice of the mmap is copied byte by
         # byte (CPython 3.14): four 1-byte AXI-Lite writes, and otpu_ctrl, which takes the
         # whole word on every write, would keep only the last byte.
         self.words = memoryview(self.regs).cast("I")
+
+    def close(self) -> None:
+        """Close the device files and release the lock (the transport is unusable after)."""
+        if getattr(self, "words", None) is not None:
+            self.words.release()
+            self.words = None
+        if getattr(self, "regs", None) is not None:
+            self.regs.close()
+            self.regs = None
+        for name in ("h2c", "c2h"):
+            if getattr(self, name, -1) >= 0:
+                os.close(getattr(self, name))
+                setattr(self, name, -1)
+        if self._otpu_lock is not None:
+            self._otpu_lock.release()
+            self._otpu_lock = None
 
     def mem_write(self, ch: int, off: int, data: np.ndarray) -> None:
         mv = memoryview(np.ascontiguousarray(data, np.uint8)).cast("B")

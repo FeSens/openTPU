@@ -78,7 +78,8 @@ def test_v3_info_snapshot_and_rates():
     b = Board(FakeTransport(devname=None))
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
-    assert i["caps"] == {"trace": True, "temp": True, "trace_depth": 4096, "pq_window": 64}
+    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "trace_depth": 4096,
+                         "pq_window": 64}
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
     assert s1["snaps"] == s0["snaps"] + 1 and s1["UPTIME"] - s0["UPTIME"] == 1_000_000
@@ -867,6 +868,21 @@ def test_setup_pcie_package():
     subprocess.run(["bash", "-n", str(pcie_setup.SCRIPT)], check=True)
     r = subprocess.run(["bash", str(pcie_setup.SCRIPT), "--help"], capture_output=True, text=True)
     assert r.returncode == 0 and "--rescan" in r.stdout and "set -euo" not in r.stdout
+
+
+def test_xdma_transport_locks_before_opening(tmp_path, monkeypatch):
+    """A transport waiting for a busy card holds no file on it (a rescan by the holder would be
+    refused): the lock comes first, so a busy device raises DeviceBusy, not an open error."""
+    from opentpu.host import runstate as rs
+    from opentpu.host.board import XdmaTransport
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    held = rs.DeviceLock("xdmaT")
+    with pytest.raises(rs.DeviceBusy):
+        XdmaTransport(str(tmp_path / "xdmaT"))
+    held.release()
+    with pytest.raises(FileNotFoundError):          # free: now it opens (no such device here)
+        XdmaTransport(str(tmp_path / "xdmaT"))
+    rs.DeviceLock("xdmaT", wait=0).release()        # and the failed open released the lock
 
 
 def test_device_lock_waits_for_a_busy_card(tmp_path, monkeypatch):
