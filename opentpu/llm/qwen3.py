@@ -779,8 +779,10 @@ class Engine:
         for s in range(self.batch) if seq is None else [seq]:
             self.poss[s] = 0
 
-    def step(self, token: int) -> np.ndarray:
-        """Feed one token at the next position; returns the logits [vocab] for the next one."""
+    def step(self, token: int, on_start=None) -> np.ndarray:
+        """Feed one token at the next position; returns the logits [vocab] for the next one.
+        on_start() is called once the device runs (host work that can overlap the run: the
+        chat hands the previous token to its interface there)."""
         if self.pos >= self.cap:
             raise RuntimeError("KV cache full")
         io, S = self.image.io, self.cfg.S
@@ -797,10 +799,14 @@ class Engine:
         start = getattr(self.backend, "start", None)
         if start is None:
             self._prefetch(self.pos + 1)
+            if on_start is not None:
+                on_start()
             st = self.backend.run(progs)
         else:                               # compile while the device runs, not while the
             start(progs)                    # host copies the program
             self._prefetch(self.pos + 1)
+            if on_start is not None:
+                on_start()
             st = self.backend.wait()
         self.stats.append(st)
         v_loc = self.image.v_loc

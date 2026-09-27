@@ -219,14 +219,13 @@ class Chat:
     def can_resume(self) -> bool:
         return self._next is not None
 
-    def _cycles(self, k0: int, k1: int | None = None) -> int:
-        return int(sum(st.get("cycles", 0) for st in self.eng.stats[k0:k1] if st))
-
     def ask(self, text: str, on_update=None, stop=lambda: False) -> tuple[str, Turn]:
-        """One turn. on_update(delta_text, turn) after every prefill step (delta "") and every
+        """One turn. on_update(delta_text, turn) for every prefill step (delta "") and every
         generated token (Detok: text that ends in an incomplete character comes with a later
-        token, or in one last call after the reply); stop() is polled between steps (the reply
-        so far is kept)."""
+        token, or in one last call after the reply). Each call comes once the card runs the
+        next step (Engine.step's on_start), so the interface draws during the run, not while
+        the host starts it; after the prefill and at the end of the reply it comes at once.
+        stop() is polled between steps (the reply so far is kept)."""
         on_update = on_update or (lambda delta, turn: None)
         t0 = time.perf_counter()
         turn = Turn(clock_mhz=self.clock_mhz, cap=self.eng.cap, context=self.eng.pos)
@@ -248,13 +247,14 @@ class Chat:
             if stop():
                 turn.end = "stopped"
                 break
-            logits = self.eng.step(t)
+            # the previous step's numbers go to the interface while the card runs this one
+            logits = self.eng.step(t, on_start=lambda: on_update("", turn))
             self.fed.append(t)
             turn.prefill_tokens += 1
             turn.prefill_s = time.perf_counter() - t0
-            turn.prefill_cycles = self._cycles(k0)
+            turn.prefill_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
             turn.context = self.eng.pos
-            on_update("", turn)
+        on_update("", turn)
         reply = self._decode(logits, [], turn, t0, on_update, stop)
         self.history.append({"role": "assistant", "content": reply})
         self.session.add(turn)
@@ -296,14 +296,16 @@ class Chat:
             turn.gen_tokens, turn.decode_s = len(out) - n0, now - t_first
             delta = detok.add(t)
             shown += delta
-            on_update(delta, turn)
             if self.eng.pos >= self.eng.cap:
                 turn.end = "cap"
-                break
-            if stop():
+            elif stop():
                 turn.end = "stopped"
+            if turn.end:
+                on_update(delta, turn)
                 break
-            logits = self.eng.step(t)
+            # the interface gets the token once the card runs the next one: its drawing
+            # overlaps the run instead of the host work that starts it
+            logits = self.eng.step(t, on_start=lambda: on_update(delta, turn))
             self.fed.append(t)
             turn.decode_steps = len(self.eng.stats) - k1
             turn.decode_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)

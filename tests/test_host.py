@@ -789,8 +789,10 @@ class StubEngine:
         self.backend = types.SimpleNamespace()
         self.cfg = board_config()
 
-    def step(self, t):
+    def step(self, t, on_start=None):
         assert self.pos < self.cap, "KV cache full"   # as Engine.step
+        if on_start is not None:
+            on_start()
         time.sleep(0.002)
         self.pos += 1
         self.stats.append({"cycles": self.cycles})

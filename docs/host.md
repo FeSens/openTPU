@@ -329,6 +329,14 @@ on the card, build 74d48591, measured 2026-09-26):
 [TTFT 2.14s; prefill 21 tokens, 9.90 (device 13.0) tok/s; decode 25 tokens, 9.57 (device 13.0) tok/s, 7.72 Mcycles/token at 100 MHz; context 46/2048]
 ```
 
+Decode tokens/s of a 160-token reply (the same prompt and seed), measured on the card (build
+a691ea98, 100 MHz), before (main at e639ecd) and after the host changes in section 7:
+
+| | device | `--plain` before | after | interface before | after |
+|---|---|---|---|---|---|
+| LFM2.5-230M | 31.7 | 17.05 | 30.35 | 15.20 | 30.19 |
+| Qwen3-0.6B | 11.4 | 10.03 | 11.11 | 9.53 | 11.10 |
+
 While a chat runs, `otpu-smi` shows the process, the model, the DRAM in use and tokens/s.
 
 `--backend board-sim` runs the same driver against the Verilator board model (bit-exact, but
@@ -360,9 +368,12 @@ counters-only profiles, tokens/s uses `--clock-mhz`.
 
 **Polling.** `XdmaTransport.poll` reads the register back to back for the first 100 us (a
 PCIe read is ~1 us: program loads finish in this phase, with no sleep latency), then sleeps
-elapsed/32, at most 1 ms, between reads. A wait of T is noticed at most ~T/32 late (a
-Qwen3-0.6B token of ~50 ms: <= 1 ms, 2%) with ~32 ln(T / 100 us) + T / 1 ms reads instead of
-T / 1 us, and the sleeps free the GIL for the compile thread (below).
+elapsed/32, at most 1 ms, between reads. A wait of T is noticed at most ~T/32 late, at most
+1 ms, with ~32 ln(T / 100 us) + T / 1 ms reads instead of T / 1 us. A token's run is polled
+with a hint instead: `BoardBackend` passes the previous run's device time (its CYCLES at
+CORE_KHZ; the next token's is a few cycles longer), and the poll sleeps once until 0.5 ms + 1%
+before it, then reads back to back. Measured on the card (build a691ea98), the run is seen
+0.02-0.06 ms after the device time instead of 0.5-1.4 ms.
 
 **DMA.** Reads go straight into one preallocated numpy buffer per channel (`os.preadv` into
 memoryview slices; no concatenation), writes from memoryview slices; both in 8 MiB calls (the
@@ -370,14 +381,53 @@ XDMA driver pins each call's pages and builds one descriptor list: 8 MiB bounds 
 per-call cost stays under 1% of the transfer).
 
 **Pipelining.** A token's program depends on its position only, so `Engine.step` compiles
-(and `BoardBackend.prepare` assembles) position p + 1 on a worker thread while the card runs
-p (`Engine(..., pipeline=None)`: on for every backend but the ISA simulator). A precompile made
-for another position (after `reset`, or `run_rows`) is waited for and dropped; the compiler's
-tracing context is per thread. Results are unchanged (`tests/test_host.py`). Measured with a
-fake card whose run takes a fixed time (FakeTransport), Qwen3-0.6B on the host above: the
-compile of a step is 4.5-7 ms; per token, device 30 ms: 36.0 ms sequential -> 32.9 ms
-pipelined; device 60 ms: 68.1 -> 64.2 ms (the compile is hidden; what remains is the
-embedding/RoPE writes, the 0.6 MiB logits read and the poll's wake-up).
+position p + 1 while the card runs p (`Engine(..., pipeline=None)`: on for every backend but
+the ISA simulator). A precompile made for another position (after `reset`, or `run_rows`) is
+waited for and dropped. Results are unchanged (`tests/test_host.py`, and the board-model tests
+compare the logits with the ISA simulator's bit for bit).
+
+On the board the compile runs in a worker process (spawned when the engine starts; until it is
+up, steps compile in line) and sends back the assembled words, and `Engine.step` hands it
+position p + 1 only after `BoardBackend.start` has copied program p to the card and started
+it. Both matter because a compile is 10-30 ms of Python on the PC above (Qwen3-0.6B ~11 ms,
+LFM2.5-230M ~20-30 ms), and in a thread of the same process it holds the GIL: started before
+the program copy, it made the copy wait for the GIL (the copy's DMA call releases it and then
+waits up to the 5 ms switch interval to get it back), measured 8.6 ms per token for Qwen3 and
+20 ms for LFM2 on the card. Other backends (the RTL simulator, the ISA simulator with
+`pipeline=True`) and `otpu-lens record` (which needs the programs) compile on a thread
+(`pipeline="thread"`). A script that makes an engine on the board needs the usual
+`if __name__ == "__main__":` guard (the worker is spawned and imports the main module).
+
+**Host time per token.** `tools/decode_profile.py --model lfm2|qwen3` runs one chat turn on the
+card with a timer around each piece of a token's host work. Measured on the card (build
+a691ea98, 100 MHz, a 96-token reply; ms per decode token):
+
+| | LFM2 before | LFM2 after | Qwen3 before | Qwen3 after |
+|---|---|---|---|---|
+| x / cos / sin write | 0.43 | 0.16 | 0.17 | 0.18 |
+| wait for the compile | 0.01 | 0.08 | 0.01 | 0.01 |
+| program upload (26 / 14 KiB) | 20.44 | 0.23 | 8.59 | 0.08 |
+| run: device time | 31.47 | 31.47 | 87.92 | 87.92 |
+| run: poll overshoot | 1.42 | 0.01 | 0.57 | 0.02 |
+| status file | 0.34 | 0.04 | 0.17 | 0.18 |
+| logits read (0.25 / 0.58 MiB) | 0.37 | 0.41 | 0.54 | 0.65 |
+| sampling | 0.73 | 0.65 | 0.78 | 0.83 |
+| detokenize | 0.07 | 0.04 | 0.06 | 0.04 |
+| other | 0.74 | 0.16 | 0.42 | 0.20 |
+| **tok/s wall (device)** | **17.84 (31.78)** | **30.07 (31.78)** | **10.08 (11.37)** | **11.09 (11.37)** |
+
+"Before" is main at e639ecd. The x / cos / sin rows go in one DMA write now (they are
+adjacent in the I/O area), the status file is rewritten at most every 0.25 s (a timer writes
+the last tokens), and the reply is detokenized incrementally (`chat.Detok`: only the tokens
+since the last emitted text, from one token earlier; an incomplete UTF-8 character is held back)
+instead of decoding the whole reply every token. What is left, ~1.8 ms (LFM2) and ~2.3 ms
+(Qwen3) per token, is mostly the logits read and the sampling over the vocabulary; reading
+only an on-device argmax would save ~0.4-0.6 ms of it for greedy decoding only.
+
+The chat interface draws each token while the card runs the next one: `Chat` hands a token to
+`on_update` from `Engine.step`'s `on_start` hook (called once the run is started), so the
+interface's work does not delay the host work that starts a run. Before, the full-screen
+interface took ~5 ms per LFM2 token from the generation thread.
 
 ## 8. Device lock, status file and otpu-smi
 
@@ -404,7 +454,8 @@ and writes its pid there. A second runner fails at once with `xdma0 is in use by
 goes away with the process, however it ends. Monitors (`otpu-smi`) never lock.
 
 **Status file.** The runner publishes `/tmp/otpu/<dev>.json`, replaced atomically after every
-token and removed at exit: `pid`, `argv`, `start`, `dev`, `model`, `core_khz`, `dram` (bytes:
+token (`BoardBackend`: at most every 0.25 s, with a timer writing the last tokens) and removed
+at exit: `pid`, `argv`, `start`, `dev`, `model`, `core_khz`, `dram` (bytes:
 `total`, `image`, `weights`, `kv_capacity`, `kv_used`, `program`, `free`), `tokens`,
 `last_cycles`, `tok_s_device` (CORE_KHZ / last cycles), `tok_s_wall` (over the last 8 tokens,
 host work included), `updated`. A file whose pid is gone (a runner killed with SIGKILL) is

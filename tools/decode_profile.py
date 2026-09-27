@@ -167,23 +167,23 @@ def main(argv=None):
     img_cls = type(eng.image)
     timed(img_cls, "compile_step", "trace")
     def pick_t(logits, ctx=()):
+        if not on.is_set() and "t" not in step0:    # the first pick: the prefill is done
+            on.set()
+            step0["t"] = time.perf_counter()
+            step0["n"] = len(eng.stats)             # the prefill steps
         t0 = time.perf_counter()
         r = pick(logits, ctx)
         if on.is_set():
             T["sample"] += time.perf_counter() - t0
         return r
+    step0 = {}
     chat = C.Chat(eng, tok, False, pick_t, a.tokens, clock_mhz=khz[0] / 1e3)
     timed(tok, "decode", "detok")
     sink = io.StringIO()
-    step0 = {}
 
     def upd(delta, turn):
         t0 = time.perf_counter()
         sink.write(delta)
-        if turn.gen_tokens == 1:            # decode steps start after the first token
-            on.set()
-            step0["t"] = time.perf_counter()
-            step0["n"] = len(eng.stats)
         if on.is_set():
             T["ui"] += time.perf_counter() - t0
     chat.ask(a.prompt, upd)
