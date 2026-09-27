@@ -70,6 +70,15 @@ def test_tiny_matches_hf(tiny):
     assert _cos(dev[:12], emu).min() > 0.9995
 
 
+def test_tiny_fp4_follows_emulation(tiny):
+    """4-bit (FP4) weights: the device follows the float64 emulation of the same weights."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 12)]
+    eng = Engine(spec, W, cap=256, wformat="fp4")
+    dev = np.array([eng.step(t) for t in toks])
+    assert _cos(dev, emulated_logits(spec, W, toks, wformat="fp4")).min() > 0.9995
+
+
 def test_tiny_reset_reuses_cache_and_conv_state(tiny):
     """After reset, positions 0 and 1 must not read the previous sequence's conv state."""
     _, W, spec = tiny

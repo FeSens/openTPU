@@ -159,6 +159,8 @@ class QTensor:
     `parts`: the matrix is stored as separate column slices of width `pw` (each with its own
     contiguous rows and scales, so a column-slice MM streams contiguous scales); it can then
     only be sliced into whole parts.
+    `wf`: the element format (isa.W8; or W4I / W4F: 4-bit elements, D/2 bytes per D-block, and
+    a two-level scale word per D-block, docs/isa.md "Weight formats").
     """
     data: Affine
     scale: Affine | None
@@ -168,6 +170,7 @@ class QTensor:
     D: int
     parts: tuple | None = None
     pw: int = 0
+    wf: int = 0
 
     def __getitem__(self, key) -> "QTensor":
         if not isinstance(key, tuple):
@@ -189,11 +192,14 @@ class QTensor:
         nr, nc = (r1 - r0).static(), (c1 - c0).static()
         if nc % self.D:
             raise CompileError("QTensor column slices must be multiples of D")
-        data = self.data + r0 * self.rs + c0
+        if self.wf == I.W8:
+            data = self.data + r0 * self.rs + c0
+        else:                     # 4-bit rows stream whole D-byte chunks of two D-blocks
+            data = self.data + r0 * self.rs + c0.div_exact(2 * self.D) * self.D
         scale = None
         if self.scale is not None:
             scale = self.scale + r0 * self.srs + c0.div_exact(self.D) * 4
-        return QTensor(data, scale, (nr, nc), self.rs, self.srs, self.D)
+        return QTensor(data, scale, (nr, nc), self.rs, self.srs, self.D, wf=self.wf)
 
 
 class KVDesc:
@@ -406,10 +412,12 @@ class Bcast:
 
 
 class Stationary:
-    """A tile quantized into ACT RAM blocks [ab, ab+KB) for up to MCOLS rows."""
+    """A tile quantized into ACT RAM blocks [ab, ab+KB) for up to MCOLS rows. `pair`: its rows
+    are also in ACT rows M..2M-1 (QACT DUP), so 4-bit MMs run at full rate (MM PAIR)."""
 
-    def __init__(self, src: Tile, chunks: list, KB: int, owners: list):
+    def __init__(self, src: Tile, chunks: list, KB: int, owners: list, pair: bool = False):
         self.src, self.chunks, self.KB, self.owners = src, chunks, KB, owners
+        self.pair = pair
 
 
 # =============================================================================== builder
@@ -838,20 +846,23 @@ class Builder:
         if fused is not None:
             src, rs, cs, rsc = fused
         chunks, owners = [], []
+        # column reuse: a tile of at most MCOLS/2 rows is written twice (no extra cycles), so a
+        # 4-bit MM can feed the odd K-blocks to the second half of the columns
+        pair = self.cfg.PAIR and 2 * x.rows <= self.cfg.MCOLS
+        st = Stationary(x, chunks, KB, owners, pair)
         for m0 in builtins.range(0, x.rows, self.cfg.MCOLS):
             mc = min(self.cfg.MCOLS, x.rows - m0)
             ab, owner = self.act_alloc(KB)
+            for k in builtins.range(ab, ab + KB):   # live now: the next chunk must not take it
+                self.act_live[k] = weakref.ref(st)
             self.emit(I.qact(src + m0 * rs, mc, ab, KB, rs, cscale=cs,
-                             rscale=None if rsc is None else rsc + m0,
+                             rscale=None if rsc is None else rsc + m0, dup=pair,
                              comment="quantize -> ACT" + (" x col scale" if cs is not None else "")
-                             + (" x row scale" if rsc is not None else "")))
+                             + (" x row scale" if rsc is not None else "")
+                             + (" dup" if pair else "")))
             chunks.append((ab, mc))
             owners.append(owner)
-        st = Stationary(x, chunks, KB, owners)
         st.loop = self.loops[-1].loop if self.loops else None     # created in this loop body
-        for ab, _ in chunks:
-            for k in builtins.range(ab, ab + KB):
-                self.act_live[k] = weakref.ref(st)
         return st
 
     def fuse_cscale(self, x: Tile):
@@ -1028,12 +1039,18 @@ class Builder:
                        or getattr(out, "spare", 0) < M or out.rs < N):
             raise CompileError("dot(rowmax=True) needs M <= MCOLS and an output tile from "
                                "ol.empty/zeros/full (they reserve the row-max area)")
+        # PAIR reads a chunk's two scale words as one 8-byte-aligned pair
+        pair = st.pair and w.wf != I.W8 and (w.scale is None or (
+            w.srs % 8 == 0 and Affine.of(w.scale).const % 8 == 0
+            and all(c % 8 == 0 for c in Affine.of(w.scale).terms.values())))
         m0 = 0
         for ab, mc in st.chunks:
             ins = I.mm(sa, ssa, out.base + m0 * ors, N, st.KB, w.rs, ors, mc, ab, w.srs,
-                       unit=w.scale is None, acc=acc is not None, rmax=rowmax,
+                       unit=w.scale is None, acc=acc is not None, rmax=rowmax, wf=w.wf,
+                       pair=pair,
                        ascale=acc_scale.base if acc_scale is not None else None, ra=ra, rb=rb,
-                       comment=f"mm {M}x{K} . {N}x{K}^T" + (" +rowmax" if rowmax else "")
+                       comment=f"mm {M}x{K} . {N}x{K}^T" + (" pair" if pair else "")
+                       + (" +rowmax" if rowmax else "")
                        + (" acc*=scale" if acc_scale is not None else ""))
             self.emit(ins)
             m0 += mc

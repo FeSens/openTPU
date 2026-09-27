@@ -2,13 +2,23 @@
 // prefetched through a FIFO) and their fp32 block scales (port A), and reuses each chunk across
 // up to MCOLS stationary rows held in ACT RAM (docs/isa.md, MM). Per chunk and column j:
 //   t[j][k] = (i2f(sum_i act[j][i] * w[i]) * ws) * ascale[j]
+// 4-bit weights (flags[5:4] = WF: 1 int4, 2 E2M1): a D-byte chunk holds two blocks (the low
+// half first) and is consumed in two advances; each block's scale word is a bf16 scale (ws) and
+// four 4-bit multipliers m_b of the sub-block sums: sum_i -> sum_b m_b * sum_{i in b} (exact).
 //   acc[j]  = isum_4(t[j][0..KB-1])      interleaved partials p[k mod 4], then (p0+p2)+(p1+p3)
+// PAIR (flags[6], 4-bit, 2M <= MCOLS; docs/isa.md "Column reuse"): a chunk is consumed in one
+// advance. Columns j < M take its low block 2c (ACT block ab+2c), columns j+M its high block
+// 2c+1 (ACT block ab+2c+1); the two scale words arrive together (port A's 8-byte pair), and
+//   acc[j]  = isum_4(t[j][2c] + t[j+M][2c+1])      (+0 for the missing block 2c+1 of an odd KB)
 // After the last block of a row the M results are written to TMEM (optionally accumulated,
 // optionally rescaled: y = old * alpha[j] + acc). With RMAX the running max of every written
 // value per column is written after the last row (the max order is total: any order is exact).
 //
 // Pipelined for the FPGA clock:
-//   pop | products | +4 | +4 | tree | i2f (2) | *ws (2) | *ascale (2) | partial loop (4) | combine
+//   pop | operands | products | +4 | +4 | tree | i2f (2) | *ws (2) | *ascale (2) | [pair (4)]
+//   | partial loop (4) | combine
+// (pair: PAIR only, t + the partner column's t; other MMs skip its four stages: a command's
+// blocks never share the pipeline with another command's, so the latency may differ by mode)
 // The partial loop is exactly 4 pipeline advances long (one 4-stage adder), so block k meets
 // the partial of block k-4 of the same row. The compute pipeline
 // advances when a chunk is popped, or with a bubble whenever the next chunk would start a new
@@ -48,6 +58,8 @@ module otpu_mxu
   output logic [3:0][31:0]      pf_uv,
   // ACT RAM read
   output logic [15:0]           act_blk,
+  output logic [15:0]           act_blk2,    // PAIR: the odd block, read by the rows in act_hi
+  output logic [MCOLS-1:0]      act_hi,
   output logic                  act_ren,     // the ACT RAM read register advances (with S0)
   input  logic [MCOLS*D*8-1:0]  act_data,
   input  logic [MCOLS*32-1:0]   act_scale,
@@ -57,6 +69,7 @@ module otpu_mxu
   input  logic                  a_gnt,
   input  logic                  a_rvalid,
   input  logic [31:0]           a_rdata,
+  input  logic [31:0]           a_rdata2,    // the other word of a_rdata's 8-byte pair
   output logic                  b_req,
   output logic [31:0]           b_addr,
   input  logic                  b_gnt,
@@ -89,23 +102,33 @@ module otpu_mxu
     return MW'((d < NL) ? d : NL);
   endfunction
   initial if (D % 16 != 0) $fatal(1, "otpu_mxu: D must be a multiple of 16");
+  localparam logic [1:0] WF_W8 = 2'd0, WF_W4F = 2'd2;
+  localparam int SDEPTH = 2 * DEPTH;         // scale entries: up to two per chunk (4-bit)
+  localparam int NP = (MCOLS + 1) / 2;       // DSP pairs (columns 2p, 2p+1 share a multiplier)
+  localparam int SPW = $clog2(SDEPTH);
 
   // ================================================================== issuer
-  logic        i_act, i_unit;
+  logic        i_act, i_unit, i_w4, i_pair;
   logic [31:0] i_left, i_rs, i_srs;
   logic [15:0] i_KB, i_k;
   logic [31:0] row_addr, chunk_addr, srow_addr, scale_addr;
   logic [PW:0] occ;                         // chunks issued and not yet popped (<= DEPTH)
 
   // ================================================================== command queue (2)
-  wire [31:0] cmd_total = 32'(cmd.w4[15:0]) * 32'(cmd.w4[31:16]);   // chunks to stream
+  // PAIR: 4-bit only; a row is ceil(KB/2) advances of one chunk each
+  wire        cmd_pair = cmd.flags[6] && cmd.flags[5:4] != WF_W8;
+  wire [15:0] cmd_KBa = cmd_pair ? (cmd.w4[31:16] + 16'd1) >> 1 : cmd.w4[31:16];
+  wire [31:0] cmd_total = 32'(cmd.w4[15:0]) * 32'(cmd_KBa);   // advances (chunk requests)
   logic [31:0] q_out [2], q_total [2];
   logic        q_tz [2];                      // q_total == 0 (registered: off the drain path)
-  logic [15:0] q_KB [2], q_ors [2];
+  logic [15:0] q_KB [2], q_KBa [2], q_ors [2];   // KBa: advances per row
+  logic        q_pair [2];
+  logic [MCOLS-1:0] q_hi [2];                 // PAIR: the columns that take the odd blocks (j >= M)
   logic [31:0] q_mxo [2];                     // RMAX output base: out + M * ors (no multiply later)
   logic [7:0]  q_M [2], q_ab [2];
   logic [MW-1:0] q_run [2];                  // drain lanes per cycle without a bank conflict
   logic        q_unit [2], q_acc [2], q_rmax [2], q_asc [2], q_go [2];
+  logic [1:0]  q_wf [2];
   logic [31:0] q_asa [2];
   logic [31:0] q_jo [2][MCOLS];            // j * ors
   logic        q_h;
@@ -113,11 +136,15 @@ module otpu_mxu
 
   wire [31:0] c_out = q_out[q_h];
   wire        c_tz = q_tz[q_h];
-  wire [15:0] c_KB = q_KB[q_h];
+  wire [15:0] c_KB = q_KB[q_h], c_KBa = q_KBa[q_h];
+  wire        c_pair = q_pair[q_h];
+  wire [MCOLS-1:0] c_hi = q_hi[q_h];
   wire [7:0]  c_M = q_M[q_h], c_ab = q_ab[q_h];
   wire [MW-1:0] c_run = q_run[q_h];
   wire        c_unit = q_unit[q_h], c_acc = q_acc[q_h], c_rmax = q_rmax[q_h];
   wire        c_asc = q_asc[q_h];
+  wire [1:0]  c_wf = q_wf[q_h];
+  wire        c_w4 = (c_wf != WF_W8);
   wire [31:0] c_asa = q_asa[q_h];
   wire        c_act = (q_n != 0) && q_go[q_h];
   logic [31:0] alpha [MCOLS];
@@ -131,31 +158,42 @@ module otpu_mxu
   // address fanning out to every LUT). The chunk FIFO is its own module (kept as a hierarchy):
   // inline, Vivado absorbed its read register into the DSP input registers of the products,
   // which left an asynchronous read, and built it from 5,472 RAM64M anyway.
-  (* ram_style = "block" *) logic [31:0]    f_scale [DEPTH];
-  logic [PW-1:0]  f_head, f_tail, s_head, s_tail;
-  logic [PW:0]    f_count, s_count;
+  (* ram_style = "block" *) logic [63:0]    f_scale [SDEPTH];   // {a_rdata2, a_rdata}
+  logic [PW-1:0]  f_head, f_tail;
+  logic [SPW-1:0] s_head, s_tail;
+  logic [PW:0]    f_count;
+  logic [SPW:0]   s_count;
 
   // ================================================================== consumer control
   logic [15:0] ck;
   logic [31:0] c_left;                      // chunks of the head command not yet popped
   logic [RFW:0] rows_live;                  // rows popped (first block) and not yet drained
-  wire last_k   = (ck + 1 == c_KB);
+  wire last_k   = (ck + 1 == c_KBa);
   wire more     = c_act && (c_left != 0);
+  // pop: one block (PAIR: one chunk) advances into the pipeline; fpop: its chunk leaves the
+  // FIFO (4-bit without PAIR: after the high half, or after the row's last block)
   wire pop      = more && (f_count != 0) && (c_unit || s_count != 0) && (ck != 0 || rows_live < RF);
+  wire fpop     = pop && (!c_w4 || c_pair || ck[0] || last_k);
   wire en_c     = pop || !(more && ck != 0);       // freeze only in the middle of a row
-  wire want_iss = i_act && (occ < (PW+1)'(DEPTH));
-  wire go_iss   = want_iss && b_gnt && (i_unit || a_gnt);
+  // the issuer walks advances: a chunk request with every 8-bit block, every even 4-bit block
+  // (an odd one's chunk is already on its way, so it needs no FIFO slot) and every PAIR chunk; a
+  // scale request with each (PAIR: the pair of words of blocks 2c, 2c+1)
+  wire need_b   = !i_w4 || i_pair || !i_k[0];
+  wire want_iss = i_act && (!need_b || occ < (PW+1)'(DEPTH));
+  wire go_iss   = want_iss && (!need_b || b_gnt) && (i_unit || a_gnt);
 
   assign rdy = !i_act && (q_n < 2);
   assign computing = pop;
   assign pf_level  = f_count;
   assign pf_starve = more && f_count == 0;
   assign pf_block  = more && f_count != 0 && !pop;
-  assign b_req  = go_iss;
-  assign b_addr = go_iss ? (chunk_addr >> 2) : '0;
+  assign b_req  = go_iss && need_b;
+  assign b_addr = b_req ? (chunk_addr >> 2) : '0;
   assign a_req  = go_iss && !i_unit;
   assign a_addr = a_req ? (scale_addr >> 2) : '0;
-  assign act_blk = 16'(c_ab) + ck;
+  assign act_blk = 16'(c_ab) + (c_pair ? {ck[14:0], 1'b0} : ck);
+  assign act_blk2 = 16'(c_ab) + {ck[14:0], 1'b1};
+  assign act_hi = c_hi;
   assign act_ren = en_c;
 
   // ================================================================== compute pipeline
@@ -164,12 +202,18 @@ module otpu_mxu
     logic       last;     // last block of its row
     logic       first;    // block index < 4: the partial starts at +0
     logic [1:0] q;        // block index mod 4
+    logic       h;        // 4-bit: the chunk's high half
+    logic       o;        // PAIR: the chunk's high block is in the row (not past an odd KB)
   } cm_t;
 
   cm_t                 m0, m1, m2, m3, m4, m5, m6;
-  logic [D*8-1:0]      w0;
+  logic [D*8-1:0]      w0;                  // the chunk (FIFO read register)
+  logic [15:0]         mb0, mb0h;           // S0's sub-block multipliers m_3..m_0 (8-bit: 1;
+                                            // h: PAIR's high block)
   logic [MCOLS*D*8-1:0] a0;
-  f32_t                ws0, ws1, ws2, ws3, ws4, ws5, ws6;
+  f32_t                ws0, ws1, ws2, ws3, ws4, ws5;
+  f32_t                ws0h, ws1h, ws2h, ws3h, ws4h, ws5h;
+  f32_t                ws6 [MCOLS];
   f32_t                as0 [MCOLS];
   f32_t                fi [MCOLS];
   // The dot product of D int8 x int8 products is exact in SW bits: |dot| <= D*2^14 < 2^MG.
@@ -202,14 +246,45 @@ module otpu_mxu
   assign a0 = act_data;
   // the scale FIFO's registered read is kept free of logic (so it maps into the block RAM's
   // output register); unit-scale chunks are substituted after it
-  f32_t ws0r;
-  logic cu0;
-  assign ws0 = cu0 ? F_ONE : ws0r;
+  logic [63:0] ws0r;
+  logic cu0, pr0;
+  logic [1:0] wf0;
+  logic [MCOLS-1:0] hi0;                    // PAIR: the columns of the high block
+  wire  w40 = (wf0 != WF_W8);
+  assign ws0 = cu0 ? F_ONE : w40 ? {ws0r[15:0], 16'd0} : ws0r[31:0];   // 4-bit: bf16 scale
+  assign mb0 = (cu0 || !w40) ? 16'h1111 : ws0r[31:16];
+  assign ws0h = cu0 ? F_ONE : {ws0r[47:32], 16'd0};
+  assign mb0h = cu0 ? 16'h1111 : ws0r[63:48];
+  // 4-bit elements: nibble i of the chunk half; int4 two's complement, E2M1 as twice its value
+  // ({0, 1, 2, 3, 4, 6, 8, 12}, sign in bit 3)
+  function automatic logic [7:0] dec4(input logic [3:0] c, input logic fp);
+    if (!fp) return {{4{c[3]}}, c};
+    case (c)
+      4'd5: return 8'd6;
+      4'd6: return 8'd8;
+      4'd7: return 8'd12;
+      4'd8: return 8'd0;
+      4'd9: return -8'sd1;
+      4'd10: return -8'sd2;
+      4'd11: return -8'sd3;
+      4'd12: return -8'sd4;
+      4'd13: return -8'sd6;
+      4'd14: return -8'sd8;
+      4'd15: return -8'sd12;
+      default: return 8'(c);
+    endcase
+  endfunction
+  // the weight of position i for a column that takes the high block (PAIR) or the high half
+  function automatic logic [7:0] wsel(input logic [D*8-1:0] w, input int i, input logic hb,
+                                      input logic [1:0] wf);
+    if (wf == WF_W8) return w[i*8 +: 8];
+    return dec4(w[(hb ? D*4 : 0) + 4*i +: 4], wf == WF_W4F);
+  endfunction
   always_comb for (int j = 0; j < MCOLS; j++) as0[j] = act_scale[j*32 +: 32];
 
   // FIFO writes (the slot was reserved when the chunk was issued; see occ)
   always_ff @(posedge clk) begin
-    if (a_rvalid) f_scale[s_tail] <= a_rdata;
+    if (a_rvalid) f_scale[s_tail] <= {a_rdata2, a_rdata};
   end
   (* keep_hierarchy = "yes" *)
   otpu_ram_sdp #(.W(D * 8), .N(DEPTH)) u_fd (
@@ -223,10 +298,15 @@ module otpu_mxu
       m0.last <= last_k;
       m0.first <= (ck < 16'(NPART));
       m0.q <= ck[1:0];
+      m0.h <= c_w4 && !c_pair && ck[0];
+      m0.o <= c_pair && !(last_k && c_KB[0]);
     end
     ws0r <= f_scale[s_head];
     cu0 <= c_unit;
-    m5 <= m4; ws5 <= ws4;
+    wf0 <= c_wf;
+    pr0 <= c_pair;
+    hi0 <= c_hi;
+    m5 <= m4; ws5 <= ws4; ws5h <= ws4h;
     m6 <= m5;
   end
   // S5, S6: int -> fp32
@@ -243,16 +323,20 @@ module otpu_mxu
       for (int j = 0; j < MCOLS; j++) fi[j] <= i2f_s2(im[j]);
     end
   end
-  // ws6 feeds the first fp multiplier's B operand: a reset flop, never an SRL tap
-  always_ff @(posedge clk) if (rst) ws6 <= '0; else if (en_c) ws6 <= ws5;
+  // ws6 feeds the first fp multiplier's B operand: a reset flop, never an SRL tap (per column:
+  // PAIR's high-block columns take the high block's scale)
+  always_ff @(posedge clk)
+    for (int j = 0; j < MCOLS; j++)
+      if (rst) ws6[j] <= '0; else if (en_c) ws6[j] <= hi0[j] ? ws5h : ws5;
 
-  // dot-product latency S0 -> s4 (the tree: 4 register levels)
+  // dot-product latency S0 -> s4 (the tree: 6 register levels: operands (the decoded weights),
+  // products, pairs, groups, sub-blocks times their multipliers, block sum)
   localparam int NG = D / CL;
   localparam int TL = (NG <= 1) ? 0 : (NG <= 4) ? 1 : (NG <= 16) ? 2 : 3;
-  localparam int LDOT = (IMPL == 0) ? 4 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
+  localparam int LDOT = (IMPL == 0) ? 6 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
 
   // ---- S1 .. S4: the exact integer dot products of the chunk with every column's ACT block;
-  // s4 (with m4, ws4) is the chunk's result LDOT - 4 cycles after S0 + 4.
+  // s4 (with m4, ws4) is the chunk's result LDOT cycles after S0.
   if (IMPL == 0) begin : g_tree
     // products, pair sums, then an 8 / D/16 adder tree (one register level each)
     // Columns 2p and 2p+1 share the weight byte, so one multiplier (a DSP48 with its pre-adder)
@@ -260,55 +344,108 @@ module otpu_mxu
     // The DSP post-adders sum positions 2q and 2q+1 (DSP 2q: M + PK, DSP 2q+1: M + that, PREG):
     // pq = E*2^16 + (O + PK), E / O the pair sums of columns 2p / 2p+1, both in [-32512, 32768].
     // O + PK is in [1, 65281], so the fields need no borrow: E = pq[32:16] (signed) and
-    // O + PK = pq[15:0] (unsigned); column 2p+1's s4 starts at -(D/2)*PK. PK is odd (no constant
-    // trailing zeros to trim from the post-adder). An odd last column keeps plain products,
-    // paired in fabric.
+    // O + PK = pq[15:0] (unsigned); column 2p+1's group sums start at -(GS/2)*PK. PK is odd
+    // (no constant trailing zeros to trim from the post-adder). An odd last column keeps plain
+    // products, paired in fabric.
+    // A PAIR split between the pair's columns (M = 2p+1: column 2p takes the low block, 2p+1 the
+    // high one, different weights) packs both 4-bit weights into the multiplier's other operand,
+    // B = wl*2^13 + wh (|w| <= 12: 18 bits), so the one product holds both columns' products:
+    //   pm = a0*wl*2^29 + (a0*wh*2^16 + a1*wl*2^13) + a1*wh
+    // The cross terms sit between them, |a0*wh*2^16 + a1*wl*2^13| < 2^27 per position. With
+    // PK2 = 2^28 + 2^12 the pair sum's low 29 bits are in (0, 2^29) and its low field in
+    // [2^12 - 3072, 2^12 + 3072]: E = pq[43:29] (signed), O + 2^12 = pq[12:0] (unsigned).
     // pm, pq and pr are packed so they are registers the DSPs absorb (MREG, PREG), not memories
     // that are mapped to fabric flops after DSP packing; signed fields are read through $signed().
-    localparam logic [33:0] PK = 34'd32513;
-    logic [(MCOLS + 1) / 2 - 1:0][D-1:0][33:0]   pm;
-    logic [(MCOLS + 1) / 2 - 1:0][D/2-1:0][33:0] pq;
-    logic [D-1:0][15:0]                         pr;
-    logic [D/2-1:0][16:0]                       prq;
-    logic signed [19:0] s3 [MCOLS][D/16];
+    localparam int NDP = MCOLS / 2;                     // DSP pairs
+    localparam logic [43:0] PK = 44'd32513, PK2 = 44'h000_1000_1000;
+    logic [NP-1:0][D-1:0][43:0]   pm;
+    logic [NP-1:0][D/2-1:0][43:0] pq;
+    logic [D-1:0][15:0]           pr;
+    logic [D/2-1:0][16:0]         prq;
+    // group sums of GS positions (16; D/4 when smaller), GPB groups per 4-bit sub-block
+    localparam int GS = (D / 4 < 16) ? D / 4 : 16;
+    localparam int NG3 = D / GS, GPB = NG3 / 4;
+    logic signed [19:0] s3 [MCOLS][NG3];
+    logic [SW-1:0] v [MCOLS][4];
+    logic [15:0] mbz, mb1, mb2, mb3, mbzh, mb1h, mb2h, mb3h;
+    cm_t  mz, mt4;
+    f32_t wz, wt4, wzh, wt4h;
+    // the operands registered once more (the multipliers' input registers): the weight decode
+    // sits between the chunk FIFO's read register and here, not in front of the multipliers
+    logic [MCOLS*D*8-1:0]       ar;
+    logic [NP-1:0][D-1:0][17:0] wr;                    // per DSP pair (B)
+    logic [D-1:0][7:0]          wrl;                   // an odd last column's weights
+    logic [NP-1:0]              sp;                    // the pair is split (with the operands)
+    logic [NP-1:0][43:0]        pkr;
     always_ff @(posedge clk) if (en_c) begin
-      for (int p = 0; p < MCOLS / 2; p++) begin
+      ar <= a0;
+      for (int p = 0; p < NDP; p++) begin
+        logic split, hb;
+        split = pr0 && !hi0[2*p] && hi0[2*p+1];
+        hb = pr0 ? hi0[2*p] : m0.h;
+        // B = wl*2^13 + wh: wh sign-extended to 13 bits, above it wl - (wh < 0); else sext(w)
+        for (int i = 0; i < D; i++) begin
+          logic [7:0] lo8, b8;
+          b8 = wsel(w0, i, split || hb, wf0);
+          lo8 = wsel(w0, i, 1'b0, wf0);
+          wr[p][i] <= {split ? 5'(lo8[4:0] - 5'(b8[7])) : {5{b8[7]}}, {5{b8[7]}}, b8};
+        end
+        sp[p] <= split;
+        pkr[p] <= split ? PK2 : PK;
+      end
+      if (MCOLS % 2 == 1)
+        for (int i = 0; i < D; i++) wrl[i] <= wsel(w0, i, pr0 ? hi0[MCOLS-1] : m0.h, wf0);
+      for (int p = 0; p < NDP; p++) begin
         for (int i = 0; i < D; i++) begin
           logic signed [24:0] pa;
-          pa = $signed({a0[(2*p*D + i)*8 +: 8], 16'b0}) + 25'($signed(a0[((2*p+1)*D + i)*8 +: 8]));
-          pm[p][i] <= 34'(pa) * 34'($signed(w0[i*8 +: 8]));
+          pa = $signed({ar[(2*p*D + i)*8 +: 8], 16'b0}) + 25'($signed(ar[((2*p+1)*D + i)*8 +: 8]));
+          pm[p][i] <= 44'(pa) * 44'($signed(wr[p][i]));
         end
         for (int q = 0; q < D / 2; q++)
-          pq[p][q] <= pm[p][2*q+1] + (pm[p][2*q] + PK);
+          pq[p][q] <= pm[p][2*q+1] + (pm[p][2*q] + pkr[p]);
       end
       if (MCOLS % 2 == 1) begin
         for (int i = 0; i < D; i++)
-          pr[i] <= 16'(int'($signed(a0[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(w0[i*8 +: 8])));
+          pr[i] <= 16'(int'($signed(ar[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(wrl[i])));
         for (int q = 0; q < D / 2; q++)
           prq[q] <= 17'($signed(pr[2*q])) + 17'($signed(pr[2*q+1]));
       end
       for (int j = 0; j < MCOLS; j++) begin
-        for (int g = 0; g < D / 16; g++) begin
+        for (int g = 0; g < NG3; g++) begin
+          // column 2p+1's pair fields carry +PK (split: +2^12) each: the group sum starts at
+          // -(GS/2) times that
           logic signed [19:0] t;
-          t = '0;
-          for (int k = 0; k < 8; k++)
-            if (j % 2 == 1) t = t + 20'(pq[j/2][8*g+k][15:0]);
-            else if (j + 1 < MCOLS) t = t + 20'($signed(pq[j/2][8*g+k][32:16]));
-            else t = t + 20'($signed(prq[8*g+k]));
+          t = (j % 2 == 0) ? '0 : sp[j/2] ? 20'(-(GS / 2 * 4096)) : 20'(-(GS / 2 * int'(PK)));
+          for (int k = 0; k < GS / 2; k++)
+            if (j % 2 == 1)
+              t = t + 20'(sp[j/2] ? {3'b0, pq[j/2][GS/2*g+k][12:0]} : pq[j/2][GS/2*g+k][15:0]);
+            else if (j + 1 < MCOLS)
+              t = t + (sp[j/2] ? 20'($signed(pq[j/2][GS/2*g+k][43:29]))
+                               : 20'($signed(pq[j/2][GS/2*g+k][32:16])));
+            else t = t + 20'($signed(prq[GS/2*g+k]));
           s3[j][g] <= t;
         end
+        // sub-block sums times their multipliers (a DSP pre-adder and multiplier), then the
+        // block sum; exact in SW bits (|sum| < 2^(SW-1) in every format)
+        for (int b = 0; b < 4; b++) begin
+          logic [SW-1:0] t;
+          t = '0;
+          for (int g = 0; g < GPB; g++) t = t + SW'(s3[j][b*GPB + g]);
+          v[j][b] <= SW'(t * SW'(hi0[j] ? mb3h[4*b +: 4] : mb3[4*b +: 4]));
+        end
         begin
-          // SW bits: the bias and partial sums may wrap, the final sum is exact
-          logic signed [SW-1:0] t;
-          t = (j % 2 == 1) ? SW'(-(D / 2 * int'(PK))) : '0;
-          for (int g = 0; g < D / 16; g++) t = t + SW'(s3[j][g]);
-          s4[j] <= t;
+          logic [SW-1:0] t;
+          t = '0;
+          for (int b = 0; b < 4; b++) t = t + v[j][b];
+          s4[j] <= $signed(t);
         end
       end
-      m1 <= m0; ws1 <= ws0;
-      m2 <= m1; ws2 <= ws1;
-      m3 <= m2; ws3 <= ws2;
-      m4 <= m3; ws4 <= ws3;
+      mz <= m0; wz <= ws0; mbz <= mb0; wzh <= ws0h; mbzh <= mb0h;
+      m1 <= mz; ws1 <= wz; mb1 <= mbz; ws1h <= wzh; mb1h <= mbzh;
+      m2 <= m1; ws2 <= ws1; mb2 <= mb1; ws2h <= ws1h; mb2h <= mb1h;
+      m3 <= m2; ws3 <= ws2; mb3 <= mb2; ws3h <= ws2h; mb3h <= mb2h;
+      mt4 <= m3; wt4 <= ws3; wt4h <= ws3h;
+      m4 <= mt4; ws4 <= wt4; ws4h <= wt4h;
     end
   end else begin : g_casc
     // Systolic accumulate chains (DSP48 A*B + PCIN cascades): the D positions form NG = D / CL
@@ -320,6 +457,9 @@ module otpu_mxu
     // operand skew: position k of every chain is delayed k cycles (weights shared by columns)
     logic [7:0] ws_k [D];                               // skewed weight bytes
     logic [7:0] as_k [MCOLS][D];                        // skewed activation bytes
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) if (pop && c_w4) $fatal(1, "otpu_mxu: 4-bit weights need IMPL = 0");
+`endif
     for (genvar i = 0; i < D; i++) begin : g_wsk
       otpu_delay #(.W(8), .N(i % CL)) u_w (.clk, .en(en_c), .d(w0[i*8 +: 8]), .q(ws_k[i]));
       for (genvar j = 0; j < MCOLS; j++) begin : g_ask
@@ -373,26 +513,49 @@ module otpu_mxu
     // the meta and the weight scale travel alongside (S0 -> S4 position)
     otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));
     otpu_delay #(.W(32), .N(LDOT)) u_ws4 (.clk, .en(en_c), .d(ws0), .q(ws4));
+    otpu_delay #(.W(32), .N(LDOT)) u_ws4h (.clk, .en(en_c), .d(ws0h), .q(ws4h));
   end
 
   // the ACT scale travels with the chunk to the second multiplier (S0 + LDOT + 2 + LM)
-  f32_t t1 [MCOLS], t2 [MCOLS], pacc [MCOLS];
-  cm_t  mt_p, mt, ma;                        // meta at the adder inputs / outputs
+  f32_t t1 [MCOLS], t2 [MCOLS], tq [MCOLS], pacc [MCOLS];
+  cm_t  mt_p, mt, mq_p, mq, mx, ma;          // meta at the pair adder input and output, the loop
+                                             // adder input (mq under PAIR, else mt), its output
+  logic [7:0] M0;                            // the command's M (constant while its blocks flow)
+  always_ff @(posedge clk) if (en_c) M0 <= c_M;
   // the delay lines into the fp operands end in reset flops (a reset can't go into an SRL, so the
   // last stage is an FDRE with a fast clock-to-out); same total length and enable
   otpu_delay #(.W($bits(cm_t)), .N(2 * LM - 1)) u_mt (.clk, .en(en_c), .d(m6), .q(mt_p));
   always_ff @(posedge clk) if (rst) mt <= '0; else if (en_c) mt <= mt_p;
-  otpu_delay #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .en(en_c), .d(mt), .q(ma));
+  otpu_delay #(.W($bits(cm_t)), .N(LA - 1)) u_mq (.clk, .en(en_c), .d(mt), .q(mq_p));
+  always_ff @(posedge clk) if (rst) mq <= '0; else if (en_c) mq <= mq_p;
+  assign mx = pr0 ? mq : mt;
+  otpu_delay #(.W($bits(cm_t)), .N(LA)) u_ma (.clk, .en(en_c), .d(mx), .q(ma));
   for (genvar j = 0; j < MCOLS; j++) begin : g_col
-    f32_t fb, prev, as_p, asq;
+    f32_t fb, prev, as_p, asq, tx;
     otpu_delay #(.W(32), .N(LDOT + 2 + LM - 1)) u_as (.clk, .en(en_c), .d(as0[j]), .q(as_p));
     always_ff @(posedge clk) if (rst) asq <= '0; else if (en_c) asq <= as_p;
-    otpu_fmul #(.LAT(LM)) u_m1 (.clk, .en(en_c), .a(fi[j]), .b(ws6), .y(t1[j]));
+    otpu_fmul #(.LAT(LM)) u_m1 (.clk, .en(en_c), .a(fi[j]), .b(ws6[j]), .y(t1[j]));
     otpu_fmul #(.LAT(LM)) u_m2 (.clk, .en(en_c), .a(t1[j]), .b(asq), .y(t2[j]));
+    // pair (PAIR): a column that takes a low block (j < M <= MCOLS/2) adds its partner's term,
+    // column j + M's, when the high block is in the row, else +0; the other columns' results are
+    // not used under PAIR
+    if (j < MCOLS / 2) begin : g_pair
+      f32_t pb;
+      always_comb begin
+        pb = F_ZERO;
+        for (int m = 1; m <= MCOLS / 2; m++)
+          if (j + m < MCOLS && mt.o && M0 == 8'(m)) pb = t2[j + m];
+      end
+      otpu_fadd #(.LAT(LA)) u_pr (.clk, .en(en_c), .a(t2[j]), .b(pb), .y(tq[j]));
+      assign tx = pr0 ? tq[j] : t2[j];
+    end else begin : g_nopair
+      assign tq[j] = '0;
+      assign tx = t2[j];
+    end
     // partial loop: pacc(block k) = pacc(block k - 4) + t(k), exactly NPART advances
     otpu_delay #(.W(32), .N(NPART - LA)) u_fb (.clk, .en(en_c), .d(pacc[j]), .q(fb));
-    assign prev = mt.first ? F_ZERO : fb;
-    otpu_fadd #(.LAT(LA)) u_acc (.clk, .en(en_c), .a(prev), .b(t2[j]), .y(pacc[j]));
+    assign prev = mx.first ? F_ZERO : fb;
+    otpu_fadd #(.LAT(LA)) u_acc (.clk, .en(en_c), .a(prev), .b(tx), .y(pacc[j]));
   end
 
   // combine a row's final partials: (p0+p2)+(p1+p3). Block k's partial meets its isum_4 partner,
@@ -455,6 +618,12 @@ module otpu_mxu
       end
   end
 `ifndef SYNTHESIS
+  // PAIR reads a block's scale word and its partner's as one 8-byte aligned pair
+  always @(posedge clk) begin
+    if (a_req && i_pair && scale_addr[2]) $fatal(1, "otpu_mxu: PAIR scales must be 8-byte aligned");
+    if (start && cmd_pair && 2 * int'(cmd.w6[23:16]) > MCOLS)
+      $fatal(1, "otpu_mxu: PAIR needs 2 * M <= MCOLS");
+  end
   // the lane count is what a greedy pick that stops at the first bank conflict would take
   always @(posedge clk) if (drain_go) begin
     logic [LANES-1:0] used;
@@ -646,12 +815,16 @@ module otpu_mxu
         q_tz[qi]    <= (cmd_total == 0);
         if (q_n == 0) c_left <= cmd_total;          // becomes the head now
         q_KB[qi]    <= cmd.w4[31:16];
+        q_KBa[qi]   <= cmd_KBa;
+        q_pair[qi]  <= cmd_pair;
+        for (int j = 0; j < MCOLS; j++) q_hi[qi][j] <= cmd_pair && 32'(j) >= 32'(cmd.w6[23:16]);
         q_ors[qi]   <= cmd.w6[15:0];
         q_mxo[qi]   <= cmd.w3 + 32'(cmd.w6[23:16]) * 32'(cmd.w6[15:0]);
         q_M[qi]     <= cmd.w6[23:16];
         q_run[qi]   <= drain_run(cmd.w6[15:0]);
         q_ab[qi]    <= cmd.w6[31:24];
         q_unit[qi]  <= cmd.flags[0];
+        q_wf[qi]    <= cmd.flags[5:4];
         q_acc[qi]   <= cmd.flags[1];
         q_rmax[qi]  <= cmd.flags[2];
         q_asc[qi]   <= cmd.flags[3];
@@ -661,12 +834,14 @@ module otpu_mxu
         qn = qn + 1;
         if (cmd.w4[15:0] != 0 && cmd.w4[31:16] != 0) begin
           i_act  <= 1'b1;
-          i_left <= 32'(cmd.w4[15:0]) * 32'(cmd.w4[31:16]);
-          i_KB   <= cmd.w4[31:16];
+          i_left <= cmd_total;
+          i_KB   <= cmd_KBa;
           i_k    <= '0;
           i_rs   <= cmd.w5;
           i_srs  <= cmd.w7;
           i_unit <= cmd.flags[0];
+          i_w4   <= (cmd.flags[5:4] != WF_W8);
+          i_pair <= cmd_pair;
           row_addr <= cmd.w1; chunk_addr <= cmd.w1;
           srow_addr <= cmd.w2; scale_addr <= cmd.w2;
         end
@@ -688,8 +863,9 @@ module otpu_mxu
           scale_addr <= srow_addr + i_srs;
         end else begin
           i_k <= i_k + 1;
-          chunk_addr <= chunk_addr + D;
-          scale_addr <= scale_addr + 4;
+          // 4-bit: two blocks per chunk (PAIR: both in one advance, with their two scale words)
+          if (!i_w4 || i_pair || i_k[0]) chunk_addr <= chunk_addr + D;
+          scale_addr <= scale_addr + (i_pair ? 32'd8 : 32'd4);
         end
       end
       // ---- FIFO pushes
@@ -697,12 +873,12 @@ module otpu_mxu
       if (a_rvalid) begin
         s_tail <= s_tail + 1;
       end
-      f_count <= f_count + (b_rvalid ? 1 : 0) - (pop ? 1 : 0);
-      occ <= occ + (go_iss ? 1'b1 : 1'b0) - (pop ? 1'b1 : 1'b0);
+      f_count <= f_count + (b_rvalid ? 1 : 0) - (fpop ? 1 : 0);
+      occ <= occ + (b_req ? 1'b1 : 1'b0) - (fpop ? 1'b1 : 1'b0);
       s_count <= s_count + (a_rvalid ? 1 : 0) - ((pop && !c_unit) ? 1 : 0);
       // ---- pop one chunk
+      if (fpop) f_head <= f_head + 1;
       if (pop) begin
-        f_head <= f_head + 1;
         if (!c_unit) s_head <= s_head + 1;
         c_left <= c_left - 1;
         if (ck == 0) rl = rl + 1;

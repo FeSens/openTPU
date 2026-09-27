@@ -77,6 +77,17 @@ def test_tiny_matches_hf(tiny, config):
     assert _cos(dev[:12], emu).min() > 0.999
 
 
+@pytest.mark.parametrize("config", ["design", "board"])
+def test_tiny_fp4_follows_emulation(tiny, config):
+    """4-bit (FP4) weights: the device follows the float64 emulation of the same weights."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 12)]
+    cfg = board_config(DRAM_BYTES=1 << 24) if config == "board" else None
+    eng = Engine(spec, W, cap=256, cfg=cfg, wformat="fp4")
+    dev = np.array([eng.step(t) for t in toks])
+    assert _cos(dev, emulated_logits(spec, W, toks, wformat="fp4")).min() > 0.999
+
+
 def test_tiny_reset_clears_state_and_conv_ring(tiny):
     """After reset, position 0 must not read the previous sequence's DeltaNet state or
     convolution rows."""

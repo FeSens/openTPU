@@ -49,6 +49,7 @@ module otpu_axi_dram #(
   input  logic [3:0]        a_be,
   output logic              a_rvalid,
   output logic [31:0]       a_rdata,
+  output logic [31:0]       a_rdata2,   // the word at a_addr ^ 1 (the other half of its 8-byte pair)
   output logic              sw_rdy,
   input  logic              sw_req,
   input  logic [31:0]       sw_addr,    // word address
@@ -311,6 +312,7 @@ module otpu_axi_dram #(
   assign b_rdata = {rb_head[1], rb_head[0]};
   assign a_rvalid = a_out;
   assign a_rdata = a_src[32 * aoh.idx +: 32];
+  assign a_rdata2 = a_src[32 * (aoh.idx ^ 4'd1) +: 32];
 
   always_ff @(posedge clk) begin
     if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= b_tag;

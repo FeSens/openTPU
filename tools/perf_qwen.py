@@ -1,7 +1,8 @@
 """Profile one decode token on the RTL at the board configuration (AXI memory path).
 
     python3 tools/perf_qwen.py [--model qwen3|lfm2|qwen35|DIR] [--layers N] [--pos P]
-                               [--bw 100] [--check]
+                               [--bw 100] [--check] [--wformat int8|int4|fp4]
+                               [--head-format int8|int4|fp4]
 
 Uses the real weights (models/Qwen3-0.6B, or --model lfm2: models/LFM2.5-230M, --model qwen35:
 models/Qwen3.5-0.8B), optionally only the first N layers (the LM head is always complete).
@@ -76,6 +77,10 @@ def main():
     ap.add_argument("--check", action="store_true", help="compare with the ISA simulator")
     ap.add_argument("--timeline", help="print the instructions of dynamic index range A:B")
     ap.add_argument("--idle", action="store_true", help="list DRAM-idle stretches (64-cycle windows)")
+    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"],
+                    help="weight format of the layers (opentpu/quant.py)")
+    ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"],
+                    help="weight format of the LM head (default: --wformat)")
     a = ap.parse_args()
     path = model_dir(a.model)
     spec = load_spec(path)
@@ -87,9 +92,10 @@ def main():
     if a.pos >= a.cap:
         ap.error(f"--pos {a.pos} needs --cap above it (the KV write would land past the cache)")
     W = load_weights(path)
-    need = spec.image(board_config(DRAM_BYTES=1 << 40), a.cap).nbytes
+    wkw = dict(wformat=a.wformat, head_format=a.head_format)
+    need = spec.image(board_config(DRAM_BYTES=1 << 40), a.cap, **wkw).nbytes
     cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()))
-    img = spec.image(cfg, a.cap)
+    img = spec.image(cfg, a.cap, **wkw)
     dram = img.build(W)[0]
     # this token's inputs (the KV cache before pos stays zero: timing does not depend on it)
     emb = np.asarray(W["model.embed_tokens.weight"][791], np.float32)
@@ -113,7 +119,10 @@ def main():
     p = parse(st["trace"], cfg, progs, path.name)
     p.cycles = st["cycles"]
     rl = p.roofline()
-    ideal = rl["bound"] * 100 / a.bw
+    # port B (chunks) runs at bw; port A (one scale word per block, from buffered beats) and the
+    # MXU (one block per cycle) do not: 4-bit weights stream two blocks per chunk
+    ps = rl["per_slice"][0]
+    ideal = max(ps["portb"] * 100 / a.bw, ps["porta"])
     print(f"layers={spec.layers} pos={a.pos} bw={a.bw}% lat={a.lat}: {p.cycles} cycles "
           f"({wall:.0f}s sim), roofline {rl['bound']} chunks -> {ideal:.0f} cycles at this "
           f"bandwidth, efficiency {100 * ideal / p.cycles:.1f}%")

@@ -468,6 +468,11 @@ def main(argv=None):
     ap.add_argument("--repetition-penalty", type=float)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--max-new", type=int, default=1024, help="tokens per reply at most")
+    ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4"],
+                    help="weight format of the layers (docs/quant.md; fp4 needs a bitstream "
+                         "with 4-bit MM support)")
+    ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
+                    help="weight format of the LM head (default: --wformat)")
     a = ap.parse_args(argv)
     from transformers import AutoTokenizer
     path = model_dir(a.model)
@@ -479,7 +484,11 @@ def main(argv=None):
         backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, path.name)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
-    eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend)
+    try:
+        eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
+                     wformat=a.wformat, head_format=a.head_format)
+    except ConfigMismatch as e:
+        raise SystemExit(f"otpu-chat: {e}") from None
     sp = sampling(spec, a)
     pick = sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,
                    sp["repetition_penalty"])

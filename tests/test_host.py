@@ -78,8 +78,8 @@ def test_v3_info_snapshot_and_rates():
     b = Board(FakeTransport(devname=None))
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
-    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False,
-                         "trace_depth": 4096, "pq_window": 64}
+    assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False, "w4": True,
+                         "pair": False, "trace_depth": 4096, "pq_window": 64}
     assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
@@ -160,7 +160,7 @@ def test_v1_bitstream_fallback():
 # ------------------------------------------------------------------------------ configuration
 @pytest.fixture
 def no_cfg_env(monkeypatch):
-    for k in ("OTPU_MCOLS", "OTPU_LANES"):
+    for k in ("OTPU_MCOLS", "OTPU_LANES", "OTPU_PAIR"):
         monkeypatch.delenv(k, raising=False)
     return monkeypatch
 
@@ -181,6 +181,17 @@ def test_device_config_follows_the_bitstream(no_cfg_env):
         device_config(info)
     with pytest.raises(ConfigMismatch, match="D=64"):
         device_config(Board(FakeTransport(devname=None, D=64)).info())
+
+
+def test_device_config_takes_column_reuse_from_caps(no_cfg_env):
+    """CAPS bit5 (MM PAIR / QACT DUP) sets Config.PAIR; OTPU_PAIR must agree with it."""
+    for pair in (False, True):
+        info = Board(FakeTransport(devname=None, pair=pair)).info()
+        assert info["caps"]["pair"] == pair and device_config(info).PAIR == pair
+        no_cfg_env.setenv("OTPU_PAIR", str(int(not pair)))
+        with pytest.raises(ConfigMismatch, match="OTPU_PAIR"):
+            device_config(info)
+        no_cfg_env.delenv("OTPU_PAIR")
 
 
 def test_board_backend_rejects_another_configuration(no_cfg_env):
@@ -213,6 +224,49 @@ def test_selftest_stops_at_config_on_a_stale_environment(no_cfg_env, capsys):
     out = capsys.readouterr().out
     assert "[PASS] link" in out and "[FAIL] config" in out
     assert "MCOLS=4 but OTPU_MCOLS=2" in out and "stopped at stage 'config'" in out
+
+
+def test_4bit_image_needs_a_4bit_bitstream(run_dir):
+    """An Engine with 4-bit weights refuses a bitstream without 4-bit MM support (CAPS bit4)."""
+    from opentpu import lens as L
+    from opentpu.host.board import ConfigMismatch, sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    for w4 in (False, True):
+        t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake5", w4=w4)
+
+        def make():
+            return Engine(spec, W, cap=256, cfg=cfg, wformat="fp4",
+                          backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+        if not w4:
+            with pytest.raises(ConfigMismatch, match="4-bit"):
+                make()
+        else:
+            eng = make()
+            assert eng.backend.info["caps"]["w4"]
+            eng.backend.close()
+
+
+def test_pair_programs_need_a_pair_bitstream(run_dir):
+    """Programs compiled for column reuse refuse a bitstream without it (CAPS bit5)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = replace(sim_config(spec, 256), PAIR=True)
+    for pair in (False, True):
+        t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake6", pair=pair)
+
+        def make():
+            return Engine(spec, W, cap=256, cfg=cfg, wformat="fp4",
+                          backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+        if not pair:
+            with pytest.raises(ConfigMismatch, match="column reuse"):
+                make()
+        else:
+            eng = make()
+            eng.backend.close()
 
 
 # ------------------------------------------------------------------------------ status file
