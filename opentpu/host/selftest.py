@@ -9,6 +9,8 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
   2 config     the bitstream's VERSION (D / MCOLS / LANES) gives the host configuration
                (opentpu.host.board.device_config); OTPU_MCOLS / OTPU_LANES, when set, must agree
   3 calib      both DDR3 controllers report calibration done
+     scrub      zeros over the whole DRAM once per configuration (Board.scrub): with ECC, a read
+               of a beat never written since power-up hangs
   4 regs       SCRATCH register write / read
   5 addr       walking address bits and random patterns on each channel (raw channel
                addresses: bottom, middle, top)
@@ -47,6 +49,8 @@ HINTS = {
     "calib": "A DDR3 controller did not calibrate: check the MIG pinout / clocking in the "
              "bitstream (docs/board.md) and the memory voltage; STATUS bit5 = channel 0, "
              "bit6 = channel 1.",
+    "scrub": "Writing the DRAM failed or timed out: DMA host->card is broken (dmesg: XDMA "
+             "errors); try the driver in poll mode (XDMA_POLL=1 opentpu/host/setup_pcie.sh).",
     "regs": "Register writes do not stick: the AXI-Lite path (XDMA BAR0 -> otpu_ctrl) is "
             "broken, or the core clock / reset is not running.",
     "addr": "An address line of that channel is stuck or aliased: DDR3 pinout / MIG address "
@@ -135,12 +139,19 @@ def main(argv=None) -> int:
                                   f"channel 1 {'ok' if c1 else 'NOT calibrated'}"
             time.sleep(0.1)
 
+    def scrub():
+        t0 = time.time()
+        if board.scrub():
+            return True, f"4 GiB written in {time.time() - t0:.1f}s (ECC check bits initialized)"
+        return True, "already done since configuration" if not a.sim else "no ECC on the model"
+
     def regs():
         vals = [0x0, 0xFFFFFFFF, 0xA5A5_5A5A, 0x1234_5678]
-        got = []
+        got, was = [], t.reg_read(R_SCRATCH)
         for v in vals:
             t.reg_write(R_SCRATCH, v)
             got.append(t.reg_read(R_SCRATCH))
+        t.reg_write(R_SCRATCH, was)                       # Board.scrub's marker
         return got == vals, "SCRATCH " + ("ok" if got == vals else f"read {got}")
 
     def addr():
@@ -197,6 +208,7 @@ def main(argv=None) -> int:
     r.stage("link", link)
     r.stage("config", config)
     r.stage("calib", calib)
+    r.stage("scrub", scrub)
     r.stage("regs", regs)
     r.stage("addr", addr)
     r.stage("pattern", pattern)

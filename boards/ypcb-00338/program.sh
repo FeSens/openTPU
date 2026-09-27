@@ -4,6 +4,7 @@
 #   ./program.sh [bitfile]                 # openFPGALoader (macOS/Linux), Xilinx Platform Cable
 #   ./program.sh --vivado [bitfile]        # Vivado hardware manager (hw_server on this machine)
 #   ./program.sh --flash [mcsfile]         # write the BPI flash (permanent; loads at power-up)
+#   CABLE=ft232 ./program.sh ...           # another openFPGALoader cable (FT232H adapter)
 #
 # The card's JTAG chain has an Inspur CPLD (IDCODE 0x10931093) before the FPGA, hence
 # --misc-device / --index-chain. The Platform Cable USB II needs its firmware (xusb_xp2.hex)
@@ -24,8 +25,8 @@ else bit="${1:-$root/build/vivado/otpu.bit}"; fi
 fw="${XUSB_FIRMWARE:-$HOME/bonetto/inspur-adventures/firmware/xusb_xp2.hex}"
 cable="${CABLE:-xilinxPlatformCableUsb}"
 # shellcheck disable=SC2054  # the commas are part of the --misc-device argument
-ofl=(openFPGALoader --cable "$cable" --probe-firmware "$fw"
-     --misc-device 0x10931093,8,inspur_cpld --index-chain 0)
+ofl=(openFPGALoader --cable "$cable" --misc-device 0x10931093,8,inspur_cpld --index-chain 0)
+[[ $cable == xilinxPlatformCableUsb ]] && ofl+=(--probe-firmware "$fw")
 
 retry() {
   for i in 1 2 3 4 5; do

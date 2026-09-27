@@ -11,6 +11,7 @@ from opentpu.isasim import Machine
 
 DATA, W8, SC, OUT = 0, 0x10000, 0x20000, 0x30000
 PROG_AT = 0x3C0000
+ZERO_AT = 0x380000              # 256 KiB of zeros below PROG_AT: run_demo clears TMEM from it first
 SPAN = 0x40000                  # bytes the demo program's results can touch (below PROG_AT)
 
 
@@ -80,10 +81,14 @@ def run_demo(board, cfg, prog: list | None = None,
     DRAM image (default: demo_image()); compare DRAM below PROG_AT. A mismatch reports the
     number of bytes, the first addresses and got / want of the first differing words."""
     img = demo_image() if img is None else img
-    prog = prog or demo_program()
+    # TMEM keeps its contents from one program to the next on the card, and the ISA simulator
+    # starts from zeros: clear it first, so a program that stores a word it never wrote
+    # (the demo's 32 + 2) compares the same after any earlier program
+    prog = [I.ld(ZERO_AT, 0, cfg.TMEM_WORDS)] + (prog or demo_program())
     ref = np.zeros(min(cfg.DRAM_BYTES, 1 << 23), np.uint8)
     ref[:len(img)] = img
     sl = Machine(dataclasses.replace(cfg, DRAM_BYTES=len(ref)), [prog], [ref]).run().slices[0]
+    board.write(ZERO_AT, np.zeros(4 * cfg.TMEM_WORDS, np.uint8))
     board.write(0, img)
     board.load_program(PROG_AT, np.asarray(I.assemble(prog), np.uint32))
     st = board.run(timeout=10.0)

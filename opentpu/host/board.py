@@ -71,9 +71,14 @@ def join(parts: list[np.ndarray]) -> np.ndarray:
 
 # ------------------------------------------------------------------------------ transports
 def _readinto(fd: int, mv: memoryview, off: int) -> int:
-    if hasattr(os, "preadv"):
-        return os.preadv(fd, [mv], off)
-    b = os.pread(fd, len(mv), off)                  # no preadv (old macOS): one extra copy
+    """A synchronous read at `off` straight into `mv`. Not preadv: vectored reads reach the
+    XDMA driver's read_iter, which queues every request as asynchronous I/O and completes it
+    from a worker -- on a synchronous request the kernel stops the call (BUG in
+    do_iter_readv_writev, kernel 7.1) and the worker jumps to a NULL completion."""
+    if hasattr(os, "readinto"):                     # Python 3.14: the driver's plain .read
+        os.lseek(fd, off, os.SEEK_SET)
+        return os.readinto(fd, mv)
+    b = os.pread(fd, len(mv), off)                  # one extra copy
     mv[:len(b)] = b
     return len(b)
 
@@ -81,6 +86,7 @@ def _readinto(fd: int, mv: memoryview, off: int) -> int:
 class XdmaTransport:
     """The card through the Xilinx XDMA driver (dma_ip_drivers/XDMA/linux-kernel).
     dma=False opens only the register BAR (monitors: no DMA channel is touched)."""
+    ecc = True                  # the card's DRAM needs Board.scrub after configuration
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
         self.dev, self.devname = dev, Path(dev).name
@@ -89,6 +95,10 @@ class XdmaTransport:
         fd = os.open(f"{dev}_user", os.O_RDWR | os.O_SYNC)
         self.regs = mmap.mmap(fd, 4096, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
         os.close(fd)
+        # One 32-bit load / store per register access. A slice of the mmap is copied byte by
+        # byte (CPython 3.14): four 1-byte AXI-Lite writes, and otpu_ctrl, which takes the
+        # whole word on every write, would keep only the last byte.
+        self.words = memoryview(self.regs).cast("I")
 
     def mem_write(self, ch: int, off: int, data: np.ndarray) -> None:
         mv = memoryview(np.ascontiguousarray(data, np.uint8)).cast("B")
@@ -112,10 +122,10 @@ class XdmaTransport:
         return buf
 
     def reg_write(self, off: int, val: int) -> None:
-        self.regs[off:off + 4] = struct.pack("<I", val & 0xFFFFFFFF)
+        self.words[off >> 2] = val & 0xFFFFFFFF
 
     def reg_read(self, off: int) -> int:
-        return struct.unpack("<I", self.regs[off:off + 4])[0]
+        return self.words[off >> 2]
 
     def reg_read_many(self, offs: list[int]) -> list[int]:
         return [self.reg_read(o) for o in offs]
@@ -367,6 +377,23 @@ class Board:
         for c, off, part in split(a0, data):
             self.t.mem_write(c, off, part)
 
+    def scrub(self, force: bool = False) -> bool:
+        """Write the whole DRAM once per configuration. The DDR3 controllers run with ECC, and
+        after power-up the check bits are random: a read of a 64-byte beat never written since is
+        an uncorrectable error, which hangs the read (a DMA timeout, or a stuck accelerator) instead
+        of failing it. Zeros everywhere (~6 s at Gen1 x8), then SCRATCH = DRAM_INIT, which a new
+        bitstream resets. Only the card: the simulated boards have no ECC. True when it scrubbed."""
+        if not getattr(self.t, "ecc", False):
+            return False
+        if not force and self.t.reg_read(R.R_SCRATCH) == R.DRAM_INIT:
+            return False
+        z = np.zeros(64 << 20, np.uint8)
+        for c in (0, 1):
+            for off in range(0, CH_BYTES, len(z)):
+                self.t.mem_write(c, off, z)
+        self.t.reg_write(R.R_SCRATCH, R.DRAM_INIT)
+        return True
+
     def read(self, addr: int, n: int) -> np.ndarray:
         a0 = addr // (2 * BEAT) * (2 * BEAT)
         a1 = -(-(addr + n) // (2 * BEAT)) * (2 * BEAT)
@@ -544,6 +571,7 @@ class BoardBackend:
             raise ValueError("the board has one slice: use opentpu.isasim.board_config()")
         self.cfg = cfg
         self.board = Board(transport)
+        self.board.scrub()
         info = self.info = self.board.info()
         if (info["D"], info["MCOLS"], info["LANES"]) != (cfg.D, cfg.MCOLS, cfg.LANES):
             self.board.close()

@@ -142,8 +142,9 @@ RW_PATTERNS = ([0, 0xFFFFFFFF, 0xA5A5_5A5A, 0x5A5A_A5A5] + [1 << k for k in rang
 
 def reg_patterns(t, off: int, mask: int = 0xFFFFFFFF) -> tuple:
     vals = [v & mask for v in RW_PATTERNS]
+    was = t.reg_read(off)
     got = _rw(t, off, vals)
-    t.reg_write(off, 0)
+    t.reg_write(off, was)                               # SCRATCH holds Board.scrub's marker
     bad = [(v, g) for v, g in zip(vals, got) if g & mask != v]
     stuck1 = stuck0 = 0
     for v, g in bad:
@@ -270,7 +271,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     ch_bytes = len(t.ch[0]) if hasattr(t, "ch") else CH_BYTES
     ctx = {"cfg": None, "board": None, "info": None}
     link, calib = "ID register", ["DDR3 calibration channel 0", "DDR3 calibration channel 1"]
-    core = [link, "configuration (VERSION)"] + calib
+    core = [link, "configuration (VERSION)"] + calib + ["DRAM initialized (ECC)"]
 
     # ---- platform
     print("platform", flush=True)
@@ -314,6 +315,13 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
             return ok, "calibrated" if ok else "NOT calibrated (STATUS bit " \
                 f"{bit.bit_length() - 1})"
         d.check("platform", f"DDR3 calibration channel {c}", cal, [link])
+
+    def scrub():
+        t0 = time.time()
+        if ctx["board"].scrub():
+            return True, f"4 GiB written in {time.time() - t0:.1f}s (ECC check bits initialized)"
+        return True, "already done since configuration" if not sim else "no ECC on the model"
+    d.check("platform", "DRAM initialized (ECC)", scrub, [link] + calib)
 
     def status_errors():
         st = t.reg_read(R.R_STATUS)
