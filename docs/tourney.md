@@ -249,11 +249,12 @@ omarchy (`OTPU_REMOTE`, below).
 
 | host (priority) | notes |
 |---|---|
-| `opentpu` (1st) | i7-4790, 4 cores / 8 threads, 31 GB; no card. One full build at a time (`OTPU_HOST_JOBS=opentpu=1`: two builds' IP synthesis filled the 31 GB and swapped 11 GB). Only `~/otpu-build/` is the tournament's |
-| `omarchy.tail5bd214.ts.net` (2nd) | also runs the test gates, the card and other streams' builds |
+| `opentpu` (1st) | i7-4790, 4 cores / 8 threads, 31 GB; the card's host since 2026-09-28. One full build at a time (`OTPU_HOST_JOBS=opentpu=1`: two builds' IP synthesis filled the 31 GB and swapped 11 GB), none during a card session (wall-clock measurements need a quiet host: `jobs=opentpu=0` in `/tmp/otpu-tourney-hosts`). Only `~/otpu-build/` is the tournament's |
+| `omarchy.tail5bd214.ts.net` (2nd) | also runs the test gates and other streams' builds |
 
 Every full build (champion and candidates) passes `OTPU_BUILD_ARGS` to `make bit`, default
-`AXI_BL=32` (32-beat DRAM bursts: the likely next production image); the cached full result's name
+`AXI_BL=32` (32-beat DRAM bursts, as in the production image deploy_pnbl32_e2521032; its other
+settings are `make bit`'s defaults: MCOLS=2, LANES=8, VPU_CL=2, DSTEP=1, 8-beat writes); the cached full result's name
 carries them (`<sha>-125.49-AXI_BL32.json`). `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
 Vivado in the `vivado:2026.1` Docker image instead. After a full build its reports are kept on
 the host in `~/otpu-build/reports/tv-<name>`; the tree is removed once its job has finished (never

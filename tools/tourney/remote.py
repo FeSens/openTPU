@@ -86,8 +86,8 @@ SETTINGS = os.environ.get("VIVADO_SETTINGS", "/opt/Xilinx/2026.1/Vivado/settings
 MAC = os.environ.get("VIVADO_MAC", "02:42:ac:11:26:01")
 LABEL = "otpu-tourney=1"
 # extra `make bit` variables for every full build (champion and candidates alike): the image the
-# tournament optimizes for. AXI_BL=32: 32-beat port B bursts, the likely next production image
-# (be388a32 closed at 120.755 MHz with +0.066 ns and decodes 2-2.6% faster on the card than BL16)
+# tournament optimizes for. AXI_BL=32: 32-beat port B bursts, the production image's
+# (deploy_pnbl32_e2521032; run_vivado.sh's default too, kept here for the cached results' names)
 BUILD_ARGS = os.environ.get("OTPU_BUILD_ARGS", "AXI_BL=32").split()
 PART = "xc7k480tffg1156-2"
 # serializes our own job starts (the check-then-start below is not atomic across processes)
