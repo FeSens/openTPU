@@ -50,10 +50,10 @@
 // AXI write response.
 module otpu_axi_dram #(
   parameter int D = 128,
-  parameter int QD = 16,                             // request queue depth per channel and port
+  parameter int BL = 8,                              // port B read burst, beats (max; 1 .. 64)
+  parameter int QD = BL > 16 ? BL : 16,              // request queue depth per channel and port
   parameter int WQD = 64,                            // SW (gathered beat) queue depth per channel
   parameter bit CHASH = 1'b1,                        // address map: see the top
-  parameter int BL = 8,                              // port B read burst, beats (max)
   parameter int GATHER = 4,                          // idle cycles before a short burst goes out
   parameter int WGATHER = 4,                         // idle cycles before a gathered SW beat goes out
   parameter int RD = 128,                            // B read beats in flight per channel
@@ -117,7 +117,7 @@ module otpu_axi_dram #(
   output logic                  err         // sticky: an AXI error response
 );
   initial if (D != 128) $fatal(1, "otpu_axi_dram: D must be 128 (one beat per channel)");
-  initial if (BL < 1 || BL > QD || BL > RD || BL > 16) $fatal(1, "otpu_axi_dram: bad BL");
+  initial if (BL < 1 || BL > QD || BL > RD || BL > 64) $fatal(1, "otpu_axi_dram: bad BL");
   initial if (APF < 1 || APF > 8 || APF > AD) $fatal(1, "otpu_axi_dram: bad APF");
   localparam int LW = $clog2(BL + 1);
   localparam int QW = $clog2(QD);

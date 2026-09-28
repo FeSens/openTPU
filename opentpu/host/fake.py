@@ -61,6 +61,7 @@ class FakeTransport:
         self.snaps = 0
         self.t_run = None               # wall time RUN rose
         self._wrote = 0                 # logits pieces written by this run
+        self._t_logits = None           # the run the logits pieces belong to
         self.runs = 0
         self.reads = 0                  # register reads (poll cost)
 
@@ -80,20 +81,31 @@ class FakeTransport:
     logits = None               # (addr, nbytes, piece): the run writes the region piece by
     #                             piece, piece i at run_s * (0.5 + 0.5 * (i + 1) / pieces) (an
     #                             LM head in the run's second half; the last one at the halt)
+    logits_lag = 0.0            # the last piece lands this long after HALTED (a store in flight)
+
+    def _put(self, addr: int, b: np.ndarray) -> None:
+        """Logical bytes at any address into the two channels (64-byte beats alternate)."""
+        i = 0
+        while i < len(b):
+            x = addr + i
+            k = min(len(b) - i, 64 - x % 64)
+            off = x // 128 * 64 + x % 64
+            self.ch[x // 64 % 2][off:off + k] = b[i:i + k]
+            i += k
 
     def _halted(self) -> bool:
         now = time.perf_counter()
-        if self.logits is not None and self.t_run is not None:
-            from .board import split
+        t_run = self._t_logits          # the stores in flight land even after RUN falls
+        if self.logits is not None and t_run is not None:
             a, n, piece = self.logits
             k = -(-n // piece)
-            while self._wrote < k and now - self.t_run >= self.run_s * (
-                    0.5 + 0.5 * (self._wrote + 1) / k):
+            while self._wrote < k and now - t_run >= self.run_s * (
+                    0.5 + 0.5 * (self._wrote + 1) / k) + (self.logits_lag
+                                                           if self._wrote == k - 1 else 0):
                 o = self._wrote * piece
                 m = min(piece, n - o)
                 vals = (np.arange(o // 4, (o + m) // 4, dtype=np.float32) % 997 * 1e-3)
-                for c, off, b in split(a + o, vals.view(np.uint8)):
-                    self.ch[c][off:off + len(b)] = b
+                self._put(a + o, vals.view(np.uint8))
                 self._wrote += 1
         return self.t_run is not None and now - self.t_run >= self.run_s
 
@@ -105,7 +117,7 @@ class FakeTransport:
         if off == R.R_CTRL:
             if val & R.CTRL_RUN and not self.regs[R.R_CTRL] & R.CTRL_RUN:
                 self.t_run = time.perf_counter()
-                self._wrote = 0
+                self._wrote, self._t_logits = 0, self.t_run
                 self.runs += 1
             elif not val & R.CTRL_RUN:
                 self.t_run = None
@@ -135,8 +147,11 @@ class FakeTransport:
             return self.version
         if off == R.R_STATUS:
             run = bool(self.regs[R.R_CTRL] & R.CTRL_RUN)
-            return (R.ST_HALTED if run and self._halted() else 0) | R.ST_CALIB0 | R.ST_CALIB1 \
-                | R.ST_WR_IDLE | (R.ST_RUN if run else 0)
+            h = self._halted()
+            idle = self.logits is None or self._t_logits is None or \
+                self._wrote >= -(-self.logits[1] // self.logits[2])
+            return (R.ST_HALTED if run and h else 0) | R.ST_CALIB0 | R.ST_CALIB1 \
+                | (R.ST_WR_IDLE if idle else 0) | (R.ST_RUN if run else 0)
         if off in (R.R_CYCLES, R.R_CYCLES_HI):
             c = self.cycles_per_run if self.runs else 0
             return c & 0xFFFFFFFF if off == R.R_CYCLES else c >> 32

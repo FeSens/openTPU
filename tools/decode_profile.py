@@ -72,6 +72,8 @@ class Profiler:
         self.t_halt = self.t_run = None
         self.crit, self.windows = 0.0, 0                # sum of HALTED seen -> next RUN
         self.runs = []                                  # RUN written -> HALTED seen, s
+        self.tokens = []                                # per window: {item: critical s}
+        self._snap = {}
 
     def add(self, item, dt, running=None):
         if self.on.is_set():
@@ -129,6 +131,14 @@ class Profiler:
                 if prof.on.is_set() and prof.t_halt is not None:
                     prof.crit += now - prof.t_halt
                     prof.windows += 1
+                    cur = {k: v[0] for k, v in prof.t.items()}
+                    tok = {k: v - prof._snap.get(k, 0.0) for k, v in cur.items()}
+                    tok = {k: v for k, v in tok.items() if v > 0}
+                    tok["critical"] = now - prof.t_halt
+                    prof.tokens.append(tok)
+                    prof._snap = cur
+                elif prof.on.is_set():
+                    prof._snap = {k: v[0] for k, v in prof.t.items()}
                 prof.t_halt, prof.t_run, prof.running = None, now, True
 
         def status_read(a, r):
@@ -308,6 +318,13 @@ def main(argv=None):
             print(f"{k:<15} {per[k][0]:9.3f} {per[k][1]:11.3f}")
     print(f"{'other':<15} {max(0.0, crit - crit_known):9.3f}")
     over = 1e3 * sum(P.runs) / max(len(P.runs), 1) - dev_ms
+    if P.tokens:                    # where the outliers are: the worst tokens and their items
+        worst = sorted(P.tokens, key=lambda t: -t["critical"])[:3]
+        print("slowest tokens (critical ms): " + "; ".join(
+            f"{1e3 * t['critical']:.2f} (" + ", ".join(
+                f"{k} {1e3 * v:.2f}" for k, v in sorted(
+                    ((k, v) for k, v in t.items() if k != "critical"), key=lambda x: -x[1])[:3])
+            + ")" for t in worst))
     print(f"host critical path (HALTED seen -> next RUN): {crit:.3f} ms/token over "
           f"{P.windows} tokens; device {dev_ms:.3f} ms/token; HALTED seen {over:.3f} ms after "
           f"the run's end (poll overshoot)")
@@ -330,7 +347,10 @@ def main(argv=None):
             "ops": {k: {"calls": v[0] / n, "bytes": v[1] / n, "ms": 1e3 * v[2] / n}
                     for k, v in P.ops.items()},
             "wall_tok_s": n / wall, "dev_tok_s": n * khz * 1e3 / cyc,
-            "reply_ids": [int(x) for x in chat._reply]}, indent=1))
+            "reply_ids": [int(x) for x in chat._reply],
+            # per token (window HALTED seen -> next RUN): the critical ms of each item
+            "tokens": [{k: round(1e3 * v, 4) for k, v in t.items()} for t in P.tokens]},
+            indent=1))
     eng._drain()
     eng.backend.close()
 

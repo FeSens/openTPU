@@ -24,7 +24,7 @@ import sys
 
 from . import isa as I
 from .compiler import (TEMP_RC_FN, Affine, Bcast, CompileError, KVDesc, QTensor, Stationary,
-                       Tensor, Tile, current, jit, tile_split)
+                       Tensor, Tile, current, jit, tile_split, unnamed)
 
 __all__ = ["jit", "program_id", "num_programs", "block_size", "tmem_words", "mxu_columns",
            "load", "store", "dot", "quantize", "exp2", "log2", "recip", "rsqrt", "abs", "maximum",
@@ -76,7 +76,7 @@ def quantize(x: Tile) -> Stationary:
     `quantize(a * v[None, :])` on an unnamed product fuses the column scaling into the
     quantizer (QACT CSCALE): no separate vector pass.
     """
-    temp = sys.getrefcount(x) <= TEMP_RC_FN
+    temp = unnamed(sys.getrefcount(x), TEMP_RC_FN, x)
     return current().quantize(x, temp)
 
 
@@ -91,7 +91,7 @@ def dot(a, w: QTensor, acc: Tile | None = None, out: Tile | None = None,
     they are then read as `out.rowmax`. `acc_scale=alpha` rescales the accumulator first,
     acc = acc * alpha[:, None] + a @ w^T, in the MXU epilogue (the flash-attention correction).
     """
-    temp = sys.getrefcount(a) <= TEMP_RC_FN
+    temp = unnamed(sys.getrefcount(a), TEMP_RC_FN, a)
     return current().dot(a, w, acc, out, temp, rowmax, acc_scale)
 
 
@@ -153,7 +153,7 @@ def zeros(shape) -> Tile:
 # ---- elementwise / reductions
 def exp2(x) -> Tile:
     """2**x. `exp2(a - b)` on an unnamed temporary fuses into one EXP2SUB pass."""
-    temp = sys.getrefcount(x) <= TEMP_RC_FN     # measured before x is passed on
+    temp = unnamed(sys.getrefcount(x), TEMP_RC_FN, x)     # measured before x is passed on
     return current().unop(I.V_EXP2, x, temp=temp)
 
 
@@ -189,7 +189,7 @@ def max(x, axis: int = -1) -> Tile:  # noqa: A001
 def sum(x, axis: int = -1) -> Tile:  # noqa: A001
     """Row sums. `sum(a * b)` on an unnamed product is one RDOT pass (b may be broadcast:
     `sum(S * k[None, :], axis=1)` is S @ k); `sum(a * a)` is RSSQ."""
-    temp = sys.getrefcount(x) <= TEMP_RC_FN
+    temp = unnamed(sys.getrefcount(x), TEMP_RC_FN, x)
     return current().reduce(I.V_RSUM, x, axis, temp)
 
 

@@ -142,6 +142,11 @@ efficiency are defined in [board.md](board.md) ("DRAM efficiency"). "fp4 + int8 
 layers with an int8 LM head (`--wformat fp4 --head-format int8`, `otpu-chat --wformat fp4
 --head-format int8`): 158 MB moved per token, of which the head is 69 MB.
 
+These figures predate the model's per-read-transaction cost (`+axi_tgap`, fitted 2026-09-28,
+[board.md](board.md) section 4). At 120.755 MHz, fp4 + int8 head, pos 50, the card measures
+1.418 Mcycles/token. The model gives 1.262 M without the cost and 1.430 M with it, so the table
+below is about 12% optimistic at DDR3-1066. Rerun `perf_qwen.py --ddr 1066` for current numbers.
+
 | weights | RTL | core clock | Mcycles/token | port eff. | DRAM eff. | tok/s (device) |
 |---|---|---:|---:|---:|---:|---:|
 | int8 | this branch | 100 MHz | 2.071 | 90.2% | 67.6% | 48.3 |

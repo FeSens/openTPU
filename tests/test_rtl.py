@@ -487,12 +487,13 @@ def test_axi_burst_throughput(have_verilator):
     prog = [I.ld(0, 0, n), I.halt()]
     img = np.random.default_rng(8100).integers(0, 256, 1 << 20, dtype=np.uint8)
     cyc = {}
-    for arc, bl in ((0, 8), (16, 8), (16, 1)):
+    for arc, bl in ((0, 8), (16, 8), (16, 1), (16, 32)):
         _, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=0,
                                   arc=arc, uarch={**rtlsim.BOARD_UARCH, "AXI_BL": bl})
         assert np.array_equal(tmems[0][:n], img[:4 * n].view("<u4"))
         cyc[arc, bl] = st["cycles"]
     assert cyc[16, 8] < 1.1 * cyc[0, 8], cyc
+    assert cyc[16, 32] < 1.1 * cyc[0, 8], cyc       # bursts over 16 beats (the queue follows BL)
     assert cyc[16, 1] > 3 * cyc[0, 8], cyc
 
 

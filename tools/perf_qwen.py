@@ -151,6 +151,7 @@ def main():
     ap.add_argument("--block", type=int, default=None, help="attention block (tokens)")
     ap.add_argument("--depth", type=int, default=None, help="attention score blocks in flight")
     ap.add_argument("--check", action="store_true", help="compare with the ISA simulator")
+    ap.add_argument("--dump", help="write the run's Lens profile data (lens.to_data) as JSON")
     ap.add_argument("--resident", action="store_true",
                     help="the resident decode program of pos's bucket (run arguments, inputs "
                          "from the image's tables; qwen3.compile_decode)")
@@ -167,7 +168,7 @@ def main():
     plus = list(a.plus)
     if a.ddr:
         a.ddr = {1066: 3200 / 3, 1333: 4000 / 3}.get(int(a.ddr), a.ddr)
-        plus = ddr3_plusargs(a.ddr, a.mhz)[2:] + plus
+        plus = plus + ddr3_plusargs(a.ddr, a.mhz)[2:]   # the first of a plusarg wins
         a.dram = "rbc" if a.dram == "off" else a.dram
         a.arc = a.arc or 4
         a.lat = a.lat if a.lat is not None else round(0.3 * a.mhz)
@@ -335,6 +336,10 @@ def main():
         if run and run[2] > 300:
             print(f"  idle {run[2]:6d} in [{run[0]}, {run[1]}]")
         print(f"  port-B idle cycles total {tot}")
+    if a.dump:
+        import json
+        from opentpu import lens as L
+        Path(a.dump).write_text(json.dumps(L.to_data(p)))
     if a.check:
         m = Machine(cfg, [progs[0]], [dram.copy()], args)
         m.run()

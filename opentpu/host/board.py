@@ -69,6 +69,8 @@ SENTINEL = 0xFFFFFFFF
 STREAM_EARLY = 0.3e-3           # probe a piece this long before it came complete last token
 STREAM_RETRY = 0.1e-3           # probe again after this when it is not complete yet
 STREAM_PROBE = 0.5e-3           # probe interval when no completion time is known yet
+TAIL_SETTLE = 5e-3              # after HALTED: how long the last stores may take to land
+WR_SETTLE = 2e-3                # after HALTED: the longest wait for WR_IDLE
 
 
 # ------------------------------------------------------------------------------ address map
@@ -690,8 +692,15 @@ class Board:
             expect = max(expect - (time.perf_counter() - self._t_run), 1e-9)
         traced = self._trace is not None
         depth, keep_first = self._trace or (0, True)
-        t.poll(R_STATUS, ST_HALTED, ST_HALTED, timeout, expect)
+        st0 = t.poll(R_STATUS, ST_HALTED, ST_HALTED, timeout, expect)
         self.t_seen = time.perf_counter()           # HALTED seen (BoardBackend's run time)
+        # HALTED rises once the last store has left the core, not when the DRAM has it
+        # (WR_IDLE: the memory adapter's writes all answered); the host reads the results
+        # next, and a read may pass writes in flight: wait for WR_IDLE (bounded; the board
+        # model replays its register script in order: no such race)
+        while not getattr(t, "batched", False) and not st0 & R.ST_WR_IDLE and \
+                time.perf_counter() - self.t_seen < WR_SETTLE:
+            st0 = t.reg_read(R_STATUS)
         self.seen_exact = getattr(t, "poll_exact", False)   # else an upper bound
         if traced:                      # the last cycles' events still drain into the buffer
             t.poll(R.R_TRACE_CTRL, R.TR_BUSY, 0, timeout)
@@ -1072,19 +1081,33 @@ class BoardBackend:
         self.last_stream = {"during": i, "pieces": len(pieces), "probes": probes}
 
     def _stream_tail(self, feed) -> None:
-        """After HALTED: the pieces not handed over yet, in one read."""
+        """After HALTED: the pieces not handed over yet, in one read and one feed."""
         addr, n, _ = self._stream
         pieces = self._pieces()
         i = self.last_stream.get("during", 0)
         o = pieces[i][0]
         t0 = time.perf_counter()
+        # HALTED rises once the last store has left the core, not when the DRAM has it: its
+        # last beats may still be on the way (WR_IDLE clear), and a read may pass them. Wait
+        # for WR_IDLE, then read; words still unwritten are read again for a while.
+        t = self.board.t
+        while not t.reg_read(R_STATUS) & R.ST_WR_IDLE and time.perf_counter() - t0 < TAIL_SETTLE:
+            pass
         w = self.board.read(addr + o, n - o).view(np.uint32)
+        tries = 0
+        while (w == SENTINEL).any() and time.perf_counter() - t0 < TAIL_SETTLE:
+            tries += 1
+            time.sleep(50e-6)
+            w = self.board.read(addr + o, n - o).view(np.uint32)
         if (w == SENTINEL).any():
             self._armed = None
-            raise RuntimeError("streamed logits: the run left words unwritten (the program "
-                               "does not write the whole logits region, or a marking raced it)")
-        for po, k in pieces[i:]:
-            feed(po, w[(po - o) // 4:(po - o + k) // 4])
+            bad = np.flatnonzero(w == SENTINEL)
+            raise RuntimeError(f"streamed logits: the run left words unwritten ({len(bad)}, "
+                               f"bytes {o + 4 * bad[0]}..{o + 4 * bad[-1] + 3} of the region, "
+                               f"{tries} re-reads over {1e3 * TAIL_SETTLE:.0f} ms): the program "
+                               "does not write the whole logits region, or a marking raced it")
+        self.last_stream["tail_retries"] = tries
+        feed(o, w)                                  # the rest in one piece
         self._rearm = [(addr + o, n - o)]
         self._stream = None
         self.last_stream.update(tail_bytes=n - o, tail_s=time.perf_counter() - t0)
