@@ -47,6 +47,8 @@ _LOCK = threading.Lock()
 # BUILD_ID of every tournament full build: one constant, so the champion and the candidates differ
 # only in their RTL (the register's value is part of the netlist). These bitstreams are for timing
 # numbers, not for the card.
+STOP = Path(os.environ.get("OTPU_TOURNEY_STOP", "/tmp/otpu-tourney-stop"))
+PAUSE = Path(os.environ.get("OTPU_TOURNEY_PAUSE", "/tmp/otpu-tourney-pause"))
 FULL_BUILD_ID = "0f3a0000"
 # the confirmation build of a winner: the same tree with another BUILD_ID constant, i.e. another
 # netlist hash and so another placement (Vivado has no placer seed): the second draw of
@@ -521,6 +523,17 @@ class Run:
             print(f"[tourney] could not prune the build host's Verilator cache: {e}")
 
     def main(self) -> None:
+        # the same control files as tools/tourney/forever.sh: a planned downtime or a quiet
+        # window holds every new round, also the ones a `make tourney-fmax` loop starts
+        if STOP.exists():
+            print(f"[tourney] {STOP} exists: not starting {self.a.comp}", flush=True)
+            raise SystemExit(3)
+        waited = False
+        while PAUSE.exists():
+            if not waited:
+                print(f"[tourney] {PAUSE} exists: {self.a.comp} waits", flush=True)
+                waited = True
+            time.sleep(60)
         self.ensure_branch()
         champ = self.champion()
         print(f"[tourney] {self.a.comp} champion: " + json.dumps(
