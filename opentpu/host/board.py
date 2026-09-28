@@ -60,7 +60,9 @@ PIPE = 2 * DMA_CHUNK            # Board.write / read: logical bytes per pipeline
 POLL_SPIN = 100e-6              # poll: seconds of back-to-back register reads before sleeping
 POLL_MAX_SLEEP = 1e-3           # poll: longest sleep between reads
 STATUS_INTERVAL = 0.25          # BoardBackend: the status file is rewritten at most this often
-POLL_EARLY = 0.5e-3             # poll with an expected wait: wake this much (+ 1%) before it
+POLL_EARLY = 1.5e-3             # poll with an expected wait: wake this much (+ 3%) before it
+# (a sleep on a loaded host wakes up to ~1 ms late: at 0.5 ms + 1% the card's LFM2 decode saw
+# HALTED 0.35-0.86 ms after the run's end, 0.02 ms when the poll spun throughout; 2026-09-28)
 POLL_MIN_SLEEP = 20e-6          # poll: shortest sleep between reads (past the expected end)
 # Streamed logits (BoardBackend.start(stream=...)): a word the device never stores marks the
 # logits not written yet (the device's NaN is canonical: 0x7FC00000, or 0xFFC00000 after a sign
@@ -273,13 +275,13 @@ class XdmaTransport:
         GIL to the thread compiling the next token's program (Engine pipelining).
 
         expect: the wait the caller expects (seconds; the previous token's run time). The
-        poll then sleeps once until POLL_EARLY before it and reads back to back from there to
+        poll then sleeps once until POLL_EARLY (+ 3%) before it and reads back to back from there to
         POLL_SPIN past it, so a run that ends on time is seen within a register read; past
         that the sleeps are 1/32 of the time since the expected end (at least POLL_MIN_SLEEP),
         so a run a little late is still seen within ~POLL_MIN_SLEEP, not a whole
         POLL_MAX_SLEEP later (before: 1.0-1.2 ms per Qwen3 token on the card)."""
         t0 = time.perf_counter()
-        early = POLL_EARLY + expect / 100
+        early = POLL_EARLY + expect * 0.03
         while (left := expect - early - (time.perf_counter() - t0)) > 0:
             time.sleep(left / 2 if left > 1e-3 else left)   # halving: a long sleep overshoots
         spin = max(expect, 0.0) + POLL_SPIN                  # by a few % (macOS: 2-3 ms of 50)
