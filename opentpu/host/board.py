@@ -1050,7 +1050,7 @@ class BoardBackend:
         # from POLL_EARLY (+ 3%) before the expected end on, the slices are short, so a run
         # that ends while a piece is awaited is seen within ~POLL_MIN_SLEEP (1 ms slices: Qwen3,
         # whose next-to-last piece comes near the end, saw HALTED 0.7-0.8 ms late on the card)
-        near = self._expect - POLL_EARLY - 0.03 * self._expect if self._expect else 0.0
+        near = self._expect - POLL_EARLY - 0.03 * self._expect if self._expect else float("inf")
         while i < len(pieces) - 1:
             d = self._due.get(i)
             # a piece's time of the last token may be past this run's end (a token delayed
@@ -1075,7 +1075,11 @@ class BoardBackend:
                 if (w == SENTINEL).any():               # the beats land out of order: soon
                     w = None
             if w is None:
-                time.sleep(STREAM_RETRY if d is not None else STREAM_PROBE)
+                # near the expected end the retry is short too: the run may end while this
+                # piece is awaited (a 0.1 ms retry left HALTED seen 0.15 ms late on the card)
+                late_run = time.perf_counter() - t0 >= near
+                time.sleep(POLL_MIN_SLEEP if late_run else
+                           STREAM_RETRY if d is not None else STREAM_PROBE)
                 continue
             feed(o, w)
             # complete at the first probe: it may have been for a while, so probe earlier
