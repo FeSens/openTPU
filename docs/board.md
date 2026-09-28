@@ -130,7 +130,8 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_prod120fp4_ea3bc560/otpu.bit`** (production, 2026-09-27 evening) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | ea3bc56 (4-bit MXU with PAIR, fmax fixes, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.149 ns, WHS +0.016 ns |
+| **`build/deploy_prod120hp_aebb0bf0/otpu.bit`** (production, 2026-09-28) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | aebb0bf (host-path: 4-bit MXU with PAIR, r7 DRAM path, replay, resident decode run arguments (CAPS bit25), DSTEP, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.004 ns, WHS +0.016 ns |
+| `build/deploy_prod120fp4_ea3bc560/otpu.bit` (production 2026-09-27 evening) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | ea3bc56 (4-bit MXU with PAIR, fmax fixes, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.149 ns, WHS +0.016 ns |
 | `build/deploy_prod120_b01b8acb/otpu.bit` (production 2026-09-27 afternoon, int8 only) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | b01b8ac (fmax fixes; section 5, "Faster DDR3") | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.080 ns, WHS +0.016 ns |
 | `build/deploy_prod1066_b2c7ce43/otpu.bit` (previous production) | `make bit DDR=1066` at 100 MHz | b2c7ce4 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns |
 | `build/deploy_burst_a691ea98/otpu.bit` (older primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | a691ea98 (port-B AXI read bursts, MXU_STARVE counter; register map 3) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns, WHS +0.040 ns (omarchy build) |
@@ -461,7 +462,47 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
-**Production image (2026-09-27, evening): `build/deploy_prod120fp4_ea3bc560`** (branch fp4-fx
+**Production image (2026-09-28): `build/deploy_prod120hp_aebb0bf0`** (branch host-path-fx aebb0bf:
+the host-path target (the 4-bit MXU with PAIR, r7-apf's DRAM path (64-entry store queue,
+read-merge-write, port-A prefetch, QST word writes, CHASH), MM replay, vt-tile, the resident
+decode's run-argument registers (CAPS bit25), DSTEP for Qwen3.5's DeltaNet and QST HALF) with
+fmax c1b91dd (VPU WBUF, the RDOT row buffer in distributed RAM). Core clock 120.755 MHz,
+DDR3-1066, WNS +0.004 ns (4 ps of margin), WHS +0.016 ns, no Synth 8-6430; 212.2K LUT (71.1%),
+167.0K FF (28.0%), 577 BRAM36 (60.4%); Vivado's power estimate 10.1 W. The directory holds
+otpu.bit, otpu.mcs, otpu.prm, reports/ and build.log; the flash has not been written with it.
+The host needs main 8efceb7 or later (CHASH channel map, resident decode, streamed logits with
+the WR_IDLE wait after HALTED).
+
+Qualified on the card 2026-09-27 23:25 - 2026-09-28 00:29 (host tree host-path-fx aebb0bf):
+selftest with the 12 op checks; `otpu-diag --mem full --soak 20` all pass cold (56 °C) and after
+a 317 s warm soak (61 -> 63 °C, 20.98 device tok/s steady) (isa 93, system 5; RDOT / OUTER /
+LOG2 all pass); Qwen3, LFM2 and Qwen3.5 token for token against the ISA simulator at int8 and
+4-bit + int8 head; resident decode equal to the per-position programs (64 greedy tokens, Qwen3
+and LFM2 at both formats). One host failure in that session: a streamed-logits tail read found
+unwritten words once (LFM2 4-bit, sampled, host aebb0bf); it did not recur in 30 runs at hosts
+7a016f1 and 4d2af30 (12 LFM2 + 3 Qwen3 sampled seeds and a greedy set each, 2026-09-28 01:25 -
+02:06), and 4d2af30 waits for the memory adapter's writes (STATUS WR_IDLE) after HALTED.
+
+Measured 2026-09-28 02:08-02:26, host main 8efceb7. Decode: `tools/decode_profile.py`, greedy,
+96 tokens, logits streamed during the run, resident decode where marked. Prefill: a 512-token
+prompt. DRAM: the card's counters over 64 decode tokens, bytes / running time (peak 17.1 GB/s).
+
+| Model | Weights | Resident decode | Mcycles/token | device tok/s | wall tok/s | prefill device tok/s | prefill wall tok/s | DRAM read per token | DRAM while decoding |
+|---|---|---|---|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | yes | 2.17 | 55.74 | 54.20 | 150.0 | 76.8 | 245 MB | 13.33 GB/s (78%) |
+| Qwen3-0.6B | int8 | yes | 5.75 | 21.02 | 20.89 | 51.3 | 48.5 | 663 MB | 13.34 GB/s (78%) |
+| Qwen3.5-0.8B | int8 | no | 7.86 | 15.37 | 15.21 | 36.7 | 23.1 | 811 MB | 12.68 GB/s (74%) |
+| LFM2.5-230M | 4-bit, int8 head | yes | 1.45 | 83.12 | 80.84 | 169.3 | 80.2 | 164 MB | 13.14 GB/s (77%) |
+| Qwen3-0.6B | 4-bit, int8 head | yes | 3.81 | 31.72 | 30.68 | 58.0 | 52.0 | 443 MB | 13.15 GB/s (77%) |
+| Qwen3.5-0.8B | 4-bit, int8 head | no | 5.70 | 21.18 | 20.80 | 40.9 | 26.2 | 562 MB | 12.21 GB/s (72%) |
+
+Qwen3.5 decodes with per-position programs: its image has no resident decode tables
+(`has_lookup` is false for its Spec). Prefill wall includes compiling each chunk's program on the
+host; Qwen3.5's (DSTEP rows) is host-bound. One run each.
+
+The previous production image:
+
+**Production image until 2026-09-28 (2026-09-27, evening): `build/deploy_prod120fp4_ea3bc560`** (branch fp4-fx
 ea3bc56: the full-rate 4-bit MXU (fp4-rebase) with fmax c1b91dd: the fmax fixes of b01b8ac, the
 VPU write buffer (WBUF) and the RDOT row buffer in distributed RAM, whose block RAM mapping made
 vg125 / wb120 / fp4f125 return every RDOT one result late). Core clock 120.755 MHz, DDR3-1066,
