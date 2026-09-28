@@ -225,8 +225,20 @@ def full_cmd(tree: str, core_mhz: float, build_id: str, jobs: int = 2,
 def start_detached(tree: str, cmd: str, tag: str) -> None:
     """Runs `cmd` on the host under nohup; its exit code lands in <tree>/<tag>.DONE."""
     inner = f"{cmd}; echo $? > {tree}/{tag}.DONE"
+    # the braces: `&` backgrounds only the job, whose output is redirected, so ssh returns at
+    # once (a trailing `&` on the whole && list kept a subshell on ssh's stdout until the build
+    # ended; the start then timed out and the tree was removed under the running build)
     ssh(f"mkdir -p {tree}/.home && rm -f {tree}/{tag}.DONE && "
-        f"nohup bash -c {shlex.quote(inner)} > {tree}/{tag}.out 2>&1 < /dev/null &", timeout=120)
+        f"{{ setsid nohup bash -c {shlex.quote(inner)} > {tree}/{tag}.out 2>&1 < /dev/null & }}",
+        timeout=120)
+
+
+def idle(tree: str, tag: str) -> bool:
+    """True when no job `tag` can be running in `tree`: never started, or finished. A tree is
+    only removed when idle (never under a running build)."""
+    s = ssh(f"test -e {tree}/{tag}.out || echo none; test -e {tree}/{tag}.DONE && echo done",
+            timeout=60, check=False)
+    return "none" in s or "done" in s
 
 
 def wait_done(tree: str, tag: str, timeout: int, poll: int = 60, sleep=time.sleep) -> int:
@@ -292,7 +304,7 @@ def ooc(wt: Path, name: str, part: dict, period_ns: float, timeout: int = 3 * 36
             raise RemoteError(f"OOC {part['top']} failed (exit {rc}): {log[-1500:]}")
         return res
     finally:
-        if not keep:
+        if not keep and idle(tree, "ooc"):
             remove(name)
 
 
@@ -322,6 +334,6 @@ def full(wt: Path, name: str, core_mhz: float, build_id: str, timeout: int = 4 *
             raise RemoteError(f"full build failed (exit {rc}): {res['log_tail']}")
         return res
     finally:
-        if not keep:
+        if not keep and idle(tree, "full"):
             remove(name)
 

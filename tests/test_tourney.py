@@ -416,6 +416,15 @@ def test_remote_commands():
     sh = RM.native_script("/h/t/o/ooc.tcl", "/h/t/o/v.log")
     assert "exec" not in sh and "vivado -mode batch" in sh and "-source /h/t/o/ooc.tcl" in sh
     assert "[o]tpu_ooc" in RM.NATIVE_COUNT_CMD and "[r]un_vivado" in RM.NATIVE_COUNT_CMD
+    sent = []
+    orig = RM.ssh
+    RM.ssh = lambda cmd, **k: sent.append(cmd)
+    try:
+        RM.start_detached("/h/t", "make bit", "full")
+    finally:
+        RM.ssh = orig
+    # only the job is backgrounded (in braces), so the ssh returns at once
+    assert sent[0].endswith("< /dev/null & }") and "{ setsid nohup bash -c " in sent[0]
     t = RM.ooc_tcl("/h/t", "otpu_vpu", ["rtl/a.sv"], {"LANES": 8}, "/h/t/o", 7.5)
     assert "-mode out_of_context" in t and "-generic LANES=8" in t
     assert "create_clock -period 7.5 -name clk [get_ports clk]" in t and "route_design" in t
