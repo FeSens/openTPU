@@ -971,6 +971,7 @@ class Engine:
         self.poss = [0] * batch
         self.stream_logits = True           # step(): stream the logits when the backend can
         self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
+        self._run_rows_n = self.rows        # rows of the last prefill run (IMEM may cut it)
         self.stats = []
         self.pipeline = backend != "isa" if pipeline is None else bool(pipeline)
         self._procs = (self.pipeline and pipeline != "thread" and self.cfg.S == 1
@@ -1217,6 +1218,8 @@ class Engine:
             key = ("rows", seq, p0, chunk, left, self._fit_rows)
             n, progs, self._fit_rows = self._take(key, self._chunk, *key[1:])
             part, last = tokens[i:i + n], n == left
+            if not last:
+                self._run_rows_n = n
             if progs is None and seq == 0:
                 lg = self.step(part[0])
             else:
@@ -1236,8 +1239,9 @@ class Engine:
     def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int) -> None:
         """Precompile the runs of a prompt from position p0 on, as many as the pipeline has
         workers (a chunk's trace can take longer than its run: Qwen3.5 on the card), each
-        predicted from the rows that fit so far; a run whose prediction turns out wrong is
-        waited for and dropped (_take), so the programs do not change."""
+        predicted to take as many rows as the last one (TMEM and IMEM limit a run: the program
+        grows with the context); a run whose prediction turns out wrong is waited for and
+        dropped (_take), so the programs do not change."""
         queued = {k for k, _ in self._next}
         for _ in range(self._ahead):
             if left <= 0:
@@ -1245,7 +1249,7 @@ class Engine:
             key = ("rows", seq, p0, chunk, left, self._fit_rows)
             if key not in queued:
                 self._submit(key, self._chunk, _worker_chunk, *key[1:])
-            n = min(chunk, self._fit_rows, left)
+            n = min(chunk, self._fit_rows, self._run_rows_n, left)
             p0, left = p0 + n, left - n
 
     def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
