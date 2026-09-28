@@ -241,9 +241,11 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
             drams[s][at:at + 4 * len(progs[s])] = 0
     tmems = [_read_hex(tmp / f"tmem_{s}.hex", cfg.TMEM_WORDS) for s in range(cfg.S)]
     stats = {"cycles": cycles, "instructions": icounts}
-    if axi:                            # per channel: AXI read transactions and beats
+    if axi:                            # per channel: AXI read / write transactions and beats
         stats["axi_reads"] = [(int(a), int(b)) for a, b in
                               re.findall(r"AXI ch\d ar=(\d+) beats=(\d+)", out)]
+        stats["axi_writes"] = [(int(a), int(b)) for a, b in
+                               re.findall(r"AXI ch\d .*aw=(\d+) wbeats=(\d+)", out)]
         # and the port A reads among them, DDR3 row opens and read-modify-writes (+axi_dram)
         # (of them from port A / QST: rmw_a)
         stats["axi_detail"] = [dict(zip(("ar_a", "row_miss", "rmw", "rmw_a"), map(int, m)))

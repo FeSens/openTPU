@@ -679,6 +679,45 @@ def test_axi_scale_runs_beside_dma_writes(have_verilator, stall, seed):
     assert ar_a < scale_beats // 3, (ar_a, scale_beats)
 
 
+@pytest.mark.parametrize("wbl,stall,seed", [(8, 0, 1), (8, 40, 2), (8, 70, 3), (1, 40, 4),
+                                           (4, 30, 5)])
+def test_axi_write_bursts(have_verilator, wbl, stall, seed):
+    """Port B writes in AXI bursts of up to WBL beats (a DMA ST's chunk runs): STs of whole and
+    partial chunks at various offsets and lengths (masked first / last beats, a run cut at a
+    4 KB page), each read back by an LD that depends on it, beside an MM's weight and scale
+    stream, under random AXI stalls: bit-exact with the ISA simulator; with WBL > 1 the long
+    STs go out in bursts (few AWs per beat), with WBL = 1 one AW per beat."""
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8700 + seed)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    SC, W = 0x20000, 0x40000
+    img[SC:SC + 4 * 4096] = (rng.random(4096, dtype=np.float32) + 0.5).view(np.uint8)
+    img[:4 * 2 * 4 * D * 4] = rng.standard_normal(2 * 4 * D * 4).astype(np.float32).view(np.uint8)
+    T = 24576
+    N, KB = 200, 4
+    prog = [I.ld(0, 0, 2 * 4 * D * 4), I.qact(0, 2, 0, KB, 4 * D), I.ld(0x60000, T, 4096),
+            I.mm(W, SC, 4096, N, KB, KB * D, N + 2, 2, 0, 4 * KB)]
+    # (byte address, words): whole runs, unaligned starts and ends, a run across 4 KB pages
+    for j, (addr, n) in enumerate([(0x80000, 2048), (0x84004, 1000), (0x88f00, 700),
+                                   (0x8c0f4, 3), (0x90000, 4096)]):
+        prog += [I.st(addr, T + 7 * j, n), I.ld(addr, 32768 + 5000 * j, n)]
+    prog += [I.halt()]
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                  seed=seed, uarch={**rtlsim.BOARD_UARCH, "AXI_WBL": wbl},
+                                  plusargs=["+axi_dram=1"])
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    aw = sum(a for a, _ in st["axi_writes"])
+    beats = sum(b for _, b in st["axi_writes"])
+    assert beats >= (2048 + 1000 + 700 + 3 + 4096) // 16
+    if wbl == 1:
+        assert aw == beats
+    else:
+        assert aw <= beats // (wbl // 2 + 1) + 16, (aw, beats)
+
+
 def test_tmem_random_traffic(have_verilator):
     """TMEM alone against a reference model; most reads hit the previous cycle's writes, which
     are still in TMEM's registered write stage (the bypass)."""

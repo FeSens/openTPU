@@ -45,6 +45,10 @@
 // burst's beats reserve response room together, so the beats in flight stay within RD (each
 // transaction has a fixed cost in the interconnect and the controller: single-beat reads
 // reached about a quarter of the channel's bandwidth on the board).
+// Port B writes that follow each other on a channel (a DMA ST's or DSTEP's write run) go out
+// likewise as one INCR write burst of up to WBL beats (AWLEN, WLAST): a burst costs the MIG's
+// AXI front end one transaction instead of one per beat. The run's beats leave the queue as
+// their W beats are taken; the burst has one write response (ID 0), counted back by its length.
 // Requests are taken when req && rdy; rdy depends on registered state only. Reads return in
 // order per port (the B tag with its data). Responses never back up: a read beat is issued on
 // AXI only when its response FIFO has room reserved. wr_idle: every accepted write has its
@@ -55,6 +59,7 @@ module otpu_axi_dram #(
   parameter int QD = BL > 16 ? BL : 16,              // request queue depth per channel and port
   parameter int WQD = 64,                            // SW (gathered beat) queue depth per channel
   parameter bit CHASH = 1'b1,                        // address map: see the top
+  parameter int WBL = 8,                             // port B write burst, beats (max; 1 .. 64)
   parameter int GATHER = 4,                          // idle cycles before a short burst goes out
   parameter int WGATHER = 4,                         // idle cycles before a gathered SW beat goes out
   parameter int RD = 128,                            // B read beats in flight per channel
@@ -96,10 +101,12 @@ module otpu_axi_dram #(
   input  logic [1:0]            m_awready,
   output logic [1:0][31:0]      m_awaddr,
   output logic [1:0]            m_awid,
+  output logic [1:0][7:0]       m_awlen,
   output logic [1:0]            m_wvalid,
   input  logic [1:0]            m_wready,
   output logic [1:0][511:0]     m_wdata,
   output logic [1:0][63:0]      m_wstrb,
+  output logic [1:0]            m_wlast,
   input  logic [1:0]            m_bvalid,
   output logic [1:0]            m_bready,
   input  logic [1:0]            m_bid,
@@ -120,6 +127,10 @@ module otpu_axi_dram #(
   initial if (D != 128) $fatal(1, "otpu_axi_dram: D must be 128 (one beat per channel)");
   initial if (BL < 1 || BL > QD || BL > RD || BL > 64) $fatal(1, "otpu_axi_dram: bad BL");
   initial if (APF < 1 || APF > 8 || APF > AD) $fatal(1, "otpu_axi_dram: bad APF");
+  initial if (WBL < 1 || WBL > QD || WBL > 64) $fatal(1, "otpu_axi_dram: bad WBL");
+  localparam int WLW = $clog2(WBL + 1);
+  localparam int BQD = 64;                           // B write bursts in flight per channel
+  localparam int BQW = $clog2(BQD);
   localparam int LW = $clog2(BL + 1);
   localparam int QW = $clog2(QD);
   localparam int WW = $clog2(WQD);
@@ -214,6 +225,15 @@ module otpu_axi_dram #(
   logic         lb_rd;
   logic [31:0]  lb_nx;
   wire          b_cont = !b_we && lb_rd && b_addr == lb_nx && b_addr[10:5] != 0;
+  // B write runs, per channel (a chunk's write goes to a channel only if it writes that half):
+  // lw_v / lw_nx: the last B request pushed on the channel was a write, and the chunk that would
+  // continue it
+  logic [1:0]   lw_v;
+  logic [31:0]  lw_nx [2];
+  logic [1:0]   bw_cont;
+  always_comb
+    for (int c = 0; c < 2; c++)
+      bw_cont[c] = b_we && lw_v[c] && b_addr == lw_nx[c] && b_addr[10:5] != 0;
   logic [2:0]   qi [2];                         // cycles since the last B push (saturating)
 
   // A beat reuse
@@ -317,7 +337,8 @@ module otpu_axi_dram #(
     end
   end
   always_ff @(posedge clk)
-    for (int c = 0; c < 2; c++) if (qb_push[c]) qc[c][QW'(qb_h[c] + qb_n[c])] <= b_cont;
+    for (int c = 0; c < 2; c++)
+      if (qb_push[c]) qc[c][QW'(qb_h[c] + qb_n[c])] <= b_we ? bw_cont[c] : b_cont;
   for (genvar c = 0; c < 2; c++) begin : g_mem
     // flat vectors: Vivado builds a RAM of structs from registers (qbm and qwm were ~37K
     // flip-flops and their read multiplexers, in the congested corner by the memory ports)
@@ -365,6 +386,23 @@ module otpu_axi_dram #(
   logic [1:0] aw_done, w_done;                   // current write head: halves already taken
   logic [1:0] wsrc [2];                          // current write's source: 0 qb, 1 qa, 2 qw
   logic [1:0] wcur;                              // a write is in progress
+  // B write bursts: the run of contiguous B writes at the queue head (wrun; it goes out as
+  // one AW once it has WBL beats, is followed by another request, or no request came for
+  // GATHER cycles); the burst in progress: its AW address and length (taken at its start: its
+  // beats leave the queue as their W beats go), W beats left; the lengths of the bursts whose
+  // response is due (in order: one B response per burst)
+  logic [WLW-1:0] wrun [2], wlen_q [2], wleft [2];
+  logic [31:0] waddr_q [2];
+  logic [WLW-1:0] blq [2][BQD];
+  logic [BQW-1:0] blq_h [2];
+  logic [BQW:0] blq_n [2];
+  logic [WLW-1:0] blq_hd [2];
+  always_ff @(posedge clk)
+    for (int c = 0; c < 2; c++)
+      if (w_b[c] && m_awvalid[c] && m_awready[c])
+        blq[c][BQW'(blq_h[c] + blq_n[c])] <= wcur[c] ? wlen_q[c] : wrun[c];
+  always_comb
+    for (int c = 0; c < 2; c++) blq_hd[c] = blq[c][blq_h[c]];
   qa_t hs [2];
   always_comb begin
     for (int c = 0; c < 2; c++) begin
@@ -379,6 +417,11 @@ module otpu_axi_dram #(
           else stop = 1'b1;
         go = run[c] == LW'(BL) || (QW + 1)'(run[c]) < qb_n[c] || qi[c] >= 3'(GATHER) ||
              rb_res[c] == 0;
+        wrun[c] = WLW'(1);
+        stop = 1'b0;
+        for (int k = 1; k < WBL; k++)
+          if (!stop && (QW + 1)'(k) < qb_n[c] && qc[c][QW'(qb_h[c] + QW'(k))]) wrun[c] = WLW'(k + 1);
+          else stop = 1'b1;
         // the SW queue's next partial beat: blocked while an older live entry may have its
         // address (one in its bucket; a hash collision only delays the read)
         w_blk[c] = wnz[c][wh_r[c]];
@@ -411,13 +454,16 @@ module otpu_axi_dram #(
         w_w[c] = (qw_n[c] != qw_wb[c]) && (!wpart[c][qw_h[c]] || wgot[c][qw_h[c]]) &&
                  !w_hold[c] && (k1w_n[c] < (KW + 1)'(KD));
         w_a[c] = !w_w[c] && (qa_n[c] != 0) && ha[c].we && (k1w_n[c] < (KW + 1)'(KD));
-        w_b[c] = !w_w[c] && !w_a[c] && (qb_n[c] != 0) && hb[c].we;
+        w_b[c] = !w_w[c] && !w_a[c] && (qb_n[c] != 0) && hb[c].we && blq_n[c] != (BQW + 1)'(BQD) &&
+                 (wrun[c] == WLW'(WBL) || (QW + 1)'(wrun[c]) < qb_n[c] || qi[c] >= 3'(GATHER));
       end
       hs[c] = ha[c];
       m_awvalid[c] = (w_w[c] || w_a[c] || w_b[c]) && !aw_done[c];
       m_wvalid[c] = (w_w[c] || w_a[c] || w_b[c]) && !w_done[c];
-      m_awaddr[c] = w_w[c] ? hw[c].addr : w_a[c] ? hs[c].addr : hb[c].addr;
+      m_awaddr[c] = w_w[c] ? hw[c].addr : w_a[c] ? hs[c].addr : wcur[c] ? waddr_q[c] : hb[c].addr;
       m_awid[c] = w_w[c] || w_a[c];
+      m_awlen[c] = w_b[c] ? 8'((wcur[c] ? wlen_q[c] : wrun[c]) - 1'b1) : 8'd0;
+      m_wlast[c] = !w_b[c] || (wcur[c] ? wleft[c] : wrun[c]) == WLW'(1);
       m_wdata[c] = '0;
       m_wstrb[c] = '0;
       if (w_w[c]) begin
@@ -463,7 +509,7 @@ module otpu_axi_dram #(
   // handshake, so at least a cycle after the accept: wr_n never goes negative
   logic [15:0] wr_n;
   logic [4:0]  wacc_q;
-  assign wr_idle = (wr_n == 0) && (wacc_q == '0) && (gv == '0);
+  assign wr_idle = (wr_n == 0) && (bw_n == 0) && (wacc_q == '0) && (gv == '0);
   assign bw_clean = bw_dirty && (bw_n == 0) && (wacc_q[1:0] == '0);
 
   always_ff @(posedge clk) begin
@@ -481,6 +527,8 @@ module otpu_axi_dram #(
       al_v <= 1'b0;
       pv <= '0; pfl[0] <= '0; pfl[1] <= '0;
       wr_n <= '0; wacc_q <= '0;
+      lw_v <= '0;
+      for (int c = 0; c < 2; c++) begin blq_h[c] <= '0; blq_n[c] <= '0; end
       bw_n <= '0; bw_dirty <= 1'b0;
       gv <= '0; gage[0] <= '0; gage[1] <= '0;
       aw_done <= '0; w_done <= '0; wcur <= '0;
@@ -494,8 +542,9 @@ module otpu_axi_dram #(
       // take strobes, not the queue pushes: an A write is never a reuse and goes to exactly one
       // channel, as does an SW write, so a_reuse and the channel decode stay off this path
       logic signed [4:0] wn;
-      wn = 5'(wacc_q[0]) + 5'(wacc_q[1]) + 5'(wacc_q[2]) + 5'(wacc_q[3]) + 5'(wacc_q[4]) -
-           5'(m_bvalid[0]) - 5'(m_bvalid[1]);
+      // (B writes are counted apart, in bw_n: one response per burst of beats)
+      wn = 5'(wacc_q[2]) + 5'(wacc_q[3]) + 5'(wacc_q[4]) -
+           5'(m_bvalid[0] && m_bid[0]) - 5'(m_bvalid[1] && m_bid[1]);
       wacc_q <= {qw_push[1], qw_push[0], a_take && a_we,
                  b_take && b_we && b_wmask[31:16] != 0,
                  b_take && b_we && b_wmask[15:0]  != 0};
@@ -558,12 +607,31 @@ module otpu_axi_dram #(
         if (qb_push[c]) qi[c] <= '0;
         else if (qi[c] != '1) qi[c] <= qi[c] + 1;
         // ---- AW / W (a write leaves its queue once both are taken)
-        if (w_w[c] || w_a[c] || w_b[c]) begin
+        if (w_b[c]) begin
+          // a B burst: its beats leave the queue as their W beats go; done once its AW and
+          // every W beat are taken
+          logic awd, wt;
+          logic [WLW-1:0] left;
+          awd = aw_done[c] || (m_awvalid[c] && m_awready[c]);
+          wt = m_wvalid[c] && m_wready[c];
+          left = (wcur[c] ? wleft[c] : wrun[c]) - WLW'(wt);
+          if (wt) begin popb = 1'b1; popn = LW'(1); end
+          if (awd && left == 0) begin
+            aw_done[c] <= 1'b0; w_done[c] <= 1'b0; wcur[c] <= 1'b0;
+          end else begin
+            aw_done[c] <= awd; w_done[c] <= left == 0; wcur[c] <= 1'b1; wsrc[c] <= 2'd0;
+          end
+          wleft[c] <= left;
+          if (!wcur[c]) begin
+            wlen_q[c] <= wrun[c];
+            waddr_q[c] <= hb[c].addr;
+          end
+        end else if (w_w[c] || w_a[c]) begin
           logic awd, wd;
           awd = aw_done[c] || (m_awvalid[c] && m_awready[c]);
           wd = w_done[c] || (m_wvalid[c] && m_wready[c]);
           if (awd && wd) begin
-            if (w_w[c]) popw = 1'b1; else if (w_a[c]) popa = 1'b1; else popb = 1'b1;
+            if (w_w[c]) popw = 1'b1; else popa = 1'b1;
             if (w_w[c] || w_a[c]) begin
               k1w[c][KW'(k1w_h[c] + k1w_n[c])] <= w_w[c];
               nkw = nkw + 1;
@@ -571,7 +639,7 @@ module otpu_axi_dram #(
             aw_done[c] <= 1'b0; w_done[c] <= 1'b0; wcur[c] <= 1'b0;
           end else begin
             aw_done[c] <= awd; w_done[c] <= wd; wcur[c] <= 1'b1;
-            wsrc[c] <= w_w[c] ? 2'd2 : w_a[c] ? 2'd1 : 2'd0;
+            wsrc[c] <= w_w[c] ? 2'd2 : 2'd1;
           end
         end
         if (popb) begin qb_h[c] <= qb_h[c] + QW'(popn); nb = nb - (QW + 1)'(popn); end
@@ -636,8 +704,21 @@ module otpu_axi_dram #(
         rb_n[c] <= rbn; rb_res[c] <= rbr; ra_n[c] <= ran; ra_res[c] <= rar;
       end
       wr_n <= wr_n + {{11{wn[4]}}, wn};
-      bw_n <= bw_n + 16'(wacc_q[0]) + 16'(wacc_q[1]) - 16'(m_bvalid[0] && !m_bid[0])
-                   - 16'(m_bvalid[1] && !m_bid[1]);
+      bw_n <= bw_n + 16'(wacc_q[0]) + 16'(wacc_q[1])
+                   - ((m_bvalid[0] && !m_bid[0]) ? 16'(blq_hd[0]) : 16'd0)
+                   - ((m_bvalid[1] && !m_bid[1]) ? 16'(blq_hd[1]) : 16'd0);
+      // B write bursts: lengths in at the AW, out at the response; the channels' last pushes
+      for (int c = 0; c < 2; c++) begin
+        logic bi, bo;
+        bi = w_b[c] && m_awvalid[c] && m_awready[c];
+        bo = m_bvalid[c] && !m_bid[c];
+        if (bo) blq_h[c] <= blq_h[c] + 1'b1;
+        blq_n[c] <= blq_n[c] + (BQW + 1)'(bi) - (BQW + 1)'(bo);
+        if (qb_push[c]) begin
+          lw_v[c] <= b_we;
+          lw_nx[c] <= b_addr + 32'(D / 4);
+        end
+      end
       if (wacc_q[1:0] != '0) bw_dirty <= 1'b1;
       else if (bw_clean) bw_dirty <= 1'b0;
       // ---- order FIFOs

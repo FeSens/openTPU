@@ -31,6 +31,7 @@ module otpu_board #(
   parameter int TRACE_QD    = 32,      // trace capture queue (cycles with events)
   parameter int PQ_WIN      = 1024,    // cycles per P/Q counter window
   parameter int AXI_BL      = 8,       // port B read burst, beats (1: single-beat reads)
+  parameter int AXI_WBL     = 8,       // port B write burst, beats (1: single-beat writes; <= 8, bd.tcl)
   parameter bit HAS_I2C     = 1'b1,    // the I2C pins are wired (CAPS bit2)
   parameter bit CHASH       = 1'b1,    // hashed channel interleave (otpu_axi_dram; CAPS bit7)
   parameter bit DSTEP       = 1'b1     // the DMA's DSTEP datapath (CAPS bit6; 0 leaves it out)
@@ -264,26 +265,27 @@ module otpu_board #(
 
   // ---- memory
   logic [1:0][31:0]  awaddr, araddr;
-  logic [1:0][7:0]   arlen;
+  logic [1:0][7:0]   arlen, awlen;
+  logic [1:0]        wlast;
   logic [1:0][511:0] wdata, rdata;
   logic [1:0][63:0]  wstrb;
   logic [1:0][1:0]   bresp, rresp;
-  otpu_axi_dram #(.D(D), .BL(AXI_BL), .CHASH(CHASH), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
+  otpu_axi_dram #(.D(D), .BL(AXI_BL), .WBL(AXI_WBL), .CHASH(CHASH), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
     .clk, .rst,
     .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
     .wr_idle,
-    .m_awvalid(awvalid), .m_awready(awready), .m_awaddr(awaddr), .m_awid(awid),
-    .m_wvalid(wvalid), .m_wready(wready), .m_wdata(wdata), .m_wstrb(wstrb),
+    .m_awvalid(awvalid), .m_awready(awready), .m_awaddr(awaddr), .m_awid(awid), .m_awlen(awlen),
+    .m_wvalid(wvalid), .m_wready(wready), .m_wdata(wdata), .m_wstrb(wstrb), .m_wlast(wlast),
     .m_bvalid(bvalid), .m_bready(bready), .m_bid(bid), .m_bresp(bresp),
     .m_arvalid(arvalid), .m_arready(arready), .m_araddr(araddr), .m_arlen(arlen), .m_arid(arid),
     .m_rvalid(rvalid), .m_rready(rready), .m_rid(rid), .m_rdata(rdata), .m_rresp(rresp),
     .m_rlast(rlast), .err(axi_err));
 
-  // 64-byte beats, incrementing, normal non-cacheable bufferable; writes single-beat, reads
-  // in bursts (port B runs, up to 8 beats)
-  assign {m0_axi_awlen, m1_axi_awlen} = '0;
+  // 64-byte beats, incrementing, normal non-cacheable bufferable; port B reads and writes in
+  // bursts (runs of up to AXI_BL / AXI_WBL beats)
+  assign {m1_axi_awlen, m0_axi_awlen} = awlen;
   assign {m1_axi_arlen, m0_axi_arlen} = arlen;
   assign {m0_axi_awsize, m1_axi_awsize, m0_axi_arsize, m1_axi_arsize} = {4{3'd6}};
   assign {m0_axi_awburst, m1_axi_awburst, m0_axi_arburst, m1_axi_arburst} = {4{2'b01}};
@@ -291,8 +293,8 @@ module otpu_board #(
   assign {m0_axi_awcache, m1_axi_awcache, m0_axi_arcache, m1_axi_arcache} = {4{4'b0011}};
   assign {m0_axi_awprot, m1_axi_awprot, m0_axi_arprot, m1_axi_arprot} = '0;
   assign {m0_axi_awqos, m1_axi_awqos, m0_axi_arqos, m1_axi_arqos} = '0;
-  assign m0_axi_wlast = 1'b1;
-  assign m1_axi_wlast = 1'b1;
+  assign m0_axi_wlast = wlast[0];
+  assign m1_axi_wlast = wlast[1];
 
   assign m0_axi_awid = awid[0];     assign m1_axi_awid = awid[1];
   assign m0_axi_awaddr = awaddr[0]; assign m1_axi_awaddr = awaddr[1];
