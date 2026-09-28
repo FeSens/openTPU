@@ -5,8 +5,11 @@ Order: sandbox -> lint -> fast (bit-exact subset) -> board (the same on the boar
 and micro-architecture) -> perf (Qwen3 proxy cycles) -> synth (area, fmax). The fmax objective
 (--objective fmax) adds a last gate, full: the whole board built in Vivado on the build host.
 
-Lint and the test gates run on this machine through TEST_LOCK, one at a time across every
-tournament process (the Mac also runs the other work streams' tests).
+Where lint and the test gates run: EXEC=remote (default) ships the slot's tree to the build
+host with tools/omarchy_test.sh and runs them there (Verilator 5.046 and the venv on omarchy);
+EXEC=local runs them on this machine. Either way they go through test_slot(): at most
+TEST_SLOTS["remote"] = 2 at a time from the tournament on the build host (its CPU is shared with
+up to 2 Vivado jobs), TEST_SLOTS["local"] = 1 here.
 """
 from __future__ import annotations
 
@@ -16,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from contextlib import contextmanager
@@ -45,22 +49,99 @@ def _tail(s: str, n: int = 1200) -> str:
     return s if len(s) <= n else "..." + s[-n:]
 
 
-# ------------------------------------------------------------------------------ local load cap
+# ------------------------------------------------------------------------------ where tests run
 TEST_LOCK = Path(os.environ.get("OTPU_TOURNEY_LOCKDIR", "/tmp")) / "otpu-tourney-tests.lock"
+TEST_SLOTS = {"remote": 2, "local": 1}
+REMOTE_SCRIPT = "tools/omarchy_test.sh"
+# the Verilator cache on the build host, shared by the tournament's trees (keyed by source hash)
+REMOTE_BUILD = "otpu-test/.tourney-build"
+
+
+def exec_mode() -> str:
+    m = os.environ.get("EXEC", "remote")
+    if m not in TEST_SLOTS:
+        raise ValueError(f"EXEC must be remote or local, not {m!r}")
+    return m
 
 
 @contextmanager
-def test_slot(path: Path | None = None):
-    """At most one lint / Verilator / pytest gate at a time on this machine, across slots and
-    tournament processes (an fcntl lock, released when the process dies)."""
+def test_slot(path: Path | None = None, slots: int | None = None, poll: float = 1.0):
+    """One of `slots` test-gate slots (fcntl locks on <path>.<i>, released when the process
+    dies): across slots and tournament processes, at most `slots` gates run at once."""
     path = path or TEST_LOCK
+    slots = slots or TEST_SLOTS[exec_mode()]
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+    while True:
+        for i in range(slots):
+            f = open(f"{path}.{i}", "w")
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                f.close()
+                continue
+            try:
+                yield i
+                return
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+                f.close()
+        time.sleep(poll)
+
+
+def remote_name(wt: Path) -> str:
+    """The slot tree's name on the build host (~/otpu-test/<name>)."""
+    return f"tourney-{wt.parent.name}-{wt.name}"
+
+
+def command(wt: Path, cmd: list[str], env_extra: dict | None = None,
+            mode: str | None = None) -> tuple[list[str], dict]:
+    """The argv and environment that run `cmd` (argv[0] "python" = the test interpreter) in the
+    slot tree `wt`, here or on the build host."""
+    mode = mode or exec_mode()
+    env = dict(os.environ)
+    for k in ("OTPU_UARCH", "OTPU_AXI", "OTPU_BOOT"):
+        env.pop(k, None)
+    if mode == "local":
+        env.update(env_extra or {})
+        env["PYTHONPATH"] = str(wt)
+        return [sys.executable if c == "python" else c for c in cmd], env
+    env["OTPU_REMOTE_NAME"], env["OTPU_REMOTE_BUILD"] = remote_name(wt), REMOTE_BUILD
+    kv = [f"{k}={v}" for k, v in (env_extra or {}).items()]
+    return ["bash", REMOTE_SCRIPT, "--exec", "env", *kv, *cmd], env
+
+
+def execute(wt: Path, cmd: list[str], gate: str, timeout: int, env_extra: dict | None = None):
+    """Runs one gate command in a test slot; returns the CompletedProcess (stdout + stderr text).
+    On the build host a timeout ends the ssh session; the remote run then dies at its next
+    output (SIGPIPE), which frees its omarchy test slot."""
+    argv, env = command(wt, cmd, env_extra)
+    with test_slot():
         try:
-            yield
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            return subprocess.run(argv, cwd=wt, capture_output=True, text=True, timeout=timeout,
+                                  env=env)
+        except subprocess.TimeoutExpired:
+            raise GateFailure(gate, f"timeout after {timeout}s")
+
+
+PRUNE_CMD = (f"find ~/{REMOTE_BUILD}/verilator -mindepth 1 -maxdepth 1 -type d -mmin +1440 "
+             f"-exec rm -rf {{}} + 2>/dev/null; true")
+
+
+def remote_prune() -> None:
+    """Drops Verilator builds older than a day from the shared cache on the build host (every
+    candidate adds its own source hashes, ~0.4 GB each; a champion's are rebuilt in seconds)."""
+    if exec_mode() != "remote":
+        return
+    from . import remote as R
+    R.ssh(PRUNE_CMD, timeout=300, check=False)
+
+
+def remote_clean(wt: Path) -> None:
+    """Removes the slot's tree from the build host (EXEC=remote)."""
+    if exec_mode() != "remote":
+        return
+    from . import remote as R
+    R.ssh(f"rm -rf ~/otpu-test/{remote_name(wt)}", timeout=120, check=False)
 
 
 # ------------------------------------------------------------------------------ sandbox
@@ -179,8 +260,7 @@ def lint(wt: Path, timeout: int = 900) -> None:
     for top, srcs, params in (("otpu_top", sim, ["-GD=128", "-GMCOLS=2", "-GAXI=1"]),
                               ("otpu_board", board, [])):
         cmd = ["verilator", *LINT_FLAGS, "--top-module", top, *params, *srcs]
-        with test_slot():
-            r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout)
+        r = execute(wt, cmd, "lint", timeout)
         if r.returncode != 0:
             raise GateFailure("lint", f"{top}: " + _tail(r.stdout + r.stderr))
 
@@ -190,18 +270,8 @@ def pytest(wt: Path, nodes: list[str], env_extra: dict | None, gate: str,
            timeout: int = 3600) -> str:
     if not nodes:
         return "no tests"
-    env = dict(os.environ)
-    for k in ("OTPU_UARCH", "OTPU_AXI", "OTPU_BOOT"):
-        env.pop(k, None)
-    env.update(env_extra or {})
-    env["PYTHONPATH"] = str(wt)
-    cmd = [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *nodes]
-    try:
-        with test_slot():
-            r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout,
-                               env=env)
-    except subprocess.TimeoutExpired:
-        raise GateFailure(gate, f"timeout after {timeout}s")
+    cmd = ["python", "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *nodes]
+    r = execute(wt, cmd, gate, timeout, env_extra)
     out = r.stdout + r.stderr
     if r.returncode != 0:
         raise GateFailure(gate, _tail(out))
@@ -229,19 +299,17 @@ def models_dir(wt: Path) -> Path | None:
 def perf(wt: Path, layers: int = 2, bw: int = 80, timeout: int = 3600) -> int | None:
     """Cycles of a Qwen3-0.6B decode token (first `layers` layers + the LM head) on the RTL at the
     board configuration, AXI memory path at `bw`% bandwidth (deterministic). None if the model
-    weights are not available (the gate is then skipped)."""
-    m = models_dir(wt)
-    if m is None:
-        return None
-    env = dict(os.environ, PYTHONPATH=str(wt))
-    cmd = [sys.executable, "tools/perf_qwen.py", "--model", str(m), "--layers", str(layers),
+    weights are not available here (EXEC=local; the gate is then skipped). On the build host the
+    tree's models/ links to its checkpoints."""
+    if exec_mode() == "remote":
+        m = "models/Qwen3-0.6B"
+    else:
+        m = models_dir(wt)
+        if m is None:
+            return None
+    cmd = ["python", "tools/perf_qwen.py", "--model", str(m), "--layers", str(layers),
            "--bw", str(bw)]
-    try:
-        with test_slot():
-            r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout,
-                               env=env)
-    except subprocess.TimeoutExpired:
-        raise GateFailure("perf", f"timeout after {timeout}s")
+    r = execute(wt, cmd, "perf", timeout)
     mm = re.search(r"^layers=\d+ .*?: (\d+) cycles", r.stdout, re.M)
     if r.returncode != 0 or not mm:
         raise GateFailure("perf", _tail(r.stdout + r.stderr))

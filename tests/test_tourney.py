@@ -447,13 +447,12 @@ def test_no_local_vivado():
         G.synthesize(Path("."), {"synth": {"parts": []}}, "vivado", Path("x"))
 
 
-def test_test_slot_is_exclusive(tmp_path):
-    lock = tmp_path / "t.lock"
+def _peak(lock, slots, n):
     inside, peak = [0], [0]
     lk = threading.Lock()
 
     def worker():
-        with G.test_slot(lock):
+        with G.test_slot(lock, slots, poll=0.005):
             with lk:
                 inside[0] += 1
                 peak[0] = max(peak[0], inside[0])
@@ -461,12 +460,87 @@ def test_test_slot_is_exclusive(tmp_path):
             with lk:
                 inside[0] -= 1
 
-    ts = [threading.Thread(target=worker) for _ in range(3)]
+    ts = [threading.Thread(target=worker) for _ in range(n)]
     for t in ts:
         t.start()
     for t in ts:
         t.join(5)
-    assert peak[0] == 1
+    return peak[0]
+
+
+def test_test_slots_cap_concurrency(tmp_path):
+    assert _peak(tmp_path / "a.lock", 1, 3) == 1
+    assert _peak(tmp_path / "b.lock", 2, 5) == 2
+    assert G.TEST_SLOTS == {"remote": 2, "local": 1}
+
+
+def test_exec_dispatch(tmp_path, monkeypatch):
+    wt = tmp_path / "fmax-otpu_vpu" / "r1-s0"
+    monkeypatch.setenv("OTPU_AXI", "1")                 # never leaks into a gate
+    monkeypatch.delenv("EXEC", raising=False)
+    assert G.exec_mode() == "remote"
+    argv, env = G.command(wt, ["python", "-m", "pytest", "-q", "t.py"], G.BOARD_ENV)
+    assert argv[:4] == ["bash", "tools/omarchy_test.sh", "--exec", "env"]
+    assert argv[4:7] == ["OTPU_UARCH=board", "OTPU_AXI=1", "OTPU_BOOT=1"]
+    assert argv[7:] == ["python", "-m", "pytest", "-q", "t.py"]
+    assert env["OTPU_REMOTE_NAME"] == "tourney-fmax-otpu_vpu-r1-s0"
+    assert env["OTPU_REMOTE_BUILD"] == G.REMOTE_BUILD and "OTPU_AXI" not in env
+    monkeypatch.setenv("EXEC", "local")
+    argv, env = G.command(wt, ["python", "-m", "pytest"], {"OTPU_BOOT": "1"})
+    import sys
+    assert argv == [sys.executable, "-m", "pytest"]
+    assert env["PYTHONPATH"] == str(wt) and env["OTPU_BOOT"] == "1" and "OTPU_AXI" not in env
+    monkeypatch.setenv("EXEC", "cloud")
+    with pytest.raises(ValueError):
+        G.exec_mode()
+
+
+def test_remote_housekeeping(monkeypatch):
+    sent = []
+    monkeypatch.setattr(RM, "ssh", lambda cmd, **k: sent.append(cmd))
+    monkeypatch.setenv("EXEC", "remote")
+    G.remote_clean(Path("/x/fmax-otpu_vpu/r1-s0"))
+    G.remote_prune()
+    assert sent[0] == "rm -rf ~/otpu-test/tourney-fmax-otpu_vpu-r1-s0"
+    assert "otpu-test/.tourney-build/verilator" in sent[1] and "-mmin +1440" in sent[1]
+    monkeypatch.setenv("EXEC", "local")
+    G.remote_clean(Path("/x/y"))
+    G.remote_prune()
+    assert len(sent) == 2
+
+
+def test_gates_go_through_execute(tmp_path, monkeypatch):
+    """lint / pytest / perf all run via execute(): remote argv, test slot held, output parsed."""
+    monkeypatch.setenv("EXEC", "remote")
+    monkeypatch.setattr(G, "TEST_LOCK", tmp_path / "t.lock")
+    seen = []
+
+    class R:
+        def __init__(self, out, rc=0):
+            self.stdout, self.stderr, self.returncode = out, "", rc
+
+    def fake_run(argv, cwd, capture_output, text, timeout, env):
+        seen.append(argv)
+        if "tools/perf_qwen.py" in argv:
+            return R("layers=2 x: 123456 cycles\n")
+        return R("5 passed in 3s\n")
+
+    monkeypatch.setattr(G.subprocess, "run", fake_run)
+    wt = tmp_path / "c" / "s0"
+    assert G.pytest(wt, ["tests/a.py"], G.BOARD_ENV, "board") == "5 passed in 3s"
+    assert G.perf(wt) == 123456
+    assert all(a[:3] == ["bash", "tools/omarchy_test.sh", "--exec"] for a in seen)
+    assert "models/Qwen3-0.6B" in seen[1]
+    monkeypatch.setattr(G.subprocess, "run", lambda *a, **k: R("FAILED x", 1))
+    with pytest.raises(G.GateFailure, match="board"):
+        G.pytest(wt, ["tests/a.py"], None, "board")
+
+    def slow(*a, **k):
+        raise G.subprocess.TimeoutExpired("x", 1)
+
+    monkeypatch.setattr(G.subprocess, "run", slow)
+    with pytest.raises(G.GateFailure, match="timeout"):
+        G.pytest(wt, ["tests/a.py"], None, "fast")
 
 
 def test_opus_only():

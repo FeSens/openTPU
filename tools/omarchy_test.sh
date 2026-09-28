@@ -2,6 +2,13 @@
 # Run pytest for the current worktree on the omarchy box instead of this machine.
 #
 #   tools/omarchy_test.sh [pytest args...]        e.g. tools/omarchy_test.sh -q tests/test_rtl.py -k fuzz
+#   tools/omarchy_test.sh --exec CMD [args...]    any command in the tree instead of pytest (with
+#                                                 the venv and Verilator on PATH), e.g.
+#                                                 --exec env OTPU_AXI=1 python -m pytest -q tests/test_board.py
+#
+# Optional: OTPU_REMOTE_NAME=<name> names the tree (~/otpu-test/<name>, default: the worktree's
+# directory name + a hash of its path); OTPU_REMOTE_BUILD=<dir under ~> links the tree's build/
+# (the Verilator cache, keyed by source hash) to a shared directory, so fresh trees reuse it.
 #
 # Ships the working tree (committed + uncommitted tracked files) to ~/otpu-test/<name> on omarchy,
 # links the model checkpoints, and runs pytest there with ~/.local/bin/verilator and ~/otpu-venv.
@@ -11,9 +18,12 @@
 set -euo pipefail
 HOST=${OTPU_REMOTE:-omarchy.tail5bd214.ts.net}
 JOBS=${OTPU_REMOTE_JOBS:-3}
+mode=pytest
+if [[ ${1:-} == --exec ]]; then mode=exec; shift; fi
 top=$(git rev-parse --show-toplevel)
-name=$(basename "$top")-$(printf '%s' "$top" | shasum | cut -c1-6)
+name=${OTPU_REMOTE_NAME:-$(basename "$top")-$(printf '%s' "$top" | shasum | cut -c1-6)}
 dir="otpu-test/$name"
+build=${OTPU_REMOTE_BUILD:-}
 
 # the tree as it is now: tracked files, including uncommitted edits
 ssh "$HOST" "mkdir -p ~/$dir"
@@ -24,6 +34,7 @@ ssh "$HOST" "bash -s" <<EOF
 set -e
 cd ~/$dir
 ln -sfn ~/openTPU/models models
+if [[ -n "$build" ]]; then mkdir -p ~/$build; rm -rf build; ln -sfn ~/$build build; fi
 # one of JOBS slots (flock on per-slot lock files)
 mkdir -p ~/otpu-test/.slots
 for i in \$(seq 1 3600); do
@@ -31,7 +42,12 @@ for i in \$(seq 1 3600); do
     exec 9>~/otpu-test/.slots/\$s
     if flock -n 9; then
       export PATH=\$HOME/.local/bin:\$PATH
-      nice -n 5 ~/otpu-venv/bin/python -m pytest -p no:cacheprovider $args
+      if [[ $mode == exec ]]; then
+        export PATH=\$HOME/otpu-venv/bin:\$PATH PYTHONPATH=\$PWD
+        nice -n 5 $args
+      else
+        nice -n 5 ~/otpu-venv/bin/python -m pytest -p no:cacheprovider $args
+      fi
       exit \$?
     fi
   done

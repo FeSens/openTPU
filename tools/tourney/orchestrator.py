@@ -237,6 +237,10 @@ class Run:
     def drop(self, wt: Path, branch: str | None) -> None:
         if self.a.keep and branch:
             return
+        try:
+            G.remote_clean(wt)
+        except Exception as e:  # noqa: BLE001 -- a leftover tree is not worth failing a round
+            print(f"[tourney] could not remove {G.remote_name(wt)} on the build host: {e}")
         git("worktree", "remove", "--force", str(wt), cwd=self.repo, check=False)
         shutil.rmtree(wt, ignore_errors=True)
         git("worktree", "prune", cwd=self.repo, check=False)
@@ -457,6 +461,10 @@ class Run:
             self.lesson(f"[{x['id']}] {x['lesson']}")
             self.append({k: v for k, v in x.items() if k not in ("wt", "_full")})
             self.drop(Path(x["wt"]), self.slot_branch(x["id"]))
+        try:
+            G.remote_prune()
+        except Exception as e:  # noqa: BLE001
+            print(f"[tourney] could not prune the build host's Verilator cache: {e}")
 
     def main(self) -> None:
         self.ensure_branch()

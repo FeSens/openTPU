@@ -212,11 +212,42 @@ removed after the results are fetched. Other hosts, directories and images can b
 `OTPU_BUILD_HOST`, `OTPU_BUILD_DIR`, `VIVADO_DOCKER`, `VIVADO_MOUNT`, `VIVADO_SETTINGS` and
 `VIVADO_MAC`.
 
-### This machine
+### Where the test gates run (`EXEC`)
 
-Lint and every pytest / Verilator gate run under one fcntl lock (`/tmp/otpu-tourney-tests.lock`,
-`gates.test_slot`): **at most one** test gate at a time across all tournament processes. Every
-role runs Opus: `MODEL_*` naming another model family is an error (`agents.model_for`).
+`EXEC=remote` (the default, for both objectives) runs lint, fast, board, perf and the champion
+sync's fast tests on omarchy, through `tools/omarchy_test.sh --exec`. The script:
+
+- ships the slot's tracked files, including uncommitted edits, to
+  `~/otpu-test/tourney-<run>-<slot>`;
+- links the model checkpoints;
+- runs the command with Verilator 5.046 (`~/.local`) and `~/otpu-venv` on PATH, niced;
+- waits for one of omarchy's 3 test slots, which it shares with other users of the script.
+
+The board gate's `OTPU_*` variables are passed with `env`. The Verilator cache is shared by the
+tournament's trees in `~/otpu-test/.tourney-build`, keyed by source hash. Entries older than a
+day are pruned after each round; one build of the board top is about 0.4 GB. A slot's tree is
+removed when its worktree is dropped. Per-gate seconds and output tails are recorded as before.
+
+`EXEC=local` runs the gates on this machine, as before.
+
+Concurrency is capped by fcntl slot locks (`/tmp/otpu-tourney-tests.lock.<i>`,
+`gates.test_slot`):
+
+- **at most 2** tournament test gates at a time with `EXEC=remote`, because omarchy's CPU also
+  runs up to 2 Vivado jobs with `JOBS=2` each;
+- **at most 1** with `EXEC=local`.
+
+Measured through the remote path (this branch, a warm ssh connection):
+
+- lint of both tops: 6.6 s;
+- `tests/test_fp.py` plus one parser test: 5.1 s;
+- `test_mlp_rtl[1]` with the board environment, including a fresh Verilator build: 16 s.
+
+A gate that times out ends the ssh session. The remote run then dies at its next output
+(SIGPIPE), which frees its test slot. Files new to the tree are not shipped, since only tracked
+files go; the sandbox rejects new files anyway.
+
+Every role runs Opus: `MODEL_*` naming another model family is an error (`agents.model_for`).
 
 ### Time and cost per round
 
@@ -229,7 +260,7 @@ omarchy. "Estimate" numbers have not been run.
 | agent calls | 2 × (hypothesis + implementation + scribe) = **6 Opus calls** | |
 | agent time | hypothesis 3.4 min, implementation 1.9 min, scribe 5 s per slot (slots in parallel) | measured |
 | agent cost | about $1.8 per slot on area prompts. The fmax prompt adds the full-design reports (about 10k tokens), and `otpu_xunit` about 40k tokens of source: **about $2-4 per slot, $4-8 per round** | measured / estimate |
-| test gates | lint 2 s, fast 26 s, board 7 s, perf 29 s per slot, one slot at a time: about 2-4 min per round (`otpu_fp`, which runs the whole RTL suite: about 30 min+) | measured |
+| test gates | lint 2 s, fast 26 s, board 7 s, perf 29 s per slot on the Mac. On omarchy (`EXEC=remote`, 2 at a time) add about 3-5 s of shipping per gate and the niced CPU: about 2-4 min per round (`otpu_fp`, which runs the whole RTL suite: about 30 min+) | measured (Mac) / estimate (omarchy) |
 | OOC | 2 jobs in parallel, **about 10-40 min each** (the champion's once per commit per component) | estimate, not run yet |
 | full build | **at most one per round**, 40-85 min per build (39, 73 and 84 min on omarchy; `JOBS=2` is at the slow end), plus the champion's when main moves | build host |
 | **round** | **about 1.5-2.5 h wall; 80-170 Vivado-minutes; 6 Opus calls** | estimate |
@@ -266,6 +297,7 @@ tools/tourney/agents.py         claude/codex runtime, prompts, model/effort sele
 tools/tourney/gates.py          sandbox, lint, pytest subsets, perf proxy, synthesis
 tools/tourney/synth.py          yosys evaluator; Vivado report parsers (util, OOC, SUMMARY, worst paths)
 tools/tourney/remote.py         Vivado on the build host: upload, job count / acquire, OOC, full build
+tools/omarchy_test.sh           runs a gate (pytest, or any command with --exec) on omarchy
 tools/tourney/accept.py         area_eq, est fmax, accept rule, perf tolerance
 tools/tourney/report.py         REPORT.md + progress.png
 tools/tourney/components/       per-component configs (gen_components.py writes them)
