@@ -1,0 +1,1 @@
+[note 2026-09-28, stream Q] the MCOLS=4 image fills 96.9% of the slices with level-5 placer congestion (south: u_tmem 28%, u_quant 21%, u_dma DSTEP 19%; north: u_dma 28%): area reductions here are what buys room for MCOLS=4.

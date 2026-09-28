@@ -1,0 +1,1 @@
+[note 2026-09-28, stream Q, MCOLS=4 image at 120.755 MHz, -0.114 ns] also on the critical list there: u_mem/qb_h_reg -> qb_n_reg (19 levels, 80% route); the die is 96.9% slices, and the placer is congested north (u_mem 33%): area savings in the adapter help MCOLS=4 fit.
