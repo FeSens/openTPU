@@ -36,11 +36,19 @@ simulator, bit for bit.
 
 *Measured on the card with the production image (`deploy_pnbl32_e2521032`: 120.755 MHz,
 32-beat DRAM read bursts, 8-beat write bursts, DDR3-1066 with a 17.1 GB/s peak) and the host on
-main. Decode is greedy, 96 tokens; "device" counts only the cycles the accelerator runs and
+main, with the card in the omarchy PC (Intel Core i5-12600KF), before it moved to opentpu (see
+below). Decode is greedy, 96 tokens; "device" counts only the cycles the accelerator runs and
 "wall" adds the host. LFM2 4-bit wall is the median of 5 runs (88.1 to 88.9); the others are one
 run each. Prefill is a 512-token prompt. DRAM reads come from the card's own counters while it
 runs. Every configuration matches the simulator token for token. More detail in
 [docs/board.md](docs/board.md).*
+
+Since 2026-09-28 the card sits in another PC, opentpu, with an older CPU (Intel Core i7-4790).
+There, the same image and host code give the same device numbers (within 0.3%), but the host
+takes about 0.45 ms per token between the end of one run and the start of the next, against
+about 0.18 ms on omarchy. So wall is lower: LFM2 4-bit decodes at 86.8 tok/s (median of 5 runs,
+85.5 to 87.1). The single runs of the others: LFM2 int8 58.1, Qwen3 int8 22.6, Qwen3 4-bit
+33.7, Qwen3.5 int8 17.1, Qwen3.5 4-bit 24.0 tok/s.
 
 4-bit weights ([docs/quant.md](docs/quant.md)) use FP4 values with two-level block scales, 4.25
 bits per weight, and keep the LM head in int8 for accuracy. They cut the bytes per token by about
@@ -49,7 +57,8 @@ perplexity that docs/quant.md reports per model.
 
 The host is nearly out of the way. For LFM2 and Qwen3 the card runs one decode program compiled
 once, which reads the position from a register and looks up its own embedding and RoPE rows, and
-the logits stream back while the card is still running: the host adds 0.3 to 0.8 ms per token.
+the logits stream back while the card is still running: the host adds 0.17 to 0.30 ms per
+token on omarchy (0.45 to 1.3 ms on opentpu).
 Qwen3.5 runs the same way for decode; its prefill still compiles each chunk's program on the host,
 ahead of the card.
 

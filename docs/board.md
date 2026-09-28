@@ -248,6 +248,37 @@ accelerator's logical DRAM is interleaved over the two channels in 64-byte beats
 opentpu/host/board.py applies the map (never write the channels directly except in the
 self-test).
 
+### The card's host: opentpu (since 2026-09-28)
+
+Until 2026-09-28 the card was in omarchy, the development PC (Intel Core i5-12600KF), where every
+measurement before that date was taken. It is now in opentpu (Intel Core i7-4790, Haswell). The
+link trains at 2.5 GT/s x8 as before. On opentpu, `otpu-selftest` measures 1.26-1.34 GB/s host
+to card and 0.84-1.00 GB/s card to host; omarchy measured 1.42 and 1.16 GB/s.
+
+- **Root access** is narrow. `/etc/sudoers.d/60-otpu-card` allows exactly three commands, with
+  no password:
+  - `sudo -n /usr/local/sbin/otpu-rescan`;
+  - `sudo -n lsof -t /dev/xdma0_*`;
+  - `sudo -n dmesg`.
+
+  Nothing else runs as root: `otpu-setup` and driver installs need the PC's owner.
+  `tools/qual/qual.sh` uses these three.
+- **`otpu-rescan`** runs a root-owned copy of `opentpu/host/setup_pcie.sh --rescan` (with
+  `pcie/relink.sh`) from `/usr/local/lib/otpu/host`. `~/otpu-card-setup.sh` on that PC
+  refreshes the copy from the repository. When the plain remove and rescan does not bring the
+  card back, it retrains the upstream port's link (section 2, "After programming"). The retrain
+  has not yet been tried on a real reload.
+- **A JTAG reload**: after one, a hot rescan once did not bring the link back on opentpu, and a
+  warm reboot did. So for now a reload there is planned with a warm reboot, and `qual.sh` runs
+  with `LOAD=0` (it qualifies the bitstream the card already runs).
+- **Flash**: it still holds the factory image. A cold power cycle loses the design; a warm
+  reboot keeps it.
+- **Commands**: the `otpu-*` commands are on `PATH` through symlinks in `~/.local/bin` to
+  `~/otpu-venv/bin`.
+
+The host path is slower there. Wall numbers from the two PCs are not comparable; section 5
+compares them per token.
+
 ## 4. Self-test, diagnostic, then chat
 
 Run order on the card:
@@ -711,6 +742,57 @@ HALTED to the next RUN is:
 - the argmax, 13 us;
 - the run arguments, 21 us;
 - CTRL, 11 us.
+
+**On opentpu (measured 2026-09-28 16:56-19:20 UTC-3, like the times above; same image, host
+main a739d08; load 0.6-2.7).**
+`qual.sh fast` with `LOAD=0` passed in 37 min, with 0 FAIL. The logs and JSON are in the deploy
+directory's `opentpu-run/` on opentpu. The device numbers are omarchy's within 0.3%; the host
+takes longer per token. LFM2.5-230M, 4-bit with an int8 head, 5 runs:
+
+| run | wall tok/s | device tok/s | host critical path, ms/token |
+|---|---|---|---|
+| 1 | 85.51 | 90.44 | 0.572 |
+| 2 | 86.77 | 90.34 | 0.447 |
+| 3 | 86.55 | 90.34 | 0.489 |
+| 4 | 86.79 | 90.35 | 0.452 |
+| 5 | 87.12 | 90.40 | 0.418 |
+| median | **86.77** | 90.35 | 0.452 (omarchy: 0.177) |
+
+The replies are identical token for token. They match the A/B runs below, qual's run, and
+omarchy's 5 runs above. The other configurations, one run each (their replies match
+omarchy's):
+
+| Model | Weights | device tok/s | wall tok/s | host critical path, ms/token (omarchy) |
+|---|---|---|---|---|
+| LFM2.5-230M | int8 | 60.69 | 58.13 | 0.686 (0.231) |
+| Qwen3-0.6B | int8 | 22.81 | 22.57 | 0.481 (0.193) |
+| Qwen3.5-0.8B | int8 | 17.58 | 17.14 | 1.322 (0.296) |
+| Qwen3-0.6B | 4-bit, int8 head | 34.31 | 33.69 | 0.524 (0.188) |
+| Qwen3.5-0.8B | 4-bit, int8 head | 24.71 | 24.03 | 1.032 (0.193) |
+
+A `watch otpu-smi` (it reads the card every 2 s) ran beside all of these except Qwen3.5 4-bit;
+it stopped during the Qwen3 4-bit run.
+Three LFM2 4-bit runs without it, in the A/B below, gave 86.96, 86.69 and 86.10: no visible
+effect. These numbers are recorded as measured; the opentpu host path was not tuned.
+
+**Shelved: a smaller last LM-head chunk (branch host-tail, 694237d, not merged).** The idea: split
+the decode LM head's last chunk so that the chunk stored last has 2048 rows (LFM2: 7 x 8192 +
+6144 + 2048 rows). The read after HALTED would then shrink from 32 KB to 8 KB. What we checked:
+- In the simulator, the logits and the tokens stayed identical in all six configurations.
+- The perf model charged 1,225 cycles (10 us) more per LFM2 token, for the extra MM.
+- On opentpu, alternating with main (LFM2 4-bit), it lost: 84.76, 84.24 and 80.96 tok/s wall,
+  against 86.96, 86.69 and 86.10.
+  - The read after HALTED went from 89.5 to 196.5 us.
+  - HALTED was seen later: the median overshoot went from 0.003-0.006 ms to 0.065-0.194 ms.
+
+Our reading of the numbers (not traced): an MM of 2048 rows takes about 0.15 ms. So the
+next-to-last piece (24 KB) now comes complete about 0.15 ms before HALTED, instead of about
+0.57 ms. The slower host is still reading or probing that piece when the run ends. Do not retry
+the split without reading the next-to-last piece earlier, or ending the stream loop at HALTED.
+
+The same branch (b51ee4e) also kept a running greedy argmax, and read only STATUS and CYCLES
+after a streamed step. In those runs the sampler and the counter reads moved by only 1-2 us.
+They were never measured apart from the split, and were not tried on omarchy.
 DSTEP alone, 22% slower on the card than simulated with 16-chunk runs, now matches the
 simulator: that gap was the read / write turn per 2 KB run.
 
