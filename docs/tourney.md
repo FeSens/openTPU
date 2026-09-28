@@ -208,8 +208,8 @@ omarchy (`OTPU_REMOTE`, below).
 | `omarchy.tail5bd214.ts.net` (2nd) | also runs the test gates, the card and other streams' builds |
 
 Every full build (champion and candidates) passes `OTPU_BUILD_ARGS` to `make bit`, default
-`AXI_BL=16` (16-beat DRAM bursts, +5.5% DRAM bytes per cycle on the card); the cached full result's
-name carries them (`<sha>-125.49-AXI_BL16.json`). `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
+`AXI_BL=32` (32-beat DRAM bursts: the likely next production image); the cached full result's name
+carries them (`<sha>-125.49-AXI_BL32.json`). `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
 Vivado in the `vivado:2026.1` Docker image instead. After a full build its reports are kept on
 the host in `~/otpu-build/reports/tv-<name>`; the tree is removed once its job has finished (never
 while it runs).
