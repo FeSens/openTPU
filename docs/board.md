@@ -130,7 +130,8 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_prod120_b01b8acb/otpu.bit`** (production, 2026-09-27) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | b01b8ac (fmax fixes; section 5, "Faster DDR3") | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.080 ns, WHS +0.016 ns |
+| **`build/deploy_prod120fp4_ea3bc560/otpu.bit`** (production, 2026-09-27 evening) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | ea3bc56 (4-bit MXU with PAIR, fmax fixes, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.149 ns, WHS +0.016 ns |
+| `build/deploy_prod120_b01b8acb/otpu.bit` (production 2026-09-27 afternoon, int8 only) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | b01b8ac (fmax fixes; section 5, "Faster DDR3") | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.080 ns, WHS +0.016 ns |
 | `build/deploy_prod1066_b2c7ce43/otpu.bit` (previous production) | `make bit DDR=1066` at 100 MHz | b2c7ce4 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns |
 | `build/deploy_burst_a691ea98/otpu.bit` (older primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | a691ea98 (port-B AXI read bursts, MXU_STARVE counter; register map 3) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns, WHS +0.040 ns (omarchy build) |
 | `build/deploy_r3route_74d4859/otpu.bit` (single-beat reads, 2.4x slower decode) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 74d4859 (chunk FIFO in block RAM, 6 TMEM copies) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.104 ns, WHS +0.038 ns |
@@ -441,7 +442,46 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
-**Production image (2026-09-27, afternoon): `build/deploy_prod120_b01b8acb`** (branch fmax
+**Production image (2026-09-27, evening): `build/deploy_prod120fp4_ea3bc560`** (branch fp4-fx
+ea3bc56: the full-rate 4-bit MXU (fp4-rebase) with fmax c1b91dd: the fmax fixes of b01b8ac, the
+VPU write buffer (WBUF) and the RDOT row buffer in distributed RAM, whose block RAM mapping made
+vg125 / wb120 / fp4f125 return every RDOT one result late). Core clock 120.755 MHz, DDR3-1066,
+WNS +0.149 ns, WHS +0.016 ns, no Synth 8-6430; 167.6K LUT (56.1%), 133.4K FF (22.3%), 561 BRAM36
+(58.7%); Vivado's power estimate 9.1 W. CAPS: 4-bit MM and PAIR; no resident decode (bit25) or
+DSTEP. The directory holds otpu.bit, otpu.mcs, otpu.prm, reports/ and build.log; the flash has
+not been written with it. Qualified on the card 2026-09-27 20:06-21:14 (JTAG load, host tree
+host-path-fx a75d2e8 + host-path 21297d0):
+
+- selftest all pass, including the vops stage's 12 op checks; `otpu-diag --mem full --soak 20`
+  all pass cold (48 °C) and again after the warm soak (platform 9, regs 7, i2c 4, mem 13, isa
+  93, system 5; every RDOT / OUTER / LOG2 check passes);
+- Qwen3, LFM2 and Qwen3.5 match the ISA simulator token for token at int8 and with 4-bit
+  (fp4) layers and an int8 LM head (Qwen3.5's prompt through chunked prefill);
+- warm soak: 326 s of continuous Qwen3 decode (12 replies of 256 tokens, 18.75 device tok/s
+  throughout), board 53 -> 55 °C, then the diag above and Qwen3 token for token again.
+
+Greedy decode (`tools/host_path_card.py`, 96 tokens, logits streamed during the run; the
+greedy replies are the same tokens with and without streaming), prefill of a 512-token prompt,
+and DRAM traffic from the card's counters over 64 decode tokens (bytes x the running time; peak
+17.1 GB/s):
+
+| Model | Weights | Mcycles/token | device tok/s | wall tok/s | prefill device tok/s | DRAM read per token | DRAM while running |
+|---|---|---|---|---|---|---|---|
+| Qwen3-0.6B | int8 | 6.41 | 18.82 | 18.58 | 39.6 | 651 MB | 11.83 GB/s (69%) |
+| LFM2.5-230M | int8 | 2.32 | 51.88 | 48.52 | 124.8 | 243 MB | 12.40 GB/s (73%) |
+| Qwen3.5-0.8B | int8 | 8.44 | 14.31 | 14.17 | 26.1 | 814 MB | 11.87 GB/s (70%) |
+| Qwen3-0.6B | fp4, int8 head | 4.52 | 26.75 | 24.92 | 44.2 | 431 MB | 10.95 GB/s (64%) |
+| LFM2.5-230M | fp4, int8 head | 1.63 | 74.21 | 59.71 | 141.0 | 162 MB | 11.71 GB/s (69%) |
+| Qwen3.5-0.8B | fp4, int8 head | 6.87 | 17.59 | 16.86 | 27.9 | 560 MB | 10.12 GB/s (59%) |
+
+Mcycles/token are the selftest's one-token runs; the DRAM rows' own 64-token decode measured
+6.67 / 2.38 / 8.49 / 4.78 / 1.68 / 6.92 (a longer reply, a longer context). One run each. At
+4-bit the host is the gap on LFM2: 1.0-3.0 ms per token on the critical path against a 13.5 ms
+run (the host-path branch works on it).
+
+The previous production image:
+
+**Production image until the evening (2026-09-27, afternoon): `build/deploy_prod120_b01b8acb`** (branch fmax
 b01b8ac: main 32d900b plus the fmax fixes: fanout caps, the AXI adapter's request queues in LUT
 RAM from r7-apf, registered MXU inputs and ACT RAM writes, a reset register per unit). Core
 clock 120.755 MHz, DDR3-1066, WNS +0.080 ns, WHS +0.016 ns; 158.6K LUT (53.1%), 128.5K FF
