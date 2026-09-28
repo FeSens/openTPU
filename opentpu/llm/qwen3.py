@@ -154,7 +154,7 @@ def _lookup_desc(lk: dict, spec, cap: int) -> dict:
 
 def has_lookup(spec) -> bool:
     """The model's image can hold the resident decode's tables (Spec.image(lookup=True)) and
-    compile_decode: Qwen3, LFM2."""
+    compile_decode: Qwen3, LFM2, Qwen3.5."""
     import inspect
     return "lookup" in inspect.signature(spec.image).parameters
 
@@ -933,8 +933,9 @@ class Engine:
     positions, compiled once and kept in IMEM, the token's embedding and RoPE rows read from
     tables in the image (Image(lookup=True)), so a step writes no inputs and loads no program.
     Needs a backend with `args` (else it falls back), a model whose image has compile_decode
-    (Qwen3, LFM2; not Qwen3.5) and batch 1; positions below the model's first run-time one
-    (LFM2: conv_k - 1) run per-position programs. Bit-identical to the per-position programs.
+    (Qwen3, LFM2, Qwen3.5) and batch 1; positions below the model's first run-time one
+    (LFM2, Qwen3.5: conv_k - 1) run per-position programs. Bit-identical to the per-position
+    programs.
 
     pipeline: step() compiles the next position's program (it depends on the position only,
     not on the token) while the backend runs the current one. Default: on for every backend
@@ -1223,8 +1224,7 @@ class Engine:
                 if progs is None:
                     progs = self.image.compile_rows(rows, lr, self.block)
                 if not last:
-                    key = ("rows", seq, p0 + n, chunk, left - n, self._fit_rows)
-                    self._submit(key, self._chunk, _worker_chunk, *key[1:])
+                    self._prefetch_chunks(seq, p0 + n, chunk, left - n)
                 elif seq == 0:
                     self._prefetch(p0 + n)
                 lg = self._run_rows(rows, part, lr, progs)
@@ -1232,6 +1232,21 @@ class Engine:
                 self.poss[seq] += n
             i += n
             yield part, (lg if last else None)
+
+    def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int) -> None:
+        """Precompile the runs of a prompt from position p0 on, as many as the pipeline has
+        workers (a chunk's trace can take longer than its run: Qwen3.5 on the card), each
+        predicted from the rows that fit so far; a run whose prediction turns out wrong is
+        waited for and dropped (_take), so the programs do not change."""
+        queued = {k for k, _ in self._next}
+        for _ in range(self._ahead):
+            if left <= 0:
+                break
+            key = ("rows", seq, p0, chunk, left, self._fit_rows)
+            if key not in queued:
+                self._submit(key, self._chunk, _worker_chunk, *key[1:])
+            n = min(chunk, self._fit_rows, left)
+            p0, left = p0 + n, left - n
 
     def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
         """Feed a prompt to sequence `seq`; returns the logits after its last token

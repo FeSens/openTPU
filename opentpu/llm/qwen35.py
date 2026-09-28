@@ -20,9 +20,12 @@ How it maps onto openTPU (docs/qwen35.md):
     both reads of S are row dot products (RDOT) and the update is one in-place OUTER. The
     heads run in pairs: the small vector work of a pair is done on [2, n] tiles, and it is
     software-pipelined around the state passes (_deltanet).
-  * The convolution state is a 4-slot ring of the pre-convolution q, k, v rows in DRAM
-    (position p in slot p % 4), as LFM2's (lfm2.py), stored per pair of heads after the
-    pair's taps.
+  * The convolution state is a window of the pre-convolution q, k, v rows of the K - 1
+    positions before, oldest first, stored per pair of heads after the pair's taps (one load);
+    each step stores it back shifted by one row (_past), so a program's addresses do not
+    depend on the position.
+  * Resident decode (qwen3.Engine(resident=True), Image(lookup=True)): one program per
+    attention bucket takes the token and the position as run arguments (qwen3.RunPos).
   * 256-wide attention heads are two MXU blocks. With MCOLS < 4 a query group of 4 heads is
     split in pairs, each streaming the KV head (qwen3._attention).
 
@@ -60,8 +63,9 @@ from ..kernels.deltanet import gates, l2norm_rows
 from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
 from .lfm2 import plan, run_layers
-from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
-                    _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables)
+from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fake_q, _fake_w,
+                    _inputs, _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc,
+                    _mlp, _qdesc, _tdesc, compile_decode, rope_tables)
 
 LIN, ATTN = "linear", "attn"
 
@@ -129,8 +133,9 @@ class Spec:
             raise ValueError("model does not map onto this openTPU config: " + "; ".join(bad))
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-              wformat: str = "int8", head_format: str | None = None) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format)
+              wformat: str = "int8", head_format: str | None = None,
+              lookup: bool = False) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup)
 
 
 # =============================================================================== reference
@@ -316,14 +321,14 @@ class Image:
     head 0, of head 1, then the z rows of heads 0 and 1; then heads 2 and 3, ...), the a and b
     rows, out_proj as one [H, og * dv] column block per og heads, per pair the convolution taps
     and then the convolution ring, the recurrent state (per head [dv, dk] fp32, transposed) and
-    the per-head constants. An attention block holds the q/k
+    the per-head constants (the window: K - 1 rows, _past). An attention block holds the q/k
     norms, the projections (the gate rows of q_proj as their own matrix) and this slice's KV
     heads with room for `cap` tokens. The I/O area holds `rows` token rows (x, cos, sin,
     logits) for chunked prefill.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-                 wformat: str = "int8", head_format: str | None = None):
+                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Qwen3.5 runs one sequence: batch=1")
@@ -340,6 +345,7 @@ class Image:
         self.nl = spec.lin_heads // S                   # DeltaNet heads of one slice
         self.C = 2 * dk + dv                            # convolved channels per head (q, k, v)
         self.R = self.C + dv                            # projected rows per head (and z)
+        self.CVW = 2 * K * self.C + (K - 1) * 2 * self.C  # a pair's taps, then its window
         self.plan = plan(spec.kinds)
         b = _Bump()
         self.io = {"x": b.alloc(4 * H * rows), "cos": b.alloc(2 * spec.rope_dim * rows),
@@ -368,7 +374,7 @@ class Image:
                             "wo": (self.h_loc, spec.n_q * d), **mlp}}
         lnb = _Bump(lb.next)
         lin = dict(common, alog=lnb.alloc(4 * nl), dtb=lnb.alloc(4 * nl), gn=lnb.alloc(4 * dv),
-                   cv=lnb.alloc(4 * nl * 2 * K * C),    # per pair: taps, then ring slots
+                   cv=lnb.alloc(4 * nl // 2 * self.CVW),  # per pair: taps, then the ring
                    state=lnb.alloc(4 * nl * dv * dk))
         ab = _Bump(lb.next)
         attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
@@ -384,10 +390,11 @@ class Image:
         n_attn = spec.kinds.count(ATTN)
         head = cap * d + 4 * cap * (d // D) + d * cap + 4 * cap
         self.kv_bytes = (n_attn * self.nkv_loc * head                   # KV cache, conv ring
-                         + (spec.layers - n_attn) * 4 * nl * (K * C + dv * dk))  # and state
+                         + (spec.layers - n_attn) * 4 * nl * ((K - 1) * C + dv * dk))  # state
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
+        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -456,7 +463,7 @@ class Image:
                     put(s, Lo["dtb"], f32(W[a + "dt_bias"][hh.start:hh.stop]))
                     put(s, Lo["gn"], f32(W[a + "norm.weight"]))
                     for q, h in enumerate(hh[::2]):
-                        put(s, Lo["cv"] + q * 4 * 4 * K * self.C,
+                        put(s, Lo["cv"] + q * 4 * self.CVW,
                             f32(np.stack([taps[chans[h]].T, taps[chans[h + 1]].T])))
             else:
                 a = p + "self_attn."
@@ -481,9 +488,16 @@ class Image:
                       [r[:, j * C_:(j + 1) * C_] for r in rows(W[p + "mlp.down_proj.weight"], n)])
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
         put_q(self.head, rows(head, self.v_loc), self.head_format)
+        if self.lookup:
+            _lookup_build(put, S, W, spec, self.cap, self.lookup)
         return imgs
 
     # ---- programs
+    def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):
+        """(programs, run_args): qwen35_step at a run-time position (qwen3.compile_decode); the
+        convolutions need lo >= conv_k - 1 (every tap of the ring is a past token)."""
+        return compile_decode(self, qwen35_step, blocks, lo, block)
+
     def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
         """One program per slice: the decode token at position `pos` (qwen35_step)."""
         return [qwen35_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
@@ -529,7 +543,7 @@ class Image:
                 ns.alog = Tensor(off + lofs["alog"], (nl,), (1,))
                 ns.dtb = Tensor(off + lofs["dtb"], (nl,), (1,))
                 ns.gn = Tensor(off + lofs["gn"], (dv,), (1,))
-                ns.cv = Tensor(off + lofs["cv"], (nl // 2, 4 * K * C), (4 * K * C, 1))
+                ns.cv = Tensor(off + lofs["cv"], (nl // 2, self.CVW), (self.CVW, 1))
                 ns.state = Tensor(off + lofs["state"], (nl, dv, dk), (dv * dk, dk, 1))
             else:
                 ns.qn = Tensor(off + lofs["qn"], (d,), (1,))
@@ -551,10 +565,22 @@ class Image:
             hs=_tdesc(self.io["hs"], (nl // 2, 4)),
             gr=_tdesc(self.io["gr"], (self.rows, 2 * nl)),
             on=_tdesc(self.io["on"], (self.rows, self.og * dv)),
-            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc)
+            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc,
+            **_lookup_desc(self.lookup, spec, self.cap))
 
 
 # =============================================================================== kernel
+def _past(K: int, pos) -> int:
+    """How many positions before pos the convolution reads (all K - 1 at a run-time one). The
+    window (a pair's convolution rows of the K - 1 positions before, oldest first, after its
+    taps in DRAM) holds position pos - j in row K - 1 - j; rows of positions below 0 hold
+    nothing useful. Each step stores it shifted by one row, its own rows last, so it does not
+    depend on the position (resident decode)."""
+    if isinstance(pos, RunPos):
+        if pos.lo < K - 1:
+            raise ValueError(f"a run-time position needs p >= {K - 1} (conv taps)")
+        return K - 1
+    return min(K - 1, pos)
 def _deltanet(x, lw, pos: int, spec: Spec, hs):
     """x + out_proj(Gated DeltaNet(x)) for one token, this slice's heads; returns the new
     residual (replicated on every slice).
@@ -598,14 +624,14 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     eb[:, 2:4].set(beta.reshape(NP, 2))
     ol.store(hs, eb)
     del decay, beta, eb
-    prevs = [(pos - j) % K for j in range(1, min(K, pos + 1))]          # ring slots of p-1, ...
+    past = _past(K, pos)
 
     def pairs(n, w):
         return [ol.empty([2 * w]).reshape(2, w) for _ in range(n)]
 
     St = [ol.empty([dv * dk]).reshape(dv, dk) for _ in range(2)]        # heads a, b of a pair
     P = [ol.empty([1, 2 * R]) for _ in range(2)]        # q k v of a, of b, then z of a, of b
-    CV = ol.empty([2 * TP])                             # taps (rows (head, tap)), ring slots
+    CV = ol.empty([TP + (K - 1) * 2 * C])  # taps (rows (head, tap)), the window (_past)
     U, Qn, Kn, GZ = pairs(2, C), pairs(2, dk), pairs(2, dk), pairs(2, dv)
     EB = [ol.empty([4]) for _ in range(2)]
     O = ol.empty([2 * dv]).reshape(2, dv)
@@ -622,7 +648,7 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
             ol.dot(xs, lw.wh[p * 2 * R + c0:p * 2 * R + c1, :], out=P[t][:, c0:c1])
 
     def fetch_cv(p):
-        """Pair p's taps and convolution ring (one load)."""
+        """Pair p's taps and convolution window (one load)."""
         ol.load(lw.cv[p, :], out=CV)
 
     def fetch_eb(p, t):
@@ -643,15 +669,18 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
         """Pair p's convolution into U[t] (j: only head j of the pair)."""
         a, n = (0, 2) if j is None else (j, 1)
         pre = P[t][0, a * C:(a + n) * C]
-        s0 = TP + (pos % K) * 2 * C + a * C
+        s0 = TP + (K - 2) * 2 * C + a * C                # the window's last row: this position
         ol.store(lw.cv[p, s0:s0 + n * C], pre)
+        if a + n == 2:                                  # its other rows, one up (_past)
+            ol.store(lw.cv[p, TP:TP + (K - 2) * 2 * C], CV[TP + 2 * C:TP + (K - 1) * 2 * C])
         taps = CV[0:TP].reshape(2 * K, C)
 
         def tap(i):
             return taps.row_stride_view(i, 2, K) if n == 2 else taps[a * K + i:a * K + i + 1, :]
+        # position p - j sits in window row K - 1 - j and is weighed by tap K - 1 - j
         terms = [(pre.reshape(n, C), K - 1)] + [
-            (CV[TP + s * 2 * C + a * C:TP + s * 2 * C + (a + n) * C].reshape(n, C), K - 2 - i)
-            for i, s in enumerate(prevs)]
+            (CV[TP + (K - 1 - j) * 2 * C + a * C:TP + (K - 1 - j) * 2 * C + (a + n) * C]
+             .reshape(n, C), K - 1 - j) for j in range(1, past + 1)]
         out = U[t][a:a + n, :]
         if len(terms) == 1:
             out.set(terms[0][0] * tap(K - 1))
@@ -754,7 +783,9 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     if NP > 1:
         project(1, 1)
     _pair_segment(0, 0, NP == 1, NP <= 2)
-    n_it = max(0, (NP - 3) // 2)            # segments 1 .. NP-3 have every part: loop them
+    # segments 1 .. NP-3 have every part: loop them, but unrolled at a run-time position (the
+    # loop's address registers would leave too few for the attention's run-time ones)
+    n_it = 0 if isinstance(pos, RunPos) else max(0, (NP - 3) // 2)
     if n_it:
         for i in ol.range(n_it):
             _pair_segment(2 * i + 1, 1, False, False, None if og == 4 else 2 * i)
@@ -794,13 +825,13 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
     eb[:, 2:4].set(beta.reshape(NP, 2))
     ol.store(hs, eb)
     del decay, beta, eb
-    prevs = [(pos - j) % K for j in range(1, min(K, pos + 1))]
+    past = _past(K, pos)
 
     def pairs(n, w):
         return [ol.empty([2 * w]).reshape(2, w) for _ in range(n)]
 
     P = [ol.empty([1, 2 * R]) for _ in range(2)]
-    CV = ol.empty([2 * TP])
+    CV = ol.empty([TP + (K - 1) * 2 * C])
     U, GZ, QK, O = pairs(2, C), pairs(2, dv), pairs(2, 2 * dk), pairs(2, dv)
     EB = [ol.empty([4]) for _ in range(2)]
     ON = ol.empty([og * dv]).reshape(og, dv)
@@ -821,15 +852,18 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
     def conv(p, t, j=None):
         a, n = (0, 2) if j is None else (j, 1)
         pre = P[t][0, a * C:(a + n) * C]
-        s0 = TP + (pos % K) * 2 * C + a * C
+        s0 = TP + (K - 2) * 2 * C + a * C                # the window's last row: this position
         ol.store(lw.cv[p, s0:s0 + n * C], pre)
+        if a + n == 2:                                  # its other rows, one up (_past)
+            ol.store(lw.cv[p, TP:TP + (K - 2) * 2 * C], CV[TP + 2 * C:TP + (K - 1) * 2 * C])
         taps = CV[0:TP].reshape(2 * K, C)
 
         def tap(i):
             return taps.row_stride_view(i, 2, K) if n == 2 else taps[a * K + i:a * K + i + 1, :]
+        # position p - j sits in window row K - 1 - j and is weighed by tap K - 1 - j
         terms = [(pre.reshape(n, C), K - 1)] + [
-            (CV[TP + s * 2 * C + a * C:TP + s * 2 * C + (a + n) * C].reshape(n, C), K - 2 - i)
-            for i, s in enumerate(prevs)]
+            (CV[TP + (K - 1 - j) * 2 * C + a * C:TP + (K - 1 - j) * 2 * C + (a + n) * C]
+             .reshape(n, C), K - 1 - j) for j in range(1, past + 1)]
         out = U[t][a:a + n, :]
         if len(terms) == 1:
             out.set(terms[0][0] * tap(K - 1))
@@ -867,7 +901,8 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
 
     def dstep(h, t, j):
         ol.deltanet_step(lw.state[h], QK[t][j, :], U[t][j, 2 * dk:C], EB[t][j:j + 1],
-                         EB[t][2 + j:3 + j], O[t][j, :], zero=(pos == 0))
+                         EB[t][2 + j:3 + j], O[t][j, :],
+                         zero=not isinstance(pos, RunPos) and pos == 0)
 
     def group(p):
         return p // (og // 2) if (p + 1) % (og // 2) == 0 else None
@@ -908,7 +943,9 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
     if NP > 1:
         project(1, 1)
     _pair_segment(0, 0, NP == 1, NP <= 2, group(0))
-    n_it = max(0, (NP - 3) // 2)
+    # segments 1 .. NP-3 have every part: loop them, but unrolled at a run-time position (the
+    # loop's address registers would leave too few for the attention's run-time ones)
+    n_it = 0 if isinstance(pos, RunPos) else max(0, (NP - 3) // 2)
     if n_it:
         for i in ol.range(n_it):
             _pair_segment(2 * i + 1, 1, False, False, i if og == 4 else 2 * i + 1)
@@ -928,8 +965,7 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
     to m.logits.
     """
     spec = m.spec
-    x = ol.load(m.x)
-    c, s_ = ol.load(m.cos), ol.load(m.sin)
+    x, c, s_ = _inputs(m, pos)
 
     def layer(li, kind):
         lw = m.layer(li, kind)
@@ -1047,14 +1083,13 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         """Pair p's taps, q k v rows (ring, then its projections) and z into buffers b."""
         taps, X, Z = PB[b]
         ol.load(lw.cv[p, 0:TP], out=taps)              # rows (head, tap)
-        for j in range(1, min(K, p0 + 1)):              # positions p0-K+1 .. from the ring
-            sl = TP + (p0 - j) % K * 2 * C
+        for j in range(1, min(K, p0 + 1)):              # positions p0-K+1 ..: the window
+            sl = TP + (K - 1 - j) * 2 * C               # (_past)
             ol.load(lw.cv[p, sl:sl + 2 * C], out=X[K - 1 - j, :])
         ol.dot(xs, lw.wh[p * 2 * RH:p * 2 * RH + 2 * C, :], out=X[K - 1:K - 1 + R, :])
         ol.dot(xs, lw.wh[p * 2 * RH + 2 * C:(p + 1) * 2 * RH, :], out=Z)   # z of a, of b
-        for r in range(max(0, R - K), R):
-            sl = TP + (p0 + r) % K * 2 * C
-            ol.store(lw.cv[p, sl:sl + 2 * C], X[K - 1 + r, :])
+        for i in range(K - 1):                          # the next window
+            ol.store(lw.cv[p, TP + i * 2 * C:TP + (i + 1) * 2 * C], X[R + i, :])
 
     def heads(p, b):
         """Pair p's heads from buffers b -> ONp."""
