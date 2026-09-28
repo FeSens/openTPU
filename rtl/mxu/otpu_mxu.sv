@@ -661,10 +661,18 @@ module otpu_mxu
   logic [MW-1:0] dj;
   logic [MW-1:0] ncnt;
   logic [7:0]    dg;                         // the group of the row being drained
-  wire  [MW-1:0] c_Mn = (dg + 8'd1 == c_G) ? q_Ml[q_h] : MW'(MCOLS);   // its results
+  logic [7:0]    dg1;                        // dg + 1, kept alongside (no adder before the
+                                             // last-group compare: BL16 at 120.755 MHz had
+                                             // dg -> dg + 1 == c_G -> drain lanes -> TMEM grant
+                                             // -> mk / dad / drow enables, 16 levels, -0.287 ns)
+  wire           d_last = (dg1 == c_G);
+  wire  [MW-1:0] c_Mn = d_last ? q_Ml[q_h] : MW'(MCOLS);   // its results
   logic [LANES-1:0][31:0] daddr_l, dval_l;
   logic [LANES-1:0][7:0]  dcol_l;
   wire  drain_go = (rf_n != 0) && (!c_asc || al_st == 2'd2);
+`ifndef SYNTHESIS
+  always @(posedge clk) if (!rst && drain_go && dg1 != dg + 8'd1) $fatal(1, "otpu_mxu: dg1 %0d, dg %0d", dg1, dg);
+`endif
   // Results j and j' of a row sit ors * (j' - j) words apart: the same bank iff that is a multiple
   // of LANES. So consecutive results are conflict-free in runs of LANES / gcd(ors, LANES)
   // (capped at NL), a per-command constant: the lane count is min(run, M - dj), with no serial
@@ -863,7 +871,7 @@ module otpu_mxu
       occ <= '0;
       f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
-      ck <= '0; cg <= '0; dg <= '0; c_left <= '0; rows_live <= '0;
+      ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1; c_left <= '0; rows_live <= '0;
       rf_h <= '0; rf_t <= '0; rf_n <= '0;
       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
@@ -996,14 +1004,14 @@ module otpu_mxu
           end
           if (drain_row_done) begin
             dj <= '0;
-            if (dg + 8'd1 == c_G) begin             // the next weight row, group 0
-              dg <= '0;
+            if (d_last) begin                       // the next weight row, group 0
+              dg <= '0; dg1 <= 8'd1;
               for (int j = 0; j < MCOLS; j++) begin
                 dad[j] <= drow[j] + 32'd1;
                 drow[j] <= drow[j] + 32'd1;
               end
             end else begin                          // the next group of this row
-              dg <= dg + 8'd1;
+              dg <= dg + 8'd1; dg1 <= dg1 + 8'd1;
               for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + q_gs[q_h];
             end
             rf_h <= rf_h + 1;
@@ -1053,7 +1061,7 @@ module otpu_mxu
         done <= 1'b1;
         q_h <= ~q_h;
         qn = qn - 1;
-        ck <= '0; cg <= '0; dg <= '0;
+        ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1;
         // the next head's chunk count: the queued entry, or a command accepted this cycle
         c_left <= (q_n == 2'd2) ? q_total[~q_h] : (start ? cmd_total : '0);
         dj <= '0;
