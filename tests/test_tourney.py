@@ -177,7 +177,7 @@ def test_sandbox_rejects(tmp_path):
 # ------------------------------------------------------------------------------ components
 def test_component_configs_are_consistent():
     comps = sorted((ROOT / "tools" / "tourney" / "components").glob("*.yaml"))
-    assert len(comps) == 11
+    assert len(comps) == 12
     for p in comps:
         c = yaml.safe_load(p.read_text())
         assert c["name"] == p.stem
@@ -338,6 +338,38 @@ def test_ooc_promising():
     assert not A.ooc_promising(old, {"fmax": 130.0, "collisions": 1}, 133.33)[0]
     assert A.ooc_promising(None, {"fmax": None}, 133.33)[0]          # no OOC baseline
     assert not A.ooc_promising(old, {"fmax": None}, 133.33)[0]
+
+
+def test_accept_fmax_area():
+    u = dict(lut=190000, lutram=22800, ff=166000, dsp=353, bram36=554)
+    old = full(wns=-0.431, period=7.969, **u)
+    small = dict(u, lut=186000)                                   # area_eq -1.1%
+    ok, why = A.accept_fmax(old, full(wns=-0.46, period=7.969, **small))
+    assert ok and why.startswith("area:") and "LUT -4000" in why  # WNS -0.03: "equal"
+    assert not A.accept_fmax(old, full(wns=-0.50, period=7.969, **small))[0]   # WNS -0.07
+    big = dict(u, lut=196000)                                     # area_eq +1.7%
+    ok, why = A.accept_fmax(old, full(wns=-0.30, period=7.969, **big))
+    assert not ok and "at most" in why                            # timing win, too big
+    ok, why = A.accept_fmax(old, full(wns=-0.30, period=7.969, **u))
+    assert ok and why.startswith("timing:")
+    # no utilization (older results): area counts as unchanged
+    assert A.accept_fmax(full(wns=-0.3), full(wns=-0.2))[0]
+
+
+def test_ooc_area_candidate_and_score():
+    old = {"fmax": 139.1, "area_eq": 29107.0}
+    ok, why = A.ooc_promising(old, {"fmax": 138.5, "area_eq": 28500.0}, 125.49)
+    assert ok and "area candidate" in why                        # -2.1% area, -0.4% fmax
+    assert not A.ooc_promising(old, {"fmax": 136.0, "area_eq": 28500.0}, 100.0)[0]
+    assert A.ooc_score(old, {"fmax": 139.1, "area_eq": 28816.0}) == pytest.approx(0.01, abs=1e-4)
+    assert A.ooc_score(None, {"fmax": 1.0}) == 0.0
+
+
+def test_rank_fmax_by_score():
+    old = full(wns=-0.4, period=7.969, lut=1000)
+    a = {"id": "a", "full": full(wns=-0.3, period=7.969, lut=1000)}   # +1.3% fmax
+    b = {"id": "b", "full": full(wns=-0.4, period=7.969, lut=900)}    # -10% area
+    assert [r["id"] for r in A.rank_fmax([a, b], old)] == ["b", "a"]
 
 
 def test_rank_fmax():
@@ -673,7 +705,43 @@ def test_full_step_broken_build(tmp_path, monkeypatch):
 
 def test_full_result_cached(tmp_path, monkeypatch):
     O, run = _run(tmp_path)
+    run.repo = tmp_path
+    trees = {"rtl": "r" * 40, "boards": "b" * 40}
+    monkeypatch.setattr(O, "git", lambda *a, **k: trees[a[1].split(":")[1]])
     monkeypatch.setattr(RM, "BUILD_ARGS", ["AXI_BL=16"])
+    # an older result cached under the commit moves to the tree key
     (tmp_path / f"{'a' * 12}-133.33-AXI_BL16.json").write_text(json.dumps(full(wns=0.1)))
     monkeypatch.setattr(O.G, "full_design", lambda *a: pytest.fail("rebuilt a cached commit"))
     assert run.full_result("a" * 40, None)["wns"] == 0.1
+    assert (tmp_path / "trrrrrrbbbbbb-133.33-AXI_BL16.json").exists()
+    # another commit with the same rtl/ and boards/ trees reuses it
+    assert run.full_result("c" * 40, None)["wns"] == 0.1
+
+
+def test_directives_sandbox(tmp_path):
+    ok = """# placement for timing
+set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE ExtraTimingOpt [get_runs impl_1]
+set_property STEPS.SYNTH_DESIGN.ARGS.RETIMING true [get_runs synth_1]
+set_property -dict {STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore} [get_runs impl_1]
+"""
+    assert G.directive_violations(ok) == []
+    for bad in ("set_property STEPS.ROUTE_DESIGN.IS_ENABLED false [get_runs impl_1]",
+                "set_property STEPS.PLACE_DESIGN.TCL.PRE /tmp/x.tcl [get_runs impl_1]",
+                "set_property -dict {STEPS.ROUTE_DESIGN.TCL.POST /x.tcl} [get_runs impl_1]",
+                "set_false_path -from [get_cells a]",
+                "source /tmp/evil.tcl",
+                "set_property STEPS.OPT_DESIGN.IS_ENABLED 0 [get_runs impl_1]",
+                "set_property INCREMENTAL_CHECKPOINT /x.dcp [get_runs impl_1]"):
+        assert G.directive_violations(bad), bad
+    wt = _repo(tmp_path)
+    d = wt / G.DIRECTIVES
+    d.parent.mkdir(parents=True)
+    d.write_text(ok)
+    assert G.sandbox(wt, [G.DIRECTIVES]) == [G.DIRECTIVES]
+    d.write_text("source /tmp/evil.tcl\n")
+    with pytest.raises(G.GateFailure, match="run properties"):
+        G.sandbox(wt, [G.DIRECTIVES])
+    (wt / "b.tcl").write_text("x\n")
+    with pytest.raises(G.GateFailure, match="off limits"):
+        G.sandbox(wt, [G.DIRECTIVES, "b.tcl"])
+

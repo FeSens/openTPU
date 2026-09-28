@@ -218,6 +218,30 @@ def xdc_diff(wt: Path, paths: list[str]) -> str:
     return "\n".join(out)
 
 
+# The one build script a candidate may edit (the whole-design component otpu_impl): run
+# properties only, one `set_property ... [get_runs synth_1|impl_1]` per line, no other Tcl.
+DIRECTIVES = "boards/ypcb-00338/vivado/impl_directives.tcl"
+DIRECTIVE_LINE = re.compile(r"^set_property\s+(-dict\s+\{[^\[\]]*\}|[A-Z0-9_.]+\s+\S+)\s+"
+                            r"\[get_runs\s+(synth_1|impl_1)\]\s*$")
+# steps that must keep running: they are what the reports and the bitstream come from
+# (and no TCL.PRE / TCL.POST hooks: they would run any Tcl)
+DIRECTIVE_BANNED = re.compile(r"IS_ENABLED\s+(false|0)\b.*|INCREMENTAL|\.TCL\.(PRE|POST)|"
+                              r"\bSTEPS\.(WRITE_BITSTREAM|ROUTE_DESIGN\.IS_ENABLED|"
+                              r"PLACE_DESIGN\.IS_ENABLED)", re.I)
+
+
+def directive_violations(text: str) -> list[str]:
+    """The lines of impl_directives.tcl that are not an allowed run property."""
+    bad = []
+    for line in text.splitlines():
+        body = line.split("#", 1)[0].strip() if not line.strip().startswith("#") else ""
+        if not body:
+            continue
+        if not DIRECTIVE_LINE.match(body) or DIRECTIVE_BANNED.search(body):
+            bad.append(body[:160])
+    return bad
+
+
 def sandbox(wt: Path, allowed: list[str]) -> list[str]:
     """Returns the RTL files the candidate changed; raises if anything else changed."""
     paths = changed_paths(wt)
@@ -227,9 +251,14 @@ def sandbox(wt: Path, allowed: list[str]) -> list[str]:
     rtl = [p for p in paths if p not in NOTES]
     if not rtl:
         raise GateFailure("sandbox", "no RTL change")
-    tcl = [p for p in rtl if p.endswith(".tcl")]
+    tcl = [p for p in rtl if p.endswith(".tcl") and p != DIRECTIVES]
     if tcl:
         raise GateFailure("sandbox", f"build scripts are off limits: {tcl}")
+    if DIRECTIVES in rtl and (wt / DIRECTIVES).exists():
+        bad = directive_violations((wt / DIRECTIVES).read_text())
+        if bad:
+            raise GateFailure("sandbox", f"{DIRECTIVES} may only set synth_1 / impl_1 run "
+                                         f"properties, one set_property per line: {bad[:5]}")
     xdc = xdc_violations(xdc_diff(wt, rtl))
     if xdc:
         raise GateFailure("sandbox", f"constraint change touches timing exceptions or clocks: "

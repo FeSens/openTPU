@@ -1,0 +1,7 @@
+{
+ "perf_cycles": 1910634,
+ "sha": "99dd0bad46f21dba78a5656b2eeef5a20565517c",
+ "period": 7.969,
+ "backend": "vivado-remote",
+ "critical": ""
+}

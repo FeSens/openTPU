@@ -171,9 +171,17 @@ class Run:
 
     # ---- the whole design (fmax objective)
     def full_key(self, sha: str) -> Path:
+        """The cache file of a commit's full build. Keyed by the git trees of what the build
+        reads (rtl/, boards/), not the commit: a champion that only took host or doc commits
+        from main is not rebuilt. A result cached under the commit (older runs) is moved over."""
         from . import remote as R
         args = "".join(f"-{a.replace('=', '')}" for a in R.BUILD_ARGS)   # e.g. -AXI_BL16
-        return self.fulldir / f"{sha[:12]}-{self.a.target_mhz:g}{args}.json"
+        trees = "".join(git("rev-parse", f"{sha}:{d}", cwd=self.repo)[:6] for d in ("rtl", "boards"))
+        key = self.fulldir / f"t{trees}-{self.a.target_mhz:g}{args}.json"
+        old = self.fulldir / f"{sha[:12]}-{self.a.target_mhz:g}{args}.json"
+        if not key.exists() and old.exists():
+            old.rename(key)
+        return key
 
     def full_result(self, sha: str, wt: Path | None) -> dict:
         """The full board build of commit `sha` at the target clock: cached in runs/_full/ (all
@@ -370,8 +378,8 @@ class Run:
             rec["ooc"] = {q: m.get(q) for q in ("lut", "lutram", "ff", "dsp", "bram36", "bram18",
                                                  "wns", "whs", "fmax", "area_eq", "collisions")}
             ok, why = A.ooc_promising(champ, m, self.a.target_mhz)
-            rec["ooc_gain"] = ((m["fmax"] - champ["fmax"]) / champ["fmax"]
-                               if m.get("fmax") and champ.get("fmax") else 0.0)
+            rec["ooc_area"] = A.area_delta(champ, m)
+            rec["ooc_gain"] = A.ooc_score(champ, m)       # fmax change - area_eq change
         else:
             ok, why = True, "cross-unit component: no out-of-context step"
             rec["ooc_gain"] = 0.0
@@ -399,12 +407,15 @@ class Run:
             w.setdefault("gate_seconds", {})["full"] = round(time.time() - t, 1)
         full["seconds"] = round(time.time() - t)
         w["full"] = {q: full.get(q) for q in ("period", "wns", "whs", "fmax", "wns_design", "lut",
-                                               "lutram", "ff", "dsp", "bram36", "collisions",
-                                               "congested", "host")}
+                                               "lutram", "ff", "dsp", "bram36", "bram18",
+                                               "collisions", "congested", "host")}
         w["_full"] = full
+        ad = A.area_delta(champ["full"], full)
+        w["full_area"] = ad                              # per-resource deltas, every candidate
         ok, why = A.accept_fmax(champ["full"], full)
         w["outcome"], w["reason"] = ("improvement" if ok else "no_gain"), why
-        w["gain"] = (full["fmax"] - champ["full"]["fmax"]) / champ["full"]["fmax"]
+        w["gain"] = A.score((full["fmax"] - champ["full"]["fmax"]) / champ["full"]["fmax"],
+                            ad["area_eq"])
 
     # ---- rounds
     def round(self, r: int) -> None:
@@ -438,6 +449,14 @@ class Run:
             w["outcome"], w["merged"] = "accepted", sha
             if self.fmax:                  # the committed tree is the one just built
                 self.full_key(sha).write_text(json.dumps(dict(w["_full"], sha=sha), indent=1))
+                with (self.dir.parent / "WINNERS.jsonl").open("a") as f:
+                    f.write(json.dumps({
+                        "time": dt.datetime.now().isoformat(timespec="seconds"),
+                        "comp": self.a.comp, "slot": w["id"], "sha": sha,
+                        "old": champ["sha"], "title": w.get("title"), "reason": w["reason"],
+                        "score": w["gain"], "full": w["full"], "area": w.get("full_area"),
+                        "perf_cycles": w.get("perf_cycles"),
+                        "perf_old": champ.get("perf_cycles")}) + "\n")
             print(f"[tourney] accepted {w['id']} -> {self.branch} {sha[:9]}: {w['reason']}")
         for x in recs:
             if self.a.scribe and x.get("hypothesis"):

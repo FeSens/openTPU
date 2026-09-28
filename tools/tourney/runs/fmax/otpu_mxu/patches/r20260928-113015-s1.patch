@@ -1,0 +1,165 @@
+diff --git a/rtl/mxu/otpu_mxu.sv b/rtl/mxu/otpu_mxu.sv
+index 8683c74..67753fd 100644
+--- a/rtl/mxu/otpu_mxu.sv
++++ b/rtl/mxu/otpu_mxu.sv
+@@ -130,8 +130,8 @@ module otpu_mxu
+ 
+   // ================================================================== issuer
+   logic        i_act, i_unit, i_w4, i_pair;
+-  logic [31:0] i_left, i_rs, i_srs;
+-  logic [15:0] i_KB, i_k;
++  logic [31:0] i_rs, i_srs;
++  logic [15:0] i_KB, i_k, i_n;              // i_n: rows left to issue
+   logic [31:0] row_addr, chunk_addr, srow_addr, scale_addr;
+   logic [PW:0] occ;                         // chunks issued and not yet popped (<= DEPTH)
+ 
+@@ -139,18 +139,22 @@ module otpu_mxu
+   // PAIR: 4-bit only; a row is ceil(KB/2) advances of one chunk each
+   wire        cmd_pair = cmd.flags[6] && cmd.flags[5:4] != WF_W8;
+   wire [15:0] cmd_KBa = cmd_pair ? (cmd.w4[31:16] + 16'd1) >> 1 : cmd.w4[31:16];
+-  wire [31:0] cmd_total = 32'(cmd.w4[15:0]) * 32'(cmd_KBa);   // advances (chunk requests)
+-  // cmd_total == 0 without the multiply (a product of two 16-bit factors is zero iff one is;
+-  // cmd_KBa is zero iff KB is, or PAIR's 16-bit KB + 1 wraps): off the DSP's pattern detect
++  // cmd_tz: no advances (N * KBa == 0) without a multiply (a product of two 16-bit factors is
++  // zero iff one is; cmd_KBa is zero iff KB is, or PAIR's 16-bit KB + 1 wraps)
+   wire        cmd_tz = (cmd.w4[15:0] == 16'd0) || (cmd.w4[31:16] == 16'd0) ||
+                        (cmd_pair && (&cmd.w4[31:16]));
++  // the counters count rows (loaded without arithmetic, no DSP on the accept cycle) and find a
++  // row's end with the advance counters
++  wire [15:0] cmd_rows = cmd_tz ? 16'd0 : cmd.w4[15:0];   // rows to consume (0: no work)
+ `ifndef SYNTHESIS
++  wire [31:0] cmd_total = 32'(cmd.w4[15:0]) * 32'(cmd_KBa);   // advances (chunk requests)
+   always @(posedge clk)
+     if (!rst && start && cmd_tz != (cmd_total == 0))
+       $fatal(1, "otpu_mxu: cmd_tz %0d but total %0d", cmd_tz, cmd_total);
+ `endif
+-  logic [31:0] q_out [2], q_total [2];
+-  logic        q_tz [2];                      // q_total == 0 (registered: off the drain path)
++  logic [31:0] q_out [2];
++  logic [15:0] q_rows [2];                    // cmd_rows
++  logic        q_tz [2];                      // q_rows == 0 (registered: off the drain path)
+   logic [15:0] q_KB [2], q_KBa [2], q_ors [2];   // KBa: advances per row
+   logic        q_pair [2];
+   logic [MCOLS-1:0] q_hi [2];                 // PAIR: the columns that take the odd blocks (j >= M)
+@@ -206,11 +210,12 @@ module otpu_mxu
+   // ================================================================== consumer control
+   logic [15:0] ck;
+   logic [7:0]  cg;                          // the group of the row being consumed (replay)
+-  logic [31:0] c_left;                      // chunks of the head command not yet freed
++  logic [15:0] c_rows;                      // rows of the head command whose last advance (in
++                                            // the last group) has not popped
+   logic [RFW:0] rows_live;                  // rows popped (first block) and not yet drained
+   wire last_k   = (ck + 1 == c_KBa);
+   wire last_g   = (cg + 1 == c_G);          // the row's last group: its pops free FIFO entries
+-  wire more     = c_act && (c_left != 0);
++  wire more     = c_act && (c_rows != 0);
+   // the chunk of advance ck (4-bit without PAIR: two advances a chunk) and whether the advance
+   // finishes it
+   wire [15:0] ckc = (c_w4 && !c_pair) ? {1'b0, ck[15:1]} : ck;
+@@ -796,9 +801,9 @@ module otpu_mxu
+       end
+ `endif
+ 
+-  wire c_drained = c_act && (c_left == 0) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
++  wire c_drained = c_act && (c_rows == 0) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
+   // RMAX writes start a cycle after the head has drained: mx_q registers the test, so the
+-  // drained compares (c_left == 0, rows_live, rmw_n, ...) are off the TMEM write request and the
++  // drained compares (c_rows == 0, rows_live, rmw_n, ...) are off the TMEM write request and the
+   // grant it feeds (clk125 at 125.49 MHz: c_left -> drained test -> MXU write request -> TMEM
+   // arbitration -> VPU WBUF enable / alpha, mk enables, 14 levels, -0.116 ns). The test holds
+   // while drained (nothing new enters the head until it completes, which needs mx_done), and it
+@@ -807,6 +812,30 @@ module otpu_mxu
+   wire mx_go     = mx_q && !mx_done;
+   wire c_fin     = c_drained && (!c_rmax || mx_done || c_tz);
+   wire al_go     = c_act && c_asc && al_st == 2'd0;
++`ifndef SYNTHESIS
++  // the row counters against the chunk counts they replace: c_rows == 0 iff no chunk is left,
++  // and the issuer's last row end is its (N * KBa)-th issue
++  logic [31:0] c_left_ref, i_left_ref, q_total_ref [2];
++  always @(posedge clk) begin
++    if (rst) c_left_ref <= '0;
++    else begin
++      if (start) begin
++        q_total_ref[q_h ^ (q_n != 0)] <= cmd_total;
++        if (q_n == 0) c_left_ref <= cmd_total;
++        if (cmd.w4[15:0] != 0 && cmd.w4[31:16] != 0) i_left_ref <= cmd_total;
++      end
++      if (pop && last_g) c_left_ref <= c_left_ref - 1;
++      if (c_fin && !pop) c_left_ref <= (q_n == 2'd2) ? q_total_ref[~q_h] : (start ? cmd_total : '0);
++      if (go_iss) begin
++        i_left_ref <= i_left_ref - 1;
++        if ((i_left_ref == 1) != (i_k + 1 == i_KB && i_n == 16'd1))
++          $fatal(1, "otpu_mxu: issuer rows %0d, k %0d, chunks left %0d", i_n, i_k, i_left_ref);
++      end
++      if ((c_left_ref == 0) != (c_rows == 0))
++        $fatal(1, "otpu_mxu: rows left %0d but chunks left %0d", c_rows, c_left_ref);
++    end
++  end
++`endif
+ 
+   always_comb begin
+     t_ren = '0; t_raddr = '0; t_wen = '0; t_waddr = '0; t_wdata = '0;
+@@ -871,7 +900,7 @@ module otpu_mxu
+       occ <= '0;
+       f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
+       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
+-      ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1; c_left <= '0; rows_live <= '0;
++      ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1; c_rows <= '0; rows_live <= '0;
+       rf_h <= '0; rf_t <= '0; rf_n <= '0;
+       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
+       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
+@@ -890,9 +919,9 @@ module otpu_mxu
+         logic qi;
+         qi = q_h ^ (q_n != 0);
+         q_out[qi]   <= cmd.w3;
+-        q_total[qi] <= cmd_total;
++        q_rows[qi]  <= cmd_rows;
+         q_tz[qi]    <= cmd_tz;
+-        if (q_n == 0) c_left <= cmd_total;          // becomes the head now
++        if (q_n == 0) c_rows <= cmd_rows;           // becomes the head now
+         q_KB[qi]    <= cmd.w4[31:16];
+         q_KBa[qi]   <= cmd_KBa;
+         q_pair[qi]  <= cmd_pair;
+@@ -921,7 +950,7 @@ module otpu_mxu
+         qn = qn + 1;
+         if (cmd.w4[15:0] != 0 && cmd.w4[31:16] != 0) begin
+           i_act  <= 1'b1;
+-          i_left <= cmd_total;
++          i_n    <= cmd.w4[15:0];
+           i_KB   <= cmd_KBa;
+           i_k    <= '0;
+           i_rs   <= cmd.w5;
+@@ -940,10 +969,10 @@ module otpu_mxu
+       end
+       // ---- issue one chunk request
+       if (go_iss) begin
+-        i_left <= i_left - 1;
+-        if (i_left == 1) i_act <= 1'b0;
+-        if (i_k + 1 == i_KB) begin
++        if (i_k + 1 == i_KB) begin              // a row's last advance
+           i_k <= '0;
++          i_n <= i_n - 1;
++          if (i_n == 16'd1) i_act <= 1'b0;
+           row_addr <= row_addr + i_rs;
+           chunk_addr <= row_addr + i_rs;
+           srow_addr <= srow_addr + i_srs;
+@@ -968,7 +997,7 @@ module otpu_mxu
+       if (pop) begin
+         if (last_g) begin
+           if (!c_unit) s_head <= s_head + 1;
+-          c_left <= c_left - 1;
++          if (last_k) c_rows <= c_rows - 1;
+         end
+         // the next read: the next entry, or back to the head for the row's next group
+         if (last_k && !last_g) f_rd <= f_head;
+@@ -1062,8 +1091,8 @@ module otpu_mxu
+         q_h <= ~q_h;
+         qn = qn - 1;
+         ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1;
+-        // the next head's chunk count: the queued entry, or a command accepted this cycle
+-        c_left <= (q_n == 2'd2) ? q_total[~q_h] : (start ? cmd_total : '0);
++        // the next head's row count: the queued entry, or a command accepted this cycle
++        c_rows <= (q_n == 2'd2) ? q_rows[~q_h] : (start ? cmd_rows : '0);
+         dj <= '0;
+         for (int j = 0; j < MCOLS; j++) begin
+           dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])

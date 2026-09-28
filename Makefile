@@ -25,7 +25,8 @@ FMAX_COMPS ?= otpu_xunit otpu_tmem otpu_vpu otpu_mxu otpu_coll otpu_seq otpu_qua
               otpu_actram otpu_axi_dram otpu_fp
 export MODEL_HYP MODEL_IMPL MODEL_SCRIBE EFFORT_HYP EFFORT_IMPL EFFORT_SCRIBE
 
-.PHONY: tourney tourney-baseline tourney-report test-tourney tourney-fmax tourney-fmax-baseline
+.PHONY: tourney tourney-baseline tourney-report test-tourney tourney-fmax tourney-fmax-baseline \
+        tourney-forever
 
 tourney:
 	@test -n "$(COMP)" || (echo "COMP=<component> required; see tools/tourney/components/" && false)
@@ -42,6 +43,11 @@ tourney-fmax:
 	  $(PYTHON) -m tools.tourney.orchestrator --objective fmax --target-mhz $(TARGET_MHZ) \
 	    --comp $$c --rounds 1 --slots $(K) --agent $(AGENT) --eval vivado-remote --base $(BASE) \
 	    $(ARGS) || exit $$?; done; done
+
+# the fmax tournament without end: every component in turn, the whole-design component every
+# WHOLE_EVERY rounds (tools/tourney/forever.sh; stop: touch /tmp/otpu-tourney-stop)
+tourney-forever:
+	K=$(K) TARGET_MHZ=$(TARGET_MHZ) bash tools/tourney/forever.sh
 
 tourney-fmax-baseline:
 	$(PYTHON) -m tools.tourney.orchestrator --objective fmax --target-mhz $(TARGET_MHZ) \

@@ -185,7 +185,9 @@ def run(provider: str, prompt: str, cwd: Path, log: Path, timeout: int, tag: str
 
 # ------------------------------------------------------------------------------ prompts
 def _src(wt: Path, files: list[str]) -> str:
-    return "\n\n".join(f"=== {f} ===\n{(wt / f).read_text()}" for f in files)
+    return "\n\n".join(f"=== {f} ===\n" + ((wt / f).read_text() if (wt / f).exists() else
+                                             "(does not exist yet: you may create it)")
+                       for f in files)
 
 
 def hypothesis_prompt(comp: dict, wt: Path, champ: dict, lessons: str, recent: str,
@@ -284,8 +286,9 @@ Worst paths inside the component:
             "whole design, so every candidate goes straight to the full build.\n")
     return f"""You are a hardware timing-closure agent working on openTPU, an FPGA accelerator on a
 Kintex-7 xc7k480t-2 (Vivado 2026.1). The goal of this tournament is a faster clock for the WHOLE
-design: propose ONE concrete change to the component `{comp['name']}` that raises the post-route
-fmax of the full board build (core clock), without changing what the design computes.
+design, and a smaller one: propose ONE concrete change to the component `{comp['name']}` that
+raises the post-route fmax of the full board build (core clock) or shrinks its area at the same
+timing, without changing what the design computes.
 
 ## Component
 {comp['description']}
@@ -312,11 +315,14 @@ Congestion (report_design_analysis -congestion):
    board's AXI memory path -- results must stay IDENTICAL (same fp32 rounding, same order of
    operations, docs/isa.md; latency may change, handshake/grant contracts may not break).
 3. A Qwen3 decode-token proxy on the RTL may not get more than 0.2% slower (in cycles).
-4. {"The component alone, out of context in Vivado: its fmax must rise by 0.5% or more, or stay within 1% if it already clears the target (then the gain must come from the paths around it)." if ooc else "(no out-of-context step for this component)"}
-5. The full board build at {target_mhz:g} MHz: accepted if the core clock's fmax rises by 0.5%
-   or more (or WNS by 0.05 ns or more), hold is met, the router reports no congestion
-   (Route 35-447) and no block RAM has a read-address collision (Synth 8-6430). One full build
-   runs per round (about an hour), so aim at the worst paths above, not at small wins.
+4. {"The component alone, out of context in Vivado: its fmax must rise by 0.5% or more, or its area_eq shrink by 1% or more at no more than 1% lower fmax, or it must stay within 1% if it already clears the target (then the gain must come from the paths around it)." if ooc else "(no out-of-context step for this component)"}
+5. The full board build at {target_mhz:g} MHz, with hold met, no router congestion (Route 35-447)
+   and no block RAM read-address collision (Synth 8-6430), is accepted for
+   - timing: core clock fmax +0.5% or more (or WNS +0.05 ns or more) at no more than +1% area, or
+   - area: area_eq -0.5% or more with WNS no worse than -0.05 ns,
+   where area_eq = LUT + LUTRAM + 0.5 FF + 40 DSP + 80 BRAM36 of the whole board. Winners rank
+   by (fmax change - area_eq change). One full build runs per round (about two hours), so aim
+   at the worst paths above or at a large block of logic, not at small wins.
 
 ## Focus for this slot
 {category}

@@ -17,6 +17,8 @@ set strategy [lindex $argv 3]
 
 open_project $out/otpu.xpr
 file mkdir $out/reports
+# run properties (synthesis options, implementation directives): impl_directives.tcl
+if {[file exists $here/impl_directives.tcl]} { source $here/impl_directives.tcl }
 
 if {!$impl_only} {
   # ---- IP (block design) out-of-context runs first

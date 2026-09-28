@@ -180,6 +180,45 @@ make tourney-report COMP=fmax/otpu_vpu
    `tourney/fmax`, and its full result is stored as the new champion's, so the next round does
    not rebuild it.
 
+### Area counts too
+
+Every candidate's record carries its full build's per-resource changes against the champion
+(`full_area`: LUT, LUTRAM, FF, DSP, BRAM36 and `area_eq`, the weighted sum from `accept.py`). A
+full build is accepted for
+
+- **timing:** fmax +0.5% or more (or WNS +0.05 ns or more at the same period), at no more than
+  +1% area_eq; or
+- **area:** area_eq -0.5% or more with "equal" timing: WNS no worse than -0.05 ns.
+
+Winners rank by the combined score, fmax change minus area_eq change (1% of clock is worth 1% of
+area). At the OOC step a unit also earns the full build with area_eq -1% at no more than -1% OOC
+fmax, and the round's one full build goes to the best OOC score (the same combination). The
+steps are smaller than place-and-route noise (0.1-0.2 ns between builds here): an accepted build
+is a candidate for main, confirmed only by a rebuild or the card.
+
+Accepted winners are also appended to `runs/fmax/WINNERS.jsonl` (component, commit, reason,
+score, full result, area changes, perf cycles).
+
+### Running continuously
+
+`make tourney-forever` (`tools/tourney/forever.sh`) never ends: one round per component in turn
+(`FOREVER_COMPS`, default DMA, sequencer, TMEM, collective, cross-unit, MXU, DRAM adapter, VPU,
+quantizer, ACT RAM), and a whole-design round (`otpu_impl`, below) after every `WHOLE_EVERY` (4)
+of them. Before each round it fetches `origin/main` (`BASE`), which the champion merges when it
+has moved; a full result is cached by the git trees of `rtl/` and `boards/`, so main's host or
+doc commits do not cost a rebuild. `K=2` slots per round, `K_<comp>=n` for one component.
+Control files: `/tmp/otpu-tourney-stop` (stop before the next round), `/tmp/otpu-tourney-pause`
+(wait while it exists), `/tmp/otpu-tourney-hosts` (build hosts and caps, read per job).
+
+### The whole-design component `otpu_impl`
+
+No RTL: the Vivado run properties in `boards/ypcb-00338/vivado/impl_directives.tcl`, which
+`build.tcl` sources after opening the project (synthesis retiming and fanout options; opt, place,
+phys_opt and route directives), and placement in `otpu_top.xdc` (pblocks, MAX_FANOUT). The
+sandbox allows only `set_property <PROP> <value> [get_runs synth_1|impl_1]` lines there: no other
+Tcl, no TCL.PRE / TCL.POST hooks, no disabled steps, no incremental checkpoints, and no timing
+exceptions or clock changes in either file.
+
 ### The cross-unit component `otpu_xunit`
 
 `otpu_xunit` may change:

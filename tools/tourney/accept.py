@@ -93,8 +93,20 @@ def accept(old: dict, new: dict, target_mhz: float) -> tuple[bool, str]:
 
 # ------------------------------------------------------------------------------ fmax objective
 # The full-design tournament (--objective fmax) judges a candidate by the whole board built in
-# Vivado at the tournament's clock: core_clk fmax = 1000 / (period - WNS).
+# Vivado at the tournament's clock: core_clk fmax = 1000 / (period - WNS), and the whole board's
+# area_eq (same weights as above, from the post-route utilization).
+#
+# Two ways to win (hold met, no router congestion, no Synth 8-6430 memory):
+#   T. timing: fmax +0.5% or better (or WNS +0.05 ns at the same period), area_eq at most +1%
+#   A. area:   area_eq -0.5% or better, timing "equal" (WNS no worse than -0.05 ns, the size of a
+#              timing win; fmax -0.5% across periods)
+# Several winners rank by score = fmax change - area_eq change (1% fmax is worth 1% area).
+# Place-and-route noise between builds of near-identical designs is ~0.1-0.2 ns here, larger
+# than either step: a single accepted build is a candidate, not a proven trend.
 FULL_GAIN, FULL_WNS_GAIN, OOC_GAIN, OOC_SLACK = 0.005, 0.05, 0.005, 0.01
+FULL_AREA_GAIN, FULL_AREA_SLACK, FULL_WNS_TOL = 0.005, 0.01, 0.05
+OOC_AREA_GAIN = 0.01
+RESOURCES = ("lut", "lutram", "ff", "dsp", "bram36", "bram18")
 
 
 def full_problems(new: dict) -> list[str]:
@@ -111,10 +123,28 @@ def full_problems(new: dict) -> list[str]:
     return why
 
 
+def area_delta(old: dict, new: dict) -> dict:
+    """Per-resource changes (new - old, None when either is missing) and the area_eq change as
+    a fraction ('area_eq', 0.0 when the champion has no utilization)."""
+    d = {k: (float(new[k]) - float(old[k]) if new.get(k) is not None and old.get(k) is not None
+             else None) for k in RESOURCES}
+    ao, an = area_eq(old), area_eq(new)
+    d["area_eq"] = (an - ao) / ao if ao and an else 0.0
+    return d
+
+
+def fmt_area(d: dict) -> str:
+    parts = [f"{k.upper()} {v:+.0f}" for k, v in d.items() if k in RESOURCES and v]
+    return f"area_eq {d['area_eq']:+.2%}" + (f" ({', '.join(parts)})" if parts else "")
+
+
+def score(df: float, da: float) -> float:
+    """The combined metric: fmax change minus area_eq change (fractions)."""
+    return df - da
+
+
 def accept_fmax(old: dict, new: dict) -> tuple[bool, str]:
-    """The full-design rule: fmax +0.5% or better, or WNS +0.05 ns or better at the same clock,
-    with hold met, no router congestion and no Synth 8-6430 memory. Area does not count here
-    (it breaks ties between several winners, see rank_fmax)."""
+    """The full-design rule (T: timing, A: area; see above)."""
     bad = full_problems(new)
     if bad:
         return False, "; ".join(bad)
@@ -122,18 +152,40 @@ def accept_fmax(old: dict, new: dict) -> tuple[bool, str]:
     df = (fn - fo) / fo
     dw = (new["wns"] - old["wns"]) if (old.get("period") == new.get("period") and
                                        old.get("wns") is not None) else None
+    ad = area_delta(old, new)
+    da = ad["area_eq"]
     msg = f"full fmax {fo:.2f} -> {fn:.2f} MHz ({df:+.2%})" + (
-        f", WNS {old['wns']:+.3f} -> {new['wns']:+.3f} ns" if dw is not None else "")
-    if df >= FULL_GAIN - 1e-12 or (dw is not None and dw >= FULL_WNS_GAIN - 1e-9):
-        return True, msg
-    return False, msg + f" (need >= {FULL_GAIN:+.1%} or WNS >= {FULL_WNS_GAIN:+.2f} ns)"
+        f", WNS {old['wns']:+.3f} -> {new['wns']:+.3f} ns" if dw is not None else "") + \
+        f", {fmt_area(ad)}, score {score(df, da):+.2%}"
+    timing = df >= FULL_GAIN - 1e-12 or (dw is not None and dw >= FULL_WNS_GAIN - 1e-9)
+    if timing and da <= FULL_AREA_SLACK + 1e-12:
+        return True, "timing: " + msg
+    same = (dw >= -FULL_WNS_TOL - 1e-9) if dw is not None else df >= -FULL_GAIN - 1e-12
+    if da <= -FULL_AREA_GAIN + 1e-12 and same:
+        return True, "area: " + msg
+    if timing:
+        return False, msg + f" (a timing win may cost at most {FULL_AREA_SLACK:+.0%} area)"
+    return False, msg + (f" (need fmax >= {FULL_GAIN:+.1%} / WNS >= {FULL_WNS_GAIN:+.2f} ns, or "
+                         f"area_eq <= {-FULL_AREA_GAIN:+.1%} with WNS >= {-FULL_WNS_TOL:+.2f} ns)")
+
+
+def ooc_score(old: dict | None, new: dict) -> float:
+    """A candidate's OOC score (fmax change - area_eq change): the round's one full build goes
+    to the best."""
+    if not old or not old.get("fmax") or not new.get("fmax"):
+        return 0.0
+    df = (new["fmax"] - old["fmax"]) / old["fmax"]
+    ao, an = old.get("area_eq"), new.get("area_eq")
+    da = (an - ao) / ao if ao and an else 0.0
+    return score(df, da)
 
 
 def ooc_promising(old: dict | None, new: dict, target_mhz: float) -> tuple[bool, str]:
-    """Whether a component's OOC result earns a full build: its OOC fmax improves by >= 0.5%,
-    or the component already clears the target on its own (so the gain must come from the paths
-    between units, which OOC cannot see) and does not get more than 1% slower. No champion
-    OOC number (e.g. the cross-unit component): always promising."""
+    """Whether a component's OOC result earns a full build: its OOC fmax improves by >= 0.5%;
+    or its OOC area_eq shrinks by >= 1% at no more than -1% OOC fmax (an area candidate); or the
+    component already clears the target on its own (so the gain must come from the paths between
+    units, which OOC cannot see) and does not get more than 1% slower. No champion OOC number
+    (e.g. the cross-unit component): always promising."""
     if new.get("collisions"):
         return False, f"{new['collisions']} Synth 8-6430 memories"
     if old is None or old.get("fmax") is None:
@@ -142,16 +194,28 @@ def ooc_promising(old: dict | None, new: dict, target_mhz: float) -> tuple[bool,
     if fn is None:
         return False, "no OOC timing"
     df = (fn - fo) / fo
+    ao, an = old.get("area_eq"), new.get("area_eq")
+    da = (an - ao) / ao if ao and an else 0.0
+    tag = f"OOC fmax {fo:.1f} -> {fn:.1f} MHz ({df:+.1%}), area_eq {da:+.1%}"
     if df >= OOC_GAIN:
-        return True, f"OOC fmax {fo:.1f} -> {fn:.1f} MHz ({df:+.1%})"
+        return True, tag
+    if da <= -OOC_AREA_GAIN and df >= -OOC_SLACK:
+        return True, tag + " (area candidate)"
     if fo >= target_mhz and df >= -OOC_SLACK:
-        return True, f"OOC fmax {fo:.1f} -> {fn:.1f} MHz ({df:+.1%}; unit already above target)"
-    return False, f"OOC fmax {fo:.1f} -> {fn:.1f} MHz ({df:+.1%}; need >= {OOC_GAIN:+.1%})"
+        return True, tag + " (unit already above target)"
+    return False, tag + f" (need fmax >= {OOC_GAIN:+.1%} or area_eq <= {-OOC_AREA_GAIN:+.0%})"
 
 
-def rank_fmax(recs: list[dict]) -> list[dict]:
-    """Accepted full-design candidates, best first: higher fmax, then smaller area."""
-    return sorted(recs, key=lambda r: (-r["full"]["fmax"], area_eq(r["full"])))
+def rank_fmax(recs: list[dict], old: dict | None = None) -> list[dict]:
+    """Accepted full-design candidates, best first: by score against `old` (the champion's full
+    result) when given, else higher fmax, then smaller area."""
+    if old is None:
+        return sorted(recs, key=lambda r: (-r["full"]["fmax"], area_eq(r["full"])))
+
+    def sc(r):
+        df = (r["full"]["fmax"] - old["fmax"]) / old["fmax"]
+        return -score(df, area_delta(old, r["full"])["area_eq"])
+    return sorted(recs, key=sc)
 
 
 def perf_ok(old_cycles: int | None, new_cycles: int | None, tol: float = 0.002) -> bool:
