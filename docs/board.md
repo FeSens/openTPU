@@ -130,7 +130,9 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_prod120hp_aebb0bf0/otpu.bit`** (production, 2026-09-28) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | aebb0bf (host-path: 4-bit MXU with PAIR, r7 DRAM path, replay, resident decode run arguments (CAPS bit25), DSTEP, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.004 ns, WHS +0.016 ns |
+| **`build/deploy_bl32mx120_be388a32/otpu.bit`** (production, 2026-09-28 11:00) | `make bit DDR=1066 CORE_MHZ=120.755 AXI_BL=32` (MCOLS=2, LANES=8) | be388a1 (tv-cand2: main + port B read bursts up to 64 beats + the MXU / adapter timing fixes), 32-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.066 ns, WHS +0.016 ns |
+| `build/deploy_bl16mx120_be388a1f/otpu.bit` (production 2026-09-28 morning) | as above, `AXI_BL=16` | be388a1, 16-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.048 ns, WHS +0.013 ns |
+| `build/deploy_prod120hp_aebb0bf0/otpu.bit` (production 2026-09-28 until the morning) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | aebb0bf (host-path: 4-bit MXU with PAIR, r7 DRAM path, replay, resident decode run arguments (CAPS bit25), DSTEP, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.004 ns, WHS +0.016 ns |
 | `build/deploy_prod120fp4_ea3bc560/otpu.bit` (production 2026-09-27 evening) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | ea3bc56 (4-bit MXU with PAIR, fmax fixes, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.149 ns, WHS +0.016 ns |
 | `build/deploy_prod120_b01b8acb/otpu.bit` (production 2026-09-27 afternoon, int8 only) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | b01b8ac (fmax fixes; section 5, "Faster DDR3") | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.080 ns, WHS +0.016 ns |
 | `build/deploy_prod1066_b2c7ce43/otpu.bit` (previous production) | `make bit DDR=1066` at 100 MHz | b2c7ce4 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns |
@@ -572,14 +574,64 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
-**BL16 candidate (2026-09-28): `~/otpu-build/deploy_bl16mx120_be388a1f`** (omarchy; branch
+**Production image (2026-09-28, 11:00): `build/deploy_bl32mx120_be388a32`** (omarchy
+`~/openTPU/build/`; be388a1 built with `AXI_BL=32`: port B reads in bursts of up to 32 beats,
+the adapter's request queue 32 deep). Core clock 120.755 MHz, DDR3-1066, WNS +0.066 ns, WHS
++0.016 ns. The worst path is MXU q_h -> TMEM pw_d at +0.066 ns (11 levels). The adapter's
+qc -> qb_n (the run / queue count) comes next at +0.097 ns (18 levels): QD 32 fits, with little
+margin. `make bit` now builds it (`AXI_BL` defaults to 32).
+
+BL16 vs BL32 A/B, 2026-09-28 08:44-08:55: the same session, host main 1654f70 (the poll fix),
+omarchy's load 1.5-2.3 during BL16 and 1.6-4.1 during BL32. Decode is `tools/decode_profile.py`,
+greedy, 96 tokens, streamed logits; "wall" is the whole run, the first window included.
+
+| Model | Weights | BL16 Mcycles | BL16 device / wall tok/s | BL32 Mcycles | BL32 device / wall tok/s | BL32 vs BL16 (device) |
+|---|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | 2.059 | 58.63 / 57.12 | 2.008 | 60.14 / 58.86 | +2.6% |
+| Qwen3-0.6B | int8 | 5.459 | 22.12 / 21.66 | 5.324 | 22.68 / 22.20 | +2.5% |
+| Qwen3.5-0.8B | int8 | 7.566 | 15.96 / 15.89 | 7.415 | 16.29 / 16.20 | +2.0% |
+| LFM2.5-230M | 4-bit, int8 head | 1.384 | 87.22 / 84.11 | 1.353 | 89.27 / 85.41 | +2.3% |
+| Qwen3-0.6B | 4-bit, int8 head | 3.620 | 33.36 / 32.31 | 3.555 | 33.97 / 33.75 | +1.8% |
+| Qwen3.5-0.8B | 4-bit, int8 head | 5.501 | 21.95 / 21.82 | 5.400 | 22.36 / 22.22 | +1.9% |
+
+`tools/rw_bench.py` mm: 122.9 B/cycle (BL32) against 119.5 (BL16) and 113.3 (BL8, aebb0bf0).
+The fitted DDR3 model projected 1.309 Mcycles for LFM2 4-bit at BL32 (pos 50), and the card gives
+1.353. The per-beat term (bgap) was fitted at BL 8 and 16 only; at 32 it credits the long bursts
+about 3% too much.
+
+Qualified on the card 2026-09-28 08:58-10:54 (host tree main 1654f70; omarchy's load 6-16:
+2 Vivado builds and a test suite):
+- selftest with the 12 op checks passes;
+- `otpu-diag --mem full --soak 20` passes cold (54 °C) and after a 315 s warm soak (61 -> 64
+  °C): isa 93, system 5, mem 13;
+- all 6 configurations are token for token equal to the ISA simulator after the soak. Before the
+  soak, 5 of the 6 were checked: the Qwen3 4-bit reference job was killed by the OOM killer, and
+  its card check timed out waiting for it;
+- resident decode is equal to the per-position programs, 64 of 64 greedy tokens, for all 6
+  configurations (Qwen3.5 is resident on main since 1654f70).
+
+Prefill (a 512-token prompt; wall includes compiling each chunk on the host, on the loaded host)
+and DRAM (the card's counters over 64 decode tokens):
+
+| Model | Weights | prefill device tok/s | prefill wall tok/s | DRAM read per token | DRAM while decoding |
+|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | 161.5 | 86.7 | 245 MB | 14.36 GB/s (84%) |
+| Qwen3-0.6B | int8 | 55.0 | 50.1 | 663 MB | 14.33 GB/s (84%) |
+| Qwen3.5-0.8B | int8 | 39.3 | 34.8 | 818 MB | 13.59 GB/s (80%) |
+| LFM2.5-230M | 4-bit, int8 head | 169.7 | 58.7 | 164 MB | 14.07 GB/s (83%) |
+| Qwen3-0.6B | 4-bit, int8 head | 58.5 | 52.2 | 443 MB | 14.04 GB/s (82%) |
+| Qwen3.5-0.8B | 4-bit, int8 head | 41.9 | 36.7 | 570 MB | 13.11 GB/s (77%) |
+
+rw_bench on it: mm 122.8 B/cycle, mm+st 211,763 cycles, mm+dstep 151,974, dstep 89,037.
+
+**Production image 2026-09-28 morning (BL16): `build/deploy_bl16mx120_be388a1f`** (omarchy; branch
 tv-cand2 be388a1: main 6e2605b + lfm2-cycles 6fb2851 (port B read bursts up to 64 beats) +
 the tournament's MXU / adapter timing fixes (q_tz from its factors, dg1 registered, the port-A
 return registered, DSTEP fill and RMAX drain registered), built with `AXI_BL=16`. Core clock
-120.755 MHz, DDR3-1066, WNS +0.048 ns, WHS +0.013 ns. It becomes the production image once
-be388a1's full test suite passes. The fallback is `deploy_bl16_fb2b6630` (lfm2-cycles fb2b663,
-AXI_BL=16 without the timing fixes, WNS +0.003 ns after an ExtraTimingOpt re-implementation).
-It also passed the checks below (05:44-06:44).
+120.755 MHz, DDR3-1066, WNS +0.048 ns, WHS +0.013 ns. It was the production image from the
+morning until BL32 replaced it at 11:00. A second BL16 image, `~/otpu-build/deploy_bl16_fb2b6630`
+(lfm2-cycles fb2b663, AXI_BL=16 without the timing fixes, WNS +0.003 ns after an ExtraTimingOpt
+re-implementation), also passed the checks below (05:44-06:44).
 
 Qualified on the card 2026-09-28 06:46-07:43 (host tree host-8efceb7):
 - selftest with the 12 op checks passes;
