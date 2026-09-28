@@ -323,8 +323,11 @@ it projected for this build came out -24% / -26% on the card.
 
 Three more parameters fitted on 2026-09-28: production image deploy_prod120hp_aebb0bf0,
 DDR3-1066, 120.755 MHz. All three are set in `ddr3_plusargs`.
-- Every AXI read transaction costs the data bus 1.7 controller cycles (`+axi_tgap=170`). This caps
-  sequential 8-beat bursts at about 8 / 9.7 of the peak: ~111 B per core cycle.
+- Every AXI read transaction costs the data bus 1.22 controller cycles (`+axi_tgap=122`), plus
+  0.06 cycles per beat (`+axi_bgap=6`). This caps sequential 8-beat bursts at about 8 / 9.7 of
+  the peak: ~111 B per core cycle. The split between the two comes from the card's 16-beat
+  bursts (below). With the per-transaction cost alone (1.7, the first fit), 16-beat bursts
+  simulated 2.5% faster than the card.
 - Every AXI write transaction (the adapter's writes are single beats) costs 2 controller cycles
   (`+axi_wgap=200`).
 - A read/write turnaround costs 4 controller cycles (`+axi_tturn=4`, was 2).
@@ -343,7 +346,7 @@ stores, loads or DSTEPs:
 | mm+ld | 199,015 | 192,180 | 198,171 |
 | mm+dstep | 158,457 | 112,794 | 154,713 |
 
-The fitted model then checks against the decode runs. The Qwen3.5 runs use DSTEP
+The fitted model then checks against the decode runs. These were run with the first fit (tgap 170, no bgap); at 8-beat bursts the split fit gives the same cycles within 0.1%. The Qwen3.5 runs use DSTEP
 (`OTPU_PAIR=1 OTPU_DSTEP=1`), as the image does:
 
 | Decode run (4-bit + int8 head) | card (lens) | sim before | sim fitted |
@@ -358,8 +361,16 @@ Still missing: DSTEP alone runs 22% slower on the card (91.2K vs 74.7K cycles). 
 bandwidth: the sim's DSTEP is far from the DRAM limit and does not respond to wgap. It is
 probably latency (write responses, or read-after-write), which the model does not separate.
 
-The simulator puts the cost on the transaction, so 16-beat bursts would halve it: 1.43 -> 1.31 M
-simulated for LFM2 (`--bl 16`). The card test is the `AXI_BL=16` build (`make bit AXI_BL=16`).
+**16-beat read bursts (`make bit AXI_BL=16`), measured 2026-09-28.** This image is
+unqualified: build fb2b6630, WNS -0.294 ns at 120.755 MHz, fmax 116.6. It passes selftest,
+`otpu-diag --only isa` (93 / 93), and LFM2 is token-exact against the ISA simulator (32 tokens).
+Same session, against production hp-wb:
+
+| | hp-wb (BL 8) | BL 16 (unqualified, WNS -0.294) | sim BL 8 / 16 (fitted) |
+|---|---|---|---|
+| rw_bench mm | 78,670 cycles, 113.3 B/cycle | 74,578, 119.5 B/cycle (-5.2%) | 79,166 / 74,495 |
+| rw_bench mm+dstep | 158,638 | 154,996 | 154,647 / 150,052 |
+| LFM2 4-bit + int8 head decode, 96 tokens | 1.455 Mcycles, 83.0 device / 79.0 wall tok/s | 1.384 Mcycles, 87.3 / 83.5 tok/s (-4.9%) | pos 50: 1.430 / 1.347 M |
 
 Before the burst fix: Decode runs at ~3.2x the simulated cycles: the counters show the MXU starved (MXU_BUSY 94%,
 MXU_MAC 21%, DRAM_WAIT 0.1%) and DRAM reads at 3.0 GB/s (0.23 beats / cycle / channel). Port B
