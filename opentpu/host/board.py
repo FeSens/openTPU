@@ -872,7 +872,12 @@ class BoardBackend:
         self._prep: dict = {}               # id(programs) -> (programs, words), from prepare()
         self._running = None                # the started programs
         self._resident = None               # (programs, words) in IMEM (start() skips the load)
-        self._expect = 0.0                  # the next run's expected seconds (the poll's hint)
+        self._expect = 0.0                  # the run's expected seconds (the poll's hint)
+        # the expected seconds per program length: a run is expected to take what the last
+        # run of a program of its length took (the first decode run after a prefill chunk,
+        # expected to take the chunk's 25 ms, was seen 14 ms late on the card)
+        self._expects: dict[int, float] = {}
+        self._key = 0
         self._ratio = 1.0                   # run wall time / (CYCLES / CORE_KHZ), smoothed
         self._seen = None                   # HALTED seen by the streamed wait (perf_counter)
         # streamed logits (start(stream=...)): the region holding the sentinel, the pieces to
@@ -987,6 +992,8 @@ class BoardBackend:
         elif stream is None:
             self._armed = None                      # the run may write the region
         self._seen = None
+        self._key = len(self._resident[1])
+        self._expect = self._expects.get(self._key, 0.0)
         self.board.start(trace=self.trace)
         self._running, self._stream = programs, stream
         for a, n in self._rearm:
@@ -1009,7 +1016,7 @@ class BoardBackend:
             self._armed, self._stream = None, None  # the region's state is unknown
             raise
         khz = self.info["core_khz"]
-        self._expect = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
+        self._expects[self._key] = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
         self.last = (programs, st)
         if self.status is not None:
             self.status.token(st["cycles"], khz, dram=self._layout(True))

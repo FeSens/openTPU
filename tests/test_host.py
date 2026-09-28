@@ -385,6 +385,28 @@ def test_streamed_wait_sees_the_halt_soon(run_dir, monkeypatch):
     assert np.median(late[3:]) < 0.3e-3, late
 
 
+def test_a_short_run_after_a_long_one_is_seen_soon(run_dir):
+    """The expected run time is per program (by its length): a short program after a long one
+    (the first decode run after a prefill chunk) is not expected to take the long one's time,
+    so HALTED is not seen a whole long run late (14 ms of 11 on the card)."""
+    card = FakeTransport(devname=None)
+    be = BoardBackend(board_config(DRAM_BYTES=1 << 21), [np.zeros(1 << 16, np.uint8)],
+                      transport=card, status=False)
+    long_ = [I.ld(0, 0, 64)] * 40 + [I.halt()]
+    short = [I.ld(0, 0, 64), I.halt()]
+    card.run_s, card.cycles_per_run = 0.04, 4_000_000       # 100 MHz
+    for _ in range(3):
+        be.run([long_])
+    card.run_s, card.cycles_per_run = 0.004, 400_000
+    late = []
+    for _ in range(3):
+        be.run([short])
+        late.append(be.board.t_seen - be.board._t_run - card.run_s)
+    be.close()
+    assert late[0] < 2e-3, late             # not the long run's 40 ms
+    assert max(late[1:]) < 1e-3, late
+
+
 def test_resident_decode_takes_run_arguments(run_dir):
     """Engine(resident=True) on a bitstream with run arguments (CAPS bit25): the decode program
     is loaded once and each step writes the ARG registers only (no inputs, no program); on one
@@ -1024,7 +1046,8 @@ def test_board_compiles_the_next_program_after_starting_the_card():
     eng._drain()
     # position 0 compiles in line; position p + 1 only after the card started position p
     assert seen == [(0, 0), (1, 1), (2, 2), (3, 3)]
-    assert eng.backend._expect == pytest.approx(t.cycles_per_run / 100e6, rel=0.02)  # x ratio
+    be = eng.backend                        # the expectation for the last program's length
+    assert be._expects[be._key] == pytest.approx(t.cycles_per_run / 100e6, rel=0.02)  # x ratio
     eng.backend.close()
 
 
