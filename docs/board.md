@@ -595,9 +595,21 @@ greedy, 96 tokens, streamed logits; "wall" is the whole run, the first window in
 | Qwen3.5-0.8B | 4-bit, int8 head | 5.501 | 21.95 / 21.82 | 5.400 | 22.36 / 22.22 | +1.9% |
 
 `tools/rw_bench.py` mm: 122.9 B/cycle (BL32) against 119.5 (BL16) and 113.3 (BL8, aebb0bf0).
-The fitted DDR3 model projected 1.309 Mcycles for LFM2 4-bit at BL32 (pos 50), and the card gives
-1.353. The per-beat term (bgap) was fitted at BL 8 and 16 only; at 32 it credits the long bursts
-about 3% too much.
+The fitted DDR3 model agrees with the card at all three burst lengths. The comparison has to be
+like for like: the card's decode_profile averages positions 24-119 of the resident program, so
+the simulation runs the resident program at pos 70 (`perf_qwen.py --resident --pos 70 --ddr 1066
+--mhz 120.755`):
+
+| LFM2 4-bit + int8 head | BL 8 | BL 16 | BL 32 |
+|---|---|---|---|
+| card, Mcycles/token | 1.455 | 1.384 | 1.353 |
+| sim (tgap 1.22, bgap 0.06), Mcycles/token | 1.454 | 1.371 (-0.9%) | 1.336 (-1.3%) |
+| card rw_bench mm, cycles | 78,670 | 74,591 | 72,559 |
+| sim rw_bench mm, cycles | 79,161 (+0.6%) | 74,492 (-0.1%) | 72,144 (-0.6%) |
+
+The per-position program at pos 50 (1.309 M at BL 32) is not comparable to the card's average.
+A refit with a larger per-beat share (tgap 0.90 + bgap 0.10, or 0.60 + 0.14) moves rw_bench
+away from the card at BL 16 / 32 (75,706 / 73,915 and 76,975 / 75,731 cycles), so the fit stays.
 
 Qualified on the card 2026-09-28 08:58-10:54 (host tree main 1654f70; omarchy's load 6-16:
 2 Vivado builds and a test suite):
