@@ -65,12 +65,12 @@ module otpu_axi_dram #(
   input  logic              clk,
   input  logic              rst,
   // slice side
-  output logic              a_rdy,
-  input  logic              a_req,
-  input  logic              a_we,
-  input  logic [31:0]       a_addr,     // word address
-  input  logic [31:0]       a_wdata,
-  input  logic [3:0]        a_be,
+  output logic              a_rdy_x,
+  input  logic              a_req_x,
+  input  logic              a_we_x,
+  input  logic [31:0]       a_addr_x,   // word address
+  input  logic [31:0]       a_wdata_x,
+  input  logic [3:0]        a_be_x,
   output logic              a_rvalid,
   output logic [31:0]       a_rdata,
   output logic [31:0]       a_rdata2,   // the word at a_addr ^ 1 (the other half of its 8-byte pair)
@@ -221,7 +221,24 @@ module otpu_axi_dram #(
   wire  [27:0]  a_beat = a_addr[31:4];
 
   assign b_rdy = (qb_n[0] < QD) && (qb_n[1] < QD) && (bt_n < OD);
+  // Port A requests are registered on the way in (a_v and the a_* copies): the slice's grant
+  // chain (DMA busy -> port arbitration -> the MXU's issue -> the scale address) no longer runs
+  // on into the channel hash, the run compare and the queue writes in one cycle (0.004 ns at
+  // 120.755 MHz). The register takes a request when it is empty or its request is taken.
+  logic        a_v, a_req, a_we, a_rdy;
+  logic [31:0] a_addr, a_wdata;
+  logic [3:0]  a_be;
+  assign a_req = a_v;
   assign a_rdy = (qa_n[0] < QD) && (qa_n[1] < QD) && (ao_n < OD);
+  assign a_rdy_x = !a_v || a_rdy;
+  always_ff @(posedge clk) begin
+    if (rst) a_v <= 1'b0;
+    else if (a_req_x && a_rdy_x) a_v <= 1'b1;
+    else if (a_rdy) a_v <= 1'b0;
+    if (a_req_x && a_rdy_x) begin
+      a_we <= a_we_x; a_addr <= a_addr_x; a_wdata <= a_wdata_x; a_be <= a_be_x;
+    end
+  end
   assign sw_rdy = (qw_n[0] < WQD) && (qw_n[1] < WQD);
   wire sw_take = sw_req && sw_rdy;
   wire sw_ch = chan_of(sw_addr);
@@ -428,9 +445,13 @@ module otpu_axi_dram #(
   wire [1:0] bth = bt_q[bt_h];
   assign b_rtag = bth[0];
   assign b_rdata = bth[1] ? {rb_head[0], rb_head[1]} : {rb_head[1], rb_head[0]};
-  assign a_rvalid = a_out;
-  assign a_rdata = a_src[32 * aoh.idx +: 32];
-  assign a_rdata2 = a_src[32 * (aoh.idx ^ 4'd1) +: 32];
+  // the A read data registered on the way out (the head's run-beat select and word select ran
+  // into the MXU's scale FIFO block RAM in one cycle: 0.006 ns at 120.755 MHz)
+  always_ff @(posedge clk) begin
+    a_rvalid <= !rst && a_out;
+    a_rdata <= a_src[32 * aoh.idx +: 32];
+    a_rdata2 <= a_src[32 * (aoh.idx ^ 4'd1) +: 32];
+  end
 
   always_ff @(posedge clk) begin
     if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= {b_sw, b_tag};
@@ -445,7 +466,7 @@ module otpu_axi_dram #(
   // handshake, so at least a cycle after the accept: wr_n never goes negative
   logic [15:0] wr_n;
   logic [4:0]  wacc_q;
-  assign wr_idle = (wr_n == 0) && (wacc_q == '0) && (gv == '0);
+  assign wr_idle = (wr_n == 0) && (wacc_q == '0) && (gv == '0) && !(a_v && a_we);
 
   always_ff @(posedge clk) begin
     if (rst) begin
