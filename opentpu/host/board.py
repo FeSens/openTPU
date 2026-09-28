@@ -686,9 +686,11 @@ class Board:
         t.reg_write(R_CTRL, CTRL_RUN)
         self._t_run = time.perf_counter()
 
-    def wait(self, timeout: float = 600.0, expect: float = 0.0) -> dict:
+    def wait(self, timeout: float = 600.0, expect: float = 0.0, counters: bool = True) -> dict:
         """Wait for the started program to halt; returns the counters (run's second half).
-        expect counts from the start (the host's work in between is taken off)."""
+        expect counts from the start (the host's work in between is taken off). counters=False:
+        STATUS and CYCLES only (3 register reads instead of 9, on the decode's critical path;
+        the next start clears the others)."""
         t = self.t
         if expect:
             expect = max(expect - (time.perf_counter() - self._t_run), 1e-9)
@@ -706,7 +708,8 @@ class Board:
         self.seen_exact = getattr(t, "poll_exact", False)   # else an upper bound
         if traced:                      # the last cycles' events still drain into the buffer
             t.poll(R.R_TRACE_CTRL, R.TR_BUSY, 0, timeout)
-        offs = self.RUN_OFFS + ([R.R_TRACE_COUNT, R.R_TRACE_DROP] if traced else [])
+        offs = (self.RUN_OFFS if counters or traced else self.RUN_OFFS[:3]) + \
+            ([R.R_TRACE_COUNT, R.R_TRACE_DROP] if traced else [])
         raw = None
         if traced and getattr(t, "batched", False):
             # the board model: one simulation, so the whole buffer is read after the counters
@@ -720,10 +723,12 @@ class Board:
             raw = w[0::2] | w[1::2] << np.uint64(32)
         else:
             vals = t.reg_read_many(offs)
-        st, lo, hi, ic, brd, bwr, ard, awr, bst = vals[:9]
-        stats = {"cycles": lo | hi << 32, "instructions": [ic], "b_reads": brd,
-                 "b_writes": bwr, "a_reads": ard, "a_writes": awr, "b_stall": bst,
-                 "status": st}
+        st, lo, hi = vals[:3]
+        stats = {"cycles": lo | hi << 32, "status": st}
+        if counters or traced:
+            ic, brd, bwr, ard, awr, bst = vals[3:9]
+            stats.update({"instructions": [ic], "b_reads": brd, "b_writes": bwr,
+                          "a_reads": ard, "a_writes": awr, "b_stall": bst})
         if traced:
             stats["trace"] = self._trace_out(vals[9], vals[10], depth, keep_first, raw)
             t.reg_write(R.R_TRACE_CTRL, 0)
@@ -1009,7 +1014,9 @@ class BoardBackend:
             if self._stream is not None:
                 self._stream_logits(feed)
             # halted already (seen by the streamed wait): read the counters, no sleep
-            st = self.board.wait(expect=0.0 if self._seen else self._expect)
+            # a streamed decode step needs its cycles only (the others: run() and traced runs)
+            st = self.board.wait(expect=0.0 if self._seen else self._expect,
+                                 counters=self._stream is None)
             if self._stream is not None:
                 self._stream_tail(feed)
         except BaseException:

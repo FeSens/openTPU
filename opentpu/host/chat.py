@@ -71,6 +71,8 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
             self.bm = np.empty(-(-n // block), dtype)
             self.bm_ok = np.zeros(len(self.bm), bool)
             self.got = 0
+            self.best = (-1, None)          # greedy: the argmax so far (index, value), over the
+            self.nan = None                 # pieces fed; the first NaN's index (argmax takes it)
             ctx = self.context
             self.ix = seen(ctx) if repetition_penalty != 1.0 and len(ctx) else None
 
@@ -83,6 +85,15 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
                 w = self.buf[sel]
                 self.buf[sel] = np.where(w > 0, w / repetition_penalty, w * repetition_penalty)
             self.got += hi - lo
+            if temperature <= 0 and hi > lo:  # the pick's argmax, piece by piece
+                k = int(np.argmax(b))
+                v = b[k]
+                if np.isnan(v):
+                    self.nan = lo + k if self.nan is None else min(self.nan, lo + k)
+                else:
+                    i, bv = self.best
+                    if bv is None or v > bv or (v == bv and lo + k < i):
+                        self.best = (lo + k, v)
             if temperature > 0 and lo % block == 0 and (hi % block == 0 or hi == len(self.buf)):
                 m = (hi - lo) // block * block      # the piece's block maxima
                 if m:
@@ -94,8 +105,8 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
         def result(self) -> int:
             assert self.got == len(self.buf), "logits missing"
             logits = self.buf
-            if temperature <= 0:
-                return int(np.argmax(logits))
+            if temperature <= 0:            # np.argmax(logits): the first maximum, or NaN
+                return self.nan if self.nan is not None else self.best[0]
             top = None
             if 0 < top_k < len(logits):
                 if not self.bm_ok.all():            # pieces off the block grid

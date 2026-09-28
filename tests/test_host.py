@@ -1315,6 +1315,35 @@ def test_sampler_stream_picks_as_pick():
                 assert a(lg, ctx) == s.result()
 
 
+def test_greedy_stream_argmax_is_numpys():
+    """Greedy: the stream keeps the argmax piece by piece (no pass over the whole vector after
+    the last piece), and it is np.argmax of the penalized logits: the first maximum, ties and
+    NaN (np.argmax takes the first NaN) included, pieces in any order."""
+    from opentpu.host import chat as C
+    rng = np.random.default_rng(12)
+    for trial in range(600):
+        n = int(rng.integers(1, 3000))
+        lg = (rng.integers(-5, 5, n) if trial % 3 else rng.standard_normal(n)).astype(np.float32)
+        if trial % 17 == 0:
+            lg[rng.integers(0, n, 2)] = np.nan
+        ctx = [int(c) for c in rng.integers(0, n, int(rng.integers(0, 20)))]
+        for rp in (1.0, 1.05):
+            pen = lg.copy()
+            if rp != 1.0 and ctx:
+                ix = np.unique(ctx)
+                pen[ix] = np.where(pen[ix] > 0, pen[ix] / rp, pen[ix] * rp)
+            pick = C.sampler(0, 50, 1.0, 0, rp)
+            assert pick(lg.copy(), ctx) == int(np.argmax(pen))
+            cuts = sorted({0, n, *rng.integers(0, n, int(rng.integers(0, 6)))})
+            parts = list(zip(cuts[:-1], cuts[1:]))
+            rng.shuffle(parts)
+            s = pick.stream(ctx)
+            s.begin(n)
+            for a, b in parts:
+                s.feed(a, lg[a:b].copy())
+            assert s.result() == int(np.argmax(pen)), (trial, rp)
+
+
 # ------------------------------------------------------------------------------ otpu-diag
 def test_diag_sim_registers_and_memory_pass(have_verilator, tmp_path, no_cfg_env):
     from opentpu.host import diag
