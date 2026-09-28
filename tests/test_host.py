@@ -356,6 +356,35 @@ def test_streamed_tail_waits_for_the_last_stores(run_dir, lag):
     eng.backend.close()
 
 
+def test_streamed_wait_sees_the_halt_soon(run_dir, monkeypatch):
+    """Streamed logits: a piece still awaited when the run ends (Qwen3 on the card: its
+    next-to-last piece completes at the very end) must not hide HALTED for a whole 1 ms sleep
+    slice: near the expected end the slices are short (0.7-0.8 ms late per token before)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm import qwen3 as Q
+    from opentpu.llm.qwen3 import Engine
+    monkeypatch.setattr(Q, "HEAD_CHUNK", 128)      # pieces of 128 logits: 8 in the tiny vocab
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    run_s = 0.02
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake10", run_s=run_s,
+                      cycles=int(run_s * 1e8))
+    t.streams = True
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+    v = eng.image.v_loc
+    t.logits = (eng.image.io["logits"], 4 * v, 4 * 128)
+    late = []
+    for tok in range(10):
+        be = eng.backend
+        be._due = {i: 1.0 for i in range(64)}   # every piece "due" past the run's end
+        eng.step(tok)
+        late.append(be.board.t_seen - be.board._t_run - run_s)
+    eng.backend.close()
+    assert np.median(late[3:]) < 0.3e-3, late
+
+
 def test_resident_decode_takes_run_arguments(run_dir):
     """Engine(resident=True) on a bitstream with run arguments (CAPS bit25): the decode program
     is loaded once and each step writes the ARG registers only (no inputs, no program); on one

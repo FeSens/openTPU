@@ -1047,12 +1047,17 @@ class BoardBackend:
         pieces, due = self._pieces(), {}
         t0, i, probes, tries = b._t_run, 0, 0, 0
         halted = False
+        # from POLL_EARLY (+ 3%) before the expected end on, the slices are short, so a run
+        # that ends while a piece is awaited is seen within ~POLL_MIN_SLEEP (1 ms slices: Qwen3,
+        # whose next-to-last piece comes near the end, saw HALTED 0.7-0.8 ms late on the card)
+        near = self._expect - POLL_EARLY - 0.03 * self._expect if self._expect else 0.0
         while i < len(pieces) - 1:
             d = self._due.get(i)
             # a piece's time of the last token may be past this run's end (a token delayed
             # by the host): HALTED is checked after every slice, not only at the piece's time
             while d is not None and (now := time.perf_counter() - t0) < d - STREAM_EARLY:
-                time.sleep(min(d - STREAM_EARLY - now, 1e-3))   # slices: sleeps overshoot
+                cap = 1e-3 if now < near else POLL_MIN_SLEEP
+                time.sleep(min(d - STREAM_EARLY - now, cap))    # slices: sleeps overshoot
                 if t.reg_read(R_STATUS) & ST_HALTED:
                     halted = True
                     break
