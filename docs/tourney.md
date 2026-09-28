@@ -38,7 +38,7 @@ may change, the synthesis top(s) with board parameters, the target clock, and th
    | lint | Verilator lint of `otpu_top` (D=128, MCOLS=2, AXI) and `otpu_board` | ~10 s |
    | fast | bit-exact RTL vs ISA subset (`tests/test_rtl.py`, plus component extras) | 1-3 min |
    | board | same with `OTPU_UARCH=board OTPU_AXI=1 OTPU_BOOT=1` (board micro-arch, AXI DRAM, boot) | 1-3 min |
-   | perf | Qwen3-0.6B decode proxy (`tools/perf_qwen.py --layers 2 --bw 80`, deterministic); ≤ +0.2% cycles vs champion; skipped without weights | ~1 min |
+   | perf | Qwen3-0.6B decode proxy (`tools/perf_qwen.py --layers 2 --bw 80`, deterministic); ≤ +0.2% cycles vs champion (fmax tournament: ≤ +0.5%, and cycles count in its score); skipped without weights | ~1 min |
    | synth | component synthesis → LUT, LUTRAM, FF, DSP, BRAM36/18, logic ns, est fmax | 10 s - 10 min |
 6. **Accept rule** (`tools/tourney/accept.py`), vs the champion:
    - **A (area):** est fmax ≥ target (110 MHz) and area-eq −1% or better; or
@@ -186,15 +186,21 @@ Every candidate's record carries its full build's per-resource changes against t
 (`full_area`: LUT, LUTRAM, FF, DSP, BRAM36 and `area_eq`, the weighted sum from `accept.py`). A
 full build is accepted for
 
-- **timing:** fmax +0.5% or more (or WNS +0.05 ns or more at the same period), at no more than
-  +1% area_eq; or
-- **area:** area_eq -0.5% or more with "equal" timing: WNS no worse than -0.05 ns.
+- **timing:** fmax minus the perf proxy's cycle change +0.5% or more (or WNS +0.05 ns or more
+  at the same period with no more cycles), at no more than +1% area_eq; or
+- **area:** area_eq -0.5% or more with "equal" timing: WNS no worse than -0.05 ns;
 
-Winners rank by the combined score, fmax change minus area_eq change (1% of clock is worth 1% of
-area). At the OOC step a unit also earns the full build with area_eq -1% at no more than -1% OOC
+and in both cases a positive score, fmax change minus area_eq change minus cycle change (1% of
+clock is worth 1% of area and 1% of cycles). Winners rank by it. The perf gate itself allows at
+most +0.5% cycles in the fmax tournament.
+
+A winner is **confirmed** before it becomes the champion: a second full build of the same tree
+with another `BUILD_ID` constant (another netlist hash, so another placement: Vivado has no
+placer seed) must pass the same rule; otherwise the slot ends `unconfirmed`. The reason and
+`WINNERS.jsonl` give both builds' WNS, and the score used is the worse draw's. At the OOC step a unit also earns the full build with area_eq -1% at no more than -1% OOC
 fmax, and the round's one full build goes to the best OOC score (the same combination). The
-steps are smaller than place-and-route noise (0.1-0.2 ns between builds here): an accepted build
-is a candidate for main, confirmed only by a rebuild or the card.
+steps are smaller than place-and-route noise (0.1-0.2 ns between builds here), hence the
+confirmation build.
 
 Accepted winners are also appended to `runs/fmax/WINNERS.jsonl` (component, commit, reason,
 score, full result, area changes, perf cycles).

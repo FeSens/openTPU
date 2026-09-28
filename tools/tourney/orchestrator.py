@@ -48,6 +48,10 @@ _LOCK = threading.Lock()
 # only in their RTL (the register's value is part of the netlist). These bitstreams are for timing
 # numbers, not for the card.
 FULL_BUILD_ID = "0f3a0000"
+# the confirmation build of a winner: the same tree with another BUILD_ID constant, i.e. another
+# netlist hash and so another placement (Vivado has no placer seed): the second draw of
+# place-and-route noise, which must pass the accept rule too
+CONFIRM_BUILD_ID = "0f3a0001"
 
 
 def git(*args, cwd: Path, check: bool = True) -> str:
@@ -345,9 +349,10 @@ class Run:
             if self.comp.get("perf"):
                 cyc = gate("perf", G.perf, wt)
                 rec["perf_cycles"] = cyc
-                if not A.perf_ok(champ.get("perf_cycles"), cyc):
+                tol = A.PERF_TOL_FMAX if self.fmax else A.PERF_TOL
+                if not A.perf_ok(champ.get("perf_cycles"), cyc, tol):
                     raise G.GateFailure("perf", f"{cyc} cycles vs champion "
-                                                f"{champ.get('perf_cycles')} (> +0.2%)")
+                                                f"{champ.get('perf_cycles')} (> {tol:+.1%})")
             if self.fmax:
                 self.ooc_step(rec, wt, sid, champ, gate)
                 raise _Done
@@ -412,10 +417,37 @@ class Run:
         w["_full"] = full
         ad = A.area_delta(champ["full"], full)
         w["full_area"] = ad                              # per-resource deltas, every candidate
-        ok, why = A.accept_fmax(champ["full"], full)
+        cyc = (champ.get("perf_cycles"), w.get("perf_cycles"))
+        dc = A.cycle_delta(*cyc)
+        w["cycles_delta"] = dc
+        ok, why = A.accept_fmax(champ["full"], full, *cyc)
         w["outcome"], w["reason"] = ("improvement" if ok else "no_gain"), why
         w["gain"] = A.score((full["fmax"] - champ["full"]["fmax"]) / champ["full"]["fmax"],
-                            ad["area_eq"])
+                            ad["area_eq"], dc)
+        if not ok:
+            return
+        # confirmation: a second placement of the same tree must pass the rule as well
+        t = time.time()
+        try:
+            conf = G.full_design(Path(w["wt"]), f"{self.a.comp}-{w['id']}-c", self.a.target_mhz,
+                                 CONFIRM_BUILD_ID)
+        except G.GateFailure as e:
+            w["outcome"], w["reason"] = "unconfirmed", why + f"; confirmation build broken: {e.tail[-300:]}"
+            return
+        finally:
+            w["gate_seconds"]["confirm"] = round(time.time() - t, 1)
+        w["confirm"] = {q: conf.get(q) for q in ("period", "wns", "whs", "fmax", "lut", "lutram",
+                                                  "ff", "dsp", "bram36", "congested", "host")}
+        ok2, why2 = A.accept_fmax(champ["full"], conf, *cyc)
+        both = f"WNS {full['wns']:+.3f} / {conf['wns']:+.3f} ns (build / confirmation)"
+        if not ok2:
+            w["outcome"], w["reason"] = "unconfirmed", f"{why}; confirmation failed: {why2}; {both}"
+            return
+        w["reason"] = f"{why}; confirmed: {both}"
+        # rank on the worse of the two draws
+        w["gain"] = min(w["gain"], A.score((conf["fmax"] - champ["full"]["fmax"]) /
+                                           champ["full"]["fmax"],
+                                           A.area_delta(champ["full"], conf)["area_eq"], dc))
 
     # ---- rounds
     def round(self, r: int) -> None:
@@ -454,7 +486,8 @@ class Run:
                         "time": dt.datetime.now().isoformat(timespec="seconds"),
                         "comp": self.a.comp, "slot": w["id"], "sha": sha,
                         "old": champ["sha"], "title": w.get("title"), "reason": w["reason"],
-                        "score": w["gain"], "full": w["full"], "area": w.get("full_area"),
+                        "score": w["gain"], "full": w["full"], "confirm": w.get("confirm"),
+                        "area": w.get("full_area"), "cycles_delta": w.get("cycles_delta"),
                         "perf_cycles": w.get("perf_cycles"),
                         "perf_old": champ.get("perf_cycles")}) + "\n")
             print(f"[tourney] accepted {w['id']} -> {self.branch} {sha[:9]}: {w['reason']}")

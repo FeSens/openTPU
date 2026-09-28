@@ -314,15 +314,18 @@ Congestion (report_design_analysis -congestion):
 2. Verilator lint; bit-exact RTL tests against the instruction-set simulator, also on the
    board's AXI memory path -- results must stay IDENTICAL (same fp32 rounding, same order of
    operations, docs/isa.md; latency may change, handshake/grant contracts may not break).
-3. A Qwen3 decode-token proxy on the RTL may not get more than 0.2% slower (in cycles).
+3. A Qwen3 decode-token proxy on the RTL may not get more than 0.5% slower (in cycles);
+   cycles count in the score below (a clock gain spent on cycles is no gain).
 4. {"The component alone, out of context in Vivado: its fmax must rise by 0.5% or more, or its area_eq shrink by 1% or more at no more than 1% lower fmax, or it must stay within 1% if it already clears the target (then the gain must come from the paths around it)." if ooc else "(no out-of-context step for this component)"}
 5. The full board build at {target_mhz:g} MHz, with hold met, no router congestion (Route 35-447)
    and no block RAM read-address collision (Synth 8-6430), is accepted for
    - timing: core clock fmax +0.5% or more (or WNS +0.05 ns or more) at no more than +1% area, or
    - area: area_eq -0.5% or more with WNS no worse than -0.05 ns,
-   where area_eq = LUT + LUTRAM + 0.5 FF + 40 DSP + 80 BRAM36 of the whole board. Winners rank
-   by (fmax change - area_eq change). One full build runs per round (about two hours), so aim
-   at the worst paths above or at a large block of logic, not at small wins.
+   where area_eq = LUT + LUTRAM + 0.5 FF + 40 DSP + 80 BRAM36 of the whole board, and the score
+   (fmax change - area_eq change - cycle change) is positive. Timing wins count fmax minus
+   cycles. A winner is confirmed by a second full build with another placement, which must
+   pass too. One full build runs per round (about two hours), so aim at the worst paths above
+   or at a large block of logic, not at small wins.
 
 ## Focus for this slot
 {category}
@@ -343,8 +346,8 @@ WRITE a file HYPOTHESIS.md at the repository root (your current directory) with:
   # <short title>
   Category: <pipeline|logic depth|fanout and placement|memories and DSPs>
   Motivation: which of the worst paths above this removes and why (cite them)
-  Change: exactly what to change, where, and why results stay bit-identical and the cycle
-          count stays within 0.2%
+  Change: exactly what to change, where, and why results stay bit-identical, and its cycle
+          cost (the perf proxy may not get more than 0.5% slower; cycles count in the score)
   Expected: estimated effect on the full design's WNS / fmax, and on area
   Risks: what could break
 Do not modify any other file in this phase."""

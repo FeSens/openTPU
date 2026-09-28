@@ -685,8 +685,10 @@ def test_full_step_builds_one_candidate(tmp_path, monkeypatch):
             {"id": "s1", "outcome": "candidate", "reason": "b", "ooc_gain": 0.02, "wt": "w1"},
             {"id": "s2", "outcome": "broken", "reason": "fast: x", "wt": "w2"}]
     run.full_step(recs, champ)
-    assert built == [("otpu_vpu-s1", 133.33, O.FULL_BUILD_ID)]
+    assert built == [("otpu_vpu-s1", 133.33, O.FULL_BUILD_ID),        # the build, then its
+                     ("otpu_vpu-s1-c", 133.33, O.CONFIRM_BUILD_ID)]    # confirmation
     assert [x["outcome"] for x in recs] == ["not_built", "improvement", "broken"]
+    assert "confirmed: WNS -0.200 / -0.200 ns" in recs[1]["reason"]
     assert recs[1]["gain"] == pytest.approx((1000 / 7.7 - 1000 / 7.8) / (1000 / 7.8))
     assert "gate_seconds" in recs[1] and recs[1]["full"]["wns"] == -0.20
 
@@ -701,6 +703,24 @@ def test_full_step_broken_build(tmp_path, monkeypatch):
     recs = [{"id": "s0", "outcome": "candidate", "reason": "a", "ooc_gain": 0.0, "wt": "w0"}]
     run.full_step(recs, {"full": full()})
     assert recs[0]["outcome"] == "broken" and "full:" in recs[0]["reason"]
+
+
+def test_full_step_unconfirmed(tmp_path, monkeypatch):
+    """A winner whose second placement does not pass the rule is not accepted."""
+    O, run = _run(tmp_path)
+    draws = iter([full(wns=-0.20), full(wns=-0.29)])                 # +1.3%, then +0.13%
+    monkeypatch.setattr(O.G, "full_design", lambda *a: next(draws))
+    recs = [{"id": "s0", "outcome": "candidate", "reason": "a", "ooc_gain": 0.01, "wt": "w0",
+             "perf_cycles": 1000}]
+    run.full_step(recs, {"full": full(wns=-0.30), "perf_cycles": 1000})
+    assert recs[0]["outcome"] == "unconfirmed" and "-0.200 / -0.290" in recs[0]["reason"]
+
+
+def test_accept_fmax_counts_cycles():
+    old = full(wns=-0.30)
+    assert A.accept_fmax(old, full(wns=-0.20), 1000, 1000)[0]        # +1.3% fmax
+    assert not A.accept_fmax(old, full(wns=-0.20), 1000, 1010)[0]    # ... spent on +1% cycles
+    assert A.accept_fmax(old, full(wns=-0.20), 1000, 1004)[0]        # +0.9% net
 
 
 def test_full_result_cached(tmp_path, monkeypatch):

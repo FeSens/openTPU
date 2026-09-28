@@ -96,13 +96,18 @@ def accept(old: dict, new: dict, target_mhz: float) -> tuple[bool, str]:
 # Vivado at the tournament's clock: core_clk fmax = 1000 / (period - WNS), and the whole board's
 # area_eq (same weights as above, from the post-route utilization).
 #
-# Two ways to win (hold met, no router congestion, no Synth 8-6430 memory):
-#   T. timing: fmax +0.5% or better (or WNS +0.05 ns at the same period), area_eq at most +1%
+# Performance is clock over cycles: the perf proxy's cycle change (dc, the Qwen3 decode token on
+# the RTL) counts against the clock. Two ways to win (hold met, no router congestion, no Synth
+# 8-6430 memory, and score > 0):
+#   T. timing: fmax - cycles +0.5% or better (or WNS +0.05 ns at the same period with no more
+#              cycles), area_eq at most +1%
 #   A. area:   area_eq -0.5% or better, timing "equal" (WNS no worse than -0.05 ns, the size of a
 #              timing win; fmax -0.5% across periods)
-# Several winners rank by score = fmax change - area_eq change (1% fmax is worth 1% area).
+# score = fmax change - area_eq change - cycle change (1% of clock = 1% of area = 1% of cycles);
+# several winners rank by it. The perf gate rejects more than +0.5% cycles before any build.
 # Place-and-route noise between builds of near-identical designs is ~0.1-0.2 ns here, larger
-# than either step: a single accepted build is a candidate, not a proven trend.
+# than either step: a winner is confirmed by a second full build (another placement, see
+# orchestrator.full_step) that must pass this rule too.
 FULL_GAIN, FULL_WNS_GAIN, OOC_GAIN, OOC_SLACK = 0.005, 0.05, 0.005, 0.01
 FULL_AREA_GAIN, FULL_AREA_SLACK, FULL_WNS_TOL = 0.005, 0.01, 0.05
 OOC_AREA_GAIN = 0.01
@@ -138,12 +143,18 @@ def fmt_area(d: dict) -> str:
     return f"area_eq {d['area_eq']:+.2%}" + (f" ({', '.join(parts)})" if parts else "")
 
 
-def score(df: float, da: float) -> float:
-    """The combined metric: fmax change minus area_eq change (fractions)."""
-    return df - da
+def score(df: float, da: float, dc: float = 0.0) -> float:
+    """The combined metric: fmax change minus area_eq change minus cycle change (fractions)."""
+    return df - da - dc
 
 
-def accept_fmax(old: dict, new: dict) -> tuple[bool, str]:
+def cycle_delta(old: int | None, new: int | None) -> float:
+    """The perf proxy's cycle change as a fraction (0.0 when either is unknown)."""
+    return (new - old) / old if old and new else 0.0
+
+
+def accept_fmax(old: dict, new: dict, old_cycles: int | None = None,
+                new_cycles: int | None = None) -> tuple[bool, str]:
     """The full-design rule (T: timing, A: area; see above)."""
     bad = full_problems(new)
     if bad:
@@ -154,14 +165,17 @@ def accept_fmax(old: dict, new: dict) -> tuple[bool, str]:
                                        old.get("wns") is not None) else None
     ad = area_delta(old, new)
     da = ad["area_eq"]
+    dc = cycle_delta(old_cycles, new_cycles)
+    sc = score(df, da, dc)
     msg = f"full fmax {fo:.2f} -> {fn:.2f} MHz ({df:+.2%})" + (
         f", WNS {old['wns']:+.3f} -> {new['wns']:+.3f} ns" if dw is not None else "") + \
-        f", {fmt_area(ad)}, score {score(df, da):+.2%}"
-    timing = df >= FULL_GAIN - 1e-12 or (dw is not None and dw >= FULL_WNS_GAIN - 1e-9)
-    if timing and da <= FULL_AREA_SLACK + 1e-12:
+        f", {fmt_area(ad)}" + (f", cycles {dc:+.2%}" if dc else "") + f", score {sc:+.2%}"
+    timing = df - dc >= FULL_GAIN - 1e-12 or (dw is not None and dw >= FULL_WNS_GAIN - 1e-9
+                                               and dc <= 1e-12)
+    if timing and da <= FULL_AREA_SLACK + 1e-12 and sc > 0:
         return True, "timing: " + msg
     same = (dw >= -FULL_WNS_TOL - 1e-9) if dw is not None else df >= -FULL_GAIN - 1e-12
-    if da <= -FULL_AREA_GAIN + 1e-12 and same:
+    if da <= -FULL_AREA_GAIN + 1e-12 and same and sc > 0:
         return True, "area: " + msg
     if timing:
         return False, msg + f" (a timing win may cost at most {FULL_AREA_SLACK:+.0%} area)"
@@ -218,8 +232,12 @@ def rank_fmax(recs: list[dict], old: dict | None = None) -> list[dict]:
     return sorted(recs, key=sc)
 
 
-def perf_ok(old_cycles: int | None, new_cycles: int | None, tol: float = 0.002) -> bool:
-    """The performance proxy may not regress by more than `tol` (0.2%)."""
+PERF_TOL, PERF_TOL_FMAX = 0.002, 0.005
+
+
+def perf_ok(old_cycles: int | None, new_cycles: int | None, tol: float = PERF_TOL) -> bool:
+    """The performance proxy may not regress by more than `tol` (0.2%; the fmax objective, whose
+    score charges cycles, allows 0.5%)."""
     if old_cycles is None or new_cycles is None:
         return True
     return new_cycles <= old_cycles * (1 + tol)
