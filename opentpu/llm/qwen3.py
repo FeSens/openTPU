@@ -651,6 +651,7 @@ COMPILE_AHEAD = 3    # decode programs compiled ahead by the worker processes (E
 DECODE_LEAD = 16     # resident decode: the next bucket's program is compiled from this many
                      # positions before the current bucket ends (Engine)
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
+HEAD_TAIL = 2048      # the decode LM head's last chunk at most (its logits are read after HALTED)
 
 
 @ol.jit
@@ -678,13 +679,23 @@ def _inputs(m, pos):
     return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
 
 
+def head_chunks(v_loc: int, chunk: int) -> list:
+    """The decode LM head's MMs: (first row, rows) of `chunk` rows each, the last one split so
+    that the chunk stored last has HEAD_TAIL rows (the host streams the others' logits while the
+    run goes on and reads only the last chunk's after HALTED: 8 KB instead of 32 KB for LFM2)."""
+    out = [(c0, min(chunk, v_loc - c0)) for c0 in range(0, v_loc, chunk)]
+    c0, n = out[-1]
+    k = (n - HEAD_TAIL) // 128 * 128        # the split on a 128-row boundary
+    if k >= HEAD_TAIL:                      # (not worth an MM for a short last chunk)
+        out[-1:] = [(c0, k), (c0 + k, n - k)]
+    return out
+
+
 def _lm_head(x, m, spec):
     """Final norm and this slice's vocabulary rows of the LM head -> m.logits."""
     sid = ol.program_id()
     xs = ol.quantize(rmsnorm(x, ol.load(m.g_final), spec.eps))
-    chunk = min(HEAD_CHUNK, ol.tmem_words() // 8)
-    for c0 in range(0, m.v_loc, chunk):
-        n = min(chunk, m.v_loc - c0)
+    for c0, n in head_chunks(m.v_loc, min(HEAD_CHUNK, ol.tmem_words() // 8)):
         col = sid * m.v_loc + c0
         ol.store(m.logits[:, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
 
@@ -1123,8 +1134,9 @@ class Engine:
         stream = None
         if start is not None and S == 1 and self.stream_logits and \
                 getattr(self.backend, "streams", False):
-            piece = 4 * min(HEAD_CHUNK, self.cfg.TMEM_WORDS // 8)     # _lm_head's chunks
-            stream = (io["logits"], 4 * vocab, piece)
+            pieces = tuple((4 * c0, 4 * n) for c0, n in       # _lm_head's chunks
+                           head_chunks(v_loc, min(HEAD_CHUNK, self.cfg.TMEM_WORDS // 8)))
+            stream = (io["logits"], 4 * vocab, pieces)
         if start is None:
             if sink is not None:
                 sink.begin(vocab)

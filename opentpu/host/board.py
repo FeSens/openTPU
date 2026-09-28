@@ -960,7 +960,8 @@ class BoardBackend:
         or the program already assembled (uint32 words).
 
         stream=(addr, nbytes, piece): the run writes its logits to [addr, addr + nbytes) in
-        pieces of `piece` bytes (the LM head's chunks, late in the run), and wait(feed) hands
+        pieces of `piece` bytes, or in the pieces `piece` lists as (byte offset, bytes), in
+        order (the LM head's chunks, late in the run), and wait(feed) hands
         each piece over as soon as it is complete. The region holds SENTINEL words before the
         run: written here when it does not (the first streamed run, or after anything else
         wrote the region), else the whole region is marked again right
@@ -1049,6 +1050,8 @@ class BoardBackend:
 
     def _pieces(self):
         addr, n, piece = self._stream
+        if not isinstance(piece, int):              # the pieces themselves: (offset, bytes)
+            return list(piece)
         return [(o, min(piece, n - o)) for o in range(0, n, piece)]
 
     def _stream_logits(self, feed) -> None:

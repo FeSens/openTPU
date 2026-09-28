@@ -446,8 +446,9 @@ def test_resident_decode_takes_run_arguments(run_dir):
 class _IsaCard(FakeTransport):
     """A fake card that computes: RUN runs the loaded program on the ISA simulator over the
     channel memories. What the run writes shows at once, except [late_addr, +late_n) (the
-    logits): piece i of `piece` bytes shows at run_s * (0.4 + 0.5 * i / pieces), its first
-    half of beats a little before the rest (the beats of one store land out of order)."""
+    logits): piece i of `piece` bytes (or of the (offset, bytes) pieces `piece` lists) shows at
+    run_s * (0.4 + 0.5 * i / pieces), its first half of beats a little before the rest (the
+    beats of one store land out of order)."""
     streams = True
 
     def __init__(self, cfg, late, piece, run_s=0.06, **kw):
@@ -491,10 +492,10 @@ class _IsaCard(FakeTransport):
         new[la:la + ln] = dram[la:la + ln]                    # the logits come later
         for c, off, part in split(0, new):
             self.ch[c][:] = part
-        npieces = -(-ln // self.piece)
-        for i, o in enumerate(range(0, ln, self.piece)):
-            k = min(self.piece, ln - o)
-            t = t0 + self.run_s * (0.4 + 0.5 * i / npieces)
+        pieces = [(o, min(self.piece, ln - o)) for o in range(0, ln, self.piece)] \
+            if isinstance(self.piece, int) else self.piece
+        for i, (o, k) in enumerate(pieces):
+            t = t0 + self.run_s * (0.4 + 0.5 * i / len(pieces))
             buf = np.zeros(-(-k // 128) * 128, np.uint8)
             buf[:k] = new_late[o:o + k]
             for j, (c, off, part) in enumerate(split(la + o, buf)):
@@ -519,18 +520,25 @@ def _big_vocab_qwen(V=20000):
     return spec, W
 
 
-def test_streamed_logits_match_the_isa_simulator(no_cfg_env):
+@pytest.mark.parametrize("tail", [None, 1024])
+def test_streamed_logits_match_the_isa_simulator(no_cfg_env, monkeypatch, tail):
     """Engine.step on the board backend streams the logits (most pieces while the run goes on,
     the rest after HALTED): the logits and the sampler's picks are those of the ISA simulator,
     token after token (the sentinel marking is renewed each run), and a prefill run in between
-    (which writes the logits region itself) makes the next step mark it again."""
+    (which writes the logits region itself) makes the next step mark it again. With `tail`,
+    the LM head's last chunk is split (head_chunks: 8192, 8192, 2560 + 1056 rows here)."""
     from opentpu.host.board import sim_config
     from opentpu.host.chat import sampler
-    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
+    from opentpu.llm import qwen3 as Q
+    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine, head_chunks
+    if tail is not None:
+        monkeypatch.setattr(Q, "HEAD_TAIL", tail)
     spec, W = _big_vocab_qwen()
     cfg = sim_config(spec, 256)
     ref = Engine(spec, W, cap=256, cfg=cfg)
-    piece = 4 * min(HEAD_CHUNK, cfg.TMEM_WORDS // 8)
+    chunks = head_chunks(spec.vocab, min(HEAD_CHUNK, cfg.TMEM_WORDS // 8))
+    assert len(chunks) == (3 if tail is None else 4), chunks
+    piece = tuple((4 * c0, 4 * n) for c0, n in chunks)
     card = _IsaCard(cfg, None, piece)
     eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
@@ -549,10 +557,31 @@ def test_streamed_logits_match_the_isa_simulator(no_cfg_env):
         got = eng.step(t, sink=sink)
         assert np.array_equal(want.view(np.uint32), got.view(np.uint32))
         ls = eng.backend.last_stream
-        assert ls["pieces"] == 3 and ls["during"] >= 1 and ls["tail_bytes"] <= 2 * piece, (i, ls, eng.backend._due)
+        assert ls["pieces"] == len(chunks) and ls["during"] >= 1 and \
+            ls["tail_bytes"] <= 2 * 4 * chunks[-1][1], (i, ls, eng.backend._due)
         t = pa(want, ctx)
         assert sink.result() == t
     eng.backend.close()
+
+
+def test_lm_head_tail_split_is_bit_exact(no_cfg_env, monkeypatch):
+    """head_chunks splits the decode LM head's last chunk (HEAD_TAIL, on a 128-row boundary):
+    the logits are the unsplit program's bit for bit, token after token."""
+    from opentpu.host.board import sim_config
+    from opentpu.llm import qwen3 as Q
+    spec, W = _big_vocab_qwen()
+    cfg = sim_config(spec, 256)
+    assert Q.head_chunks(65536, 8192)[-2:] == [(57344, 6144), (63488, 2048)]    # LFM2
+    assert Q.head_chunks(151936, 8192)[-2:] == [(147456, 2432), (149888, 2048)]  # Qwen3
+    assert Q.head_chunks(248320, 8192)[-2:] == [(237568, 8192), (245760, 2560)]  # Qwen3.5
+    runs = []
+    for tail in (1 << 30, 1024):
+        monkeypatch.setattr(Q, "HEAD_TAIL", tail)
+        assert len(Q.head_chunks(spec.vocab, 8192)) == (3 if tail > spec.vocab else 4)
+        eng = Q.Engine(spec, W, cap=256, cfg=cfg, pipeline=False)
+        runs.append([eng.step(t).view(np.uint32) for t in (5, 7, 9)])
+    for a, b in zip(*runs):
+        assert np.array_equal(a, b)
 
 
 def test_streamed_logits_are_on_for_the_card_only():
