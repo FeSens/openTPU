@@ -118,7 +118,7 @@ DOCKER_COUNT_CMD = ("printf 'runviv %s\\n' \"$(pgrep -fc 'bash \\./[r]un_vivado'
 # native: `total` counts every native Vivado process (a make bit's runs spawn several),
 # `docker` the Vivado containers (another stream's Docker jobs on the same host)
 NATIVE_COUNT_CMD = ("printf 'runviv %s\\n' \"$(pgrep -fc 'bash \\./[r]un_vivado')\"; "
-                    "printf 'ours %s\\n' \"$(pgrep -fc 'bash [o]tpu_ooc\\.sh')\"; "
+                    "printf 'ours %s\\n' \"$(pgrep -fc '^bash [o]tpu_ooc\\.sh')\"; "
                     "printf 'total %s\\n' \"$(pgrep -fc '[u]nwrapped/lnx64\\.o/vivado')\"; "
                     "printf 'docker %s\\n' \"$(docker ps -q --filter ancestor=" + IMAGE +
                     " 2>/dev/null | wc -l)\"")
