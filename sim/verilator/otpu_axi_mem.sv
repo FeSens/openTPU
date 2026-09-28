@@ -24,7 +24,7 @@
 // top 3 bits of the channel's 2 GB, so a 256 MB region is one bank) or 1 ROW_BANK_COLUMN
 // (consecutive 8 KB rows rotate over the 8 banks). +axi_tgap=N: the data bus loses N / 100 controller
 // cycles per read transaction (the MIG's AXI front end: on the card, 8-beat bursts deliver
-// about 8 / 10 of the peak, see docs/board.md). Times: +axi_trcd +axi_trp +axi_tras
+// about 8 / 10 of the peak, see docs/board.md); +axi_wgap=N likewise per write transaction. Times: +axi_trcd +axi_trp +axi_tras
 // +axi_trc +axi_trtp +axi_trefi +axi_trfc +axi_tturn (controller cycles); +axi_tpc / +axi_tpu the
 // core and controller clock periods in ticks (4 / 4 at DDR3-800, 4 / 3 at DDR3-1066: ui_clk
 // 133 MHz, one beat per 0.75 core cycles). What-if: +axi_afree=1 serves port A reads (arid 1)
@@ -81,6 +81,7 @@ module otpu_axi_mem #(
   int trcd = 2, trp = 2, tras = 4, trc = 6, trtp = 1, trefi = 780, trfc = 16, tturn = 2;
   int trmw = 12;                         // core cycles
   int tgap = 0;                          // the data bus's loss per read transaction, 1/100 controller cycle
+  int wgap = 0;                          // likewise per write transaction
   int tpc = 4, tpu = 4;                  // ticks per core / controller cycle
   int afree = 0;                         // what-if: port A reads cost the DRAM nothing
   int rout = 0, wout = 0;                // outstanding transaction limits (0: none)
@@ -255,6 +256,8 @@ module otpu_axi_mem #(
               n_rmw[c]++;
               if (aw_i[c][0]) n_rmw_a[c]++;
             end
+            if (bus[c] < tw * tpc) bus[c] = tw * tpc;
+            bus[c] = bus[c] + (wgap * tpu + 50) / 100;
             tw = dram_slot(c, aw_a[c][0], 1'b1, tw);
           end
           b = beat_word(aw_a[c][0], c);
@@ -311,6 +314,7 @@ module otpu_axi_mem #(
     void'($value$plusargs("axi_tturn=%d", tturn));
     void'($value$plusargs("axi_trmw=%d", trmw));
     void'($value$plusargs("axi_tgap=%d", tgap));
+    void'($value$plusargs("axi_wgap=%d", wgap));
     void'($value$plusargs("axi_tpc=%d", tpc));
     void'($value$plusargs("axi_tpu=%d", tpu));
     void'($value$plusargs("axi_afree=%d", afree));

@@ -168,7 +168,7 @@ def main():
     plus = list(a.plus)
     if a.ddr:
         a.ddr = {1066: 3200 / 3, 1333: 4000 / 3}.get(int(a.ddr), a.ddr)
-        plus = ddr3_plusargs(a.ddr, a.mhz)[2:] + plus
+        plus = plus + ddr3_plusargs(a.ddr, a.mhz)[2:]   # the first of a plusarg wins
         a.dram = "rbc" if a.dram == "off" else a.dram
         a.arc = a.arc or 4
         a.lat = a.lat if a.lat is not None else round(0.3 * a.mhz)

@@ -321,6 +321,21 @@ read-modify-write holds the channel 23 cycles, 4 cycles per AXI read transaction
 reproduces a691ea98 at 8.22 (Qwen3) and 3.00 (LFM2) Mcycles, 4% under the card; the -25% / -27%
 it projected for this build came out -24% / -26% on the card.
 
+Fourth fitted parameter (2026-09-28, production image deploy_prod120hp_aebb0bf0, DDR3-1066, 120.755
+MHz): every AXI read transaction costs the data bus 1.7 controller cycles (`+axi_tgap=170`, in
+ddr3_plusargs). This parameter caps sequential 8-beat bursts at about 8 / 9.7 of the peak: ~111 B per core cycle.
+Without it the model gave ~126 B/cycle and 1-2% MXU starvation, where the card shows ~15%. With it
+the simulated cycles match the card:
+
+| Run | card (lens) | sim before | sim with tgap |
+|---|---|---|---|
+| LFM2 4-bit + int8 head, pos 50 | 1.418 M | 1.262 M | 1.430 M |
+| Qwen3.5 4-bit + int8 head, 1 layer, pos 60 | 2.553 M | 2.28 M | 2.552 M |
+
+The simulator puts the cost on the transaction, so 16-beat bursts would halve it: 1.43 -> 1.31 M
+simulated for LFM2 (`--bl 16`). The card test is the `AXI_BL=16` build (`make bit AXI_BL=16`).
+Writes (`+axi_wgap`, per single-beat write transaction) are not fitted yet.
+
 Before the burst fix: Decode runs at ~3.2x the simulated cycles: the counters show the MXU starved (MXU_BUSY 94%,
 MXU_MAC 21%, DRAM_WAIT 0.1%) and DRAM reads at 3.0 GB/s (0.23 beats / cycle / channel). Port B
 issues single-beat 64-byte AXI reads (SmartConnect ports MAX_BURST_LENGTH 1); the per-transaction
