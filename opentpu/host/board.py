@@ -1072,7 +1072,7 @@ class BoardBackend:
         self.last_stream = {"during": i, "pieces": len(pieces), "probes": probes}
 
     def _stream_tail(self, feed) -> None:
-        """After HALTED: the pieces not handed over yet, in one read."""
+        """After HALTED: the pieces not handed over yet, in one read and one feed."""
         addr, n, _ = self._stream
         pieces = self._pieces()
         i = self.last_stream.get("during", 0)
@@ -1083,8 +1083,7 @@ class BoardBackend:
             self._armed = None
             raise RuntimeError("streamed logits: the run left words unwritten (the program "
                                "does not write the whole logits region, or a marking raced it)")
-        for po, k in pieces[i:]:
-            feed(po, w[(po - o) // 4:(po - o + k) // 4])
+        feed(o, w)                                  # the rest in one piece
         self._rearm = [(addr + o, n - o)]
         self._stream = None
         self.last_stream.update(tail_bytes=n - o, tail_s=time.perf_counter() - t0)
