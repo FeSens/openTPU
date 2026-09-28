@@ -695,8 +695,8 @@ the same host:
 | Qwen3-0.6B | 4-bit, int8 head | 3.527 | 34.24 | 34.02 |
 | Qwen3.5-0.8B | 4-bit, int8 head | 4.895 | 24.67 | 24.56 |
 
-On the card's host (fine timestamps, 12:00), the median critical path from HALTED to the next
-RUN is:
+On the card's host (fine timestamps, 11:50, host c3db597), the median critical path from
+HALTED to the next RUN is:
 - the counters, 19 us;
 - WR_IDLE, the last logits piece's read (32 KB) and its hand-over to the sampler, 89 us;
 - the backend and chat code, 16 us;
