@@ -541,7 +541,7 @@ Device numbers from the same session: decode Mcycles/token from `tools/decode_pr
 | LFM2.5-230M | int8 | 2.060 | 58.63 | 157.5 | 245 MB | 14.02 GB/s (82%) | +5.2% |
 | Qwen3-0.6B | int8 | 5.456 | 22.13 | 53.6 | 663 MB | 13.99 GB/s (82%) | +5.3% |
 | Qwen3.5-0.8B | int8 | 7.515 | 16.07 | 38.1 | 811 MB | 13.27 GB/s (78%) | +4.6% |
-| LFM2.5-230M | 4-bit, int8 head | 1.382 | 87.40 | 169.3 | 164 MB | 13.78 GB/s (81%) | +5.2% |
+| LFM2.5-230M | 4-bit, int8 head | 1.382 | 87.40 | 169.3 | 164 MB | 13.78 GB/s (81%) | +5.1% |
 | Qwen3-0.6B | 4-bit, int8 head | 3.631 | 33.26 | 58.1 | 443 MB | 13.75 GB/s (81%) | +4.9% |
 | Qwen3.5-0.8B | 4-bit, int8 head | 5.478 | 22.04 | 40.7 | 562 MB | 12.73 GB/s (75%) | +4.1% |
 
