@@ -65,8 +65,8 @@ Slot worktrees and branches are removed after the round (`ARGS=--keep` keeps the
   then `sta` with the Xilinx cell timing models. Logic-only; the fmax is an estimate to *rank*
   candidates, not signoff. Uses `--allow-use-before-declare` (for sources that declare a signal
   after use).
-- `EVAL=vivado-remote`: Vivado 2026.1 on the build host (`opentpu` by default, or omarchy; see
-  [The build host](#the-build-host)), never on this machine
+- `EVAL=vivado-remote`: Vivado 2026.1 on a build host (`opentpu`, then omarchy; see
+  [The build hosts](#the-build-hosts)), never on this machine
   (`EVAL=vivado`, the old local evaluator, is refused). The slot's tree is sent with `git
   archive | ssh tar -x` to `~/otpu-build/tv-<name>` and each synthesis part runs out of context
   there in the `vivado:2026.1` image: synth, opt, place, phys_opt, route on xc7k480tffg1156-2 at
@@ -196,33 +196,38 @@ image the worst path is one: `u_coll/s_reg` → a TMEM block RAM write enable, 7
 `pw_a`. Its tests: the common subset, two-slice fuzz and scoreboard, and the board memory-path
 tests including `tests/test_board.py`.
 
-### The build host
+### The build hosts
 
-Vivado runs on one of two Linux boxes (`OTPU_BUILD_HOST`); the test gates always run on omarchy
-(`OTPU_REMOTE`, below), which also holds the card:
+Vivado runs on two Linux boxes, natively (`~/.local/bin/vivado`, put first on the PATH of every
+job). A job goes to the first host in `OTPU_BUILD_HOSTS` with room. The test gates always run on
+omarchy (`OTPU_REMOTE`, below).
 
-| host | Vivado | notes |
-|---|---|---|
-| `opentpu` (default) | native 2026.1 (`vivado` on the ssh PATH) | i7-4790, 4 cores / 8 threads, 31 GB; no card. Only `~/otpu-build/` is the tournament's |
-| `omarchy.tail5bd214.ts.net` | the `vivado:2026.1` Docker image | shared with the card work and other builds |
+| host (priority) | notes |
+|---|---|
+| `opentpu` (1st) | i7-4790, 4 cores / 8 threads, 31 GB; no card. Only `~/otpu-build/` is the tournament's |
+| `omarchy.tail5bd214.ts.net` (2nd) | also runs the test gates, the card and other streams' builds |
 
-`VIVADO_NATIVE=1` / `0` overrides the choice (default: Docker on omarchy, native elsewhere).
+`OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
+Vivado in the `vivado:2026.1` Docker image instead. After a full build its reports are kept on
+the host in `~/otpu-build/reports/tv-<name>`; the tree is removed once its job has finished (never
+while it runs).
 
-At most **2 Vivado jobs** run on the build host at a time (`OTPU_MAX_VIVADO`), counting
+At most **2 Vivado jobs** run on each build host at a time (`OTPU_MAX_VIVADO`), counting
 **every** job there, not only the tournament's. The count is taken over ssh:
 
 - `run_vivado.sh` processes: anyone's `make bit`, including the tournament's full builds;
 - with Docker: containers of the Vivado image, and the tournament's own labelled OOC containers
   (`--label otpu-tourney=1`);
-- native: the tournament's OOC jobs, each a `bash otpu_ooc.sh` wrapper; Vivado processes under
-  neither (someone's own session) count as one job.
+- native: the tournament's OOC jobs, each a `bash otpu_ooc.sh` wrapper, and Vivado containers
+  that are no `make bit`'s; native Vivado processes under none of these (someone's own session)
+  count as one job. An unreachable host counts as full.
 
 A `make bit` counts once. Before starting a job, `remote.acquire()` waits (polling every 60 s)
 until the count is below 2, and holds a local start lock until the new job is visible, so two
 slots cannot both take the last place. Jobs run detached (`nohup`, with a `DONE` file holding
 the exit code) and are polled, so a dropped ssh connection does not kill a build. Trees are
 removed after the results are fetched. Other hosts, directories and images can be set with
-`OTPU_BUILD_HOST`, `VIVADO_NATIVE`, `OTPU_BUILD_DIR`, `VIVADO_DOCKER`, `VIVADO_MOUNT`, `VIVADO_SETTINGS` and
+`OTPU_BUILD_HOSTS`, `VIVADO_DOCKER_HOSTS`, `OTPU_BUILD_DIR`, `VIVADO_DOCKER`, `VIVADO_MOUNT`, `VIVADO_SETTINGS` and
 `VIVADO_MAC`.
 
 ### Where the test gates run (`EXEC`)

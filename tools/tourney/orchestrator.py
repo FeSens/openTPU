@@ -398,7 +398,7 @@ class Run:
         full["seconds"] = round(time.time() - t)
         w["full"] = {q: full.get(q) for q in ("period", "wns", "whs", "fmax", "wns_design", "lut",
                                                "lutram", "ff", "dsp", "bram36", "collisions",
-                                               "congested")}
+                                               "congested", "host")}
         w["_full"] = full
         ok, why = A.accept_fmax(champ["full"], full)
         w["outcome"], w["reason"] = ("improvement" if ok else "no_gain"), why

@@ -350,28 +350,49 @@ def test_rank_fmax():
 # ------------------------------------------------------------------------------ fmax: build host
 def test_parse_counts_and_busy():
     c = RM.parse_counts("runviv 1\nours 1\ntotal 2\n")
-    assert c == {"runviv": 1, "ours": 1, "total": 2}
-    busy = lambda t: RM.busy(RM.parse_counts(t), native=False)     # Docker host (omarchy)
-    assert RM.busy(c, native=False) == 2           # one make bit + one tournament OOC job
+    assert c == {"runviv": 1, "ours": 1, "total": 2, "docker": 0}
+    busy = lambda t: RM.busy(RM.parse_counts(t), False)     # Docker host (omarchy)
+    assert RM.busy(c, False) == 2           # one make bit + one tournament OOC job
     assert busy("runviv 1\nours 0\ntotal 0\n") == 1   # make bit, pre-Vivado
     assert busy("runviv 0\nours 0\ntotal 1\n") == 1   # someone's bare docker
     assert busy("runviv 2\nours 0\ntotal 2\n") == 2
     assert busy("garbage") == 0
-    nat = lambda t: RM.busy(RM.parse_counts(t), native=True)       # native Vivado (opentpu)
+    nat = lambda t: RM.busy(RM.parse_counts(t), True)       # native Vivado (opentpu)
     assert nat("runviv 1\nours 1\ntotal 5\n") == 2    # a make bit's runs are several processes
     assert nat("runviv 0\nours 0\ntotal 3\n") == 1    # someone's own Vivado session
     assert nat("runviv 0\nours 2\ntotal 0\n") == 2    # OOC wrappers before Vivado starts
     assert nat("garbage") == 0
+    assert nat("runviv 1\nours 0\ntotal 0\ndocker 1\n") == 1   # a Docker make bit, once
+    assert nat("runviv 0\nours 0\ntotal 0\ndocker 1\n") == 1   # another stream's container
 
 
 def test_acquire_waits_for_room(tmp_path, monkeypatch):
     monkeypatch.setattr(RM, "START_LOCK", tmp_path / "v.lock")
     counts = iter([2, 2, 1])
     slept, logs = [], []
-    with RM.acquire(poll=7, count=lambda: next(counts), sleep=slept.append, log=logs.append,
-                    max_jobs=2) as n:
-        assert n == 1
-    assert slept == [7, 7] and len(logs) == 1 and "2/2" in logs[0]
+    with RM.acquire(poll=7, count=lambda h: next(counts), sleep=slept.append, log=logs.append,
+                    max_jobs=2, hosts=["a"]) as (h, n):
+        assert (h, n) == ("a", 1)
+    assert slept == [7, 7] and len(logs) == 1 and "a 2/2" in logs[0]
+
+
+def test_acquire_takes_hosts_in_order(tmp_path, monkeypatch):
+    """The first host with room wins; a full first host sends the job to the second; an
+    unreachable host counts as full."""
+    monkeypatch.setattr(RM, "START_LOCK", tmp_path / "v.lock")
+    load = {"a": 1, "b": 0}
+    with RM.acquire(count=lambda h: load[h], max_jobs=2, hosts=["a", "b"]) as (h, n):
+        assert (h, n) == ("a", 1)
+    load["a"] = 2
+    with RM.acquire(count=lambda h: load[h], max_jobs=2, hosts=["a", "b"]) as (h, n):
+        assert (h, n) == ("b", 0)
+
+    def down(h):
+        if h == "a":
+            raise RuntimeError("ssh: connect timed out")
+        return 0
+    with RM.acquire(count=down, max_jobs=2, hosts=["a", "b"]) as (h, n):
+        assert h == "b"
 
 
 def test_acquire_serializes_starts(tmp_path, monkeypatch):
@@ -383,8 +404,8 @@ def test_acquire_serializes_starts(tmp_path, monkeypatch):
     started = []
 
     def worker(tag):
-        with RM.acquire(poll=0, count=lambda: running[0], sleep=lambda s: time.sleep(0.01),
-                        log=lambda m: None, max_jobs=2):
+        with RM.acquire(poll=0, count=lambda h: running[0], sleep=lambda s: time.sleep(0.01),
+                        log=lambda m: None, max_jobs=2, hosts=["a"]):
             with lk:
                 running[0] += 1
                 started.append((tag, running[0]))
@@ -401,18 +422,19 @@ def test_acquire_serializes_starts(tmp_path, monkeypatch):
 
 
 def test_remote_commands():
-    c = RM.full_cmd("/h/otpu-build/tv-x", 133.33, "0f3a0000", native=False)
+    c = RM.full_cmd("/h/otpu-build/tv-x", 133.33, "0f3a0000", is_native=False)
     assert "make bit DDR=1066" in c and "CORE_MHZ=133.33" in c and "JOBS=2" in c
     assert "VIVADO_AS_USER=1" in c and "BUILD_ID=0f3a0000" in c
-    n = RM.full_cmd("/h/otpu-build/tv-x", 125.49, "0f3a0000", native=True)
+    n = RM.full_cmd("/h/otpu-build/tv-x", 125.49, "0f3a0000", is_native=True)
+    assert n.startswith("export PATH=$HOME/.local/bin:$PATH; ")
     assert "make bit DDR=1066" in n and "CORE_MHZ=125.49" in n and "BUILD_ID=0f3a0000" in n
     assert "VIVADO_DOCKER" not in n and "docker" not in n
     d = RM.docker_cmd("/h/t", "/h/t/ooc.tcl", "/h/t/v.log")
     assert "--label otpu-tourney=1" in d and "--mac-address" in d and ":ro" in d
-    assert RM.vivado_cmd("/h/t", "/h/t/o/ooc.tcl", "/h/t/o/v.log", native=False) == d.replace(
+    assert RM.vivado_cmd("/h/t", "/h/t/o/ooc.tcl", "/h/t/o/v.log", False) == d.replace(
         "/h/t/ooc.tcl", "/h/t/o/ooc.tcl").replace("/h/t/v.log", "/h/t/o/v.log")
-    v = RM.vivado_cmd("/h/t", "/h/t/o/ooc.tcl", "/h/t/o/v.log", native=True)
-    assert v == "cd /h/t/o && bash otpu_ooc.sh"     # what NATIVE_COUNT_CMD counts
+    v = RM.vivado_cmd("/h/t", "/h/t/o/ooc.tcl", "/h/t/o/v.log", True)
+    assert v == RM.NATIVE_PATH + "cd /h/t/o && bash otpu_ooc.sh"   # what NATIVE_COUNT_CMD counts
     sh = RM.native_script("/h/t/o/ooc.tcl", "/h/t/o/v.log")
     assert "exec" not in sh and "vivado -mode batch" in sh and "-source /h/t/o/ooc.tcl" in sh
     assert "[o]tpu_ooc" in RM.NATIVE_COUNT_CMD and "[r]un_vivado" in RM.NATIVE_COUNT_CMD
