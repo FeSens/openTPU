@@ -11,6 +11,7 @@
 #   STEP=impl ./run_vivado.sh             # rerun implementation only (keeps project and synthesis)
 #   IMPL_STRATEGY=Performance_Explore     # a stronger implementation strategy (with bit or impl)
 #   MIG_ADDR_MAP=BANK_ROW_COLUMN          # the MIG address map (default ROW_BANK_COLUMN; gen_mig_prj.py)
+#   MIG_BANK_MACHINES=8 MIG_ORDERING=Strict # the MIG controllers' bank machines (4) and ordering (Normal)
 #   The xc7k480t needs a paid or 30-day evaluation license, node-locked to a MAC address. In Docker
 #   set VIVADO_MAC (the MAC the license was issued for) and XILINXD_LICENSE_FILE (path to the .lic).
 #
@@ -32,7 +33,8 @@ core_mhz="${CORE_MHZ:-100}"   # accelerator clock; lower it (80, 75) if timing d
 build_id="${BUILD_ID:-$(git -C "$root" rev-parse HEAD 2>/dev/null | cut -c1-8)}"
 build_id="${build_id:-0}"
 
-python3 "$here/scripts/gen_mig_prj.py" --speed "$speed" ${MIG_ADDR_MAP:+--addr-map "$MIG_ADDR_MAP"}
+python3 "$here/scripts/gen_mig_prj.py" --speed "$speed" ${MIG_ADDR_MAP:+--addr-map "$MIG_ADDR_MAP"} \
+  ${MIG_BANK_MACHINES:+--bank-machines "$MIG_BANK_MACHINES"} ${MIG_ORDERING:+--ordering "$MIG_ORDERING"}
 
 run() {  # run a Vivado Tcl script with arguments
   local script="$1"; shift
