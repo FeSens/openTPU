@@ -330,11 +330,18 @@ the simulated cycles match the card:
 | Run | card (lens) | sim before | sim with tgap |
 |---|---|---|---|
 | LFM2 4-bit + int8 head, pos 50 | 1.418 M | 1.262 M | 1.430 M |
-| Qwen3.5 4-bit + int8 head, 1 layer, pos 60 | 2.553 M | 2.28 M | 2.552 M |
+| Qwen3.5 4-bit + int8 head, 1 layer, pos 60 | 2.553 M | 2.203 M | 2.485 M (-2.7%) |
+| Qwen3.5, 4 layers | 2.952 M | 2.529 M | 2.853 M (-3.4%) |
+| Qwen3.5 attention + MLP layer (4 - 3 layers) | 89.3 K | 84.4 K | 91.8 K |
+| Qwen3.5 DeltaNet + MLP layer ((3 - 1 layers) / 2) | 154.7 K | 120.8 K | 138 K |
+
+The Qwen3.5 runs use DSTEP (`OTPU_PAIR=1 OTPU_DSTEP=1`), as the image does. The rest of the
+DeltaNet layer's gap (1.12x) is its 1 MiB DSTEP state write-back mixed with the weight reads.
+The model charges those writes too little. `+axi_wgap` and `+axi_tturn` are the knobs for
+this, and they are waiting for a card fit (`tools/rw_bench.py`).
 
 The simulator puts the cost on the transaction, so 16-beat bursts would halve it: 1.43 -> 1.31 M
 simulated for LFM2 (`--bl 16`). The card test is the `AXI_BL=16` build (`make bit AXI_BL=16`).
-Writes (`+axi_wgap`, per single-beat write transaction) are not fitted yet.
 
 Before the burst fix: Decode runs at ~3.2x the simulated cycles: the counters show the MXU starved (MXU_BUSY 94%,
 MXU_MAC 21%, DRAM_WAIT 0.1%) and DRAM reads at 3.0 GB/s (0.23 beats / cycle / channel). Port B
