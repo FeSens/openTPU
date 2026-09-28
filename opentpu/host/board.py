@@ -1035,11 +1035,17 @@ class BoardBackend:
         addr = self._stream[0]
         pieces, due = self._pieces(), {}
         t0, i, probes, tries = b._t_run, 0, 0, 0
+        halted = False
         while i < len(pieces) - 1:
             d = self._due.get(i)
+            # a piece's time of the last token may be past this run's end (a token delayed
+            # by the host): HALTED is checked after every slice, not only at the piece's time
             while d is not None and (now := time.perf_counter() - t0) < d - STREAM_EARLY:
                 time.sleep(min(d - STREAM_EARLY - now, 1e-3))   # slices: sleeps overshoot
-            if t.reg_read(R_STATUS) & ST_HALTED:
+                if t.reg_read(R_STATUS) & ST_HALTED:
+                    halted = True
+                    break
+            if halted or t.reg_read(R_STATUS) & ST_HALTED:
                 self._seen = time.perf_counter()
                 break
             o, k = pieces[i]

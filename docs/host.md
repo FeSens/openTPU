@@ -463,8 +463,9 @@ per-call cost stays under 1% of the transfer).
 
 **Pipelining.** A token's program depends on its position only, so `Engine.step` compiles
 position p + 1 while the card runs p (`Engine(..., pipeline=None)`: on for every backend but
-the ISA simulator); on the board, two worker processes keep p + 1 and p + 2 in flight
-(`COMPILE_AHEAD`), so a compile may take up to two device runs. A precompile made for another
+the ISA simulator); on the board, three worker processes keep p + 1 .. p + 3 in flight
+(`COMPILE_AHEAD`), so a compile may take up to three device runs (two until LFM2 fp4's 13.5 ms
+run: 0.8-1.2 ms of compile wait per token on a card host running two Vivado builds). A precompile made for another
 position (after `reset`, or `run_rows`) is waited for and dropped. Results are unchanged (`tests/test_host.py`, and the board-model tests
 compare the logits with the ISA simulator's bit for bit).
 
@@ -585,6 +586,12 @@ fraction F off the wall time; the fake writes its logits piece by piece), Qwen3'
 on the loaded Mac, HALTED seen after the run's end: 0.00-0.02 ms without streaming (before:
 3.2-3.7 ms, most of it the macOS sleep overshoot) and 0.07-0.18 ms streamed, at F = +0.25% and
 -2%. Not yet on the card.
+
+**Streamed wait vs a late piece time.** The streamed wait sleeps until each piece's time of
+the last token; a time learned on a delayed token can lie past this run's end, and HALTED was
+checked only at the piece's time: LFM2 fp4 on a busy card host (fp4fx120, two Vivado builds)
+saw HALTED 2.2 ms after the run's end in one streamed run. HALTED is now read after every
+sleep slice (at most 1 ms apart). Not yet re-measured on the card.
 
 **Resident decode.** A decode program now takes the position and the token as run arguments
 (docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit25), so one program serves

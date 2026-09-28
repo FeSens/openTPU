@@ -647,7 +647,7 @@ def _mlp(x, lw, spec: Spec):
 # holds the activations of 8 rows of Qwen3-0.6B (Engine.prefill_chunks shrinks a run that does
 # not fit).
 PREFILL_ROWS = 8
-COMPILE_AHEAD = 2    # decode programs compiled ahead by the worker processes (Engine)
+COMPILE_AHEAD = 3    # decode programs compiled ahead by the worker processes (Engine)
 DECODE_LEAD = 16     # resident decode: the next bucket's program is compiled from this many
                      # positions before the current bucket ends (Engine)
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
@@ -977,8 +977,9 @@ class Engine:
         self._pool = None
         self._ready = None                  # the worker process's start (process pipeline)
         self._next = []                     # [(key, Future of a coming run's programs)]
-        # decode programs precompiled ahead: two worker processes, so a compile can take
-        # two device runs (LFM2 at 1900 tokens: 30 ms of trace on a busy host, 27 ms run)
+        # per-position decode programs precompiled ahead: three worker processes, so a
+        # compile can take three device runs (LFM2 fp4 on the card: a 13.5 ms run against a
+        # 16-30 ms trace, more on a host busy with other work; resident decode compiles none)
         self._ahead = COMPILE_AHEAD if self._procs else 1
         if self._procs:
             self._start_pool()
