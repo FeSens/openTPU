@@ -214,7 +214,7 @@ module otpu_axi_mem #(
             longint a;
             a = (aa + arc > cyc) ? aa + arc : cyc;
             aa = a;
-            if (afree == 0 || !s_arid[c]) begin
+            if (tgap != 0 && (afree == 0 || !s_arid[c])) begin
               if (bus[c] < a * tpc) bus[c] = a * tpc;
               bus[c] = bus[c] + (tgap * tpu + 50) / 100;
             end
@@ -256,8 +256,10 @@ module otpu_axi_mem #(
               n_rmw[c]++;
               if (aw_i[c][0]) n_rmw_a[c]++;
             end
-            if (bus[c] < tw * tpc) bus[c] = tw * tpc;
-            bus[c] = bus[c] + (wgap * tpu + 50) / 100;
+            if (wgap != 0) begin
+              if (bus[c] < tw * tpc) bus[c] = tw * tpc;
+              bus[c] = bus[c] + (wgap * tpu + 50) / 100;
+            end
             tw = dram_slot(c, aw_a[c][0], 1'b1, tw);
           end
           b = beat_word(aw_a[c][0], c);
