@@ -140,6 +140,15 @@ module otpu_mxu
   wire        cmd_pair = cmd.flags[6] && cmd.flags[5:4] != WF_W8;
   wire [15:0] cmd_KBa = cmd_pair ? (cmd.w4[31:16] + 16'd1) >> 1 : cmd.w4[31:16];
   wire [31:0] cmd_total = 32'(cmd.w4[15:0]) * 32'(cmd_KBa);   // advances (chunk requests)
+  // cmd_total == 0 without the multiply (a product of two 16-bit factors is zero iff one is;
+  // cmd_KBa is zero iff KB is, or PAIR's 16-bit KB + 1 wraps): off the DSP's pattern detect
+  wire        cmd_tz = (cmd.w4[15:0] == 16'd0) || (cmd.w4[31:16] == 16'd0) ||
+                       (cmd_pair && (&cmd.w4[31:16]));
+`ifndef SYNTHESIS
+  always @(posedge clk)
+    if (!rst && start && cmd_tz != (cmd_total == 0))
+      $fatal(1, "otpu_mxu: cmd_tz %0d but total %0d", cmd_tz, cmd_total);
+`endif
   logic [31:0] q_out [2], q_total [2];
   logic        q_tz [2];                      // q_total == 0 (registered: off the drain path)
   logic [15:0] q_KB [2], q_KBa [2], q_ors [2];   // KBa: advances per row
@@ -867,7 +876,7 @@ module otpu_mxu
         qi = q_h ^ (q_n != 0);
         q_out[qi]   <= cmd.w3;
         q_total[qi] <= cmd_total;
-        q_tz[qi]    <= (cmd_total == 0);
+        q_tz[qi]    <= cmd_tz;
         if (q_n == 0) c_left <= cmd_total;          // becomes the head now
         q_KB[qi]    <= cmd.w4[31:16];
         q_KBa[qi]   <= cmd_KBa;
