@@ -65,6 +65,10 @@ MOUNT = os.environ.get("VIVADO_MOUNT", "/mnt/ml/Xilinx:/opt/Xilinx:ro")
 SETTINGS = os.environ.get("VIVADO_SETTINGS", "/opt/Xilinx/2026.1/Vivado/settings64.sh")
 MAC = os.environ.get("VIVADO_MAC", "02:42:ac:11:26:01")
 LABEL = "otpu-tourney=1"
+# extra `make bit` variables for every full build (champion and candidates alike): the image the
+# tournament optimizes for. AXI_BL=16: 16-beat port B bursts (+5.5% DRAM bytes per cycle on the
+# card), which the production clock does not close yet
+BUILD_ARGS = os.environ.get("OTPU_BUILD_ARGS", "AXI_BL=16").split()
 PART = "xc7k480tffg1156-2"
 # serializes our own job starts (the check-then-start below is not atomic across processes)
 START_LOCK = Path(os.environ.get("OTPU_TOURNEY_LOCKDIR", "/tmp")) / "otpu-tourney-vivado.lock"
@@ -260,11 +264,13 @@ def full_cmd(tree: str, core_mhz: float, build_id: str, jobs: int = 2,
     """`make bit` for the whole board, as the production builds run it."""
     if is_native:
         env = f"BUILD_ID={build_id} CORE_MHZ={core_mhz:g} JOBS={jobs}"
-        return f"{NATIVE_PATH}cd {tree}/boards/ypcb-00338 && {env} make bit DDR=1066"
+        return (f"{NATIVE_PATH}cd {tree}/boards/ypcb-00338 && {env} make bit DDR=1066"
+                + "".join(f" {shlex.quote(a)}" for a in BUILD_ARGS))
     env = (f"BUILD_ID={build_id} CORE_MHZ={core_mhz:g} JOBS={jobs} VIVADO_DOCKER={IMAGE} "
            f"VIVADO_AS_USER=1 VIVADO_MOUNT={MOUNT} VIVADO_SETTINGS={SETTINGS} "
            f"VIVADO_MAC={MAC} XILINXD_LICENSE_FILE=$HOME/Xilinx.lic")
-    return f"cd {tree}/boards/ypcb-00338 && {env} make bit DDR=1066"
+    return (f"cd {tree}/boards/ypcb-00338 && {env} make bit DDR=1066"
+            + "".join(f" {shlex.quote(a)}" for a in BUILD_ARGS))
 
 
 def start_detached(tree: str, cmd: str, tag: str, host: str | None = None) -> None:

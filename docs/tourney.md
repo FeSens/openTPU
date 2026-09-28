@@ -207,7 +207,9 @@ omarchy (`OTPU_REMOTE`, below).
 | `opentpu` (1st) | i7-4790, 4 cores / 8 threads, 31 GB; no card. One full build at a time (`OTPU_HOST_JOBS=opentpu=1`: two builds' IP synthesis filled the 31 GB and swapped 11 GB). Only `~/otpu-build/` is the tournament's |
 | `omarchy.tail5bd214.ts.net` (2nd) | also runs the test gates, the card and other streams' builds |
 
-`OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
+Every full build (champion and candidates) passes `OTPU_BUILD_ARGS` to `make bit`, default
+`AXI_BL=16` (16-beat DRAM bursts, +5.5% DRAM bytes per cycle on the card); the cached full result's
+name carries them (`<sha>-125.49-AXI_BL16.json`). `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
 Vivado in the `vivado:2026.1` Docker image instead. After a full build its reports are kept on
 the host in `~/otpu-build/reports/tv-<name>`; the tree is removed once its job has finished (never
 while it runs).

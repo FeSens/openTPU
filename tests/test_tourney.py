@@ -434,6 +434,7 @@ def test_remote_commands():
     assert n.startswith("export PATH=$HOME/.local/bin:$PATH; ")
     assert "make bit DDR=1066" in n and "CORE_MHZ=125.49" in n and "BUILD_ID=0f3a0000" in n
     assert "VIVADO_DOCKER" not in n and "docker" not in n
+    assert n.endswith(" make bit DDR=1066" + "".join(" " + x for x in RM.BUILD_ARGS))
     d = RM.docker_cmd("/h/t", "/h/t/ooc.tcl", "/h/t/v.log")
     assert "--label otpu-tourney=1" in d and "--mac-address" in d and ":ro" in d
     assert RM.vivado_cmd("/h/t", "/h/t/o/ooc.tcl", "/h/t/o/v.log", False) == d.replace(
@@ -663,6 +664,7 @@ def test_full_step_broken_build(tmp_path, monkeypatch):
 
 def test_full_result_cached(tmp_path, monkeypatch):
     O, run = _run(tmp_path)
-    (tmp_path / f"{'a' * 12}-133.33.json").write_text(json.dumps(full(wns=0.1)))
+    monkeypatch.setattr(RM, "BUILD_ARGS", ["AXI_BL=16"])
+    (tmp_path / f"{'a' * 12}-133.33-AXI_BL16.json").write_text(json.dumps(full(wns=0.1)))
     monkeypatch.setattr(O.G, "full_design", lambda *a: pytest.fail("rebuilt a cached commit"))
     assert run.full_result("a" * 40, None)["wns"] == 0.1

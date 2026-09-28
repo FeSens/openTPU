@@ -171,7 +171,9 @@ class Run:
 
     # ---- the whole design (fmax objective)
     def full_key(self, sha: str) -> Path:
-        return self.fulldir / f"{sha[:12]}-{self.a.target_mhz:g}.json"
+        from . import remote as R
+        args = "".join(f"-{a.replace('=', '')}" for a in R.BUILD_ARGS)   # e.g. -AXI_BL16
+        return self.fulldir / f"{sha[:12]}-{self.a.target_mhz:g}{args}.json"
 
     def full_result(self, sha: str, wt: Path | None) -> dict:
         """The full board build of commit `sha` at the target clock: cached in runs/_full/ (all
