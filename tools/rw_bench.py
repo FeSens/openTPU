@@ -104,6 +104,7 @@ def main(argv=None) -> int:
     ap.add_argument("--dev", default="/dev/xdma0")
     ap.add_argument("--json")
     ap.add_argument("--bl", type=int, default=8, help="sim: the AXI read burst, beats")
+    ap.add_argument("--wbl", type=int, default=8, help="sim: the AXI write burst, beats")
     ap.add_argument("--plus", action="append", default=[],
                     help="sim: extra simulator argument, overriding the calibrated ones "
                          "(e.g. --plus +axi_wgap=100; repeatable)")
@@ -134,7 +135,8 @@ def main(argv=None) -> int:
                 cyc = st["cycles"]
             else:
                 mts = 3200 / 3
-                _, _, st = rtlsim.run(cfg, [prog], [img], uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl},
+                _, _, st = rtlsim.run(cfg, [prog], [img], uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl,
+                                                                          "AXI_WBL": a.wbl},
                                       axi=True, boot=True, stall=0, bw=100,
                                       lat=round(0.3 * a.mhz), arc=4, max_cycles=1 << 40,
                                       plusargs=a.plus + ddr3_plusargs(mts, a.mhz))

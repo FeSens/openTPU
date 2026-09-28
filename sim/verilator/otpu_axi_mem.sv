@@ -1,5 +1,5 @@
-// Simulation model of the board memory: two AXI4 slave channels (512-bit; single-beat writes,
-// INCR read bursts, which must not cross 4 KB) in front of one logical DRAM image with the 64-byte channel interleave of
+// Simulation model of the board memory: two AXI4 slave channels (512-bit; INCR read and write
+// bursts, which must not cross 4 KB) in front of one logical DRAM image with the 64-byte channel interleave of
 // otpu_axi_dram (with its CHASH: the chunk halves swapped by the chunk index's parity). Every ready is randomly withheld and every response randomly delayed (seed
 // +axi_seed=N, stall probability +axi_stall=percent), so the slice sees variable latency and
 // backpressure; reads and writes are not ordered against each other, as in a real controller:
@@ -10,7 +10,7 @@
 // cost per read transaction, as the board's interconnect and controller have: a read's data
 // starts no sooner than N cycles after the previous read's on its channel (0 = none; single
 // 64-byte reads then reach at most 1/N beats per cycle). The final dump prints each channel's
-// read transactions and beats (AXI ch<c> ar=<n> beats=<n> ...).
+// read and write transactions and beats (AXI ch<c> ar=<n> beats=<n> aw=<n> wbeats=<n> ...).
 // DDR3 timing (+axi_dram=1, replaces +axi_bw): each channel is one DDR3 rank behind a
 // first-come first-served controller, in controller clock cycles (= core cycles: the MIG's
 // ui_clk at DDR3-800 4:1 is 100 MHz). A 64-byte beat is one BL8 burst: one cycle of the data
@@ -49,10 +49,12 @@ module otpu_axi_mem #(
   output logic [1:0]            s_awready,
   input  logic [1:0][31:0]      s_awaddr,
   input  logic [1:0]            s_awid,
+  input  logic [1:0][7:0]       s_awlen,
   input  logic [1:0]            s_wvalid,
   output logic [1:0]            s_wready,
   input  logic [1:0][511:0]     s_wdata,
   input  logic [1:0][63:0]      s_wstrb,
+  input  logic [1:0]            s_wlast,
   output logic [1:0]            s_bvalid,
   input  logic [1:0]            s_bready,
   output logic [1:0]            s_bid,
@@ -75,7 +77,7 @@ module otpu_axi_mem #(
   int bw = 100;
   int lat = LAT;
   int arc = 0;
-  longint n_ar [2], n_rb [2], n_ara [2], n_miss [2], n_rmw [2];
+  longint n_ar [2], n_rb [2], n_ara [2], n_miss [2], n_rmw [2], n_aw [2], n_wb [2];
   // DDR3 model (see the top)
   int dram = 0, amap = 0;
   int trcd = 2, trp = 2, tras = 4, trc = 6, trtp = 1, trefi = 780, trfc = 16, tturn = 2;
@@ -151,14 +153,16 @@ module otpu_axi_mem #(
 
   typedef struct { longint t; logic id; logic [31:0] addr; int len; } rq_t;
   longint rbt [2][$];                    // DDR3 model: each read beat's data time
-  typedef struct { longint t; logic id; int b; logic [511:0] d; logic [63:0] s; } bq_t;
+  typedef struct { longint t; logic id; int b; logic [511:0] d; logic [63:0] s; bit last; } bq_t;
   logic [511:0] rdq [2][$];              // each read beat's data, taken when its AR is accepted
   rq_t rq [2][$];
   bq_t bq [2][$];
   logic [31:0] aw_a [2][$];
   logic        aw_i [2][$];
+  int          aw_l [2][$];              // the write's beats (AWLEN + 1)
   logic [511:0] w_d [2][$];
   logic [63:0]  w_s [2][$];
+  logic         w_last [2][$];
 
   always_ff @(posedge clk) cyc <= cyc + 1;
 
@@ -166,6 +170,7 @@ module otpu_axi_mem #(
     logic arr, awr, wr, rv, bv;
     int cr = 0;                          // bandwidth credit (100 = one beat)
     int ri = 0;                          // the head read's next beat
+    int wi = 0;                          // the head write's next beat
     longint art = 0;                     // the last read's earliest data (transaction cost)
     longint aa = 0;                      // DDR3 model: the last read's arrival at the controller
     always_ff @(posedge clk) begin
@@ -194,8 +199,8 @@ module otpu_axi_mem #(
     always_ff @(posedge clk) begin
       if (rst) begin
         rq[c].delete(); bq[c].delete(); aw_a[c].delete(); aw_i[c].delete(); rdq[c].delete();
-        w_d[c].delete(); w_s[c].delete();
-        rv <= 1'b0; bv <= 1'b0; ri = 0; art = 0; aa = 0; nw_out = 0;
+        w_d[c].delete(); w_s[c].delete(); w_last[c].delete();
+        rv <= 1'b0; bv <= 1'b0; ri = 0; wi = 0; art = 0; aa = 0; nw_out = 0; aw_l[c].delete();
         rbt[c].delete(); bus[c] = 0; nref[c] = trefi * tpu; wdir[c] = 1'b0;
         for (int k = 0; k < 8; k++) begin orow[c][k] = -1; tact[c][k] = -1000; tcol[c][k] = -1000; end
       end else begin
@@ -233,43 +238,65 @@ module otpu_axi_mem #(
           n_rb[c] += n;
           if (s_arid[c]) n_ara[c]++;
         end
-        if (s_awvalid[c] && s_awready[c]) nw_out = nw_out + 1;
+        if (s_awvalid[c] && s_awready[c]) begin nw_out = nw_out + 1; n_aw[c]++; end
+        if (s_wvalid[c] && s_wready[c]) n_wb[c]++;
         if (bv && s_bready[c]) nw_out = nw_out - 1;
         if (s_awvalid[c] && s_awready[c]) begin
+          if ((s_awaddr[c] & 32'hfff) + 32'(64 * (int'(s_awlen[c]) + 1)) > 32'h1000)
+            $fatal(1, "AXI write burst crosses 4 KB");
           aw_a[c].push_back(s_awaddr[c]);
           aw_i[c].push_back(s_awid[c]);
+          aw_l[c].push_back(int'(s_awlen[c]) + 1);
         end
         if (s_wvalid[c] && s_wready[c]) begin
           w_d[c].push_back(s_wdata[c]);
+          w_last[c].push_back(s_wlast[c]);
           w_s[c].push_back(s_wstrb[c]);
         end
         cr = (dram != 0) ? 200 : (cr + bw > 200) ? 200 : cr + bw;
-        // a write is performed once both its address and data are in (and the channel has time)
+        // a write beat is performed once its burst's address and the beat's data are in (and
+        // the channel has time); a burst costs the bus wgap once, and has one response, after
+        // its last beat
         if (aw_a[c].size() != 0 && w_d[c].size() != 0 && cr >= 100) begin
           int b;
           longint tw;
+          logic [31:0] wa;
+          bit last;
           cr = cr - 100;
+          wa = aw_a[c][0] + 32'(64 * wi);
+          last = wi == aw_l[c][0] - 1;
+          if (w_last[c][0] != last) $fatal(1, "AXI WLAST does not match AWLEN");
           tw = cyc;
           if (dram != 0) begin
             tw = cyc;
             if (w_s[c][0] != '1) begin
-              tw = dram_slot(c, aw_a[c][0], 1'b0, cyc) + trmw;
+              tw = dram_slot(c, wa, 1'b0, cyc) + trmw;
               n_rmw[c]++;
               if (aw_i[c][0]) n_rmw_a[c]++;
             end
-            if (wgap != 0) begin
+            if (wgap != 0 && wi == 0) begin
               if (bus[c] < tw * tpc) bus[c] = tw * tpc;
               bus[c] = bus[c] + (wgap * tpu + 50) / 100;
             end
-            tw = dram_slot(c, aw_a[c][0], 1'b1, tw);
+            tw = dram_slot(c, wa, 1'b1, tw);
           end
-          b = beat_word(aw_a[c][0], c);
+          b = beat_word(wa, c);
           if (b + 16 > WORDS) $fatal(1, "AXI write beyond memory");
-          // the write lands in memory when its response goes out: a read accepted before
-          // then may or may not see it, as in a real controller (here: never)
-          bq[c].push_back('{tw + lat + ($urandom % 8), aw_i[c][0], b, w_d[c][0], w_s[c][0]});
-          void'(aw_a[c].pop_front()); void'(aw_i[c].pop_front());
-          void'(w_d[c].pop_front()); void'(w_s[c].pop_front());
+          // the write lands in memory when its response goes out (a burst's other beats: at
+          // their own time, silently): a read accepted before then may or may not see it, as
+          // in a real controller (here: never)
+          bq[c].push_back('{tw + lat + ($urandom % 8), aw_i[c][0], b, w_d[c][0], w_s[c][0], last});
+          if (last) begin
+            void'(aw_a[c].pop_front()); void'(aw_i[c].pop_front()); void'(aw_l[c].pop_front());
+            wi = 0;
+          end else wi++;
+          void'(w_d[c].pop_front()); void'(w_s[c].pop_front()); void'(w_last[c].pop_front());
+        end
+        // a burst's beats before its last land silently, in order
+        while (bq[c].size() != 0 && !bq[c][0].last && bq[c][0].t <= cyc) begin
+          for (int k = 0; k < 64; k++)
+            if (bq[c][0].s[k]) mem[bq[c][0].b + k / 4][8 * (k % 4) +: 8] <= bq[c][0].d[8 * k +: 8];
+          void'(bq[c].pop_front());
         end
         if (rv && s_rready[c]) begin
           if (dram != 0) void'(rbt[c].pop_front());
@@ -292,7 +319,7 @@ module otpu_axi_mem #(
         end else begin
           rv <= 1'b0;
         end
-        bv <= bq[c].size() != 0 && bq[c][0].t <= cyc && !rnd_stall();
+        bv <= bq[c].size() != 0 && bq[c][0].last && bq[c][0].t <= cyc && !rnd_stall();
       end
     end
   end
@@ -324,7 +351,7 @@ module otpu_axi_mem #(
     void'($value$plusargs("axi_afree=%d", afree));
     void'($value$plusargs("axi_rout=%d", rout));
     void'($value$plusargs("axi_wout=%d", wout));
-    n_ar = '{0, 0}; n_rb = '{0, 0}; n_ara = '{0, 0}; n_miss = '{0, 0}; n_rmw = '{0, 0}; n_rmw_a = '{0, 0};
+    n_ar = '{0, 0}; n_rb = '{0, 0}; n_ara = '{0, 0}; n_miss = '{0, 0}; n_rmw = '{0, 0}; n_rmw_a = '{0, 0}; n_aw = '{0, 0}; n_wb = '{0, 0};
     begin
       int seed;
       if ($value$plusargs("axi_seed=%d", seed)) void'($urandom(seed));
@@ -353,8 +380,8 @@ module otpu_axi_mem #(
   end
   always @(posedge clk) if (dump) begin
     for (int c = 0; c < 2; c++)
-      $display("AXI ch%0d ar=%0d beats=%0d ar_a=%0d row_miss=%0d rmw=%0d rmw_a=%0d", c, n_ar[c],
-               n_rb[c], n_ara[c], n_miss[c], n_rmw[c], n_rmw_a[c]);
+      $display("AXI ch%0d ar=%0d beats=%0d aw=%0d wbeats=%0d ar_a=%0d row_miss=%0d rmw=%0d rmw_a=%0d",
+               c, n_ar[c], n_rb[c], n_aw[c], n_wb[c], n_ara[c], n_miss[c], n_rmw[c], n_rmw_a[c]);
     if (PHYS == 0) begin
       fd = $fopen($sformatf("%s/dram_out_%0d.bin", dir, SID), "wb");
       for (int i = 0; i < WORDS; i++) $fwrite(fd, "%u", mem[i]);

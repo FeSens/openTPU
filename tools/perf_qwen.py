@@ -132,6 +132,8 @@ def main():
                     help="cycles per AXI read transaction and channel (the board's is about 4)")
     ap.add_argument("--bl", type=int, default=8,
                     help="AXI read burst, beats (1: single-beat reads, as before bursts)")
+    ap.add_argument("--wbl", type=int, default=8,
+                    help="AXI write burst, beats (1: single-beat writes, as before bursts)")
     ap.add_argument("--dram", choices=["off", "brc", "rbc"], default="off",
                     help="DDR3 bank / row timing (otpu_axi_mem.sv) with the MIG's address map "
                          "BANK_ROW_COLUMN or ROW_BANK_COLUMN (replaces --bw)")
@@ -218,7 +220,7 @@ def main():
         progs = img.compile_step(a.pos, *([a.block] if a.block else []))
     t = time.time()
     drams, _, st = rtlsim.run(cfg, progs, [dram], trace=True,
-                              uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl},
+                              uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl, "AXI_WBL": a.wbl},
                               axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat, arc=a.arc,
                               max_cycles=1 << 40, args=args,
                               plusargs=([] if a.dram == "off" else
@@ -243,7 +245,7 @@ def main():
     if ar:
         print("AXI reads per channel (transactions, beats, beats/transaction): " +
               ", ".join(f"{n}, {b}, {b / max(n, 1):.2f}" for n, b in ar) +
-              f"; arc={a.arc} bl={a.bl} dram={a.dram}")
+              f"; arc={a.arc} bl={a.bl} wbl={a.wbl} dram={a.dram}")
     b = p.buckets[0]
     if b.get("ms") is not None:
         mxb = sum(b.get("mx", []))
