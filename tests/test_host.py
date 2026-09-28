@@ -329,6 +329,33 @@ def test_halt_is_seen_soon_when_core_khz_is_off(run_dir, skew):
     assert np.median(late[4:]) < 0.4e-3, late
 
 
+@pytest.mark.parametrize("lag", [0.0, 1e-3, 20e-3])
+def test_streamed_tail_waits_for_the_last_stores(run_dir, lag):
+    """The last logits piece lands `lag` after HALTED (its stores still in flight): the tail
+    read after HALTED reads again until it is there (up to TAIL_SETTLE); a piece missing for
+    longer is an error (seen on the card: LFM2 fp4 + int8 head, resident decode, sampled)."""
+    from opentpu import lens as L
+    from opentpu.host.board import TAIL_SETTLE, sim_config
+    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake8", run_s=0.01)
+    t.streams = True
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+    v = eng.image.v_loc
+    t.logits = (eng.image.io["logits"], 4 * v, 4 * min(HEAD_CHUNK, eng.cfg.TMEM_WORDS // 8))
+    t.logits_lag = lag
+    want = np.arange(v, dtype=np.float32) % 997 * 1e-3
+    if lag > TAIL_SETTLE:
+        with pytest.raises(RuntimeError, match="unwritten"):
+            eng.step(1)
+    else:
+        for tok in (1, 2):
+            assert np.array_equal(eng.step(tok), want)
+    eng.backend.close()
+
+
 def test_resident_decode_takes_run_arguments(run_dir):
     """Engine(resident=True) on a bitstream with run arguments (CAPS bit25): the decode program
     is loaded once and each step writes the ARG registers only (no inputs, no program); on one

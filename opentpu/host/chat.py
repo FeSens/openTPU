@@ -83,7 +83,7 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
                 w = self.buf[sel]
                 self.buf[sel] = np.where(w > 0, w / repetition_penalty, w * repetition_penalty)
             self.got += hi - lo
-            if lo % block == 0 and (hi % block == 0 or hi == len(self.buf)):
+            if temperature > 0 and lo % block == 0 and (hi % block == 0 or hi == len(self.buf)):
                 m = (hi - lo) // block * block      # the piece's block maxima
                 if m:
                     self.bm[lo // block:(lo + m) // block] = b[:m].reshape(-1, block).max(axis=1)
