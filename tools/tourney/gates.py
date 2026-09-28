@@ -52,7 +52,9 @@ def _tail(s: str, n: int = 1200) -> str:
 
 # ------------------------------------------------------------------------------ where tests run
 TEST_LOCK = Path(os.environ.get("OTPU_TOURNEY_LOCKDIR", "/tmp")) / "otpu-tourney-tests.lock"
-TEST_SLOTS = {"remote": 2, "local": 1}
+# remote: OTPU_REMOTE_JOBS, the same cap as tools/omarchy_test.sh (omarchy runs out of memory with
+# builds, tests and card sessions together: set it to 1 on busy days)
+TEST_SLOTS = {"remote": int(os.environ.get("OTPU_REMOTE_JOBS", "2")), "local": 1}
 REMOTE_SCRIPT = "tools/omarchy_test.sh"
 # the Verilator cache on the build host, shared by the tournament's trees (keyed by source hash)
 REMOTE_BUILD = "otpu-test/.tourney-build"
