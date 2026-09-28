@@ -3,8 +3,8 @@
 package otpu_pkg;
   localparam logic [7:0] OP_NOP = 8'h00, OP_HALT = 8'h01, OP_LI = 8'h02, OP_ADDI = 8'h03,
                          OP_LOOP = 8'h04, OP_BAR = 8'h05, OP_LD = 8'h10, OP_ST = 8'h11,
-                         OP_MM = 8'h20, OP_QACT = 8'h21, OP_QST = 8'h22, OP_VOP = 8'h30,
-                         OP_GATHER = 8'h40;
+                         OP_DSTEP = 8'h12, OP_MM = 8'h20, OP_QACT = 8'h21, OP_QST = 8'h22,
+                         OP_VOP = 8'h30, OP_GATHER = 8'h40;
 
   localparam logic [7:0] V_ADD = 0, V_SUB = 1, V_RSUB = 2, V_MUL = 3, V_MAX = 4, V_MIN = 5,
                          V_OUTER = 6, V_COPY = 8, V_EXP2 = 9, V_RECIP = 10, V_RSQRT = 11,
@@ -12,6 +12,8 @@ package otpu_pkg;
                          V_RMAX = 17, V_RSSQ = 18, V_RDOT = 19;
   // VOP OUTER flags: one decay word T[d] for all columns / decay 1.0 (T[d] not read)
   localparam int VF_DSCALAR = 0, VF_DONE = 1;
+  // DSTEP flags: the state starts at +0 (DRAM not read)
+  localparam int DF_ZERO = 0;
 
   localparam logic [1:0] B_FULL = 0, B_ROW = 1, B_COL = 2, B_SCALAR = 3;
 
@@ -42,7 +44,7 @@ package otpu_pkg;
 
   function automatic int unit_of(input logic [7:0] op);
     case (op)
-      OP_LD, OP_ST:      return U_DMA;
+      OP_LD, OP_ST, OP_DSTEP: return U_DMA;
       OP_MM:             return U_MXU;
       OP_QACT, OP_QST:   return U_Q;
       OP_VOP:            return U_VPU;
@@ -144,6 +146,9 @@ package otpu_pkg;
         o.a[1] = 24'(rows - 1); o.w[1] = 32'(c.w6[15:0]);
         o.a[2] = 24'(rows - 1); o.w[2] = 32'(c.w5[15:0]);
       end
+      OP_DSTEP: begin
+        o.a[0] = 24'(32'(c.w4[15:0]) - 1); o.w[0] = 32'(c.w4[31:16]);
+      end
       OP_GATHER: begin
         rows = 32'(c.w3[15:0]);
         o.a[0] = 24'(rows - 1); o.w[0] = c.w4;
@@ -189,6 +194,18 @@ package otpu_pkg;
       OP_ST: begin
         f.rd[0] = mk(SP_TMEM, c.w2, c.w3);
         f.wr[0] = mk(SP_DRAM, c.w1, c.w3 << 2);
+      end
+      OP_DSTEP: begin
+        // the state is read and written in place (a write range); q | k, v, decay .. beta
+        // are read, o written
+        rows = 32'(c.w4[15:0]); cols = 32'(c.w4[31:16]);
+        if (rows != 0 && cols != 0) begin
+          f.wr[0] = mk(SP_DRAM, c.w1, (p.p0 + cols) << 2);
+          f.wr[1] = mk(SP_TMEM, c.w6, rows);
+          f.rd[0] = mk(SP_TMEM, c.w2, cols << 1);
+          f.rd[1] = mk(SP_TMEM, c.w3, rows);
+          f.rd[2] = mk(SP_TMEM, c.w5, c.w7 + 1);
+        end
       end
       OP_MM: begin
         n = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]); m = 32'(c.w6[23:16]);

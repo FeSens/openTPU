@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from opentpu.llm.qwen3 import (Engine, Spec, device_config, emulated_logits, load_weights,
-                                reference_logits)
+                                reference_logits, rope_tables)
 
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
@@ -81,6 +81,24 @@ def test_tiny_4bit_column_reuse(tiny, wformat):
     emu = emulated_logits(spec, W, toks, wformat=wformat)
     assert _cos(runs[True], emu).min() > 0.9995
     assert _cos(runs[True], runs[False]).min() > 0.99999
+
+
+def test_tiny_resident_decode_is_bit_exact(tiny):
+    """Resident decode (compile_decode: one program per attention bucket, the token and
+    position as run arguments) gives the per-position programs' logits bit for bit, from
+    position 0 and across the bucket boundary 256, after a chunked prefill."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 262)]
+    a = Engine(spec, W, cap=512, resident=True)
+    b = Engine(spec, W, cap=512)
+    assert a.resident
+    for t in toks[:3]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    assert np.array_equal(a.prefill(toks[3:252]), b.prefill(toks[3:252]))
+    for t in toks[252:]:
+        pa = a.pos
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), pa
+    assert sorted(a._decodes) == [1, 2]
 
 
 def test_tiny_reset_reuses_cache(tiny):
@@ -213,3 +231,60 @@ def test_qwen3_0_6b_chunked_prefill_and_batch_match_hf():
                                do_sample=False)[0, len(ids):].tolist()
         assert got[s] == want[:len(got[s])] and len(got[s]) >= 5
     assert got[1] == Engine(spec, W, cap=256).generate(prompts[1], max_new=6)
+
+
+def test_tiny_vt_tiles_bit_exact(tiny, monkeypatch):
+    """A 512-token cache holds V^T in tiles of 256 tokens (compiler.KVDesc): a prefill chunk
+    across the tile edge, then decode past it, give the same logits bit for bit as the plain
+    [d, cap] layout."""
+    import opentpu.compiler as C
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 264)]
+
+    def run():
+        eng = Engine(spec, W, cap=512, rows=8)
+        eng.step(toks[0])
+        out = [eng.prefill(toks[1:257], chunk=8)]          # rows 249..256 cross the edge
+        out += [eng.step(t) for t in toks[257:]]
+        return out
+    assert C.vt_tile(512) == 256
+    tiled = run()
+    monkeypatch.setattr(C, "VT_TILE", 1 << 30)
+    plain = run()
+    assert all(np.array_equal(a.view(np.uint32), b.view(np.uint32)) for a, b in zip(tiled, plain))
+
+
+@pytest.mark.parametrize("mcols,wformat", [(2, "int8"), (4, "int8"), (2, "fp4")])
+def test_tiny_prefill_chunk_with_mm_replay_on_rtl(tiny, have_verilator, mcols, wformat):
+    """An 8-row prefill run at the board configuration with 8 ACT RAM rows (each projection is
+    one MM that replays every weight chunk for 8 / MCOLS groups) on the RTL's board memory
+    path: DRAM and TMEM equal the ISA simulator's, and the logits equal decode's. fp4: 4-bit
+    layers (two blocks a replayed chunk) with an int8 head, on a PAIR board (decode rows pair,
+    the 8-row MMs replay)."""
+    from opentpu import rtlsim
+    from opentpu.isasim import Machine, board_config
+    _, W, spec = tiny
+    wkw = dict(wformat=wformat, head_format="int8") if wformat != "int8" else {}
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 11)]
+    ref = Engine(spec, W, cap=256, **wkw)
+    want = ref.prefill(toks, chunk=1)
+    cfg = board_config(MCOLS=mcols, ACT_ROWS=8, DRAM_BYTES=1 << 24, PAIR=wformat != "int8")
+    eng = Engine(spec, W, cap=256, cfg=cfg, **wkw)
+    eng.prefill(toks[:3])                         # a cache to attend over
+    rows = [(0, 3 + j) for j in range(8)]
+    progs = eng.image.compile_rows(rows, [7])
+    assert any(i.op == 0x20 and (i.w[5] >> 16) & 0xFF == 8 for i in progs[0])
+    x = eng.embed[toks[3:]]
+    io = eng.image.io
+    cs = [np.stack(a).astype(np.float32) for a in zip(*[rope_tables(spec, p) for _, p in rows])]
+    dram = eng.backend.machine.slices[0].dram.copy()
+    for k, v in (("x", x), ("cos", cs[0]), ("sin", cs[1])):
+        b = np.ascontiguousarray(v, np.float32).view(np.uint8).reshape(-1)
+        dram[io[k]:io[k] + b.size] = b
+    m = Machine(cfg, progs, [dram.copy()]).run()
+    drams, tmems, _ = rtlsim.run(cfg, progs, [dram.copy()], uarch=rtlsim.BOARD_UARCH, axi=True,
+                                 boot=True)
+    assert np.array_equal(drams[0][:eng.image.nbytes], m.slices[0].dram[:eng.image.nbytes])
+    v = spec.vocab
+    lg = drams[0][io["logits"] + 4 * 7 * v:io["logits"] + 4 * 8 * v].view(np.float32)
+    assert np.array_equal(lg, want)

@@ -2,7 +2,23 @@
 import math
 
 from .. import language as ol
+from ..compiler import Tensor
 from .lib import rmsnorm, rope
+
+
+class Bucket:
+    """A sequence length known only at run time (one program for every position of a bucket):
+    `blocks` blocks of `block` tokens, the last one partly past the sequence. `z` is the
+    address (bytes; run-time: it adds -4 * position) of a float row whose entry for token t0 + c
+    of a block at t0 is +inf when the token is in the sequence and -inf past it: that block's
+    scores are min(s, row), so the tokens past the sequence score -inf and weigh exactly +0 --
+    the softmax, its sums and P.V come out bit for bit as with the partial block."""
+
+    def __init__(self, blocks: int, z):
+        self.blocks, self.z = blocks, z
+
+    def row(self, t0: int, n: int) -> Tensor:
+        return Tensor(self.z + 4 * t0, (n,), (1,))
 
 
 def _attend(qh, kv, h, seq_len: int, block: int, scale: float | None = None, raw: bool = False,
@@ -31,10 +47,23 @@ class _Head:
         self.acc = ol.zeros([G, self.VT.shape[0]])   # V's head_dim (q and K may be padded)
         self.buf = {}                                # block index -> score buffer
         self.S = None                                # the hardware loop's score buffers
-        nfull, tail = divmod(seq_len, block)
-        self.blocks = [(i * block, block) for i in range(nfull)] + \
-            ([(nfull * block, tail)] if tail else [])
+        self.rowmax = {}                             # masked block t0 -> its scores' row maxima
+        self.masked = None                           # (t0, Bucket) of the masked block
+        if isinstance(seq_len, Bucket):              # full blocks and a masked last one
+            nfull = seq_len.blocks - 1
+            self.blocks = [(i * block, block) for i in range(seq_len.blocks)]
+            self.masked = (nfull * block, seq_len)
+        else:
+            nfull, tail = divmod(seq_len, block)
+            self.blocks = [(i * block, block) for i in range(nfull)] + \
+                ([(nfull * block, tail)] if tail else [])
         self.groups = max(0, (nfull + 1 - depth) // depth)
+        if self.VT.tiles is not None:            # V^T in tiles of tb tokens (KVDesc)
+            tb = self.VT.tiles[0]
+            if tb % block:
+                raise ol.CompileError(f"attention block {block} must divide the V^T tile {tb}")
+            if (depth * block) % tb:             # a loop step must be whole tiles
+                self.groups = 0
 
 
 def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = None,
@@ -68,7 +97,13 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
         return heads[min(i, len(hs) - 1)]
 
     def scores(st, t0, n, out):
-        """s = q.K^T for tokens [t0, t0+n); the MXU epilogue also writes the row maxima."""
+        """s = q.K^T for tokens [t0, t0+n); the MXU epilogue also writes the row maxima (a
+        masked block: min with its mask row, then the row maxima of that)."""
+        if st.masked is not None and isinstance(t0, int) and st.masked[0] == t0:
+            ol.dot(st.qs, st.K[t0:t0 + n, :], out=out)
+            s = ol.minimum(out, ol.load(st.masked[1].row(t0, n))[None, :])
+            st.rowmax[t0] = ol.max(s, axis=1)
+            return s
         ol.dot(st.qs, st.K[t0:t0 + n, :], out=out, rowmax=True)
         return out
 
@@ -76,7 +111,8 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
         """Online-softmax update and acc += P.V for the block whose scores are in `s`."""
         G = st.G
         vs = ol.load(st.VS[t0:t0 + n])
-        m_new = ol.maximum(st.m, s.rowmax)
+        rm = st.rowmax.pop(t0) if isinstance(t0, int) and t0 in st.rowmax else s.rowmax
+        m_new = ol.maximum(st.m, rm)
         p = ol.exp2(s - m_new[:, None])                           # fused EXP2SUB
         alpha = ol.exp2(st.m - m_new)
         npad = -(-n // D) * D
@@ -86,7 +122,8 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
             pp = ol.zeros([G, npad])
             pp[:, :n].set(p * vs[None, :])
             pq = ol.quantize(pp)
-        ol.dot(pq, st.VT[:, t0:t0 + npad], acc=st.acc, acc_scale=alpha)  # acc*alpha + P.V
+        vt = st.VT.padded_cols(0, st.VT.shape[0], t0, npad, n)             # zero-padded P
+        ol.dot(pq, vt, acc=st.acc, acc_scale=alpha)                         # acc*alpha + P.V
         st.m.set(m_new)                                           # the next block needs m first
         st.l.set(st.l * alpha + ol.sum(p, axis=1))                # off the critical path
 

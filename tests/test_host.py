@@ -13,6 +13,7 @@ import textwrap
 import time
 import types
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -79,7 +80,8 @@ def test_v3_info_snapshot_and_rates():
     i = b.info()
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
     assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False, "w4": True,
-                         "pair": False, "trace_depth": 4096, "pq_window": 64}
+                         "pair": False, "dstep": False, "chash": False, "act_rows": False,
+                         "args": False, "trace_depth": 4096, "pq_window": 64}
     assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
@@ -160,7 +162,7 @@ def test_v1_bitstream_fallback():
 # ------------------------------------------------------------------------------ configuration
 @pytest.fixture
 def no_cfg_env(monkeypatch):
-    for k in ("OTPU_MCOLS", "OTPU_LANES", "OTPU_PAIR"):
+    for k in ("OTPU_MCOLS", "OTPU_LANES", "OTPU_PAIR", "OTPU_DSTEP"):
         monkeypatch.delenv(k, raising=False)
     return monkeypatch
 
@@ -192,6 +194,17 @@ def test_device_config_takes_column_reuse_from_caps(no_cfg_env):
         with pytest.raises(ConfigMismatch, match="OTPU_PAIR"):
             device_config(info)
         no_cfg_env.delenv("OTPU_PAIR")
+
+
+def test_device_config_takes_dstep_from_caps(no_cfg_env):
+    """CAPS bit6 (DSTEP) sets Config.DSTEP; OTPU_DSTEP must agree with it."""
+    for dstep in (False, True):
+        info = Board(FakeTransport(devname=None, dstep=dstep)).info()
+        assert info["caps"]["dstep"] == dstep and device_config(info).DSTEP == dstep
+        no_cfg_env.setenv("OTPU_DSTEP", str(int(not dstep)))
+        with pytest.raises(ConfigMismatch, match="OTPU_DSTEP"):
+            device_config(info)
+        no_cfg_env.delenv("OTPU_DSTEP")
 
 
 def test_board_backend_rejects_another_configuration(no_cfg_env):
@@ -269,6 +282,271 @@ def test_pair_programs_need_a_pair_bitstream(run_dir):
             eng.backend.close()
 
 
+def test_compile_worker_builds_the_engines_image():
+    """The compile worker process's programs are the engine's own: its image has the engine's
+    weight formats and lookup tables (4-bit layers, an int8 head; per-position and resident
+    programs), run here in-process."""
+    from opentpu import isa as I
+    from opentpu import lens as L
+    from opentpu.llm import qwen3 as Q
+    spec, W = L._tiny_qwen()
+    eng = Q.Engine(spec, W, cap=256, wformat="fp4", head_format="int8", resident=True)
+    Q._worker_init(spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block, "fp4", "int8",
+                   True)
+    try:
+        assert np.array_equal(Q._worker_compile(5), I.assemble(eng.image.compile_step(5)[0]))
+        words, ra = Q._worker_decode(1, 0)
+        progs, ra0 = eng.image.compile_decode(1, 0)
+        assert np.array_equal(words, I.assemble(progs[0]))
+        assert [(v.name, c) for v, c in ra] == [(v.name, c) for v, c in ra0]
+    finally:
+        Q._WORKER = None
+
+
+@pytest.mark.parametrize("skew", [0.0025, -0.03])
+def test_halt_is_seen_soon_when_core_khz_is_off(run_dir, skew):
+    """The run's CYCLES / CORE_KHZ differ from its wall time (a clock a little off its CORE_KHZ,
+    either way): the poll learns the ratio and sees HALTED within a fraction of a millisecond
+    (before: up to POLL_MAX_SLEEP late when the run ended past the spin, or a whole
+    POLL_EARLY + 1% late when it ended before the wake-up; 1.0-1.2 ms per Qwen3 token on the
+    card). Generous bound: the test host may be loaded."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    run_s = 0.03
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake9", run_s=run_s,
+                      cycles=int(run_s * (1 + skew) * 1e8))
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+    late = []
+    for tok in range(12):
+        eng.step(tok)
+        b = eng.backend.board
+        late.append(b.t_seen - b._t_run - run_s)
+    eng.backend.close()
+    assert np.median(late[4:]) < 0.4e-3, late
+
+
+def test_resident_decode_takes_run_arguments(run_dir):
+    """Engine(resident=True) on a bitstream with run arguments (CAPS bit25): the decode program
+    is loaded once and each step writes the ARG registers only (no inputs, no program); on one
+    without them it falls back to per-position programs, and start(args=...) is refused."""
+    from opentpu import lens as L
+    from opentpu.compiler import arg_words
+    from opentpu.host import regs as R
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine, RunPos
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256, lookup=True)
+    for args in (False, True):
+        t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake7", args=args)
+        eng = Engine(spec, W, cap=256, cfg=cfg, resident=True,
+                     backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+        assert eng.resident == args and eng.backend.args == args
+        be, loads, writes = eng.backend, [], []
+        load, write = be.board.load_program, be.write
+        be.board.load_program = lambda *a: (loads.append(1), load(*a))
+        be.write = lambda *a: (writes.append(a[1]), write(*a))
+        for tok in (5, 6, 7):
+            eng.step(tok)
+        if args:
+            assert len(loads) == 1 and not writes
+            progs, ra = eng._decodes[1]
+            want = arg_words(ra, RunPos.values(7, 2))
+            assert [t.regs.get(R.R_ARG0 + 4 * k, 0) for k in range(8)] == want
+            assert want[7] == 7 * 4 * spec.hidden          # the token's embedding row
+        else:
+            assert len(loads) == 3 and writes
+            with pytest.raises(ConfigMismatch, match="CAPS bit25"):
+                be.start(eng.image.compile_step(3), args=[1])
+        be.close()
+
+
+# ------------------------------------------------------------------------------ streamed logits
+class _IsaCard(FakeTransport):
+    """A fake card that computes: RUN runs the loaded program on the ISA simulator over the
+    channel memories. What the run writes shows at once, except [late_addr, +late_n) (the
+    logits): piece i of `piece` bytes shows at run_s * (0.4 + 0.5 * i / pieces), its first
+    half of beats a little before the rest (the beats of one store land out of order)."""
+    streams = True
+
+    def __init__(self, cfg, late, piece, run_s=0.06, **kw):
+        super().__init__(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=run_s, **kw)
+        self.cfg, self.late, self.piece = cfg, late, piece
+        self.pending = []                                     # (time, channel, offset, bytes)
+
+    def _flat(self):
+        from opentpu.host.board import join
+        return join([c for c in self.ch])
+
+    def _apply(self):
+        now = time.perf_counter()
+        keep = []
+        for t, c, off, b in self.pending:
+            if t <= now:
+                self.ch[c][off:off + len(b)] = b
+            else:
+                keep.append((t, c, off, b))
+        self.pending = keep
+
+    def reg_write(self, off, val):
+        from opentpu import isa as I
+        from opentpu.host import regs as R
+        from opentpu.host.board import split
+        from opentpu.isasim import Machine
+        rising = off == R.R_CTRL and val & R.CTRL_RUN and not self.regs[R.R_CTRL] & R.CTRL_RUN
+        super().reg_write(off, val)
+        if not rising:
+            return
+        self._apply()
+        dram = self._flat()
+        a, n = self.regs[R.R_PROG_ADDR], self.regs[R.R_PROG_N]
+        w = dram[a:a + 32 * n].view(np.uint32).reshape(n, 8)
+        m = Machine(self.cfg, [[I.Instr.decode(x) for x in w]], [dram.copy()])
+        m.run()
+        new = m.slices[0].dram
+        la, ln = self.late
+        t0 = self.t_run = time.perf_counter()               # the run starts now
+        new_late = new[la:la + ln].copy()
+        new[la:la + ln] = dram[la:la + ln]                    # the logits come later
+        for c, off, part in split(0, new):
+            self.ch[c][:] = part
+        npieces = -(-ln // self.piece)
+        for i, o in enumerate(range(0, ln, self.piece)):
+            k = min(self.piece, ln - o)
+            t = t0 + self.run_s * (0.4 + 0.5 * i / npieces)
+            buf = np.zeros(-(-k // 128) * 128, np.uint8)
+            buf[:k] = new_late[o:o + k]
+            for j, (c, off, part) in enumerate(split(la + o, buf)):
+                # channel 0's beats a little before channel 1's
+                self.pending.append((t + 0.002 * j, c, off, part[:len(part)]))
+
+    def reg_read(self, off):
+        self._apply()
+        return super().reg_read(off)
+
+    def mem_read(self, ch, off, n, out=None):
+        self._apply()
+        return super().mem_read(ch, off, n, out)
+
+
+def _big_vocab_qwen(V=20000):
+    from opentpu import lens as L
+    spec, W = L._tiny_qwen()
+    spec = replace(spec, vocab=V)
+    W["model.embed_tokens.weight"] = np.random.default_rng(3).normal(
+        0, 0.05, (V, spec.hidden)).astype(np.float32)
+    return spec, W
+
+
+def test_streamed_logits_match_the_isa_simulator(no_cfg_env):
+    """Engine.step on the board backend streams the logits (most pieces while the run goes on,
+    the rest after HALTED): the logits and the sampler's picks are those of the ISA simulator,
+    token after token (the sentinel marking is renewed each run), and a prefill run in between
+    (which writes the logits region itself) makes the next step mark it again."""
+    from opentpu.host.board import sim_config
+    from opentpu.host.chat import sampler
+    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
+    spec, W = _big_vocab_qwen()
+    cfg = sim_config(spec, 256)
+    ref = Engine(spec, W, cap=256, cfg=cfg)
+    piece = 4 * min(HEAD_CHUNK, cfg.TMEM_WORDS // 8)
+    card = _IsaCard(cfg, None, piece)
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    card.late = (eng.image.io["logits"], 4 * spec.vocab)
+    assert eng.backend.streams
+    pa, pb, ctx = sampler(0.7, 20, 0.9, 1, 1.05), sampler(0.7, 20, 0.9, 1, 1.05), [5]
+    t = 5
+    for i in range(6):
+        if i == 3:                                          # a prefill run: no stream
+            want, got = ref.prefill([7, 8]), eng.prefill([7, 8])
+            assert np.array_equal(want.view(np.uint32), got.view(np.uint32))
+            ctx += [7, 8]
+        want = ref.step(t)
+        ctx.append(t)
+        sink = pb.stream(ctx)
+        got = eng.step(t, sink=sink)
+        assert np.array_equal(want.view(np.uint32), got.view(np.uint32))
+        ls = eng.backend.last_stream
+        assert ls["pieces"] == 3 and ls["during"] >= 1 and ls["tail_bytes"] <= 2 * piece, (i, ls, eng.backend._due)
+        t = pa(want, ctx)
+        assert sink.result() == t
+    eng.backend.close()
+
+
+def test_streamed_logits_are_on_for_the_card_only():
+    """The card's transport streams the logits; the board model (one simulation per flush)
+    and the plain fake (it computes nothing) read them after the run."""
+    from opentpu.host.board import SimTransport, XdmaTransport
+    assert XdmaTransport.streams and not getattr(SimTransport, "streams", False)
+    assert not getattr(FakeTransport, "streams", False)
+
+
+def test_streamed_logits_refuse_an_unwritten_piece(no_cfg_env):
+    """A run that leaves part of the logits region unwritten (here: a card that computes
+    nothing) is an error, not stale logits; the region is marked again on the next start."""
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = _big_vocab_qwen()
+    cfg = sim_config(spec, 256)
+    card = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=0.01)
+    card.streams = True
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    with pytest.raises(RuntimeError, match="left words unwritten"):
+        eng.step(5)
+    assert eng.backend._armed is None
+    eng.stream_logits = False
+    eng.pos = 0
+    assert eng.step(5).view(np.uint32)[0] == 0xFFFFFFFF      # without streaming: what is there
+    eng.backend.close()
+
+
+@pytest.mark.skipif(not (Path(__file__).resolve().parent.parent / "models" / "LFM2.5-230M")
+                    .exists(), reason="models/LFM2.5-230M not downloaded")
+def test_decode_profile_splits_the_critical_path(tmp_path, no_cfg_env):
+    """tools/decode_profile.py on the fake card: the critical path (HALTED seen -> next RUN)
+    is measured per token, split into items, with the transport operations and the reply.
+    The decode is resident (the fake announces run arguments): each step writes the ARG
+    registers, no inputs."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "decode_profile", Path(__file__).resolve().parent.parent / "tools/decode_profile.py")
+    dp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dp)
+    out = tmp_path / "p.json"
+    dp.main(["--backend", "fake", "--model", "lfm2", "--tokens", "6", "--fake-ms", "5",
+             "--greedy", "--json", str(out)])
+    d = json.loads(out.read_text())
+    assert d["steps"] == 6 and len(d["reply_ids"]) == 6 and d["critical_ms"] > 0
+    assert d["ms"]["counters"]["overlapped"] > 3                 # the wait for the 5 ms run
+    assert {"args-write", "logits-read"} <= set(d["ms"]) and "io-write" not in d["ms"]
+    assert d["ops"]["dma-read"]["bytes"] >= 4 * 65536            # the logits, after the run
+
+
+def test_dstep_programs_need_a_dstep_bitstream(run_dir):
+    """Programs compiled with DSTEP refuse a bitstream without it (CAPS bit6)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = replace(sim_config(spec, 256), DSTEP=True)
+    for dstep in (False, True):
+        t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake6", dstep=dstep)
+
+        def make():
+            return Engine(spec, W, cap=256, cfg=cfg,
+                          backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+        if not dstep:
+            with pytest.raises(ConfigMismatch, match="DSTEP"):
+                make()
+        else:
+            make().backend.close()
+
+
 # ------------------------------------------------------------------------------ status file
 def test_status_file_lifecycle(run_dir):
     from opentpu import lens as L
@@ -316,12 +594,18 @@ def test_runner_status_is_atomic(run_dir):
 
 
 def test_runner_status_min_interval_defers_to_a_timer(run_dir):
+    import threading
     s = RunnerStatus("fake6", min_interval=0.1)
+    writers = []
+    w = s.write
+    s.write = lambda: (writers.append(threading.current_thread()), w())[1]
     for k in range(5):
         s.token(1000 + k, 100_000)
-    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 1   # the first at once
+    time.sleep(0.05)
+    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] >= 1    # at once, and
     time.sleep(0.2)
-    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 5   # then the timer
+    assert json.loads((run_dir / "fake6.json").read_text())["tokens"] == 5   # the rest later
+    assert writers and threading.main_thread() not in writers  # never on the caller's thread
     s.remove()
 
 # ------------------------------------------------------------------------------ polling
@@ -683,7 +967,7 @@ def test_board_compiles_the_next_program_after_starting_the_card():
     eng._drain()
     # position 0 compiles in line; position p + 1 only after the card started position p
     assert seen == [(0, 0), (1, 1), (2, 2), (3, 3)]
-    assert eng.backend._expect == pytest.approx(t.cycles_per_run / 100e6)
+    assert eng.backend._expect == pytest.approx(t.cycles_per_run / 100e6, rel=0.02)  # x ratio
     eng.backend.close()
 
 
@@ -925,6 +1209,32 @@ def test_sampler_fast_top_k_picks_as_the_float64_path():
                 assert a(lg, ctx) == b(lg, ctx)
     assert fast > 50                                        # the fast path did run
 
+def test_sampler_stream_picks_as_pick():
+    """pick.stream: the logits fed in pieces (any order, on or off the 64-logit block grid, a
+    partial last block) give the picks of pick() on the whole vector, with the same random
+    stream, for greedy and sampled settings with and without the repetition penalty."""
+    from opentpu.host import chat as C
+    rng = np.random.default_rng(11)
+    for V in (1000, 4099, 8192):
+        for T, k, tp, rp in [(0.1, 50, 1.0, 1.05), (0.7, 20, 0.8, 1.0), (0, 50, 1.0, 1.05),
+                             (0.7, 0, 0.9, 1.0), (1.0, 5, 1.0, 1.2)]:
+            a, b, ctx = C.sampler(T, k, tp, 5, rp), C.sampler(T, k, tp, 5, rp), []
+            for step in range(24):
+                lg = (rng.standard_normal(V) * 3).astype(np.float32)
+                if step % 3 == 1:
+                    lg = np.round(lg * 4) / 4                   # ties
+                ctx.append(int(rng.integers(0, V)))
+                cuts = sorted({0, V, *(rng.integers(1, V, 5) if step % 2 else
+                                       range(0, V, 1024))})
+                pieces = list(zip(cuts[:-1], cuts[1:]))
+                rng.shuffle(pieces)
+                s = b.stream(ctx)
+                s.begin(V)
+                for lo, hi in pieces:
+                    s.feed(lo, lg[lo:hi])
+                assert a(lg, ctx) == s.result()
+
+
 # ------------------------------------------------------------------------------ otpu-diag
 def test_diag_sim_registers_and_memory_pass(have_verilator, tmp_path, no_cfg_env):
     from opentpu.host import diag
@@ -1015,14 +1325,18 @@ class StubEngine:
         self.backend = types.SimpleNamespace()
         self.cfg = board_config()
 
-    def step(self, t, on_start=None):
+    def step(self, t, on_start=None, sink=None):
         assert self.pos < self.cap, "KV cache full"   # as Engine.step
         if on_start is not None:
             on_start()
         time.sleep(0.002)
         self.pos += 1
         self.stats.append({"cycles": self.cycles})
-        return np.zeros(8, np.float32)
+        logits = np.zeros(8, np.float32)
+        if sink is not None:
+            sink.begin(len(logits))
+            sink.feed(0, logits)
+        return logits
 
     def prefill_chunks(self, tokens):
         tokens = list(tokens)

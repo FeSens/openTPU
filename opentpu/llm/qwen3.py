@@ -30,9 +30,9 @@ import numpy as np
 from .. import fp32 as F
 from .. import quant as Q
 from .. import language as ol
-from ..compiler import Affine, CompileError, KVDesc, QTensor, Tensor
+from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, arg_words
 from ..isasim import Config, Machine, design_config
-from ..kernels.attention import _attend_heads
+from ..kernels.attention import Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid
 from ..kernels.mlp import _chunk, swiglu_down
@@ -91,8 +91,9 @@ class Spec:
             raise ValueError("model does not map onto this openTPU config: " + "; ".join(bad))
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-              wformat: str = "int8", head_format: str | None = None) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format)
+              wformat: str = "int8", head_format: str | None = None,
+              lookup: bool = False) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup)
 
 
 def load_weights(model_dir) -> dict:
@@ -117,6 +118,64 @@ def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
     inv = 1.0 / (spec.theta ** (np.arange(half, dtype=np.float64) * 2 / spec.rope_dim))
     ang = pos * inv
     return np.cos(ang).astype(np.float32), np.sin(ang).astype(np.float32)
+
+
+# =============================================================================== lookup tables
+def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None) -> dict:
+    """DRAM for the device-side inputs of a run-time position (RunPos): every token's embedding
+    row (fp32, flushed as the host writes it), the RoPE cos / sin rows of every position, and
+    the attention mask table (attention.Bucket: cap entries +inf, then a block of -inf)."""
+    block = block or ATTN_BLOCK
+    half = len(rope_tables(spec, 0)[0])
+    return {"embed": b.alloc(4 * spec.vocab * spec.hidden), "cos_t": b.alloc(4 * cap * half),
+            "sin_t": b.alloc(4 * cap * half), "zmask": b.alloc(4 * (cap + block)),
+            "half": half, "block": block}
+
+
+def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
+    e = F.ftz(np.asarray(W["model.embed_tokens.weight"], np.float32))
+    cs = [rope_tables(spec, p) for p in range(cap)]
+    z = np.concatenate([np.full(cap, np.inf, np.float32), np.full(lk["block"], -np.inf,
+                                                                  np.float32)])
+    for s in range(S):
+        put(s, lk["embed"], e)
+        put(s, lk["cos_t"], np.stack([c for c, _ in cs]))
+        put(s, lk["sin_t"], np.stack([x for _, x in cs]))
+        put(s, lk["zmask"], z)
+
+
+def _lookup_desc(lk: dict, spec, cap: int) -> dict:
+    if not lk:
+        return {}
+    return {"embed": _tdesc(lk["embed"], (spec.vocab, spec.hidden)),
+            "cos_t": _tdesc(lk["cos_t"], (cap, lk["half"])),
+            "sin_t": _tdesc(lk["sin_t"], (cap, lk["half"])), "zmask": lk["zmask"]}
+
+
+def has_lookup(spec) -> bool:
+    """The model's image can hold the resident decode's tables (Spec.image(lookup=True)) and
+    compile_decode: Qwen3, LFM2."""
+    import inspect
+    return "lookup" in inspect.signature(spec.image).parameters
+
+
+def compile_decode(image, kernel, blocks: int, lo: int, block: int | None = None):
+    """The decode program of every position p in [lo, blocks * block), lo >= (blocks - 1) *
+    block, at a run-time position (RunPos; the image needs lookup=True): (programs, run_args),
+    run_args the programs' arguments (RunVar, coefficient) (compiler.arg_words gives the ARG
+    register words of RunPos.values)."""
+    if not image.lookup:
+        raise ValueError("compile_decode needs an image with lookup tables (lookup=True)")
+    block = block or ATTN_BLOCK
+    if not (blocks - 1) * block <= lo < min(blocks * block, image.cap):
+        raise ValueError(f"lo {lo} is not in bucket {blocks}")
+    rp = RunPos(blocks, block, lo, image.lookup["zmask"], image.cap)
+    bs = [kernel.trace(image.cfg, s, {"m": image.descriptors(s), "pos": rp, "block": block})
+          for s in range(image.cfg.S)]
+    progs = [b.finish() for b in bs]
+    if any(b.run_args != bs[0].run_args for b in bs):
+        raise CompileError("the slices' programs take different run-time arguments")
+    return progs, list(bs[0].run_args)
 
 
 # =============================================================================== reference
@@ -282,7 +341,7 @@ class Image:
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-                 wformat: str = "int8", head_format: str | None = None):
+                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False):
         spec.check(cfg)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
@@ -323,6 +382,7 @@ class Image:
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
+        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -379,9 +439,15 @@ class Image:
                                                               self.h_loc)])
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
         put_q(self.head, rows(head, self.v_loc), self.head_format)
+        if self.lookup:
+            _lookup_build(put, S, W, spec, self.cap, self.lookup)
         return imgs
 
     # ---- programs
+    def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):
+        """(programs, run_args): qwen3_step at a run-time position (compile_decode)."""
+        return compile_decode(self, qwen3_step, blocks, lo, block)
+
     def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
         """One program per slice: the decode token at position `pos` (qwen3_step)."""
         return [qwen3_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
@@ -438,7 +504,8 @@ class Image:
             cosr=_tdesc(self.io["cos"], (self.rows, d // 2)),
             sinr=_tdesc(self.io["sin"], (self.rows, d // 2)),
             logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
-            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc)
+            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc,
+            **_lookup_desc(self.lookup, spec, self.cap))
 
 
 # =============================================================================== kernel
@@ -468,22 +535,52 @@ def _rope_padded(x, c, s_):
     return out
 
 
+class RunPos:
+    """The decode position as a run-time value (docs/isa.md "Arguments"): one program serves
+    every position p of a bucket, lo <= p < blocks * block, whose attention spans `blocks`
+    blocks (the last one masked: attention.Bucket). The program sees p as t0 + tpos, t0 =
+    (blocks - 1) * block the bucket's first position and tpos = p - t0 < block the run-time
+    value (so the V^T append stays in its 256-token tile: compiler.tile_split). The token's
+    embedding and RoPE rows come from the image's tables (Image(lookup=True)) at the token id
+    and the position; the KV cache appends at the position; ring is (p + 1) mod K, the first
+    row of the last K in a mirrored K-row state ring (LFM2's convolutions: lfm2._ring_rows).
+    values(token, p, K, block) and compiler.arg_words give the argument words of a program's
+    run_args."""
+
+    tok, ring = RunVar("tok"), RunVar("ring")
+
+    def __init__(self, blocks: int, block: int, lo: int, zmask: int, cap: int):
+        self.blocks, self.block, self.lo = blocks, block, lo
+        self.t0 = (blocks - 1) * block
+        self.tpos = RunVar("tpos", bound=min(block, cap - self.t0))
+        self.pos = self.tpos + self.t0
+        # the mask row of a block at t0' starts at entry cap - 1 - p + t0' of the table
+        self.bucket = Bucket(blocks, Affine(zmask + 4 * (cap - 1 - self.t0)) + self.tpos * -4)
+
+    @staticmethod
+    def values(token: int, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:
+        return {"tpos": p % block, "tok": token, "ring": (p + 1) % K}
+
+
 def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = False):
     """x + W_o . attention(x) for one token, this slice's heads; returns the new residual
     (replicated on every slice).
 
     Schedule (the MXU streams weights in program order, so what sits between two MMs in the
     stream overlaps them): K, V and then Q (one MM per KV head's query group) are projected
-    first, back to back, and the K / V norms, RoPE and cache appends run while Q streams. Each
-    head's query preparation follows in the attention pipeline (_attend_heads). The Q MMs come
-    before the appends and queries in program order so that the sequencer's window, which
-    the slow V^T appends fill, never holds the MXU's next MM back.
+    first, back to back, and the K / V norms, RoPE and K appends run while Q streams. Each
+    head's V^T append and query preparation follow in the attention pipeline (_attend_heads),
+    so the quantizer's slow V^T appends (a byte into each of d cache rows) overlap the heads
+    before it instead of holding all queries back. The Q MMs come before the appends and
+    queries in program order so that the sequencer's window, which the appends fill, never
+    holds the MXU's next MM back.
 
     A query group of more heads than the MXU has columns attends in parts of MCOLS heads, each
     streaming the KV head again. `gated` (Qwen3.5): lw.wgate projects a gate per query
     dimension, and the attention output is multiplied by sigmoid(gate) before W_o."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
     kv = lw.kv
+    kpos = pos.pos if isinstance(pos, RunPos) else pos
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     k = ol.dot(xs, lw.wk)                       # [1, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
@@ -496,10 +593,13 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
     kh = _rope_padded(rmsnorm(k.reshape(nh, d), kn, eps), c, s_)  # [nkv_loc, d or D]
     vh = _padded(v.reshape(nh, d))
     for j, hh in enumerate(heads):
-        ol.kv_append(kv, hh, pos, kh[j:j + 1, :], vh[j:j + 1, :])
+        ol.kv_append(kv, hh, kpos, kh[j:j + 1, :], None)
 
     def queries(j):
         def emit():
+            # the head's V^T append (byte-strided, the quantizer's slowest store) just ahead of
+            # its queries: head j's scores start after K and V_0..V_j, not after all V appends
+            ol.kv_append(kv, heads[j], kpos, None, vh[j:j + 1, :])
             return _rope_padded(rmsnorm(qps[j].reshape(G, d), qn, eps), c, s_)
         return emit
 
@@ -518,7 +618,8 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
                 return qg[g0:g1, :]
             return emit
         qhs = [part(*p) for p in parts]
-    outs = _attend_heads(qhs, kv, [heads[j] for j, _, _ in parts], pos + 1, block, scale,
+    seq = pos.bucket if isinstance(pos, RunPos) else pos + 1
+    outs = _attend_heads(qhs, kv, [heads[j] for j, _, _ in parts], seq, block, scale,
                          depth=ATTN_DEPTH, ahead=2)
     o_row = ol.empty([1, G * nh * d])
     o_loc = o_row.reshape(G * nh, d)            # the heads' outputs, written in place
@@ -546,7 +647,9 @@ def _mlp(x, lw, spec: Spec):
 # holds the activations of 8 rows of Qwen3-0.6B (Engine.prefill_chunks shrinks a run that does
 # not fit).
 PREFILL_ROWS = 8
-COMPILE_AHEAD = 2    # decode programs compiled ahead by the worker processes (Engine)
+COMPILE_AHEAD = 3    # decode programs compiled ahead by the worker processes (Engine)
+DECODE_LEAD = 16     # resident decode: the next bucket's program is compiled from this many
+                     # positions before the current bucket ends (Engine)
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
 
 
@@ -558,13 +661,21 @@ def qwen3_step(m, pos: int, block: int = ATTN_BLOCK):
     positions 0..pos. Logits for this slice's vocabulary rows are stored to m.logits.
     """
     spec = m.spec
-    x = ol.load(m.x)
-    c, s_ = ol.load(m.cos), ol.load(m.sin)
+    x, c, s_ = _inputs(m, pos)
     for li in ol.range(m.n_layers):
         lw = m.layer(li)
         x.set(_attention(x, lw, c, s_, pos, spec, block))
         x.set(_mlp(x, lw, spec))
     _lm_head(x, m, spec)
+
+
+def _inputs(m, pos):
+    """The token's embedding row and its RoPE rows: from the I/O area (the host writes them),
+    or, at a run-time position (RunPos), from the image's tables at the token id and position."""
+    if isinstance(pos, RunPos):
+        return (ol.load(m.embed[pos.tok:pos.tok + 1, :]), ol.load(m.cos_t[pos.pos, :]),
+                ol.load(m.sin_t[pos.pos, :]))
+    return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
 
 
 def _lm_head(x, m, spec):
@@ -694,10 +805,10 @@ def _lm_head_rows(x, m, spec, logit_rows):
 
 # =============================================================================== engine
 def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: str = "int8",
-                  head_format: str | None = None, **kw) -> Config:
+                  head_format: str | None = None, lookup: bool = False, **kw) -> Config:
     """The design configuration with DRAM sized for this model (power of two MiB)."""
     probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows, wformat,
-                       head_format)
+                       head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}))
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
 
@@ -715,17 +826,23 @@ class IsaBackend:
     def read(self, s: int, addr: int, nbytes: int) -> np.ndarray:
         return self.machine.slices[s].dram[addr:addr + nbytes].copy()
 
-    def run(self, programs: list) -> dict:
-        self.machine.load(programs).run(max_steps=1 << 40)
+    args = True                 # run(programs, args): the run's arguments (R8..R15)
+
+    def run(self, programs: list, args=None) -> dict:
+        self.machine.load(programs, args).run(max_steps=1 << 40)
         return {"instructions": [s.icount for s in self.machine.slices]}
 
 
 _WORKER: tuple | None = None                # (image, block) in the compile worker process
 
 
-def _worker_init(spec, cfg, cap, batch, rows, block, wformat, head_format) -> None:
+def _worker_init(spec, cfg, cap, batch, rows, block, wformat, head_format,
+                 lookup: bool = False) -> None:
+    """The worker's image: the engine's layout (weight formats, and the resident decode's
+    lookup tables: its programs must address the same image)."""
     global _WORKER
-    _WORKER = (spec.image(cfg, cap, batch, rows, wformat, head_format), block)
+    _WORKER = (spec.image(cfg, cap, batch, rows, wformat, head_format,
+                          **({"lookup": True} if lookup else {})), block)
     _exit_with_parent()
 
 
@@ -753,6 +870,15 @@ def _worker_compile(pos: int) -> np.ndarray:
     from ..isa import assemble
     image, block = _WORKER
     return np.asarray(assemble(image.compile_step(pos, block)[0]), np.uint32)
+
+
+def _worker_decode(blocks: int, lo: int):
+    """The worker process: the resident decode program of a bucket, assembled (one slice),
+    and its run_args (compile_decode)."""
+    from ..isa import assemble
+    image, block = _WORKER
+    progs, ra = image.compile_decode(blocks, lo, block)
+    return np.asarray(assemble(progs[0]), np.uint32), ra
 
 
 def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int):
@@ -797,7 +923,18 @@ class Engine:
     simulator and the PCIe board driver implement the same interface). Optional backend hooks:
     attach(engine), called once the engine exists; prepare(programs), called on the compile
     thread with every precompiled program (the board assembles it there); start(programs) and
-    wait() -> stats, the two halves of run() (step compiles the next program in between).
+    wait() -> stats, the two halves of run() (step compiles the next program in between);
+    streams (true: start(programs, stream=(addr, nbytes, piece)) and wait(feed) hand the logits
+    over in pieces, most of them during the run; the engine's stream_logits turns it off);
+    args (true: run / start take args=words, the run's arguments: resident decode).
+
+    resident: decode with programs that take the position and the token as run arguments
+    (compile_decode, docs/isa.md "Arguments"): one program per attention bucket of `block`
+    positions, compiled once and kept in IMEM, the token's embedding and RoPE rows read from
+    tables in the image (Image(lookup=True)), so a step writes no inputs and loads no program.
+    Needs a backend with `args` (else it falls back), a model whose image has compile_decode
+    (Qwen3, LFM2; not Qwen3.5) and batch 1; positions below the model's first run-time one
+    (LFM2: conv_k - 1) run per-position programs. Bit-identical to the per-position programs.
 
     pipeline: step() compiles the next position's program (it depends on the position only,
     not on the token) while the backend runs the current one. Default: on for every backend
@@ -813,17 +950,25 @@ class Engine:
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
                  backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
-                 wformat: str = "int8", head_format: str | None = None):
+                 wformat: str = "int8", head_format: str | None = None,
+                 resident: bool = False):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
+        lookup = bool(resident) and batch == 1 and has_lookup(spec)
+        if lookup:
+            wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
         self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
+        self.resident = lookup and bool(getattr(self.backend, "args", False))
+        self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
+        self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self.poss = [0] * batch
+        self.stream_logits = True           # step(): stream the logits when the backend can
         self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
         self.stats = []
         self.pipeline = backend != "isa" if pipeline is None else bool(pipeline)
@@ -832,8 +977,9 @@ class Engine:
         self._pool = None
         self._ready = None                  # the worker process's start (process pipeline)
         self._next = []                     # [(key, Future of a coming run's programs)]
-        # decode programs precompiled ahead: two worker processes, so a compile can take
-        # two device runs (LFM2 at 1900 tokens: 30 ms of trace on a busy host, 27 ms run)
+        # per-position decode programs precompiled ahead: three worker processes, so a
+        # compile can take three device runs (LFM2 fp4 on the card: a 13.5 ms run against a
+        # 16-30 ms trace, more on a host busy with other work; resident decode compiles none)
         self._ahead = COMPILE_AHEAD if self._procs else 1
         if self._procs:
             self._start_pool()
@@ -855,7 +1001,8 @@ class Engine:
         self._pool = ProcessPoolExecutor(
             self._ahead, mp_context=mp.get_context("spawn"), initializer=_worker_init,
             initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block,
-                      self.image.wformat, self.image.head_format))
+                      self.image.wformat, self.image.head_format,
+                      bool(getattr(self.image, "lookup", None))))
         self._ready = self._pool.submit(_worker_ready)
 
     def _take(self, key, fn, *args):
@@ -888,9 +1035,35 @@ class Engine:
         """The step program for `pos`: the precompiled one when it is for `pos`."""
         return self._take(("step", pos), self._compile, pos)
 
+    def _compile_decode(self, blocks: int):
+        progs, ra = self.image.compile_decode(blocks, max((blocks - 1) * self.block,
+                                                          self._conv_lo), self.block)
+        prep = getattr(self.backend, "prepare", None)
+        if prep is not None:
+            prep(progs)
+        return progs, ra
+
+    def _decode(self, pos: int):
+        """Resident decode: (programs, run_args) of the bucket of `pos` (compiled once), or
+        None for a per-position program."""
+        if not self.resident or pos < self._conv_lo:
+            return None
+        b = pos // self.block + 1
+        if b not in self._decodes:
+            self._decodes[b] = self._take(("decode", b), self._compile_decode, b)
+        return self._decodes[b]
+
     def _prefetch(self, pos: int) -> None:
-        """Precompile the steps at pos .. pos + ahead - 1 (those not in flight yet)."""
+        """Precompile the steps at pos .. pos + ahead - 1 (those not in flight yet); resident:
+        the bucket of pos and, DECODE_LEAD positions before its end, the next one."""
         queued = {k for k, _ in self._next}
+        if self.resident and pos >= self._conv_lo:
+            for p in (pos, pos + DECODE_LEAD):
+                b = p // self.block + 1
+                if p < self.cap and b not in self._decodes and ("decode", b) not in queued:
+                    self._submit(("decode", b), self._compile_decode, _worker_decode, b,
+                                 max((b - 1) * self.block, self._conv_lo))
+            return
         for p in range(pos, min(pos + self._ahead, self.cap)):
             if ("step", p) not in queued:
                 self._submit(("step", p), self._compile, _worker_compile, p)
@@ -914,41 +1087,77 @@ class Engine:
         for s in range(self.batch) if seq is None else [seq]:
             self.poss[s] = 0
 
-    def step(self, token: int, on_start=None) -> np.ndarray:
+    def step(self, token: int, on_start=None, sink=None) -> np.ndarray:
         """Feed one token at the next position; returns the logits [vocab] for the next one.
         on_start() is called once the device runs (host work that can overlap the run: the
-        chat hands the previous token to its interface there)."""
+        chat hands the previous token to its interface there). sink (a sampler's
+        pick.stream(context), chat.sampler) gets the logits too: begin(vocab), then feed(lo,
+        values) per piece -- on a backend that streams them (BoardBackend.streams), most
+        pieces while the run goes on, so the sampler's work on them is off the token's
+        critical path."""
         if self.pos >= self.cap:
             raise RuntimeError("KV cache full")
         io, S = self.image.io, self.cfg.S
-        x = F.ftz(self.embed[token].astype(np.float32))
-        cos, sin = rope_tables(self.spec, self.pos)
-        if io["cos"] == io["x"] + x.nbytes and io["sin"] == io["cos"] + cos.nbytes:
-            parts = [(io["x"], np.concatenate([x, cos, sin]))]      # one transfer
-        else:
-            parts = [(io["x"], x), (io["cos"], cos), (io["sin"], sin)]
-        for s in range(S):
-            for a, v in parts:
-                self.backend.write(s, a, v)
-        progs = self._program(self.pos)
+        dec = self._decode(self.pos)
+        if dec is None:
+            x = F.ftz(self.embed[token].astype(np.float32))
+            cos, sin = rope_tables(self.spec, self.pos)
+            if io["cos"] == io["x"] + x.nbytes and io["sin"] == io["cos"] + cos.nbytes:
+                parts = [(io["x"], np.concatenate([x, cos, sin]))]      # one transfer
+            else:
+                parts = [(io["x"], x), (io["cos"], cos), (io["sin"], sin)]
+            for s in range(S):
+                for a, v in parts:
+                    self.backend.write(s, a, v)
+            progs, kw = self._program(self.pos), {}
+        else:                               # the token and position as run arguments
+            progs, ra = dec
+            kw = {"args": arg_words(ra, RunPos.values(int(token), self.pos,
+                                                      getattr(self.spec, "conv_k", 1),
+                                                      self.block))}
         start = getattr(self.backend, "start", None)
+        v_loc = self.image.v_loc
+        vocab = S * v_loc
+        stream = None
+        if start is not None and S == 1 and self.stream_logits and \
+                getattr(self.backend, "streams", False):
+            piece = 4 * min(HEAD_CHUNK, self.cfg.TMEM_WORDS // 8)     # _lm_head's chunks
+            stream = (io["logits"], 4 * vocab, piece)
+        if sink is not None:
+            sink.begin(vocab)
         if start is None:
             self._prefetch(self.pos + 1)
             if on_start is not None:
                 on_start()
-            st = self.backend.run(progs)
-        else:                               # compile while the device runs, not while the
-            start(progs)                    # host copies the program
+            st = self.backend.run(progs, **kw)
+        elif stream is None:                # compile while the device runs, not while the
+            start(progs, **kw)              # host copies the program
             self._prefetch(self.pos + 1)
             if on_start is not None:
                 on_start()
             st = self.backend.wait()
+        else:
+            logits = np.empty(vocab, np.float32)
+
+            def feed(o, w):
+                v = logits[o // 4:o // 4 + len(w)]
+                v[:] = w.view(np.float32)
+                if sink is not None:
+                    sink.feed(o // 4, v)
+            start(progs, stream=stream, **kw)
+            self._prefetch(self.pos + 1)
+            if on_start is not None:
+                on_start()
+            st = self.backend.wait(feed)
         self.stats.append(st)
-        v_loc = self.image.v_loc
-        parts = [self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc).view(np.float32)
-                 for s in range(S)]
+        if stream is None:
+            logits = np.concatenate([self.backend.read(s, io["logits"] + 4 * s * v_loc,
+                                                       4 * v_loc).view(np.float32)
+                                     for s in range(S)])
+            if sink is not None:
+                sink.feed(0, logits)
         self.pos += 1
-        return np.concatenate(parts)
+        return logits
 
     def run_rows(self, rows, tokens, logit_rows) -> np.ndarray:
         """One device run over token rows (rows[r] = (sequence, position)); returns the logits

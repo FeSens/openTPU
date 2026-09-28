@@ -26,6 +26,13 @@ class Config:
     IMEM_WORDS: int = 1 << 16   # 8 words per instruction
     LANES: int = 8           # VPU lanes == TMEM banks (timing only; results do not depend on it)
     PAIR: bool = False       # MM PAIR / QACT DUP: 4-bit MMs of M <= MCOLS/2 rows at full rate
+    DSTEP: bool = False      # the DMA runs DSTEP (Gated DeltaNet head steps on DRAM state)
+    ACT_ROWS: int = 0        # ACT RAM rows == max stationary rows of one MM (0: MCOLS); more
+    #                          than MCOLS: the MXU replays each streamed chunk (docs/isa.md, MM)
+
+    @property
+    def act_rows(self) -> int:
+        return self.ACT_ROWS or self.MCOLS
 
 
 def design_config(**kw) -> Config:
@@ -43,12 +50,16 @@ def board_config(**kw) -> Config:
     OTPU_MCOLS in the environment selects the MXU column count (default 2; make -C
     boards/ypcb-00338 bit MCOLS=4), OTPU_LANES the VPU lanes / TMEM banks (default 8; bit
     LANES=16; timing only, the programs do not change), OTPU_PAIR=1 column reuse (MM PAIR /
-    QACT DUP). They configure the simulators and the board model; on the card,
-    opentpu.host.board.device_config takes them from the bitstream."""
+    QACT DUP), OTPU_DSTEP=1 the DMA's DSTEP, OTPU_ACT_ROWS the ACT RAM rows (default MCOLS;
+    more: the MXU replays each weight chunk for MCOLS rows at a time). They configure the
+    simulators and the board model; on the card, opentpu.host.board.device_config takes them
+    from the bitstream."""
     base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 2)), ACT_BLOCKS=128,
-                LANES=int(os.environ.get("OTPU_LANES", 8)), TMEM_WORDS=1 << 16,
+                LANES=int(os.environ.get("OTPU_LANES", 8)),
+                ACT_ROWS=int(os.environ.get("OTPU_ACT_ROWS", 0)), TMEM_WORDS=1 << 16,
                 IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32,
-                PAIR=bool(int(os.environ.get("OTPU_PAIR", 0))))
+                PAIR=bool(int(os.environ.get("OTPU_PAIR", 0))),
+                DSTEP=bool(int(os.environ.get("OTPU_DSTEP", 0))))
     base.update(kw)
     return Config(**base)
 
@@ -65,8 +76,8 @@ class Slice:
         if dram is not None:
             self.dram[: len(dram)] = dram
         self.tmem = np.zeros(cfg.TMEM_WORDS, dtype=np.uint32)
-        self.act = np.zeros((cfg.MCOLS, cfg.ACT_BLOCKS * cfg.D), dtype=np.int8)
-        self.ascale = np.zeros((cfg.MCOLS, cfg.ACT_BLOCKS), dtype=np.float32)
+        self.act = np.zeros((cfg.act_rows, cfg.ACT_BLOCKS * cfg.D), dtype=np.int8)
+        self.ascale = np.zeros((cfg.act_rows, cfg.ACT_BLOCKS), dtype=np.float32)
         self.R = [0] * 16
         self.pc = 0
         self.stack: list[list[int]] = []
@@ -169,6 +180,8 @@ class Slice:
             wi = self._widx(d + 4 * np.arange(n))
             self.m32[wi] = self.tmem[self._tidx(t + np.arange(n))]
             return
+        if op == I.DSTEP:
+            return self._dstep(ins)
         if op == I.MM:
             return self._mm(ins)
         if op == I.QACT:
@@ -178,6 +191,36 @@ class Slice:
         if op == I.VOP:
             return self._vop(ins)
         raise SimError(f"slice {self.sid}: bad opcode {op:#x} at pc {self.pc}")
+
+    def _dstep(self, ins: I.Instr) -> None:
+        """DSTEP: every input (q, k, v, e, beta and each state row) is read before the row's
+        results are written; o is written last."""
+        w = ins.w
+        d = (self.reg(ins.ra) + w[0]) & 0xFFFFFFFF
+        qk = (self.reg(ins.rb) + w[1]) & 0xFFFFFFFF
+        v = (self.reg(ins.rc) + w[2]) & 0xFFFFFFFF
+        rows, cols = w[3] & 0xFFFF, w[3] >> 16
+        g, o, gs = w[4], w[5], w[6]
+        if not (0 < rows <= I.DSTEP_MAX_ROWS) or cols % 64 or not (0 < cols <= 256):
+            raise SimError("DSTEP: rows must be 1..256, cols 64, 128, 192 or 256")
+        if d % self.cfg.D:
+            raise SimError("DSTEP: the state must be DRAM-chunk aligned")
+        q = self.tget(qk + np.arange(cols))[None, :]
+        k = self.tget(qk + cols + np.arange(cols))[None, :]
+        vv = self.tget(v + np.arange(rows))
+        e = self.tget(np.array([g]))
+        beta = self.tget(np.array([g + gs]))
+        wi = self._widx(d + 4 * np.arange(rows * cols))
+        if ins.flags & I.F_DZERO:
+            S = np.zeros((rows, cols), np.float32)
+        else:
+            S = self.m32[wi].view(np.float32).reshape(rows, cols)
+        kv = F.rdot(S, k)
+        dd = F.mul(F.sub(vv, F.mul(kv, e)), beta)
+        S = F.outer(S, e[None, :], dd[:, None], k)
+        oo = F.rdot(S, q)
+        self.m32[wi] = F.f32(S).reshape(-1).view(np.uint32)
+        self.tput(o + np.arange(rows), oo)
 
     # ---------------------------------------------------------------- MXU
     def _mm(self, ins: I.Instr) -> None:
@@ -193,8 +236,12 @@ class Slice:
         unit, accf = bool(ins.flags & I.F_UNIT), bool(ins.flags & I.F_ACC)
         pair = bool(ins.flags & I.F_PAIR)
         R = 2 * M if pair else M                          # ACT rows read
-        if not (0 < R <= cfg.MCOLS) or ab + KB > cfg.ACT_BLOCKS:
+        if not (0 < R <= cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("MM: M or ACT RAM range out of bounds")
+        if M > cfg.MCOLS and ins.flags & (I.F_RMAX | I.F_ASCALE):
+            raise SimError("MM: RMAX and ASCALE need M <= MCOLS")
+        if pair and R > cfg.MCOLS:
+            raise SimError("MM: PAIR needs 2*M <= MCOLS")
         wf = (ins.flags >> I.WF_SHIFT) & 3
         if wf not in (I.W8, I.W4I, I.W4F):
             raise SimError("MM: bad weight format")
@@ -279,7 +326,7 @@ class Slice:
         rows, ab, KB = w[1] & 0xFF, (w[1] >> 8) & 0xFF, w[1] >> 16
         srs = w[2]
         dup = bool(ins.flags & I.F_DUP)
-        if (2 * rows if dup else rows) > cfg.MCOLS or ab + KB > cfg.ACT_BLOCKS:
+        if (2 * rows > cfg.MCOLS if dup else rows > cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("QACT out of ACT RAM bounds")
         cs = (w[3] & 0xFFFFFFFF) if ins.flags & I.F_CSCALE else None
         rsc = (w[4] & 0xFFFFFFFF) if ins.flags & I.F_RSCALE else None
@@ -296,11 +343,15 @@ class Slice:
         rows, KB = w[3] & 0xFFFF, w[3] >> 16
         srs, drs, es = w[4], w[5], w[6]
         row_mode = bool(ins.flags & I.F_ROW)
+        half = bool(ins.flags & I.F_HALF)
+        if half and not row_mode:
+            raise SimError("QST: HALF needs ROW mode")
         q, s = self._quant_groups(src, rows, KB, srs, row_mode)
-        baddr = dst + np.arange(rows)[:, None] * drs + np.arange(KB * cfg.D)[None, :] * es
+        ne = KB * cfg.D // 2 if half else KB * cfg.D   # HALF: the row's first half only
+        baddr = dst + np.arange(rows)[:, None] * drs + np.arange(ne)[None, :] * es
         if np.any(baddr < 0) or np.any(baddr >= cfg.DRAM_BYTES):
             raise SimError("QST: byte address out of range")
-        self.dram[baddr] = q.view(np.uint8)
+        self.dram[baddr] = q[:, :ne].view(np.uint8)
         if row_mode:
             self.m32[self._widx(sdst + 4 * np.arange(rows))] = s[:, 0].view(np.uint32)
         else:
@@ -399,18 +450,36 @@ class Slice:
                 raise SimError(f"slice {self.sid}: VOP read-after-write hazard at TMEM {v}")
 
 
+ARG0 = 8                    # the run's arguments are R8..R15 at the start (docs/isa.md)
+
+
+def _regs(args) -> list[int]:
+    args = list(args or [])
+    if len(args) > 8:
+        raise ValueError("at most 8 run arguments")
+    R = [0] * 16
+    for k, v in enumerate(args):
+        R[ARG0 + k] = int(v) & 0xFFFFFFFF
+    return R
+
+
 class Machine:
-    def __init__(self, cfg: Config, programs: list[list[I.Instr]], drams: list[np.ndarray | None]):
+    """args: the run's arguments (up to 8 words): R8..R15 start with them (0 without)."""
+
+    def __init__(self, cfg: Config, programs: list[list[I.Instr]], drams: list[np.ndarray | None],
+                 args=None):
         assert len(programs) == cfg.S and len(drams) == cfg.S
         self.cfg = cfg
         self.slices = [Slice(cfg, s, programs[s], drams[s]) for s in range(cfg.S)]
+        for s in self.slices:
+            s.R = _regs(args)
 
-    def load(self, programs: list[list[I.Instr]]) -> "Machine":
+    def load(self, programs: list[list[I.Instr]], args=None) -> "Machine":
         """Start new programs on the same machine: DRAM, TMEM and ACT RAM are kept (as on the
         board, where the host writes a new program image between launches)."""
         assert len(programs) == self.cfg.S
         for s, p in zip(self.slices, programs):
-            s.prog, s.R, s.pc, s.stack = p, [0] * 16, 0, []
+            s.prog, s.R, s.pc, s.stack = p, _regs(args), 0, []
             s.halted, s.waiting, s.icount = False, None, 0
         return self
 

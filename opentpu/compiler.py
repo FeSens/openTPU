@@ -61,6 +61,54 @@ class Loop:
         return f"iv{self.id}"
 
 
+class RunVar:
+    """A value known only when the program runs (the token's position, its id). An address may
+    add `c * var` for one (var, c): the host puts c times the value into one of the run's
+    argument registers (docs/isa.md "Arguments"), one per distinct (var, c) of the program
+    (Builder.run_args), so the same program serves every value. bound: the value is below it
+    (a V^T append at a run-time token stays in its tile: tile_split)."""
+
+    def __init__(self, name: str, bound: int | None = None):
+        self.name, self.bound = name, bound
+
+    def _aff(self) -> "Affine":
+        return Affine(0, {self: 1})
+
+    def __add__(self, o):
+        return self._aff() + o
+
+    __radd__ = __add__
+
+    def __sub__(self, o):
+        return self._aff() - o
+
+    def __mul__(self, k):
+        return self._aff() * k
+
+    __rmul__ = __mul__
+
+    def __repr__(self):
+        return self.name
+
+
+ARG0 = 8                        # the run's arguments ARG0..7 are R8..R15 at the start
+
+
+def arg_reg(k: int) -> int:
+    """The register of a program's k-th run-time argument (Builder.run_args): from R15 down,
+    as address registers are taken from R1 up."""
+    return 15 - k
+
+
+def arg_words(run_args: list, values: dict) -> list[int]:
+    """The words ARG0..7 of a program's Builder.run_args for these values: argument k,
+    c * var, in ARG(7 - k) (register R15 - k)."""
+    w = [0] * (16 - ARG0)
+    for k, (v, c) in enumerate(run_args):
+        w[arg_reg(k) - ARG0] = (c * values[v.name]) & 0xFFFFFFFF
+    return w
+
+
 class Affine:
     def __init__(self, const: int = 0, terms: dict | None = None):
         self.const = int(const)
@@ -70,7 +118,7 @@ class Affine:
     def of(x) -> "Affine":
         if isinstance(x, Affine):
             return x
-        if isinstance(x, Loop):
+        if isinstance(x, (Loop, RunVar)):
             return x._aff()
         if isinstance(x, (int, np.integer)):
             return Affine(int(x))
@@ -161,6 +209,9 @@ class QTensor:
     only be sliced into whole parts.
     `wf`: the element format (isa.W8; or W4I / W4F: 4-bit elements, D/2 bytes per D-block, and
     a two-level scale word per D-block, docs/isa.md "Weight formats").
+    `tiles`: (tb, tstride): the columns are stored in tiles of tb (each tile rows x tb, row
+    stride rs = tb, tiles tstride bytes apart; int8, unscaled: the V^T cache). A column slice
+    must stay within one tile.
     """
     data: Affine
     scale: Affine | None
@@ -171,6 +222,22 @@ class QTensor:
     parts: tuple | None = None
     pw: int = 0
     wf: int = 0
+    tiles: tuple | None = None
+
+    def padded_cols(self, r0, nr: int, c0, nc: int, valid: int) -> "QTensor":
+        """Rows [r0, r0+nr), columns [c0, c0+nc) of which the first `valid` are real (the rest
+        pad an MM operand to whole D-blocks: the caller weights them 0). In a tiled matrix
+        the real columns must stay within one tile; the padding may run past it (into the
+        next row, then read with weight 0)."""
+        if self.tiles is None:
+            return self[r0:Affine.of(r0) + nr, c0:Affine.of(c0) + nc]
+        tb, tstride = self.tiles
+        q, r = tile_split(c0, tb)
+        if r + valid > tb:
+            raise CompileError(f"a column slice of a tiled matrix must stay within one tile "
+                               f"of {tb} (columns {c0} + {valid})")
+        return QTensor(self.data + q * tstride + Affine.of(r0) * self.rs + r, None, (nr, nc),
+                       self.rs, 0, self.D)
 
     def __getitem__(self, key) -> "QTensor":
         if not isinstance(key, tuple):
@@ -192,6 +259,8 @@ class QTensor:
         nr, nc = (r1 - r0).static(), (c1 - c0).static()
         if nc % self.D:
             raise CompileError("QTensor column slices must be multiples of D")
+        if self.tiles is not None:
+            return self.padded_cols(r0, nr, c0, nc, nc)
         if self.wf == I.W8:
             data = self.data + r0 * self.rs + c0
         else:                     # 4-bit rows stream whole D-byte chunks of two D-blocks
@@ -202,12 +271,56 @@ class QTensor:
         return QTensor(data, scale, (nr, nc), self.rs, self.srs, self.D, wf=self.wf)
 
 
+VT_TILE = 256          # V^T cache tile (tokens): the attention block (qwen3.ATTN_BLOCK)
+
+
+def vt_tile(cap: int) -> int:
+    """Tokens per V^T tile for a cache of `cap` tokens (cap itself: one tile, untiled)."""
+    return VT_TILE if cap % VT_TILE == 0 else cap
+
+
+def tile_split(t: Affine, tb: int) -> tuple:
+    """t = q * tb + r with r static (0 <= r < tb): (q, r). A loop-dependent t needs its loop
+    terms to be multiples of tb. Run-time terms (RunVar) go to r, which is then an Affine: they
+    need a bound that keeps r below tb."""
+    t = Affine.of(t)
+    run = {v: c for v, c in t.terms.items() if isinstance(v, RunVar)}
+    if run:
+        q, r = tile_split(Affine(t.const, {v: c for v, c in t.terms.items() if v not in run}),
+                          tb)
+        if any(v.bound is None or c < 0 for v, c in run.items()) or \
+                r + sum(c * (v.bound - 1) for v, c in run.items()) >= tb:
+            raise CompileError(f"token index {t} may cross a tile of {tb}")
+        return q, Affine(r, run)
+    r = t.const % tb
+    try:
+        return (t - r).div_exact(tb), r
+    except CompileError:
+        raise CompileError(f"token index {t} does not split into tiles of {tb}") from None
+
+
+def vt_tiled(vt: np.ndarray) -> np.ndarray:
+    """A V^T [d, cap] in its DRAM order (tiles of vt_tile(cap) tokens, see KVDesc), flat."""
+    d, cap = vt.shape
+    tb = vt_tile(cap)
+    return np.ascontiguousarray(vt.reshape(d, cap // tb, tb).transpose(1, 0, 2)).reshape(-1)
+
+
+def vt_untiled(flat: np.ndarray, d: int, cap: int) -> np.ndarray:
+    """Inverse of vt_tiled: DRAM bytes -> V^T [d, cap]."""
+    tb = vt_tile(cap)
+    return flat.reshape(cap // tb, d, tb).transpose(1, 0, 2).reshape(d, cap)
+
+
 class KVDesc:
     """Per-slice view of a KV cache whose heads are dealt round-robin over slices.
 
     Layout per head: K token-major int8 [cap, d] + scales [cap, d/D]; V^T dim-major int8
-    [d, cap]; one V scale per token [cap] (folded into P before P.V). With head_dim < D the
-    rows are zero-padded to d = D and dv = head_dim: P.V reads only the first dv rows of V^T.
+    [d, cap] in tiles of tb = vt_tile(cap) tokens: tile i holds tokens [i*tb, (i+1)*tb) of every
+    row, [d, tb] contiguous (so P.V of an attention block streams one contiguous tile, and a
+    token's column stays within a few DRAM rows at any capacity); one V scale per token [cap]
+    (folded into P before P.V). With head_dim < D the rows are zero-padded to d = D and
+    dv = head_dim: P.V reads only the first dv rows of V^T.
     """
 
     def __init__(self, heads: dict, cap: int, d: int, D: int, S: int, sid: int,
@@ -230,7 +343,15 @@ class KVDesc:
 
     def vt(self, h: int) -> QTensor:
         e = self._h(h)
-        return QTensor(Affine.of(e["vt"]), None, (self.dv, self.cap), self.cap, 0, self.D)
+        tb = vt_tile(self.cap)
+        return QTensor(Affine.of(e["vt"]), None, (self.dv, self.cap), tb, 0, self.D,
+                       tiles=(tb, self.d * tb) if tb < self.cap else None)
+
+    def vt_column(self, h: int, t) -> Affine:
+        """The address of token t's byte in V^T row 0 (the next rows are vt(h).rs apart)."""
+        tb = vt_tile(self.cap)
+        q, r = tile_split(t, tb)
+        return Affine.of(self._h(h)["vt"]) + q * (self.d * tb) + r
 
     def vscale(self, h: int) -> Tensor:
         e = self._h(h)
@@ -412,8 +533,9 @@ class Bcast:
 
 
 class Stationary:
-    """A tile quantized into ACT RAM blocks [ab, ab+KB) for up to MCOLS rows. `pair`: its rows
-    are also in ACT rows M..2M-1 (QACT DUP), so 4-bit MMs run at full rate (MM PAIR)."""
+    """A tile quantized into ACT RAM blocks [ab, ab+KB), in chunks of up to ACT_ROWS rows.
+    `pair`: its rows are also in ACT rows M..2M-1 (QACT DUP), so 4-bit MMs run at full rate
+    (MM PAIR)."""
 
     def __init__(self, src: Tile, chunks: list, KB: int, owners: list, pair: bool = False):
         self.src, self.chunks, self.KB, self.owners = src, chunks, KB, owners
@@ -468,6 +590,7 @@ class Builder:
         # body would leave it non-zero for its earlier use in the next iteration)
         self.free_regs = [(r, frozenset()) for r in range(15, 0, -1)]
         self.used_regs: set = set()
+        self.run_args: list = []      # (RunVar, coefficient) of argument k (arg_reg(k))
         self.versions = weakref.WeakKeyDictionary()
         self.tmem_regions: list = []     # (base, end, weakref to the allocation's _Buf)
         self.tmem_peak = 0
@@ -483,25 +606,60 @@ class Builder:
         a = Affine.of(a)
         if a.is_static:
             return 0, a.const
+        run = [(v, c) for v, c in a.terms.items() if isinstance(v, RunVar)]
         for l in a.terms:
-            if not any(lb.loop is l for lb in self.loops):
+            if not isinstance(l, RunVar) and not any(lb.loop is l for lb in self.loops):
                 raise CompileError(f"address uses {l} outside its loop")
+        if len(run) > 1:
+            raise CompileError(f"address {a} adds more than one run-time value")
+        if run:
+            arg = self.arg_reg(*run[0])
+            if len(a.terms) == 1:                   # the argument register itself
+                return arg, a.const
         key = frozenset(a.terms.items())
         if key not in self.regs:
             r = self._spare_for(key)
             if r is None:
                 r = self._free_for(key)
+                if r is not None and run:          # it starts at the argument's value
+                    self._init_before_loops(key, I.addi(r, arg, 0, comment=f"{run[0][1]}*"
+                                                        f"{run[0][0]} (argument)"))
             if r is None:
                 raise CompileError("out of address registers")
             self.regs[key] = r
             self.used_regs.add(r)
         return self.regs[key], a.const
 
+    def arg_reg(self, var: RunVar, c: int) -> int:
+        """The argument register that holds c * var (allocated on first use; it leaves the
+        address registers)."""
+        if (var, c) not in self.run_args:
+            if len(self.run_args) == 16 - ARG0:
+                raise CompileError(f"more than {16 - ARG0} run-time argument values")
+            r = arg_reg(len(self.run_args))
+            if r in self.used_regs:
+                raise CompileError(f"out of address registers: R{r} is taken, argument "
+                                   f"{len(self.run_args)} needs it")
+            self.free_regs = [(f, lt) for f, lt in self.free_regs if f != r]
+            self.run_args.append((var, c))
+        return arg_reg(self.run_args.index((var, c)))
+
+    def _init_before_loops(self, key, ins: I.Instr) -> None:
+        """Put `ins` before the outermost live loop among key's terms (the register must hold
+        its run-time value when that loop starts; the loops step and reset it from there)."""
+        for d, lb in enumerate(self.loops):
+            if (lb.loop, dict(key).get(lb.loop)) in key:
+                items = self.stack[d]
+                items.insert(next(i for i, x in enumerate(items) if x is lb), ins)
+                return
+        raise CompileError("a run-time address outside its loops")    # (a bare argument)
+
     def _spare_for(self, key):
         """A retired register holding a subset of `key` whose missing terms all belong to loops
-        begun after it was retired."""
+        begun after it was retired (a run-time term must be there already)."""
         for i, (terms, live_then, r) in enumerate(self.spare_regs):
-            if terms <= key and not any(id(l) in live_then for l, _ in key - terms):
+            if terms <= key and not any(id(l) in live_then or isinstance(l, RunVar)
+                                        for l, _ in key - terms):
                 del self.spare_regs[i]
                 return r
         return None
@@ -548,6 +706,8 @@ class Builder:
         for terms, r in retired:
             if not terms:
                 self.free_regs.append((r, frozenset(live)))
+            elif all(isinstance(l, RunVar) for l, _ in terms):     # the argument's value
+                self.spare_regs.append((terms, frozenset(live), r))
             elif terms not in self.regs:
                 self.regs[terms] = r
             else:
@@ -847,11 +1007,12 @@ class Builder:
             src, rs, cs, rsc = fused
         chunks, owners = [], []
         # column reuse: a tile of at most MCOLS/2 rows is written twice (no extra cycles), so a
-        # 4-bit MM can feed the odd K-blocks to the second half of the columns
+        # 4-bit MM can feed the odd K-blocks to the second half of the columns. A taller tile
+        # (up to ACT_ROWS rows) replays the streamed chunks instead: PAIR would not be faster
         pair = self.cfg.PAIR and 2 * x.rows <= self.cfg.MCOLS
         st = Stationary(x, chunks, KB, owners, pair)
-        for m0 in builtins.range(0, x.rows, self.cfg.MCOLS):
-            mc = min(self.cfg.MCOLS, x.rows - m0)
+        for m0 in builtins.range(0, x.rows, self.cfg.act_rows):
+            mc = min(self.cfg.act_rows, x.rows - m0)
             ab, owner = self.act_alloc(KB)
             for k in builtins.range(ab, ab + KB):   # live now: the next chunk must not take it
                 self.act_live[k] = weakref.ref(st)
@@ -981,6 +1142,33 @@ class Builder:
         self.bump_version(acc.buf)
         return acc
 
+    def deltanet_step(self, state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile,
+                      o: Tile, zero: bool = False) -> None:
+        """DSTEP: one Gated DeltaNet head step on the fp32 state `state` [rows, cols] in DRAM,
+        updated in place; qk = [q | k] (2 * cols words), v [rows], decay and beta [1] tiles
+        (beta after decay), o [rows] written (docs/isa.md). `zero`: the state starts at +0."""
+        if not self.cfg.DSTEP:
+            raise CompileError("deltanet_step needs Config.DSTEP (the DMA's DSTEP)")
+        if len(state.shape) != 2 or state.strides != (state.shape[1], 1):
+            raise CompileError("deltanet_step: the state must be a row-major [rows, cols] tensor")
+        rows, cols = state.shape
+        if not (0 < rows <= I.DSTEP_MAX_ROWS) or cols % 64 or not (0 < cols <= 256):
+            raise CompileError("deltanet_step: rows 1..256, cols 64, 128, 192 or 256")
+        for t, n, what in ((qk, 2 * cols, "qk"), (v, rows, "v"), (decay, 1, "decay"),
+                           (beta, 1, "beta"), (o, rows, "o")):
+            if not isinstance(t, Tile) or len(t.shape) != 1 or t.cols != n:
+                raise CompileError(f"deltanet_step: {what} must be a 1-D tile of {n}")
+        gs = beta.base - decay.base
+        if not 0 < gs < 1 << 16:
+            raise CompileError("deltanet_step: beta must follow decay in TMEM")
+        self.check_live(qk, v, decay, beta, o)
+        if Affine.of(state.base).is_static and Affine.of(state.base).const % self.cfg.D:
+            raise CompileError("deltanet_step: the state must be DRAM-chunk aligned")
+        ra, imm = self.addr(state.base)
+        self.emit(I.dstep(imm, qk.base, v.base, rows, cols, decay.base, gs, o.base, zero=zero,
+                          ra=ra, comment="dstep"))
+        self.bump_version(o.buf)
+
     def fuse_mm_rmax(self, x: Tile):
         """max(s, axis=1) of a dot output nothing has touched since: set RMAX on that MM and
         return the maxima it writes after the tile's last row."""
@@ -1033,9 +1221,9 @@ class Builder:
         if acc_scale is not None:
             if acc_scale.shape != (M,):
                 raise CompileError(f"dot: acc_scale shape {acc_scale.shape} != {(M,)}")
-            if len(st.chunks) != 1:
+            if len(st.chunks) != 1 or M > self.cfg.MCOLS:
                 raise CompileError("dot(acc_scale=...) needs M <= MCOLS")
-        if rowmax and (len(st.chunks) != 1 or len(out.shape) != 2
+        if rowmax and (len(st.chunks) != 1 or M > self.cfg.MCOLS or len(out.shape) != 2
                        or getattr(out, "spare", 0) < M or out.rs < N):
             raise CompileError("dot(rowmax=True) needs M <= MCOLS and an output tile from "
                                "ol.empty/zeros/full (they reserve the row-max area)")
@@ -1055,13 +1243,13 @@ class Builder:
             self.emit(ins)
             m0 += mc
         self.bump_version(out.buf)
-        if (acc is None and len(st.chunks) == 1 and len(out.shape) == 2
+        if (acc is None and len(st.chunks) == 1 and M <= self.cfg.MCOLS and len(out.shape) == 2
                 and getattr(out, "spare", 0) >= M and out.rs >= N):
             out.mm_src = (ins, self.versions.get(out.buf, 0), M, ors)
         return out
 
     def store_quantized(self, x: Tile, dst: Affine, sdst: Affine, drs: int, es: int,
-                        row_scale: bool) -> None:
+                        row_scale: bool, half: bool = False) -> None:
         D = self.cfg.D
         if x.cols % D:
             raise CompileError("quantized stores need a multiple of D elements per row")
@@ -1069,7 +1257,7 @@ class Builder:
         rc, simm = self.addr(sdst)
         rs = x.rs if len(x.shape) == 2 else x.cols
         self.emit(I.qst(x.base, dimm, simm, x.rows, x.cols // D, rs, drs, es, row=row_scale,
-                        rb=rb, rc=rc, comment="quantized store"))
+                        half=half, rb=rb, rc=rc, comment="quantized store"))
 
     def all_gather(self, x: Tile, S: int) -> Tile:
         x = self.materialize(x)

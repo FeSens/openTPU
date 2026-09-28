@@ -148,9 +148,10 @@ class RunnerStatus:
     tokens (device runs so far), last_cycles, tok_s_device (CORE_KHZ / last_cycles),
     tok_s_wall (over the last WALL_WINDOW runs, host work included), updated (unix time).
 
-    min_interval: token() rewrites the file at most this often (seconds); a token that comes
-    sooner is written by a timer when the interval is up, so the file is never behind for
-    longer. The rewrite is off the token's critical path (0.2-0.5 ms on the card's host).
+    min_interval: the file is rewritten after a token at most this often (seconds), by a
+    timer thread (at once when the interval is already up), so the file is never behind for
+    longer and the rewrite (0.2-0.5 ms on the card's host) is never on the token's critical
+    path; 0: token() rewrites it itself.
     """
 
     WALL_WINDOW = 8
@@ -185,12 +186,11 @@ class RunnerStatus:
         if len(self._ends) > 1:
             d["tok_s_wall"] = (len(self._ends) - 1) / max(self._ends[-1] - self._ends[0], 1e-9)
         d.update(fields)
-        wait = self.min_interval - (time.perf_counter() - self._tok_written)
-        if wait <= 0:
-            self._tok_written = time.perf_counter()
+        if self.min_interval <= 0:
             self.write()
-        elif self._timer is None:
-            self._timer = threading.Timer(wait, self._flush)
+        elif self._timer is None:           # the rewrite is the timer's, never the caller's
+            wait = self.min_interval - (time.perf_counter() - self._tok_written)
+            self._timer = threading.Timer(max(wait, 0.0), self._flush)
             self._timer.daemon = True
             self._timer.start()
 

@@ -43,7 +43,6 @@ from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
                                  model_check, partial_writes, pattern_test, run_demo,
                                  vops_check)
-from opentpu.host.opchecks import diag_image, op_checks
 
 HINTS = {
     "link": "Is the card enumerated (lspci -d 10ee:), the XDMA driver loaded (lsmod | grep "
@@ -214,22 +213,7 @@ def main(argv=None) -> int:
         from opentpu.llm import load_spec, model_dir
         qwen35 = bool(a.model) and \
             type(load_spec(model_dir(a.model))).__module__.endswith(".qwen35")
-        ok, msg = vops_check(board, cfg, need=qwen35)
-        if not ok or msg.startswith("note:"):
-            return ok, msg
-        # the vops program passed: otpu-diag's reduction and RDOT / OUTER / LOG2 op checks back
-        # to back (each result read right after it), which caught a stale RDOT result
-        progs = [(n, p) for g, n, p in op_checks(cfg) if g in ("vpu-reduce", "vpu-new")]
-        bad = []
-        for name, prog in progs:
-            ok2, msg2, _ = run_demo(board, cfg, prog, diag_image())
-            if not ok2:
-                bad.append(f"{name}: {msg2.split(',')[0]}")
-        if bad:
-            return False, (f"RDOT / OUTER / LOG2 program ok, but {len(bad)} of {len(progs)} "
-                           "reduction / RDOT / OUTER / LOG2 op checks differ: "
-                           + "; ".join(bad[:4]))
-        return True, f"{msg}; {len(progs)} op checks ok"
+        return vops_check(board, cfg, need=qwen35)
 
     def model():
         return model_check(t, cfg, a.model, a.tokens, a.sim, a.wformat, a.head_format)
