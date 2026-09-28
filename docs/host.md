@@ -593,6 +593,16 @@ checked only at the piece's time: LFM2 fp4 on a busy card host (fp4fx120, two Vi
 saw HALTED 2.2 ms after the run's end in one streamed run. HALTED is now read after every
 sleep slice (at most 1 ms apart). Not yet re-measured on the card.
 
+**HALTED before the last stores land.** HALTED rises once the last store has left the core;
+the memory adapter may still have writes in flight (STATUS WR_IDLE clear), and a host read
+through the XDMA may pass them. On the card (hp-wb aebb0bf0, resident decode, LFM2 fp4 + int8
+head, sampled, streamed) a tail read found words of the last logits piece unwritten.
+`Board.wait` now waits for WR_IDLE after HALTED (at most 2 ms; not on the board model, whose
+register script replays in order), and the streamed tail reads again for up to 5 ms before it
+calls a piece unwritten (the error names the words). `FakeTransport.logits_lag` lands the last
+piece after HALTED, with WR_IDLE clear until then (tests/test_host.py). Not yet re-run on the
+card.
+
 **Resident decode.** A decode program now takes the position and the token as run arguments
 (docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit25), so one program serves
 every position of an attention bucket (`Engine(resident=True)`, the default of `otpu-chat` and
