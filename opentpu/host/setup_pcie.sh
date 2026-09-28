@@ -6,7 +6,9 @@
 #   setup_pcie.sh --check      report what is installed and working, change nothing
 #                              (exit 1 when something is missing or wrong)
 #   setup_pcie.sh --rescan     after a JTAG load: remove the card from the bus, rescan, bind the
-#                              driver, wait for /dev/xdma0_user, read the ID register
+#                              driver, wait for /dev/xdma0_user, read the ID register. When the
+#                              card is not back, retrain its upstream port's link first
+#                              (pcie/relink.sh: Retrain Link, Link Disable, secondary bus reset)
 #   setup_pcie.sh --uninstall  remove everything the install put on the system
 #   --poll | --irq             the driver's completion mode (poll_mode=1 | 0), kept in
 #                              /etc/modprobe.d/otpu-xdma.conf; without either, an existing
@@ -71,12 +73,16 @@ if [[ $mode != check && $EUID != 0 ]]; then
   exec sudo -- bash "$0" "${args[@]}"
 fi
 [[ -d "$files" ]] || die "$files missing: run the script from the openTPU package"
+pci=/sys/bus/pci
+state=/run/otpu-card-ports     # the cards' upstream ports, kept by --rescan (pcie/relink.sh)
+# shellcheck source=pcie/relink.sh
+source "$files/relink.sh"
 
 # ---------------------------------------------------------------- probes (no side effects)
 
 cards() {  # the openTPU cards on the bus: 10ee:7028, or any device with subsystem 10ee:4f54
   local d
-  for d in /sys/bus/pci/devices/*; do
+  for d in "$pci"/devices/*; do
     [[ "$(cat "$d/vendor")" == 0x10ee ]] || continue
     if [[ "$(cat "$d/device")" == 0x7028 || "$(cat "$d/subsystem_device")" == 0x4f54 ]]; then
       basename "$d"
@@ -450,21 +456,13 @@ do_install() {
 }
 
 do_rescan() {
-  local b ap
   refuse_if_busy "stop it first: the rescan removes the device under it"
   say "rescan"
-  for b in $(cards); do note "removing $b"; echo 1 > "/sys/bus/pci/devices/$b/remove"; done
-  # re-add without automatic probing, so that 8250_pci cannot take a serial-class bitstream
-  # before the driver override is set (bind_cards binds it)
-  ap="$(cat /sys/bus/pci/drivers_autoprobe)"
-  trap "echo $ap > /sys/bus/pci/drivers_autoprobe" EXIT
-  echo 0 > /sys/bus/pci/drivers_autoprobe
-  echo 1 > /sys/bus/pci/rescan
-  echo "$ap" > /sys/bus/pci/drivers_autoprobe
+  trap relink_cleanup EXIT
+  rescan_cards || die "no openTPU card after the rescan and the link retrain: is the bitstream \
+loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot \
+(the FPGA keeps its configuration while the slot stays powered)"
   trap - EXIT
-  [[ -n "$(cards)" ]] || die "no openTPU card after the rescan: is the bitstream loaded? A JTAG \
-load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps \
-its configuration while the slot stays powered)"
   load_driver
   wait_nodes || true
   report_cards

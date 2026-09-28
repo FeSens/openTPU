@@ -217,8 +217,10 @@ before that show class 07 00 01 (serial), subsystem 10ee:0007, revision 00. Veri
 Corporation Device [10ee:7028] (rev 01)`, subsystem `[10ee:4f54]`, and the driver binds it
 without the serial-port override.
 
-If the device does not appear, warm-reboot the host (the FPGA keeps its configuration across a
-warm reboot, as long as the slot power stays on), or write the flash, then power-cycle. If the
+If the device does not appear, `--rescan` retrains the link of the card's upstream port and
+rescans again ([host.md](host.md) section 3). If it is still missing, warm-reboot the host (the
+FPGA keeps its configuration across a warm reboot, as long as the slot power stays on), or write
+the flash, then power-cycle. If the
 link trains at a lower width, check `LnkSta` and the PCIe placement note in section 6.
 
 ## 3. Host setup and bring-up checklist
