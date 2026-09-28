@@ -281,6 +281,7 @@ def main(argv=None):
             P.add("sample", time.perf_counter() - t0)
             return r
     timed_pick.stream = TimedStream
+    timed_pick.warm = pick.warm
     chat = C.Chat(eng, tok, False, timed_pick, a.tokens, clock_mhz=khz / 1e3)
     dec = tok.decode
 

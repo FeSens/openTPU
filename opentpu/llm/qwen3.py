@@ -1125,15 +1125,17 @@ class Engine:
                 getattr(self.backend, "streams", False):
             piece = 4 * min(HEAD_CHUNK, self.cfg.TMEM_WORDS // 8)     # _lm_head's chunks
             stream = (io["logits"], 4 * vocab, piece)
-        if sink is not None:
-            sink.begin(vocab)
         if start is None:
+            if sink is not None:
+                sink.begin(vocab)
             self._prefetch(self.pos + 1)
             if on_start is not None:
                 on_start()
             st = self.backend.run(progs, **kw)
         elif stream is None:                # compile while the device runs, not while the
             start(progs, **kw)              # host copies the program
+            if sink is not None:            # after the start: off the halt -> run path
+                sink.begin(vocab)
             self._prefetch(self.pos + 1)
             if on_start is not None:
                 on_start()
@@ -1147,6 +1149,8 @@ class Engine:
                 if sink is not None:
                     sink.feed(o // 4, v)
             start(progs, stream=stream, **kw)
+            if sink is not None:            # after the start: off the halt -> run path
+                sink.begin(vocab)
             self._prefetch(self.pos + 1)
             if on_start is not None:
                 on_start()

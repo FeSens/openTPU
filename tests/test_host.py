@@ -895,6 +895,7 @@ def test_smi_json(tmp_path, capsys):
     img = [np.zeros(1 << 16, np.uint8)]
     be = BoardBackend(board_config(DRAM_BYTES=1 << 21), img, transport=card, model="m0")
     be.run([PROG])
+    time.sleep(0.05)                # the status file's rewrite: TOKEN_DEFER after the token
     rc = smi.main(["--json", "--dev", "/dev/fake5", "--power-json", str(pj), "-i", "0"],
                   open_transport=lambda dev: FakeTransport(devname="fake5"))
     assert rc == 0
