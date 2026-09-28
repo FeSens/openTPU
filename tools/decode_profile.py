@@ -336,8 +336,13 @@ def main(argv=None):
         print(f"streamed logits (last token): {ls.get('during')} of {ls.get('pieces')} pieces "
               f"during the run, {ls.get('probes')} probes, then "
               f"{ls.get('tail_bytes', 0) / 1024:.0f} KiB in {1e3 * ls.get('tail_s', 0):.3f} ms")
+    # the first window (the prompt's last pick, the first decode program's upload) is the
+    # start-up of the decode, not a step of it: the rate from the first decode run on
+    first_ms = 1e3 * P.tokens[0]["critical"] if P.tokens else 0.0
+    steady = n / (wall - first_ms / 1e3) if wall > first_ms / 1e3 else 0.0
     print(f"wall {n / wall:.2f} tok/s, device {n * khz * 1e3 / cyc:.2f} tok/s "
-          f"({cyc / n / 1e6:.3f} Mcycles/token)")
+          f"({cyc / n / 1e6:.3f} Mcycles/token); from the first decode run {steady:.2f} tok/s "
+          f"(the first window, {first_ms:.2f} ms, left out)")
     if a.json:
         Path(a.json).write_text(json.dumps({
             "model": path.name, "wformat": a.wformat, "head_format": a.head_format,
@@ -347,6 +352,7 @@ def main(argv=None):
             "ops": {k: {"calls": v[0] / n, "bytes": v[1] / n, "ms": 1e3 * v[2] / n}
                     for k, v in P.ops.items()},
             "wall_tok_s": n / wall, "dev_tok_s": n * khz * 1e3 / cyc,
+            "steady_tok_s": steady, "first_window_ms": first_ms,
             "reply_ids": [int(x) for x in chat._reply],
             # per token (window HALTED seen -> next RUN): the critical ms of each item
             "tokens": [{k: round(1e3 * v, 4) for k, v in t.items()} for t in P.tokens]},

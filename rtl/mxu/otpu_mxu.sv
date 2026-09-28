@@ -140,6 +140,15 @@ module otpu_mxu
   wire        cmd_pair = cmd.flags[6] && cmd.flags[5:4] != WF_W8;
   wire [15:0] cmd_KBa = cmd_pair ? (cmd.w4[31:16] + 16'd1) >> 1 : cmd.w4[31:16];
   wire [31:0] cmd_total = 32'(cmd.w4[15:0]) * 32'(cmd_KBa);   // advances (chunk requests)
+  // cmd_total == 0 without the multiply (a product of two 16-bit factors is zero iff one is;
+  // cmd_KBa is zero iff KB is, or PAIR's 16-bit KB + 1 wraps): off the DSP's pattern detect
+  wire        cmd_tz = (cmd.w4[15:0] == 16'd0) || (cmd.w4[31:16] == 16'd0) ||
+                       (cmd_pair && (&cmd.w4[31:16]));
+`ifndef SYNTHESIS
+  always @(posedge clk)
+    if (!rst && start && cmd_tz != (cmd_total == 0))
+      $fatal(1, "otpu_mxu: cmd_tz %0d but total %0d", cmd_tz, cmd_total);
+`endif
   logic [31:0] q_out [2], q_total [2];
   logic        q_tz [2];                      // q_total == 0 (registered: off the drain path)
   logic [15:0] q_KB [2], q_KBa [2], q_ors [2];   // KBa: advances per row
@@ -652,10 +661,18 @@ module otpu_mxu
   logic [MW-1:0] dj;
   logic [MW-1:0] ncnt;
   logic [7:0]    dg;                         // the group of the row being drained
-  wire  [MW-1:0] c_Mn = (dg + 8'd1 == c_G) ? q_Ml[q_h] : MW'(MCOLS);   // its results
+  logic [7:0]    dg1;                        // dg + 1, kept alongside (no adder before the
+                                             // last-group compare: BL16 at 120.755 MHz had
+                                             // dg -> dg + 1 == c_G -> drain lanes -> TMEM grant
+                                             // -> mk / dad / drow enables, 16 levels, -0.287 ns)
+  wire           d_last = (dg1 == c_G);
+  wire  [MW-1:0] c_Mn = d_last ? q_Ml[q_h] : MW'(MCOLS);   // its results
   logic [LANES-1:0][31:0] daddr_l, dval_l;
   logic [LANES-1:0][7:0]  dcol_l;
   wire  drain_go = (rf_n != 0) && (!c_asc || al_st == 2'd2);
+`ifndef SYNTHESIS
+  always @(posedge clk) if (!rst && drain_go && dg1 != dg + 8'd1) $fatal(1, "otpu_mxu: dg1 %0d, dg %0d", dg1, dg);
+`endif
   // Results j and j' of a row sit ors * (j' - j) words apart: the same bank iff that is a multiple
   // of LANES. So consecutive results are conflict-free in runs of LANES / gcd(ors, LANES)
   // (capped at NL), a per-command constant: the lane count is min(run, M - dj), with no serial
@@ -780,7 +797,14 @@ module otpu_mxu
 `endif
 
   wire c_drained = c_act && (c_left == 0) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
-  wire mx_go     = c_drained && c_rmax && !mx_done && !c_tz;
+  // RMAX writes start a cycle after the head has drained: mx_q registers the test, so the
+  // drained compares (c_left == 0, rows_live, rmw_n, ...) are off the TMEM write request and the
+  // grant it feeds (clk125 at 125.49 MHz: c_left -> drained test -> MXU write request -> TMEM
+  // arbitration -> VPU WBUF enable / alpha, mk enables, 14 levels, -0.116 ns). The test holds
+  // while drained (nothing new enters the head until it completes, which needs mx_done), and it
+  // is false in the completing cycle (mx_done), so a new head never sees a stale mx_q.
+  logic mx_q;
+  wire mx_go     = mx_q && !mx_done;
   wire c_fin     = c_drained && (!c_rmax || mx_done || c_tz);
   wire al_go     = c_act && c_asc && al_st == 2'd0;
 
@@ -847,13 +871,13 @@ module otpu_mxu
       occ <= '0;
       f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
-      ck <= '0; cg <= '0; dg <= '0; c_left <= '0; rows_live <= '0;
+      ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1; c_left <= '0; rows_live <= '0;
       rf_h <= '0; rf_t <= '0; rf_n <= '0;
       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
       r0 <= '0; rx <= '0; rmw_n <= '0;
       st_starve <= '0; st_bp <= '0; st_frz <= '0; st_deny <= '0;
-      st_c <= '0; st_f <= 1'b0;
+      st_c <= '0; st_f <= 1'b0; mx_q <= 1'b0;
     end else begin
       logic [1:0] qn;
       logic [RFW:0] rn;
@@ -867,7 +891,7 @@ module otpu_mxu
         qi = q_h ^ (q_n != 0);
         q_out[qi]   <= cmd.w3;
         q_total[qi] <= cmd_total;
-        q_tz[qi]    <= (cmd_total == 0);
+        q_tz[qi]    <= cmd_tz;
         if (q_n == 0) c_left <= cmd_total;          // becomes the head now
         q_KB[qi]    <= cmd.w4[31:16];
         q_KBa[qi]   <= cmd_KBa;
@@ -980,14 +1004,14 @@ module otpu_mxu
           end
           if (drain_row_done) begin
             dj <= '0;
-            if (dg + 8'd1 == c_G) begin             // the next weight row, group 0
-              dg <= '0;
+            if (d_last) begin                       // the next weight row, group 0
+              dg <= '0; dg1 <= 8'd1;
               for (int j = 0; j < MCOLS; j++) begin
                 dad[j] <= drow[j] + 32'd1;
                 drow[j] <= drow[j] + 32'd1;
               end
             end else begin                          // the next group of this row
-              dg <= dg + 8'd1;
+              dg <= dg + 8'd1; dg1 <= dg1 + 8'd1;
               for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + q_gs[q_h];
             end
             rf_h <= rf_h + 1;
@@ -1027,6 +1051,7 @@ module otpu_mxu
       st_c <= {want_iss && !go_iss, !t_gnt && (drain_go || rw.v || mx_go || al_go),
                more && f_count != 0 && !pop, more && f_count == 0};
       st_f <= c_fin && !pop;
+      mx_q <= c_drained && c_rmax && !mx_done && !c_tz;
       st_starve <= st_starve + 32'(st_g[0]);
       st_bp <= st_bp + 32'(st_g[1]);
       st_frz <= st_frz + 32'(st_g[2]);
@@ -1036,7 +1061,7 @@ module otpu_mxu
         done <= 1'b1;
         q_h <= ~q_h;
         qn = qn - 1;
-        ck <= '0; cg <= '0; dg <= '0;
+        ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1;
         // the next head's chunk count: the queued entry, or a command accepted this cycle
         c_left <= (q_n == 2'd2) ? q_total[~q_h] : (start ? cmd_total : '0);
         dj <= '0;

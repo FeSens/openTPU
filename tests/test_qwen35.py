@@ -164,20 +164,61 @@ def test_tiny_dstep_is_bit_exact(tiny, config):
 
 
 @pytest.mark.parametrize("dstep", [False, True])
-def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep):
-    """The board model through the host driver, through a full turn of the convolution ring:
-    logits bit-identical to the ISA simulator (with and without DSTEP)."""
+def test_tiny_resident_decode_is_bit_exact(tiny, dstep):
+    """Resident decode (one program per 256-position attention bucket, the token and position
+    as run arguments, the embedding and RoPE rows from the image's tables, the conv ring read
+    through its mirrored rows at a run-time offset) gives the per-position programs' logits bit
+    for bit: from the ring's first positions (0 .. 2 run per-position programs), after a
+    chunked prefill and across the bucket boundary at 256; the layer blocks (KV cache, conv
+    ring, DeltaNet state) agree too, but for the rings' scratch rows."""
+    _, W, spec = tiny
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep, PAIR=True)
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 262)]
+    a = Engine(spec, W, cap=512, cfg=cfg, resident=True)
+    b = Engine(spec, W, cap=512, cfg=cfg)
+    assert a.resident and not b.resident
+    p = 0
+    for stop, run in ((0, 6), (252, 10)):
+        if stop > p:
+            assert np.array_equal(a.prefill(toks[p:stop]), b.prefill(toks[p:stop]))
+            p = stop
+        for t in toks[p:p + run]:
+            pa = a.pos
+            assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), pa
+        p += run
+    assert sorted(a._decodes) == [1, 2] and not b._decodes
+    ia, ib = a.image, b.image
+    assert (ia.layer0, ia.LS) == (ib.layer0, ib.LS)
+    ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.layer0 + len(spec.kinds) * ib.LS]
+              .copy() for e in (a, b))
+    TP = 2 * spec.conv_k * ib.C
+    for li, k in enumerate(spec.kinds):     # row 0 of each pair's ring is scratch (_ring)
+        if k == "linear":
+            for q in range(ib.nl // 2):
+                o = li * ib.LS + ib.lofs["linear"]["cv"] + 4 * (q * ib.CVW + TP)
+                ma[o:o + 8 * ib.C] = mb[o:o + 8 * ib.C] = 0
+    assert np.array_equal(ma, mb)
+
+
+@pytest.mark.parametrize("dstep,resident", [(False, False), (True, False), (True, True)])
+def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep, resident):
+    """The board model through the host driver, through a full turn of the convolution window:
+    logits bit-identical to the ISA simulator (with and without DSTEP; resident: from position
+    3 on the resident decode program, its token and position as run arguments)."""
     from opentpu.host.board import BoardBackend, SimTransport
     _, W, spec = tiny
-    cfg = board_config(DRAM_BYTES=1 << 24, DSTEP=dstep)
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep)
     isa = Engine(spec, W, cap=256, cfg=cfg)
     tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
-    brd = Engine(spec, W, cap=256, cfg=cfg,
+    brd = Engine(spec, W, cap=256, cfg=cfg, resident=resident,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr))
-    for tok in (11, 222, 333, 444, 555):
+    assert brd.resident == resident
+    for tok in (11, 222, 333, 444, 555, 666):
         a, b = isa.step(tok), brd.step(tok)
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
     assert brd.stats[-1]["cycles"] > 0
+    if resident:
+        assert sorted(brd._decodes) == [1] and brd.backend._resident[0] is brd._decodes[1][0]
 
 
 def test_tiny_qwen35_on_a_board_without_dstep(tiny, have_verilator):

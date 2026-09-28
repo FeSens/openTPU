@@ -270,7 +270,8 @@ module otpu_board #(
   logic [1:0][1:0]   bresp, rresp;
   otpu_axi_dram #(.D(D), .BL(AXI_BL), .CHASH(CHASH), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
     .clk, .rst,
-    .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
+    .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+        .a_be_x(a_be), .a_rvalid, .a_rdata, .a_rdata2,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
     .wr_idle,
