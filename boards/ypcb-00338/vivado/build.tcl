@@ -79,6 +79,8 @@ open_run impl_1
 report_timing_summary -max_paths 50 -report_unconstrained -warn_on_violation \
   -file $out/reports/timing_summary.rpt
 report_timing -max_paths 30 -sort_by group -nworst 1 -file $out/reports/timing_worst.rpt
+# placer / router congestion windows per region (the fmax tournament shows them to its agents)
+report_design_analysis -congestion -file $out/reports/congestion.rpt
 report_clock_interaction -file $out/reports/clock_interaction.rpt
 report_clocks -file $out/reports/clocks.rpt
 report_cdc -details -file $out/reports/cdc.rpt

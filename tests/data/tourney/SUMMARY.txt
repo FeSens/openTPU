@@ -1,0 +1,5 @@
+WNS 0.149 ns   WHS 0.016 ns
+pcie_refclk                              period  10.000 ns  slack    9.029 ns  fmax 1029.9 MHz
+core_clk_otpu_bd_clk_wiz_0_0_1           period   8.281 ns  slack    0.149 ns  fmax 123.0 MHz
+clk_200_otpu_bd_clk_wiz_0_0_1            period   5.000 ns  slack    4.155 ns  fmax 1183.4 MHz
+clk_125mhz                               period   8.000 ns  slack    0.764 ns  fmax 138.2 MHz

@@ -1,4 +1,5 @@
-"""Component synthesis evaluators (EVAL=yosys | vivado).
+"""Component synthesis evaluators (EVAL=yosys | vivado | vivado-remote) and the Vivado report
+parsers (component OOC and full-board builds).
 
 Each returns a dict: lut, lutram (LUTs used as memory / shift registers), ff, dsp, bram36,
 bram18, logic_ns, fmax (MHz), backend, log (path). fmax is estimated from the logic-only
@@ -97,13 +98,101 @@ puts "OTPU_PERIOD {period_ns}"
 
 
 def parse_vivado_util(text: str) -> dict:
-    def row(name):
-        m = re.search(rf"^\|\s*{re.escape(name)}\s*\|\s*([\d.]+)\s*\|", text, re.M)
-        return float(m.group(1)) if m else 0.0
+    """Utilization from `report_utilization` (full board or out-of-context component). The
+    first matching row wins: the summary tables come before the per-primitive breakdown."""
+    def row(*names):
+        for name in names:
+            m = re.search(rf"^\|\s*{re.escape(name)}\s*\|\s*([\d.]+)\s*\|", text, re.M)
+            if m:
+                return float(m.group(1))
+        return 0.0
     return {"lut": row("LUT as Logic"), "lutram": row("LUT as Memory"),
-            "ff": row("Slice Registers") or row("Register as Flip Flop"),
-            "dsp": row("DSPs"), "bram36": row("RAMB36/FIFO*") or row("RAMB36/FIFO"),
+            "ff": row("Slice Registers", "Register as Flip Flop"),
+            "dsp": row("DSPs"), "bram36": row("RAMB36/FIFO*", "RAMB36/FIFO"),
             "bram18": row("RAMB18")}
+
+
+COLLISION = re.compile(r"Synth 8-6430\]")
+CONGESTION = re.compile(r"Route 35-447\]")
+
+
+def collisions(log: str) -> int:
+    """Block RAMs that synthesis gave a read-address register where the RTL reads
+    asynchronously (their read-after-write differs from the simulation; the build stops)."""
+    return len(COLLISION.findall(log))
+
+
+def congested(log: str) -> bool:
+    """The router warned that congestion kept it from routing all nets."""
+    return bool(CONGESTION.search(log))
+
+
+def parse_ooc(log: str, util: str, period_ns: float) -> dict:
+    """An OOC run's vivado.log (OTPU_WNS / OTPU_WHS lines) and util.txt."""
+    res = parse_vivado_util(util)
+    w = re.search(r"OTPU_WNS\s+(-?[\d.]+)", log)
+    h = re.search(r"OTPU_WHS\s+(-?[\d.]+)", log)
+    res["period"] = period_ns
+    res["wns"] = float(w.group(1)) if w else None
+    res["whs"] = float(h.group(1)) if h else None
+    res["fmax"] = 1000.0 / (period_ns - res["wns"]) if w else None
+    res["logic_ns"] = period_ns - res["wns"] if w else None
+    res["collisions"] = collisions(log)
+    res["congested"] = congested(log)
+    res["backend"] = "vivado-remote"
+    return res
+
+
+def parse_summary(text: str) -> dict:
+    """reports/SUMMARY.txt of a board build: overall WNS / WHS and each clock's period and
+    slack."""
+    out: dict = {"wns": None, "whs": None, "clocks": {}}
+    m = re.search(r"^WNS\s+(-?[\d.]+) ns\s+WHS\s+(-?[\d.]+) ns", text, re.M)
+    if m:
+        out["wns"], out["whs"] = float(m.group(1)), float(m.group(2))
+    for m in re.finditer(r"^(\S+)\s+period\s+([\d.]+) ns\s+slack\s+(-?[\d.]+) ns", text, re.M):
+        out["clocks"][m.group(1)] = (float(m.group(2)), float(m.group(3)))
+    return out
+
+
+def parse_full(summary: str, logs: str, util: str) -> dict:
+    """A full board build: the core clock's period and slack (-> fmax), the design's WNS / WHS,
+    the collision and congestion warnings from the logs, and the utilization."""
+    s = parse_summary(summary)
+    res = parse_vivado_util(util) if util.strip() else {}
+    core = next(((k, v) for k, v in s["clocks"].items() if k.startswith("core_clk")), None)
+    res["wns_design"], res["whs"] = s["wns"], s["whs"]
+    if core:
+        period, slack = core[1]
+        res.update(period=period, wns=slack, fmax=1000.0 / (period - slack),
+                   logic_ns=period - slack, core_clock=core[0])
+    else:
+        res.update(period=None, wns=None, fmax=None, logic_ns=None)
+    res["collisions"] = collisions(logs)
+    res["congested"] = congested(logs)
+    res["backend"] = "vivado-remote-full"
+    return res
+
+
+def worst_paths(timing: str, n: int = 30) -> str:
+    """The first n paths of a `report_timing` report, one line each: slack, source ->
+    destination (register names), clock of the destination."""
+    out = []
+    for blk in re.split(r"\n(?=Slack \()", timing):
+        m = re.match(r"Slack \((\w+)\)\s*:\s*(-?[\d.]+)ns", blk)
+        if not m:
+            continue
+        src = re.search(r"Source:\s+(\S+)", blk)
+        dst = re.search(r"Destination:\s+(\S+)", blk)
+        lv = re.search(r"Logic Levels:\s+(\d+)", blk)
+        dp = re.search(r"Data Path Delay:\s+([\d.]+)ns\s+\(logic ([\d.]+)ns.*?route ([\d.]+)ns", blk)
+        extra = (f" levels {lv.group(1)}" if lv else "") + (
+            f", data {dp.group(1)} ns (logic {dp.group(2)}, route {dp.group(3)})" if dp else "")
+        out.append(f"{m.group(2):>7} ns {m.group(1):<8} {src.group(1) if src else '?'} -> "
+                   f"{dst.group(1) if dst else '?'}{extra}")
+        if len(out) >= n:
+            break
+    return "\n".join(out)
 
 
 def vivado(root: Path, top: str, sources: list[str], params: dict, out: Path,

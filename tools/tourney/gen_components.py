@@ -125,6 +125,36 @@ FP = {
 }
 
 
+# The cross-unit component of the fmax tournament (--objective fmax): the wiring between the
+# units, the slice and board tops and the timing constraints. It has no out-of-context part (its
+# paths only exist in the whole design), so a candidate goes straight to the full build. The pin
+# constraint files are not in it (pins are fixed by the card).
+XUNIT = {
+    "name": "otpu_xunit",
+    "description": "Cross-unit paths: otpu_slice (the units and their wiring: scoreboard grants, "
+                   "TMEM port muxes, DRAM ports), otpu_top, otpu_pkg, the board wrappers "
+                   "(otpu_board: PCIe/AXI bridge, control registers, trace; otpu_fpga_top: clocks "
+                   "and resets) and the core timing constraints (otpu_top.xdc: pblocks, placement, "
+                   "no timing exceptions or clock changes). Changes here target paths that cross "
+                   "unit boundaries: register slices on inter-unit buses, fanout of broadcast "
+                   "signals, placement.",
+    "allowed": ["rtl/top/otpu_slice.sv", "rtl/top/otpu_top.sv", "rtl/top/otpu_pkg.sv",
+                "rtl/boards/ypcb-00338/otpu_board.sv", "rtl/boards/ypcb-00338/otpu_ctrl.sv",
+                "rtl/boards/ypcb-00338/otpu_fpga_top.sv", "rtl/boards/ypcb-00338/otpu_trace.sv",
+                "boards/ypcb-00338/constraints/otpu_top.xdc"],
+    "synth": {"parts": []},
+    "objectives": ["fmax"],
+    "target_mhz": 133.33,
+    "tests": {"fast": ["tests/test_perf.py"] + FAST + ["tests/test_rtl.py::test_fuzz_two_slices[0]",
+                              "tests/test_rtl.py::test_scoreboard_stress_two_slices[0]",
+                              "tests/test_rtl.py::test_attention_layer_rtl[1]"],
+              "board": BOARD + ["tests/test_rtl.py::test_board_memory_path_stress[2-60]",
+                                "tests/test_rtl.py::test_board_memory_path_fuzz[1-70]",
+                                "tests/test_board.py"]},
+    "perf": True,
+}
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     for name, c in C.items():
@@ -140,7 +170,8 @@ def main():
         }
         (OUT / f"{name}.yaml").write_text(yaml.safe_dump(y, sort_keys=False, width=100))
     (OUT / "otpu_fp.yaml").write_text(yaml.safe_dump(FP, sort_keys=False, width=100))
-    print("wrote", len(C) + 1, "components to", OUT)
+    (OUT / "otpu_xunit.yaml").write_text(yaml.safe_dump(XUNIT, sort_keys=False, width=100))
+    print("wrote", len(C) + 2, "components to", OUT)
 
 
 if __name__ == "__main__":

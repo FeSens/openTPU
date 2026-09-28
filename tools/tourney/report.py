@@ -1,6 +1,7 @@
 """Tournament report: per-slot table, acceptance and cost per model, progress plot.
 
     python3 -m tools.tourney.report [--comp otpu_coll ...]   (default: every component with a log)
+    python3 -m tools.tourney.report --comp fmax/otpu_vpu      (the fmax tournament's logs)
 
 Writes tools/tourney/runs/<comp>/REPORT.md and progress.png, and prints the tables.
 """
@@ -30,7 +31,7 @@ def slot_table(rows: list[dict]) -> str:
     out = ["| slot | outcome | title | area_eq | fmax | impl model @effort | cost $ | min | reason |",
            "|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
-        m = r.get("metrics") or {}
+        m = r.get("metrics") or r.get("full") or r.get("ooc") or {}   # fmax: full, else OOC
         md, ef = r.get("models") or {}, r.get("efforts") or {}
         out.append(f"| {r['id']} | {r['outcome']} | {r.get('title', '')[:50]} | "
                    f"{_f(m.get('area_eq'))} | {_f(m.get('fmax'))} | "

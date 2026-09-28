@@ -65,10 +65,13 @@ Slot worktrees and branches are removed after the round (`ARGS=--keep` keeps the
   then `sta` with the Xilinx cell timing models. Logic-only; the fmax is an estimate to *rank*
   candidates, not signoff. Uses `--allow-use-before-declare` (for sources that declare a signal
   after use).
-- `EVAL=vivado` (**untested** — Vivado is not installed yet): out-of-context synth, place, route
-  on xc7k480tffg1156-2 through `~/bonetto/vivado-docker/vivado` (override with `VIVADO=`),
-  10 ns clock; utilization and post-route WNS → fmax. Check the report parsing
-  (`synth.parse_vivado_util`) on the first real run. The champion cache is per evaluator.
+- `EVAL=vivado-remote`: Vivado 2026.1 on the build host (omarchy), never on this machine
+  (`EVAL=vivado`, the old local evaluator, is refused). The slot's tree is sent with `git
+  archive | ssh tar -x` to `~/otpu-build/tv-<name>` and each synthesis part runs out of context
+  there in the `vivado:2026.1` image: synth, opt, place, phys_opt, route on xc7k480tffg1156-2 at
+  the tournament's clock; utilization, post-route WNS / WHS, fmax = 1000 / (period − WNS), the
+  30 worst paths, and the Synth 8-6430 / Route 35-447 warnings. Used by the fmax tournament
+  below. The champion cache is per evaluator and clock.
 
 `otpu_fp` synthesizes `otpu_fadd` and `otpu_fmul` and weights them by their approximate instance
 counts at the board configuration (64 / 78), so its fitness tracks the whole design's fp cost;
@@ -120,16 +123,155 @@ was accepted on rule A: LUT 1325→1165, FF 262→280, DSP 9→0, logic 8.06→4
 75→128 MHz, area-eq 1816→1305 (−28%). Champion `tourney/otpu_coll` = b3af1b5 (not merged into
 main).
 
+## The fmax tournament (whole design, Vivado)
+
+Goal: a faster core clock for the **whole** board design. Every component (the ten above plus
+`otpu_xunit`, below) evolves one shared champion branch, `tourney/fmax`. A candidate is scored by
+the full board build in Vivado, on the build host.
+
+```
+make tourney-fmax-baseline                  # main's full build at 133.33 MHz (first thing to run)
+make tourney-fmax N=1 K=2                   # one pass over FMAX_COMPS, one round of 2 slots each
+make tourney-fmax N=3 K=2 FMAX_COMPS="otpu_xunit otpu_tmem otpu_vpu" TARGET_MHZ=133.33
+make tourney-report COMP=fmax/otpu_vpu
+```
+
+(`tourney-fmax` runs `python3 -m tools.tourney.orchestrator --objective fmax --target-mhz T
+--comp C --rounds 1 --slots K --eval vivado-remote` for each component in turn. Do not pass
+`ARGS=--reset`: it would reset the shared champion on every component.)
+
+### One round (one component)
+
+1. **Champion.** If main has moved, it is merged into `tourney/fmax` (kept only if the fast tests
+   pass). The champion's full build at the target is read from `runs/_full/<sha>-<MHz>.json`,
+   which every component shares. If that file is missing, the champion is built: once per
+   commit, under a lock file, so two processes never build the same tree. The component's own
+   out-of-context (OOC) result is cached in `runs/fmax/<comp>/champion.json`.
+2. **Hypothesis** (Opus). The prompt carries the full design's core-clock WNS / WHS / fmax and
+   utilization, its **30 worst setup paths** (from `timing_worst.rpt`), its **congestion
+   report** (`report_design_analysis -congestion`, now written by `build.tcl`), the component's
+   OOC result with its worst paths, the history and the lessons. The focus areas rotate over the
+   slots: pipeline, logic depth, fanout and placement, memories and DSPs.
+3. **Implementation** (Opus), then the gates. These are the same correctness gates as the
+   component tournament: sandbox, lint, fast, board and perf (≤ +0.2% cycles). The sandbox
+   also rejects any build-script (`.tcl`) change, and any constraint change that adds or
+   removes timing exceptions or clocks: `set_false_path`, `set_multicycle_path`,
+   `set_max/min_delay`, `set_clock_groups`, `set_disable_timing`, `create_clock`,
+   `create_generated_clock`, I/O delays and clock uncertainty.
+4. **OOC in Vivado.** Each of the component's parts runs on the host at the target period
+   (7.5 ns). The candidate goes on to the full build if its OOC fmax improves by ≥ 0.5%. It
+   also goes on if the unit already clears the target on its own and loses ≤ 1%: in that case
+   the gain must come from the paths around it, which OOC cannot see. Any Synth 8-6430 memory
+   fails the step. `otpu_xunit` has no OOC part and goes straight on.
+5. **One full build per round**, for the candidate with the best OOC gain. It runs `make bit
+   DDR=1066 CORE_MHZ=<target>` in a fresh tree `~/otpu-build/tv-<comp>-<slot>`, with the
+   production flags (`VIVADO_AS_USER=1`, the read-only install mount, the licence MAC,
+   `JOBS=2`) and a fixed `BUILD_ID=0f3a0000`. The BUILD_ID is fixed so that the champion and
+   the candidates differ only in RTL; these bitstreams are for timing only, not for the card.
+   The core clock's period and slack come from `reports/SUMMARY.txt`. Other candidates of the
+   round that passed the OOC step are logged `not_built`; their patches stay in `patches/`.
+6. **Accept** (`accept.accept_fmax`). A candidate is accepted if its full-design core-clock
+   fmax improves by ≥ 0.5%, or its WNS by ≥ 0.05 ns at the same period. It is always rejected
+   if hold is violated (WHS < 0, design-wide), if Route 35-447 (router congestion) appears in
+   the logs, or if there is any Synth 8-6430 (`build.tcl` also stops on these). Area does not
+   count, except to rank ties (`rank_fmax`). At a 7.5 ns period, +0.5% fmax is +0.038 ns, so the
+   fmax criterion always binds before the WNS criterion. The winner is committed to
+   `tourney/fmax`, and its full result is stored as the new champion's, so the next round does
+   not rebuild it.
+
+### The cross-unit component `otpu_xunit`
+
+`otpu_xunit` may change:
+
+- `rtl/top/otpu_slice.sv`, `otpu_top.sv` and `otpu_pkg.sv`;
+- the board wrappers `rtl/boards/ypcb-00338/{otpu_board,otpu_ctrl,otpu_fpga_top,otpu_trace}.sv`;
+- `boards/ypcb-00338/constraints/otpu_top.xdc` (pblocks and placement, but no timing
+  exceptions).
+
+The pin files (`ddr3_ch*.pins.xdc`, `otpu_ddr3_pins.xdc`, the vendor file) are excluded because
+the card fixes them. This component is for paths that cross unit boundaries. In the production
+image the worst path is one: `u_coll/s_reg` → a TMEM block RAM write enable, 7 logic levels,
+7.43 ns of data delay of which 6.80 ns is route. Next come MXU → VPU `g_wbuf` enables and TMEM
+`pw_a`. Its tests: the common subset, two-slice fuzz and scoreboard, and the board memory-path
+tests including `tests/test_board.py`.
+
+### The build host
+
+At most **2 Vivado jobs** run on omarchy at a time (`OTPU_MAX_VIVADO`), counting **every** job
+there, not only the tournament's. The count is taken over ssh:
+
+- `run_vivado.sh` processes: anyone's `make bit`, including the tournament's full builds;
+- containers of the Vivado image;
+- the tournament's own labelled OOC containers (`--label otpu-tourney=1`).
+
+A `make bit` counts once. Before starting a job, `remote.acquire()` waits (polling every 60 s)
+until the count is below 2, and holds a local start lock until the new job is visible, so two
+slots cannot both take the last place. Jobs run detached (`nohup`, with a `DONE` file holding
+the exit code) and are polled, so a dropped ssh connection does not kill a build. Trees are
+removed after the results are fetched. Other hosts, directories and images can be set with
+`OTPU_BUILD_HOST`, `OTPU_BUILD_DIR`, `VIVADO_DOCKER`, `VIVADO_MOUNT`, `VIVADO_SETTINGS` and
+`VIVADO_MAC`.
+
+### This machine
+
+Lint and every pytest / Verilator gate run under one fcntl lock (`/tmp/otpu-tourney-tests.lock`,
+`gates.test_slot`): **at most one** test gate at a time across all tournament processes. Every
+role runs Opus: `MODEL_*` naming another model family is an error (`agents.model_for`).
+
+### Time and cost per round
+
+"Measured" numbers are the medians of the 96 slots logged so far by the component tournaments
+(area objective). "Build host" numbers come from the timestamps of earlier full builds on
+omarchy. "Estimate" numbers have not been run.
+
+| step | per round (K = 2 slots, one component) | source |
+|---|---|---|
+| agent calls | 2 × (hypothesis + implementation + scribe) = **6 Opus calls** | |
+| agent time | hypothesis 3.4 min, implementation 1.9 min, scribe 5 s per slot (slots in parallel) | measured |
+| agent cost | about $1.8 per slot on area prompts. The fmax prompt adds the full-design reports (about 10k tokens), and `otpu_xunit` about 40k tokens of source: **about $2-4 per slot, $4-8 per round** | measured / estimate |
+| test gates | lint 2 s, fast 26 s, board 7 s, perf 29 s per slot, one slot at a time: about 2-4 min per round (`otpu_fp`, which runs the whole RTL suite: about 30 min+) | measured |
+| OOC | 2 jobs in parallel, **about 10-40 min each** (the champion's once per commit per component) | estimate, not run yet |
+| full build | **at most one per round**, 40-85 min per build (39, 73 and 84 min on omarchy; `JOBS=2` is at the slow end), plus the champion's when main moves | build host |
+| **round** | **about 1.5-2.5 h wall; 80-170 Vivado-minutes; 6 Opus calls** | estimate |
+
+One pass over the 11 components is about 11 rounds: **roughly 16-28 hours** and 66 Opus calls,
+plus the first pass's baselines (one full build, and one OOC run for each of the ten components
+with parts). Rounds whose candidates all fail the correctness or OOC gates skip the full build
+and take about 30-50 min.
+
+### Caveats
+
+- **Place-and-route noise.** Vivado's results move with small netlist changes, and a 0.5%
+  step (0.04 ns at 7.5 ns) may be within that noise. This design's spread has not been
+  measured: no two builds of the same RTL at one clock exist yet. An accepted winner is one
+  build, not a confirmed trend. Rebuild a winner (or the pass's final champion)
+  before merging it into main, and load it on the card with the qualification in
+  `docs/board.md`.
+- **OOC blind spots.** An OOC run has no I/O constraints, so paths across the unit's ports look
+  free. That is why a unit already above the target may go on to the full build with a small
+  OOC loss.
+- **Baseline.** The production image (ea3bc56) closes 120.755 MHz with WNS +0.149 ns
+  (122.97 MHz). The tournament's baseline is main built at the **target** clock
+  (`make tourney-fmax-baseline`), because Vivado works differently at a tighter period. Expect a
+  negative WNS there; fmax = 1000 / (period − WNS) is still the metric.
+- **Config drift.** `gen_components.py` has fallen behind the hand-edited YAML (test_perf in the
+  fast gates, notes on known timing paths). Only `otpu_xunit.yaml` was generated for this; do
+  not regenerate the others without porting those edits first.
+
 ## Files
 
 ```
 tools/tourney/orchestrator.py   rounds, slots, worktrees, merge, log
 tools/tourney/agents.py         claude/codex runtime, prompts, model/effort selection, usage
 tools/tourney/gates.py          sandbox, lint, pytest subsets, perf proxy, synthesis
-tools/tourney/synth.py          yosys and vivado evaluators
+tools/tourney/synth.py          yosys evaluator; Vivado report parsers (util, OOC, SUMMARY, worst paths)
+tools/tourney/remote.py         Vivado on the build host: upload, job count / acquire, OOC, full build
 tools/tourney/accept.py         area_eq, est fmax, accept rule, perf tolerance
 tools/tourney/report.py         REPORT.md + progress.png
 tools/tourney/components/       per-component configs (gen_components.py writes them)
 tools/tourney/check_nodes.py    checks the configs' test ids exist
 tools/tourney/runs/<comp>/      champion.json, log.jsonl, LESSONS.md, REPORT.md, progress.png
+tools/tourney/runs/fmax/<comp>/ the same for the fmax tournament
+tools/tourney/runs/_full/       full-design results per commit and target clock (shared)
+tests/data/tourney/             report excerpts of the fp4fx120 production build (parser tests)
 ```

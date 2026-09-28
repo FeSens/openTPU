@@ -1,7 +1,12 @@
 """Tests for the architecture tournament harness (tools/tourney): the accept rule, fitness,
-parsers, sandbox, model selection, usage accounting and the report. No agents, no synthesis."""
+parsers, sandbox, model selection, usage accounting and the report; for the fmax objective the
+Vivado report parsers (fixtures: excerpts of the fp4fx120 production build's reports in
+tests/data/tourney), the fmax accept rule, the build-host job counting and the local test lock.
+No agents, no synthesis, no ssh."""
 import json
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -10,10 +15,12 @@ import yaml
 from tools.tourney import accept as A
 from tools.tourney import agents as AG
 from tools.tourney import gates as G
+from tools.tourney import remote as RM
 from tools.tourney import report as R
 from tools.tourney import synth as S
 
 ROOT = Path(__file__).resolve().parents[1]
+DATA = ROOT / "tests" / "data" / "tourney"
 
 
 def m(area, fmax):
@@ -170,7 +177,7 @@ def test_sandbox_rejects(tmp_path):
 # ------------------------------------------------------------------------------ components
 def test_component_configs_are_consistent():
     comps = sorted((ROOT / "tools" / "tourney" / "components").glob("*.yaml"))
-    assert len(comps) == 10
+    assert len(comps) == 11
     for p in comps:
         c = yaml.safe_load(p.read_text())
         assert c["name"] == p.stem
@@ -187,9 +194,9 @@ def test_component_configs_are_consistent():
 def test_model_selection_defaults_and_round_robin():
     for role in AG.ROLES:
         assert AG.model_for(role, 0, "claude", {}) == "claude-opus-5-5"
-    env = {"MODEL_IMPL": "opus,model-b"}
+    env = {"MODEL_IMPL": "opus,claude-opus-4-1"}
     assert [AG.model_for("impl", k, "claude", env) for k in range(3)] == \
-        ["claude-opus-5-5", "model-b", "claude-opus-5-5"]
+        ["claude-opus-5-5", "claude-opus-4-1", "claude-opus-5-5"]
     assert AG.model_for("impl", 0, "codex", {}) is None
     assert AG.model_for("impl", 1, "codex", {"MODEL_IMPL": "a,b"}) == "b"
 
@@ -256,3 +263,278 @@ def test_fp_internals_rule():
         ["fadd_p1_t", "fp_mul_s1"]
     assert G.fp_internal_uses("rtl/vpu/otpu_fp.sv", "fp_mul_s1(a, b)") == []
     assert G.fp_internal_uses("rtl/vpu/otpu_vpu.sv", "otpu_fmadd u (.a, .b); fp_gt(x, y)") == []
+
+
+# ------------------------------------------------------------------------------ fmax: Vivado reports
+def test_parse_vivado_util_real_report():
+    u = S.parse_vivado_util((DATA / "util.rpt").read_text())
+    assert (u["lut"], u["lutram"], u["ff"], u["dsp"], u["bram36"], u["bram18"]) == \
+        (148048, 19518, 133410, 283, 550, 22)
+
+
+def test_parse_summary_and_full():
+    sm = S.parse_summary((DATA / "SUMMARY.txt").read_text())
+    assert (sm["wns"], sm["whs"]) == (0.149, 0.016)
+    assert sm["clocks"]["core_clk_otpu_bd_clk_wiz_0_0_1"] == (8.281, 0.149)
+    logs = ("WARNING: [Synth 8-6430] The Block RAM \"x\" may get collision\n"
+            "WARNING: [Synth 8-6430] The Block RAM \"y\" may get collision\n")
+    f = S.parse_full((DATA / "SUMMARY.txt").read_text(), logs, (DATA / "util.rpt").read_text())
+    assert f["core_clock"] == "core_clk_otpu_bd_clk_wiz_0_0_1"
+    assert (f["period"], f["wns"], f["whs"]) == (8.281, 0.149, 0.016)
+    assert f["fmax"] == pytest.approx(1000 / (8.281 - 0.149))
+    assert f["lut"] == 148048 and f["collisions"] == 2 and not f["congested"]
+    assert S.congested("WARNING: [Route 35-447] Congestion is preventing the router")
+    assert S.parse_full("", "", "")["fmax"] is None
+
+
+def test_parse_ooc():
+    log = "junk\nOTPU_WNS -0.250\nOTPU_WHS 0.031\nOTPU_PERIOD 7.5\n"
+    r = S.parse_ooc(log, (DATA / "util.rpt").read_text(), 7.5)
+    assert r["wns"] == -0.25 and r["whs"] == 0.031
+    assert r["fmax"] == pytest.approx(1000 / 7.75) and r["logic_ns"] == pytest.approx(7.75)
+    assert S.parse_ooc("failed", "", 7.5)["fmax"] is None
+
+
+def test_worst_paths():
+    w = S.worst_paths((DATA / "timing_worst.rpt").read_text(), 30).splitlines()
+    assert len(w) == 3
+    assert w[0].split()[:3] == ["0.149", "ns", "MET"]
+    assert "u_board/u_coll/s_reg[23]/C -> " in w[0] and "levels 7" in w[0]
+    assert "data 7.434 ns" in w[0] and "route 6.804" in w[0]
+    assert S.worst_paths((DATA / "timing_worst.rpt").read_text(), 2).count("\n") == 1
+
+
+# ------------------------------------------------------------------------------ fmax: accept rule
+def full(fmax=None, wns=0.1, period=7.5, whs=0.02, **kw):
+    fmax = 1000 / (period - wns) if fmax is None else fmax
+    return dict(fmax=fmax, wns=wns, period=period, whs=whs, collisions=0, congested=False, **kw)
+
+
+def test_accept_fmax():
+    old = full(wns=-0.30)                                           # 128.2 MHz at 7.5 ns
+    ok, why = A.accept_fmax(old, full(wns=-0.26))                   # +0.04 ns = +0.52% fmax
+    assert ok and "WNS" in why
+    assert not A.accept_fmax(old, full(wns=-0.29))[0]               # +0.01 ns = +0.13%
+    slow = full(wns=-3.0, period=20.0)                              # 43.5 MHz at 20 ns
+    assert A.accept_fmax(slow, full(wns=-2.95, period=20.0))[0]     # +0.05 ns (+0.29%): WNS rule
+    # WNS gain only counts at the same period; fmax gain always
+    assert not A.accept_fmax(old, full(wns=0.0, period=7.8))[0]     # 128.2 MHz at 7.8 ns
+    assert A.accept_fmax(old, full(wns=0.0, period=7.7))[0]         # 129.9 MHz
+    for bad, word in ((dict(whs=-0.01), "hold"), (dict(congested=True), "congestion"),
+                      (dict(collisions=1), "8-6430"), (dict(fmax=None), "no core_clk")):
+        n = full(wns=0.5)
+        n.update(bad)
+        ok, why = A.accept_fmax(old, n)
+        assert not ok and word in why
+
+
+def test_ooc_promising():
+    old = {"fmax": 120.0}
+    assert A.ooc_promising(old, {"fmax": 120.7}, 133.33)[0]          # +0.58%
+    assert not A.ooc_promising(old, {"fmax": 120.3}, 133.33)[0]
+    above = {"fmax": 140.0}                                          # already above the target
+    assert A.ooc_promising(above, {"fmax": 139.0}, 133.33)[0]        # -0.7%: inter-unit change
+    assert not A.ooc_promising(above, {"fmax": 138.0}, 133.33)[0]    # -1.4%
+    assert not A.ooc_promising(old, {"fmax": 130.0, "collisions": 1}, 133.33)[0]
+    assert A.ooc_promising(None, {"fmax": None}, 133.33)[0]          # no OOC baseline
+    assert not A.ooc_promising(old, {"fmax": None}, 133.33)[0]
+
+
+def test_rank_fmax():
+    a = {"id": "a", "full": dict(fmax=130.0, lut=10)}
+    b = {"id": "b", "full": dict(fmax=131.0, lut=20)}
+    c = {"id": "c", "full": dict(fmax=131.0, lut=5)}
+    assert [r["id"] for r in A.rank_fmax([a, b, c])] == ["c", "b", "a"]
+
+
+# ------------------------------------------------------------------------------ fmax: build host
+def test_parse_counts_and_busy():
+    c = RM.parse_counts("runviv 1\nours 1\ntotal 2\n")
+    assert c == {"runviv": 1, "ours": 1, "total": 2}
+    assert RM.busy(c) == 2                         # one make bit + one tournament OOC job
+    assert RM.busy(RM.parse_counts("runviv 1\nours 0\ntotal 0\n")) == 1   # make bit, pre-Vivado
+    assert RM.busy(RM.parse_counts("runviv 0\nours 0\ntotal 1\n")) == 1   # someone's bare docker
+    assert RM.busy(RM.parse_counts("runviv 2\nours 0\ntotal 2\n")) == 2
+    assert RM.busy(RM.parse_counts("garbage")) == 0
+
+
+def test_acquire_waits_for_room(tmp_path, monkeypatch):
+    monkeypatch.setattr(RM, "START_LOCK", tmp_path / "v.lock")
+    counts = iter([2, 2, 1])
+    slept, logs = [], []
+    with RM.acquire(poll=7, count=lambda: next(counts), sleep=slept.append, log=logs.append,
+                    max_jobs=2) as n:
+        assert n == 1
+    assert slept == [7, 7] and len(logs) == 1 and "2/2" in logs[0]
+
+
+def test_acquire_serializes_starts(tmp_path, monkeypatch):
+    """Two threads see room for one more job; the start lock makes the second re-count after
+    the first has started (count goes 1 -> 2 once a job is started)."""
+    monkeypatch.setattr(RM, "START_LOCK", tmp_path / "v.lock")
+    running = [1]
+    lk = threading.Lock()
+    started = []
+
+    def worker(tag):
+        with RM.acquire(poll=0, count=lambda: running[0], sleep=lambda s: time.sleep(0.01),
+                        log=lambda m: None, max_jobs=2):
+            with lk:
+                running[0] += 1
+                started.append((tag, running[0]))
+        time.sleep(0.05)
+        with lk:
+            running[0] -= 1
+
+    ts = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(5)
+    assert [n for _, n in started] == [2, 2]       # never 3
+
+
+def test_remote_commands():
+    c = RM.full_cmd("/h/otpu-build/tv-x", 133.33, "0f3a0000")
+    assert "make bit DDR=1066" in c and "CORE_MHZ=133.33" in c and "JOBS=2" in c
+    assert "VIVADO_AS_USER=1" in c and "BUILD_ID=0f3a0000" in c
+    d = RM.docker_cmd("/h/t", "/h/t/ooc.tcl", "/h/t/v.log")
+    assert "--label otpu-tourney=1" in d and "--mac-address" in d and ":ro" in d
+    t = RM.ooc_tcl("/h/t", "otpu_vpu", ["rtl/a.sv"], {"LANES": 8}, "/h/t/o", 7.5)
+    assert "-mode out_of_context" in t and "-generic LANES=8" in t
+    assert "create_clock -period 7.5 -name clk [get_ports clk]" in t and "route_design" in t
+
+
+def test_tree_id_includes_uncommitted(tmp_path):
+    wt = _repo(tmp_path)
+    t0 = RM.tree_id(wt)
+    (wt / "rtl" / "a.sv").write_text("module a; wire w; endmodule\n")
+    (wt / "new.sv").write_text("x\n")
+    (wt / "build").symlink_to(tmp_path)
+    t1 = RM.tree_id(wt)
+    assert t0 != t1
+    ls = subprocess.run(["git", "ls-tree", "-r", "--name-only", t1], cwd=wt, capture_output=True,
+                        text=True).stdout.split()
+    assert "new.sv" in ls and "build" not in ls
+    assert subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True,
+                          text=True).stdout.count("??") == 2    # own index untouched
+
+
+# ------------------------------------------------------------------------------ fmax: gates
+def test_xdc_guard(tmp_path):
+    assert G.xdc_violations("+set_property LOC SLICE_X0Y0 [get_cells a]\n"
+                            "+create_pblock pb_vpu\n") == []
+    bad = G.xdc_violations("--- a/x.xdc\n+++ b/x.xdc\n"
+                           "+set_false_path -from [get_cells a]\n"
+                           "+# set_multicycle_path in a comment is fine\n"
+                           "-create_clock -period 8 [get_ports c]\n"
+                           " set_max_delay 3 (context line)\n")
+    assert len(bad) == 2 and "set_false_path" in bad[0] and "create_clock" in bad[1]
+    wt = _repo(tmp_path)
+    (wt / "c").mkdir()
+    (wt / "c" / "t.xdc").write_text("set_multicycle_path 2 -setup -to [get_pins x]\n")
+    with pytest.raises(G.GateFailure, match="timing exceptions"):
+        G.sandbox(wt, ["c/*.xdc"])
+    (wt / "c" / "t.xdc").write_text("create_pblock pb\n")
+    assert G.sandbox(wt, ["c/*.xdc"]) == ["c/t.xdc"]
+    (wt / "c" / "b.tcl").write_text("puts x\n")
+    with pytest.raises(G.GateFailure, match="build scripts"):
+        G.sandbox(wt, ["c/*"])
+
+
+def test_no_local_vivado():
+    with pytest.raises(G.GateFailure, match="does not run on this machine"):
+        G.synthesize(Path("."), {"synth": {"parts": []}}, "vivado", Path("x"))
+
+
+def test_test_slot_is_exclusive(tmp_path):
+    lock = tmp_path / "t.lock"
+    inside, peak = [0], [0]
+    lk = threading.Lock()
+
+    def worker():
+        with G.test_slot(lock):
+            with lk:
+                inside[0] += 1
+                peak[0] = max(peak[0], inside[0])
+            time.sleep(0.03)
+            with lk:
+                inside[0] -= 1
+
+    ts = [threading.Thread(target=worker) for _ in range(3)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(5)
+    assert peak[0] == 1
+
+
+def test_opus_only():
+    for bad in ("claude-sonnet-5", "claude-haiku-4-5-20251001", "fable"):
+        with pytest.raises(ValueError, match="Opus"):
+            AG.model_for("impl", 0, "claude", {"MODEL_IMPL": bad})
+    assert AG.model_for("scribe", 0, "claude", {"MODEL_SCRIBE": "opus"}) == "claude-opus-5-5"
+
+
+def test_fmax_prompt_and_xunit(tmp_path):
+    c = yaml.safe_load((ROOT / "tools" / "tourney" / "components" / "otpu_xunit.yaml").read_text())
+    assert c["synth"]["parts"] == [] and c["objectives"] == ["fmax"]
+    assert not any("pins" in f or "vendor" in f for f in c["allowed"])
+    champ = {"sha": "x", "full": {"fmax": 122.97, "period": 7.5, "wns": -0.63, "whs": 0.01,
+                                  "core_clock": "core_clk", "timing": "PATH-LIST",
+                                  "congestion_report": "CONG-TABLE"}}
+    p = AG.hypothesis_prompt_fmax(c, ROOT, champ, "(none)", "(none)", AG.FMAX_CATEGORIES[0],
+                                  133.33)
+    assert "PATH-LIST" in p and "CONG-TABLE" in p and "122.97 MHz" in p
+    assert "straight to the full build" in p and "=== rtl/top/otpu_slice.sv ===" in p
+    assert AG.expand(ROOT, ["rtl/boards/ypcb-00338/*.sv"]) == [
+        f"rtl/boards/ypcb-00338/{n}.sv" for n in ("otpu_board", "otpu_ctrl", "otpu_fpga_top",
+                                                  "otpu_trace")]
+
+
+# ------------------------------------------------------------------------------ fmax: the round's full build
+def _run(tmp_path):
+    from tools.tourney import orchestrator as O
+    r = object.__new__(O.Run)
+    r.a = type("A", (), {"comp": "otpu_vpu", "target_mhz": 133.33})()
+    r.fulldir = tmp_path
+    return O, r
+
+
+def test_full_step_builds_one_candidate(tmp_path, monkeypatch):
+    O, run = _run(tmp_path)
+    built = []
+
+    def fake_full(wt, name, mhz, build_id):
+        built.append((name, mhz, build_id))
+        return full(wns=-0.20)                                     # vs -0.30: +1.3%
+
+    monkeypatch.setattr(O.G, "full_design", fake_full)
+    champ = {"full": full(wns=-0.30)}
+    recs = [{"id": "s0", "outcome": "candidate", "reason": "a", "ooc_gain": 0.006, "wt": "w0"},
+            {"id": "s1", "outcome": "candidate", "reason": "b", "ooc_gain": 0.02, "wt": "w1"},
+            {"id": "s2", "outcome": "broken", "reason": "fast: x", "wt": "w2"}]
+    run.full_step(recs, champ)
+    assert built == [("otpu_vpu-s1", 133.33, O.FULL_BUILD_ID)]
+    assert [x["outcome"] for x in recs] == ["not_built", "improvement", "broken"]
+    assert recs[1]["gain"] == pytest.approx((1000 / 7.7 - 1000 / 7.8) / (1000 / 7.8))
+    assert "gate_seconds" in recs[1] and recs[1]["full"]["wns"] == -0.20
+
+
+def test_full_step_broken_build(tmp_path, monkeypatch):
+    O, run = _run(tmp_path)
+
+    def fail(*a):
+        raise G.GateFailure("full", "no core_clk timing")
+
+    monkeypatch.setattr(O.G, "full_design", fail)
+    recs = [{"id": "s0", "outcome": "candidate", "reason": "a", "ooc_gain": 0.0, "wt": "w0"}]
+    run.full_step(recs, {"full": full()})
+    assert recs[0]["outcome"] == "broken" and "full:" in recs[0]["reason"]
+
+
+def test_full_result_cached(tmp_path, monkeypatch):
+    O, run = _run(tmp_path)
+    (tmp_path / f"{'a' * 12}-133.33.json").write_text(json.dumps(full(wns=0.1)))
+    monkeypatch.setattr(O.G, "full_design", lambda *a: pytest.fail("rebuilt a cached commit"))
+    assert run.full_result("a" * 40, None)["wns"] == 0.1

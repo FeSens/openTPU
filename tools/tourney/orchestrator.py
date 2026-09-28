@@ -1,7 +1,8 @@
 """Per-component architecture tournament (docs/tourney.md).
 
     python3 -m tools.tourney.orchestrator --comp otpu_coll --rounds 1 --slots 1 [--agent claude]
-        [--eval yosys|vivado] [--base main] [--reset] [--keep] [--no-scribe] [--baseline-only]
+        [--eval yosys|vivado-remote] [--base main] [--reset] [--keep] [--no-scribe] [--baseline-only]
+        [--objective area|fmax] [--target-mhz 133.33]
 
 Each component evolves on its own champion branch `tourney/<comp>` (created from --base, i.e.
 main, the first time; --reset recreates it). A round runs K slots in parallel, each in its own
@@ -10,11 +11,19 @@ agent edits only the component's files, then the gates run (tools/tourney/gates.
 accepted slot is committed and fast-forwarded onto the champion branch. Every slot is logged to
 tools/tourney/runs/<comp>/log.jsonl and leaves a lesson in LESSONS.md. The orchestrator never
 touches main and never pushes.
+
+--objective fmax (docs/tourney.md, the fmax tournament): every component evolves ONE shared
+champion, `tourney/fmax`, scored by the whole board built in Vivado on the build host at
+--target-mhz. A slot that passes the correctness gates runs its component out of context in
+Vivado (tools/tourney/remote.py); the most promising slot of the round (at most one) gets the full
+build, and the accept rule is accept.accept_fmax. Logs in tools/tourney/runs/fmax/<comp>/, full
+build results cached per commit in tools/tourney/runs/_full/.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fcntl
 import json
 import os
 import shutil
@@ -35,6 +44,10 @@ HERE = Path(__file__).resolve().parent
 os.environ["GIT_CONFIG_PARAMETERS"] = (os.environ.get("GIT_CONFIG_PARAMETERS", "") +
                                        " 'commit.gpgsign=false' 'tag.gpgsign=false'").strip()
 _LOCK = threading.Lock()
+# BUILD_ID of every tournament full build: one constant, so the champion and the candidates differ
+# only in their RTL (the register's value is part of the netlist). These bitstreams are for timing
+# numbers, not for the card.
+FULL_BUILD_ID = "0f3a0000"
 
 
 def git(*args, cwd: Path, check: bool = True) -> str:
@@ -42,6 +55,10 @@ def git(*args, cwd: Path, check: bool = True) -> str:
     if check and r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()}")
     return r.stdout.strip()
+
+
+class _Done(Exception):
+    """A slot's gates finished early with an outcome already set (fmax objective)."""
 
 
 def load_component(name: str) -> dict:
@@ -57,12 +74,28 @@ class Run:
         self.a = a
         self.repo = Path(git("rev-parse", "--show-toplevel", cwd=Path.cwd()))
         self.comp = load_component(a.comp)
-        self.branch = f"tourney/{a.comp}"
-        self.dir = self.repo / "tools" / "tourney" / "runs" / a.comp
+        self.fmax = a.objective == "fmax"
+        if a.objective not in self.comp.get("objectives", ["area", "fmax"]):
+            raise SystemExit(f"{a.comp} has no {a.objective} objective")
+        runs = self.repo / "tools" / "tourney" / "runs"
+        if self.fmax:
+            if a.eval != "vivado-remote":
+                print(f"[tourney] --objective fmax evaluates with vivado-remote (not {a.eval})")
+                a.eval = "vivado-remote"
+            self.period = round(1000.0 / a.target_mhz, 3)
+            self.branch = "tourney/fmax"
+            self.dir = runs / "fmax" / a.comp
+            self.fulldir = runs / "_full"
+            self.fulldir.mkdir(parents=True, exist_ok=True)
+            self.wtroot = self.repo / ".tourney" / f"fmax-{a.comp}"
+        else:
+            self.period = None
+            self.branch = f"tourney/{a.comp}"
+            self.dir = runs / a.comp
+            self.wtroot = self.repo / ".tourney" / a.comp
         self.dir.mkdir(parents=True, exist_ok=True)
         self.log = self.dir / "log.jsonl"
         self.lessons = self.dir / "LESSONS.md"
-        self.wtroot = self.repo / ".tourney" / a.comp
         self.shared_build = self.repo / "build"
 
     # ---- champion
@@ -111,20 +144,58 @@ class Run:
         cache = self.dir / "champion.json"
         if cache.exists():
             c = json.loads(cache.read_text())
-            if c.get("sha") == sha and c.get("backend") == self.a.eval:
+            if (c.get("sha") == sha and c.get("backend") == self.a.eval and
+                    c.get("period") == self.period):
+                if self.fmax:
+                    c["full"] = self.full_result(sha, None)
                 return c
         print(f"[tourney] measuring champion {sha[:9]} ({self.a.eval})", flush=True)
         wt = self.worktree("champion", sha, detach=True)
         try:
-            m = G.synthesize(wt, self.comp, self.a.eval,
-                             self.shared_build / "tourney" / self.a.comp / f"champ-{sha[:9]}")
+            out = self.shared_build / "tourney" / self.a.comp / f"champ-{sha[:9]}"
+            if self.comp["synth"]["parts"]:
+                m = G.synthesize(wt, self.comp, self.a.eval, out, self.period)
+            else:
+                m = {}
             m["perf_cycles"] = G.perf(wt) if self.comp.get("perf") else None
+            if self.fmax:
+                full = self.full_result(sha, wt)
         finally:
             self.drop(wt, None)
-        m["sha"] = sha
-        m["critical"] = self.critical(m)
+        m["sha"], m["period"], m["backend"] = sha, self.period, self.a.eval
+        m["critical"] = self.critical(m) if not self.fmax else ""
         cache.write_text(json.dumps(m, indent=1))
+        if self.fmax:
+            m["full"] = full
         return m
+
+    # ---- the whole design (fmax objective)
+    def full_key(self, sha: str) -> Path:
+        return self.fulldir / f"{sha[:12]}-{self.a.target_mhz:g}.json"
+
+    def full_result(self, sha: str, wt: Path | None) -> dict:
+        """The full board build of commit `sha` at the target clock: cached in runs/_full/ (all
+        components share it); built on the host when missing (one waiter per commit, under a
+        lock file, so two tournament processes never build the same tree)."""
+        key = self.full_key(sha)
+        with key.with_suffix(".lock").open("w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            if key.exists():
+                return json.loads(key.read_text())
+            own = wt is None
+            if own:
+                wt = self.worktree(f"full-{sha[:9]}", sha, detach=True)
+            try:
+                print(f"[tourney] full build of {sha[:9]} at {self.a.target_mhz:g} MHz on the "
+                      f"build host", flush=True)
+                t = time.time()
+                r = G.full_design(wt, f"full-{sha[:12]}", self.a.target_mhz, FULL_BUILD_ID)
+                r["seconds"], r["sha"] = round(time.time() - t), sha
+            finally:
+                if own:
+                    self.drop(wt, None)
+            key.write_text(json.dumps(r, indent=1))
+            return r
 
     def critical(self, m: dict, n: int = 24) -> str:
         """The deepest cells of the critical path from the Yosys sta report(s)."""
@@ -219,10 +290,15 @@ class Run:
 
         try:
             lessons = self.lessons.read_text() if self.lessons.exists() else "(none yet)"
-            cat = AG.CATEGORIES[k % len(AG.CATEGORIES)]
+            cats = AG.FMAX_CATEGORIES if self.fmax else AG.CATEGORIES
+            cat = cats[k % len(cats)]
             rec["category"] = cat.split(":")[0]
-            agent("hyp", AG.hypothesis_prompt(self.comp, wt, champ, lessons, self.history(),
-                                              cat, champ["critical"]))
+            if self.fmax:
+                agent("hyp", AG.hypothesis_prompt_fmax(self.comp, wt, champ, lessons,
+                                                       self.history(), cat, self.a.target_mhz))
+            else:
+                agent("hyp", AG.hypothesis_prompt(self.comp, wt, champ, lessons, self.history(),
+                                                  cat, champ["critical"]))
             hyp = (wt / "HYPOTHESIS.md").read_text() if (wt / "HYPOTHESIS.md").exists() else ""
             if not hyp.strip():
                 raise G.GateFailure("hypothesis", "no HYPOTHESIS.md written")
@@ -258,6 +334,9 @@ class Run:
                 if not A.perf_ok(champ.get("perf_cycles"), cyc):
                     raise G.GateFailure("perf", f"{cyc} cycles vs champion "
                                                 f"{champ.get('perf_cycles')} (> +0.2%)")
+            if self.fmax:
+                self.ooc_step(rec, wt, sid, champ, gate)
+                raise _Done
             m = gate("synth", G.synthesize, wt, self.comp, self.a.eval,
                      self.shared_build / "tourney" / self.a.comp / sid)
             rec["metrics"] = {q: m.get(q) for q in ("lut", "lutram", "ff", "dsp", "bram36",
@@ -266,6 +345,8 @@ class Run:
             rec["outcome"], rec["reason"] = ("improvement" if ok else "no_gain"), why
             rec["gain"] = (champ["area_eq"] - m["area_eq"]) / champ["area_eq"] + \
                           (m["fmax"] - champ["fmax"]) / champ["fmax"]
+        except _Done:
+            pass
         except G.GateFailure as e:
             rec["outcome"], rec["reason"] = "broken", f"{e.gate}: {e.tail}"
         except Exception as e:  # noqa: BLE001 -- agent / tool crashes are logged, not fatal
@@ -275,15 +356,68 @@ class Run:
         print(f"[tourney] {sid}: {rec['outcome']} -- {rec.get('reason', '')[:160]}", flush=True)
         return rec
 
+    # ---- fmax objective: the out-of-context step and the round's full build
+    def ooc_step(self, rec: dict, wt: Path, sid: str, champ: dict, gate) -> None:
+        """Sets rec's outcome to `candidate` (earns a full build) or `no_gain`."""
+        if self.comp["synth"]["parts"]:
+            m = gate("ooc", G.synthesize, wt, self.comp, "vivado-remote", Path(sid), self.period)
+            rec["ooc"] = {q: m.get(q) for q in ("lut", "lutram", "ff", "dsp", "bram36", "bram18",
+                                                 "wns", "whs", "fmax", "area_eq", "collisions")}
+            ok, why = A.ooc_promising(champ, m, self.a.target_mhz)
+            rec["ooc_gain"] = ((m["fmax"] - champ["fmax"]) / champ["fmax"]
+                               if m.get("fmax") and champ.get("fmax") else 0.0)
+        else:
+            ok, why = True, "cross-unit component: no out-of-context step"
+            rec["ooc_gain"] = 0.0
+        rec["outcome"], rec["reason"] = ("candidate", why) if ok else ("no_gain", f"ooc: {why}")
+
+    def full_step(self, recs: list[dict], champ: dict) -> None:
+        """The round's one full build: the candidate with the best OOC gain (ties: slot order).
+        The other candidates are logged `not_built` (their patches stay in patches/)."""
+        cands = sorted((x for x in recs if x["outcome"] == "candidate"),
+                       key=lambda x: -x.get("ooc_gain", 0.0))
+        if not cands:
+            return
+        w = cands[0]
+        for x in cands[1:]:
+            x["outcome"] = "not_built"
+            x["reason"] += f"; the round's one full build went to {w['id']}"
+        t = time.time()
+        try:
+            full = G.full_design(Path(w["wt"]), f"{self.a.comp}-{w['id']}", self.a.target_mhz,
+                                 FULL_BUILD_ID)
+        except G.GateFailure as e:
+            w["outcome"], w["reason"] = "broken", f"{e.gate}: {e.tail}"
+            return
+        finally:
+            w.setdefault("gate_seconds", {})["full"] = round(time.time() - t, 1)
+        full["seconds"] = round(time.time() - t)
+        w["full"] = {q: full.get(q) for q in ("period", "wns", "whs", "fmax", "wns_design", "lut",
+                                               "lutram", "ff", "dsp", "bram36", "collisions",
+                                               "congested")}
+        w["_full"] = full
+        ok, why = A.accept_fmax(champ["full"], full)
+        w["outcome"], w["reason"] = ("improvement" if ok else "no_gain"), why
+        w["gain"] = (full["fmax"] - champ["full"]["fmax"]) / champ["full"]["fmax"]
+
     # ---- rounds
     def round(self, r: int) -> None:
         self.sync_base()
         champ = self.champion()
-        print(f"[tourney] round {r}: champion {champ['sha'][:9]} area_eq {champ['area_eq']:.0f} "
-              f"fmax {champ['fmax']:.0f} MHz perf {champ.get('perf_cycles')}", flush=True)
+        if self.fmax:
+            f = champ["full"]
+            print(f"[tourney] round {r}: champion {champ['sha'][:9]} full fmax {f['fmax']:.2f} "
+                  f"MHz (WNS {f['wns']:+.3f} ns at {f['period']} ns), OOC fmax "
+                  f"{champ.get('fmax') or 0:.1f} MHz, perf {champ.get('perf_cycles')}", flush=True)
+        else:
+            print(f"[tourney] round {r}: champion {champ['sha'][:9]} area_eq "
+                  f"{champ['area_eq']:.0f} fmax {champ['fmax']:.0f} MHz perf "
+                  f"{champ.get('perf_cycles')}", flush=True)
         rid = f"r{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
         with ThreadPoolExecutor(self.a.slots) as ex:
             recs = list(ex.map(lambda k: self.slot(rid, k, champ), range(self.a.slots)))
+        if self.fmax:
+            self.full_step(recs, champ)
         winners = sorted((x for x in recs if x["outcome"] == "improvement"),
                          key=lambda x: -x["gain"])
         if winners:
@@ -296,6 +430,8 @@ class Run:
             sha = git("rev-parse", "HEAD", cwd=wt)
             git("update-ref", f"refs/heads/{self.branch}", sha, champ["sha"], cwd=self.repo)
             w["outcome"], w["merged"] = "accepted", sha
+            if self.fmax:                  # the committed tree is the one just built
+                self.full_key(sha).write_text(json.dumps(dict(w["_full"], sha=sha), indent=1))
             print(f"[tourney] accepted {w['id']} -> {self.branch} {sha[:9]}: {w['reason']}")
         for x in recs:
             if self.a.scribe and x.get("hypothesis"):
@@ -319,7 +455,7 @@ class Run:
             x["cost_usd"] = round(sum(c for c in costs if c), 4) if any(costs) else None
             x["end"] = dt.datetime.now().isoformat(timespec="seconds")
             self.lesson(f"[{x['id']}] {x['lesson']}")
-            self.append({k: v for k, v in x.items() if k != "wt"})
+            self.append({k: v for k, v in x.items() if k not in ("wt", "_full")})
             self.drop(Path(x["wt"]), self.slot_branch(x["id"]))
 
     def main(self) -> None:
@@ -347,6 +483,10 @@ def main(argv=None):
     ap.add_argument("--no-scribe", dest="scribe", action="store_false")
     ap.add_argument("--baseline-only", action="store_true")
     ap.add_argument("--agent-timeout", type=int, default=3600)
+    ap.add_argument("--objective", choices=("area", "fmax"),
+                    default=os.environ.get("OBJECTIVE", "area"))
+    ap.add_argument("--target-mhz", type=float, default=float(os.environ.get("TARGET_MHZ",
+                                                                             "133.33")))
     Run(ap.parse_args(argv)).main()
 
 

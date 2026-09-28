@@ -2,16 +2,23 @@
 short tail of its output; the orchestrator records `broken: <gate>: <tail>` and stops.
 
 Order: sandbox -> lint -> fast (bit-exact subset) -> board (the same on the board's memory path
-and micro-architecture) -> perf (Qwen3 proxy cycles) -> synth (area, fmax).
+and micro-architecture) -> perf (Qwen3 proxy cycles) -> synth (area, fmax). The fmax objective
+(--objective fmax) adds a last gate, full: the whole board built in Vivado on the build host.
+
+Lint and the test gates run on this machine through TEST_LOCK, one at a time across every
+tournament process (the Mac also runs the other work streams' tests).
 """
 from __future__ import annotations
 
+import fcntl
 import fnmatch
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+from contextlib import contextmanager
 
 from . import accept as A
 from . import synth as S
@@ -36,6 +43,24 @@ class GateFailure(Exception):
 def _tail(s: str, n: int = 1200) -> str:
     s = s.strip()
     return s if len(s) <= n else "..." + s[-n:]
+
+
+# ------------------------------------------------------------------------------ local load cap
+TEST_LOCK = Path(os.environ.get("OTPU_TOURNEY_LOCKDIR", "/tmp")) / "otpu-tourney-tests.lock"
+
+
+@contextmanager
+def test_slot(path: Path | None = None):
+    """At most one lint / Verilator / pytest gate at a time on this machine, across slots and
+    tournament processes (an fcntl lock, released when the process dies)."""
+    path = path or TEST_LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 # ------------------------------------------------------------------------------ sandbox
@@ -73,6 +98,41 @@ def fp_internal_uses(path: str, text: str) -> list[str]:
     return sorted(set(m.group(1) for m in FP_INTERNALS.finditer(text)))
 
 
+# Constraint files may move logic (pblocks, placement, max fanout) but may not buy fmax by
+# relaxing what is timed: no new timing exceptions and no clock changes.
+XDC_FORBIDDEN = re.compile(r"\b(set_false_path|set_multicycle_path|set_max_delay|set_min_delay|"
+                           r"set_clock_groups|set_disable_timing|create_clock|"
+                           r"create_generated_clock|set_input_delay|set_output_delay|"
+                           r"set_clock_uncertainty)\b")
+
+
+def xdc_violations(diff: str) -> list[str]:
+    """The added or removed lines of a constraint diff (unified format) that touch timing
+    exceptions or clocks."""
+    bad = []
+    for line in diff.splitlines():
+        if line.startswith(("+++", "---")) or not line[:1] in ("+", "-"):
+            continue
+        body = line[1:].split("#", 1)[0]
+        if XDC_FORBIDDEN.search(body):
+            bad.append(line.strip()[:160])
+    return bad
+
+
+def xdc_diff(wt: Path, paths: list[str]) -> str:
+    """The unified diff of the changed .xdc / .tcl files, untracked ones as all-added."""
+    out = []
+    for p in paths:
+        if not p.endswith((".xdc", ".tcl")):
+            continue
+        d = subprocess.run(["git", "-C", str(wt), "diff", "-U0", "HEAD", "--", p],
+                           capture_output=True, text=True).stdout
+        if not d and (wt / p).exists():
+            d = "".join("+" + l + "\n" for l in (wt / p).read_text().splitlines())
+        out.append(d)
+    return "\n".join(out)
+
+
 def sandbox(wt: Path, allowed: list[str]) -> list[str]:
     """Returns the RTL files the candidate changed; raises if anything else changed."""
     paths = changed_paths(wt)
@@ -82,6 +142,13 @@ def sandbox(wt: Path, allowed: list[str]) -> list[str]:
     rtl = [p for p in paths if p not in NOTES]
     if not rtl:
         raise GateFailure("sandbox", "no RTL change")
+    tcl = [p for p in rtl if p.endswith(".tcl")]
+    if tcl:
+        raise GateFailure("sandbox", f"build scripts are off limits: {tcl}")
+    xdc = xdc_violations(xdc_diff(wt, rtl))
+    if xdc:
+        raise GateFailure("sandbox", f"constraint change touches timing exceptions or clocks: "
+                                     f"{xdc[:5]}")
     for p in rtl:
         f = wt / p
         uses = fp_internal_uses(p, f.read_text()) if f.exists() else []
@@ -112,7 +179,8 @@ def lint(wt: Path, timeout: int = 900) -> None:
     for top, srcs, params in (("otpu_top", sim, ["-GD=128", "-GMCOLS=2", "-GAXI=1"]),
                               ("otpu_board", board, [])):
         cmd = ["verilator", *LINT_FLAGS, "--top-module", top, *params, *srcs]
-        r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout)
+        with test_slot():
+            r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout)
         if r.returncode != 0:
             raise GateFailure("lint", f"{top}: " + _tail(r.stdout + r.stderr))
 
@@ -129,7 +197,9 @@ def pytest(wt: Path, nodes: list[str], env_extra: dict | None, gate: str,
     env["PYTHONPATH"] = str(wt)
     cmd = [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *nodes]
     try:
-        r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout, env=env)
+        with test_slot():
+            r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout,
+                               env=env)
     except subprocess.TimeoutExpired:
         raise GateFailure(gate, f"timeout after {timeout}s")
     out = r.stdout + r.stderr
@@ -167,7 +237,9 @@ def perf(wt: Path, layers: int = 2, bw: int = 80, timeout: int = 3600) -> int | 
     cmd = [sys.executable, "tools/perf_qwen.py", "--model", str(m), "--layers", str(layers),
            "--bw", str(bw)]
     try:
-        r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout, env=env)
+        with test_slot():
+            r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=timeout,
+                               env=env)
     except subprocess.TimeoutExpired:
         raise GateFailure("perf", f"timeout after {timeout}s")
     mm = re.search(r"^layers=\d+ .*?: (\d+) cycles", r.stdout, re.M)
@@ -177,17 +249,43 @@ def perf(wt: Path, layers: int = 2, bw: int = 80, timeout: int = 3600) -> int | 
 
 
 # ------------------------------------------------------------------------------ synthesis
-def synthesize(wt: Path, comp: dict, backend: str, out: Path) -> dict:
+def synthesize(wt: Path, comp: dict, backend: str, out: Path,
+               period_ns: float | None = None) -> dict:
+    """Area and fmax of the component's synthesis parts. backend yosys runs here; vivado-remote
+    runs each part out of context on the build host (synth, place, route at period_ns).
+    `out` names the run (its last component keys the remote tree)."""
+    if backend == "vivado":
+        raise GateFailure("synth", "Vivado does not run on this machine: use --eval vivado-remote")
     parts = []
     for p in comp["synth"]["parts"]:
         try:
-            m = S.run(backend, wt, p["top"], p["sources"], p.get("params", {}),
-                      out / p["top"])
+            if backend == "vivado-remote":
+                from . import remote as R
+                m = R.ooc(wt, f"{comp['name']}-{out.name}-{p['top']}", p, period_ns or 7.5)
+            else:
+                m = S.run(backend, wt, p["top"], p["sources"], p.get("params", {}),
+                          out / p["top"])
         except Exception as e:  # noqa: BLE001 -- any tool failure is a broken candidate
             raise GateFailure("synth", _tail(str(e)))
         parts.append((m, float(p.get("weight", 1))))
     res = A.fitness(A.combine(parts)) if len(parts) > 1 or parts[0][1] != 1 else A.fitness(parts[0][0])
-    res["parts"] = {p["top"]: {k: v for k, v in m.items() if k != "log"}
+    res["parts"] = {p["top"]: {k: v for k, v in m.items() if k not in ("log", "log_tail")}
                     for p, (m, _) in zip(comp["synth"]["parts"], parts)}
     res["backend"] = backend
+    if backend == "vivado-remote":
+        res["collisions"] = sum(m.get("collisions") or 0 for m, _ in parts)
+        res["whs"] = min((m["whs"] for m, _ in parts if m.get("whs") is not None), default=None)
+        res["timing"] = "\n".join(f"[{p['top']}]\n{m.get('timing', '')}"
+                                  for p, (m, _) in zip(comp["synth"]["parts"], parts))
     return res
+
+
+# ------------------------------------------------------------------------------ full design
+def full_design(wt: Path, name: str, core_mhz: float, build_id: str) -> dict:
+    """The whole board built on the build host at core_mhz (the fmax objective's last gate).
+    Raises when the build gives no core_clk timing; the accept rule judges the rest."""
+    from . import remote as R
+    try:
+        return R.full(wt, name, core_mhz, build_id)
+    except Exception as e:  # noqa: BLE001 -- a failed build is a broken candidate
+        raise GateFailure("full", _tail(str(e)))

@@ -91,6 +91,69 @@ def accept(old: dict, new: dict, target_mhz: float) -> tuple[bool, str]:
     return False, "; ".join(why)
 
 
+# ------------------------------------------------------------------------------ fmax objective
+# The full-design tournament (--objective fmax) judges a candidate by the whole board built in
+# Vivado at the tournament's clock: core_clk fmax = 1000 / (period - WNS).
+FULL_GAIN, FULL_WNS_GAIN, OOC_GAIN, OOC_SLACK = 0.005, 0.05, 0.005, 0.01
+
+
+def full_problems(new: dict) -> list[str]:
+    """Why a full build cannot be accepted whatever its fmax (empty when it can)."""
+    why = []
+    if new.get("fmax") is None:
+        why.append("no core_clk timing (build failed)")
+    if new.get("whs") is not None and new["whs"] < 0:
+        why.append(f"hold violated (WHS {new['whs']:+.3f} ns)")
+    if new.get("congested"):
+        why.append("router congestion (Route 35-447)")
+    if new.get("collisions"):
+        why.append(f"{new['collisions']} block RAM read-address collisions (Synth 8-6430)")
+    return why
+
+
+def accept_fmax(old: dict, new: dict) -> tuple[bool, str]:
+    """The full-design rule: fmax +0.5% or better, or WNS +0.05 ns or better at the same clock,
+    with hold met, no router congestion and no Synth 8-6430 memory. Area does not count here
+    (it breaks ties between several winners, see rank_fmax)."""
+    bad = full_problems(new)
+    if bad:
+        return False, "; ".join(bad)
+    fo, fn = old["fmax"], new["fmax"]
+    df = (fn - fo) / fo
+    dw = (new["wns"] - old["wns"]) if (old.get("period") == new.get("period") and
+                                       old.get("wns") is not None) else None
+    msg = f"full fmax {fo:.2f} -> {fn:.2f} MHz ({df:+.2%})" + (
+        f", WNS {old['wns']:+.3f} -> {new['wns']:+.3f} ns" if dw is not None else "")
+    if df >= FULL_GAIN - 1e-12 or (dw is not None and dw >= FULL_WNS_GAIN - 1e-9):
+        return True, msg
+    return False, msg + f" (need >= {FULL_GAIN:+.1%} or WNS >= {FULL_WNS_GAIN:+.2f} ns)"
+
+
+def ooc_promising(old: dict | None, new: dict, target_mhz: float) -> tuple[bool, str]:
+    """Whether a component's OOC result earns a full build: its OOC fmax improves by >= 0.5%,
+    or the component already clears the target on its own (so the gain must come from the paths
+    between units, which OOC cannot see) and does not get more than 1% slower. No champion
+    OOC number (e.g. the cross-unit component): always promising."""
+    if new.get("collisions"):
+        return False, f"{new['collisions']} Synth 8-6430 memories"
+    if old is None or old.get("fmax") is None:
+        return True, "no OOC baseline"
+    fo, fn = old["fmax"], new["fmax"]
+    if fn is None:
+        return False, "no OOC timing"
+    df = (fn - fo) / fo
+    if df >= OOC_GAIN:
+        return True, f"OOC fmax {fo:.1f} -> {fn:.1f} MHz ({df:+.1%})"
+    if fo >= target_mhz and df >= -OOC_SLACK:
+        return True, f"OOC fmax {fo:.1f} -> {fn:.1f} MHz ({df:+.1%}; unit already above target)"
+    return False, f"OOC fmax {fo:.1f} -> {fn:.1f} MHz ({df:+.1%}; need >= {OOC_GAIN:+.1%})"
+
+
+def rank_fmax(recs: list[dict]) -> list[dict]:
+    """Accepted full-design candidates, best first: higher fmax, then smaller area."""
+    return sorted(recs, key=lambda r: (-r["full"]["fmax"], area_eq(r["full"])))
+
+
 def perf_ok(old_cycles: int | None, new_cycles: int | None, tol: float = 0.002) -> bool:
     """The performance proxy may not regress by more than `tol` (0.2%)."""
     if old_cycles is None or new_cycles is None:

@@ -7,3 +7,5 @@ models/
 .claude/
 .tourney/
 tools/tourney/runs/*/agents/
+tools/tourney/runs/fmax/*/agents/
+tools/tourney/runs/_full/*.lock

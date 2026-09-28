@@ -36,12 +36,18 @@ def _pick(raw: str | None, slot: int) -> str | None:
 
 
 def model_for(role: str, slot: int, provider: str, env: dict | None = None) -> str | None:
-    """The model for `role` in slot `slot` (None: the CLI's own default)."""
+    """The model for `role` in slot `slot` (None: the CLI's own default). With claude every
+    role runs Opus: a MODEL_<ROLE> naming another family is an error, not a silent downgrade."""
     env = os.environ if env is None else env
     m = _pick(env.get(f"MODEL_{role.upper()}"), slot)
     if m is None:
         return ROLE_DEFAULTS[role] if provider == "claude" else None
-    return ALIASES.get(m, m) if provider == "claude" else m
+    if provider != "claude":
+        return m
+    m = ALIASES.get(m, m)
+    if "opus" not in m:
+        raise ValueError(f"MODEL_{role.upper()}={m!r}: the tournament runs Opus for every role")
+    return m
 
 
 def effort_for(role: str, slot: int, env: dict | None = None) -> str:
@@ -238,11 +244,111 @@ WRITE a file HYPOTHESIS.md at the repository root (your current directory) with:
 Do not modify any other file in this phase."""
 
 
+FMAX_CATEGORIES = [
+    "pipeline: cut the worst path with a register stage the protocol absorbs (a FIFO or skid "
+    "stage, a registered block RAM output, an extra stage in a fixed-latency pipe matched on "
+    "every branch)",
+    "logic depth: precompute, one-hot decode, move a mux or compare before the register, split a "
+    "wide reduction or carry chain",
+    "fanout and placement: replicate high-fanout registers (per bank / per lane copies), keep "
+    "broadcast enables local, move logic next to the block RAM or DSP it drives",
+    "memories and DSPs: use the block RAM / DSP48 output and input registers, cascade DSPs, "
+    "keep LUT RAM reads registered",
+]
+
+
+def expand(wt: Path, globs: list[str]) -> list[str]:
+    """The files the allowed globs name in the worktree (a literal path stays as is)."""
+    out = []
+    for g in globs:
+        hits = sorted(str(p.relative_to(wt)) for p in wt.glob(g)) if any(
+            c in g for c in "*?[") else [g]
+        out += [h for h in hits if h not in out]
+    return out
+
+
+def hypothesis_prompt_fmax(comp: dict, wt: Path, champ: dict, lessons: str, recent: str,
+                           category: str, target_mhz: float) -> str:
+    """The hypothesis prompt of the fmax objective: the whole board's post-route timing is the
+    score, so the agent sees the full design's worst paths and congestion, and (if the component
+    has one) its own out-of-context result."""
+    files = expand(wt, comp["allowed"])
+    full = champ.get("full") or {}
+    ooc = champ if champ.get("fmax") is not None and comp["synth"]["parts"] else None
+    ooc_txt = (f"""## This component alone (Vivado out of context, placed and routed at {1000 / target_mhz:.3f} ns)
+LUT {ooc.get('lut')}, LUT-RAM {ooc.get('lutram')}, FF {ooc.get('ff')}, DSP {ooc.get('dsp')}, BRAM36 {ooc.get('bram36')}
+WNS {ooc.get('wns') if ooc.get('wns') is not None else 'n/a'} ns -> fmax {ooc['fmax']:.1f} MHz.
+Worst paths inside the component:
+{ooc.get('timing', '(not available)')}
+""" if ooc else "## This component alone\nNo out-of-context run: its paths only exist in the "
+            "whole design, so every candidate goes straight to the full build.\n")
+    return f"""You are a hardware timing-closure agent working on openTPU, an FPGA accelerator on a
+Kintex-7 xc7k480t-2 (Vivado 2026.1). The goal of this tournament is a faster clock for the WHOLE
+design: propose ONE concrete change to the component `{comp['name']}` that raises the post-route
+fmax of the full board build (core clock), without changing what the design computes.
+
+## Component
+{comp['description']}
+
+Files you may change (only these): {', '.join(files)}
+
+## The whole design now (full board build, `make bit DDR=1066 CORE_MHZ={target_mhz:g}`)
+core clock {full.get('core_clock', '?')}: period {full.get('period', '?')} ns, WNS {full.get('wns', '?')} ns
+-> fmax {full.get('fmax') or 0:.2f} MHz (target {target_mhz:g} MHz); WHS {full.get('whs', '?')} ns.
+Utilization: LUT {full.get('lut')}, LUT-RAM {full.get('lutram')}, FF {full.get('ff')}, DSP {full.get('dsp')},
+BRAM36 {full.get('bram36')} (xc7k480t: 298,600 LUT, 1,920 DSP, 955 BRAM36).
+
+The 30 worst setup paths of the whole design (slack, start -> end, logic levels, data delay):
+{full.get('timing') or '(not available)'}
+
+Congestion (report_design_analysis -congestion):
+{full.get('congestion_report') or '(not available)'}
+
+{ooc_txt}
+## How a change is judged (the orchestrator does all of this, you do not)
+1. Only the files above changed; constraint files may not add timing exceptions
+   (set_false_path, set_multicycle_path, set_max_delay, ...) or change clocks.
+2. Verilator lint; bit-exact RTL tests against the instruction-set simulator, also on the
+   board's AXI memory path -- results must stay IDENTICAL (same fp32 rounding, same order of
+   operations, docs/isa.md; latency may change, handshake/grant contracts may not break).
+3. A Qwen3 decode-token proxy on the RTL may not get more than 0.2% slower (in cycles).
+4. {"The component alone, out of context in Vivado: its fmax must rise by 0.5% or more, or stay within 1% if it already clears the target (then the gain must come from the paths around it)." if ooc else "(no out-of-context step for this component)"}
+5. The full board build at {target_mhz:g} MHz: accepted if the core clock's fmax rises by 0.5%
+   or more (or WNS by 0.05 ns or more), hold is met, the router reports no congestion
+   (Route 35-447) and no block RAM has a read-address collision (Synth 8-6430). One full build
+   runs per round (about an hour), so aim at the worst paths above, not at small wins.
+
+## Focus for this slot
+{category}
+
+## History
+Recent outcomes:
+{recent}
+
+Lessons from earlier rounds:
+{lessons}
+
+## Source
+{_src(wt, files)}
+
+## Instructions
+Read the code (and docs/isa.md, the neighbouring units in rtl/ if you need the protocols). Then
+WRITE a file HYPOTHESIS.md at the repository root (your current directory) with:
+  # <short title>
+  Category: <pipeline|logic depth|fanout and placement|memories and DSPs>
+  Motivation: which of the worst paths above this removes and why (cite them)
+  Change: exactly what to change, where, and why results stay bit-identical and the cycle
+          count stays within 0.2%
+  Expected: estimated effect on the full design's WNS / fmax, and on area
+  Risks: what could break
+Do not modify any other file in this phase."""
+
+
 def implement_prompt(comp: dict, wt: Path) -> str:
     return f"""You are implementing an approved hardware change in openTPU.
 
 Read HYPOTHESIS.md in your current directory and implement it by editing ONLY these files:
-{', '.join(comp['allowed'])}
+{', '.join(expand(wt, comp['allowed']))}
 
 Rules:
 - Results must stay bit-identical to the instruction-set simulator (opentpu/isasim.py,

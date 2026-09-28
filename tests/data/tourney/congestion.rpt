@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2026.1 (lin64) Build 6511674 Tue Jun 16 11:01:26 MDT 2026
+| Date         : Sun Sep 27 21:26:35 2026
+| Host         : b9f2f233b4ce running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_design_analysis -congestion -file /home/bonetto/otpu-build/rca/hp-fx/congestion.rpt
+| Design       : otpu_fpga_top
+| Device       : xc7k480t
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Placer Final Level Congestion Reporting
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+
++-----------+--------+-------+------------+----------------------------------+---------------+----------------+-----+--------+------+------+------+-----+-------+-----+------------------------------------------------------------+
+| Direction |  Type  | Level | Congestion |              Window              | Combined LUTs | Avg LUT Inputs | LUT | LUTRAM | Flop | MUXF | RAMB | DSP | CARRY | SRL |                         Cell Names                         |
++-----------+--------+-------+------------+----------------------------------+---------------+----------------+-----+--------+------+------+------+-----+-------+-----+------------------------------------------------------------+
+| North     | Global |     5 |       104% | (CLBLL_L_X64Y34,CLBLM_R_X95Y65)  |            0% |          3.483 | 79% | 0%     |  54% |   0% | 100% | 32% |    2% |  8% | u_board/u_slice/u_vpu(76%),u_board/u_slice/u_vpu/u_vt(20%) |
+| South     | Global |     5 |       125% | (CLBLM_L_X70Y32,CLBLM_R_X101Y63) |            0% |          3.224 | 74% | 0%     |  50% |   0% | 100% | 27% |    3% | 11% | u_board/u_slice/u_vpu(80%),u_board/u_slice/u_vpu/u_vt(19%) |
++-----------+--------+-------+------------+----------------------------------+---------------+----------------+-----+--------+------+------+------+-----+-------+-----+------------------------------------------------------------+
+
+
