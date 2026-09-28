@@ -789,7 +789,14 @@ module otpu_mxu
 `endif
 
   wire c_drained = c_act && (c_left == 0) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
-  wire mx_go     = c_drained && c_rmax && !mx_done && !c_tz;
+  // RMAX writes start a cycle after the head has drained: mx_q registers the test, so the
+  // drained compares (c_left == 0, rows_live, rmw_n, ...) are off the TMEM write request and the
+  // grant it feeds (clk125 at 125.49 MHz: c_left -> drained test -> MXU write request -> TMEM
+  // arbitration -> VPU WBUF enable / alpha, mk enables, 14 levels, -0.116 ns). The test holds
+  // while drained (nothing new enters the head until it completes, which needs mx_done), and it
+  // is false in the completing cycle (mx_done), so a new head never sees a stale mx_q.
+  logic mx_q;
+  wire mx_go     = mx_q && !mx_done;
   wire c_fin     = c_drained && (!c_rmax || mx_done || c_tz);
   wire al_go     = c_act && c_asc && al_st == 2'd0;
 
@@ -862,7 +869,7 @@ module otpu_mxu
       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
       r0 <= '0; rx <= '0; rmw_n <= '0;
       st_starve <= '0; st_bp <= '0; st_frz <= '0; st_deny <= '0;
-      st_c <= '0; st_f <= 1'b0;
+      st_c <= '0; st_f <= 1'b0; mx_q <= 1'b0;
     end else begin
       logic [1:0] qn;
       logic [RFW:0] rn;
@@ -1036,6 +1043,7 @@ module otpu_mxu
       st_c <= {want_iss && !go_iss, !t_gnt && (drain_go || rw.v || mx_go || al_go),
                more && f_count != 0 && !pop, more && f_count == 0};
       st_f <= c_fin && !pop;
+      mx_q <= c_drained && c_rmax && !mx_done && !c_tz;
       st_starve <= st_starve + 32'(st_g[0]);
       st_bp <= st_bp + 32'(st_g[1]);
       st_frz <= st_frz + 32'(st_g[2]);
