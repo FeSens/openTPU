@@ -513,6 +513,47 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
+**BL16 candidate (2026-09-28): `~/otpu-build/deploy_bl16mx120_be388a1f`** (omarchy; branch
+tv-cand2 be388a1: main 6e2605b + lfm2-cycles 6fb2851 (port B read bursts up to 64 beats) +
+the tournament's MXU / adapter timing fixes (q_tz from its factors, dg1 registered, the port-A
+return registered, DSTEP fill and RMAX drain registered), built with `AXI_BL=16`. Core clock
+120.755 MHz, DDR3-1066, WNS +0.048 ns, WHS +0.013 ns. It becomes the production image once
+be388a1's full test suite passes. The fallback is `deploy_bl16_fb2b6630` (lfm2-cycles fb2b663,
+AXI_BL=16 without the timing fixes, WNS +0.003 ns after an ExtraTimingOpt re-implementation).
+It also passed the checks below (05:44-06:44).
+
+Qualified on the card 2026-09-28 06:46-07:43 (host tree host-8efceb7):
+- selftest with the 12 op checks passes;
+- `otpu-diag --mem full --soak 20` passes cold (57 °C) and after a 305 s warm soak (63 -> 64 °C):
+  isa 93, system 5, mem 13;
+- all 6 configurations are token for token equal to the ISA simulator, before and after the
+  soak;
+- resident decode is equal to the per-position programs (64 greedy tokens, Qwen3 and LFM2 at
+  both formats).
+
+Device numbers from the same session: decode Mcycles/token from `tools/decode_profile.py`
+(greedy, 96 tokens, streamed logits); DRAM from the counters over 64 tokens; prefill from a
+512-token prompt. The wall columns are left out: omarchy's load was 11-14 during the session
+(2 Vivado builds and a test suite).
+
+| Model | Weights | Mcycles/token | device tok/s | prefill device tok/s | DRAM read per token | DRAM while decoding | vs aebb0bf0 (device) |
+|---|---|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | 2.060 | 58.63 | 157.5 | 245 MB | 14.02 GB/s (82%) | +5.2% |
+| Qwen3-0.6B | int8 | 5.456 | 22.13 | 53.6 | 663 MB | 13.99 GB/s (82%) | +5.3% |
+| Qwen3.5-0.8B | int8 | 7.515 | 16.07 | 38.1 | 811 MB | 13.27 GB/s (78%) | +4.6% |
+| LFM2.5-230M | 4-bit, int8 head | 1.382 | 87.40 | 169.3 | 164 MB | 13.78 GB/s (81%) | +5.1% |
+| Qwen3-0.6B | 4-bit, int8 head | 3.631 | 33.26 | 58.1 | 443 MB | 13.75 GB/s (81%) | +4.9% |
+| Qwen3.5-0.8B | 4-bit, int8 head | 5.478 | 22.04 | 40.7 | 562 MB | 12.73 GB/s (75%) | +4.1% |
+
+`tools/rw_bench.py` on it: the weight stream alone runs at 119.5 B/cycle (74,591 cycles; hp-wb
+113.3), mm+st at 213,612 cycles, mm+dstep at 155,425, dstep at 91,438.
+
+HALTED probe, LFM2 4-bit. With the normal poll, the host saw HALTED 0.35-0.86 ms after the run's
+end on the loaded host, for 80.2 wall tok/s. With the poll reading back to back from the run's
+start (`spin_probe`), it saw HALTED 0.023 ms after the end, for 84.1 wall tok/s with the host
+equally loaded. So the overshoot is the host's sleep waking up late, not the card.
+lfm2-cycles therefore starts the back-to-back reads earlier: POLL_EARLY 0.5 ms + 1% -> 1.5 ms + 3%.
+
 **Production image (2026-09-28): `build/deploy_prod120hp_aebb0bf0`** (branch host-path-fx aebb0bf:
 the host-path target (the 4-bit MXU with PAIR, r7-apf's DRAM path (64-entry store queue,
 read-merge-write, port-A prefetch, QST word writes, CHASH), MM replay, vt-tile, the resident
