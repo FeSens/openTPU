@@ -194,7 +194,11 @@ so stop every program using the card first. After a power cycle the FPGA configu
 in time for enumeration: no JTAG and no rescan. Until then the card boots the image already in
 flash: on the development PC that image enumerates as 10ee:7028 with class 05 80 00 and a 2 MiB
 64-bit BAR (from dmesg at boot), is not openTPU, and `otpu-setup --check` says so. Not done on
-the card yet: the flash still holds that image.
+the card yet: the flash still holds that image. The first attempt (2026-09-28, openFPGALoader
+1.1.1) stopped before touching the flash: without `-b ypcb003381p1` it takes its SPI bridge,
+and `program.sh` now passes the board entry. [flash.md](flash.md) has the Vivado route
+(`flash_jtag.sh`: backup, program with verify, boot from flash), the byte order, and a proposal
+for writing the flash over PCIe with a golden image.
 
 ### After programming: PCIe
 
