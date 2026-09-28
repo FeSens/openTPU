@@ -5,7 +5,9 @@
 #
 # DEPLOY_DIR holds otpu.bit (a path, or a name under ~/otpu-build). Runs from the host tree the
 # script is in. Environment: REST (the bitstream to leave on the card; default the candidate),
-# OUT (results; default /tmp/qual-<deploy>), REFCACHE (tools/qual/refs.py).
+# OUT (results; default /tmp/qual-<deploy>), REFCACHE (tools/qual/refs.py), LOAD=0 (no JTAG load:
+# qualify the bitstream the card runs, e.g. on opentpu, whose root port does not bring the link
+# back on a hot rescan after a reload; the selftest's config line names the build).
 #
 # fast (~25 min with cached references): selftest (with the RDOT/OUTER/LOG2 op checks), the ISA
 #   references in the background, prefill + DRAM efficiency for the six configurations, the
@@ -66,7 +68,8 @@ trap finish EXIT
 
 echo "################ $NAME, $PROFILE profile, host tree $(git -C "$H" rev-parse --short HEAD) $(date +%T)"
 phase "load + selftest"
-load "$BIT" || exit 1
+if [ "${LOAD:-1}" = 0 ]; then echo "LOAD=0: no JTAG load, the card keeps its bitstream"
+else load "$BIT" || exit 1; fi
 selftest
 $P tools/qual/refs.py cfg "$OUT/cfg.pkl" --name "$NAME" | cut -c1-200
 
@@ -111,6 +114,6 @@ for r in $RUNS; do IFS=: read -r m w h <<< "$r"
 done
 
 phase "final selftest"
-if [ "$REST" != "$BIT" ]; then load "$REST" || exit 1; fi
+if [ "$REST" != "$BIT" ] && [ "${LOAD:-1}" != 0 ]; then load "$REST" || exit 1; fi
 selftest
 sudo dmesg | grep -iE "xdma.*(timed out|error|fail)" | tail -3
