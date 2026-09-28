@@ -206,7 +206,11 @@ def tree_id(wt: Path) -> str:
     try:
         subprocess.run(["git", "read-tree", "HEAD"], cwd=wt, env=env, check=True,
                        capture_output=True)
-        r = subprocess.run(["git", "add", "-A", "--", ".", ":!build"], cwd=wt, env=env,
+        # an explicit exclude of an ignored path fails `git add`: the build/ *directory* is
+        # ignored (.gitignore build/), a build *symlink* (the slot worktrees') is not
+        ex = [f":!{d}" for d in ("build", "models") if (wt / d).is_symlink()
+              and not subprocess.run(["git", "check-ignore", "-q", d], cwd=wt).returncode == 0]
+        r = subprocess.run(["git", "add", "-A", "--", ".", *ex], cwd=wt, env=env,
                            capture_output=True, text=True)
         if r.returncode != 0:
             raise RemoteError(f"git add for the upload failed: {r.stderr[-600:]}")
