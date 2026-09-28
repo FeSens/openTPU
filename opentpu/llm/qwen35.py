@@ -1028,8 +1028,8 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         """y += ON . out_proj columns [c0, c1) of head group g (heads of dv columns)."""
         ol.dot(ON, lw.wout[g * spec.hidden:(g + 1) * spec.hidden, c0 * dv:c1 * dv], acc=y)
 
-    def head(h, X, Z, taps, a):
-        """Head h, head a of its pair (whose q k v rows are in X, z in Z) -> ONp[:, a]."""
+    def head_in(X, taps, a):
+        """Head a of the pair whose q k v rows are in X: the convolution and SiLU -> [R, C]."""
         U = ol.empty([R, C])
         for r0, r1 in rgroups:                          # the convolution, as _deltanet's conv
             t = min(K - 1, p0 + r0)
@@ -1045,6 +1045,11 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
                             taps[a * K + K - 1 - t, :][None, :])
             del u
         U.set(silu(U))
+        return U
+
+    def head(h, X, Z, taps, a):
+        """Head h, head a of its pair (whose q k v rows are in X, z in Z) -> ONp[:, a]."""
+        U = head_in(X, taps, a)
         GZ = silu(Z[:, a * dv:(a + 1) * dv])
         if dstep:                                       # q | k per row, a DSTEP per row
             QK = ol.empty([R, 2 * dk])
@@ -1079,8 +1084,10 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     PB = [(ol.empty([2 * K * C]), ol.empty([K - 1 + R, 2 * C]), ol.empty([R, 2 * dv]))
           for _ in range(NB)]
 
-    def project(p, b):
-        """Pair p's taps, q k v rows (ring, then its projections) and z into buffers b."""
+    def project(p, b, window=True):
+        """Pair p's taps, q k v rows (ring, then its projections) and z into buffers b; window:
+        store the next window (else store_window after the pair's DSTEPs: a store waiting for
+        the projections would hold the DMA's queue, and the DSTEPs behind it)."""
         taps, X, Z = PB[b]
         ol.load(lw.cv[p, 0:TP], out=taps)              # rows (head, tap)
         for j in range(1, min(K, p0 + 1)):              # positions p0-K+1 ..: the window
@@ -1088,18 +1095,45 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             ol.load(lw.cv[p, sl:sl + 2 * C], out=X[K - 1 - j, :])
         ol.dot(xs, lw.wh[p * 2 * RH:p * 2 * RH + 2 * C, :], out=X[K - 1:K - 1 + R, :])
         ol.dot(xs, lw.wh[p * 2 * RH + 2 * C:(p + 1) * 2 * RH, :], out=Z)   # z of a, of b
+        if window:
+            store_window(p, b)
+
+    def store_window(p, b):
+        X = PB[b][1]
         for i in range(K - 1):                          # the next window
             ol.store(lw.cv[p, TP + i * 2 * C:TP + (i + 1) * 2 * C], X[R + i, :])
 
     def heads(p, b):
-        """Pair p's heads from buffers b -> ONp."""
+        """Pair p's heads from buffers b -> ONp. With DSTEP both heads' VPU work (convolution,
+        SiLU, norms) comes before their DSTEPs and both outputs after, so the DMA runs the pair's
+        DSTEPs back to back (the same operations, in another order)."""
         taps, X, Z = PB[b]
         taps = taps.reshape(2 * K, C)
         for r in range(R):
             ol.load(gr[r, 2 * p:2 * p + 2], out=GD[r, :])
             ol.load(gr[r, nl + 2 * p:nl + 2 * p + 2], out=GB[r, :])
+        if not dstep:
+            for a in range(2):
+                head(2 * p + a, X, Z, taps, a)
+            return
+        QK = [ol.empty([R, 2 * dk]) for _ in range(2)]
+        V = [ol.empty([R, dv]) for _ in range(2)]
+        GZ = [ol.empty([R, dv]) for _ in range(2)]
         for a in range(2):
-            head(2 * p + a, X, Z, taps, a)
+            U = head_in(X, taps, a)
+            QK[a][:, 0:dk].set(l2norm_rows(U[:, 0:dk], dk ** -0.5))
+            QK[a][:, dk:2 * dk].set(l2norm_rows(U[:, dk:2 * dk]))
+            V[a].set(U[:, 2 * dk:C])
+            del U
+            GZ[a].set(silu(Z[:, a * dv:(a + 1) * dv]))
+        O = [ol.empty([R, dv]) for _ in range(2)]
+        for a in range(2):
+            for r in range(R):
+                ol.deltanet_step(lw.state[2 * p + a], QK[a][r, :], V[a][r, :], GDB[r, a:a + 1],
+                                 GDB[r, 2 + a:3 + a], O[a][r, :], zero=(p0 == 0 and r == 0))
+        del QK, V
+        for a in range(2):
+            ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O[a], gn, eps) * GZ[a])
 
     def pair(p):
         """Pair p (an int or a loop expression) -> ONp."""
@@ -1113,20 +1147,24 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     if NB == 2:
         # groups of 2 pairs, software pipelined: the projections of the pair after the next
         # one stream while a pair's DSTEPs run (the same operations, in another order)
-        project(0, 0)
+        project(0, 0, window=False)
         for g in loop(ng - 1):
-            project(2 * g + 1, 1)
+            project(2 * g + 1, 1, window=False)
             heads(2 * g, 0)
+            store_window(2 * g, 0)
             ol.store(on[:, 0:2 * dv], ONp)
-            project(2 * g + 2, 0)
+            project(2 * g + 2, 0, window=False)
             heads(2 * g + 1, 1)
+            store_window(2 * g + 1, 1)
             ol.store(on[:, 2 * dv:4 * dv], ONp)
             flush(g, ol.load(on), 0, og)
         q0 = 2 * (ng - 1)                               # the last group, pair by pair
-        project(q0 + 1, 1)
+        project(q0 + 1, 1, window=False)
         heads(q0, 0)
+        store_window(q0, 0)
         flush(ng - 1, ONp, 0, 2)
         heads(q0 + 1, 1)
+        store_window(q0 + 1, 1)
         flush(ng - 1, ONp, 2, 4)
         return x + ol.all_reduce(y)
     for g in loop(ng - 1 if split else ng):             # whole groups
