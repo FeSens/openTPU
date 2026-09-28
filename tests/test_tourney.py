@@ -351,11 +351,17 @@ def test_rank_fmax():
 def test_parse_counts_and_busy():
     c = RM.parse_counts("runviv 1\nours 1\ntotal 2\n")
     assert c == {"runviv": 1, "ours": 1, "total": 2}
-    assert RM.busy(c) == 2                         # one make bit + one tournament OOC job
-    assert RM.busy(RM.parse_counts("runviv 1\nours 0\ntotal 0\n")) == 1   # make bit, pre-Vivado
-    assert RM.busy(RM.parse_counts("runviv 0\nours 0\ntotal 1\n")) == 1   # someone's bare docker
-    assert RM.busy(RM.parse_counts("runviv 2\nours 0\ntotal 2\n")) == 2
-    assert RM.busy(RM.parse_counts("garbage")) == 0
+    busy = lambda t: RM.busy(RM.parse_counts(t), native=False)     # Docker host (omarchy)
+    assert RM.busy(c, native=False) == 2           # one make bit + one tournament OOC job
+    assert busy("runviv 1\nours 0\ntotal 0\n") == 1   # make bit, pre-Vivado
+    assert busy("runviv 0\nours 0\ntotal 1\n") == 1   # someone's bare docker
+    assert busy("runviv 2\nours 0\ntotal 2\n") == 2
+    assert busy("garbage") == 0
+    nat = lambda t: RM.busy(RM.parse_counts(t), native=True)       # native Vivado (opentpu)
+    assert nat("runviv 1\nours 1\ntotal 5\n") == 2    # a make bit's runs are several processes
+    assert nat("runviv 0\nours 0\ntotal 3\n") == 1    # someone's own Vivado session
+    assert nat("runviv 0\nours 2\ntotal 0\n") == 2    # OOC wrappers before Vivado starts
+    assert nat("garbage") == 0
 
 
 def test_acquire_waits_for_room(tmp_path, monkeypatch):
@@ -395,11 +401,21 @@ def test_acquire_serializes_starts(tmp_path, monkeypatch):
 
 
 def test_remote_commands():
-    c = RM.full_cmd("/h/otpu-build/tv-x", 133.33, "0f3a0000")
+    c = RM.full_cmd("/h/otpu-build/tv-x", 133.33, "0f3a0000", native=False)
     assert "make bit DDR=1066" in c and "CORE_MHZ=133.33" in c and "JOBS=2" in c
     assert "VIVADO_AS_USER=1" in c and "BUILD_ID=0f3a0000" in c
+    n = RM.full_cmd("/h/otpu-build/tv-x", 125.49, "0f3a0000", native=True)
+    assert "make bit DDR=1066" in n and "CORE_MHZ=125.49" in n and "BUILD_ID=0f3a0000" in n
+    assert "VIVADO_DOCKER" not in n and "docker" not in n
     d = RM.docker_cmd("/h/t", "/h/t/ooc.tcl", "/h/t/v.log")
     assert "--label otpu-tourney=1" in d and "--mac-address" in d and ":ro" in d
+    assert RM.vivado_cmd("/h/t", "/h/t/o/ooc.tcl", "/h/t/o/v.log", native=False) == d.replace(
+        "/h/t/ooc.tcl", "/h/t/o/ooc.tcl").replace("/h/t/v.log", "/h/t/o/v.log")
+    v = RM.vivado_cmd("/h/t", "/h/t/o/ooc.tcl", "/h/t/o/v.log", native=True)
+    assert v == "cd /h/t/o && bash otpu_ooc.sh"     # what NATIVE_COUNT_CMD counts
+    sh = RM.native_script("/h/t/o/ooc.tcl", "/h/t/o/v.log")
+    assert "exec" not in sh and "vivado -mode batch" in sh and "-source /h/t/o/ooc.tcl" in sh
+    assert "[o]tpu_ooc" in RM.NATIVE_COUNT_CMD and "[r]un_vivado" in RM.NATIVE_COUNT_CMD
     t = RM.ooc_tcl("/h/t", "otpu_vpu", ["rtl/a.sv"], {"LANES": 8}, "/h/t/o", 7.5)
     assert "-mode out_of_context" in t and "-generic LANES=8" in t
     assert "create_clock -period 7.5 -name clk [get_ports clk]" in t and "route_design" in t
@@ -497,12 +513,14 @@ def test_exec_dispatch(tmp_path, monkeypatch):
 
 def test_remote_housekeeping(monkeypatch):
     sent = []
-    monkeypatch.setattr(RM, "ssh", lambda cmd, **k: sent.append(cmd))
+    hosts = []
+    monkeypatch.setattr(RM, "ssh", lambda cmd, **k: (sent.append(cmd), hosts.append(k.get("host"))))
     monkeypatch.setenv("EXEC", "remote")
     G.remote_clean(Path("/x/fmax-otpu_vpu/r1-s0"))
     G.remote_prune()
     assert sent[0] == "rm -rf ~/otpu-test/tourney-fmax-otpu_vpu-r1-s0"
     assert "otpu-test/.tourney-build/verilator" in sent[1] and "-mmin +1440" in sent[1]
+    assert hosts == [RM.TEST_HOST] * 2              # test trees live on omarchy, not the Vivado host
     monkeypatch.setenv("EXEC", "local")
     G.remote_clean(Path("/x/y"))
     G.remote_prune()

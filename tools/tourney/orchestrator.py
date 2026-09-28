@@ -2,7 +2,7 @@
 
     python3 -m tools.tourney.orchestrator --comp otpu_coll --rounds 1 --slots 1 [--agent claude]
         [--eval yosys|vivado-remote] [--base main] [--reset] [--keep] [--no-scribe] [--baseline-only]
-        [--objective area|fmax] [--target-mhz 133.33]
+        [--objective area|fmax] [--target-mhz 125.49]
 
 Each component evolves on its own champion branch `tourney/<comp>` (created from --base, i.e.
 main, the first time; --reset recreates it). A round runs K slots in parallel, each in its own
@@ -494,7 +494,7 @@ def main(argv=None):
     ap.add_argument("--objective", choices=("area", "fmax"),
                     default=os.environ.get("OBJECTIVE", "area"))
     ap.add_argument("--target-mhz", type=float, default=float(os.environ.get("TARGET_MHZ",
-                                                                             "133.33")))
+                                                                             "125.49")))
     Run(ap.parse_args(argv)).main()
 
 

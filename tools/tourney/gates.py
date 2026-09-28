@@ -5,11 +5,12 @@ Order: sandbox -> lint -> fast (bit-exact subset) -> board (the same on the boar
 and micro-architecture) -> perf (Qwen3 proxy cycles) -> synth (area, fmax). The fmax objective
 (--objective fmax) adds a last gate, full: the whole board built in Vivado on the build host.
 
-Where lint and the test gates run: EXEC=remote (default) ships the slot's tree to the build
-host with tools/omarchy_test.sh and runs them there (Verilator 5.046 and the venv on omarchy);
+Where lint and the test gates run: EXEC=remote (default) ships the slot's tree to omarchy (the
+test host, remote.TEST_HOST; Vivado runs on remote.HOST) with tools/omarchy_test.sh and runs them
+there (Verilator 5.046 and the venv on omarchy);
 EXEC=local runs them on this machine. Either way they go through test_slot(): at most
-TEST_SLOTS["remote"] = 2 at a time from the tournament on the build host (its CPU is shared with
-up to 2 Vivado jobs), TEST_SLOTS["local"] = 1 here.
+TEST_SLOTS["remote"] = 2 at a time from the tournament on omarchy (its CPU is shared with
+up to 2 Vivado jobs of other streams), TEST_SLOTS["local"] = 1 here.
 """
 from __future__ import annotations
 
@@ -133,7 +134,7 @@ def remote_prune() -> None:
     if exec_mode() != "remote":
         return
     from . import remote as R
-    R.ssh(PRUNE_CMD, timeout=300, check=False)
+    R.ssh(PRUNE_CMD, timeout=300, check=False, host=R.TEST_HOST)
 
 
 def remote_clean(wt: Path) -> None:
@@ -141,7 +142,8 @@ def remote_clean(wt: Path) -> None:
     if exec_mode() != "remote":
         return
     from . import remote as R
-    R.ssh(f"rm -rf ~/otpu-test/{remote_name(wt)}", timeout=120, check=False)
+    R.ssh(f"rm -rf ~/otpu-test/{remote_name(wt)}", timeout=120, check=False,
+          host=R.TEST_HOST)
 
 
 # ------------------------------------------------------------------------------ sandbox

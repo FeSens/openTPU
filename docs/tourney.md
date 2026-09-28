@@ -65,7 +65,8 @@ Slot worktrees and branches are removed after the round (`ARGS=--keep` keeps the
   then `sta` with the Xilinx cell timing models. Logic-only; the fmax is an estimate to *rank*
   candidates, not signoff. Uses `--allow-use-before-declare` (for sources that declare a signal
   after use).
-- `EVAL=vivado-remote`: Vivado 2026.1 on the build host (omarchy), never on this machine
+- `EVAL=vivado-remote`: Vivado 2026.1 on the build host (`opentpu` by default, or omarchy; see
+  [The build host](#the-build-host)), never on this machine
   (`EVAL=vivado`, the old local evaluator, is refused). The slot's tree is sent with `git
   archive | ssh tar -x` to `~/otpu-build/tv-<name>` and each synthesis part runs out of context
   there in the `vivado:2026.1` image: synth, opt, place, phys_opt, route on xc7k480tffg1156-2 at
@@ -130,7 +131,7 @@ Goal: a faster core clock for the **whole** board design. Every component (the t
 the full board build in Vivado, on the build host.
 
 ```
-make tourney-fmax-baseline                  # main's full build at 133.33 MHz (first thing to run)
+make tourney-fmax-baseline                  # the champion's full build at 125.49 MHz (first thing to run)
 make tourney-fmax N=1 K=2                   # one pass over FMAX_COMPS, one round of 2 slots each
 make tourney-fmax N=3 K=2 FMAX_COMPS="otpu_xunit otpu_tmem otpu_vpu" TARGET_MHZ=133.33
 make tourney-report COMP=fmax/otpu_vpu
@@ -159,7 +160,7 @@ make tourney-report COMP=fmax/otpu_vpu
    `set_max/min_delay`, `set_clock_groups`, `set_disable_timing`, `create_clock`,
    `create_generated_clock`, I/O delays and clock uncertainty.
 4. **OOC in Vivado.** Each of the component's parts runs on the host at the target period
-   (7.5 ns). The candidate goes on to the full build if its OOC fmax improves by ≥ 0.5%. It
+   (7.969 ns at 125.49 MHz). The candidate goes on to the full build if its OOC fmax improves by ≥ 0.5%. It
    also goes on if the unit already clears the target on its own and loses ≤ 1%: in that case
    the gain must come from the paths around it, which OOC cannot see. Any Synth 8-6430 memory
    fails the step. `otpu_xunit` has no OOC part and goes straight on.
@@ -174,7 +175,7 @@ make tourney-report COMP=fmax/otpu_vpu
    fmax improves by ≥ 0.5%, or its WNS by ≥ 0.05 ns at the same period. It is always rejected
    if hold is violated (WHS < 0, design-wide), if Route 35-447 (router congestion) appears in
    the logs, or if there is any Synth 8-6430 (`build.tcl` also stops on these). Area does not
-   count, except to rank ties (`rank_fmax`). At a 7.5 ns period, +0.5% fmax is +0.038 ns, so the
+   count, except to rank ties (`rank_fmax`). At a 7.969 ns period (125.49 MHz), +0.5% fmax is +0.04 ns, so the
    fmax criterion always binds before the WNS criterion. The winner is committed to
    `tourney/fmax`, and its full result is stored as the new champion's, so the next round does
    not rebuild it.
@@ -197,19 +198,31 @@ tests including `tests/test_board.py`.
 
 ### The build host
 
-At most **2 Vivado jobs** run on omarchy at a time (`OTPU_MAX_VIVADO`), counting **every** job
-there, not only the tournament's. The count is taken over ssh:
+Vivado runs on one of two Linux boxes (`OTPU_BUILD_HOST`); the test gates always run on omarchy
+(`OTPU_REMOTE`, below), which also holds the card:
+
+| host | Vivado | notes |
+|---|---|---|
+| `opentpu` (default) | native 2026.1 (`vivado` on the ssh PATH) | i7-4790, 4 cores / 8 threads, 31 GB; no card. Only `~/otpu-build/` is the tournament's |
+| `omarchy.tail5bd214.ts.net` | the `vivado:2026.1` Docker image | shared with the card work and other builds |
+
+`VIVADO_NATIVE=1` / `0` overrides the choice (default: Docker on omarchy, native elsewhere).
+
+At most **2 Vivado jobs** run on the build host at a time (`OTPU_MAX_VIVADO`), counting
+**every** job there, not only the tournament's. The count is taken over ssh:
 
 - `run_vivado.sh` processes: anyone's `make bit`, including the tournament's full builds;
-- containers of the Vivado image;
-- the tournament's own labelled OOC containers (`--label otpu-tourney=1`).
+- with Docker: containers of the Vivado image, and the tournament's own labelled OOC containers
+  (`--label otpu-tourney=1`);
+- native: the tournament's OOC jobs, each a `bash otpu_ooc.sh` wrapper; Vivado processes under
+  neither (someone's own session) count as one job.
 
 A `make bit` counts once. Before starting a job, `remote.acquire()` waits (polling every 60 s)
 until the count is below 2, and holds a local start lock until the new job is visible, so two
 slots cannot both take the last place. Jobs run detached (`nohup`, with a `DONE` file holding
 the exit code) and are polled, so a dropped ssh connection does not kill a build. Trees are
 removed after the results are fetched. Other hosts, directories and images can be set with
-`OTPU_BUILD_HOST`, `OTPU_BUILD_DIR`, `VIVADO_DOCKER`, `VIVADO_MOUNT`, `VIVADO_SETTINGS` and
+`OTPU_BUILD_HOST`, `VIVADO_NATIVE`, `OTPU_BUILD_DIR`, `VIVADO_DOCKER`, `VIVADO_MOUNT`, `VIVADO_SETTINGS` and
 `VIVADO_MAC`.
 
 ### Where the test gates run (`EXEC`)

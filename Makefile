@@ -4,10 +4,10 @@
 #                [EFFORT_HYP=high] [EFFORT_IMPL=high,xhigh] [EFFORT_SCRIBE=low] [ARGS=--keep]
 #   make tourney-report [COMP=otpu_coll]
 #   (any target: EXEC=remote (default) runs lint and the test gates on omarchy, EXEC=local here)
-#   make tourney-fmax N=1 K=2 [TARGET_MHZ=133.33] [FMAX_COMPS="otpu_xunit otpu_tmem ..."]
+#   make tourney-fmax N=1 K=2 [TARGET_MHZ=125.49] [FMAX_COMPS="otpu_xunit otpu_tmem ..."]
 #        the whole-design fmax tournament: N passes over FMAX_COMPS, one round each, all on the
 #        shared champion tourney/fmax, Vivado on the build host (EVAL=vivado-remote)
-#   make tourney-fmax-baseline [TARGET_MHZ=133.33]   the champion's full build only
+#   make tourney-fmax-baseline [TARGET_MHZ=125.49]   the champion's full build only
 PYTHON ?= python3
 COMP   ?=
 N      ?= 1
@@ -16,7 +16,7 @@ AGENT  ?= claude
 EVAL   ?= yosys
 BASE   ?= main
 ARGS   ?=
-TARGET_MHZ ?= 133.33
+TARGET_MHZ ?= 125.49
 # where lint and the test gates run: remote (omarchy, tools/omarchy_test.sh) or local
 EXEC   ?= remote
 export EXEC
