@@ -65,14 +65,16 @@ def ddr3_plusargs(mts: float, mhz: float) -> list[str]:
     with the core at `mhz`: the MIG's ui_clk is mts / 8 (4:1), the data-sheet tRAS / tRC /
     tRFC / tREFI in ui_clk cycles, and two of the parameters fitted on the card at DDR3-800
     (docs/board.md: tRP = tRCD = 3 controller cycles, a read-modify-write holds the channel
-    230 ns). The caller sets the other fitted one, 4 core cycles per AXI read transaction
-    (rtlsim arc), and the read latency (tools/perf_qwen.py: 300 ns)."""
+    230 ns), and one fitted at DDR3-1066 / 120.755 MHz: each AXI read transaction costs the data
+    bus 1.7 controller cycles (tgap; LFM2 4-bit decode at pos 50: 1.418 Mcycles on the card,
+    1.42 simulated). The caller sets the other fitted one, 4 core cycles per AXI read
+    transaction (rtlsim arc), and the read latency (tools/perf_qwen.py: 300 ns)."""
     import math
     fu = mts / 8                       # MHz
     ps = lambda f: round(1e6 / f)      # clock period in ps, the model's tick
     cyc = lambda ns: math.ceil(ns * fu / 1e3 - 1e-3)
     t = dict(tpc=ps(mhz), tpu=ps(fu), trp=3, trcd=3, tras=cyc(37.5), trc=cyc(50.625),
-             trfc=cyc(160), trefi=round(7.8 * fu), trmw=round(0.23 * mhz))
+             trfc=cyc(160), trefi=round(7.8 * fu), trmw=round(0.23 * mhz), tgap=170)
     return ["+axi_dram=1", "+axi_map=1"] + [f"+axi_{k}={v}" for k, v in t.items()]
 
 
