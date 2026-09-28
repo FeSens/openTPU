@@ -25,22 +25,31 @@ The design runs three modern models with their real weights on an Inspur YPCB-00
 (Xilinx Kintex-7 xc7k480t, two DDR3 channels), and the card produces the same tokens as the
 simulator, bit for bit.
 
-| Model | Decode speed | Cycles per token | DRAM reads | Share of DDR3 peak |
-|:--|--:|--:|--:|--:|
-| LFM2.5-230M | 52.4 tok/s | 2.30 M | 12.4 GB/s | 73% |
-| Qwen3-0.6B | 19.1 tok/s | 6.33 M | 11.8 GB/s | 69% |
-| Qwen3.5-0.8B | 14.4 tok/s | 8.38 M | 11.6 GB/s | 68% |
+| Model | Weights | Decode, device | Decode, wall | Prefill, device | DRAM reads while decoding |
+|:--|:--|--:|--:|--:|--:|
+| LFM2.5-230M | int8 | 51.9 tok/s | 48.5 tok/s | 124.8 tok/s | 12.4 GB/s (73% of peak) |
+| LFM2.5-230M | 4-bit, int8 head | 74.2 tok/s | 60-67 tok/s | 141.0 tok/s | 11.7 GB/s (69%) |
+| Qwen3-0.6B | int8 | 18.8 tok/s | 18.6 tok/s | 39.6 tok/s | 11.8 GB/s (69%) |
+| Qwen3-0.6B | 4-bit, int8 head | 26.8 tok/s | 24.9 tok/s | 44.2 tok/s | 11.0 GB/s (64%) |
+| Qwen3.5-0.8B | int8 | 14.3 tok/s | 14.2 tok/s | 26.1 tok/s | 11.9 GB/s (70%) |
+| Qwen3.5-0.8B | 4-bit, int8 head | 17.6 tok/s | 16.9 tok/s | 27.9 tok/s | 10.1 GB/s (59%) |
 
-*Greedy decode on the card at 120.755 MHz with int8 weights and DDR3-1066 (17.1 GB/s peak),
-measured with `tools/decode_profile.py`. DRAM reads are estimated: bytes read per token, counted
-by the card's counters on an earlier image, times the decode speed above. More detail in
+*Measured on the card with the production image (`deploy_prod120fp4_ea3bc560`: 120.755 MHz,
+DDR3-1066 with a 17.1 GB/s peak, full-rate 4-bit matrix unit). Decode is greedy, 96 tokens;
+"device" counts only the cycles the accelerator runs and "wall" adds the host. Prefill is a
+512-token prompt. DRAM reads come from the card's own counters while it runs. Every
+configuration matches the simulator token for token. More detail in
 [docs/board.md](docs/board.md).*
 
-4-bit weights (FP4 with two-level scales, [docs/quant.md](docs/quant.md)) have run on the card
-too, on a test image that is not production (`fp4f125`, 125.49 MHz, full-rate 4-bit MXU): Qwen3
-at 28.0 tok/s with an int8 LM head and 32.8 tok/s all 4-bit, LFM2 at 77.6 and 94.1 tok/s, each
-token for token equal to the simulator. That image computes RDOT wrong, so Qwen3.5 was not run
-on it.
+4-bit weights ([docs/quant.md](docs/quant.md)) use FP4 values with two-level block scales, 4.25
+bits per weight, and keep the LM head in int8 for accuracy. They cut the bytes per token by about
+a third and raise decode speed by 23% (Qwen3.5) to 43% (LFM2, Qwen3), at a measurable cost in perplexity that
+docs/quant.md reports per model.
+
+LFM2 with 4-bit weights is limited by the host, not the card: the host still compiles a program
+for every position, and at 13.5 ms per token it cannot always keep up. Programs that take the
+position from a register (compiled once, reused for every token) and streaming the logits while
+the card runs are built and tested in simulation, and wait for the next bitstream.
 
 ## How it works
 
@@ -128,11 +137,15 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 
 ## What's next
 
-- **Use more of the DRAM bandwidth.** Decode is memory-bound, and there is still headroom.
-- **4-bit weights.** Already in the simulator and RTL; they roughly halve the bytes per token
-  once a bitstream with them meets timing.
-- **A faster clock.** The core runs at 120.755 MHz; a 125 MHz build is close.
-- **Faster prefill and Qwen3.5's recurrence**, both limited by compute today.
+- **Use more of the DRAM bandwidth.** Decode reaches 59 to 73% of the DDR3 peak on the card. In
+  simulation, a faster memory adapter and a DeltaNet state engine (`DSTEP`) bring LFM2 and
+  Qwen3.5 above 80%; they are waiting for a bitstream that routes at 120 MHz.
+- **Host time.** Resident decode programs and streamed logits, built and tested in simulation,
+  bring the host's share of a token under half a millisecond.
+- **A faster clock.** The core runs at 120.755 MHz; builds at 125 MHz meet timing but need more
+  margin on the card.
+- **Faster prefill.** Prefill is limited by the matrix unit's multiply rate, so the next step is
+  more multipliers per cycle.
 
 ## Contributing
 
