@@ -280,8 +280,8 @@ PCIe, the DMA rate and the real DRAM latency.
 A candidate bitstream becomes the resting image only after `tools/qual/qual.sh` passes on the
 card. It runs from the host tree it lives in, under the card lock, and leaves the candidate on
 the card (`REST=path/otpu.bit` leaves another; `LOAD=0` loads nothing and qualifies the
-bitstream the card already runs: on opentpu a hot rescan after a JTAG reload does not bring the
-link back, so a reload needs a warm reboot):
+bitstream the card already runs: on opentpu a hot rescan after a JTAG reload once did not bring
+the link back, and a warm reboot did):
 
 ```sh
 otpu-lock --wait 3600 -- bash tools/qual/qual.sh deploy_bl32mx120_be388a32         # fast

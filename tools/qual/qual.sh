@@ -6,8 +6,8 @@
 # DEPLOY_DIR holds otpu.bit (a path, or a name under ~/otpu-build). Runs from the host tree the
 # script is in. Environment: REST (the bitstream to leave on the card; default the candidate),
 # OUT (results; default /tmp/qual-<deploy>), REFCACHE (tools/qual/refs.py), LOAD=0 (no JTAG load:
-# qualify the bitstream the card runs, e.g. on opentpu, whose root port does not bring the link
-# back on a hot rescan after a reload; the selftest's config line names the build).
+# qualify the bitstream the card runs, e.g. on opentpu, whose root port once did not bring the
+# link back on a hot rescan after a reload; the selftest's config line names the build).
 #
 # fast (~25 min with cached references): selftest (with the RDOT/OUTER/LOG2 op checks), the ISA
 #   references in the background, prefill + DRAM efficiency for the six configurations, the
@@ -40,14 +40,16 @@ phase() {
   PH=$1; PT=$now
   [ -n "$PH" ] && echo "=== $PH $(date +%T)  load $(cut -d' ' -f1 /proc/loadavg), MemAvailable $(memgb) GiB"
 }
-others() { sudo lsof -t /dev/xdma0_* 2>/dev/null | head -1; }
+# root helpers: opentpu has narrow sudo rules (/etc/sudoers.d/60-otpu-card) for these exact commands
+rescan() { if [ -x /usr/local/sbin/otpu-rescan ]; then sudo -n /usr/local/sbin/otpu-rescan; else sudo ~/otpu-venv/bin/otpu-setup --rescan; fi; }
+others() { sudo -n lsof -t /dev/xdma0_* 2>/dev/null | head -1; }
 quiet() { for _ in $(seq 120); do [ -z "$(others)" ] && return 0; sleep 5; done
   echo "device open by pid $(others)"; return 1; }
 load() {
   quiet || return 1
   openFPGALoader -c digilent_hs2 --freq 10000000 "$1" 2>&1 | tail -1
   for _ in $(seq 60); do
-    sudo ~/otpu-venv/bin/otpu-setup --rescan 2>&1 | tail -1 | tee "$OUT/rescan"
+    rescan 2>&1 | tail -1 | tee "$OUT/rescan"
     grep -q "ID 0x4f545055" "$OUT/rescan" && return 0; sleep 10; done
   echo "rescan failed for 10 minutes"; return 1; }
 selftest() { timeout 1800 $P -m opentpu.host.selftest 2>&1 \
@@ -116,4 +118,4 @@ done
 phase "final selftest"
 if [ "$REST" != "$BIT" ] && [ "${LOAD:-1}" != 0 ]; then load "$REST" || exit 1; fi
 selftest
-sudo dmesg | grep -iE "xdma.*(timed out|error|fail)" | tail -3
+sudo -n dmesg | grep -iE "xdma.*(timed out|error|fail)" | tail -3
