@@ -58,8 +58,28 @@ HOST_JOBS = {k.strip(): int(v) for k, v in (kv.split("=") for kv in os.environ.g
     "OTPU_HOST_JOBS", "opentpu=1").split(",") if "=" in kv)}
 
 
-def max_jobs_on(host: str, default: int = MAX_JOBS) -> int:
-    return min(HOST_JOBS.get(host, default), default)
+# a running tournament can be moved between hosts without a restart: this file, when present,
+# overrides OTPU_BUILD_HOSTS / OTPU_HOST_JOBS at every acquire(): lines `hosts=a,b` and `jobs=a=1,b=1`
+HOSTS_FILE = Path(os.environ.get("OTPU_HOSTS_FILE", "/tmp/otpu-tourney-hosts"))
+
+
+def _override() -> tuple[list[str] | None, dict | None]:
+    try:
+        txt = HOSTS_FILE.read_text()
+    except OSError:
+        return None, None
+    hosts = jobs = None
+    for line in txt.splitlines():
+        k, _, v = line.strip().partition("=")
+        if k == "hosts" and v:
+            hosts = [h.strip() for h in v.split(",") if h.strip()]
+        elif k == "jobs" and v:
+            jobs = {a.strip(): int(b) for a, b in (kv.split("=") for kv in v.split(",") if "=" in kv)}
+    return hosts, jobs
+
+
+def max_jobs_on(host: str, default: int = MAX_JOBS, caps: dict | None = None) -> int:
+    return min((HOST_JOBS if caps is None else caps).get(host, default), default)
 IMAGE = os.environ.get("VIVADO_DOCKER", "vivado:2026.1")
 MOUNT = os.environ.get("VIVADO_MOUNT", "/mnt/ml/Xilinx:/opt/Xilinx:ro")
 SETTINGS = os.environ.get("VIVADO_SETTINGS", "/opt/Xilinx/2026.1/Vivado/settings64.sh")
@@ -150,7 +170,10 @@ def acquire(poll: int = 60, count=jobs, sleep=time.sleep, log=print, max_jobs: i
     """Blocks until a host (in priority order) runs fewer than max_jobs Vivado jobs, then holds
     the local start lock while the caller starts its job there (release happens once the job is
     visible remotely, i.e. when the with-block ends). Yields (host, jobs running there)."""
-    hosts = hosts or HOSTS
+    caps = None
+    if hosts is None:
+        o_hosts, o_jobs = _override()
+        hosts, caps = o_hosts or HOSTS, o_jobs
     START_LOCK.parent.mkdir(parents=True, exist_ok=True)
     with START_LOCK.open("w") as f:
         waited = False
@@ -160,13 +183,13 @@ def acquire(poll: int = 60, count=jobs, sleep=time.sleep, log=print, max_jobs: i
             for h in hosts:
                 n = _count(count, h)
                 ns.append(n)
-                if n < max_jobs_on(h, max_jobs):
+                if n < max_jobs_on(h, max_jobs, caps):
                     break
             else:
                 fcntl.flock(f, fcntl.LOCK_UN)
                 if not waited:
                     log("[tourney] build hosts busy (" + ", ".join(
-                        f"{h} {n}/{max_jobs_on(h, max_jobs)}" for h, n in zip(hosts, ns)) +
+                        f"{h} {n}/{max_jobs_on(h, max_jobs, caps)}" for h, n in zip(hosts, ns)) +
                         " Vivado jobs): waiting")
                     waited = True
                 sleep(poll)

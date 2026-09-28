@@ -400,6 +400,15 @@ def test_acquire_takes_hosts_in_order(tmp_path, monkeypatch):
         assert h == "b"
 
 
+def test_acquire_hosts_file_overrides(tmp_path, monkeypatch):
+    monkeypatch.setattr(RM, "START_LOCK", tmp_path / "v.lock")
+    monkeypatch.setattr(RM, "HOSTS_FILE", tmp_path / "hosts")
+    monkeypatch.setattr(RM, "HOSTS", ["a"])
+    (tmp_path / "hosts").write_text("hosts=a,b\njobs=a=1,b=1\n")
+    with RM.acquire(count=lambda h: 1 if h == "a" else 0, max_jobs=2) as (h, n):
+        assert (h, n) == ("b", 0)                  # a is at its file cap of 1
+
+
 def test_acquire_serializes_starts(tmp_path, monkeypatch):
     """Two threads see room for one more job; the start lock makes the second re-count after
     the first has started (count goes 1 -> 2 once a job is started)."""
