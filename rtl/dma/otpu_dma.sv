@@ -7,8 +7,13 @@
 //   LD  the chunks are requested ahead into a DEPTH-chunk buffer (block RAM). A chunk's slot is
 //       reserved when it is requested, so read data (which cannot be refused) always has room.
 //       A segment leaves the buffer through its registered read and the TMEM write register.
-//   ST  the segments read from TMEM are gathered into a chunk register; a chunk is written once,
-//       word-masked, with its last segment in range (that segment comes straight from TMEM).
+//   ST  the segments read from TMEM are gathered into a chunk register; a chunk is complete
+//       with its last segment in range (that segment comes straight from TMEM) and goes, with
+//       its word mask, into the LD chunk buffer (idle during an ST). The buffered chunks are
+//       written in runs of SRUN (the rest at the end) on consecutive cycles: the DMA has
+//       priority on port B, so no MXU read comes between them, and the DRAM sees one read /
+//       write turnaround per run instead of one per chunk (a chunk every SPC cycles, the MXU's
+//       weight reads in between).
 //   DSTEP one Gated DeltaNet head step on an fp32 state in DRAM (docs/isa.md), updated in place:
 //       q | k, v, the decay and beta are first read from TMEM into the datapath (otpu_dstep);
 //       then the state's chunks are requested like an LD's and their segments fed to the
@@ -86,7 +91,9 @@ module otpu_dma
   logic [PW-1:0] wp, rp;               // buffer slot of the next chunk received / delivered
   logic ds_wreq, ds_eat;                                    // DSTEP: a chunk write; a chunk used
   wire ld_act = busy && !is_st && !ackw;
-  localparam int RUN = 16;                            // DSTEP: chunks per DRAM read / write run
+  localparam int RUN = 64;                            // DSTEP: chunks per DRAM read / write run
+  localparam int SRUN = 32;                           // ST: chunks per write run (<= DEPTH)
+  initial if (SRUN > DEPTH) $fatal(1, "otpu_dma: SRUN > DEPTH");
   logic ds_rr;                                        // DSTEP: inside a read run
   logic [$clog2(RUN)-1:0] ds_rc;                      // ... its chunks issued
   wire ld_req = ld_act && (cleft != 0) && (occ != (PW+1)'(DEPTH)) &&
@@ -98,10 +105,19 @@ module otpu_dma
   // block RAM, written in its own reset-free process (see otpu_mxu); read every cycle
   (* ram_style = "block" *) logic [D*8-1:0] lb [DEPTH];
   logic [D*8-1:0] lb_q;
+  // ST: a complete chunk (st_push: its data st_cd, word mask st_cm) into the buffer at wp;
+  // a write run (st_wq) issues the chunk at rp, and the buffer's read follows the next one
+  logic           st_push, st_iss, st_wq;
+  logic [D*8-1:0] st_cd;
+  logic [CW-1:0]  st_cm;
+  (* ram_style = "distributed" *) logic [CW-1:0] lm [DEPTH];
   always_ff @(posedge clk) begin
     if (b_rvalid) lb[wp] <= b_rdata;
-    lb_q <= lb[rp];
+    else if (st_push) lb[wp] <= st_cd;
+    lb_q <= lb[st_iss ? rp + 1'b1 : rp];
   end
+  always_ff @(posedge clk)
+    if (st_push) lm[wp] <= st_cm;
   // ---- DSTEP
   localparam int NGC = 2 * RUN;                      // output gather (chunks)
   localparam int NG = NGC * SPC;                     // ... in segments
@@ -247,21 +263,26 @@ module otpu_dma
   logic                   st_pend, pl;
   (* max_fanout = 64 *) int pp;   // selects every data bit of b_wdata: replicated
   logic [W-1:0]           pm;
-  logic [31:0]            pc;
   logic [CW-1:0][31:0]    cb;
   logic [CW-1:0]          cbm;
-  wire st_wr = st_pend && pl;                       // the chunk's write request
-  wire adv   = !st_wr || b_gnt;                     // the read -> write pipeline moves
+  logic                   st_fin;                   // every chunk is in the buffer
+  logic [PW:0]            st_wn;                    // chunks left in the write run
+  wire st_wr = st_pend && pl;                       // the chunk is complete
+  wire adv   = !st_wr || (occ != (PW+1)'(DEPTH));   // the read -> buffer pipeline moves
   wire st_rd = busy && is_st && !ackw && (sleft != 0) && adv;
+  assign st_push = busy && is_st && !ackw && st_wr && adv;
+  assign st_iss  = st_wq && b_gnt;
 
   always_comb begin
     b_req = ld_req; b_we = 1'b0; b_addr = ic;
     t_ren = '0; t_raddr = '0;
     for (int p = 0; p < SPC; p++)
       for (int l = 0; l < W; l++) begin
-        b_wmask[p * W + l] = cbm[p * W + l] || (pp == p && pm[l]);
-        b_wdata[32 * (p * W + l) +: 32] = (pp == p) ? t_rdata[l] : cb[p * W + l];
+        st_cm[p * W + l] = cbm[p * W + l] || (pp == p && pm[l]);
+        st_cd[32 * (p * W + l) +: 32] = (pp == p) ? t_rdata[l] : cb[p * W + l];
       end
+    b_wmask = lm[rp];
+    b_wdata = lb_q;
     if (ds_wreq) begin                    // DSTEP: the head chunk of the gather
       b_req = 1'b1;
       b_we = 1'b1;
@@ -278,8 +299,8 @@ module otpu_dma
         t_raddr[l] = fk_a + 32'(l);
       end
     if (busy && is_st && !ackw) begin
-      b_addr = pc;
-      if (st_wr) begin
+      b_addr = ic;
+      if (st_wq) begin
         b_req = 1'b1;
         b_we = 1'b1;
       end
@@ -315,6 +336,7 @@ module otpu_dma
       dv_v <= 1'b0;
       busy <= 1'b0;
       st_pend <= 1'b0;
+      st_wq <= 1'b0;
       ackw <= 1'b0;
       ds_wr <= 1'b0;
       ds_rr <= 1'b0;
@@ -366,6 +388,8 @@ module otpu_dma
       cleft <= (n + (oc + (CW - 1))) >> CWL;
       occ <= '0; cnt <= '0; wp <= '0; rp <= '0;
       st_pend <= 1'b0;
+      st_wq <= 1'b0;
+      st_fin <= 1'b0;
       cbm <= '0;
       ackw <= 1'b0;
       if (cmd.w3 == 0) done <= 1'b1;
@@ -445,23 +469,40 @@ module otpu_dma
           busy <= 1'b0;
           ld_fin <= 1'b1;
         end
-      end else if (adv) begin
-        if (st_pend) begin
-          if (pl) cbm <= '0;                    // the chunk's write is taken this cycle
-          else
-            for (int l = 0; l < W; l++) begin
-              cb[pp * W + l] <= t_rdata[l];
-              cbm[pp * W + l] <= pm[l];
-            end
+      end else begin
+        // the buffer: complete chunks in, write runs out (chunk addresses from ic, in order).
+        // A run starts once SRUN chunks are in (or all of them are), counted a cycle late so
+        // that its chunks' buffer writes have landed before the reads that follow them
+        occ <= occ + (PW+1)'(st_push) - (PW+1)'(st_iss);
+        if (st_push) wp <= wp + 1'b1;
+        if (st_iss) begin
+          rp <= rp + 1'b1;
+          ic <= ic + CW;
+          st_wn <= st_wn - 1'b1;
+          if (st_wn == 1) st_wq <= 1'b0;
         end
-        st_pend <= st_rd;
-        pp <= pos_of(sw);
-        pm <= sm;
-        pc <= sw & ~32'(CW - 1);
-        pl <= seg_end;
-        if (st_pend && sleft == 0) begin        // the last write is taken this cycle
-          st_pend <= 1'b0;
-          ackw <= 1'b1;
+        if (!st_wq && (occ >= (PW+1)'(SRUN) || (st_fin && occ != 0))) begin
+          st_wq <= 1'b1;
+          st_wn <= occ;
+        end
+        if (st_fin && !st_wq && occ == 0) ackw <= 1'b1;
+        if (adv) begin
+          if (st_pend) begin
+            if (pl) cbm <= '0;                  // the chunk goes into the buffer this cycle
+            else
+              for (int l = 0; l < W; l++) begin
+                cb[pp * W + l] <= t_rdata[l];
+                cbm[pp * W + l] <= pm[l];
+              end
+          end
+          st_pend <= st_rd;
+          pp <= pos_of(sw);
+          pm <= sm;
+          pl <= seg_end;
+          if (st_pend && sleft == 0) begin      // the last chunk goes into the buffer
+            st_pend <= 1'b0;
+            st_fin <= 1'b1;
+          end
         end
       end
     end

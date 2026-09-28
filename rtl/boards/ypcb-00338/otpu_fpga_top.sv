@@ -26,7 +26,8 @@ module otpu_fpga_top #(
   parameter logic [31:0] BUILD_ID = 32'h0,  // the git commit (BUILD_ID register)
   parameter int DDR_MTS = 0,                // the DDR3 data rate the MIGs run (DDR_MTS register)
   parameter bit DSTEP = 1'b1,               // the DMA's DSTEP datapath (CAPS bit6; 0: left out)
-  parameter int AXI_BL = 8                  // port B read burst, beats (otpu_axi_dram; 1 .. 64)
+  parameter int AXI_BL = 8,                 // port B read burst, beats (otpu_axi_dram; 1 .. 64)
+  parameter int AXI_WBL = 8                 // port B write burst, beats (1 .. 8: bd.tcl's MAX_BURST_LENGTH)
 ) (
   // board
   input  logic        SYS_CLK,              // 50 MHz, AA28
@@ -142,7 +143,7 @@ module otpu_fpga_top #(
   IOBUF u_iob_sda1 (.IO(smb_sda),  .I(1'b0), .T(!i2c_lo[3]), .O(i2c_lvl[3]));
 
   logic [2:0] board_led;
-  otpu_board #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .LANES(LANES), .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .DSTEP(DSTEP), .AXI_BL(AXI_BL)) u_board (
+  otpu_board #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .LANES(LANES), .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .DSTEP(DSTEP), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL)) u_board (
     .clk(core_clk), .rst(core_rst), .calib, .temp(device_temp), .led(board_led),
     .i2c_lo, .i2c_pin({lm73_alert_n, i2c_lvl}),
     .s_ctl_awaddr(ctl_awaddr[11:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),
