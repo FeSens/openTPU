@@ -647,6 +647,37 @@ def test_axi_scale_runs(have_verilator, stall, seed):
     assert ar_a < scale_beats // 3, (ar_a, scale_beats)
 
 
+# The DMA's chunk writes (an ST; a DSTEP's state write-back) beside the MXU's scale stream: writes
+# to other addresses leave the scale runs alone, a write into scales that a run may hold drops
+# it (and every run fetched while the writes were outstanding), under random stalls: bit-exact,
+# and still far fewer A transactions than scale beats (a B write once dropped every run).
+@pytest.mark.parametrize("stall,seed", [(0, 1), (40, 2), (70, 3)])
+def test_axi_scale_runs_beside_dma_writes(have_verilator, stall, seed):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8600 + seed)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    SC, W, OUT = 0x20000, 0x40000, 0x80000         # scales (fp32), weights (int8), ST target
+    img[SC:SC + 4 * 4096] = (rng.random(4096, dtype=np.float32) + 0.5).view(np.uint8)
+    img[:4 * 2 * 4 * D * 4] = rng.standard_normal(2 * 4 * D * 4).astype(np.float32).view(np.uint8)
+    T = 24576                                      # TMEM words the STs write from
+    N, KB = 300, 4
+    mm = lambda out: I.mm(W, SC, out, N, KB, KB * D, N + 2, 2, 0, 4 * KB)    # noqa: E731
+    prog = [I.ld(0, 0, 2 * 4 * D * 4), I.qact(0, 2, 0, KB, 4 * D),
+            I.ld(0x60000, T, 2048), mm(4096)]
+    prog += [I.st(OUT + 8192 * j, T, 2048) for j in range(6)]    # beside the MMs: elsewhere
+    prog += [mm(8192), I.st(SC + 4096, T, 64),                    # into the scales mm 3 reads
+             mm(12288), I.st(OUT + 0x10000, T, 2048), mm(16384), I.halt()]
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                  seed=seed, uarch=rtlsim.BOARD_UARCH, plusargs=["+axi_dram=1"])
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    ar_a = sum(d["ar_a"] for d in st["axi_detail"])
+    scale_beats = 4 * N * KB * 4 // 64
+    assert ar_a < scale_beats // 3, (ar_a, scale_beats)
+
+
 def test_tmem_random_traffic(have_verilator):
     """TMEM alone against a reference model; most reads hit the previous cycle's writes, which
     are still in TMEM's registered write stage (the bypass)."""

@@ -28,14 +28,15 @@
 // past the read point, and a read waits while its bucket's count is not zero (a collision only
 // delays it). The queue's writes wait while its reads are still going out (unless it is half
 // full), so the controller sees runs of reads, then runs of writes. A reads that fall in the beat of the previous A read (the MXU's scale stream:
-// 16 scales per beat) reuse it without a DRAM access, until any write is accepted. An A read that
-// misses fetches a run of up to APF channel-consecutive beats (one INCR burst, not across 4 KB);
-// the A reads that follow the run in order take its beats without a DRAM access, and a read off
-// the run (or after a B or A write) drops the beats not yet taken. An SW write drops the run
-// (and the reused beat) only when it touches them: checked when the write is taken and again
-// when its beat is in memory (a run fetched in between read the old beat), so the QSTs that
-// stream while an MM runs do not cost its scale stream its runs. (A read that depends on a QST
-// comes after the QST is done, i.e. after its writes' responses.) The scale stream thus costs
+// 16 scales per beat) reuse it without a DRAM access. An A read that misses fetches a run of up
+// to APF channel-consecutive beats (one INCR burst, not across 4 KB); the A reads that follow the
+// run in order take its beats without a DRAM access, and a read off the run (or after an A
+// write) drops the beats not yet taken. An SW or a B write drops the run (and the reused beat)
+// only when it touches them: an SW's checked when the write is taken and again when its beat is
+// in memory (a run fetched in between read the old beat); a B write's when it is taken, and
+// every run is dropped once all B writes have their responses. So the QSTs that stream while
+// an MM runs, and DSTEP's state write-back, do not cost its scale stream its runs. (A read that
+// depends on a QST or a B write comes after its writes' responses.) The scale stream thus costs
 // one AXI transaction per APF beats instead of one per beat.
 // Port B reads that follow each other in the address space (a streamed operand) are issued as
 // one burst per channel: a run of queued contiguous reads goes out once it has BL beats, once
@@ -254,6 +255,23 @@ module otpu_axi_dram #(
                           (ld && al_beat == {lb, c[0] ^ (CHASH && ^lb)}));
     end
   end
+  // A B write (a DMA ST's or DSTEP's chunk) drops channel c's run, or the reused beat, only
+  // when its chunk is in them (bw_kr, bw_ka): a DSTEP's state write-back leaves the MXU's scale
+  // runs alone. A run fetched while B writes are outstanding may hold a beat from before one of
+  // them lands, so all runs are dropped once every B write has its response (bw_clean); a read
+  // that depends on a B write comes after it (an ST or a DSTEP completes on wr_idle), so after
+  // that drop.
+  logic [1:0]   bw_kr;
+  logic         bw_ka;
+  wire  [26:0]  b_cb = b_addr[31:5];              // the B chunk: its beat on either channel
+  always_comb begin
+    for (int c = 0; c < 2; c++)
+      bw_kr[c] = b_take && b_we && pv[c] && 27'(b_cb - pnx[c]) < 27'(pfl[c]);
+    bw_ka = b_take && b_we && al_v && al_beat[27:1] == b_cb;
+  end
+  logic [15:0]  bw_n;                            // B writes accepted and not answered (ID 0)
+  logic         bw_dirty;                        // runs may have been fetched meanwhile
+  wire          bw_clean;
   wire  [3:0]   a_len = (7'd64 - {1'b0, a_cb[5:0]} < 7'(APF)) ? 4'(7'd64 - {1'b0, a_cb[5:0]})
                                                                : 4'(APF);
 
@@ -446,6 +464,7 @@ module otpu_axi_dram #(
   logic [15:0] wr_n;
   logic [4:0]  wacc_q;
   assign wr_idle = (wr_n == 0) && (wacc_q == '0) && (gv == '0);
+  assign bw_clean = bw_dirty && (bw_n == 0) && (wacc_q[1:0] == '0);
 
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -462,6 +481,7 @@ module otpu_axi_dram #(
       al_v <= 1'b0;
       pv <= '0; pfl[0] <= '0; pfl[1] <= '0;
       wr_n <= '0; wacc_q <= '0;
+      bw_n <= '0; bw_dirty <= 1'b0;
       gv <= '0; gage[0] <= '0; gage[1] <= '0;
       aw_done <= '0; w_done <= '0; wcur <= '0;
       arh <= '0; arh_w <= '0; lb_rd <= 1'b0;
@@ -616,6 +636,10 @@ module otpu_axi_dram #(
         rb_n[c] <= rbn; rb_res[c] <= rbr; ra_n[c] <= ran; ra_res[c] <= rar;
       end
       wr_n <= wr_n + {{11{wn[4]}}, wn};
+      bw_n <= bw_n + 16'(wacc_q[0]) + 16'(wacc_q[1]) - 16'(m_bvalid[0] && !m_bid[0])
+                   - 16'(m_bvalid[1] && !m_bid[1]);
+      if (wacc_q[1:0] != '0) bw_dirty <= 1'b1;
+      else if (bw_clean) bw_dirty <= 1'b0;
       // ---- order FIFOs
       begin
         logic [OW:0] btn, aon;
@@ -667,9 +691,9 @@ module otpu_axi_dram #(
           pv[a_ch] <= 1'b1;
         end
       end
-      for (int c = 0; c < 2; c++) if (sw_kr[c]) pv[c] <= 1'b0;
-      if ((b_take && b_we) || (a_take && a_we)) pv <= '0;
-      if ((b_take && b_we) || (a_take && a_we) || (|sw_ka)) al_v <= 1'b0;
+      for (int c = 0; c < 2; c++) if (sw_kr[c] || bw_kr[c]) pv[c] <= 1'b0;
+      if ((a_take && a_we) || bw_clean) pv <= '0;
+      if ((a_take && a_we) || (|sw_ka) || bw_ka || bw_clean) al_v <= 1'b0;
       else if (a_take && !a_we) begin
         al_v <= 1'b1;
         al_beat <= a_beat;
