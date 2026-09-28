@@ -203,7 +203,8 @@ def record_card(a) -> list:
     tr = XdmaTransport(a.dev)
     cfg = device_config(Board(tr, lock=False).info())
     eng = Engine(spec, load_weights(model), cap=cap, cfg=cfg, pipeline="thread",  # programs
-                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model.name))
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model.name),
+                 wformat=a.wformat, head_format=a.head_format)
     return _record_engine(eng, ids, pos0, a, f"{model.name} on {a.dev}")
 
 
@@ -290,6 +291,10 @@ def main(argv=None) -> int:
     r.add_argument("--workload", default="mlp-small",
                    help="--sim: a kernel workload of `lens list`, or qwen-tiny")
     r.add_argument("--open", action="store_true", help="open the app afterwards")
+    r.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4"],
+                   help="weight format of the layers (docs/quant.md)")
+    r.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
+                   help="weight format of the LM head (default: --wformat)")
     for c in PASS:
         sub.add_parser(c, help=f"-> python -m opentpu.lens {c}")
     a = ap.parse_args(argv)

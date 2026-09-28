@@ -151,6 +151,7 @@ def main():
     ap.add_argument("--block", type=int, default=None, help="attention block (tokens)")
     ap.add_argument("--depth", type=int, default=None, help="attention score blocks in flight")
     ap.add_argument("--check", action="store_true", help="compare with the ISA simulator")
+    ap.add_argument("--dump", help="write the run's Lens profile data (lens.to_data) as JSON")
     ap.add_argument("--resident", action="store_true",
                     help="the resident decode program of pos's bucket (run arguments, inputs "
                          "from the image's tables; qwen3.compile_decode)")
@@ -335,6 +336,10 @@ def main():
         if run and run[2] > 300:
             print(f"  idle {run[2]:6d} in [{run[0]}, {run[1]}]")
         print(f"  port-B idle cycles total {tot}")
+    if a.dump:
+        import json
+        from opentpu import lens as L
+        Path(a.dump).write_text(json.dumps(L.to_data(p)))
     if a.check:
         m = Machine(cfg, [progs[0]], [dram.copy()], args)
         m.run()
