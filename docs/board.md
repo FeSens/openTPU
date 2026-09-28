@@ -272,6 +272,65 @@ passes every check that the model can run. What the model cannot show: MIG calib
 controllers' read-modify-write of partial writes (the model applies byte strobes directly),
 PCIe, the DMA rate and the real DRAM latency.
 
+### Qualifying a bitstream
+
+A candidate bitstream becomes the resting image only after `tools/qual/qual.sh` passes on the
+card. It runs from the host tree it lives in, under the card lock, and leaves the candidate on
+the card (`REST=path/otpu.bit` leaves another):
+
+```sh
+otpu-lock --wait 3600 -- bash tools/qual/qual.sh deploy_bl32mx120_be388a32         # fast
+otpu-lock --wait 3600 -- bash tools/qual/qual.sh deploy_bl32mx120_be388a32 full    # full
+```
+
+| Phase | fast | full |
+|:--|:--|:--|
+| load, `otpu-selftest` (with the RDOT / OUTER / LOG2 op checks) | yes | yes |
+| ISA references (background, `tools/qual/refs.py compute`) | yes | yes |
+| `otpu-diag --mem full --soak 20` cold (march C-, 2 x 2.6 min) | - | yes |
+| prefill 512 tokens + decode counters (`tools/qual/perf.py`), 6 configurations | yes | yes |
+| streamed decode (`tools/decode_profile.py`, 96 tokens) | 4-bit | all 6 |
+| `tools/rw_bench.py` | - | yes |
+| warm soak (continuous Qwen3 decode) | 3 min | 5 min |
+| `otpu-diag --soak 20`, warm | quick memory test | march C- |
+| after the soak: token-exact against the ISA simulator, 6 configurations, per-position and resident decode | yes | yes |
+| final `otpu-selftest` (after loading `REST` if set) | yes | yes |
+
+Every phase prints its duration; the table of phases is at the end and in `$OUT/phases.tsv`
+(`/tmp/qual-<deploy>`), with every PASS / FAIL line in `$OUT/checks.txt`. The fast profile is
+meant for images that change timing or the DRAM path; use `full` for a new production
+candidate after RTL changes to the MXU, VPU or memory system, and whenever fast finds anything.
+
+The ISA references (greedy tokens of the ISA simulator, 32 tokens per configuration) are what
+costs time when they are not cached: 0.5 to 10 minutes each, 20 minutes for the six on a loaded
+omarchy. `tools/qual/refs.py` caches them by content: the sources of the `opentpu` package
+without `opentpu/host` (the card's host code; the simulator configuration it computes is hashed
+as a value), the configuration, the checkpoint, the formats and the token count. A host-only
+change (a poll fix, a new tool) reuses them; any compiler, kernel or simulator change computes
+new ones. The key holds no path or machine, so they can be computed ahead on any box and
+copied:
+
+```sh
+python3 tools/qual/refs.py compute ~/otpu-build/refcache/configs/deploy_bl16mx120_be388a1f.pkl
+rsync -a ~/otpu-build/refcache/ omarchy:otpu-build/refcache/    # from another box
+```
+
+(`qual.sh` keeps each card's configuration as `$REFCACHE/configs/<deploy>.pkl`; a new build with
+the same D, MCOLS, LANES, PAIR, DSTEP and ACT_ROWS has the same one.) On the Mac the six
+compute in 6.4 minutes one at a time (Qwen3.5 4-bit 139 s, LFM2 int8 11 s), against about 20
+minutes three at a time on a busy omarchy (Qwen3.5 4-bit 620 s), and give the same tokens
+(checked for all six against omarchy's references of 2026-09-28).
+
+A card check never waits for a reference nobody is computing: a job in progress keeps a
+`.pending` file with its pid and a heartbeat, a failed job leaves a `.failed` file with the
+reason, and `refs.py card` fails at once when the reference is missing, its job died (the OOM
+killer: `killed by signal 9`) or its heartbeat stopped. `compute` starts a job only while
+`MemAvailable` covers its recorded peak memory plus 4 GiB, and runs one job fewer per Vivado
+build on the box. (Before this, a reference job killed by the OOM killer beside two Vivado
+builds left the card check polling for an hour.) References computed during the session load
+the host while the prefill and decode phases measure wall time: for wall numbers that go into
+a table, compute the references first.
+
 ### First light (measured on the card, 2026-09-26)
 
 Build 74d48591 (the primary image), Arch Linux 7.1 host, Xilinx dma_ip_drivers XDMA (poll mode),
@@ -512,6 +571,47 @@ The tightest inter-clock paths are inside the MIG: ui_clk to the ISERDES clocks,
 own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds otpu.bit,
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
+
+**BL16 candidate (2026-09-28): `~/otpu-build/deploy_bl16mx120_be388a1f`** (omarchy; branch
+tv-cand2 be388a1: main 6e2605b + lfm2-cycles 6fb2851 (port B read bursts up to 64 beats) +
+the tournament's MXU / adapter timing fixes (q_tz from its factors, dg1 registered, the port-A
+return registered, DSTEP fill and RMAX drain registered), built with `AXI_BL=16`. Core clock
+120.755 MHz, DDR3-1066, WNS +0.048 ns, WHS +0.013 ns. It becomes the production image once
+be388a1's full test suite passes. The fallback is `deploy_bl16_fb2b6630` (lfm2-cycles fb2b663,
+AXI_BL=16 without the timing fixes, WNS +0.003 ns after an ExtraTimingOpt re-implementation).
+It also passed the checks below (05:44-06:44).
+
+Qualified on the card 2026-09-28 06:46-07:43 (host tree host-8efceb7):
+- selftest with the 12 op checks passes;
+- `otpu-diag --mem full --soak 20` passes cold (57 °C) and after a 305 s warm soak (63 -> 64 °C):
+  isa 93, system 5, mem 13;
+- all 6 configurations are token for token equal to the ISA simulator, before and after the
+  soak;
+- resident decode is equal to the per-position programs (64 greedy tokens, Qwen3 and LFM2 at
+  both formats).
+
+Device numbers from the same session: decode Mcycles/token from `tools/decode_profile.py`
+(greedy, 96 tokens, streamed logits); DRAM from the counters over 64 tokens; prefill from a
+512-token prompt. The wall columns are left out: omarchy's load was 11-14 during the session
+(2 Vivado builds and a test suite).
+
+| Model | Weights | Mcycles/token | device tok/s | prefill device tok/s | DRAM read per token | DRAM while decoding | vs aebb0bf0 (device) |
+|---|---|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | 2.060 | 58.63 | 157.5 | 245 MB | 14.02 GB/s (82%) | +5.2% |
+| Qwen3-0.6B | int8 | 5.456 | 22.13 | 53.6 | 663 MB | 13.99 GB/s (82%) | +5.3% |
+| Qwen3.5-0.8B | int8 | 7.515 | 16.07 | 38.1 | 811 MB | 13.27 GB/s (78%) | +4.6% |
+| LFM2.5-230M | 4-bit, int8 head | 1.382 | 87.40 | 169.3 | 164 MB | 13.78 GB/s (81%) | +5.1% |
+| Qwen3-0.6B | 4-bit, int8 head | 3.631 | 33.26 | 58.1 | 443 MB | 13.75 GB/s (81%) | +4.9% |
+| Qwen3.5-0.8B | 4-bit, int8 head | 5.478 | 22.04 | 40.7 | 562 MB | 12.73 GB/s (75%) | +4.1% |
+
+`tools/rw_bench.py` on it: the weight stream alone runs at 119.5 B/cycle (74,591 cycles; hp-wb
+113.3), mm+st at 213,612 cycles, mm+dstep at 155,425, dstep at 91,438.
+
+HALTED probe, LFM2 4-bit. With the normal poll, the host saw HALTED 0.35-0.86 ms after the run's
+end on the loaded host, for 80.2 wall tok/s. With the poll reading back to back from the run's
+start (`spin_probe`), it saw HALTED 0.023 ms after the end, for 84.1 wall tok/s with the host
+equally loaded. So the overshoot is the host's sleep waking up late, not the card.
+lfm2-cycles therefore starts the back-to-back reads earlier: POLL_EARLY 0.5 ms + 1% -> 1.5 ms + 3%.
 
 **Production image (2026-09-28): `build/deploy_prod120hp_aebb0bf0`** (branch host-path-fx aebb0bf:
 the host-path target (the 4-bit MXU with PAIR, r7-apf's DRAM path (64-entry store queue,
