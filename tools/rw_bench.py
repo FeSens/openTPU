@@ -103,10 +103,6 @@ def main(argv=None) -> int:
     ap.add_argument("--mhz", type=float, default=120.755)
     ap.add_argument("--dev", default="/dev/xdma0")
     ap.add_argument("--json")
-    ap.add_argument("--bl", type=int, default=8, help="sim: the AXI read burst, beats")
-    ap.add_argument("--plus", action="append", default=[],
-                    help="sim: extra simulator argument, overriding the calibrated ones "
-                         "(e.g. --plus +axi_wgap=100; repeatable)")
     a = ap.parse_args(argv)
     n_mm = max(1, round(a.mb * MB / (R * Q.row_bytes(H, "fp4", 128))))
     n_dma = {"st": 64, "ld": 64, "dstep": 32}
@@ -134,10 +130,10 @@ def main(argv=None) -> int:
                 cyc = st["cycles"]
             else:
                 mts = 3200 / 3
-                _, _, st = rtlsim.run(cfg, [prog], [img], uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl},
+                _, _, st = rtlsim.run(cfg, [prog], [img], uarch={**rtlsim.BOARD_UARCH, "AXI_BL": 8},
                                       axi=True, boot=True, stall=0, bw=100,
                                       lat=round(0.3 * a.mhz), arc=4, max_cycles=1 << 40,
-                                      plusargs=a.plus + ddr3_plusargs(mts, a.mhz))
+                                      plusargs=ddr3_plusargs(mts, a.mhz))
                 cyc = st["cycles"]
             mmb = (n_mm * R * (Q.row_bytes(H, "fp4", 128) + 4 * (H // 128))) if "mm" in mode else 0
             dmab = nd * 4 * NS * NS * (2 if mode.endswith("dstep") else 1)
