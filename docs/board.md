@@ -130,7 +130,10 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_prod120hp_aebb0bf0/otpu.bit`** (production, 2026-09-28) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | aebb0bf (host-path: 4-bit MXU with PAIR, r7 DRAM path, replay, resident decode run arguments (CAPS bit25), DSTEP, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.004 ns, WHS +0.016 ns |
+| **`build/deploy_pnbl32_e2521032/otpu.bit`** (production, 2026-09-28 afternoon) | `make bit DDR=1066 CORE_MHZ=120.755` (AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8) | prod-next e252101 (be388a1 + Qwen3.5 resident decode + DSTEP / ST write runs + AXI write bursts + the port-A order register), 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.013 ns, WHS +0.021 ns |
+| `build/deploy_bl32mx120_be388a32/otpu.bit` (production 2026-09-28 11:00 until the afternoon) | `make bit DDR=1066 CORE_MHZ=120.755 AXI_BL=32` (MCOLS=2, LANES=8) | be388a1 (tv-cand2: main + port B read bursts up to 64 beats + the MXU / adapter timing fixes), 32-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.066 ns, WHS +0.016 ns |
+| `build/deploy_bl16mx120_be388a1f/otpu.bit` (production 2026-09-28 morning) | as above, `AXI_BL=16` | be388a1, 16-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.048 ns, WHS +0.013 ns |
+| `build/deploy_prod120hp_aebb0bf0/otpu.bit` (production 2026-09-28 until the morning) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | aebb0bf (host-path: 4-bit MXU with PAIR, r7 DRAM path, replay, resident decode run arguments (CAPS bit25), DSTEP, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.004 ns, WHS +0.016 ns |
 | `build/deploy_prod120fp4_ea3bc560/otpu.bit` (production 2026-09-27 evening) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | ea3bc56 (4-bit MXU with PAIR, fmax fixes, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.149 ns, WHS +0.016 ns |
 | `build/deploy_prod120_b01b8acb/otpu.bit` (production 2026-09-27 afternoon, int8 only) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | b01b8ac (fmax fixes; section 5, "Faster DDR3") | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.080 ns, WHS +0.016 ns |
 | `build/deploy_prod1066_b2c7ce43/otpu.bit` (previous production) | `make bit DDR=1066` at 100 MHz | b2c7ce4 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns |
@@ -191,7 +194,11 @@ so stop every program using the card first. After a power cycle the FPGA configu
 in time for enumeration: no JTAG and no rescan. Until then the card boots the image already in
 flash: on the development PC that image enumerates as 10ee:7028 with class 05 80 00 and a 2 MiB
 64-bit BAR (from dmesg at boot), is not openTPU, and `otpu-setup --check` says so. Not done on
-the card yet: the flash still holds that image.
+the card yet: the flash still holds that image. The first attempt (2026-09-28, openFPGALoader
+1.1.1) stopped before touching the flash: without `-b ypcb003381p1` it takes its SPI bridge,
+and `program.sh` now passes the board entry. [flash.md](flash.md) has the Vivado route
+(`flash_jtag.sh`: backup, program with verify, boot from flash), the byte order, and a proposal
+for writing the flash over PCIe with a golden image.
 
 ### After programming: PCIe
 
@@ -214,8 +221,10 @@ before that show class 07 00 01 (serial), subsystem 10ee:0007, revision 00. Veri
 Corporation Device [10ee:7028] (rev 01)`, subsystem `[10ee:4f54]`, and the driver binds it
 without the serial-port override.
 
-If the device does not appear, warm-reboot the host (the FPGA keeps its configuration across a
-warm reboot, as long as the slot power stays on), or write the flash, then power-cycle. If the
+If the device does not appear, `--rescan` retrains the link of the card's upstream port and
+rescans again ([host.md](host.md) section 3). If it is still missing, warm-reboot the host (the
+FPGA keeps its configuration across a warm reboot, as long as the slot power stays on), or write
+the flash, then power-cycle. If the
 link trains at a lower width, check `LnkSta` and the PCIe placement note in section 6.
 
 ## 3. Host setup and bring-up checklist
@@ -271,6 +280,67 @@ for token (Qwen3, LFM2 and Qwen3.5 at MCOLS=2; Qwen3 at MCOLS=4 VPU_CL=4); `otpu
 passes every check that the model can run. What the model cannot show: MIG calibration, the
 controllers' read-modify-write of partial writes (the model applies byte strobes directly),
 PCIe, the DMA rate and the real DRAM latency.
+
+### Qualifying a bitstream
+
+A candidate bitstream becomes the resting image only after `tools/qual/qual.sh` passes on the
+card. It runs from the host tree it lives in, under the card lock, and leaves the candidate on
+the card (`REST=path/otpu.bit` leaves another; `LOAD=0` loads nothing and qualifies the
+bitstream the card already runs: on opentpu a hot rescan after a JTAG reload once did not bring
+the link back, and a warm reboot did):
+
+```sh
+otpu-lock --wait 3600 -- bash tools/qual/qual.sh deploy_bl32mx120_be388a32         # fast
+otpu-lock --wait 3600 -- bash tools/qual/qual.sh deploy_bl32mx120_be388a32 full    # full
+```
+
+| Phase | fast | full |
+|:--|:--|:--|
+| load, `otpu-selftest` (with the RDOT / OUTER / LOG2 op checks) | yes | yes |
+| ISA references (background, `tools/qual/refs.py compute`) | yes | yes |
+| `otpu-diag --mem full --soak 20` cold (march C-, 2 x 2.6 min) | - | yes |
+| prefill 512 tokens + decode counters (`tools/qual/perf.py`), 6 configurations | yes | yes |
+| streamed decode (`tools/decode_profile.py`, 96 tokens) | 4-bit | all 6 |
+| `tools/rw_bench.py` | - | yes |
+| warm soak (continuous Qwen3 decode) | 3 min | 5 min |
+| `otpu-diag --soak 20`, warm | quick memory test | march C- |
+| after the soak: token-exact against the ISA simulator, 6 configurations, per-position and resident decode | yes | yes |
+| final `otpu-selftest` (after loading `REST` if set) | yes | yes |
+
+Every phase prints its duration; the table of phases is at the end and in `$OUT/phases.tsv`
+(`/tmp/qual-<deploy>`), with every PASS / FAIL line in `$OUT/checks.txt`. The fast profile is
+meant for images that change timing or the DRAM path; use `full` for a new production
+candidate after RTL changes to the MXU, VPU or memory system, and whenever fast finds anything.
+
+The ISA references (greedy tokens of the ISA simulator, 32 tokens per configuration) are what
+costs time when they are not cached: 0.5 to 10 minutes each, 20 minutes for the six on a loaded
+omarchy. `tools/qual/refs.py` caches them by content: the sources of the `opentpu` package
+without `opentpu/host` (the card's host code; the simulator configuration it computes is hashed
+as a value), the configuration, the checkpoint, the formats and the token count. A host-only
+change (a poll fix, a new tool) reuses them; any compiler, kernel or simulator change computes
+new ones. The key holds no path or machine, so they can be computed ahead on any box and
+copied:
+
+```sh
+python3 tools/qual/refs.py compute ~/otpu-build/refcache/configs/deploy_bl16mx120_be388a1f.pkl
+rsync -a ~/otpu-build/refcache/ omarchy:otpu-build/refcache/    # from another box
+```
+
+(`qual.sh` keeps each card's configuration as `$REFCACHE/configs/<deploy>.pkl`; a new build with
+the same D, MCOLS, LANES, PAIR, DSTEP and ACT_ROWS has the same one.) On the Mac the six
+compute in 6.4 minutes one at a time (Qwen3.5 4-bit 139 s, LFM2 int8 11 s), against about 20
+minutes three at a time on a busy omarchy (Qwen3.5 4-bit 620 s), and give the same tokens
+(checked for all six against omarchy's references of 2026-09-28).
+
+A card check never waits for a reference nobody is computing: a job in progress keeps a
+`.pending` file with its pid and a heartbeat, a failed job leaves a `.failed` file with the
+reason, and `refs.py card` fails at once when the reference is missing, its job died (the OOM
+killer: `killed by signal 9`) or its heartbeat stopped. `compute` starts a job only while
+`MemAvailable` covers its recorded peak memory plus 4 GiB, and runs one job fewer per Vivado
+build on the box. (Before this, a reference job killed by the OOM killer beside two Vivado
+builds left the card check polling for an hour.) References computed during the session load
+the host while the prefill and decode phases measure wall time: for wall numbers that go into
+a table, compute the references first.
 
 ### First light (measured on the card, 2026-09-26)
 
@@ -513,14 +583,207 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
-**BL16 candidate (2026-09-28): `~/otpu-build/deploy_bl16mx120_be388a1f`** (omarchy; branch
+**Production image (2026-09-28 afternoon): `build/deploy_pnbl32_e2521032`** (omarchy
+`~/otpu-build/`; branch prod-next e252101, built with `AXI_BL=32`, `AXI_WBL=8`, the
+ExtraTimingOpt implementation strategy, BUILD_ID e2521032). On top of be388a32's RTL:
+- the DMA writes an ST's chunks in runs of 32 on consecutive cycles (they gather in the LD chunk
+  buffer, idle during an ST), and DSTEP's state reads and write-backs in runs of 64 chunks
+  instead of 16, so the DRAM turns between reads and writes once per run, not once per chunk
+  between the MXU's weight reads (Qwen3.5 decode: 48K turnarounds per channel and token in the
+  simulator before, 7.3K after);
+- port B writes go out as AXI INCR bursts of up to 8 beats (AWLEN / WLAST, one write response
+  per burst);
+- a port B write drops the MXU's scale prefetch runs only when it writes into them;
+- the adapter's oldest pending A read (aoh) is a register, which took the order FIFO's LUT RAM
+  read off the port-A return path (the first build of this branch failed there at -0.469 ns).
+
+Core clock 120.755 MHz, DDR3-1066. Post-route WNS -0.132 ns, +0.013 ns after the post-route
+phys_opt; WHS +0.021 ns. The worst paths are the DMA's request (cleft) into the adapter's B
+queue count and run marks (qb_n, qc), 16-18 levels, +0.013 to +0.028 ns; then TMEM -> the DMA's
+chunk buffer at +0.048 ns. No Synth 8-6430 memory; congestion level 5 at most. The same RTL at
+`AXI_BL=16` (`~/otpu-build/deploy_pnbl16_e2521016`) meets timing too, WNS +0.012 ns, WHS +0.038 ns
+(worst: the write burst length FIFO's enable, 10 levels), and has not been on the card.
+
+Qualified on the card 2026-09-28 10:54-11:32 with `tools/qual/qual.sh deploy_pnbl32_e2521032
+full` (host tree prod-next e0315b4 = e252101 + main 27bdf62; the six ISA references computed
+ahead on the Mac in 6.5 min and copied; omarchy's load 1.2-1.5, nothing else running): 0 FAIL,
+32 PASS, 4 ALL PASS.
+- selftest with the 12 op checks passes;
+- `otpu-diag --mem full --soak 20` passes cold (54 °C) and after the 300 s warm soak;
+- all 6 configurations are token for token equal to the ISA simulator after the soak, with
+  per-position and resident decode.
+
+| Phase (full profile) | seconds |
+|---|---|
+| load + selftest | 18 |
+| ISA references (cached) | 3 |
+| diag cold, full march | 309 |
+| prefill + decode counters, 6 configurations | 371 |
+| decode_profile, 6 configurations | 323 |
+| rw_bench | 1 |
+| warm soak | 302 |
+| diag warm, full march | 306 |
+| token-exact after the soak, 6 x per-position + resident | 616 |
+| final selftest | 2 |
+| total | 38 min |
+
+Decode (`tools/decode_profile.py`, greedy, 96 tokens, streamed logits; "wall" is the whole run),
+against be388a32's device cycles from its A/B below:
+
+| Model | Weights | Mcycles/token | device tok/s | wall tok/s | be388a32 Mcycles | change |
+|---|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | 1.992 | 60.61 | 59.30 | 2.008 | -0.8% |
+| Qwen3-0.6B | int8 | 5.300 | 22.78 | 22.68 | 5.324 | -0.5% |
+| Qwen3.5-0.8B | int8 | 6.876 | 17.56 | 17.47 | 7.415 | -7.3% |
+| LFM2.5-230M | 4-bit, int8 head | 1.339 | 90.21 | 87.02 | 1.353 | -1.0% |
+| Qwen3-0.6B | 4-bit, int8 head | 3.524 | 34.26 | 34.03 | 3.555 | -0.9% |
+| Qwen3.5-0.8B | 4-bit, int8 head | 4.899 | 24.65 | 24.40 | 5.400 | -9.3% |
+
+The host's critical path is 0.21-0.30 ms per token; HALTED is seen 0.005-0.22 ms after the run's
+end. The fitted DDR3 model (lfm2-cycles 71b55e1, at BL16) projected 4.98 Mcycles for Qwen3.5
+4-bit with this RTL.
+
+Prefill (a 512-token prompt; wall includes compiling each chunk on the host) and DRAM (the
+card's counters over 64 decode tokens, `tools/qual/perf.py`):
+
+| Model | Weights | prefill device tok/s | prefill wall tok/s | DRAM read per token | DRAM write per token | DRAM while decoding |
+|---|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | 161.5 | 97.4 | 245 MB | 0.54 MB | 14.45 GB/s (85%) |
+| Qwen3-0.6B | int8 | 55.0 | 51.7 | 662 MB | 2.50 MB | 14.41 GB/s (84%) |
+| Qwen3.5-0.8B | int8 | 44.1 | 39.5 | 810 MB | 21.40 MB | 14.50 GB/s (85%) |
+| LFM2.5-230M | 4-bit, int8 head | 169.7 | 100.5 | 164 MB | 0.54 MB | 14.18 GB/s (83%) |
+| Qwen3-0.6B | 4-bit, int8 head | 58.5 | 54.4 | 442 MB | 2.50 MB | 14.12 GB/s (83%) |
+| Qwen3.5-0.8B | 4-bit, int8 head | 46.3 | 41.5 | 561 MB | 21.40 MB | 14.21 GB/s (83%) |
+
+`tools/rw_bench.py` (cycles) against be388a32 and the fitted DDR3 model (the simulator ran this
+RTL at 16-beat reads):
+
+| Mode | this image | be388a32 | simulated |
+|---|---|---|---|
+| mm (8.91 MB of fp4 weights) | 72,594 | 72,559 | - |
+| mm + 64 STs of 64 KB | 146,100 | 211,763 | 149,013 |
+| mm + 32 DSTEPs | 110,642 | 151,974 | 120,789 |
+| 32 DSTEPs alone | 75,706 | 89,037 | 74,706 |
+
+The card charges an 8-beat write burst about as the model does (one wgap per AW), not per beat.
+
+**Host path, measured 2026-09-28 12:14-12:23** on this image (host main 59a9f06, omarchy's load
+1.8-3.8, a niced test run beside it; 96 greedy tokens per run; logs and JSON in the deploy
+directory's `readme-run/`). The host's changes since e0315b4:
+- the sampler is warmed when the Chat starts, so the first pick (2-10 ms in a new process) is off
+  the decode;
+- the next pick's buffers are set up after the run's start;
+- the status file's rewrite runs on one writer thread, at least 2 ms after the token;
+- streamed pieces are marked again after the next start;
+- the expected run time, the poll's hint, is kept per program length.
+The last change removed the "poll overshoot". A trace of the host's sleeps, register reads and
+DMA (12:04) showed HALTED seen within 10 us of the run's end on 95 of 96 runs. The one late run
+was the first decode run after the prompt: it was expected to take the prefill chunk's 25 ms
+and was seen 14 ms late, which averaged to 0.15 ms per token.
+
+LFM2.5-230M, 4-bit with an int8 head, 5 runs:
+
+| run | wall tok/s | device tok/s | host critical path, ms/token | HALTED seen after the end (median / max), ms |
+|---|---|---|---|---|
+| 1 | 88.76 | 90.16 | 0.177 | 0.003 / 0.014 |
+| 2 | 88.78 | 90.12 | 0.170 | 0.003 / 0.015 |
+| 3 | 88.07 | 90.16 | 0.271 | 0.003 / 0.017 |
+| 4 | 88.74 | 90.18 | 0.181 | 0.003 / 0.013 |
+| 5 | 88.90 | 90.20 | 0.165 | 0.003 / 0.014 |
+| median | **88.76** | 90.16 | 0.177 | 0.003 |
+
+The five replies are token for token identical. The other configurations, one run each, with
+the same host:
+
+| Model | Weights | Mcycles/token | device tok/s | wall tok/s |
+|---|---|---|---|---|
+| LFM2.5-230M | int8 | 1.993 | 60.59 | 59.78 |
+| Qwen3-0.6B | int8 | 5.291 | 22.82 | 22.73 |
+| Qwen3.5-0.8B | int8 | 6.879 | 17.55 | 17.46 |
+| Qwen3-0.6B | 4-bit, int8 head | 3.527 | 34.24 | 34.02 |
+| Qwen3.5-0.8B | 4-bit, int8 head | 4.895 | 24.67 | 24.56 |
+
+On the card's host (fine timestamps, 11:50, host c3db597), the median critical path from
+HALTED to the next RUN is:
+- the counters, 19 us;
+- WR_IDLE, the last logits piece's read (32 KB) and its hand-over to the sampler, 89 us;
+- the backend and chat code, 16 us;
+- the argmax, 13 us;
+- the run arguments, 21 us;
+- CTRL, 11 us.
+DSTEP alone, 22% slower on the card than simulated with 16-chunk runs, now matches the
+simulator: that gap was the read / write turn per 2 KB run.
+
+**Production image 2026-09-28 11:00 until the afternoon (BL32): `build/deploy_bl32mx120_be388a32`** (omarchy
+`~/openTPU/build/`; be388a1 built with `AXI_BL=32`: port B reads in bursts of up to 32 beats,
+the adapter's request queue 32 deep). Core clock 120.755 MHz, DDR3-1066, WNS +0.066 ns, WHS
++0.016 ns. The worst path is MXU q_h -> TMEM pw_d at +0.066 ns (11 levels). The adapter's
+qc -> qb_n (the run / queue count) comes next at +0.097 ns (18 levels): QD 32 fits, with little
+margin. `make bit` now builds it (`AXI_BL` defaults to 32).
+
+BL16 vs BL32 A/B, 2026-09-28 08:44-08:55: the same session, host main 1654f70 (the poll fix),
+omarchy's load 1.5-2.3 during BL16 and 1.6-4.1 during BL32. Decode is `tools/decode_profile.py`,
+greedy, 96 tokens, streamed logits; "wall" is the whole run, the first window included.
+
+| Model | Weights | BL16 Mcycles | BL16 device / wall tok/s | BL32 Mcycles | BL32 device / wall tok/s | BL32 vs BL16 (device) |
+|---|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | 2.059 | 58.63 / 57.12 | 2.008 | 60.14 / 58.86 | +2.6% |
+| Qwen3-0.6B | int8 | 5.459 | 22.12 / 21.66 | 5.324 | 22.68 / 22.20 | +2.5% |
+| Qwen3.5-0.8B | int8 | 7.566 | 15.96 / 15.89 | 7.415 | 16.29 / 16.20 | +2.0% |
+| LFM2.5-230M | 4-bit, int8 head | 1.384 | 87.22 / 84.11 | 1.353 | 89.27 / 85.41 | +2.3% |
+| Qwen3-0.6B | 4-bit, int8 head | 3.620 | 33.36 / 32.31 | 3.555 | 33.97 / 33.75 | +1.8% |
+| Qwen3.5-0.8B | 4-bit, int8 head | 5.501 | 21.95 / 21.82 | 5.400 | 22.36 / 22.22 | +1.9% |
+
+`tools/rw_bench.py` mm: 122.9 B/cycle (BL32) against 119.5 (BL16) and 113.3 (BL8, aebb0bf0).
+The fitted DDR3 model agrees with the card at all three burst lengths. The comparison has to be
+like for like: the card's decode_profile averages positions 24-119 of the resident program, so
+the simulation runs the resident program at pos 70 (`perf_qwen.py --resident --pos 70 --ddr 1066
+--mhz 120.755`):
+
+| LFM2 4-bit + int8 head | BL 8 | BL 16 | BL 32 |
+|---|---|---|---|
+| card, Mcycles/token | 1.455 | 1.384 | 1.353 |
+| sim (tgap 1.22, bgap 0.06), Mcycles/token | 1.454 | 1.371 (-0.9%) | 1.336 (-1.3%) |
+| card rw_bench mm, cycles | 78,670 | 74,591 | 72,559 |
+| sim rw_bench mm, cycles | 79,161 (+0.6%) | 74,492 (-0.1%) | 72,144 (-0.6%) |
+
+The per-position program at pos 50 (1.309 M at BL 32) is not comparable to the card's average.
+A refit with a larger per-beat share (tgap 0.90 + bgap 0.10, or 0.60 + 0.14) moves rw_bench
+away from the card at BL 16 / 32 (75,706 / 73,915 and 76,975 / 75,731 cycles), so the fit stays.
+
+Qualified on the card 2026-09-28 08:58-10:54 (host tree main 1654f70; omarchy's load 6-16:
+2 Vivado builds and a test suite):
+- selftest with the 12 op checks passes;
+- `otpu-diag --mem full --soak 20` passes cold (54 °C) and after a 315 s warm soak (61 -> 64
+  °C): isa 93, system 5, mem 13;
+- all 6 configurations are token for token equal to the ISA simulator after the soak. Before the
+  soak, 5 of the 6 were checked: the Qwen3 4-bit reference job was killed by the OOM killer, and
+  its card check timed out waiting for it;
+- resident decode is equal to the per-position programs, 64 of 64 greedy tokens, for all 6
+  configurations (Qwen3.5 is resident on main since 1654f70).
+
+Prefill (a 512-token prompt; wall includes compiling each chunk on the host, on the loaded host)
+and DRAM (the card's counters over 64 decode tokens):
+
+| Model | Weights | prefill device tok/s | prefill wall tok/s | DRAM read per token | DRAM while decoding |
+|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | 161.5 | 86.7 | 245 MB | 14.36 GB/s (84%) |
+| Qwen3-0.6B | int8 | 55.0 | 50.1 | 663 MB | 14.33 GB/s (84%) |
+| Qwen3.5-0.8B | int8 | 39.3 | 34.8 | 818 MB | 13.59 GB/s (80%) |
+| LFM2.5-230M | 4-bit, int8 head | 169.7 | 58.7 | 164 MB | 14.07 GB/s (83%) |
+| Qwen3-0.6B | 4-bit, int8 head | 58.5 | 52.2 | 443 MB | 14.04 GB/s (82%) |
+| Qwen3.5-0.8B | 4-bit, int8 head | 41.9 | 36.7 | 570 MB | 13.11 GB/s (77%) |
+
+rw_bench on it: mm 122.8 B/cycle, mm+st 211,763 cycles, mm+dstep 151,974, dstep 89,037.
+
+**Production image 2026-09-28 morning (BL16): `build/deploy_bl16mx120_be388a1f`** (omarchy; branch
 tv-cand2 be388a1: main 6e2605b + lfm2-cycles 6fb2851 (port B read bursts up to 64 beats) +
 the tournament's MXU / adapter timing fixes (q_tz from its factors, dg1 registered, the port-A
 return registered, DSTEP fill and RMAX drain registered), built with `AXI_BL=16`. Core clock
-120.755 MHz, DDR3-1066, WNS +0.048 ns, WHS +0.013 ns. It becomes the production image once
-be388a1's full test suite passes. The fallback is `deploy_bl16_fb2b6630` (lfm2-cycles fb2b663,
-AXI_BL=16 without the timing fixes, WNS +0.003 ns after an ExtraTimingOpt re-implementation).
-It also passed the checks below (05:44-06:44).
+120.755 MHz, DDR3-1066, WNS +0.048 ns, WHS +0.013 ns. It was the production image from the
+morning until BL32 replaced it at 11:00. A second BL16 image, `~/otpu-build/deploy_bl16_fb2b6630`
+(lfm2-cycles fb2b663, AXI_BL=16 without the timing fixes, WNS +0.003 ns after an ExtraTimingOpt
+re-implementation), also passed the checks below (05:44-06:44).
 
 Qualified on the card 2026-09-28 06:46-07:43 (host tree host-8efceb7):
 - selftest with the 12 op checks passes;

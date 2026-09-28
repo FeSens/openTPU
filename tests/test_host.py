@@ -356,6 +356,57 @@ def test_streamed_tail_waits_for_the_last_stores(run_dir, lag):
     eng.backend.close()
 
 
+def test_streamed_wait_sees_the_halt_soon(run_dir, monkeypatch):
+    """Streamed logits: a piece still awaited when the run ends (Qwen3 on the card: its
+    next-to-last piece completes at the very end) must not hide HALTED for a whole 1 ms sleep
+    slice: near the expected end the slices are short (0.7-0.8 ms late per token before)."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm import qwen3 as Q
+    from opentpu.llm.qwen3 import Engine
+    monkeypatch.setattr(Q, "HEAD_CHUNK", 128)      # pieces of 128 logits: 8 in the tiny vocab
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    run_s = 0.02
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake10", run_s=run_s,
+                      cycles=int(run_s * 1e8))
+    t.streams = True
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+    v = eng.image.v_loc
+    t.logits = (eng.image.io["logits"], 4 * v, 4 * 128)
+    late = []
+    for tok in range(10):
+        be = eng.backend
+        be._due = {i: 1.0 for i in range(64)}   # every piece "due" past the run's end
+        eng.step(tok)
+        late.append(be.board.t_seen - be.board._t_run - run_s)
+    eng.backend.close()
+    assert np.median(late[3:]) < 0.3e-3, late
+
+
+def test_a_short_run_after_a_long_one_is_seen_soon(run_dir):
+    """The expected run time is per program (by its length): a short program after a long one
+    (the first decode run after a prefill chunk) is not expected to take the long one's time,
+    so HALTED is not seen a whole long run late (14 ms of 11 on the card)."""
+    card = FakeTransport(devname=None)
+    be = BoardBackend(board_config(DRAM_BYTES=1 << 21), [np.zeros(1 << 16, np.uint8)],
+                      transport=card, status=False)
+    long_ = [I.ld(0, 0, 64)] * 40 + [I.halt()]
+    short = [I.ld(0, 0, 64), I.halt()]
+    card.run_s, card.cycles_per_run = 0.04, 4_000_000       # 100 MHz
+    for _ in range(3):
+        be.run([long_])
+    card.run_s, card.cycles_per_run = 0.004, 400_000
+    late = []
+    for _ in range(3):
+        be.run([short])
+        late.append(be.board.t_seen - be.board._t_run - card.run_s)
+    be.close()
+    assert late[0] < 2e-3, late             # not the long run's 40 ms
+    assert max(late[1:]) < 1e-3, late
+
+
 def test_resident_decode_takes_run_arguments(run_dir):
     """Engine(resident=True) on a bitstream with run arguments (CAPS bit25): the decode program
     is loaded once and each step writes the ARG registers only (no inputs, no program); on one
@@ -620,7 +671,7 @@ def test_runner_status_is_atomic(run_dir):
 
 
 
-def test_runner_status_min_interval_defers_to_a_timer(run_dir):
+def test_runner_status_min_interval_defers_to_a_writer_thread(run_dir):
     import threading
     s = RunnerStatus("fake6", min_interval=0.1)
     writers = []
@@ -866,6 +917,7 @@ def test_smi_json(tmp_path, capsys):
     img = [np.zeros(1 << 16, np.uint8)]
     be = BoardBackend(board_config(DRAM_BYTES=1 << 21), img, transport=card, model="m0")
     be.run([PROG])
+    time.sleep(0.05)                # the status file's rewrite: TOKEN_DEFER after the token
     rc = smi.main(["--json", "--dev", "/dev/fake5", "--power-json", str(pj), "-i", "0"],
                   open_transport=lambda dev: FakeTransport(devname="fake5"))
     assert rc == 0
@@ -994,7 +1046,8 @@ def test_board_compiles_the_next_program_after_starting_the_card():
     eng._drain()
     # position 0 compiles in line; position p + 1 only after the card started position p
     assert seen == [(0, 0), (1, 1), (2, 2), (3, 3)]
-    assert eng.backend._expect == pytest.approx(t.cycles_per_run / 100e6, rel=0.02)  # x ratio
+    be = eng.backend                        # the expectation for the last program's length
+    assert be._expects[be._key] == pytest.approx(t.cycles_per_run / 100e6, rel=0.02)  # x ratio
     eng.backend.close()
 
 

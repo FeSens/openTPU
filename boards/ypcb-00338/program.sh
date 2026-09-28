@@ -42,8 +42,11 @@ case $mode in
   ofl)
     retry "${ofl[@]}" --freq 6000000 "$bit" ;;
   flash)
-    # BPI flash through the FPGA (openFPGALoader loads its bpiOverJtag bridge first)
-    retry "${ofl[@]}" --freq 6000000 --fpga-part xc7k480tffg1156 -f "$bit" ;;
+    # BPI flash through the FPGA (openFPGALoader loads its bpiOverJtag bridge first). The board
+    # entry selects BPI: without -b, openFPGALoader 1.1.1 takes its SPI bridge and stops ("fail
+    # to open .../spiOverJtag_xc7k480tffg1156.bit.gz"). Not tried on the card yet; openFPGALoader
+    # does not verify BPI writes (flash_jtag.sh verify does, docs/flash.md)
+    retry "${ofl[@]}" --freq 6000000 -b ypcb003381p1 --fpga-part xc7k480tffg1156 -f "$bit" ;;
   vivado)
     tcl="$(mktemp "${TMPDIR:-/tmp}/otpu_prog.XXXXXX")"   # BSD mktemp: the X's must end the name
     trap 'rm -f "$tcl"' EXIT

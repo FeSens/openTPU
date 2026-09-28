@@ -27,29 +27,31 @@ simulator, bit for bit.
 
 | Model | Weights | Decode, device | Decode, wall | Prefill, device | DRAM reads while decoding |
 |:--|:--|--:|--:|--:|--:|
-| LFM2.5-230M | int8 | 55.7 tok/s | 54.2 tok/s | 150.0 tok/s | 13.3 GB/s (78% of peak) |
-| LFM2.5-230M | 4-bit, int8 head | 83.1 tok/s | 80.8 tok/s | 169.3 tok/s | 13.1 GB/s (77%) |
-| Qwen3-0.6B | int8 | 21.0 tok/s | 20.9 tok/s | 51.3 tok/s | 13.3 GB/s (78%) |
-| Qwen3-0.6B | 4-bit, int8 head | 31.7 tok/s | 30.7 tok/s | 58.0 tok/s | 13.2 GB/s (77%) |
-| Qwen3.5-0.8B | int8 | 15.4 tok/s | 15.2 tok/s | 36.7 tok/s | 12.7 GB/s (74%) |
-| Qwen3.5-0.8B | 4-bit, int8 head | 21.2 tok/s | 20.8 tok/s | 40.9 tok/s | 12.2 GB/s (72%) |
+| LFM2.5-230M | int8 | 60.6 tok/s | 59.8 tok/s | 161.5 tok/s | 14.5 GB/s (85% of peak) |
+| LFM2.5-230M | 4-bit, int8 head | 90.2 tok/s | 88.8 tok/s | 169.7 tok/s | 14.2 GB/s (83%) |
+| Qwen3-0.6B | int8 | 22.8 tok/s | 22.7 tok/s | 55.0 tok/s | 14.4 GB/s (84%) |
+| Qwen3-0.6B | 4-bit, int8 head | 34.2 tok/s | 34.0 tok/s | 58.5 tok/s | 14.1 GB/s (83%) |
+| Qwen3.5-0.8B | int8 | 17.6 tok/s | 17.5 tok/s | 44.1 tok/s | 14.5 GB/s (85%) |
+| Qwen3.5-0.8B | 4-bit, int8 head | 24.7 tok/s | 24.6 tok/s | 46.3 tok/s | 14.2 GB/s (83%) |
 
-*Measured on the card with the production image (`deploy_prod120hp_aebb0bf0`: 120.755 MHz,
-DDR3-1066 with a 17.1 GB/s peak) and the host on main. Decode is greedy, 96 tokens; "device"
-counts only the cycles the accelerator runs and "wall" adds the host. Prefill is a 512-token
-prompt. DRAM reads come from the card's own counters while it runs. Every configuration matches
-the simulator token for token. One run each; more detail in [docs/board.md](docs/board.md).*
+*Measured on the card with the production image (`deploy_pnbl32_e2521032`: 120.755 MHz,
+32-beat DRAM read bursts, 8-beat write bursts, DDR3-1066 with a 17.1 GB/s peak) and the host on
+main. Decode is greedy, 96 tokens; "device" counts only the cycles the accelerator runs and
+"wall" adds the host. LFM2 4-bit wall is the median of 5 runs (88.1 to 88.9); the others are one
+run each. Prefill is a 512-token prompt. DRAM reads come from the card's own counters while it
+runs. Every configuration matches the simulator token for token. More detail in
+[docs/board.md](docs/board.md).*
 
 4-bit weights ([docs/quant.md](docs/quant.md)) use FP4 values with two-level block scales, 4.25
 bits per weight, and keep the LM head in int8 for accuracy. They cut the bytes per token by about
-a third and raise decode speed by 38% (Qwen3.5) to 51% (Qwen3), at a measurable cost in
+a third and raise decode speed by 40% (Qwen3.5) to 50% (Qwen3), at a measurable cost in
 perplexity that docs/quant.md reports per model.
 
 The host is nearly out of the way. For LFM2 and Qwen3 the card runs one decode program compiled
 once, which reads the position from a register and looks up its own embedding and RoPE rows, and
 the logits stream back while the card is still running: the host adds 0.3 to 0.8 ms per token.
-Qwen3.5 still compiles a program per position, which shows in its prefill (23 to 26 tok/s wall
-against 37 to 41 on the device).
+Qwen3.5 runs the same way for decode; its prefill still compiles each chunk's program on the host,
+ahead of the card.
 
 ## How it works
 
@@ -137,14 +139,13 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 
 ## What's next
 
-- **A faster clock.** The core runs at 120.755 MHz with only a few picoseconds of margin. A
-  tournament of Vivado runs is working on the paths that stop it at 125 MHz: the matrix unit's
-  drain control, the DRAM adapter's request select and the DeltaNet state engine.
-- **The last DRAM bandwidth.** Decode reads 72 to 78% of the DDR3 peak; the target is 80% and up.
-- **Qwen3.5 on the resident path.** Its decode and prefill programs are still compiled per
-  position on the host.
-- **Faster prefill.** Prefill is limited by the matrix unit's multiply rate, so the next step is
-  more multipliers per cycle.
+- **Faster prefill.** Prefill is limited by the matrix unit's multiply rate. A four-column matrix
+  unit halves that cost in simulation (Qwen3.5 prefill from 2.5 to 1.8 Mcycles per token); the
+  question is whether it closes timing at 120 MHz in the space left on the chip.
+- **A faster clock and a smaller design.** A tournament of Vivado runs keeps working on the paths
+  that stop the design at 125 MHz and on its area. Decode is bound by DRAM, so the clock mostly
+  helps prefill.
+- **The last few percent of DRAM.** Decode reads 83 to 85% of the DDR3 peak.
 
 ## Contributing
 

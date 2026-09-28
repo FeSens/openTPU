@@ -149,17 +149,20 @@ class RunnerStatus:
     tok_s_wall (over the last WALL_WINDOW runs, host work included), updated (unix time).
 
     min_interval: the file is rewritten after a token at most this often (seconds), by a
-    timer thread (at once when the interval is already up), so the file is never behind for
+    writer thread (TOKEN_DEFER after the token when the interval is already up), so the file is never behind for
     longer and the rewrite (0.2-0.5 ms on the card's host) is never on the token's critical
     path; 0: token() rewrites it itself.
     """
 
     WALL_WINDOW = 8
+    TOKEN_DEFER = 2e-3                      # seconds between a token and its rewrite (at least)
 
     def __init__(self, name: str, min_interval: float = 0.0, **fields):
         self.min_interval = min_interval
         self._lock = threading.Lock()
-        self._timer: threading.Timer | None = None
+        self._due = threading.Event()       # a token's rewrite is due (the writer thread's)
+        self._writer: threading.Thread | None = None
+        self._closed = False
         self._tok_written = -1e9            # perf_counter of the last write after a token
         self.path = run_dir() / f"{name}.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,16 +191,29 @@ class RunnerStatus:
         d.update(fields)
         if self.min_interval <= 0:
             self.write()
-        elif self._timer is None:           # the rewrite is the timer's, never the caller's
-            wait = self.min_interval - (time.perf_counter() - self._tok_written)
-            self._timer = threading.Timer(max(wait, 0.0), self._flush)
-            self._timer.daemon = True
-            self._timer.start()
+            return
+        # the rewrite is the writer thread's, never the caller's: token() only sets an event
+        # (starting a threading.Timer per rewrite cost the caller 0.1-0.2 ms on the card's host)
+        if self._writer is None:
+            self._writer = threading.Thread(target=self._write_loop, daemon=True)
+            self._writer.start()
+        self._due.set()
 
-    def _flush(self) -> None:
-        self._timer = None
-        self._tok_written = time.perf_counter()
-        self.write()
+    def _write_loop(self) -> None:
+        while True:
+            self._due.wait()
+            if self._closed:
+                return
+            # at least TOKEN_DEFER after the token: the caller is then back on the device's
+            # run, not between its HALTED and the next RUN (a rewrite there held the GIL for
+            # 0.2-0.6 ms of some LFM2 tokens' critical path on the card)
+            wait = self.min_interval - (time.perf_counter() - self._tok_written)
+            time.sleep(max(wait, self.TOKEN_DEFER))
+            if self._closed:
+                return
+            self._due.clear()
+            self._tok_written = time.perf_counter()
+            self.write()
 
     def write(self) -> None:
         with self._lock:
@@ -207,9 +223,8 @@ class RunnerStatus:
             os.replace(tmp, self.path)      # readers see the old file or the new, never half
 
     def remove(self) -> None:
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
+        self._closed = True
+        self._due.set()                     # the writer thread ends
         try:
             cur = json.loads(self.path.read_text())
             if cur.get("pid") == os.getpid():

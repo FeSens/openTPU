@@ -121,7 +121,15 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
         s.feed(0, logits)
         return s.result()
 
+    def warm() -> None:
+        """Run numpy's code paths of a pick once (the first pick of a process took 2-10 ms:
+        np.union1d, the top-k selection and the generator's choice, first called) on a
+        throwaway sampler with its own generator: this one's draws do not change."""
+        w = sampler(temperature, top_k, top_p, 0, repetition_penalty)
+        w(np.linspace(-1.0, 1.0, 4096, dtype=np.float32), [1, 2, 3])
+
     pick.stream = Stream
+    pick.warm = warm
     return pick
 
 
@@ -323,6 +331,9 @@ class Chat:
         self.last: Turn | None = None
         self._next = None                   # logits after a reply cut at max_new (resume())
         self._reply: list[int] = []         # the last reply's tokens
+        warm = getattr(pick, "warm", None)
+        if warm is not None:                # the first pick then costs what the others do
+            warm()
 
     def _template(self, add_prompt=True) -> list[int]:
         ids = self.tok.apply_chat_template(self.history, add_generation_prompt=add_prompt,

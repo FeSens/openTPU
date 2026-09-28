@@ -872,7 +872,12 @@ class BoardBackend:
         self._prep: dict = {}               # id(programs) -> (programs, words), from prepare()
         self._running = None                # the started programs
         self._resident = None               # (programs, words) in IMEM (start() skips the load)
-        self._expect = 0.0                  # the next run's expected seconds (the poll's hint)
+        self._expect = 0.0                  # the run's expected seconds (the poll's hint)
+        # the expected seconds per program length: a run is expected to take what the last
+        # run of a program of its length took (the first decode run after a prefill chunk,
+        # expected to take the chunk's 25 ms, was seen 14 ms late on the card)
+        self._expects: dict[int, float] = {}
+        self._key = 0
         self._ratio = 1.0                   # run wall time / (CYCLES / CORE_KHZ), smoothed
         self._seen = None                   # HALTED seen by the streamed wait (perf_counter)
         # streamed logits (start(stream=...)): the region holding the sentinel, the pieces to
@@ -953,7 +958,7 @@ class BoardBackend:
         pieces of `piece` bytes (the LM head's chunks, late in the run), and wait(feed) hands
         each piece over as soon as it is complete. The region holds SENTINEL words before the
         run: written here when it does not (the first streamed run, or after anything else
-        wrote the region), else the pieces read after the last run are marked again right
+        wrote the region), else the whole region is marked again right
         after this start, while the run is still far from its LM head. Needs a transport that
         allows DMA during a run (`streams`).
 
@@ -987,6 +992,8 @@ class BoardBackend:
         elif stream is None:
             self._armed = None                      # the run may write the region
         self._seen = None
+        self._key = len(self._resident[1])
+        self._expect = self._expects.get(self._key, 0.0)
         self.board.start(trace=self.trace)
         self._running, self._stream = programs, stream
         for a, n in self._rearm:
@@ -1009,7 +1016,7 @@ class BoardBackend:
             self._armed, self._stream = None, None  # the region's state is unknown
             raise
         khz = self.info["core_khz"]
-        self._expect = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
+        self._expects[self._key] = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
         self.last = (programs, st)
         if self.status is not None:
             self.status.token(st["cycles"], khz, dram=self._layout(True))
@@ -1047,12 +1054,17 @@ class BoardBackend:
         pieces, due = self._pieces(), {}
         t0, i, probes, tries = b._t_run, 0, 0, 0
         halted = False
+        # from POLL_EARLY (+ 3%) before the expected end on, the slices are short, so a run
+        # that ends while a piece is awaited is seen within ~POLL_MIN_SLEEP (1 ms slices: Qwen3,
+        # whose next-to-last piece comes near the end, saw HALTED 0.7-0.8 ms late on the card)
+        near = self._expect - POLL_EARLY - 0.03 * self._expect if self._expect else float("inf")
         while i < len(pieces) - 1:
             d = self._due.get(i)
             # a piece's time of the last token may be past this run's end (a token delayed
             # by the host): HALTED is checked after every slice, not only at the piece's time
             while d is not None and (now := time.perf_counter() - t0) < d - STREAM_EARLY:
-                time.sleep(min(d - STREAM_EARLY - now, 1e-3))   # slices: sleeps overshoot
+                cap = 1e-3 if now < near else POLL_MIN_SLEEP
+                time.sleep(min(d - STREAM_EARLY - now, cap))    # slices: sleeps overshoot
                 if t.reg_read(R_STATUS) & ST_HALTED:
                     halted = True
                     break
@@ -1070,14 +1082,19 @@ class BoardBackend:
                 if (w == SENTINEL).any():               # the beats land out of order: soon
                     w = None
             if w is None:
-                time.sleep(STREAM_RETRY if d is not None else STREAM_PROBE)
+                # near the expected end the retry is short too: the run may end while this
+                # piece is awaited (a 0.1 ms retry left HALTED seen 0.15 ms late on the card)
+                late_run = time.perf_counter() - t0 >= near
+                time.sleep(POLL_MIN_SLEEP if late_run else
+                           STREAM_RETRY if d is not None else STREAM_PROBE)
                 continue
             feed(o, w)
             # complete at the first probe: it may have been for a while, so probe earlier
             # next token; else it came between the last two probes
             due[i] = d - STREAM_EARLY if tries == 1 and d is not None else \
                 time.perf_counter() - t0
-            b.write(addr + o, np.full(k // 4, SENTINEL, np.uint32))    # the run is past it
+            # its SENTINEL marks go back after the next start (with the tail's): a write
+            # here kept the host busy when the run ended (HALTED seen up to 0.15 ms late)
             i, tries = i + 1, 0
         self._due.update(due)
         self.last_stream = {"during": i, "pieces": len(pieces), "probes": probes}
@@ -1110,7 +1127,7 @@ class BoardBackend:
                                "does not write the whole logits region, or a marking raced it")
         self.last_stream["tail_retries"] = tries
         feed(o, w)                                  # the rest in one piece
-        self._rearm = [(addr + o, n - o)]
+        self._rearm = [(addr, n)]                  # every piece: marked after the next start
         self._stream = None
         self.last_stream.update(tail_bytes=n - o, tail_s=time.perf_counter() - t0)
 

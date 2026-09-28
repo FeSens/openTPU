@@ -250,6 +250,18 @@ sudo lspci -d 10ee: -vv | grep -E "LnkCap|LnkSta|Region"
 under it). It re-adds the card with the kernel's automatic probing off, so the 8250 driver
 never touches a serial-class bitstream, and binds xdma itself.
 
+When the card is not back after that plain rescan, `--rescan` works on the card's upstream
+port (`opentpu/host/pcie/relink.sh`), rescanning after each step: Retrain Link (Link Control
+bit 5), then Link Disable (bit 4) set and cleared, then a secondary bus reset (Bridge Control
+bit 6). It prints the port's Link Status before each step and names the step that brought the
+card back. A port that retrains by itself (the development PC's) is never touched. Meanwhile
+the port is held in D0: with runtime PM on, an empty port suspends 100 ms after its last device
+is removed, and a suspended port trains no link. The port is kept in `/run/otpu-card-ports`, so
+a later `--rescan` finds it when an earlier one left the card off the bus. The steps need
+`setpci` (pciutils). Why: on opentpu (Haswell PEG root port 00:01.0) the card did not come back
+for 5 minutes of rescans after a JTAG load, and a warm reboot brought it back (2026-09-28, seen
+once; the steps above are not yet tried on that port).
+
 A quick register check without Python: `dd if=/dev/xdma0_user bs=4 count=1 2>/dev/null | xxd`
 must print `55 50 54 4f` ("OTPU", the ID register at offset 0, little-endian).
 

@@ -30,6 +30,7 @@ module tb_board;
   parameter int TRACE_QD   = 32;
   parameter int PQ_WIN     = 1024;
   parameter int AXI_BL     = 8;
+  parameter int AXI_WBL    = 8;
   parameter bit DSTEP      = 1'b1;
   parameter logic [11:0] TEMP = 12'hA1A;  // the XADC code of 45 C
 
@@ -46,9 +47,9 @@ module tb_board;
   logic [2:0]  led;
 
   // AXI channels
-  logic [1:0] awv, awr, awi, wv, wr, bv, br, bi, arv, arr, ari, rv, rr, ri, rl;
+  logic [1:0] awv, awr, awi, wv, wr, wl, bv, br, bi, arv, arr, ari, rv, rr, ri, rl;
   logic [1:0][31:0] awa, ara;
-  logic [1:0][7:0] arl;
+  logic [1:0][7:0] arl, awl;
   logic [1:0][511:0] wd, rd;
   logic [1:0][63:0] ws;
   logic [1:0][1:0] bre, rre;
@@ -66,7 +67,7 @@ module tb_board;
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
                .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
-               .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL), .DSTEP(DSTEP)) dut (
+               .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .DSTEP(DSTEP)) dut (
     .clk, .rst, .calib(2'b11), .temp(TEMP), .led,
     .i2c_lo, .i2c_pin(~({1'b0, i2c_lo} | i2c_hold)),
     .s_ctl_awaddr(awaddr), .s_ctl_awvalid(awvalid), .s_ctl_awready(awready),
@@ -74,11 +75,11 @@ module tb_board;
     .s_ctl_bresp(bresp), .s_ctl_bvalid(bvalid), .s_ctl_bready(bready),
     .s_ctl_araddr(araddr), .s_ctl_arvalid(arvalid), .s_ctl_arready(arready),
     .s_ctl_rdata(rdata), .s_ctl_rresp(rresp), .s_ctl_rvalid(rvalid), .s_ctl_rready(rready),
-    .m0_axi_awid(awi[0]), .m0_axi_awaddr(awa[0]), .m0_axi_awlen(unused8[0]),
+    .m0_axi_awid(awi[0]), .m0_axi_awaddr(awa[0]), .m0_axi_awlen(awl[0]),
     .m0_axi_awsize(unused3[0]), .m0_axi_awburst(unused2[0]), .m0_axi_awlock(unusedl[0]),
     .m0_axi_awcache(unused4[0]), .m0_axi_awprot(unused3[1]), .m0_axi_awqos(unused4[1]),
     .m0_axi_awvalid(awv[0]), .m0_axi_awready(awr[0]), .m0_axi_wdata(wd[0]),
-    .m0_axi_wstrb(ws[0]), .m0_axi_wlast(unusedl[1]), .m0_axi_wvalid(wv[0]),
+    .m0_axi_wstrb(ws[0]), .m0_axi_wlast(wl[0]), .m0_axi_wvalid(wv[0]),
     .m0_axi_wready(wr[0]), .m0_axi_bid(bi[0]), .m0_axi_bresp(bre[0]), .m0_axi_bvalid(bv[0]),
     .m0_axi_bready(br[0]), .m0_axi_arid(ari[0]), .m0_axi_araddr(ara[0]),
     .m0_axi_arlen(arl[0]), .m0_axi_arsize(unused3[2]), .m0_axi_arburst(unused2[1]),
@@ -86,11 +87,11 @@ module tb_board;
     .m0_axi_arqos(unused4[3]), .m0_axi_arvalid(arv[0]), .m0_axi_arready(arr[0]),
     .m0_axi_rid(ri[0]), .m0_axi_rdata(rd[0]), .m0_axi_rresp(rre[0]), .m0_axi_rlast(rl[0]),
     .m0_axi_rvalid(rv[0]), .m0_axi_rready(rr[0]),
-    .m1_axi_awid(awi[1]), .m1_axi_awaddr(awa[1]), .m1_axi_awlen(unused8[2]),
+    .m1_axi_awid(awi[1]), .m1_axi_awaddr(awa[1]), .m1_axi_awlen(awl[1]),
     .m1_axi_awsize(unused3[4]), .m1_axi_awburst(unused2[2]), .m1_axi_awlock(unusedl[3]),
     .m1_axi_awcache(unused4[4]), .m1_axi_awprot(unused3[5]), .m1_axi_awqos(unused4[5]),
     .m1_axi_awvalid(awv[1]), .m1_axi_awready(awr[1]), .m1_axi_wdata(wd[1]),
-    .m1_axi_wstrb(ws[1]), .m1_axi_wlast(unusedl[4]), .m1_axi_wvalid(wv[1]),
+    .m1_axi_wstrb(ws[1]), .m1_axi_wlast(wl[1]), .m1_axi_wvalid(wv[1]),
     .m1_axi_wready(wr[1]), .m1_axi_bid(bi[1]), .m1_axi_bresp(bre[1]), .m1_axi_bvalid(bv[1]),
     .m1_axi_bready(br[1]), .m1_axi_arid(ari[1]), .m1_axi_araddr(ara[1]),
     .m1_axi_arlen(arl[1]), .m1_axi_arsize(unused3[6]), .m1_axi_arburst(unused2[3]),
@@ -101,8 +102,8 @@ module tb_board;
 
   otpu_axi_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (
     .clk, .rst,
-    .s_awvalid(awv), .s_awready(awr), .s_awaddr(awa), .s_awid(awi),
-    .s_wvalid(wv), .s_wready(wr), .s_wdata(wd), .s_wstrb(ws),
+    .s_awvalid(awv), .s_awready(awr), .s_awaddr(awa), .s_awid(awi), .s_awlen(awl),
+    .s_wvalid(wv), .s_wready(wr), .s_wdata(wd), .s_wstrb(ws), .s_wlast(wl),
     .s_bvalid(bv), .s_bready(br), .s_bid(bi), .s_bresp(bre),
     .s_arvalid(arv), .s_arready(arr), .s_araddr(ara), .s_arlen(arl), .s_arid(ari),
     .s_rvalid(rv), .s_rready(rr), .s_rid(ri), .s_rdata(rd), .s_rresp(rre), .s_rlast(rl),

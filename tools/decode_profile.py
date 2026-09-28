@@ -281,6 +281,7 @@ def main(argv=None):
             P.add("sample", time.perf_counter() - t0)
             return r
     timed_pick.stream = TimedStream
+    timed_pick.warm = pick.warm
     chat = C.Chat(eng, tok, False, timed_pick, a.tokens, clock_mhz=khz / 1e3)
     dec = tok.decode
 
@@ -318,6 +319,9 @@ def main(argv=None):
             print(f"{k:<15} {per[k][0]:9.3f} {per[k][1]:11.3f}")
     print(f"{'other':<15} {max(0.0, crit - crit_known):9.3f}")
     over = 1e3 * sum(P.runs) / max(len(P.runs), 1) - dev_ms
+    # the mean hides where it comes from (one run seen 14 ms late is 0.15 ms per token of 96)
+    over_med = 1e3 * sorted(P.runs)[len(P.runs) // 2] - dev_ms if P.runs else 0.0
+    over_max = 1e3 * max(P.runs) - dev_ms if P.runs else 0.0
     if P.tokens:                    # where the outliers are: the worst tokens and their items
         worst = sorted(P.tokens, key=lambda t: -t["critical"])[:3]
         print("slowest tokens (critical ms): " + "; ".join(
@@ -327,7 +331,7 @@ def main(argv=None):
             + ")" for t in worst))
     print(f"host critical path (HALTED seen -> next RUN): {crit:.3f} ms/token over "
           f"{P.windows} tokens; device {dev_ms:.3f} ms/token; HALTED seen {over:.3f} ms after "
-          f"the run's end (poll overshoot)")
+          f"the run's end (poll overshoot; median {over_med:.3f}, max {over_max:.3f})")
     print("transport per token: " + ", ".join(
         f"{k} {v[0] / n:.1f}x {v[1] / n / 1024:.1f} KiB {1e3 * v[2] / n:.3f} ms"
         for k, v in sorted(P.ops.items())))
