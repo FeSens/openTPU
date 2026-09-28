@@ -82,7 +82,21 @@ def vops_check(board, cfg, need: bool = False) -> tuple[bool, str]:
     from .regs import VOPS_SINCE
     ok, msg, _ = run_demo(board, cfg, vops_program())
     if ok:
-        return True, f"RDOT / OUTER / LOG2 ok ({msg})"
+        # then otpu-diag's reduction and RDOT / OUTER / LOG2 programs back to back: a build
+        # passed the vops program but wrote RDOT's last row sum stale (a block RAM the
+        # synthesis made of an asynchronous-read buffer), one RDOT late in otpu-diag
+        from .opchecks import diag_image, op_checks
+        progs = [(n, p) for g, n, p in op_checks(cfg) if g in ("vpu-reduce", "vpu-new")]
+        bad = []
+        for name, prog in progs:
+            ok2, msg2, _ = run_demo(board, cfg, prog, diag_image())
+            if not ok2:
+                bad.append(f"{name}: {msg2.split(',')[0]}")
+        if bad:
+            return False, (f"RDOT / OUTER / LOG2 program ok, but {len(bad)} of {len(progs)} "
+                           "reduction / RDOT / OUTER / LOG2 op checks differ: "
+                           + "; ".join(bad[:4]))
+        return True, f"RDOT / OUTER / LOG2 ok ({msg}); {len(progs)} op checks ok"
     rm = board.info()["regmap"]
     msg = f"RDOT / OUTER / LOG2 differ from the ISA simulator ({msg.split(',')[0]})"
     if rm >= VOPS_SINCE:
@@ -133,9 +147,10 @@ def pattern_test(board, regions: list[tuple[int, int]], seed: int = 1) -> tuple[
         got = board.read(a, n)
         bad = np.nonzero(got != d)[0]
         if len(bad):
+            b = (a + int(bad[0])) // 64
+            ch = b % 2 ^ (board.chash and bin(b // 2).count("1") & 1)
             return False, (f"region {a:#x}+{n:#x}: {len(bad)} bytes wrong, first at "
-                           f"{a + int(bad[0]):#x} (logical beat {(a + int(bad[0])) // 64}, "
-                           f"channel {((a + int(bad[0])) // 64) % 2})")
+                           f"{a + int(bad[0]):#x} (logical beat {b}, channel {ch})")
     return True, f"{len(regions)} regions, {sum(n for _, n in regions)} bytes"
 
 

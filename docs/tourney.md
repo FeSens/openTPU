@@ -221,7 +221,7 @@ sync's fast tests on omarchy, through `tools/omarchy_test.sh --exec`. The script
   `~/otpu-test/tourney-<run>-<slot>`;
 - links the model checkpoints;
 - runs the command with Verilator 5.046 (`~/.local`) and `~/otpu-venv` on PATH, niced;
-- waits for one of omarchy's 3 test slots, which it shares with other users of the script.
+- waits for one of omarchy's 2 test slots (`OTPU_REMOTE_JOBS`), which it shares with other users of the script.
 
 The board gate's `OTPU_*` variables are passed with `env`. The Verilator cache is shared by the
 tournament's trees in `~/otpu-test/.tourney-build`, keyed by source hash. Entries older than a

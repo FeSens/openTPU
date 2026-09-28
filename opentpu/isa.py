@@ -6,13 +6,13 @@ from dataclasses import dataclass, field
 import numpy as np
 
 NOP, HALT, LI, ADDI, LOOP, BAR = 0x00, 0x01, 0x02, 0x03, 0x04, 0x05
-LD, ST = 0x10, 0x11
+LD, ST, DSTEP = 0x10, 0x11, 0x12
 MM, QACT, QST = 0x20, 0x21, 0x22
 VOP = 0x30
 GATHER = 0x40
 
 OPNAMES = {NOP: "NOP", HALT: "HALT", LI: "LI", ADDI: "ADDI", LOOP: "LOOP", BAR: "BAR",
-           LD: "LD", ST: "ST", MM: "MM", QACT: "QACT", QST: "QST", VOP: "VOP",
+           LD: "LD", ST: "ST", DSTEP: "DSTEP", MM: "MM", QACT: "QACT", QST: "QST", VOP: "VOP",
            GATHER: "GATHER"}
 
 # MM / QACT / QST flags
@@ -24,6 +24,7 @@ WFORMATS = {"int8": W8, "int4": W4I, "fp4": W4F}
 F_PAIR = 0x40                   # MM, 4-bit only: column reuse, two K-blocks per cycle and row
 F_ROW, F_CSCALE, F_RSCALE = 0x1, 0x2, 0x4   # QACT (QST: F_ROW)
 F_DUP = 0x8                     # QACT: also write the rows to ACT rows rows..2*rows-1 (PAIR)
+F_HALF = 0x2                    # QST, ROW mode: write only the first half of each row
 
 # VOP functions
 V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_OUTER = 0, 1, 2, 3, 4, 5, 6
@@ -121,6 +122,22 @@ def st(dram, tmem, nwords, ra=0, rb=0, comment=""):
     return Instr(ST, ra=ra, rb=rb, w=_w(dram, tmem, nwords), comment=comment)
 
 
+DSTEP_LANES = 8                      # DSTEP: state words per cycle (timing only)
+DSTEP_MAX_ROWS = 256                 # DSTEP: o is held in a 256-word buffer
+F_DZERO = 0x1                        # DSTEP: the state starts at +0 (DRAM is not read)
+
+
+def dstep(dram, qk, v, rows, cols, g, gs, o, zero=False, ra=0, rb=0, rc=0, comment=""):
+    """DSTEP (DMA): one Gated DeltaNet head step on an fp32 state St [rows, cols] (row-major)
+    in DRAM at byte address R[ra] + dram, updated in place. q = T[qk + c], k = T[qk + cols + c]
+    (qk: R[rb] + w2), v(r) = T[v + r] (R[rc] + w3), the decay e = T[g], beta = T[g + gs], and
+    o(r) = T[o + r] is written. Row by row: kv = rdot(St[r], k), d = (v(r) - kv * e) * beta,
+    St[r] = St[r] * e + d * k, o(r) = rdot(St[r], q) -- the rounding of RDOT, MUL, SUB, MUL,
+    OUTER, RDOT (docs/isa.md). `zero`: the state starts at +0 and is not read (position 0)."""
+    return Instr(DSTEP, ra=ra, rb=rb, rc=rc, flags=F_DZERO if zero else 0,
+                 w=_w(dram, qk, v, rows | (cols << 16), g, o, gs), comment=comment)
+
+
 def mm(sa, ssa, out, n, kb, rs, ors, m, ab, srs, unit=False, acc=False, rmax=False,
        ascale=None, wf=W8, pair=False, ra=0, rb=0, rc=0, comment=""):
     """MM. With `ascale` (a TMEM address; needs unit and acc) the old accumulator is first
@@ -155,9 +172,11 @@ def qact(src, rows, ab, kb, srs, row=False, cscale=None, rscale=None, dup=False,
                  comment=comment)
 
 
-def qst(src, dst, sdst, rows, kb, srs, drs, es, row=False, ra=0, rb=0, rc=0, comment=""):
+def qst(src, dst, sdst, rows, kb, srs, drs, es, row=False, half=False, ra=0, rb=0, rc=0,
+        comment=""):
     assert 0 < rows < 65536 and 0 < kb < 65536
-    return Instr(QST, ra=ra, rb=rb, rc=rc, flags=F_ROW if row else 0,
+    assert row or not half, "QST HALF needs ROW mode"
+    return Instr(QST, ra=ra, rb=rb, rc=rc, flags=(F_ROW if row else 0) | (F_HALF if half else 0),
                  w=_w(src, dst, sdst, rows | (kb << 16), srs, drs, es), comment=comment)
 
 

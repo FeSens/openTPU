@@ -9,6 +9,7 @@ module otpu_board #(
   parameter int D          = 128,
   parameter int MCOLS      = 2,
   parameter int ACT_BLOCKS = 128,
+  parameter int ACT_ROWS   = MCOLS,
   parameter int TMEM_WORDS = 1 << 16,
   parameter int IMEM_WORDS = 1 << 15,
   parameter int FIFO_DEPTH = 1024,
@@ -30,7 +31,9 @@ module otpu_board #(
   parameter int TRACE_QD    = 32,      // trace capture queue (cycles with events)
   parameter int PQ_WIN      = 1024,    // cycles per P/Q counter window
   parameter int AXI_BL      = 8,       // port B read burst, beats (1: single-beat reads)
-  parameter bit HAS_I2C     = 1'b1     // the I2C pins are wired (CAPS bit2)
+  parameter bit HAS_I2C     = 1'b1,    // the I2C pins are wired (CAPS bit2)
+  parameter bit CHASH       = 1'b1,    // hashed channel interleave (otpu_axi_dram; CAPS bit7)
+  parameter bit DSTEP       = 1'b1     // the DMA's DSTEP datapath (CAPS bit6; 0 leaves it out)
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
@@ -173,6 +176,7 @@ module otpu_board #(
   // ---- control
   logic run, ld_start, ld_busy, halted, error, wr_idle, axi_err;
   logic [31:0] ld_addr, ld_n, icount;
+  logic [31:0] arg [8];               // the run's arguments (ARG0..7: R8..R15 at the start)
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_rvalid, b_rtag, b_rdy;
   logic [31:0] a_addr, a_wdata, a_rdata, a_rdata2, b_addr;
   logic [3:0]  a_be, sw_be;
@@ -188,9 +192,9 @@ module otpu_board #(
   logic [1:0]  awvalid, awready, awid, wvalid, wready, bvalid, bready, bid;
   logic [1:0]  arvalid, arready, arid, rvalid, rready, rid, rlast;
 
-  otpu_ctrl #(.D(D), .MCOLS(MCOLS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
+  otpu_ctrl #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
               .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
-              .HAS_I2C(HAS_I2C)) u_ctrl (
+              .HAS_I2C(HAS_I2C), .CHASH(CHASH), .DSTEP(DSTEP)) u_ctrl (
     .clk, .rst,
     .s_awaddr(s_ctl_awaddr), .s_awvalid(s_ctl_awvalid), .s_awready(s_ctl_awready),
     .s_wdata(s_ctl_wdata), .s_wstrb(s_ctl_wstrb), .s_wvalid(s_ctl_wvalid),
@@ -198,7 +202,7 @@ module otpu_board #(
     .s_bready(s_ctl_bready), .s_araddr(s_ctl_araddr), .s_arvalid(s_ctl_arvalid),
     .s_arready(s_ctl_arready), .s_rdata(s_ctl_rdata), .s_rresp(s_ctl_rresp),
     .s_rvalid(s_ctl_rvalid), .s_rready(s_ctl_rready),
-    .run, .ld_start, .ld_addr, .ld_n, .ld_busy, .halted, .error, .icount, .wr_idle, .axi_err,
+    .run, .ld_start, .arg, .ld_addr, .ld_n, .ld_busy, .halted, .error, .icount, .wr_idle, .axi_err,
     .calib(cal_s2),
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
     .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(b_req && !b_rdy),
@@ -238,11 +242,12 @@ module otpu_board #(
   cmd_t         coll_cmds [1];
   assign coll_cmds[0] = coll_cmd;
 
-  otpu_slice #(.SID(0), .S(1), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS),
+  otpu_slice #(.SID(0), .S(1), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .ACT_ROWS(ACT_ROWS),
                .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS), .FIFO_DEPTH(FIFO_DEPTH),
                .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL),
-               .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN)) u_slice (
-    .clk, .sys_rst(rst), .rst(core_rst), .ld_start, .ld_addr, .ld_n, .ld_busy,
+               .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN),
+               .HAS_DSTEP(DSTEP)) u_slice (
+    .clk, .sys_rst(rst), .rst(core_rst), .rinit(arg), .ld_start, .ld_addr, .ld_n, .ld_busy,
     .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
     .sw_req, .sw_addr, .sw_wdata, .sw_be,
@@ -263,7 +268,7 @@ module otpu_board #(
   logic [1:0][511:0] wdata, rdata;
   logic [1:0][63:0]  wstrb;
   logic [1:0][1:0]   bresp, rresp;
-  otpu_axi_dram #(.D(D), .BL(AXI_BL), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
+  otpu_axi_dram #(.D(D), .BL(AXI_BL), .CHASH(CHASH), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
     .clk, .rst,
     .a_rdy, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,

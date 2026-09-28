@@ -19,6 +19,7 @@ module otpu_slice
   parameter int D          = 32,
   parameter int MCOLS      = 8,
   parameter int ACT_BLOCKS = 64,
+  parameter int ACT_ROWS   = MCOLS,   // ACT RAM rows (> MCOLS: the MXU replays chunks)
   parameter int TMEM_WORDS = 1 << 16,
   parameter int IMEM_WORDS = 1 << 16,
   parameter int FIFO_DEPTH = 128,
@@ -30,11 +31,13 @@ module otpu_slice
   parameter int MXU_CL     = 16,      // cascade chain length
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with the composite functions
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer (<= LANES)
-  parameter int PQ_WIN     = 64       // cycles per P/Q counter window (+bucket= in simulation)
+  parameter int PQ_WIN     = 64,      // cycles per P/Q counter window (+bucket= in simulation)
+  parameter bit HAS_DSTEP  = 1'b1     // the DMA's DSTEP datapath (otpu_dma)
 ) (
   input  logic          clk,
   input  logic          sys_rst,
   input  logic          rst,
+  input  logic [31:0]   rinit [8],  // the run's arguments: R8..R15 at the start (otpu_seq)
   // program loader
   input  logic          ld_start,
   input  logic [31:0]   ld_addr,
@@ -103,7 +106,7 @@ module otpu_slice
   seq_ev_t sq_ev;
   otpu_seq #(.IMEM_WORDS(IMEM_WORDS), .SID(SID), .S(S), .D(D), .WIN(WIN)) u_seq (
     .clk, .rst, .ucmd, .ustart, .urel, .urdy, .udone, .halted, .error, .icount, .ev(sq_ev),
-    .im_we, .im_row, .im_data(b_rdata));
+    .rinit, .im_we, .im_row, .im_data(b_rdata));
 
   // ---- program loader
   localparam int IPR = D / 32;
@@ -163,14 +166,15 @@ module otpu_slice
   logic [31:0]            act_idx, asc_data;
   logic [15:0]            asc_blk, act_rblk, act_rblk2;
   logic [MCOLS-1:0]       act_rhi;
+  logic [7:0]             act_rgrp;
   logic                   act_ren;
   logic [MCOLS*D*8-1:0]   act_rdata;
   logic [MCOLS*32-1:0]    act_rscale;
-  otpu_actram #(.D(D), .MCOLS(MCOLS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES)) u_act (
+  otpu_actram #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES)) u_act (
     .clk, .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data), .w_dup(act_dup),
     .w_off(act_off), .swe(asc_we),
     .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_blk(act_rblk),
-    .r_blk2(act_rblk2), .r_hi(act_rhi),
+    .r_blk2(act_rblk2), .r_hi(act_rhi), .r_grp(act_rgrp),
     .r_data(act_rdata), .r_scale(act_rscale));
 
   // ---- units
@@ -202,19 +206,19 @@ module otpu_slice
     rst_dma <= rst; rst_mxu <= rst; rst_q <= rst; rst_vpu <= rst;
   end
 
-  otpu_dma #(.D(D), .LANES(LANES)) u_dma (
+  otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_DSTEP)) u_dma (
     .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
     .b_req(dma_breq), .b_gnt(b_rdy), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
     .b_addr(dma_baddr), .b_rvalid(b_rvalid && b_rtag), .b_rdata, .wr_idle,
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rdata(r_data[P_DMA]),
     .t_wen(dma_wen), .t_waddr(dma_waddr), .t_wdata(dma_wdata));
 
-  otpu_mxu #(.D(D), .MCOLS(MCOLS), .DEPTH(FIFO_DEPTH), .LANES(ULANES), .IMPL(MXU_IMPL),
+  otpu_mxu #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .DEPTH(FIFO_DEPTH), .LANES(ULANES), .IMPL(MXU_IMPL),
              .CL(MXU_CL), .SID(SID)) u_mxu (
     .clk, .rst(rst_mxu), .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
     .computing(mxu_pop), .pf_level(mxu_level), .pf_starve(mxu_starve), .pf_block(mxu_block),
     .pf_u(mxu_u), .pf_uv(mxu_uv),
-    .act_blk(act_rblk), .act_blk2(act_rblk2), .act_hi(act_rhi), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
+    .act_blk(act_rblk), .act_blk2(act_rblk2), .act_hi(act_rhi), .act_grp(act_rgrp), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
     .a_req(mxu_areq), .a_addr(mxu_aaddr), .a_gnt(mxu_agnt), .a_rvalid, .a_rdata, .a_rdata2,
     .b_req(mxu_breq), .b_addr(mxu_baddr), .b_gnt(mxu_bgnt), .b_rvalid(b_rvalid && !b_rtag),
     .b_rdata,

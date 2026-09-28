@@ -22,9 +22,11 @@ rebuilds these lines from the trace buffer; docs/observability.md).
 
 Roofline. Per slice the DRAM burst port (B) moves one D-byte chunk per cycle and the MXU
 consumes one chunk per cycle, so both the memory and the compute roof are "chunks per cycle".
-The bound for a program is the number of port-B transfers it needs (MM chunks + the chunks LD/ST touch)
-and, separately, port-A transfers (MM scales + QST bytes); the roofline is the larger, taken
-over slices. Efficiency = roofline cycles / measured cycles.
+The bound for a program is the number of port-B transfers it needs (MM chunks + the chunks LD/ST touch),
+the port-A cycles (MM scales, one word per cycle or a PAIR MM's scale pair per cycle, + QST
+bytes) and the MXU's own cycles (4-bit: one block per cycle, PAIR one chunk); the roofline is
+the largest, taken over slices. Efficiency = roofline cycles / measured cycles. This is a bound
+at the core's ports; dram_efficiency() compares against the DDR3 peak instead.
 """
 from __future__ import annotations
 
@@ -35,12 +37,43 @@ from . import isa as I
 from . import rtlsim
 
 UNITS = ["DMA", "MXU", "QUANT", "VPU", "COLL"]
-OPNAMES = {I.LD: "LD", I.ST: "ST", I.MM: "MM", I.QACT: "QACT", I.QST: "QST", I.VOP: "VOP",
-           I.GATHER: "GATHER", I.BAR: "BAR"}
+OPNAMES = {I.LD: "LD", I.ST: "ST", I.DSTEP: "DSTEP", I.MM: "MM", I.QACT: "QACT", I.QST: "QST",
+           I.VOP: "VOP", I.GATHER: "GATHER", I.BAR: "BAR"}
 VFUNCS = {I.V_ADD: "add", I.V_SUB: "sub", I.V_RSUB: "rsub", I.V_MUL: "mul", I.V_MAX: "max",
           I.V_MIN: "min", I.V_COPY: "copy", I.V_EXP2: "exp2", I.V_RECIP: "recip",
           I.V_RSQRT: "rsqrt", I.V_ABS: "abs", I.V_FILL: "fill", I.V_EXP2SUB: "exp2sub",
           I.V_RSUM: "rsum", I.V_RMAX: "rmax", I.V_RSSQ: "rssq"}
+
+
+# ------------------------------------------------------------------------------ DDR3 peak
+DDR_CHANNELS, DDR_BYTES = 2, 8        # two 64-bit DDR3 channels (ECC bits not counted)
+
+
+def ddr3_peak(mts: float) -> float:
+    """Peak DRAM bandwidth of the board in bytes/s at `mts` MT/s (DDR3-1066: 17.07 GB/s)."""
+    return DDR_CHANNELS * DDR_BYTES * mts * 1e6
+
+
+def dram_efficiency(nbytes: float, cycles: float, mts: float, mhz: float) -> float:
+    """DRAM efficiency: bytes moved per token (weights, scales, KV cache, I/O; reads and
+    writes) over what the DDR3 peak moves in the token's time (cycles at `mhz`)."""
+    return nbytes / (cycles / (mhz * 1e6) * ddr3_peak(mts))
+
+
+def ddr3_plusargs(mts: float, mhz: float) -> list[str]:
+    """Simulator arguments of the DDR3 bank model (sim/verilator/otpu_axi_mem.sv) for DDR3-`mts`
+    with the core at `mhz`: the MIG's ui_clk is mts / 8 (4:1), the data-sheet tRAS / tRC /
+    tRFC / tREFI in ui_clk cycles, and two of the parameters fitted on the card at DDR3-800
+    (docs/board.md: tRP = tRCD = 3 controller cycles, a read-modify-write holds the channel
+    230 ns). The caller sets the other fitted one, 4 core cycles per AXI read transaction
+    (rtlsim arc), and the read latency (tools/perf_qwen.py: 300 ns)."""
+    import math
+    fu = mts / 8                       # MHz
+    ps = lambda f: round(1e6 / f)      # clock period in ps, the model's tick
+    cyc = lambda ns: math.ceil(ns * fu / 1e3 - 1e-3)
+    t = dict(tpc=ps(mhz), tpu=ps(fu), trp=3, trcd=3, tras=cyc(37.5), trc=cyc(50.625),
+             trfc=cyc(160), trefi=round(7.8 * fu), trmw=round(0.23 * mhz))
+    return ["+axi_dram=1", "+axi_map=1"] + [f"+axi_{k}={v}" for k, v in t.items()]
 
 
 @dataclass
@@ -74,6 +107,12 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
         # one TMEM segment per cycle; each D-byte chunk once on port B (chunk-aligned count)
         n = w[2]
         return OPNAMES[op], f"{n} words", -(-n // burst), -(-n // (D // 4)), 0
+    if op == I.DSTEP:
+        # DSTEP_LANES state words per cycle; every state chunk read (unless zero) and written
+        rows, cols = w[3] & 0xFFFF, w[3] >> 16
+        n = -(-rows * cols * 4 // D)
+        return ("DSTEP", f"{rows}x{cols}{' zero' if ins.flags & I.F_DZERO else ''}",
+                -(-rows * cols // I.DSTEP_LANES), n if ins.flags & I.F_DZERO else 2 * n, 0)
     if op == I.MM:
         N, KB, M = w[3] & 0xFFFF, w[3] >> 16, (w[5] >> 16) & 0xFF
         acc = " +acc" if ins.flags & I.F_ACC else ""
@@ -93,7 +132,8 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
     if op == I.QST:
         rows, KB = w[3] & 0xFFFF, w[3] >> 16
         n = rows * KB * D
-        return "QST", f"{rows}x{KB * D} -> DRAM int8", -(-n // L) + n, 0, n + rows * KB
+        nw = n // 2 if ins.flags & I.F_HALF else n     # HALF: the rows' first halves written
+        return "QST", f"{rows}x{KB * D} -> DRAM int8", -(-n // L) + nw, 0, nw + rows * KB
     if op == I.VOP:
         rows, cols = w[3] & 0xFFFF, w[3] >> 16
         func = (w[5] >> 16) & 0xFF
@@ -126,7 +166,12 @@ class Profile:
             rs = self.slice_recs(s)
             b = sum(r.portb for r in rs)
             a = sum(r.porta for r in rs)
-            per.append({"portb": b, "porta": a, "bound": max(a, b)})
+            # port A delivers one scale word per MXU cycle, a PAIR MM's 8-byte scale pair at once
+            ac = sum(r.porta // 2 if r.detail.endswith((" pair", " pair +acc")) else r.porta
+                     for r in rs)
+            m = sum(r.work for r in rs if r.op == I.MM)
+            per.append({"portb": b, "porta": a, "porta_cycles": ac, "mxu": m,
+                        "bound": max(ac, b, m)})
         bound = max(p["bound"] for p in per) if per else 0
         return {"bound": bound, "per_slice": per,
                 "efficiency": bound / self.cycles if self.cycles else 0.0}
@@ -263,7 +308,8 @@ def parse(trace: str, cfg, programs, name: str = "") -> Profile:
             slot, pc, op = int(kv["s"]), int(kv["pc"]), int(kv["op"], 16)
             ins = programs[s][pc]
             nm, det, work, pb, pa = _describe(ins, cfg)
-            unit = {I.LD: 0, I.ST: 0, I.MM: 1, I.QACT: 2, I.QST: 2, I.VOP: 3}.get(op, 4)
+            unit = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.MM: 1, I.QACT: 2, I.QST: 2,
+                    I.VOP: 3}.get(op, 4)
             r = Rec(s, counts[s], pc, op, unit, c, name=nm, detail=det, comment=ins.comment,
                     work=work, portb=pb, porta=pa)
             counts[s] += 1

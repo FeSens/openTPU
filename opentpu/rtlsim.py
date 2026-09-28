@@ -16,7 +16,8 @@ BUILD = ROOT / "build" / "verilator"
 
 RTL_SOURCES = [
     "vpu/otpu_fp.sv", "vpu/otpu_fpipe.sv", "top/otpu_pkg.sv", "mem/otpu_dram.sv", "mem/otpu_tmem.sv",
-    "mem/otpu_axi_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv",
+    "mem/otpu_axi_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv", "vpu/otpu_vtree.sv",
+    "dma/otpu_dstep.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv",
     "vpu/otpu_quant.sv", "vpu/otpu_vpu.sv", "top/otpu_coll.sv", "top/otpu_slice.sv",
     "top/otpu_top.sv",
 ]
@@ -49,6 +50,34 @@ def build(top: str, sources: list[Path], params: dict | None = None) -> Path:
     if r.returncode != 0 or not exe.exists():
         raise RuntimeError(f"verilator failed:\n{r.stdout[-4000:]}\n{r.stderr[-4000:]}")
     return exe
+
+
+# A simulator whose Python parent dies (killed, or os._exit) would run on under launchd for
+# hours: the child is started under a shell that kills it once the parent is gone (macOS has
+# no PR_SET_PDEATHSIG), and in its own process group, killed on any exception here (a timeout,
+# KeyboardInterrupt).
+_WATCH = ('"$@" & c=$!; (while kill -0 "$OTPU_PARENT" 2>/dev/null; do sleep 1; done; '
+          'kill -9 $c 2>/dev/null) & w=$!; wait $c; r=$?; kill $w 2>/dev/null; exit $r')
+
+
+def run_sim(cmd: list, timeout: float | None = None) -> subprocess.CompletedProcess:
+    """subprocess.run(cmd, capture_output=True, text=True, timeout=timeout) for a simulator
+    binary, which never outlives this process (see _WATCH)."""
+    import signal
+    env = {**os.environ, "OTPU_PARENT": str(os.getpid())}
+    p = subprocess.Popen(["/bin/sh", "-c", _WATCH, "sh", *map(str, cmd)], env=env,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except BaseException:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        p.wait()
+        raise
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 
 
 def run_fp_vectors(vec_path: Path) -> str:
@@ -114,6 +143,7 @@ MEMORY = {"AXI": os.environ.get("OTPU_AXI", "0") == "1",
 def top_params(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = False,
                dram_bytes: int | None = None) -> dict:
     p = {"S": cfg.S, "D": cfg.D, "MCOLS": cfg.MCOLS, "ACT_BLOCKS": cfg.ACT_BLOCKS,
+         "ACT_ROWS": cfg.act_rows,
          "TMEM_WORDS": cfg.TMEM_WORDS, "IMEM_WORDS": cfg.IMEM_WORDS,
          "DRAM_WORDS": (dram_bytes or cfg.DRAM_BYTES) // 4, "DRAM_LAT": dram_lat,
          "LANES": cfg.LANES,
@@ -144,9 +174,11 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         keep: Path | None = None, trace: bool = False, uarch: dict | None = None,
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
         seed: int | None = None, bw: int | None = None, lat: int | None = None,
-        arc: int | None = None, plusargs: list | None = None):
-    """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats)."""
+        arc: int | None = None, plusargs: list | None = None, args=None):
+    """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats). args: the
+    run's arguments (R8..R15 at the start, as isasim.Machine)."""
     from . import isa as I
+    run_args = args
     axi = MEMORY["AXI"] if axi is None else axi
     axi = axi and cfg.D == 128
     boot = MEMORY["BOOT"] if boot is None else boot
@@ -180,6 +212,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         img.view("<u4").astype(">u4").tofile(tmp / f"dram_{s}.bin")
     args = [str(exe), f"+dir={tmp}", f"+max_cycles={max_cycles}"] + (["+trace"] if trace else [])
     args += list(plusargs or [])
+    args += [f"+arg{k}={int(v) & 0xFFFFFFFF}" for k, v in enumerate(run_args or [])]
     if axi:
         args += [f"+axi_stall={stall}", f"+axi_seed={seed}",
                  f"+axi_bw={MEMORY['BW'] if bw is None else bw}",
@@ -187,8 +220,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
                  f"+axi_arc={MEMORY['ARC'] if arc is None else arc}"]
     if boot:
         args += ["+boot", f"+boot_addr={at}", f"+boot_n={max(len(p) for p in progs) // 8}"]
-    r = subprocess.run(args,
-                       capture_output=True, text=True, timeout=3600)
+    r = run_sim(args, timeout=3600)
     out = r.stdout + r.stderr
     import re
     m = re.search(r"RESULT cycles=(\d+) halted=(\d+) error=(\d+)", out)

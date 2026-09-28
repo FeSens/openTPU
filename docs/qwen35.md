@@ -265,6 +265,39 @@ Default board (MCOLS=2, VPU_CL=2), context 128, measured:
   context 128 (80%).
 - Attention, MLP and LM head are what they were for Qwen3: at 99-100% of their bytes.
 
+### DSTEP: the head step in the DMA
+
+With `Config.DSTEP` (CAPS bit6, `OTPU_DSTEP=1` for the simulators) `_deltanet_dstep` replaces
+each head's LD, RDOT, MUL, SUB, MUL, OUTER, RDOT and ST with one DSTEP ([isa.md](isa.md)): the
+DMA streams the head's state from DRAM through its datapath and back, so the VPU no longer makes
+the 3 state passes and TMEM no longer takes the 16K-word state loads. The small ops (prep,
+post, the gates) stay on the VPU, pair by pair. Results are bit-identical to the VOP path
+(`tests/test_qwen35.py::test_tiny_dstep_is_bit_exact`, the RTL token test with and without it).
+
+Simulated on the Verilator RTL (not measured on the card): fp4 body, int8 LM head, `OTPU_PAIR=1`,
+the card-calibrated DDR3-1066 bank model with the core at 120 MHz (the `perf_qwen --ddr 1066
+--mhz 120` preset: `--dram rbc --lat 36 --arc 4`, `+axi_tpc=8333 +axi_tpu=7505 +axi_trp=3
++axi_trcd=3 +axi_tras=5 +axi_trc=7 +axi_trfc=22 +axi_trefi=1039 +axi_trmw=28`), context 9:
+
+| | one DeltaNet layer (`--layers 1`) | VPU busy in it | full token | DeltaNet, 18 layers | useful-bytes efficiency | tok/s at 120 MHz (projected) |
+|---|---:|---:|---:|---:|---:|---:|
+| VOP path | ~156 K | ~155 K | 6,317,654 | 2,814,558 | 70.5% | 19.0 |
+| DSTEP, a chunk at a time | 100,113 | 25,638 | | | | |
+| DSTEP, DRAM runs of 16 chunks | 76,164 | 22,500 | 4,876,920 | 1,367,372 | 91.4% | **24.6** |
+
+The layer's useful bytes need 61.8 K cycles: the mixer is at 81.1% of its roofline (39.5% on the
+VOP path). DSTEP first requested the state one chunk at a time between the MXU's weight
+bursts: every read was its own AXI transaction (4 cycles of fixed cost each) and every write a
+read / write turnaround. With the reads issued 16 chunks at a time and the writes once 16 chunks
+are gathered, one layer went from 100.1 K to 76.2 K cycles. With ideal memory (no bank model)
+the layer takes 66.2 K, so the rest of the gap is DRAM (row misses between the weight stream and
+the state); the small ops between the DSTEPs are worth at most the last 4 K.
+
+Resources (yosys estimate, `tools/synth/run.py otpu_dma`): otpu_dma 33.2 K LUT, 24.8 K FF, 70 DSP,
+18.5 BRAM36. Vivado out of context at 120 MHz (placed and routed, the chunk-at-a-time
+version): 28,333 LUT / 29,853 FF / 30 BRAM36 / 70 DSP, WNS +0.257 ns (otpu_dma without DSTEP:
+1,940 LUT, 14.5 BRAM36, WNS +0.705 ns). Not yet in a full bitstream build.
+
 ## What limits it
 
 These are the limits of the ISA and the RTL for this model, found while mapping it; the numbers
@@ -311,6 +344,15 @@ the run's rows.
   over a 2-column MXU.
 - The KV cache, ring, DeltaNet state and logits are bit-identical to feeding the tokens one by
   one (`tests/test_qwen35.py`, design and board configurations).
+
+With DSTEP, the chunk's recurrence is one DSTEP per row and head (the state streams from DRAM
+through the DMA's datapath and back, row after row), and the pairs are software pipelined: the
+next pair's projections stream while a pair's DSTEPs run. Simulated on the RTL (not measured on
+the card): 6 rows at positions 9..14, fp4 body / int8 head, PAIR, ACT_ROWS = 6, the DDR3-1066
+bank model at 120 MHz: 27,338,223 cycles on the VOP path, 19,326,817 with DSTEP per row,
+16,748,128 pipelined, i.e. 26.3 -> 43.0 tok/s projected at 120 MHz. What is left is the MXU:
+MLP and the projections each replay their weights for the 6 rows over 2 columns (MXU busy
+6.4 M and 5.2 M cycles).
 
 Not attempted: batched decode. The state is kept per sequence in the layer block, so batching
 would need a state per sequence.

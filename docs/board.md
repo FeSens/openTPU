@@ -365,6 +365,25 @@ per token are small (program ~40 KB, logits 600 KB): the one-time weight upload 
 ~0.5-0.7 s at Gen1 x8 (2 GB/s). Gen1 rather than Gen2: at Gen2 the PCIe block runs a
 500 MHz user clock whose IP-placed paths missed timing by ~0.1 ns (Vivado 2026.1, 80 MHz build).
 
+### DRAM efficiency
+
+Two numbers describe how well a token uses the memory. `tools/perf_qwen.py` prints both:
+
+- **DRAM efficiency** = the bytes a token moves to and from DRAM (weights with their block
+  scales, the KV cache, the conv state, the I/O; reads and writes) / (its time x the DDR3
+  peak). The peak is 16 bytes x the data rate: two x64 channels, ECC bits not counted, so
+  17.07 GB/s at DDR3-1066. This is the number the hardware as a whole is judged by
+  (`opentpu.profile.dram_efficiency`).
+- **Port efficiency** = the same bytes / (cycles x 128 B): the fraction of the core's own
+  path, one 64-byte beat per channel per core cycle.
+
+The port caps DRAM efficiency at 128 B x f_core / peak: 75% at 100 MHz and DDR3-1066, 87% at
+116 MHz, 94% at 125 MHz, 100% from 133 MHz. Above that clock, or with a wider port
+([wide_dram.md](wide_dram.md)), the DDR3 is the limit. `perf_qwen.py --ddr 1066 --mhz F`
+runs the DDR3 bank model calibrated on the card (section 4; `opentpu.profile.ddr3_plusargs`)
+at that data rate and core clock and prints both efficiencies. Every figure it prints is
+simulated. [lfm2.md](lfm2.md) has the LFM2 numbers.
+
 ### Faster DDR3
 
 The core takes at most 12.8 GB/s (one 128-byte chunk per 100 MHz cycle, a 512-bit port per

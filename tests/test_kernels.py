@@ -90,3 +90,39 @@ def test_design_size_block_128():
                            block=128)
     got = launch(attention_decode, Config(S=1, D=128, ACT_BLOCKS=16), **args).outputs["out"]
     assert rel(got, want) < 0.03
+
+
+# The V^T cache in tiles of 256 tokens (compiler.KVDesc) against the plain [d, cap] layout:
+# the same program math, so the outputs are bit for bit the same -- across tile boundaries,
+# for blocks that divide the tile (hardware-loop steps of whole tiles, or unrolled), and for
+# appends at and across a tile's edge.
+@pytest.mark.parametrize("T,block,cap", [(255, 32, 512), (256, 64, 512), (300, 128, 512),
+                                         (600, 256, 768), (513, 32, 768), (700, 128, 1024),
+                                         (1300, 256, 1536)])
+def test_attention_decode_vt_tiles_bit_exact(T, block, cap, monkeypatch):
+    import opentpu.compiler as C
+    cfg = Config(S=1) if block < 128 else Config(S=1, D=128, ACT_BLOCKS=16)
+    args, want = attn_args(np.random.default_rng(T), Hq=4, Hkv=2, d=cfg.D, T=T, cap=cap,
+                           block=block)
+    tiled = launch(attention_decode, cfg, **args)
+    assert C.vt_tile(cap) == 256
+    kv_tiled = tiled.kv("kv")                            # (read back with the tiled map)
+    monkeypatch.setattr(C, "VT_TILE", 1 << 30)
+    plain = launch(attention_decode, cfg, **args)
+    assert np.array_equal(tiled.outputs["out"], plain.outputs["out"])
+    assert rel(tiled.outputs["out"], want) < 0.03
+    for a, b in zip(kv_tiled, plain.kv("kv")):
+        assert np.array_equal(a, b)
+
+
+@pytest.mark.parametrize("pos", [255, 256, 511])
+def test_attention_layer_vt_tiles_bit_exact(pos, monkeypatch):
+    import opentpu.compiler as C
+    args, (want, knew, vnew) = layer_args(np.random.default_rng(pos), 1, pos=pos, cap=512)
+    tiled = launch(attention_layer, Config(S=1), **args)
+    K, V = tiled.kv("kv")
+    monkeypatch.setattr(C, "VT_TILE", 1 << 30)
+    plain = launch(attention_layer, Config(S=1), **args)
+    assert np.array_equal(tiled.outputs["out"], plain.outputs["out"])
+    assert np.array_equal(V, plain.kv("kv")[1])
+    assert rel(V[:, pos], vnew) < 0.02

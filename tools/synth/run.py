@@ -21,17 +21,19 @@ RTL = ROOT / "rtl"
 OUT = Path(os.environ.get("SYNTH_OUT", ROOT / "build" / "synth_board"))
 BASE = ["vpu/otpu_fp.sv", "vpu/otpu_fpipe.sv", "top/otpu_pkg.sv"]
 ALL = ["mem/otpu_tmem.sv", "mem/otpu_axi_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv",
-       "dma/otpu_dma.sv", "mxu/otpu_mxu.sv", "vpu/otpu_quant.sv", "vpu/otpu_vpu.sv",
+       "vpu/otpu_vtree.sv", "dma/otpu_dstep.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv",
+       "vpu/otpu_quant.sv", "vpu/otpu_vpu.sv",
        "top/otpu_coll.sv", "top/otpu_slice.sv", "boards/ypcb-00338/otpu_ctrl.sv",
        "boards/ypcb-00338/otpu_trace.sv", "boards/ypcb-00338/otpu_board.sv"]
 
 # board parameters (rtl/boards/ypcb-00338/otpu_board.sv, opentpu.isasim.board_config)
 COMPONENTS = {
     "otpu_seq": (["seq/otpu_seq.sv"], dict(IMEM_WORDS=32768, S=1, D=128, WIN=16)),
-    "otpu_dma": (["dma/otpu_dma.sv"], dict(D=128, LANES=8)),
+    "otpu_dma": (["vpu/otpu_vtree.sv", "dma/otpu_dstep.sv", "dma/otpu_dma.sv"],
+                 dict(D=128, LANES=8)),
     "otpu_mxu": (["mxu/otpu_mxu.sv"], dict(D=128, MCOLS=2, DEPTH=1024, LANES=8)),
     "otpu_quant": (["vpu/otpu_quant.sv"], dict(D=128, LANES=8)),
-    "otpu_vpu": (["vpu/otpu_vpu.sv"], dict(LANES=8)),
+    "otpu_vpu": (["vpu/otpu_vtree.sv", "vpu/otpu_vpu.sv"], dict(LANES=8)),
     "otpu_tmem": (["mem/otpu_tmem.sv"], dict(WORDS=65536, LANES=8, NRP=8, NWP=4, WPB=1)),
     "otpu_actram": (["mem/otpu_actram.sv"], dict(D=128, MCOLS=2, BLOCKS=128, LANES=8)),
     "otpu_coll": (["top/otpu_coll.sv"], dict(S=1, LANES=8)),

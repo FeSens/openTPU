@@ -9,6 +9,7 @@ module otpu_top
   parameter int D          = 32,
   parameter int MCOLS      = 8,
   parameter int ACT_BLOCKS = 64,
+  parameter int ACT_ROWS   = MCOLS,
   parameter int TMEM_WORDS = 1 << 16,
   parameter int IMEM_WORDS = 1 << 16,
   parameter int DRAM_WORDS = 1 << 18,
@@ -28,6 +29,7 @@ module otpu_top
   input  logic          clk,
   input  logic          sys_rst,
   input  logic          rst,
+  input  logic [31:0]   rinit [8],     // the run's arguments (R8..R15 at the start)
   input  logic          ld_start,
   input  logic [31:0]   ld_addr,
   input  logic [31:0]   ld_n,
@@ -98,11 +100,11 @@ module otpu_top
         .s_rlast(rlast), .dump);
     end
 
-    otpu_slice #(.SID(s), .S(S), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS),
+    otpu_slice #(.SID(s), .S(S), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .ACT_ROWS(ACT_ROWS),
                  .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS),
                  .FIFO_DEPTH(FIFO_DEPTH), .LANES(LANES), .WIN(WIN), .RPB(RPB),
                  .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES)) u_slice (
-      .clk, .sys_rst, .rst, .ld_start, .ld_addr, .ld_n, .ld_busy(ldb[s]),
+      .clk, .sys_rst, .rst, .rinit, .ld_start, .ld_addr, .ld_n, .ld_busy(ldb[s]),
       .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
       .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
       .sw_req, .sw_addr, .sw_wdata, .sw_be,

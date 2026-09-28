@@ -15,8 +15,12 @@ What the host sees:
 
 The card's AXI address map: DDR3 channel 0 at `0x0000_0000`, channel 1 at `0x8000_0000`,
 2 GiB each. The accelerator sees one 4 GiB logical DRAM interleaved over the two channels in
-64-byte beats (logical beat *b* is on channel *b* % 2 at offset (*b* // 2) * 64).
-`opentpu/host/board.py` applies that map, so everything above it uses logical addresses.
+64-byte beats: logical beat *b* of chunk *m* = *b* // 2 is at offset *m* * 64 on channel
+*b* % 2, or, on a bitstream with CAPS bit7 (CHASH), on channel (*b* % 2) XOR parity(*m*): each
+128-byte chunk still has one beat on each channel, but the chunks with an odd number of set
+bits have them swapped, so a column at a power-of-two stride (the transposed V cache: one byte
+per cache row) is spread over both channels instead of loading one. `opentpu/host/board.py`
+reads CAPS and applies the map, so everything above it uses logical addresses.
 
 The host software is the package `opentpu/host` (userspace; the kernel side is the Xilinx
 XDMA driver, installed by `otpu-setup`). `pip install -e .` installs its commands:
@@ -459,8 +463,9 @@ per-call cost stays under 1% of the transfer).
 
 **Pipelining.** A token's program depends on its position only, so `Engine.step` compiles
 position p + 1 while the card runs p (`Engine(..., pipeline=None)`: on for every backend but
-the ISA simulator); on the board, two worker processes keep p + 1 and p + 2 in flight
-(`COMPILE_AHEAD`), so a compile may take up to two device runs. A precompile made for another
+the ISA simulator); on the board, three worker processes keep p + 1 .. p + 3 in flight
+(`COMPILE_AHEAD`), so a compile may take up to three device runs (two until LFM2 fp4's 13.5 ms
+run: 0.8-1.2 ms of compile wait per token on a card host running two Vivado builds). A precompile made for another
 position (after `reset`, or `run_rows`) is waited for and dropped. Results are unchanged (`tests/test_host.py`, and the board-model tests
 compare the logits with the ISA simulator's bit for bit).
 
@@ -512,6 +517,126 @@ card (build a691ea98, burst image), ms per token for the sampling, before / afte
 8.18 / 8.22). In isolation the new selection takes 0.10 / 0.16 / 0.27 ms on the PC above; in the
 chat loop the logits are freshly read from the card, and the rest of the sampler (the
 repetition penalty, the choice) adds to it.
+
+**Streamed logits.** What the host does between seeing HALTED and writing RUN for the next token
+is the token's critical path: the card idles meanwhile. Reading the whole logits vector and
+sampling from it after the run were most of it (0.41 + 0.47-0.65 ms for LFM2 above). The LM
+head writes the logits in chunks of 8,192 (32 KiB), one after the other, in the last part of
+the run (25-40% of an LFM2 token, simulated), so the host now takes each chunk while the run
+goes on (`BoardBackend.start(stream=...)` / `wait(feed)`, `Engine.step(sink=...)`):
+
+- Before the run the logits region holds a word the device never stores, 0xFFFFFFFF (its NaN
+  is canonical: 0x7FC00000, or 0xFFC00000 after a sign flip). A chunk is complete when none of
+  its words is left: the host probes the chunk's last beat (one 64-byte read), then reads the
+  chunk and checks every word, and writes the marker back into it (the run is past it).
+- The probes start 0.3 ms before the time the same chunk was seen complete in the last token
+  (every 0.5 ms on the first), and retry every 0.1 ms; a chunk already complete at its first
+  probe moves its time 0.3 ms earlier, so the schedule follows the run both ways. The waits are
+  sleeps of at most 1 ms (a long sleep overshoots: 38% on macOS). HALTED ends the loop; the last
+  chunk (written just before the halt) and any other still pending are read in one read after
+  it, and marked again right after the next token's RUN (its LM head is milliseconds away).
+- The sampler takes each chunk as it comes (`pick.stream(context)`, chat.sampler): the
+  repetition penalty and the 64-logit block maxima of the top-k prefilter are applied per chunk,
+  so after the halt only the selection is left (21-31 us against 44-108 us for the whole
+  vector on the Mac, the models' defaults). The picks are those of `pick(logits, context)`
+  exactly, with the same random stream (tests/test_host.py).
+- A run that leaves a word of the region unwritten is an error, not stale logits; a run that
+  is not a streamed decode step (a prefill, a batch) makes the next step mark the whole region
+  again (256 KiB for LFM2, before its RUN). Transports without DMA during a run (the board
+  model) read the logits after the run as before; `Engine.stream_logits = False` turns it off.
+
+This DMA during a run is new on the card: the whole path is tested against a fake card that
+runs the ISA simulator and reveals the logits late, chunk by chunk (bit-exact logits and the
+same picks over prefill and decode), but not yet on the card.
+
+The token's text and the interface's drawing now go after the next RUN (`on_start`), and the
+status file is rewritten only by its timer thread, never from the token's critical path.
+
+**Measuring it.** `tools/decode_profile.py` measures the critical path directly: from HALTED
+seen to the next RUN written, per token, split into its steps, every transport operation
+(DMA write / read, register read / write, the HALTED poll) filed under the step it serves and
+as critical or overlapped (`--no-stream` for the old read; `--json` adds the reply's token ids).
+The tool's own timers add a few microseconds per operation. `tools/host_path_card.py` is the
+card session: for each model, greedy with and without streaming (the replies must be the same
+tokens) and sampled with and without, then one table per model:
+
+```sh
+OTPU_LOCK_WAIT=600 python3 tools/host_path_card.py --models lfm2,qwen3 --tokens 96
+OTPU_LOCK_WAIT=600 python3 tools/host_path_card.py --models lfm2 -- --wformat fp4 --head-format int8
+```
+
+What is left on the critical path after streaming, by the measurements above (*estimate* until
+the card run): the x / cos / sin write (0.16 ms), the program upload and IMEM load (0.23 ms, gone
+with one position-independent program per model), the wait for the compile (0.08 ms; at a 12 ms
+token the per-position compile of LFM2 no longer keeps up on a laptop: the same fix), the
+counters (~0.02 ms), the last chunk's read and the selection (~0.1 ms), Python (~0.1 ms).
+
+**Poll outliers** (card, host-path bc132ba: ~1 ms per Qwen3 token as poll overshoot in half
+the runs, or as critical time in the counters in one streamed run per pair). The poll's
+expected time was the last run's CYCLES / CORE_KHZ; a run a little longer than that (past the
+0.1 ms spin) was seen only after the next 1 ms sleep, and one that ended before the wake-up was
+seen at the wake-up; after the streamed wait had seen HALTED itself, the poll still slept until
+the expected end. Now: the sleeps past the expected end are 1/32 of the lateness (at least
+20 us, at most 1 ms); the expected time is CYCLES / CORE_KHZ times the smoothed ratio of the
+seen run times to it (raised only by a halt seen by back-to-back reads that saw the run going
+just before, lowered by any); a halt the streamed wait saw skips the sleep; the wake-up sleep
+halves its way to the target (a 50 ms sleep overshoots 2-3 ms on macOS). Measured on
+`FakeTransport` (`decode_profile.py --backend fake --fake-skew F [--fake-stream]`: CYCLES a
+fraction F off the wall time; the fake writes its logits piece by piece), Qwen3's 53 ms run
+on the loaded Mac, HALTED seen after the run's end: 0.00-0.02 ms without streaming (before:
+3.2-3.7 ms, most of it the macOS sleep overshoot) and 0.07-0.18 ms streamed, at F = +0.25% and
+-2%. Not yet on the card.
+
+**Streamed wait vs a late piece time.** The streamed wait sleeps until each piece's time of
+the last token; a time learned on a delayed token can lie past this run's end, and HALTED was
+checked only at the piece's time: LFM2 fp4 on a busy card host (fp4fx120, two Vivado builds)
+saw HALTED 2.2 ms after the run's end in one streamed run. HALTED is now read after every
+sleep slice (at most 1 ms apart). Not yet re-measured on the card.
+
+**Resident decode.** A decode program now takes the position and the token as run arguments
+(docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit25), so one program serves
+every position of an attention bucket (`Engine(resident=True)`, the default of `otpu-chat` and
+`decode_profile.py`; `--per-position` for the old path):
+
+- Attention spans `blocks` 256-token blocks, the last one masked: the program adds a row of a
+  mask table (`+inf` for the first `cap` entries, then 256 of `-inf`) to its scores at an
+  offset of -4 x position, `min(score, mask)`; a masked score is `-inf`, its exp2 is +0, so
+  the row sums, P.V and the row maximum (VOP RMAX, the same bits as the MM epilogue) are the
+  unmasked columns' (`kernels/attention.Bucket`). One program per 256 positions: compiled once
+  (on the worker process, 16 positions before the bucket is reached) and kept in IMEM.
+- The program sees the position as t0 + tpos, t0 the bucket's first position and tpos < 256
+  the argument (so a V^T append stays in its 256-token tile). The KV append, the K / V scales
+  and V^T columns, and the RoPE rows are at tpos x 128, x 4 and x 1; LFM2's convolution ring is mirrored (each row stored twice, in 2K rows) so the last K
+  rows are contiguous at ((p + 1) mod K) x row: one argument instead of three
+  (`lfm2._ring_rows`).
+- The token's embedding row and the RoPE cos / sin rows come from tables in the image
+  (`Image(lookup=True)`: the fp32 embedding, cos / sin of every position): the step writes no
+  inputs. For LFM2.5-230M the tables are 256 MiB of the card's 4 GiB.
+- Positions 0 and 1 of LFM2 (the convolution's taps before position 0) and Qwen3.5 (its
+  convolution and DeltaNet programs use R1..R8) keep the per-position programs, and so does a
+  bitstream without CAPS bit25 (`Engine.resident` falls back; the worker processes of
+  `COMPILE_AHEAD` stay for it).
+
+The logits are bit-identical to the per-position programs' (tests: `test_qwen3.py`,
+`test_lfm2.py` from position 0 across the bucket boundaries 256 and 512 on the ISA
+simulator, positions 255 and 256 on the Verilator RTL, LFM2.5-230M fp4 with an int8 head on
+the RTL; the board model with the ARG registers, where each run is a fresh simulation, so it
+loads the program every run; `FakeTransport` counts one load). A step's host work before RUN is then the
+changed ARG words (up to 6 register writes, posted) instead of the x / cos / sin write
+(0.16 ms), the program upload and IMEM load (0.23 ms) and the compile wait (0.08 ms, and at
+long contexts the 16-33 ms trace that no longer keeps up): by the measurements above the
+critical path would be ~0.25 ms per token (counters, the last chunk and the selection,
+Python). This is an *estimate*: it needs a bitstream with the ARG registers, not built yet. On
+`FakeTransport` (its DMA is a memory copy, so it shows the Python side only; LFM2.5-230M fp4 /
+int8 head, 48 tokens, an 11 ms run, the Mac above) `decode_profile.py` measures 0.215 ms of
+critical path per token against 0.245 with `--per-position`.
+
+The price is on the device: the bucket's last block is computed in full, masked, so early in
+a bucket attention does up to 255 columns more than a per-position program. LFM2.5-230M, fp4
+with an int8 head, DDR3-1066 bank model at 116 MHz, position 9 (the worst case), simulated:
+1,289,001 cycles against 1,260,820 (+2.2%, 90.0 against 92.0 tok/s device); at a bucket's end
+the two meet. Against the ~0.5 ms of host time per token it removes (4% of an 11 ms token)
+it is a gain at every position.
 
 The chat interface draws each token while the card runs the next one: `Chat` hands a token to
 `on_update` from `Engine.step`'s `on_start` hook (called once the run is started), so the

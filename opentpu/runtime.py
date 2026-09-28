@@ -18,7 +18,7 @@ import numpy as np
 
 from . import fp32 as F
 from . import quant as Q
-from .compiler import Affine, Compiled, KVDesc, Kernel, QTensor, Tensor
+from .compiler import Affine, Compiled, KVDesc, Kernel, QTensor, Tensor, vt_tiled, vt_untiled
 from .isasim import Config, Machine
 
 ALIGN = 128                  # DRAM allocations: whole MXU chunks (D <= 128)
@@ -170,7 +170,7 @@ def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
                     vsf[:a.T] = vs
                     dram.put(s, r["k"], kfull)
                     dram.put(s, r["ks"], ksf)
-                    dram.put(s, r["vt"], vt)
+                    dram.put(s, r["vt"], vt_tiled(vt))
                     dram.put(s, r["vs"], vsf)
             layout.params[name] = (a, heads)
             for s in range(S):
@@ -226,7 +226,7 @@ class Result:
                 ks = img[r["ks"]:r["ks"] + 4 * a.cap * (a.d // D)].view(np.float32)
                 ks = ks.reshape(a.cap, a.d // D)
                 K[h] = kq.astype(np.float32) * np.repeat(ks, D, axis=1)
-                vt = img[r["vt"]:r["vt"] + a.d * a.cap].view(np.int8).reshape(a.d, a.cap)
+                vt = vt_untiled(img[r["vt"]:r["vt"] + a.d * a.cap].view(np.int8), a.d, a.cap)
                 vs = img[r["vs"]:r["vs"] + 4 * a.cap].view(np.float32)
                 V[h] = vt.T.astype(np.float32) * vs[:, None]
         return K, V

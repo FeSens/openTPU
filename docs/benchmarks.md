@@ -220,3 +220,50 @@ The Gated DeltaNet recurrence runs on the vector unit with RDOT and OUTER (3 pas
 head's state instead of 7) and takes 37% of the token (3.41 M cycles, at either bandwidth); the
 MLPs, attention and LM head run at their rooflines. VPU_CL=4 gains under 1%. Details,
 accuracy and the cycle breakdown are in [qwen35.md](qwen35.md).
+
+## Prefill with MM replay and 4-bit weights (2026-09-27)
+
+MM replay (`make bit ACT_ROWS=8`, CAPS bit6; docs/isa.md, MM) keeps 8 prompt rows in the ACT RAM
+and streams each weight chunk once for all of them: the MXU consumes it once per group of MCOLS
+rows. Simulated RTL cycles (`tools/perf_qwen.py --layers 0 --rows R --logits last`, full models,
+position 9) on the DDR3-1066 bank model with the card's fitted parameters (`--dram rbc --arc 4`,
+300 ns latency, `+axi_tpc` for the core clock); tok/s are these cycles at the core clock, no
+host time. "r7" adds the r7-apf AXI adapter (port-A prefetch, write queue, read-modify-write
+path; not on main yet) in a scratch merge.
+
+| model | weights | rows | adapter | cycles per prompt token | tok/s at 100 MHz | at 116 MHz |
+|---|---|---|---|---:|---:|---:|
+| LFM2.5-230M | int8 | 8 | main | 905,384 | 110 | |
+| LFM2.5-230M | fp4 + int8 head | 8 | main | 898,246 | 111 | 125 (929,405 cycles) |
+| LFM2.5-230M | int8 or fp4 + int8 head | 8 | r7 | 749,650 / 749,644 | 133 | 155 (750,034) |
+| Qwen3-0.6B | int8 / fp4 + int8 head | 8 | main | 2,834,128 / 2,813,549 | 35 / 36 | 39 (2,962,806, fp4) |
+| Qwen3-0.6B | int8 / fp4 + int8 head | 8 | r7 | 2,098,037 / 2,099,378 | 48 | 55 (2,101,514, fp4) |
+| Qwen3.5-0.8B | int8 / fp4 + int8 head | 6 | main | 4,632,214 / 4,629,860 | 22 | |
+| Qwen3.5-0.8B | int8 / fp4 + int8 head | 6 | r7 | 4,553,914 / 4,553,324 | 22 | 25 (4,555,238, fp4) |
+
+For comparison, one decode token (rows 1, main's adapter, 100 MHz): LFM2 2.06 M cycles (int8) /
+1.43 M (fp4 PAIR), Qwen3 5.75 M / 4.03 M, Qwen3.5 7.55 M / 6.22 M.
+
+- **Prefill is bound by the MXU's multiply rate, not by DRAM or the weight format.** With 8
+  rows and MCOLS = 2 an int8 chunk takes 4 cycles (4 groups) and a 4-bit chunk 8 (two blocks,
+  4 groups): 256 multiply-adds per cycle either way, so fp4 prefill takes the int8 cycles. With
+  r7's adapter the MXU multiplies in 94% of the LFM2 run (78% with main's adapter, where it
+  waited 16% of the cycles on port-A scale reads next to QST read-modify-writes).
+- **The LM head** streams once per run for the last row's logits: about 9% of an LFM2 row and
+  7% of a Qwen3 row. 16-row runs would halve that share, but they do not fit the TMEM
+  ("TMEM exhausted"; Qwen3.5 runs 6 rows for the same reason).
+- **Qwen3.5 is bound by the DeltaNet recurrence**, which runs once per row on the VPU whatever
+  the run size: 6-row prefill is only 1.4-1.7x decode.
+
+Ranked next steps for prefill (estimates):
+
+1. The r7 adapter (on its way to main): -17% (LFM2) and -26% (Qwen3) cycles per prompt token,
+   measured above in simulation.
+2. More multiply-adds per cycle, the only way past the MXU bound: MCOLS = 4 (about 2x on the
+   MXU-bound part; +23K LUT, +176 DSP per docs/mxu_study.md, an fmax risk), or a 4-bit mode that
+   feeds each column two blocks per cycle (a second ACT RAM read and a second adder tree per
+   column; the DSPs already pack two 4-bit products).
+3. Qwen3.5: a faster DeltaNet state update (the DSTEP work), which prefill shares with decode.
+4. Larger prefill runs (16 rows) to spread the LM head: needs TMEM room (smaller per-row
+   temporaries or TMEM reuse across layers).
+5. The MXU gaps after QACTs (227K cycles, 3.8% of an LFM2 run with r7): little left there.

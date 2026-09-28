@@ -12,12 +12,12 @@
 #
 # Ships the working tree (committed + uncommitted tracked files) to ~/otpu-test/<name> on omarchy,
 # links the model checkpoints, and runs pytest there with ~/.local/bin/verilator and ~/otpu-venv.
-# At most OTPU_REMOTE_JOBS (default 3) test runs share omarchy at once; a run waits for a free
-# slot, so Vivado builds keep most of the CPU. The Verilator cache (build/) stays per tree on
+# At most OTPU_REMOTE_JOBS (default 2) test runs share omarchy at once; a run waits for a free
+# slot, so Vivado builds keep most of the CPU and memory (two builds plus three test runs thrashed 32 GB). The Verilator cache (build/) stays per tree on
 # omarchy between runs of the same worktree. Exit status is pytest's.
 set -euo pipefail
 HOST=${OTPU_REMOTE:-omarchy.tail5bd214.ts.net}
-JOBS=${OTPU_REMOTE_JOBS:-3}
+JOBS=${OTPU_REMOTE_JOBS:-2}
 mode=pytest
 if [[ ${1:-} == --exec ]]; then mode=exec; shift; fi
 top=$(git rev-parse --show-toplevel)

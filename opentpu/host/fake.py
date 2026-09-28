@@ -14,7 +14,8 @@ out of the buffer) and TRACE_DROP = `trace_drop`.
 
 With `i2c` (two fake_i2c.OpenDrainBus, e.g. fake_i2c.card_buses()) CAPS announces the I2C pins
 and I2C_CTRL / I2C_IN drive and read those bus models. With `ddr_mts` CAPS bit3 announces the
-DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams.
+DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams. With
+`args` CAPS bit25 announces the ARG0..7 registers (kept, read back).
 """
 from __future__ import annotations
 
@@ -38,7 +39,8 @@ class FakeTransport:
                  step: int = 1_000_000, trace: list[int] | None = None, trace_extra: int = 0,
                  trace_drop: int = 0, D: int = 128, MCOLS: int = 2, LANES: int = 8,
                  i2c: list | None = None, ddr_mts: int | None = None,
-                 w4: bool = True, pair: bool = False):
+                 w4: bool = True, pair: bool = False, dstep: bool = False,
+                 args: bool = False):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.v, self.devname, self.dev = regmap, devname, devname and f"/dev/{devname}"
         self.run_s, self.cycles_per_run = run_s, cycles
@@ -50,12 +52,15 @@ class FakeTransport:
         self.ddr_mts = ddr_mts          # None: a bitstream without the DDR_MTS register
         self.w4 = w4                    # CAPS bit4: the MXU runs 4-bit weights
         self.pair = pair                # CAPS bit5: MM PAIR / QACT DUP
+        self.dstep = dstep              # CAPS bit6: DSTEP
+        self.args = args                # CAPS bit25: ARG0..7 (R_ARG0 + 4k, read back)
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
                      R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0, R.R_I2C_CTRL: 0}
         self.count = {k: 0 for k in R.counters(regmap)}
         self.shadow = dict(self.count)
         self.snaps = 0
         self.t_run = None               # wall time RUN rose
+        self._wrote = 0                 # logits pieces written by this run
         self.runs = 0
         self.reads = 0                  # register reads (poll cost)
 
@@ -64,14 +69,33 @@ class FakeTransport:
         self.ch[ch][off:off + len(data)] = data
 
     def mem_read(self, ch, off, n, out=None):
+        self._halted()                  # the run's logits pieces land
         if out is None:
             return self.ch[ch][off:off + n].copy()
         out[:] = self.ch[ch][off:off + n]
         return out
 
     # ---- registers
+    streams = False             # DMA during a run (BoardBackend's streamed logits): set with
+    logits = None               # (addr, nbytes, piece): the run writes the region piece by
+    #                             piece, piece i at run_s * (0.5 + 0.5 * (i + 1) / pieces) (an
+    #                             LM head in the run's second half; the last one at the halt)
+
     def _halted(self) -> bool:
-        return self.t_run is not None and time.perf_counter() - self.t_run >= self.run_s
+        now = time.perf_counter()
+        if self.logits is not None and self.t_run is not None:
+            from .board import split
+            a, n, piece = self.logits
+            k = -(-n // piece)
+            while self._wrote < k and now - self.t_run >= self.run_s * (
+                    0.5 + 0.5 * (self._wrote + 1) / k):
+                o = self._wrote * piece
+                m = min(piece, n - o)
+                vals = (np.arange(o // 4, (o + m) // 4, dtype=np.float32) % 997 * 1e-3)
+                for c, off, b in split(a + o, vals.view(np.uint8)):
+                    self.ch[c][off:off + len(b)] = b
+                self._wrote += 1
+        return self.t_run is not None and now - self.t_run >= self.run_s
 
     def reg_write(self, off, val):
         if self.v < 2:
@@ -81,6 +105,7 @@ class FakeTransport:
         if off == R.R_CTRL:
             if val & R.CTRL_RUN and not self.regs[R.R_CTRL] & R.CTRL_RUN:
                 self.t_run = time.perf_counter()
+                self._wrote = 0
                 self.runs += 1
             elif not val & R.CTRL_RUN:
                 self.t_run = None
@@ -125,6 +150,7 @@ class FakeTransport:
             return (R.CAP_TRACE | R.CAP_TEMP | (R.CAP_I2C if self.i2c else 0)
                     | (R.CAP_DDR if self.ddr_mts else 0) | (R.CAP_W4 if self.w4 else 0)
                     | (R.CAP_PAIR if self.pair else 0)
+                    | (R.CAP_DSTEP if self.dstep else 0) | (R.CAP_ARGS if self.args else 0)
                     | self.trace_log2 << 8 | 6 << 16)
         if off == R.R_CORE_KHZ:
             return self.core_khz

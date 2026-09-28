@@ -13,6 +13,12 @@
 // After the last block of a row the M results are written to TMEM (optionally accumulated,
 // optionally rescaled: y = old * alpha[j] + acc). With RMAX the running max of every written
 // value per column is written after the last row (the max order is total: any order is exact).
+// Replay (ROWS > MCOLS, M > MCOLS): each streamed row is consumed G = ceil(M / MCOLS) times,
+// once per group of MCOLS stationary rows (ACT RAM rows g*MCOLS ..). Group 0 pops the row's
+// chunks from the FIFO without freeing them, the later groups read the same FIFO entries again
+// (head + k) and the last group frees them, so a weight is streamed from DRAM once for all M
+// rows (a row must fit the FIFO: KB <= DEPTH). Each (row, group) is a row of the pipeline and
+// the drain; the drain steps its TMEM addresses by MCOLS * ors per group.
 //
 // Pipelined for the FPGA clock:
 //   pop | operands | products | +4 | +4 | tree | i2f (2) | *ws (2) | *ascale (2) | [pair (4)]
@@ -35,6 +41,7 @@ module otpu_mxu
 #(
   parameter int D     = 32,
   parameter int MCOLS = 8,
+  parameter int ROWS  = MCOLS,   // ACT RAM rows: the most stationary rows of a command
   parameter int DEPTH = 16,
   parameter int LANES = 8,       // TMEM banks (MCOLS > LANES drains a row in several cycles)
   parameter int IMPL  = 0,       // integer dot product: 0 adder tree, 1 DSP cascade chains
@@ -60,6 +67,7 @@ module otpu_mxu
   output logic [15:0]           act_blk,
   output logic [15:0]           act_blk2,    // PAIR: the odd block, read by the rows in act_hi
   output logic [MCOLS-1:0]      act_hi,
+  output logic [7:0]            act_grp,
   output logic                  act_ren,     // the ACT RAM read register advances (with S0)
   input  logic [MCOLS*D*8-1:0]  act_data,
   input  logic [MCOLS*32-1:0]   act_scale,
@@ -106,6 +114,19 @@ module otpu_mxu
   localparam int SDEPTH = 2 * DEPTH;         // scale entries: up to two per chunk (4-bit)
   localparam int NP = (MCOLS + 1) / 2;       // DSP pairs (columns 2p, 2p+1 share a multiplier)
   localparam int SPW = $clog2(SDEPTH);
+  initial if (ROWS < MCOLS || ROWS > 255) $fatal(1, "otpu_mxu: MCOLS <= ROWS < 256");
+`ifndef SYNTHESIS
+  // a replayed row (M > MCOLS) must fit the FIFO: its chunks (4-bit: two blocks each)
+  always @(posedge clk) if (!rst && start) begin
+    if (int'(cmd.w6[23:16]) > ROWS) $fatal(1, "otpu_mxu: M %0d > ROWS %0d", cmd.w6[23:16], ROWS);
+    if (int'(cmd.w6[23:16]) > MCOLS && ((cmd.flags[5:4] != WF_W8) ?
+        (int'(cmd.w4[31:16]) + 1) / 2 : int'(cmd.w4[31:16])) > DEPTH)
+      $fatal(1, "otpu_mxu: a replayed row (M > MCOLS) must fit the FIFO: KB %0d, DEPTH %0d",
+             cmd.w4[31:16], DEPTH);
+    if (int'(cmd.w6[23:16]) > MCOLS && cmd.flags[6])
+      $fatal(1, "otpu_mxu: PAIR needs 2*M <= MCOLS");
+  end
+`endif
 
   // ================================================================== issuer
   logic        i_act, i_unit, i_w4, i_pair;
@@ -131,6 +152,10 @@ module otpu_mxu
   logic [1:0]  q_wf [2];
   logic [31:0] q_asa [2];
   logic [31:0] q_jo [2][MCOLS];            // j * ors
+  logic [7:0]  q_G [2];                     // groups: ceil(M / MCOLS)
+  logic [MW-1:0] q_Ml [2];                  // rows of the last group
+  logic [31:0] q_gs [2];                    // drain address step to the next group
+                                            // (MCOLS * ors)
   logic        q_h;
   logic [1:0]  q_n;
 
@@ -147,6 +172,7 @@ module otpu_mxu
   wire        c_w4 = (c_wf != WF_W8);
   wire [31:0] c_asa = q_asa[q_h];
   wire        c_act = (q_n != 0) && q_go[q_h];
+  wire [7:0]  c_G = q_G[q_h];
   logic [31:0] alpha [MCOLS];
   logic [1:0]  al_st;                       // ASCALE factors: 0 to load, 1 loading, 2 loaded
   logic [7:0]  al_i, mx_i;                  // next ASCALE factor to load / RMAX value to write
@@ -163,18 +189,41 @@ module otpu_mxu
   logic [SPW-1:0] s_head, s_tail;
   logic [PW:0]    f_count;
   logic [SPW:0]   s_count;
+  // FIFO read addresses, kept equal to (last group ? head : head + entry k of the row) by the
+  // pops: a register, so no adder sits in front of the block RAM address
+  logic [PW-1:0]  f_rd;
+  logic [SPW-1:0] s_rd;
 
   // ================================================================== consumer control
   logic [15:0] ck;
-  logic [31:0] c_left;                      // chunks of the head command not yet popped
+  logic [7:0]  cg;                          // the group of the row being consumed (replay)
+  logic [31:0] c_left;                      // chunks of the head command not yet freed
   logic [RFW:0] rows_live;                  // rows popped (first block) and not yet drained
   wire last_k   = (ck + 1 == c_KBa);
+  wire last_g   = (cg + 1 == c_G);          // the row's last group: its pops free FIFO entries
   wire more     = c_act && (c_left != 0);
+  // the chunk of advance ck (4-bit without PAIR: two advances a chunk) and whether the advance
+  // finishes it
+  wire [15:0] ckc = (c_w4 && !c_pair) ? {1'b0, ck[15:1]} : ck;
+  wire cdone    = !c_w4 || c_pair || ck[0] || last_k;
+  // advance ck's chunk and scale are in the FIFO: the next entries (one group), or entry ck of
+  // the row (group 0 of several; the later groups find the whole row)
+  wire f_av     = (c_G == 8'd1) ? (f_count != 0) : (cg != 0 || 32'(f_count) > 32'(ckc));
+  wire s_av     = (c_G == 8'd1) ? (s_count != 0) : (cg != 0 || 32'(s_count) > 32'(ck));
   // pop: one block (PAIR: one chunk) advances into the pipeline; fpop: its chunk leaves the
-  // FIFO (4-bit without PAIR: after the high half, or after the row's last block)
-  wire pop      = more && (f_count != 0) && (c_unit || s_count != 0) && (ck != 0 || rows_live < RF);
-  wire fpop     = pop && (!c_w4 || c_pair || ck[0] || last_k);
+  // FIFO (4-bit without PAIR: after the high half, or after the row's last block; replay: in the
+  // row's last group)
+  wire pop      = more && f_av && (c_unit || s_av) && (ck != 0 || rows_live < RF);
+  wire fpop     = pop && last_g && cdone;
   wire en_c     = pop || !(more && ck != 0);       // freeze only in the middle of a row
+`ifndef SYNTHESIS
+  always @(posedge clk) if (!rst && more) begin
+    if (f_rd != (last_g ? f_head : f_head + PW'(ckc)))
+      $fatal(1, "otpu_mxu: FIFO read address %0d, head %0d, k %0d", f_rd, f_head, ck);
+    if (!c_unit && s_rd != (last_g ? s_head : s_head + SPW'(ck)))
+      $fatal(1, "otpu_mxu: scale read address %0d, head %0d, k %0d", s_rd, s_head, ck);
+  end
+`endif
   // the issuer walks advances: a chunk request with every 8-bit block, every even 4-bit block
   // (an odd one's chunk is already on its way, so it needs no FIFO slot) and every PAIR chunk; a
   // scale request with each (PAIR: the pair of words of blocks 2c, 2c+1)
@@ -194,6 +243,7 @@ module otpu_mxu
   assign act_blk = 16'(c_ab) + (c_pair ? {ck[14:0], 1'b0} : ck);
   assign act_blk2 = 16'(c_ab) + {ck[14:0], 1'b1};
   assign act_hi = c_hi;
+  assign act_grp = cg;
   assign act_ren = en_c;
 
   // ================================================================== compute pipeline
@@ -288,7 +338,7 @@ module otpu_mxu
   end
   (* keep_hierarchy = "yes" *)
   otpu_ram_sdp #(.W(D * 8), .N(DEPTH)) u_fd (
-    .clk, .we(b_rvalid), .wa(f_tail), .wd(b_rdata), .re(en_c), .ra(f_head), .rd(w0));
+    .clk, .we(b_rvalid), .wa(f_tail), .wd(b_rdata), .re(en_c), .ra(f_rd), .rd(w0));
 
   always_ff @(posedge clk) if (en_c) begin
     // S0: the popped chunk, its ACT RAM block and scales
@@ -301,7 +351,7 @@ module otpu_mxu
       m0.h <= c_w4 && !c_pair && ck[0];
       m0.o <= c_pair && !(last_k && c_KB[0]);
     end
-    ws0r <= f_scale[s_head];
+    ws0r <= f_scale[s_rd];
     cu0 <= c_unit;
     wf0 <= c_wf;
     pr0 <= c_pair;
@@ -593,6 +643,7 @@ module otpu_mxu
 
   // ================================================================== drain
   // lanes this cycle: results dj .. dj+ncnt-1 of the head row, stopping at a bank conflict
+  logic [31:0] drow [MCOLS];                 // replay: dad of the head row's group 0
   logic [31:0] dad [MCOLS];                  // head row's TMEM addresses: out + n + j * ors,
                                              // kept incrementally (no adder between the drain's
                                              // lane pick and the arbiter)
@@ -600,7 +651,8 @@ module otpu_mxu
   // row-done compare are a few bits wide instead of carry chains
   logic [MW-1:0] dj;
   logic [MW-1:0] ncnt;
-  wire  [MW-1:0] c_Mn = MW'(c_M);
+  logic [7:0]    dg;                         // the group of the row being drained
+  wire  [MW-1:0] c_Mn = (dg + 8'd1 == c_G) ? q_Ml[q_h] : MW'(MCOLS);   // its results
   logic [LANES-1:0][31:0] daddr_l, dval_l;
   logic [LANES-1:0][7:0]  dcol_l;
   wire  drain_go = (rf_n != 0) && (!c_asc || al_st == 2'd2);
@@ -632,7 +684,7 @@ module otpu_mxu
     logic [LANES-1:0] used;
     int n;
     used = '0; n = 0;
-    for (int k = 0; k < NL && 32'(dj) + 32'(k) < 32'(c_M); k++) begin
+    for (int k = 0; k < NL && 32'(dj) + 32'(k) < 32'(c_Mn); k++) begin
       if (used[dad[MW'(dj) + MW'(k)][BW-1:0]]) break;
       used[dad[MW'(dj) + MW'(k)][BW-1:0]] = 1'b1;
       n++;
@@ -793,9 +845,9 @@ module otpu_mxu
       i_act <= 1'b0;
       q_h <= 1'b0; q_n <= '0;
       occ <= '0;
-      f_head <= '0; f_tail <= '0; f_count <= '0;
-      s_head <= '0; s_tail <= '0; s_count <= '0;
-      ck <= '0; c_left <= '0; rows_live <= '0;
+      f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
+      s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
+      ck <= '0; cg <= '0; dg <= '0; c_left <= '0; rows_live <= '0;
       rf_h <= '0; rf_t <= '0; rf_n <= '0;
       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
@@ -834,6 +886,14 @@ module otpu_mxu
         q_go[qi]    <= 1'b0;
         q_asa[qi]   <= cmd.w2;
         for (int j = 0; j < MCOLS; j++) q_jo[qi][j] <= 32'(j) * 32'(cmd.w6[15:0]);
+        begin
+          int g;
+          g = (int'(cmd.w6[23:16]) + MCOLS - 1) / MCOLS;
+          if (g < 1) g = 1;
+          q_G[qi]  <= 8'(g);
+          q_Ml[qi] <= MW'(int'(cmd.w6[23:16]) - (g - 1) * MCOLS);
+          q_gs[qi] <= 32'(MCOLS) * 32'(cmd.w6[15:0]);
+        end
         qn = qn + 1;
         if (cmd.w4[15:0] != 0 && cmd.w4[31:16] != 0) begin
           i_act  <= 1'b1;
@@ -878,14 +938,21 @@ module otpu_mxu
       end
       f_count <= f_count + (b_rvalid ? 1 : 0) - (fpop ? 1 : 0);
       occ <= occ + (b_req ? 1'b1 : 1'b0) - (fpop ? 1'b1 : 1'b0);
-      s_count <= s_count + (a_rvalid ? 1 : 0) - ((pop && !c_unit) ? 1 : 0);
-      // ---- pop one chunk
+      s_count <= s_count + (a_rvalid ? 1 : 0) - ((pop && last_g && !c_unit) ? 1 : 0);
+      // ---- pop one advance (the row's last group frees its chunk and scale)
       if (fpop) f_head <= f_head + 1;
       if (pop) begin
-        if (!c_unit) s_head <= s_head + 1;
-        c_left <= c_left - 1;
+        if (last_g) begin
+          if (!c_unit) s_head <= s_head + 1;
+          c_left <= c_left - 1;
+        end
+        // the next read: the next entry, or back to the head for the row's next group
+        if (last_k && !last_g) f_rd <= f_head;
+        else if (cdone) f_rd <= f_rd + 1;
+        if (!c_unit) s_rd <= (last_k && !last_g) ? s_head : s_rd + 1;
         if (ck == 0) rl = rl + 1;
         ck <= last_k ? '0 : ck + 1;
+        if (last_k) cg <= last_g ? '0 : cg + 1;
       end
       // ---- a finished row enters the result FIFO
       if (rf_push) begin
@@ -913,7 +980,16 @@ module otpu_mxu
           end
           if (drain_row_done) begin
             dj <= '0;
-            for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + 1;
+            if (dg + 8'd1 == c_G) begin             // the next weight row, group 0
+              dg <= '0;
+              for (int j = 0; j < MCOLS; j++) begin
+                dad[j] <= drow[j] + 32'd1;
+                drow[j] <= drow[j] + 32'd1;
+              end
+            end else begin                          // the next group of this row
+              dg <= dg + 8'd1;
+              for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + q_gs[q_h];
+            end
             rf_h <= rf_h + 1;
             rn = rn - 1;
             rl = rl - 1;
@@ -960,13 +1036,16 @@ module otpu_mxu
         done <= 1'b1;
         q_h <= ~q_h;
         qn = qn - 1;
-        ck <= '0;
+        ck <= '0; cg <= '0; dg <= '0;
         // the next head's chunk count: the queued entry, or a command accepted this cycle
         c_left <= (q_n == 2'd2) ? q_total[~q_h] : (start ? cmd_total : '0);
         dj <= '0;
-        for (int j = 0; j < MCOLS; j++)
+        for (int j = 0; j < MCOLS; j++) begin
           dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
                                            : q_out[~q_h] + q_jo[~q_h][j];
+          drow[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
+                                            : q_out[~q_h] + q_jo[~q_h][j];
+        end
         mx_done <= 1'b0; mx_have <= '0;
         al_st <= 2'd0; al_i <= '0; mx_i <= '0;
         pf_u <= 1'b1;
@@ -976,7 +1055,10 @@ module otpu_mxu
       end
       // the head's output base (set when a command becomes head)
       if (start && q_n == 0) begin
-        for (int j = 0; j < MCOLS; j++) dad[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+        for (int j = 0; j < MCOLS; j++) begin
+          dad[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+          drow[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+        end
       end
       q_n <= qn;
     end

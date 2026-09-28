@@ -10,15 +10,36 @@ every bit written to TMEM or DRAM.
   instruction memory, a private DRAM, a TMEM, an ACT RAM, an MXU, a VPU and a quantizer.
   Slices share nothing except the collective unit (`GATHER`, `BAR`).
 - `D` = MXU depth = quantization block size (bytes / int8 elements). Default 32 in tests,
-  128 in the design. `MCOLS` = MXU columns = max stationary rows (8).
+  128 in the design. `MCOLS` = MXU columns (8). `ACT_ROWS` = ACT RAM rows =
+  max stationary rows of one MM (at least MCOLS; default MCOLS). With `ACT_ROWS > MCOLS` the MXU
+  consumes each streamed chunk once per group of MCOLS rows ("replay"): one DRAM pass serves all
+  M rows, at ceil(M / MCOLS) cycles per chunk. Results do not depend on MCOLS or ACT_ROWS.
 - **DRAM**: byte addressed, little endian, accessed as 32-bit words. All word accesses and all
   MXU chunk reads must be 4-byte aligned. Only `QST` writes single bytes.
 - **TMEM**: 32-bit word addressed. Holds fp32 values (raw IEEE bits).
-- **ACT RAM**: `MCOLS` rows x `ACT_BLOCKS` blocks x `D` int8, plus one fp32 scale per
+- **ACT RAM**: `ACT_ROWS` rows x `ACT_BLOCKS` blocks x `D` int8, plus one fp32 scale per
   (row, block). Written only by `QACT`, read only by `MM`.
 
 Execution is in order. Every instruction completes (all its writes are visible) before the
 next one starts. The MXU prefetches its streamed operand from DRAM internally.
+
+### Arguments
+
+A run starts with `R0..R7` = 0 and `R8..R15` = the run's arguments `ARG0..ARG7`: words the
+host writes before RUN (board: control registers 0x060 + 4k, announced by CAPS bit25,
+docs/observability.md; ISA simulator: `Machine(..., args)` / `load(programs, args)`; RTL
+simulator: `+arg0=..+arg7=`; unwritten arguments are 0). The same program can then serve
+different values: an address is `R[x] + imm`, and `LOOP` runs `R[ra] + w2` times.
+
+The compiler's run-time values (`compiler.RunVar`) use them: an address that adds `c * var`
+reads the argument register holding `c * var` (the host computes the product: there is no
+multiply), or, when it also has loop terms, a register that `ADDI r, R_arg, 0` initializes
+before the outermost of those loops. A program's k-th distinct (var, c) is in `R15 - k`
+(`compiler.arg_reg`, `arg_words`), so address registers grow from `R1` and arguments from
+`R15`. The resident decode programs (qwen3.compile_decode, docs/host.md) take the token id
+and the position this way: LFM2.5-230M uses 6 arguments (token x 4096; the position within
+its 256-token bucket x 128, x 4, x 1 and x -4; the convolution ring's row x 2048) and at most
+8 address registers (up to 16 attention blocks).
 
 ## Arithmetic (fp32)
 
@@ -79,6 +100,7 @@ Every instruction is 8 x 32-bit words `w0..w7`.
 | 0x05 | BAR | wait until every slice has reached a `BAR` |
 | 0x10 | LD | DRAM -> TMEM, `n = w3` words: `T[R[rb]+w2+i] = M32[R[ra]+w1+4i]` |
 | 0x11 | ST | TMEM -> DRAM: `M32[R[ra]+w1+4i] = T[R[rb]+w2+i]` for `i < w3` |
+| 0x12 | DSTEP | one Gated DeltaNet head step on a DRAM state, run by the DMA (see below; `Config.DSTEP`, CAPS bit6) |
 | 0x20 | MM | see below |
 | 0x21 | QACT | quantize TMEM rows into ACT RAM |
 | 0x22 | QST | quantize TMEM rows into DRAM bytes |
@@ -99,6 +121,9 @@ is rescaled first: `y = T[out + j*ors + n] * T[ssa + j] + acc[j]` -- the flash-a
 correction step, done in the MXU epilogue), bits 5:4 `WF`, the streamed weights' format (below;
 0 = int8), bit6 `PAIR` (4-bit weights at full rate, "Column reuse"). The streamed rows are
 D-byte aligned (`sa` and `rs` are multiples of D): the MXU streams whole D-byte DRAM chunks.
+`0 < M <= ACT_ROWS`; RMAX, ASCALE and PAIR need `M <= MCOLS` (PAIR: `2*M <= MCOLS`), and an MM
+with `M > MCOLS` needs its streamed row to fit the MXU's chunk FIFO (`KB` chunks for int8,
+`ceil(KB/2)` for 4-bit; the board: 1024; a replayed row stays in the FIFO until its last group).
 
 ```
 for n in 0..N-1:
@@ -158,8 +183,8 @@ rows. The results differ from a `PAIR`-less MM only in fp32 rounding (the sum or
 
 ### QACT
 
-`src = R[ra]+w1` (TMEM words), `rows = w2[7:0]`, `ab = w2[15:8]`, `KB = w2[31:16]`,
-`srs = w3` (source row stride, words). Flag bit0 `ROW`: one scale per row instead of per block.
+`src = R[ra]+w1` (TMEM words), `rows = w2[7:0]` (at most ACT_ROWS), `ab = w2[15:8]`,
+`KB = w2[31:16]`, `srs = w3` (source row stride, words). Flag bit0 `ROW`: one scale per row instead of per block.
 Flag bit1 `CSCALE`: every element is first multiplied by a per-column scale,
 `x = T[src + r*srs + c] * T[w4 + c]` (this folds V's per-token scale into P for free).
 Flag bit2 `RSCALE`: every element is first multiplied by a per-row factor `T[w5 + r]`. With
@@ -176,7 +201,10 @@ in the same cycles, the operand layout of `MM PAIR` ("Column reuse").
 (element stride, bytes). Flag bit0 `ROW`.
 Element `c` of row `r` goes to byte `dst + r*drs + c*es`. Scales: per block to
 `sdst + (r*KB + k)*4`; in `ROW` mode one scale per row to `sdst + r*4`. The data and scale ranges of
-one QST must not overlap.
+one QST must not overlap. Flag bit1 `HALF` (`ROW` mode only): the scale is still the whole row's,
+but only elements `c < KB*D/2` are written (a V^T append of a head half as wide as its padded row,
+LFM2's 64 of 128, then writes its 64 real rows instead of 128 byte-strided ones; a quantizer
+without `HALF` writes the zero padding too, which nothing reads).
 
 ### VOP
 
@@ -223,6 +251,37 @@ Dv(c)), mul(B(r), Cv(c)))`: two rounded products, then a rounded add. B must be 
 bit 1 (DONE; `a` is not read). The `a` field holds the decay address: A is dst itself (`ars` is
 not used). `cols <= 256`. `Cv` and `Dv` are read before anything is written, so they may overlap
 dst; `B(r)` is read with every element and must not be written by an earlier element.
+
+### DSTEP
+
+One Gated DeltaNet head step, run by the DMA on a fp32 state that stays in DRAM: the DMA
+streams the state `St [rows, cols]` (row-major, the transposed state: rows are the value
+dimension) from DRAM through its datapath and writes it back in place, so the state never
+enters TMEM. `dram = R[ra]+w1` (bytes, chunk aligned), `qk = R[rb]+w2`, `v = R[rc]+w3`,
+`rows = w4[15:0]` (1..256), `cols = w4[31:16]` (64, 128, 192 or 256), `g = w5`, `o = w6`,
+`gs = w7`; flag bit 0 (ZERO): the state is taken as 0 and not read (position 0). With
+`q = T[qk + c]`, `k = T[qk + cols + c]`, `v(r) = T[v + r]`, `e = T[g]`, `beta = T[g + gs]`:
+
+```
+kv = RDOT(St, k)                       isum_64 row dots, as the VOP
+d  = MUL(SUB(v, MUL(kv, e)), beta)
+St = OUTER(St, e, d, k)                add(mul(St, e), mul(d(r), k(c))), in place in DRAM
+o  = RDOT(St, q)                       T[o + r]
+```
+
+bit for bit the VOP sequence RDOT, MUL, SUB, MUL, OUTER (DSCALAR), RDOT it replaces
+(`tests/test_vops.py::test_dstep_is_the_vop_sequence`). Every input is read before anything is
+written; `o` is written last. The scoreboard footprint: DRAM `[dram, dram + 4 rows cols)` written,
+TMEM `[qk, qk + 2 cols)`, `[v, v + rows)` and `{g, g + gs}` read, `[o, o + rows)` written.
+A bitstream without it leaves CAPS bit6 clear; the compiler then emits the VOP sequence
+(`Config.DSTEP = False`, the default of `board_config`; the host takes it from CAPS through
+`device_config`).
+
+The board's datapath (`rtl/dma/otpu_dstep.sv`) takes 8 state words per cycle: a head of
+128 x 128 is 2,048 cycles of datapath plus about 200 of fill and pipeline, against 1,024
+cycles of port-B chunks (64 KiB read, 64 KiB written). The DMA reads the state 16 chunks at a
+time and writes it back in runs of 16 gathered chunks (DRAM bursts; timing only). Only an
+8-lane DMA (W = 8) has DSTEP.
 
 ### GATHER
 

@@ -2,6 +2,7 @@
 TMEM, gated attention with 256-wide heads and partial RoPE) against Hugging Face transformers.
 A tiny random model always runs; the real Qwen3.5-0.8B runs when its checkpoint is in
 models/Qwen3.5-0.8B."""
+import dataclasses
 from pathlib import Path
 
 import numpy as np
@@ -111,19 +112,26 @@ def _layers_dram(eng):
     return [s.dram[img.layer0:img.nbytes] for s in eng.backend.machine.slices]
 
 
-@pytest.mark.parametrize("config,first,chunk", [("design", 0, 5), ("design", 2, 8),
-                                                ("board", 1, 4)])
-def test_tiny_chunked_prefill_is_bit_exact(tiny, config, first, chunk):
+@pytest.mark.parametrize("config,first,chunk,dstep", [("design", 0, 5, False),
+                                                      ("design", 2, 8, False),
+                                                      ("board", 1, 4, False),
+                                                      ("design", 0, 5, True),
+                                                      ("board", 2, 6, True)])
+def test_tiny_chunked_prefill_is_bit_exact(tiny, config, first, chunk, dstep):
     """Prefill in chunks (the DeltaNet recurrence row after row on a state loaded once per
     chunk, the convolution over the chunk and the ring from positions 0, 1 or 2 on, gated
     row attention; board: query groups split over the 2-column MXU) gives the same logits,
-    KV cache, conv ring and DeltaNet state as token-by-token decode."""
+    KV cache, conv ring and DeltaNet state as token-by-token decode. dstep: the chunk's rows
+    each run a DSTEP (the reference decodes on the VPU path)."""
+    import dataclasses
+    from opentpu.isasim import design_config
     _, W, spec = tiny
     cfg = board_config(DRAM_BYTES=1 << 24) if config == "board" else None
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 19)]
     ref = Engine(spec, W, cap=256, cfg=cfg)
     want = [ref.step(t) for t in toks]
-    eng = Engine(spec, W, cap=256, cfg=cfg)
+    ecfg = dataclasses.replace(cfg or design_config(), DSTEP=True) if dstep else cfg
+    eng = Engine(spec, W, cap=256, cfg=ecfg)
     for t in toks[:first]:
         eng.step(t)
     got = eng.prefill(toks[first:17], chunk=chunk)
@@ -135,12 +143,33 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, config, first, chunk):
     assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[17:], want[17:]))
 
 
-def test_tiny_qwen35_on_board_model(tiny, have_verilator):
+@pytest.mark.parametrize("config", ["design", "board"])
+def test_tiny_dstep_is_bit_exact(tiny, config):
+    """DSTEP (the DMA streams each DeltaNet head's state through its datapath) gives the same
+    logits, DeltaNet state, conv ring and KV cache as the VPU's RDOT / OUTER passes, word for
+    word, from position 0 on; chunked prefill (the VPU path) continues from its state."""
+    import dataclasses
+    from opentpu.isasim import design_config
+    _, W, spec = tiny
+    base = board_config(DRAM_BYTES=1 << 24) if config == "board" else design_config()
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 9)]
+    ref = Engine(spec, W, cap=256, cfg=base)
+    eng = Engine(spec, W, cap=256, cfg=dataclasses.replace(base, DSTEP=True))
+    assert any(i.op == 0x12 for i in eng.image.compile_step(1)[0])
+    for t in toks[:6]:
+        assert np.array_equal(ref.step(t).view(np.uint32), eng.step(t).view(np.uint32))
+    assert all(np.array_equal(a, b) for a, b in zip(_layers_dram(eng), _layers_dram(ref)))
+    a, b = ref.prefill(toks[6:], chunk=3), eng.prefill(toks[6:], chunk=3)
+    assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
+
+
+@pytest.mark.parametrize("dstep", [False, True])
+def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep):
     """The board model through the host driver, through a full turn of the convolution ring:
-    logits bit-identical to the ISA simulator."""
+    logits bit-identical to the ISA simulator (with and without DSTEP)."""
     from opentpu.host.board import BoardBackend, SimTransport
     _, W, spec = tiny
-    cfg = board_config(DRAM_BYTES=1 << 24)
+    cfg = board_config(DRAM_BYTES=1 << 24, DSTEP=dstep)
     isa = Engine(spec, W, cap=256, cfg=cfg)
     tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
     brd = Engine(spec, W, cap=256, cfg=cfg,
@@ -149,6 +178,24 @@ def test_tiny_qwen35_on_board_model(tiny, have_verilator):
         a, b = isa.step(tok), brd.step(tok)
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
     assert brd.stats[-1]["cycles"] > 0
+
+
+def test_tiny_qwen35_on_a_board_without_dstep(tiny, have_verilator):
+    """A bitstream built with DSTEP=0 (the DMA's DSTEP datapath left out) reports CAPS bit6 = 0;
+    the host configuration then has no DSTEP and the model runs on VOPs, bit-identical."""
+    from opentpu.host.board import Board, BoardBackend, SimTransport, device_config
+    _, W, spec = tiny
+    tr = SimTransport(ch_bytes=(1 << 24) // 2, stall=20, seed=5, params={"DSTEP": 0})
+    info = Board(tr).info()
+    assert not info["caps"]["dstep"] and info["caps"]["pair"]
+    cfg = dataclasses.replace(device_config(info), DRAM_BYTES=1 << 24)
+    assert not cfg.DSTEP
+    isa = Engine(spec, W, cap=256, cfg=cfg)
+    brd = Engine(spec, W, cap=256, cfg=cfg,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr))
+    for tok in (11, 222, 333):
+        a, b = isa.step(tok), brd.step(tok)
+        assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3.5-0.8B not downloaded")
@@ -175,13 +222,16 @@ def test_qwen35_0_8b_greedy_matches_hf():
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3.5-0.8B not downloaded")
-def test_qwen35_0_8b_token_on_rtl_is_bit_exact(have_verilator):
+@pytest.mark.parametrize("dstep", [False, True])
+def test_qwen35_0_8b_token_on_rtl_is_bit_exact(have_verilator, dstep):
     """Feed part of a prompt on the ISA simulator (board configuration), then run the next
     token on the Verilator RTL and on the ISA simulator from the same DRAM state: weights, KV
-    cache, convolution ring, DeltaNet state and logits must agree bit for bit."""
+    cache, convolution ring, DeltaNet state and logits must agree bit for bit (with and
+    without DSTEP)."""
     from opentpu.llm.rtl_backend import RtlBackend
     spec = load_spec(REAL)
-    eng = Engine(spec, load_weights(REAL), cap=256, cfg=board_config(DRAM_BYTES=1 << 30))
+    eng = Engine(spec, load_weights(REAL), cap=256,
+                 cfg=board_config(DRAM_BYTES=1 << 30, DSTEP=dstep))
     prompt = [760, 6511, 314, 9338, 369]            # "The capital of France is"
     for t in prompt[:-1]:
         eng.step(t)
@@ -194,3 +244,55 @@ def test_qwen35_0_8b_token_on_rtl_is_bit_exact(have_verilator):
     assert np.array_equal(want.view(np.uint32), got.view(np.uint32))
     for s in range(eng.cfg.S):
         assert np.array_equal(isa.machine.slices[s].dram[:n], rtl.drams[s][:n])
+
+
+def test_tiny_vt_tiles_bit_exact(tiny, monkeypatch):
+    """A 512-token cache holds V^T in tiles of 256 tokens (compiler.KVDesc): a prefill chunk
+    across the tile edge, then decode past it, give the same logits bit for bit as the plain
+    [d, cap] layout."""
+    import opentpu.compiler as C
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 264)]
+
+    def run():
+        eng = Engine(spec, W, cap=512)
+        eng.step(toks[0])
+        out = [eng.prefill(toks[1:257], chunk=8)]          # rows 249..256 cross the edge
+        out += [eng.step(t) for t in toks[257:]]
+        return out
+    assert C.vt_tile(512) == 256
+    tiled = run()
+    monkeypatch.setattr(C, "VT_TILE", 1 << 30)
+    plain = run()
+    assert all(np.array_equal(a.view(np.uint32), b.view(np.uint32)) for a, b in zip(tiled, plain))
+
+
+def test_tiny_prefill_rows_dstep_on_rtl(tiny, have_verilator):
+    """A 6-row prefill run with DSTEP (a DSTEP per row and head) on the RTL's board memory
+    path: DRAM equals the ISA simulator's, and the logits equal token-by-token decode's."""
+    from opentpu import rtlsim
+    from opentpu.isasim import Machine
+    from opentpu.llm.qwen3 import rope_tables
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 9)]
+    want = Engine(spec, W, cap=256, cfg=board_config(DRAM_BYTES=1 << 24)).prefill(toks, chunk=1)
+    cfg = board_config(DRAM_BYTES=1 << 24, DSTEP=True)
+    eng = Engine(spec, W, cap=256, cfg=cfg)
+    eng.prefill(toks[:3])                         # a state, ring and cache to continue from
+    rows = [(0, 3 + j) for j in range(6)]
+    progs = eng.image.compile_rows(rows, [5])
+    assert sum(i.op == 0x12 for i in progs[0]) >= 6
+    io = eng.image.io
+    cs = [np.stack(a).astype(np.float32) for a in zip(*[rope_tables(spec, p) for _, p in rows])]
+    dram = eng.backend.machine.slices[0].dram.copy()
+    for k, v in (("x", eng.embed[toks[3:]]), ("cos", cs[0]), ("sin", cs[1])):
+        b = np.ascontiguousarray(v, np.float32).view(np.uint8).reshape(-1)
+        dram[io[k]:io[k] + b.size] = b
+    m = Machine(cfg, progs, [dram.copy()]).run()
+    drams, _, _ = rtlsim.run(cfg, progs, [dram.copy()], uarch=rtlsim.BOARD_UARCH, axi=True,
+                             boot=True)
+    n = eng.image.nbytes
+    assert np.array_equal(drams[0][:n], m.slices[0].dram[:n])
+    v = spec.vocab
+    assert np.array_equal(drams[0][io["logits"] + 4 * 5 * v:io["logits"] + 4 * 6 * v]
+                          .view(np.float32), want)

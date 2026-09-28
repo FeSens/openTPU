@@ -1,19 +1,22 @@
-// ACT RAM: the MXU's stationary operand. MCOLS rows x BLOCKS blocks x D int8, plus one fp32
+// ACT RAM: the MXU's stationary operand. ROWS rows x BLOCKS blocks x D int8, plus one fp32
 // scale per (row, block). The quantizer writes up to LANES consecutive bytes (and one scale) per
 // cycle; its byte index is LANES aligned, so the bytes sit in one block. With `w_dup` (QACT DUP)
-// the bytes and the scale also go to row w_row + w_off (w_off: the QACT's row count). The MXU
-// reads one block of every row per cycle: block r_blk, or r_blk2 for the rows in r_hi (MM PAIR:
-// the odd blocks).
+// the bytes and the scale also go to row w_row + w_off (w_off: the QACT's row count; DUP rows
+// stay below MCOLS). The MXU reads one block of MCOLS rows per cycle: rows g*MCOLS ..
+// g*MCOLS+MCOLS-1 of group `r_grp` (ROWS > MCOLS: the MXU replays a weight chunk for each group
+// of an MM), block r_blk, or r_blk2 for the rows in r_hi (MM PAIR: the odd blocks).
 //
-// Block RAM: one memory per row, BLOCKS words of D bytes with byte write enables. The read is
-// registered (the MXU's first pipeline register) and advances with `ren`; a read of a block
-// written at the same edge returns the old bytes. Writes are registered (bytes in place, row
-// selects) and land a cycle after they are presented: the quantizer's write path (its grant,
-// the lane placement) ends in a flip-flop, not at the block RAM pins spread over the die. The
-// quantizer reports done a cycle after its last write.
+// Block RAM: one memory per column j (rows j, j+MCOLS, ...), GROUPS*BLOCKS words of D bytes
+// with byte write enables, group-major. The read is registered (the MXU's first pipeline
+// register) and advances with `ren`; a read of a block written at the same edge returns the old
+// bytes. Writes are registered (bytes in place, column selects, their groups) and land a cycle
+// after they are presented: the quantizer's write path (its grant, the lane placement) ends in a
+// flip-flop, not at the block RAM pins spread over the die. The quantizer reports done a cycle
+// after its last write.
 module otpu_actram #(
   parameter int D      = 32,
   parameter int MCOLS  = 8,
+  parameter int ROWS   = MCOLS,     // a multiple of MCOLS, MCOLS a power of two if more
   parameter int BLOCKS = 64,
   parameter int LANES  = 8
 ) (
@@ -32,20 +35,34 @@ module otpu_actram #(
   input  logic [15:0]            r_blk,
   input  logic [15:0]            r_blk2,
   input  logic [MCOLS-1:0]       r_hi,
+  input  logic [7:0]             r_grp,
   output wire  [MCOLS*D*8-1:0]   r_data,      // row j at [j*D*8 +: D*8], byte i at [+8i]
   output wire  [MCOLS*32-1:0]    r_scale
 );
   localparam int BW = $clog2(BLOCKS);
   localparam int DW = $clog2(D);
-  localparam int RW = (MCOLS > 1) ? $clog2(MCOLS) : 1;
+  localparam int GROUPS = ROWS / MCOLS;
+  localparam int GW = (GROUPS > 1) ? $clog2(GROUPS) : 1;
   initial if (D % LANES != 0) $fatal(1, "otpu_actram: LANES must divide D");
+  initial if (ROWS % MCOLS != 0 || (GROUPS > 1 && (MCOLS & (MCOLS - 1)) != 0))
+    $fatal(1, "otpu_actram: ROWS must be a multiple of MCOLS, a power of two if larger");
+  // a row's column and group
+  function automatic int col(input logic [7:0] r);
+    return (MCOLS > 1) ? int'(r) % MCOLS : 0;
+  endfunction
+  function automatic logic [GW-1:0] grp(input logic [7:0] r);
+    return (GROUPS > 1) ? GW'(int'(r) / MCOLS) : '0;
+  endfunction
+  wire [7:0] w_row2 = w_row + w_off;          // the DUP copy's row
+  wire [7:0] s_row2 = s_row + w_off;
 
   // the write, as a block address, byte enables and bytes in place (registered), and the
-  // scale write (registered)
+  // scale write (registered); per column: selected, and the group of the row it writes
   logic [BW-1:0]    wb;
   logic [D-1:0]     wbe;
   logic [D*8-1:0]   wd;
   logic [MCOLS-1:0] wsel, ssel;
+  logic [GW-1:0]    wg [MCOLS], sg [MCOLS];
   logic [BW-1:0]    sb;
   logic [31:0]      sd;
   always_ff @(posedge clk) begin
@@ -57,8 +74,10 @@ module otpu_actram #(
       wd[8 * (w_idx[DW-1:0] + DW'(l)) +: 8] <= w_data[l];
     end
     for (int j = 0; j < MCOLS; j++) begin
-      wsel[j] <= ((w_row[RW-1:0] == RW'(j)) || (w_dup && RW'(w_row + w_off) == RW'(j))) && (|we);
-      ssel[j] <= swe && ((s_row[RW-1:0] == RW'(j)) || (w_dup && RW'(s_row + w_off) == RW'(j)));
+      wsel[j] <= ((col(w_row) == j) || (w_dup && col(w_row2) == j)) && (|we);
+      ssel[j] <= swe && ((col(s_row) == j) || (w_dup && col(s_row2) == j));
+      wg[j] <= (col(w_row) == j) ? grp(w_row) : grp(w_row2);
+      sg[j] <= (col(s_row) == j) ? grp(s_row) : grp(s_row2);
     end
     sb <= s_blk[BW-1:0];
     sd <= s_data;
@@ -68,24 +87,27 @@ module otpu_actram #(
 `endif
 
   for (genvar j = 0; j < MCOLS; j++) begin : g_row
-    logic [D*8-1:0] act [BLOCKS];
-    logic [31:0]    asc [BLOCKS];
+    logic [D*8-1:0] act [GROUPS*BLOCKS];
+    logic [31:0]    asc [GROUPS*BLOCKS];
     logic [D*8-1:0] rd;
     logic [31:0]    rs;
     wire [BW-1:0] rb = r_hi[j] ? r_blk2[BW-1:0] : r_blk[BW-1:0];
+    wire [GW+BW-1:0] ra = (GROUPS > 1) ? {r_grp[GW-1:0], rb} : (GW+BW)'(rb);
+    wire [GW+BW-1:0] wa = (GROUPS > 1) ? {wg[j], wb} : (GW+BW)'(wb);
+    wire [GW+BW-1:0] sa = (GROUPS > 1) ? {sg[j], sb} : (GW+BW)'(sb);
     always_ff @(posedge clk) begin
       for (int b = 0; b < D; b++)
-        if (wsel[j] && wbe[b]) act[wb][8 * b +: 8] <= wd[8 * b +: 8];
-      if (ren) rd <= act[rb];
+        if (wsel[j] && wbe[b]) act[wa][8 * b +: 8] <= wd[8 * b +: 8];
+      if (ren) rd <= act[ra];
     end
     always_ff @(posedge clk) begin
-      if (ssel[j]) asc[sb] <= sd;
-      if (ren) rs <= asc[rb];
+      if (ssel[j]) asc[sa] <= sd;
+      if (ren) rs <= asc[ra];
     end
     assign r_data[j*D*8 +: D*8] = rd;
     assign r_scale[j*32 +: 32] = rs;
 `ifndef SYNTHESIS
-    initial for (int b = 0; b < BLOCKS; b++) begin act[b] = '0; asc[b] = '0; end
+    initial for (int b = 0; b < GROUPS*BLOCKS; b++) begin act[b] = '0; asc[b] = '0; end
 `endif
   end
 endmodule

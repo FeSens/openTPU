@@ -6,9 +6,10 @@ The card exposes, through the XDMA bridge:
   - the control registers (rtl/boards/ypcb-00338/otpu_ctrl.sv; map in regs.py and
     docs/observability.md) on BAR0, /dev/xdma0_user.
 
-The accelerator addresses one logical DRAM interleaved over the channels in 64-byte beats
-(logical beat b lives on channel b % 2 at BASE[b % 2] + (b // 2) * 64; rtl/mem/otpu_axi_dram.sv).
-This driver applies the same map, so the host works with logical addresses only.
+The accelerator addresses one logical DRAM interleaved over the channels in 64-byte beats:
+logical beat b of chunk m = b // 2 lives at BASE[c] + m * 64 on channel c = b % 2, or, on a
+bitstream with CAPS.chash, c = (b % 2) ^ parity(m) (rtl/mem/otpu_axi_dram.sv). This driver
+applies the same map, so the host works with logical addresses only.
 
 BoardBackend implements the Engine backend interface (write / read / run, plus prepare and
 attach), so `Engine(..., cfg=device_config(board.info()), backend=BoardBackend)` runs Qwen3,
@@ -27,7 +28,6 @@ import concurrent.futures
 import mmap
 import os
 import struct
-import subprocess
 import tempfile
 import time
 from dataclasses import replace
@@ -61,23 +61,54 @@ POLL_SPIN = 100e-6              # poll: seconds of back-to-back register reads b
 POLL_MAX_SLEEP = 1e-3           # poll: longest sleep between reads
 STATUS_INTERVAL = 0.25          # BoardBackend: the status file is rewritten at most this often
 POLL_EARLY = 0.5e-3             # poll with an expected wait: wake this much (+ 1%) before it
+POLL_MIN_SLEEP = 20e-6          # poll: shortest sleep between reads (past the expected end)
+# Streamed logits (BoardBackend.start(stream=...)): a word the device never stores marks the
+# logits not written yet (the device's NaN is canonical: 0x7FC00000, or 0xFFC00000 after a sign
+# flip), so the host reads each piece of the LM head's output as soon as it is complete.
+SENTINEL = 0xFFFFFFFF
+STREAM_EARLY = 0.3e-3           # probe a piece this long before it came complete last token
+STREAM_RETRY = 0.1e-3           # probe again after this when it is not complete yet
+STREAM_PROBE = 0.5e-3           # probe interval when no completion time is known yet
 
 
 # ------------------------------------------------------------------------------ address map
-def split(addr: int, data: np.ndarray) -> list[tuple[int, int, np.ndarray]]:
+def swapped(addr: int, n: int) -> np.ndarray:
+    """CHASH: which of the n chunks from logical `addr` (chunk aligned) have their halves
+    swapped between the channels (the parity of the chunk index)."""
+    m = np.arange(addr // (2 * BEAT), addr // (2 * BEAT) + n, dtype=np.uint64)
+    for s in (32, 16, 8, 4, 2, 1):
+        m ^= m >> np.uint64(s)
+    return (m & np.uint64(1)).astype(bool)
+
+
+def hash_swap(addr: int, v: np.ndarray) -> None:
+    """Chunks [n, 2, BEAT] at logical `addr`: swap the halves CHASH swaps, in place (its own
+    inverse: logical order <-> channel order)."""
+    p = swapped(addr, len(v))
+    v[p] = v[p][:, ::-1]
+
+
+def split(addr: int, data: np.ndarray, chash: bool = False) -> list[tuple[int, int, np.ndarray]]:
     """Logical bytes at `addr` -> [(channel, channel offset, bytes)], beat-aligned pieces
     merged into one contiguous run per channel. `addr` and len(data) must be multiples of
     2 * BEAT (the caller widens unaligned ranges)."""
     assert addr % (2 * BEAT) == 0 and len(data) % (2 * BEAT) == 0
     v = data.reshape(-1, 2, BEAT)
+    if chash:
+        v = v.copy()
+        hash_swap(addr, v)
     off = addr // 2
     return [(c, off, np.ascontiguousarray(v[:, c, :]).reshape(-1)) for c in (0, 1)]
 
 
-def join(parts: list[np.ndarray]) -> np.ndarray:
-    """Inverse of split: the two channels' contiguous runs -> logical bytes."""
+def join(parts: list[np.ndarray], addr: int = 0, chash: bool = False) -> np.ndarray:
+    """Inverse of split: the two channels' contiguous runs (from logical `addr`) -> logical
+    bytes."""
     a, b = (p.reshape(-1, BEAT) for p in parts)
-    return np.stack([a, b], axis=1).reshape(-1)
+    v = np.stack([a, b], axis=1)
+    if chash:
+        hash_swap(addr, v)
+    return v.reshape(-1)
 
 
 # ------------------------------------------------------------------------------ transports
@@ -119,6 +150,7 @@ class XdmaTransport:
     dma=False opens only the register BAR (monitors: no DMA channel is touched)."""
     ecc = True                  # the card's DRAM needs Board.scrub after configuration
     threaded = True             # Board may run the DMA calls in a worker thread (Board.write/read)
+    streams = True              # DMA while the accelerator runs (BoardBackend streamed logits)
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
         self.dev, self.devname = dev, Path(dev).name
@@ -238,24 +270,32 @@ class XdmaTransport:
         32 ln(T / 100 us) + T / 1 ms times instead of T / 1 us, and the sleeps release the
         GIL to the thread compiling the next token's program (Engine pipelining).
 
-        expect: the wait the caller expects (seconds; the previous token's device time). The
+        expect: the wait the caller expects (seconds; the previous token's run time). The
         poll then sleeps once until POLL_EARLY before it and reads back to back from there to
-        POLL_SPIN past it, so a run that ends on time is seen within a register read; a longer
-        one falls back to the sleeps above."""
+        POLL_SPIN past it, so a run that ends on time is seen within a register read; past
+        that the sleeps are 1/32 of the time since the expected end (at least POLL_MIN_SLEEP),
+        so a run a little late is still seen within ~POLL_MIN_SLEEP, not a whole
+        POLL_MAX_SLEEP later (before: 1.0-1.2 ms per Qwen3 token on the card)."""
         t0 = time.perf_counter()
         early = POLL_EARLY + expect / 100
-        if expect > early:
-            time.sleep(expect - early)
-        spin = max(expect, 0.0) + POLL_SPIN
+        while (left := expect - early - (time.perf_counter() - t0)) > 0:
+            time.sleep(left / 2 if left > 1e-3 else left)   # halving: a long sleep overshoots
+        spin = max(expect, 0.0) + POLL_SPIN                  # by a few % (macOS: 2-3 ms of 50)
+        # exact: the condition was seen by back-to-back reads that saw it false just before
+        # (not at the first read, nor after a sleep): its time is known to a read
+        self.poll_exact = False
         while True:
             r = self.reg_read(off)
             if r & mask == val:
                 return r
+            self.poll_exact = True
             el = time.perf_counter() - t0
             if el > timeout:
                 raise TimeoutError(f"register {off:#x} = {r:#x}, waiting for {val:#x}/{mask:#x}")
             if el > spin:
-                time.sleep(min(POLL_MAX_SLEEP, el / 32))
+                late = el - max(expect, 0.0)
+                time.sleep(min(POLL_MAX_SLEEP, max(POLL_MIN_SLEEP, late / 32)))
+                self.poll_exact = False
 
 
 class SimTransport:
@@ -276,6 +316,7 @@ class SimTransport:
 
     batched = True
     devname = None              # private to this process: no device lock
+    keeps_state = False         # IMEM and the ARG registers start from reset every flush
 
     def __init__(self, ch_bytes: int = 1 << 24, stall: int = 20, seed: int = 1,
                  params: dict | None = None, plusargs: list | None = None):
@@ -340,6 +381,7 @@ class SimTransport:
         cfg = board_config()                        # OTPU_MCOLS / OTPU_LANES: the "bitstream"
         # VPU_CL and ULANES as the bitstream builds them (make bit: VPU_CL 2, ULANES 8)
         p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": cfg.MCOLS, "LANES": cfg.LANES,
+             "ACT_ROWS": cfg.act_rows,
              "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8)}
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
@@ -349,9 +391,8 @@ class SimTransport:
                 self.ch[c].view("<u4").astype(">u4").tofile(d / f"ch{c}.bin")
             (d / "host.txt").write_text("\n".join(self.script) + "\n")
             self.script, self.nreads = [], 0
-            r = subprocess.run([str(exe), f"+dir={d}", f"+axi_stall={self.stall}",
-                                f"+axi_seed={self.seed}", *self.plusargs],
-                               capture_output=True, text=True)
+            r = rtlsim.run_sim([str(exe), f"+dir={d}", f"+axi_stall={self.stall}",
+                                f"+axi_seed={self.seed}", *self.plusargs])
             out = self.out = r.stdout + r.stderr
             if "DONE" not in out:
                 raise RuntimeError(f"board simulation failed:\n{out[-3000:]}")
@@ -443,7 +484,7 @@ class Board:
              "calibrated": bool(st & ST_CALIB0) and bool(st & ST_CALIB1),
              "running": bool(st & ST_RUN) and not st & ST_HALTED,
              "regmap": R.regmap(rm), "caps": None, "core_khz": None, "build_id": None,
-             "temp_c": None, "ddr_mts": None}
+             "temp_c": None, "ddr_mts": None, "act_rows": (v >> 8) & 0xFF}
         if d["regmap"] >= 2:
             cp, khz, bid, tp, mts = self.t.reg_read_many([R.R_CAPS, R.R_CORE_KHZ, R.R_BUILD_ID,
                                                           R.R_TEMP, R.R_DDR_MTS])
@@ -451,8 +492,16 @@ class Board:
                      temp_c=round(R.temp_c(tp), 2) if cp & R.CAP_TEMP and tp & R.TEMP_VALID
                      else None,
                      ddr_mts=(mts or None) if cp & R.CAP_DDR else None)
+            if cp & R.CAP_ACT:
+                d["act_rows"] = self.t.reg_read(R.R_ACT_ROWS)
         self._info = d
         return d
+
+    @property
+    def chash(self) -> bool:
+        """The bitstream hashes the channel interleave (CAPS bit7)."""
+        c = (self._info or self.info())["caps"]
+        return bool(c and c.get("chash"))
 
     @property
     def v2(self) -> bool:
@@ -486,7 +535,8 @@ class Board:
             return
         a0 = addr // (2 * BEAT) * (2 * BEAT)
         a1 = -(-(addr + len(data)) // (2 * BEAT)) * (2 * BEAT)
-        if a0 != addr or a1 != addr + len(data):        # widen: read-modify-write the edges
+        own = a0 != addr or a1 != addr + len(data)      # data is our own buffer
+        if own:                                         # widen: read-modify-write the edges
             buf = np.empty(a1 - a0, np.uint8)
             head, tail = addr - a0, a1 - addr - len(data)
             if head:
@@ -495,6 +545,9 @@ class Board:
                 buf[-2 * BEAT:] = self.read(a1 - 2 * BEAT, 2 * BEAT)
             buf[head:head + len(data)] = data
             data = buf
+        if self.chash:                                  # channel order (a copy)
+            data = data if own else data.copy()
+            hash_swap(a0, data.reshape(-1, 2, BEAT))
         if not (getattr(self.t, "threaded", False) and len(data) > PIPE):
             for c, off, part in split(a0, data):
                 self.t.mem_write(c, off, part)
@@ -565,6 +618,8 @@ class Board:
                 for c, part in enumerate(fut.result()):
                     out[rows, c, :] = part.reshape(-1, BEAT)
                 fut = nxt
+        if self.chash:                                  # channel order -> logical
+            hash_swap(a0, out)
         flat = out.reshape(-1)
         return flat if (a0, a1) == (addr, addr + n) else flat[addr - a0:addr - a0 + n].copy()
 
@@ -579,6 +634,17 @@ class Board:
         t.reg_write(R_PROG_N, len(words) // 8)
         t.reg_write(R_CTRL, CTRL_LOAD)
         t.poll(R_STATUS, ST_LOADING, 0)
+
+    def set_args(self, words) -> None:
+        """The next runs' arguments ARG0..7 (CAPS bit25; R8..R15 at the start): only the words
+        that differ from the last ones written (8 at most)."""
+        last = getattr(self, "_args", None) if getattr(self.t, "keeps_state", True) else None
+        last = last or [None] * 8
+        for k, w in enumerate(words):
+            w = int(w) & 0xFFFFFFFF
+            if last[k] != w:
+                self.t.reg_write(R.R_ARG0 + 4 * k, w)
+        self._args = [int(w) & 0xFFFFFFFF for w in words]
 
     RUN_OFFS = [R_STATUS, R_CYCLES, R_CYCLES_HI, R_ICOUNT, R.R_B_RD, R.R_B_WR, R.R_A_RD,
                 R.R_A_WR, R.R_B_STALL]
@@ -625,6 +691,8 @@ class Board:
         traced = self._trace is not None
         depth, keep_first = self._trace or (0, True)
         t.poll(R_STATUS, ST_HALTED, ST_HALTED, timeout, expect)
+        self.t_seen = time.perf_counter()           # HALTED seen (BoardBackend's run time)
+        self.seen_exact = getattr(t, "poll_exact", False)   # else an upper bound
         if traced:                      # the last cycles' events still drain into the buffer
             t.poll(R.R_TRACE_CTRL, R.TR_BUSY, 0, timeout)
         offs = self.RUN_OFFS + ([R.R_TRACE_COUNT, R.R_TRACE_DROP] if traced else [])
@@ -690,9 +758,9 @@ class ConfigMismatch(RuntimeError):
 
 def device_config(info: dict, **kw):
     """The board_config of the bitstream that `info` (Board.info()) describes: MCOLS and LANES
-    come from its VERSION register and PAIR from CAPS bit5, so the card needs no OTPU_MCOLS /
-    OTPU_LANES / OTPU_PAIR. When one is set in the environment it must name the bitstream's
-    value (ConfigMismatch otherwise). Keyword arguments set other fields (DRAM_BYTES)."""
+    come from its VERSION register, PAIR from CAPS bit5 and DSTEP from bit6, so the card needs
+    no OTPU_MCOLS / OTPU_LANES / OTPU_PAIR / OTPU_DSTEP. When one is set in the environment it
+    must name the bitstream's value (ConfigMismatch otherwise). Keyword arguments set other fields (DRAM_BYTES)."""
     from opentpu.isasim import board_config
     for k in ("MCOLS", "LANES"):
         env = os.environ.get(f"OTPU_{k}")
@@ -700,13 +768,19 @@ def device_config(info: dict, **kw):
             raise ConfigMismatch(f"the bitstream was built with {k}={info[k]} but OTPU_{k}={env}"
                                  f": unset OTPU_{k} (the host follows the bitstream) or load "
                                  f"a {k}={env} bitstream")
-    pair = bool((info.get("caps") or {}).get("pair"))
-    env = os.environ.get("OTPU_PAIR")
-    if env is not None and bool(int(env)) != pair:
-        raise ConfigMismatch(f"the bitstream {'has' if pair else 'lacks'} column reuse (CAPS "
-                             f"bit5) but OTPU_PAIR={env}: unset OTPU_PAIR (the host follows the "
-                             f"bitstream)")
-    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair, **kw})
+    caps = info.get("caps") or {}
+    pair, dstep = bool(caps.get("pair")), bool(caps.get("dstep"))
+    for k, have, what in (("PAIR", pair, "column reuse (CAPS bit5)"),
+                          ("DSTEP", dstep, "DSTEP (CAPS bit6)")):
+        env = os.environ.get(f"OTPU_{k}")
+        if env is not None and bool(int(env)) != have:
+            raise ConfigMismatch(f"the bitstream {'has' if have else 'lacks'} {what} but "
+                                 f"OTPU_{k}={env}: unset OTPU_{k} (the host follows the "
+                                 f"bitstream)")
+    rows = info.get("act_rows") or 0              # 0: MCOLS rows (no MM replay)
+    cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair,
+                          "DSTEP": dstep, "ACT_ROWS": rows if rows > info["MCOLS"] else 0,
+                          **kw})
     if info["D"] != cfg.D:
         raise ConfigMismatch(f"the bitstream has D={info['D']}, the board configuration "
                              f"D={cfg.D}: not a YPCB-00338 openTPU build")
@@ -714,15 +788,17 @@ def device_config(info: dict, **kw):
 
 
 # ------------------------------------------------------------------------------ Engine backend
-def sim_config(spec, cap: int, base=None, rows: int | None = None):
+def sim_config(spec, cap: int, base=None, rows: int | None = None, lookup: bool = False):
     """`base` (default board_config()) with the DRAM cut to what the model needs (power of
     two): the image with I/O rows for `rows` tokens per run (default the Engine's
-    PREFILL_ROWS), then the program area. The board model's memory, and the ISA reference
-    that runs the same layout."""
+    PREFILL_ROWS; lookup: with the resident decode's tables, Engine(resident=True)), then the
+    program area. The board model's memory, and the ISA reference that runs the same
+    layout."""
     from opentpu.isasim import board_config
-    from opentpu.llm.qwen3 import PREFILL_ROWS
+    from opentpu.llm.qwen3 import PREFILL_ROWS, has_lookup
     base = base or board_config()
-    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS)
+    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS,
+                       **({"lookup": True} if lookup and has_lookup(spec) else {}))
     need = -(-probe.nbytes // 4096) * 4096 + 4 * base.IMEM_WORDS
     return replace(base, DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
 
@@ -767,7 +843,8 @@ class BoardBackend:
         self.board = Board(transport)
         self.board.scrub()
         info = self.info = self.board.info()
-        if (info["D"], info["MCOLS"], info["LANES"]) != (cfg.D, cfg.MCOLS, cfg.LANES):
+        if (info["D"], info["MCOLS"], info["LANES"], info.get("act_rows") or info["MCOLS"]) != \
+                (cfg.D, cfg.MCOLS, cfg.LANES, cfg.act_rows):
             self.board.close()
             raise ConfigMismatch(f"the bitstream is D={info['D']} MCOLS={info['MCOLS']} "
                                  f"LANES={info['LANES']}, the configuration D={cfg.D} "
@@ -783,7 +860,18 @@ class BoardBackend:
         self.last = None
         self._prep: dict = {}               # id(programs) -> (programs, words), from prepare()
         self._running = None                # the started programs
-        self._expect = 0.0                  # the last run's device seconds (the poll's hint)
+        self._resident = None               # (programs, words) in IMEM (start() skips the load)
+        self._expect = 0.0                  # the next run's expected seconds (the poll's hint)
+        self._ratio = 1.0                   # run wall time / (CYCLES / CORE_KHZ), smoothed
+        self._seen = None                   # HALTED seen by the streamed wait (perf_counter)
+        # streamed logits (start(stream=...)): the region holding the sentinel, the pieces to
+        # mark again once the next run has started, the pieces' completion times last token
+        self.streams = bool(getattr(self.board.t, "streams", False))
+        self._armed = None                  # (addr, nbytes, piece) filled with SENTINEL
+        self._rearm: list = []
+        self._stream = None                 # the running program's (addr, nbytes, piece)
+        self._due: dict = {}
+        self.last_stream: dict = {}         # the last streamed wait: pieces during the run...
         t = self.board.t
         self.status = RunnerStatus(t.devname, STATUS_INTERVAL, dev=getattr(t, "dev", t.devname),
                                    model=model,
@@ -814,11 +902,18 @@ class BoardBackend:
             self.board.close()
             raise ConfigMismatch("the programs use column reuse (MM PAIR / QACT DUP) and this "
                                  "bitstream lacks it (CAPS bit5 clear): use device_config")
+        if self.cfg.DSTEP and not caps.get("dstep"):
+            self.board.close()
+            raise ConfigMismatch("the programs use DSTEP and this bitstream lacks it (CAPS bit6 "
+                                 "clear): use device_config")
         self.engine = engine
         if self.status is not None:
             self.status.update(dram=self._layout())
 
     def write(self, s: int, addr: int, data: np.ndarray) -> None:
+        a = self._armed
+        if a is not None and addr < a[0] + a[1] and a[0] < addr + np.asarray(data).nbytes:
+            self._armed = None
         self.board.write(addr, data)
 
     def read(self, s: int, addr: int, nbytes: int) -> np.ndarray:
@@ -833,34 +928,166 @@ class BoardBackend:
 
     runs_words = True           # start() takes assembled words too (the Engine's worker process)
 
-    def start(self, programs) -> None:
+    @property
+    def args(self) -> bool:
+        """The bitstream takes run arguments (CAPS bit25): start(programs, args=words)."""
+        return bool((self.info.get("caps") or {}).get("args"))
+
+    def start(self, programs, stream: tuple | None = None, args=None) -> None:
         """Copy the program to the card, load it and start it (run's first half: the Engine
         compiles the next token's program between start and wait). `programs`: the programs,
-        or the program already assembled (uint32 words)."""
-        prep = self._prep.pop(id(programs), None)
-        while len(self._prep) > 1:                  # stale entries (discarded compiles)
-            self._prep.pop(next(iter(self._prep)), None)
-        if isinstance(programs, np.ndarray):
-            words = programs
-        else:
-            words = prep[1] if prep is not None and prep[0] is programs else \
-                np.asarray(self.I.assemble(programs[0]), np.uint32)
-        if len(words) > self.cfg.IMEM_WORDS:
-            raise ValueError("program does not fit IMEM")
-        self.board.load_program(self.prog_at, words)
-        self.board.start(trace=self.trace)
-        self._running = programs
+        or the program already assembled (uint32 words).
 
-    def wait(self) -> dict:
-        """Wait for the started program; returns its counters (run's second half)."""
+        stream=(addr, nbytes, piece): the run writes its logits to [addr, addr + nbytes) in
+        pieces of `piece` bytes (the LM head's chunks, late in the run), and wait(feed) hands
+        each piece over as soon as it is complete. The region holds SENTINEL words before the
+        run: written here when it does not (the first streamed run, or after anything else
+        wrote the region), else the pieces read after the last run are marked again right
+        after this start, while the run is still far from its LM head. Needs a transport that
+        allows DMA during a run (`streams`).
+
+        args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit25). The
+        program in IMEM stays there: starting the same `programs` object again (a program
+        that takes its position as arguments) loads nothing, on a transport that keeps the
+        device's state between runs (not SimTransport: it loads again)."""
+        if args is not None and not self.args:
+            raise ConfigMismatch("this bitstream takes no run arguments (CAPS bit25 clear)")
+        res = self._resident
+        if res is None or res[0] is not programs or not getattr(self.board.t, "keeps_state",
+                                                                  True):
+            prep = self._prep.pop(id(programs), None)
+            while len(self._prep) > 1:              # stale entries (discarded compiles)
+                self._prep.pop(next(iter(self._prep)), None)
+            if isinstance(programs, np.ndarray):
+                words = programs
+            else:
+                words = prep[1] if prep is not None and prep[0] is programs else \
+                    np.asarray(self.I.assemble(programs[0]), np.uint32)
+            if len(words) > self.cfg.IMEM_WORDS:
+                raise ValueError("program does not fit IMEM")
+            self._resident = None
+            self.board.load_program(self.prog_at, words)
+            self._resident = (programs, words)
+        if args is not None:
+            self.board.set_args(list(args) + [0] * (8 - len(args)))
+        if stream is not None and self._armed != stream:
+            self.board.write(stream[0], np.full(stream[1] // 4, SENTINEL, np.uint32))
+            self._armed, self._rearm = stream, []
+        elif stream is None:
+            self._armed = None                      # the run may write the region
+        self._seen = None
+        self.board.start(trace=self.trace)
+        self._running, self._stream = programs, stream
+        for a, n in self._rearm:
+            self.board.write(a, np.full(n // 4, SENTINEL, np.uint32))
+        self._rearm = []
+
+    def wait(self, feed=None) -> dict:
+        """Wait for the started program; returns its counters (run's second half). After a
+        start(stream=...), feed(offset, words) gets every piece of the logits (byte offset in
+        the region, uint32 words), most of them while the run goes on."""
         programs, self._running = self._running, None
-        st = self.board.wait(expect=self._expect)
+        try:
+            if self._stream is not None:
+                self._stream_logits(feed)
+            # halted already (seen by the streamed wait): read the counters, no sleep
+            st = self.board.wait(expect=0.0 if self._seen else self._expect)
+            if self._stream is not None:
+                self._stream_tail(feed)
+        except BaseException:
+            self._armed, self._stream = None, None  # the region's state is unknown
+            raise
         khz = self.info["core_khz"]
-        self._expect = st["cycles"] / (khz * 1e3) if khz else 0.0
+        self._expect = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
         self.last = (programs, st)
         if self.status is not None:
             self.status.token(st["cycles"], khz, dram=self._layout(True))
         return st
+
+    def _next_expect(self, dev: float) -> float:
+        """The next run's expected wall time: this run's device time (CYCLES / CORE_KHZ) times
+        the smoothed ratio of the seen run times to it (the clock may differ from CORE_KHZ by
+        a fraction of a percent: 0.25% of a 53 ms token is past the poll's spin; the seen time
+        includes the poll's lateness, which the ratio's average keeps small)."""
+        streamed, self._seen = self._seen, None
+        seen = streamed or getattr(self.board, "t_seen", None)
+        t_run = getattr(self.board, "_t_run", None)
+        if dev > 0 and seen is not None and t_run is not None:
+            r = (seen - t_run) / dev
+            # halted at the first read after a sleep (or by the streamed wait's probes): the
+            # run ended some time before, so the ratio may only come down to it; halted by
+            # back-to-back reads that saw it running: within a read of the end
+            upper = streamed is not None or not getattr(self.board, "seen_exact", False)
+            if 0.9 < r < 1.1 and (r < self._ratio or not upper):
+                self._ratio = 0.5 * self._ratio + 0.5 * r
+        return dev * self._ratio
+
+    def _pieces(self):
+        addr, n, piece = self._stream
+        return [(o, min(piece, n - o)) for o in range(0, n, piece)]
+
+    def _stream_logits(self, feed) -> None:
+        """Hand over the pieces before the last one while the run goes on: probe a piece's
+        last beat from STREAM_EARLY before its completion time of the last token (or every
+        STREAM_PROBE), read it once the beat is written, check every word, mark it again.
+        Stops at HALTED; the last piece (written just before it) is left to _stream_tail."""
+        t, b = self.board.t, self.board
+        addr = self._stream[0]
+        pieces, due = self._pieces(), {}
+        t0, i, probes, tries = b._t_run, 0, 0, 0
+        halted = False
+        while i < len(pieces) - 1:
+            d = self._due.get(i)
+            # a piece's time of the last token may be past this run's end (a token delayed
+            # by the host): HALTED is checked after every slice, not only at the piece's time
+            while d is not None and (now := time.perf_counter() - t0) < d - STREAM_EARLY:
+                time.sleep(min(d - STREAM_EARLY - now, 1e-3))   # slices: sleeps overshoot
+                if t.reg_read(R_STATUS) & ST_HALTED:
+                    halted = True
+                    break
+            if halted or t.reg_read(R_STATUS) & ST_HALTED:
+                self._seen = time.perf_counter()
+                break
+            o, k = pieces[i]
+            last = addr + o + k - BEAT                  # the piece's last beat (64-byte aligned)
+            probes += 1
+            tries += 1
+            beat = t.mem_read(last // BEAT % 2, last // (2 * BEAT) * BEAT, BEAT)
+            w = None
+            if not (beat.view(np.uint32) == SENTINEL).any():
+                w = b.read(addr + o, k).view(np.uint32)
+                if (w == SENTINEL).any():               # the beats land out of order: soon
+                    w = None
+            if w is None:
+                time.sleep(STREAM_RETRY if d is not None else STREAM_PROBE)
+                continue
+            feed(o, w)
+            # complete at the first probe: it may have been for a while, so probe earlier
+            # next token; else it came between the last two probes
+            due[i] = d - STREAM_EARLY if tries == 1 and d is not None else \
+                time.perf_counter() - t0
+            b.write(addr + o, np.full(k // 4, SENTINEL, np.uint32))    # the run is past it
+            i, tries = i + 1, 0
+        self._due.update(due)
+        self.last_stream = {"during": i, "pieces": len(pieces), "probes": probes}
+
+    def _stream_tail(self, feed) -> None:
+        """After HALTED: the pieces not handed over yet, in one read."""
+        addr, n, _ = self._stream
+        pieces = self._pieces()
+        i = self.last_stream.get("during", 0)
+        o = pieces[i][0]
+        t0 = time.perf_counter()
+        w = self.board.read(addr + o, n - o).view(np.uint32)
+        if (w == SENTINEL).any():
+            self._armed = None
+            raise RuntimeError("streamed logits: the run left words unwritten (the program "
+                               "does not write the whole logits region, or a marking raced it)")
+        for po, k in pieces[i:]:
+            feed(po, w[(po - o) // 4:(po - o + k) // 4])
+        self._rearm = [(addr + o, n - o)]
+        self._stream = None
+        self.last_stream.update(tail_bytes=n - o, tail_s=time.perf_counter() - t0)
 
     def run(self, programs: list) -> dict:
         self.start(programs)
