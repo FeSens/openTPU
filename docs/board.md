@@ -321,24 +321,42 @@ read-modify-write holds the channel 23 cycles, 4 cycles per AXI read transaction
 reproduces a691ea98 at 8.22 (Qwen3) and 3.00 (LFM2) Mcycles, 4% under the card; the -25% / -27%
 it projected for this build came out -24% / -26% on the card.
 
-Fourth fitted parameter (2026-09-28, production image deploy_prod120hp_aebb0bf0, DDR3-1066, 120.755
-MHz): every AXI read transaction costs the data bus 1.7 controller cycles (`+axi_tgap=170`, in
-ddr3_plusargs). This parameter caps sequential 8-beat bursts at about 8 / 9.7 of the peak: ~111 B per core cycle.
-Without it the model gave ~126 B/cycle and 1-2% MXU starvation, where the card shows ~15%. With it
-the simulated cycles match the card:
+Three more parameters fitted on 2026-09-28: production image deploy_prod120hp_aebb0bf0,
+DDR3-1066, 120.755 MHz. All three are set in `ddr3_plusargs`.
+- Every AXI read transaction costs the data bus 1.7 controller cycles (`+axi_tgap=170`). This caps
+  sequential 8-beat bursts at about 8 / 9.7 of the peak: ~111 B per core cycle.
+- Every AXI write transaction (the adapter's writes are single beats) costs 2 controller cycles
+  (`+axi_wgap=200`).
+- A read/write turnaround costs 4 controller cycles (`+axi_tturn=4`, was 2).
 
-| Run | card (lens) | sim before | sim with tgap |
+Without these the model gave ~126 B/cycle and 1-2% MXU starvation, where the card shows ~15%. The
+write parameters come from `tools/rw_bench.py`, which puts an fp4 weight stream (`mm`) beside DMA
+stores, loads or DSTEPs:
+
+| rw_bench mode | card cycles | sim before | sim fitted |
 |---|---|---|---|
-| LFM2 4-bit + int8 head, pos 50 | 1.418 M | 1.262 M | 1.430 M |
-| Qwen3.5 4-bit + int8 head, 1 layer, pos 60 | 2.553 M | 2.203 M | 2.485 M (-2.7%) |
-| Qwen3.5, 4 layers | 2.952 M | 2.529 M | 2.853 M (-3.4%) |
-| Qwen3.5 attention + MLP layer (4 - 3 layers) | 89.3 K | 84.4 K | 91.8 K |
-| Qwen3.5 DeltaNet + MLP layer ((3 - 1 layers) / 2) | 154.7 K | 120.8 K | 138 K |
+| mm | 78,669 | 69,943 | 79,166 |
+| st | 141,965 | 136,457 | 136,619 |
+| ld | 137,852 | 136,472 | 137,276 |
+| dstep | 91,218 | 74,460 | 74,706 |
+| mm+st | 217,350 | 189,058 | 217,266 |
+| mm+ld | 199,015 | 192,180 | 198,171 |
+| mm+dstep | 158,457 | 112,794 | 154,713 |
 
-The Qwen3.5 runs use DSTEP (`OTPU_PAIR=1 OTPU_DSTEP=1`), as the image does. The rest of the
-DeltaNet layer's gap (1.12x) is its 1 MiB DSTEP state write-back mixed with the weight reads.
-The model charges those writes too little. `+axi_wgap` and `+axi_tturn` are the knobs for
-this, and they are waiting for a card fit (`tools/rw_bench.py`).
+The fitted model then checks against the decode runs. The Qwen3.5 runs use DSTEP
+(`OTPU_PAIR=1 OTPU_DSTEP=1`), as the image does:
+
+| Decode run (4-bit + int8 head) | card (lens) | sim before | sim fitted |
+|---|---|---|---|
+| LFM2, pos 50 | 1.418 M | 1.262 M | 1.431 M (+0.9%) |
+| Qwen3.5, 1 layer, pos 60 | 2.553 M | 2.203 M | 2.512 M (-1.6%) |
+| Qwen3.5, 4 layers | 2.952 M | 2.529 M | 2.909 M (-1.5%) |
+| Qwen3.5 DeltaNet + MLP layer ((3 - 1 layers) / 2) | 154.7 K | 120.8 K | 152 K |
+| Qwen3.5 attention + MLP layer (4 - 3 layers) | 89.3 K | 84.4 K | 93 K |
+
+Still missing: DSTEP alone runs 22% slower on the card (91.2K vs 74.7K cycles). It is not
+bandwidth: the sim's DSTEP is far from the DRAM limit and does not respond to wgap. It is
+probably latency (write responses, or read-after-write), which the model does not separate.
 
 The simulator puts the cost on the transaction, so 16-beat bursts would halve it: 1.43 -> 1.31 M
 simulated for LFM2 (`--bl 16`). The card test is the `AXI_BL=16` build (`make bit AXI_BL=16`).
