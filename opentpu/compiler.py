@@ -381,6 +381,23 @@ TEMP_RC_FN = _probe_fn(object())
 TEMP_RC_METHOD = _Probe().m(object())
 
 
+def unnamed(rc: int, limit: int, x) -> bool:
+    """`x` is an unnamed temporary, so the op may overwrite it in place. `rc` is its reference
+    count taken in the ol function that received it (the first argument, so it is counted
+    before `x` is pushed for this call), `limit` the matching TEMP_RC_*; call this from that
+    function. Python 3.14 loads local variables as borrowed references, so a named
+    argument counts no more than a temporary: the count still sees references held by
+    containers and attributes, and the variables of the calling frames are checked here."""
+    if rc > limit:
+        return False
+    f = sys._getframe(2)            # skip this function and the ol function that received x
+    while f is not None and f.f_code is not _TRACE_CODE:     # frames above the trace hold no tiles
+        if builtins.any(v is x for v in f.f_locals.values()):
+            return False
+        f = f.f_back
+    return True
+
+
 class Tile:
     """fp32 values in TMEM: `base` word address, `shape` (1-D or 2-D), row stride `rs`."""
 
@@ -453,7 +470,7 @@ class Tile:
 
     # ---- in-place update (loop-carried values)
     def set(self, value) -> "Tile":
-        temp = sys.getrefcount(value) <= TEMP_RC_METHOD
+        temp = unnamed(sys.getrefcount(value), TEMP_RC_METHOD, value)
         if temp and isinstance(value, Tile) and self.b.retarget_matvec(value, self):
             self.b.bump_version(self.buf)
             return self
@@ -1344,6 +1361,9 @@ class Kernel:
         finally:
             st.pop()
         return b
+
+
+_TRACE_CODE = Kernel.trace.__code__
 
 
 def jit(fn) -> Kernel:
