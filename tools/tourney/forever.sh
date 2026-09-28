@@ -5,11 +5,14 @@
 #   touch /tmp/otpu-tourney-stop     stop before the next round (the running round completes)
 #   touch /tmp/otpu-tourney-pause    wait before the next round while the file exists
 #   /tmp/otpu-tourney-hosts          the Vivado hosts and their caps (remote.py), read per job
+#   /tmp/otpu-tourney-comps          the components of the next pass (whitespace separated; a
+#                                    component listed twice runs twice per pass), read per pass
 # Each round's champion first merges BASE (origin/main, fetched per round) when it has moved.
 # K=2 agent slots per round; K_<comp>=n overrides one component (e.g. K_otpu_mxu=3).
 set -u
 cd "$(git rev-parse --show-toplevel)"
 COMPS=${FOREVER_COMPS:-"otpu_dma otpu_seq otpu_tmem otpu_coll otpu_xunit otpu_mxu otpu_axi_dram otpu_vpu otpu_quant otpu_actram"}
+COMPS_FILE=${FOREVER_COMPS_FILE:-/tmp/otpu-tourney-comps}
 WHOLE=${FOREVER_WHOLE:-"otpu_impl"}
 EVERY=${WHOLE_EVERY:-4}
 K=${K:-2}
@@ -20,6 +23,7 @@ STOP=/tmp/otpu-tourney-stop PAUSE=/tmp/otpu-tourney-pause
 round() {   # one round of component $1
   local c=$1 k var
   [[ -e $STOP ]] && { echo "[forever] $STOP: stopping"; exit 0; }
+  [[ -f tools/tourney/components/$c.yaml ]] || { echo "[forever] no component $c: skipped"; return 0; }
   while [[ -e $PAUSE ]]; do sleep 60; done
   var="K_$c"; k=${!var:-$K}
   git fetch -q origin 2>/dev/null || echo "[forever] git fetch failed; using the last $BASE"
@@ -29,9 +33,18 @@ round() {   # one round of component $1
     || echo "[forever] $(date '+%F %T') $c: round failed (exit $?); going on"
 }
 
+comps() {   # the next pass: the comps file when it names components, else COMPS
+  local f=""
+  [[ -f $COMPS_FILE ]] && f=$(tr -s '[:space:]' ' ' < "$COMPS_FILE")
+  f=${f# }; f=${f% }
+  echo "${f:-$COMPS}"
+}
+
 n=0
 while :; do
-  for c in $COMPS; do
+  pass=$(comps)
+  echo "[forever] $(date '+%F %T') pass: $pass"
+  for c in $pass; do
     round "$c"
     n=$((n + 1))
     if (( n % EVERY == 0 )); then

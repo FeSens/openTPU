@@ -214,7 +214,10 @@ of them. Before each round it fetches `origin/main` (`BASE`), which the champion
 has moved; a full result is cached by the git trees of `rtl/` and `boards/`, so main's host or
 doc commits do not cost a rebuild. `K=2` slots per round, `K_<comp>=n` for one component.
 Control files: `/tmp/otpu-tourney-stop` (stop before the next round), `/tmp/otpu-tourney-pause`
-(wait while it exists), `/tmp/otpu-tourney-hosts` (build hosts and caps, read per job).
+(wait while it exists), `/tmp/otpu-tourney-hosts` (build hosts and caps, read per job),
+`/tmp/otpu-tourney-comps` (the components of the next pass, in order, in place of
+`FOREVER_COMPS`; a component listed twice runs twice per pass; read at the start of each pass, so
+priorities change without a restart).
 
 ### The whole-design component `otpu_impl`
 
