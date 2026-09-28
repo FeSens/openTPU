@@ -501,10 +501,19 @@ module otpu_axi_dram #(
 
   // ------------------------------------------------------------------ merge
   wire b_out = (bt_n != 0) && (rb_n[0] != 0) && (rb_n[1] != 0);
-  assign aoh = ao_q[ao_h];
+  // the oldest A read, registered (the order FIFO's LUT RAM read was in front of the run-beat
+  // and word select into a_rdata: -0.469 ns at 120.755 MHz with BL16 and write bursts): after a
+  // pop the next entry (written at least a cycle before), or the entry pushed into an empty queue
+  ao_t          ao_nx1, ao_in;
+  assign ao_nx1 = ao_q[OW'(ao_h + 1'b1)];
+  assign ao_in = '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse,
+                   drop: (a_reuse || a_hit) ? 3'd0 : pfl[a_ch]};
   logic [511:0] a_last;                          // the beat of the last fetched A read
   wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] > (AW_ + 1)'(aoh.drop));
   wire [511:0] a_src = aoh.reuse ? a_last : ra_head[aoh.c];
+  always_ff @(posedge clk)
+    if (a_out) aoh <= (ao_n == (OW + 1)'(1)) ? ao_in : ao_nx1;
+    else if (ao_n == 0) aoh <= ao_in;
   assign b_rvalid = b_out;
   wire [1:0] bth = bt_q[bt_h];
   assign b_rtag = bth[0];
@@ -520,8 +529,7 @@ module otpu_axi_dram #(
   always_ff @(posedge clk) begin
     if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= {b_sw, b_tag};
     if (a_take && !a_we)
-      ao_q[OW'(ao_h + ao_n)] <= '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse,
-                                  drop: (a_reuse || a_hit) ? 3'd0 : pfl[a_ch]};
+      ao_q[OW'(ao_h + ao_n)] <= ao_in;
   end
 
   // ------------------------------------------------------------------ writes outstanding
