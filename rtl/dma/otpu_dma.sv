@@ -178,28 +178,41 @@ module otpu_dma
 `endif
   end
 
-  // the fill's TMEM read this cycle: kind, index, address, lanes
-  logic [2:0]  fk_k;
-  logic [4:0]  fk_i;
-  logic [31:0] fk_a;
-  logic [W-1:0] fk_m;
+  // the fill's TMEM read this cycle: kind, index, address, lanes. Step fk's are registered
+  // (fs_*), computed a cycle ahead from fk_nx: the compare / subtract chain on fk and the
+  // counts stays off the TMEM read address (it was clk125's DSTEP path at 125.49 MHz:
+  // ds_nq -> compares -> fk_a -> t_raddr -> TMEM bank address, 13 levels). A DSTEP primes
+  // the first step for a cycle (ds_prime) before its fill starts.
+  logic        ds_prime;
+  logic [2:0]  fk_k, fs_k, fn_k;
+  logic [4:0]  fk_i, fs_i, fn_i;
+  logic [31:0] fk_a, fs_a, fn_a;
+  logic [W-1:0] fk_m, fs_m, fn_m;
+  wire  [7:0]  fk_nx = ds_prime ? 8'd0 : fk + 8'd1;
   always_comb begin
-    fk_k = 3'd0; fk_i = '0; fk_a = '0; fk_m = '0;
-    if (ds_fill && fk != fn) begin
-      if (fk < ds_nq) begin
-        fk_k = 3'd1; fk_i = 5'(fk); fk_a = ds_qa + 32'(fk) * W; fk_m = '1;
-      end else if (fk < 2 * ds_nq) begin
-        fk_k = 3'd2; fk_i = 5'(fk - ds_nq); fk_a = ds_qa + 32'(fk) * W; fk_m = '1;
-      end else if (fk < 2 * ds_nq + ds_nv) begin
-        fk_k = 3'd3; fk_i = 5'(fk - 2 * ds_nq); fk_a = ds_va + 32'(fk_i) * W;
-        for (int l = 0; l < W; l++) fk_m[l] = (32'(fk_i) * W + l) < 32'(ds_rows);
-      end else if (fk == 2 * ds_nq + ds_nv) begin
-        fk_k = 3'd4; fk_a = ds_ga; fk_m[0] = 1'b1;
-      end else begin
-        fk_k = 3'd5; fk_a = ds_ga + ds_gs; fk_m[0] = 1'b1;
-      end
+    fn_k = 3'd0; fn_i = '0; fn_a = '0; fn_m = '0;
+    if (fk_nx < ds_nq) begin
+      fn_k = 3'd1; fn_i = 5'(fk_nx); fn_a = ds_qa + 32'(fk_nx) * W; fn_m = '1;
+    end else if (fk_nx < 2 * ds_nq) begin
+      fn_k = 3'd2; fn_i = 5'(fk_nx - ds_nq); fn_a = ds_qa + 32'(fk_nx) * W; fn_m = '1;
+    end else if (fk_nx < 2 * ds_nq + ds_nv) begin
+      fn_k = 3'd3; fn_i = 5'(fk_nx - 2 * ds_nq); fn_a = ds_va + 32'(fn_i) * W;
+      for (int l = 0; l < W; l++) fn_m[l] = (32'(fn_i) * W + l) < 32'(ds_rows);
+    end else if (fk_nx == 2 * ds_nq + ds_nv) begin
+      fn_k = 3'd4; fn_a = ds_ga; fn_m[0] = 1'b1;
+    end else begin
+      fn_k = 3'd5; fn_a = ds_ga + ds_gs; fn_m[0] = 1'b1;
     end
   end
+  always_ff @(posedge clk)
+    if (ds_prime || (ds_fill && fk != fn)) begin
+      fs_k <= fn_k; fs_i <= fn_i; fs_a <= fn_a; fs_m <= fn_m;
+    end
+  wire fk_on = ds_fill && fk != fn;
+  assign fk_k = fk_on ? fs_k : 3'd0;
+  assign fk_i = fk_on ? fs_i : 5'd0;
+  assign fk_a = fk_on ? fs_a : 32'd0;
+  assign fk_m = fk_on ? fs_m : '0;
 
   // the delivered segment (in lb_q) goes to the TMEM write register; its position in the
   // chunk, lanes and TMEM address come with it (dv_*)
@@ -305,6 +318,7 @@ module otpu_dma
       ackw <= 1'b0;
       ds_wr <= 1'b0;
       ds_rr <= 1'b0;
+      ds_prime <= 1'b0;
     end else if (start && cmd.op == OP_DSTEP) begin
       logic [31:0] a;
       logic [8:0]  rows;
@@ -327,7 +341,7 @@ module otpu_dma
       ds_nseg <= 16'(32'(rows) * 32'(ns)); ds_left <= 16'(32'(rows) * 32'(ns));
       ds_ycnt <= '0; ds_ocnt <= '0; ds_wch <= '0;
       ds_nq <= 8'(ns); ds_nv <= nv; fk <= '0; fn <= 8'(2 * ns) + nv + 8'd2;
-      ds_fill <= 1'b1; ds_run <= 1'b0; ds_out <= 1'b0;
+      ds_fill <= 1'b0; ds_prime <= 1'b1; ds_run <= 1'b0; ds_out <= 1'b0;
       og <= '0; gt <= '0; gh <= '0; ds_pos <= '0; oi <= '0; ds_wr <= 1'b0;
       ds_rr <= 1'b0; ds_rc <= '0;
       st_pend <= 1'b0;
@@ -366,6 +380,10 @@ module otpu_dma
     end else if (busy) begin
       if (is_ds) begin
         // fill: one TMEM read per cycle, captured by the datapath a cycle later
+        if (ds_prime) begin
+          ds_prime <= 1'b0;
+          ds_fill <= 1'b1;
+        end
         if (ds_fill) begin
           if (fk != fn) fk <= fk + 1'b1;
           else begin
