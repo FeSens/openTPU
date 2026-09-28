@@ -30,6 +30,11 @@ module otpu_coll
   // row base addresses kept by adding the strides (no multipliers):
   // rrow = w1[s] + r*w4[s], wrow = dst + s*seg + r*drs, wseg = dst + s*seg
   logic [31:0] rrow, wrow, wseg;
+  // the read stage's address (rrow + c) and lane mask (c + l < cols), registered with c and
+  // rrow: the TMEM read address pins take a flip-flop, not an adder (c -> TMEM block RAM
+  // address was a 0.24 ns path at 125.49 MHz)
+  logic [31:0]      ra;
+  logic [LANES-1:0] rm;
   // the write stage's address base and lane mask, registered with pcl (they feed the TMEM
   // arbiter, so no adder or compare sits in front of it)
   logic [31:0]      pwa;
@@ -49,9 +54,9 @@ module otpu_coll
       for (int k = 0; k < S; k++)
         if (k == int'(s))
           for (int l = 0; l < LANES; l++)
-            if (c + 32'(l) < 32'(cols)) begin
+            if (rm[l]) begin
               r_en[k][l] = 1'b1;
-              r_addr[k][l] = rrow + c + 32'(l);
+              r_addr[k][l] = ra + 32'(l);
             end
     end
     if (st == C_RUN && qv) begin
@@ -82,6 +87,8 @@ module otpu_coll
             seg  <= cmds[0].w6;
             s <= '0; r <= '0; c <= '0;
             rrow <= cmds[0].w1;
+            ra <= cmds[0].w1;
+            for (int l = 0; l < LANES; l++) rm[l] <= (l < int'(cmds[0].w3[31:16]));
             wrow <= cmds[0].w2; wseg <= cmds[0].w2;
             pv <= 1'b0;
             qv <= 1'b0;
@@ -101,25 +108,30 @@ module otpu_coll
           pwa <= wrow + c;
           for (int l = 0; l < LANES; l++) pm[l] <= (c + 32'(l) < 32'(cols));
           if (issuing) begin
+            logic [31:0] nc, nrrow;
+            nc = c; nrrow = rrow;
             if (c + LANES >= 32'(cols)) begin
-              c <= '0;
+              nc = '0;
               if (r + 1 == 32'(rows)) begin
                 r <= '0;
                 if (s + 1 == S) issuing <= 1'b0;
                 else begin
                   s <= s + 1;
-                  for (int k = 0; k < S; k++) if (k == int'(s) + 1) rrow <= cmds[k].w1;
+                  for (int k = 0; k < S; k++) if (k == int'(s) + 1) nrrow = cmds[k].w1;
                   wseg <= wseg + seg;
                   wrow <= wseg + seg;
                 end
               end else begin
                 r <= r + 1;
-                for (int k = 0; k < S; k++) if (k == int'(s)) rrow <= rrow + cmds[k].w4;
+                for (int k = 0; k < S; k++) if (k == int'(s)) nrrow = rrow + cmds[k].w4;
                 wrow <= wrow + drs;
               end
             end else begin
-              c <= c + LANES;
+              nc = c + LANES;
             end
+            c <= nc; rrow <= nrrow;
+            ra <= nrrow + nc;
+            for (int l = 0; l < LANES; l++) rm[l] <= (nc + 32'(l) < 32'(cols));
           end
           if (pv && ps + 1 == S && pr + 1 == 32'(rows) && pcl + LANES >= 32'(cols))
             pv <= 1'b0;                                 // the last read's data moves to q

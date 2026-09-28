@@ -225,8 +225,10 @@ module otpu_board #(
     assign tr_busy = 1'b0;
   end
 
-  // ---- the slice (held in reset while RUN is 0) and the collective unit (one slice)
-  logic core_rst;
+  // ---- the slice (held in reset while RUN is 0) and the collective unit (one slice).
+  // core_rst reaches ~15k flip-flops across the die: synthesis replicates it (a single copy's
+  // net took 9.6 ns, the worst core_clk path at 100 MHz)
+  (* max_fanout = 256 *) logic core_rst;
   always_ff @(posedge clk) core_rst <= rst || !run;
 
   logic         coll_req, coll_ack, coll_gl;

@@ -40,7 +40,9 @@ if {![info exists CORE_MHZ]} { set CORE_MHZ 100 }
 set VCO [expr {$DDR_SPEED == 1333 ? 1000 : 800}]
 set CORE_DIV [expr {round(double($VCO) / $CORE_MHZ * 8) / 8.0}]
 set CORE_MHZ_ACT [format %.3f [expr {double($VCO) / $CORE_DIV}]]
-set CORE_HZ [expr {round($VCO * 1.0e6 / $CORE_DIV)}]
+# in whole Hz truncated, as clk_wiz reports it (validation wants the ports to match exactly,
+# e.g. 800 / 7.125 = 112280701.75 Hz)
+set CORE_HZ [expr {int(floor($VCO * 1.0e6 / $CORE_DIV))}]
 puts "core_clk: $CORE_MHZ_ACT MHz (MMCM divide $CORE_DIV)"
 
 # ------------------------------------------------------------------ external ports
