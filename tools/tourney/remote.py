@@ -30,6 +30,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -145,14 +146,21 @@ def remote_tree(name: str) -> str:
 
 def tree_id(wt: Path) -> str:
     """A git tree of the worktree's current contents (tracked + untracked, uncommitted edits
-    included), written through a temporary index so the worktree's own index is untouched."""
-    idx = wt / ".git-tourney-index"
+    included), written through a temporary index (outside the tree, so neither it nor its lock
+    file is picked up) so the worktree's own index is untouched. The build/ and models/ links are
+    left out: build/ by pathspec, models/ by .gitignore (an explicit exclude of an ignored path
+    makes `git add` fail)."""
+    fd, name = tempfile.mkstemp(prefix="otpu-tourney-index-")
+    os.close(fd)
+    idx = Path(name)
     env = dict(os.environ, GIT_INDEX_FILE=str(idx))
     try:
         subprocess.run(["git", "read-tree", "HEAD"], cwd=wt, env=env, check=True,
                        capture_output=True)
-        subprocess.run(["git", "add", "-A", "--", ".", ":!build", ":!models",
-                        ":!.git-tourney-index"], cwd=wt, env=env, check=True, capture_output=True)
+        r = subprocess.run(["git", "add", "-A", "--", ".", ":!build"], cwd=wt, env=env,
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RemoteError(f"git add for the upload failed: {r.stderr[-600:]}")
         return subprocess.run(["git", "write-tree"], cwd=wt, env=env, check=True,
                               capture_output=True, text=True).stdout.strip()
     finally:
