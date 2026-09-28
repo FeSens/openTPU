@@ -953,7 +953,7 @@ class BoardBackend:
         pieces of `piece` bytes (the LM head's chunks, late in the run), and wait(feed) hands
         each piece over as soon as it is complete. The region holds SENTINEL words before the
         run: written here when it does not (the first streamed run, or after anything else
-        wrote the region), else the pieces read after the last run are marked again right
+        wrote the region), else the whole region is marked again right
         after this start, while the run is still far from its LM head. Needs a transport that
         allows DMA during a run (`streams`).
 
@@ -1082,7 +1082,8 @@ class BoardBackend:
             # next token; else it came between the last two probes
             due[i] = d - STREAM_EARLY if tries == 1 and d is not None else \
                 time.perf_counter() - t0
-            b.write(addr + o, np.full(k // 4, SENTINEL, np.uint32))    # the run is past it
+            # its SENTINEL marks go back after the next start (with the tail's): a write
+            # here kept the host busy when the run ended (HALTED seen up to 0.15 ms late)
             i, tries = i + 1, 0
         self._due.update(due)
         self.last_stream = {"during": i, "pieces": len(pieces), "probes": probes}
@@ -1115,7 +1116,7 @@ class BoardBackend:
                                "does not write the whole logits region, or a marking raced it")
         self.last_stream["tail_retries"] = tries
         feed(o, w)                                  # the rest in one piece
-        self._rearm = [(addr + o, n - o)]
+        self._rearm = [(addr, n)]                  # every piece: marked after the next start
         self._stream = None
         self.last_stream.update(tail_bytes=n - o, tail_s=time.perf_counter() - t0)
 
