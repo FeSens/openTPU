@@ -316,9 +316,10 @@ rsync -a ~/otpu-build/refcache/ omarchy:otpu-build/refcache/    # from another b
 ```
 
 (`qual.sh` keeps each card's configuration as `$REFCACHE/configs/<deploy>.pkl`; a new build with
-the same D, MCOLS, LANES, PAIR, DSTEP and ACT_ROWS has the same one.) On the Mac they compute
-two to three times faster than on a busy omarchy (LFM2 int8: 11 s against 21-31 s), with the
-same tokens.
+the same D, MCOLS, LANES, PAIR, DSTEP and ACT_ROWS has the same one.) On the Mac the six
+compute in 6.4 minutes one at a time (Qwen3.5 4-bit 139 s, LFM2 int8 11 s), against about 20
+minutes three at a time on a busy omarchy (Qwen3.5 4-bit 620 s), and give the same tokens
+(checked for all six against omarchy's references of 2026-09-28).
 
 A card check never waits for a reference nobody is computing: a job in progress keeps a
 `.pending` file with its pid and a heartbeat, a failed job leaves a `.failed` file with the
