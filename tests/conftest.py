@@ -4,6 +4,24 @@ import pytest
 from opentpu import rtlsim
 
 
+def pytest_addoption(parser):
+    parser.addoption("--runslow", action="store_true",
+                     help="also run the tests marked slow (full-size models on the RTL)")
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: long; runs only with --runslow")
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--runslow"):
+        return
+    skip = pytest.mark.skip(reason="slow: needs --runslow")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip)
+
+
 def rel(a, b):
     return float(np.linalg.norm(np.asarray(a, np.float64) - b) / np.linalg.norm(b))
 
