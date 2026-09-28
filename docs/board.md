@@ -658,6 +658,51 @@ RTL at 16-beat reads):
 | 32 DSTEPs alone | 75,706 | 89,037 | 74,706 |
 
 The card charges an 8-beat write burst about as the model does (one wgap per AW), not per beat.
+
+**Host path, measured 2026-09-28 12:14-12:23** on this image (host main 59a9f06, omarchy's load
+1.8-3.8, a niced test run beside it; 96 greedy tokens per run; logs and JSON in the deploy
+directory's `readme-run/`). The host's changes since e0315b4:
+- the sampler is warmed when the Chat starts, so the first pick (2-10 ms in a new process) is off
+  the decode;
+- the next pick's buffers are set up after the run's start;
+- the status file's rewrite runs on one writer thread, at least 2 ms after the token;
+- streamed pieces are marked again after the next start;
+- the expected run time, the poll's hint, is kept per program length.
+The last change removed the "poll overshoot". A trace of the host's sleeps, register reads and
+DMA (12:04) showed HALTED seen within 10 us of the run's end on 95 of 96 runs. The one late run
+was the first decode run after the prompt: it was expected to take the prefill chunk's 25 ms
+and was seen 14 ms late, which averaged to 0.15 ms per token.
+
+LFM2.5-230M, 4-bit with an int8 head, 5 runs:
+
+| run | wall tok/s | device tok/s | host critical path, ms/token | HALTED seen after the end (median / max), ms |
+|---|---|---|---|---|
+| 1 | 88.76 | 90.16 | 0.177 | 0.003 / 0.014 |
+| 2 | 88.78 | 90.12 | 0.170 | 0.003 / 0.015 |
+| 3 | 88.07 | 90.16 | 0.271 | 0.003 / 0.017 |
+| 4 | 88.74 | 90.18 | 0.181 | 0.003 / 0.013 |
+| 5 | 88.90 | 90.20 | 0.165 | 0.003 / 0.014 |
+| median | **88.76** | 90.16 | 0.177 | 0.003 |
+
+The five replies are token for token identical. The other configurations, one run each, with
+the same host:
+
+| Model | Weights | Mcycles/token | device tok/s | wall tok/s |
+|---|---|---|---|---|
+| LFM2.5-230M | int8 | 1.993 | 60.59 | 59.78 |
+| Qwen3-0.6B | int8 | 5.291 | 22.82 | 22.73 |
+| Qwen3.5-0.8B | int8 | 6.879 | 17.55 | 17.46 |
+| Qwen3-0.6B | 4-bit, int8 head | 3.527 | 34.24 | 34.02 |
+| Qwen3.5-0.8B | 4-bit, int8 head | 4.895 | 24.67 | 24.56 |
+
+On the card's host (fine timestamps, 12:00), the median critical path from HALTED to the next
+RUN is:
+- the counters, 19 us;
+- WR_IDLE, the last logits piece's read (32 KB) and its hand-over to the sampler, 89 us;
+- the backend and chat code, 16 us;
+- the argmax, 13 us;
+- the run arguments, 21 us;
+- CTRL, 11 us.
 DSTEP alone, 22% slower on the card than simulated with 16-chunk runs, now matches the
 simulator: that gap was the read / write turn per 2 KB run.
 
