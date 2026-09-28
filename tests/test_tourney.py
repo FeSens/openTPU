@@ -387,6 +387,11 @@ def test_acquire_takes_hosts_in_order(tmp_path, monkeypatch):
     with RM.acquire(count=lambda h: load[h], max_jobs=2, hosts=["a", "b"]) as (h, n):
         assert (h, n) == ("b", 0)
 
+    monkeypatch.setattr(RM, "HOST_JOBS", {"a": 1})     # a per-host cap below max_jobs
+    load["a"] = 1
+    with RM.acquire(count=lambda h: load[h], max_jobs=2, hosts=["a", "b"]) as (h, n):
+        assert (h, n) == ("b", 0)
+
     def down(h):
         if h == "a":
             raise RuntimeError("ssh: connect timed out")

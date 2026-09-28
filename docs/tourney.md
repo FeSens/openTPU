@@ -204,7 +204,7 @@ omarchy (`OTPU_REMOTE`, below).
 
 | host (priority) | notes |
 |---|---|
-| `opentpu` (1st) | i7-4790, 4 cores / 8 threads, 31 GB; no card. Only `~/otpu-build/` is the tournament's |
+| `opentpu` (1st) | i7-4790, 4 cores / 8 threads, 31 GB; no card. One full build at a time (`OTPU_HOST_JOBS=opentpu=1`: two builds' IP synthesis filled the 31 GB and swapped 11 GB). Only `~/otpu-build/` is the tournament's |
 | `omarchy.tail5bd214.ts.net` (2nd) | also runs the test gates, the card and other streams' builds |
 
 `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run

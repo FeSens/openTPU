@@ -52,6 +52,14 @@ def native(host: str | None = None) -> bool:
     return (host or HOST) not in DOCKER_HOSTS
 REMOTE_DIR = os.environ.get("OTPU_BUILD_DIR", "otpu-build")        # relative to the remote $HOME
 MAX_JOBS = int(os.environ.get("OTPU_MAX_VIVADO", "2"))
+# per-host caps (host=n,...): opentpu takes one full build at a time. Two builds' IP synthesis
+# phases (JOBS=2 each) filled its 31 GB and pushed 11 GB to swap (2026-09-28 00:07)
+HOST_JOBS = {k.strip(): int(v) for k, v in (kv.split("=") for kv in os.environ.get(
+    "OTPU_HOST_JOBS", "opentpu=1").split(",") if "=" in kv)}
+
+
+def max_jobs_on(host: str, default: int = MAX_JOBS) -> int:
+    return min(HOST_JOBS.get(host, default), default)
 IMAGE = os.environ.get("VIVADO_DOCKER", "vivado:2026.1")
 MOUNT = os.environ.get("VIVADO_MOUNT", "/mnt/ml/Xilinx:/opt/Xilinx:ro")
 SETTINGS = os.environ.get("VIVADO_SETTINGS", "/opt/Xilinx/2026.1/Vivado/settings64.sh")
@@ -148,12 +156,14 @@ def acquire(poll: int = 60, count=jobs, sleep=time.sleep, log=print, max_jobs: i
             for h in hosts:
                 n = _count(count, h)
                 ns.append(n)
-                if n < max_jobs:
+                if n < max_jobs_on(h, max_jobs):
                     break
             else:
                 fcntl.flock(f, fcntl.LOCK_UN)
                 if not waited:
-                    log(f"[tourney] build hosts busy ({', '.join(f'{h} {n}/{max_jobs}' for h, n in zip(hosts, ns))} Vivado jobs): waiting")
+                    log("[tourney] build hosts busy (" + ", ".join(
+                        f"{h} {n}/{max_jobs_on(h, max_jobs)}" for h, n in zip(hosts, ns)) +
+                        " Vivado jobs): waiting")
                     waited = True
                 sleep(poll)
                 continue
