@@ -143,6 +143,12 @@ module otpu_dma
   logic         y_v, o_v;
   logic [31:0]  y_d [W], in_d [W], fdat [W], o_d;
   logic [31:0]  ob [W][CBD];
+  // an o value lands in ob a cycle after it leaves the datapath: its one-hot entry enable and
+  // the value, registered (o_d went to all 256 entries, their enables decoded from ds_ocnt:
+  // 8 ns of wire at MCOLS=4). ds_out, the first read of ob, starts on the edge that writes
+  // the last o at the earliest
+  logic [W-1:0][CBD-1:0] ow_e;
+  (* max_fanout = 32 *) logic [31:0] o_q;
   logic [7:0]   oi;                                  // o segment written to TMEM next
   wire  ds_room = ({1'b0, og} + (GW+1)'(pe && y_v)) <= (GW+1)'(NG - 1);
   wire  ds_take = ds_run && (ds_left != 0) && (ds_zero || cnt != 0) && ds_room;
@@ -321,6 +327,18 @@ module otpu_dma
     pe_pos <= ds_pos;
   end
   assign ds_ow = ds_out;
+  always_ff @(posedge clk) begin
+    for (int l = 0; l < W; l++)
+      for (int e = 0; e < CBD; e++) begin
+        ow_e[l][e] <= !rst && pe && o_v && 32'(ds_ocnt) == e * W + l;
+        if (ow_e[l][e]) ob[l][e] <= o_q;
+      end
+    o_q <= o_d;
+  end
+`ifndef SYNTHESIS
+  always_ff @(posedge clk)
+    if (!rst && ds_out && ow_e != '0) $fatal(1, "otpu_dma: ob read before its last o landed");
+`endif
 
   logic ld_fin;                          // LD: the last write is in the write register
   always_ff @(posedge clk) begin
@@ -433,10 +451,7 @@ module otpu_dma
         // a read run: starts with a request when RUN slots are free, ends after RUN chunks
         if (ld_iss) ds_rc <= (32'(ds_rc) == RUN - 1) ? '0 : ds_rc + 1'b1;
         ds_rr <= ds_rr_nx || (ld_iss && !ds_rr && RUN > 1 && cleft != 1);
-        if (pe && o_v) begin
-          ob[ds_ocnt % W][ds_ocnt / W] <= o_d;
-          ds_ocnt <= ds_ocnt + 1'b1;
-        end
+        if (pe && o_v) ds_ocnt <= ds_ocnt + 1'b1;
         if (ds_run && ds_flushed && og == 0) begin
           ds_run <= 1'b0;
           ds_out <= 1'b1;
