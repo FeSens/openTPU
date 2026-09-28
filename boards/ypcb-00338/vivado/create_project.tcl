@@ -16,7 +16,7 @@ set LANES [expr {[llength $argv] > 6 ? [lindex $argv 6] : 8}]
 set ACT_ROWS [expr {[llength $argv] > 7 ? [lindex $argv 7] : $MCOLS}]
 # DSTEP 0: the DMA's DeltaNet head step left out (CAPS bit6 = 0; the compiler emits VOPs)
 set DSTEP [expr {[llength $argv] > 8 ? [lindex $argv 8] : 1}]
-# AXI_BL: the accelerator's port B read burst, beats (8 or 16; bd.tcl's MAX_BURST_LENGTH follows)
+# AXI_BL: the accelerator's port B read burst, beats (8 default, up to 64; bd.tcl's MAX_BURST_LENGTH follows)
 set AXI_BL [expr {[llength $argv] > 9 ? [lindex $argv 9] : 8}]
 if {$BUILD_ID eq ""} {
   if {[catch {exec git -C $root rev-parse HEAD} BUILD_ID]} { set BUILD_ID 0 }

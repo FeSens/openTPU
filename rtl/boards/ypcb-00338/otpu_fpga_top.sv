@@ -26,7 +26,7 @@ module otpu_fpga_top #(
   parameter logic [31:0] BUILD_ID = 32'h0,  // the git commit (BUILD_ID register)
   parameter int DDR_MTS = 0,                // the DDR3 data rate the MIGs run (DDR_MTS register)
   parameter bit DSTEP = 1'b1,               // the DMA's DSTEP datapath (CAPS bit6; 0: left out)
-  parameter int AXI_BL = 8                  // port B read burst, beats (otpu_axi_dram; 8 or 16)
+  parameter int AXI_BL = 8                  // port B read burst, beats (otpu_axi_dram; 1 .. 64)
 ) (
   // board
   input  logic        SYS_CLK,              // 50 MHz, AA28

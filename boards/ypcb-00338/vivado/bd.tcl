@@ -68,7 +68,7 @@ set_property -dict [list CONFIG.PROTOCOL AXI4LITE CONFIG.DATA_WIDTH 32 CONFIG.AD
 # headroom keeps short bursts and single A reads from being throttled. Up to 64 writes
 # outstanding: the SW queue's read-modify-writes of a transposed V column (up to 64 per channel)
 # would otherwise wait on each other's responses 16 at a time
-# (AXI_BL = 16: bursts of up to 16 beats, create_project.tcl)
+# (AXI_BL > 8: bursts of up to AXI_BL beats, create_project.tcl)
 set axi_bl [expr {[info exists AXI_BL] ? max(8, $AXI_BL) : 8}]
 foreach p {S_AXI_M0 S_AXI_M1} {
   set s [create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:aximm_rtl:1.0 $p]
