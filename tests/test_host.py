@@ -649,7 +649,7 @@ def test_runner_status_is_atomic(run_dir):
 
 
 
-def test_runner_status_min_interval_defers_to_a_timer(run_dir):
+def test_runner_status_min_interval_defers_to_a_writer_thread(run_dir):
     import threading
     s = RunnerStatus("fake6", min_interval=0.1)
     writers = []
