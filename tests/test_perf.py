@@ -25,10 +25,11 @@ def _eff(p):
 def test_mlp_decode_at_roofline(have_verilator):
     a, _ = mlp_args(np.random.default_rng(0), M=1, H=1024, Fd=2048)
     p = profile(mlp, design_config(), **a)
-    # 0.945, was 0.95: the timing registers added for the board (VPU/quantizer inputs and
-    # writes, MXU combine operands) add a fixed few cycles per instruction -- 95.1% -> 95.0% on
-    # this small kernel, for 41 -> 83 MHz (est.) on the full board; a Qwen3 token is unchanged
-    assert _eff(p) > 0.945, p.summary()
+    # 0.94, was 0.945 (0.95 before that): the timing registers added for the board (VPU/quantizer
+    # inputs and writes, MXU combine operands, then the 120 MHz image's WBUF and the MXU row
+    # register before the result FIFO) add a fixed few cycles per instruction -- 94.4% on this
+    # small kernel; a Qwen3 token changes by +0.02%
+    assert _eff(p) > 0.94, p.summary()
 
 
 def test_mlp_small_batch_near_roofline(have_verilator):
