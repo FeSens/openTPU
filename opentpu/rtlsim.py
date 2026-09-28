@@ -52,6 +52,34 @@ def build(top: str, sources: list[Path], params: dict | None = None) -> Path:
     return exe
 
 
+# A simulator whose Python parent dies (killed, or os._exit) would run on under launchd for
+# hours: the child is started under a shell that kills it once the parent is gone (macOS has
+# no PR_SET_PDEATHSIG), and in its own process group, killed on any exception here (a timeout,
+# KeyboardInterrupt).
+_WATCH = ('"$@" & c=$!; (while kill -0 "$OTPU_PARENT" 2>/dev/null; do sleep 1; done; '
+          'kill -9 $c 2>/dev/null) & w=$!; wait $c; r=$?; kill $w 2>/dev/null; exit $r')
+
+
+def run_sim(cmd: list, timeout: float | None = None) -> subprocess.CompletedProcess:
+    """subprocess.run(cmd, capture_output=True, text=True, timeout=timeout) for a simulator
+    binary, which never outlives this process (see _WATCH)."""
+    import signal
+    env = {**os.environ, "OTPU_PARENT": str(os.getpid())}
+    p = subprocess.Popen(["/bin/sh", "-c", _WATCH, "sh", *map(str, cmd)], env=env,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except BaseException:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        p.wait()
+        raise
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
 def run_fp_vectors(vec_path: Path) -> str:
     exe = build("tb_fp", [RTL / "vpu/otpu_fp.sv", TB / "tb_fp.sv"])
     r = subprocess.run([str(exe), f"+vec={vec_path}"], capture_output=True, text=True, timeout=600)
@@ -192,8 +220,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
                  f"+axi_arc={MEMORY['ARC'] if arc is None else arc}"]
     if boot:
         args += ["+boot", f"+boot_addr={at}", f"+boot_n={max(len(p) for p in progs) // 8}"]
-    r = subprocess.run(args,
-                       capture_output=True, text=True, timeout=3600)
+    r = run_sim(args, timeout=3600)
     out = r.stdout + r.stderr
     import re
     m = re.search(r"RESULT cycles=(\d+) halted=(\d+) error=(\d+)", out)

@@ -345,6 +345,15 @@ the run's rows.
 - The KV cache, ring, DeltaNet state and logits are bit-identical to feeding the tokens one by
   one (`tests/test_qwen35.py`, design and board configurations).
 
+With DSTEP, the chunk's recurrence is one DSTEP per row and head (the state streams from DRAM
+through the DMA's datapath and back, row after row), and the pairs are software pipelined: the
+next pair's projections stream while a pair's DSTEPs run. Simulated on the RTL (not measured on
+the card): 6 rows at positions 9..14, fp4 body / int8 head, PAIR, ACT_ROWS = 6, the DDR3-1066
+bank model at 120 MHz: 27,338,223 cycles on the VOP path, 19,326,817 with DSTEP per row,
+16,748,128 pipelined, i.e. 26.3 -> 43.0 tok/s projected at 120 MHz. What is left is the MXU:
+MLP and the projections each replay their weights for the 6 rows over 2 columns (MXU busy
+6.4 M and 5.2 M cycles).
+
 Not attempted: batched decode. The state is kept per sequence in the layer block, so batching
 would need a state per sequence.
 

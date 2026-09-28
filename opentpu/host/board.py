@@ -28,7 +28,6 @@ import concurrent.futures
 import mmap
 import os
 import struct
-import subprocess
 import tempfile
 import time
 from dataclasses import replace
@@ -62,6 +61,7 @@ POLL_SPIN = 100e-6              # poll: seconds of back-to-back register reads b
 POLL_MAX_SLEEP = 1e-3           # poll: longest sleep between reads
 STATUS_INTERVAL = 0.25          # BoardBackend: the status file is rewritten at most this often
 POLL_EARLY = 0.5e-3             # poll with an expected wait: wake this much (+ 1%) before it
+POLL_MIN_SLEEP = 20e-6          # poll: shortest sleep between reads (past the expected end)
 # Streamed logits (BoardBackend.start(stream=...)): a word the device never stores marks the
 # logits not written yet (the device's NaN is canonical: 0x7FC00000, or 0xFFC00000 after a sign
 # flip), so the host reads each piece of the LM head's output as soon as it is complete.
@@ -270,24 +270,32 @@ class XdmaTransport:
         32 ln(T / 100 us) + T / 1 ms times instead of T / 1 us, and the sleeps release the
         GIL to the thread compiling the next token's program (Engine pipelining).
 
-        expect: the wait the caller expects (seconds; the previous token's device time). The
+        expect: the wait the caller expects (seconds; the previous token's run time). The
         poll then sleeps once until POLL_EARLY before it and reads back to back from there to
-        POLL_SPIN past it, so a run that ends on time is seen within a register read; a longer
-        one falls back to the sleeps above."""
+        POLL_SPIN past it, so a run that ends on time is seen within a register read; past
+        that the sleeps are 1/32 of the time since the expected end (at least POLL_MIN_SLEEP),
+        so a run a little late is still seen within ~POLL_MIN_SLEEP, not a whole
+        POLL_MAX_SLEEP later (before: 1.0-1.2 ms per Qwen3 token on the card)."""
         t0 = time.perf_counter()
         early = POLL_EARLY + expect / 100
-        if expect > early:
-            time.sleep(expect - early)
-        spin = max(expect, 0.0) + POLL_SPIN
+        while (left := expect - early - (time.perf_counter() - t0)) > 0:
+            time.sleep(left / 2 if left > 1e-3 else left)   # halving: a long sleep overshoots
+        spin = max(expect, 0.0) + POLL_SPIN                  # by a few % (macOS: 2-3 ms of 50)
+        # exact: the condition was seen by back-to-back reads that saw it false just before
+        # (not at the first read, nor after a sleep): its time is known to a read
+        self.poll_exact = False
         while True:
             r = self.reg_read(off)
             if r & mask == val:
                 return r
+            self.poll_exact = True
             el = time.perf_counter() - t0
             if el > timeout:
                 raise TimeoutError(f"register {off:#x} = {r:#x}, waiting for {val:#x}/{mask:#x}")
             if el > spin:
-                time.sleep(min(POLL_MAX_SLEEP, el / 32))
+                late = el - max(expect, 0.0)
+                time.sleep(min(POLL_MAX_SLEEP, max(POLL_MIN_SLEEP, late / 32)))
+                self.poll_exact = False
 
 
 class SimTransport:
@@ -383,9 +391,8 @@ class SimTransport:
                 self.ch[c].view("<u4").astype(">u4").tofile(d / f"ch{c}.bin")
             (d / "host.txt").write_text("\n".join(self.script) + "\n")
             self.script, self.nreads = [], 0
-            r = subprocess.run([str(exe), f"+dir={d}", f"+axi_stall={self.stall}",
-                                f"+axi_seed={self.seed}", *self.plusargs],
-                               capture_output=True, text=True)
+            r = rtlsim.run_sim([str(exe), f"+dir={d}", f"+axi_stall={self.stall}",
+                                f"+axi_seed={self.seed}", *self.plusargs])
             out = self.out = r.stdout + r.stderr
             if "DONE" not in out:
                 raise RuntimeError(f"board simulation failed:\n{out[-3000:]}")
@@ -684,6 +691,8 @@ class Board:
         traced = self._trace is not None
         depth, keep_first = self._trace or (0, True)
         t.poll(R_STATUS, ST_HALTED, ST_HALTED, timeout, expect)
+        self.t_seen = time.perf_counter()           # HALTED seen (BoardBackend's run time)
+        self.seen_exact = getattr(t, "poll_exact", False)   # else an upper bound
         if traced:                      # the last cycles' events still drain into the buffer
             t.poll(R.R_TRACE_CTRL, R.TR_BUSY, 0, timeout)
         offs = self.RUN_OFFS + ([R.R_TRACE_COUNT, R.R_TRACE_DROP] if traced else [])
@@ -852,7 +861,9 @@ class BoardBackend:
         self._prep: dict = {}               # id(programs) -> (programs, words), from prepare()
         self._running = None                # the started programs
         self._resident = None               # (programs, words) in IMEM (start() skips the load)
-        self._expect = 0.0                  # the last run's device seconds (the poll's hint)
+        self._expect = 0.0                  # the next run's expected seconds (the poll's hint)
+        self._ratio = 1.0                   # run wall time / (CYCLES / CORE_KHZ), smoothed
+        self._seen = None                   # HALTED seen by the streamed wait (perf_counter)
         # streamed logits (start(stream=...)): the region holding the sentinel, the pieces to
         # mark again once the next run has started, the pieces' completion times last token
         self.streams = bool(getattr(self.board.t, "streams", False))
@@ -964,6 +975,7 @@ class BoardBackend:
             self._armed, self._rearm = stream, []
         elif stream is None:
             self._armed = None                      # the run may write the region
+        self._seen = None
         self.board.start(trace=self.trace)
         self._running, self._stream = programs, stream
         for a, n in self._rearm:
@@ -978,18 +990,37 @@ class BoardBackend:
         try:
             if self._stream is not None:
                 self._stream_logits(feed)
-            st = self.board.wait(expect=self._expect)
+            # halted already (seen by the streamed wait): read the counters, no sleep
+            st = self.board.wait(expect=0.0 if self._seen else self._expect)
             if self._stream is not None:
                 self._stream_tail(feed)
         except BaseException:
             self._armed, self._stream = None, None  # the region's state is unknown
             raise
         khz = self.info["core_khz"]
-        self._expect = st["cycles"] / (khz * 1e3) if khz else 0.0
+        self._expect = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
         self.last = (programs, st)
         if self.status is not None:
             self.status.token(st["cycles"], khz, dram=self._layout(True))
         return st
+
+    def _next_expect(self, dev: float) -> float:
+        """The next run's expected wall time: this run's device time (CYCLES / CORE_KHZ) times
+        the smoothed ratio of the seen run times to it (the clock may differ from CORE_KHZ by
+        a fraction of a percent: 0.25% of a 53 ms token is past the poll's spin; the seen time
+        includes the poll's lateness, which the ratio's average keeps small)."""
+        streamed, self._seen = self._seen, None
+        seen = streamed or getattr(self.board, "t_seen", None)
+        t_run = getattr(self.board, "_t_run", None)
+        if dev > 0 and seen is not None and t_run is not None:
+            r = (seen - t_run) / dev
+            # halted at the first read after a sleep (or by the streamed wait's probes): the
+            # run ended some time before, so the ratio may only come down to it; halted by
+            # back-to-back reads that saw it running: within a read of the end
+            upper = streamed is not None or not getattr(self.board, "seen_exact", False)
+            if 0.9 < r < 1.1 and (r < self._ratio or not upper):
+                self._ratio = 0.5 * self._ratio + 0.5 * r
+        return dev * self._ratio
 
     def _pieces(self):
         addr, n, piece = self._stream
@@ -1004,11 +1035,18 @@ class BoardBackend:
         addr = self._stream[0]
         pieces, due = self._pieces(), {}
         t0, i, probes, tries = b._t_run, 0, 0, 0
+        halted = False
         while i < len(pieces) - 1:
             d = self._due.get(i)
+            # a piece's time of the last token may be past this run's end (a token delayed
+            # by the host): HALTED is checked after every slice, not only at the piece's time
             while d is not None and (now := time.perf_counter() - t0) < d - STREAM_EARLY:
                 time.sleep(min(d - STREAM_EARLY - now, 1e-3))   # slices: sleeps overshoot
-            if t.reg_read(R_STATUS) & ST_HALTED:
+                if t.reg_read(R_STATUS) & ST_HALTED:
+                    halted = True
+                    break
+            if halted or t.reg_read(R_STATUS) & ST_HALTED:
+                self._seen = time.perf_counter()
                 break
             o, k = pieces[i]
             last = addr + o + k - BEAT                  # the piece's last beat (64-byte aligned)

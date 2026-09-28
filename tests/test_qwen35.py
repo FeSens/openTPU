@@ -112,19 +112,26 @@ def _layers_dram(eng):
     return [s.dram[img.layer0:img.nbytes] for s in eng.backend.machine.slices]
 
 
-@pytest.mark.parametrize("config,first,chunk", [("design", 0, 5), ("design", 2, 8),
-                                                ("board", 1, 4)])
-def test_tiny_chunked_prefill_is_bit_exact(tiny, config, first, chunk):
+@pytest.mark.parametrize("config,first,chunk,dstep", [("design", 0, 5, False),
+                                                      ("design", 2, 8, False),
+                                                      ("board", 1, 4, False),
+                                                      ("design", 0, 5, True),
+                                                      ("board", 2, 6, True)])
+def test_tiny_chunked_prefill_is_bit_exact(tiny, config, first, chunk, dstep):
     """Prefill in chunks (the DeltaNet recurrence row after row on a state loaded once per
     chunk, the convolution over the chunk and the ring from positions 0, 1 or 2 on, gated
     row attention; board: query groups split over the 2-column MXU) gives the same logits,
-    KV cache, conv ring and DeltaNet state as token-by-token decode."""
+    KV cache, conv ring and DeltaNet state as token-by-token decode. dstep: the chunk's rows
+    each run a DSTEP (the reference decodes on the VPU path)."""
+    import dataclasses
+    from opentpu.isasim import design_config
     _, W, spec = tiny
     cfg = board_config(DRAM_BYTES=1 << 24) if config == "board" else None
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 19)]
     ref = Engine(spec, W, cap=256, cfg=cfg)
     want = [ref.step(t) for t in toks]
-    eng = Engine(spec, W, cap=256, cfg=cfg)
+    ecfg = dataclasses.replace(cfg or design_config(), DSTEP=True) if dstep else cfg
+    eng = Engine(spec, W, cap=256, cfg=ecfg)
     for t in toks[:first]:
         eng.step(t)
     got = eng.prefill(toks[first:17], chunk=chunk)
@@ -258,3 +265,34 @@ def test_tiny_vt_tiles_bit_exact(tiny, monkeypatch):
     monkeypatch.setattr(C, "VT_TILE", 1 << 30)
     plain = run()
     assert all(np.array_equal(a.view(np.uint32), b.view(np.uint32)) for a, b in zip(tiled, plain))
+
+
+def test_tiny_prefill_rows_dstep_on_rtl(tiny, have_verilator):
+    """A 6-row prefill run with DSTEP (a DSTEP per row and head) on the RTL's board memory
+    path: DRAM equals the ISA simulator's, and the logits equal token-by-token decode's."""
+    from opentpu import rtlsim
+    from opentpu.isasim import Machine
+    from opentpu.llm.qwen3 import rope_tables
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 9)]
+    want = Engine(spec, W, cap=256, cfg=board_config(DRAM_BYTES=1 << 24)).prefill(toks, chunk=1)
+    cfg = board_config(DRAM_BYTES=1 << 24, DSTEP=True)
+    eng = Engine(spec, W, cap=256, cfg=cfg)
+    eng.prefill(toks[:3])                         # a state, ring and cache to continue from
+    rows = [(0, 3 + j) for j in range(6)]
+    progs = eng.image.compile_rows(rows, [5])
+    assert sum(i.op == 0x12 for i in progs[0]) >= 6
+    io = eng.image.io
+    cs = [np.stack(a).astype(np.float32) for a in zip(*[rope_tables(spec, p) for _, p in rows])]
+    dram = eng.backend.machine.slices[0].dram.copy()
+    for k, v in (("x", eng.embed[toks[3:]]), ("cos", cs[0]), ("sin", cs[1])):
+        b = np.ascontiguousarray(v, np.float32).view(np.uint8).reshape(-1)
+        dram[io[k]:io[k] + b.size] = b
+    m = Machine(cfg, progs, [dram.copy()]).run()
+    drams, _, _ = rtlsim.run(cfg, progs, [dram.copy()], uarch=rtlsim.BOARD_UARCH, axi=True,
+                             boot=True)
+    n = eng.image.nbytes
+    assert np.array_equal(drams[0][:n], m.slices[0].dram[:n])
+    v = spec.vocab
+    assert np.array_equal(drams[0][io["logits"] + 4 * 5 * v:io["logits"] + 4 * 6 * v]
+                          .view(np.float32), want)

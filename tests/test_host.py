@@ -303,6 +303,32 @@ def test_compile_worker_builds_the_engines_image():
         Q._WORKER = None
 
 
+@pytest.mark.parametrize("skew", [0.0025, -0.03])
+def test_halt_is_seen_soon_when_core_khz_is_off(run_dir, skew):
+    """The run's CYCLES / CORE_KHZ differ from its wall time (a clock a little off its CORE_KHZ,
+    either way): the poll learns the ratio and sees HALTED within a fraction of a millisecond
+    (before: up to POLL_MAX_SLEEP late when the run ended past the spin, or a whole
+    POLL_EARLY + 1% late when it ended before the wake-up; 1.0-1.2 ms per Qwen3 token on the
+    card). Generous bound: the test host may be loaded."""
+    from opentpu import lens as L
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Engine
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 256)
+    run_s = 0.03
+    t = FakeTransport(ch_bytes=cfg.DRAM_BYTES // 2, devname="fake9", run_s=run_s,
+                      cycles=int(run_s * (1 + skew) * 1e8))
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
+    late = []
+    for tok in range(12):
+        eng.step(tok)
+        b = eng.backend.board
+        late.append(b.t_seen - b._t_run - run_s)
+    eng.backend.close()
+    assert np.median(late[4:]) < 0.4e-3, late
+
+
 def test_resident_decode_takes_run_arguments(run_dir):
     """Engine(resident=True) on a bitstream with run arguments (CAPS bit25): the decode program
     is loaded once and each step writes the ARG registers only (no inputs, no program); on one
@@ -941,7 +967,7 @@ def test_board_compiles_the_next_program_after_starting_the_card():
     eng._drain()
     # position 0 compiles in line; position p + 1 only after the card started position p
     assert seen == [(0, 0), (1, 1), (2, 2), (3, 3)]
-    assert eng.backend._expect == pytest.approx(t.cycles_per_run / 100e6)
+    assert eng.backend._expect == pytest.approx(t.cycles_per_run / 100e6, rel=0.02)  # x ratio
     eng.backend.close()
 
 

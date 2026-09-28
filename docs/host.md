@@ -463,8 +463,9 @@ per-call cost stays under 1% of the transfer).
 
 **Pipelining.** A token's program depends on its position only, so `Engine.step` compiles
 position p + 1 while the card runs p (`Engine(..., pipeline=None)`: on for every backend but
-the ISA simulator); on the board, two worker processes keep p + 1 and p + 2 in flight
-(`COMPILE_AHEAD`), so a compile may take up to two device runs. A precompile made for another
+the ISA simulator); on the board, three worker processes keep p + 1 .. p + 3 in flight
+(`COMPILE_AHEAD`), so a compile may take up to three device runs (two until LFM2 fp4's 13.5 ms
+run: 0.8-1.2 ms of compile wait per token on a card host running two Vivado builds). A precompile made for another
 position (after `reset`, or `run_rows`) is waited for and dropped. Results are unchanged (`tests/test_host.py`, and the board-model tests
 compare the logits with the ISA simulator's bit for bit).
 
@@ -569,6 +570,28 @@ the card run): the x / cos / sin write (0.16 ms), the program upload and IMEM lo
 with one position-independent program per model), the wait for the compile (0.08 ms; at a 12 ms
 token the per-position compile of LFM2 no longer keeps up on a laptop: the same fix), the
 counters (~0.02 ms), the last chunk's read and the selection (~0.1 ms), Python (~0.1 ms).
+
+**Poll outliers** (card, host-path bc132ba: ~1 ms per Qwen3 token as poll overshoot in half
+the runs, or as critical time in the counters in one streamed run per pair). The poll's
+expected time was the last run's CYCLES / CORE_KHZ; a run a little longer than that (past the
+0.1 ms spin) was seen only after the next 1 ms sleep, and one that ended before the wake-up was
+seen at the wake-up; after the streamed wait had seen HALTED itself, the poll still slept until
+the expected end. Now: the sleeps past the expected end are 1/32 of the lateness (at least
+20 us, at most 1 ms); the expected time is CYCLES / CORE_KHZ times the smoothed ratio of the
+seen run times to it (raised only by a halt seen by back-to-back reads that saw the run going
+just before, lowered by any); a halt the streamed wait saw skips the sleep; the wake-up sleep
+halves its way to the target (a 50 ms sleep overshoots 2-3 ms on macOS). Measured on
+`FakeTransport` (`decode_profile.py --backend fake --fake-skew F [--fake-stream]`: CYCLES a
+fraction F off the wall time; the fake writes its logits piece by piece), Qwen3's 53 ms run
+on the loaded Mac, HALTED seen after the run's end: 0.00-0.02 ms without streaming (before:
+3.2-3.7 ms, most of it the macOS sleep overshoot) and 0.07-0.18 ms streamed, at F = +0.25% and
+-2%. Not yet on the card.
+
+**Streamed wait vs a late piece time.** The streamed wait sleeps until each piece's time of
+the last token; a time learned on a delayed token can lie past this run's end, and HALTED was
+checked only at the piece's time: LFM2 fp4 on a busy card host (fp4fx120, two Vivado builds)
+saw HALTED 2.2 ms after the run's end in one streamed run. HALTED is now read after every
+sleep slice (at most 1 ms apart). Not yet re-measured on the card.
 
 **Resident decode.** A decode program now takes the position and the token as run arguments
 (docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit25), so one program serves

@@ -956,7 +956,10 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     the head groups but the last, each a loop over its pairs; then the last group's pairs),
     or the program would not fit IMEM. TMEM addresses are static: the per-head decays and
     betas go through `gr` in DRAM ([R, 2nl]: the decays, then the betas of each row), and a
-    group's normed outputs through `on` ([R, og * dv]) before its out_proj."""
+    group's normed outputs through `on` ([R, og * dv]) before its out_proj.
+
+    With DSTEP (ol.has_dstep()) each row's step is one DSTEP on the state in DRAM (the DMA
+    streams it through its datapath and back), row after row, instead of the VPU passes."""
     eps, K, R = spec.eps, spec.conv_k, x.rows
     dk, dv = spec.lin_dk, spec.lin_dv
     nl, C = lw.state.shape[0], 2 * dk + dv
@@ -974,10 +977,13 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     del ab, alog, dtb
     gn = ol.load(lw.gn)
     y = ol.zeros([R, spec.hidden])
-    St = ol.empty([dv * dk]).reshape(dv, dk)
-    w = ol.empty([dv])
+    dstep = ol.has_dstep()
+    if not dstep:
+        St = ol.empty([dv * dk]).reshape(dv, dk)
+        w = ol.empty([dv])
     ONp = ol.empty([R, 2 * dv])                         # normed, gated o of a pair per row
-    GD, GB = ol.empty([R, 2]), ol.empty([R, 2])         # decays, betas of the pair's heads
+    GDB = ol.empty([R, 4])                              # decays, then betas, of the pair's heads
+    GD, GB = GDB[:, 0:2], GDB[:, 2:4]
     full = max(0, K - 1 - p0)                           # rows before it lack positions < 0
     rgroups = [(r, r + 1) for r in range(min(full, R))] + ([(full, R)] if full < R else [])
     split = og == 4 and NP > 1                          # _deltanet's last group, in pairs
@@ -1003,9 +1009,20 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
                             taps[a * K + K - 1 - t, :][None, :])
             del u
         U.set(silu(U))
+        GZ = silu(Z[:, a * dv:(a + 1) * dv])
+        if dstep:                                       # q | k per row, a DSTEP per row
+            QK = ol.empty([R, 2 * dk])
+            QK[:, 0:dk].set(l2norm_rows(U[:, 0:dk], dk ** -0.5))
+            QK[:, dk:2 * dk].set(l2norm_rows(U[:, dk:2 * dk]))
+            O = ol.empty([R, dv])
+            for r in range(R):
+                ol.deltanet_step(lw.state[h], QK[r, :], U[r, 2 * dk:C], GDB[r, a:a + 1],
+                                 GDB[r, 2 + a:3 + a], O[r, :], zero=(p0 == 0 and r == 0))
+            del QK
+            ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
+            return
         Qn = l2norm_rows(U[:, 0:dk], dk ** -0.5)
         Kn = l2norm_rows(U[:, dk:2 * dk])
-        GZ = silu(Z[:, a * dv:(a + 1) * dv])
         if p0:
             ol.load(lw.state[h], out=St)
         else:
@@ -1020,28 +1037,63 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         ol.store(lw.state[h], St)
         ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
 
-    def pair(p):
-        """Pair p (an int or a loop expression) -> ONp."""
-        for r in range(R):
-            ol.load(gr[r, 2 * p:2 * p + 2], out=GD[r, :])
-            ol.load(gr[r, nl + 2 * p:nl + 2 * p + 2], out=GB[r, :])
-        taps = ol.load(lw.cv[p, 0:TP]).reshape(2 * K, C)    # rows (head, tap)
-        X = ol.empty([K - 1 + R, 2 * C])                # q k v of a, of b: positions p0-K+1 ..
-        for j in range(1, min(K, p0 + 1)):              # ... from the ring
+    # a pair's projections, taps and ring rows; two sets with DSTEP (pair p + 1's projections
+    # stream while pair p's DSTEPs run)
+    NB = 2 if dstep and split and gp == 2 else 1
+    PB = [(ol.empty([2 * K * C]), ol.empty([K - 1 + R, 2 * C]), ol.empty([R, 2 * dv]))
+          for _ in range(NB)]
+
+    def project(p, b):
+        """Pair p's taps, q k v rows (ring, then its projections) and z into buffers b."""
+        taps, X, Z = PB[b]
+        ol.load(lw.cv[p, 0:TP], out=taps)              # rows (head, tap)
+        for j in range(1, min(K, p0 + 1)):              # positions p0-K+1 .. from the ring
             sl = TP + (p0 - j) % K * 2 * C
             ol.load(lw.cv[p, sl:sl + 2 * C], out=X[K - 1 - j, :])
         ol.dot(xs, lw.wh[p * 2 * RH:p * 2 * RH + 2 * C, :], out=X[K - 1:K - 1 + R, :])
-        Z = ol.dot(xs, lw.wh[p * 2 * RH + 2 * C:(p + 1) * 2 * RH, :])   # z of a, of b
+        ol.dot(xs, lw.wh[p * 2 * RH + 2 * C:(p + 1) * 2 * RH, :], out=Z)   # z of a, of b
         for r in range(max(0, R - K), R):
             sl = TP + (p0 + r) % K * 2 * C
             ol.store(lw.cv[p, sl:sl + 2 * C], X[K - 1 + r, :])
+
+    def heads(p, b):
+        """Pair p's heads from buffers b -> ONp."""
+        taps, X, Z = PB[b]
+        taps = taps.reshape(2 * K, C)
+        for r in range(R):
+            ol.load(gr[r, 2 * p:2 * p + 2], out=GD[r, :])
+            ol.load(gr[r, nl + 2 * p:nl + 2 * p + 2], out=GB[r, :])
         for a in range(2):
             head(2 * p + a, X, Z, taps, a)
+
+    def pair(p):
+        """Pair p (an int or a loop expression) -> ONp."""
+        project(p, 0)
+        heads(p, 0)
 
     def loop(n):
         """ol.range(n), or the single index 0 unrolled."""
         return ol.range(n) if n > 1 else range(n)
 
+    if NB == 2:
+        # groups of 2 pairs, software pipelined: the projections of the pair after the next
+        # one stream while a pair's DSTEPs run (the same operations, in another order)
+        project(0, 0)
+        for g in loop(ng - 1):
+            project(2 * g + 1, 1)
+            heads(2 * g, 0)
+            ol.store(on[:, 0:2 * dv], ONp)
+            project(2 * g + 2, 0)
+            heads(2 * g + 1, 1)
+            ol.store(on[:, 2 * dv:4 * dv], ONp)
+            flush(g, ol.load(on), 0, og)
+        q0 = 2 * (ng - 1)                               # the last group, pair by pair
+        project(q0 + 1, 1)
+        heads(q0, 0)
+        flush(ng - 1, ONp, 0, 2)
+        heads(q0 + 1, 1)
+        flush(ng - 1, ONp, 2, 4)
+        return x + ol.all_reduce(y)
     for g in loop(ng - 1 if split else ng):             # whole groups
         if gp == 1:
             pair(g)

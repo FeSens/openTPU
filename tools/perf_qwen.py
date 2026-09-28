@@ -41,7 +41,7 @@ from opentpu.profile import ddr3_peak, ddr3_plusargs, dram_efficiency, parse  # 
 # kernel functions that name a phase of the token (the innermost one on an instruction's source
 # stack wins)
 PHASE_NAMES = {"head_step": "DeltaNet", "_deltanet": "DeltaNet", "_pair_segment": "DeltaNet",
-               "_deltanet_dstep": "DeltaNet",
+               "_deltanet_dstep": "DeltaNet", "_deltanet_rows": "DeltaNet",
                "_attention": "attention", "_attend_heads": "attention", "_conv": "conv",
                "_mlp": "MLP", "swiglu_down": "MLP", "_lm_head": "LM head",
                "_attention_rows": "attention", "qwen3_rows": "LM head"}
