@@ -98,9 +98,10 @@ module otpu_top
         for (int c = 0; c < 2; c++) begin
           $write("NATIVE ch%0d a_runs=%0d a_rd=%0d b_rd=%0d sw_rd=%0d ", c, u_adapt.st_arun[c],
                  u_adapt.st_ard[c], u_adapt.st_brd[c], u_adapt.st_srd[c]);
-          $display("b_wr=%0d a_wr=%0d sw_wr=%0d part_b=%0d part_a=%0d part_sw=%0d",
-                   u_adapt.st_bwr[c], u_adapt.st_awr[c], u_adapt.st_swr[c], u_adapt.st_pb[c],
-                   u_adapt.st_pa[c], u_adapt.st_ps[c]);
+          $write("b_wr=%0d a_wr=%0d sw_wr=%0d part_b=%0d part_a=%0d part_sw=%0d ",
+                 u_adapt.st_bwr[c], u_adapt.st_awr[c], u_adapt.st_swr[c], u_adapt.st_pb[c],
+                 u_adapt.st_pa[c], u_adapt.st_ps[c]);
+          $display("part_rep1=%0d part_rep2=%0d", u_adapt.st_pr1[c], u_adapt.st_pr2[c]);
         end
     end else begin : g_axi
       logic [1:0] awvalid, awready, awid, wvalid, wready, bvalid, bready, bid;

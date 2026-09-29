@@ -645,14 +645,22 @@ module otpu_native_dram #(
 
   // Counters for the simulation's statistics (otpu_top prints them): per channel, A runs and
   // their read commands, B reads, SW fill reads; writes by source, and those with a byte mask
-  // that is not whole (a read-modify-write in the channel module)
+  // that is not whole (a read-modify-write in the channel module); of the partial writes, those
+  // to the beat of the channel's last partial write (st_pr1), or of one of its last two
+  // distinct ones (st_pr2: what a one- or two-line RMW cache in the channel module would hold)
   longint st_arun [2], st_ard [2], st_brd [2], st_srd [2];
   longint st_bwr [2], st_awr [2], st_swr [2], st_pb [2], st_pa [2], st_ps [2];
-  initial
+  longint st_pr1 [2], st_pr2 [2];
+  logic [24:0] st_lp0 [2], st_lp1 [2];           // the last two distinct partial beats
+  logic [1:0]  st_lv0, st_lv1;
+  initial begin
     for (int c = 0; c < 2; c++) begin
       st_arun[c] = 0; st_ard[c] = 0; st_brd[c] = 0; st_srd[c] = 0; st_bwr[c] = 0;
       st_awr[c] = 0; st_swr[c] = 0; st_pb[c] = 0; st_pa[c] = 0; st_ps[c] = 0;
+      st_pr1[c] = 0; st_pr2[c] = 0;
     end
+    st_lv0 = '0; st_lv1 = '0;
+  end
   always_ff @(posedge clk)
     for (int c = 0; c < 2; c++) begin
       if (rtk[c] && src[c] == S_A) begin
@@ -669,6 +677,16 @@ module otpu_native_dram #(
           S_WW: begin st_swr[c] <= st_swr[c] + 1; if (part) st_ps[c] <= st_ps[c] + 1; end
           default: begin st_bwr[c] <= st_bwr[c] + 1; if (part) st_pb[c] <= st_pb[c] + 1; end
         endcase
+        if (part) begin
+          if (st_lv0[c] && st_lp0[c] == n_caddr[c]) begin
+            st_pr1[c] <= st_pr1[c] + 1;
+            st_pr2[c] <= st_pr2[c] + 1;
+          end else begin
+            if (st_lv1[c] && st_lp1[c] == n_caddr[c]) st_pr2[c] <= st_pr2[c] + 1;
+            st_lp1[c] <= st_lp0[c]; st_lv1[c] <= st_lv0[c];
+            st_lp0[c] <= n_caddr[c]; st_lv0[c] <= 1'b1;
+          end
+        end
       end
     end
 `endif

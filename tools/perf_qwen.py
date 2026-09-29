@@ -257,6 +257,8 @@ def main():
     for c, d in enumerate(st.get("axi_detail", [])):
         print(f"  ch{c}: port A reads {d['ar_a']}, DDR3 row opens {d['row_miss']}, "
               f"read-modify-writes {d['rmw']} (port A / QST {d['rmw_a']})")
+    for c, n in enumerate(st.get("native", [])):     # OTPU_NATIVE: otpu_native_dram's counters
+        print(f"  ch{c} native: " + " ".join(f"{k}={v}" for k, v in n.items()))
     # useful-bytes roofline: weights + their fp32 block scales + KV + activations, at D bytes
     # per cycle (both channels at 100%)
     D = cfg.D

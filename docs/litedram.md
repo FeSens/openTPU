@@ -239,6 +239,13 @@ channel for `otpu_mem_ch`, selected in `otpu_board` by `MEM_NATIVE` (default 0: 
   did not). Decode saturates it (0.98 read beats per cycle and channel), which is most of the 1%
   to the cost-free AXI model; a transposed V append needs two commands per beat (the fill read
   and the write). A second command per cycle, or a faster command clock, would lift it.
+- **Partial beats** (a read-modify-write each in the channel module with RMW = 1, ~31 cycles):
+  none in decode (**measured**, the adapter's `part_*` counters, both channels): Qwen3-0.6B
+  (28 layers), LFM2 (14) and Qwen3.5 (24) streamed at pos 300, Qwen3 and LFM2 resident, 8-row
+  prefill of both, and the `test_perf` kernels, 0 of every write. Port A never writes (the slice
+  ties `a_we` off), the SW port fills its beats before they go out (one fill read per partial SW
+  beat, about 14.6K per channel in a streamed Qwen3 token), and the compiler's stores are whole
+  beats. So the adapter does not coalesce B tails; a short store still works, at RMW cost.
 
 ## 4. Measured
 
