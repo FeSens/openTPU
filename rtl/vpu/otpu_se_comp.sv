@@ -102,8 +102,14 @@ module otpu_se_comp
       default:        return 1;
     endcase
   endfunction
+  // (each case a constant, so no divider is built for a variable c)
   function automatic logic [3:0] n_pass(input logic [2:0] c);
-    return 4'((n_ops(c) + NS - 1) / NS);
+    case (c)
+      CC_EXP, CC_EXS: return 4'((9 + NS - 1) / NS);
+      CC_RCP:         return 4'((6 + NS - 1) / NS);
+      CC_RSQ, CC_LOG: return 4'((10 + NS - 1) / NS);
+      default:        return 4'd1;
+    endcase
   endfunction
 
   // One op: y = a*b + c into dst (negated with neg). The multiply is commutative bit for bit,
@@ -215,6 +221,17 @@ module otpu_se_comp
         if (u.dst != D_V && u.kv != F_ZERO) return 1'b1;
       end
     return 1'b0;
+  endfunction
+
+  // stage s's control for a chunk of function c in pass p: a ROM over (c, p) built from ucode
+  // with constant arguments (k's arithmetic, % 2 and % 3, never reaches the hardware)
+  function automatic uc_t uc_rom(input logic [2:0] c, input logic [3:0] p, input int s);
+    uc_t u;
+    u = ucode(CC_NONE, 0);
+    for (int ci = 1; ci <= 5; ci++)
+      for (int pi = 0; pi < 16; pi++)
+        if (c == 3'(ci) && p == 4'(pi)) u = ucode(3'(ci), pi * NS + s);
+    return u;
   endfunction
 
   // ---------------------------------------------------------------- state and meta
@@ -362,7 +379,7 @@ module otpu_se_comp
     if (rst) ret_r <= 1'b0;
     else if (en) ret_r <= vpos[T-2] && (mp[NS - 1].pass + 4'd1 < n_pass(mp[NS - 1].cls));
   always_ff @(posedge clk)
-    if (en) uc_rt <= ucode(mp[NS - 1].cls, (int'(mp[NS - 1].pass) + 1) * NS);
+    if (en) uc_rt <= uc_rom(mp[NS - 1].cls, mp[NS - 1].pass + 4'd1, 0);
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
     if (!rst && ret != (lp_v && !fin)) $fatal(1, "otpu_se_comp: ret out of step");
@@ -372,11 +389,11 @@ module otpu_se_comp
   uc_t uci [NS], uco [NS];
   for (genvar s = 0; s < NS; s++) begin : g_uc
     if (s == 0) begin : g_u0
-      assign uci[s] = ret ? uc_rt : ucode(f_cc(in_f), 0);
+      assign uci[s] = ret ? uc_rt : uc_rom(f_cc(in_f), 4'd0, 0);
     end else begin : g_un
-      assign uci[s] = ucode(mi[s].cls, int'(mi[s].pass) * NS + s);
+      assign uci[s] = uc_rom(mi[s].cls, mi[s].pass, s);
     end
-    assign uco[s] = ucode(mo[s].cls, int'(mo[s].pass) * NS + s);
+    assign uco[s] = uc_rom(mo[s].cls, mo[s].pass, s);
   end
   // RR's flags, from the meta after S0: EXP2's range reduction / LOG2's i2f(e), pass 0 only
   wire rr_e = (mo[0].pass == 0) && (mo[0].cls == CC_EXP || mo[0].cls == CC_EXS);
