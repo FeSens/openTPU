@@ -63,7 +63,7 @@
 // other master nor the memory.
 //
 // Clock-domain crossings: every synchronizer carries ASYNC_REG; their constraints (max delay
-// without skew, bus skew for the gray counts) are in boards/ypcb-00338/constraints/otpu_mem_ch.xdc.
+// without skew, bus skew for the gray counts) are in boards/ypcb-00338/constraints/otpu_mem_ch.tcl.
 module otpu_mem_ch #(
   parameter int XIDW = 4,         // XDMA M_AXI ID width
   parameter int ARD  = 64,        // accelerator read-data FIFO (read credits), beats

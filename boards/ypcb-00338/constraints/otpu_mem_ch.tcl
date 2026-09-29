@@ -1,9 +1,10 @@
 # Clock-domain crossings of otpu_mem_ch (rtl/boards/ypcb-00338/otpu_mem_ch.sv) and its six
 # otpu_afifo instances. Scoped to the module and read after the clocks exist, as Xilinx's own
-# xpm_cdc constraint files are (Tcl variables and get_property):
-#   non-project:  read_xdc -unmanaged -ref otpu_mem_ch otpu_mem_ch.xdc     (after create_clock)
-#   project:      the same file as an unmanaged Tcl constraint, SCOPED_TO_REF otpu_mem_ch,
-#                 PROCESSING_ORDER LATE (not wired into build.tcl yet)
+# xpm_cdc constraint files are: Tcl (variables, get_property, if / foreach), so an unmanaged Tcl
+# constraint file (.tcl), not an XDC:
+#   non-project:  read_xdc -unmanaged -ref otpu_mem_ch otpu_mem_ch.tcl     (after create_clock)
+#   project:      in constrs_1 with SCOPED_TO_REF otpu_mem_ch, PROCESSING_ORDER LATE and
+#                 USED_IN_SYNTHESIS false (create_project.tcl, MEM=litedram)
 # tools/memch_ooc.tcl checks it out of context (report_cdc, report_methodology, and every source
 # of a path between the clocks against the crossings constrained here).
 #

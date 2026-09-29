@@ -1,5 +1,5 @@
 # Out-of-context Vivado check of otpu_mem_ch's clock-domain crossings, with its constraints
-# (boards/ypcb-00338/constraints/otpu_mem_ch.xdc, read scoped and unmanaged as the build will):
+# (boards/ypcb-00338/constraints/otpu_mem_ch.tcl, read scoped and unmanaged as the build will):
 # synthesis, then report_cdc (with the XDC's waivers; also every check per endpoint, where the
 # Vivado version has -all_checks_per_endpoint), report_methodology, the waivers, the clock
 # interaction, the timing exceptions (each set_max_delay applied once) and whether every query of
@@ -38,7 +38,7 @@ foreach {pats c t} [list {n_* rst} clk $t_clk {x_* xrst} xclk $t_xcl {c_* urst} 
   if {[llength $ins]}  { set_input_delay  -clock $c [expr {0.3 * $t}] $ins }
   if {[llength $outs]} { set_output_delay -clock $c [expr {0.3 * $t}] $outs }
 }
-set xdc $root/boards/ypcb-00338/constraints/otpu_mem_ch.xdc
+set xdc $root/boards/ypcb-00338/constraints/otpu_mem_ch.tcl
 set fh [open $xdc]; set xdc_text [read $fh]; close $fh
 set n_xmd [regexp -all -line {^\s*set_max_delay\M} $xdc_text]
 set n_xwv [regexp -all -line {^\s*create_waiver\M} $xdc_text]
