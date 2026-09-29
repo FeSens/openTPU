@@ -55,7 +55,10 @@ def hold(csr, timeout=1.0):
 
 
 def release(csr):
-    """Restart the CPU's calibration from the top (it drops each channel's cal_ready first)."""
+    """Restart the CPU's calibration from the top (it drops each channel's cal_ready first).
+    selfcal_state is cleared first: the firmware writes it only once it starts (a millisecond
+    on), and until then wait() would find the last run done."""
+    csr.w("selfcal_state", 0)
     csr.w("selfcal_hold", 0)
 
 

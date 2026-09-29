@@ -577,10 +577,19 @@ def selfcal_run(a, csr, chans, period, phy):
             dk = (h["dqs_steps"] - r.get("dqs_steps", 0) + period // 2) % period - period // 2
             dw = h["window_steps"] - r.get("window_steps", 0)
             same = abs(dk) <= 2 and abs(dw) <= 2
-            print(f"  host: CK at {h['dqs_steps']}, window {h['window_steps']} steps, write latency "
-                  f"{h['write_latency']}, read taps {[x['tap'] for x in h['read']]}; CPU: CK at "
-                  f"{r.get('dqs_steps')}, window {r.get('window_steps')} steps -> CK {dk:+d}, window "
-                  f"{dw:+d} steps: " + ("within 2 steps" if same else "DIFFERENT"))
+            def bits(x):
+                return ", ".join(f"m{m}.{i} {o:+d}" for m, row in enumerate(x.get("bit_offsets", []))
+                                 for i, o in enumerate(row) if o) or "none"
+            for who, x in (("host", h), ("CPU", r)):
+                print(f"  {who}: CK at {x.get('dqs_steps')}, window {x.get('window_steps')} steps, "
+                      f"write latency {x.get('write_latency')}, read taps "
+                      f"{[y['tap'] for y in x.get('read', [])]}, windows "
+                      f"{[y['taps'] for y in x.get('read', [])]}, bitslips "
+                      f"{[y['bitslip'] for y in x.get('read', [])]}, bits off their lane {bits(x)}")
+            print(f"  host - CPU: CK {dk:+d}, window {dw:+d} steps: "
+                  + ("within 2 steps" if same else "DIFFERENT")
+                  + f"; write latency {'same' if h['write_latency'] == r.get('write_latency') else 'differs'}"
+                  f", per-bit framing {'same' if bits(h) == bits(r) else 'differs'}")
             ok &= same
             print(f"  BIST over {a.gib:g} GiB at the host's calibration:")
             ok &= run_bist(c, phy["sys_hz"], a.gib)

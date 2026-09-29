@@ -207,6 +207,7 @@ class SelfcalCsr:
         self.own = {"selfcal_hold": 0, "selfcal_config": 3 | stride << 8, "selfcal_state": 0,
                     "selfcal_mbox_adr": 0}
         self.mbox, self.cpu_runs, self.host_writes, self.due = [0] * 256, 0, [], True
+        self.started = True
         if not lazy:
             self.cpu()
 
@@ -225,6 +226,9 @@ class SelfcalCsr:
         if name == "selfcal_status":
             return S.MAGIC << 16 | self.own["selfcal_hold"]
         if name == "selfcal_state" and self.due and not self.own["selfcal_hold"]:
+            if not self.started:            # the firmware writes the state a millisecond on
+                self.started = True
+                return self.own[name]
             self.cpu()
         if name == "selfcal_mbox_dat":
             return self.mbox[self.own["selfcal_mbox_adr"]]
@@ -233,7 +237,7 @@ class SelfcalCsr:
     def w(self, name, v):
         if name == "selfcal_hold":
             if self.own[name] and not v:
-                self.due = True             # released: the CPU starts over
+                self.due, self.started = True, False    # released: the CPU starts over
             self.own[name] = v
         elif name in self.own:
             self.own[name] = v
