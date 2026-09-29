@@ -39,10 +39,10 @@ CAP_ACT, R_ACT_ROWS = 1 << 24, 0x58
 # CAPS bit25: ARG0..7 (0x60 + 4k) are the run's arguments, R8..R15 at the start (docs/isa.md
 # "Arguments"): one program serves every decode position
 CAP_ARGS, R_ARG0 = 1 << 25, 0x60
-# CAPS bit26: the DDR3 controllers are LiteDRAM (docs/litedram.md): the host calibrates them
+# CAPS bit27: the DDR3 controllers are LiteDRAM (docs/litedram.md): the host calibrates them
 # (opentpu/host/memcal.py) through their CSRs in the BAR0 window at R_MEMCAL; STATUS CALIB0/1
 # rise when it has. The MIG bitstreams calibrate themselves.
-CAP_HOSTCAL, R_MEMCAL = 1 << 26, 0x10000
+CAP_HOSTCAL, R_MEMCAL = 1 << 27, 0x10000   # (bit26: the stream engine, se-main)
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset

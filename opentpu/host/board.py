@@ -453,7 +453,7 @@ class Board:
     def __init__(self, transport=None, check: bool = True, lock: bool = True,
                  calibrate: bool = True):
         """check: the card must answer as openTPU; calibrate: then calibrate its DDR3 if the
-        bitstream wants the host to (LiteDRAM, CAPS bit26: memcal.ensure; once per
+        bitstream wants the host to (LiteDRAM, CAPS bit27: memcal.ensure; once per
         configuration, as the STATUS calibration bits say)."""
         self.t = transport or XdmaTransport()
         self.lock = _lock(self.t) if lock else None

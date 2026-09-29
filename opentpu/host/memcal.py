@@ -1,5 +1,5 @@
 """otpu-memcal: the host's DDR3 calibration for a bitstream whose memory controllers are
-LiteDRAM (CAPS bit26, docs/litedram.md section 7). The MIG bitstreams calibrate themselves in
+LiteDRAM (CAPS bit27, docs/litedram.md section 7). The MIG bitstreams calibrate themselves in
 hardware; LiteDRAM's A7DDRPHY is calibrated from the host, through each controller's CSRs in the
 BAR0 window at R_MEMCAL (0x10000), by opentpu.host.ddrcal: per channel the write DQS phase is
 scanned over one tCK with the channel's BIST as the traffic check, the phase goes to the centre
@@ -32,7 +32,7 @@ CALIB = (R.ST_CALIB0, R.ST_CALIB1)
 
 
 def hostcal(t) -> bool:
-    """The bitstream's controllers want the host's calibration (register map 2 and CAPS bit26)."""
+    """The bitstream's controllers want the host's calibration (register map 2 and CAPS bit27)."""
     return R.regmap(t.reg_read(R.R_REGMAP)) >= 2 and bool(t.reg_read(R.R_CAPS) & R.CAP_HOSTCAL)
 
 

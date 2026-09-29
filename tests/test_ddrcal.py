@@ -68,7 +68,7 @@ from opentpu.host import memcal, regs as R          # noqa: E402
 
 
 class FakeCard:
-    """BAR0 of a host-calibrated bitstream: REGMAP 3, CAPS bit26 (unless `hostcal` is off),
+    """BAR0 of a host-calibrated bitstream: REGMAP 3, CAPS bit27 (unless `hostcal` is off),
     STATUS CALIB0/1 from the two simulated channels' cal_ready, and their CSRs (the production
     core's map, opentpu/host/litedram/csr.csv) in the window at R_MEMCAL."""
     devname = None
