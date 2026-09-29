@@ -417,6 +417,7 @@ def calibrate_groups(d, dqs, wclk, groups, period, stride=1, csr=None, mib=64, l
     group 0's. 3: a second scan at that offset (the groups now move together: the run common to
     all lanes) and the common phase at its centre; calibration there. Returns a dict with both
     scans' tables, each group's run (steps) in the first, the offset, and the common run."""
+    wclk.check()                            # the DRP encoding as assumed, before any write
     wclk.set_group1(0)
     d.ctl(0)                                # the DRAM's reset: its clocks stopped
     time.sleep(0.001)
