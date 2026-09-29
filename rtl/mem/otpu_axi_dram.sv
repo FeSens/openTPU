@@ -423,6 +423,12 @@ module otpu_axi_dram #(
   logic [WLW-1:0] wrun0_q [2], wrun1_q [2], wrun_u [2];
   logic [QW:0]    n0_q [2], n1_q [2], n_u [2];
   logic [1:0]     rs_v, rs_1;
+  // the request pushed last cycle (at most one per channel): it is the entry right after the
+  // scanned ones, and it extends their run if the run covers them all and it continues it; so
+  // the runs used are the queue's exactly (the check below), a cycle's pushes included
+  logic [1:0]     psh_q, pc_q;
+  logic [LW-1:0]  run_e [2];
+  logic [WLW-1:0] wrun_e [2];
   // the scan: qc rotated to the head once (rq[k]: entry k from the head), then the run from the
   // entry at offset o is 1 + the leading entries after it that continue and are queued: a
   // priority encoder over the first zero (every term in parallel), not a serial chain
@@ -446,12 +452,18 @@ module otpu_axi_dram #(
       wrun1_q[c] <= WLW'(lead(rq, qb_n[c], 1, WBL));
       n0_q[c] <= qb_n[c];
       n1_q[c] <= (qb_n[c] != 0) ? qb_n[c] - 1'b1 : '0;
+      psh_q[c] <= !rst && qb_push[c];
+      pc_q[c] <= b_we ? bw_cont[c] : b_cont;
     end
   always_comb
     for (int c = 0; c < 2; c++) begin
       run_u[c]  = rs_1[c] ? run1_q[c] : run0_q[c];
       wrun_u[c] = rs_1[c] ? wrun1_q[c] : wrun0_q[c];
       n_u[c]    = rs_1[c] ? n1_q[c] : n0_q[c];
+      run_e[c]  = run_u[c] + LW'(psh_q[c] && pc_q[c] && (QW + 1)'(run_u[c]) == n_u[c] &&
+                                 run_u[c] != LW'(BL));
+      wrun_e[c] = wrun_u[c] + WLW'(psh_q[c] && pc_q[c] && (QW + 1)'(wrun_u[c]) == n_u[c] &&
+                                   wrun_u[c] != WLW'(WBL));
     end
 `ifndef SYNTHESIS
   // the run from the head as the queue holds it now (a serial scan, the reference)
@@ -480,16 +492,17 @@ module otpu_axi_dram #(
             (qb_n[c] > 1 && lead(qq[QD-1:0], qb_n[c], 1, WBL) != scan(qc[c], qb_h[c] + 1'b1, n1, WBL)))
           $fatal(1, "otpu_axi_dram: ch%0d parallel run scan differs from the serial one", c);
       end
-  // the registered runs describe the queue: never longer than its runs now, from no more
-  // entries than it holds
+  // the runs used are the queue's runs now (so bursts are what the serial scan gave), from the
+  // entries it holds
   always @(posedge clk)
     if (!rst)
       for (int c = 0; c < 2; c++)
         if (rs_v[c] && qb_n[c] != 0) begin
-          if (32'(run_u[c]) > 32'(scan(qc[c], qb_h[c], qb_n[c], BL)) ||
-              32'(wrun_u[c]) > 32'(scan(qc[c], qb_h[c], qb_n[c], WBL)) || n_u[c] > qb_n[c])
-            $fatal(1, "otpu_axi_dram: ch%0d registered run %0d / %0d (of %0d) beyond the queue's %0d / %0d (%0d)",
-                   c, run_u[c], wrun_u[c], n_u[c], scan(qc[c], qb_h[c], qb_n[c], BL),
+          if (32'(run_e[c]) != 32'(scan(qc[c], qb_h[c], qb_n[c], BL)) ||
+              32'(wrun_e[c]) != 32'(scan(qc[c], qb_h[c], qb_n[c], WBL)) ||
+              n_u[c] + (QW + 1)'(psh_q[c]) != qb_n[c])
+            $fatal(1, "otpu_axi_dram: ch%0d registered run %0d / %0d (of %0d + %0d) is not the queue's %0d / %0d (%0d)",
+                   c, run_e[c], wrun_e[c], n_u[c], psh_q[c], scan(qc[c], qb_h[c], qb_n[c], BL),
                    scan(qc[c], qb_h[c], qb_n[c], WBL), qb_n[c]);
         end
 `endif
@@ -511,10 +524,10 @@ module otpu_axi_dram #(
       // its run to fill (see the top); an AR shown on the bus stays as it is until taken
       begin
         logic go;
-        run[c] = run_u[c];
-        go = rs_v[c] && (run[c] == LW'(BL) || (QW + 1)'(run[c]) < n_u[c] || qi[c] >= 3'(GATHER) ||
+        run[c] = run_e[c];
+        go = rs_v[c] && (run[c] == LW'(BL) || (QW + 1)'(run[c]) < qb_n[c] || qi[c] >= 3'(GATHER) ||
              rb_res[c] == 0);
-        wrun[c] = wrun_u[c];
+        wrun[c] = wrun_e[c];
         // the SW queue's next partial beat: blocked while an older live entry may have its
         // address (one in its bucket; a hash collision only delays the read)
         w_blk[c] = wnz[c][wh_r[c]];
@@ -548,7 +561,7 @@ module otpu_axi_dram #(
                  !w_hold[c] && (k1w_n[c] < (KW + 1)'(KD));
         w_a[c] = !w_w[c] && (qa_n[c] != 0) && ha[c].we && (k1w_n[c] < (KW + 1)'(KD));
         w_b[c] = !w_w[c] && !w_a[c] && (qb_n[c] != 0) && hb[c].we && blq_n[c] != (BQW + 1)'(BQD) &&
-                 rs_v[c] && (wrun[c] == WLW'(WBL) || (QW + 1)'(wrun[c]) < n_u[c] ||
+                 rs_v[c] && (wrun[c] == WLW'(WBL) || (QW + 1)'(wrun[c]) < qb_n[c] ||
                  qi[c] >= 3'(GATHER));
       end
       hs[c] = ha[c];
