@@ -620,9 +620,10 @@ module otpu_mxu
     // delayed by its chain stage k = i % CL, and the weights then move one register hop per
     // column: column j sees them j cycles after column 0 (fan-out 2, no broadcast). Both streams
     // flow: the low block (or the 4-bit half of a non-PAIR advance) and PAIR's high block; each
-    // column takes one by its per-command hi0[j]. Column j's activation byte i is delayed
-    // 1 + k + j (one shift register per bit). Along D: chains of CL products, one per DSP48E1
-    // (M register, P = PCIN + M). The 4-bit sub-blocks are two chains each, so the sub-block
+    // column takes one in its DSPs' pre-adder (A = low, D = high, INMODE by its per-command
+    // hi0[j]: no fabric select). Column j's activation byte i is delayed k + j (shift registers)
+    // into the DSP's B register. Along D: chains of CL products, one per DSP48E1 (otpu_pe: M
+    // register, P = PCIN + M). The 4-bit sub-blocks are two chains each, so the sub-block
     // multipliers apply at the chain ends, as in IMPL 0; column j's s4 is then delayed
     // MCOLS - 1 - j cycles, and all columns reach the epilogue together (LDOT = CLS + MCOLS + 3).
     // Exact integers: bit-identical to IMPL 0. Chains of CLS = min(CL, D/4) positions, so a
@@ -639,22 +640,18 @@ module otpu_mxu
     always_ff @(posedge clk) if (en_c)
       for (int j = 1; j < MCOLS; j++) wc[j] <= wc[j-1];
     logic [7:0] as_k [MCOLS][D];
+    logic signed [23:0] preg [MCOLS][D];                // running sums (the DSPs' P registers)
+    logic [47:0] pc [MCOLS][D];                         // their cascade outputs
     for (genvar j = 0; j < MCOLS; j++) begin : g_ask
       for (genvar i = 0; i < D; i++) begin : g_p
-        otpu_skew #(.W(8), .N(1 + i % CLS + j)) u_a (.clk, .en(en_c), .d(a0[(j*D + i)*8 +: 8]),
-                                                   .q(as_k[j][i]));
+        otpu_skew #(.W(8), .N(i % CLS + j)) u_a (.clk, .en(en_c), .d(a0[(j*D + i)*8 +: 8]),
+                                               .q(as_k[j][i]));
+        otpu_pe #(.FIRST(i % CLS == 0)) u_pe (.clk, .en(en_c), .act(as_k[j][i]),
+          .wlo(wc[j][i][7:0]), .whi(wc[j][i][15:8]), .sel(hi0[j]),
+          .pcin((i % CLS == 0) ? 48'd0 : pc[j][(i % CLS == 0) ? i : i - 1]), .pcout(pc[j][i]),
+          .p(preg[j][i]));
       end
     end
-    // (use_dsp: Vivado keeps 8 x 8 products and their sums in fabric by default)
-    (* use_dsp = "yes" *) logic signed [15:0] mreg [MCOLS][D];   // products (M registers)
-    (* use_dsp = "yes" *) logic signed [23:0] preg [MCOLS][D];   // running sums (P registers)
-    always_ff @(posedge clk) if (en_c)
-      for (int j = 0; j < MCOLS; j++)
-        for (int i = 0; i < D; i++) begin
-          mreg[j][i] <= 16'(int'($signed(as_k[j][i])) *
-                            int'($signed(hi0[j] ? wc[j][i][15:8] : wc[j][i][7:0])));
-          preg[j][i] <= ((i % CLS == 0) ? 24'sd0 : preg[j][i - 1]) + 24'(mreg[j][i]);
-        end
     // chain ends (S0 + CLS + 2 + j): the sub-block sums times their multipliers, then the block
     // sum; the multipliers of column j (its block's under PAIR) travel alongside
     (* use_dsp = "yes" *) logic [SW-1:0] vs [MCOLS][4];
@@ -1253,4 +1250,53 @@ module otpu_skew #(parameter int W = 8, parameter int N = 1) (
     end
     assign q = r[N-1];
   end
+endmodule
+
+// One position of the systolic MXU (IMPL 2): a DSP48E1 with the activation in its B register
+// (BREG 1), the two weight streams on A (low) and D (high), one selected by the pre-adder's input
+// gates (INMODE: sel 0 -> A, 1 -> D), the product in M and the chain's running sum in P:
+// P = PCIN + M (FIRST: P = M). Simulation uses the equivalent behavioural model.
+module otpu_pe #(parameter bit FIRST = 1'b0) (
+  input  logic               clk,
+  input  logic               en,
+  input  logic [7:0]         act,
+  input  logic [7:0]         wlo,
+  input  logic [7:0]         whi,
+  input  logic               sel,
+  input  logic [47:0]        pcin,
+  output logic [47:0]        pcout,
+  output logic signed [23:0] p
+);
+`ifdef SYNTHESIS
+  logic [47:0] pf;
+  DSP48E1 #(
+    .A_INPUT("DIRECT"), .B_INPUT("DIRECT"), .USE_DPORT("TRUE"), .USE_MULT("MULTIPLY"),
+    .USE_SIMD("ONE48"), .AREG(0), .ACASCREG(0), .BREG(1), .BCASCREG(1), .CREG(0), .DREG(0),
+    .ADREG(0), .MREG(1), .PREG(1), .INMODEREG(0), .OPMODEREG(0), .ALUMODEREG(0),
+    .CARRYINREG(0), .CARRYINSELREG(0), .USE_PATTERN_DETECT("NO_PATDET"),
+    .AUTORESET_PATDET("NO_RESET"), .MASK(48'h3fffffffffff), .PATTERN(48'h0),
+    .SEL_MASK("MASK"), .SEL_PATTERN("PATTERN")
+  ) u_dsp (
+    .CLK(clk),
+    .A({{22{wlo[7]}}, wlo}), .B({{10{act[7]}}, act}), .C(48'd0), .D({{17{whi[7]}}, whi}),
+    .INMODE({2'b00, sel, sel, 1'b0}), .OPMODE(FIRST ? 7'b000_01_01 : 7'b001_01_01),
+    .ALUMODE(4'b0000), .CARRYIN(1'b0), .CARRYINSEL(3'b000),
+    .CEA1(1'b0), .CEA2(1'b0), .CEB1(en), .CEB2(en), .CEC(1'b0), .CED(1'b0), .CEAD(1'b0),
+    .CEM(en), .CEP(en), .CEALUMODE(1'b0), .CECTRL(1'b0), .CECARRYIN(1'b0), .CEINMODE(1'b0),
+    .RSTA(1'b0), .RSTB(1'b0), .RSTC(1'b0), .RSTD(1'b0), .RSTM(1'b0), .RSTP(1'b0),
+    .RSTALLCARRYIN(1'b0), .RSTALUMODE(1'b0), .RSTCTRL(1'b0), .RSTINMODE(1'b0),
+    .ACIN(30'd0), .BCIN(18'd0), .PCIN(pcin), .CARRYCASCIN(1'b0), .MULTSIGNIN(1'b0),
+    .ACOUT(), .BCOUT(), .PCOUT(pcout), .P(pf), .CARRYCASCOUT(), .MULTSIGNOUT(), .CARRYOUT(),
+    .OVERFLOW(), .UNDERFLOW(), .PATTERNDETECT(), .PATTERNBDETECT());
+  assign p = pf[23:0];
+`else
+  logic [7:0] br;
+  logic signed [15:0] m;
+  always_ff @(posedge clk) if (en) begin
+    br <= act;
+    m <= 16'(int'($signed(br)) * int'($signed(sel ? whi : wlo)));
+    p <= (FIRST ? 24'sd0 : $signed(pcin[23:0])) + 24'(m);
+  end
+  assign pcout = 48'(p);
+`endif
 endmodule
