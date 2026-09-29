@@ -442,8 +442,16 @@ module otpu_dma
     t_wdata <= lw_data;
   end
 
-  // ---- ST: the segment read last cycle, pending in t_rdata (its position, lanes, chunk, and
-  // whether it ends its chunk), and the chunk gathered so far
+  // ---- ST: a two-stage read pipeline. The segment read last cycle is in t_rdata (pa: its
+  // position, lanes, whether it ends its chunk), the one before in t_rq, a register (st_pend,
+  // pp, pm, pl), and the chunk gathered so far in cb: the buffer's write data (st_cd) comes from
+  // flip-flops, not from TMEM's block RAMs through its read path in the same cycle (the se-sys
+  // build's TMEM port 1 -> lb DI paths, BRAM to BRAM, -0.38 ns). Both stages move with adv;
+  // while they hold, t_rdata holds too (no new read)
+  logic                   pa, pla;
+  int                     ppa;
+  logic [W-1:0]           pma;
+  logic [W-1:0][31:0]     t_rq;
   logic                   st_pend, pl;
   (* max_fanout = 64 *) int pp;   // selects every data bit of b_wdata: replicated
   logic [W-1:0]           pm;
@@ -463,7 +471,7 @@ module otpu_dma
     for (int p = 0; p < SPC; p++)
       for (int l = 0; l < W; l++) begin
         st_cm[p * W + l] = cbm[p * W + l] || (pp == p && pm[l]);
-        st_cd[32 * (p * W + l) +: 32] = (pp == p) ? t_rdata[l] : cb[p * W + l];
+        st_cd[32 * (p * W + l) +: 32] = (pp == p) ? t_rq[l] : cb[p * W + l];
       end
     b_wmask = lm[rp];
     b_wdata = lb_q;
@@ -535,7 +543,7 @@ module otpu_dma
       ld_fin <= 1'b0;
       dv_v <= 1'b0;
       busy <= 1'b0;
-      st_pend <= 1'b0;
+      st_pend <= 1'b0; pa <= 1'b0;
       st_wq <= 1'b0;
       ackw <= 1'b0;
       ds_wr <= 1'b0;
@@ -555,7 +563,7 @@ module otpu_dma
       ds_wait <= 1'b0; ds_fill <= 1'b0; ds_run <= 1'b0; ds_out <= 1'b0;
       og <= '0; gt <= '0; gh <= '0; ds_pos <= '0; oi <= '0; ds_wr <= 1'b0;
       ds_rr <= 1'b0; ds_rc <= '0;
-      st_pend <= 1'b0;
+      st_pend <= 1'b0; pa <= 1'b0;
       ackw <= 1'b0;
       busy <= 1'b1;
     end else if (start) begin
@@ -577,7 +585,7 @@ module otpu_dma
       nc = (n + (oc + (CW - 1))) >> CWL;
       cleft <= nc; cl_nz <= nc != 0; cl_one <= nc == 1;
       occ <= '0; cnt <= '0; wp <= '0; rp <= '0;
-      st_pend <= 1'b0;
+      st_pend <= 1'b0; pa <= 1'b0;
       st_wq <= 1'b0;
       st_fin <= 1'b0;
       cbm <= '0;
@@ -714,15 +722,20 @@ module otpu_dma
             if (pl) cbm <= '0;                  // the chunk goes into the buffer this cycle
             else
               for (int l = 0; l < W; l++) begin
-                cb[pp * W + l] <= t_rdata[l];
+                cb[pp * W + l] <= t_rq[l];
                 cbm[pp * W + l] <= pm[l];
               end
           end
-          st_pend <= st_rd;
-          pp <= pos_of(sw);
-          pm <= sm;
-          pl <= seg_end;
-          if (st_pend && sleft == 0) begin      // the last chunk goes into the buffer
+          st_pend <= pa;
+          pp <= ppa;
+          pm <= pma;
+          pl <= pla;
+          t_rq <= t_rdata;
+          pa <= st_rd;
+          ppa <= pos_of(sw);
+          pma <= sm;
+          pla <= seg_end;
+          if (st_pend && !pa && sleft == 0) begin  // the last chunk goes into the buffer
             st_pend <= 1'b0;
             st_fin <= 1'b1;
           end
