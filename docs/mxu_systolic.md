@@ -141,12 +141,17 @@ none`).
 |---|---|---|---|---|
 | LFM2 decode | 1,319,029 | 1,319,029 | 1,320,453 (+0.11%) | 1,320,668 (+0.12%) |
 | Qwen3.5 decode | 4,848,785 | 4,832,273 | 4,832,035 (-0.35%) | 4,832,472 (-0.34%) |
-| Qwen3 decode | | | 3,541,285 | |
-| LFM2 prefill, 6 rows | | | 2,949,361 | 1,736,596 (-41%) |
-| Qwen3.5 prefill, 6 rows | | 12,059,908 | 11,998,949 (-0.5%) | 9,323,037 (-22%) |
-| Qwen3 prefill, 6 rows | | | 8,979,279 | 5,837,044 (-35%) |
+| Qwen3 decode | 3,537,826 | | 3,541,285 (+0.10%) | |
+| LFM2 prefill, 6 rows | 4,243,796 | | 2,949,361 (-31%) | 1,736,596 (-59%) |
+| Qwen3.5 prefill, 6 rows | | 12,059,908 | 11,998,949 (-0.5%) | 9,323,037 (-23%) |
+| Qwen3 prefill, 6 rows | 12,441,375 | | 8,979,279 (-28%) | 5,837,044 (-53%) |
+| LFM2 prefill, 8 rows | 5,689,462 | | | 1,958,019 (-66%) |
+| Qwen3 prefill, 8 rows | 16,559,838 | | | 6,813,500 (-59%) |
 
-(Percentages: decode against IMPL 0 at MCOLS 2; prefill at MCOLS 8 against IMPL 2 at MCOLS 4.)
+(Percentages against IMPL 0 at MCOLS 2 where it was measured; Qwen3.5's prefill against IMPL 0
+at MCOLS 4. IMPL 0 ran on `11e00c4` (the tree with the DSP-cascade pair sums), IMPL 2 on the
+systolic branches before the stream engine merge: `465d629` (MCOLS 4 and the 6-row MCOLS 8 runs)
+and `0cb4a7d` (the 8-row runs), which have the same pipeline latency (LDOT).)
 
 Decode does not regress (the gate: <= 1%). The overlap of commands pays IMPL 2's longer pipeline.
 
