@@ -28,6 +28,7 @@ lanes="${LANES:-8}"            # VPU lanes / TMEM banks (likewise in VERSION)
 act_rows="${ACT_ROWS:-$mcols}" # ACT RAM rows (> MCOLS: MM replay; the ACT_ROWS register)
 dstep="${DSTEP:-1}"            # 0: no DSTEP datapath in the DMA (CAPS bit6 = 0)
 axi_bl="${AXI_BL:-32}"         # port B read burst, beats (32 default, the production image; up to 64)
+se="${SE:-v1}"                 # the stream engine: v1, or v2 (composites on 8 lanes, one tree)
 core_mhz="${CORE_MHZ:-100}"   # accelerator clock; lower it (80, 75) if timing does not close
 # BUILD_ID register: the git commit's first 8 hex digits, taken here (Vivado may run in Docker)
 build_id="${BUILD_ID:-$(git -C "$root" rev-parse HEAD 2>/dev/null | cut -c1-8)}"
@@ -66,7 +67,7 @@ mkdir -p "$out"
 if [[ "${STEP:-}" == impl ]]; then
   run "$here/vivado/build.tcl" "$out" "$jobs" impl "${IMPL_STRATEGY:-}"
 else
-  run "$here/vivado/create_project.tcl" "$speed" "$out" "$mcols" "$core_mhz" "$build_id" "$vpu_cl" "$lanes" "$act_rows" "$dstep" "$axi_bl"
+  run "$here/vivado/create_project.tcl" "$speed" "$out" "$mcols" "$core_mhz" "$build_id" "$vpu_cl" "$lanes" "$act_rows" "$dstep" "$axi_bl" "$se"
   run "$here/vivado/build.tcl" "$out" "$jobs" full "${IMPL_STRATEGY:-}"
 fi
 echo "done: $out/otpu.bit"

@@ -1,5 +1,5 @@
 # Create the Vivado project for openTPU on the YPCB-00338.
-#   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL] [LANES] [ACT_ROWS] [DSTEP] [AXI_BL]
+#   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL] [LANES] [ACT_ROWS] [DSTEP] [AXI_BL] [SE]
 # DDR_SPEED: 800 (default), 1066, or the out-of-spec 1300, 1333, 1600 (docs/board.md). OUT_DIR: default ../../../build/vivado (repository build/).
 # BUILD_ID: 8 hex digits for the BUILD_ID register (default: the first 8 hex digits of the
 # repository's git commit, else 0).
@@ -18,6 +18,9 @@ set ACT_ROWS [expr {[llength $argv] > 7 ? [lindex $argv 7] : $MCOLS}]
 set DSTEP [expr {[llength $argv] > 8 ? [lindex $argv 8] : 1}]
 # AXI_BL: the accelerator's port B read burst, beats (8 default, up to 64; bd.tcl's MAX_BURST_LENGTH follows)
 set AXI_BL [expr {[llength $argv] > 9 ? [lindex $argv 9] : 8}]
+# SE: the stream engine's version (docs/stream.md): v1, or v2 (SE_COMP8 = SE_ONE_TREE = 1)
+set SE [expr {[llength $argv] > 10 ? [lindex $argv 10] : "v1"}]
+set SE_V2 [expr {$SE eq "v2" ? 1 : 0}]
 if {$BUILD_ID eq ""} {
   if {[catch {exec git -C $root rev-parse HEAD} BUILD_ID]} { set BUILD_ID 0 }
   set BUILD_ID [string range $BUILD_ID 0 7]
@@ -60,7 +63,7 @@ source $here/bd.tcl
 make_wrapper -files [get_files otpu_bd.bd] -top
 add_files -norecurse [glob $out/otpu.gen/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v]
 set_property top otpu_fpga_top [current_fileset]
-set_property generic "MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DDR_MTS=$DDR_SPEED DSTEP=1'b$DSTEP AXI_BL=$AXI_BL" [current_fileset]
+set_property generic "MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DDR_MTS=$DDR_SPEED DSTEP=1'b$DSTEP AXI_BL=$AXI_BL SE_COMP8=1'b$SE_V2 SE_ONE_TREE=1'b$SE_V2" [current_fileset]
 
 # ---- constraints
 add_files -fileset constrs_1 -norecurse [list \

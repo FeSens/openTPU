@@ -47,8 +47,10 @@
 // TMEM access; everything advances on the stream's pe; slot 0 of every lane runs the RDOT
 // partial loop on the tail's X segment (xd) and dot-A vector (xa), and u_vt folds it into the
 // row's kv for the tail (otpu_se_tail: the d stage, the delay line, U and Q). Every ss_* input
-// is registered here (the DMA registers its side too), so SE runs one cycle behind the DMA's
-// pe; ss_y_v and ss_o_v are qualified with SE's pe (a Y / an O this cycle).
+// is registered twice here (the DMA registers its side too), so SE runs two cycles behind the
+// DMA's pe: the enable (~30K loads) is then a flip-flop copy of one computed a cycle ahead
+// (en_q), with no logic in front of its replicas; ss_y_v and ss_o_v are qualified with SE's pe
+// (a Y / an O this cycle).
 //
 // v2 (docs/stream.md 11), two parameters on the above (both 0: v1):
 //   ONE_TREE  the tail's dot Q folds on u_vt too, in windows between dot A's (the tail pads its
@@ -249,6 +251,7 @@ module otpu_vpu
   // the stream: the ss_* inputs registered (sen: its pe; s_init: its first granted cycle), the
   // tail's X registers (s_xd, s_xa, s_xm), and s_xm at slot 0's pacc (s_mt)
   (* max_fanout = 64 *) logic sen;
+  logic       ss_act_d;                        // ss_act's next value
   logic       s_init, s_in_v, s_first;
   f32_t       s_in_d [LANES], s_fd [LANES], s_xd [LANES], s_xa [LANES];
   logic [2:0] s_fk;
@@ -957,22 +960,29 @@ module otpu_vpu
     // grant only reaches the pointers and the count). An enabled cycle pushes its writes (if
     // any) with the pending done; `done` follows the pop of the entry that carries it. The
     // enable for the next cycle is room for a push even if the head is not taken then.
+    // SE: the enable is computed a cycle ahead (en_q) and en_r is its copy, so en_r's replicas
+    // have a flip-flop in front of them, no logic; it is then a cycle staler, and the buffer
+    // has four slots (at most three are used). In stream mode it is the stream's pe (two
+    // cycles behind the DMA's, see the header).
+    localparam int NWQ = SE ? 4 : 2;
+    localparam int WQW = $clog2(NWQ);
     typedef struct packed {
       logic [LANES-1:0]         en;
       logic [LANES-1:0][AW-1:0] a;
       logic [LANES-1:0][31:0]   d;
       logic                     dn;
     } wb_t;
-    wb_t        wq [2];
-    logic       wh, wt;                          // head, tail slot
-    logic [1:0] wn;                              // entries
+    wb_t        wq [NWQ];
+    logic [WQW-1:0] wh, wt;                      // head, tail slot
+    logic [WQW:0]   wn;                          // entries
     (* max_fanout = 64 *) logic en_r;
+    (* max_fanout = 32 *) logic en_q;
     assign en = en_r;
     assign wb_e = (wn == 0);
     wire  pdn  = done_i || dpend;
     wire  push = en && ((|cw_en) || pdn);
     wire  pop  = (wn != 0) && gnt;
-    wire  [1:0] wn_nx = wn + 2'(push) - 2'(pop);
+    wire  [WQW:0] wn_nx = wn + (WQW+1)'(push) - (WQW+1)'(pop);
     wb_t  hd;
     assign hd = wq[wh];
     always_comb begin
@@ -983,13 +993,18 @@ module otpu_vpu
     always_ff @(posedge clk) if (push) wq[wt] <= '{en: cw_en, a: cw_addr, d: cw_data, dn: pdn};
     always_ff @(posedge clk) begin
       if (rst) begin
-        wh <= 1'b0; wt <= 1'b0; wn <= '0; en_r <= 1'b0;
+        wh <= '0; wt <= '0; wn <= '0; en_r <= 1'b0; en_q <= 1'b0;
         done <= 1'b0; dpend <= 1'b0;
       end else begin
-        if (push) wt <= ~wt;
-        if (pop) wh <= ~wh;
+        if (push) wt <= wt + 1'b1;
+        if (pop) wh <= wh + 1'b1;
         wn <= wn_nx;
-        en_r <= (SE && ss_act) ? ss_pe : (wn_nx < 2);     // a stream: its pe (as sen)
+        if (SE) begin
+          en_q <= ss_act_d ? ss_pe : (wn_nx < 2);         // a stream: its pe (as sen)
+          en_r <= en_q;
+        end else begin
+          en_r <= (wn_nx < 2);
+        end
         done <= pop && hd.dn;
         dpend <= pdn && !en;
       end
@@ -1036,18 +1051,28 @@ module otpu_vpu
   // drained.
   if (SE) begin : g_se
     wire idle = !start && (cq_n == 0) && !busy && !done_i && !dpend && wb_e;
+    assign ss_act_d = ss_req && ss_rq && (ss_act || idle);
+    // the inputs through two registers (sen_q, s1_*: the first), as the enable (en_q, en_r)
+    (* max_fanout = 32 *) logic sen_q;
+    logic       s1_in_v;
+    f32_t       s1_in_d [LANES], s1_fd [LANES];
+    logic [2:0] s1_fk;
+    logic [4:0] s1_fi;
     always_ff @(posedge clk) begin
       if (rst) begin
-        ss_rq <= 1'b0; ss_act <= 1'b0; s_init <= 1'b0; sen <= 1'b0; s_fk <= SF_NONE;
+        ss_rq <= 1'b0; ss_act <= 1'b0; s_init <= 1'b0; sen_q <= 1'b0; sen <= 1'b0;
+        s1_fk <= SF_NONE; s_fk <= SF_NONE;
       end else begin
         ss_rq <= ss_req;
-        ss_act <= ss_req && ss_rq && (ss_act || idle);
+        ss_act <= ss_act_d;
         s_init <= ss_req && ss_rq && !ss_act && idle;
-        sen <= ss_act && ss_pe;
-        s_fk <= ss_act ? ss_fk : SF_NONE;
+        sen_q <= ss_act_d && ss_pe;
+        sen <= sen_q;
+        s1_fk <= ss_act ? ss_fk : SF_NONE;
+        s_fk <= s1_fk;
       end
-      s_fi <= ss_fi; s_fd <= ss_fd;
-      s_in_v <= ss_in_v; s_in_d <= ss_in_d;
+      s1_fi <= ss_fi; s1_fd <= ss_fd; s_fi <= s1_fi; s_fd <= s1_fd;
+      s1_in_v <= ss_in_v; s1_in_d <= ss_in_d; s_in_v <= s1_in_v; s_in_d <= s1_in_d;
       s_cfg <= ss_cfg;
     end
     assign ss_gnt = ss_act;
@@ -1102,6 +1127,7 @@ module otpu_vpu
     assign ss_o_v = sen && t_ov;
   end else begin : g_nse
     assign ss_rq = 1'b0;
+    assign ss_act_d = 1'b0;
     assign q_cap = 1'b0;
     assign q_rl = 1'b0;
     assign q_sub = '0;
