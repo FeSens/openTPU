@@ -202,22 +202,37 @@ def test_counter_snapshots_bracket_a_run(have_verilator):
 
 @pytest.mark.skipif(bool(rtlsim.MEMORY["NATIVE"]), reason="AXI read bursts (native: no transactions)")
 def test_mxu_starve_counter(have_verilator):
-    """MXU_STARVE: cycles the MXU streams a command and no chunk has arrived. Under a cost of 4
-    cycles per AXI read transaction (as on the card), single-beat reads (AXI_BL=1) starve the
-    MXU for a large part of its busy time, while DRAM_WAIT stays 0 (the adapter takes every
-    request; the data comes late), as on the card. Read bursts remove the starved cycles and
-    shorten the run."""
+    """MXU_STARVE: cycles the MXU streams a command and its chunk FIFO is empty -- exactly the
+    ms of the slice's Q records (+trace), summed. Under a cost of 4 cycles per AXI read
+    transaction (as on the card), single-beat reads (AXI_BL=1) keep the MXU waiting for chunks
+    (starved, ms, or blocked on the chunks it holds, mb) for most of its busy time, while
+    DRAM_WAIT stays 0 (the adapter takes every request; the data comes late), as on the card.
+    Where the wait lands depends on the MXU: the adder tree and the cascade (MXU_IMPL 0 / 1)
+    consume a row chunk by chunk, as the chunks arrive, so the FIFO runs empty and the wait is
+    starved; the systolic array (2) starts a row only once all of its chunks are in (a row never
+    stalls in the pipeline; docs/mxu_systolic.md), so it waits mostly on a partial row, blocked,
+    and MXU_STARVE sees only the gaps with the FIFO empty. Read bursts remove most of the wait
+    and shorten the run."""
     cfg, img, prog = _kernel("mlp")
-    c, cyc = {}, {}
+    c, cyc, q = {}, {}, {}
     for bl in (1, 8):
-        t = SimTransport(ch_bytes=cfg.DRAM_BYTES, stall=0, plusargs=["+axi_arc=4"],
+        t = SimTransport(ch_bytes=cfg.DRAM_BYTES, stall=0, plusargs=["+axi_arc=4", "+trace"],
                          params={"TRACE_DEPTH": 1024, "AXI_BL": bl})
         r = run_traced(t, img, prog, trace_ctrl=0, snap=True)
         assert r["status"] & ST_HALTED
         c[bl], cyc[bl] = r["counters"], r["cycles"]
-        assert c[bl]["MXU_BUSY"] >= c[bl]["MXU_STARVE"]
-    assert c[1]["MXU_STARVE"] > c[1]["MXU_BUSY"] // 4 and c[1]["DRAM_WAIT"] == 0, c[1]
-    assert c[8]["MXU_STARVE"] < c[1]["MXU_STARVE"] // 4, (c[1], c[8])
+        ql = [dict(re.findall(r"(\w+)=(\d+)", line)) for line in r["sim"] if line.split()[1] == "Q"]
+        q[bl] = {k: sum(int(d[k]) for d in ql) for k in ("n", "ms", "mb")}
+        assert q[bl]["n"] == cyc[bl] and c[bl]["MXU_STARVE"] == q[bl]["ms"], (c[bl], q[bl])
+        assert c[bl]["MXU_BUSY"] >= q[bl]["ms"] + q[bl]["mb"], (c[bl], q[bl])
+    wait = {bl: q[bl]["ms"] + q[bl]["mb"] for bl in q}
+    assert wait[1] > c[1]["MXU_BUSY"] // 2 and c[1]["DRAM_WAIT"] == 0, (c[1], q[1])
+    if rtlsim.UARCH.get("MXU_IMPL", 0) == 2:
+        assert q[1]["mb"] > 2 * q[1]["ms"], q[1]
+    else:
+        assert c[1]["MXU_STARVE"] > c[1]["MXU_BUSY"] // 4, c[1]
+        assert c[8]["MXU_STARVE"] < c[1]["MXU_STARVE"] // 4, (c[1], c[8])
+    assert wait[8] < wait[1] // 2, (q[1], q[8])
     assert cyc[8] < 0.75 * cyc[1], cyc
 
 
