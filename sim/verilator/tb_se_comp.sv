@@ -23,14 +23,15 @@ module tb_se_comp;
 
   logic          in_v, hold, out_v;
   logic [7:0]    in_f;
-  logic [MW-1:0] in_m, out_m;
-  f32_t          in_x [L], in_y [L], out_d [L];
-  logic          u_sel [NS];
-  f32_t          u_a [NS][L], u_b [NS][L], u_c [NS][L], u_y [NS][L];
+  logic [MW-1:0] in_meta, out_meta;
+  logic [L-1:0]  in_m, out_m;
+  f32_t          in_a [L], in_b [L], out_d [L];
+  logic [NS-1:0] st_sel;
+  f32_t          st_a [NS][L], st_b [NS][L], st_c [NS][L], st_e [NS][L], st_y [NS][L];
 
   otpu_se_comp #(.LANES(L), .NS(NS), .MW(MW), .HA(HA), .EXT(EXT)) dut (
-    .clk, .rst, .en, .in_v, .in_f, .in_m, .in_x, .in_y, .hold, .out_v, .out_m, .out_d,
-    .u_sel, .u_a, .u_b, .u_c, .u_y);
+    .clk, .rst, .en, .in_v, .in_f, .in_a, .in_b, .in_m, .in_meta, .hold, .st_sel, .st_a, .st_b,
+    .st_c, .st_e, .st_y, .out_v, .out_d, .out_m, .out_meta);
 
   if (EXT) begin : g_units
     for (genvar s = 0; s < NS; s++) begin : g_s
@@ -40,27 +41,27 @@ module tb_se_comp;
           // feedback register, loaded with c LM cycles after the operands
           f32_t ra, rb, rc, cd, fbq, tq;
           always_ff @(posedge clk) if (en) begin
-            ra <= u_a[s][l]; rb <= u_b[s][l]; rc <= u_c[s][l];
+            ra <= st_a[s][l]; rb <= st_b[s][l]; rc <= st_c[s][l];
             fbq <= cd;
           end
           otpu_delay #(.W(32), .N(LM - 1)) u_cd (.clk, .en, .d(rc), .q(cd));
           otpu_fmul #(.LAT(LM)) u_m (.clk, .en, .a(ra), .b(rb), .y(tq));
-          otpu_fadd #(.LAT(LA)) u_ad (.clk, .en, .a(fbq), .b(tq), .y(u_y[s][l]));
+          otpu_fadd #(.LAT(LA)) u_ad (.clk, .en, .a(fbq), .b(tq), .y(st_y[s][l]));
         end else begin : g_mma
           // slot 0 / U: a*b + c*e with e = 1.0
           f32_t ra, rb, rc, re;
           always_ff @(posedge clk) if (en) begin
-            ra <= u_a[s][l]; rb <= u_b[s][l]; rc <= u_c[s][l]; re <= F_ONE;
+            ra <= st_a[s][l]; rb <= st_b[s][l]; rc <= st_c[s][l]; re <= st_e[s][l];
           end
           otpu_fmma #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .e(re),
-                                              .y(u_y[s][l]));
+                                              .y(st_y[s][l]));
         end
       end
     end
   end else begin : g_nounits
     for (genvar s = 0; s < NS; s++) begin : g_s
       for (genvar l = 0; l < L; l++) begin : g_l
-        assign u_y[s][l] = '0;
+        assign st_y[s][l] = '0;
       end
     end
   end
@@ -86,10 +87,11 @@ module tb_se_comp;
   longint      cyc;
   assign in_v = pv[HA - 1];
   assign in_f = fn[pi[HA - 1]];
-  assign in_m = MW'(pi[HA - 1]);
+  assign in_meta = MW'(pi[HA - 1]);
+  assign in_m = L'(pi[HA - 1] * 37);             // the lane mask is carried, not used
   for (genvar l = 0; l < L; l++) begin : g_in
-    assign in_x[l] = xs[pi[HA - 1] * L + l];
-    assign in_y[l] = ys[pi[HA - 1] * L + l];
+    assign in_a[l] = xs[pi[HA - 1] * L + l];
+    assign in_b[l] = ys[pi[HA - 1] * L + l];
   end
 
   int fout;
@@ -106,8 +108,8 @@ module tb_se_comp;
         pv[0] <= 1'b0;
         if (out_v) begin
           string sline;
-          if (int'(out_m) != (nout & 16'hFFFF)) $fatal(1, "out of order: %0d, expected %0d",
-                                                       out_m, nout);
+          if (int'(out_meta) != (nout & 16'hFFFF) || out_m != L'(nout * 37))
+            $fatal(1, "out of order: %0d, expected %0d", out_meta, nout);
           sline = $sformatf("%0d", nout);
           for (int l = 0; l < L; l++) begin
             f32_t x, y, e;

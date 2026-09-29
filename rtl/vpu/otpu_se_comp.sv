@@ -20,20 +20,20 @@
 //   RSQRT     10   4                 2
 //   LOG2      10   4                 2
 //
-// Stage s of a lane is a unit y = add(mul(a, b), c) whose operands (u_a, u_b, u_c) are
-// registered at the cycle they are presented and whose result (u_y) comes back SL = 1 + LM +
-// LA cycles later -- an otpu_fmadd behind input registers, or an otpu_fmma with e = 1.0.
-// EXT = 0 instantiates those units here; EXT = 1 leaves them to the owner (in SE: VPU slot 0,
-// the tail's U and Q), which muxes u_a/u_b/u_c into its input registers when u_sel[s].
+// Stage s of a lane is a unit y = add(mul(a, b), c) (an otpu_fmma with e = 1.0, or an
+// otpu_fmul then otpu_fadd) whose operands (st_a, st_b, st_c, st_e) are registered at the
+// cycle they are presented and whose result (st_y) comes back SL = 1 + LM + LA cycles later.
+// EXT = 1 leaves the units to their owners (in SE: VPU slot 0, the tail's U and Q), which take
+// st_* into their input registers when st_sel[s]; EXT = 0 instantiates generic ones here.
 // Everything this module computes besides the units is here: the per-lane setup (the seeds and
 // the LOG2 split), RR, the state carried along the stages (k1, k2, ii, f; v is the result of
 // the stage before, as in the chains), the operand muxes, the per-stage control (a ROM on the
 // chunk's function and pass, shared by the lanes) and the final fix-ups.
 //
-// Issue: a chunk enters at S0 (in_v, with x and y per lane) unless a chunk returns to S0 that
+// Issue: a chunk enters at S0 (in_v, with A and B per lane) unless a chunk returns to S0 that
 // cycle. `hold` says so HA cycles ahead (it is a register tap: the loop is a fixed schedule),
 // so the issuer (the VPU: read address -> mi -> m0 -> S0 is HA = 2) holds its read instead of
-// buffering it. A chunk with P passes finishes (out_v, out_m, out_d) P*T cycles after it
+// buffering it. A chunk with P passes finishes (out_v, out_d, out_m, out_meta) P*T cycles after it
 // entered; chunks finish in entry order as long as a chunk never enters while chunks with
 // more passes are in flight (the VPU's latency rule: an instruction may start only if its
 // latency is at least that of those in flight). Everything advances with `en`.
@@ -42,31 +42,35 @@ module otpu_se_comp
   import otpu_fp::*;
 #(
   parameter int LANES = 8,
+  parameter int MW    = 64,       // the core's opaque chunk meta (out_meta = in_meta)
   parameter int NS    = 3,        // stages per lane
-  parameter int MW    = 1,        // meta bits carried with a chunk (out_m = in_m)
   parameter int HA    = 2,        // `hold` leads the S0 cycle it protects by HA cycles
-  parameter bit EXT   = 1'b0      // the stage units are outside (u_*)
+  parameter bit EXT   = 1'b1      // the stage units are outside (st_*); 0: generic ones inside
 ) (
-  input  logic          clk,
-  input  logic          rst,
-  input  logic          en,
+  input  logic             clk,
+  input  logic             rst,
+  input  logic             en,
   // entry at S0: a chunk of function in_f (V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2)
-  input  logic          in_v,
-  input  logic [7:0]    in_f,
-  input  logic [MW-1:0] in_m,
-  input  f32_t          in_x [LANES],    // operand A
-  input  f32_t          in_y [LANES],    // operand B (EXP2SUB)
-  output logic          hold,            // an entry HA cycles from now would collide
-  // a finished chunk (taken with en)
-  output logic          out_v,
-  output logic [MW-1:0] out_m,
-  output f32_t          out_d [LANES],
-  // the stage units (EXT): operands this cycle, the result SL cycles later
-  output logic          u_sel [NS],      // a chunk is presented to stage s this cycle
-  output f32_t          u_a [NS][LANES],
-  output f32_t          u_b [NS][LANES],
-  output f32_t          u_c [NS][LANES],
-  input  f32_t          u_y [NS][LANES]
+  input  logic             in_v,
+  input  logic [7:0]       in_f,
+  input  f32_t             in_a [LANES],     // operand A
+  input  f32_t             in_b [LANES],     // operand B (EXP2SUB)
+  input  logic [LANES-1:0] in_m,             // lane mask (carried)
+  input  logic [MW-1:0]    in_meta,
+  output logic             hold,             // an entry HA cycles from now would collide
+  // the stage units (EXT): operands at stage s's input mux this cycle (st_sel[s]), the
+  // result SL cycles later; y = a*b + c*e (e = 1.0; the Q stage takes a*b + c)
+  output logic [NS-1:0]    st_sel,
+  output f32_t             st_a [NS][LANES],
+  output f32_t             st_b [NS][LANES],
+  output f32_t             st_c [NS][LANES],
+  output f32_t             st_e [NS][LANES],
+  input  f32_t             st_y [NS][LANES],
+  // a finished chunk, n_pass(f) * T cycles after it entered (taken with en)
+  output logic             out_v,
+  output f32_t             out_d [LANES],
+  output logic [LANES-1:0] out_m,
+  output logic [MW-1:0]    out_meta
 );
   localparam int LM = 2, LA = 4;
   localparam int SL = 1 + LM + LA;         // a stage: input registers, multiply, add
@@ -190,9 +194,10 @@ module otpu_se_comp
   } cst_t;
   localparam int KW = 32 + 32 + 9 + 3;     // the fields carried along a stage (not v)
   typedef struct packed {
-    logic [2:0]    cls;
-    logic [3:0]    pass;
-    logic [MW-1:0] m;
+    logic [2:0]       cls;
+    logic [3:0]       pass;
+    logic [LANES-1:0] mask;
+    logic [MW-1:0]    m;
   } cm_t;
 
   // pass 0's state from x (the chains' boundary 0)
@@ -248,7 +253,8 @@ module otpu_se_comp
   assign ret  = lp_v && !fin;             // it returns to S0 this cycle
   assign hold = cpos[T - HA - 1];         // it will return HA cycles from now
   assign out_v = lp_v && fin;
-  assign out_m = lp_m.m;
+  assign out_m = lp_m.mask;
+  assign out_meta = lp_m.m;
   for (genvar l = 0; l < LANES; l++) begin : g_out
     assign out_d[l] = finish(lp_m.cls, lp_st[l]);
   end
@@ -257,8 +263,8 @@ module otpu_se_comp
   cm_t  mo [NS];                           // ... at its output (SL later)
   cm_t  mp [NS];                           // ... after it (RR for s = 0)
   wire  p0 = in_v || ret;
-  assign mi[0] = ret ? '{cls: lp_m.cls, pass: lp_m.pass + 4'd1, m: lp_m.m} :
-                       '{cls: f_cc(in_f), pass: 4'd0, m: in_m};
+  assign mi[0] = ret ? '{cls: lp_m.cls, pass: lp_m.pass + 4'd1, mask: lp_m.mask, m: lp_m.m} :
+                       '{cls: f_cc(in_f), pass: 4'd0, mask: in_m, m: in_meta};
   always_ff @(posedge clk)
     if (rst) begin
       vpos <= '0; cpos <= '0;
@@ -277,9 +283,9 @@ module otpu_se_comp
   endfunction
   for (genvar s = 0; s < NS; s++) begin : g_sel
     if (s == 0) begin : g_s0
-      assign u_sel[s] = p0;
+      assign st_sel[s] = p0;
     end else begin : g_sn
-      assign u_sel[s] = vpos[s_off(s) - 1];
+      assign st_sel[s] = vpos[s_off(s) - 1];
     end
     otpu_delay #(.W($bits(cm_t)), .N(SL)) u_md (.clk, .en, .d(mi[s]), .q(mo[s]));
     if (s == 0) begin : g_rrm
@@ -311,7 +317,7 @@ module otpu_se_comp
   // ---------------------------------------------------------------- lanes
   for (genvar l = 0; l < LANES; l++) begin : g_lane
     cst_t sti [NS], sto [NS], stp [NS];    // state at each stage's input, output, after it
-    assign sti[0] = ret ? lp_st[l] : setup(f_cc(in_f), in_x[l]);
+    assign sti[0] = ret ? lp_st[l] : setup(f_cc(in_f), in_a[l]);
 
     for (genvar s = 0; s < NS; s++) begin : g_st
       f32_t a, b, c, y;
@@ -323,27 +329,28 @@ module otpu_se_comp
           A_K2:    a = t.k2;
           A_V:     a = t.v;
           A_KA:    a = uci[s].ka;
-          default: a = (s == 0) ? in_x[l] : uci[s].ka;          // A_X: pass 0 is at S0
+          default: a = (s == 0) ? in_a[l] : uci[s].ka;          // A_X: pass 0 is at S0
         endcase
         case (uci[s].bs)
           B_K1:    b = t.k1;
           B_K2:    b = t.k2;
           B_V:     b = t.v;
-          B_X:     b = (s == 0) ? in_x[l] : F_ONE;
+          B_X:     b = (s == 0) ? in_a[l] : F_ONE;
           default: b = F_ONE;
         endcase
         case (uci[s].cs)
-          C_NY:    c = (s == 0) ? fneg(in_y[l]) : F_NZ;
+          C_NY:    c = (s == 0) ? fneg(in_b[l]) : F_NZ;
           C_K2:    c = t.k2;
           C_KC:    c = uci[s].kc;
           default: c = F_NZ;
         endcase
       end
-      assign u_a[s][l] = a;
-      assign u_b[s][l] = b;
-      assign u_c[s][l] = c;
+      assign st_a[s][l] = a;
+      assign st_b[s][l] = b;
+      assign st_c[s][l] = c;
+      assign st_e[s][l] = F_ONE;
       if (EXT) begin : g_ext
-        assign y = u_y[s][l];
+        assign y = st_y[s][l];
       end else begin : g_int
         f32_t ra, rb, rc;
         always_ff @(posedge clk) if (en) begin
