@@ -37,7 +37,8 @@ opentpu.host.i2c, when that package is importable) are logged with every line.
 BUILD_DIR holds csr.csv and sdram_init.py (written by ld_test.py). Only numpy-free stdlib.
 
 --fused: the production image (MEM=litedram, gen_core.py --phy wl): the same PHY, BIST, phase and
-wclk CSRs through BAR0's window at 0x10000, BUILD_DIR = its host tree's opentpu/host/litedram.
+wclk CSRs through BAR0's window at 0x10000, BUILD_DIR = its host tree's opentpu/host/litedram;
+the FPGA temperature from the XADC's registers (0x30000), the LM73 over I2C_CTRL / I2C_IN.
 The commands run the same and leave cal_ready as they find it: the accelerator gets the channels
 from memcal (otpu-memcal cal --force, or Board() on a channel whose STATUS bit is low).
 
@@ -74,15 +75,16 @@ from ddrcal import (MIN_WINDOW, CalError, Chan, Dram, DqsPhase, FakeBoard, FakeC
 class Bar0:
     """CSRs over /dev/xdma0_user: one 32-bit load / store per word (see board.py's transport).
     `fused`: the production image, whose LiteDRAM core's CSRs sit in BAR0's window at R_MEMCAL
-    (0x10000, opentpu/host/memcal.py) and whose board registers (temperature, I2C pins) are at
-    their regs.py offsets; the test image's CSRs start at 0."""
-    R_MEMCAL, R_TEMP, TEMP_VALID = 0x10000, 0x4C, 1 << 31
+    (0x10000, opentpu/host/memcal.py) and whose board registers (I2C pins) are at their regs.py
+    offsets, with the XADC's registers at 0x30000 (bd_native.tcl); the test image's CSRs start
+    at 0."""
+    R_MEMCAL, R_XADC_TEMP = 0x10000, 0x30200
 
     def __init__(self, build: Path, dev: str = "/dev/xdma0_user", fused: bool = False):
         self.regs = csr_map(build / "csr.csv")
         self.fused, self.base = fused, self.R_MEMCAL if fused else 0
         fd = os.open(dev, os.O_RDWR | os.O_SYNC)
-        self.mm = mmap.mmap(fd, 2 << 16 if fused else 1 << 16, mmap.MAP_SHARED,
+        self.mm = mmap.mmap(fd, 4 << 16 if fused else 1 << 16, mmap.MAP_SHARED,
                             mmap.PROT_READ | mmap.PROT_WRITE)
         os.close(fd)
         self.words = memoryview(self.mm).cast("I")
@@ -110,7 +112,8 @@ class Bar0:
 class Temps:
     """The FPGA die temperature (XADC) and the board's LM73, read over the image's i2c_ctrl /
     i2c_in (production's I2C_CTRL / I2C_IN bits) with opentpu.host.i2c when it is importable.
-    On the fused image (Bar0.fused): the board registers TEMP and I2C_CTRL / I2C_IN."""
+    On the fused image (Bar0.fused): the XADC's registers (0x30000) and the board's I2C_CTRL /
+    I2C_IN."""
     def __init__(self, csr):
         self.c, self.bus, self.addr, self.note = csr, None, None, ""
         fused = getattr(csr, "fused", False)
@@ -142,9 +145,11 @@ class Temps:
 
     def read(self):
         if getattr(self.c, "fused", False):
-            v = self.c.raw_r(Bar0.R_TEMP)
-            d = {"fpga_c": (v & 0xFFF) * 503.975 / 4096 - 273.15 if v & Bar0.TEMP_VALID
-                 else float("nan")}
+            # the XADC's own temperature register (the 12-bit code in [15:4]); the board's TEMP
+            # register (0x4C) is valid only once channel 0's cal_ready is up, which these
+            # commands leave as they find it
+            v = self.c.raw_r(Bar0.R_XADC_TEMP)
+            d = {"fpga_c": (v >> 4 & 0xFFF) * 503.975 / 4096 - 273.15}
         else:
             d = {"fpga_c": self.c.r("xadc_temperature") * 503.975 / 4096 - 273.15}
         if self.addr is not None:

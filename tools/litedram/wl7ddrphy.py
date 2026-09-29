@@ -30,11 +30,15 @@ Every domain name above except sys is the PHY's own; the SoC maps them per chann
 ClockDomainsRenamer. The CSRs and settings are A7DDRPHY's (phytype A7DDRPHY), plus dly_sel_bits
 (per-bit bitslip strobes).
 
-rd_reg (default on): a register after each DQ bit's read bitslip mux, and the read latency one sys
-cycle longer to match (the controller's crossbar and rddata_valid follow settings.read_latency;
-the host's calibration does not use it). Without it the mux's select (the bitslip value) went
-straight into the controller's read data and the ECC decoder: 9 LUT levels to the ECC error
-counters, -0.409 ns at 133.33 MHz in the fused image (ld-top 14875bf).
+rd_reg (opt-in, gen_core.py --rd-reg; off in the qualified production core, ld-top 5e5a58ab): a
+register after each DQ bit's read bitslip mux, and the read latency one sys cycle longer to match
+(the controller's crossbar and rddata_valid follow settings.read_latency; the host's calibration
+does not use it). Without it the mux's select (the bitslip value) goes straight into the
+controller's read data and the ECC decoder: 9 LUT levels to the ECC error counters, -0.409 ns at
+133.33 MHz in the fused image ld-top 14875bf (FAST=1); 5e5a58ab met timing without it (full-effort
+place and route). Out-of-context synthesis: those paths from 9 LUT levels (5.50 ns) to 6 or 8
+(4.02 ns). On the card in ldcpu's ld_test --selfcal image: BIST and a 300 s soak per channel,
+0 errors.
 
 Derived from LiteDRAM (BSD-2-Clause): Copyright (c) 2015-2020 Florent Kermarrec, (c) 2015 Sebastien
 Bourdeauducq, (c) 2021 Antmicro.
@@ -54,7 +58,7 @@ from litedram.phy.dfi import *
 
 class WL7DDRPHY(Module, AutoCSR):
     def __init__(self, pads, groups, sys_clk_freq, iodelay_clk_freq=200e6, cl=None, cwl=None,
-                 rd_reg=True):
+                 rd_reg=False):
         """groups[i]: byte lane i's write clock group (0 or 1). rd_reg: see the module doc."""
         memtype, nphases = "DDR3", 4
         pads = PHYPadsCombiner(pads)
@@ -290,11 +294,13 @@ class WL7DDRPHY(Module, AutoCSR):
     @staticmethod
     def constraints(ns=3.0):
         """XDC: every serializer reset register (serdes_rst) reaches its SERDES' RST within `ns`
-        of its CLKDIV edge (the same clock at both ends: the clock skew counts). Hygiene: at
-        1.2 ns ldtest3d's routes reached 1.66 ns, and its read framing did not follow the
-        reset's arrival (0.58-0.72 ns to the ISERDES of the bits framed off); at 2.0 ns
-        ldtest3e (-0.308) and the fused image (-0.514, 0 LUT levels, 1.88 ns of route) missed it
-        by placement alone, and ldtest3e calibrated and passed BIST on both channels."""
+        of its CLKDIV edge (the same clock at both ends: the clock skew counts). Hygiene: the
+        path is also timed against the 7.5 ns CLKDIV period, which alone releases every SERDES of
+        a channel on the same CLKDIV edge. At 1.2 ns ldtest3d's routes reached 1.66 ns, and its
+        read framing did not follow the reset's arrival (0.58-0.72 ns to the ISERDES of the bits
+        framed off); at 2.0 ns ldtest3e (-0.308) and the fused image (-0.514, 0 LUT levels,
+        1.88 ns of route) missed it by placement alone, and ldtest3e calibrated and passed BIST on
+        both channels."""
         src = "[get_cells -hierarchical -filter {NAME =~ *wlrst*}]"
         dst = ("[get_pins -of_objects [get_cells -hierarchical -filter "
                "{REF_NAME == OSERDESE2 || REF_NAME == ISERDESE2}] -filter {REF_PIN_NAME == RST}]")

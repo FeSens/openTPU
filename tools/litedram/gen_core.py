@@ -209,8 +209,7 @@ def main():
     ap.add_argument("--groups0", default="0,0,0,0,0,0,0,0,0", help="wl: channel 0's lane groups")
     ap.add_argument("--groups1", default="0,0,0,0,0,0,0,0,0", help="wl: channel 1's lane groups")
     ap.add_argument("--rd-reg", action="store_true",
-                    help="wl: a register after each read bitslip mux, the read latency one cycle "
-                         "longer (wl7ddrphy.py; ld_test.py has it; the committed core does not)")
+                    help="wl: a register after the read bitslip mux, read latency + 1 (WL7DDRPHY rd_reg)")
     ap.add_argument("--selfcal", action="store_true",
                     help="the calibration CPU: the core calibrates itself at reset (section 10)")
     ap.add_argument("--fw-id", type=lambda x: int(x, 16), default=0,

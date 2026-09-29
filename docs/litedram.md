@@ -2,8 +2,9 @@
 
 Draft, 2026-09-29. This is an investigation; the design is unchanged. Labels: **measured** means
 a Vivado run, a simulation or a card run that was actually done (tool and version given).
-**estimate** means arithmetic. Sections 1-6 predate the card; sections 7 and 8 are the test
-images on the card.
+**estimate** means arithmetic. Sections 1-6 predate the card; sections 7 and 8 are the card runs
+(the test images, then the production image); section 9 is the native-channel build; section
+10 is the calibration CPU in the core.
 
 The question: could [LiteDRAM](https://github.com/enjoy-digital/litedram) replace the two Xilinx
 MIG controllers, the SmartConnect in front of them and the AXI side of `otpu_axi_dram`? Its
@@ -829,10 +830,20 @@ The running phase stayed inside every window. The BIST afterwards was clean on b
 **Verdict: GO.** Both channels calibrate at one common CK phase with per-lane latency; their
 BIST, 300 s soak and 35 min temperature run are clean; and the common windows (753 and
 1222 ps) are 5 and 8 times the 150 ps criterion. The production core (`gen_core.py --phy wl`)
-is this PHY. Since 86bee3c it also has a register after the read bitslip mux (`rd_reg`): in
-the fused image the mux's select fed the ECC error counters through 9 LUT levels and missed
-133.33 MHz by 0.409 ns. The OOC synthesis of the two cores (Vivado 2026.1, **measured**, before
-place and route) takes those paths from 9 levels (5.50 ns) to 6 or 8 (4.02 ns).
+is this PHY.
+
+**`rd_reg` (86bee3c): an opt-in register after the read bitslip mux.**
+- **What it is:** `gen_core.py --rd-reg` adds the register and lengthens the read latency by one
+  sys cycle.
+- **Why:** in the first fused image (14875bf, FAST=1) the mux's select fed the ECC error counters
+  through 9 LUT levels and missed 133.33 MHz by 0.409 ns.
+- **Effect:** OOC synthesis of the two cores (Vivado 2026.1, **measured**, before place and route)
+  takes those paths from 9 levels (5.50 ns) to 6 or 8 (4.02 ns).
+- **Status:** off in the qualified core. 5e5a58ab met timing without it under full-effort place
+  and route.
+- **On the card:** ldcpu's isolated test image (`ld_test --selfcal`) is the first card run with
+  `rd_reg`. Both channels had 0 BIST errors and a 300 s soak each with 0 errors, at 58 C
+  (**measured**, as ldcpu reported it).
 
 **Reading the ldtest3e numbers:**
 - **Window width:** the scans step the common CK phase in 16.7 ps steps. A lane fails only
@@ -882,6 +893,47 @@ The first fused image: accelerator plus this PHY. It ran on opentpu with host tr
   build (5e5a58ab: the same core, all timing met). Then the card's JTAG chain went empty and a
   cold power cycle brought back the factory image.
 
+### The merge candidate on the card (ld-top 5e5a58ab, 2026-09-29): qualified
+
+Changes from 14875bf:
+- the same core (8cbfd3b), with the serializer resets' max delay at 3.0 ns;
+- a scoped false path for the reset strobe into the 50 MHz domain;
+- the SW hazard counts in `otpu_native_dram` without a reset;
+- the strategy `Performance_ExplorePostRoutePhysOpt` at a 100 MHz core.
+
+Routed: WNS +0.128 ns, WHS +0.016 ns, every constraint met. It ran on opentpu with host tree
+ld-qual b719cd3, whose `otpu-selftest` calibrates a HOSTCAL image itself. Logs are in
+`~/otpu-build/fused-5e5a58ab` on opentpu. **Measured:**
+
+| check | channel 0 | channel 1 |
+|---|---|---|
+| `ld_host.py --fused all`: common window | 44 steps (737 ps), CK +49 | 72 steps (1205 ps), CK +64 |
+| write latency | every lane at bitslip 6 | every lane at bitslip 0 |
+| bits off their lane's read framing | none | lane 3 bit 1 |
+| BIST, 2 GiB x 2 x 2 | 0 errors | 0 errors |
+| 300 s soak | 268 passes, 0 errors | 268 passes, 0 errors |
+
+**Channel 1's bits off their lane's framing, across four builds:**
+- `ldtest3d`: lane 3 bit 3 at +2, lane 8 bits 0 and 3 at -2;
+- `ldtest3e`: lane 3 bit 3, lane 8 bits 1, 2, 5 and 7, all at +2;
+- 14875bf: lane 3 bits 1 and 3, lane 8 bit 6, all at +2;
+- 5e5a58ab: lane 3 bit 1 at +2.
+
+Channel 0 needed none in any build. The 3.0 ns reset constraint added no misframed bits.
+
+**`tools/qual/qual.sh fast`, 38 min, 0 FAIL lines:**
+- **`otpu-selftest` ALL PASS**, before and after. Its calib stage calibrated both channels
+  through `memcal.ensure` in 50.7 s.
+- **Token-exact against the ISA simulator:** all 12 pass (Qwen3-0.6B, LFM2.5-230M and
+  Qwen3.5-0.8B, in int8 and in fp4 with an int8 head, each per-position and resident).
+- **Decode:** 5.445, 1.988 and 6.573 Mcycles/token (int8); 3.731, 1.357 and 4.673 (fp4).
+  DRAM ran at 11.9-12.5 GB/s while busy.
+- **Streamed decode (`decode_profile`, fp4):** 28.9, 73.6 and 21.1 tok/s wall.
+- **Warm soak and diag:** a 3 min warm soak, FPGA 64 to 66 C. Then `otpu-diag` with the quick
+  memory test: 129 PASS, 0 FAIL (isa 93 / 93, mem 11 / 11).
+
+Afterwards the card went back to se-cand3 (build 002569bc), whose selftest passed.
+
 ## 9. The native-channel builds (branch `ld-top`, 2026-09-29)
 
 The accelerator and XDMA now reach the DDR3 channels through native ports, with no
@@ -892,7 +944,7 @@ controllers (`create_project.tcl`'s 11th argument; `make bit MEM=...`):
 |---|---|---|---|---|
 | `mig` (default) | the MIGs' AXI ports behind the SmartConnect | `otpu_fpga_top` | `bd.tcl` | today's production build, unchanged |
 | `mig_native` | the MIGs' native interface (`gen_mig_prj.py --native`), per channel `otpu_mig_native` | `otpu_fpga_top_mn` | `bd_native.tcl` | parked: LiteDRAM's fallback if its checkpoint fails. Vivado check (project, block design, MIG parameters, `synth_design -rtl`) passes; not built |
-| `litedram` | the committed LiteDRAM core with WL7DDRPHY (section 8; `boards/ypcb-00338/litedram/`, `tools/litedram/check_core.sh`) | `otpu_fpga_top_ld` | `bd_native.tcl` | primary: built once the WL test image passes on both channels on the card |
+| `litedram` | the committed LiteDRAM core with WL7DDRPHY (section 8; `boards/ypcb-00338/litedram/`, `tools/litedram/check_core.sh`) | `otpu_fpga_top_ld` | `bd_native.tcl` | primary: qualified on the card (ld-top 5e5a58ab, section 8) |
 
 **Shared by both native builds:** `otpu_native_sys` holds:
 - `otpu_board` with `MEM_NATIVE` (`otpu_native_dram` on the native masters);
@@ -1084,8 +1136,9 @@ after a JTAG load and a warm reboot. FPGA 58.3 C, board 50.8 C at the start. All
 | the CPU again (hold, release) | 6.3 s: CK +50, 44 steps / 737 ps | 5.84 s: CK -48, 73 steps / 1222 ps, the same three bits |
 
 - The CPU and the host agree on the CK phase, the window (within a step), write latency and
-  the per-bit framing. ldtest3e's host runs found the same (45 / 73 steps at CK +50 / +64, the
-  same misframed bits on channel 1 but for lane 8's).
+  the per-bit framing. ldtest3e's host runs found the same windows (45 / 73 steps at CK +50 /
+  +64); channel 1's bits off their lane are ldtest3d's set (section 8: each build frames its
+  own).
 - Read leveling: the same windows (9-11 taps). On channel 0, lanes 3, 5 and 6 sometimes take an
   equal-width window at the adjacent bitslip; that flips between the CPU's own two runs too.
 - The host's calibration of the same channels: about 25 s each (the step's time less its BIST
