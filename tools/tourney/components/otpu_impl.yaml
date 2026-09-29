@@ -13,7 +13,7 @@ synth:
   parts: []
 objectives:
 - fmax
-target_mhz: 125.49
+target_mhz: 133.33
 tests:
   fast:
   - tests/test_rtl.py::test_mlp_rtl[1]

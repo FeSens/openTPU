@@ -36,7 +36,14 @@ SHARED = ("build", "models")
 
 LINT_FLAGS = ["--lint-only", "-Wno-fatal", "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC",
               "-Wno-UNUSEDSIGNAL", "-Wno-UNUSEDPARAM", "-Wno-DECLFILENAME", "--timing"]
-BOARD_ENV = {"OTPU_UARCH": "board", "OTPU_AXI": "1", "OTPU_BOOT": "1"}
+# the board tests: the board's micro-architecture and memory path (otpu_native_dram in front of
+# the native memory model; the board model on the LiteDRAM channels, otpu_mem_ch and a LiteDRAM
+# native-port model), the program booted from DRAM
+BOARD_ENV = {"OTPU_UARCH": "board", "OTPU_AXI": "1", "OTPU_BOOT": "1", "OTPU_NATIVE": "ld"}
+# the configuration a gate must not inherit from the orchestrator's environment (the board
+# build's defaults: MCOLS=4, the systolic MXU)
+GATE_ENV = ("OTPU_UARCH", "OTPU_AXI", "OTPU_BOOT", "OTPU_NATIVE", "OTPU_MCOLS", "OTPU_MXU",
+            "OTPU_LANES")
 
 
 class GateFailure(Exception):
@@ -102,7 +109,7 @@ def command(wt: Path, cmd: list[str], env_extra: dict | None = None,
     slot tree `wt`, here or on the build host."""
     mode = mode or exec_mode()
     env = dict(os.environ)
-    for k in ("OTPU_UARCH", "OTPU_AXI", "OTPU_BOOT"):
+    for k in GATE_ENV:
         env.pop(k, None)
     if mode == "local":
         env.update(env_extra or {})

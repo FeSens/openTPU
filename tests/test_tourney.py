@@ -657,8 +657,8 @@ def test_exec_dispatch(tmp_path, monkeypatch):
     assert G.exec_mode() == "remote"
     argv, env = G.command(wt, ["python", "-m", "pytest", "-q", "t.py"], G.BOARD_ENV)
     assert argv[:4] == ["bash", "tools/omarchy_test.sh", "--exec", "env"]
-    assert argv[4:7] == ["OTPU_UARCH=board", "OTPU_AXI=1", "OTPU_BOOT=1"]
-    assert argv[7:] == ["python", "-m", "pytest", "-q", "t.py"]
+    assert argv[4:8] == ["OTPU_UARCH=board", "OTPU_AXI=1", "OTPU_BOOT=1", "OTPU_NATIVE=ld"]
+    assert argv[8:] == ["python", "-m", "pytest", "-q", "t.py"]
     assert env["OTPU_REMOTE_NAME"] == "tourney-fmax-otpu_vpu-r1-s0"
     assert env["OTPU_REMOTE_BUILD"] == G.REMOTE_BUILD and "OTPU_AXI" not in env
     monkeypatch.setenv("EXEC", "local")
