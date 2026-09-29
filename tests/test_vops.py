@@ -419,6 +419,36 @@ def test_vops_rtl_bit_exact(have_verilator, lanes, uarch, seed):
     assert np.array_equal(drams[0], m.slices[0].dram)
 
 
+@pytest.mark.parametrize("uarch,seed", [({}, 0), ("board", 1)])
+def test_many_small_composites_rtl_bit_exact(have_verilator, uarch, seed):
+    """Runs of independent tiny composite VOPs (1..3 elements, often one row of one column, as
+    RMSNorm's rsqrt), so many are in flight in the VPU at once (one may start every other
+    cycle, each ~66 cycles long: more than 15, and at the board's WIN = 16 all 16 window
+    entries), in rising and falling latency order, RTL against the ISA simulator bit for bit."""
+    cfg = Config(S=1)
+    uarch = dict(rtlsim.BOARD_UARCH) if uarch == "board" else uarch
+    r = np.random.default_rng(900 + seed)
+    img = np.zeros(1 << 20, np.uint8)
+    img[:4 * 4096] = _special(r, 4096).view(np.uint8)
+    prog, dst = [I.ld(0, 0, 4096)], 5000
+    runs = [[I.V_RECIP] * 20, [I.V_EXP2] * 20, [I.V_RSQRT] * 40, [I.V_LOG2] * 40,
+            [I.V_RECIP, I.V_EXP2, I.V_EXP2SUB, I.V_RSQRT, I.V_LOG2] * 8,
+            [I.V_LOG2, I.V_RSQRT, I.V_EXP2SUB, I.V_EXP2, I.V_RECIP] * 8]
+    for run in runs:
+        for fn in run:
+            rows, cols = (1, 1) if r.integers(3) else (int(r.integers(1, 3)), int(r.integers(1, 3)))
+            a = int(r.integers(0, 4000))
+            bm = I.B_SCALAR if fn == I.V_EXP2SUB else I.B_FULL
+            prog.append(I.vop(fn, dst, a, int(r.integers(0, 4000)), rows, cols, cols, cols, cols,
+                              bm, float(r.uniform(-3, 3))))
+            dst += rows * cols + int(r.integers(0, 2))
+    prog.append(I.halt())
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], uarch=uarch)
+    bad = np.nonzero(tmems[0] != m.slices[0].tmem)[0]
+    assert len(bad) == 0, f"{len(bad)} TMEM words differ, first at {bad[:8]}"
+
+
 def _dstep_rtl_program(rng, n_steps=6):
     """DSTEPs on a few DRAM states (odd rows, 64..256 columns, the zero flag) with their inputs
     LDed into TMEM just before (RAW), VOPs reading o right after, the same state stepped twice
