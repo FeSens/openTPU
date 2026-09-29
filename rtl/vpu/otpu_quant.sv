@@ -156,6 +156,7 @@ module otpu_quant
   localparam f32_t F_NZ = 32'h8000_0000;
   initial if (D % LANES != 0) $fatal(1, "otpu_quant: LANES must divide D");
   initial if (LANES < 4) $fatal(1, "otpu_quant: QST word writes need LANES >= 4");
+  initial if ((LANES & (LANES - 1)) != 0) $fatal(1, "otpu_quant: LANES must be a power of two");
 
   wire en = gnt;
 
@@ -363,7 +364,7 @@ module otpu_quant
       wq.mask = mp.mask;
       for (int l = 0; l < LANES; l++) wx[l] = xp[l];
       wq.row = mp.row[7:0];
-      wq.idx = 32'(ab) * D + mp.rel;
+      wq.idx = (32'(ab) * D + mp.rel) & ~32'(LANES - 1);  // QACT: rel steps by LANES (QST: unused)
       wq.sw = !is_st && (mp.rel % D == 0);
       wq.blk = 16'(ab) + 16'(mp.rel / D);
       wq.st = is_st;
@@ -447,9 +448,11 @@ module otpu_quant
         end
       end else begin
         act_row = wqd.row;
-        act_idx = wqd.idx;
+        // QACT writes are whole chunks (idx LANES aligned, every mask bit set); saying so here
+        // folds the ACT RAM's byte rotator to a chunk decode
+        act_idx = wqd.idx & ~32'(LANES - 1);
         for (int l = 0; l < LANES; l++) begin
-          act_we[l] = wqd.mask[l];
+          act_we[l] = wqd.mask[0];
           act_data[l] = qb[l];
         end
         if (wqd.sw) begin
