@@ -32,7 +32,9 @@ module otpu_slice
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with the composite functions
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer (<= LANES)
   parameter int PQ_WIN     = 64,      // cycles per P/Q counter window (+bucket= in simulation)
-  parameter bit HAS_DSTEP  = 1'b1     // the DMA's DSTEP datapath (otpu_dma)
+  parameter bit HAS_DSTEP  = 1'b1,    // the DMA's DSTEP datapath (otpu_dma)
+  parameter bit SE_COMP8   = 1'b0,    // the stream engine's v2 (otpu_vpu COMP8, ONE_TREE)
+  parameter bit SE_ONE_TREE = 1'b0
 ) (
   input  logic          clk,
   input  logic          sys_rst,
@@ -242,7 +244,8 @@ module otpu_slice
   for (genvar l = 0; l < LANES; l++) begin : g_ssz
     assign ss_zd[l] = '0;
   end
-  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK), .HAS_SE(HAS_DSTEP)) u_vpu (
+  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK), .HAS_SE(HAS_DSTEP),
+             .COMP8(SE_COMP8), .ONE_TREE(SE_ONE_TREE)) u_vpu (
     .clk, .rst(rst_vpu), .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
     .gnt(gnt[G_VPU]), .ren(v_ren),
     .ta_en(va_ren), .ta_addr(va_raddr), .ta_data(r_data[P_VA]),
