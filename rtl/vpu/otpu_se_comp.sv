@@ -10,7 +10,7 @@
 //
 // Op k of a function runs at stage k % NS of pass k / NS; stages past a function's last op run
 // the identity v = v*1 + -0 (exact for every flushed value). RR is the EXP2 range reduction
-// (clamp | floor | -i2f, three register stages, today's slot-1 pre-stages), applied on pass 0
+// (range flags | floor | -i2f, three register stages, today's slot-1 pre-stages), applied on pass 0
 // only (op 0 is at S0); LOG2 takes i2f(e) there. T = NS*SL + 4 cycles from S0 to S0.
 //
 //   func      ops  passes (NS = 3)   columns per cycle (LANES = 8)
@@ -158,8 +158,8 @@ module otpu_se_comp
         if (k < 6) begin
           if (k % 2 == 0) begin                                      // t = 2 - |x| y
             u.as = A_K1; u.bs = B_K2; u.kc = F_TWO;
-          end else begin                                             // y = t y
-            u.bs = B_K2; u.dst = D_K2;
+          end else begin                                             // y = t y (the last
+            u.bs = B_K2; u.dst = (k == 5) ? D_V : D_K2;               // into v)
           end
         end
       CC_RSQ:
@@ -170,8 +170,8 @@ module otpu_se_comp
             u.as = A_K2; u.bs = B_K2;
           end else if ((k - 1) % 3 == 1) begin                       // 1.5 - (y y) h
             u.bs = B_K1; u.kc = F_1P5;
-          end else begin                                             // y = t y
-            u.bs = B_K2; u.dst = D_K2;
+          end else begin                                             // y = t y (the last
+            u.bs = B_K2; u.dst = (k == 9) ? D_V : D_K2;               // into v)
           end
         end
       CC_LOG:
@@ -185,6 +185,36 @@ module otpu_se_comp
       default: ;
     endcase
     return u;
+  endfunction
+
+  // What stage s's ops use, over every function and pass (elaboration time): the operand and
+  // destination muxes keep only those inputs. At NS = 3, e.g., Q's c is always a constant and
+  // Q never writes k1.
+  function automatic logic [3:0] st_use(input int s, input int w);   // w: 0 a, 1 b, 2 c, 3 dst
+    logic [3:0] m;
+    uc_t u;
+    m = '0;
+    for (int c = 1; c <= 5; c++)
+      for (int p = 0; p < int'(n_pass(3'(c))); p++) begin
+        u = ucode(3'(c), p * NS + s);
+        case (w)
+          0:       m[u.as] = 1'b1;
+          1:       m[u.bs] = 1'b1;
+          2:       m[u.cs] = 1'b1;
+          default: m[u.dst] = 1'b1;
+        endcase
+      end
+    return m;
+  endfunction
+  // ... and whether one of them writes a constant into v (kv)
+  function automatic logic kv_use(input int s);
+    uc_t u;
+    for (int c = 1; c <= 5; c++)
+      for (int p = 0; p < int'(n_pass(3'(c))); p++) begin
+        u = ucode(3'(c), p * NS + s);
+        if (u.dst != D_V && u.kv != F_ZERO) return 1'b1;
+      end
+    return 1'b0;
   endfunction
 
   // ---------------------------------------------------------------- state and meta
@@ -229,7 +259,8 @@ module otpu_se_comp
   endfunction
 
   // RR's floor (ffloor on its domain): x flushed and in [-126, 128) or +-0, so |x| < 128 and
-  // the integer part is the top 7 bits of the significand at most
+  // the integer part is the top 7 bits of the significand at most (outside it, EXP2's result
+  // is a flag's +0 or +inf and the value here does not matter)
   function automatic logic [8:0] rr_floor(input f32_t x);
     logic [2:0] k;
     logic [6:0] ip;
@@ -258,8 +289,8 @@ module otpu_se_comp
     case (c)
       CC_EXP, CC_EXS: return t.f[0] ? F_ZERO : t.f[1] ? F_INF : (t.v + {t.ii, 23'd0});
       CC_RCP:         return t.f[0] ? F_ZERO : t.f[1] ? {t.f[2], 31'd0} :
-                             (t.f[2] ? fneg(t.k2) : t.k2);
-      CC_RSQ:         return t.f[0] ? F_ZERO : t.k2;
+                             (t.f[2] ? fneg(t.v) : t.v);
+      CC_RSQ:         return t.f[0] ? F_ZERO : t.v;
       CC_LOG:         return t.f[0] ? F_NINF : t.f[2] ? F_NAN : t.f[1] ? F_INF : t.v;
       default:        return F_ZERO;
     endcase
@@ -362,24 +393,27 @@ module otpu_se_comp
     assign sti[0] = ret ? lp_st[l] : setup(f_cc(in_f), in_a[l]);
 
     for (genvar s = 0; s < NS; s++) begin : g_st
+      localparam logic [3:0] AU = st_use(s, 0), BU = st_use(s, 1), CU = st_use(s, 2),
+                             DU = st_use(s, 3);
+      localparam logic       KVU = kv_use(s);
       f32_t a, b, c, y;
       always_comb begin
         cst_t t;
         t = sti[s];
         case (uci[s].as)
-          A_K1:    a = t.k1;
-          A_K2:    a = t.k2;
-          A_X:     a = (s == 0) ? in_a[l] : t.v;                // pass 0 is at S0
+          A_K1:    a = AU[A_K1] ? t.k1 : t.v;
+          A_K2:    a = AU[A_K2] ? t.k2 : t.v;
+          A_X:     a = (s == 0 && AU[A_X]) ? in_a[l] : t.v;     // pass 0 is at S0
           default: a = t.v;
         endcase
         case (uci[s].bs)
-          B_K1:    b = t.k1;
-          B_K2:    b = t.k2;
+          B_K1:    b = BU[B_K1] ? t.k1 : uci[s].kb;
+          B_K2:    b = BU[B_K2] ? t.k2 : uci[s].kb;
           default: b = uci[s].kb;
         endcase
         case (uci[s].cs)
-          C_K2:    c = t.k2;
-          C_NY:    c = (s == 0) ? fneg(in_b[l]) : uci[s].kc;
+          C_K2:    c = CU[C_K2] ? t.k2 : uci[s].kc;
+          C_NY:    c = (s == 0 && CU[C_NY]) ? fneg(in_b[l]) : uci[s].kc;
           default: c = uci[s].kc;
         endcase
       end
@@ -405,26 +439,27 @@ module otpu_se_comp
         r = uco[s].neg ? fneg(y) : y;
         sto[s] = '0;
         {sto[s].k1, sto[s].k2, sto[s].ii, sto[s].f} = kd;
-        sto[s].v = uco[s].kv;
+        sto[s].v = KVU ? uco[s].kv : F_ZERO;
         case (uco[s].dst)
           D_V:  sto[s].v  = r;
-          D_K1: sto[s].k1 = r;
-          D_K2: sto[s].k2 = r;
+          D_K1: if (DU[D_K1]) sto[s].k1 = r;
+          D_K2: if (DU[D_K2]) sto[s].k2 = r;
           default: ;
         endcase
       end
 
       if (s == 0) begin : g_rr
-        // RR: EXP2 v = x clamped (f: hi, lo) | i = floor(v) | k2 = -i2f(i); LOG2 k2 = i2f(e)
+        // RR: EXP2 f = (hi, lo) | i = floor(v) | k2 = -i2f(i); LOG2 k2 = i2f(e)
         cst_t q0, q1, q2;
         always_ff @(posedge clk) if (en) begin
           cst_t t;
           logic lo, hi;
           t = sto[s];
           if (rr_e) begin
+            // x < -126 or x >= 128 (or NaN): the result is +0 or +inf whatever the steps
+            // compute, so x is not clamped to 0 (the flags decide at the end)
             lo = fp_gt(F_M126, t.v);
             hi = !fp_gt(F_128, t.v);
-            t.v = (lo || hi) ? F_ZERO : t.v;
             t.f = {1'b0, hi, lo};
           end
           q0 <= t;
