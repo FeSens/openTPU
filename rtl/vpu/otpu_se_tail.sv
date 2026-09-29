@@ -41,7 +41,10 @@ module otpu_se_tail
   // ONE_TREE: Q's final partials go to the VPU's tree (qp_*, QD registers there) and its root
   // comes back (qo_*): no tree of its own (docs/stream.md 11.3)
   parameter bit ONE_TREE = 1'b0,
-  parameter int QD    = 1
+  parameter int QD    = 1,
+  // COMP8: U and Q are also the VPU's composite stages (otpu_se_comp) in VOP mode (cm): their
+  // units advance on cen (the VPU's enable, which is pe in stream mode) (docs/stream.md 11.2)
+  parameter bit COMP8 = 1'b0
 ) (
   input  logic             clk,
   input  logic             rst,
@@ -70,7 +73,22 @@ module otpu_se_tail
   output logic [7:0]       qp_sub,
   output f32_t             qp_d [LANES],
   input  logic             qo_v,
-  input  f32_t             qo_d
+  input  f32_t             qo_d,
+  // COMP8: U (y = a*b + c*e) and Q (y = a*b + c) as generic stages, SL cen-cycles from the
+  // cycle their operands are presented (u_sel / q_sel) to u_y / q_y
+  input  logic             cm,
+  input  logic             cen,
+  input  logic             u_sel,
+  input  f32_t             u_a [LANES],
+  input  f32_t             u_b [LANES],
+  input  f32_t             u_c [LANES],
+  input  f32_t             u_e [LANES],
+  output f32_t             u_y [LANES],
+  input  logic             q_sel,
+  input  f32_t             q_a [LANES],
+  input  f32_t             q_b [LANES],
+  input  f32_t             q_c [LANES],
+  output f32_t             q_y [LANES]
 );
   localparam int L = LANES;
   localparam int LM = 2, LA = 4;
@@ -281,13 +299,21 @@ module otpu_se_tail
   f32_t  nw [L];
   ss_meta_t um_y;
   wire   upad = c_pad && um.j[4:3] != '0;
+  // U's and Q's units: on pe, or (COMP8) on cen, with the composite's operands in VOP mode
+  wire   ue = COMP8 ? cen : pe;
+  wire   uc = COMP8 && cm;
   for (genvar l = 0; l < L; l++) begin : g_u
     f32_t ra, rg, rc, re;
-    always_ff @(posedge clk) if (pe) begin
-      ra <= ud[l]; rg <= upad ? F_ZERO : c_gcol ? gu[l] : gk; rc <= upad ? F_ZERO : d_row;
-      re <= ku[l];
+    always_ff @(posedge clk) if (ue) begin
+      if (uc) begin
+        ra <= u_a[l]; rg <= u_b[l]; rc <= u_c[l]; re <= u_e[l];
+      end else begin
+        ra <= ud[l]; rg <= upad ? F_ZERO : c_gcol ? gu[l] : gk; rc <= upad ? F_ZERO : d_row;
+        re <= ku[l];
+      end
     end
-    otpu_fmma #(.LM(LM), .LA(LA)) u_ma (.clk, .en(pe), .a(ra), .b(rg), .c(rc), .e(re), .y(nw[l]));
+    otpu_fmma #(.LM(LM), .LA(LA)) u_ma (.clk, .en(ue), .a(ra), .b(rg), .c(rc), .e(re), .y(nw[l]));
+    assign u_y[l] = nw[l];
   end
   otpu_delay #(.W($bits(ss_meta_t)), .N(SL)) u_uy (.clk, .en(pe), .d(um), .q(um_y));
   assign y_v = um_y.v;
@@ -307,13 +333,27 @@ module otpu_se_tail
   otpu_delay #(.W($bits(ss_meta_t)), .N(LA)) u_yt (.clk, .en(pe), .d(yq_q), .q(yq_t));
   logic  fq_e;
   otpu_delay #(.W(1), .N(LM - 1)) u_fq (.clk, .en(pe), .d(yq_d.first), .q(fq_e));
+  // COMP8 in VOP mode: a*b + c from input registers (qa, qb, qc), c reaching the adder through
+  // fbq (the partial loop's register) as the product does
   for (genvar l = 0; l < L; l++) begin : g_lq
-    f32_t tq, prev, fbd, fbq;
-    otpu_fmul #(.LAT(LM)) u_m (.clk, .en(pe), .a(nw[l]), .b(qy[l]), .y(tq));
-    otpu_delay #(.W(32), .N(RL - LA - 1)) u_fb (.clk, .en(pe), .d(pq[l]), .q(fbd));
-    always_ff @(posedge clk) if (pe) fbq <= fq_e ? F_ZERO : fbd;
+    f32_t tq, prev, fbd, fbq, qa, qb, qc, qc2, ma, mb;
+    if (COMP8) begin : g_qi
+      always_ff @(posedge clk) if (ue) begin
+        qa <= q_a[l]; qb <= q_b[l]; qc <= q_c[l]; qc2 <= qc;
+      end
+      assign ma = uc ? qa : nw[l];
+      assign mb = uc ? qb : qy[l];
+    end else begin : g_qs
+      assign ma = nw[l];
+      assign mb = qy[l];
+      assign qc2 = F_ZERO;
+    end
+    otpu_fmul #(.LAT(LM)) u_m (.clk, .en(ue), .a(ma), .b(mb), .y(tq));
+    otpu_delay #(.W(32), .N(RL - LA - 1)) u_fb (.clk, .en(ue), .d(pq[l]), .q(fbd));
+    always_ff @(posedge clk) if (ue) fbq <= uc ? qc2 : fq_e ? F_ZERO : fbd;
     assign prev = fbq;
-    otpu_fadd #(.LAT(LA)) u_a (.clk, .en(pe), .a(prev), .b(tq), .y(pq[l]));
+    otpu_fadd #(.LAT(LA)) u_a (.clk, .en(ue), .a(prev), .b(tq), .y(pq[l]));
+    assign q_y[l] = pq[l];
   end
   if (ONE_TREE) begin : g_q1
     // the final partials to the VPU's tree (in Q's windows, see T_U), the root back

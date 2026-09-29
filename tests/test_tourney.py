@@ -177,7 +177,7 @@ def test_sandbox_rejects(tmp_path):
 # ------------------------------------------------------------------------------ components
 def test_component_configs_are_consistent():
     comps = sorted((ROOT / "tools" / "tourney" / "components").glob("*.yaml"))
-    assert len(comps) == 14
+    assert len(comps) == 13
     for p in comps:
         c = yaml.safe_load(p.read_text())
         assert c["name"] == p.stem
@@ -208,7 +208,7 @@ def test_every_module_has_a_component():
     # the components that can change the DSTEP datapath run its RTL test
     for c in comps:
         if any(fnmatch.fnmatch(f, g) for g in c["allowed"]
-               for f in ("rtl/dma/otpu_dstep.sv", "rtl/vpu/otpu_vtree.sv", "rtl/vpu/otpu_fp.sv")):
+               for f in ("rtl/vpu/otpu_se_tail.sv", "rtl/vpu/otpu_vtree.sv", "rtl/vpu/otpu_fp.sv")):
             assert "tests/test_vops.py::test_dstep_rtl_bit_exact" in c["tests"]["fast"], c["name"]
 
 
@@ -219,9 +219,9 @@ def test_path_summary_groups_units():
          " levels 14, data 8.000 ns (logic 1.000, route 7.000)\n"
          "-0.500 ns VIOLATED u_board/u_slice/u_mxu/q_h_reg/C -> u_board/u_slice/u_tmem/pw_b_reg[1]/D"
          " levels 12, data 8.000 ns (logic 3.000, route 5.000)\n"
-         "-0.400 ns VIOLATED u_board/u_slice/u_dma/g_ds.u_ds/x_reg/C -> u_board/u_slice/cnt_reg/D"
+         "-0.400 ns VIOLATED u_board/u_slice/u_vpu/g_se.u_tail/x_reg/C -> u_board/u_slice/cnt_reg/D"
          " levels 3, data 7.000 ns (logic 3.500, route 3.500)\n")
-    assert AG.unit_of("u_board/u_slice/u_dma/u_ds/x_reg/C") == "u_dma/u_ds"
+    assert AG.unit_of("u_board/u_slice/u_vpu/g_se.u_tail/x_reg/C") == "u_vpu/u_tail"
     assert AG.unit_of("u_board/u_slice/cnt_reg/D") == "u_slice"
     assert AG.unit_of("u_board/u_mem/qc_reg[0][19]/C") == "u_mem"
     s = AG.path_summary(t).splitlines()
@@ -239,7 +239,7 @@ def test_full_component_prompt_does_not_quote_the_rtl():
     p = AG.hypothesis_prompt_fmax(c, ROOT, champ, "(none)", "(none)", AG.FMAX_CATEGORIES[0],
                                   125.49)
     assert "=== rtl/" not in p and "read the ones on the paths you target" in p
-    assert "rtl/dma/otpu_dstep.sv" in p and "rtl/boards/ypcb-00338/otpu_board.sv" in p
+    assert "rtl/vpu/otpu_se_tail.sv" in p and "rtl/boards/ypcb-00338/otpu_board.sv" in p
     assert len(p) < 40000
 
 

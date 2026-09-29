@@ -1,10 +1,10 @@
 name: otpu_dma
 description: 'DMA: LD/ST between DRAM port B (chunk-aligned requests, backpressure, variable latency)
   and TMEM: each chunk requested once (LD chunk buffer, ST gather), one W-word segment
-  per cycle on TMEM; ST completes on write acknowledge.'
+  per cycle on TMEM; ST completes on write acknowledge. Streams (DSTEP, STREAM): the descriptor
+  read and decode, the fill of the stream engine (ss_*), the stream''s DRAM runs through it
+  and the row outputs to TMEM.'
 allowed:
-- rtl/vpu/otpu_vtree.sv
-- rtl/dma/otpu_dstep.sv
 - rtl/dma/otpu_dma.sv
 synth:
   parts:
@@ -17,8 +17,6 @@ synth:
     - rtl/vpu/otpu_fp.sv
     - rtl/vpu/otpu_fpipe.sv
     - rtl/top/otpu_pkg.sv
-    - rtl/vpu/otpu_vtree.sv
-    - rtl/dma/otpu_dstep.sv
     - rtl/dma/otpu_dma.sv
 target_mhz: 110
 tests:
@@ -35,6 +33,8 @@ tests:
   - tests/test_rtl.py::test_fuzz_single_slice[2]
   - tests/test_rtl.py::test_fuzz_single_slice[3]
   - tests/test_vops.py::test_dstep_rtl_bit_exact
+  - tests/test_stream.py::test_stream_rtl_bit_exact
+  - tests/test_stream_rtl.py
   board:
   - tests/test_rtl.py::test_design_size_block_128_rtl
   - tests/test_rtl.py::test_board_memory_path_stress[1-30]

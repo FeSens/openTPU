@@ -5,12 +5,14 @@
 // must drain them before the grant, and they resume after it. The VOPs share slot 0's partial
 // loop and u_vt with the streams (RSUM/RSSQ/RDOT).
 // Input (+in=, hex words): the VOPs, "nvop" then nvop lines "op flags w1 .. w7"; then per stream
-//   1 ns rows a_en a_sel dmode g_src q_en nfill nseg pe_pct nrel delay pad64
+//   1|3 ns rows a_en a_sel dmode g_src q_en nfill nseg pe_pct nrel delay pad64
+// (3: drain with pe after the last output; 1: stop pe right after it, as the DMA does)
 // (nrel: VOPs released so far; delay: cycles from their release to ss_req), nfill lines
 // "fk fi d0 .. d7" and nseg lines "d0 .. d7"; a 0 ends the file. +tmem= preloads the TMEM
 // (readmemh). Output (+out=): per stream "Y d0 .. d7" per updated segment and "O d" per row
 // output, then "E"; at the end "T" and the TMEM words (+dump= of them), one per line.
 module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter bit ONE_TREE = 1'b0,
+                   parameter bit COMP8 = 1'b0,
                    parameter int GNT_PCT = 80);
   import otpu_pkg::*;
   import otpu_fp::*;
@@ -37,7 +39,7 @@ module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter bit ONE_TREE = 1'b0,
   logic [2:0] ss_fk = SF_NONE;
   logic [4:0] ss_fi = '0;
 
-  otpu_vpu #(.LANES(L), .WBUF(WBUF), .HAS_SE(1'b1), .ONE_TREE(ONE_TREE)) dut (
+  otpu_vpu #(.LANES(L), .WBUF(WBUF), .HAS_SE(1'b1), .ONE_TREE(ONE_TREE), .COMP8(COMP8)) dut (
     .clk, .rst, .start, .cmd, .rdy, .done, .gnt, .ren, .ta_en, .ta_addr, .ta_data, .tb_en,
     .tb_addr, .tb_data, .tw_en, .tw_addr, .tw_data, .pf_u, .pf_frz,
     .ss_req, .ss_gnt, .ss_cfg, .ss_pe, .ss_in_v, .ss_in_d, .ss_fk, .ss_fi, .ss_fd, .ss_y_v,
@@ -166,12 +168,15 @@ module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter bit ONE_TREE = 1'b0,
       end
       ss_pe = 1'b0;
       ss_in_v = 1'b0;
-      // a few more pe cycles: nothing else may come out
-      for (i = 0; i < 300; i++) begin
-        ss_pe = ($urandom % 2) == 0;
-        @(negedge clk);
+      // half the streams: a few more pe cycles, nothing else may come out; the others stop pe
+      // right after the last output, as the DMA does (the next stream must not see this one)
+      if (hdr[1]) begin
+        for (i = 0; i < 300; i++) begin
+          ss_pe = ($urandom % 2) == 0;
+          @(negedge clk);
+        end
+        ss_pe = 1'b0;
       end
-      ss_pe = 1'b0;
       @(negedge clk);
       if (ny - y0 != nseg || no - o0 != (qen_q != 0 ? rows_q : 0))
         $fatal(1, "extra outputs: %0d/%0d segments, %0d/%0d o", ny - y0, nseg, no - o0, rows_q);

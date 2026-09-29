@@ -64,7 +64,7 @@ def _vops(rng, n):
     return out
 
 
-def run_front(streams, vops, rels, tm0, rng, tmp_path, wbuf, one_tree=False):
+def run_front(streams, vops, rels, tm0, rng, tmp_path, wbuf, one_tree=False, comp8=False):
     """With one_tree, a 64-column stream is presented as the DMA presents it (ns = 16, pad64:
     each row's 8 segments, then 8 of +0 whose Y is dropped)."""
     lines = [f"{len(vops):x}"]
@@ -77,7 +77,8 @@ def run_front(streams, vops, rels, tm0, rng, tmp_path, wbuf, one_tree=False):
         S = np.concatenate([st["S"], np.zeros_like(st["S"])], 1) if pad else st["S"]
         segs = F.bits(S).reshape(-1, L)
         pct = int(rng.choice([100, 70, 40]))
-        lines.append(" ".join(f"{v:x}" for v in [1, S.shape[1] // L, rows, int(st["a_en"]),
+        drain = 3 if rng.integers(2) else 1        # pe after the last output or not
+        lines.append(" ".join(f"{v:x}" for v in [drain, S.shape[1] // L, rows, int(st["a_en"]),
                                                   int(st["a_sel"]), st["dmode"], st["g_src"],
                                                   int(st["q_en"]), len(fills), len(segs), pct,
                                                   nrel, dly, int(pad)]))
@@ -91,9 +92,9 @@ def run_front(streams, vops, rels, tm0, rng, tmp_path, wbuf, one_tree=False):
     R = rtlsim.RTL
     exe = rtlsim.build("tb_se_vpu", [R / "vpu/otpu_fp.sv", R / "vpu/otpu_fpipe.sv",
                                      R / "top/otpu_pkg.sv", R / "vpu/otpu_vtree.sv",
-                                     R / "vpu/otpu_se_tail.sv", R / "vpu/otpu_vpu.sv",
-                                     rtlsim.TB / "tb_se_vpu.sv"],
-                        {"WBUF": int(wbuf), "ONE_TREE": int(one_tree)})
+                                     R / "vpu/otpu_se_comp.sv", R / "vpu/otpu_se_tail.sv",
+                                     R / "vpu/otpu_vpu.sv", rtlsim.TB / "tb_se_vpu.sv"],
+                        {"WBUF": int(wbuf), "ONE_TREE": int(one_tree), "COMP8": int(comp8)})
     r = rtlsim.run_sim([exe, f"+in={fin}", f"+out={fout}", f"+tmem={ftm}", f"+dump={fdump}"],
                        timeout=900)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
@@ -118,9 +119,11 @@ def run_front(streams, vops, rels, tm0, rng, tmp_path, wbuf, one_tree=False):
     return out, tm
 
 
-@pytest.mark.parametrize("wbuf,seed,one_tree", [(1, 0, 0), (1, 1, 0), (0, 2, 0), (1, 3, 1),
-                                                 (1, 4, 1), (0, 5, 1)])
-def test_se_front_rtl_bit_exact(have_verilator, tmp_path, wbuf, seed, one_tree):
+@pytest.mark.parametrize("wbuf,seed,one_tree,comp8", [
+    (1, 0, 0, 0), (1, 1, 0, 0), (0, 2, 0, 0),            # v1
+    (1, 3, 1, 0), (1, 4, 1, 0), (0, 5, 1, 0),            # ONE_TREE
+    (1, 6, 1, 1), (1, 7, 1, 1), (0, 8, 1, 1), (1, 9, 0, 1)])   # v2 (and COMP8 alone)
+def test_se_front_rtl_bit_exact(have_verilator, tmp_path, wbuf, seed, one_tree, comp8):
     rng = np.random.default_rng(1700 + seed)
     special = seed != 0
     streams = [_stream(rng, special, dm, gs) for dm in range(4) for gs in range(3)]
@@ -132,7 +135,7 @@ def test_se_front_rtl_bit_exact(have_verilator, tmp_path, wbuf, seed, one_tree):
              int(rng.choice([0, 1, 1, 2, 3, int(rng.integers(0, 31))])))
             for i in range(len(streams))]
     tm0 = F.bits(_special(rng, TW))
-    outs, tm = run_front(streams, vops, rels, tm0, rng, tmp_path, wbuf, one_tree)
+    outs, tm = run_front(streams, vops, rels, tm0, rng, tmp_path, wbuf, one_tree, comp8)
     _check(streams, outs)
     m = Machine(Config(S=1), [vops + [I.halt()]], [None])
     m.slices[0].tput(np.arange(TW), tm0.view(np.float32))

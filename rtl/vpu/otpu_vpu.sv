@@ -49,6 +49,16 @@
 // row's kv for the tail (otpu_se_tail: the d stage, the delay line, U and Q). Every ss_* input
 // is registered here (the DMA registers its side too), so SE runs one cycle behind the DMA's
 // pe; ss_y_v and ss_o_v are qualified with SE's pe (a Y / an O this cycle).
+//
+// v2 (docs/stream.md 11), two parameters on the above (both 0: v1):
+//   ONE_TREE  the tail's dot Q folds on u_vt too, in windows between dot A's (the tail pads its
+//             Q path so they never meet); a FIFO of the rows' kinds routes each root
+//   COMP8     no long lanes: the composites (EXP2, EXP2SUB, RECIP, RSQRT, LOG2) are issued
+//             LANES columns per cycle into otpu_se_comp, which loops each chunk through slot 0
+//             and the tail's U and Q (its stages 0, 1, 2) and hands the result back in start
+//             order; a composite chunk is not issued while comp's `hold` says slot 0 will be
+//             taken when it gets there. The latency rule is unchanged: a composite's latency
+//             (passes x 25 cycles) orders the functions as their slot counts do.
 module otpu_vpu
   import otpu_pkg::*;
   import otpu_fp::*;
@@ -64,7 +74,10 @@ module otpu_vpu
   parameter bit HAS_SE = 1'b0,                        // the stream engine's tail (LANES = 8)
   // one tree (docs/stream.md 11.3): the tail's Q dots fold on u_vt too, in windows between
   // the A dots' (the tail pads its Q path so they never meet)
-  parameter bit ONE_TREE = 1'b0
+  parameter bit ONE_TREE = 1'b0,
+  // COMP8 (docs/stream.md 11): the composite functions loop through slot 0 and the tail's U
+  // and Q on all the lanes (otpu_se_comp) instead of the long lanes' ten-slot chains (HAS_SE)
+  parameter bit COMP8 = 1'b0
 ) (
   input  logic                    clk,
   input  logic                    rst,
@@ -109,7 +122,12 @@ module otpu_vpu
   localparam int NP = 64;                    // RSUM/RSSQ partials (isum_64)
   localparam int RL = NP / LANES;            // partial loop length in chunks
   localparam int LW = $clog2(LANES);
-  localparam int NCL = (CL < LANES) ? CL : LANES;
+  // the stream engine: its tail is built for 8 lanes (slot 0's partial loop, RL = 8)
+  localparam bit SE = HAS_SE && (LANES == 8);
+  localparam bit C8 = COMP8 && SE;           // the composites on otpu_se_comp
+  localparam int NCL = C8 ? LANES : (CL < LANES) ? CL : LANES;   // composite columns per cycle
+  localparam int NLL = C8 ? 0 : NCL;         // long lanes (the composites' slot chains)
+  localparam int NSX = C8 ? 1 : NSLOT;       // slots along the lane taps
   localparam int CLW = $clog2(NCL);
   // TMEM word address bits (the TMEM has far fewer words and $fatals past them); the ports
   // zero-extend to 32 bits
@@ -119,8 +137,6 @@ module otpu_vpu
   localparam int CBW = $clog2(CBD);
   initial if (RL < LA || NP % LANES != 0)
     $fatal(1, "otpu_vpu: LANES must be a power of two <= 16");
-  // the stream engine: its tail is built for 8 lanes (slot 0's partial loop, RL = 8)
-  localparam bit SE = HAS_SE && (LANES == 8);
   localparam int TA = 1 + LM + LA;           // stream: the tail's X registers -> slot 0's pacc
 
   localparam f32_t F_NZ = 32'h8000_0000;     // -0: (a*b) + -0 == a*b exactly
@@ -197,6 +213,19 @@ module otpu_vpu
   endfunction
   wire [15:0] iwid = comp_f(func) ? 16'(NCL) : 16'(LANES);   // columns issued per cycle
 
+  // C8: otpu_se_comp, whose stages are slot 0 (s = 0) and the tail's U (1) and Q (2). A
+  // composite chunk is not issued while comp says slot 0 is taken when it would get there
+  // (hold: HA = 2 cycles ahead, the read -> mi -> m0 path)
+  localparam int CNS = 3;
+  logic             c_hold, c_ov, c_s0;
+  logic [CNS-1:0]   c_sel;
+  f32_t             c_sa [CNS][LANES], c_sb [CNS][LANES], c_sc [CNS][LANES], c_se [CNS][LANES];
+  f32_t             c_s0y [LANES], c_uy [LANES], c_qy [LANES];   // the stages' results
+  f32_t             c_ia [LANES], c_ib [LANES], c_od [LANES];
+  logic [LANES-1:0] c_om;
+  logic [AW:0]      c_ometa;                   // {waddr, all_last}
+  wire              iss_ok = !(C8 && comp_f(func) && c_hold);
+
   wire is_sum = (func == V_RSUM) || (func == V_RSSQ) || (func == V_RDOT);
   wire is_red = is_sum || (func == V_RMAX);
 
@@ -264,7 +293,7 @@ module otpu_vpu
           end
         end
       end
-    end else if (issuing) begin
+    end else if (issuing && iss_ok) begin
       for (int l = 0; l < LANES; l++) begin
         if (32'(ic) + 32'(l) < 32'(cols) && 16'(l) < iwid) begin
           imask[l] = 1'b1;
@@ -387,7 +416,7 @@ module otpu_vpu
     return s <= 8;
   endfunction
 
-  mt_t   mtap [NSLOT + 1];
+  mt_t   mtap [NSX + 1];
   f32_t  lres [LANES];
 
   // RSUM/RSSQ on the lanes' slot-0 multiply-add when the partial loop (RL cycles) holds the
@@ -416,8 +445,8 @@ module otpu_vpu
   endfunction
   // slot 1 has three extra input stages for the EXP2 range reduction (clamp, floor, i2f)
   localparam int PRE1 = 3;
-  mt_t   msl [NSLOT];                        // meta at each slot's input mux
-  for (genvar s = 0; s < NSLOT; s++) begin : g_mdel
+  mt_t   msl [NSX];                          // meta at each slot's input mux
+  for (genvar s = 0; s < NSX; s++) begin : g_mdel
     if (s == 1) begin : g_pre
       logic [MTW-1:0] q;
       otpu_delay #(.W(MTW), .N(PRE1)) u_p (.clk, .en, .d(mt_pk(mtap[s])), .q(q));
@@ -444,19 +473,22 @@ module otpu_vpu
   // which boundary holds an entry at its function's last slot (at most one: see header); each
   // end tap is tied to its functions, so the lanes read every result from a fixed tap. Past
   // tap 0 the class decides (the reductions' C_OTH has no slots).
-  logic hit [NSLOT + 1];
+  // (C8: a composite's chunk ends in otpu_se_comp, c_ov; the latency rule keeps it apart)
+  logic hit [NSX + 1];
   mt_t  mo;
   always_comb begin
     mo = '0;
-    for (int s = 0; s <= NSLOT; s++) begin
+    for (int s = 0; s <= NSX; s++) begin
       if (s == 0) hit[s] = mtap[s].v && !red_f(m0.func) && n_slots(m0.func) == 4'd0;
       else        hit[s] = end_tap(s) && mtap[s].v && n_slots(cls_f(mtap[s].cls)) == 4'(s);
       if (hit[s]) mo = mtap[s];
     end
+    if (C8 && c_ov) mo = '{v: 1'b1, cls: C_OTH, mask: c_om, waddr: c_ometa[AW:1],
+                           all_last: c_ometa[0]};
   end
 
   // long lanes: all functions
-  for (genvar l = 0; l < NCL; l++) begin : g_lane
+  for (genvar l = 0; l < NLL; l++) begin : g_lane
     localparam int NS = NSLOT;                     // slots of this lane
     f32_t x, y;
     lst_t st [NS + 1];
@@ -674,8 +706,9 @@ module otpu_vpu
   end
 
   // short lanes: slot 0 only. The composite functions are never issued here (imask), so their
-  // setup, operand cases and result muxes are left out.
-  for (genvar l = NCL; l < LANES; l++) begin : g_slane
+  // setup, operand cases and result muxes are left out. C8: every lane, and slot 0 takes
+  // otpu_se_comp's operands when it presents a chunk (c_s0).
+  for (genvar l = NLL; l < LANES; l++) begin : g_slane
     f32_t x, y;
     f32_t st [2];                                  // v at boundaries 0 and 1
     assign x = xa[l];
@@ -706,19 +739,52 @@ module otpu_vpu
       endcase
     end
     always_ff @(posedge clk) if (en) begin
-      ra <= ia; rb <= ib; re <= ie;
+      ra <= c_s0 ? c_sa[0][l] : ia; rb <= c_s0 ? c_sb[0][l] : ib; re <= c_s0 ? c_se[0][l] : ie;
     end
     // sync reset keeps rc out of u_c's SRL (see g_slot)
     always_ff @(posedge clk)
       if (rst)     rc <= F_NZ;
-      else if (en) rc <= ic_;
+      else if (en) rc <= c_s0 ? c_sc[0][l] : ic_;
     otpu_fmma #(.LM(LM), .LA(LA)) u_ma (.clk, .en, .a(ra), .b(rb), .c(rc), .e(re), .y(st[1]));
     if (RMA) begin : g_pacc
       assign pacc[l] = st[1];
     end
+    assign c_s0y[l] = st[1];
 
-    // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here)
-    assign lres[l] = hit[0] ? st[0] : st[1];
+    // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here), or
+    // (C8) a composite's
+    assign lres[l] = (C8 && c_ov) ? c_od[l] : hit[0] ? st[0] : st[1];
+    assign c_ia[l] = x;
+    assign c_ib[l] = y;
+  end
+
+  if (C8) begin : g_comp
+    f32_t sy [CNS][LANES];
+    assign sy[0] = c_s0y;
+    assign sy[1] = c_uy;
+    assign sy[2] = c_qy;
+    otpu_se_comp #(.LANES(LANES), .MW(AW + 1), .NS(CNS), .HA(2), .EXT(1'b1)) u_comp (
+      .clk, .rst, .en, .in_v(m0.v && comp_f(m0.func)), .in_f(m0.func), .in_a(c_ia),
+      .in_b(c_ib), .in_m(m0.mask), .in_meta({m0.waddr, m0.all_last}), .hold(c_hold),
+      .st_sel(c_sel), .st_a(c_sa), .st_b(c_sb), .st_c(c_sc), .st_e(c_se), .st_y(sy),
+      .out_v(c_ov), .out_d(c_od), .out_m(c_om), .out_meta(c_ometa));
+    assign c_s0 = c_sel[0];
+  end else begin : g_nocomp
+    assign c_hold = 1'b0;
+    assign c_ov = 1'b0;
+    assign c_s0 = 1'b0;
+    assign c_sel = '0;
+    assign c_om = '0;
+    assign c_ometa = '0;
+    for (genvar l = 0; l < LANES; l++) begin : g_z
+      assign c_od[l] = '0;
+      for (genvar k = 0; k < CNS; k++) begin : g_k
+        assign c_sa[k][l] = '0;
+        assign c_sb[k][l] = '0;
+        assign c_sc[k][l] = '0;
+        assign c_se[k][l] = '0;
+      end
+    end
   end
 
   // ------------------------------------------------------------------ RMAX
@@ -989,12 +1055,15 @@ module otpu_vpu
     logic t_yv, t_ov, t_qc, t_qrl;
     logic [7:0] t_qsub;
     f32_t t_qd [LANES];
-    otpu_se_tail #(.LANES(LANES), .TA(TA), .ONE_TREE(ONE_TREE), .QD(1)) u_tail (
+    otpu_se_tail #(.LANES(LANES), .TA(TA), .ONE_TREE(ONE_TREE), .QD(1), .COMP8(C8)) u_tail (
       .clk, .rst, .init(s_init), .cfg(s_cfg), .fk(s_fk), .fi(s_fi), .fd(s_fd),
       .pe(sen), .in_v(s_in_v), .in_d(s_in_d), .xd(s_xd), .xa(s_xa), .xm(s_xm),
       .kv(root), .kv_v(root_v && !vt_q), .y_v(t_yv), .y_d(ss_y_d), .o_v(t_ov), .o_d(ss_o_d),
       .qp_cap(t_qc), .qp_row_last(t_qrl), .qp_sub(t_qsub), .qp_d(t_qd),
-      .qo_v(root_v && vt_q), .qo_d(root));
+      .qo_v(root_v && vt_q), .qo_d(root),
+      .cm(!ss_act), .cen(en), .u_sel(c_sel[1]), .u_a(c_sa[1]), .u_b(c_sb[1]), .u_c(c_sc[1]),
+      .u_e(c_se[1]), .u_y(c_uy), .q_sel(c_sel[2]), .q_a(c_sa[2]), .q_b(c_sb[2]), .q_c(c_sc[2]),
+      .q_y(c_qy));
     if (ONE_TREE) begin : g_one
       // Q's partials registered here (QD = 1: the tail pads its Q path for it), so no path
       // runs from the tail's adders into the tree's; the roots come out in window order, so
@@ -1047,6 +1116,8 @@ module otpu_vpu
       assign s_xa[l] = '0;
       assign ss_y_d[l] = '0;
       assign q_pd[l] = '0;
+      assign c_uy[l] = '0;
+      assign c_qy[l] = '0;
     end
     assign ss_y_v = 1'b0;
     assign ss_o_v = 1'b0;
@@ -1135,7 +1206,7 @@ module otpu_vpu
             ic <= ic + 16'(LANES);
             ch <= ch + 1;
           end
-        end else if (issuing) begin
+        end else if (issuing && iss_ok) begin
           mi.v <= 1'b1;
           mi.tag <= tag;
           mi.func <= func;
