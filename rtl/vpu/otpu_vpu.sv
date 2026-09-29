@@ -178,7 +178,9 @@ module otpu_vpu
   cmd_t        cq [2];
   logic [1:0]  cq_n;                          // queued
   logic        cq_h;
-  logic [3:0]  ew_n;                          // elementwise instructions issued, not done
+  // elementwise instructions issued, not done: one may start every other cycle, so up to
+  // about latency / 2 are in flight (the composites: ~70 cycles), more than 4 bits count
+  logic [6:0]  ew_n;
   logic [3:0]  last_tap;                      // slots of the last one started
   assign rdy = (cq_n < 2);
   cmd_t hc;
@@ -907,7 +909,7 @@ module otpu_vpu
       mi <= '0;
       tag <= '0;
     end else begin
-      logic [3:0] ewn;
+      logic [6:0] ewn;
       logic [1:0] qn;
       ewn = ew_n;
       qn = cq_n;
