@@ -298,12 +298,15 @@ module otpu_se_tail
   for (genvar l = 0; l < L; l++) begin : g_qd
     otpu_delay #(.W(32), .N(SL)) u_q (.clk, .en(pe), .d(qu[l]), .q(qy[l]));
   end
+  // Without O no valid row enters Q: the DMA stops pe once the last Y is out, and a row still
+  // on its way through Q would come out in the next stream
   f32_t  pq [L];
-  ss_meta_t yq_q, yq_t;
-  otpu_delay #(.W($bits(ss_meta_t)), .N(LM)) u_yq (.clk, .en(pe), .d(um_y), .q(yq_q));
+  ss_meta_t yq_d, yq_q, yq_t;
+  assign yq_d = c_qen ? um_y : '0;
+  otpu_delay #(.W($bits(ss_meta_t)), .N(LM)) u_yq (.clk, .en(pe), .d(yq_d), .q(yq_q));
   otpu_delay #(.W($bits(ss_meta_t)), .N(LA)) u_yt (.clk, .en(pe), .d(yq_q), .q(yq_t));
   logic  fq_e;
-  otpu_delay #(.W(1), .N(LM - 1)) u_fq (.clk, .en(pe), .d(um_y.first), .q(fq_e));
+  otpu_delay #(.W(1), .N(LM - 1)) u_fq (.clk, .en(pe), .d(yq_d.first), .q(fq_e));
   for (genvar l = 0; l < L; l++) begin : g_lq
     f32_t tq, prev, fbd, fbq;
     otpu_fmul #(.LAT(LM)) u_m (.clk, .en(pe), .a(nw[l]), .b(qy[l]), .y(tq));
