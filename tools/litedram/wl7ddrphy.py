@@ -30,6 +30,12 @@ Every domain name above except sys is the PHY's own; the SoC maps them per chann
 ClockDomainsRenamer. The CSRs and settings are A7DDRPHY's (phytype A7DDRPHY), plus dly_sel_bits
 (per-bit bitslip strobes).
 
+rd_reg (default on): a register after each DQ bit's read bitslip mux, and the read latency one sys
+cycle longer to match (the controller's crossbar and rddata_valid follow settings.read_latency;
+the host's calibration does not use it). Without it the mux's select (the bitslip value) went
+straight into the controller's read data and the ECC decoder: 9 LUT levels to the ECC error
+counters, -0.409 ns at 133.33 MHz in the fused image (ld-top 14875bf).
+
 Derived from LiteDRAM (BSD-2-Clause): Copyright (c) 2015-2020 Florent Kermarrec, (c) 2015 Sebastien
 Bourdeauducq, (c) 2021 Antmicro.
 """
@@ -47,8 +53,9 @@ from litedram.phy.dfi import *
 
 
 class WL7DDRPHY(Module, AutoCSR):
-    def __init__(self, pads, groups, sys_clk_freq, iodelay_clk_freq=200e6, cl=None, cwl=None):
-        """groups[i]: byte lane i's write clock group (0 or 1)."""
+    def __init__(self, pads, groups, sys_clk_freq, iodelay_clk_freq=200e6, cl=None, cwl=None,
+                 rd_reg=True):
+        """groups[i]: byte lane i's write clock group (0 or 1). rd_reg: see the module doc."""
         memtype, nphases = "DDR3", 4
         pads = PHYPadsCombiner(pads)
         tck = 2 / (2 * nphases * sys_clk_freq)
@@ -106,7 +113,7 @@ class WL7DDRPHY(Module, AutoCSR):
             phytype="A7DDRPHY", memtype=memtype, databits=databits, strobes=strobes,
             dfi_databits=2 * databits, nranks=nranks, nphases=nphases,
             rdphase=self._rdphase.storage, wrphase=self._wrphase.storage, cl=cl, cwl=cwl,
-            read_latency=cl_sys_latency + 6, write_latency=cwl_sys_latency - 1,
+            read_latency=cl_sys_latency + 6 + int(rd_reg), write_latency=cwl_sys_latency - 1,
             cmd_latency=0, cmd_delay=None, write_leveling=False, write_dq_dqs_training=False,
             write_latency_calibration=True, read_leveling=True, delays=32, bitslips=8,
             with_dm=hasattr(pads, "dm"))
@@ -248,8 +255,9 @@ class WL7DDRPHY(Module, AutoCSR):
                 i_RST=rd_rst[lane], i_CLK=ClockSignal("sys4x_w0"), i_CLKB=~ClockSignal("sys4x_w0"),
                 i_CLKDIV=ClockSignal("sys_w"), i_BITSLIP=0, i_CE1=1, i_DDLY=dq_i_delayed,
                 **{f"o_Q{n + 1}": dq_q[8 - 1 - n] for n in range(8)})
+            rd = self.sync if rd_reg else self.comb
             for n in range(8):
-                self.comb += dfi.phases[n // 2].rddata[n % 2 * databits + i].eq(dq_i_bitslip.o[n])
+                rd += dfi.phases[n // 2].rddata[n % 2 * databits + i].eq(dq_i_bitslip.o[n])
             self.specials += Instance("IDELAYE2",
                 p_SIGNAL_PATTERN="DATA", p_DELAY_SRC="IDATAIN", p_CINVCTRL_SEL="FALSE",
                 p_HIGH_PERFORMANCE_MODE="TRUE", p_REFCLK_FREQUENCY=iodelay_clk_freq / 1e6,
