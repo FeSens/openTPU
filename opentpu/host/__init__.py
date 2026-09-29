@@ -7,6 +7,7 @@ its tools.
     fake       FakeTransport: an in-memory card with register map 2 (tests, demos)
     power      Vivado report_power -> power.json, and the power estimate
     checks     bring-up checks
+    ddrcal     LiteDRAM DDR3 calibration from the host (the LiteDRAM test image; docs/litedram.md)
     smi        otpu-smi         selftest   otpu-selftest
     hwlens     otpu-lens        chat       otpu-chat
     pcie_setup otpu-setup (setup_pcie.sh and its files in pcie/: driver, udev rules)
