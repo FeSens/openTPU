@@ -202,11 +202,22 @@ module otpu_slice
   // flops across the die, and one replicated net from the board ran 8.4 ns routes into the
   // units (the worst core_clk paths at 114 MHz). The units leave reset a cycle after the
   // sequencer, which starts nothing that early. max_fanout 64: at 125.49 MHz rst_vpu (256 per
-  // copy) into the VPU lanes' c registers had 0.25 ns slack.
+  // copy) into the VPU lanes' c registers had 0.25 ns slack. Q and the VPU take a second stage
+  // (rst_q0, rst_v0), so their replicas are loaded next to them: in the SE v2 build the board's
+  // core_rst copies into rst_vpu / rst_q had -0.107 ns with no logic. They leave reset two
+  // cycles after the sequencer (checked below).
   (* max_fanout = 64 *) logic rst_dma, rst_mxu, rst_q, rst_vpu;
+  logic rst_q0, rst_v0;
   always_ff @(posedge clk) begin
-    rst_dma <= rst; rst_mxu <= rst; rst_q <= rst; rst_vpu <= rst;
+    rst_dma <= rst; rst_mxu <= rst; rst_q0 <= rst; rst_v0 <= rst;
+    rst_q <= rst_q0; rst_vpu <= rst_v0;
   end
+`ifndef SYNTHESIS
+  always_ff @(posedge clk)
+    if ((ustart[U_DMA] && rst_dma) || (ustart[U_MXU] && rst_mxu) || (ustart[U_Q] && rst_q) ||
+        (ustart[U_VPU] && rst_vpu))
+      $fatal(1, "otpu_slice: a unit started while in reset (ustart %b)", ustart);
+`endif
 
   // the stream engine (docs/stream.md): the DMA moves a stream (DSTEP, STREAM) through SE in
   // the VPU; streams need 8 lanes on both sides (otpu_dma W = 8: D >= 32)
