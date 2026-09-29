@@ -11,7 +11,7 @@
 // Device     : xc7k480t-ffg1156-2
 // Hierarchy  : disabled
 // LiteX sha1 : --------
-// Date       : 2026-09-29 10:41:12
+// Date       : 2026-09-29 11:08:00
 //------------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -143,8 +143,8 @@ OTPULiteDRAM
 ├── cpu (CPUNone)
 ├── identifier (Identifier)
 ├── wclk (WriteClocks)
-│    ├── [BB:MMCME2_ADV]
 │    ├── [BB:BUFG]
+│    ├── [BB:MMCME2_ADV]
 │    ├── [BB:BUFG]
 │    ├── [BB:BUFG]
 │    ├── [BB:BUFG]
@@ -311,20 +311,11 @@ OTPULiteDRAM
 │    ├── bitslip_152 (BitSlip) [Gen]
 │    ├── tappeddelayline_2 (TappedDelayLine) [Gen]
 │    ├── tappeddelayline_3 (TappedDelayLine) [Gen]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -354,6 +345,30 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
@@ -391,34 +406,9 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -574,20 +564,13 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUFDS]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
-│    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
@@ -597,861 +580,293 @@ OTPULiteDRAM
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:ISERDESE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    └── [BB:IOBUF]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    └── [BB:IDELAYE2]
 ├── sdram (LiteDRAMCore)
 │    ├── dfii (DFIInjector)
 │    │    ├── pi0 (PhaseInjector)
@@ -1783,15 +1198,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OBUFDS]
@@ -2042,869 +1448,293 @@ OTPULiteDRAM
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    └── [BB:IOBUF]
+│    ├── [BB:IOBUF]
+│    └── [BB:IDELAYE2]
 ├── sdram1 (LiteDRAMCore)
 │    ├── dfii (DFIInjector)
 │    │    ├── pi0 (PhaseInjector)
@@ -16582,14 +15412,6 @@ reg           wl7ddrphy0_half_sys8x_taps_wr_stb = 1'd0;
 wire    [2:0] wl7ddrphy0_pads_ba;
 wire          wl7ddrphy0_rd_rst_r0;
 wire          wl7ddrphy0_rd_rst_r1;
-wire          wl7ddrphy0_rd_rst_r10;
-wire          wl7ddrphy0_rd_rst_r11;
-wire          wl7ddrphy0_rd_rst_r12;
-wire          wl7ddrphy0_rd_rst_r13;
-wire          wl7ddrphy0_rd_rst_r14;
-wire          wl7ddrphy0_rd_rst_r15;
-wire          wl7ddrphy0_rd_rst_r16;
-wire          wl7ddrphy0_rd_rst_r17;
 wire          wl7ddrphy0_rd_rst_r2;
 wire          wl7ddrphy0_rd_rst_r3;
 wire          wl7ddrphy0_rd_rst_r4;
@@ -16597,7 +15419,6 @@ wire          wl7ddrphy0_rd_rst_r5;
 wire          wl7ddrphy0_rd_rst_r6;
 wire          wl7ddrphy0_rd_rst_r7;
 wire          wl7ddrphy0_rd_rst_r8;
-wire          wl7ddrphy0_rd_rst_r9;
 wire          wl7ddrphy0_rdly_dq_bitslip_r;
 reg           wl7ddrphy0_rdly_dq_bitslip_re = 1'd0;
 wire          wl7ddrphy0_rdly_dq_bitslip_rst_r;
@@ -16647,7 +15468,6 @@ reg           wl7ddrphy0_wdly_dq_bitslip_we = 1'd0;
 wire          wl7ddrphy0_wl7ddrphy0_r0;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r1;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r10;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r100;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r11;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r12;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r13;
@@ -16667,84 +15487,13 @@ wire    [7:0] wl7ddrphy0_wl7ddrphy0_r25;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r26;
 wire          wl7ddrphy0_wl7ddrphy0_r27;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r28;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r29;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r3;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r30;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r31;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r32;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r33;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r34;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r35;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r36;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r37;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r38;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r39;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r4;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r40;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r41;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r42;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r43;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r44;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r45;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r46;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r47;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r48;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r49;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r5;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r50;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r51;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r52;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r53;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r54;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r55;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r56;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r57;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r58;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r59;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r6;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r60;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r61;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r62;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r63;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r64;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r65;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r66;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r67;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r68;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r69;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r7;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r70;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r71;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r72;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r73;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r74;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r75;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r76;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r77;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r78;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r79;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r8;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r80;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r81;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r82;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r83;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r84;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r85;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r86;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r87;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r88;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r89;
 wire          wl7ddrphy0_wl7ddrphy0_r9;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r90;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r91;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r92;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r93;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r94;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r95;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r96;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r97;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r98;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r99;
 reg           wl7ddrphy0_wlevel_en_storage = 1'd0;
 reg           wl7ddrphy0_wlevel_en_wr_stb = 1'd0;
 wire          wl7ddrphy0_wlevel_strobe_r;
@@ -17679,14 +16428,6 @@ reg           wl7ddrphy1_half_sys8x_taps_wr_stb = 1'd0;
 wire    [2:0] wl7ddrphy1_pads_ba;
 wire          wl7ddrphy1_rd_rst_r0;
 wire          wl7ddrphy1_rd_rst_r1;
-wire          wl7ddrphy1_rd_rst_r10;
-wire          wl7ddrphy1_rd_rst_r11;
-wire          wl7ddrphy1_rd_rst_r12;
-wire          wl7ddrphy1_rd_rst_r13;
-wire          wl7ddrphy1_rd_rst_r14;
-wire          wl7ddrphy1_rd_rst_r15;
-wire          wl7ddrphy1_rd_rst_r16;
-wire          wl7ddrphy1_rd_rst_r17;
 wire          wl7ddrphy1_rd_rst_r2;
 wire          wl7ddrphy1_rd_rst_r3;
 wire          wl7ddrphy1_rd_rst_r4;
@@ -17694,7 +16435,6 @@ wire          wl7ddrphy1_rd_rst_r5;
 wire          wl7ddrphy1_rd_rst_r6;
 wire          wl7ddrphy1_rd_rst_r7;
 wire          wl7ddrphy1_rd_rst_r8;
-wire          wl7ddrphy1_rd_rst_r9;
 wire          wl7ddrphy1_rdly_dq_bitslip_r;
 reg           wl7ddrphy1_rdly_dq_bitslip_re = 1'd0;
 wire          wl7ddrphy1_rdly_dq_bitslip_rst_r;
@@ -17744,7 +16484,6 @@ reg           wl7ddrphy1_wdly_dq_bitslip_we = 1'd0;
 wire          wl7ddrphy1_wl7ddrphy1_r0;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r1;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r10;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r100;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r11;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r12;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r13;
@@ -17764,84 +16503,13 @@ wire    [7:0] wl7ddrphy1_wl7ddrphy1_r25;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r26;
 wire          wl7ddrphy1_wl7ddrphy1_r27;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r28;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r29;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r3;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r30;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r31;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r32;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r33;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r34;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r35;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r36;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r37;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r38;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r39;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r4;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r40;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r41;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r42;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r43;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r44;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r45;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r46;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r47;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r48;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r49;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r5;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r50;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r51;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r52;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r53;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r54;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r55;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r56;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r57;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r58;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r59;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r6;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r60;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r61;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r62;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r63;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r64;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r65;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r66;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r67;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r68;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r69;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r7;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r70;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r71;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r72;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r73;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r74;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r75;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r76;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r77;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r78;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r79;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r8;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r80;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r81;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r82;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r83;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r84;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r85;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r86;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r87;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r88;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r89;
 wire          wl7ddrphy1_wl7ddrphy1_r9;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r90;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r91;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r92;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r93;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r94;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r95;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r96;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r97;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r98;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r99;
 reg           wl7ddrphy1_wlevel_en_storage = 1'd0;
 reg           wl7ddrphy1_wlevel_en_wr_stb = 1'd0;
 wire          wl7ddrphy1_wlevel_strobe_r;
@@ -55407,7 +54075,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip0_value2 <= 3'd7;
     end
-    wl7ddrphy0_bitslip0_r2 <= {wl7ddrphy0_wl7ddrphy0_r29, wl7ddrphy0_bitslip0_r2[15:8]};
+    wl7ddrphy0_bitslip0_r2 <= {wl7ddrphy0_dfi_name0, wl7ddrphy0_bitslip0_r2[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip1_value1 <= (wl7ddrphy0_bitslip1_value1 + 1'd1);
     end
@@ -55421,7 +54089,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip1_value2 <= 3'd7;
     end
-    wl7ddrphy0_bitslip1_r2 <= {wl7ddrphy0_wl7ddrphy0_r30, wl7ddrphy0_bitslip1_r2[15:8]};
+    wl7ddrphy0_bitslip1_r2 <= {wl7ddrphy0_dfi_name1, wl7ddrphy0_bitslip1_r2[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip2_value1 <= (wl7ddrphy0_bitslip2_value1 + 1'd1);
     end
@@ -55435,7 +54103,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip2_value2 <= 3'd7;
     end
-    wl7ddrphy0_bitslip2_r2 <= {wl7ddrphy0_wl7ddrphy0_r31, wl7ddrphy0_bitslip2_r2[15:8]};
+    wl7ddrphy0_bitslip2_r2 <= {wl7ddrphy0_dfi_name2, wl7ddrphy0_bitslip2_r2[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip3_value1 <= (wl7ddrphy0_bitslip3_value1 + 1'd1);
     end
@@ -55449,7 +54117,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip3_value2 <= 3'd7;
     end
-    wl7ddrphy0_bitslip3_r2 <= {wl7ddrphy0_wl7ddrphy0_r32, wl7ddrphy0_bitslip3_r2[15:8]};
+    wl7ddrphy0_bitslip3_r2 <= {wl7ddrphy0_dfi_name3, wl7ddrphy0_bitslip3_r2[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip4_value1 <= (wl7ddrphy0_bitslip4_value1 + 1'd1);
     end
@@ -55463,7 +54131,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip4_value2 <= 3'd7;
     end
-    wl7ddrphy0_bitslip4_r2 <= {wl7ddrphy0_wl7ddrphy0_r33, wl7ddrphy0_bitslip4_r2[15:8]};
+    wl7ddrphy0_bitslip4_r2 <= {wl7ddrphy0_dfi_name4, wl7ddrphy0_bitslip4_r2[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip5_value1 <= (wl7ddrphy0_bitslip5_value1 + 1'd1);
     end
@@ -55477,7 +54145,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip5_value2 <= 3'd7;
     end
-    wl7ddrphy0_bitslip5_r2 <= {wl7ddrphy0_wl7ddrphy0_r34, wl7ddrphy0_bitslip5_r2[15:8]};
+    wl7ddrphy0_bitslip5_r2 <= {wl7ddrphy0_dfi_name5, wl7ddrphy0_bitslip5_r2[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip6_value1 <= (wl7ddrphy0_bitslip6_value1 + 1'd1);
     end
@@ -55491,7 +54159,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip6_value2 <= 3'd7;
     end
-    wl7ddrphy0_bitslip6_r2 <= {wl7ddrphy0_wl7ddrphy0_r35, wl7ddrphy0_bitslip6_r2[15:8]};
+    wl7ddrphy0_bitslip6_r2 <= {wl7ddrphy0_dfi_name6, wl7ddrphy0_bitslip6_r2[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip7_value1 <= (wl7ddrphy0_bitslip7_value1 + 1'd1);
     end
@@ -55505,7 +54173,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip7_value2 <= 3'd7;
     end
-    wl7ddrphy0_bitslip7_r2 <= {wl7ddrphy0_wl7ddrphy0_r36, wl7ddrphy0_bitslip7_r2[15:8]};
+    wl7ddrphy0_bitslip7_r2 <= {wl7ddrphy0_dfi_name7, wl7ddrphy0_bitslip7_r2[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip8_value1 <= (wl7ddrphy0_bitslip8_value1 + 1'd1);
     end
@@ -55519,7 +54187,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip8_value2 <= 3'd7;
     end
-    wl7ddrphy0_bitslip8_r2 <= {wl7ddrphy0_wl7ddrphy0_r37, wl7ddrphy0_bitslip8_r2[15:8]};
+    wl7ddrphy0_bitslip8_r2 <= {wl7ddrphy0_dfi_name8, wl7ddrphy0_bitslip8_r2[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip9_value0 <= (wl7ddrphy0_bitslip9_value0 + 1'd1);
     end
@@ -55533,7 +54201,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip9_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip9_r1 <= {wl7ddrphy0_wl7ddrphy0_r38, wl7ddrphy0_bitslip9_r1[15:8]};
+    wl7ddrphy0_bitslip9_r1 <= {wl7ddrphy0_dfi_name9, wl7ddrphy0_bitslip9_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip10_value0 <= (wl7ddrphy0_bitslip10_value0 + 1'd1);
     end
@@ -55547,7 +54215,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip10_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip10_r1 <= {wl7ddrphy0_wl7ddrphy0_r39, wl7ddrphy0_bitslip10_r1[15:8]};
+    wl7ddrphy0_bitslip10_r1 <= {wl7ddrphy0_dfi_name10, wl7ddrphy0_bitslip10_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip11_value0 <= (wl7ddrphy0_bitslip11_value0 + 1'd1);
     end
@@ -55561,7 +54229,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip11_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip11_r1 <= {wl7ddrphy0_wl7ddrphy0_r40, wl7ddrphy0_bitslip11_r1[15:8]};
+    wl7ddrphy0_bitslip11_r1 <= {wl7ddrphy0_dfi_name11, wl7ddrphy0_bitslip11_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip12_value0 <= (wl7ddrphy0_bitslip12_value0 + 1'd1);
     end
@@ -55575,7 +54243,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip12_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip12_r1 <= {wl7ddrphy0_wl7ddrphy0_r41, wl7ddrphy0_bitslip12_r1[15:8]};
+    wl7ddrphy0_bitslip12_r1 <= {wl7ddrphy0_dfi_name12, wl7ddrphy0_bitslip12_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip13_value0 <= (wl7ddrphy0_bitslip13_value0 + 1'd1);
     end
@@ -55589,7 +54257,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip13_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip13_r1 <= {wl7ddrphy0_wl7ddrphy0_r42, wl7ddrphy0_bitslip13_r1[15:8]};
+    wl7ddrphy0_bitslip13_r1 <= {wl7ddrphy0_dfi_name13, wl7ddrphy0_bitslip13_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip14_value0 <= (wl7ddrphy0_bitslip14_value0 + 1'd1);
     end
@@ -55603,7 +54271,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip14_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip14_r1 <= {wl7ddrphy0_wl7ddrphy0_r43, wl7ddrphy0_bitslip14_r1[15:8]};
+    wl7ddrphy0_bitslip14_r1 <= {wl7ddrphy0_dfi_name14, wl7ddrphy0_bitslip14_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip15_value0 <= (wl7ddrphy0_bitslip15_value0 + 1'd1);
     end
@@ -55617,7 +54285,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip15_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip15_r1 <= {wl7ddrphy0_wl7ddrphy0_r44, wl7ddrphy0_bitslip15_r1[15:8]};
+    wl7ddrphy0_bitslip15_r1 <= {wl7ddrphy0_dfi_name15, wl7ddrphy0_bitslip15_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip16_value0 <= (wl7ddrphy0_bitslip16_value0 + 1'd1);
     end
@@ -55631,7 +54299,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip16_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip16_r1 <= {wl7ddrphy0_wl7ddrphy0_r45, wl7ddrphy0_bitslip16_r1[15:8]};
+    wl7ddrphy0_bitslip16_r1 <= {wl7ddrphy0_dfi_name16, wl7ddrphy0_bitslip16_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip17_value0 <= (wl7ddrphy0_bitslip17_value0 + 1'd1);
     end
@@ -55645,7 +54313,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip17_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip17_r1 <= {wl7ddrphy0_wl7ddrphy0_r46, wl7ddrphy0_bitslip17_r1[15:8]};
+    wl7ddrphy0_bitslip17_r1 <= {wl7ddrphy0_dfi_name17, wl7ddrphy0_bitslip17_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip18_value0 <= (wl7ddrphy0_bitslip18_value0 + 1'd1);
     end
@@ -55659,7 +54327,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip18_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip18_r1 <= {wl7ddrphy0_wl7ddrphy0_r47, wl7ddrphy0_bitslip18_r1[15:8]};
+    wl7ddrphy0_bitslip18_r1 <= {wl7ddrphy0_dfi_name18, wl7ddrphy0_bitslip18_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip19_value0 <= (wl7ddrphy0_bitslip19_value0 + 1'd1);
     end
@@ -55673,7 +54341,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip19_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip19_r1 <= {wl7ddrphy0_wl7ddrphy0_r48, wl7ddrphy0_bitslip19_r1[15:8]};
+    wl7ddrphy0_bitslip19_r1 <= {wl7ddrphy0_dfi_name19, wl7ddrphy0_bitslip19_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip20_value0 <= (wl7ddrphy0_bitslip20_value0 + 1'd1);
     end
@@ -55687,7 +54355,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip20_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip20_r1 <= {wl7ddrphy0_wl7ddrphy0_r49, wl7ddrphy0_bitslip20_r1[15:8]};
+    wl7ddrphy0_bitslip20_r1 <= {wl7ddrphy0_dfi_name20, wl7ddrphy0_bitslip20_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip21_value0 <= (wl7ddrphy0_bitslip21_value0 + 1'd1);
     end
@@ -55701,7 +54369,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip21_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip21_r1 <= {wl7ddrphy0_wl7ddrphy0_r50, wl7ddrphy0_bitslip21_r1[15:8]};
+    wl7ddrphy0_bitslip21_r1 <= {wl7ddrphy0_dfi_name21, wl7ddrphy0_bitslip21_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip22_value0 <= (wl7ddrphy0_bitslip22_value0 + 1'd1);
     end
@@ -55715,7 +54383,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip22_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip22_r1 <= {wl7ddrphy0_wl7ddrphy0_r51, wl7ddrphy0_bitslip22_r1[15:8]};
+    wl7ddrphy0_bitslip22_r1 <= {wl7ddrphy0_dfi_name22, wl7ddrphy0_bitslip22_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip23_value0 <= (wl7ddrphy0_bitslip23_value0 + 1'd1);
     end
@@ -55729,7 +54397,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip23_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip23_r1 <= {wl7ddrphy0_wl7ddrphy0_r52, wl7ddrphy0_bitslip23_r1[15:8]};
+    wl7ddrphy0_bitslip23_r1 <= {wl7ddrphy0_dfi_name23, wl7ddrphy0_bitslip23_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip24_value0 <= (wl7ddrphy0_bitslip24_value0 + 1'd1);
     end
@@ -55743,7 +54411,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip24_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip24_r1 <= {wl7ddrphy0_wl7ddrphy0_r53, wl7ddrphy0_bitslip24_r1[15:8]};
+    wl7ddrphy0_bitslip24_r1 <= {wl7ddrphy0_dfi_name24, wl7ddrphy0_bitslip24_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip25_value0 <= (wl7ddrphy0_bitslip25_value0 + 1'd1);
     end
@@ -55757,7 +54425,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip25_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip25_r1 <= {wl7ddrphy0_wl7ddrphy0_r54, wl7ddrphy0_bitslip25_r1[15:8]};
+    wl7ddrphy0_bitslip25_r1 <= {wl7ddrphy0_dfi_name25, wl7ddrphy0_bitslip25_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip26_value0 <= (wl7ddrphy0_bitslip26_value0 + 1'd1);
     end
@@ -55771,7 +54439,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip26_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip26_r1 <= {wl7ddrphy0_wl7ddrphy0_r55, wl7ddrphy0_bitslip26_r1[15:8]};
+    wl7ddrphy0_bitslip26_r1 <= {wl7ddrphy0_dfi_name26, wl7ddrphy0_bitslip26_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip27_value0 <= (wl7ddrphy0_bitslip27_value0 + 1'd1);
     end
@@ -55785,7 +54453,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip27_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip27_r1 <= {wl7ddrphy0_wl7ddrphy0_r56, wl7ddrphy0_bitslip27_r1[15:8]};
+    wl7ddrphy0_bitslip27_r1 <= {wl7ddrphy0_dfi_name27, wl7ddrphy0_bitslip27_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip28_value0 <= (wl7ddrphy0_bitslip28_value0 + 1'd1);
     end
@@ -55799,7 +54467,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip28_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip28_r1 <= {wl7ddrphy0_wl7ddrphy0_r57, wl7ddrphy0_bitslip28_r1[15:8]};
+    wl7ddrphy0_bitslip28_r1 <= {wl7ddrphy0_dfi_name28, wl7ddrphy0_bitslip28_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip29_value0 <= (wl7ddrphy0_bitslip29_value0 + 1'd1);
     end
@@ -55813,7 +54481,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip29_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip29_r1 <= {wl7ddrphy0_wl7ddrphy0_r58, wl7ddrphy0_bitslip29_r1[15:8]};
+    wl7ddrphy0_bitslip29_r1 <= {wl7ddrphy0_dfi_name29, wl7ddrphy0_bitslip29_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip30_value0 <= (wl7ddrphy0_bitslip30_value0 + 1'd1);
     end
@@ -55827,7 +54495,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip30_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip30_r1 <= {wl7ddrphy0_wl7ddrphy0_r59, wl7ddrphy0_bitslip30_r1[15:8]};
+    wl7ddrphy0_bitslip30_r1 <= {wl7ddrphy0_dfi_name30, wl7ddrphy0_bitslip30_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip31_value0 <= (wl7ddrphy0_bitslip31_value0 + 1'd1);
     end
@@ -55841,7 +54509,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip31_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip31_r1 <= {wl7ddrphy0_wl7ddrphy0_r60, wl7ddrphy0_bitslip31_r1[15:8]};
+    wl7ddrphy0_bitslip31_r1 <= {wl7ddrphy0_dfi_name31, wl7ddrphy0_bitslip31_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip32_value0 <= (wl7ddrphy0_bitslip32_value0 + 1'd1);
     end
@@ -55855,7 +54523,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip32_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip32_r1 <= {wl7ddrphy0_wl7ddrphy0_r61, wl7ddrphy0_bitslip32_r1[15:8]};
+    wl7ddrphy0_bitslip32_r1 <= {wl7ddrphy0_dfi_name32, wl7ddrphy0_bitslip32_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip33_value0 <= (wl7ddrphy0_bitslip33_value0 + 1'd1);
     end
@@ -55869,7 +54537,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip33_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip33_r1 <= {wl7ddrphy0_wl7ddrphy0_r62, wl7ddrphy0_bitslip33_r1[15:8]};
+    wl7ddrphy0_bitslip33_r1 <= {wl7ddrphy0_dfi_name33, wl7ddrphy0_bitslip33_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip34_value0 <= (wl7ddrphy0_bitslip34_value0 + 1'd1);
     end
@@ -55883,7 +54551,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip34_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip34_r1 <= {wl7ddrphy0_wl7ddrphy0_r63, wl7ddrphy0_bitslip34_r1[15:8]};
+    wl7ddrphy0_bitslip34_r1 <= {wl7ddrphy0_dfi_name34, wl7ddrphy0_bitslip34_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip35_value0 <= (wl7ddrphy0_bitslip35_value0 + 1'd1);
     end
@@ -55897,7 +54565,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip35_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip35_r1 <= {wl7ddrphy0_wl7ddrphy0_r64, wl7ddrphy0_bitslip35_r1[15:8]};
+    wl7ddrphy0_bitslip35_r1 <= {wl7ddrphy0_dfi_name35, wl7ddrphy0_bitslip35_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip36_value0 <= (wl7ddrphy0_bitslip36_value0 + 1'd1);
     end
@@ -55911,7 +54579,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip36_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip36_r1 <= {wl7ddrphy0_wl7ddrphy0_r65, wl7ddrphy0_bitslip36_r1[15:8]};
+    wl7ddrphy0_bitslip36_r1 <= {wl7ddrphy0_dfi_name36, wl7ddrphy0_bitslip36_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip37_value0 <= (wl7ddrphy0_bitslip37_value0 + 1'd1);
     end
@@ -55925,7 +54593,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip37_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip37_r1 <= {wl7ddrphy0_wl7ddrphy0_r66, wl7ddrphy0_bitslip37_r1[15:8]};
+    wl7ddrphy0_bitslip37_r1 <= {wl7ddrphy0_dfi_name37, wl7ddrphy0_bitslip37_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip38_value0 <= (wl7ddrphy0_bitslip38_value0 + 1'd1);
     end
@@ -55939,7 +54607,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip38_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip38_r1 <= {wl7ddrphy0_wl7ddrphy0_r67, wl7ddrphy0_bitslip38_r1[15:8]};
+    wl7ddrphy0_bitslip38_r1 <= {wl7ddrphy0_dfi_name38, wl7ddrphy0_bitslip38_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip39_value0 <= (wl7ddrphy0_bitslip39_value0 + 1'd1);
     end
@@ -55953,7 +54621,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip39_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip39_r1 <= {wl7ddrphy0_wl7ddrphy0_r68, wl7ddrphy0_bitslip39_r1[15:8]};
+    wl7ddrphy0_bitslip39_r1 <= {wl7ddrphy0_dfi_name39, wl7ddrphy0_bitslip39_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip40_value0 <= (wl7ddrphy0_bitslip40_value0 + 1'd1);
     end
@@ -55967,7 +54635,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip40_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip40_r1 <= {wl7ddrphy0_wl7ddrphy0_r69, wl7ddrphy0_bitslip40_r1[15:8]};
+    wl7ddrphy0_bitslip40_r1 <= {wl7ddrphy0_dfi_name40, wl7ddrphy0_bitslip40_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip41_value0 <= (wl7ddrphy0_bitslip41_value0 + 1'd1);
     end
@@ -55981,7 +54649,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip41_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip41_r1 <= {wl7ddrphy0_wl7ddrphy0_r70, wl7ddrphy0_bitslip41_r1[15:8]};
+    wl7ddrphy0_bitslip41_r1 <= {wl7ddrphy0_dfi_name41, wl7ddrphy0_bitslip41_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip42_value0 <= (wl7ddrphy0_bitslip42_value0 + 1'd1);
     end
@@ -55995,7 +54663,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip42_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip42_r1 <= {wl7ddrphy0_wl7ddrphy0_r71, wl7ddrphy0_bitslip42_r1[15:8]};
+    wl7ddrphy0_bitslip42_r1 <= {wl7ddrphy0_dfi_name42, wl7ddrphy0_bitslip42_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip43_value0 <= (wl7ddrphy0_bitslip43_value0 + 1'd1);
     end
@@ -56009,7 +54677,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip43_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip43_r1 <= {wl7ddrphy0_wl7ddrphy0_r72, wl7ddrphy0_bitslip43_r1[15:8]};
+    wl7ddrphy0_bitslip43_r1 <= {wl7ddrphy0_dfi_name43, wl7ddrphy0_bitslip43_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip44_value0 <= (wl7ddrphy0_bitslip44_value0 + 1'd1);
     end
@@ -56023,7 +54691,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip44_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip44_r1 <= {wl7ddrphy0_wl7ddrphy0_r73, wl7ddrphy0_bitslip44_r1[15:8]};
+    wl7ddrphy0_bitslip44_r1 <= {wl7ddrphy0_dfi_name44, wl7ddrphy0_bitslip44_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip45_value0 <= (wl7ddrphy0_bitslip45_value0 + 1'd1);
     end
@@ -56037,7 +54705,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip45_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip45_r1 <= {wl7ddrphy0_wl7ddrphy0_r74, wl7ddrphy0_bitslip45_r1[15:8]};
+    wl7ddrphy0_bitslip45_r1 <= {wl7ddrphy0_dfi_name45, wl7ddrphy0_bitslip45_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip46_value0 <= (wl7ddrphy0_bitslip46_value0 + 1'd1);
     end
@@ -56051,7 +54719,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip46_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip46_r1 <= {wl7ddrphy0_wl7ddrphy0_r75, wl7ddrphy0_bitslip46_r1[15:8]};
+    wl7ddrphy0_bitslip46_r1 <= {wl7ddrphy0_dfi_name46, wl7ddrphy0_bitslip46_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip47_value0 <= (wl7ddrphy0_bitslip47_value0 + 1'd1);
     end
@@ -56065,7 +54733,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip47_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip47_r1 <= {wl7ddrphy0_wl7ddrphy0_r76, wl7ddrphy0_bitslip47_r1[15:8]};
+    wl7ddrphy0_bitslip47_r1 <= {wl7ddrphy0_dfi_name47, wl7ddrphy0_bitslip47_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip48_value0 <= (wl7ddrphy0_bitslip48_value0 + 1'd1);
     end
@@ -56079,7 +54747,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip48_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip48_r1 <= {wl7ddrphy0_wl7ddrphy0_r77, wl7ddrphy0_bitslip48_r1[15:8]};
+    wl7ddrphy0_bitslip48_r1 <= {wl7ddrphy0_dfi_name48, wl7ddrphy0_bitslip48_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip49_value0 <= (wl7ddrphy0_bitslip49_value0 + 1'd1);
     end
@@ -56093,7 +54761,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip49_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip49_r1 <= {wl7ddrphy0_wl7ddrphy0_r78, wl7ddrphy0_bitslip49_r1[15:8]};
+    wl7ddrphy0_bitslip49_r1 <= {wl7ddrphy0_dfi_name49, wl7ddrphy0_bitslip49_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip50_value0 <= (wl7ddrphy0_bitslip50_value0 + 1'd1);
     end
@@ -56107,7 +54775,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip50_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip50_r1 <= {wl7ddrphy0_wl7ddrphy0_r79, wl7ddrphy0_bitslip50_r1[15:8]};
+    wl7ddrphy0_bitslip50_r1 <= {wl7ddrphy0_dfi_name50, wl7ddrphy0_bitslip50_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip51_value0 <= (wl7ddrphy0_bitslip51_value0 + 1'd1);
     end
@@ -56121,7 +54789,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip51_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip51_r1 <= {wl7ddrphy0_wl7ddrphy0_r80, wl7ddrphy0_bitslip51_r1[15:8]};
+    wl7ddrphy0_bitslip51_r1 <= {wl7ddrphy0_dfi_name51, wl7ddrphy0_bitslip51_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip52_value0 <= (wl7ddrphy0_bitslip52_value0 + 1'd1);
     end
@@ -56135,7 +54803,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip52_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip52_r1 <= {wl7ddrphy0_wl7ddrphy0_r81, wl7ddrphy0_bitslip52_r1[15:8]};
+    wl7ddrphy0_bitslip52_r1 <= {wl7ddrphy0_dfi_name52, wl7ddrphy0_bitslip52_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip53_value0 <= (wl7ddrphy0_bitslip53_value0 + 1'd1);
     end
@@ -56149,7 +54817,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip53_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip53_r1 <= {wl7ddrphy0_wl7ddrphy0_r82, wl7ddrphy0_bitslip53_r1[15:8]};
+    wl7ddrphy0_bitslip53_r1 <= {wl7ddrphy0_dfi_name53, wl7ddrphy0_bitslip53_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip54_value0 <= (wl7ddrphy0_bitslip54_value0 + 1'd1);
     end
@@ -56163,7 +54831,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip54_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip54_r1 <= {wl7ddrphy0_wl7ddrphy0_r83, wl7ddrphy0_bitslip54_r1[15:8]};
+    wl7ddrphy0_bitslip54_r1 <= {wl7ddrphy0_dfi_name54, wl7ddrphy0_bitslip54_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip55_value0 <= (wl7ddrphy0_bitslip55_value0 + 1'd1);
     end
@@ -56177,7 +54845,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip55_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip55_r1 <= {wl7ddrphy0_wl7ddrphy0_r84, wl7ddrphy0_bitslip55_r1[15:8]};
+    wl7ddrphy0_bitslip55_r1 <= {wl7ddrphy0_dfi_name55, wl7ddrphy0_bitslip55_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip56_value0 <= (wl7ddrphy0_bitslip56_value0 + 1'd1);
     end
@@ -56191,7 +54859,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip56_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip56_r1 <= {wl7ddrphy0_wl7ddrphy0_r85, wl7ddrphy0_bitslip56_r1[15:8]};
+    wl7ddrphy0_bitslip56_r1 <= {wl7ddrphy0_dfi_name56, wl7ddrphy0_bitslip56_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip57_value0 <= (wl7ddrphy0_bitslip57_value0 + 1'd1);
     end
@@ -56205,7 +54873,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip57_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip57_r1 <= {wl7ddrphy0_wl7ddrphy0_r86, wl7ddrphy0_bitslip57_r1[15:8]};
+    wl7ddrphy0_bitslip57_r1 <= {wl7ddrphy0_dfi_name57, wl7ddrphy0_bitslip57_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip58_value0 <= (wl7ddrphy0_bitslip58_value0 + 1'd1);
     end
@@ -56219,7 +54887,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip58_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip58_r1 <= {wl7ddrphy0_wl7ddrphy0_r87, wl7ddrphy0_bitslip58_r1[15:8]};
+    wl7ddrphy0_bitslip58_r1 <= {wl7ddrphy0_dfi_name58, wl7ddrphy0_bitslip58_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip59_value0 <= (wl7ddrphy0_bitslip59_value0 + 1'd1);
     end
@@ -56233,7 +54901,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip59_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip59_r1 <= {wl7ddrphy0_wl7ddrphy0_r88, wl7ddrphy0_bitslip59_r1[15:8]};
+    wl7ddrphy0_bitslip59_r1 <= {wl7ddrphy0_dfi_name59, wl7ddrphy0_bitslip59_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip60_value0 <= (wl7ddrphy0_bitslip60_value0 + 1'd1);
     end
@@ -56247,7 +54915,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip60_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip60_r1 <= {wl7ddrphy0_wl7ddrphy0_r89, wl7ddrphy0_bitslip60_r1[15:8]};
+    wl7ddrphy0_bitslip60_r1 <= {wl7ddrphy0_dfi_name60, wl7ddrphy0_bitslip60_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip61_value0 <= (wl7ddrphy0_bitslip61_value0 + 1'd1);
     end
@@ -56261,7 +54929,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip61_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip61_r1 <= {wl7ddrphy0_wl7ddrphy0_r90, wl7ddrphy0_bitslip61_r1[15:8]};
+    wl7ddrphy0_bitslip61_r1 <= {wl7ddrphy0_dfi_name61, wl7ddrphy0_bitslip61_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip62_value0 <= (wl7ddrphy0_bitslip62_value0 + 1'd1);
     end
@@ -56275,7 +54943,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip62_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip62_r1 <= {wl7ddrphy0_wl7ddrphy0_r91, wl7ddrphy0_bitslip62_r1[15:8]};
+    wl7ddrphy0_bitslip62_r1 <= {wl7ddrphy0_dfi_name62, wl7ddrphy0_bitslip62_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip63_value0 <= (wl7ddrphy0_bitslip63_value0 + 1'd1);
     end
@@ -56289,7 +54957,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip63_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip63_r1 <= {wl7ddrphy0_wl7ddrphy0_r92, wl7ddrphy0_bitslip63_r1[15:8]};
+    wl7ddrphy0_bitslip63_r1 <= {wl7ddrphy0_dfi_name63, wl7ddrphy0_bitslip63_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip64_value0 <= (wl7ddrphy0_bitslip64_value0 + 1'd1);
     end
@@ -56303,7 +54971,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip64_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip64_r1 <= {wl7ddrphy0_wl7ddrphy0_r93, wl7ddrphy0_bitslip64_r1[15:8]};
+    wl7ddrphy0_bitslip64_r1 <= {wl7ddrphy0_dfi_name64, wl7ddrphy0_bitslip64_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip65_value0 <= (wl7ddrphy0_bitslip65_value0 + 1'd1);
     end
@@ -56317,7 +54985,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip65_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip65_r1 <= {wl7ddrphy0_wl7ddrphy0_r94, wl7ddrphy0_bitslip65_r1[15:8]};
+    wl7ddrphy0_bitslip65_r1 <= {wl7ddrphy0_dfi_name65, wl7ddrphy0_bitslip65_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip66_value0 <= (wl7ddrphy0_bitslip66_value0 + 1'd1);
     end
@@ -56331,7 +54999,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip66_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip66_r1 <= {wl7ddrphy0_wl7ddrphy0_r95, wl7ddrphy0_bitslip66_r1[15:8]};
+    wl7ddrphy0_bitslip66_r1 <= {wl7ddrphy0_dfi_name66, wl7ddrphy0_bitslip66_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip67_value0 <= (wl7ddrphy0_bitslip67_value0 + 1'd1);
     end
@@ -56345,7 +55013,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip67_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip67_r1 <= {wl7ddrphy0_wl7ddrphy0_r96, wl7ddrphy0_bitslip67_r1[15:8]};
+    wl7ddrphy0_bitslip67_r1 <= {wl7ddrphy0_dfi_name67, wl7ddrphy0_bitslip67_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip68_value0 <= (wl7ddrphy0_bitslip68_value0 + 1'd1);
     end
@@ -56359,7 +55027,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip68_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip68_r1 <= {wl7ddrphy0_wl7ddrphy0_r97, wl7ddrphy0_bitslip68_r1[15:8]};
+    wl7ddrphy0_bitslip68_r1 <= {wl7ddrphy0_dfi_name68, wl7ddrphy0_bitslip68_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip69_value0 <= (wl7ddrphy0_bitslip69_value0 + 1'd1);
     end
@@ -56373,7 +55041,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip69_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip69_r1 <= {wl7ddrphy0_wl7ddrphy0_r98, wl7ddrphy0_bitslip69_r1[15:8]};
+    wl7ddrphy0_bitslip69_r1 <= {wl7ddrphy0_dfi_name69, wl7ddrphy0_bitslip69_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip70_value0 <= (wl7ddrphy0_bitslip70_value0 + 1'd1);
     end
@@ -56387,7 +55055,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip70_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip70_r1 <= {wl7ddrphy0_wl7ddrphy0_r99, wl7ddrphy0_bitslip70_r1[15:8]};
+    wl7ddrphy0_bitslip70_r1 <= {wl7ddrphy0_dfi_name70, wl7ddrphy0_bitslip70_r1[15:8]};
     if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip71_value0 <= (wl7ddrphy0_bitslip71_value0 + 1'd1);
     end
@@ -56401,7 +55069,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip71_value1 <= 3'd7;
     end
-    wl7ddrphy0_bitslip71_r1 <= {wl7ddrphy0_wl7ddrphy0_r100, wl7ddrphy0_bitslip71_r1[15:8]};
+    wl7ddrphy0_bitslip71_r1 <= {wl7ddrphy0_dfi_name71, wl7ddrphy0_bitslip71_r1[15:8]};
     wl7ddrphy0_tappeddelayline02 <= (((wl7ddrphy0_dfi_p0_rddata_en | wl7ddrphy0_dfi_p1_rddata_en) | wl7ddrphy0_dfi_p2_rddata_en) | wl7ddrphy0_dfi_p3_rddata_en);
     wl7ddrphy0_tappeddelayline03 <= wl7ddrphy0_tappeddelayline02;
     wl7ddrphy0_tappeddelayline04 <= wl7ddrphy0_tappeddelayline03;
@@ -58051,7 +56719,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip72_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip72_r1 <= {wl7ddrphy1_wl7ddrphy1_r29, wl7ddrphy1_bitslip72_r1[15:8]};
+    wl7ddrphy1_bitslip72_r1 <= {wl7ddrphy1_dfi_name0, wl7ddrphy1_bitslip72_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip73_value0 <= (wl7ddrphy1_bitslip73_value0 + 1'd1);
     end
@@ -58065,7 +56733,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip73_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip73_r1 <= {wl7ddrphy1_wl7ddrphy1_r30, wl7ddrphy1_bitslip73_r1[15:8]};
+    wl7ddrphy1_bitslip73_r1 <= {wl7ddrphy1_dfi_name1, wl7ddrphy1_bitslip73_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip74_value0 <= (wl7ddrphy1_bitslip74_value0 + 1'd1);
     end
@@ -58079,7 +56747,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip74_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip74_r1 <= {wl7ddrphy1_wl7ddrphy1_r31, wl7ddrphy1_bitslip74_r1[15:8]};
+    wl7ddrphy1_bitslip74_r1 <= {wl7ddrphy1_dfi_name2, wl7ddrphy1_bitslip74_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip75_value0 <= (wl7ddrphy1_bitslip75_value0 + 1'd1);
     end
@@ -58093,7 +56761,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip75_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip75_r1 <= {wl7ddrphy1_wl7ddrphy1_r32, wl7ddrphy1_bitslip75_r1[15:8]};
+    wl7ddrphy1_bitslip75_r1 <= {wl7ddrphy1_dfi_name3, wl7ddrphy1_bitslip75_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip76_value0 <= (wl7ddrphy1_bitslip76_value0 + 1'd1);
     end
@@ -58107,7 +56775,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip76_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip76_r1 <= {wl7ddrphy1_wl7ddrphy1_r33, wl7ddrphy1_bitslip76_r1[15:8]};
+    wl7ddrphy1_bitslip76_r1 <= {wl7ddrphy1_dfi_name4, wl7ddrphy1_bitslip76_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip77_value0 <= (wl7ddrphy1_bitslip77_value0 + 1'd1);
     end
@@ -58121,7 +56789,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip77_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip77_r1 <= {wl7ddrphy1_wl7ddrphy1_r34, wl7ddrphy1_bitslip77_r1[15:8]};
+    wl7ddrphy1_bitslip77_r1 <= {wl7ddrphy1_dfi_name5, wl7ddrphy1_bitslip77_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip78_value0 <= (wl7ddrphy1_bitslip78_value0 + 1'd1);
     end
@@ -58135,7 +56803,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip78_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip78_r1 <= {wl7ddrphy1_wl7ddrphy1_r35, wl7ddrphy1_bitslip78_r1[15:8]};
+    wl7ddrphy1_bitslip78_r1 <= {wl7ddrphy1_dfi_name6, wl7ddrphy1_bitslip78_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip79_value0 <= (wl7ddrphy1_bitslip79_value0 + 1'd1);
     end
@@ -58149,7 +56817,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip79_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip79_r1 <= {wl7ddrphy1_wl7ddrphy1_r36, wl7ddrphy1_bitslip79_r1[15:8]};
+    wl7ddrphy1_bitslip79_r1 <= {wl7ddrphy1_dfi_name7, wl7ddrphy1_bitslip79_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip80_value0 <= (wl7ddrphy1_bitslip80_value0 + 1'd1);
     end
@@ -58163,7 +56831,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip80_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip80_r1 <= {wl7ddrphy1_wl7ddrphy1_r37, wl7ddrphy1_bitslip80_r1[15:8]};
+    wl7ddrphy1_bitslip80_r1 <= {wl7ddrphy1_dfi_name8, wl7ddrphy1_bitslip80_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip81_value0 <= (wl7ddrphy1_bitslip81_value0 + 1'd1);
     end
@@ -58177,7 +56845,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip81_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip81_r1 <= {wl7ddrphy1_wl7ddrphy1_r38, wl7ddrphy1_bitslip81_r1[15:8]};
+    wl7ddrphy1_bitslip81_r1 <= {wl7ddrphy1_dfi_name9, wl7ddrphy1_bitslip81_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip82_value0 <= (wl7ddrphy1_bitslip82_value0 + 1'd1);
     end
@@ -58191,7 +56859,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip82_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip82_r1 <= {wl7ddrphy1_wl7ddrphy1_r39, wl7ddrphy1_bitslip82_r1[15:8]};
+    wl7ddrphy1_bitslip82_r1 <= {wl7ddrphy1_dfi_name10, wl7ddrphy1_bitslip82_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip83_value0 <= (wl7ddrphy1_bitslip83_value0 + 1'd1);
     end
@@ -58205,7 +56873,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip83_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip83_r1 <= {wl7ddrphy1_wl7ddrphy1_r40, wl7ddrphy1_bitslip83_r1[15:8]};
+    wl7ddrphy1_bitslip83_r1 <= {wl7ddrphy1_dfi_name11, wl7ddrphy1_bitslip83_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip84_value0 <= (wl7ddrphy1_bitslip84_value0 + 1'd1);
     end
@@ -58219,7 +56887,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip84_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip84_r1 <= {wl7ddrphy1_wl7ddrphy1_r41, wl7ddrphy1_bitslip84_r1[15:8]};
+    wl7ddrphy1_bitslip84_r1 <= {wl7ddrphy1_dfi_name12, wl7ddrphy1_bitslip84_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip85_value0 <= (wl7ddrphy1_bitslip85_value0 + 1'd1);
     end
@@ -58233,7 +56901,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip85_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip85_r1 <= {wl7ddrphy1_wl7ddrphy1_r42, wl7ddrphy1_bitslip85_r1[15:8]};
+    wl7ddrphy1_bitslip85_r1 <= {wl7ddrphy1_dfi_name13, wl7ddrphy1_bitslip85_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip86_value0 <= (wl7ddrphy1_bitslip86_value0 + 1'd1);
     end
@@ -58247,7 +56915,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip86_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip86_r1 <= {wl7ddrphy1_wl7ddrphy1_r43, wl7ddrphy1_bitslip86_r1[15:8]};
+    wl7ddrphy1_bitslip86_r1 <= {wl7ddrphy1_dfi_name14, wl7ddrphy1_bitslip86_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip87_value0 <= (wl7ddrphy1_bitslip87_value0 + 1'd1);
     end
@@ -58261,7 +56929,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip87_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip87_r1 <= {wl7ddrphy1_wl7ddrphy1_r44, wl7ddrphy1_bitslip87_r1[15:8]};
+    wl7ddrphy1_bitslip87_r1 <= {wl7ddrphy1_dfi_name15, wl7ddrphy1_bitslip87_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip88_value0 <= (wl7ddrphy1_bitslip88_value0 + 1'd1);
     end
@@ -58275,7 +56943,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip88_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip88_r1 <= {wl7ddrphy1_wl7ddrphy1_r45, wl7ddrphy1_bitslip88_r1[15:8]};
+    wl7ddrphy1_bitslip88_r1 <= {wl7ddrphy1_dfi_name16, wl7ddrphy1_bitslip88_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip89_value0 <= (wl7ddrphy1_bitslip89_value0 + 1'd1);
     end
@@ -58289,7 +56957,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip89_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip89_r1 <= {wl7ddrphy1_wl7ddrphy1_r46, wl7ddrphy1_bitslip89_r1[15:8]};
+    wl7ddrphy1_bitslip89_r1 <= {wl7ddrphy1_dfi_name17, wl7ddrphy1_bitslip89_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip90_value0 <= (wl7ddrphy1_bitslip90_value0 + 1'd1);
     end
@@ -58303,7 +56971,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip90_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip90_r1 <= {wl7ddrphy1_wl7ddrphy1_r47, wl7ddrphy1_bitslip90_r1[15:8]};
+    wl7ddrphy1_bitslip90_r1 <= {wl7ddrphy1_dfi_name18, wl7ddrphy1_bitslip90_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip91_value0 <= (wl7ddrphy1_bitslip91_value0 + 1'd1);
     end
@@ -58317,7 +56985,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip91_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip91_r1 <= {wl7ddrphy1_wl7ddrphy1_r48, wl7ddrphy1_bitslip91_r1[15:8]};
+    wl7ddrphy1_bitslip91_r1 <= {wl7ddrphy1_dfi_name19, wl7ddrphy1_bitslip91_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip92_value0 <= (wl7ddrphy1_bitslip92_value0 + 1'd1);
     end
@@ -58331,7 +56999,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip92_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip92_r1 <= {wl7ddrphy1_wl7ddrphy1_r49, wl7ddrphy1_bitslip92_r1[15:8]};
+    wl7ddrphy1_bitslip92_r1 <= {wl7ddrphy1_dfi_name20, wl7ddrphy1_bitslip92_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip93_value0 <= (wl7ddrphy1_bitslip93_value0 + 1'd1);
     end
@@ -58345,7 +57013,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip93_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip93_r1 <= {wl7ddrphy1_wl7ddrphy1_r50, wl7ddrphy1_bitslip93_r1[15:8]};
+    wl7ddrphy1_bitslip93_r1 <= {wl7ddrphy1_dfi_name21, wl7ddrphy1_bitslip93_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip94_value0 <= (wl7ddrphy1_bitslip94_value0 + 1'd1);
     end
@@ -58359,7 +57027,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip94_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip94_r1 <= {wl7ddrphy1_wl7ddrphy1_r51, wl7ddrphy1_bitslip94_r1[15:8]};
+    wl7ddrphy1_bitslip94_r1 <= {wl7ddrphy1_dfi_name22, wl7ddrphy1_bitslip94_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip95_value0 <= (wl7ddrphy1_bitslip95_value0 + 1'd1);
     end
@@ -58373,7 +57041,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip95_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip95_r1 <= {wl7ddrphy1_wl7ddrphy1_r52, wl7ddrphy1_bitslip95_r1[15:8]};
+    wl7ddrphy1_bitslip95_r1 <= {wl7ddrphy1_dfi_name23, wl7ddrphy1_bitslip95_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip96_value0 <= (wl7ddrphy1_bitslip96_value0 + 1'd1);
     end
@@ -58387,7 +57055,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip96_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip96_r1 <= {wl7ddrphy1_wl7ddrphy1_r53, wl7ddrphy1_bitslip96_r1[15:8]};
+    wl7ddrphy1_bitslip96_r1 <= {wl7ddrphy1_dfi_name24, wl7ddrphy1_bitslip96_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip97_value0 <= (wl7ddrphy1_bitslip97_value0 + 1'd1);
     end
@@ -58401,7 +57069,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip97_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip97_r1 <= {wl7ddrphy1_wl7ddrphy1_r54, wl7ddrphy1_bitslip97_r1[15:8]};
+    wl7ddrphy1_bitslip97_r1 <= {wl7ddrphy1_dfi_name25, wl7ddrphy1_bitslip97_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip98_value0 <= (wl7ddrphy1_bitslip98_value0 + 1'd1);
     end
@@ -58415,7 +57083,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip98_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip98_r1 <= {wl7ddrphy1_wl7ddrphy1_r55, wl7ddrphy1_bitslip98_r1[15:8]};
+    wl7ddrphy1_bitslip98_r1 <= {wl7ddrphy1_dfi_name26, wl7ddrphy1_bitslip98_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip99_value0 <= (wl7ddrphy1_bitslip99_value0 + 1'd1);
     end
@@ -58429,7 +57097,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip99_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip99_r1 <= {wl7ddrphy1_wl7ddrphy1_r56, wl7ddrphy1_bitslip99_r1[15:8]};
+    wl7ddrphy1_bitslip99_r1 <= {wl7ddrphy1_dfi_name27, wl7ddrphy1_bitslip99_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip100_value0 <= (wl7ddrphy1_bitslip100_value0 + 1'd1);
     end
@@ -58443,7 +57111,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip100_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip100_r1 <= {wl7ddrphy1_wl7ddrphy1_r57, wl7ddrphy1_bitslip100_r1[15:8]};
+    wl7ddrphy1_bitslip100_r1 <= {wl7ddrphy1_dfi_name28, wl7ddrphy1_bitslip100_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip101_value0 <= (wl7ddrphy1_bitslip101_value0 + 1'd1);
     end
@@ -58457,7 +57125,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip101_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip101_r1 <= {wl7ddrphy1_wl7ddrphy1_r58, wl7ddrphy1_bitslip101_r1[15:8]};
+    wl7ddrphy1_bitslip101_r1 <= {wl7ddrphy1_dfi_name29, wl7ddrphy1_bitslip101_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip102_value0 <= (wl7ddrphy1_bitslip102_value0 + 1'd1);
     end
@@ -58471,7 +57139,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip102_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip102_r1 <= {wl7ddrphy1_wl7ddrphy1_r59, wl7ddrphy1_bitslip102_r1[15:8]};
+    wl7ddrphy1_bitslip102_r1 <= {wl7ddrphy1_dfi_name30, wl7ddrphy1_bitslip102_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip103_value0 <= (wl7ddrphy1_bitslip103_value0 + 1'd1);
     end
@@ -58485,7 +57153,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip103_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip103_r1 <= {wl7ddrphy1_wl7ddrphy1_r60, wl7ddrphy1_bitslip103_r1[15:8]};
+    wl7ddrphy1_bitslip103_r1 <= {wl7ddrphy1_dfi_name31, wl7ddrphy1_bitslip103_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip104_value0 <= (wl7ddrphy1_bitslip104_value0 + 1'd1);
     end
@@ -58499,7 +57167,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip104_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip104_r1 <= {wl7ddrphy1_wl7ddrphy1_r61, wl7ddrphy1_bitslip104_r1[15:8]};
+    wl7ddrphy1_bitslip104_r1 <= {wl7ddrphy1_dfi_name32, wl7ddrphy1_bitslip104_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip105_value0 <= (wl7ddrphy1_bitslip105_value0 + 1'd1);
     end
@@ -58513,7 +57181,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip105_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip105_r1 <= {wl7ddrphy1_wl7ddrphy1_r62, wl7ddrphy1_bitslip105_r1[15:8]};
+    wl7ddrphy1_bitslip105_r1 <= {wl7ddrphy1_dfi_name33, wl7ddrphy1_bitslip105_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip106_value0 <= (wl7ddrphy1_bitslip106_value0 + 1'd1);
     end
@@ -58527,7 +57195,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip106_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip106_r1 <= {wl7ddrphy1_wl7ddrphy1_r63, wl7ddrphy1_bitslip106_r1[15:8]};
+    wl7ddrphy1_bitslip106_r1 <= {wl7ddrphy1_dfi_name34, wl7ddrphy1_bitslip106_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip107_value0 <= (wl7ddrphy1_bitslip107_value0 + 1'd1);
     end
@@ -58541,7 +57209,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip107_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip107_r1 <= {wl7ddrphy1_wl7ddrphy1_r64, wl7ddrphy1_bitslip107_r1[15:8]};
+    wl7ddrphy1_bitslip107_r1 <= {wl7ddrphy1_dfi_name35, wl7ddrphy1_bitslip107_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip108_value0 <= (wl7ddrphy1_bitslip108_value0 + 1'd1);
     end
@@ -58555,7 +57223,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip108_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip108_r1 <= {wl7ddrphy1_wl7ddrphy1_r65, wl7ddrphy1_bitslip108_r1[15:8]};
+    wl7ddrphy1_bitslip108_r1 <= {wl7ddrphy1_dfi_name36, wl7ddrphy1_bitslip108_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip109_value0 <= (wl7ddrphy1_bitslip109_value0 + 1'd1);
     end
@@ -58569,7 +57237,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip109_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip109_r1 <= {wl7ddrphy1_wl7ddrphy1_r66, wl7ddrphy1_bitslip109_r1[15:8]};
+    wl7ddrphy1_bitslip109_r1 <= {wl7ddrphy1_dfi_name37, wl7ddrphy1_bitslip109_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip110_value0 <= (wl7ddrphy1_bitslip110_value0 + 1'd1);
     end
@@ -58583,7 +57251,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip110_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip110_r1 <= {wl7ddrphy1_wl7ddrphy1_r67, wl7ddrphy1_bitslip110_r1[15:8]};
+    wl7ddrphy1_bitslip110_r1 <= {wl7ddrphy1_dfi_name38, wl7ddrphy1_bitslip110_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip111_value0 <= (wl7ddrphy1_bitslip111_value0 + 1'd1);
     end
@@ -58597,7 +57265,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip111_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip111_r1 <= {wl7ddrphy1_wl7ddrphy1_r68, wl7ddrphy1_bitslip111_r1[15:8]};
+    wl7ddrphy1_bitslip111_r1 <= {wl7ddrphy1_dfi_name39, wl7ddrphy1_bitslip111_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip112_value0 <= (wl7ddrphy1_bitslip112_value0 + 1'd1);
     end
@@ -58611,7 +57279,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip112_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip112_r1 <= {wl7ddrphy1_wl7ddrphy1_r69, wl7ddrphy1_bitslip112_r1[15:8]};
+    wl7ddrphy1_bitslip112_r1 <= {wl7ddrphy1_dfi_name40, wl7ddrphy1_bitslip112_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip113_value0 <= (wl7ddrphy1_bitslip113_value0 + 1'd1);
     end
@@ -58625,7 +57293,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip113_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip113_r1 <= {wl7ddrphy1_wl7ddrphy1_r70, wl7ddrphy1_bitslip113_r1[15:8]};
+    wl7ddrphy1_bitslip113_r1 <= {wl7ddrphy1_dfi_name41, wl7ddrphy1_bitslip113_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip114_value0 <= (wl7ddrphy1_bitslip114_value0 + 1'd1);
     end
@@ -58639,7 +57307,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip114_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip114_r1 <= {wl7ddrphy1_wl7ddrphy1_r71, wl7ddrphy1_bitslip114_r1[15:8]};
+    wl7ddrphy1_bitslip114_r1 <= {wl7ddrphy1_dfi_name42, wl7ddrphy1_bitslip114_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip115_value0 <= (wl7ddrphy1_bitslip115_value0 + 1'd1);
     end
@@ -58653,7 +57321,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip115_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip115_r1 <= {wl7ddrphy1_wl7ddrphy1_r72, wl7ddrphy1_bitslip115_r1[15:8]};
+    wl7ddrphy1_bitslip115_r1 <= {wl7ddrphy1_dfi_name43, wl7ddrphy1_bitslip115_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip116_value0 <= (wl7ddrphy1_bitslip116_value0 + 1'd1);
     end
@@ -58667,7 +57335,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip116_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip116_r1 <= {wl7ddrphy1_wl7ddrphy1_r73, wl7ddrphy1_bitslip116_r1[15:8]};
+    wl7ddrphy1_bitslip116_r1 <= {wl7ddrphy1_dfi_name44, wl7ddrphy1_bitslip116_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip117_value0 <= (wl7ddrphy1_bitslip117_value0 + 1'd1);
     end
@@ -58681,7 +57349,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip117_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip117_r1 <= {wl7ddrphy1_wl7ddrphy1_r74, wl7ddrphy1_bitslip117_r1[15:8]};
+    wl7ddrphy1_bitslip117_r1 <= {wl7ddrphy1_dfi_name45, wl7ddrphy1_bitslip117_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip118_value0 <= (wl7ddrphy1_bitslip118_value0 + 1'd1);
     end
@@ -58695,7 +57363,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip118_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip118_r1 <= {wl7ddrphy1_wl7ddrphy1_r75, wl7ddrphy1_bitslip118_r1[15:8]};
+    wl7ddrphy1_bitslip118_r1 <= {wl7ddrphy1_dfi_name46, wl7ddrphy1_bitslip118_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip119_value0 <= (wl7ddrphy1_bitslip119_value0 + 1'd1);
     end
@@ -58709,7 +57377,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip119_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip119_r1 <= {wl7ddrphy1_wl7ddrphy1_r76, wl7ddrphy1_bitslip119_r1[15:8]};
+    wl7ddrphy1_bitslip119_r1 <= {wl7ddrphy1_dfi_name47, wl7ddrphy1_bitslip119_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip120_value0 <= (wl7ddrphy1_bitslip120_value0 + 1'd1);
     end
@@ -58723,7 +57391,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip120_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip120_r1 <= {wl7ddrphy1_wl7ddrphy1_r77, wl7ddrphy1_bitslip120_r1[15:8]};
+    wl7ddrphy1_bitslip120_r1 <= {wl7ddrphy1_dfi_name48, wl7ddrphy1_bitslip120_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip121_value0 <= (wl7ddrphy1_bitslip121_value0 + 1'd1);
     end
@@ -58737,7 +57405,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip121_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip121_r1 <= {wl7ddrphy1_wl7ddrphy1_r78, wl7ddrphy1_bitslip121_r1[15:8]};
+    wl7ddrphy1_bitslip121_r1 <= {wl7ddrphy1_dfi_name49, wl7ddrphy1_bitslip121_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip122_value0 <= (wl7ddrphy1_bitslip122_value0 + 1'd1);
     end
@@ -58751,7 +57419,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip122_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip122_r1 <= {wl7ddrphy1_wl7ddrphy1_r79, wl7ddrphy1_bitslip122_r1[15:8]};
+    wl7ddrphy1_bitslip122_r1 <= {wl7ddrphy1_dfi_name50, wl7ddrphy1_bitslip122_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip123_value0 <= (wl7ddrphy1_bitslip123_value0 + 1'd1);
     end
@@ -58765,7 +57433,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip123_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip123_r1 <= {wl7ddrphy1_wl7ddrphy1_r80, wl7ddrphy1_bitslip123_r1[15:8]};
+    wl7ddrphy1_bitslip123_r1 <= {wl7ddrphy1_dfi_name51, wl7ddrphy1_bitslip123_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip124_value0 <= (wl7ddrphy1_bitslip124_value0 + 1'd1);
     end
@@ -58779,7 +57447,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip124_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip124_r1 <= {wl7ddrphy1_wl7ddrphy1_r81, wl7ddrphy1_bitslip124_r1[15:8]};
+    wl7ddrphy1_bitslip124_r1 <= {wl7ddrphy1_dfi_name52, wl7ddrphy1_bitslip124_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip125_value0 <= (wl7ddrphy1_bitslip125_value0 + 1'd1);
     end
@@ -58793,7 +57461,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip125_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip125_r1 <= {wl7ddrphy1_wl7ddrphy1_r82, wl7ddrphy1_bitslip125_r1[15:8]};
+    wl7ddrphy1_bitslip125_r1 <= {wl7ddrphy1_dfi_name53, wl7ddrphy1_bitslip125_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip126_value0 <= (wl7ddrphy1_bitslip126_value0 + 1'd1);
     end
@@ -58807,7 +57475,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip126_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip126_r1 <= {wl7ddrphy1_wl7ddrphy1_r83, wl7ddrphy1_bitslip126_r1[15:8]};
+    wl7ddrphy1_bitslip126_r1 <= {wl7ddrphy1_dfi_name54, wl7ddrphy1_bitslip126_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip127_value0 <= (wl7ddrphy1_bitslip127_value0 + 1'd1);
     end
@@ -58821,7 +57489,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip127_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip127_r1 <= {wl7ddrphy1_wl7ddrphy1_r84, wl7ddrphy1_bitslip127_r1[15:8]};
+    wl7ddrphy1_bitslip127_r1 <= {wl7ddrphy1_dfi_name55, wl7ddrphy1_bitslip127_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip128_value0 <= (wl7ddrphy1_bitslip128_value0 + 1'd1);
     end
@@ -58835,7 +57503,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip128_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip128_r1 <= {wl7ddrphy1_wl7ddrphy1_r85, wl7ddrphy1_bitslip128_r1[15:8]};
+    wl7ddrphy1_bitslip128_r1 <= {wl7ddrphy1_dfi_name56, wl7ddrphy1_bitslip128_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip129_value0 <= (wl7ddrphy1_bitslip129_value0 + 1'd1);
     end
@@ -58849,7 +57517,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip129_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip129_r1 <= {wl7ddrphy1_wl7ddrphy1_r86, wl7ddrphy1_bitslip129_r1[15:8]};
+    wl7ddrphy1_bitslip129_r1 <= {wl7ddrphy1_dfi_name57, wl7ddrphy1_bitslip129_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip130_value0 <= (wl7ddrphy1_bitslip130_value0 + 1'd1);
     end
@@ -58863,7 +57531,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip130_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip130_r1 <= {wl7ddrphy1_wl7ddrphy1_r87, wl7ddrphy1_bitslip130_r1[15:8]};
+    wl7ddrphy1_bitslip130_r1 <= {wl7ddrphy1_dfi_name58, wl7ddrphy1_bitslip130_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip131_value0 <= (wl7ddrphy1_bitslip131_value0 + 1'd1);
     end
@@ -58877,7 +57545,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip131_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip131_r1 <= {wl7ddrphy1_wl7ddrphy1_r88, wl7ddrphy1_bitslip131_r1[15:8]};
+    wl7ddrphy1_bitslip131_r1 <= {wl7ddrphy1_dfi_name59, wl7ddrphy1_bitslip131_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip132_value0 <= (wl7ddrphy1_bitslip132_value0 + 1'd1);
     end
@@ -58891,7 +57559,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip132_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip132_r1 <= {wl7ddrphy1_wl7ddrphy1_r89, wl7ddrphy1_bitslip132_r1[15:8]};
+    wl7ddrphy1_bitslip132_r1 <= {wl7ddrphy1_dfi_name60, wl7ddrphy1_bitslip132_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip133_value0 <= (wl7ddrphy1_bitslip133_value0 + 1'd1);
     end
@@ -58905,7 +57573,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip133_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip133_r1 <= {wl7ddrphy1_wl7ddrphy1_r90, wl7ddrphy1_bitslip133_r1[15:8]};
+    wl7ddrphy1_bitslip133_r1 <= {wl7ddrphy1_dfi_name61, wl7ddrphy1_bitslip133_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip134_value0 <= (wl7ddrphy1_bitslip134_value0 + 1'd1);
     end
@@ -58919,7 +57587,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip134_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip134_r1 <= {wl7ddrphy1_wl7ddrphy1_r91, wl7ddrphy1_bitslip134_r1[15:8]};
+    wl7ddrphy1_bitslip134_r1 <= {wl7ddrphy1_dfi_name62, wl7ddrphy1_bitslip134_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip135_value0 <= (wl7ddrphy1_bitslip135_value0 + 1'd1);
     end
@@ -58933,7 +57601,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip135_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip135_r1 <= {wl7ddrphy1_wl7ddrphy1_r92, wl7ddrphy1_bitslip135_r1[15:8]};
+    wl7ddrphy1_bitslip135_r1 <= {wl7ddrphy1_dfi_name63, wl7ddrphy1_bitslip135_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip136_value0 <= (wl7ddrphy1_bitslip136_value0 + 1'd1);
     end
@@ -58947,7 +57615,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip136_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip136_r1 <= {wl7ddrphy1_wl7ddrphy1_r93, wl7ddrphy1_bitslip136_r1[15:8]};
+    wl7ddrphy1_bitslip136_r1 <= {wl7ddrphy1_dfi_name64, wl7ddrphy1_bitslip136_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip137_value0 <= (wl7ddrphy1_bitslip137_value0 + 1'd1);
     end
@@ -58961,7 +57629,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip137_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip137_r1 <= {wl7ddrphy1_wl7ddrphy1_r94, wl7ddrphy1_bitslip137_r1[15:8]};
+    wl7ddrphy1_bitslip137_r1 <= {wl7ddrphy1_dfi_name65, wl7ddrphy1_bitslip137_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip138_value0 <= (wl7ddrphy1_bitslip138_value0 + 1'd1);
     end
@@ -58975,7 +57643,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip138_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip138_r1 <= {wl7ddrphy1_wl7ddrphy1_r95, wl7ddrphy1_bitslip138_r1[15:8]};
+    wl7ddrphy1_bitslip138_r1 <= {wl7ddrphy1_dfi_name66, wl7ddrphy1_bitslip138_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip139_value0 <= (wl7ddrphy1_bitslip139_value0 + 1'd1);
     end
@@ -58989,7 +57657,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip139_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip139_r1 <= {wl7ddrphy1_wl7ddrphy1_r96, wl7ddrphy1_bitslip139_r1[15:8]};
+    wl7ddrphy1_bitslip139_r1 <= {wl7ddrphy1_dfi_name67, wl7ddrphy1_bitslip139_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip140_value0 <= (wl7ddrphy1_bitslip140_value0 + 1'd1);
     end
@@ -59003,7 +57671,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip140_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip140_r1 <= {wl7ddrphy1_wl7ddrphy1_r97, wl7ddrphy1_bitslip140_r1[15:8]};
+    wl7ddrphy1_bitslip140_r1 <= {wl7ddrphy1_dfi_name68, wl7ddrphy1_bitslip140_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip141_value0 <= (wl7ddrphy1_bitslip141_value0 + 1'd1);
     end
@@ -59017,7 +57685,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip141_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip141_r1 <= {wl7ddrphy1_wl7ddrphy1_r98, wl7ddrphy1_bitslip141_r1[15:8]};
+    wl7ddrphy1_bitslip141_r1 <= {wl7ddrphy1_dfi_name69, wl7ddrphy1_bitslip141_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip142_value0 <= (wl7ddrphy1_bitslip142_value0 + 1'd1);
     end
@@ -59031,7 +57699,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip142_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip142_r1 <= {wl7ddrphy1_wl7ddrphy1_r99, wl7ddrphy1_bitslip142_r1[15:8]};
+    wl7ddrphy1_bitslip142_r1 <= {wl7ddrphy1_dfi_name70, wl7ddrphy1_bitslip142_r1[15:8]};
     if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip143_value0 <= (wl7ddrphy1_bitslip143_value0 + 1'd1);
     end
@@ -59045,7 +57713,7 @@ always @(posedge sys_clk_1) begin
     if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip143_value1 <= 3'd7;
     end
-    wl7ddrphy1_bitslip143_r1 <= {wl7ddrphy1_wl7ddrphy1_r100, wl7ddrphy1_bitslip143_r1[15:8]};
+    wl7ddrphy1_bitslip143_r1 <= {wl7ddrphy1_dfi_name71, wl7ddrphy1_bitslip143_r1[15:8]};
     wl7ddrphy1_tappeddelayline12 <= (((wl7ddrphy1_dfi_p0_rddata_en | wl7ddrphy1_dfi_p1_rddata_en) | wl7ddrphy1_dfi_p2_rddata_en) | wl7ddrphy1_dfi_p3_rddata_en);
     wl7ddrphy1_tappeddelayline13 <= wl7ddrphy1_tappeddelayline12;
     wl7ddrphy1_tappeddelayline14 <= wl7ddrphy1_tappeddelayline13;
@@ -63020,24 +61688,6 @@ FDRE #(
 	.Q  (wl7ddrphy0_self_r)
 );
 
-//------------------------------------------------------------------------------
-// Instance FDRE_1 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r0)
-);
-
 (* DONT_TOUCH = "TRUE" *)
 //------------------------------------------------------------------------------
 // Instance wlrst of FDRE Module.
@@ -63047,31 +61697,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst (
 	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_rd_rst_r0),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r1)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_2 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_2 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw0_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r2)
+	.Q  (wl7ddrphy0_rd_rst_r0)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -63083,31 +61715,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_1 (
 	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_rd_rst_r2),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r3)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_3 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_3 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw0_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r4)
+	.Q  (wl7ddrphy0_rd_rst_r1)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -63119,31 +61733,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_2 (
 	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_rd_rst_r4),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r5)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_4 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_4 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw0_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r6)
+	.Q  (wl7ddrphy0_rd_rst_r2)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -63155,31 +61751,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_3 (
 	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_rd_rst_r6),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r7)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_5 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_5 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw0_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r8)
+	.Q  (wl7ddrphy0_rd_rst_r3)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -63191,31 +61769,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_4 (
 	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_rd_rst_r8),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r9)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_6 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_6 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw0_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r10)
+	.Q  (wl7ddrphy0_rd_rst_r4)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -63227,31 +61787,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_5 (
 	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_rd_rst_r10),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r11)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_7 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_7 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw0_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r12)
+	.Q  (wl7ddrphy0_rd_rst_r5)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -63263,31 +61805,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_6 (
 	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_rd_rst_r12),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r13)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_8 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_8 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw0_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r14)
+	.Q  (wl7ddrphy0_rd_rst_r6)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -63299,31 +61823,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_7 (
 	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_rd_rst_r14),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r15)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_9 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_9 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw0_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r16)
+	.Q  (wl7ddrphy0_rd_rst_r7)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -63335,13 +61841,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_8 (
 	// Inputs.
-	.C  (sysc0_clk),
+	.C  (sysw0_clk),
 	.CE (1'd1),
-	.D  (wl7ddrphy0_rd_rst_r16),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r17)
+	.Q  (wl7ddrphy0_rd_rst_r8)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -63566,13 +62072,13 @@ OBUFDS OBUFDS(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_10 of FDRE Module.
+// Instance FDRE_1 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_10 (
+) FDRE_1 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63584,13 +62090,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_11 of FDRE Module.
+// Instance FDRE_2 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_11 (
+) FDRE_2 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63602,13 +62108,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_12 of FDRE Module.
+// Instance FDRE_3 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_12 (
+) FDRE_3 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63620,13 +62126,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_13 of FDRE Module.
+// Instance FDRE_4 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_13 (
+) FDRE_4 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63638,13 +62144,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_14 of FDRE Module.
+// Instance FDRE_5 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_14 (
+) FDRE_5 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63656,13 +62162,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_15 of FDRE Module.
+// Instance FDRE_6 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_15 (
+) FDRE_6 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63674,13 +62180,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_16 of FDRE Module.
+// Instance FDRE_7 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_16 (
+) FDRE_7 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63692,13 +62198,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_17 of FDRE Module.
+// Instance FDRE_8 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_17 (
+) FDRE_8 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63739,13 +62245,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_18 of FDRE Module.
+// Instance FDRE_9 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_18 (
+) FDRE_9 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63757,13 +62263,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_19 of FDRE Module.
+// Instance FDRE_10 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_19 (
+) FDRE_10 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63775,13 +62281,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_20 of FDRE Module.
+// Instance FDRE_11 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_20 (
+) FDRE_11 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63793,13 +62299,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_21 of FDRE Module.
+// Instance FDRE_12 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_21 (
+) FDRE_12 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63811,13 +62317,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_22 of FDRE Module.
+// Instance FDRE_13 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_22 (
+) FDRE_13 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63829,13 +62335,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_23 of FDRE Module.
+// Instance FDRE_14 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_23 (
+) FDRE_14 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63847,13 +62353,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_24 of FDRE Module.
+// Instance FDRE_15 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_24 (
+) FDRE_15 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63865,13 +62371,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_25 of FDRE Module.
+// Instance FDRE_16 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_25 (
+) FDRE_16 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63912,13 +62418,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_26 of FDRE Module.
+// Instance FDRE_17 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_26 (
+) FDRE_17 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63930,13 +62436,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_27 of FDRE Module.
+// Instance FDRE_18 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_27 (
+) FDRE_18 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63948,13 +62454,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_28 of FDRE Module.
+// Instance FDRE_19 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_28 (
+) FDRE_19 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63966,13 +62472,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_29 of FDRE Module.
+// Instance FDRE_20 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_29 (
+) FDRE_20 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -63984,13 +62490,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_30 of FDRE Module.
+// Instance FDRE_21 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_30 (
+) FDRE_21 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64002,13 +62508,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_31 of FDRE Module.
+// Instance FDRE_22 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_31 (
+) FDRE_22 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64020,13 +62526,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_32 of FDRE Module.
+// Instance FDRE_23 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_32 (
+) FDRE_23 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64038,13 +62544,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_33 of FDRE Module.
+// Instance FDRE_24 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_33 (
+) FDRE_24 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64085,13 +62591,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_34 of FDRE Module.
+// Instance FDRE_25 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_34 (
+) FDRE_25 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64103,13 +62609,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_35 of FDRE Module.
+// Instance FDRE_26 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_35 (
+) FDRE_26 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64121,13 +62627,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_36 of FDRE Module.
+// Instance FDRE_27 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_36 (
+) FDRE_27 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64139,13 +62645,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_37 of FDRE Module.
+// Instance FDRE_28 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_37 (
+) FDRE_28 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64157,13 +62663,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_38 of FDRE Module.
+// Instance FDRE_29 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_38 (
+) FDRE_29 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64175,13 +62681,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_39 of FDRE Module.
+// Instance FDRE_30 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_39 (
+) FDRE_30 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64193,13 +62699,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_40 of FDRE Module.
+// Instance FDRE_31 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_40 (
+) FDRE_31 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64211,13 +62717,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_41 of FDRE Module.
+// Instance FDRE_32 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_41 (
+) FDRE_32 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64258,13 +62764,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_42 of FDRE Module.
+// Instance FDRE_33 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_42 (
+) FDRE_33 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64276,13 +62782,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_43 of FDRE Module.
+// Instance FDRE_34 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_43 (
+) FDRE_34 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64294,13 +62800,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_44 of FDRE Module.
+// Instance FDRE_35 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_44 (
+) FDRE_35 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64312,13 +62818,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_45 of FDRE Module.
+// Instance FDRE_36 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_45 (
+) FDRE_36 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64330,13 +62836,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_46 of FDRE Module.
+// Instance FDRE_37 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_46 (
+) FDRE_37 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64348,13 +62854,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_47 of FDRE Module.
+// Instance FDRE_38 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_47 (
+) FDRE_38 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64366,13 +62872,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_48 of FDRE Module.
+// Instance FDRE_39 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_48 (
+) FDRE_39 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64384,13 +62890,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_49 of FDRE Module.
+// Instance FDRE_40 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_49 (
+) FDRE_40 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64431,13 +62937,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_50 of FDRE Module.
+// Instance FDRE_41 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_50 (
+) FDRE_41 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64449,13 +62955,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_51 of FDRE Module.
+// Instance FDRE_42 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_51 (
+) FDRE_42 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64467,13 +62973,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_52 of FDRE Module.
+// Instance FDRE_43 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_52 (
+) FDRE_43 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64485,13 +62991,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_53 of FDRE Module.
+// Instance FDRE_44 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_53 (
+) FDRE_44 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64503,13 +63009,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_54 of FDRE Module.
+// Instance FDRE_45 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_54 (
+) FDRE_45 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64521,13 +63027,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_55 of FDRE Module.
+// Instance FDRE_46 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_55 (
+) FDRE_46 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64539,13 +63045,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_56 of FDRE Module.
+// Instance FDRE_47 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_56 (
+) FDRE_47 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64557,13 +63063,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_57 of FDRE Module.
+// Instance FDRE_48 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_57 (
+) FDRE_48 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64604,13 +63110,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_58 of FDRE Module.
+// Instance FDRE_49 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_58 (
+) FDRE_49 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64622,13 +63128,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_59 of FDRE Module.
+// Instance FDRE_50 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_59 (
+) FDRE_50 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64640,13 +63146,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_60 of FDRE Module.
+// Instance FDRE_51 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_60 (
+) FDRE_51 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64658,13 +63164,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_61 of FDRE Module.
+// Instance FDRE_52 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_61 (
+) FDRE_52 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64676,13 +63182,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_62 of FDRE Module.
+// Instance FDRE_53 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_62 (
+) FDRE_53 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64694,13 +63200,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_63 of FDRE Module.
+// Instance FDRE_54 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_63 (
+) FDRE_54 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64712,13 +63218,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_64 of FDRE Module.
+// Instance FDRE_55 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_64 (
+) FDRE_55 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64730,13 +63236,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_65 of FDRE Module.
+// Instance FDRE_56 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_65 (
+) FDRE_56 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64777,13 +63283,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_66 of FDRE Module.
+// Instance FDRE_57 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_66 (
+) FDRE_57 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64795,13 +63301,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_67 of FDRE Module.
+// Instance FDRE_58 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_67 (
+) FDRE_58 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64813,13 +63319,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_68 of FDRE Module.
+// Instance FDRE_59 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_68 (
+) FDRE_59 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64831,13 +63337,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_69 of FDRE Module.
+// Instance FDRE_60 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_69 (
+) FDRE_60 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64849,13 +63355,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_70 of FDRE Module.
+// Instance FDRE_61 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_70 (
+) FDRE_61 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64867,13 +63373,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_71 of FDRE Module.
+// Instance FDRE_62 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_71 (
+) FDRE_62 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64885,13 +63391,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_72 of FDRE Module.
+// Instance FDRE_63 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_72 (
+) FDRE_63 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64903,13 +63409,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_73 of FDRE Module.
+// Instance FDRE_64 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_73 (
+) FDRE_64 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64968,13 +63474,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_74 of FDRE Module.
+// Instance FDRE_65 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_74 (
+) FDRE_65 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -64986,13 +63492,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_75 of FDRE Module.
+// Instance FDRE_66 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_75 (
+) FDRE_66 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65004,13 +63510,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_76 of FDRE Module.
+// Instance FDRE_67 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_76 (
+) FDRE_67 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65022,13 +63528,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_77 of FDRE Module.
+// Instance FDRE_68 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_77 (
+) FDRE_68 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65040,13 +63546,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_78 of FDRE Module.
+// Instance FDRE_69 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_78 (
+) FDRE_69 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65058,13 +63564,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_79 of FDRE Module.
+// Instance FDRE_70 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_79 (
+) FDRE_70 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65076,13 +63582,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_80 of FDRE Module.
+// Instance FDRE_71 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_80 (
+) FDRE_71 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65094,13 +63600,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_81 of FDRE Module.
+// Instance FDRE_72 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_81 (
+) FDRE_72 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65141,13 +63647,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_82 of FDRE Module.
+// Instance FDRE_73 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_82 (
+) FDRE_73 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65159,13 +63665,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_83 of FDRE Module.
+// Instance FDRE_74 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_83 (
+) FDRE_74 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65177,13 +63683,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_84 of FDRE Module.
+// Instance FDRE_75 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_84 (
+) FDRE_75 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65195,13 +63701,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_85 of FDRE Module.
+// Instance FDRE_76 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_85 (
+) FDRE_76 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65213,13 +63719,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_86 of FDRE Module.
+// Instance FDRE_77 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_86 (
+) FDRE_77 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65231,13 +63737,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_87 of FDRE Module.
+// Instance FDRE_78 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_87 (
+) FDRE_78 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65249,13 +63755,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_88 of FDRE Module.
+// Instance FDRE_79 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_88 (
+) FDRE_79 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65267,13 +63773,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_89 of FDRE Module.
+// Instance FDRE_80 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_89 (
+) FDRE_80 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65314,13 +63820,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_90 of FDRE Module.
+// Instance FDRE_81 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_90 (
+) FDRE_81 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65332,13 +63838,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_91 of FDRE Module.
+// Instance FDRE_82 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_91 (
+) FDRE_82 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65350,13 +63856,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_92 of FDRE Module.
+// Instance FDRE_83 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_92 (
+) FDRE_83 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65368,13 +63874,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_93 of FDRE Module.
+// Instance FDRE_84 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_93 (
+) FDRE_84 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65386,13 +63892,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_94 of FDRE Module.
+// Instance FDRE_85 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_94 (
+) FDRE_85 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65404,13 +63910,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_95 of FDRE Module.
+// Instance FDRE_86 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_95 (
+) FDRE_86 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65422,13 +63928,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_96 of FDRE Module.
+// Instance FDRE_87 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_96 (
+) FDRE_87 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65440,13 +63946,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_97 of FDRE Module.
+// Instance FDRE_88 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_97 (
+) FDRE_88 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65487,13 +63993,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_98 of FDRE Module.
+// Instance FDRE_89 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_98 (
+) FDRE_89 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65505,13 +64011,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_99 of FDRE Module.
+// Instance FDRE_90 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_99 (
+) FDRE_90 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65523,13 +64029,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_100 of FDRE Module.
+// Instance FDRE_91 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_100 (
+) FDRE_91 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65541,13 +64047,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_101 of FDRE Module.
+// Instance FDRE_92 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_101 (
+) FDRE_92 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65559,13 +64065,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_102 of FDRE Module.
+// Instance FDRE_93 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_102 (
+) FDRE_93 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65577,13 +64083,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_103 of FDRE Module.
+// Instance FDRE_94 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_103 (
+) FDRE_94 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65595,13 +64101,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_104 of FDRE Module.
+// Instance FDRE_95 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_104 (
+) FDRE_95 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65613,13 +64119,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_105 of FDRE Module.
+// Instance FDRE_96 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_105 (
+) FDRE_96 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65660,13 +64166,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_106 of FDRE Module.
+// Instance FDRE_97 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_106 (
+) FDRE_97 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65678,13 +64184,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_107 of FDRE Module.
+// Instance FDRE_98 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_107 (
+) FDRE_98 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65696,13 +64202,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_108 of FDRE Module.
+// Instance FDRE_99 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_108 (
+) FDRE_99 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65714,13 +64220,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_109 of FDRE Module.
+// Instance FDRE_100 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_109 (
+) FDRE_100 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65732,13 +64238,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_110 of FDRE Module.
+// Instance FDRE_101 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_110 (
+) FDRE_101 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65750,13 +64256,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_111 of FDRE Module.
+// Instance FDRE_102 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_111 (
+) FDRE_102 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65768,13 +64274,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_112 of FDRE Module.
+// Instance FDRE_103 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_112 (
+) FDRE_103 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65786,13 +64292,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_113 of FDRE Module.
+// Instance FDRE_104 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_113 (
+) FDRE_104 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65833,13 +64339,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_114 of FDRE Module.
+// Instance FDRE_105 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_114 (
+) FDRE_105 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65851,13 +64357,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_115 of FDRE Module.
+// Instance FDRE_106 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_115 (
+) FDRE_106 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65869,13 +64375,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_116 of FDRE Module.
+// Instance FDRE_107 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_116 (
+) FDRE_107 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65887,13 +64393,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_117 of FDRE Module.
+// Instance FDRE_108 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_117 (
+) FDRE_108 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65905,13 +64411,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_118 of FDRE Module.
+// Instance FDRE_109 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_118 (
+) FDRE_109 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65923,13 +64429,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_119 of FDRE Module.
+// Instance FDRE_110 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_119 (
+) FDRE_110 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65941,13 +64447,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_120 of FDRE Module.
+// Instance FDRE_111 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_120 (
+) FDRE_111 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -65959,13 +64465,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_121 of FDRE Module.
+// Instance FDRE_112 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_121 (
+) FDRE_112 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66006,13 +64512,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_122 of FDRE Module.
+// Instance FDRE_113 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_122 (
+) FDRE_113 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66024,13 +64530,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_123 of FDRE Module.
+// Instance FDRE_114 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_123 (
+) FDRE_114 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66042,13 +64548,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_124 of FDRE Module.
+// Instance FDRE_115 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_124 (
+) FDRE_115 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66060,13 +64566,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_125 of FDRE Module.
+// Instance FDRE_116 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_125 (
+) FDRE_116 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66078,13 +64584,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_126 of FDRE Module.
+// Instance FDRE_117 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_126 (
+) FDRE_117 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66096,13 +64602,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_127 of FDRE Module.
+// Instance FDRE_118 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_127 (
+) FDRE_118 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66114,13 +64620,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_128 of FDRE Module.
+// Instance FDRE_119 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_128 (
+) FDRE_119 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66132,13 +64638,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_129 of FDRE Module.
+// Instance FDRE_120 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_129 (
+) FDRE_120 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66179,13 +64685,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_130 of FDRE Module.
+// Instance FDRE_121 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_130 (
+) FDRE_121 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66197,13 +64703,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_131 of FDRE Module.
+// Instance FDRE_122 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_131 (
+) FDRE_122 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66215,13 +64721,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_132 of FDRE Module.
+// Instance FDRE_123 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_132 (
+) FDRE_123 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66233,13 +64739,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_133 of FDRE Module.
+// Instance FDRE_124 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_133 (
+) FDRE_124 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66251,13 +64757,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_134 of FDRE Module.
+// Instance FDRE_125 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_134 (
+) FDRE_125 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66269,13 +64775,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_135 of FDRE Module.
+// Instance FDRE_126 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_135 (
+) FDRE_126 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66287,13 +64793,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_136 of FDRE Module.
+// Instance FDRE_127 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_136 (
+) FDRE_127 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66305,13 +64811,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_137 of FDRE Module.
+// Instance FDRE_128 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_137 (
+) FDRE_128 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66370,13 +64876,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_138 of FDRE Module.
+// Instance FDRE_129 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_138 (
+) FDRE_129 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66388,13 +64894,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_139 of FDRE Module.
+// Instance FDRE_130 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_139 (
+) FDRE_130 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66406,13 +64912,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_140 of FDRE Module.
+// Instance FDRE_131 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_140 (
+) FDRE_131 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66424,13 +64930,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_141 of FDRE Module.
+// Instance FDRE_132 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_141 (
+) FDRE_132 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66442,13 +64948,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_142 of FDRE Module.
+// Instance FDRE_133 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_142 (
+) FDRE_133 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66460,13 +64966,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_143 of FDRE Module.
+// Instance FDRE_134 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_143 (
+) FDRE_134 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66478,13 +64984,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_144 of FDRE Module.
+// Instance FDRE_135 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_144 (
+) FDRE_135 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66496,13 +65002,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_145 of FDRE Module.
+// Instance FDRE_136 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_145 (
+) FDRE_136 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66543,13 +65049,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_146 of FDRE Module.
+// Instance FDRE_137 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_146 (
+) FDRE_137 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66561,13 +65067,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_147 of FDRE Module.
+// Instance FDRE_138 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_147 (
+) FDRE_138 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66579,13 +65085,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_148 of FDRE Module.
+// Instance FDRE_139 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_148 (
+) FDRE_139 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66597,13 +65103,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_149 of FDRE Module.
+// Instance FDRE_140 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_149 (
+) FDRE_140 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66615,13 +65121,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_150 of FDRE Module.
+// Instance FDRE_141 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_150 (
+) FDRE_141 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66633,13 +65139,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_151 of FDRE Module.
+// Instance FDRE_142 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_151 (
+) FDRE_142 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66651,13 +65157,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_152 of FDRE Module.
+// Instance FDRE_143 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_152 (
+) FDRE_143 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66669,13 +65175,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_153 of FDRE Module.
+// Instance FDRE_144 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_153 (
+) FDRE_144 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66716,13 +65222,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_154 of FDRE Module.
+// Instance FDRE_145 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_154 (
+) FDRE_145 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66734,13 +65240,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_155 of FDRE Module.
+// Instance FDRE_146 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_155 (
+) FDRE_146 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66752,13 +65258,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_156 of FDRE Module.
+// Instance FDRE_147 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_156 (
+) FDRE_147 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66770,13 +65276,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_157 of FDRE Module.
+// Instance FDRE_148 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_157 (
+) FDRE_148 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66788,13 +65294,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_158 of FDRE Module.
+// Instance FDRE_149 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_158 (
+) FDRE_149 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66806,13 +65312,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_159 of FDRE Module.
+// Instance FDRE_150 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_159 (
+) FDRE_150 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66824,13 +65330,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_160 of FDRE Module.
+// Instance FDRE_151 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_160 (
+) FDRE_151 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66842,13 +65348,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_161 of FDRE Module.
+// Instance FDRE_152 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_161 (
+) FDRE_152 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66889,13 +65395,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_162 of FDRE Module.
+// Instance FDRE_153 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_162 (
+) FDRE_153 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66907,13 +65413,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_163 of FDRE Module.
+// Instance FDRE_154 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_163 (
+) FDRE_154 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66925,13 +65431,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_164 of FDRE Module.
+// Instance FDRE_155 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_164 (
+) FDRE_155 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66943,13 +65449,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_165 of FDRE Module.
+// Instance FDRE_156 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_165 (
+) FDRE_156 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66961,13 +65467,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_166 of FDRE Module.
+// Instance FDRE_157 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_166 (
+) FDRE_157 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66979,13 +65485,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_167 of FDRE Module.
+// Instance FDRE_158 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_167 (
+) FDRE_158 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -66997,13 +65503,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_168 of FDRE Module.
+// Instance FDRE_159 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_168 (
+) FDRE_159 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67015,13 +65521,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_169 of FDRE Module.
+// Instance FDRE_160 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_169 (
+) FDRE_160 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67062,13 +65568,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_170 of FDRE Module.
+// Instance FDRE_161 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_170 (
+) FDRE_161 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67080,13 +65586,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_171 of FDRE Module.
+// Instance FDRE_162 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_171 (
+) FDRE_162 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67098,13 +65604,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_172 of FDRE Module.
+// Instance FDRE_163 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_172 (
+) FDRE_163 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67116,13 +65622,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_173 of FDRE Module.
+// Instance FDRE_164 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_173 (
+) FDRE_164 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67134,13 +65640,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_174 of FDRE Module.
+// Instance FDRE_165 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_174 (
+) FDRE_165 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67152,13 +65658,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_175 of FDRE Module.
+// Instance FDRE_166 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_175 (
+) FDRE_166 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67170,13 +65676,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_176 of FDRE Module.
+// Instance FDRE_167 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_176 (
+) FDRE_167 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67188,13 +65694,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_177 of FDRE Module.
+// Instance FDRE_168 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_177 (
+) FDRE_168 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67235,13 +65741,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_178 of FDRE Module.
+// Instance FDRE_169 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_178 (
+) FDRE_169 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67253,13 +65759,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_179 of FDRE Module.
+// Instance FDRE_170 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_179 (
+) FDRE_170 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67271,13 +65777,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_180 of FDRE Module.
+// Instance FDRE_171 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_180 (
+) FDRE_171 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67289,13 +65795,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_181 of FDRE Module.
+// Instance FDRE_172 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_181 (
+) FDRE_172 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67307,13 +65813,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_182 of FDRE Module.
+// Instance FDRE_173 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_182 (
+) FDRE_173 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67325,13 +65831,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_183 of FDRE Module.
+// Instance FDRE_174 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_183 (
+) FDRE_174 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67343,13 +65849,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_184 of FDRE Module.
+// Instance FDRE_175 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_184 (
+) FDRE_175 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67361,13 +65867,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_185 of FDRE Module.
+// Instance FDRE_176 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_185 (
+) FDRE_176 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67408,13 +65914,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_186 of FDRE Module.
+// Instance FDRE_177 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_186 (
+) FDRE_177 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67426,13 +65932,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_187 of FDRE Module.
+// Instance FDRE_178 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_187 (
+) FDRE_178 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67444,13 +65950,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_188 of FDRE Module.
+// Instance FDRE_179 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_188 (
+) FDRE_179 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67462,13 +65968,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_189 of FDRE Module.
+// Instance FDRE_180 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_189 (
+) FDRE_180 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67480,13 +65986,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_190 of FDRE Module.
+// Instance FDRE_181 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_190 (
+) FDRE_181 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67498,13 +66004,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_191 of FDRE Module.
+// Instance FDRE_182 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_191 (
+) FDRE_182 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67516,13 +66022,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_192 of FDRE Module.
+// Instance FDRE_183 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_192 (
+) FDRE_183 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67534,13 +66040,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_193 of FDRE Module.
+// Instance FDRE_184 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_193 (
+) FDRE_184 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67581,13 +66087,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_194 of FDRE Module.
+// Instance FDRE_185 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_194 (
+) FDRE_185 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67599,13 +66105,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_195 of FDRE Module.
+// Instance FDRE_186 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_195 (
+) FDRE_186 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67617,13 +66123,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_196 of FDRE Module.
+// Instance FDRE_187 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_196 (
+) FDRE_187 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67635,13 +66141,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_197 of FDRE Module.
+// Instance FDRE_188 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_197 (
+) FDRE_188 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67653,13 +66159,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_198 of FDRE Module.
+// Instance FDRE_189 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_198 (
+) FDRE_189 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67671,13 +66177,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_199 of FDRE Module.
+// Instance FDRE_190 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_199 (
+) FDRE_190 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67689,13 +66195,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_200 of FDRE Module.
+// Instance FDRE_191 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_200 (
+) FDRE_191 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67707,13 +66213,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_201 of FDRE Module.
+// Instance FDRE_192 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_201 (
+) FDRE_192 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67772,13 +66278,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_202 of FDRE Module.
+// Instance FDRE_193 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_202 (
+) FDRE_193 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67790,13 +66296,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_203 of FDRE Module.
+// Instance FDRE_194 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_203 (
+) FDRE_194 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67808,13 +66314,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_204 of FDRE Module.
+// Instance FDRE_195 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_204 (
+) FDRE_195 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67826,13 +66332,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_205 of FDRE Module.
+// Instance FDRE_196 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_205 (
+) FDRE_196 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67844,13 +66350,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_206 of FDRE Module.
+// Instance FDRE_197 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_206 (
+) FDRE_197 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67862,13 +66368,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_207 of FDRE Module.
+// Instance FDRE_198 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_207 (
+) FDRE_198 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67880,13 +66386,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_208 of FDRE Module.
+// Instance FDRE_199 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_208 (
+) FDRE_199 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -67898,13 +66404,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_209 of FDRE Module.
+// Instance FDRE_200 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_209 (
+) FDRE_200 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -68382,150 +66888,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_210 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_210 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name0[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r29[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_211 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_211 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name0[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r29[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_212 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_212 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name0[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r29[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_213 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_213 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name0[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r29[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_214 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_214 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name0[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r29[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_215 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_215 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name0[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r29[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_216 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_216 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name0[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r29[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_217 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_217 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name0[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r29[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -68540,11 +66902,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed0),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name0[7]),
@@ -68631,150 +66993,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_218 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_218 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name1[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r30[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_219 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_219 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name1[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r30[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_220 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_220 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name1[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r30[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_221 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_221 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name1[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r30[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_222 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_222 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name1[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r30[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_223 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_223 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name1[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r30[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_224 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_224 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name1[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r30[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_225 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_225 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name1[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r30[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_1 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -68789,11 +67007,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed1),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name1[7]),
@@ -68880,150 +67098,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_226 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_226 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name2[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r31[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_227 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_227 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name2[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r31[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_228 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_228 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name2[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r31[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_229 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_229 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name2[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r31[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_230 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_230 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name2[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r31[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_231 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_231 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name2[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r31[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_232 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_232 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name2[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r31[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_233 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_233 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name2[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r31[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_2 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -69038,11 +67112,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed2),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name2[7]),
@@ -69129,150 +67203,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_234 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_234 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name3[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r32[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_235 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_235 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name3[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r32[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_236 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_236 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name3[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r32[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_237 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_237 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name3[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r32[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_238 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_238 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name3[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r32[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_239 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_239 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name3[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r32[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_240 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_240 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name3[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r32[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_241 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_241 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name3[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r32[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_3 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -69287,11 +67217,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed3),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name3[7]),
@@ -69378,150 +67308,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_242 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_242 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name4[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r33[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_243 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_243 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name4[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r33[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_244 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_244 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name4[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r33[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_245 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_245 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name4[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r33[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_246 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_246 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name4[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r33[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_247 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_247 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name4[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r33[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_248 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_248 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name4[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r33[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_249 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_249 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name4[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r33[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_4 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -69536,11 +67322,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed4),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name4[7]),
@@ -69627,150 +67413,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_250 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_250 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name5[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r34[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_251 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_251 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name5[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r34[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_252 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_252 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name5[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r34[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_253 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_253 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name5[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r34[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_254 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_254 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name5[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r34[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_255 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_255 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name5[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r34[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_256 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_256 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name5[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r34[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_257 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_257 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name5[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r34[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_5 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -69785,11 +67427,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed5),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name5[7]),
@@ -69876,150 +67518,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_258 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_258 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name6[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r35[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_259 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_259 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name6[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r35[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_260 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_260 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name6[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r35[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_261 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_261 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name6[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r35[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_262 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_262 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name6[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r35[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_263 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_263 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name6[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r35[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_264 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_264 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name6[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r35[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_265 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_265 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name6[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r35[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_6 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -70034,11 +67532,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed6),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name6[7]),
@@ -70125,150 +67623,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_266 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_266 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name7[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r36[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_267 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_267 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name7[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r36[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_268 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_268 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name7[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r36[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_269 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_269 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name7[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r36[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_270 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_270 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name7[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r36[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_271 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_271 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name7[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r36[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_272 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_272 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name7[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r36[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_273 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_273 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name7[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r36[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_7 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -70283,11 +67637,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed7),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name7[7]),
@@ -70374,150 +67728,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_274 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_274 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name8[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r37[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_275 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_275 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name8[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r37[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_276 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_276 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name8[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r37[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_277 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_277 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name8[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r37[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_278 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_278 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name8[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r37[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_279 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_279 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name8[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r37[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_280 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_280 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name8[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r37[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_281 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_281 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name8[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r37[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_8 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -70532,11 +67742,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed8),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name8[7]),
@@ -70623,150 +67833,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_282 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_282 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name9[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r38[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_283 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_283 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name9[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r38[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_284 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_284 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name9[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r38[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_285 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_285 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name9[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r38[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_286 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_286 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name9[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r38[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_287 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_287 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name9[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r38[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_288 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_288 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name9[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r38[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_289 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_289 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name9[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r38[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_9 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -70781,11 +67847,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed9),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name9[7]),
@@ -70872,150 +67938,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_290 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_290 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name10[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r39[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_291 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_291 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name10[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r39[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_292 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_292 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name10[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r39[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_293 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_293 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name10[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r39[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_294 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_294 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name10[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r39[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_295 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_295 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name10[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r39[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_296 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_296 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name10[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r39[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_297 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_297 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name10[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r39[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_10 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -71030,11 +67952,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed10),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name10[7]),
@@ -71121,150 +68043,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_298 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_298 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name11[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r40[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_299 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_299 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name11[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r40[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_300 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_300 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name11[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r40[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_301 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_301 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name11[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r40[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_302 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_302 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name11[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r40[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_303 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_303 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name11[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r40[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_304 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_304 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name11[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r40[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_305 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_305 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name11[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r40[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_11 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -71279,11 +68057,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed11),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name11[7]),
@@ -71370,150 +68148,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_306 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_306 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name12[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r41[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_307 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_307 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name12[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r41[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_308 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_308 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name12[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r41[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_309 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_309 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name12[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r41[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_310 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_310 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name12[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r41[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_311 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_311 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name12[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r41[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_312 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_312 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name12[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r41[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_313 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_313 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name12[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r41[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_12 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -71528,11 +68162,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed12),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name12[7]),
@@ -71619,150 +68253,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_314 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_314 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name13[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r42[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_315 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_315 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name13[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r42[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_316 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_316 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name13[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r42[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_317 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_317 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name13[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r42[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_318 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_318 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name13[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r42[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_319 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_319 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name13[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r42[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_320 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_320 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name13[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r42[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_321 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_321 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name13[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r42[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_13 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -71777,11 +68267,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed13),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name13[7]),
@@ -71868,150 +68358,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_322 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_322 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name14[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r43[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_323 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_323 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name14[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r43[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_324 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_324 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name14[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r43[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_325 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_325 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name14[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r43[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_326 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_326 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name14[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r43[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_327 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_327 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name14[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r43[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_328 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_328 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name14[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r43[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_329 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_329 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name14[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r43[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_14 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -72026,11 +68372,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed14),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name14[7]),
@@ -72117,150 +68463,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_330 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_330 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name15[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r44[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_331 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_331 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name15[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r44[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_332 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_332 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name15[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r44[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_333 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_333 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name15[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r44[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_334 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_334 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name15[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r44[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_335 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_335 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name15[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r44[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_336 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_336 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name15[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r44[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_337 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_337 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name15[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r44[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_15 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -72275,11 +68477,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed15),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name15[7]),
@@ -72366,150 +68568,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_338 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_338 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name16[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r45[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_339 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_339 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name16[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r45[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_340 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_340 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name16[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r45[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_341 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_341 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name16[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r45[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_342 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_342 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name16[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r45[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_343 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_343 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name16[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r45[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_344 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_344 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name16[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r45[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_345 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_345 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name16[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r45[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_16 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -72524,11 +68582,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed16),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name16[7]),
@@ -72615,150 +68673,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_346 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_346 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name17[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r46[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_347 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_347 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name17[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r46[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_348 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_348 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name17[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r46[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_349 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_349 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name17[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r46[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_350 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_350 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name17[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r46[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_351 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_351 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name17[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r46[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_352 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_352 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name17[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r46[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_353 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_353 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name17[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r46[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_17 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -72773,11 +68687,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed17),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name17[7]),
@@ -72864,150 +68778,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_354 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_354 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name18[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r47[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_355 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_355 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name18[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r47[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_356 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_356 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name18[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r47[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_357 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_357 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name18[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r47[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_358 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_358 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name18[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r47[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_359 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_359 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name18[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r47[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_360 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_360 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name18[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r47[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_361 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_361 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name18[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r47[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_18 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -73022,11 +68792,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed18),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name18[7]),
@@ -73113,150 +68883,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_362 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_362 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name19[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r48[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_363 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_363 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name19[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r48[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_364 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_364 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name19[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r48[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_365 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_365 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name19[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r48[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_366 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_366 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name19[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r48[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_367 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_367 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name19[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r48[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_368 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_368 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name19[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r48[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_369 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_369 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name19[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r48[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_19 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -73271,11 +68897,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed19),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name19[7]),
@@ -73362,150 +68988,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_370 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_370 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name20[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r49[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_371 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_371 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name20[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r49[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_372 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_372 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name20[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r49[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_373 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_373 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name20[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r49[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_374 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_374 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name20[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r49[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_375 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_375 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name20[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r49[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_376 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_376 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name20[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r49[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_377 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_377 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name20[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r49[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_20 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -73520,11 +69002,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed20),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name20[7]),
@@ -73611,150 +69093,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_378 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_378 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name21[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r50[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_379 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_379 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name21[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r50[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_380 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_380 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name21[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r50[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_381 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_381 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name21[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r50[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_382 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_382 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name21[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r50[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_383 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_383 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name21[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r50[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_384 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_384 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name21[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r50[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_385 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_385 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name21[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r50[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_21 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -73769,11 +69107,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed21),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name21[7]),
@@ -73860,150 +69198,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_386 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_386 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name22[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r51[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_387 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_387 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name22[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r51[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_388 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_388 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name22[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r51[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_389 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_389 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name22[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r51[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_390 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_390 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name22[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r51[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_391 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_391 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name22[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r51[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_392 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_392 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name22[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r51[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_393 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_393 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name22[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r51[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_22 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -74018,11 +69212,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed22),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name22[7]),
@@ -74109,150 +69303,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_394 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_394 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name23[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r52[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_395 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_395 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name23[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r52[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_396 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_396 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name23[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r52[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_397 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_397 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name23[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r52[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_398 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_398 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name23[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r52[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_399 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_399 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name23[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r52[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_400 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_400 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name23[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r52[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_401 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_401 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name23[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r52[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_23 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -74267,11 +69317,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed23),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name23[7]),
@@ -74358,150 +69408,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_402 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_402 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name24[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r53[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_403 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_403 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name24[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r53[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_404 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_404 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name24[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r53[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_405 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_405 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name24[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r53[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_406 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_406 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name24[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r53[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_407 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_407 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name24[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r53[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_408 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_408 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name24[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r53[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_409 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_409 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name24[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r53[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_24 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -74516,11 +69422,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed24),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name24[7]),
@@ -74607,150 +69513,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_410 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_410 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name25[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r54[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_411 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_411 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name25[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r54[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_412 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_412 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name25[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r54[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_413 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_413 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name25[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r54[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_414 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_414 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name25[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r54[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_415 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_415 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name25[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r54[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_416 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_416 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name25[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r54[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_417 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_417 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name25[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r54[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_25 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -74765,11 +69527,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed25),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name25[7]),
@@ -74856,150 +69618,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_418 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_418 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name26[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r55[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_419 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_419 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name26[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r55[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_420 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_420 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name26[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r55[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_421 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_421 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name26[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r55[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_422 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_422 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name26[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r55[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_423 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_423 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name26[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r55[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_424 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_424 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name26[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r55[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_425 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_425 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name26[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r55[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_26 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -75014,11 +69632,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed26),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name26[7]),
@@ -75105,150 +69723,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_426 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_426 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name27[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r56[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_427 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_427 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name27[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r56[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_428 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_428 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name27[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r56[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_429 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_429 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name27[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r56[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_430 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_430 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name27[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r56[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_431 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_431 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name27[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r56[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_432 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_432 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name27[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r56[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_433 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_433 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name27[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r56[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_27 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -75263,11 +69737,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed27),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name27[7]),
@@ -75354,150 +69828,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_434 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_434 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name28[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r57[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_435 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_435 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name28[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r57[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_436 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_436 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name28[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r57[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_437 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_437 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name28[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r57[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_438 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_438 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name28[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r57[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_439 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_439 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name28[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r57[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_440 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_440 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name28[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r57[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_441 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_441 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name28[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r57[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_28 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -75512,11 +69842,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed28),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name28[7]),
@@ -75603,150 +69933,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_442 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_442 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name29[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r58[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_443 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_443 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name29[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r58[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_444 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_444 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name29[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r58[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_445 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_445 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name29[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r58[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_446 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_446 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name29[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r58[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_447 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_447 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name29[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r58[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_448 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_448 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name29[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r58[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_449 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_449 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name29[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r58[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_29 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -75761,11 +69947,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed29),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name29[7]),
@@ -75852,150 +70038,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_450 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_450 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name30[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r59[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_451 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_451 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name30[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r59[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_452 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_452 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name30[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r59[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_453 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_453 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name30[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r59[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_454 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_454 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name30[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r59[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_455 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_455 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name30[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r59[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_456 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_456 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name30[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r59[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_457 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_457 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name30[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r59[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_30 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -76010,11 +70052,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed30),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name30[7]),
@@ -76101,150 +70143,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_458 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_458 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name31[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r60[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_459 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_459 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name31[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r60[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_460 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_460 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name31[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r60[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_461 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_461 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name31[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r60[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_462 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_462 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name31[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r60[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_463 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_463 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name31[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r60[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_464 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_464 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name31[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r60[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_465 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_465 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name31[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r60[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_31 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -76259,11 +70157,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed31),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name31[7]),
@@ -76350,150 +70248,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_466 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_466 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name32[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r61[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_467 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_467 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name32[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r61[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_468 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_468 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name32[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r61[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_469 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_469 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name32[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r61[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_470 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_470 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name32[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r61[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_471 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_471 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name32[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r61[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_472 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_472 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name32[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r61[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_473 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_473 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name32[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r61[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_32 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -76508,11 +70262,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed32),
-	.RST     (wl7ddrphy0_rd_rst_r9),
+	.RST     (wl7ddrphy0_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name32[7]),
@@ -76599,150 +70353,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_474 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_474 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name33[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r62[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_475 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_475 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name33[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r62[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_476 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_476 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name33[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r62[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_477 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_477 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name33[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r62[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_478 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_478 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name33[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r62[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_479 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_479 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name33[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r62[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_480 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_480 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name33[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r62[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_481 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_481 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name33[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r62[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_33 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -76757,11 +70367,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed33),
-	.RST     (wl7ddrphy0_rd_rst_r9),
+	.RST     (wl7ddrphy0_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name33[7]),
@@ -76848,150 +70458,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_482 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_482 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name34[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r63[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_483 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_483 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name34[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r63[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_484 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_484 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name34[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r63[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_485 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_485 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name34[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r63[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_486 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_486 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name34[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r63[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_487 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_487 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name34[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r63[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_488 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_488 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name34[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r63[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_489 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_489 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name34[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r63[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_34 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -77006,11 +70472,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed34),
-	.RST     (wl7ddrphy0_rd_rst_r9),
+	.RST     (wl7ddrphy0_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name34[7]),
@@ -77097,150 +70563,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_490 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_490 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name35[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r64[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_491 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_491 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name35[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r64[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_492 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_492 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name35[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r64[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_493 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_493 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name35[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r64[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_494 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_494 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name35[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r64[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_495 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_495 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name35[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r64[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_496 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_496 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name35[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r64[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_497 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_497 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name35[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r64[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_35 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -77255,11 +70577,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed35),
-	.RST     (wl7ddrphy0_rd_rst_r9),
+	.RST     (wl7ddrphy0_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name35[7]),
@@ -77346,150 +70668,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_498 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_498 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name36[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r65[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_499 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_499 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name36[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r65[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_500 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_500 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name36[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r65[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_501 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_501 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name36[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r65[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_502 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_502 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name36[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r65[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_503 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_503 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name36[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r65[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_504 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_504 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name36[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r65[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_505 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_505 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name36[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r65[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_36 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -77504,11 +70682,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed36),
-	.RST     (wl7ddrphy0_rd_rst_r9),
+	.RST     (wl7ddrphy0_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name36[7]),
@@ -77595,150 +70773,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_506 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_506 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name37[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r66[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_507 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_507 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name37[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r66[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_508 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_508 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name37[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r66[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_509 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_509 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name37[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r66[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_510 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_510 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name37[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r66[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_511 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_511 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name37[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r66[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_512 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_512 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name37[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r66[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_513 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_513 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name37[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r66[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_37 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -77753,11 +70787,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed37),
-	.RST     (wl7ddrphy0_rd_rst_r9),
+	.RST     (wl7ddrphy0_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name37[7]),
@@ -77844,150 +70878,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_514 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_514 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name38[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r67[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_515 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_515 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name38[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r67[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_516 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_516 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name38[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r67[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_517 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_517 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name38[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r67[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_518 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_518 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name38[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r67[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_519 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_519 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name38[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r67[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_520 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_520 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name38[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r67[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_521 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_521 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name38[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r67[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_38 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -78002,11 +70892,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed38),
-	.RST     (wl7ddrphy0_rd_rst_r9),
+	.RST     (wl7ddrphy0_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name38[7]),
@@ -78093,150 +70983,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_522 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_522 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name39[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r68[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_523 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_523 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name39[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r68[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_524 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_524 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name39[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r68[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_525 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_525 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name39[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r68[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_526 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_526 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name39[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r68[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_527 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_527 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name39[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r68[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_528 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_528 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name39[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r68[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_529 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_529 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name39[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r68[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_39 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -78251,11 +70997,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed39),
-	.RST     (wl7ddrphy0_rd_rst_r9),
+	.RST     (wl7ddrphy0_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name39[7]),
@@ -78342,150 +71088,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_530 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_530 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name40[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r69[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_531 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_531 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name40[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r69[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_532 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_532 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name40[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r69[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_533 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_533 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name40[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r69[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_534 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_534 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name40[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r69[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_535 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_535 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name40[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r69[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_536 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_536 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name40[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r69[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_537 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_537 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name40[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r69[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_40 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -78500,11 +71102,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed40),
-	.RST     (wl7ddrphy0_rd_rst_r11),
+	.RST     (wl7ddrphy0_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name40[7]),
@@ -78591,150 +71193,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_538 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_538 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name41[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r70[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_539 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_539 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name41[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r70[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_540 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_540 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name41[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r70[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_541 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_541 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name41[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r70[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_542 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_542 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name41[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r70[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_543 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_543 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name41[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r70[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_544 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_544 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name41[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r70[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_545 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_545 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name41[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r70[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_41 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -78749,11 +71207,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed41),
-	.RST     (wl7ddrphy0_rd_rst_r11),
+	.RST     (wl7ddrphy0_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name41[7]),
@@ -78840,150 +71298,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_546 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_546 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name42[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r71[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_547 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_547 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name42[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r71[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_548 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_548 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name42[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r71[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_549 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_549 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name42[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r71[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_550 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_550 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name42[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r71[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_551 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_551 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name42[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r71[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_552 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_552 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name42[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r71[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_553 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_553 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name42[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r71[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_42 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -78998,11 +71312,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed42),
-	.RST     (wl7ddrphy0_rd_rst_r11),
+	.RST     (wl7ddrphy0_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name42[7]),
@@ -79089,150 +71403,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_554 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_554 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name43[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r72[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_555 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_555 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name43[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r72[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_556 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_556 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name43[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r72[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_557 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_557 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name43[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r72[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_558 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_558 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name43[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r72[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_559 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_559 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name43[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r72[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_560 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_560 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name43[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r72[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_561 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_561 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name43[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r72[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_43 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -79247,11 +71417,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed43),
-	.RST     (wl7ddrphy0_rd_rst_r11),
+	.RST     (wl7ddrphy0_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name43[7]),
@@ -79338,150 +71508,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_562 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_562 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name44[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r73[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_563 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_563 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name44[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r73[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_564 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_564 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name44[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r73[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_565 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_565 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name44[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r73[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_566 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_566 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name44[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r73[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_567 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_567 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name44[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r73[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_568 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_568 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name44[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r73[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_569 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_569 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name44[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r73[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_44 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -79496,11 +71522,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed44),
-	.RST     (wl7ddrphy0_rd_rst_r11),
+	.RST     (wl7ddrphy0_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name44[7]),
@@ -79587,150 +71613,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_570 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_570 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name45[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r74[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_571 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_571 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name45[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r74[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_572 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_572 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name45[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r74[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_573 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_573 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name45[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r74[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_574 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_574 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name45[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r74[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_575 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_575 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name45[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r74[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_576 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_576 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name45[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r74[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_577 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_577 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name45[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r74[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_45 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -79745,11 +71627,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed45),
-	.RST     (wl7ddrphy0_rd_rst_r11),
+	.RST     (wl7ddrphy0_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name45[7]),
@@ -79836,150 +71718,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_578 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_578 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name46[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r75[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_579 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_579 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name46[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r75[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_580 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_580 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name46[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r75[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_581 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_581 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name46[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r75[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_582 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_582 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name46[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r75[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_583 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_583 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name46[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r75[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_584 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_584 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name46[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r75[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_585 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_585 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name46[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r75[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_46 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -79994,11 +71732,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed46),
-	.RST     (wl7ddrphy0_rd_rst_r11),
+	.RST     (wl7ddrphy0_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name46[7]),
@@ -80085,150 +71823,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_586 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_586 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name47[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r76[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_587 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_587 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name47[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r76[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_588 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_588 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name47[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r76[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_589 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_589 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name47[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r76[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_590 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_590 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name47[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r76[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_591 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_591 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name47[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r76[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_592 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_592 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name47[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r76[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_593 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_593 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name47[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r76[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_47 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -80243,11 +71837,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed47),
-	.RST     (wl7ddrphy0_rd_rst_r11),
+	.RST     (wl7ddrphy0_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name47[7]),
@@ -80334,150 +71928,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_594 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_594 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name48[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r77[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_595 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_595 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name48[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r77[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_596 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_596 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name48[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r77[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_597 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_597 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name48[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r77[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_598 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_598 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name48[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r77[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_599 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_599 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name48[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r77[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_600 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_600 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name48[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r77[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_601 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_601 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name48[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r77[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_48 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -80492,11 +71942,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed48),
-	.RST     (wl7ddrphy0_rd_rst_r13),
+	.RST     (wl7ddrphy0_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name48[7]),
@@ -80583,150 +72033,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_602 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_602 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name49[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r78[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_603 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_603 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name49[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r78[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_604 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_604 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name49[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r78[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_605 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_605 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name49[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r78[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_606 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_606 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name49[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r78[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_607 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_607 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name49[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r78[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_608 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_608 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name49[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r78[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_609 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_609 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name49[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r78[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_49 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -80741,11 +72047,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed49),
-	.RST     (wl7ddrphy0_rd_rst_r13),
+	.RST     (wl7ddrphy0_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name49[7]),
@@ -80832,150 +72138,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_610 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_610 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name50[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r79[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_611 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_611 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name50[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r79[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_612 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_612 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name50[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r79[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_613 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_613 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name50[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r79[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_614 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_614 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name50[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r79[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_615 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_615 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name50[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r79[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_616 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_616 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name50[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r79[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_617 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_617 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name50[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r79[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_50 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -80990,11 +72152,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed50),
-	.RST     (wl7ddrphy0_rd_rst_r13),
+	.RST     (wl7ddrphy0_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name50[7]),
@@ -81081,150 +72243,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_618 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_618 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name51[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r80[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_619 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_619 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name51[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r80[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_620 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_620 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name51[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r80[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_621 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_621 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name51[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r80[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_622 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_622 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name51[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r80[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_623 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_623 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name51[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r80[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_624 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_624 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name51[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r80[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_625 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_625 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name51[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r80[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_51 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -81239,11 +72257,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed51),
-	.RST     (wl7ddrphy0_rd_rst_r13),
+	.RST     (wl7ddrphy0_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name51[7]),
@@ -81330,150 +72348,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_626 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_626 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name52[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r81[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_627 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_627 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name52[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r81[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_628 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_628 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name52[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r81[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_629 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_629 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name52[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r81[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_630 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_630 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name52[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r81[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_631 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_631 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name52[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r81[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_632 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_632 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name52[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r81[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_633 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_633 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name52[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r81[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_52 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -81488,11 +72362,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed52),
-	.RST     (wl7ddrphy0_rd_rst_r13),
+	.RST     (wl7ddrphy0_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name52[7]),
@@ -81579,150 +72453,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_634 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_634 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name53[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r82[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_635 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_635 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name53[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r82[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_636 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_636 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name53[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r82[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_637 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_637 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name53[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r82[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_638 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_638 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name53[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r82[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_639 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_639 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name53[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r82[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_640 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_640 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name53[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r82[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_641 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_641 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name53[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r82[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_53 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -81737,11 +72467,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed53),
-	.RST     (wl7ddrphy0_rd_rst_r13),
+	.RST     (wl7ddrphy0_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name53[7]),
@@ -81828,150 +72558,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_642 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_642 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name54[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r83[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_643 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_643 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name54[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r83[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_644 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_644 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name54[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r83[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_645 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_645 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name54[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r83[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_646 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_646 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name54[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r83[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_647 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_647 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name54[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r83[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_648 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_648 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name54[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r83[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_649 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_649 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name54[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r83[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_54 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -81986,11 +72572,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed54),
-	.RST     (wl7ddrphy0_rd_rst_r13),
+	.RST     (wl7ddrphy0_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name54[7]),
@@ -82077,150 +72663,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_650 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_650 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name55[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r84[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_651 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_651 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name55[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r84[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_652 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_652 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name55[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r84[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_653 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_653 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name55[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r84[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_654 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_654 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name55[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r84[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_655 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_655 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name55[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r84[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_656 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_656 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name55[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r84[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_657 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_657 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name55[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r84[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_55 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -82235,11 +72677,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed55),
-	.RST     (wl7ddrphy0_rd_rst_r13),
+	.RST     (wl7ddrphy0_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name55[7]),
@@ -82326,150 +72768,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_658 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_658 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name56[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r85[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_659 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_659 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name56[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r85[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_660 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_660 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name56[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r85[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_661 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_661 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name56[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r85[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_662 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_662 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name56[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r85[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_663 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_663 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name56[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r85[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_664 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_664 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name56[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r85[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_665 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_665 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name56[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r85[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_56 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -82484,11 +72782,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed56),
-	.RST     (wl7ddrphy0_rd_rst_r15),
+	.RST     (wl7ddrphy0_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name56[7]),
@@ -82575,150 +72873,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_666 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_666 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name57[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r86[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_667 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_667 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name57[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r86[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_668 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_668 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name57[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r86[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_669 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_669 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name57[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r86[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_670 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_670 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name57[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r86[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_671 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_671 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name57[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r86[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_672 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_672 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name57[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r86[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_673 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_673 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name57[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r86[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_57 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -82733,11 +72887,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed57),
-	.RST     (wl7ddrphy0_rd_rst_r15),
+	.RST     (wl7ddrphy0_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name57[7]),
@@ -82824,150 +72978,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_674 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_674 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name58[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r87[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_675 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_675 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name58[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r87[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_676 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_676 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name58[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r87[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_677 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_677 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name58[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r87[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_678 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_678 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name58[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r87[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_679 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_679 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name58[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r87[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_680 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_680 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name58[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r87[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_681 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_681 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name58[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r87[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_58 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -82982,11 +72992,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed58),
-	.RST     (wl7ddrphy0_rd_rst_r15),
+	.RST     (wl7ddrphy0_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name58[7]),
@@ -83073,150 +73083,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_682 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_682 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name59[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r88[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_683 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_683 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name59[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r88[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_684 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_684 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name59[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r88[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_685 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_685 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name59[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r88[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_686 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_686 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name59[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r88[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_687 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_687 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name59[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r88[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_688 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_688 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name59[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r88[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_689 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_689 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name59[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r88[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_59 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -83231,11 +73097,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed59),
-	.RST     (wl7ddrphy0_rd_rst_r15),
+	.RST     (wl7ddrphy0_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name59[7]),
@@ -83322,150 +73188,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_690 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_690 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name60[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r89[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_691 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_691 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name60[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r89[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_692 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_692 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name60[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r89[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_693 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_693 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name60[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r89[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_694 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_694 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name60[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r89[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_695 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_695 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name60[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r89[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_696 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_696 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name60[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r89[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_697 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_697 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name60[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r89[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_60 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -83480,11 +73202,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed60),
-	.RST     (wl7ddrphy0_rd_rst_r15),
+	.RST     (wl7ddrphy0_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name60[7]),
@@ -83571,150 +73293,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_698 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_698 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name61[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r90[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_699 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_699 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name61[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r90[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_700 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_700 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name61[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r90[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_701 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_701 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name61[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r90[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_702 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_702 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name61[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r90[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_703 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_703 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name61[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r90[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_704 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_704 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name61[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r90[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_705 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_705 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name61[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r90[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_61 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -83729,11 +73307,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed61),
-	.RST     (wl7ddrphy0_rd_rst_r15),
+	.RST     (wl7ddrphy0_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name61[7]),
@@ -83820,150 +73398,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_706 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_706 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name62[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r91[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_707 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_707 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name62[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r91[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_708 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_708 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name62[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r91[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_709 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_709 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name62[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r91[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_710 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_710 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name62[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r91[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_711 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_711 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name62[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r91[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_712 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_712 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name62[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r91[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_713 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_713 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name62[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r91[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_62 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -83978,11 +73412,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed62),
-	.RST     (wl7ddrphy0_rd_rst_r15),
+	.RST     (wl7ddrphy0_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name62[7]),
@@ -84069,150 +73503,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_714 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_714 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name63[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r92[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_715 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_715 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name63[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r92[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_716 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_716 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name63[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r92[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_717 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_717 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name63[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r92[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_718 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_718 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name63[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r92[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_719 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_719 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name63[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r92[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_720 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_720 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name63[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r92[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_721 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_721 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name63[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r92[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_63 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -84227,11 +73517,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed63),
-	.RST     (wl7ddrphy0_rd_rst_r15),
+	.RST     (wl7ddrphy0_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name63[7]),
@@ -84318,150 +73608,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_722 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_722 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name64[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r93[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_723 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_723 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name64[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r93[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_724 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_724 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name64[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r93[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_725 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_725 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name64[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r93[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_726 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_726 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name64[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r93[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_727 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_727 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name64[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r93[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_728 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_728 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name64[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r93[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_729 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_729 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name64[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r93[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_64 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -84476,11 +73622,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed64),
-	.RST     (wl7ddrphy0_rd_rst_r17),
+	.RST     (wl7ddrphy0_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name64[7]),
@@ -84567,150 +73713,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_730 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_730 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name65[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r94[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_731 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_731 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name65[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r94[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_732 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_732 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name65[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r94[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_733 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_733 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name65[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r94[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_734 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_734 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name65[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r94[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_735 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_735 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name65[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r94[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_736 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_736 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name65[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r94[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_737 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_737 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name65[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r94[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_65 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -84725,11 +73727,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed65),
-	.RST     (wl7ddrphy0_rd_rst_r17),
+	.RST     (wl7ddrphy0_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name65[7]),
@@ -84816,150 +73818,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_738 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_738 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name66[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r95[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_739 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_739 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name66[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r95[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_740 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_740 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name66[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r95[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_741 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_741 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name66[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r95[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_742 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_742 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name66[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r95[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_743 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_743 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name66[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r95[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_744 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_744 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name66[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r95[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_745 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_745 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name66[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r95[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_66 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -84974,11 +73832,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed66),
-	.RST     (wl7ddrphy0_rd_rst_r17),
+	.RST     (wl7ddrphy0_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name66[7]),
@@ -85065,150 +73923,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_746 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_746 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name67[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r96[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_747 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_747 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name67[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r96[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_748 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_748 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name67[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r96[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_749 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_749 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name67[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r96[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_750 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_750 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name67[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r96[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_751 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_751 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name67[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r96[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_752 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_752 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name67[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r96[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_753 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_753 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name67[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r96[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_67 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -85223,11 +73937,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed67),
-	.RST     (wl7ddrphy0_rd_rst_r17),
+	.RST     (wl7ddrphy0_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name67[7]),
@@ -85314,150 +74028,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_754 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_754 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name68[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r97[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_755 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_755 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name68[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r97[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_756 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_756 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name68[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r97[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_757 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_757 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name68[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r97[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_758 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_758 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name68[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r97[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_759 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_759 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name68[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r97[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_760 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_760 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name68[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r97[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_761 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_761 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name68[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r97[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_68 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -85472,11 +74042,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed68),
-	.RST     (wl7ddrphy0_rd_rst_r17),
+	.RST     (wl7ddrphy0_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name68[7]),
@@ -85563,150 +74133,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_762 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_762 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name69[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r98[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_763 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_763 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name69[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r98[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_764 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_764 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name69[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r98[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_765 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_765 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name69[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r98[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_766 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_766 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name69[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r98[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_767 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_767 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name69[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r98[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_768 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_768 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name69[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r98[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_769 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_769 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name69[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r98[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_69 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -85721,11 +74147,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed69),
-	.RST     (wl7ddrphy0_rd_rst_r17),
+	.RST     (wl7ddrphy0_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name69[7]),
@@ -85812,150 +74238,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_770 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_770 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name70[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r99[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_771 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_771 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name70[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r99[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_772 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_772 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name70[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r99[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_773 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_773 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name70[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r99[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_774 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_774 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name70[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r99[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_775 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_775 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name70[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r99[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_776 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_776 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name70[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r99[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_777 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_777 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name70[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r99[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_70 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -85970,11 +74252,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed70),
-	.RST     (wl7ddrphy0_rd_rst_r17),
+	.RST     (wl7ddrphy0_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name70[7]),
@@ -86061,150 +74343,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_778 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_778 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name71[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r100[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_779 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_779 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name71[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r100[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_780 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_780 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name71[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r100[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_781 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_781 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name71[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r100[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_782 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_782 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name71[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r100[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_783 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_783 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name71[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r100[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_784 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_784 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name71[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r100[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_785 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_785 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_dfi_name71[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r100[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_71 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -86219,11 +74357,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc0_clk),
-	.CLKB    ((~sys4xc0_clk)),
-	.CLKDIV  (sysc0_clk),
+	.CLK     (sys4xw0a_clk),
+	.CLKB    ((~sys4xw0a_clk)),
+	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed71),
-	.RST     (wl7ddrphy0_rd_rst_r17),
+	.RST     (wl7ddrphy0_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name71[7]),
@@ -86560,13 +74698,13 @@ BUFG BUFG_17(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_786 of FDRE Module.
+// Instance FDRE_201 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_786 (
+) FDRE_201 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -86575,24 +74713,6 @@ FDRE #(
 
 	// Outputs.
 	.Q  (wl7ddrphy1_self_r)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_787 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_787 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r0)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -86604,31 +74724,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_22 (
 	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_rd_rst_r0),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r1)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_788 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_788 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw1_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r2)
+	.Q  (wl7ddrphy1_rd_rst_r0)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -86640,31 +74742,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_23 (
 	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_rd_rst_r2),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r3)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_789 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_789 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw1_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r4)
+	.Q  (wl7ddrphy1_rd_rst_r1)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -86676,31 +74760,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_24 (
 	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_rd_rst_r4),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r5)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_790 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_790 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw1_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r6)
+	.Q  (wl7ddrphy1_rd_rst_r2)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -86712,31 +74778,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_25 (
 	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_rd_rst_r6),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r7)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_791 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_791 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw1_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r8)
+	.Q  (wl7ddrphy1_rd_rst_r3)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -86748,31 +74796,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_26 (
 	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_rd_rst_r8),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r9)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_792 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_792 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw1_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r10)
+	.Q  (wl7ddrphy1_rd_rst_r4)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -86784,31 +74814,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_27 (
 	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_rd_rst_r10),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r11)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_793 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_793 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw1_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r12)
+	.Q  (wl7ddrphy1_rd_rst_r5)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -86820,31 +74832,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_28 (
 	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_rd_rst_r12),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r13)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_794 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_794 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw1_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r14)
+	.Q  (wl7ddrphy1_rd_rst_r6)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -86856,31 +74850,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_29 (
 	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_rd_rst_r14),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r15)
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_795 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_795 (
-	// Inputs.
-	.C  (sys_clk_1),
+	.C  (sysw1_clk),
 	.CE (1'd1),
 	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r16)
+	.Q  (wl7ddrphy1_rd_rst_r7)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -86892,13 +74868,13 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst_30 (
 	// Inputs.
-	.C  (sysc1_clk),
+	.C  (sysw1_clk),
 	.CE (1'd1),
-	.D  (wl7ddrphy1_rd_rst_r16),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r17)
+	.Q  (wl7ddrphy1_rd_rst_r8)
 );
 
 (* DONT_TOUCH = "TRUE" *)
@@ -87123,13 +75099,13 @@ OBUFDS OBUFDS_1(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_796 of FDRE Module.
+// Instance FDRE_202 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_796 (
+) FDRE_202 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87141,13 +75117,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_797 of FDRE Module.
+// Instance FDRE_203 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_797 (
+) FDRE_203 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87159,13 +75135,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_798 of FDRE Module.
+// Instance FDRE_204 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_798 (
+) FDRE_204 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87177,13 +75153,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_799 of FDRE Module.
+// Instance FDRE_205 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_799 (
+) FDRE_205 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87195,13 +75171,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_800 of FDRE Module.
+// Instance FDRE_206 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_800 (
+) FDRE_206 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87213,13 +75189,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_801 of FDRE Module.
+// Instance FDRE_207 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_801 (
+) FDRE_207 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87231,13 +75207,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_802 of FDRE Module.
+// Instance FDRE_208 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_802 (
+) FDRE_208 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87249,13 +75225,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_803 of FDRE Module.
+// Instance FDRE_209 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_803 (
+) FDRE_209 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87296,13 +75272,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_804 of FDRE Module.
+// Instance FDRE_210 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_804 (
+) FDRE_210 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87314,13 +75290,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_805 of FDRE Module.
+// Instance FDRE_211 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_805 (
+) FDRE_211 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87332,13 +75308,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_806 of FDRE Module.
+// Instance FDRE_212 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_806 (
+) FDRE_212 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87350,13 +75326,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_807 of FDRE Module.
+// Instance FDRE_213 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_807 (
+) FDRE_213 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87368,13 +75344,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_808 of FDRE Module.
+// Instance FDRE_214 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_808 (
+) FDRE_214 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87386,13 +75362,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_809 of FDRE Module.
+// Instance FDRE_215 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_809 (
+) FDRE_215 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87404,13 +75380,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_810 of FDRE Module.
+// Instance FDRE_216 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_810 (
+) FDRE_216 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87422,13 +75398,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_811 of FDRE Module.
+// Instance FDRE_217 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_811 (
+) FDRE_217 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87469,13 +75445,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_812 of FDRE Module.
+// Instance FDRE_218 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_812 (
+) FDRE_218 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87487,13 +75463,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_813 of FDRE Module.
+// Instance FDRE_219 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_813 (
+) FDRE_219 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87505,13 +75481,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_814 of FDRE Module.
+// Instance FDRE_220 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_814 (
+) FDRE_220 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87523,13 +75499,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_815 of FDRE Module.
+// Instance FDRE_221 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_815 (
+) FDRE_221 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87541,13 +75517,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_816 of FDRE Module.
+// Instance FDRE_222 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_816 (
+) FDRE_222 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87559,13 +75535,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_817 of FDRE Module.
+// Instance FDRE_223 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_817 (
+) FDRE_223 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87577,13 +75553,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_818 of FDRE Module.
+// Instance FDRE_224 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_818 (
+) FDRE_224 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87595,13 +75571,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_819 of FDRE Module.
+// Instance FDRE_225 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_819 (
+) FDRE_225 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87642,13 +75618,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_820 of FDRE Module.
+// Instance FDRE_226 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_820 (
+) FDRE_226 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87660,13 +75636,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_821 of FDRE Module.
+// Instance FDRE_227 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_821 (
+) FDRE_227 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87678,13 +75654,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_822 of FDRE Module.
+// Instance FDRE_228 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_822 (
+) FDRE_228 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87696,13 +75672,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_823 of FDRE Module.
+// Instance FDRE_229 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_823 (
+) FDRE_229 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87714,13 +75690,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_824 of FDRE Module.
+// Instance FDRE_230 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_824 (
+) FDRE_230 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87732,13 +75708,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_825 of FDRE Module.
+// Instance FDRE_231 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_825 (
+) FDRE_231 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87750,13 +75726,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_826 of FDRE Module.
+// Instance FDRE_232 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_826 (
+) FDRE_232 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87768,13 +75744,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_827 of FDRE Module.
+// Instance FDRE_233 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_827 (
+) FDRE_233 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87815,13 +75791,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_828 of FDRE Module.
+// Instance FDRE_234 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_828 (
+) FDRE_234 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87833,13 +75809,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_829 of FDRE Module.
+// Instance FDRE_235 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_829 (
+) FDRE_235 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87851,13 +75827,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_830 of FDRE Module.
+// Instance FDRE_236 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_830 (
+) FDRE_236 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87869,13 +75845,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_831 of FDRE Module.
+// Instance FDRE_237 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_831 (
+) FDRE_237 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87887,13 +75863,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_832 of FDRE Module.
+// Instance FDRE_238 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_832 (
+) FDRE_238 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87905,13 +75881,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_833 of FDRE Module.
+// Instance FDRE_239 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_833 (
+) FDRE_239 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87923,13 +75899,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_834 of FDRE Module.
+// Instance FDRE_240 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_834 (
+) FDRE_240 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87941,13 +75917,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_835 of FDRE Module.
+// Instance FDRE_241 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_835 (
+) FDRE_241 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -87988,13 +75964,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_836 of FDRE Module.
+// Instance FDRE_242 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_836 (
+) FDRE_242 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88006,13 +75982,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_837 of FDRE Module.
+// Instance FDRE_243 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_837 (
+) FDRE_243 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88024,13 +76000,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_838 of FDRE Module.
+// Instance FDRE_244 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_838 (
+) FDRE_244 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88042,13 +76018,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_839 of FDRE Module.
+// Instance FDRE_245 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_839 (
+) FDRE_245 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88060,13 +76036,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_840 of FDRE Module.
+// Instance FDRE_246 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_840 (
+) FDRE_246 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88078,13 +76054,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_841 of FDRE Module.
+// Instance FDRE_247 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_841 (
+) FDRE_247 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88096,13 +76072,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_842 of FDRE Module.
+// Instance FDRE_248 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_842 (
+) FDRE_248 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88114,13 +76090,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_843 of FDRE Module.
+// Instance FDRE_249 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_843 (
+) FDRE_249 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88161,13 +76137,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_844 of FDRE Module.
+// Instance FDRE_250 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_844 (
+) FDRE_250 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88179,13 +76155,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_845 of FDRE Module.
+// Instance FDRE_251 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_845 (
+) FDRE_251 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88197,13 +76173,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_846 of FDRE Module.
+// Instance FDRE_252 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_846 (
+) FDRE_252 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88215,13 +76191,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_847 of FDRE Module.
+// Instance FDRE_253 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_847 (
+) FDRE_253 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88233,13 +76209,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_848 of FDRE Module.
+// Instance FDRE_254 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_848 (
+) FDRE_254 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88251,13 +76227,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_849 of FDRE Module.
+// Instance FDRE_255 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_849 (
+) FDRE_255 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88269,13 +76245,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_850 of FDRE Module.
+// Instance FDRE_256 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_850 (
+) FDRE_256 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88287,13 +76263,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_851 of FDRE Module.
+// Instance FDRE_257 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_851 (
+) FDRE_257 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88334,13 +76310,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_852 of FDRE Module.
+// Instance FDRE_258 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_852 (
+) FDRE_258 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88352,13 +76328,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_853 of FDRE Module.
+// Instance FDRE_259 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_853 (
+) FDRE_259 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88370,13 +76346,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_854 of FDRE Module.
+// Instance FDRE_260 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_854 (
+) FDRE_260 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88388,13 +76364,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_855 of FDRE Module.
+// Instance FDRE_261 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_855 (
+) FDRE_261 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88406,13 +76382,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_856 of FDRE Module.
+// Instance FDRE_262 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_856 (
+) FDRE_262 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88424,13 +76400,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_857 of FDRE Module.
+// Instance FDRE_263 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_857 (
+) FDRE_263 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88442,13 +76418,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_858 of FDRE Module.
+// Instance FDRE_264 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_858 (
+) FDRE_264 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88460,13 +76436,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_859 of FDRE Module.
+// Instance FDRE_265 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_859 (
+) FDRE_265 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88525,13 +76501,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_860 of FDRE Module.
+// Instance FDRE_266 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_860 (
+) FDRE_266 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88543,13 +76519,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_861 of FDRE Module.
+// Instance FDRE_267 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_861 (
+) FDRE_267 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88561,13 +76537,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_862 of FDRE Module.
+// Instance FDRE_268 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_862 (
+) FDRE_268 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88579,13 +76555,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_863 of FDRE Module.
+// Instance FDRE_269 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_863 (
+) FDRE_269 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88597,13 +76573,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_864 of FDRE Module.
+// Instance FDRE_270 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_864 (
+) FDRE_270 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88615,13 +76591,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_865 of FDRE Module.
+// Instance FDRE_271 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_865 (
+) FDRE_271 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88633,13 +76609,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_866 of FDRE Module.
+// Instance FDRE_272 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_866 (
+) FDRE_272 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88651,13 +76627,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_867 of FDRE Module.
+// Instance FDRE_273 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_867 (
+) FDRE_273 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88698,13 +76674,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_868 of FDRE Module.
+// Instance FDRE_274 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_868 (
+) FDRE_274 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88716,13 +76692,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_869 of FDRE Module.
+// Instance FDRE_275 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_869 (
+) FDRE_275 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88734,13 +76710,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_870 of FDRE Module.
+// Instance FDRE_276 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_870 (
+) FDRE_276 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88752,13 +76728,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_871 of FDRE Module.
+// Instance FDRE_277 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_871 (
+) FDRE_277 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88770,13 +76746,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_872 of FDRE Module.
+// Instance FDRE_278 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_872 (
+) FDRE_278 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88788,13 +76764,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_873 of FDRE Module.
+// Instance FDRE_279 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_873 (
+) FDRE_279 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88806,13 +76782,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_874 of FDRE Module.
+// Instance FDRE_280 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_874 (
+) FDRE_280 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88824,13 +76800,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_875 of FDRE Module.
+// Instance FDRE_281 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_875 (
+) FDRE_281 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88871,13 +76847,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_876 of FDRE Module.
+// Instance FDRE_282 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_876 (
+) FDRE_282 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88889,13 +76865,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_877 of FDRE Module.
+// Instance FDRE_283 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_877 (
+) FDRE_283 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88907,13 +76883,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_878 of FDRE Module.
+// Instance FDRE_284 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_878 (
+) FDRE_284 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88925,13 +76901,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_879 of FDRE Module.
+// Instance FDRE_285 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_879 (
+) FDRE_285 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88943,13 +76919,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_880 of FDRE Module.
+// Instance FDRE_286 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_880 (
+) FDRE_286 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88961,13 +76937,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_881 of FDRE Module.
+// Instance FDRE_287 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_881 (
+) FDRE_287 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88979,13 +76955,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_882 of FDRE Module.
+// Instance FDRE_288 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_882 (
+) FDRE_288 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -88997,13 +76973,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_883 of FDRE Module.
+// Instance FDRE_289 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_883 (
+) FDRE_289 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89044,13 +77020,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_884 of FDRE Module.
+// Instance FDRE_290 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_884 (
+) FDRE_290 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89062,13 +77038,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_885 of FDRE Module.
+// Instance FDRE_291 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_885 (
+) FDRE_291 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89080,13 +77056,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_886 of FDRE Module.
+// Instance FDRE_292 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_886 (
+) FDRE_292 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89098,13 +77074,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_887 of FDRE Module.
+// Instance FDRE_293 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_887 (
+) FDRE_293 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89116,13 +77092,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_888 of FDRE Module.
+// Instance FDRE_294 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_888 (
+) FDRE_294 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89134,13 +77110,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_889 of FDRE Module.
+// Instance FDRE_295 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_889 (
+) FDRE_295 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89152,13 +77128,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_890 of FDRE Module.
+// Instance FDRE_296 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_890 (
+) FDRE_296 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89170,13 +77146,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_891 of FDRE Module.
+// Instance FDRE_297 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_891 (
+) FDRE_297 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89217,13 +77193,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_892 of FDRE Module.
+// Instance FDRE_298 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_892 (
+) FDRE_298 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89235,13 +77211,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_893 of FDRE Module.
+// Instance FDRE_299 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_893 (
+) FDRE_299 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89253,13 +77229,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_894 of FDRE Module.
+// Instance FDRE_300 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_894 (
+) FDRE_300 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89271,13 +77247,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_895 of FDRE Module.
+// Instance FDRE_301 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_895 (
+) FDRE_301 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89289,13 +77265,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_896 of FDRE Module.
+// Instance FDRE_302 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_896 (
+) FDRE_302 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89307,13 +77283,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_897 of FDRE Module.
+// Instance FDRE_303 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_897 (
+) FDRE_303 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89325,13 +77301,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_898 of FDRE Module.
+// Instance FDRE_304 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_898 (
+) FDRE_304 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89343,13 +77319,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_899 of FDRE Module.
+// Instance FDRE_305 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_899 (
+) FDRE_305 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89390,13 +77366,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_900 of FDRE Module.
+// Instance FDRE_306 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_900 (
+) FDRE_306 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89408,13 +77384,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_901 of FDRE Module.
+// Instance FDRE_307 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_901 (
+) FDRE_307 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89426,13 +77402,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_902 of FDRE Module.
+// Instance FDRE_308 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_902 (
+) FDRE_308 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89444,13 +77420,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_903 of FDRE Module.
+// Instance FDRE_309 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_903 (
+) FDRE_309 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89462,13 +77438,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_904 of FDRE Module.
+// Instance FDRE_310 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_904 (
+) FDRE_310 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89480,13 +77456,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_905 of FDRE Module.
+// Instance FDRE_311 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_905 (
+) FDRE_311 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89498,13 +77474,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_906 of FDRE Module.
+// Instance FDRE_312 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_906 (
+) FDRE_312 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89516,13 +77492,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_907 of FDRE Module.
+// Instance FDRE_313 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_907 (
+) FDRE_313 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89563,13 +77539,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_908 of FDRE Module.
+// Instance FDRE_314 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_908 (
+) FDRE_314 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89581,13 +77557,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_909 of FDRE Module.
+// Instance FDRE_315 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_909 (
+) FDRE_315 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89599,13 +77575,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_910 of FDRE Module.
+// Instance FDRE_316 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_910 (
+) FDRE_316 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89617,13 +77593,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_911 of FDRE Module.
+// Instance FDRE_317 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_911 (
+) FDRE_317 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89635,13 +77611,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_912 of FDRE Module.
+// Instance FDRE_318 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_912 (
+) FDRE_318 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89653,13 +77629,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_913 of FDRE Module.
+// Instance FDRE_319 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_913 (
+) FDRE_319 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89671,13 +77647,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_914 of FDRE Module.
+// Instance FDRE_320 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_914 (
+) FDRE_320 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89689,13 +77665,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_915 of FDRE Module.
+// Instance FDRE_321 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_915 (
+) FDRE_321 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89736,13 +77712,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_916 of FDRE Module.
+// Instance FDRE_322 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_916 (
+) FDRE_322 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89754,13 +77730,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_917 of FDRE Module.
+// Instance FDRE_323 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_917 (
+) FDRE_323 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89772,13 +77748,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_918 of FDRE Module.
+// Instance FDRE_324 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_918 (
+) FDRE_324 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89790,13 +77766,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_919 of FDRE Module.
+// Instance FDRE_325 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_919 (
+) FDRE_325 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89808,13 +77784,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_920 of FDRE Module.
+// Instance FDRE_326 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_920 (
+) FDRE_326 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89826,13 +77802,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_921 of FDRE Module.
+// Instance FDRE_327 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_921 (
+) FDRE_327 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89844,13 +77820,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_922 of FDRE Module.
+// Instance FDRE_328 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_922 (
+) FDRE_328 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89862,13 +77838,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_923 of FDRE Module.
+// Instance FDRE_329 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_923 (
+) FDRE_329 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89927,13 +77903,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_924 of FDRE Module.
+// Instance FDRE_330 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_924 (
+) FDRE_330 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89945,13 +77921,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_925 of FDRE Module.
+// Instance FDRE_331 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_925 (
+) FDRE_331 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89963,13 +77939,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_926 of FDRE Module.
+// Instance FDRE_332 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_926 (
+) FDRE_332 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89981,13 +77957,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_927 of FDRE Module.
+// Instance FDRE_333 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_927 (
+) FDRE_333 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -89999,13 +77975,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_928 of FDRE Module.
+// Instance FDRE_334 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_928 (
+) FDRE_334 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90017,13 +77993,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_929 of FDRE Module.
+// Instance FDRE_335 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_929 (
+) FDRE_335 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90035,13 +78011,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_930 of FDRE Module.
+// Instance FDRE_336 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_930 (
+) FDRE_336 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90053,13 +78029,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_931 of FDRE Module.
+// Instance FDRE_337 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_931 (
+) FDRE_337 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90100,13 +78076,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_932 of FDRE Module.
+// Instance FDRE_338 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_932 (
+) FDRE_338 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90118,13 +78094,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_933 of FDRE Module.
+// Instance FDRE_339 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_933 (
+) FDRE_339 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90136,13 +78112,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_934 of FDRE Module.
+// Instance FDRE_340 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_934 (
+) FDRE_340 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90154,13 +78130,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_935 of FDRE Module.
+// Instance FDRE_341 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_935 (
+) FDRE_341 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90172,13 +78148,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_936 of FDRE Module.
+// Instance FDRE_342 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_936 (
+) FDRE_342 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90190,13 +78166,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_937 of FDRE Module.
+// Instance FDRE_343 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_937 (
+) FDRE_343 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90208,13 +78184,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_938 of FDRE Module.
+// Instance FDRE_344 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_938 (
+) FDRE_344 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90226,13 +78202,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_939 of FDRE Module.
+// Instance FDRE_345 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_939 (
+) FDRE_345 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90273,13 +78249,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_940 of FDRE Module.
+// Instance FDRE_346 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_940 (
+) FDRE_346 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90291,13 +78267,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_941 of FDRE Module.
+// Instance FDRE_347 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_941 (
+) FDRE_347 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90309,13 +78285,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_942 of FDRE Module.
+// Instance FDRE_348 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_942 (
+) FDRE_348 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90327,13 +78303,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_943 of FDRE Module.
+// Instance FDRE_349 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_943 (
+) FDRE_349 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90345,13 +78321,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_944 of FDRE Module.
+// Instance FDRE_350 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_944 (
+) FDRE_350 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90363,13 +78339,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_945 of FDRE Module.
+// Instance FDRE_351 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_945 (
+) FDRE_351 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90381,13 +78357,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_946 of FDRE Module.
+// Instance FDRE_352 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_946 (
+) FDRE_352 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90399,13 +78375,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_947 of FDRE Module.
+// Instance FDRE_353 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_947 (
+) FDRE_353 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90446,13 +78422,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_948 of FDRE Module.
+// Instance FDRE_354 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_948 (
+) FDRE_354 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90464,13 +78440,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_949 of FDRE Module.
+// Instance FDRE_355 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_949 (
+) FDRE_355 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90482,13 +78458,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_950 of FDRE Module.
+// Instance FDRE_356 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_950 (
+) FDRE_356 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90500,13 +78476,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_951 of FDRE Module.
+// Instance FDRE_357 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_951 (
+) FDRE_357 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90518,13 +78494,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_952 of FDRE Module.
+// Instance FDRE_358 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_952 (
+) FDRE_358 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90536,13 +78512,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_953 of FDRE Module.
+// Instance FDRE_359 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_953 (
+) FDRE_359 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90554,13 +78530,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_954 of FDRE Module.
+// Instance FDRE_360 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_954 (
+) FDRE_360 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90572,13 +78548,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_955 of FDRE Module.
+// Instance FDRE_361 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_955 (
+) FDRE_361 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90619,13 +78595,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_956 of FDRE Module.
+// Instance FDRE_362 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_956 (
+) FDRE_362 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90637,13 +78613,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_957 of FDRE Module.
+// Instance FDRE_363 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_957 (
+) FDRE_363 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90655,13 +78631,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_958 of FDRE Module.
+// Instance FDRE_364 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_958 (
+) FDRE_364 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90673,13 +78649,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_959 of FDRE Module.
+// Instance FDRE_365 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_959 (
+) FDRE_365 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90691,13 +78667,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_960 of FDRE Module.
+// Instance FDRE_366 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_960 (
+) FDRE_366 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90709,13 +78685,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_961 of FDRE Module.
+// Instance FDRE_367 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_961 (
+) FDRE_367 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90727,13 +78703,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_962 of FDRE Module.
+// Instance FDRE_368 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_962 (
+) FDRE_368 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90745,13 +78721,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_963 of FDRE Module.
+// Instance FDRE_369 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_963 (
+) FDRE_369 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90792,13 +78768,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_964 of FDRE Module.
+// Instance FDRE_370 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_964 (
+) FDRE_370 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90810,13 +78786,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_965 of FDRE Module.
+// Instance FDRE_371 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_965 (
+) FDRE_371 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90828,13 +78804,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_966 of FDRE Module.
+// Instance FDRE_372 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_966 (
+) FDRE_372 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90846,13 +78822,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_967 of FDRE Module.
+// Instance FDRE_373 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_967 (
+) FDRE_373 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90864,13 +78840,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_968 of FDRE Module.
+// Instance FDRE_374 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_968 (
+) FDRE_374 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90882,13 +78858,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_969 of FDRE Module.
+// Instance FDRE_375 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_969 (
+) FDRE_375 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90900,13 +78876,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_970 of FDRE Module.
+// Instance FDRE_376 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_970 (
+) FDRE_376 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90918,13 +78894,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_971 of FDRE Module.
+// Instance FDRE_377 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_971 (
+) FDRE_377 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90965,13 +78941,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_972 of FDRE Module.
+// Instance FDRE_378 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_972 (
+) FDRE_378 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -90983,13 +78959,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_973 of FDRE Module.
+// Instance FDRE_379 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_973 (
+) FDRE_379 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91001,13 +78977,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_974 of FDRE Module.
+// Instance FDRE_380 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_974 (
+) FDRE_380 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91019,13 +78995,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_975 of FDRE Module.
+// Instance FDRE_381 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_975 (
+) FDRE_381 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91037,13 +79013,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_976 of FDRE Module.
+// Instance FDRE_382 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_976 (
+) FDRE_382 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91055,13 +79031,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_977 of FDRE Module.
+// Instance FDRE_383 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_977 (
+) FDRE_383 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91073,13 +79049,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_978 of FDRE Module.
+// Instance FDRE_384 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_978 (
+) FDRE_384 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91091,13 +79067,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_979 of FDRE Module.
+// Instance FDRE_385 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_979 (
+) FDRE_385 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91138,13 +79114,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_980 of FDRE Module.
+// Instance FDRE_386 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_980 (
+) FDRE_386 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91156,13 +79132,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_981 of FDRE Module.
+// Instance FDRE_387 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_981 (
+) FDRE_387 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91174,13 +79150,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_982 of FDRE Module.
+// Instance FDRE_388 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_982 (
+) FDRE_388 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91192,13 +79168,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_983 of FDRE Module.
+// Instance FDRE_389 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_983 (
+) FDRE_389 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91210,13 +79186,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_984 of FDRE Module.
+// Instance FDRE_390 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_984 (
+) FDRE_390 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91228,13 +79204,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_985 of FDRE Module.
+// Instance FDRE_391 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_985 (
+) FDRE_391 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91246,13 +79222,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_986 of FDRE Module.
+// Instance FDRE_392 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_986 (
+) FDRE_392 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91264,13 +79240,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_987 of FDRE Module.
+// Instance FDRE_393 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_987 (
+) FDRE_393 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91329,13 +79305,13 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_988 of FDRE Module.
+// Instance FDRE_394 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_988 (
+) FDRE_394 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91347,13 +79323,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_989 of FDRE Module.
+// Instance FDRE_395 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_989 (
+) FDRE_395 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91365,13 +79341,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_990 of FDRE Module.
+// Instance FDRE_396 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_990 (
+) FDRE_396 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91383,13 +79359,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_991 of FDRE Module.
+// Instance FDRE_397 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_991 (
+) FDRE_397 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91401,13 +79377,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_992 of FDRE Module.
+// Instance FDRE_398 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_992 (
+) FDRE_398 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91419,13 +79395,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_993 of FDRE Module.
+// Instance FDRE_399 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_993 (
+) FDRE_399 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91437,13 +79413,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_994 of FDRE Module.
+// Instance FDRE_400 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_994 (
+) FDRE_400 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91455,13 +79431,13 @@ FDRE #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_995 of FDRE Module.
+// Instance FDRE_401 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT          (1'd0),
 	.IS_C_INVERTED (1'd1)
-) FDRE_995 (
+) FDRE_401 (
 	// Inputs.
 	.C  (sys_clk_1),
 	.CE (1'd1),
@@ -91939,150 +79915,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_996 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_996 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name0[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r29[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_997 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_997 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name0[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r29[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_998 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_998 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name0[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r29[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_999 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_999 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name0[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r29[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1000 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1000 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name0[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r29[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1001 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1001 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name0[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r29[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1002 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1002 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name0[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r29[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1003 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1003 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name0[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r29[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_72 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -92097,11 +79929,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed0),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name0[7]),
@@ -92188,150 +80020,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1004 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1004 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name1[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r30[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1005 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1005 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name1[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r30[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1006 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1006 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name1[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r30[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1007 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1007 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name1[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r30[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1008 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1008 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name1[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r30[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1009 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1009 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name1[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r30[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1010 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1010 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name1[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r30[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1011 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1011 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name1[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r30[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_73 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -92346,11 +80034,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed1),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name1[7]),
@@ -92437,150 +80125,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1012 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1012 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name2[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r31[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1013 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1013 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name2[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r31[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1014 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1014 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name2[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r31[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1015 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1015 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name2[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r31[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1016 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1016 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name2[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r31[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1017 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1017 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name2[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r31[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1018 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1018 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name2[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r31[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1019 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1019 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name2[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r31[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_74 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -92595,11 +80139,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed2),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name2[7]),
@@ -92686,150 +80230,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1020 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1020 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name3[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r32[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1021 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1021 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name3[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r32[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1022 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1022 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name3[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r32[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1023 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1023 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name3[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r32[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1024 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1024 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name3[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r32[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1025 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1025 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name3[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r32[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1026 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1026 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name3[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r32[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1027 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1027 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name3[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r32[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_75 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -92844,11 +80244,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed3),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name3[7]),
@@ -92935,150 +80335,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1028 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1028 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name4[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r33[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1029 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1029 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name4[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r33[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1030 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1030 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name4[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r33[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1031 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1031 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name4[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r33[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1032 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1032 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name4[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r33[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1033 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1033 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name4[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r33[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1034 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1034 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name4[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r33[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1035 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1035 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name4[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r33[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_76 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -93093,11 +80349,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed4),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name4[7]),
@@ -93184,150 +80440,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1036 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1036 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name5[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r34[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1037 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1037 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name5[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r34[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1038 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1038 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name5[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r34[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1039 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1039 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name5[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r34[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1040 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1040 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name5[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r34[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1041 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1041 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name5[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r34[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1042 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1042 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name5[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r34[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1043 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1043 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name5[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r34[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_77 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -93342,11 +80454,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed5),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name5[7]),
@@ -93433,150 +80545,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1044 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1044 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name6[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r35[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1045 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1045 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name6[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r35[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1046 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1046 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name6[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r35[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1047 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1047 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name6[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r35[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1048 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1048 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name6[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r35[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1049 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1049 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name6[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r35[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1050 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1050 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name6[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r35[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1051 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1051 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name6[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r35[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_78 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -93591,11 +80559,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed6),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name6[7]),
@@ -93682,150 +80650,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1052 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1052 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name7[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r36[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1053 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1053 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name7[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r36[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1054 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1054 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name7[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r36[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1055 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1055 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name7[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r36[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1056 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1056 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name7[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r36[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1057 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1057 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name7[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r36[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1058 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1058 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name7[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r36[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1059 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1059 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name7[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r36[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_79 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -93840,11 +80664,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed7),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_rd_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name7[7]),
@@ -93931,150 +80755,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1060 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1060 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name8[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r37[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1061 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1061 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name8[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r37[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1062 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1062 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name8[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r37[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1063 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1063 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name8[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r37[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1064 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1064 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name8[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r37[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1065 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1065 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name8[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r37[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1066 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1066 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name8[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r37[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1067 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1067 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name8[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r37[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_80 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -94089,11 +80769,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed8),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name8[7]),
@@ -94180,150 +80860,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1068 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1068 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name9[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r38[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1069 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1069 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name9[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r38[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1070 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1070 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name9[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r38[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1071 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1071 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name9[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r38[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1072 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1072 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name9[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r38[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1073 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1073 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name9[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r38[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1074 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1074 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name9[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r38[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1075 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1075 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name9[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r38[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_81 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -94338,11 +80874,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed9),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name9[7]),
@@ -94429,150 +80965,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1076 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1076 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name10[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r39[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1077 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1077 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name10[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r39[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1078 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1078 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name10[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r39[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1079 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1079 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name10[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r39[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1080 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1080 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name10[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r39[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1081 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1081 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name10[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r39[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1082 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1082 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name10[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r39[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1083 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1083 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name10[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r39[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_82 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -94587,11 +80979,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed10),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name10[7]),
@@ -94678,150 +81070,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1084 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1084 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name11[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r40[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1085 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1085 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name11[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r40[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1086 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1086 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name11[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r40[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1087 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1087 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name11[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r40[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1088 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1088 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name11[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r40[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1089 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1089 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name11[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r40[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1090 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1090 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name11[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r40[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1091 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1091 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name11[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r40[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_83 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -94836,11 +81084,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed11),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name11[7]),
@@ -94927,150 +81175,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1092 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1092 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name12[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r41[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1093 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1093 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name12[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r41[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1094 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1094 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name12[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r41[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1095 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1095 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name12[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r41[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1096 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1096 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name12[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r41[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1097 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1097 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name12[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r41[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1098 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1098 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name12[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r41[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1099 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1099 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name12[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r41[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_84 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -95085,11 +81189,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed12),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name12[7]),
@@ -95176,150 +81280,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1100 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1100 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name13[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r42[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1101 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1101 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name13[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r42[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1102 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1102 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name13[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r42[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1103 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1103 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name13[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r42[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1104 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1104 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name13[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r42[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1105 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1105 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name13[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r42[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1106 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1106 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name13[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r42[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1107 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1107 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name13[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r42[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_85 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -95334,11 +81294,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed13),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name13[7]),
@@ -95425,150 +81385,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1108 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1108 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name14[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r43[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1109 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1109 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name14[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r43[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1110 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1110 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name14[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r43[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1111 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1111 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name14[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r43[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1112 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1112 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name14[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r43[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1113 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1113 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name14[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r43[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1114 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1114 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name14[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r43[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1115 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1115 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name14[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r43[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_86 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -95583,11 +81399,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed14),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name14[7]),
@@ -95674,150 +81490,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1116 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1116 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name15[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r44[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1117 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1117 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name15[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r44[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1118 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1118 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name15[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r44[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1119 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1119 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name15[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r44[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1120 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1120 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name15[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r44[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1121 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1121 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name15[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r44[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1122 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1122 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name15[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r44[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1123 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1123 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name15[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r44[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_87 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -95832,11 +81504,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed15),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_rd_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name15[7]),
@@ -95923,150 +81595,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1124 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1124 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name16[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r45[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1125 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1125 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name16[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r45[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1126 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1126 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name16[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r45[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1127 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1127 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name16[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r45[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1128 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1128 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name16[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r45[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1129 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1129 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name16[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r45[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1130 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1130 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name16[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r45[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1131 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1131 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name16[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r45[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_88 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -96081,11 +81609,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed16),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name16[7]),
@@ -96172,150 +81700,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1132 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1132 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name17[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r46[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1133 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1133 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name17[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r46[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1134 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1134 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name17[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r46[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1135 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1135 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name17[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r46[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1136 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1136 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name17[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r46[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1137 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1137 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name17[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r46[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1138 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1138 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name17[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r46[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1139 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1139 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name17[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r46[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_89 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -96330,11 +81714,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed17),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name17[7]),
@@ -96421,150 +81805,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1140 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1140 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name18[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r47[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1141 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1141 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name18[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r47[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1142 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1142 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name18[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r47[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1143 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1143 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name18[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r47[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1144 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1144 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name18[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r47[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1145 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1145 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name18[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r47[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1146 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1146 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name18[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r47[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1147 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1147 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name18[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r47[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_90 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -96579,11 +81819,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed18),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name18[7]),
@@ -96670,150 +81910,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1148 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1148 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name19[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r48[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1149 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1149 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name19[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r48[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1150 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1150 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name19[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r48[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1151 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1151 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name19[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r48[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1152 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1152 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name19[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r48[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1153 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1153 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name19[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r48[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1154 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1154 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name19[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r48[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1155 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1155 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name19[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r48[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_91 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -96828,11 +81924,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed19),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name19[7]),
@@ -96919,150 +82015,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1156 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1156 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name20[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r49[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1157 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1157 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name20[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r49[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1158 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1158 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name20[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r49[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1159 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1159 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name20[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r49[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1160 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1160 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name20[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r49[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1161 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1161 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name20[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r49[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1162 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1162 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name20[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r49[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1163 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1163 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name20[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r49[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_92 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -97077,11 +82029,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed20),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name20[7]),
@@ -97168,150 +82120,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1164 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1164 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name21[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r50[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1165 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1165 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name21[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r50[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1166 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1166 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name21[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r50[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1167 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1167 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name21[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r50[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1168 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1168 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name21[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r50[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1169 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1169 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name21[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r50[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1170 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1170 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name21[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r50[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1171 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1171 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name21[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r50[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_93 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -97326,11 +82134,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed21),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name21[7]),
@@ -97417,150 +82225,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1172 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1172 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name22[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r51[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1173 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1173 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name22[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r51[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1174 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1174 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name22[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r51[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1175 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1175 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name22[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r51[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1176 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1176 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name22[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r51[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1177 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1177 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name22[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r51[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1178 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1178 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name22[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r51[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1179 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1179 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name22[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r51[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_94 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -97575,11 +82239,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed22),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name22[7]),
@@ -97666,150 +82330,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1180 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1180 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name23[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r52[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1181 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1181 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name23[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r52[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1182 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1182 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name23[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r52[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1183 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1183 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name23[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r52[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1184 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1184 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name23[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r52[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1185 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1185 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name23[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r52[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1186 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1186 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name23[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r52[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1187 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1187 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name23[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r52[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_95 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -97824,11 +82344,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed23),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_rd_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name23[7]),
@@ -97915,150 +82435,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1188 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1188 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name24[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r53[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1189 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1189 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name24[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r53[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1190 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1190 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name24[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r53[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1191 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1191 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name24[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r53[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1192 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1192 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name24[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r53[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1193 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1193 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name24[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r53[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1194 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1194 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name24[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r53[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1195 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1195 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name24[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r53[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_96 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -98073,11 +82449,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed24),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name24[7]),
@@ -98164,150 +82540,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1196 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1196 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name25[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r54[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1197 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1197 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name25[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r54[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1198 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1198 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name25[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r54[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1199 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1199 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name25[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r54[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1200 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1200 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name25[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r54[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1201 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1201 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name25[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r54[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1202 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1202 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name25[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r54[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1203 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1203 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name25[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r54[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_97 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -98322,11 +82554,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed25),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name25[7]),
@@ -98413,150 +82645,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1204 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1204 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name26[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r55[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1205 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1205 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name26[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r55[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1206 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1206 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name26[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r55[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1207 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1207 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name26[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r55[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1208 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1208 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name26[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r55[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1209 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1209 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name26[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r55[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1210 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1210 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name26[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r55[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1211 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1211 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name26[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r55[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_98 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -98571,11 +82659,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed26),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name26[7]),
@@ -98662,150 +82750,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1212 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1212 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name27[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r56[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1213 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1213 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name27[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r56[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1214 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1214 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name27[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r56[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1215 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1215 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name27[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r56[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1216 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1216 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name27[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r56[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1217 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1217 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name27[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r56[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1218 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1218 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name27[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r56[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1219 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1219 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name27[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r56[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_99 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -98820,11 +82764,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed27),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name27[7]),
@@ -98911,150 +82855,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1220 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1220 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name28[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r57[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1221 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1221 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name28[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r57[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1222 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1222 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name28[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r57[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1223 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1223 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name28[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r57[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1224 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1224 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name28[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r57[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1225 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1225 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name28[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r57[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1226 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1226 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name28[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r57[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1227 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1227 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name28[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r57[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_100 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -99069,11 +82869,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed28),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name28[7]),
@@ -99160,150 +82960,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1228 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1228 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name29[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r58[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1229 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1229 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name29[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r58[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1230 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1230 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name29[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r58[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1231 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1231 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name29[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r58[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1232 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1232 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name29[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r58[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1233 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1233 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name29[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r58[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1234 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1234 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name29[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r58[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1235 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1235 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name29[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r58[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_101 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -99318,11 +82974,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed29),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name29[7]),
@@ -99409,150 +83065,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1236 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1236 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name30[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r59[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1237 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1237 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name30[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r59[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1238 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1238 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name30[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r59[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1239 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1239 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name30[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r59[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1240 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1240 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name30[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r59[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1241 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1241 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name30[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r59[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1242 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1242 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name30[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r59[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1243 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1243 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name30[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r59[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_102 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -99567,11 +83079,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed30),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name30[7]),
@@ -99658,150 +83170,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1244 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1244 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name31[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r60[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1245 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1245 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name31[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r60[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1246 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1246 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name31[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r60[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1247 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1247 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name31[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r60[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1248 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1248 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name31[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r60[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1249 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1249 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name31[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r60[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1250 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1250 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name31[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r60[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1251 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1251 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name31[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r60[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_103 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -99816,11 +83184,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed31),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_rd_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name31[7]),
@@ -99907,150 +83275,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1252 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1252 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name32[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r61[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1253 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1253 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name32[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r61[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1254 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1254 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name32[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r61[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1255 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1255 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name32[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r61[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1256 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1256 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name32[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r61[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1257 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1257 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name32[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r61[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1258 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1258 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name32[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r61[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1259 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1259 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name32[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r61[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_104 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -100065,11 +83289,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed32),
-	.RST     (wl7ddrphy1_rd_rst_r9),
+	.RST     (wl7ddrphy1_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name32[7]),
@@ -100156,150 +83380,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1260 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1260 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name33[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r62[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1261 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1261 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name33[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r62[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1262 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1262 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name33[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r62[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1263 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1263 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name33[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r62[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1264 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1264 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name33[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r62[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1265 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1265 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name33[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r62[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1266 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1266 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name33[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r62[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1267 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1267 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name33[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r62[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_105 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -100314,11 +83394,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed33),
-	.RST     (wl7ddrphy1_rd_rst_r9),
+	.RST     (wl7ddrphy1_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name33[7]),
@@ -100405,150 +83485,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1268 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1268 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name34[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r63[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1269 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1269 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name34[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r63[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1270 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1270 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name34[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r63[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1271 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1271 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name34[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r63[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1272 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1272 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name34[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r63[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1273 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1273 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name34[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r63[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1274 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1274 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name34[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r63[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1275 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1275 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name34[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r63[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_106 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -100563,11 +83499,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed34),
-	.RST     (wl7ddrphy1_rd_rst_r9),
+	.RST     (wl7ddrphy1_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name34[7]),
@@ -100654,150 +83590,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1276 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1276 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name35[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r64[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1277 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1277 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name35[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r64[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1278 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1278 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name35[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r64[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1279 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1279 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name35[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r64[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1280 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1280 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name35[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r64[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1281 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1281 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name35[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r64[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1282 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1282 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name35[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r64[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1283 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1283 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name35[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r64[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_107 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -100812,11 +83604,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed35),
-	.RST     (wl7ddrphy1_rd_rst_r9),
+	.RST     (wl7ddrphy1_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name35[7]),
@@ -100903,150 +83695,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1284 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1284 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name36[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r65[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1285 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1285 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name36[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r65[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1286 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1286 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name36[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r65[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1287 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1287 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name36[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r65[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1288 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1288 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name36[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r65[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1289 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1289 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name36[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r65[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1290 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1290 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name36[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r65[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1291 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1291 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name36[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r65[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_108 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -101061,11 +83709,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed36),
-	.RST     (wl7ddrphy1_rd_rst_r9),
+	.RST     (wl7ddrphy1_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name36[7]),
@@ -101152,150 +83800,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1292 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1292 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name37[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r66[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1293 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1293 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name37[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r66[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1294 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1294 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name37[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r66[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1295 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1295 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name37[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r66[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1296 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1296 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name37[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r66[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1297 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1297 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name37[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r66[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1298 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1298 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name37[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r66[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1299 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1299 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name37[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r66[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_109 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -101310,11 +83814,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed37),
-	.RST     (wl7ddrphy1_rd_rst_r9),
+	.RST     (wl7ddrphy1_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name37[7]),
@@ -101401,150 +83905,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1300 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1300 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name38[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r67[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1301 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1301 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name38[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r67[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1302 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1302 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name38[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r67[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1303 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1303 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name38[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r67[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1304 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1304 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name38[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r67[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1305 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1305 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name38[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r67[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1306 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1306 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name38[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r67[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1307 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1307 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name38[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r67[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_110 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -101559,11 +83919,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed38),
-	.RST     (wl7ddrphy1_rd_rst_r9),
+	.RST     (wl7ddrphy1_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name38[7]),
@@ -101650,150 +84010,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1308 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1308 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name39[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r68[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1309 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1309 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name39[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r68[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1310 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1310 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name39[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r68[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1311 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1311 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name39[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r68[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1312 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1312 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name39[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r68[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1313 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1313 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name39[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r68[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1314 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1314 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name39[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r68[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1315 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1315 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name39[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r68[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_111 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -101808,11 +84024,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed39),
-	.RST     (wl7ddrphy1_rd_rst_r9),
+	.RST     (wl7ddrphy1_rd_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name39[7]),
@@ -101899,150 +84115,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1316 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1316 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name40[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r69[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1317 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1317 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name40[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r69[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1318 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1318 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name40[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r69[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1319 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1319 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name40[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r69[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1320 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1320 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name40[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r69[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1321 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1321 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name40[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r69[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1322 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1322 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name40[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r69[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1323 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1323 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name40[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r69[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_112 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -102057,11 +84129,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed40),
-	.RST     (wl7ddrphy1_rd_rst_r11),
+	.RST     (wl7ddrphy1_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name40[7]),
@@ -102148,150 +84220,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1324 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1324 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name41[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r70[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1325 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1325 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name41[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r70[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1326 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1326 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name41[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r70[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1327 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1327 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name41[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r70[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1328 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1328 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name41[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r70[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1329 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1329 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name41[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r70[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1330 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1330 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name41[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r70[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1331 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1331 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name41[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r70[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_113 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -102306,11 +84234,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed41),
-	.RST     (wl7ddrphy1_rd_rst_r11),
+	.RST     (wl7ddrphy1_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name41[7]),
@@ -102397,150 +84325,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1332 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1332 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name42[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r71[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1333 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1333 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name42[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r71[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1334 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1334 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name42[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r71[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1335 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1335 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name42[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r71[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1336 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1336 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name42[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r71[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1337 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1337 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name42[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r71[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1338 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1338 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name42[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r71[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1339 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1339 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name42[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r71[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_114 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -102555,11 +84339,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed42),
-	.RST     (wl7ddrphy1_rd_rst_r11),
+	.RST     (wl7ddrphy1_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name42[7]),
@@ -102646,150 +84430,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1340 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1340 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name43[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r72[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1341 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1341 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name43[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r72[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1342 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1342 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name43[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r72[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1343 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1343 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name43[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r72[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1344 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1344 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name43[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r72[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1345 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1345 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name43[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r72[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1346 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1346 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name43[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r72[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1347 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1347 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name43[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r72[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_115 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -102804,11 +84444,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed43),
-	.RST     (wl7ddrphy1_rd_rst_r11),
+	.RST     (wl7ddrphy1_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name43[7]),
@@ -102895,150 +84535,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1348 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1348 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name44[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r73[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1349 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1349 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name44[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r73[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1350 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1350 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name44[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r73[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1351 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1351 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name44[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r73[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1352 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1352 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name44[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r73[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1353 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1353 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name44[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r73[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1354 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1354 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name44[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r73[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1355 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1355 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name44[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r73[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_116 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -103053,11 +84549,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed44),
-	.RST     (wl7ddrphy1_rd_rst_r11),
+	.RST     (wl7ddrphy1_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name44[7]),
@@ -103144,150 +84640,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1356 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1356 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name45[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r74[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1357 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1357 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name45[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r74[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1358 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1358 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name45[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r74[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1359 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1359 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name45[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r74[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1360 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1360 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name45[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r74[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1361 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1361 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name45[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r74[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1362 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1362 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name45[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r74[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1363 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1363 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name45[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r74[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_117 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -103302,11 +84654,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed45),
-	.RST     (wl7ddrphy1_rd_rst_r11),
+	.RST     (wl7ddrphy1_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name45[7]),
@@ -103393,150 +84745,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1364 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1364 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name46[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r75[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1365 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1365 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name46[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r75[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1366 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1366 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name46[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r75[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1367 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1367 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name46[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r75[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1368 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1368 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name46[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r75[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1369 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1369 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name46[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r75[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1370 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1370 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name46[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r75[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1371 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1371 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name46[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r75[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_118 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -103551,11 +84759,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed46),
-	.RST     (wl7ddrphy1_rd_rst_r11),
+	.RST     (wl7ddrphy1_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name46[7]),
@@ -103642,150 +84850,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1372 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1372 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name47[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r76[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1373 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1373 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name47[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r76[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1374 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1374 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name47[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r76[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1375 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1375 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name47[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r76[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1376 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1376 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name47[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r76[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1377 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1377 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name47[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r76[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1378 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1378 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name47[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r76[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1379 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1379 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name47[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r76[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_119 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -103800,11 +84864,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed47),
-	.RST     (wl7ddrphy1_rd_rst_r11),
+	.RST     (wl7ddrphy1_rd_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name47[7]),
@@ -103891,150 +84955,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1380 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1380 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name48[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r77[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1381 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1381 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name48[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r77[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1382 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1382 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name48[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r77[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1383 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1383 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name48[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r77[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1384 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1384 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name48[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r77[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1385 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1385 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name48[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r77[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1386 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1386 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name48[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r77[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1387 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1387 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name48[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r77[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_120 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -104049,11 +84969,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed48),
-	.RST     (wl7ddrphy1_rd_rst_r13),
+	.RST     (wl7ddrphy1_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name48[7]),
@@ -104140,150 +85060,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1388 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1388 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name49[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r78[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1389 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1389 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name49[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r78[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1390 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1390 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name49[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r78[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1391 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1391 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name49[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r78[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1392 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1392 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name49[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r78[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1393 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1393 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name49[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r78[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1394 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1394 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name49[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r78[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1395 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1395 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name49[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r78[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_121 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -104298,11 +85074,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed49),
-	.RST     (wl7ddrphy1_rd_rst_r13),
+	.RST     (wl7ddrphy1_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name49[7]),
@@ -104389,150 +85165,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1396 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1396 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name50[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r79[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1397 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1397 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name50[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r79[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1398 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1398 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name50[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r79[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1399 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1399 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name50[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r79[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1400 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1400 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name50[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r79[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1401 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1401 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name50[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r79[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1402 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1402 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name50[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r79[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1403 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1403 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name50[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r79[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_122 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -104547,11 +85179,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed50),
-	.RST     (wl7ddrphy1_rd_rst_r13),
+	.RST     (wl7ddrphy1_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name50[7]),
@@ -104638,150 +85270,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1404 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1404 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name51[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r80[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1405 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1405 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name51[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r80[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1406 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1406 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name51[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r80[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1407 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1407 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name51[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r80[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1408 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1408 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name51[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r80[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1409 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1409 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name51[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r80[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1410 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1410 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name51[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r80[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1411 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1411 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name51[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r80[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_123 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -104796,11 +85284,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed51),
-	.RST     (wl7ddrphy1_rd_rst_r13),
+	.RST     (wl7ddrphy1_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name51[7]),
@@ -104887,150 +85375,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1412 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1412 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name52[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r81[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1413 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1413 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name52[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r81[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1414 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1414 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name52[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r81[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1415 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1415 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name52[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r81[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1416 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1416 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name52[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r81[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1417 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1417 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name52[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r81[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1418 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1418 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name52[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r81[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1419 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1419 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name52[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r81[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_124 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -105045,11 +85389,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed52),
-	.RST     (wl7ddrphy1_rd_rst_r13),
+	.RST     (wl7ddrphy1_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name52[7]),
@@ -105136,150 +85480,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1420 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1420 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name53[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r82[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1421 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1421 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name53[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r82[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1422 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1422 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name53[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r82[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1423 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1423 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name53[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r82[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1424 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1424 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name53[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r82[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1425 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1425 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name53[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r82[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1426 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1426 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name53[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r82[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1427 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1427 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name53[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r82[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_125 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -105294,11 +85494,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed53),
-	.RST     (wl7ddrphy1_rd_rst_r13),
+	.RST     (wl7ddrphy1_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name53[7]),
@@ -105385,150 +85585,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1428 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1428 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name54[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r83[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1429 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1429 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name54[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r83[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1430 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1430 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name54[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r83[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1431 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1431 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name54[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r83[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1432 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1432 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name54[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r83[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1433 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1433 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name54[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r83[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1434 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1434 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name54[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r83[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1435 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1435 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name54[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r83[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_126 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -105543,11 +85599,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed54),
-	.RST     (wl7ddrphy1_rd_rst_r13),
+	.RST     (wl7ddrphy1_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name54[7]),
@@ -105634,150 +85690,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1436 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1436 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name55[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r84[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1437 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1437 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name55[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r84[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1438 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1438 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name55[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r84[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1439 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1439 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name55[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r84[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1440 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1440 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name55[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r84[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1441 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1441 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name55[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r84[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1442 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1442 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name55[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r84[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1443 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1443 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name55[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r84[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_127 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -105792,11 +85704,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed55),
-	.RST     (wl7ddrphy1_rd_rst_r13),
+	.RST     (wl7ddrphy1_rd_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name55[7]),
@@ -105883,150 +85795,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1444 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1444 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name56[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r85[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1445 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1445 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name56[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r85[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1446 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1446 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name56[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r85[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1447 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1447 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name56[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r85[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1448 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1448 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name56[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r85[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1449 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1449 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name56[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r85[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1450 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1450 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name56[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r85[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1451 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1451 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name56[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r85[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_128 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -106041,11 +85809,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed56),
-	.RST     (wl7ddrphy1_rd_rst_r15),
+	.RST     (wl7ddrphy1_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name56[7]),
@@ -106132,150 +85900,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1452 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1452 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name57[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r86[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1453 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1453 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name57[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r86[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1454 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1454 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name57[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r86[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1455 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1455 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name57[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r86[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1456 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1456 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name57[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r86[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1457 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1457 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name57[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r86[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1458 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1458 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name57[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r86[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1459 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1459 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name57[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r86[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_129 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -106290,11 +85914,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed57),
-	.RST     (wl7ddrphy1_rd_rst_r15),
+	.RST     (wl7ddrphy1_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name57[7]),
@@ -106381,150 +86005,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1460 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1460 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name58[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r87[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1461 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1461 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name58[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r87[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1462 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1462 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name58[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r87[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1463 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1463 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name58[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r87[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1464 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1464 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name58[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r87[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1465 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1465 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name58[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r87[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1466 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1466 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name58[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r87[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1467 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1467 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name58[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r87[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_130 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -106539,11 +86019,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed58),
-	.RST     (wl7ddrphy1_rd_rst_r15),
+	.RST     (wl7ddrphy1_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name58[7]),
@@ -106630,150 +86110,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1468 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1468 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name59[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r88[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1469 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1469 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name59[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r88[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1470 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1470 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name59[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r88[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1471 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1471 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name59[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r88[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1472 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1472 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name59[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r88[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1473 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1473 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name59[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r88[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1474 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1474 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name59[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r88[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1475 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1475 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name59[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r88[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_131 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -106788,11 +86124,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed59),
-	.RST     (wl7ddrphy1_rd_rst_r15),
+	.RST     (wl7ddrphy1_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name59[7]),
@@ -106879,150 +86215,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1476 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1476 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name60[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r89[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1477 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1477 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name60[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r89[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1478 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1478 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name60[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r89[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1479 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1479 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name60[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r89[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1480 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1480 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name60[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r89[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1481 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1481 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name60[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r89[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1482 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1482 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name60[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r89[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1483 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1483 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name60[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r89[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_132 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -107037,11 +86229,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed60),
-	.RST     (wl7ddrphy1_rd_rst_r15),
+	.RST     (wl7ddrphy1_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name60[7]),
@@ -107128,150 +86320,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1484 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1484 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name61[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r90[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1485 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1485 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name61[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r90[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1486 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1486 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name61[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r90[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1487 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1487 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name61[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r90[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1488 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1488 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name61[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r90[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1489 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1489 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name61[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r90[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1490 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1490 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name61[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r90[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1491 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1491 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name61[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r90[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_133 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -107286,11 +86334,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed61),
-	.RST     (wl7ddrphy1_rd_rst_r15),
+	.RST     (wl7ddrphy1_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name61[7]),
@@ -107377,150 +86425,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1492 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1492 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name62[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r91[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1493 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1493 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name62[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r91[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1494 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1494 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name62[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r91[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1495 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1495 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name62[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r91[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1496 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1496 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name62[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r91[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1497 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1497 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name62[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r91[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1498 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1498 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name62[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r91[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1499 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1499 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name62[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r91[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_134 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -107535,11 +86439,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed62),
-	.RST     (wl7ddrphy1_rd_rst_r15),
+	.RST     (wl7ddrphy1_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name62[7]),
@@ -107626,150 +86530,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1500 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1500 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name63[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r92[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1501 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1501 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name63[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r92[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1502 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1502 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name63[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r92[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1503 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1503 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name63[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r92[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1504 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1504 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name63[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r92[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1505 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1505 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name63[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r92[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1506 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1506 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name63[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r92[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1507 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1507 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name63[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r92[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_135 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -107784,11 +86544,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed63),
-	.RST     (wl7ddrphy1_rd_rst_r15),
+	.RST     (wl7ddrphy1_rd_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name63[7]),
@@ -107875,150 +86635,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1508 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1508 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name64[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r93[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1509 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1509 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name64[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r93[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1510 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1510 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name64[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r93[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1511 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1511 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name64[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r93[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1512 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1512 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name64[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r93[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1513 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1513 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name64[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r93[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1514 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1514 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name64[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r93[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1515 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1515 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name64[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r93[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_136 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -108033,11 +86649,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed64),
-	.RST     (wl7ddrphy1_rd_rst_r17),
+	.RST     (wl7ddrphy1_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name64[7]),
@@ -108124,150 +86740,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1516 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1516 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name65[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r94[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1517 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1517 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name65[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r94[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1518 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1518 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name65[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r94[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1519 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1519 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name65[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r94[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1520 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1520 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name65[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r94[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1521 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1521 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name65[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r94[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1522 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1522 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name65[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r94[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1523 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1523 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name65[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r94[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_137 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -108282,11 +86754,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed65),
-	.RST     (wl7ddrphy1_rd_rst_r17),
+	.RST     (wl7ddrphy1_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name65[7]),
@@ -108373,150 +86845,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1524 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1524 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name66[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r95[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1525 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1525 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name66[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r95[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1526 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1526 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name66[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r95[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1527 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1527 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name66[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r95[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1528 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1528 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name66[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r95[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1529 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1529 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name66[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r95[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1530 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1530 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name66[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r95[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1531 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1531 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name66[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r95[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_138 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -108531,11 +86859,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed66),
-	.RST     (wl7ddrphy1_rd_rst_r17),
+	.RST     (wl7ddrphy1_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name66[7]),
@@ -108622,150 +86950,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1532 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1532 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name67[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r96[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1533 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1533 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name67[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r96[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1534 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1534 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name67[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r96[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1535 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1535 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name67[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r96[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1536 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1536 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name67[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r96[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1537 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1537 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name67[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r96[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1538 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1538 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name67[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r96[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1539 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1539 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name67[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r96[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_139 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -108780,11 +86964,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed67),
-	.RST     (wl7ddrphy1_rd_rst_r17),
+	.RST     (wl7ddrphy1_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name67[7]),
@@ -108871,150 +87055,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1540 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1540 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name68[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r97[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1541 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1541 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name68[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r97[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1542 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1542 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name68[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r97[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1543 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1543 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name68[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r97[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1544 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1544 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name68[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r97[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1545 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1545 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name68[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r97[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1546 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1546 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name68[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r97[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1547 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1547 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name68[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r97[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_140 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -109029,11 +87069,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed68),
-	.RST     (wl7ddrphy1_rd_rst_r17),
+	.RST     (wl7ddrphy1_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name68[7]),
@@ -109120,150 +87160,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1548 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1548 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name69[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r98[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1549 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1549 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name69[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r98[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1550 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1550 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name69[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r98[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1551 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1551 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name69[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r98[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1552 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1552 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name69[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r98[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1553 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1553 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name69[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r98[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1554 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1554 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name69[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r98[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1555 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1555 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name69[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r98[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_141 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -109278,11 +87174,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed69),
-	.RST     (wl7ddrphy1_rd_rst_r17),
+	.RST     (wl7ddrphy1_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name69[7]),
@@ -109369,150 +87265,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1556 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1556 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name70[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r99[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1557 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1557 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name70[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r99[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1558 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1558 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name70[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r99[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1559 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1559 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name70[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r99[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1560 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1560 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name70[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r99[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1561 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1561 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name70[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r99[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1562 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1562 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name70[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r99[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1563 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1563 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name70[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r99[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_142 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -109527,11 +87279,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed70),
-	.RST     (wl7ddrphy1_rd_rst_r17),
+	.RST     (wl7ddrphy1_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name70[7]),
@@ -109618,150 +87370,6 @@ OSERDESE2 #(
 );
 
 //------------------------------------------------------------------------------
-// Instance FDRE_1564 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1564 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name71[0]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r100[0])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1565 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1565 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name71[1]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r100[1])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1566 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1566 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name71[2]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r100[2])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1567 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1567 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name71[3]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r100[3])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1568 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1568 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name71[4]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r100[4])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1569 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1569 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name71[5]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r100[5])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1570 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1570 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name71[6]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r100[6])
-);
-
-//------------------------------------------------------------------------------
-// Instance FDRE_1571 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT          (1'd0),
-	.IS_C_INVERTED (1'd1)
-) FDRE_1571 (
-	// Inputs.
-	.C  (sys_clk_1),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_dfi_name71[7]),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r100[7])
-);
-
-//------------------------------------------------------------------------------
 // Instance ISERDESE2_143 of ISERDESE2 Module.
 //------------------------------------------------------------------------------
 ISERDESE2 #(
@@ -109776,11 +87384,11 @@ ISERDESE2 #(
 	// Inputs.
 	.BITSLIP (1'd0),
 	.CE1     (1'd1),
-	.CLK     (sys4xc1_clk),
-	.CLKB    ((~sys4xc1_clk)),
-	.CLKDIV  (sysc1_clk),
+	.CLK     (sys4xw1a_clk),
+	.CLKB    ((~sys4xw1a_clk)),
+	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed71),
-	.RST     (wl7ddrphy1_rd_rst_r17),
+	.RST     (wl7ddrphy1_rd_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name71[7]),
@@ -110388,5 +87996,5 @@ FDPE #(
 endmodule
 
 // -----------------------------------------------------------------------------
-//  Auto-Generated by LiteX on 2026-09-29 10:41:35.
+//  Auto-Generated by LiteX on 2026-09-29 11:08:16.
 //------------------------------------------------------------------------------
