@@ -469,3 +469,128 @@ session answers two questions:
 - `otpu_mem_ch`: one channel's accelerator and XDMA masters on a generic native port, with a
   read-modify-write for LiteDRAM's ECC port or wr_bytes for the MIG. It replaces the SmartConnect.
 - The host calibration flow.
+
+### The two-channel image on the card (2026-09-29, opentpu)
+
+Logs: `docs/data/litedram/card2-*.log`. Both channels are built as in the one-channel image, with
+one difference: channel 1's DQS clock comes from a **second MMCM** (fine phase shift moves every
+fine-PS output of an MMCM together), while its DQ, CK and serializer CLKDIV stay on the first.
+
+- **Channel 0** passes, as before. BIST at 7.69 / 7.76 GB/s (90.1 / 91.0% of peak) with 0 errors.
+  The common write window is 12 steps (201 ps) at FPGA 53 C / board 47 C (234 ps in the cooler
+  first session).
+- **Channel 1** fails. Calibration passes, but the BIST has errors on all nine lanes, and no DQS
+  phase works for every lane.
+
+**The DQS scan with the write latency forced** (`ld_host.py wscan`, both channels in the same
+minute, FPGA 54.5 C, board 47.5 C). Each lane's latency is held at bitslip 0, then at 6, so a
+lane's window at one latency shows whole instead of being cut where the calibration switches
+latency. Steps of 16.7 ps; 64 MiB BIST per step; "edges" = steps from a lane's last clean phase
+to the first with half its beats wrong.
+
+| lane | ch0 wl 0 | ch0 wl 6 | ch1 wl 0 | ch1 wl 6 |
+|---|---|---|---|---|
+| 0 | -16..+24 (41) | - | +18..+32 (15) | - |
+| 1 | -13..+23 (37) | -22 (1) | +19..+32 (14) | - |
+| 2 | +3..+23 (21) | -21..-5 (17) | +7..+32 (26) | - |
+| 3 | +9..+26 (18) | -22..-1 (22) | +28..+33 (6) | +6..+8 (3) |
+| 4 | - | -19..+25 (45) | +25..+33 (9) | - |
+| 5 | - | -21..+25 (47) | +32..+33 (2) | +6..+12 (7) |
+| 6 | - | -22..+25 (48) | +21..+33 (13) | - |
+| 7 | - | -19..+24 (44) | +24..+31 (8) | - |
+| 8 | - | -19..+20 (40) | - | +6..+17 (12) |
+| edges | 1-4 steps | | 8-12 steps | |
+
+Reading (**measured** unless marked):
+- Forcing the latency widens no lane. Every window is bounded by the two limits of section 7's
+  corrected reading: the DQ-DQS eye, common to the channel's lanes, and each lane's tDQSS
+  crossing, around which it fails at both latencies.
+- **The fly-by is genuine and no larger on channel 1.** Its crossings, taken where the
+  calibration switches latency, span 34 steps (570 ps): lane 2 -6, 0 +6, 1 +8, 6 +8, 7 +12,
+  4 +13, 3 +19, 5 +21, 8 +28. On channel 0, lanes 0 to 8 already span at least 46 steps, and
+  lanes 4-7 cross outside the eye.
+- **What is worse on channel 1 is the eye and every edge.** The eye is 28 steps (+6..+33, 467 ps)
+  against 48 (-22..+25, 800 ps). The zone around a crossing is 19 steps (lanes 3 and 5) against
+  7-9 (lanes 2 and 3 of channel 0). Every edge is 8-12 steps soft against 1-4: the error counts
+  fall off like Gaussian tails over 10-15 steps, where channel 0's go from none to all in 2-3.
+  Reads look the same on both channels (windows of 9-11 taps).
+- **Cause (inferred, not proven):** channel 1's DQS clock comes from its own MMCM, whose jitter
+  is independent of the MMCM that clocks its DQ and CK. Its DQS serializer also has CLK from one
+  MMCM and CLKDIV from the other, which the OSERDESE2 does not allow. Both would give soft,
+  jittery edges on the write side only. The board is not implicated.
+- **Consequence for the design:** separate MMCMs per clock group would repeat the penalty
+  (**measured** on channel 1: an eye 20 steps narrower, crossing zones 10 steps wider). DQS-only
+  groups cannot work either (section 7: the eye does not move with DQS). DQ has to move with its
+  DQS, and all of a channel's interface clocks have to come from one MMCM. Section 8.
+
+## 8. Write leveling by clock groups (WL7DDRPHY, 2026-09-29)
+
+The goal: both channels at DDR3-1066 with at least 150 ps of write window per clock group,
+through a temperature run. The route: real write leveling, meaning DQ moves together with its
+DQS against CK, in two groups per channel. Built by `ld_test.py --phy wl`
+(`tools/litedram/wl7ddrphy.py`), calibrated by `ld_host.py all` / `temp`
+(`opentpu/host/ddrcal.py`: `WriteClocks`, `calibrate_groups`).
+
+**The PHY (`WL7DDRPHY`).** It is LiteDRAM's A7DDRPHY with one change. Each byte lane's write side
+(its 8 DQ serializers, DQS serializer and the CLKDIV of all of them) runs on its group's clocks:
+
+| clock | MMCM output | frequency | phase | drives |
+|---|---|---|---|---|
+| `sysc` | CLKOUT0 | 133.33 MHz | fixed 0 | PHY logic; CLKDIV of CK, commands, reads |
+| `sys4xc` | CLKOUT1 | 533.33 MHz | fixed 0 | CK, commands, the read ISERDES |
+| `sysw` | CLKOUT2 | 133.33 MHz | fine PS | CLKDIV of every write serializer |
+| `sys4xw a` | CLKOUT3 | 533.33 MHz | fine PS | group 0's DQ |
+| `sys4xw a dqs` | CLKOUT4 | 533.33 MHz | fine PS + 90 deg | group 0's DQS |
+| `sys4xw b` | CLKOUT5 | 533.33 MHz | fine PS + offset | group 1's DQ |
+| `sys4xw b dqs` | CLKOUT6 | 533.33 MHz | fine PS + offset + 90 deg | group 1's DQS |
+
+- **DQ keeps its DQS at 90 deg**, which is the measured eye centre (channel 0's eye is centred
+  within 2 steps of it). The pair then moves against CK, so the eye no longer limits the phase;
+  only the lanes' tDQSS crossings do. Every lane still picks its own write latency (bitslip).
+- **One MMCM per channel.** All of a channel's interface clocks, CK included, come from one VCO,
+  so no clock pair in the DDR3 interface carries another MMCM's jitter. The MMCM has exactly the
+  7 outputs this takes. The fine phase shift moves CLKOUT2-6 together.
+- **Group 1's offset from group 0 is static.** The host sets it through the MMCM's DRP: CLKOUT5/6's
+  PHASE_MUX and DELAY_TIME, in 1/8 VCO steps (117 ps = 7 fine steps). The MMCM is held in reset
+  meanwhile, so the channel's PHY clocks stop and the DRAM gets its reset and init again.
+  CLKOUT5/6's CLK is offset from its CLKDIV (`sysw`) by that amount, as A7DDRPHY's DQS serializer
+  already is by 90 deg. A whole-tCK slip of the load is absorbed by the lane's write latency.
+- **Cascaded from `sys` at DIVCLK_DIVIDE 1**, with the feedback through a BUFG. The outputs keep a
+  fixed phase to `sys`, so Vivado times the controller (`sys`) to PHY (`sysc`) paths as
+  synchronous. A cascade from the 50 MHz oscillator would need DIVCLK_DIVIDE 3 for 1066.67 MHz,
+  and the phase against the controller's clock would then be one of three values after each lock.
+  The top MMCM (`sys` only) runs at 1200 MHz VCO with DIVCLK 1.
+- **The write data cross from `sysc` to `sysw` through a register on `sysc`'s falling edge.**
+  The host keeps `sysw` within half a tCK (0.94 ns) of `sysc`: every phase has an equivalent a
+  tCK away, against CK, and the write latency calibration absorbs the tCK (`DqsPhase` wraps its
+  targets into [-56, +56) steps). Launched half a cycle (3.75 ns) before the capture edge, the
+  data keep at least 2.8 ns of setup and hold. The build constrains the crossing with 1.0 ns of
+  clock uncertainty on setup and on hold. At `sysw` = `sysc` the write timing is A7DDRPHY's,
+  cycle for cycle. The tristate controls (TQ in BUF mode, not clocked by the serializer) stay as
+  A7DDRPHY has them.
+
+**Groups (by bank).** Each group's clocks then reach only its own banks' clock regions:
+- channel 0: group 0 = bank 11 (lanes 0-3), group 1 = banks 12 and 13 (lanes 4-8);
+- channel 1: group 0 = bank 16 (lanes 0, 1, 3, 8), group 1 = banks 17 and 18 (lanes 2, 4, 5, 6, 7).
+
+**Calibration (`calibrate_groups`).**
+1. Group 1 is put onto group 0 (offset 0), and the common phase is scanned over a tCK. Each step
+   gets a full calibration plus a 64 MiB BIST per lane.
+2. Each group's longest common run is found. Group 1's offset is set to the multiple of 7 steps
+   that brings its run's centre onto group 0's.
+3. A second scan at that offset. The common phase goes to the centre of the run common to all
+   lanes, and the channel is calibrated there.
+
+The temperature run rescans every 5 minutes and logs each group's run.
+
+**Expected windows** (**estimates**, from the crossing positions above; they assume channel 0's
+7-9-step crossing zones, i.e. that one MMCM per channel restores its sharp edges on channel 1):
+- **Channel 1, whose crossings span 34 steps:** about 67 steps (1.1 ns) even as one group, and
+  more for each of its two groups.
+- **Channel 0 as one group:** only the gap between lane 3's crossing (+4) and lane 8's (+25):
+  12 steps, the 200 ps it has now. That holds unless lanes 4-7 cross far enough away, and the
+  first image cannot see them.
+- **Channel 0 in two groups:** group 0 (crossings -21..+4) about 78 steps; group 1 (lane 8 at
+  +25, lanes 4-7 somewhere beyond +29) probably at least 40.
+
+**Status:** built from `litedram-int`; results below when measured.

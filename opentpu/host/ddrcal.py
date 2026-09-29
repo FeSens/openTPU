@@ -251,15 +251,22 @@ class Dram:
 
 # ------------------------------------------------------------------------------ DQS phase
 class DqsPhase:
-    def __init__(self, csr, vco_hz):
+    """The write DQS phase (phase_dqs_*), in fine steps since configuration. With `wrap` (fine
+    steps per tCK: a WL7DDRPHY image, whose write CLKDIV may sit at most about half a tCK from
+    sys), every target is moved to its equivalent in [-wrap/2, wrap/2): the same phase against
+    CK, a tCK apart, which the write latency calibration absorbs."""
+    def __init__(self, csr, vco_hz, wrap=None):
         self.c = csr
         self.step_ps = 1e12 / vco_hz / 56
+        self.wrap = wrap
 
     def steps(self):
         v = self.c.r("phase_dqs_steps")
         return v - (1 << 32) if v & (1 << 31) else v
 
     def move(self, target):
+        if self.wrap:
+            target = (target + self.wrap // 2) % self.wrap - self.wrap // 2
         while True:
             s = self.steps()
             if s == target:
@@ -267,6 +274,12 @@ class DqsPhase:
             while self.c.r("phase_dqs_busy"):
                 pass
             self.c.w("phase_dqs_shift", 1 if target > s else 0)
+
+
+def dqs_phase(csr, phy):
+    """The channel's DqsPhase for a build's PHY settings (its sdram_init.py `phy`)."""
+    period = round(56 * phy["vco_hz"] / (4 * phy["sys_hz"]))
+    return DqsPhase(csr, phy["vco_hz"], wrap=period if phy.get("phy") == "wl" else None)
 
 
 def dqs_scan(dram, dqs, period_steps, stride, seeds=(42,), csr=None, mib=64, show=True):
@@ -699,7 +712,7 @@ def calibrate_channel(csr, config, stride=1, mib=64, log=print):
     is 0 from the start. The scan writes over the channel's first `mib` MiB. Returns the
     result; raises CalError when no phase or calibration works."""
     d = Dram(csr, config)
-    dqs = DqsPhase(csr, d.phy["vco_hz"])
+    dqs = dqs_phase(csr, d.phy)
     period = round(56 * d.phy["vco_hz"] / (4 * d.phy["sys_hz"]))     # fine steps per tCK
     has_bist = has_csr(csr, "bist_start")
     has_ready = has_csr(csr, "cal_ready")          # production's core: the accelerator waits for it

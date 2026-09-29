@@ -51,6 +51,7 @@ except ImportError:         # a card host whose installed opentpu predates ddrca
 sys.modules.setdefault("ddrcal", ddrcal)
 from ddrcal import (MIN_WINDOW, CalError, Chan, Dram, DqsPhase, FakeBoard, FakeCsr,  # noqa: E402
                     WriteClocks, bist_read_scan, bist, bist_start, bist_wait, calibrate_groups,
+                    dqs_phase,
                     csr_map, dqs_scan, group_windows, margins, offsets, pass_map, run_bist)
 # ------------------------------------------------------------------------------ CSR access
 class Bar0:
@@ -173,7 +174,7 @@ def temp_run(a, csr, chans, period):
     for ch in chans:
         c = Chan(csr, ch)
         d = Dram(c, a.build)
-        dqs = DqsPhase(c, d.phy["vco_hz"])
+        dqs = dqs_phase(c, d.phy)
         groups = d.phy["groups"][str(ch)] if d.phy.get("phy") == "wl" else None
         if groups:                  # group 1's offset first (it resets the DQS phase to 0)
             try:
@@ -312,7 +313,7 @@ def wl_scan(a, c, period):
     rate rises). The raw table goes to BUILD_DIR/wscan_ch<ch>.json."""
     import json
     d = Dram(c, a.build)
-    dqs = DqsPhase(c, d.phy["vco_hz"])
+    dqs = dqs_phase(c, d.phy)
     sys_hz = d.phy["sys_hz"]
     beats = a.mib * (1 << 20) // 64
     start = dqs.steps()
@@ -438,7 +439,7 @@ def channel(a, csr, period):
     if a.what == "wscan":
         return wl_scan(a, csr, period)
     d = Dram(csr, a.build)
-    dqs = DqsPhase(csr, d.phy["vco_hz"])
+    dqs = dqs_phase(csr, d.phy)
     wl_phy = d.phy.get("phy") == "wl"
     if a.what == "g1":
         w = WriteClocks(csr)

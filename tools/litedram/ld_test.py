@@ -236,14 +236,13 @@ class WriteClocks(LiteXModule):
         self.comb += [cd["sys_n"].clk.eq(~cd["sys"].clk), cd["sys_n"].rst.eq(cd["sys"].rst)]
         self.specials += AsyncResetSynchronizer(cd["sys"], ~self.locked)
 
-    def constraints(self):
+    def constraints(self, ns=1.0):
         """Pre-placement Tcl: the write data cross from sysc_n (sysc's falling edge) to sysw,
-        which the host moves up to a tCK (a quarter of sysc) either way: that much uncertainty on
-        both setup and hold."""
+        which the host keeps within half a tCK (0.94 ns) of sysc (ddrcal.DqsPhase's wrap): `ns`
+        of uncertainty on both setup and hold."""
         c = lambda i: f"[get_clocks -of_objects [get_pins {self.name_of}/CLKOUT{i}]]"
-        tck = 1e9 / (4 * self.f)
-        return [f"set_clock_uncertainty -setup {tck:.3f} -from {c(0)} -to {c(2)}",
-                f"set_clock_uncertainty -hold {tck:.3f} -from {c(0)} -to {c(2)}"]
+        return [f"set_clock_uncertainty -setup {ns:.3f} -from {c(0)} -to {c(2)}",
+                f"set_clock_uncertainty -hold {ns:.3f} -from {c(0)} -to {c(2)}"]
 
 
 XDMA_IN = ("awready", "wready", "bid", "bresp", "bvalid", "arready", "rid", "rdata", "rresp",
