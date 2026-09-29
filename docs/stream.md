@@ -381,10 +381,14 @@ module otpu_se_tail import otpu_pkg::*; import otpu_fp::*;
 - **STREAM:** the fill starts with one TMEM read of `desc`, 8 words. The DMA decodes the
   float-safe payloads into `ss_cfg` and the addresses (slots at vec + i*cols, x, K_j = k +
   j*ks, out), then fills the slots the modes need (4.3). `o` is counted only with `q_en`.
-- **pkg / seq:** `OP_STREAM` = 0x13 is a U_DMA instruction. Its footprint:
-  - DRAM `[src, src + 4 rows cols)` read and written;
-  - TMEM reads of desc (d0..d7), vec (4 cols), x (rows) and K (4 ks);
-  - a TMEM write of `[out, out + rows)`.
+- **pkg / seq:** `OP_STREAM` = 0x13 is a U_DMA instruction. The sequencer cannot read the
+  descriptor, so the footprint takes the subset's largest shape (rows, cols ≤ 256):
+  - DRAM `[src, src + 256 KiB)` written (in place);
+  - TMEM reads of desc `[desc, desc + 8)`, vec `[vec, vec + 1024)`, x `[x, x + 256)` and K
+    `[k, k + ks + 1)` (ks from w1, which is why it is in the instruction);
+  - a TMEM write of `[out, out + 256)`.
+  - The extra false conflicts only order a STREAM against its neighbours. SE runs streams and
+    VOPs in turn anyway. DSTEP keeps its exact footprint, and it is what Qwen3.5 uses.
 - **CAPS:** bit26 `STREAM` (the subset). bit7 is CHASH; bit6 DSTEP stays set.
 - **slice:** wire u_dma and u_vpu `ss_*`. `HAS_DSTEP` now gates the tail inside u_vpu.
 
