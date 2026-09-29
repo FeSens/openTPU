@@ -646,12 +646,18 @@ card. Rows still marked "pending" were not in when this was written.
 
 - At 2deead3, v1 was 3,154,611 on Qwen3.5 (-64 against main). The lost VOP/stream overlap
   from 6 does not show up.
-- **v2 is slower than main by 0.011% at most. Strictly, that fails the "no model slower"
-  criterion.** The cause is COMP8's RSQRT latency (100 against ~70) where it sits on the
-  dependency chain:
-  - VOP.rsqrt busy on Qwen3.5 goes 11,541 → 14,196;
-  - Qwen3.5 DeltaNet +90 cycles per layer (the gate is 2.7K), attention +32;
-  - Qwen3 attention +65 per layer.
+- **v2 is slower than main by 0.011% at most.**
+  - Verilator is deterministic, so the extra cycles are real, not noise.
+  - The coordinator accepted v2 at the checkpoint (03:13). They counted the extra cycles as
+    within tolerance next to -16.3K LUT and -52 DSP.
+  - The cause is COMP8's RSQRT latency (100 against ~70) where it sits on the dependency
+    chain:
+    - VOP.rsqrt busy on Qwen3.5 goes 11,541 → 14,196;
+    - Qwen3.5 DeltaNet +90 cycles per layer (the gate is 2.7K), attention +32;
+    - Qwen3 attention +65 per layer.
+- **Prefill** (6 rows, MCOLS 2 and 4; Qwen3.5 and LFM2), v1 against v2: pending. The
+  norm → quantize chain is where RSQRT's latency could show. Above ~0.5%, an RSQRT latency fix
+  goes on the list.
 - **Composite throughput doubles, but the decode doesn't see it.** exp2 busy -22%, recip -32%,
   exp2 wait_unit 6,835 → 3. These decodes are MXU/port bound, with the VPU 2-5% busy.
 
