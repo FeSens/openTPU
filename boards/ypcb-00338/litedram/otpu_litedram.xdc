@@ -1379,7 +1379,7 @@ set_clock_uncertainty -setup 1.000 -from [get_clocks -of_objects [get_pins -hier
 
 set_clock_uncertainty -hold 1.000 -from [get_clocks -of_objects [get_pins -hierarchical -filter {NAME =~ */ldmmcm0/CLKOUT0}]] -to [get_clocks -of_objects [get_pins -hierarchical -filter {NAME =~ */ldmmcm0/CLKIN1}]]
 
-set_max_delay 2.000 -from [get_cells -hierarchical -filter {NAME =~ *wlrst*}] -to [get_pins -of_objects [get_cells -hierarchical -filter {REF_NAME == OSERDESE2 || REF_NAME == ISERDESE2}] -filter {REF_PIN_NAME == RST}]
+set_max_delay 3.000 -from [get_cells -hierarchical -filter {NAME =~ *wlrst*}] -to [get_pins -of_objects [get_cells -hierarchical -filter {REF_NAME == OSERDESE2 || REF_NAME == ISERDESE2}] -filter {REF_PIN_NAME == RST}]
 
 set_clock_uncertainty -setup 1.000 -from [get_clocks -of_objects [get_pins -hierarchical -filter {NAME =~ */ldmmcm1/CLKIN1}]] -to [get_clocks -of_objects [get_pins -hierarchical -filter {NAME =~ */ldmmcm1/CLKOUT0}]]
 

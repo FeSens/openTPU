@@ -43,6 +43,19 @@ if {[llength [get_cells -quiet u_ld]]} {
     if {[llength $ld_x]}   { set_max_delay -datapath_only -from $c_ucl -to $ld_x $t_x }
     puts "otpu_top_native.tcl: LiteDRAM CSR crossing, [llength $ld_sys] sys / [llength $ld_x] xdma_aclk registers in u_ld"
   }
+  # LiteX's MMCM and PLL reset chains (per primitive 8 FDCE in the 50 MHz clock that feeds it,
+  # crg_mmcm_reset -> s7mmcm_reset0..): their reset, the ctrl CSR's soc_rst, comes from sys. The
+  # standalone images false-path sys -> clkin (WLCRG's add_false_path_constraints); the core's
+  # XDC does not carry it. From sys into those registers alone (on the routed 14875bf: -2.780 ns
+  # at a 2.5 ns requirement, reset_wr_stb -> FDCE / FDCE_8).
+  set c_50  [get_clocks -quiet sys_clk_50]
+  set ld_50 [filter -quiet [all_registers -clock $c_50] {NAME =~ u_ld/*}]
+  if {[llength $ld_50] && [llength $c_ucl] == 1} {
+    set_false_path -from $c_ucl -to $ld_50
+    puts "otpu_top_native.tcl: LiteDRAM MMCM / PLL reset chains, [llength $ld_50] sys_clk_50 registers in u_ld"
+  } else {
+    puts "CRITICAL WARNING: \[otpu_top_native.tcl\] LiteDRAM reset chains: [llength $ld_50] sys_clk_50 registers in u_ld"
+  }
   # The calibration flags (the core's cal_ready CSRs, sys) into the accelerator's synchronizer
   # (STATUS CALIB0/1; 2 flip-flops, ASYNC_REG): one core_clk period, datapath only (otpu_top_ld.xdc
   # has no false path for them, unlike the MIG builds' otpu_top.xdc).

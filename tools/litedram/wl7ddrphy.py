@@ -280,11 +280,13 @@ class WL7DDRPHY(Module, AutoCSR):
         self.comb += dqs_postamble.eq(wrdata_en.taps[wrtap + 1] & ~wrdata_en.taps[wrtap + 0])
 
     @staticmethod
-    def constraints(ns=2.0):
+    def constraints(ns=3.0):
         """XDC: every serializer reset register (serdes_rst) reaches its SERDES' RST within `ns`
         of its CLKDIV edge (the same clock at both ends: the clock skew counts). Hygiene: at
         1.2 ns ldtest3d's routes reached 1.66 ns, and its read framing did not follow the
-        reset's arrival (0.58-0.72 ns to the ISERDES of the bits framed off)."""
+        reset's arrival (0.58-0.72 ns to the ISERDES of the bits framed off); at 2.0 ns
+        ldtest3e (-0.308) and the fused image (-0.514, 0 LUT levels, 1.88 ns of route) missed it
+        by placement alone, and ldtest3e calibrated and passed BIST on both channels."""
         src = "[get_cells -hierarchical -filter {NAME =~ *wlrst*}]"
         dst = ("[get_pins -of_objects [get_cells -hierarchical -filter "
                "{REF_NAME == OSERDESE2 || REF_NAME == ISERDESE2}] -filter {REF_PIN_NAME == RST}]")

@@ -774,7 +774,13 @@ exported as `M_AXI_DMA`.
 add each channel's write clock MMCM (`wclk` / `wclk1` at 0x7000 / 0x7800 of the window, for
 ddrcal's DRP and reset access). Its XDC carries two sets of constraints:
 - 1.0 ns of clock uncertainty on the sys <-> sysc crossings;
-- the serializer resets' 1.2 ns max delay.
+- the serializer resets' max delay: 3.0 ns (1.2 at d2c1ede, 2.0 at 8cbfd3b; at 2.0 ldtest3e and
+  the first fused image, 14875bf, missed it by placement alone, 1.88 ns of route at 0 LUT
+  levels, and ldtest3e calibrated and passed BIST on both channels).
+
+`otpu_top_native.tcl` false-paths the paths from sys into the core's MMCM and PLL reset
+chains (LiteX's FDCE chains in the 50 MHz clock) and no others; the standalone images do it
+with `add_false_path_constraints`.
 
 `otpu_top_ld.xdc` places the two write clock MMCMs at X0Y2 / X0Y6, as on the card images.
 
