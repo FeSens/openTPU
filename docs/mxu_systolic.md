@@ -36,8 +36,8 @@ position i (chain g = i/16, stage k = i%16), in each column:
     M  = act * w          (DSP48E1 M register, one product per DSP)
     P  = PCIN + M         (stage k > 0; stage 0: P = M)  -> the chain's running sum
 chain ends (8 per column): sub-block b = chains 2b, 2b+1 (32 positions, the 4-bit sub-block)
-    v[b] = (chain 2b + chain 2b+1) * m_b   (DSP pre-adder + multiplier, as IMPL=0)
-    s4   = v0 + v1 + v2 + v3               (small fabric adder, registered)
+    v[b] = (chain 2b + chain 2b+1) * m_b   (otpu_colend: DSP b's pre-adder, multiplier, M)
+    s4   = v0 + v1 + v2 + v3               (the four DSPs' PCIN cascade, DSP 3's P register)
 deskew: column j's s4 delayed MCOLS-1-j cycles -> all columns aligned for the epilogue
 ```
 
