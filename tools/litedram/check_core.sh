@@ -39,7 +39,11 @@ if [[ -z "$py" ]]; then echo "set PYTHON or LITEX_VENV (or --setup DIR)" >&2; ex
 
 out="$(mktemp -d "${TMPDIR:-/tmp}/otpu_core.XXXXXX")"
 trap 'rm -rf "$out"' EXIT
-(cd "$out" && "$py" "$here/gen_core.py" --out core > gen.log 2>&1) || { tail -20 "$out/gen.log"; exit 1; }
+# gen_core.py's arguments as core.json records them ("<dir>": the output directory)
+args=()
+while IFS= read -r a; do args+=("$a"); done < <(python3 -c "import json,sys
+for a in json.load(open(sys.argv[1]))['args']: print('core' if a == '<dir>' else a)" "$core/core.json")
+(cd "$out" && "$py" "$here/gen_core.py" "${args[@]}" > gen.log 2>&1) || { tail -20 "$out/gen.log"; exit 1; }
 new="$out/core"
 
 # the generated Verilog without its date and its instance-tree comment
