@@ -1156,13 +1156,6 @@ Against the core without the CPU:
 memcal detects the CPU by the magic in `selfcal_status`. A bitstream built on an older core
 reads 0 there, and the host calibrates it as before.
 
-**Temperature rescans (designed for, not built).** The mailbox keeps each lane's pass map over the
-scan and the run the CPU chose, so a drift shows as a moved or narrowed run. A rescan needs the
-channel's traffic stopped (the scan writes the first 64 MiB and moves CK), so the host schedules
-it: it quiesces the channel, sets `selfcal_config` to that channel and releases the CPU, which
-recalibrates it as at reset. Firmware that tracks drift in place (a narrow scan around the
-current phase, the BIST on a reserved region) can be loaded later without a new bitstream.
-
 ### The fused image with the CPU on the card (08b898d5, 2026-09-29): qualified
 
 The production design with the CPU in its core: main f1f635a + ld-cpu2 (the core above, rd_reg
@@ -1197,3 +1190,52 @@ a JTAG load and a warm reboot, host tree = this branch at 08b898d5; logs in
 - A first qual run from a host tree without its `models` link failed every model phase
   (FileNotFoundError) and still printed "0 FAIL lines": qual.sh counts `[FAIL]` lines only.
 - Afterwards the card went back to se-cand3 (build 002569bc), whose selftest passed.
+
+### Follow-up: temperature rescans (not built)
+
+**Why.** The CPU calibrates once, at configuration.
+- **Temperatures covered so far:** ldtest3e's 35 min temperature run held its windows (737-753
+  and 1222 ps) at 54-55 C. The fused image passed its qual at 60-67 C.
+- **Not covered:** a cold start, and a card that heats well past its calibration temperature.
+- **The margin:** the CK phase sits in the middle of the common run, about 22 and 36 steps (370
+  and 600 ps) from its edges on channels 0 and 1. A drift that moves a lane's edge that far
+  would make the channel fail.
+
+**What the hardware already gives.**
+- The mailbox keeps each lane's pass map over the scan and the run the CPU chose.
+- `selfcal_config` picks the channels.
+- A release recalibrates as at reset, dropping and raising that channel's `cal_ready` (STATUS
+  CALIB0 / CALIB1).
+- A new firmware loads without a bitstream (`otpu-memcal selfcal --firmware`).
+
+**Step 1: host-scheduled rescans, no new firmware.**
+- **Trigger:** `memcal` records the XADC temperature with each calibration. When the card has
+  moved more than a threshold from it (15 C, say; to be set from measurements), the next
+  `Board()` open, or a between-runs hook, schedules a rescan while no program runs (the device
+  lock held).
+- **The rescan:** hold the CPU, set `selfcal_config` to the channel, release. This takes about 6
+  s per channel, during which the channel's `cal_ready` is low and the accelerator must not use
+  it.
+- **The data:** the scan's BIST writes the channel's first 64 MiB. Either the host keeps that
+  region out of its allocations (the weights and KV cache then live above it), or it saves and
+  restores the region around a rescan. Either way, the scanned region is scrubbed again (ECC
+  check bits) before use.
+- **Logging:** `otpu-memcal` shows the old and new CK phase and run per channel. A run that
+  moved or narrowed is the drift record that sets the threshold.
+
+**Step 2: tracking firmware, loaded when step 1 shows drift.**
+- **The scan:** a narrow scan around the current CK phase (plus or minus N steps), its BIST on a
+  reserved region. CK moves and the channel is re-leveled only if the run's centre moved by
+  more than M steps.
+- **Selecting it:** through `selfcal_config`'s reserved bits (7:2), so the reset path stays
+  `ddrcal`'s.
+- **Checks:** the same as for the reset firmware:
+  - a `ddrcal` counterpart first, with an identical CSR trace on the simulated PHY;
+  - then the Verilator SoC sim;
+  - then a card run from a cold start (after power-off) and from a hot card (after a long
+    soak), comparing the runs and with BIST during and after.
+
+**Cost (estimate).**
+- **Step 1:** host code only (`memcal` rescan, the temperature trigger, the allocator's reserved
+  region), plus a card session for the temperature sweep.
+- **Step 2:** a firmware mode, and no RTL or bitstream change.
