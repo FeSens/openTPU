@@ -408,7 +408,7 @@ class LDTest(SoCCore):
     mem_map = {"csr": 0x0000_0000}          # CSRs at BAR0 offset 0
 
     def __init__(self, f, dqs_phase=90, xdma_tcl=None, channels=(0, 1), phy="a7", groups=None,
-                 group1_deg=None):
+                 group1_deg=None, mmcm_locs=None):
         """phy: "a7" (A7DDRPHY, the DQS clock alone shifted) or "wl" (WL7DDRPHY: per channel a
         WriteClocks MMCM, the write side in two clock groups; groups[ch]: each lane's group,
         group1_deg[ch]: group 1's static offset at configuration)."""
@@ -436,6 +436,9 @@ class LDTest(SoCCore):
                     platform.request("ddram", ch), groups=groups[ch], sys_clk_freq=f,
                     iodelay_clk_freq=200e6, cl=cl, cwl=cwl))
                 platform.toolchain.pre_placement_commands += esc(wc.constraints())
+                if mmcm_locs:   # the channel's MMCM in its own banks' clock regions
+                    platform.add_platform_command(
+                        f"set_property LOC MMCME2_ADV_{mmcm_locs[ch]} [get_cells {wc.name_of}]")
             else:
                 p = s7ddrphy.A7DDRPHY(platform.request("ddram", ch), memtype="DDR3", nphases=4,
                                       sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
@@ -560,6 +563,9 @@ def main():
     ap.add_argument("--group1-deg", default="0,0",
                     help="wl: group 1's static offset per channel at configuration, degrees of sys4x "
                          "(multiples of 22.5; the host reprograms it over the DRP)")
+    ap.add_argument("--mmcm-locs", default="X0Y2,X0Y6",
+                    help="wl: each channel's MMCM site (channel 0's banks 11-13 are clock regions "
+                         "X0Y0-2, channel 1's 16-18 X0Y5-7; X0Y1 is XDMA's)")
     a = ap.parse_args()
     channels = tuple(int(c) for c in a.channels.split(","))
     groups = {0: [int(x) for x in a.groups0.split(",")], 1: [int(x) for x in a.groups1.split(",")]}
@@ -569,7 +575,8 @@ def main():
     xdma_tcl = out / "gateware" / "xdma_ip.tcl"
     xdma_tcl.write_text((HERE / "xdma_ip.tcl").read_text())
     soc = LDTest(a.sys_mhz * 1e6, a.dqs_phase, xdma_tcl="xdma_ip.tcl", channels=channels,
-                 phy=a.phy, groups=groups, group1_deg=g1deg)
+                 phy=a.phy, groups=groups, group1_deg=g1deg,
+                 mmcm_locs=dict(enumerate(a.mmcm_locs.split(","))) if a.mmcm_locs else None)
     b = Builder(soc, output_dir=str(out), compile_software=False, compile_gateware=False,
                 csr_csv=str(out / "csr.csv"))
     b.build(build_name="ld_test", vivado_place_directive="Explore",
