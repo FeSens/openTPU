@@ -9,10 +9,13 @@
 // Block RAM: one memory per column j (rows j, j+MCOLS, ...), GROUPS*BLOCKS words of D bytes
 // with byte write enables, group-major. The read is registered (the MXU's first pipeline
 // register) and advances with `ren`; a read of a block written at the same edge returns the old
-// bytes. Writes are registered (bytes in place, column selects, their groups) and land a cycle
-// after they are presented: the quantizer's write path (its grant, the lane placement) ends in a
-// flip-flop, not at the block RAM pins spread over the die. The quantizer reports done a cycle
-// after its last write.
+// bytes. Writes land two cycles after they are presented: the quantizer's write is registered as
+// it arrives (LANES bytes, their index and row, the scale), so it crosses from the quantizer in
+// that narrow form and the lane placement (LANES -> D bytes) starts at a flip-flop by the block
+// RAMs, then registered again in place (bytes, column selects, their groups). The quantizer
+// reports done two cycles after its last write and the sequencer releases a dependent MM two
+// cycles after that (otpu_quant), so a consumed read (r_use, the MXU's pop) never names a block
+// whose write is still in flight: the simulation checks it.
 module otpu_actram #(
   parameter int D      = 32,
   parameter int MCOLS  = 8,
@@ -32,6 +35,7 @@ module otpu_actram #(
   input  logic [15:0]            s_blk,
   input  logic [31:0]            s_data,
   input  logic                   ren,
+  input  logic                   r_use,       // this edge's read is consumed (simulation checks)
   input  logic [15:0]            r_blk,
   input  logic [15:0]            r_blk2,
   input  logic [MCOLS-1:0]       r_hi,
@@ -53,8 +57,30 @@ module otpu_actram #(
   function automatic logic [GW-1:0] grp(input logic [7:0] r);
     return (GROUPS > 1) ? GW'(int'(r) / MCOLS) : '0;
   endfunction
-  wire [7:0] w_row2 = w_row + w_off;          // the DUP copy's row
-  wire [7:0] s_row2 = s_row + w_off;
+  // the quantizer's write as it arrives: the long hop from the quantizer is this narrow register
+  // (on 959b425 at 133.33 MHz the quantizer sat 600 RPM units from these block RAMs and the wide
+  // write register below, fed straight from it, missed timing)
+  logic [LANES-1:0]      we_i;
+  logic [7:0]            w_row_i, w_off_i, s_row_i;
+  logic [DW+BW-1:0]      w_idx_i;
+  logic [LANES-1:0][7:0] w_data_i;
+  logic                  w_dup_i, swe_i;
+  logic [BW-1:0]         s_blk_i;
+  logic [31:0]           s_data_i;
+  always_ff @(posedge clk) begin
+    we_i <= we;
+    w_row_i <= w_row;
+    w_idx_i <= w_idx[DW+BW-1:0];
+    w_data_i <= w_data;
+    w_dup_i <= w_dup;
+    w_off_i <= w_off;
+    swe_i <= swe;
+    s_row_i <= s_row;
+    s_blk_i <= s_blk[BW-1:0];
+    s_data_i <= s_data;
+  end
+  wire [7:0] w_row2 = w_row_i + w_off_i;      // the DUP copy's row
+  wire [7:0] s_row2 = s_row_i + w_off_i;
 
   // the write, as a block address, byte enables and bytes in place (registered), and the
   // scale write (registered); per column: selected, and the group of the row it writes
@@ -65,25 +91,35 @@ module otpu_actram #(
   logic [GW-1:0]    wg [MCOLS], sg [MCOLS];
   logic [BW-1:0]    sb;
   logic [31:0]      sd;
+  // the second register's inputs: per column, selected and the group of the row it writes
+  logic [MCOLS-1:0] wsel_n, ssel_n;
+  logic [GW-1:0]    wg_n [MCOLS], sg_n [MCOLS];
+  always_comb
+    for (int j = 0; j < MCOLS; j++) begin
+      wsel_n[j] = ((col(w_row_i) == j) || (w_dup_i && col(w_row2) == j)) && (|we_i);
+      ssel_n[j] = swe_i && ((col(s_row_i) == j) || (w_dup_i && col(s_row2) == j));
+      wg_n[j] = (col(w_row_i) == j) ? grp(w_row_i) : grp(w_row2);
+      sg_n[j] = (col(s_row_i) == j) ? grp(s_row_i) : grp(s_row2);
+    end
   always_ff @(posedge clk) begin
-    wb <= w_idx[DW +: BW];
+    wb <= w_idx_i[DW +: BW];
     wbe <= '0;
     wd <= '0;
     for (int l = 0; l < LANES; l++) begin
-      wbe[w_idx[DW-1:0] + DW'(l)] <= we[l];
-      wd[8 * (w_idx[DW-1:0] + DW'(l)) +: 8] <= w_data[l];
+      wbe[w_idx_i[DW-1:0] + DW'(l)] <= we_i[l];
+      wd[8 * (w_idx_i[DW-1:0] + DW'(l)) +: 8] <= w_data_i[l];
     end
+    wsel <= wsel_n;
+    ssel <= ssel_n;
     for (int j = 0; j < MCOLS; j++) begin
-      wsel[j] <= ((col(w_row) == j) || (w_dup && col(w_row2) == j)) && (|we);
-      ssel[j] <= swe && ((col(s_row) == j) || (w_dup && col(s_row2) == j));
-      wg[j] <= (col(w_row) == j) ? grp(w_row) : grp(w_row2);
-      sg[j] <= (col(s_row) == j) ? grp(s_row) : grp(s_row2);
+      wg[j] <= wg_n[j];
+      sg[j] <= sg_n[j];
     end
-    sb <= s_blk[BW-1:0];
-    sd <= s_data;
+    sb <= s_blk_i;
+    sd <= s_data_i;
   end
 `ifndef SYNTHESIS
-  initial begin wsel = '0; ssel = '0; end
+  initial begin we_i = '0; swe_i = 1'b0; wsel = '0; ssel = '0; end
 `endif
 
   for (genvar j = 0; j < MCOLS; j++) begin : g_row
@@ -108,6 +144,14 @@ module otpu_actram #(
     assign r_scale[j*32 +: 32] = rs;
 `ifndef SYNTHESIS
     initial for (int b = 0; b < GROUPS*BLOCKS; b++) begin act[b] = '0; asc[b] = '0; end
+    // a consumed read of a block (or its scale) with a write in either register: it would
+    // return the old bytes
+    wire [GW+BW-1:0] wa_n = (GROUPS > 1) ? {wg_n[j], w_idx_i[DW +: BW]} : (GW+BW)'(w_idx_i[DW +: BW]);
+    wire [GW+BW-1:0] sa_n = (GROUPS > 1) ? {sg_n[j], s_blk_i} : (GW+BW)'(s_blk_i);
+    always @(posedge clk)
+      if (ren && r_use && ((wsel[j] && wa == ra) || (wsel_n[j] && wa_n == ra) ||
+                           (ssel[j] && sa == ra) || (ssel_n[j] && sa_n == ra)))
+        $fatal(1, "otpu_actram: column %0d block %0d read while its write is in flight at %0t", j, ra, $time);
 `endif
   end
 endmodule
