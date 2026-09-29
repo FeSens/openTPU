@@ -157,9 +157,9 @@ class DQSPhase(LiteXModule):
                 mmcm.psen.eq(1), mmcm.psincdec.eq(self.dqs_shift.storage[0]), busy.eq(1),
                 If(self.dqs_shift.storage[0], steps.eq(steps + 1)).Else(steps.eq(steps - 1)),
             ).Elif(mmcm.psdone, busy.eq(0)),
-            # an MMCM with a reset of its own (WriteClocks) starts again from its static phases
-            If(~getattr(mmcm, "ps_ready", 1), busy.eq(0), steps.eq(0)),
         ]
+        if hasattr(mmcm, "ps_ready"):   # an MMCM with a reset of its own (WriteClocks) starts
+            self.sync += If(~mmcm.ps_ready, busy.eq(0), steps.eq(0))   # from its static phases
         self.comb += [self.dqs_busy.status.eq(busy), self.dqs_steps.status.eq(steps)]
 
 
@@ -236,11 +236,14 @@ class WriteClocks(LiteXModule):
         self.comb += [cd["sys_n"].clk.eq(~cd["sys"].clk), cd["sys_n"].rst.eq(cd["sys"].rst)]
         self.specials += AsyncResetSynchronizer(cd["sys"], ~self.locked)
 
-    def constraints(self, ns=1.0):
-        """Pre-placement Tcl: the write data cross from sysc_n (sysc's falling edge) to sysw,
-        which the host keeps within half a tCK (0.94 ns) of sysc (ddrcal.DqsPhase's wrap): `ns`
-        of uncertainty on both setup and hold."""
-        c = lambda i: f"[get_clocks -of_objects [get_pins {self.name_of}/CLKOUT{i}]]"
+    def constraints(self, ns=1.0, hier=False):
+        """Pre-placement Tcl / XDC: the write data cross from sysc_n (sysc's falling edge) to
+        sysw, which the host keeps within half a tCK (0.94 ns) of sysc (ddrcal.DqsPhase's wrap):
+        `ns` of uncertainty on both setup and hold. hier: the MMCM found anywhere in the
+        hierarchy (the production core inside the board top)."""
+        pin = (lambda i: f"[get_pins -hierarchical -filter {{NAME =~ */{self.name_of}/CLKOUT{i}}}]") \
+            if hier else (lambda i: f"[get_pins {self.name_of}/CLKOUT{i}]")
+        c = lambda i: f"[get_clocks -of_objects {pin(i)}]"
         return [f"set_clock_uncertainty -setup {ns:.3f} -from {c(0)} -to {c(2)}",
                 f"set_clock_uncertainty -hold {ns:.3f} -from {c(0)} -to {c(2)}"]
 
