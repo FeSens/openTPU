@@ -146,6 +146,28 @@ def test_se_comp_each_function(f, tmp_path):
     check(chunks, got)
 
 
+def test_se_comp_range_reduction(tmp_path):
+    """EXP2's floor and i2f and LOG2's i2f(e) on their whole domains: every integer and half
+    integer in [-130, 130], its neighbours one ulp up and down, a fine grid, and LOG2 on
+    every exponent with the mantissa split's edges."""
+    i = np.arange(-130, 131).astype(np.float32)
+    up = np.nextafter(i, np.float32(np.inf)).astype(np.float32)
+    dn = np.nextafter(i, np.float32(-np.inf)).astype(np.float32)
+    grid = F.f32(np.arange(-130, 130, 1 / 64))
+    x = np.concatenate([i, i + 0.5, up, dn, grid, -EDGE, EDGE]).astype(np.float32)
+    ex = np.arange(0, 256, dtype=np.uint32) << np.uint32(23)
+    lg = np.concatenate([F.from_bits(ex | m) for m in (0, 1, 0x3504F2, 0x3504F3, 0x7FFFFF)])
+    lg = np.concatenate([lg, -lg]).astype(np.float32)
+    chunks = []
+    for f, v in [(V_EXP2, x), (V_EXP2SUB, x), (V_LOG2, lg)]:
+        v = np.resize(v, -(-len(v) // 8) * 8).astype(np.float32)
+        y = F.f32(np.resize([0.0, -0.0, 0.5, -1.0], len(v)))
+        for k in range(0, len(v), 8):
+            chunks.append((f, v[k:k + 8], y[k:k + 8]))
+    got, _ = run_comp(chunks, tmp_path)
+    check(chunks, got)
+
+
 @pytest.mark.parametrize("seed", [1, 2, 3])
 def test_se_comp_mixed_stalls(seed, tmp_path):
     """Random programs of all functions, random gaps and enable stalls (the latency rule and

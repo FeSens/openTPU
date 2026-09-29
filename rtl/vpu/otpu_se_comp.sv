@@ -106,19 +106,23 @@ module otpu_se_comp
     return 4'((n_ops(c) + NS - 1) / NS);
   endfunction
 
-  // operand sources and destinations of one op: a*b + c into dst (negated with neg)
-  localparam logic [2:0] A_X = 3'd0, A_K1 = 3'd1, A_K2 = 3'd2, A_V = 3'd3, A_KA = 3'd4;
-  localparam logic [2:0] B_1 = 3'd0, B_X = 3'd1, B_K1 = 3'd2, B_K2 = 3'd3, B_V = 3'd4;
-  localparam logic [1:0] C_NZ = 2'd0, C_NY = 2'd1, C_K2 = 2'd2, C_KC = 2'd3;
+  // One op: y = a*b + c into dst (negated with neg). The multiply is commutative bit for bit,
+  // so each op puts its variable factor in a and b takes k1, k2 or a constant; a first Horner
+  // coefficient is written into v by the op before (kv: v when dst is not v), so a never
+  // takes a constant. At S0 a also takes the input A and c the negated input B.
+  localparam logic [1:0] A_V = 2'd0, A_K1 = 2'd1, A_K2 = 2'd2, A_X = 2'd3;
+  localparam logic [1:0] B_K1 = 2'd0, B_K2 = 2'd1, B_KB = 2'd2;
+  localparam logic [1:0] C_KC = 2'd0, C_K2 = 2'd1, C_NY = 2'd2;
   localparam logic [1:0] D_NO = 2'd0, D_V = 2'd1, D_K1 = 2'd2, D_K2 = 2'd3;
   typedef struct packed {
-    logic [2:0] as;
-    logic [2:0] bs;
+    logic [1:0] as;
+    logic [1:0] bs;
     logic [1:0] cs;
     logic [1:0] dst;
     logic       neg;
-    f32_t       ka;
+    f32_t       kb;
     f32_t       kc;
+    f32_t       kv;
   } uc_t;
 
   function automatic f32_t exp2_c(input int i);
@@ -135,49 +139,46 @@ module otpu_se_comp
     endcase
   endfunction
 
-  // op k of function c (the VPU chains' slot k); k past the last op: v = v*1 + -0
+  // op k of function c (the VPU chains' slot k, factors in either order); k past the last op:
+  // v = v*1 + -0
   function automatic uc_t ucode(input logic [2:0] c, input int k);
     uc_t u;
-    u = '{as: A_V, bs: B_1, cs: C_NZ, dst: D_V, neg: 1'b0, ka: F_ZERO, kc: F_ZERO};
+    u = '{as: A_V, bs: B_KB, cs: C_KC, dst: D_V, neg: 1'b0, kb: F_ONE, kc: F_NZ, kv: F_ZERO};
     case (c)
       CC_EXP, CC_EXS: begin
         if (k == 0) begin                                            // v = x (- y)
-          u.as = A_X; u.cs = (c == CC_EXS) ? C_NY : C_NZ;
-        end else if (k == 1) begin                                   // f = xf - i2f(i)
-          u.cs = C_K2; u.dst = D_K1;
-        end else if (k == 2) begin                                   // C7*f + C6
-          u.as = A_KA; u.ka = EXP2_C7; u.bs = B_K1; u.cs = C_KC; u.kc = EXP2_C6;
-        end else if (k <= 8) begin                                   // p*f + C5 .. C0
-          u.bs = B_K1; u.cs = C_KC; u.kc = exp2_c(8 - k);
+          u.as = A_X; u.cs = (c == CC_EXS) ? C_NY : C_KC;
+        end else if (k == 1) begin                                   // f = xf - i2f(i); v = C7
+          u.cs = C_K2; u.dst = D_K1; u.kv = EXP2_C7;
+        end else if (k <= 8) begin                                   // p*f + C6 .. C0
+          u.bs = B_K1; u.kc = exp2_c(8 - k);
         end
       end
       CC_RCP:
         if (k < 6) begin
           if (k % 2 == 0) begin                                      // t = 2 - |x| y
-            u.as = A_K1; u.bs = B_K2; u.cs = C_KC; u.kc = F_TWO;
-          end else begin                                             // y = y t
-            u.as = A_K2; u.bs = B_V; u.dst = D_K2;
+            u.as = A_K1; u.bs = B_K2; u.kc = F_TWO;
+          end else begin                                             // y = t y
+            u.bs = B_K2; u.dst = D_K2;
           end
         end
       CC_RSQ:
-        if (k == 0) begin                                            // -h = -(0.5 x)
-          u.as = A_KA; u.ka = F_HALF; u.bs = B_X; u.dst = D_K1; u.neg = 1'b1;
+        if (k == 0) begin                                            // -h = -(x 0.5)
+          u.as = A_X; u.kb = F_HALF; u.dst = D_K1; u.neg = 1'b1;
         end else if (k < 10) begin
           if ((k - 1) % 3 == 0) begin                                // y y
             u.as = A_K2; u.bs = B_K2;
-          end else if ((k - 1) % 3 == 1) begin                       // 1.5 - h (y y)
-            u.as = A_K1; u.bs = B_V; u.cs = C_KC; u.kc = F_1P5;
-          end else begin                                             // y = y t
-            u.as = A_K2; u.bs = B_V; u.dst = D_K2;
+          end else if ((k - 1) % 3 == 1) begin                       // 1.5 - (y y) h
+            u.bs = B_K1; u.kc = F_1P5;
+          end else begin                                             // y = t y
+            u.bs = B_K2; u.dst = D_K2;
           end
         end
       CC_LOG:
-        if (k == 0) begin                                            // t = m - 1
-          u.as = A_K1; u.cs = C_KC; u.kc = F_M1; u.dst = D_K1;
-        end else if (k == 1) begin                                   // C9*t + C8
-          u.as = A_KA; u.ka = LOG2_C9; u.bs = B_K1; u.cs = C_KC; u.kc = LOG2_C8;
-        end else if (k <= 8) begin                                   // q*t + C7 .. C1
-          u.bs = B_K1; u.cs = C_KC; u.kc = log2_c(9 - k);
+        if (k == 0) begin                                            // t = m - 1; v = C9
+          u.as = A_K1; u.kc = F_M1; u.dst = D_K1; u.kv = LOG2_C9;
+        end else if (k <= 8) begin                                   // q*t + C8 .. C1
+          u.bs = B_K1; u.kc = log2_c(9 - k);
         end else if (k == 9) begin                                   // q*t + i2f(e)
           u.bs = B_K1; u.cs = C_K2;
         end
@@ -200,34 +201,57 @@ module otpu_se_comp
     logic [MW-1:0]    m;
   } cm_t;
 
-  // pass 0's state from x (the chains' boundary 0)
+  // pass 0's state from x (the chains' boundary 0). Fields a function does not read before
+  // writing them are don't-cares: RECIP and RSQRT share one seed subtractor, and k1 and ii
+  // are computed whatever the function.
   function automatic cst_t setup(input logic [2:0] c, input f32_t x);
     cst_t t;
-    f32_t xz, ax;
-    logic ge, z;
+    f32_t xz, ax, sd;
+    logic ge, z, rcp;
     xz = ftz(x);
     ax = {1'b0, xz[30:0]};
+    ge = (xz[22:0] >= LOG2_SQRT2);
+    z  = (xz[30:0] == 0);
+    rcp = (c == CC_RCP);
+    sd = (rcp ? RECIP_MAGIC : RSQRT_MAGIC) - (rcp ? ax : (xz >> 1));
     t = '0;
+    t.k2 = rcp ? ftz(sd) : sd;                                        // the seed
+    t.k1 = (c == CC_LOG) ? {1'b0, ge ? 8'd126 : 8'd127, xz[22:0]}    // m in [sqrt(1/2), sqrt(2))
+                         : {1'b1, ax[30:0]};                          // -|x|
+    t.ii = 9'(xz[30:23]) - 9'd127 + 9'(ge);                           // LOG2's e
     case (c)
-      CC_RCP: begin
-        t.k1 = {1'b1, ax[30:0]};                                      // -|x|
-        t.k2 = ftz(RECIP_MAGIC - ax);                                 // seed
-        t.f  = {xz[31], (ax >= 32'h7E80_0000), (ax == 0)};
-      end
-      CC_RSQ: begin
-        t.k2 = RSQRT_MAGIC - (xz >> 1);
-        t.f  = {2'b00, (xz[31] || xz[30:0] == 0 || xz == F_INF)};
-      end
-      CC_LOG: begin                                                   // m in [sqrt(1/2), sqrt(2)), e
-        ge = (xz[22:0] >= LOG2_SQRT2);
-        z  = (xz[30:0] == 0);
-        t.k1 = {1'b0, ge ? 8'd126 : 8'd127, xz[22:0]};
-        t.ii = 9'(xz[30:23]) - 9'd127 + 9'(ge);
-        t.f  = {!z && (xz[31] || is_nan(xz)), xz == F_INF, z};       // NaN, +inf, -inf
-      end
+      CC_RCP: t.f = {xz[31], (ax >= 32'h7E80_0000), (ax == 0)};
+      CC_RSQ: t.f = {2'b00, (xz[31] || z || xz == F_INF)};
+      CC_LOG: t.f = {!z && (xz[31] || is_nan(xz)), xz == F_INF, z};  // NaN, +inf, -inf
       default: ;
     endcase
     return t;
+  endfunction
+
+  // RR's floor (ffloor on its domain): x flushed and in [-126, 128) or +-0, so |x| < 128 and
+  // the integer part is the top 7 bits of the significand at most
+  function automatic logic [8:0] rr_floor(input f32_t x);
+    logic [2:0] k;
+    logic [6:0] ip;
+    logic       fr;
+    if (x[30:23] < 8'd127) return (x[31] && x[30:23] != 0) ? 9'h1FF : 9'd0;
+    k  = 3'(x[30:23] - 8'd127);                   // 0..6
+    ip = 7'({1'b1, x[22:17]} >> (3'd6 - k));
+    fr = |(x[22:0] & (23'h7F_FFFF >> k));         // the fraction bits below the point
+    return x[31] ? -(9'(ip) + 9'(fr)) : 9'(ip);
+  endfunction
+
+  // i2f of a 9-bit integer of magnitude <= 255: exact, so equal to i2f
+  function automatic f32_t i2f9(input logic [8:0] n);
+    logic [7:0]  m;
+    logic [2:0]  p;
+    logic [30:0] sh;
+    m = n[8] ? 8'(-n) : n[7:0];
+    if (m == 0) return F_ZERO;
+    p = 3'd0;
+    for (int j = 1; j < 8; j++) if (m[j]) p = 3'(j);
+    sh = {m, 23'd0} >> p;                         // the leading one at bit 23
+    return {n[8], 8'd127 + 8'(p), sh[22:0]};
   endfunction
 
   function automatic f32_t finish(input logic [2:0] c, input cst_t t);
@@ -327,22 +351,18 @@ module otpu_se_comp
         case (uci[s].as)
           A_K1:    a = t.k1;
           A_K2:    a = t.k2;
-          A_V:     a = t.v;
-          A_KA:    a = uci[s].ka;
-          default: a = (s == 0) ? in_a[l] : uci[s].ka;          // A_X: pass 0 is at S0
+          A_X:     a = (s == 0) ? in_a[l] : t.v;                // pass 0 is at S0
+          default: a = t.v;
         endcase
         case (uci[s].bs)
           B_K1:    b = t.k1;
           B_K2:    b = t.k2;
-          B_V:     b = t.v;
-          B_X:     b = (s == 0) ? in_a[l] : F_ONE;
-          default: b = F_ONE;
+          default: b = uci[s].kb;
         endcase
         case (uci[s].cs)
-          C_NY:    c = (s == 0) ? fneg(in_b[l]) : F_NZ;
           C_K2:    c = t.k2;
-          C_KC:    c = uci[s].kc;
-          default: c = F_NZ;
+          C_NY:    c = (s == 0) ? fneg(in_b[l]) : uci[s].kc;
+          default: c = uci[s].kc;
         endcase
       end
       assign st_a[s][l] = a;
@@ -367,6 +387,7 @@ module otpu_se_comp
         r = uco[s].neg ? fneg(y) : y;
         sto[s] = '0;
         {sto[s].k1, sto[s].k2, sto[s].ii, sto[s].f} = kd;
+        sto[s].v = uco[s].kv;
         case (uco[s].dst)
           D_V:  sto[s].v  = r;
           D_K1: sto[s].k1 = r;
@@ -390,11 +411,11 @@ module otpu_se_comp
           end
           q0 <= t;
           t = q0;
-          if (e1) t.ii = 9'(ffloor(q0.v));
+          if (e1) t.ii = rr_floor(q0.v);
           q1 <= t;
           t = q1;
           if (e2 || g2) begin
-            t.k2 = i2f(32'($signed(q1.ii)));
+            t.k2 = i2f9(q1.ii);
             t.k2[31] = t.k2[31] ^ e2;
           end
           q2 <= t;
