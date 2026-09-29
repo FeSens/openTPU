@@ -1,8 +1,9 @@
 # LiteDRAM instead of the MIG: an assessment (draft)
 
 Draft, 2026-09-29. This is an investigation; the design is unchanged. Labels: **measured** means
-a Vivado run or a simulation that was actually run (tool and version given). **estimate** means
-arithmetic. Nothing here has run on the card.
+a Vivado run, a simulation or a card run that was actually done (tool and version given).
+**estimate** means arithmetic. Sections 1-6 predate the card; sections 7 and 8 are the test
+images on the card.
 
 The question: could [LiteDRAM](https://github.com/enjoy-digital/litedram) replace the two Xilinx
 MIG controllers, the SmartConnect in front of them and the AXI side of `otpu_axi_dram`? Its
@@ -636,6 +637,17 @@ a 64 MiB BIST per lane; the phase goes to the centre of the longest run common t
 the channel is calibrated there. (Until d2c1ede a second step set group 1's offset to bring its
 run onto group 0's and scanned again; see above for why it is gone.)
 
+**Read framing per bit (8cbfd3b).** The ISERDES of one lane do not all frame the word alike: a
+bit can come out a CLK (two bitslips) early or late against the other bits of its lane, with a
+full-width window at its own framing (`ldtest3d` and `ldtest3e` below: different pins in each
+build). The PHY's CSR `dly_sel_bits` (8 bits, reset 0xFF) masks the read and write bitslip
+strobes per DQ bit of the lanes that `dly_sel` picks; DQS and DM follow only with every bit
+selected. Read leveling (`ddrcal`: `read_scan`, `lane_best_bits`) counts wrong reads per DQ bit.
+A lane's window is where every bit reads right at the lane's bitslip or two away. The widest
+window wins, and among equal ones the one with the fewest bits off. Those bits then get their
+own bitslip. The host finds the CSR by name, and cores without it are calibrated per lane as
+before.
+
 The temperature run rescans every 5 minutes and logs each group's run.
 
 **Expected windows** (**estimates**, from the crossing positions above; they assume channel 0's
@@ -690,6 +702,24 @@ The temperature run rescans every 5 minutes and logs each group's run.
   | sys -> sysw1 | +1.358 ns | +0.101 ns | 0.248 ns |
 
   Bitstream md5: 1ae9ef50d2ddec89f3282e29104178bf.
+- **Reads on the static clocks, a reset register per lane (d2c1ede, `ldtest3d`)** and **per-bit
+  read framing (8cbfd3b, `ldtest3e`, the checkpoint image):** the same LOCs. The read data now
+  cross from `sysw`, so there is no `sysc` -> `sys` path. Every clock crossing meets its
+  constraint. The serializer resets' `set_max_delay` does not: 1.2 ns on `ldtest3d`, with routes
+  up to 1.66 ns (WNS -0.967 ns, 308 endpoints); 2.0 ns on `ldtest3e` (WNS -0.308 ns, 85
+  endpoints). That constraint is hygiene (section `ldtest3` below: the reset's arrival does not
+  move the framing), so neither image was rebuilt for it. **Measured**, worst path of each:
+
+  | crossing | `ldtest3d` setup / hold | `ldtest3e` setup / hold |
+  |---|---|---|
+  | sys -> sysc0 | +0.271 / +2.469 ns | +0.340 / +2.466 ns |
+  | sys -> sysc1 | +0.234 / +2.459 ns | +0.193 / +2.461 ns |
+  | sys -> sysw0 | +0.840 / +0.101 ns | +1.516 / +0.109 ns |
+  | sys -> sysw1 | +1.545 / +0.103 ns | +1.247 / +0.131 ns |
+  | sysw0 -> sys (read data) | +3.726 / +0.093 ns | +3.623 / +0.081 ns |
+  | sysw1 -> sys | +4.465 / +0.064 ns | +3.593 / +0.061 ns |
+
+  `ldtest3e` bitstream md5: 79e977a4c8360812daa89a831f8cff4c.
 
 ### `ldtest3` on the card (2026-09-29, opentpu, both channels, FPGA 54-55 C)
 
@@ -735,7 +765,81 @@ ISERDES onto the static pair and gives every lane's serializers their own reset 
 write side (CLKOUT2-6 together, CK moved with it): 4 eighths as at 0 (the same late bit), 1, 2, 3
 and 5 eighths every lane lost.
 
-**Status:** d2c1ede (read capture static, one group) building; the checkpoint run follows.
+### `ldtest3d` on the card (d2c1ede: reads on the static clocks, 2026-09-29)
+
+Logs: `docs/data/litedram/card3d-*.log`.
+
+**Channel 0: all nine lanes, calibrated.**
+- **Calibration:** the first scan found a 28-step common run (469 ps). The second found 45 steps
+  (753 ps) with CK at +50 (`card3d-all-ch0.log`, `card3d-all2-ch0.log`).
+- **BIST:** clean.
+- **300 s soak:** 268 passes of 2 GiB x 2 data modes, 0 errors (`card3d-soak-ch0.log`).
+- **Temperature run:** stopped at 28:20 when `ldtest3e` was ready. It had 2,888 BIST passes and
+  0 wrong beats, with the FPGA at 54.3-55.2 C. The rescans every 5 minutes found 44, 44, 25, 44
+  and 45 steps; the 25 is -13..+11 around the running phase against -13..+30 in the others
+  (`card3d-temp-ch0.log`).
+
+**Channel 1: no common phase.** Two lanes had no read window at any CK phase
+(`card3d-all-ch1.log`). A per-bit read scan, which shows each bit's passing taps at each read
+bitslip (`card3d-diag6.log`), found:
+- in lane 3, dq27 reads right two bitslips later than the other seven bits;
+- in lane 8, dq64 and dq67 read right two earlier than the other six.
+
+Each of these bits has a full window of 10-11 taps at its own framing. The misframed bits move
+with the build: channel 0's lane 7, which `ldtest3` lost to dq61, calibrated on `ldtest3d`. The
+reset reached those ISERDES in 0.58-0.72 ns, so its arrival did not decide the framing. 8cbfd3b
+adds the per-bit read framing (above).
+
+### `ldtest3e` on the card: the checkpoint (8cbfd3b, 2026-09-29)
+
+The image: `ldtest3` with reads on the static clocks, a reset register per lane, and per-bit read
+framing; one write group; group 1 at offset 0. The session (`task3.sh`) ran on both channels, per
+channel:
+- calibration and a BIST;
+- the forced-latency scan;
+- a 300 s soak.
+
+Then came the 35 min temperature run on both channels together, and the BIST bandwidth. Logs:
+`docs/data/litedram/card3e-*.log`. **Measured:**
+
+| | channel 0 | channel 1 |
+|---|---|---|
+| common window (calibration scan) | **45 steps, 753 ps**, CK at +50 | **73 steps, 1222 ps**, CK at +64 (-48) |
+| forced-latency scan, best latency per lane | +90..+134 (45 steps) | +76..+148 (73 steps) |
+| write latency | every lane at bitslip 6 | every lane at bitslip 0 |
+| read windows at the chosen taps | 9-11 taps (703-859 ps) | 9-10 taps (703-781 ps) |
+| bits off their lane's read framing | none | lane 3 bit 3; lane 8 bits 1, 2, 5, 7 (+2 each) |
+| BIST, 2 GiB x 2 passes x 2 patterns | 0 errors | 0 errors |
+| 300 s soak | 268 passes, 0 errors | 268 passes, 0 errors |
+| BIST bandwidth | write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%) | the same |
+
+Channel 1 needs the per-bit framing: five bits in two lanes read right only at their lane's
+bitslip + 2. Channel 0 needs none on this build. Lane 3's bit 3 (dq27) is the same pin as on
+`ldtest3d`; lane 8's set differs.
+
+**The temperature run** (`card3e-temp.log`): 35 min of back-to-back BIST on both channels at
+once, with the FPGA at 54.4-55.2 C and the board at 47.5-48.0 C. Each channel ran 3,209 passes
+of 2 GiB with 0 wrong beats. The windows were rescanned every 5 minutes, 7 scans in all:
+- channel 0: 737-753 ps (-22..+21 or +22 around the running phase);
+- channel 1: 1222 ps every time (-36..+36).
+
+The running phase stayed inside every window. The BIST afterwards was clean on both channels
+(`card3e-bist.log`).
+
+**Verdict: GO.** Both channels calibrate at one common CK phase with per-lane latency; their
+BIST, 300 s soak and 35 min temperature run are clean; and the common windows (753 and
+1222 ps) are 5 and 8 times the 150 ps criterion. The production core (`gen_core.py --phy wl`)
+is this PHY. Since 86bee3c it also has a register after the read bitslip mux (`rd_reg`): in
+the fused image the mux's select fed the ECC error counters through 9 LUT levels and missed
+133.33 MHz by 0.409 ns. The OOC synthesis of the two cores (Vivado 2026.1, **measured**, before
+place and route) takes those paths from 9 levels (5.50 ns) to 6 or 8 (4.02 ns).
+
+**Reading the ldtest3e numbers:**
+- **Window width:** the scans step the common CK phase in 16.7 ps steps. A lane fails only
+  where its write latency flips, so the width is the gap between the lanes' tDQSS crossings,
+  not a data eye.
+- **Temperature coverage:** the run held the FPGA near 55 C. It does not cover a cold start or
+  a hot card; the rescans give the host the drift to recalibrate on if the window moves.
 
 ## 9. The native-channel builds (branch `ld-top`, 2026-09-29)
 
