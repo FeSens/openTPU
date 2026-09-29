@@ -85,6 +85,14 @@ of a channel's bandwidth, with DRAM_WAIT near 0). MXU_STARVE sees that case: MXU
 MXU_MAC minus MXU_STARVE is roughly the MXU's own time (TMEM arbitration, drain, waiting for
 its operands).
 
+The systolic MXU (MXU_IMPL 2) starts a row only once all of the row's chunks are in the FIFO, so
+it waits for memory mostly with part of a row in the FIFO: blocked (the Q line's mb), not starved.
+With single-beat reads (the mlp kernel, 4 cycles per read transaction) the tree MXU counts 34303
+starved and 2051 blocked cycles, and the systolic MXU 10788 and 26258 (tests/test_observability.py
+test_mxu_starve_counter). Both wait for about 0.73 of their busy time. Follow-up: otpu-smi's
+"MXU-starve" reads only MXU_STARVE and so reads low on a systolic card. It needs mb, or a
+starve that includes a row still filling.
+
 The program loader's reads (LOAD) count in DRAM_RD and DRAM_WAIT too; RUNNING over one run
 equals the run's CYCLES.
 
