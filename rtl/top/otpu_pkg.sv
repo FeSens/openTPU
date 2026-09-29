@@ -3,7 +3,8 @@
 package otpu_pkg;
   localparam logic [7:0] OP_NOP = 8'h00, OP_HALT = 8'h01, OP_LI = 8'h02, OP_ADDI = 8'h03,
                          OP_LOOP = 8'h04, OP_BAR = 8'h05, OP_LD = 8'h10, OP_ST = 8'h11,
-                         OP_DSTEP = 8'h12, OP_MM = 8'h20, OP_QACT = 8'h21, OP_QST = 8'h22,
+                         OP_DSTEP = 8'h12, OP_STREAM = 8'h13, OP_MM = 8'h20, OP_QACT = 8'h21,
+                         OP_QST = 8'h22,
                          OP_VOP = 8'h30, OP_GATHER = 8'h40;
 
   localparam logic [7:0] V_ADD = 0, V_SUB = 1, V_RSUB = 2, V_MUL = 3, V_MAX = 4, V_MIN = 5,
@@ -12,8 +13,9 @@ package otpu_pkg;
                          V_RMAX = 17, V_RSSQ = 18, V_RDOT = 19;
   // VOP OUTER flags: one decay word T[d] for all columns / decay 1.0 (T[d] not read)
   localparam int VF_DSCALAR = 0, VF_DONE = 1;
-  // DSTEP flags: the state starts at +0 (DRAM not read)
-  localparam int DF_ZERO = 0;
+  // DSTEP / STREAM flags: the state starts at +0 (DRAM not read); STREAM's TMEM source and
+  // destination and no write-back (not in the hardware subset)
+  localparam int DF_ZERO = 0, STF_SRC_T = 1, STF_DST_T = 2, STF_NODST = 3;
 
   localparam logic [1:0] B_FULL = 0, B_ROW = 1, B_COL = 2, B_SCALAR = 3;
 
@@ -64,7 +66,7 @@ package otpu_pkg;
 
   function automatic int unit_of(input logic [7:0] op);
     case (op)
-      OP_LD, OP_ST, OP_DSTEP: return U_DMA;
+      OP_LD, OP_ST, OP_DSTEP, OP_STREAM: return U_DMA;
       OP_MM:             return U_MXU;
       OP_QACT, OP_QST:   return U_Q;
       OP_VOP:            return U_VPU;
@@ -214,6 +216,20 @@ package otpu_pkg;
       OP_ST: begin
         f.rd[0] = mk(SP_TMEM, c.w2, c.w3);
         f.wr[0] = mk(SP_DRAM, c.w1, c.w3 << 2);
+      end
+      OP_STREAM: begin
+        // the shape (rows, cols <= 256) and ks are in the descriptor, which the sequencer
+        // cannot read: the hardware subset's largest stream (docs/stream.md 4.4), read and
+        // written in place (dst = src); o written; the descriptor's first 8 words, the 4 column
+        // slots, and x and the constants (K1 = T[k + ks]) as [min(x, k), top of TMEM)
+        f.wr[0] = mk(SP_DRAM, c.w2, 32'(4 * 256 * 256));
+        f.wr[1] = mk(SP_TMEM, c.w7, 32'd256);
+        f.rd[0] = mk(SP_TMEM, 32'(c.w1[15:0]), 32'd8);
+        f.rd[1] = mk(SP_TMEM, c.w4, 32'(4 * 256));
+        f.rd[2].v = 1'b1;
+        f.rd[2].sp = SP_TMEM;
+        f.rd[2].lo = (c.w5 < c.w6) ? c.w5 : c.w6;
+        f.rd[2].hi = 32'h0001_0000;
       end
       OP_DSTEP: begin
         // the state is read and written in place (a write range); q | k, v, decay .. beta

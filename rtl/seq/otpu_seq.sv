@@ -80,7 +80,7 @@ module otpu_seq
   // which overlaps nothing (b.lo < 0 is false) -- exactly ov()'s v terms. Routing (fp_seg):
   //   LD:     d[0] = rd0          t[0] = wr0 W
   //   ST:     d[0] = wr0 (dw)     t[0] = rd0
-  //   DSTEP:  d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2
+  //   DSTEP, STREAM:  d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2
   //   MM:     d = rd0, rd1        t[0] = wr0 W, t[1] = wr1 W (RMAX), t2 = rd3 (ASCALE), a = rd2
   //   QACT:                       t[0] = rd0, t[1] = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
   //   QST:    d = wr0, wr1 (dw)   t[0] = rd0
@@ -136,7 +136,7 @@ module otpu_seq
       OP_ST: begin
         s.dw = 1'b1; s.d[0] = r32(f.wr[0]); t0 = f.rd[0];
       end
-      OP_DSTEP: begin
+      OP_DSTEP, OP_STREAM: begin
         s.dw = 1'b1; s.d[0] = r32(f.wr[0]);
         t0 = f.wr[1]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1]; t3 = f.rd[2];
       end
@@ -242,13 +242,17 @@ module otpu_seq
     return (r == 0) ? 32'd0 : R[r];
   endfunction
 
+  // STREAM: src (w2) and dst (w3) += R[ra], vec (w4) += R[rb], x (w5) += R[rc], k (w6) += R[rd]
   cmd_t dcmd;
+  wire  is_str = (op == OP_STREAM);
   always_comb begin
     dcmd.op = op; dcmd.flags = flags;
-    dcmd.w1 = iw[1] + rv(ra);
-    dcmd.w2 = iw[2] + rv(rb);
-    dcmd.w3 = iw[3] + rv(rc);
-    dcmd.w4 = iw[4]; dcmd.w5 = iw[5]; dcmd.w6 = iw[6];
+    dcmd.w1 = iw[1] + (is_str ? 32'd0 : rv(ra));
+    dcmd.w2 = iw[2] + (is_str ? rv(ra) : rv(rb));
+    dcmd.w3 = iw[3] + (is_str ? rv(ra) : rv(rc));
+    dcmd.w4 = iw[4] + (is_str ? rv(rb) : 32'd0);
+    dcmd.w5 = iw[5] + (is_str ? rv(rc) : 32'd0);
+    dcmd.w6 = iw[6] + (is_str ? rv(rd) : 32'd0);
     dcmd.w7 = iw[7] + ((op == OP_VOP) ? rv(rd) : 32'd0);        // VOP: w7 += R[rd]
   end
   int dunit;

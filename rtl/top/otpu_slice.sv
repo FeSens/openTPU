@@ -32,7 +32,7 @@ module otpu_slice
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with the composite functions
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer (<= LANES)
   parameter int PQ_WIN     = 64,      // cycles per P/Q counter window (+bucket= in simulation)
-  parameter bit HAS_DSTEP  = 1'b1     // the DMA's DSTEP datapath (otpu_dma)
+  parameter bit HAS_DSTEP  = 1'b1     // streams (DSTEP, STREAM): SE's tail in the VPU
 ) (
   input  logic          clk,
   input  logic          sys_rst,
@@ -206,12 +206,24 @@ module otpu_slice
     rst_dma <= rst; rst_mxu <= rst; rst_q <= rst; rst_vpu <= rst;
   end
 
-  otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_DSTEP)) u_dma (
+  // the stream engine (docs/stream.md): the DMA moves a stream (DSTEP, STREAM) through SE in
+  // the VPU; streams need 8 lanes on both sides (otpu_dma W = 8: D >= 32)
+  localparam bit HAS_SS = HAS_DSTEP && LANES == 8 && D >= 32;
+  logic        ss_req, ss_gnt, ss_pe, ss_in_v, ss_y_v, ss_o_v;
+  ss_cfg_t     ss_cfg;
+  logic [2:0]  ss_fk;
+  logic [4:0]  ss_fi;
+  logic [31:0] ss_in_d [LANES], ss_fd [LANES], ss_y_d [LANES];
+  logic [31:0] ss_o_d;
+
+  otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_SS)) u_dma (
     .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
     .b_req(dma_breq), .b_gnt(b_rdy), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
     .b_addr(dma_baddr), .b_rvalid(b_rvalid && b_rtag), .b_rdata, .wr_idle,
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rdata(r_data[P_DMA]),
-    .t_wen(dma_wen), .t_waddr(dma_waddr), .t_wdata(dma_wdata));
+    .t_wen(dma_wen), .t_waddr(dma_waddr), .t_wdata(dma_wdata),
+    .ss_req, .ss_gnt, .ss_cfg, .ss_pe, .ss_in_v, .ss_in_d, .ss_fk, .ss_fi, .ss_fd,
+    .ss_y_v, .ss_y_d, .ss_o_v, .ss_o_d);
 
   otpu_mxu #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .DEPTH(FIFO_DEPTH), .LANES(ULANES), .IMPL(MXU_IMPL),
              .CL(MXU_CL), .SID(SID)) u_mxu (
@@ -235,12 +247,14 @@ module otpu_slice
     .a_req(q_areq), .a_we(q_awe), .a_addr(q_aaddr), .a_wdata(q_awdata), .a_be(q_abe),
     .pf_u(q_u), .pf_frz(q_frz));
 
-  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK)) u_vpu (
+  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK), .HAS_SE(HAS_SS)) u_vpu (
     .clk, .rst(rst_vpu), .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
     .gnt(gnt[G_VPU]), .ren(v_ren),
     .ta_en(va_ren), .ta_addr(va_raddr), .ta_data(r_data[P_VA]),
     .tb_en(vb_ren), .tb_addr(vb_raddr), .tb_data(r_data[P_VB]),
-    .tw_en(v_wen), .tw_addr(v_waddr), .tw_data(v_wdata), .pf_u(v_u), .pf_frz(v_frz));
+    .tw_en(v_wen), .tw_addr(v_waddr), .tw_data(v_wdata), .pf_u(v_u), .pf_frz(v_frz),
+    .ss_req, .ss_gnt, .ss_cfg, .ss_pe, .ss_in_v, .ss_in_d, .ss_fk, .ss_fi, .ss_fd,
+    .ss_y_v, .ss_y_d, .ss_o_v, .ss_o_d);
 
   // collective: request from start until acknowledged
   always_ff @(posedge clk) begin
