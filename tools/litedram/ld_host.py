@@ -11,9 +11,9 @@ calibrated from the host over BAR0 (/dev/xdma0_user), then tested with the image
     python3 ld_host.py BUILD_DIR wscan [--wl 0,6 --stride 1]  # DQS scan, write latency forced
     python3 ld_host.py BUILD_DIR g1 --eighths N   # WL7DDRPHY image: group 1's offset (DRP)
 
-WL7DDRPHY images (ld_test.py --phy wl, docs/litedram.md section 8): the DQS phase moves each
-channel's whole write side (DQ with its DQS) in two clock groups; `all` and `temp` pick group 1's
-static offset (ddrcal.calibrate_groups) before the common phase.
+WL7DDRPHY images (ld_test.py --phy wl, docs/litedram.md section 8): the phase moves each
+channel's CK and commands against its whole write side (DQ with its DQS); `all` and `temp` scan
+the CK phase common to every lane (ddrcal.calibrate_groups; group 1 stays at offset 0).
     python3 ld_host.py BUILD_DIR selftest     # the calibration logic against a simulated PHY
 
 --ch 0, 1 or both (default: every channel of the image, one after the other; `temp` runs them
@@ -464,24 +464,25 @@ def channel(a, csr, period):
         print("DQS phase", dqs.steps())
     if a.what == "all" and wl_phy:
         groups = d.phy["groups"][str(csr.ch)]
-        print(f"write clock groups {groups}: scan of the common phase with group 1 on group 0, "
-              f"every {a.stride} steps, a 64 MiB BIST per step:")
+        print(f"write clock groups {groups}: scan of the common CK phase, every {a.stride} steps, "
+              f"a 64 MiB BIST per step:")
         try:
             res = calibrate_groups(d, dqs, WriteClocks(csr), groups, period, stride=a.stride,
                                    csr=csr)
         except CalError as e:
+            res = {"scan0": getattr(e, "scan", None)}
             print(f"  {e}: FAIL")
-            return 1
-        for name, t in (("group 1 at 0", res["scan0"]),
-                        (f"group 1 at {res['offset_eighths']}/8", res["scan1"])):
-            print(f"  lanes, {name} (phase steps from -{period // 2} to +{period // 2}):")
-            for m, line in enumerate(pass_map(t, d.nm, period)):
+        if res["scan0"] is not None:
+            print(f"  lanes (CK phase steps from -{period // 2} to +{period // 2}):")
+            for m, line in enumerate(pass_map(res["scan0"], d.nm, period)):
                 print(f"    m{m} g{groups[m]} {line}")
+        if "run" not in res:
+            return 1
         run = res["run"]
         print(f"common: {len(run) * a.stride} steps ({len(run) * a.stride * dqs.step_ps:.0f} ps; "
-              f"groups alone at offset 0: " + ", ".join(
+              f"groups alone: " + ", ".join(
                   f"{g} {w} steps ({w * dqs.step_ps:.0f} ps)" for g, w in res["group_runs"].items())
-              + f"); DQS at +{res['pick']} steps")
+              + f"); CK at +{res['pick']} steps")
     elif a.what == "all":
         print(f"DQS phase scan (every {a.stride} steps = {a.stride * dqs.step_ps:.0f} ps over one "
               f"tCK; per lane: calibrated read window in taps, 0 if its calibration check or a "
