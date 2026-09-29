@@ -88,6 +88,30 @@ def test_calibrate_channel_write_clock_groups():
     assert all(f.good(m) for m in range(f.nm))
 
 
+def test_per_bit_read_framing():
+    # ldtest3d, channel 1: single DQ bits read a CLK off their lane (dq27 at the lane's read
+    # bitslip + 2; dq64 and dq67 at -2 against the other six). With ddrphy_dly_sel_bits (the WL
+    # image's map) each takes its own bitslip and the lanes calibrate; without it they cannot
+    wl = DATA.parent / "litedram_wl"
+    for per_bit in (True, False):
+        fake = C.FakeCsr(wl)
+        if not per_bit:
+            fake.regs = {k: v for k, v in fake.regs.items() if "dly_sel_bits" not in k}
+        fake.RB[3], fake.RB[8] = 4, 5
+        fake.BOFF = {(3, 3): 2, (8, 0): -2, (8, 3): -2}
+        for m in range(fake.nm):
+            fake.WLO[m], fake.WHI[m] = 0, 111
+        d = C.Dram(fake, wl)
+        assert d.per_bit == per_bit
+        wl_, rl, err = d.calibrate(verbose=False)
+        if per_bit:
+            assert not any(err) and all(fake.good(m) for m in range(fake.nm)), (wl_, rl, err)
+            assert d.boff[3] == [0, 0, 0, 2, 0, 0, 0, 0] and d.boff[8] == [-2, 0, 0, -2, 0, 0, 0, 0]
+            assert fake.v["ddrphy_dly_sel_bits"] == 0xFF
+        else:
+            assert err[3] and err[8] and not any(e for m, e in enumerate(err) if m not in (3, 8))
+
+
 def test_word_csr_most_significant_word_first():
     mem = {}
     regs = {"a": (0x10, 1), "seed": (0x20, 2)}

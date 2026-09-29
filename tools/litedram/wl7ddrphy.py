@@ -27,7 +27,8 @@ is the stock PHY's, cycle for cycle. The tristate controls (T1, OSERDES TQ in BU
 clocked) stay as the stock PHY's.
 
 Every domain name above except sys is the PHY's own; the SoC maps them per channel with
-ClockDomainsRenamer. The CSRs and settings are A7DDRPHY's (phytype A7DDRPHY).
+ClockDomainsRenamer. The CSRs and settings are A7DDRPHY's (phytype A7DDRPHY), plus dly_sel_bits
+(per-bit bitslip strobes).
 
 Derived from LiteDRAM (BSD-2-Clause): Copyright (c) 2015-2020 Florent Kermarrec, (c) 2015 Sebastien
 Bourdeauducq, (c) 2021 Antmicro.
@@ -85,6 +86,10 @@ class WL7DDRPHY(Module, AutoCSR):
         self._wdly_dq_bitslip = CSR()
         self._rdphase = CSRStorage(int(math.log2(nphases)), reset=rdphase)
         self._wrphase = CSRStorage(int(math.log2(nphases)), reset=wrphase)
+        # the DQ bits (of the lanes dly_sel selects) the read / write bitslip strobes act on; DQS
+        # and DM follow only with every bit selected. ldtest3d framed single bits' ISERDES words
+        # a CLK off the rest of their lane; the host gives those their own read bitslip
+        self._dly_sel_bits = CSRStorage(8, reset=0xFF)
 
         rdly_dq_rst = self._rdly_dq_rst.wr_stb
         rdly_dq_inc = self._rdly_dq_inc.wr_stb
@@ -93,6 +98,9 @@ class WL7DDRPHY(Module, AutoCSR):
         wlevel_strobe = self._wlevel_strobe.wr_stb
         wdly_dq_bitslip_rst = self._wdly_dq_bitslip_rst.wr_stb
         wdly_dq_bitslip = self._wdly_dq_bitslip.wr_stb
+        bit_sel = self._dly_sel_bits.storage
+        lane_all = Signal()
+        self.comb += lane_all.eq(bit_sel == 0xFF)
 
         self.settings = PhySettings(
             phytype="A7DDRPHY", memtype=memtype, databits=databits, strobes=strobes,
@@ -188,8 +196,8 @@ class WL7DDRPHY(Module, AutoCSR):
             dqs_o = Signal()
             dqs_t = Signal()
             dqs_bitslip = BitSlip(8, i=dqs_pattern.o,
-                                  rst=(self._dly_sel.storage[i] & wdly_dq_bitslip_rst) | self._rst.storage,
-                                  slp=self._dly_sel.storage[i] & wdly_dq_bitslip, cycles=1)
+                                  rst=(self._dly_sel.storage[i] & lane_all & wdly_dq_bitslip_rst) | self._rst.storage,
+                                  slp=self._dly_sel.storage[i] & lane_all & wdly_dq_bitslip, cycles=1)
             self.submodules += dqs_bitslip
             self.specials += oserdes(dqs_bitslip.o, ClockSignal(f"sys4x_w{g}_dqs"),
                                      ClockSignal("sys_w"), wr_rst[i], dqs_o,
@@ -203,8 +211,8 @@ class WL7DDRPHY(Module, AutoCSR):
                 g = groups[i]
                 dm_i = Cat(*[dfi.phases[n // 2].wrdata_mask[n % 2 * databits // 8 + i] for n in range(8)])
                 dm_o_bitslip = BitSlip(8, i=dm_i,
-                                       rst=(self._dly_sel.storage[i] & wdly_dq_bitslip_rst) | self._rst.storage,
-                                       slp=self._dly_sel.storage[i] & wdly_dq_bitslip, cycles=1)
+                                       rst=(self._dly_sel.storage[i] & lane_all & wdly_dq_bitslip_rst) | self._rst.storage,
+                                       slp=self._dly_sel.storage[i] & lane_all & wdly_dq_bitslip, cycles=1)
                 self.submodules += dm_o_bitslip
                 self.specials += oserdes(dm_o_bitslip.o, ClockSignal(f"sys4x_w{g}"),
                                          ClockSignal("sys_w"), wr_rst[i], pads.dm[i])
@@ -223,16 +231,16 @@ class WL7DDRPHY(Module, AutoCSR):
             dq_t = Signal()
             dq_o_bitslip = BitSlip(8,
                 i=Cat(*[dfi.phases[n // 2].wrdata[n % 2 * databits + i] for n in range(8)]),
-                rst=(self._dly_sel.storage[lane] & wdly_dq_bitslip_rst) | self._rst.storage,
-                slp=self._dly_sel.storage[lane] & wdly_dq_bitslip, cycles=1)
+                rst=(self._dly_sel.storage[lane] & bit_sel[i % 8] & wdly_dq_bitslip_rst) | self._rst.storage,
+                slp=self._dly_sel.storage[lane] & bit_sel[i % 8] & wdly_dq_bitslip, cycles=1)
             self.submodules += dq_o_bitslip
             self.specials += oserdes(dq_o_bitslip.o, ClockSignal(f"sys4x_w{g}"),
                                      ClockSignal("sys_w"), wr_rst[lane], dq_o,
                                      t1=~dq_oe_delay.output, tq=dq_t)
             dq_q = Signal(8)
             dq_i_bitslip = BitSlip(8, i=dq_q,
-                rst=(self._dly_sel.storage[lane] & rdly_dq_bitslip_rst) | self._rst.storage,
-                slp=self._dly_sel.storage[lane] & rdly_dq_bitslip, cycles=1)
+                rst=(self._dly_sel.storage[lane] & bit_sel[i % 8] & rdly_dq_bitslip_rst) | self._rst.storage,
+                slp=self._dly_sel.storage[lane] & bit_sel[i % 8] & rdly_dq_bitslip, cycles=1)
             self.submodules += dq_i_bitslip
             self.specials += Instance("ISERDESE2",
                 p_SERDES_MODE="MASTER", p_INTERFACE_TYPE="NETWORKING", p_DATA_WIDTH=2 * nphases,
@@ -272,10 +280,11 @@ class WL7DDRPHY(Module, AutoCSR):
         self.comb += dqs_postamble.eq(wrdata_en.taps[wrtap + 1] & ~wrdata_en.taps[wrtap + 0])
 
     @staticmethod
-    def constraints(ns=1.2):
+    def constraints(ns=2.0):
         """XDC: every serializer reset register (serdes_rst) reaches its SERDES' RST within `ns`
-        of its CLKDIV edge (the same clock at both ends: the clock skew counts), so that the
-        deassertion lands before the first CLK edge after it, 1.875 ns on."""
+        of its CLKDIV edge (the same clock at both ends: the clock skew counts). Hygiene: at
+        1.2 ns ldtest3d's routes reached 1.66 ns, and its read framing did not follow the
+        reset's arrival (0.58-0.72 ns to the ISERDES of the bits framed off)."""
         src = "[get_cells -hierarchical -filter {NAME =~ *wlrst*}]"
         dst = ("[get_pins -of_objects [get_cells -hierarchical -filter "
                "{REF_NAME == OSERDESE2 || REF_NAME == ISERDESE2}] -filter {REF_PIN_NAME == RST}]")
