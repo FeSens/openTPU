@@ -23,7 +23,8 @@ LANES ?= 8
 ACT_ROWS ?= $(MCOLS)
 RTL := $(addprefix $(ROOT)/rtl/, vpu/otpu_fp.sv vpu/otpu_fpipe.sv top/otpu_pkg.sv \
   mem/otpu_tmem.sv mem/otpu_axi_dram.sv mem/otpu_actram.sv seq/otpu_seq.sv vpu/otpu_vtree.sv \
-  dma/otpu_dstep.sv dma/otpu_dma.sv mxu/otpu_mxu.sv vpu/otpu_quant.sv vpu/otpu_vpu.sv \
+  dma/otpu_dstep.sv dma/otpu_dma.sv mxu/otpu_mxu.sv vpu/otpu_quant.sv vpu/otpu_se_tail.sv \
+  vpu/otpu_vpu.sv \
   top/otpu_coll.sv top/otpu_slice.sv \
   boards/ypcb-00338/otpu_ctrl.sv boards/ypcb-00338/otpu_trace.sv boards/ypcb-00338/otpu_board.sv)
 
