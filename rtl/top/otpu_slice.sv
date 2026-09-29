@@ -168,18 +168,18 @@ module otpu_slice
   logic [MCOLS-1:0]       act_rhi;
   logic [7:0]             act_rgrp;
   logic                   act_ren;
+  logic                   mxu_pop;       // the MXU consumes a block this cycle (its ACT read)
   logic [MCOLS*D*8-1:0]   act_rdata;
   logic [MCOLS*32-1:0]    act_rscale;
   otpu_actram #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES)) u_act (
     .clk, .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data), .w_dup(act_dup),
     .w_off(act_off), .swe(asc_we),
-    .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_blk(act_rblk),
+    .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_use(mxu_pop), .r_blk(act_rblk),
     .r_blk2(act_rblk2), .r_hi(act_rhi), .r_grp(act_rgrp),
     .r_data(act_rdata), .r_scale(act_rscale));
 
   // ---- units
   logic [NG-1:0] gnt;
-  logic        mxu_pop;
   logic        q3_en;
   logic [31:0] q3_addr;
   logic d_dma, d_mxu, d_q, d_vpu, r_dma, r_mxu, r_q, r_vpu;
