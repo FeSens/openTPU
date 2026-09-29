@@ -11,7 +11,7 @@
 // Device     : xc7k480t-ffg1156-2
 // Hierarchy  : disabled
 // LiteX sha1 : --------
-// Date       : 2026-09-29 11:29:22
+// Date       : 2026-09-29 12:51:44
 //------------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -313,33 +313,9 @@ OTPULiteDRAM
 │    ├── tappeddelayline_3 (TappedDelayLine) [Gen]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
 │    ├── [BB:OBUFDS]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -347,23 +323,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -372,15 +331,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -398,8 +348,24 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -428,6 +394,40 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -565,59 +565,31 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IOBUF]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
@@ -625,25 +597,13 @@ OTPULiteDRAM
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
@@ -700,10 +660,6 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
@@ -715,50 +671,10 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
@@ -828,16 +744,12 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -847,6 +759,94 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
@@ -1011,8 +1011,8 @@ OTPULiteDRAM
 ├── cal (Cal)
 ├── bist (BIST)
 ├── wclk1 (WriteClocks)
-│    ├── [BB:BUFG]
 │    ├── [BB:MMCME2_ADV]
+│    ├── [BB:BUFG]
 │    ├── [BB:BUFG]
 │    ├── [BB:BUFG]
 │    ├── [BB:BUFG]
@@ -1209,14 +1209,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
@@ -1256,6 +1248,14 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -1461,6 +1461,10 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
@@ -1545,8 +1549,8 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1714,11 +1718,7 @@ OTPULiteDRAM
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -4935,6 +4935,8 @@ reg           litedramcore0_new_master_rdata_valid14 = 1'd0;
 reg           litedramcore0_new_master_rdata_valid15 = 1'd0;
 reg           litedramcore0_new_master_rdata_valid16 = 1'd0;
 reg           litedramcore0_new_master_rdata_valid17 = 1'd0;
+reg           litedramcore0_new_master_rdata_valid18 = 1'd0;
+reg           litedramcore0_new_master_rdata_valid19 = 1'd0;
 reg           litedramcore0_new_master_rdata_valid2 = 1'd0;
 reg           litedramcore0_new_master_rdata_valid3 = 1'd0;
 reg           litedramcore0_new_master_rdata_valid4 = 1'd0;
@@ -6393,6 +6395,8 @@ reg           litedramcore1_new_master_rdata_valid14 = 1'd0;
 reg           litedramcore1_new_master_rdata_valid15 = 1'd0;
 reg           litedramcore1_new_master_rdata_valid16 = 1'd0;
 reg           litedramcore1_new_master_rdata_valid17 = 1'd0;
+reg           litedramcore1_new_master_rdata_valid18 = 1'd0;
+reg           litedramcore1_new_master_rdata_valid19 = 1'd0;
 reg           litedramcore1_new_master_rdata_valid2 = 1'd0;
 reg           litedramcore1_new_master_rdata_valid3 = 1'd0;
 reg           litedramcore1_new_master_rdata_valid4 = 1'd0;
@@ -15458,6 +15462,7 @@ wire          wl7ddrphy0_tappeddelayline01;
 reg           wl7ddrphy0_tappeddelayline010 = 1'd0;
 reg           wl7ddrphy0_tappeddelayline011 = 1'd0;
 reg           wl7ddrphy0_tappeddelayline012 = 1'd0;
+reg           wl7ddrphy0_tappeddelayline013 = 1'd0;
 reg           wl7ddrphy0_tappeddelayline02 = 1'd0;
 reg           wl7ddrphy0_tappeddelayline03 = 1'd0;
 reg           wl7ddrphy0_tappeddelayline04 = 1'd0;
@@ -16477,6 +16482,7 @@ wire          wl7ddrphy1_tappeddelayline11;
 reg           wl7ddrphy1_tappeddelayline110 = 1'd0;
 reg           wl7ddrphy1_tappeddelayline111 = 1'd0;
 reg           wl7ddrphy1_tappeddelayline112 = 1'd0;
+reg           wl7ddrphy1_tappeddelayline113 = 1'd0;
 reg           wl7ddrphy1_tappeddelayline12 = 1'd0;
 reg           wl7ddrphy1_tappeddelayline13 = 1'd0;
 reg           wl7ddrphy1_tappeddelayline14 = 1'd0;
@@ -16782,599 +16788,11 @@ assign wl7ddrphy0_lane_all = (wl7ddrphy0_dly_sel_bits_storage == 8'hff);
 assign ddram0_ba = wl7ddrphy0_pads_ba;
 assign wl7ddrphy0_tappeddelayline00 = ((wl7ddrphy0_dqs_preamble | wl7ddrphy0_dqs_oe) | wl7ddrphy0_dqs_postamble);
 assign wl7ddrphy0_tappeddelayline01 = ((wl7ddrphy0_dqs_preamble | wl7ddrphy0_dq_oe) | wl7ddrphy0_dqs_postamble);
-always @(*) begin
-    wl7ddrphy0_dfi_p0_rddata = 144'd0;
-    wl7ddrphy0_dfi_p0_rddata[0] = wl7ddrphy0_bitslip02[0];
-    wl7ddrphy0_dfi_p0_rddata[72] = wl7ddrphy0_bitslip02[1];
-    wl7ddrphy0_dfi_p0_rddata[1] = wl7ddrphy0_bitslip12[0];
-    wl7ddrphy0_dfi_p0_rddata[73] = wl7ddrphy0_bitslip12[1];
-    wl7ddrphy0_dfi_p0_rddata[2] = wl7ddrphy0_bitslip22[0];
-    wl7ddrphy0_dfi_p0_rddata[74] = wl7ddrphy0_bitslip22[1];
-    wl7ddrphy0_dfi_p0_rddata[3] = wl7ddrphy0_bitslip32[0];
-    wl7ddrphy0_dfi_p0_rddata[75] = wl7ddrphy0_bitslip32[1];
-    wl7ddrphy0_dfi_p0_rddata[4] = wl7ddrphy0_bitslip42[0];
-    wl7ddrphy0_dfi_p0_rddata[76] = wl7ddrphy0_bitslip42[1];
-    wl7ddrphy0_dfi_p0_rddata[5] = wl7ddrphy0_bitslip52[0];
-    wl7ddrphy0_dfi_p0_rddata[77] = wl7ddrphy0_bitslip52[1];
-    wl7ddrphy0_dfi_p0_rddata[6] = wl7ddrphy0_bitslip62[0];
-    wl7ddrphy0_dfi_p0_rddata[78] = wl7ddrphy0_bitslip62[1];
-    wl7ddrphy0_dfi_p0_rddata[7] = wl7ddrphy0_bitslip72[0];
-    wl7ddrphy0_dfi_p0_rddata[79] = wl7ddrphy0_bitslip72[1];
-    wl7ddrphy0_dfi_p0_rddata[8] = wl7ddrphy0_bitslip82[0];
-    wl7ddrphy0_dfi_p0_rddata[80] = wl7ddrphy0_bitslip82[1];
-    wl7ddrphy0_dfi_p0_rddata[9] = wl7ddrphy0_bitslip91[0];
-    wl7ddrphy0_dfi_p0_rddata[81] = wl7ddrphy0_bitslip91[1];
-    wl7ddrphy0_dfi_p0_rddata[10] = wl7ddrphy0_bitslip101[0];
-    wl7ddrphy0_dfi_p0_rddata[82] = wl7ddrphy0_bitslip101[1];
-    wl7ddrphy0_dfi_p0_rddata[11] = wl7ddrphy0_bitslip111[0];
-    wl7ddrphy0_dfi_p0_rddata[83] = wl7ddrphy0_bitslip111[1];
-    wl7ddrphy0_dfi_p0_rddata[12] = wl7ddrphy0_bitslip121[0];
-    wl7ddrphy0_dfi_p0_rddata[84] = wl7ddrphy0_bitslip121[1];
-    wl7ddrphy0_dfi_p0_rddata[13] = wl7ddrphy0_bitslip131[0];
-    wl7ddrphy0_dfi_p0_rddata[85] = wl7ddrphy0_bitslip131[1];
-    wl7ddrphy0_dfi_p0_rddata[14] = wl7ddrphy0_bitslip141[0];
-    wl7ddrphy0_dfi_p0_rddata[86] = wl7ddrphy0_bitslip141[1];
-    wl7ddrphy0_dfi_p0_rddata[15] = wl7ddrphy0_bitslip151[0];
-    wl7ddrphy0_dfi_p0_rddata[87] = wl7ddrphy0_bitslip151[1];
-    wl7ddrphy0_dfi_p0_rddata[16] = wl7ddrphy0_bitslip161[0];
-    wl7ddrphy0_dfi_p0_rddata[88] = wl7ddrphy0_bitslip161[1];
-    wl7ddrphy0_dfi_p0_rddata[17] = wl7ddrphy0_bitslip171[0];
-    wl7ddrphy0_dfi_p0_rddata[89] = wl7ddrphy0_bitslip171[1];
-    wl7ddrphy0_dfi_p0_rddata[18] = wl7ddrphy0_bitslip181[0];
-    wl7ddrphy0_dfi_p0_rddata[90] = wl7ddrphy0_bitslip181[1];
-    wl7ddrphy0_dfi_p0_rddata[19] = wl7ddrphy0_bitslip191[0];
-    wl7ddrphy0_dfi_p0_rddata[91] = wl7ddrphy0_bitslip191[1];
-    wl7ddrphy0_dfi_p0_rddata[20] = wl7ddrphy0_bitslip201[0];
-    wl7ddrphy0_dfi_p0_rddata[92] = wl7ddrphy0_bitslip201[1];
-    wl7ddrphy0_dfi_p0_rddata[21] = wl7ddrphy0_bitslip211[0];
-    wl7ddrphy0_dfi_p0_rddata[93] = wl7ddrphy0_bitslip211[1];
-    wl7ddrphy0_dfi_p0_rddata[22] = wl7ddrphy0_bitslip221[0];
-    wl7ddrphy0_dfi_p0_rddata[94] = wl7ddrphy0_bitslip221[1];
-    wl7ddrphy0_dfi_p0_rddata[23] = wl7ddrphy0_bitslip231[0];
-    wl7ddrphy0_dfi_p0_rddata[95] = wl7ddrphy0_bitslip231[1];
-    wl7ddrphy0_dfi_p0_rddata[24] = wl7ddrphy0_bitslip241[0];
-    wl7ddrphy0_dfi_p0_rddata[96] = wl7ddrphy0_bitslip241[1];
-    wl7ddrphy0_dfi_p0_rddata[25] = wl7ddrphy0_bitslip251[0];
-    wl7ddrphy0_dfi_p0_rddata[97] = wl7ddrphy0_bitslip251[1];
-    wl7ddrphy0_dfi_p0_rddata[26] = wl7ddrphy0_bitslip261[0];
-    wl7ddrphy0_dfi_p0_rddata[98] = wl7ddrphy0_bitslip261[1];
-    wl7ddrphy0_dfi_p0_rddata[27] = wl7ddrphy0_bitslip271[0];
-    wl7ddrphy0_dfi_p0_rddata[99] = wl7ddrphy0_bitslip271[1];
-    wl7ddrphy0_dfi_p0_rddata[28] = wl7ddrphy0_bitslip281[0];
-    wl7ddrphy0_dfi_p0_rddata[100] = wl7ddrphy0_bitslip281[1];
-    wl7ddrphy0_dfi_p0_rddata[29] = wl7ddrphy0_bitslip291[0];
-    wl7ddrphy0_dfi_p0_rddata[101] = wl7ddrphy0_bitslip291[1];
-    wl7ddrphy0_dfi_p0_rddata[30] = wl7ddrphy0_bitslip301[0];
-    wl7ddrphy0_dfi_p0_rddata[102] = wl7ddrphy0_bitslip301[1];
-    wl7ddrphy0_dfi_p0_rddata[31] = wl7ddrphy0_bitslip311[0];
-    wl7ddrphy0_dfi_p0_rddata[103] = wl7ddrphy0_bitslip311[1];
-    wl7ddrphy0_dfi_p0_rddata[32] = wl7ddrphy0_bitslip321[0];
-    wl7ddrphy0_dfi_p0_rddata[104] = wl7ddrphy0_bitslip321[1];
-    wl7ddrphy0_dfi_p0_rddata[33] = wl7ddrphy0_bitslip331[0];
-    wl7ddrphy0_dfi_p0_rddata[105] = wl7ddrphy0_bitslip331[1];
-    wl7ddrphy0_dfi_p0_rddata[34] = wl7ddrphy0_bitslip341[0];
-    wl7ddrphy0_dfi_p0_rddata[106] = wl7ddrphy0_bitslip341[1];
-    wl7ddrphy0_dfi_p0_rddata[35] = wl7ddrphy0_bitslip351[0];
-    wl7ddrphy0_dfi_p0_rddata[107] = wl7ddrphy0_bitslip351[1];
-    wl7ddrphy0_dfi_p0_rddata[36] = wl7ddrphy0_bitslip361[0];
-    wl7ddrphy0_dfi_p0_rddata[108] = wl7ddrphy0_bitslip361[1];
-    wl7ddrphy0_dfi_p0_rddata[37] = wl7ddrphy0_bitslip371[0];
-    wl7ddrphy0_dfi_p0_rddata[109] = wl7ddrphy0_bitslip371[1];
-    wl7ddrphy0_dfi_p0_rddata[38] = wl7ddrphy0_bitslip381[0];
-    wl7ddrphy0_dfi_p0_rddata[110] = wl7ddrphy0_bitslip381[1];
-    wl7ddrphy0_dfi_p0_rddata[39] = wl7ddrphy0_bitslip391[0];
-    wl7ddrphy0_dfi_p0_rddata[111] = wl7ddrphy0_bitslip391[1];
-    wl7ddrphy0_dfi_p0_rddata[40] = wl7ddrphy0_bitslip401[0];
-    wl7ddrphy0_dfi_p0_rddata[112] = wl7ddrphy0_bitslip401[1];
-    wl7ddrphy0_dfi_p0_rddata[41] = wl7ddrphy0_bitslip411[0];
-    wl7ddrphy0_dfi_p0_rddata[113] = wl7ddrphy0_bitslip411[1];
-    wl7ddrphy0_dfi_p0_rddata[42] = wl7ddrphy0_bitslip421[0];
-    wl7ddrphy0_dfi_p0_rddata[114] = wl7ddrphy0_bitslip421[1];
-    wl7ddrphy0_dfi_p0_rddata[43] = wl7ddrphy0_bitslip431[0];
-    wl7ddrphy0_dfi_p0_rddata[115] = wl7ddrphy0_bitslip431[1];
-    wl7ddrphy0_dfi_p0_rddata[44] = wl7ddrphy0_bitslip441[0];
-    wl7ddrphy0_dfi_p0_rddata[116] = wl7ddrphy0_bitslip441[1];
-    wl7ddrphy0_dfi_p0_rddata[45] = wl7ddrphy0_bitslip451[0];
-    wl7ddrphy0_dfi_p0_rddata[117] = wl7ddrphy0_bitslip451[1];
-    wl7ddrphy0_dfi_p0_rddata[46] = wl7ddrphy0_bitslip461[0];
-    wl7ddrphy0_dfi_p0_rddata[118] = wl7ddrphy0_bitslip461[1];
-    wl7ddrphy0_dfi_p0_rddata[47] = wl7ddrphy0_bitslip471[0];
-    wl7ddrphy0_dfi_p0_rddata[119] = wl7ddrphy0_bitslip471[1];
-    wl7ddrphy0_dfi_p0_rddata[48] = wl7ddrphy0_bitslip481[0];
-    wl7ddrphy0_dfi_p0_rddata[120] = wl7ddrphy0_bitslip481[1];
-    wl7ddrphy0_dfi_p0_rddata[49] = wl7ddrphy0_bitslip491[0];
-    wl7ddrphy0_dfi_p0_rddata[121] = wl7ddrphy0_bitslip491[1];
-    wl7ddrphy0_dfi_p0_rddata[50] = wl7ddrphy0_bitslip501[0];
-    wl7ddrphy0_dfi_p0_rddata[122] = wl7ddrphy0_bitslip501[1];
-    wl7ddrphy0_dfi_p0_rddata[51] = wl7ddrphy0_bitslip511[0];
-    wl7ddrphy0_dfi_p0_rddata[123] = wl7ddrphy0_bitslip511[1];
-    wl7ddrphy0_dfi_p0_rddata[52] = wl7ddrphy0_bitslip521[0];
-    wl7ddrphy0_dfi_p0_rddata[124] = wl7ddrphy0_bitslip521[1];
-    wl7ddrphy0_dfi_p0_rddata[53] = wl7ddrphy0_bitslip531[0];
-    wl7ddrphy0_dfi_p0_rddata[125] = wl7ddrphy0_bitslip531[1];
-    wl7ddrphy0_dfi_p0_rddata[54] = wl7ddrphy0_bitslip541[0];
-    wl7ddrphy0_dfi_p0_rddata[126] = wl7ddrphy0_bitslip541[1];
-    wl7ddrphy0_dfi_p0_rddata[55] = wl7ddrphy0_bitslip551[0];
-    wl7ddrphy0_dfi_p0_rddata[127] = wl7ddrphy0_bitslip551[1];
-    wl7ddrphy0_dfi_p0_rddata[56] = wl7ddrphy0_bitslip561[0];
-    wl7ddrphy0_dfi_p0_rddata[128] = wl7ddrphy0_bitslip561[1];
-    wl7ddrphy0_dfi_p0_rddata[57] = wl7ddrphy0_bitslip571[0];
-    wl7ddrphy0_dfi_p0_rddata[129] = wl7ddrphy0_bitslip571[1];
-    wl7ddrphy0_dfi_p0_rddata[58] = wl7ddrphy0_bitslip581[0];
-    wl7ddrphy0_dfi_p0_rddata[130] = wl7ddrphy0_bitslip581[1];
-    wl7ddrphy0_dfi_p0_rddata[59] = wl7ddrphy0_bitslip591[0];
-    wl7ddrphy0_dfi_p0_rddata[131] = wl7ddrphy0_bitslip591[1];
-    wl7ddrphy0_dfi_p0_rddata[60] = wl7ddrphy0_bitslip601[0];
-    wl7ddrphy0_dfi_p0_rddata[132] = wl7ddrphy0_bitslip601[1];
-    wl7ddrphy0_dfi_p0_rddata[61] = wl7ddrphy0_bitslip611[0];
-    wl7ddrphy0_dfi_p0_rddata[133] = wl7ddrphy0_bitslip611[1];
-    wl7ddrphy0_dfi_p0_rddata[62] = wl7ddrphy0_bitslip621[0];
-    wl7ddrphy0_dfi_p0_rddata[134] = wl7ddrphy0_bitslip621[1];
-    wl7ddrphy0_dfi_p0_rddata[63] = wl7ddrphy0_bitslip631[0];
-    wl7ddrphy0_dfi_p0_rddata[135] = wl7ddrphy0_bitslip631[1];
-    wl7ddrphy0_dfi_p0_rddata[64] = wl7ddrphy0_bitslip641[0];
-    wl7ddrphy0_dfi_p0_rddata[136] = wl7ddrphy0_bitslip641[1];
-    wl7ddrphy0_dfi_p0_rddata[65] = wl7ddrphy0_bitslip651[0];
-    wl7ddrphy0_dfi_p0_rddata[137] = wl7ddrphy0_bitslip651[1];
-    wl7ddrphy0_dfi_p0_rddata[66] = wl7ddrphy0_bitslip661[0];
-    wl7ddrphy0_dfi_p0_rddata[138] = wl7ddrphy0_bitslip661[1];
-    wl7ddrphy0_dfi_p0_rddata[67] = wl7ddrphy0_bitslip671[0];
-    wl7ddrphy0_dfi_p0_rddata[139] = wl7ddrphy0_bitslip671[1];
-    wl7ddrphy0_dfi_p0_rddata[68] = wl7ddrphy0_bitslip681[0];
-    wl7ddrphy0_dfi_p0_rddata[140] = wl7ddrphy0_bitslip681[1];
-    wl7ddrphy0_dfi_p0_rddata[69] = wl7ddrphy0_bitslip691[0];
-    wl7ddrphy0_dfi_p0_rddata[141] = wl7ddrphy0_bitslip691[1];
-    wl7ddrphy0_dfi_p0_rddata[70] = wl7ddrphy0_bitslip701[0];
-    wl7ddrphy0_dfi_p0_rddata[142] = wl7ddrphy0_bitslip701[1];
-    wl7ddrphy0_dfi_p0_rddata[71] = wl7ddrphy0_bitslip711[0];
-    wl7ddrphy0_dfi_p0_rddata[143] = wl7ddrphy0_bitslip711[1];
-end
-always @(*) begin
-    wl7ddrphy0_dfi_p1_rddata = 144'd0;
-    wl7ddrphy0_dfi_p1_rddata[0] = wl7ddrphy0_bitslip02[2];
-    wl7ddrphy0_dfi_p1_rddata[72] = wl7ddrphy0_bitslip02[3];
-    wl7ddrphy0_dfi_p1_rddata[1] = wl7ddrphy0_bitslip12[2];
-    wl7ddrphy0_dfi_p1_rddata[73] = wl7ddrphy0_bitslip12[3];
-    wl7ddrphy0_dfi_p1_rddata[2] = wl7ddrphy0_bitslip22[2];
-    wl7ddrphy0_dfi_p1_rddata[74] = wl7ddrphy0_bitslip22[3];
-    wl7ddrphy0_dfi_p1_rddata[3] = wl7ddrphy0_bitslip32[2];
-    wl7ddrphy0_dfi_p1_rddata[75] = wl7ddrphy0_bitslip32[3];
-    wl7ddrphy0_dfi_p1_rddata[4] = wl7ddrphy0_bitslip42[2];
-    wl7ddrphy0_dfi_p1_rddata[76] = wl7ddrphy0_bitslip42[3];
-    wl7ddrphy0_dfi_p1_rddata[5] = wl7ddrphy0_bitslip52[2];
-    wl7ddrphy0_dfi_p1_rddata[77] = wl7ddrphy0_bitslip52[3];
-    wl7ddrphy0_dfi_p1_rddata[6] = wl7ddrphy0_bitslip62[2];
-    wl7ddrphy0_dfi_p1_rddata[78] = wl7ddrphy0_bitslip62[3];
-    wl7ddrphy0_dfi_p1_rddata[7] = wl7ddrphy0_bitslip72[2];
-    wl7ddrphy0_dfi_p1_rddata[79] = wl7ddrphy0_bitslip72[3];
-    wl7ddrphy0_dfi_p1_rddata[8] = wl7ddrphy0_bitslip82[2];
-    wl7ddrphy0_dfi_p1_rddata[80] = wl7ddrphy0_bitslip82[3];
-    wl7ddrphy0_dfi_p1_rddata[9] = wl7ddrphy0_bitslip91[2];
-    wl7ddrphy0_dfi_p1_rddata[81] = wl7ddrphy0_bitslip91[3];
-    wl7ddrphy0_dfi_p1_rddata[10] = wl7ddrphy0_bitslip101[2];
-    wl7ddrphy0_dfi_p1_rddata[82] = wl7ddrphy0_bitslip101[3];
-    wl7ddrphy0_dfi_p1_rddata[11] = wl7ddrphy0_bitslip111[2];
-    wl7ddrphy0_dfi_p1_rddata[83] = wl7ddrphy0_bitslip111[3];
-    wl7ddrphy0_dfi_p1_rddata[12] = wl7ddrphy0_bitslip121[2];
-    wl7ddrphy0_dfi_p1_rddata[84] = wl7ddrphy0_bitslip121[3];
-    wl7ddrphy0_dfi_p1_rddata[13] = wl7ddrphy0_bitslip131[2];
-    wl7ddrphy0_dfi_p1_rddata[85] = wl7ddrphy0_bitslip131[3];
-    wl7ddrphy0_dfi_p1_rddata[14] = wl7ddrphy0_bitslip141[2];
-    wl7ddrphy0_dfi_p1_rddata[86] = wl7ddrphy0_bitslip141[3];
-    wl7ddrphy0_dfi_p1_rddata[15] = wl7ddrphy0_bitslip151[2];
-    wl7ddrphy0_dfi_p1_rddata[87] = wl7ddrphy0_bitslip151[3];
-    wl7ddrphy0_dfi_p1_rddata[16] = wl7ddrphy0_bitslip161[2];
-    wl7ddrphy0_dfi_p1_rddata[88] = wl7ddrphy0_bitslip161[3];
-    wl7ddrphy0_dfi_p1_rddata[17] = wl7ddrphy0_bitslip171[2];
-    wl7ddrphy0_dfi_p1_rddata[89] = wl7ddrphy0_bitslip171[3];
-    wl7ddrphy0_dfi_p1_rddata[18] = wl7ddrphy0_bitslip181[2];
-    wl7ddrphy0_dfi_p1_rddata[90] = wl7ddrphy0_bitslip181[3];
-    wl7ddrphy0_dfi_p1_rddata[19] = wl7ddrphy0_bitslip191[2];
-    wl7ddrphy0_dfi_p1_rddata[91] = wl7ddrphy0_bitslip191[3];
-    wl7ddrphy0_dfi_p1_rddata[20] = wl7ddrphy0_bitslip201[2];
-    wl7ddrphy0_dfi_p1_rddata[92] = wl7ddrphy0_bitslip201[3];
-    wl7ddrphy0_dfi_p1_rddata[21] = wl7ddrphy0_bitslip211[2];
-    wl7ddrphy0_dfi_p1_rddata[93] = wl7ddrphy0_bitslip211[3];
-    wl7ddrphy0_dfi_p1_rddata[22] = wl7ddrphy0_bitslip221[2];
-    wl7ddrphy0_dfi_p1_rddata[94] = wl7ddrphy0_bitslip221[3];
-    wl7ddrphy0_dfi_p1_rddata[23] = wl7ddrphy0_bitslip231[2];
-    wl7ddrphy0_dfi_p1_rddata[95] = wl7ddrphy0_bitslip231[3];
-    wl7ddrphy0_dfi_p1_rddata[24] = wl7ddrphy0_bitslip241[2];
-    wl7ddrphy0_dfi_p1_rddata[96] = wl7ddrphy0_bitslip241[3];
-    wl7ddrphy0_dfi_p1_rddata[25] = wl7ddrphy0_bitslip251[2];
-    wl7ddrphy0_dfi_p1_rddata[97] = wl7ddrphy0_bitslip251[3];
-    wl7ddrphy0_dfi_p1_rddata[26] = wl7ddrphy0_bitslip261[2];
-    wl7ddrphy0_dfi_p1_rddata[98] = wl7ddrphy0_bitslip261[3];
-    wl7ddrphy0_dfi_p1_rddata[27] = wl7ddrphy0_bitslip271[2];
-    wl7ddrphy0_dfi_p1_rddata[99] = wl7ddrphy0_bitslip271[3];
-    wl7ddrphy0_dfi_p1_rddata[28] = wl7ddrphy0_bitslip281[2];
-    wl7ddrphy0_dfi_p1_rddata[100] = wl7ddrphy0_bitslip281[3];
-    wl7ddrphy0_dfi_p1_rddata[29] = wl7ddrphy0_bitslip291[2];
-    wl7ddrphy0_dfi_p1_rddata[101] = wl7ddrphy0_bitslip291[3];
-    wl7ddrphy0_dfi_p1_rddata[30] = wl7ddrphy0_bitslip301[2];
-    wl7ddrphy0_dfi_p1_rddata[102] = wl7ddrphy0_bitslip301[3];
-    wl7ddrphy0_dfi_p1_rddata[31] = wl7ddrphy0_bitslip311[2];
-    wl7ddrphy0_dfi_p1_rddata[103] = wl7ddrphy0_bitslip311[3];
-    wl7ddrphy0_dfi_p1_rddata[32] = wl7ddrphy0_bitslip321[2];
-    wl7ddrphy0_dfi_p1_rddata[104] = wl7ddrphy0_bitslip321[3];
-    wl7ddrphy0_dfi_p1_rddata[33] = wl7ddrphy0_bitslip331[2];
-    wl7ddrphy0_dfi_p1_rddata[105] = wl7ddrphy0_bitslip331[3];
-    wl7ddrphy0_dfi_p1_rddata[34] = wl7ddrphy0_bitslip341[2];
-    wl7ddrphy0_dfi_p1_rddata[106] = wl7ddrphy0_bitslip341[3];
-    wl7ddrphy0_dfi_p1_rddata[35] = wl7ddrphy0_bitslip351[2];
-    wl7ddrphy0_dfi_p1_rddata[107] = wl7ddrphy0_bitslip351[3];
-    wl7ddrphy0_dfi_p1_rddata[36] = wl7ddrphy0_bitslip361[2];
-    wl7ddrphy0_dfi_p1_rddata[108] = wl7ddrphy0_bitslip361[3];
-    wl7ddrphy0_dfi_p1_rddata[37] = wl7ddrphy0_bitslip371[2];
-    wl7ddrphy0_dfi_p1_rddata[109] = wl7ddrphy0_bitslip371[3];
-    wl7ddrphy0_dfi_p1_rddata[38] = wl7ddrphy0_bitslip381[2];
-    wl7ddrphy0_dfi_p1_rddata[110] = wl7ddrphy0_bitslip381[3];
-    wl7ddrphy0_dfi_p1_rddata[39] = wl7ddrphy0_bitslip391[2];
-    wl7ddrphy0_dfi_p1_rddata[111] = wl7ddrphy0_bitslip391[3];
-    wl7ddrphy0_dfi_p1_rddata[40] = wl7ddrphy0_bitslip401[2];
-    wl7ddrphy0_dfi_p1_rddata[112] = wl7ddrphy0_bitslip401[3];
-    wl7ddrphy0_dfi_p1_rddata[41] = wl7ddrphy0_bitslip411[2];
-    wl7ddrphy0_dfi_p1_rddata[113] = wl7ddrphy0_bitslip411[3];
-    wl7ddrphy0_dfi_p1_rddata[42] = wl7ddrphy0_bitslip421[2];
-    wl7ddrphy0_dfi_p1_rddata[114] = wl7ddrphy0_bitslip421[3];
-    wl7ddrphy0_dfi_p1_rddata[43] = wl7ddrphy0_bitslip431[2];
-    wl7ddrphy0_dfi_p1_rddata[115] = wl7ddrphy0_bitslip431[3];
-    wl7ddrphy0_dfi_p1_rddata[44] = wl7ddrphy0_bitslip441[2];
-    wl7ddrphy0_dfi_p1_rddata[116] = wl7ddrphy0_bitslip441[3];
-    wl7ddrphy0_dfi_p1_rddata[45] = wl7ddrphy0_bitslip451[2];
-    wl7ddrphy0_dfi_p1_rddata[117] = wl7ddrphy0_bitslip451[3];
-    wl7ddrphy0_dfi_p1_rddata[46] = wl7ddrphy0_bitslip461[2];
-    wl7ddrphy0_dfi_p1_rddata[118] = wl7ddrphy0_bitslip461[3];
-    wl7ddrphy0_dfi_p1_rddata[47] = wl7ddrphy0_bitslip471[2];
-    wl7ddrphy0_dfi_p1_rddata[119] = wl7ddrphy0_bitslip471[3];
-    wl7ddrphy0_dfi_p1_rddata[48] = wl7ddrphy0_bitslip481[2];
-    wl7ddrphy0_dfi_p1_rddata[120] = wl7ddrphy0_bitslip481[3];
-    wl7ddrphy0_dfi_p1_rddata[49] = wl7ddrphy0_bitslip491[2];
-    wl7ddrphy0_dfi_p1_rddata[121] = wl7ddrphy0_bitslip491[3];
-    wl7ddrphy0_dfi_p1_rddata[50] = wl7ddrphy0_bitslip501[2];
-    wl7ddrphy0_dfi_p1_rddata[122] = wl7ddrphy0_bitslip501[3];
-    wl7ddrphy0_dfi_p1_rddata[51] = wl7ddrphy0_bitslip511[2];
-    wl7ddrphy0_dfi_p1_rddata[123] = wl7ddrphy0_bitslip511[3];
-    wl7ddrphy0_dfi_p1_rddata[52] = wl7ddrphy0_bitslip521[2];
-    wl7ddrphy0_dfi_p1_rddata[124] = wl7ddrphy0_bitslip521[3];
-    wl7ddrphy0_dfi_p1_rddata[53] = wl7ddrphy0_bitslip531[2];
-    wl7ddrphy0_dfi_p1_rddata[125] = wl7ddrphy0_bitslip531[3];
-    wl7ddrphy0_dfi_p1_rddata[54] = wl7ddrphy0_bitslip541[2];
-    wl7ddrphy0_dfi_p1_rddata[126] = wl7ddrphy0_bitslip541[3];
-    wl7ddrphy0_dfi_p1_rddata[55] = wl7ddrphy0_bitslip551[2];
-    wl7ddrphy0_dfi_p1_rddata[127] = wl7ddrphy0_bitslip551[3];
-    wl7ddrphy0_dfi_p1_rddata[56] = wl7ddrphy0_bitslip561[2];
-    wl7ddrphy0_dfi_p1_rddata[128] = wl7ddrphy0_bitslip561[3];
-    wl7ddrphy0_dfi_p1_rddata[57] = wl7ddrphy0_bitslip571[2];
-    wl7ddrphy0_dfi_p1_rddata[129] = wl7ddrphy0_bitslip571[3];
-    wl7ddrphy0_dfi_p1_rddata[58] = wl7ddrphy0_bitslip581[2];
-    wl7ddrphy0_dfi_p1_rddata[130] = wl7ddrphy0_bitslip581[3];
-    wl7ddrphy0_dfi_p1_rddata[59] = wl7ddrphy0_bitslip591[2];
-    wl7ddrphy0_dfi_p1_rddata[131] = wl7ddrphy0_bitslip591[3];
-    wl7ddrphy0_dfi_p1_rddata[60] = wl7ddrphy0_bitslip601[2];
-    wl7ddrphy0_dfi_p1_rddata[132] = wl7ddrphy0_bitslip601[3];
-    wl7ddrphy0_dfi_p1_rddata[61] = wl7ddrphy0_bitslip611[2];
-    wl7ddrphy0_dfi_p1_rddata[133] = wl7ddrphy0_bitslip611[3];
-    wl7ddrphy0_dfi_p1_rddata[62] = wl7ddrphy0_bitslip621[2];
-    wl7ddrphy0_dfi_p1_rddata[134] = wl7ddrphy0_bitslip621[3];
-    wl7ddrphy0_dfi_p1_rddata[63] = wl7ddrphy0_bitslip631[2];
-    wl7ddrphy0_dfi_p1_rddata[135] = wl7ddrphy0_bitslip631[3];
-    wl7ddrphy0_dfi_p1_rddata[64] = wl7ddrphy0_bitslip641[2];
-    wl7ddrphy0_dfi_p1_rddata[136] = wl7ddrphy0_bitslip641[3];
-    wl7ddrphy0_dfi_p1_rddata[65] = wl7ddrphy0_bitslip651[2];
-    wl7ddrphy0_dfi_p1_rddata[137] = wl7ddrphy0_bitslip651[3];
-    wl7ddrphy0_dfi_p1_rddata[66] = wl7ddrphy0_bitslip661[2];
-    wl7ddrphy0_dfi_p1_rddata[138] = wl7ddrphy0_bitslip661[3];
-    wl7ddrphy0_dfi_p1_rddata[67] = wl7ddrphy0_bitslip671[2];
-    wl7ddrphy0_dfi_p1_rddata[139] = wl7ddrphy0_bitslip671[3];
-    wl7ddrphy0_dfi_p1_rddata[68] = wl7ddrphy0_bitslip681[2];
-    wl7ddrphy0_dfi_p1_rddata[140] = wl7ddrphy0_bitslip681[3];
-    wl7ddrphy0_dfi_p1_rddata[69] = wl7ddrphy0_bitslip691[2];
-    wl7ddrphy0_dfi_p1_rddata[141] = wl7ddrphy0_bitslip691[3];
-    wl7ddrphy0_dfi_p1_rddata[70] = wl7ddrphy0_bitslip701[2];
-    wl7ddrphy0_dfi_p1_rddata[142] = wl7ddrphy0_bitslip701[3];
-    wl7ddrphy0_dfi_p1_rddata[71] = wl7ddrphy0_bitslip711[2];
-    wl7ddrphy0_dfi_p1_rddata[143] = wl7ddrphy0_bitslip711[3];
-end
-always @(*) begin
-    wl7ddrphy0_dfi_p2_rddata = 144'd0;
-    wl7ddrphy0_dfi_p2_rddata[0] = wl7ddrphy0_bitslip02[4];
-    wl7ddrphy0_dfi_p2_rddata[72] = wl7ddrphy0_bitslip02[5];
-    wl7ddrphy0_dfi_p2_rddata[1] = wl7ddrphy0_bitslip12[4];
-    wl7ddrphy0_dfi_p2_rddata[73] = wl7ddrphy0_bitslip12[5];
-    wl7ddrphy0_dfi_p2_rddata[2] = wl7ddrphy0_bitslip22[4];
-    wl7ddrphy0_dfi_p2_rddata[74] = wl7ddrphy0_bitslip22[5];
-    wl7ddrphy0_dfi_p2_rddata[3] = wl7ddrphy0_bitslip32[4];
-    wl7ddrphy0_dfi_p2_rddata[75] = wl7ddrphy0_bitslip32[5];
-    wl7ddrphy0_dfi_p2_rddata[4] = wl7ddrphy0_bitslip42[4];
-    wl7ddrphy0_dfi_p2_rddata[76] = wl7ddrphy0_bitslip42[5];
-    wl7ddrphy0_dfi_p2_rddata[5] = wl7ddrphy0_bitslip52[4];
-    wl7ddrphy0_dfi_p2_rddata[77] = wl7ddrphy0_bitslip52[5];
-    wl7ddrphy0_dfi_p2_rddata[6] = wl7ddrphy0_bitslip62[4];
-    wl7ddrphy0_dfi_p2_rddata[78] = wl7ddrphy0_bitslip62[5];
-    wl7ddrphy0_dfi_p2_rddata[7] = wl7ddrphy0_bitslip72[4];
-    wl7ddrphy0_dfi_p2_rddata[79] = wl7ddrphy0_bitslip72[5];
-    wl7ddrphy0_dfi_p2_rddata[8] = wl7ddrphy0_bitslip82[4];
-    wl7ddrphy0_dfi_p2_rddata[80] = wl7ddrphy0_bitslip82[5];
-    wl7ddrphy0_dfi_p2_rddata[9] = wl7ddrphy0_bitslip91[4];
-    wl7ddrphy0_dfi_p2_rddata[81] = wl7ddrphy0_bitslip91[5];
-    wl7ddrphy0_dfi_p2_rddata[10] = wl7ddrphy0_bitslip101[4];
-    wl7ddrphy0_dfi_p2_rddata[82] = wl7ddrphy0_bitslip101[5];
-    wl7ddrphy0_dfi_p2_rddata[11] = wl7ddrphy0_bitslip111[4];
-    wl7ddrphy0_dfi_p2_rddata[83] = wl7ddrphy0_bitslip111[5];
-    wl7ddrphy0_dfi_p2_rddata[12] = wl7ddrphy0_bitslip121[4];
-    wl7ddrphy0_dfi_p2_rddata[84] = wl7ddrphy0_bitslip121[5];
-    wl7ddrphy0_dfi_p2_rddata[13] = wl7ddrphy0_bitslip131[4];
-    wl7ddrphy0_dfi_p2_rddata[85] = wl7ddrphy0_bitslip131[5];
-    wl7ddrphy0_dfi_p2_rddata[14] = wl7ddrphy0_bitslip141[4];
-    wl7ddrphy0_dfi_p2_rddata[86] = wl7ddrphy0_bitslip141[5];
-    wl7ddrphy0_dfi_p2_rddata[15] = wl7ddrphy0_bitslip151[4];
-    wl7ddrphy0_dfi_p2_rddata[87] = wl7ddrphy0_bitslip151[5];
-    wl7ddrphy0_dfi_p2_rddata[16] = wl7ddrphy0_bitslip161[4];
-    wl7ddrphy0_dfi_p2_rddata[88] = wl7ddrphy0_bitslip161[5];
-    wl7ddrphy0_dfi_p2_rddata[17] = wl7ddrphy0_bitslip171[4];
-    wl7ddrphy0_dfi_p2_rddata[89] = wl7ddrphy0_bitslip171[5];
-    wl7ddrphy0_dfi_p2_rddata[18] = wl7ddrphy0_bitslip181[4];
-    wl7ddrphy0_dfi_p2_rddata[90] = wl7ddrphy0_bitslip181[5];
-    wl7ddrphy0_dfi_p2_rddata[19] = wl7ddrphy0_bitslip191[4];
-    wl7ddrphy0_dfi_p2_rddata[91] = wl7ddrphy0_bitslip191[5];
-    wl7ddrphy0_dfi_p2_rddata[20] = wl7ddrphy0_bitslip201[4];
-    wl7ddrphy0_dfi_p2_rddata[92] = wl7ddrphy0_bitslip201[5];
-    wl7ddrphy0_dfi_p2_rddata[21] = wl7ddrphy0_bitslip211[4];
-    wl7ddrphy0_dfi_p2_rddata[93] = wl7ddrphy0_bitslip211[5];
-    wl7ddrphy0_dfi_p2_rddata[22] = wl7ddrphy0_bitslip221[4];
-    wl7ddrphy0_dfi_p2_rddata[94] = wl7ddrphy0_bitslip221[5];
-    wl7ddrphy0_dfi_p2_rddata[23] = wl7ddrphy0_bitslip231[4];
-    wl7ddrphy0_dfi_p2_rddata[95] = wl7ddrphy0_bitslip231[5];
-    wl7ddrphy0_dfi_p2_rddata[24] = wl7ddrphy0_bitslip241[4];
-    wl7ddrphy0_dfi_p2_rddata[96] = wl7ddrphy0_bitslip241[5];
-    wl7ddrphy0_dfi_p2_rddata[25] = wl7ddrphy0_bitslip251[4];
-    wl7ddrphy0_dfi_p2_rddata[97] = wl7ddrphy0_bitslip251[5];
-    wl7ddrphy0_dfi_p2_rddata[26] = wl7ddrphy0_bitslip261[4];
-    wl7ddrphy0_dfi_p2_rddata[98] = wl7ddrphy0_bitslip261[5];
-    wl7ddrphy0_dfi_p2_rddata[27] = wl7ddrphy0_bitslip271[4];
-    wl7ddrphy0_dfi_p2_rddata[99] = wl7ddrphy0_bitslip271[5];
-    wl7ddrphy0_dfi_p2_rddata[28] = wl7ddrphy0_bitslip281[4];
-    wl7ddrphy0_dfi_p2_rddata[100] = wl7ddrphy0_bitslip281[5];
-    wl7ddrphy0_dfi_p2_rddata[29] = wl7ddrphy0_bitslip291[4];
-    wl7ddrphy0_dfi_p2_rddata[101] = wl7ddrphy0_bitslip291[5];
-    wl7ddrphy0_dfi_p2_rddata[30] = wl7ddrphy0_bitslip301[4];
-    wl7ddrphy0_dfi_p2_rddata[102] = wl7ddrphy0_bitslip301[5];
-    wl7ddrphy0_dfi_p2_rddata[31] = wl7ddrphy0_bitslip311[4];
-    wl7ddrphy0_dfi_p2_rddata[103] = wl7ddrphy0_bitslip311[5];
-    wl7ddrphy0_dfi_p2_rddata[32] = wl7ddrphy0_bitslip321[4];
-    wl7ddrphy0_dfi_p2_rddata[104] = wl7ddrphy0_bitslip321[5];
-    wl7ddrphy0_dfi_p2_rddata[33] = wl7ddrphy0_bitslip331[4];
-    wl7ddrphy0_dfi_p2_rddata[105] = wl7ddrphy0_bitslip331[5];
-    wl7ddrphy0_dfi_p2_rddata[34] = wl7ddrphy0_bitslip341[4];
-    wl7ddrphy0_dfi_p2_rddata[106] = wl7ddrphy0_bitslip341[5];
-    wl7ddrphy0_dfi_p2_rddata[35] = wl7ddrphy0_bitslip351[4];
-    wl7ddrphy0_dfi_p2_rddata[107] = wl7ddrphy0_bitslip351[5];
-    wl7ddrphy0_dfi_p2_rddata[36] = wl7ddrphy0_bitslip361[4];
-    wl7ddrphy0_dfi_p2_rddata[108] = wl7ddrphy0_bitslip361[5];
-    wl7ddrphy0_dfi_p2_rddata[37] = wl7ddrphy0_bitslip371[4];
-    wl7ddrphy0_dfi_p2_rddata[109] = wl7ddrphy0_bitslip371[5];
-    wl7ddrphy0_dfi_p2_rddata[38] = wl7ddrphy0_bitslip381[4];
-    wl7ddrphy0_dfi_p2_rddata[110] = wl7ddrphy0_bitslip381[5];
-    wl7ddrphy0_dfi_p2_rddata[39] = wl7ddrphy0_bitslip391[4];
-    wl7ddrphy0_dfi_p2_rddata[111] = wl7ddrphy0_bitslip391[5];
-    wl7ddrphy0_dfi_p2_rddata[40] = wl7ddrphy0_bitslip401[4];
-    wl7ddrphy0_dfi_p2_rddata[112] = wl7ddrphy0_bitslip401[5];
-    wl7ddrphy0_dfi_p2_rddata[41] = wl7ddrphy0_bitslip411[4];
-    wl7ddrphy0_dfi_p2_rddata[113] = wl7ddrphy0_bitslip411[5];
-    wl7ddrphy0_dfi_p2_rddata[42] = wl7ddrphy0_bitslip421[4];
-    wl7ddrphy0_dfi_p2_rddata[114] = wl7ddrphy0_bitslip421[5];
-    wl7ddrphy0_dfi_p2_rddata[43] = wl7ddrphy0_bitslip431[4];
-    wl7ddrphy0_dfi_p2_rddata[115] = wl7ddrphy0_bitslip431[5];
-    wl7ddrphy0_dfi_p2_rddata[44] = wl7ddrphy0_bitslip441[4];
-    wl7ddrphy0_dfi_p2_rddata[116] = wl7ddrphy0_bitslip441[5];
-    wl7ddrphy0_dfi_p2_rddata[45] = wl7ddrphy0_bitslip451[4];
-    wl7ddrphy0_dfi_p2_rddata[117] = wl7ddrphy0_bitslip451[5];
-    wl7ddrphy0_dfi_p2_rddata[46] = wl7ddrphy0_bitslip461[4];
-    wl7ddrphy0_dfi_p2_rddata[118] = wl7ddrphy0_bitslip461[5];
-    wl7ddrphy0_dfi_p2_rddata[47] = wl7ddrphy0_bitslip471[4];
-    wl7ddrphy0_dfi_p2_rddata[119] = wl7ddrphy0_bitslip471[5];
-    wl7ddrphy0_dfi_p2_rddata[48] = wl7ddrphy0_bitslip481[4];
-    wl7ddrphy0_dfi_p2_rddata[120] = wl7ddrphy0_bitslip481[5];
-    wl7ddrphy0_dfi_p2_rddata[49] = wl7ddrphy0_bitslip491[4];
-    wl7ddrphy0_dfi_p2_rddata[121] = wl7ddrphy0_bitslip491[5];
-    wl7ddrphy0_dfi_p2_rddata[50] = wl7ddrphy0_bitslip501[4];
-    wl7ddrphy0_dfi_p2_rddata[122] = wl7ddrphy0_bitslip501[5];
-    wl7ddrphy0_dfi_p2_rddata[51] = wl7ddrphy0_bitslip511[4];
-    wl7ddrphy0_dfi_p2_rddata[123] = wl7ddrphy0_bitslip511[5];
-    wl7ddrphy0_dfi_p2_rddata[52] = wl7ddrphy0_bitslip521[4];
-    wl7ddrphy0_dfi_p2_rddata[124] = wl7ddrphy0_bitslip521[5];
-    wl7ddrphy0_dfi_p2_rddata[53] = wl7ddrphy0_bitslip531[4];
-    wl7ddrphy0_dfi_p2_rddata[125] = wl7ddrphy0_bitslip531[5];
-    wl7ddrphy0_dfi_p2_rddata[54] = wl7ddrphy0_bitslip541[4];
-    wl7ddrphy0_dfi_p2_rddata[126] = wl7ddrphy0_bitslip541[5];
-    wl7ddrphy0_dfi_p2_rddata[55] = wl7ddrphy0_bitslip551[4];
-    wl7ddrphy0_dfi_p2_rddata[127] = wl7ddrphy0_bitslip551[5];
-    wl7ddrphy0_dfi_p2_rddata[56] = wl7ddrphy0_bitslip561[4];
-    wl7ddrphy0_dfi_p2_rddata[128] = wl7ddrphy0_bitslip561[5];
-    wl7ddrphy0_dfi_p2_rddata[57] = wl7ddrphy0_bitslip571[4];
-    wl7ddrphy0_dfi_p2_rddata[129] = wl7ddrphy0_bitslip571[5];
-    wl7ddrphy0_dfi_p2_rddata[58] = wl7ddrphy0_bitslip581[4];
-    wl7ddrphy0_dfi_p2_rddata[130] = wl7ddrphy0_bitslip581[5];
-    wl7ddrphy0_dfi_p2_rddata[59] = wl7ddrphy0_bitslip591[4];
-    wl7ddrphy0_dfi_p2_rddata[131] = wl7ddrphy0_bitslip591[5];
-    wl7ddrphy0_dfi_p2_rddata[60] = wl7ddrphy0_bitslip601[4];
-    wl7ddrphy0_dfi_p2_rddata[132] = wl7ddrphy0_bitslip601[5];
-    wl7ddrphy0_dfi_p2_rddata[61] = wl7ddrphy0_bitslip611[4];
-    wl7ddrphy0_dfi_p2_rddata[133] = wl7ddrphy0_bitslip611[5];
-    wl7ddrphy0_dfi_p2_rddata[62] = wl7ddrphy0_bitslip621[4];
-    wl7ddrphy0_dfi_p2_rddata[134] = wl7ddrphy0_bitslip621[5];
-    wl7ddrphy0_dfi_p2_rddata[63] = wl7ddrphy0_bitslip631[4];
-    wl7ddrphy0_dfi_p2_rddata[135] = wl7ddrphy0_bitslip631[5];
-    wl7ddrphy0_dfi_p2_rddata[64] = wl7ddrphy0_bitslip641[4];
-    wl7ddrphy0_dfi_p2_rddata[136] = wl7ddrphy0_bitslip641[5];
-    wl7ddrphy0_dfi_p2_rddata[65] = wl7ddrphy0_bitslip651[4];
-    wl7ddrphy0_dfi_p2_rddata[137] = wl7ddrphy0_bitslip651[5];
-    wl7ddrphy0_dfi_p2_rddata[66] = wl7ddrphy0_bitslip661[4];
-    wl7ddrphy0_dfi_p2_rddata[138] = wl7ddrphy0_bitslip661[5];
-    wl7ddrphy0_dfi_p2_rddata[67] = wl7ddrphy0_bitslip671[4];
-    wl7ddrphy0_dfi_p2_rddata[139] = wl7ddrphy0_bitslip671[5];
-    wl7ddrphy0_dfi_p2_rddata[68] = wl7ddrphy0_bitslip681[4];
-    wl7ddrphy0_dfi_p2_rddata[140] = wl7ddrphy0_bitslip681[5];
-    wl7ddrphy0_dfi_p2_rddata[69] = wl7ddrphy0_bitslip691[4];
-    wl7ddrphy0_dfi_p2_rddata[141] = wl7ddrphy0_bitslip691[5];
-    wl7ddrphy0_dfi_p2_rddata[70] = wl7ddrphy0_bitslip701[4];
-    wl7ddrphy0_dfi_p2_rddata[142] = wl7ddrphy0_bitslip701[5];
-    wl7ddrphy0_dfi_p2_rddata[71] = wl7ddrphy0_bitslip711[4];
-    wl7ddrphy0_dfi_p2_rddata[143] = wl7ddrphy0_bitslip711[5];
-end
-always @(*) begin
-    wl7ddrphy0_dfi_p3_rddata = 144'd0;
-    wl7ddrphy0_dfi_p3_rddata[0] = wl7ddrphy0_bitslip02[6];
-    wl7ddrphy0_dfi_p3_rddata[72] = wl7ddrphy0_bitslip02[7];
-    wl7ddrphy0_dfi_p3_rddata[1] = wl7ddrphy0_bitslip12[6];
-    wl7ddrphy0_dfi_p3_rddata[73] = wl7ddrphy0_bitslip12[7];
-    wl7ddrphy0_dfi_p3_rddata[2] = wl7ddrphy0_bitslip22[6];
-    wl7ddrphy0_dfi_p3_rddata[74] = wl7ddrphy0_bitslip22[7];
-    wl7ddrphy0_dfi_p3_rddata[3] = wl7ddrphy0_bitslip32[6];
-    wl7ddrphy0_dfi_p3_rddata[75] = wl7ddrphy0_bitslip32[7];
-    wl7ddrphy0_dfi_p3_rddata[4] = wl7ddrphy0_bitslip42[6];
-    wl7ddrphy0_dfi_p3_rddata[76] = wl7ddrphy0_bitslip42[7];
-    wl7ddrphy0_dfi_p3_rddata[5] = wl7ddrphy0_bitslip52[6];
-    wl7ddrphy0_dfi_p3_rddata[77] = wl7ddrphy0_bitslip52[7];
-    wl7ddrphy0_dfi_p3_rddata[6] = wl7ddrphy0_bitslip62[6];
-    wl7ddrphy0_dfi_p3_rddata[78] = wl7ddrphy0_bitslip62[7];
-    wl7ddrphy0_dfi_p3_rddata[7] = wl7ddrphy0_bitslip72[6];
-    wl7ddrphy0_dfi_p3_rddata[79] = wl7ddrphy0_bitslip72[7];
-    wl7ddrphy0_dfi_p3_rddata[8] = wl7ddrphy0_bitslip82[6];
-    wl7ddrphy0_dfi_p3_rddata[80] = wl7ddrphy0_bitslip82[7];
-    wl7ddrphy0_dfi_p3_rddata[9] = wl7ddrphy0_bitslip91[6];
-    wl7ddrphy0_dfi_p3_rddata[81] = wl7ddrphy0_bitslip91[7];
-    wl7ddrphy0_dfi_p3_rddata[10] = wl7ddrphy0_bitslip101[6];
-    wl7ddrphy0_dfi_p3_rddata[82] = wl7ddrphy0_bitslip101[7];
-    wl7ddrphy0_dfi_p3_rddata[11] = wl7ddrphy0_bitslip111[6];
-    wl7ddrphy0_dfi_p3_rddata[83] = wl7ddrphy0_bitslip111[7];
-    wl7ddrphy0_dfi_p3_rddata[12] = wl7ddrphy0_bitslip121[6];
-    wl7ddrphy0_dfi_p3_rddata[84] = wl7ddrphy0_bitslip121[7];
-    wl7ddrphy0_dfi_p3_rddata[13] = wl7ddrphy0_bitslip131[6];
-    wl7ddrphy0_dfi_p3_rddata[85] = wl7ddrphy0_bitslip131[7];
-    wl7ddrphy0_dfi_p3_rddata[14] = wl7ddrphy0_bitslip141[6];
-    wl7ddrphy0_dfi_p3_rddata[86] = wl7ddrphy0_bitslip141[7];
-    wl7ddrphy0_dfi_p3_rddata[15] = wl7ddrphy0_bitslip151[6];
-    wl7ddrphy0_dfi_p3_rddata[87] = wl7ddrphy0_bitslip151[7];
-    wl7ddrphy0_dfi_p3_rddata[16] = wl7ddrphy0_bitslip161[6];
-    wl7ddrphy0_dfi_p3_rddata[88] = wl7ddrphy0_bitslip161[7];
-    wl7ddrphy0_dfi_p3_rddata[17] = wl7ddrphy0_bitslip171[6];
-    wl7ddrphy0_dfi_p3_rddata[89] = wl7ddrphy0_bitslip171[7];
-    wl7ddrphy0_dfi_p3_rddata[18] = wl7ddrphy0_bitslip181[6];
-    wl7ddrphy0_dfi_p3_rddata[90] = wl7ddrphy0_bitslip181[7];
-    wl7ddrphy0_dfi_p3_rddata[19] = wl7ddrphy0_bitslip191[6];
-    wl7ddrphy0_dfi_p3_rddata[91] = wl7ddrphy0_bitslip191[7];
-    wl7ddrphy0_dfi_p3_rddata[20] = wl7ddrphy0_bitslip201[6];
-    wl7ddrphy0_dfi_p3_rddata[92] = wl7ddrphy0_bitslip201[7];
-    wl7ddrphy0_dfi_p3_rddata[21] = wl7ddrphy0_bitslip211[6];
-    wl7ddrphy0_dfi_p3_rddata[93] = wl7ddrphy0_bitslip211[7];
-    wl7ddrphy0_dfi_p3_rddata[22] = wl7ddrphy0_bitslip221[6];
-    wl7ddrphy0_dfi_p3_rddata[94] = wl7ddrphy0_bitslip221[7];
-    wl7ddrphy0_dfi_p3_rddata[23] = wl7ddrphy0_bitslip231[6];
-    wl7ddrphy0_dfi_p3_rddata[95] = wl7ddrphy0_bitslip231[7];
-    wl7ddrphy0_dfi_p3_rddata[24] = wl7ddrphy0_bitslip241[6];
-    wl7ddrphy0_dfi_p3_rddata[96] = wl7ddrphy0_bitslip241[7];
-    wl7ddrphy0_dfi_p3_rddata[25] = wl7ddrphy0_bitslip251[6];
-    wl7ddrphy0_dfi_p3_rddata[97] = wl7ddrphy0_bitslip251[7];
-    wl7ddrphy0_dfi_p3_rddata[26] = wl7ddrphy0_bitslip261[6];
-    wl7ddrphy0_dfi_p3_rddata[98] = wl7ddrphy0_bitslip261[7];
-    wl7ddrphy0_dfi_p3_rddata[27] = wl7ddrphy0_bitslip271[6];
-    wl7ddrphy0_dfi_p3_rddata[99] = wl7ddrphy0_bitslip271[7];
-    wl7ddrphy0_dfi_p3_rddata[28] = wl7ddrphy0_bitslip281[6];
-    wl7ddrphy0_dfi_p3_rddata[100] = wl7ddrphy0_bitslip281[7];
-    wl7ddrphy0_dfi_p3_rddata[29] = wl7ddrphy0_bitslip291[6];
-    wl7ddrphy0_dfi_p3_rddata[101] = wl7ddrphy0_bitslip291[7];
-    wl7ddrphy0_dfi_p3_rddata[30] = wl7ddrphy0_bitslip301[6];
-    wl7ddrphy0_dfi_p3_rddata[102] = wl7ddrphy0_bitslip301[7];
-    wl7ddrphy0_dfi_p3_rddata[31] = wl7ddrphy0_bitslip311[6];
-    wl7ddrphy0_dfi_p3_rddata[103] = wl7ddrphy0_bitslip311[7];
-    wl7ddrphy0_dfi_p3_rddata[32] = wl7ddrphy0_bitslip321[6];
-    wl7ddrphy0_dfi_p3_rddata[104] = wl7ddrphy0_bitslip321[7];
-    wl7ddrphy0_dfi_p3_rddata[33] = wl7ddrphy0_bitslip331[6];
-    wl7ddrphy0_dfi_p3_rddata[105] = wl7ddrphy0_bitslip331[7];
-    wl7ddrphy0_dfi_p3_rddata[34] = wl7ddrphy0_bitslip341[6];
-    wl7ddrphy0_dfi_p3_rddata[106] = wl7ddrphy0_bitslip341[7];
-    wl7ddrphy0_dfi_p3_rddata[35] = wl7ddrphy0_bitslip351[6];
-    wl7ddrphy0_dfi_p3_rddata[107] = wl7ddrphy0_bitslip351[7];
-    wl7ddrphy0_dfi_p3_rddata[36] = wl7ddrphy0_bitslip361[6];
-    wl7ddrphy0_dfi_p3_rddata[108] = wl7ddrphy0_bitslip361[7];
-    wl7ddrphy0_dfi_p3_rddata[37] = wl7ddrphy0_bitslip371[6];
-    wl7ddrphy0_dfi_p3_rddata[109] = wl7ddrphy0_bitslip371[7];
-    wl7ddrphy0_dfi_p3_rddata[38] = wl7ddrphy0_bitslip381[6];
-    wl7ddrphy0_dfi_p3_rddata[110] = wl7ddrphy0_bitslip381[7];
-    wl7ddrphy0_dfi_p3_rddata[39] = wl7ddrphy0_bitslip391[6];
-    wl7ddrphy0_dfi_p3_rddata[111] = wl7ddrphy0_bitslip391[7];
-    wl7ddrphy0_dfi_p3_rddata[40] = wl7ddrphy0_bitslip401[6];
-    wl7ddrphy0_dfi_p3_rddata[112] = wl7ddrphy0_bitslip401[7];
-    wl7ddrphy0_dfi_p3_rddata[41] = wl7ddrphy0_bitslip411[6];
-    wl7ddrphy0_dfi_p3_rddata[113] = wl7ddrphy0_bitslip411[7];
-    wl7ddrphy0_dfi_p3_rddata[42] = wl7ddrphy0_bitslip421[6];
-    wl7ddrphy0_dfi_p3_rddata[114] = wl7ddrphy0_bitslip421[7];
-    wl7ddrphy0_dfi_p3_rddata[43] = wl7ddrphy0_bitslip431[6];
-    wl7ddrphy0_dfi_p3_rddata[115] = wl7ddrphy0_bitslip431[7];
-    wl7ddrphy0_dfi_p3_rddata[44] = wl7ddrphy0_bitslip441[6];
-    wl7ddrphy0_dfi_p3_rddata[116] = wl7ddrphy0_bitslip441[7];
-    wl7ddrphy0_dfi_p3_rddata[45] = wl7ddrphy0_bitslip451[6];
-    wl7ddrphy0_dfi_p3_rddata[117] = wl7ddrphy0_bitslip451[7];
-    wl7ddrphy0_dfi_p3_rddata[46] = wl7ddrphy0_bitslip461[6];
-    wl7ddrphy0_dfi_p3_rddata[118] = wl7ddrphy0_bitslip461[7];
-    wl7ddrphy0_dfi_p3_rddata[47] = wl7ddrphy0_bitslip471[6];
-    wl7ddrphy0_dfi_p3_rddata[119] = wl7ddrphy0_bitslip471[7];
-    wl7ddrphy0_dfi_p3_rddata[48] = wl7ddrphy0_bitslip481[6];
-    wl7ddrphy0_dfi_p3_rddata[120] = wl7ddrphy0_bitslip481[7];
-    wl7ddrphy0_dfi_p3_rddata[49] = wl7ddrphy0_bitslip491[6];
-    wl7ddrphy0_dfi_p3_rddata[121] = wl7ddrphy0_bitslip491[7];
-    wl7ddrphy0_dfi_p3_rddata[50] = wl7ddrphy0_bitslip501[6];
-    wl7ddrphy0_dfi_p3_rddata[122] = wl7ddrphy0_bitslip501[7];
-    wl7ddrphy0_dfi_p3_rddata[51] = wl7ddrphy0_bitslip511[6];
-    wl7ddrphy0_dfi_p3_rddata[123] = wl7ddrphy0_bitslip511[7];
-    wl7ddrphy0_dfi_p3_rddata[52] = wl7ddrphy0_bitslip521[6];
-    wl7ddrphy0_dfi_p3_rddata[124] = wl7ddrphy0_bitslip521[7];
-    wl7ddrphy0_dfi_p3_rddata[53] = wl7ddrphy0_bitslip531[6];
-    wl7ddrphy0_dfi_p3_rddata[125] = wl7ddrphy0_bitslip531[7];
-    wl7ddrphy0_dfi_p3_rddata[54] = wl7ddrphy0_bitslip541[6];
-    wl7ddrphy0_dfi_p3_rddata[126] = wl7ddrphy0_bitslip541[7];
-    wl7ddrphy0_dfi_p3_rddata[55] = wl7ddrphy0_bitslip551[6];
-    wl7ddrphy0_dfi_p3_rddata[127] = wl7ddrphy0_bitslip551[7];
-    wl7ddrphy0_dfi_p3_rddata[56] = wl7ddrphy0_bitslip561[6];
-    wl7ddrphy0_dfi_p3_rddata[128] = wl7ddrphy0_bitslip561[7];
-    wl7ddrphy0_dfi_p3_rddata[57] = wl7ddrphy0_bitslip571[6];
-    wl7ddrphy0_dfi_p3_rddata[129] = wl7ddrphy0_bitslip571[7];
-    wl7ddrphy0_dfi_p3_rddata[58] = wl7ddrphy0_bitslip581[6];
-    wl7ddrphy0_dfi_p3_rddata[130] = wl7ddrphy0_bitslip581[7];
-    wl7ddrphy0_dfi_p3_rddata[59] = wl7ddrphy0_bitslip591[6];
-    wl7ddrphy0_dfi_p3_rddata[131] = wl7ddrphy0_bitslip591[7];
-    wl7ddrphy0_dfi_p3_rddata[60] = wl7ddrphy0_bitslip601[6];
-    wl7ddrphy0_dfi_p3_rddata[132] = wl7ddrphy0_bitslip601[7];
-    wl7ddrphy0_dfi_p3_rddata[61] = wl7ddrphy0_bitslip611[6];
-    wl7ddrphy0_dfi_p3_rddata[133] = wl7ddrphy0_bitslip611[7];
-    wl7ddrphy0_dfi_p3_rddata[62] = wl7ddrphy0_bitslip621[6];
-    wl7ddrphy0_dfi_p3_rddata[134] = wl7ddrphy0_bitslip621[7];
-    wl7ddrphy0_dfi_p3_rddata[63] = wl7ddrphy0_bitslip631[6];
-    wl7ddrphy0_dfi_p3_rddata[135] = wl7ddrphy0_bitslip631[7];
-    wl7ddrphy0_dfi_p3_rddata[64] = wl7ddrphy0_bitslip641[6];
-    wl7ddrphy0_dfi_p3_rddata[136] = wl7ddrphy0_bitslip641[7];
-    wl7ddrphy0_dfi_p3_rddata[65] = wl7ddrphy0_bitslip651[6];
-    wl7ddrphy0_dfi_p3_rddata[137] = wl7ddrphy0_bitslip651[7];
-    wl7ddrphy0_dfi_p3_rddata[66] = wl7ddrphy0_bitslip661[6];
-    wl7ddrphy0_dfi_p3_rddata[138] = wl7ddrphy0_bitslip661[7];
-    wl7ddrphy0_dfi_p3_rddata[67] = wl7ddrphy0_bitslip671[6];
-    wl7ddrphy0_dfi_p3_rddata[139] = wl7ddrphy0_bitslip671[7];
-    wl7ddrphy0_dfi_p3_rddata[68] = wl7ddrphy0_bitslip681[6];
-    wl7ddrphy0_dfi_p3_rddata[140] = wl7ddrphy0_bitslip681[7];
-    wl7ddrphy0_dfi_p3_rddata[69] = wl7ddrphy0_bitslip691[6];
-    wl7ddrphy0_dfi_p3_rddata[141] = wl7ddrphy0_bitslip691[7];
-    wl7ddrphy0_dfi_p3_rddata[70] = wl7ddrphy0_bitslip701[6];
-    wl7ddrphy0_dfi_p3_rddata[142] = wl7ddrphy0_bitslip701[7];
-    wl7ddrphy0_dfi_p3_rddata[71] = wl7ddrphy0_bitslip711[6];
-    wl7ddrphy0_dfi_p3_rddata[143] = wl7ddrphy0_bitslip711[7];
-end
-assign wl7ddrphy0_dfi_p0_rddata_valid = (wl7ddrphy0_tappeddelayline09 | wl7ddrphy0_wlevel_en_storage);
-assign wl7ddrphy0_dfi_p1_rddata_valid = (wl7ddrphy0_tappeddelayline09 | wl7ddrphy0_wlevel_en_storage);
-assign wl7ddrphy0_dfi_p2_rddata_valid = (wl7ddrphy0_tappeddelayline09 | wl7ddrphy0_wlevel_en_storage);
-assign wl7ddrphy0_dfi_p3_rddata_valid = (wl7ddrphy0_tappeddelayline09 | wl7ddrphy0_wlevel_en_storage);
-assign wl7ddrphy0_dq_oe = wl7ddrphy0_tappeddelayline011;
+assign wl7ddrphy0_dfi_p0_rddata_valid = (wl7ddrphy0_tappeddelayline010 | wl7ddrphy0_wlevel_en_storage);
+assign wl7ddrphy0_dfi_p1_rddata_valid = (wl7ddrphy0_tappeddelayline010 | wl7ddrphy0_wlevel_en_storage);
+assign wl7ddrphy0_dfi_p2_rddata_valid = (wl7ddrphy0_tappeddelayline010 | wl7ddrphy0_wlevel_en_storage);
+assign wl7ddrphy0_dfi_p3_rddata_valid = (wl7ddrphy0_tappeddelayline010 | wl7ddrphy0_wlevel_en_storage);
+assign wl7ddrphy0_dq_oe = wl7ddrphy0_tappeddelayline012;
 always @(*) begin
     wl7ddrphy0_dqs_oe = 1'd0;
     if (wl7ddrphy0_wlevel_en_storage) begin
@@ -17383,8 +16801,8 @@ always @(*) begin
         wl7ddrphy0_dqs_oe = wl7ddrphy0_dq_oe;
     end
 end
-assign wl7ddrphy0_dqs_preamble = (wl7ddrphy0_tappeddelayline010 & (~wl7ddrphy0_tappeddelayline011));
-assign wl7ddrphy0_dqs_postamble = (wl7ddrphy0_tappeddelayline012 & (~wl7ddrphy0_tappeddelayline011));
+assign wl7ddrphy0_dqs_preamble = (wl7ddrphy0_tappeddelayline011 & (~wl7ddrphy0_tappeddelayline012));
+assign wl7ddrphy0_dqs_postamble = (wl7ddrphy0_tappeddelayline013 & (~wl7ddrphy0_tappeddelayline012));
 always @(*) begin
     wl7ddrphy0_dqspattern0_o0 = 8'd0;
     wl7ddrphy0_dqspattern0_o0 = 7'd85;
@@ -24179,6 +23597,9 @@ always @(*) begin
             litedramcore0_multiplexer0_next_state = 4'd10;
         end
         4'd10: begin
+            litedramcore0_multiplexer0_next_state = 4'd11;
+        end
+        4'd11: begin
             litedramcore0_multiplexer0_next_state = 1'd1;
         end
         default: begin
@@ -24274,8 +23695,8 @@ assign litedramcrossbar0_cmd_ready0 = ((((((((1'd0 | (((litedramcore0_roundrobin
 assign litedramcrossbar0_cmd_ready1 = ((((((((1'd0 | (((litedramcore0_roundrobin0_grant == 1'd1) & ((litedramcrossbar0_cmd_payload_addr1[9:7] == 1'd0) & (~(((((((litedramcore0_locked1 | (litedramcore0_interface_bank1_lock & (litedramcore0_roundrobin1_grant == 1'd1))) | (litedramcore0_interface_bank2_lock & (litedramcore0_roundrobin2_grant == 1'd1))) | (litedramcore0_interface_bank3_lock & (litedramcore0_roundrobin3_grant == 1'd1))) | (litedramcore0_interface_bank4_lock & (litedramcore0_roundrobin4_grant == 1'd1))) | (litedramcore0_interface_bank5_lock & (litedramcore0_roundrobin5_grant == 1'd1))) | (litedramcore0_interface_bank6_lock & (litedramcore0_roundrobin6_grant == 1'd1))) | (litedramcore0_interface_bank7_lock & (litedramcore0_roundrobin7_grant == 1'd1)))))) & litedramcore0_interface_bank0_ready)) | (((litedramcore0_roundrobin1_grant == 1'd1) & ((litedramcrossbar0_cmd_payload_addr1[9:7] == 1'd1) & (~(((((((litedramcore0_locked3 | (litedramcore0_interface_bank0_lock & (litedramcore0_roundrobin0_grant == 1'd1))) | (litedramcore0_interface_bank2_lock & (litedramcore0_roundrobin2_grant == 1'd1))) | (litedramcore0_interface_bank3_lock & (litedramcore0_roundrobin3_grant == 1'd1))) | (litedramcore0_interface_bank4_lock & (litedramcore0_roundrobin4_grant == 1'd1))) | (litedramcore0_interface_bank5_lock & (litedramcore0_roundrobin5_grant == 1'd1))) | (litedramcore0_interface_bank6_lock & (litedramcore0_roundrobin6_grant == 1'd1))) | (litedramcore0_interface_bank7_lock & (litedramcore0_roundrobin7_grant == 1'd1)))))) & litedramcore0_interface_bank1_ready)) | (((litedramcore0_roundrobin2_grant == 1'd1) & ((litedramcrossbar0_cmd_payload_addr1[9:7] == 2'd2) & (~(((((((litedramcore0_locked5 | (litedramcore0_interface_bank0_lock & (litedramcore0_roundrobin0_grant == 1'd1))) | (litedramcore0_interface_bank1_lock & (litedramcore0_roundrobin1_grant == 1'd1))) | (litedramcore0_interface_bank3_lock & (litedramcore0_roundrobin3_grant == 1'd1))) | (litedramcore0_interface_bank4_lock & (litedramcore0_roundrobin4_grant == 1'd1))) | (litedramcore0_interface_bank5_lock & (litedramcore0_roundrobin5_grant == 1'd1))) | (litedramcore0_interface_bank6_lock & (litedramcore0_roundrobin6_grant == 1'd1))) | (litedramcore0_interface_bank7_lock & (litedramcore0_roundrobin7_grant == 1'd1)))))) & litedramcore0_interface_bank2_ready)) | (((litedramcore0_roundrobin3_grant == 1'd1) & ((litedramcrossbar0_cmd_payload_addr1[9:7] == 2'd3) & (~(((((((litedramcore0_locked7 | (litedramcore0_interface_bank0_lock & (litedramcore0_roundrobin0_grant == 1'd1))) | (litedramcore0_interface_bank1_lock & (litedramcore0_roundrobin1_grant == 1'd1))) | (litedramcore0_interface_bank2_lock & (litedramcore0_roundrobin2_grant == 1'd1))) | (litedramcore0_interface_bank4_lock & (litedramcore0_roundrobin4_grant == 1'd1))) | (litedramcore0_interface_bank5_lock & (litedramcore0_roundrobin5_grant == 1'd1))) | (litedramcore0_interface_bank6_lock & (litedramcore0_roundrobin6_grant == 1'd1))) | (litedramcore0_interface_bank7_lock & (litedramcore0_roundrobin7_grant == 1'd1)))))) & litedramcore0_interface_bank3_ready)) | (((litedramcore0_roundrobin4_grant == 1'd1) & ((litedramcrossbar0_cmd_payload_addr1[9:7] == 3'd4) & (~(((((((litedramcore0_locked9 | (litedramcore0_interface_bank0_lock & (litedramcore0_roundrobin0_grant == 1'd1))) | (litedramcore0_interface_bank1_lock & (litedramcore0_roundrobin1_grant == 1'd1))) | (litedramcore0_interface_bank2_lock & (litedramcore0_roundrobin2_grant == 1'd1))) | (litedramcore0_interface_bank3_lock & (litedramcore0_roundrobin3_grant == 1'd1))) | (litedramcore0_interface_bank5_lock & (litedramcore0_roundrobin5_grant == 1'd1))) | (litedramcore0_interface_bank6_lock & (litedramcore0_roundrobin6_grant == 1'd1))) | (litedramcore0_interface_bank7_lock & (litedramcore0_roundrobin7_grant == 1'd1)))))) & litedramcore0_interface_bank4_ready)) | (((litedramcore0_roundrobin5_grant == 1'd1) & ((litedramcrossbar0_cmd_payload_addr1[9:7] == 3'd5) & (~(((((((litedramcore0_locked11 | (litedramcore0_interface_bank0_lock & (litedramcore0_roundrobin0_grant == 1'd1))) | (litedramcore0_interface_bank1_lock & (litedramcore0_roundrobin1_grant == 1'd1))) | (litedramcore0_interface_bank2_lock & (litedramcore0_roundrobin2_grant == 1'd1))) | (litedramcore0_interface_bank3_lock & (litedramcore0_roundrobin3_grant == 1'd1))) | (litedramcore0_interface_bank4_lock & (litedramcore0_roundrobin4_grant == 1'd1))) | (litedramcore0_interface_bank6_lock & (litedramcore0_roundrobin6_grant == 1'd1))) | (litedramcore0_interface_bank7_lock & (litedramcore0_roundrobin7_grant == 1'd1)))))) & litedramcore0_interface_bank5_ready)) | (((litedramcore0_roundrobin6_grant == 1'd1) & ((litedramcrossbar0_cmd_payload_addr1[9:7] == 3'd6) & (~(((((((litedramcore0_locked13 | (litedramcore0_interface_bank0_lock & (litedramcore0_roundrobin0_grant == 1'd1))) | (litedramcore0_interface_bank1_lock & (litedramcore0_roundrobin1_grant == 1'd1))) | (litedramcore0_interface_bank2_lock & (litedramcore0_roundrobin2_grant == 1'd1))) | (litedramcore0_interface_bank3_lock & (litedramcore0_roundrobin3_grant == 1'd1))) | (litedramcore0_interface_bank4_lock & (litedramcore0_roundrobin4_grant == 1'd1))) | (litedramcore0_interface_bank5_lock & (litedramcore0_roundrobin5_grant == 1'd1))) | (litedramcore0_interface_bank7_lock & (litedramcore0_roundrobin7_grant == 1'd1)))))) & litedramcore0_interface_bank6_ready)) | (((litedramcore0_roundrobin7_grant == 1'd1) & ((litedramcrossbar0_cmd_payload_addr1[9:7] == 3'd7) & (~(((((((litedramcore0_locked15 | (litedramcore0_interface_bank0_lock & (litedramcore0_roundrobin0_grant == 1'd1))) | (litedramcore0_interface_bank1_lock & (litedramcore0_roundrobin1_grant == 1'd1))) | (litedramcore0_interface_bank2_lock & (litedramcore0_roundrobin2_grant == 1'd1))) | (litedramcore0_interface_bank3_lock & (litedramcore0_roundrobin3_grant == 1'd1))) | (litedramcore0_interface_bank4_lock & (litedramcore0_roundrobin4_grant == 1'd1))) | (litedramcore0_interface_bank5_lock & (litedramcore0_roundrobin5_grant == 1'd1))) | (litedramcore0_interface_bank6_lock & (litedramcore0_roundrobin6_grant == 1'd1)))))) & litedramcore0_interface_bank7_ready));
 assign litedramcrossbar0_wdata_ready0 = litedramcore0_new_master_wdata_ready1;
 assign litedramcrossbar0_wdata_ready1 = litedramcore0_new_master_wdata_ready3;
-assign litedramcrossbar0_rdata_valid0 = litedramcore0_new_master_rdata_valid8;
-assign litedramcrossbar0_rdata_valid1 = litedramcore0_new_master_rdata_valid17;
+assign litedramcrossbar0_rdata_valid0 = litedramcore0_new_master_rdata_valid9;
+assign litedramcrossbar0_rdata_valid1 = litedramcore0_new_master_rdata_valid19;
 always @(*) begin
     litedramcore0_interface_wdata = 576'd0;
     litedramcore0_interface_wdata_we = 72'd0;
@@ -32445,599 +31866,11 @@ assign wl7ddrphy1_lane_all = (wl7ddrphy1_dly_sel_bits_storage == 8'hff);
 assign ddram1_ba = wl7ddrphy1_pads_ba;
 assign wl7ddrphy1_tappeddelayline10 = ((wl7ddrphy1_dqs_preamble | wl7ddrphy1_dqs_oe) | wl7ddrphy1_dqs_postamble);
 assign wl7ddrphy1_tappeddelayline11 = ((wl7ddrphy1_dqs_preamble | wl7ddrphy1_dq_oe) | wl7ddrphy1_dqs_postamble);
-always @(*) begin
-    wl7ddrphy1_dfi_p0_rddata = 144'd0;
-    wl7ddrphy1_dfi_p0_rddata[0] = wl7ddrphy1_bitslip721[0];
-    wl7ddrphy1_dfi_p0_rddata[72] = wl7ddrphy1_bitslip721[1];
-    wl7ddrphy1_dfi_p0_rddata[1] = wl7ddrphy1_bitslip731[0];
-    wl7ddrphy1_dfi_p0_rddata[73] = wl7ddrphy1_bitslip731[1];
-    wl7ddrphy1_dfi_p0_rddata[2] = wl7ddrphy1_bitslip741[0];
-    wl7ddrphy1_dfi_p0_rddata[74] = wl7ddrphy1_bitslip741[1];
-    wl7ddrphy1_dfi_p0_rddata[3] = wl7ddrphy1_bitslip751[0];
-    wl7ddrphy1_dfi_p0_rddata[75] = wl7ddrphy1_bitslip751[1];
-    wl7ddrphy1_dfi_p0_rddata[4] = wl7ddrphy1_bitslip761[0];
-    wl7ddrphy1_dfi_p0_rddata[76] = wl7ddrphy1_bitslip761[1];
-    wl7ddrphy1_dfi_p0_rddata[5] = wl7ddrphy1_bitslip771[0];
-    wl7ddrphy1_dfi_p0_rddata[77] = wl7ddrphy1_bitslip771[1];
-    wl7ddrphy1_dfi_p0_rddata[6] = wl7ddrphy1_bitslip781[0];
-    wl7ddrphy1_dfi_p0_rddata[78] = wl7ddrphy1_bitslip781[1];
-    wl7ddrphy1_dfi_p0_rddata[7] = wl7ddrphy1_bitslip791[0];
-    wl7ddrphy1_dfi_p0_rddata[79] = wl7ddrphy1_bitslip791[1];
-    wl7ddrphy1_dfi_p0_rddata[8] = wl7ddrphy1_bitslip801[0];
-    wl7ddrphy1_dfi_p0_rddata[80] = wl7ddrphy1_bitslip801[1];
-    wl7ddrphy1_dfi_p0_rddata[9] = wl7ddrphy1_bitslip811[0];
-    wl7ddrphy1_dfi_p0_rddata[81] = wl7ddrphy1_bitslip811[1];
-    wl7ddrphy1_dfi_p0_rddata[10] = wl7ddrphy1_bitslip821[0];
-    wl7ddrphy1_dfi_p0_rddata[82] = wl7ddrphy1_bitslip821[1];
-    wl7ddrphy1_dfi_p0_rddata[11] = wl7ddrphy1_bitslip831[0];
-    wl7ddrphy1_dfi_p0_rddata[83] = wl7ddrphy1_bitslip831[1];
-    wl7ddrphy1_dfi_p0_rddata[12] = wl7ddrphy1_bitslip841[0];
-    wl7ddrphy1_dfi_p0_rddata[84] = wl7ddrphy1_bitslip841[1];
-    wl7ddrphy1_dfi_p0_rddata[13] = wl7ddrphy1_bitslip851[0];
-    wl7ddrphy1_dfi_p0_rddata[85] = wl7ddrphy1_bitslip851[1];
-    wl7ddrphy1_dfi_p0_rddata[14] = wl7ddrphy1_bitslip861[0];
-    wl7ddrphy1_dfi_p0_rddata[86] = wl7ddrphy1_bitslip861[1];
-    wl7ddrphy1_dfi_p0_rddata[15] = wl7ddrphy1_bitslip871[0];
-    wl7ddrphy1_dfi_p0_rddata[87] = wl7ddrphy1_bitslip871[1];
-    wl7ddrphy1_dfi_p0_rddata[16] = wl7ddrphy1_bitslip881[0];
-    wl7ddrphy1_dfi_p0_rddata[88] = wl7ddrphy1_bitslip881[1];
-    wl7ddrphy1_dfi_p0_rddata[17] = wl7ddrphy1_bitslip891[0];
-    wl7ddrphy1_dfi_p0_rddata[89] = wl7ddrphy1_bitslip891[1];
-    wl7ddrphy1_dfi_p0_rddata[18] = wl7ddrphy1_bitslip901[0];
-    wl7ddrphy1_dfi_p0_rddata[90] = wl7ddrphy1_bitslip901[1];
-    wl7ddrphy1_dfi_p0_rddata[19] = wl7ddrphy1_bitslip911[0];
-    wl7ddrphy1_dfi_p0_rddata[91] = wl7ddrphy1_bitslip911[1];
-    wl7ddrphy1_dfi_p0_rddata[20] = wl7ddrphy1_bitslip921[0];
-    wl7ddrphy1_dfi_p0_rddata[92] = wl7ddrphy1_bitslip921[1];
-    wl7ddrphy1_dfi_p0_rddata[21] = wl7ddrphy1_bitslip931[0];
-    wl7ddrphy1_dfi_p0_rddata[93] = wl7ddrphy1_bitslip931[1];
-    wl7ddrphy1_dfi_p0_rddata[22] = wl7ddrphy1_bitslip941[0];
-    wl7ddrphy1_dfi_p0_rddata[94] = wl7ddrphy1_bitslip941[1];
-    wl7ddrphy1_dfi_p0_rddata[23] = wl7ddrphy1_bitslip951[0];
-    wl7ddrphy1_dfi_p0_rddata[95] = wl7ddrphy1_bitslip951[1];
-    wl7ddrphy1_dfi_p0_rddata[24] = wl7ddrphy1_bitslip961[0];
-    wl7ddrphy1_dfi_p0_rddata[96] = wl7ddrphy1_bitslip961[1];
-    wl7ddrphy1_dfi_p0_rddata[25] = wl7ddrphy1_bitslip971[0];
-    wl7ddrphy1_dfi_p0_rddata[97] = wl7ddrphy1_bitslip971[1];
-    wl7ddrphy1_dfi_p0_rddata[26] = wl7ddrphy1_bitslip981[0];
-    wl7ddrphy1_dfi_p0_rddata[98] = wl7ddrphy1_bitslip981[1];
-    wl7ddrphy1_dfi_p0_rddata[27] = wl7ddrphy1_bitslip991[0];
-    wl7ddrphy1_dfi_p0_rddata[99] = wl7ddrphy1_bitslip991[1];
-    wl7ddrphy1_dfi_p0_rddata[28] = wl7ddrphy1_bitslip1001[0];
-    wl7ddrphy1_dfi_p0_rddata[100] = wl7ddrphy1_bitslip1001[1];
-    wl7ddrphy1_dfi_p0_rddata[29] = wl7ddrphy1_bitslip1011[0];
-    wl7ddrphy1_dfi_p0_rddata[101] = wl7ddrphy1_bitslip1011[1];
-    wl7ddrphy1_dfi_p0_rddata[30] = wl7ddrphy1_bitslip1021[0];
-    wl7ddrphy1_dfi_p0_rddata[102] = wl7ddrphy1_bitslip1021[1];
-    wl7ddrphy1_dfi_p0_rddata[31] = wl7ddrphy1_bitslip1031[0];
-    wl7ddrphy1_dfi_p0_rddata[103] = wl7ddrphy1_bitslip1031[1];
-    wl7ddrphy1_dfi_p0_rddata[32] = wl7ddrphy1_bitslip1041[0];
-    wl7ddrphy1_dfi_p0_rddata[104] = wl7ddrphy1_bitslip1041[1];
-    wl7ddrphy1_dfi_p0_rddata[33] = wl7ddrphy1_bitslip1051[0];
-    wl7ddrphy1_dfi_p0_rddata[105] = wl7ddrphy1_bitslip1051[1];
-    wl7ddrphy1_dfi_p0_rddata[34] = wl7ddrphy1_bitslip1061[0];
-    wl7ddrphy1_dfi_p0_rddata[106] = wl7ddrphy1_bitslip1061[1];
-    wl7ddrphy1_dfi_p0_rddata[35] = wl7ddrphy1_bitslip1071[0];
-    wl7ddrphy1_dfi_p0_rddata[107] = wl7ddrphy1_bitslip1071[1];
-    wl7ddrphy1_dfi_p0_rddata[36] = wl7ddrphy1_bitslip1081[0];
-    wl7ddrphy1_dfi_p0_rddata[108] = wl7ddrphy1_bitslip1081[1];
-    wl7ddrphy1_dfi_p0_rddata[37] = wl7ddrphy1_bitslip1091[0];
-    wl7ddrphy1_dfi_p0_rddata[109] = wl7ddrphy1_bitslip1091[1];
-    wl7ddrphy1_dfi_p0_rddata[38] = wl7ddrphy1_bitslip1101[0];
-    wl7ddrphy1_dfi_p0_rddata[110] = wl7ddrphy1_bitslip1101[1];
-    wl7ddrphy1_dfi_p0_rddata[39] = wl7ddrphy1_bitslip1111[0];
-    wl7ddrphy1_dfi_p0_rddata[111] = wl7ddrphy1_bitslip1111[1];
-    wl7ddrphy1_dfi_p0_rddata[40] = wl7ddrphy1_bitslip1121[0];
-    wl7ddrphy1_dfi_p0_rddata[112] = wl7ddrphy1_bitslip1121[1];
-    wl7ddrphy1_dfi_p0_rddata[41] = wl7ddrphy1_bitslip1131[0];
-    wl7ddrphy1_dfi_p0_rddata[113] = wl7ddrphy1_bitslip1131[1];
-    wl7ddrphy1_dfi_p0_rddata[42] = wl7ddrphy1_bitslip1141[0];
-    wl7ddrphy1_dfi_p0_rddata[114] = wl7ddrphy1_bitslip1141[1];
-    wl7ddrphy1_dfi_p0_rddata[43] = wl7ddrphy1_bitslip1151[0];
-    wl7ddrphy1_dfi_p0_rddata[115] = wl7ddrphy1_bitslip1151[1];
-    wl7ddrphy1_dfi_p0_rddata[44] = wl7ddrphy1_bitslip1161[0];
-    wl7ddrphy1_dfi_p0_rddata[116] = wl7ddrphy1_bitslip1161[1];
-    wl7ddrphy1_dfi_p0_rddata[45] = wl7ddrphy1_bitslip1171[0];
-    wl7ddrphy1_dfi_p0_rddata[117] = wl7ddrphy1_bitslip1171[1];
-    wl7ddrphy1_dfi_p0_rddata[46] = wl7ddrphy1_bitslip1181[0];
-    wl7ddrphy1_dfi_p0_rddata[118] = wl7ddrphy1_bitslip1181[1];
-    wl7ddrphy1_dfi_p0_rddata[47] = wl7ddrphy1_bitslip1191[0];
-    wl7ddrphy1_dfi_p0_rddata[119] = wl7ddrphy1_bitslip1191[1];
-    wl7ddrphy1_dfi_p0_rddata[48] = wl7ddrphy1_bitslip1201[0];
-    wl7ddrphy1_dfi_p0_rddata[120] = wl7ddrphy1_bitslip1201[1];
-    wl7ddrphy1_dfi_p0_rddata[49] = wl7ddrphy1_bitslip1211[0];
-    wl7ddrphy1_dfi_p0_rddata[121] = wl7ddrphy1_bitslip1211[1];
-    wl7ddrphy1_dfi_p0_rddata[50] = wl7ddrphy1_bitslip1221[0];
-    wl7ddrphy1_dfi_p0_rddata[122] = wl7ddrphy1_bitslip1221[1];
-    wl7ddrphy1_dfi_p0_rddata[51] = wl7ddrphy1_bitslip1231[0];
-    wl7ddrphy1_dfi_p0_rddata[123] = wl7ddrphy1_bitslip1231[1];
-    wl7ddrphy1_dfi_p0_rddata[52] = wl7ddrphy1_bitslip1241[0];
-    wl7ddrphy1_dfi_p0_rddata[124] = wl7ddrphy1_bitslip1241[1];
-    wl7ddrphy1_dfi_p0_rddata[53] = wl7ddrphy1_bitslip1251[0];
-    wl7ddrphy1_dfi_p0_rddata[125] = wl7ddrphy1_bitslip1251[1];
-    wl7ddrphy1_dfi_p0_rddata[54] = wl7ddrphy1_bitslip1261[0];
-    wl7ddrphy1_dfi_p0_rddata[126] = wl7ddrphy1_bitslip1261[1];
-    wl7ddrphy1_dfi_p0_rddata[55] = wl7ddrphy1_bitslip1271[0];
-    wl7ddrphy1_dfi_p0_rddata[127] = wl7ddrphy1_bitslip1271[1];
-    wl7ddrphy1_dfi_p0_rddata[56] = wl7ddrphy1_bitslip1281[0];
-    wl7ddrphy1_dfi_p0_rddata[128] = wl7ddrphy1_bitslip1281[1];
-    wl7ddrphy1_dfi_p0_rddata[57] = wl7ddrphy1_bitslip1291[0];
-    wl7ddrphy1_dfi_p0_rddata[129] = wl7ddrphy1_bitslip1291[1];
-    wl7ddrphy1_dfi_p0_rddata[58] = wl7ddrphy1_bitslip1301[0];
-    wl7ddrphy1_dfi_p0_rddata[130] = wl7ddrphy1_bitslip1301[1];
-    wl7ddrphy1_dfi_p0_rddata[59] = wl7ddrphy1_bitslip1311[0];
-    wl7ddrphy1_dfi_p0_rddata[131] = wl7ddrphy1_bitslip1311[1];
-    wl7ddrphy1_dfi_p0_rddata[60] = wl7ddrphy1_bitslip1321[0];
-    wl7ddrphy1_dfi_p0_rddata[132] = wl7ddrphy1_bitslip1321[1];
-    wl7ddrphy1_dfi_p0_rddata[61] = wl7ddrphy1_bitslip1331[0];
-    wl7ddrphy1_dfi_p0_rddata[133] = wl7ddrphy1_bitslip1331[1];
-    wl7ddrphy1_dfi_p0_rddata[62] = wl7ddrphy1_bitslip1341[0];
-    wl7ddrphy1_dfi_p0_rddata[134] = wl7ddrphy1_bitslip1341[1];
-    wl7ddrphy1_dfi_p0_rddata[63] = wl7ddrphy1_bitslip1351[0];
-    wl7ddrphy1_dfi_p0_rddata[135] = wl7ddrphy1_bitslip1351[1];
-    wl7ddrphy1_dfi_p0_rddata[64] = wl7ddrphy1_bitslip1361[0];
-    wl7ddrphy1_dfi_p0_rddata[136] = wl7ddrphy1_bitslip1361[1];
-    wl7ddrphy1_dfi_p0_rddata[65] = wl7ddrphy1_bitslip1371[0];
-    wl7ddrphy1_dfi_p0_rddata[137] = wl7ddrphy1_bitslip1371[1];
-    wl7ddrphy1_dfi_p0_rddata[66] = wl7ddrphy1_bitslip1381[0];
-    wl7ddrphy1_dfi_p0_rddata[138] = wl7ddrphy1_bitslip1381[1];
-    wl7ddrphy1_dfi_p0_rddata[67] = wl7ddrphy1_bitslip1391[0];
-    wl7ddrphy1_dfi_p0_rddata[139] = wl7ddrphy1_bitslip1391[1];
-    wl7ddrphy1_dfi_p0_rddata[68] = wl7ddrphy1_bitslip1401[0];
-    wl7ddrphy1_dfi_p0_rddata[140] = wl7ddrphy1_bitslip1401[1];
-    wl7ddrphy1_dfi_p0_rddata[69] = wl7ddrphy1_bitslip1411[0];
-    wl7ddrphy1_dfi_p0_rddata[141] = wl7ddrphy1_bitslip1411[1];
-    wl7ddrphy1_dfi_p0_rddata[70] = wl7ddrphy1_bitslip1421[0];
-    wl7ddrphy1_dfi_p0_rddata[142] = wl7ddrphy1_bitslip1421[1];
-    wl7ddrphy1_dfi_p0_rddata[71] = wl7ddrphy1_bitslip1431[0];
-    wl7ddrphy1_dfi_p0_rddata[143] = wl7ddrphy1_bitslip1431[1];
-end
-always @(*) begin
-    wl7ddrphy1_dfi_p1_rddata = 144'd0;
-    wl7ddrphy1_dfi_p1_rddata[0] = wl7ddrphy1_bitslip721[2];
-    wl7ddrphy1_dfi_p1_rddata[72] = wl7ddrphy1_bitslip721[3];
-    wl7ddrphy1_dfi_p1_rddata[1] = wl7ddrphy1_bitslip731[2];
-    wl7ddrphy1_dfi_p1_rddata[73] = wl7ddrphy1_bitslip731[3];
-    wl7ddrphy1_dfi_p1_rddata[2] = wl7ddrphy1_bitslip741[2];
-    wl7ddrphy1_dfi_p1_rddata[74] = wl7ddrphy1_bitslip741[3];
-    wl7ddrphy1_dfi_p1_rddata[3] = wl7ddrphy1_bitslip751[2];
-    wl7ddrphy1_dfi_p1_rddata[75] = wl7ddrphy1_bitslip751[3];
-    wl7ddrphy1_dfi_p1_rddata[4] = wl7ddrphy1_bitslip761[2];
-    wl7ddrphy1_dfi_p1_rddata[76] = wl7ddrphy1_bitslip761[3];
-    wl7ddrphy1_dfi_p1_rddata[5] = wl7ddrphy1_bitslip771[2];
-    wl7ddrphy1_dfi_p1_rddata[77] = wl7ddrphy1_bitslip771[3];
-    wl7ddrphy1_dfi_p1_rddata[6] = wl7ddrphy1_bitslip781[2];
-    wl7ddrphy1_dfi_p1_rddata[78] = wl7ddrphy1_bitslip781[3];
-    wl7ddrphy1_dfi_p1_rddata[7] = wl7ddrphy1_bitslip791[2];
-    wl7ddrphy1_dfi_p1_rddata[79] = wl7ddrphy1_bitslip791[3];
-    wl7ddrphy1_dfi_p1_rddata[8] = wl7ddrphy1_bitslip801[2];
-    wl7ddrphy1_dfi_p1_rddata[80] = wl7ddrphy1_bitslip801[3];
-    wl7ddrphy1_dfi_p1_rddata[9] = wl7ddrphy1_bitslip811[2];
-    wl7ddrphy1_dfi_p1_rddata[81] = wl7ddrphy1_bitslip811[3];
-    wl7ddrphy1_dfi_p1_rddata[10] = wl7ddrphy1_bitslip821[2];
-    wl7ddrphy1_dfi_p1_rddata[82] = wl7ddrphy1_bitslip821[3];
-    wl7ddrphy1_dfi_p1_rddata[11] = wl7ddrphy1_bitslip831[2];
-    wl7ddrphy1_dfi_p1_rddata[83] = wl7ddrphy1_bitslip831[3];
-    wl7ddrphy1_dfi_p1_rddata[12] = wl7ddrphy1_bitslip841[2];
-    wl7ddrphy1_dfi_p1_rddata[84] = wl7ddrphy1_bitslip841[3];
-    wl7ddrphy1_dfi_p1_rddata[13] = wl7ddrphy1_bitslip851[2];
-    wl7ddrphy1_dfi_p1_rddata[85] = wl7ddrphy1_bitslip851[3];
-    wl7ddrphy1_dfi_p1_rddata[14] = wl7ddrphy1_bitslip861[2];
-    wl7ddrphy1_dfi_p1_rddata[86] = wl7ddrphy1_bitslip861[3];
-    wl7ddrphy1_dfi_p1_rddata[15] = wl7ddrphy1_bitslip871[2];
-    wl7ddrphy1_dfi_p1_rddata[87] = wl7ddrphy1_bitslip871[3];
-    wl7ddrphy1_dfi_p1_rddata[16] = wl7ddrphy1_bitslip881[2];
-    wl7ddrphy1_dfi_p1_rddata[88] = wl7ddrphy1_bitslip881[3];
-    wl7ddrphy1_dfi_p1_rddata[17] = wl7ddrphy1_bitslip891[2];
-    wl7ddrphy1_dfi_p1_rddata[89] = wl7ddrphy1_bitslip891[3];
-    wl7ddrphy1_dfi_p1_rddata[18] = wl7ddrphy1_bitslip901[2];
-    wl7ddrphy1_dfi_p1_rddata[90] = wl7ddrphy1_bitslip901[3];
-    wl7ddrphy1_dfi_p1_rddata[19] = wl7ddrphy1_bitslip911[2];
-    wl7ddrphy1_dfi_p1_rddata[91] = wl7ddrphy1_bitslip911[3];
-    wl7ddrphy1_dfi_p1_rddata[20] = wl7ddrphy1_bitslip921[2];
-    wl7ddrphy1_dfi_p1_rddata[92] = wl7ddrphy1_bitslip921[3];
-    wl7ddrphy1_dfi_p1_rddata[21] = wl7ddrphy1_bitslip931[2];
-    wl7ddrphy1_dfi_p1_rddata[93] = wl7ddrphy1_bitslip931[3];
-    wl7ddrphy1_dfi_p1_rddata[22] = wl7ddrphy1_bitslip941[2];
-    wl7ddrphy1_dfi_p1_rddata[94] = wl7ddrphy1_bitslip941[3];
-    wl7ddrphy1_dfi_p1_rddata[23] = wl7ddrphy1_bitslip951[2];
-    wl7ddrphy1_dfi_p1_rddata[95] = wl7ddrphy1_bitslip951[3];
-    wl7ddrphy1_dfi_p1_rddata[24] = wl7ddrphy1_bitslip961[2];
-    wl7ddrphy1_dfi_p1_rddata[96] = wl7ddrphy1_bitslip961[3];
-    wl7ddrphy1_dfi_p1_rddata[25] = wl7ddrphy1_bitslip971[2];
-    wl7ddrphy1_dfi_p1_rddata[97] = wl7ddrphy1_bitslip971[3];
-    wl7ddrphy1_dfi_p1_rddata[26] = wl7ddrphy1_bitslip981[2];
-    wl7ddrphy1_dfi_p1_rddata[98] = wl7ddrphy1_bitslip981[3];
-    wl7ddrphy1_dfi_p1_rddata[27] = wl7ddrphy1_bitslip991[2];
-    wl7ddrphy1_dfi_p1_rddata[99] = wl7ddrphy1_bitslip991[3];
-    wl7ddrphy1_dfi_p1_rddata[28] = wl7ddrphy1_bitslip1001[2];
-    wl7ddrphy1_dfi_p1_rddata[100] = wl7ddrphy1_bitslip1001[3];
-    wl7ddrphy1_dfi_p1_rddata[29] = wl7ddrphy1_bitslip1011[2];
-    wl7ddrphy1_dfi_p1_rddata[101] = wl7ddrphy1_bitslip1011[3];
-    wl7ddrphy1_dfi_p1_rddata[30] = wl7ddrphy1_bitslip1021[2];
-    wl7ddrphy1_dfi_p1_rddata[102] = wl7ddrphy1_bitslip1021[3];
-    wl7ddrphy1_dfi_p1_rddata[31] = wl7ddrphy1_bitslip1031[2];
-    wl7ddrphy1_dfi_p1_rddata[103] = wl7ddrphy1_bitslip1031[3];
-    wl7ddrphy1_dfi_p1_rddata[32] = wl7ddrphy1_bitslip1041[2];
-    wl7ddrphy1_dfi_p1_rddata[104] = wl7ddrphy1_bitslip1041[3];
-    wl7ddrphy1_dfi_p1_rddata[33] = wl7ddrphy1_bitslip1051[2];
-    wl7ddrphy1_dfi_p1_rddata[105] = wl7ddrphy1_bitslip1051[3];
-    wl7ddrphy1_dfi_p1_rddata[34] = wl7ddrphy1_bitslip1061[2];
-    wl7ddrphy1_dfi_p1_rddata[106] = wl7ddrphy1_bitslip1061[3];
-    wl7ddrphy1_dfi_p1_rddata[35] = wl7ddrphy1_bitslip1071[2];
-    wl7ddrphy1_dfi_p1_rddata[107] = wl7ddrphy1_bitslip1071[3];
-    wl7ddrphy1_dfi_p1_rddata[36] = wl7ddrphy1_bitslip1081[2];
-    wl7ddrphy1_dfi_p1_rddata[108] = wl7ddrphy1_bitslip1081[3];
-    wl7ddrphy1_dfi_p1_rddata[37] = wl7ddrphy1_bitslip1091[2];
-    wl7ddrphy1_dfi_p1_rddata[109] = wl7ddrphy1_bitslip1091[3];
-    wl7ddrphy1_dfi_p1_rddata[38] = wl7ddrphy1_bitslip1101[2];
-    wl7ddrphy1_dfi_p1_rddata[110] = wl7ddrphy1_bitslip1101[3];
-    wl7ddrphy1_dfi_p1_rddata[39] = wl7ddrphy1_bitslip1111[2];
-    wl7ddrphy1_dfi_p1_rddata[111] = wl7ddrphy1_bitslip1111[3];
-    wl7ddrphy1_dfi_p1_rddata[40] = wl7ddrphy1_bitslip1121[2];
-    wl7ddrphy1_dfi_p1_rddata[112] = wl7ddrphy1_bitslip1121[3];
-    wl7ddrphy1_dfi_p1_rddata[41] = wl7ddrphy1_bitslip1131[2];
-    wl7ddrphy1_dfi_p1_rddata[113] = wl7ddrphy1_bitslip1131[3];
-    wl7ddrphy1_dfi_p1_rddata[42] = wl7ddrphy1_bitslip1141[2];
-    wl7ddrphy1_dfi_p1_rddata[114] = wl7ddrphy1_bitslip1141[3];
-    wl7ddrphy1_dfi_p1_rddata[43] = wl7ddrphy1_bitslip1151[2];
-    wl7ddrphy1_dfi_p1_rddata[115] = wl7ddrphy1_bitslip1151[3];
-    wl7ddrphy1_dfi_p1_rddata[44] = wl7ddrphy1_bitslip1161[2];
-    wl7ddrphy1_dfi_p1_rddata[116] = wl7ddrphy1_bitslip1161[3];
-    wl7ddrphy1_dfi_p1_rddata[45] = wl7ddrphy1_bitslip1171[2];
-    wl7ddrphy1_dfi_p1_rddata[117] = wl7ddrphy1_bitslip1171[3];
-    wl7ddrphy1_dfi_p1_rddata[46] = wl7ddrphy1_bitslip1181[2];
-    wl7ddrphy1_dfi_p1_rddata[118] = wl7ddrphy1_bitslip1181[3];
-    wl7ddrphy1_dfi_p1_rddata[47] = wl7ddrphy1_bitslip1191[2];
-    wl7ddrphy1_dfi_p1_rddata[119] = wl7ddrphy1_bitslip1191[3];
-    wl7ddrphy1_dfi_p1_rddata[48] = wl7ddrphy1_bitslip1201[2];
-    wl7ddrphy1_dfi_p1_rddata[120] = wl7ddrphy1_bitslip1201[3];
-    wl7ddrphy1_dfi_p1_rddata[49] = wl7ddrphy1_bitslip1211[2];
-    wl7ddrphy1_dfi_p1_rddata[121] = wl7ddrphy1_bitslip1211[3];
-    wl7ddrphy1_dfi_p1_rddata[50] = wl7ddrphy1_bitslip1221[2];
-    wl7ddrphy1_dfi_p1_rddata[122] = wl7ddrphy1_bitslip1221[3];
-    wl7ddrphy1_dfi_p1_rddata[51] = wl7ddrphy1_bitslip1231[2];
-    wl7ddrphy1_dfi_p1_rddata[123] = wl7ddrphy1_bitslip1231[3];
-    wl7ddrphy1_dfi_p1_rddata[52] = wl7ddrphy1_bitslip1241[2];
-    wl7ddrphy1_dfi_p1_rddata[124] = wl7ddrphy1_bitslip1241[3];
-    wl7ddrphy1_dfi_p1_rddata[53] = wl7ddrphy1_bitslip1251[2];
-    wl7ddrphy1_dfi_p1_rddata[125] = wl7ddrphy1_bitslip1251[3];
-    wl7ddrphy1_dfi_p1_rddata[54] = wl7ddrphy1_bitslip1261[2];
-    wl7ddrphy1_dfi_p1_rddata[126] = wl7ddrphy1_bitslip1261[3];
-    wl7ddrphy1_dfi_p1_rddata[55] = wl7ddrphy1_bitslip1271[2];
-    wl7ddrphy1_dfi_p1_rddata[127] = wl7ddrphy1_bitslip1271[3];
-    wl7ddrphy1_dfi_p1_rddata[56] = wl7ddrphy1_bitslip1281[2];
-    wl7ddrphy1_dfi_p1_rddata[128] = wl7ddrphy1_bitslip1281[3];
-    wl7ddrphy1_dfi_p1_rddata[57] = wl7ddrphy1_bitslip1291[2];
-    wl7ddrphy1_dfi_p1_rddata[129] = wl7ddrphy1_bitslip1291[3];
-    wl7ddrphy1_dfi_p1_rddata[58] = wl7ddrphy1_bitslip1301[2];
-    wl7ddrphy1_dfi_p1_rddata[130] = wl7ddrphy1_bitslip1301[3];
-    wl7ddrphy1_dfi_p1_rddata[59] = wl7ddrphy1_bitslip1311[2];
-    wl7ddrphy1_dfi_p1_rddata[131] = wl7ddrphy1_bitslip1311[3];
-    wl7ddrphy1_dfi_p1_rddata[60] = wl7ddrphy1_bitslip1321[2];
-    wl7ddrphy1_dfi_p1_rddata[132] = wl7ddrphy1_bitslip1321[3];
-    wl7ddrphy1_dfi_p1_rddata[61] = wl7ddrphy1_bitslip1331[2];
-    wl7ddrphy1_dfi_p1_rddata[133] = wl7ddrphy1_bitslip1331[3];
-    wl7ddrphy1_dfi_p1_rddata[62] = wl7ddrphy1_bitslip1341[2];
-    wl7ddrphy1_dfi_p1_rddata[134] = wl7ddrphy1_bitslip1341[3];
-    wl7ddrphy1_dfi_p1_rddata[63] = wl7ddrphy1_bitslip1351[2];
-    wl7ddrphy1_dfi_p1_rddata[135] = wl7ddrphy1_bitslip1351[3];
-    wl7ddrphy1_dfi_p1_rddata[64] = wl7ddrphy1_bitslip1361[2];
-    wl7ddrphy1_dfi_p1_rddata[136] = wl7ddrphy1_bitslip1361[3];
-    wl7ddrphy1_dfi_p1_rddata[65] = wl7ddrphy1_bitslip1371[2];
-    wl7ddrphy1_dfi_p1_rddata[137] = wl7ddrphy1_bitslip1371[3];
-    wl7ddrphy1_dfi_p1_rddata[66] = wl7ddrphy1_bitslip1381[2];
-    wl7ddrphy1_dfi_p1_rddata[138] = wl7ddrphy1_bitslip1381[3];
-    wl7ddrphy1_dfi_p1_rddata[67] = wl7ddrphy1_bitslip1391[2];
-    wl7ddrphy1_dfi_p1_rddata[139] = wl7ddrphy1_bitslip1391[3];
-    wl7ddrphy1_dfi_p1_rddata[68] = wl7ddrphy1_bitslip1401[2];
-    wl7ddrphy1_dfi_p1_rddata[140] = wl7ddrphy1_bitslip1401[3];
-    wl7ddrphy1_dfi_p1_rddata[69] = wl7ddrphy1_bitslip1411[2];
-    wl7ddrphy1_dfi_p1_rddata[141] = wl7ddrphy1_bitslip1411[3];
-    wl7ddrphy1_dfi_p1_rddata[70] = wl7ddrphy1_bitslip1421[2];
-    wl7ddrphy1_dfi_p1_rddata[142] = wl7ddrphy1_bitslip1421[3];
-    wl7ddrphy1_dfi_p1_rddata[71] = wl7ddrphy1_bitslip1431[2];
-    wl7ddrphy1_dfi_p1_rddata[143] = wl7ddrphy1_bitslip1431[3];
-end
-always @(*) begin
-    wl7ddrphy1_dfi_p2_rddata = 144'd0;
-    wl7ddrphy1_dfi_p2_rddata[0] = wl7ddrphy1_bitslip721[4];
-    wl7ddrphy1_dfi_p2_rddata[72] = wl7ddrphy1_bitslip721[5];
-    wl7ddrphy1_dfi_p2_rddata[1] = wl7ddrphy1_bitslip731[4];
-    wl7ddrphy1_dfi_p2_rddata[73] = wl7ddrphy1_bitslip731[5];
-    wl7ddrphy1_dfi_p2_rddata[2] = wl7ddrphy1_bitslip741[4];
-    wl7ddrphy1_dfi_p2_rddata[74] = wl7ddrphy1_bitslip741[5];
-    wl7ddrphy1_dfi_p2_rddata[3] = wl7ddrphy1_bitslip751[4];
-    wl7ddrphy1_dfi_p2_rddata[75] = wl7ddrphy1_bitslip751[5];
-    wl7ddrphy1_dfi_p2_rddata[4] = wl7ddrphy1_bitslip761[4];
-    wl7ddrphy1_dfi_p2_rddata[76] = wl7ddrphy1_bitslip761[5];
-    wl7ddrphy1_dfi_p2_rddata[5] = wl7ddrphy1_bitslip771[4];
-    wl7ddrphy1_dfi_p2_rddata[77] = wl7ddrphy1_bitslip771[5];
-    wl7ddrphy1_dfi_p2_rddata[6] = wl7ddrphy1_bitslip781[4];
-    wl7ddrphy1_dfi_p2_rddata[78] = wl7ddrphy1_bitslip781[5];
-    wl7ddrphy1_dfi_p2_rddata[7] = wl7ddrphy1_bitslip791[4];
-    wl7ddrphy1_dfi_p2_rddata[79] = wl7ddrphy1_bitslip791[5];
-    wl7ddrphy1_dfi_p2_rddata[8] = wl7ddrphy1_bitslip801[4];
-    wl7ddrphy1_dfi_p2_rddata[80] = wl7ddrphy1_bitslip801[5];
-    wl7ddrphy1_dfi_p2_rddata[9] = wl7ddrphy1_bitslip811[4];
-    wl7ddrphy1_dfi_p2_rddata[81] = wl7ddrphy1_bitslip811[5];
-    wl7ddrphy1_dfi_p2_rddata[10] = wl7ddrphy1_bitslip821[4];
-    wl7ddrphy1_dfi_p2_rddata[82] = wl7ddrphy1_bitslip821[5];
-    wl7ddrphy1_dfi_p2_rddata[11] = wl7ddrphy1_bitslip831[4];
-    wl7ddrphy1_dfi_p2_rddata[83] = wl7ddrphy1_bitslip831[5];
-    wl7ddrphy1_dfi_p2_rddata[12] = wl7ddrphy1_bitslip841[4];
-    wl7ddrphy1_dfi_p2_rddata[84] = wl7ddrphy1_bitslip841[5];
-    wl7ddrphy1_dfi_p2_rddata[13] = wl7ddrphy1_bitslip851[4];
-    wl7ddrphy1_dfi_p2_rddata[85] = wl7ddrphy1_bitslip851[5];
-    wl7ddrphy1_dfi_p2_rddata[14] = wl7ddrphy1_bitslip861[4];
-    wl7ddrphy1_dfi_p2_rddata[86] = wl7ddrphy1_bitslip861[5];
-    wl7ddrphy1_dfi_p2_rddata[15] = wl7ddrphy1_bitslip871[4];
-    wl7ddrphy1_dfi_p2_rddata[87] = wl7ddrphy1_bitslip871[5];
-    wl7ddrphy1_dfi_p2_rddata[16] = wl7ddrphy1_bitslip881[4];
-    wl7ddrphy1_dfi_p2_rddata[88] = wl7ddrphy1_bitslip881[5];
-    wl7ddrphy1_dfi_p2_rddata[17] = wl7ddrphy1_bitslip891[4];
-    wl7ddrphy1_dfi_p2_rddata[89] = wl7ddrphy1_bitslip891[5];
-    wl7ddrphy1_dfi_p2_rddata[18] = wl7ddrphy1_bitslip901[4];
-    wl7ddrphy1_dfi_p2_rddata[90] = wl7ddrphy1_bitslip901[5];
-    wl7ddrphy1_dfi_p2_rddata[19] = wl7ddrphy1_bitslip911[4];
-    wl7ddrphy1_dfi_p2_rddata[91] = wl7ddrphy1_bitslip911[5];
-    wl7ddrphy1_dfi_p2_rddata[20] = wl7ddrphy1_bitslip921[4];
-    wl7ddrphy1_dfi_p2_rddata[92] = wl7ddrphy1_bitslip921[5];
-    wl7ddrphy1_dfi_p2_rddata[21] = wl7ddrphy1_bitslip931[4];
-    wl7ddrphy1_dfi_p2_rddata[93] = wl7ddrphy1_bitslip931[5];
-    wl7ddrphy1_dfi_p2_rddata[22] = wl7ddrphy1_bitslip941[4];
-    wl7ddrphy1_dfi_p2_rddata[94] = wl7ddrphy1_bitslip941[5];
-    wl7ddrphy1_dfi_p2_rddata[23] = wl7ddrphy1_bitslip951[4];
-    wl7ddrphy1_dfi_p2_rddata[95] = wl7ddrphy1_bitslip951[5];
-    wl7ddrphy1_dfi_p2_rddata[24] = wl7ddrphy1_bitslip961[4];
-    wl7ddrphy1_dfi_p2_rddata[96] = wl7ddrphy1_bitslip961[5];
-    wl7ddrphy1_dfi_p2_rddata[25] = wl7ddrphy1_bitslip971[4];
-    wl7ddrphy1_dfi_p2_rddata[97] = wl7ddrphy1_bitslip971[5];
-    wl7ddrphy1_dfi_p2_rddata[26] = wl7ddrphy1_bitslip981[4];
-    wl7ddrphy1_dfi_p2_rddata[98] = wl7ddrphy1_bitslip981[5];
-    wl7ddrphy1_dfi_p2_rddata[27] = wl7ddrphy1_bitslip991[4];
-    wl7ddrphy1_dfi_p2_rddata[99] = wl7ddrphy1_bitslip991[5];
-    wl7ddrphy1_dfi_p2_rddata[28] = wl7ddrphy1_bitslip1001[4];
-    wl7ddrphy1_dfi_p2_rddata[100] = wl7ddrphy1_bitslip1001[5];
-    wl7ddrphy1_dfi_p2_rddata[29] = wl7ddrphy1_bitslip1011[4];
-    wl7ddrphy1_dfi_p2_rddata[101] = wl7ddrphy1_bitslip1011[5];
-    wl7ddrphy1_dfi_p2_rddata[30] = wl7ddrphy1_bitslip1021[4];
-    wl7ddrphy1_dfi_p2_rddata[102] = wl7ddrphy1_bitslip1021[5];
-    wl7ddrphy1_dfi_p2_rddata[31] = wl7ddrphy1_bitslip1031[4];
-    wl7ddrphy1_dfi_p2_rddata[103] = wl7ddrphy1_bitslip1031[5];
-    wl7ddrphy1_dfi_p2_rddata[32] = wl7ddrphy1_bitslip1041[4];
-    wl7ddrphy1_dfi_p2_rddata[104] = wl7ddrphy1_bitslip1041[5];
-    wl7ddrphy1_dfi_p2_rddata[33] = wl7ddrphy1_bitslip1051[4];
-    wl7ddrphy1_dfi_p2_rddata[105] = wl7ddrphy1_bitslip1051[5];
-    wl7ddrphy1_dfi_p2_rddata[34] = wl7ddrphy1_bitslip1061[4];
-    wl7ddrphy1_dfi_p2_rddata[106] = wl7ddrphy1_bitslip1061[5];
-    wl7ddrphy1_dfi_p2_rddata[35] = wl7ddrphy1_bitslip1071[4];
-    wl7ddrphy1_dfi_p2_rddata[107] = wl7ddrphy1_bitslip1071[5];
-    wl7ddrphy1_dfi_p2_rddata[36] = wl7ddrphy1_bitslip1081[4];
-    wl7ddrphy1_dfi_p2_rddata[108] = wl7ddrphy1_bitslip1081[5];
-    wl7ddrphy1_dfi_p2_rddata[37] = wl7ddrphy1_bitslip1091[4];
-    wl7ddrphy1_dfi_p2_rddata[109] = wl7ddrphy1_bitslip1091[5];
-    wl7ddrphy1_dfi_p2_rddata[38] = wl7ddrphy1_bitslip1101[4];
-    wl7ddrphy1_dfi_p2_rddata[110] = wl7ddrphy1_bitslip1101[5];
-    wl7ddrphy1_dfi_p2_rddata[39] = wl7ddrphy1_bitslip1111[4];
-    wl7ddrphy1_dfi_p2_rddata[111] = wl7ddrphy1_bitslip1111[5];
-    wl7ddrphy1_dfi_p2_rddata[40] = wl7ddrphy1_bitslip1121[4];
-    wl7ddrphy1_dfi_p2_rddata[112] = wl7ddrphy1_bitslip1121[5];
-    wl7ddrphy1_dfi_p2_rddata[41] = wl7ddrphy1_bitslip1131[4];
-    wl7ddrphy1_dfi_p2_rddata[113] = wl7ddrphy1_bitslip1131[5];
-    wl7ddrphy1_dfi_p2_rddata[42] = wl7ddrphy1_bitslip1141[4];
-    wl7ddrphy1_dfi_p2_rddata[114] = wl7ddrphy1_bitslip1141[5];
-    wl7ddrphy1_dfi_p2_rddata[43] = wl7ddrphy1_bitslip1151[4];
-    wl7ddrphy1_dfi_p2_rddata[115] = wl7ddrphy1_bitslip1151[5];
-    wl7ddrphy1_dfi_p2_rddata[44] = wl7ddrphy1_bitslip1161[4];
-    wl7ddrphy1_dfi_p2_rddata[116] = wl7ddrphy1_bitslip1161[5];
-    wl7ddrphy1_dfi_p2_rddata[45] = wl7ddrphy1_bitslip1171[4];
-    wl7ddrphy1_dfi_p2_rddata[117] = wl7ddrphy1_bitslip1171[5];
-    wl7ddrphy1_dfi_p2_rddata[46] = wl7ddrphy1_bitslip1181[4];
-    wl7ddrphy1_dfi_p2_rddata[118] = wl7ddrphy1_bitslip1181[5];
-    wl7ddrphy1_dfi_p2_rddata[47] = wl7ddrphy1_bitslip1191[4];
-    wl7ddrphy1_dfi_p2_rddata[119] = wl7ddrphy1_bitslip1191[5];
-    wl7ddrphy1_dfi_p2_rddata[48] = wl7ddrphy1_bitslip1201[4];
-    wl7ddrphy1_dfi_p2_rddata[120] = wl7ddrphy1_bitslip1201[5];
-    wl7ddrphy1_dfi_p2_rddata[49] = wl7ddrphy1_bitslip1211[4];
-    wl7ddrphy1_dfi_p2_rddata[121] = wl7ddrphy1_bitslip1211[5];
-    wl7ddrphy1_dfi_p2_rddata[50] = wl7ddrphy1_bitslip1221[4];
-    wl7ddrphy1_dfi_p2_rddata[122] = wl7ddrphy1_bitslip1221[5];
-    wl7ddrphy1_dfi_p2_rddata[51] = wl7ddrphy1_bitslip1231[4];
-    wl7ddrphy1_dfi_p2_rddata[123] = wl7ddrphy1_bitslip1231[5];
-    wl7ddrphy1_dfi_p2_rddata[52] = wl7ddrphy1_bitslip1241[4];
-    wl7ddrphy1_dfi_p2_rddata[124] = wl7ddrphy1_bitslip1241[5];
-    wl7ddrphy1_dfi_p2_rddata[53] = wl7ddrphy1_bitslip1251[4];
-    wl7ddrphy1_dfi_p2_rddata[125] = wl7ddrphy1_bitslip1251[5];
-    wl7ddrphy1_dfi_p2_rddata[54] = wl7ddrphy1_bitslip1261[4];
-    wl7ddrphy1_dfi_p2_rddata[126] = wl7ddrphy1_bitslip1261[5];
-    wl7ddrphy1_dfi_p2_rddata[55] = wl7ddrphy1_bitslip1271[4];
-    wl7ddrphy1_dfi_p2_rddata[127] = wl7ddrphy1_bitslip1271[5];
-    wl7ddrphy1_dfi_p2_rddata[56] = wl7ddrphy1_bitslip1281[4];
-    wl7ddrphy1_dfi_p2_rddata[128] = wl7ddrphy1_bitslip1281[5];
-    wl7ddrphy1_dfi_p2_rddata[57] = wl7ddrphy1_bitslip1291[4];
-    wl7ddrphy1_dfi_p2_rddata[129] = wl7ddrphy1_bitslip1291[5];
-    wl7ddrphy1_dfi_p2_rddata[58] = wl7ddrphy1_bitslip1301[4];
-    wl7ddrphy1_dfi_p2_rddata[130] = wl7ddrphy1_bitslip1301[5];
-    wl7ddrphy1_dfi_p2_rddata[59] = wl7ddrphy1_bitslip1311[4];
-    wl7ddrphy1_dfi_p2_rddata[131] = wl7ddrphy1_bitslip1311[5];
-    wl7ddrphy1_dfi_p2_rddata[60] = wl7ddrphy1_bitslip1321[4];
-    wl7ddrphy1_dfi_p2_rddata[132] = wl7ddrphy1_bitslip1321[5];
-    wl7ddrphy1_dfi_p2_rddata[61] = wl7ddrphy1_bitslip1331[4];
-    wl7ddrphy1_dfi_p2_rddata[133] = wl7ddrphy1_bitslip1331[5];
-    wl7ddrphy1_dfi_p2_rddata[62] = wl7ddrphy1_bitslip1341[4];
-    wl7ddrphy1_dfi_p2_rddata[134] = wl7ddrphy1_bitslip1341[5];
-    wl7ddrphy1_dfi_p2_rddata[63] = wl7ddrphy1_bitslip1351[4];
-    wl7ddrphy1_dfi_p2_rddata[135] = wl7ddrphy1_bitslip1351[5];
-    wl7ddrphy1_dfi_p2_rddata[64] = wl7ddrphy1_bitslip1361[4];
-    wl7ddrphy1_dfi_p2_rddata[136] = wl7ddrphy1_bitslip1361[5];
-    wl7ddrphy1_dfi_p2_rddata[65] = wl7ddrphy1_bitslip1371[4];
-    wl7ddrphy1_dfi_p2_rddata[137] = wl7ddrphy1_bitslip1371[5];
-    wl7ddrphy1_dfi_p2_rddata[66] = wl7ddrphy1_bitslip1381[4];
-    wl7ddrphy1_dfi_p2_rddata[138] = wl7ddrphy1_bitslip1381[5];
-    wl7ddrphy1_dfi_p2_rddata[67] = wl7ddrphy1_bitslip1391[4];
-    wl7ddrphy1_dfi_p2_rddata[139] = wl7ddrphy1_bitslip1391[5];
-    wl7ddrphy1_dfi_p2_rddata[68] = wl7ddrphy1_bitslip1401[4];
-    wl7ddrphy1_dfi_p2_rddata[140] = wl7ddrphy1_bitslip1401[5];
-    wl7ddrphy1_dfi_p2_rddata[69] = wl7ddrphy1_bitslip1411[4];
-    wl7ddrphy1_dfi_p2_rddata[141] = wl7ddrphy1_bitslip1411[5];
-    wl7ddrphy1_dfi_p2_rddata[70] = wl7ddrphy1_bitslip1421[4];
-    wl7ddrphy1_dfi_p2_rddata[142] = wl7ddrphy1_bitslip1421[5];
-    wl7ddrphy1_dfi_p2_rddata[71] = wl7ddrphy1_bitslip1431[4];
-    wl7ddrphy1_dfi_p2_rddata[143] = wl7ddrphy1_bitslip1431[5];
-end
-always @(*) begin
-    wl7ddrphy1_dfi_p3_rddata = 144'd0;
-    wl7ddrphy1_dfi_p3_rddata[0] = wl7ddrphy1_bitslip721[6];
-    wl7ddrphy1_dfi_p3_rddata[72] = wl7ddrphy1_bitslip721[7];
-    wl7ddrphy1_dfi_p3_rddata[1] = wl7ddrphy1_bitslip731[6];
-    wl7ddrphy1_dfi_p3_rddata[73] = wl7ddrphy1_bitslip731[7];
-    wl7ddrphy1_dfi_p3_rddata[2] = wl7ddrphy1_bitslip741[6];
-    wl7ddrphy1_dfi_p3_rddata[74] = wl7ddrphy1_bitslip741[7];
-    wl7ddrphy1_dfi_p3_rddata[3] = wl7ddrphy1_bitslip751[6];
-    wl7ddrphy1_dfi_p3_rddata[75] = wl7ddrphy1_bitslip751[7];
-    wl7ddrphy1_dfi_p3_rddata[4] = wl7ddrphy1_bitslip761[6];
-    wl7ddrphy1_dfi_p3_rddata[76] = wl7ddrphy1_bitslip761[7];
-    wl7ddrphy1_dfi_p3_rddata[5] = wl7ddrphy1_bitslip771[6];
-    wl7ddrphy1_dfi_p3_rddata[77] = wl7ddrphy1_bitslip771[7];
-    wl7ddrphy1_dfi_p3_rddata[6] = wl7ddrphy1_bitslip781[6];
-    wl7ddrphy1_dfi_p3_rddata[78] = wl7ddrphy1_bitslip781[7];
-    wl7ddrphy1_dfi_p3_rddata[7] = wl7ddrphy1_bitslip791[6];
-    wl7ddrphy1_dfi_p3_rddata[79] = wl7ddrphy1_bitslip791[7];
-    wl7ddrphy1_dfi_p3_rddata[8] = wl7ddrphy1_bitslip801[6];
-    wl7ddrphy1_dfi_p3_rddata[80] = wl7ddrphy1_bitslip801[7];
-    wl7ddrphy1_dfi_p3_rddata[9] = wl7ddrphy1_bitslip811[6];
-    wl7ddrphy1_dfi_p3_rddata[81] = wl7ddrphy1_bitslip811[7];
-    wl7ddrphy1_dfi_p3_rddata[10] = wl7ddrphy1_bitslip821[6];
-    wl7ddrphy1_dfi_p3_rddata[82] = wl7ddrphy1_bitslip821[7];
-    wl7ddrphy1_dfi_p3_rddata[11] = wl7ddrphy1_bitslip831[6];
-    wl7ddrphy1_dfi_p3_rddata[83] = wl7ddrphy1_bitslip831[7];
-    wl7ddrphy1_dfi_p3_rddata[12] = wl7ddrphy1_bitslip841[6];
-    wl7ddrphy1_dfi_p3_rddata[84] = wl7ddrphy1_bitslip841[7];
-    wl7ddrphy1_dfi_p3_rddata[13] = wl7ddrphy1_bitslip851[6];
-    wl7ddrphy1_dfi_p3_rddata[85] = wl7ddrphy1_bitslip851[7];
-    wl7ddrphy1_dfi_p3_rddata[14] = wl7ddrphy1_bitslip861[6];
-    wl7ddrphy1_dfi_p3_rddata[86] = wl7ddrphy1_bitslip861[7];
-    wl7ddrphy1_dfi_p3_rddata[15] = wl7ddrphy1_bitslip871[6];
-    wl7ddrphy1_dfi_p3_rddata[87] = wl7ddrphy1_bitslip871[7];
-    wl7ddrphy1_dfi_p3_rddata[16] = wl7ddrphy1_bitslip881[6];
-    wl7ddrphy1_dfi_p3_rddata[88] = wl7ddrphy1_bitslip881[7];
-    wl7ddrphy1_dfi_p3_rddata[17] = wl7ddrphy1_bitslip891[6];
-    wl7ddrphy1_dfi_p3_rddata[89] = wl7ddrphy1_bitslip891[7];
-    wl7ddrphy1_dfi_p3_rddata[18] = wl7ddrphy1_bitslip901[6];
-    wl7ddrphy1_dfi_p3_rddata[90] = wl7ddrphy1_bitslip901[7];
-    wl7ddrphy1_dfi_p3_rddata[19] = wl7ddrphy1_bitslip911[6];
-    wl7ddrphy1_dfi_p3_rddata[91] = wl7ddrphy1_bitslip911[7];
-    wl7ddrphy1_dfi_p3_rddata[20] = wl7ddrphy1_bitslip921[6];
-    wl7ddrphy1_dfi_p3_rddata[92] = wl7ddrphy1_bitslip921[7];
-    wl7ddrphy1_dfi_p3_rddata[21] = wl7ddrphy1_bitslip931[6];
-    wl7ddrphy1_dfi_p3_rddata[93] = wl7ddrphy1_bitslip931[7];
-    wl7ddrphy1_dfi_p3_rddata[22] = wl7ddrphy1_bitslip941[6];
-    wl7ddrphy1_dfi_p3_rddata[94] = wl7ddrphy1_bitslip941[7];
-    wl7ddrphy1_dfi_p3_rddata[23] = wl7ddrphy1_bitslip951[6];
-    wl7ddrphy1_dfi_p3_rddata[95] = wl7ddrphy1_bitslip951[7];
-    wl7ddrphy1_dfi_p3_rddata[24] = wl7ddrphy1_bitslip961[6];
-    wl7ddrphy1_dfi_p3_rddata[96] = wl7ddrphy1_bitslip961[7];
-    wl7ddrphy1_dfi_p3_rddata[25] = wl7ddrphy1_bitslip971[6];
-    wl7ddrphy1_dfi_p3_rddata[97] = wl7ddrphy1_bitslip971[7];
-    wl7ddrphy1_dfi_p3_rddata[26] = wl7ddrphy1_bitslip981[6];
-    wl7ddrphy1_dfi_p3_rddata[98] = wl7ddrphy1_bitslip981[7];
-    wl7ddrphy1_dfi_p3_rddata[27] = wl7ddrphy1_bitslip991[6];
-    wl7ddrphy1_dfi_p3_rddata[99] = wl7ddrphy1_bitslip991[7];
-    wl7ddrphy1_dfi_p3_rddata[28] = wl7ddrphy1_bitslip1001[6];
-    wl7ddrphy1_dfi_p3_rddata[100] = wl7ddrphy1_bitslip1001[7];
-    wl7ddrphy1_dfi_p3_rddata[29] = wl7ddrphy1_bitslip1011[6];
-    wl7ddrphy1_dfi_p3_rddata[101] = wl7ddrphy1_bitslip1011[7];
-    wl7ddrphy1_dfi_p3_rddata[30] = wl7ddrphy1_bitslip1021[6];
-    wl7ddrphy1_dfi_p3_rddata[102] = wl7ddrphy1_bitslip1021[7];
-    wl7ddrphy1_dfi_p3_rddata[31] = wl7ddrphy1_bitslip1031[6];
-    wl7ddrphy1_dfi_p3_rddata[103] = wl7ddrphy1_bitslip1031[7];
-    wl7ddrphy1_dfi_p3_rddata[32] = wl7ddrphy1_bitslip1041[6];
-    wl7ddrphy1_dfi_p3_rddata[104] = wl7ddrphy1_bitslip1041[7];
-    wl7ddrphy1_dfi_p3_rddata[33] = wl7ddrphy1_bitslip1051[6];
-    wl7ddrphy1_dfi_p3_rddata[105] = wl7ddrphy1_bitslip1051[7];
-    wl7ddrphy1_dfi_p3_rddata[34] = wl7ddrphy1_bitslip1061[6];
-    wl7ddrphy1_dfi_p3_rddata[106] = wl7ddrphy1_bitslip1061[7];
-    wl7ddrphy1_dfi_p3_rddata[35] = wl7ddrphy1_bitslip1071[6];
-    wl7ddrphy1_dfi_p3_rddata[107] = wl7ddrphy1_bitslip1071[7];
-    wl7ddrphy1_dfi_p3_rddata[36] = wl7ddrphy1_bitslip1081[6];
-    wl7ddrphy1_dfi_p3_rddata[108] = wl7ddrphy1_bitslip1081[7];
-    wl7ddrphy1_dfi_p3_rddata[37] = wl7ddrphy1_bitslip1091[6];
-    wl7ddrphy1_dfi_p3_rddata[109] = wl7ddrphy1_bitslip1091[7];
-    wl7ddrphy1_dfi_p3_rddata[38] = wl7ddrphy1_bitslip1101[6];
-    wl7ddrphy1_dfi_p3_rddata[110] = wl7ddrphy1_bitslip1101[7];
-    wl7ddrphy1_dfi_p3_rddata[39] = wl7ddrphy1_bitslip1111[6];
-    wl7ddrphy1_dfi_p3_rddata[111] = wl7ddrphy1_bitslip1111[7];
-    wl7ddrphy1_dfi_p3_rddata[40] = wl7ddrphy1_bitslip1121[6];
-    wl7ddrphy1_dfi_p3_rddata[112] = wl7ddrphy1_bitslip1121[7];
-    wl7ddrphy1_dfi_p3_rddata[41] = wl7ddrphy1_bitslip1131[6];
-    wl7ddrphy1_dfi_p3_rddata[113] = wl7ddrphy1_bitslip1131[7];
-    wl7ddrphy1_dfi_p3_rddata[42] = wl7ddrphy1_bitslip1141[6];
-    wl7ddrphy1_dfi_p3_rddata[114] = wl7ddrphy1_bitslip1141[7];
-    wl7ddrphy1_dfi_p3_rddata[43] = wl7ddrphy1_bitslip1151[6];
-    wl7ddrphy1_dfi_p3_rddata[115] = wl7ddrphy1_bitslip1151[7];
-    wl7ddrphy1_dfi_p3_rddata[44] = wl7ddrphy1_bitslip1161[6];
-    wl7ddrphy1_dfi_p3_rddata[116] = wl7ddrphy1_bitslip1161[7];
-    wl7ddrphy1_dfi_p3_rddata[45] = wl7ddrphy1_bitslip1171[6];
-    wl7ddrphy1_dfi_p3_rddata[117] = wl7ddrphy1_bitslip1171[7];
-    wl7ddrphy1_dfi_p3_rddata[46] = wl7ddrphy1_bitslip1181[6];
-    wl7ddrphy1_dfi_p3_rddata[118] = wl7ddrphy1_bitslip1181[7];
-    wl7ddrphy1_dfi_p3_rddata[47] = wl7ddrphy1_bitslip1191[6];
-    wl7ddrphy1_dfi_p3_rddata[119] = wl7ddrphy1_bitslip1191[7];
-    wl7ddrphy1_dfi_p3_rddata[48] = wl7ddrphy1_bitslip1201[6];
-    wl7ddrphy1_dfi_p3_rddata[120] = wl7ddrphy1_bitslip1201[7];
-    wl7ddrphy1_dfi_p3_rddata[49] = wl7ddrphy1_bitslip1211[6];
-    wl7ddrphy1_dfi_p3_rddata[121] = wl7ddrphy1_bitslip1211[7];
-    wl7ddrphy1_dfi_p3_rddata[50] = wl7ddrphy1_bitslip1221[6];
-    wl7ddrphy1_dfi_p3_rddata[122] = wl7ddrphy1_bitslip1221[7];
-    wl7ddrphy1_dfi_p3_rddata[51] = wl7ddrphy1_bitslip1231[6];
-    wl7ddrphy1_dfi_p3_rddata[123] = wl7ddrphy1_bitslip1231[7];
-    wl7ddrphy1_dfi_p3_rddata[52] = wl7ddrphy1_bitslip1241[6];
-    wl7ddrphy1_dfi_p3_rddata[124] = wl7ddrphy1_bitslip1241[7];
-    wl7ddrphy1_dfi_p3_rddata[53] = wl7ddrphy1_bitslip1251[6];
-    wl7ddrphy1_dfi_p3_rddata[125] = wl7ddrphy1_bitslip1251[7];
-    wl7ddrphy1_dfi_p3_rddata[54] = wl7ddrphy1_bitslip1261[6];
-    wl7ddrphy1_dfi_p3_rddata[126] = wl7ddrphy1_bitslip1261[7];
-    wl7ddrphy1_dfi_p3_rddata[55] = wl7ddrphy1_bitslip1271[6];
-    wl7ddrphy1_dfi_p3_rddata[127] = wl7ddrphy1_bitslip1271[7];
-    wl7ddrphy1_dfi_p3_rddata[56] = wl7ddrphy1_bitslip1281[6];
-    wl7ddrphy1_dfi_p3_rddata[128] = wl7ddrphy1_bitslip1281[7];
-    wl7ddrphy1_dfi_p3_rddata[57] = wl7ddrphy1_bitslip1291[6];
-    wl7ddrphy1_dfi_p3_rddata[129] = wl7ddrphy1_bitslip1291[7];
-    wl7ddrphy1_dfi_p3_rddata[58] = wl7ddrphy1_bitslip1301[6];
-    wl7ddrphy1_dfi_p3_rddata[130] = wl7ddrphy1_bitslip1301[7];
-    wl7ddrphy1_dfi_p3_rddata[59] = wl7ddrphy1_bitslip1311[6];
-    wl7ddrphy1_dfi_p3_rddata[131] = wl7ddrphy1_bitslip1311[7];
-    wl7ddrphy1_dfi_p3_rddata[60] = wl7ddrphy1_bitslip1321[6];
-    wl7ddrphy1_dfi_p3_rddata[132] = wl7ddrphy1_bitslip1321[7];
-    wl7ddrphy1_dfi_p3_rddata[61] = wl7ddrphy1_bitslip1331[6];
-    wl7ddrphy1_dfi_p3_rddata[133] = wl7ddrphy1_bitslip1331[7];
-    wl7ddrphy1_dfi_p3_rddata[62] = wl7ddrphy1_bitslip1341[6];
-    wl7ddrphy1_dfi_p3_rddata[134] = wl7ddrphy1_bitslip1341[7];
-    wl7ddrphy1_dfi_p3_rddata[63] = wl7ddrphy1_bitslip1351[6];
-    wl7ddrphy1_dfi_p3_rddata[135] = wl7ddrphy1_bitslip1351[7];
-    wl7ddrphy1_dfi_p3_rddata[64] = wl7ddrphy1_bitslip1361[6];
-    wl7ddrphy1_dfi_p3_rddata[136] = wl7ddrphy1_bitslip1361[7];
-    wl7ddrphy1_dfi_p3_rddata[65] = wl7ddrphy1_bitslip1371[6];
-    wl7ddrphy1_dfi_p3_rddata[137] = wl7ddrphy1_bitslip1371[7];
-    wl7ddrphy1_dfi_p3_rddata[66] = wl7ddrphy1_bitslip1381[6];
-    wl7ddrphy1_dfi_p3_rddata[138] = wl7ddrphy1_bitslip1381[7];
-    wl7ddrphy1_dfi_p3_rddata[67] = wl7ddrphy1_bitslip1391[6];
-    wl7ddrphy1_dfi_p3_rddata[139] = wl7ddrphy1_bitslip1391[7];
-    wl7ddrphy1_dfi_p3_rddata[68] = wl7ddrphy1_bitslip1401[6];
-    wl7ddrphy1_dfi_p3_rddata[140] = wl7ddrphy1_bitslip1401[7];
-    wl7ddrphy1_dfi_p3_rddata[69] = wl7ddrphy1_bitslip1411[6];
-    wl7ddrphy1_dfi_p3_rddata[141] = wl7ddrphy1_bitslip1411[7];
-    wl7ddrphy1_dfi_p3_rddata[70] = wl7ddrphy1_bitslip1421[6];
-    wl7ddrphy1_dfi_p3_rddata[142] = wl7ddrphy1_bitslip1421[7];
-    wl7ddrphy1_dfi_p3_rddata[71] = wl7ddrphy1_bitslip1431[6];
-    wl7ddrphy1_dfi_p3_rddata[143] = wl7ddrphy1_bitslip1431[7];
-end
-assign wl7ddrphy1_dfi_p0_rddata_valid = (wl7ddrphy1_tappeddelayline19 | wl7ddrphy1_wlevel_en_storage);
-assign wl7ddrphy1_dfi_p1_rddata_valid = (wl7ddrphy1_tappeddelayline19 | wl7ddrphy1_wlevel_en_storage);
-assign wl7ddrphy1_dfi_p2_rddata_valid = (wl7ddrphy1_tappeddelayline19 | wl7ddrphy1_wlevel_en_storage);
-assign wl7ddrphy1_dfi_p3_rddata_valid = (wl7ddrphy1_tappeddelayline19 | wl7ddrphy1_wlevel_en_storage);
-assign wl7ddrphy1_dq_oe = wl7ddrphy1_tappeddelayline111;
+assign wl7ddrphy1_dfi_p0_rddata_valid = (wl7ddrphy1_tappeddelayline110 | wl7ddrphy1_wlevel_en_storage);
+assign wl7ddrphy1_dfi_p1_rddata_valid = (wl7ddrphy1_tappeddelayline110 | wl7ddrphy1_wlevel_en_storage);
+assign wl7ddrphy1_dfi_p2_rddata_valid = (wl7ddrphy1_tappeddelayline110 | wl7ddrphy1_wlevel_en_storage);
+assign wl7ddrphy1_dfi_p3_rddata_valid = (wl7ddrphy1_tappeddelayline110 | wl7ddrphy1_wlevel_en_storage);
+assign wl7ddrphy1_dq_oe = wl7ddrphy1_tappeddelayline112;
 always @(*) begin
     wl7ddrphy1_dqs_oe = 1'd0;
     if (wl7ddrphy1_wlevel_en_storage) begin
@@ -33046,8 +31879,8 @@ always @(*) begin
         wl7ddrphy1_dqs_oe = wl7ddrphy1_dq_oe;
     end
 end
-assign wl7ddrphy1_dqs_preamble = (wl7ddrphy1_tappeddelayline110 & (~wl7ddrphy1_tappeddelayline111));
-assign wl7ddrphy1_dqs_postamble = (wl7ddrphy1_tappeddelayline112 & (~wl7ddrphy1_tappeddelayline111));
+assign wl7ddrphy1_dqs_preamble = (wl7ddrphy1_tappeddelayline111 & (~wl7ddrphy1_tappeddelayline112));
+assign wl7ddrphy1_dqs_postamble = (wl7ddrphy1_tappeddelayline113 & (~wl7ddrphy1_tappeddelayline112));
 always @(*) begin
     wl7ddrphy1_dqspattern1_o0 = 8'd0;
     wl7ddrphy1_dqspattern1_o0 = 7'd85;
@@ -39842,6 +38675,9 @@ always @(*) begin
             litedramcore1_multiplexer1_next_state = 4'd10;
         end
         4'd10: begin
+            litedramcore1_multiplexer1_next_state = 4'd11;
+        end
+        4'd11: begin
             litedramcore1_multiplexer1_next_state = 1'd1;
         end
         default: begin
@@ -39937,8 +38773,8 @@ assign litedramcrossbar1_cmd_ready0 = ((((((((1'd0 | (((litedramcore1_roundrobin
 assign litedramcrossbar1_cmd_ready1 = ((((((((1'd0 | (((litedramcore1_roundrobin8_grant == 1'd1) & ((litedramcrossbar1_cmd_payload_addr1[9:7] == 1'd0) & (~(((((((litedramcore1_locked1 | (litedramcore1_interface_bank1_lock & (litedramcore1_roundrobin9_grant == 1'd1))) | (litedramcore1_interface_bank2_lock & (litedramcore1_roundrobin10_grant == 1'd1))) | (litedramcore1_interface_bank3_lock & (litedramcore1_roundrobin11_grant == 1'd1))) | (litedramcore1_interface_bank4_lock & (litedramcore1_roundrobin12_grant == 1'd1))) | (litedramcore1_interface_bank5_lock & (litedramcore1_roundrobin13_grant == 1'd1))) | (litedramcore1_interface_bank6_lock & (litedramcore1_roundrobin14_grant == 1'd1))) | (litedramcore1_interface_bank7_lock & (litedramcore1_roundrobin15_grant == 1'd1)))))) & litedramcore1_interface_bank0_ready)) | (((litedramcore1_roundrobin9_grant == 1'd1) & ((litedramcrossbar1_cmd_payload_addr1[9:7] == 1'd1) & (~(((((((litedramcore1_locked3 | (litedramcore1_interface_bank0_lock & (litedramcore1_roundrobin8_grant == 1'd1))) | (litedramcore1_interface_bank2_lock & (litedramcore1_roundrobin10_grant == 1'd1))) | (litedramcore1_interface_bank3_lock & (litedramcore1_roundrobin11_grant == 1'd1))) | (litedramcore1_interface_bank4_lock & (litedramcore1_roundrobin12_grant == 1'd1))) | (litedramcore1_interface_bank5_lock & (litedramcore1_roundrobin13_grant == 1'd1))) | (litedramcore1_interface_bank6_lock & (litedramcore1_roundrobin14_grant == 1'd1))) | (litedramcore1_interface_bank7_lock & (litedramcore1_roundrobin15_grant == 1'd1)))))) & litedramcore1_interface_bank1_ready)) | (((litedramcore1_roundrobin10_grant == 1'd1) & ((litedramcrossbar1_cmd_payload_addr1[9:7] == 2'd2) & (~(((((((litedramcore1_locked5 | (litedramcore1_interface_bank0_lock & (litedramcore1_roundrobin8_grant == 1'd1))) | (litedramcore1_interface_bank1_lock & (litedramcore1_roundrobin9_grant == 1'd1))) | (litedramcore1_interface_bank3_lock & (litedramcore1_roundrobin11_grant == 1'd1))) | (litedramcore1_interface_bank4_lock & (litedramcore1_roundrobin12_grant == 1'd1))) | (litedramcore1_interface_bank5_lock & (litedramcore1_roundrobin13_grant == 1'd1))) | (litedramcore1_interface_bank6_lock & (litedramcore1_roundrobin14_grant == 1'd1))) | (litedramcore1_interface_bank7_lock & (litedramcore1_roundrobin15_grant == 1'd1)))))) & litedramcore1_interface_bank2_ready)) | (((litedramcore1_roundrobin11_grant == 1'd1) & ((litedramcrossbar1_cmd_payload_addr1[9:7] == 2'd3) & (~(((((((litedramcore1_locked7 | (litedramcore1_interface_bank0_lock & (litedramcore1_roundrobin8_grant == 1'd1))) | (litedramcore1_interface_bank1_lock & (litedramcore1_roundrobin9_grant == 1'd1))) | (litedramcore1_interface_bank2_lock & (litedramcore1_roundrobin10_grant == 1'd1))) | (litedramcore1_interface_bank4_lock & (litedramcore1_roundrobin12_grant == 1'd1))) | (litedramcore1_interface_bank5_lock & (litedramcore1_roundrobin13_grant == 1'd1))) | (litedramcore1_interface_bank6_lock & (litedramcore1_roundrobin14_grant == 1'd1))) | (litedramcore1_interface_bank7_lock & (litedramcore1_roundrobin15_grant == 1'd1)))))) & litedramcore1_interface_bank3_ready)) | (((litedramcore1_roundrobin12_grant == 1'd1) & ((litedramcrossbar1_cmd_payload_addr1[9:7] == 3'd4) & (~(((((((litedramcore1_locked9 | (litedramcore1_interface_bank0_lock & (litedramcore1_roundrobin8_grant == 1'd1))) | (litedramcore1_interface_bank1_lock & (litedramcore1_roundrobin9_grant == 1'd1))) | (litedramcore1_interface_bank2_lock & (litedramcore1_roundrobin10_grant == 1'd1))) | (litedramcore1_interface_bank3_lock & (litedramcore1_roundrobin11_grant == 1'd1))) | (litedramcore1_interface_bank5_lock & (litedramcore1_roundrobin13_grant == 1'd1))) | (litedramcore1_interface_bank6_lock & (litedramcore1_roundrobin14_grant == 1'd1))) | (litedramcore1_interface_bank7_lock & (litedramcore1_roundrobin15_grant == 1'd1)))))) & litedramcore1_interface_bank4_ready)) | (((litedramcore1_roundrobin13_grant == 1'd1) & ((litedramcrossbar1_cmd_payload_addr1[9:7] == 3'd5) & (~(((((((litedramcore1_locked11 | (litedramcore1_interface_bank0_lock & (litedramcore1_roundrobin8_grant == 1'd1))) | (litedramcore1_interface_bank1_lock & (litedramcore1_roundrobin9_grant == 1'd1))) | (litedramcore1_interface_bank2_lock & (litedramcore1_roundrobin10_grant == 1'd1))) | (litedramcore1_interface_bank3_lock & (litedramcore1_roundrobin11_grant == 1'd1))) | (litedramcore1_interface_bank4_lock & (litedramcore1_roundrobin12_grant == 1'd1))) | (litedramcore1_interface_bank6_lock & (litedramcore1_roundrobin14_grant == 1'd1))) | (litedramcore1_interface_bank7_lock & (litedramcore1_roundrobin15_grant == 1'd1)))))) & litedramcore1_interface_bank5_ready)) | (((litedramcore1_roundrobin14_grant == 1'd1) & ((litedramcrossbar1_cmd_payload_addr1[9:7] == 3'd6) & (~(((((((litedramcore1_locked13 | (litedramcore1_interface_bank0_lock & (litedramcore1_roundrobin8_grant == 1'd1))) | (litedramcore1_interface_bank1_lock & (litedramcore1_roundrobin9_grant == 1'd1))) | (litedramcore1_interface_bank2_lock & (litedramcore1_roundrobin10_grant == 1'd1))) | (litedramcore1_interface_bank3_lock & (litedramcore1_roundrobin11_grant == 1'd1))) | (litedramcore1_interface_bank4_lock & (litedramcore1_roundrobin12_grant == 1'd1))) | (litedramcore1_interface_bank5_lock & (litedramcore1_roundrobin13_grant == 1'd1))) | (litedramcore1_interface_bank7_lock & (litedramcore1_roundrobin15_grant == 1'd1)))))) & litedramcore1_interface_bank6_ready)) | (((litedramcore1_roundrobin15_grant == 1'd1) & ((litedramcrossbar1_cmd_payload_addr1[9:7] == 3'd7) & (~(((((((litedramcore1_locked15 | (litedramcore1_interface_bank0_lock & (litedramcore1_roundrobin8_grant == 1'd1))) | (litedramcore1_interface_bank1_lock & (litedramcore1_roundrobin9_grant == 1'd1))) | (litedramcore1_interface_bank2_lock & (litedramcore1_roundrobin10_grant == 1'd1))) | (litedramcore1_interface_bank3_lock & (litedramcore1_roundrobin11_grant == 1'd1))) | (litedramcore1_interface_bank4_lock & (litedramcore1_roundrobin12_grant == 1'd1))) | (litedramcore1_interface_bank5_lock & (litedramcore1_roundrobin13_grant == 1'd1))) | (litedramcore1_interface_bank6_lock & (litedramcore1_roundrobin14_grant == 1'd1)))))) & litedramcore1_interface_bank7_ready));
 assign litedramcrossbar1_wdata_ready0 = litedramcore1_new_master_wdata_ready1;
 assign litedramcrossbar1_wdata_ready1 = litedramcore1_new_master_wdata_ready3;
-assign litedramcrossbar1_rdata_valid0 = litedramcore1_new_master_rdata_valid8;
-assign litedramcrossbar1_rdata_valid1 = litedramcore1_new_master_rdata_valid17;
+assign litedramcrossbar1_rdata_valid0 = litedramcore1_new_master_rdata_valid9;
+assign litedramcrossbar1_rdata_valid1 = litedramcore1_new_master_rdata_valid19;
 always @(*) begin
     litedramcore1_interface_wdata = 576'd0;
     litedramcore1_interface_wdata_we = 72'd0;
@@ -54032,6 +52868,582 @@ always @(posedge sys_clk_1) begin
             writeclocks0_drp_dat_r_status <= writeclocks06;
         end
     end
+    wl7ddrphy0_dfi_p0_rddata[0] <= wl7ddrphy0_bitslip02[0];
+    wl7ddrphy0_dfi_p0_rddata[72] <= wl7ddrphy0_bitslip02[1];
+    wl7ddrphy0_dfi_p1_rddata[0] <= wl7ddrphy0_bitslip02[2];
+    wl7ddrphy0_dfi_p1_rddata[72] <= wl7ddrphy0_bitslip02[3];
+    wl7ddrphy0_dfi_p2_rddata[0] <= wl7ddrphy0_bitslip02[4];
+    wl7ddrphy0_dfi_p2_rddata[72] <= wl7ddrphy0_bitslip02[5];
+    wl7ddrphy0_dfi_p3_rddata[0] <= wl7ddrphy0_bitslip02[6];
+    wl7ddrphy0_dfi_p3_rddata[72] <= wl7ddrphy0_bitslip02[7];
+    wl7ddrphy0_dfi_p0_rddata[1] <= wl7ddrphy0_bitslip12[0];
+    wl7ddrphy0_dfi_p0_rddata[73] <= wl7ddrphy0_bitslip12[1];
+    wl7ddrphy0_dfi_p1_rddata[1] <= wl7ddrphy0_bitslip12[2];
+    wl7ddrphy0_dfi_p1_rddata[73] <= wl7ddrphy0_bitslip12[3];
+    wl7ddrphy0_dfi_p2_rddata[1] <= wl7ddrphy0_bitslip12[4];
+    wl7ddrphy0_dfi_p2_rddata[73] <= wl7ddrphy0_bitslip12[5];
+    wl7ddrphy0_dfi_p3_rddata[1] <= wl7ddrphy0_bitslip12[6];
+    wl7ddrphy0_dfi_p3_rddata[73] <= wl7ddrphy0_bitslip12[7];
+    wl7ddrphy0_dfi_p0_rddata[2] <= wl7ddrphy0_bitslip22[0];
+    wl7ddrphy0_dfi_p0_rddata[74] <= wl7ddrphy0_bitslip22[1];
+    wl7ddrphy0_dfi_p1_rddata[2] <= wl7ddrphy0_bitslip22[2];
+    wl7ddrphy0_dfi_p1_rddata[74] <= wl7ddrphy0_bitslip22[3];
+    wl7ddrphy0_dfi_p2_rddata[2] <= wl7ddrphy0_bitslip22[4];
+    wl7ddrphy0_dfi_p2_rddata[74] <= wl7ddrphy0_bitslip22[5];
+    wl7ddrphy0_dfi_p3_rddata[2] <= wl7ddrphy0_bitslip22[6];
+    wl7ddrphy0_dfi_p3_rddata[74] <= wl7ddrphy0_bitslip22[7];
+    wl7ddrphy0_dfi_p0_rddata[3] <= wl7ddrphy0_bitslip32[0];
+    wl7ddrphy0_dfi_p0_rddata[75] <= wl7ddrphy0_bitslip32[1];
+    wl7ddrphy0_dfi_p1_rddata[3] <= wl7ddrphy0_bitslip32[2];
+    wl7ddrphy0_dfi_p1_rddata[75] <= wl7ddrphy0_bitslip32[3];
+    wl7ddrphy0_dfi_p2_rddata[3] <= wl7ddrphy0_bitslip32[4];
+    wl7ddrphy0_dfi_p2_rddata[75] <= wl7ddrphy0_bitslip32[5];
+    wl7ddrphy0_dfi_p3_rddata[3] <= wl7ddrphy0_bitslip32[6];
+    wl7ddrphy0_dfi_p3_rddata[75] <= wl7ddrphy0_bitslip32[7];
+    wl7ddrphy0_dfi_p0_rddata[4] <= wl7ddrphy0_bitslip42[0];
+    wl7ddrphy0_dfi_p0_rddata[76] <= wl7ddrphy0_bitslip42[1];
+    wl7ddrphy0_dfi_p1_rddata[4] <= wl7ddrphy0_bitslip42[2];
+    wl7ddrphy0_dfi_p1_rddata[76] <= wl7ddrphy0_bitslip42[3];
+    wl7ddrphy0_dfi_p2_rddata[4] <= wl7ddrphy0_bitslip42[4];
+    wl7ddrphy0_dfi_p2_rddata[76] <= wl7ddrphy0_bitslip42[5];
+    wl7ddrphy0_dfi_p3_rddata[4] <= wl7ddrphy0_bitslip42[6];
+    wl7ddrphy0_dfi_p3_rddata[76] <= wl7ddrphy0_bitslip42[7];
+    wl7ddrphy0_dfi_p0_rddata[5] <= wl7ddrphy0_bitslip52[0];
+    wl7ddrphy0_dfi_p0_rddata[77] <= wl7ddrphy0_bitslip52[1];
+    wl7ddrphy0_dfi_p1_rddata[5] <= wl7ddrphy0_bitslip52[2];
+    wl7ddrphy0_dfi_p1_rddata[77] <= wl7ddrphy0_bitslip52[3];
+    wl7ddrphy0_dfi_p2_rddata[5] <= wl7ddrphy0_bitslip52[4];
+    wl7ddrphy0_dfi_p2_rddata[77] <= wl7ddrphy0_bitslip52[5];
+    wl7ddrphy0_dfi_p3_rddata[5] <= wl7ddrphy0_bitslip52[6];
+    wl7ddrphy0_dfi_p3_rddata[77] <= wl7ddrphy0_bitslip52[7];
+    wl7ddrphy0_dfi_p0_rddata[6] <= wl7ddrphy0_bitslip62[0];
+    wl7ddrphy0_dfi_p0_rddata[78] <= wl7ddrphy0_bitslip62[1];
+    wl7ddrphy0_dfi_p1_rddata[6] <= wl7ddrphy0_bitslip62[2];
+    wl7ddrphy0_dfi_p1_rddata[78] <= wl7ddrphy0_bitslip62[3];
+    wl7ddrphy0_dfi_p2_rddata[6] <= wl7ddrphy0_bitslip62[4];
+    wl7ddrphy0_dfi_p2_rddata[78] <= wl7ddrphy0_bitslip62[5];
+    wl7ddrphy0_dfi_p3_rddata[6] <= wl7ddrphy0_bitslip62[6];
+    wl7ddrphy0_dfi_p3_rddata[78] <= wl7ddrphy0_bitslip62[7];
+    wl7ddrphy0_dfi_p0_rddata[7] <= wl7ddrphy0_bitslip72[0];
+    wl7ddrphy0_dfi_p0_rddata[79] <= wl7ddrphy0_bitslip72[1];
+    wl7ddrphy0_dfi_p1_rddata[7] <= wl7ddrphy0_bitslip72[2];
+    wl7ddrphy0_dfi_p1_rddata[79] <= wl7ddrphy0_bitslip72[3];
+    wl7ddrphy0_dfi_p2_rddata[7] <= wl7ddrphy0_bitslip72[4];
+    wl7ddrphy0_dfi_p2_rddata[79] <= wl7ddrphy0_bitslip72[5];
+    wl7ddrphy0_dfi_p3_rddata[7] <= wl7ddrphy0_bitslip72[6];
+    wl7ddrphy0_dfi_p3_rddata[79] <= wl7ddrphy0_bitslip72[7];
+    wl7ddrphy0_dfi_p0_rddata[8] <= wl7ddrphy0_bitslip82[0];
+    wl7ddrphy0_dfi_p0_rddata[80] <= wl7ddrphy0_bitslip82[1];
+    wl7ddrphy0_dfi_p1_rddata[8] <= wl7ddrphy0_bitslip82[2];
+    wl7ddrphy0_dfi_p1_rddata[80] <= wl7ddrphy0_bitslip82[3];
+    wl7ddrphy0_dfi_p2_rddata[8] <= wl7ddrphy0_bitslip82[4];
+    wl7ddrphy0_dfi_p2_rddata[80] <= wl7ddrphy0_bitslip82[5];
+    wl7ddrphy0_dfi_p3_rddata[8] <= wl7ddrphy0_bitslip82[6];
+    wl7ddrphy0_dfi_p3_rddata[80] <= wl7ddrphy0_bitslip82[7];
+    wl7ddrphy0_dfi_p0_rddata[9] <= wl7ddrphy0_bitslip91[0];
+    wl7ddrphy0_dfi_p0_rddata[81] <= wl7ddrphy0_bitslip91[1];
+    wl7ddrphy0_dfi_p1_rddata[9] <= wl7ddrphy0_bitslip91[2];
+    wl7ddrphy0_dfi_p1_rddata[81] <= wl7ddrphy0_bitslip91[3];
+    wl7ddrphy0_dfi_p2_rddata[9] <= wl7ddrphy0_bitslip91[4];
+    wl7ddrphy0_dfi_p2_rddata[81] <= wl7ddrphy0_bitslip91[5];
+    wl7ddrphy0_dfi_p3_rddata[9] <= wl7ddrphy0_bitslip91[6];
+    wl7ddrphy0_dfi_p3_rddata[81] <= wl7ddrphy0_bitslip91[7];
+    wl7ddrphy0_dfi_p0_rddata[10] <= wl7ddrphy0_bitslip101[0];
+    wl7ddrphy0_dfi_p0_rddata[82] <= wl7ddrphy0_bitslip101[1];
+    wl7ddrphy0_dfi_p1_rddata[10] <= wl7ddrphy0_bitslip101[2];
+    wl7ddrphy0_dfi_p1_rddata[82] <= wl7ddrphy0_bitslip101[3];
+    wl7ddrphy0_dfi_p2_rddata[10] <= wl7ddrphy0_bitslip101[4];
+    wl7ddrphy0_dfi_p2_rddata[82] <= wl7ddrphy0_bitslip101[5];
+    wl7ddrphy0_dfi_p3_rddata[10] <= wl7ddrphy0_bitslip101[6];
+    wl7ddrphy0_dfi_p3_rddata[82] <= wl7ddrphy0_bitslip101[7];
+    wl7ddrphy0_dfi_p0_rddata[11] <= wl7ddrphy0_bitslip111[0];
+    wl7ddrphy0_dfi_p0_rddata[83] <= wl7ddrphy0_bitslip111[1];
+    wl7ddrphy0_dfi_p1_rddata[11] <= wl7ddrphy0_bitslip111[2];
+    wl7ddrphy0_dfi_p1_rddata[83] <= wl7ddrphy0_bitslip111[3];
+    wl7ddrphy0_dfi_p2_rddata[11] <= wl7ddrphy0_bitslip111[4];
+    wl7ddrphy0_dfi_p2_rddata[83] <= wl7ddrphy0_bitslip111[5];
+    wl7ddrphy0_dfi_p3_rddata[11] <= wl7ddrphy0_bitslip111[6];
+    wl7ddrphy0_dfi_p3_rddata[83] <= wl7ddrphy0_bitslip111[7];
+    wl7ddrphy0_dfi_p0_rddata[12] <= wl7ddrphy0_bitslip121[0];
+    wl7ddrphy0_dfi_p0_rddata[84] <= wl7ddrphy0_bitslip121[1];
+    wl7ddrphy0_dfi_p1_rddata[12] <= wl7ddrphy0_bitslip121[2];
+    wl7ddrphy0_dfi_p1_rddata[84] <= wl7ddrphy0_bitslip121[3];
+    wl7ddrphy0_dfi_p2_rddata[12] <= wl7ddrphy0_bitslip121[4];
+    wl7ddrphy0_dfi_p2_rddata[84] <= wl7ddrphy0_bitslip121[5];
+    wl7ddrphy0_dfi_p3_rddata[12] <= wl7ddrphy0_bitslip121[6];
+    wl7ddrphy0_dfi_p3_rddata[84] <= wl7ddrphy0_bitslip121[7];
+    wl7ddrphy0_dfi_p0_rddata[13] <= wl7ddrphy0_bitslip131[0];
+    wl7ddrphy0_dfi_p0_rddata[85] <= wl7ddrphy0_bitslip131[1];
+    wl7ddrphy0_dfi_p1_rddata[13] <= wl7ddrphy0_bitslip131[2];
+    wl7ddrphy0_dfi_p1_rddata[85] <= wl7ddrphy0_bitslip131[3];
+    wl7ddrphy0_dfi_p2_rddata[13] <= wl7ddrphy0_bitslip131[4];
+    wl7ddrphy0_dfi_p2_rddata[85] <= wl7ddrphy0_bitslip131[5];
+    wl7ddrphy0_dfi_p3_rddata[13] <= wl7ddrphy0_bitslip131[6];
+    wl7ddrphy0_dfi_p3_rddata[85] <= wl7ddrphy0_bitslip131[7];
+    wl7ddrphy0_dfi_p0_rddata[14] <= wl7ddrphy0_bitslip141[0];
+    wl7ddrphy0_dfi_p0_rddata[86] <= wl7ddrphy0_bitslip141[1];
+    wl7ddrphy0_dfi_p1_rddata[14] <= wl7ddrphy0_bitslip141[2];
+    wl7ddrphy0_dfi_p1_rddata[86] <= wl7ddrphy0_bitslip141[3];
+    wl7ddrphy0_dfi_p2_rddata[14] <= wl7ddrphy0_bitslip141[4];
+    wl7ddrphy0_dfi_p2_rddata[86] <= wl7ddrphy0_bitslip141[5];
+    wl7ddrphy0_dfi_p3_rddata[14] <= wl7ddrphy0_bitslip141[6];
+    wl7ddrphy0_dfi_p3_rddata[86] <= wl7ddrphy0_bitslip141[7];
+    wl7ddrphy0_dfi_p0_rddata[15] <= wl7ddrphy0_bitslip151[0];
+    wl7ddrphy0_dfi_p0_rddata[87] <= wl7ddrphy0_bitslip151[1];
+    wl7ddrphy0_dfi_p1_rddata[15] <= wl7ddrphy0_bitslip151[2];
+    wl7ddrphy0_dfi_p1_rddata[87] <= wl7ddrphy0_bitslip151[3];
+    wl7ddrphy0_dfi_p2_rddata[15] <= wl7ddrphy0_bitslip151[4];
+    wl7ddrphy0_dfi_p2_rddata[87] <= wl7ddrphy0_bitslip151[5];
+    wl7ddrphy0_dfi_p3_rddata[15] <= wl7ddrphy0_bitslip151[6];
+    wl7ddrphy0_dfi_p3_rddata[87] <= wl7ddrphy0_bitslip151[7];
+    wl7ddrphy0_dfi_p0_rddata[16] <= wl7ddrphy0_bitslip161[0];
+    wl7ddrphy0_dfi_p0_rddata[88] <= wl7ddrphy0_bitslip161[1];
+    wl7ddrphy0_dfi_p1_rddata[16] <= wl7ddrphy0_bitslip161[2];
+    wl7ddrphy0_dfi_p1_rddata[88] <= wl7ddrphy0_bitslip161[3];
+    wl7ddrphy0_dfi_p2_rddata[16] <= wl7ddrphy0_bitslip161[4];
+    wl7ddrphy0_dfi_p2_rddata[88] <= wl7ddrphy0_bitslip161[5];
+    wl7ddrphy0_dfi_p3_rddata[16] <= wl7ddrphy0_bitslip161[6];
+    wl7ddrphy0_dfi_p3_rddata[88] <= wl7ddrphy0_bitslip161[7];
+    wl7ddrphy0_dfi_p0_rddata[17] <= wl7ddrphy0_bitslip171[0];
+    wl7ddrphy0_dfi_p0_rddata[89] <= wl7ddrphy0_bitslip171[1];
+    wl7ddrphy0_dfi_p1_rddata[17] <= wl7ddrphy0_bitslip171[2];
+    wl7ddrphy0_dfi_p1_rddata[89] <= wl7ddrphy0_bitslip171[3];
+    wl7ddrphy0_dfi_p2_rddata[17] <= wl7ddrphy0_bitslip171[4];
+    wl7ddrphy0_dfi_p2_rddata[89] <= wl7ddrphy0_bitslip171[5];
+    wl7ddrphy0_dfi_p3_rddata[17] <= wl7ddrphy0_bitslip171[6];
+    wl7ddrphy0_dfi_p3_rddata[89] <= wl7ddrphy0_bitslip171[7];
+    wl7ddrphy0_dfi_p0_rddata[18] <= wl7ddrphy0_bitslip181[0];
+    wl7ddrphy0_dfi_p0_rddata[90] <= wl7ddrphy0_bitslip181[1];
+    wl7ddrphy0_dfi_p1_rddata[18] <= wl7ddrphy0_bitslip181[2];
+    wl7ddrphy0_dfi_p1_rddata[90] <= wl7ddrphy0_bitslip181[3];
+    wl7ddrphy0_dfi_p2_rddata[18] <= wl7ddrphy0_bitslip181[4];
+    wl7ddrphy0_dfi_p2_rddata[90] <= wl7ddrphy0_bitslip181[5];
+    wl7ddrphy0_dfi_p3_rddata[18] <= wl7ddrphy0_bitslip181[6];
+    wl7ddrphy0_dfi_p3_rddata[90] <= wl7ddrphy0_bitslip181[7];
+    wl7ddrphy0_dfi_p0_rddata[19] <= wl7ddrphy0_bitslip191[0];
+    wl7ddrphy0_dfi_p0_rddata[91] <= wl7ddrphy0_bitslip191[1];
+    wl7ddrphy0_dfi_p1_rddata[19] <= wl7ddrphy0_bitslip191[2];
+    wl7ddrphy0_dfi_p1_rddata[91] <= wl7ddrphy0_bitslip191[3];
+    wl7ddrphy0_dfi_p2_rddata[19] <= wl7ddrphy0_bitslip191[4];
+    wl7ddrphy0_dfi_p2_rddata[91] <= wl7ddrphy0_bitslip191[5];
+    wl7ddrphy0_dfi_p3_rddata[19] <= wl7ddrphy0_bitslip191[6];
+    wl7ddrphy0_dfi_p3_rddata[91] <= wl7ddrphy0_bitslip191[7];
+    wl7ddrphy0_dfi_p0_rddata[20] <= wl7ddrphy0_bitslip201[0];
+    wl7ddrphy0_dfi_p0_rddata[92] <= wl7ddrphy0_bitslip201[1];
+    wl7ddrphy0_dfi_p1_rddata[20] <= wl7ddrphy0_bitslip201[2];
+    wl7ddrphy0_dfi_p1_rddata[92] <= wl7ddrphy0_bitslip201[3];
+    wl7ddrphy0_dfi_p2_rddata[20] <= wl7ddrphy0_bitslip201[4];
+    wl7ddrphy0_dfi_p2_rddata[92] <= wl7ddrphy0_bitslip201[5];
+    wl7ddrphy0_dfi_p3_rddata[20] <= wl7ddrphy0_bitslip201[6];
+    wl7ddrphy0_dfi_p3_rddata[92] <= wl7ddrphy0_bitslip201[7];
+    wl7ddrphy0_dfi_p0_rddata[21] <= wl7ddrphy0_bitslip211[0];
+    wl7ddrphy0_dfi_p0_rddata[93] <= wl7ddrphy0_bitslip211[1];
+    wl7ddrphy0_dfi_p1_rddata[21] <= wl7ddrphy0_bitslip211[2];
+    wl7ddrphy0_dfi_p1_rddata[93] <= wl7ddrphy0_bitslip211[3];
+    wl7ddrphy0_dfi_p2_rddata[21] <= wl7ddrphy0_bitslip211[4];
+    wl7ddrphy0_dfi_p2_rddata[93] <= wl7ddrphy0_bitslip211[5];
+    wl7ddrphy0_dfi_p3_rddata[21] <= wl7ddrphy0_bitslip211[6];
+    wl7ddrphy0_dfi_p3_rddata[93] <= wl7ddrphy0_bitslip211[7];
+    wl7ddrphy0_dfi_p0_rddata[22] <= wl7ddrphy0_bitslip221[0];
+    wl7ddrphy0_dfi_p0_rddata[94] <= wl7ddrphy0_bitslip221[1];
+    wl7ddrphy0_dfi_p1_rddata[22] <= wl7ddrphy0_bitslip221[2];
+    wl7ddrphy0_dfi_p1_rddata[94] <= wl7ddrphy0_bitslip221[3];
+    wl7ddrphy0_dfi_p2_rddata[22] <= wl7ddrphy0_bitslip221[4];
+    wl7ddrphy0_dfi_p2_rddata[94] <= wl7ddrphy0_bitslip221[5];
+    wl7ddrphy0_dfi_p3_rddata[22] <= wl7ddrphy0_bitslip221[6];
+    wl7ddrphy0_dfi_p3_rddata[94] <= wl7ddrphy0_bitslip221[7];
+    wl7ddrphy0_dfi_p0_rddata[23] <= wl7ddrphy0_bitslip231[0];
+    wl7ddrphy0_dfi_p0_rddata[95] <= wl7ddrphy0_bitslip231[1];
+    wl7ddrphy0_dfi_p1_rddata[23] <= wl7ddrphy0_bitslip231[2];
+    wl7ddrphy0_dfi_p1_rddata[95] <= wl7ddrphy0_bitslip231[3];
+    wl7ddrphy0_dfi_p2_rddata[23] <= wl7ddrphy0_bitslip231[4];
+    wl7ddrphy0_dfi_p2_rddata[95] <= wl7ddrphy0_bitslip231[5];
+    wl7ddrphy0_dfi_p3_rddata[23] <= wl7ddrphy0_bitslip231[6];
+    wl7ddrphy0_dfi_p3_rddata[95] <= wl7ddrphy0_bitslip231[7];
+    wl7ddrphy0_dfi_p0_rddata[24] <= wl7ddrphy0_bitslip241[0];
+    wl7ddrphy0_dfi_p0_rddata[96] <= wl7ddrphy0_bitslip241[1];
+    wl7ddrphy0_dfi_p1_rddata[24] <= wl7ddrphy0_bitslip241[2];
+    wl7ddrphy0_dfi_p1_rddata[96] <= wl7ddrphy0_bitslip241[3];
+    wl7ddrphy0_dfi_p2_rddata[24] <= wl7ddrphy0_bitslip241[4];
+    wl7ddrphy0_dfi_p2_rddata[96] <= wl7ddrphy0_bitslip241[5];
+    wl7ddrphy0_dfi_p3_rddata[24] <= wl7ddrphy0_bitslip241[6];
+    wl7ddrphy0_dfi_p3_rddata[96] <= wl7ddrphy0_bitslip241[7];
+    wl7ddrphy0_dfi_p0_rddata[25] <= wl7ddrphy0_bitslip251[0];
+    wl7ddrphy0_dfi_p0_rddata[97] <= wl7ddrphy0_bitslip251[1];
+    wl7ddrphy0_dfi_p1_rddata[25] <= wl7ddrphy0_bitslip251[2];
+    wl7ddrphy0_dfi_p1_rddata[97] <= wl7ddrphy0_bitslip251[3];
+    wl7ddrphy0_dfi_p2_rddata[25] <= wl7ddrphy0_bitslip251[4];
+    wl7ddrphy0_dfi_p2_rddata[97] <= wl7ddrphy0_bitslip251[5];
+    wl7ddrphy0_dfi_p3_rddata[25] <= wl7ddrphy0_bitslip251[6];
+    wl7ddrphy0_dfi_p3_rddata[97] <= wl7ddrphy0_bitslip251[7];
+    wl7ddrphy0_dfi_p0_rddata[26] <= wl7ddrphy0_bitslip261[0];
+    wl7ddrphy0_dfi_p0_rddata[98] <= wl7ddrphy0_bitslip261[1];
+    wl7ddrphy0_dfi_p1_rddata[26] <= wl7ddrphy0_bitslip261[2];
+    wl7ddrphy0_dfi_p1_rddata[98] <= wl7ddrphy0_bitslip261[3];
+    wl7ddrphy0_dfi_p2_rddata[26] <= wl7ddrphy0_bitslip261[4];
+    wl7ddrphy0_dfi_p2_rddata[98] <= wl7ddrphy0_bitslip261[5];
+    wl7ddrphy0_dfi_p3_rddata[26] <= wl7ddrphy0_bitslip261[6];
+    wl7ddrphy0_dfi_p3_rddata[98] <= wl7ddrphy0_bitslip261[7];
+    wl7ddrphy0_dfi_p0_rddata[27] <= wl7ddrphy0_bitslip271[0];
+    wl7ddrphy0_dfi_p0_rddata[99] <= wl7ddrphy0_bitslip271[1];
+    wl7ddrphy0_dfi_p1_rddata[27] <= wl7ddrphy0_bitslip271[2];
+    wl7ddrphy0_dfi_p1_rddata[99] <= wl7ddrphy0_bitslip271[3];
+    wl7ddrphy0_dfi_p2_rddata[27] <= wl7ddrphy0_bitslip271[4];
+    wl7ddrphy0_dfi_p2_rddata[99] <= wl7ddrphy0_bitslip271[5];
+    wl7ddrphy0_dfi_p3_rddata[27] <= wl7ddrphy0_bitslip271[6];
+    wl7ddrphy0_dfi_p3_rddata[99] <= wl7ddrphy0_bitslip271[7];
+    wl7ddrphy0_dfi_p0_rddata[28] <= wl7ddrphy0_bitslip281[0];
+    wl7ddrphy0_dfi_p0_rddata[100] <= wl7ddrphy0_bitslip281[1];
+    wl7ddrphy0_dfi_p1_rddata[28] <= wl7ddrphy0_bitslip281[2];
+    wl7ddrphy0_dfi_p1_rddata[100] <= wl7ddrphy0_bitslip281[3];
+    wl7ddrphy0_dfi_p2_rddata[28] <= wl7ddrphy0_bitslip281[4];
+    wl7ddrphy0_dfi_p2_rddata[100] <= wl7ddrphy0_bitslip281[5];
+    wl7ddrphy0_dfi_p3_rddata[28] <= wl7ddrphy0_bitslip281[6];
+    wl7ddrphy0_dfi_p3_rddata[100] <= wl7ddrphy0_bitslip281[7];
+    wl7ddrphy0_dfi_p0_rddata[29] <= wl7ddrphy0_bitslip291[0];
+    wl7ddrphy0_dfi_p0_rddata[101] <= wl7ddrphy0_bitslip291[1];
+    wl7ddrphy0_dfi_p1_rddata[29] <= wl7ddrphy0_bitslip291[2];
+    wl7ddrphy0_dfi_p1_rddata[101] <= wl7ddrphy0_bitslip291[3];
+    wl7ddrphy0_dfi_p2_rddata[29] <= wl7ddrphy0_bitslip291[4];
+    wl7ddrphy0_dfi_p2_rddata[101] <= wl7ddrphy0_bitslip291[5];
+    wl7ddrphy0_dfi_p3_rddata[29] <= wl7ddrphy0_bitslip291[6];
+    wl7ddrphy0_dfi_p3_rddata[101] <= wl7ddrphy0_bitslip291[7];
+    wl7ddrphy0_dfi_p0_rddata[30] <= wl7ddrphy0_bitslip301[0];
+    wl7ddrphy0_dfi_p0_rddata[102] <= wl7ddrphy0_bitslip301[1];
+    wl7ddrphy0_dfi_p1_rddata[30] <= wl7ddrphy0_bitslip301[2];
+    wl7ddrphy0_dfi_p1_rddata[102] <= wl7ddrphy0_bitslip301[3];
+    wl7ddrphy0_dfi_p2_rddata[30] <= wl7ddrphy0_bitslip301[4];
+    wl7ddrphy0_dfi_p2_rddata[102] <= wl7ddrphy0_bitslip301[5];
+    wl7ddrphy0_dfi_p3_rddata[30] <= wl7ddrphy0_bitslip301[6];
+    wl7ddrphy0_dfi_p3_rddata[102] <= wl7ddrphy0_bitslip301[7];
+    wl7ddrphy0_dfi_p0_rddata[31] <= wl7ddrphy0_bitslip311[0];
+    wl7ddrphy0_dfi_p0_rddata[103] <= wl7ddrphy0_bitslip311[1];
+    wl7ddrphy0_dfi_p1_rddata[31] <= wl7ddrphy0_bitslip311[2];
+    wl7ddrphy0_dfi_p1_rddata[103] <= wl7ddrphy0_bitslip311[3];
+    wl7ddrphy0_dfi_p2_rddata[31] <= wl7ddrphy0_bitslip311[4];
+    wl7ddrphy0_dfi_p2_rddata[103] <= wl7ddrphy0_bitslip311[5];
+    wl7ddrphy0_dfi_p3_rddata[31] <= wl7ddrphy0_bitslip311[6];
+    wl7ddrphy0_dfi_p3_rddata[103] <= wl7ddrphy0_bitslip311[7];
+    wl7ddrphy0_dfi_p0_rddata[32] <= wl7ddrphy0_bitslip321[0];
+    wl7ddrphy0_dfi_p0_rddata[104] <= wl7ddrphy0_bitslip321[1];
+    wl7ddrphy0_dfi_p1_rddata[32] <= wl7ddrphy0_bitslip321[2];
+    wl7ddrphy0_dfi_p1_rddata[104] <= wl7ddrphy0_bitslip321[3];
+    wl7ddrphy0_dfi_p2_rddata[32] <= wl7ddrphy0_bitslip321[4];
+    wl7ddrphy0_dfi_p2_rddata[104] <= wl7ddrphy0_bitslip321[5];
+    wl7ddrphy0_dfi_p3_rddata[32] <= wl7ddrphy0_bitslip321[6];
+    wl7ddrphy0_dfi_p3_rddata[104] <= wl7ddrphy0_bitslip321[7];
+    wl7ddrphy0_dfi_p0_rddata[33] <= wl7ddrphy0_bitslip331[0];
+    wl7ddrphy0_dfi_p0_rddata[105] <= wl7ddrphy0_bitslip331[1];
+    wl7ddrphy0_dfi_p1_rddata[33] <= wl7ddrphy0_bitslip331[2];
+    wl7ddrphy0_dfi_p1_rddata[105] <= wl7ddrphy0_bitslip331[3];
+    wl7ddrphy0_dfi_p2_rddata[33] <= wl7ddrphy0_bitslip331[4];
+    wl7ddrphy0_dfi_p2_rddata[105] <= wl7ddrphy0_bitslip331[5];
+    wl7ddrphy0_dfi_p3_rddata[33] <= wl7ddrphy0_bitslip331[6];
+    wl7ddrphy0_dfi_p3_rddata[105] <= wl7ddrphy0_bitslip331[7];
+    wl7ddrphy0_dfi_p0_rddata[34] <= wl7ddrphy0_bitslip341[0];
+    wl7ddrphy0_dfi_p0_rddata[106] <= wl7ddrphy0_bitslip341[1];
+    wl7ddrphy0_dfi_p1_rddata[34] <= wl7ddrphy0_bitslip341[2];
+    wl7ddrphy0_dfi_p1_rddata[106] <= wl7ddrphy0_bitslip341[3];
+    wl7ddrphy0_dfi_p2_rddata[34] <= wl7ddrphy0_bitslip341[4];
+    wl7ddrphy0_dfi_p2_rddata[106] <= wl7ddrphy0_bitslip341[5];
+    wl7ddrphy0_dfi_p3_rddata[34] <= wl7ddrphy0_bitslip341[6];
+    wl7ddrphy0_dfi_p3_rddata[106] <= wl7ddrphy0_bitslip341[7];
+    wl7ddrphy0_dfi_p0_rddata[35] <= wl7ddrphy0_bitslip351[0];
+    wl7ddrphy0_dfi_p0_rddata[107] <= wl7ddrphy0_bitslip351[1];
+    wl7ddrphy0_dfi_p1_rddata[35] <= wl7ddrphy0_bitslip351[2];
+    wl7ddrphy0_dfi_p1_rddata[107] <= wl7ddrphy0_bitslip351[3];
+    wl7ddrphy0_dfi_p2_rddata[35] <= wl7ddrphy0_bitslip351[4];
+    wl7ddrphy0_dfi_p2_rddata[107] <= wl7ddrphy0_bitslip351[5];
+    wl7ddrphy0_dfi_p3_rddata[35] <= wl7ddrphy0_bitslip351[6];
+    wl7ddrphy0_dfi_p3_rddata[107] <= wl7ddrphy0_bitslip351[7];
+    wl7ddrphy0_dfi_p0_rddata[36] <= wl7ddrphy0_bitslip361[0];
+    wl7ddrphy0_dfi_p0_rddata[108] <= wl7ddrphy0_bitslip361[1];
+    wl7ddrphy0_dfi_p1_rddata[36] <= wl7ddrphy0_bitslip361[2];
+    wl7ddrphy0_dfi_p1_rddata[108] <= wl7ddrphy0_bitslip361[3];
+    wl7ddrphy0_dfi_p2_rddata[36] <= wl7ddrphy0_bitslip361[4];
+    wl7ddrphy0_dfi_p2_rddata[108] <= wl7ddrphy0_bitslip361[5];
+    wl7ddrphy0_dfi_p3_rddata[36] <= wl7ddrphy0_bitslip361[6];
+    wl7ddrphy0_dfi_p3_rddata[108] <= wl7ddrphy0_bitslip361[7];
+    wl7ddrphy0_dfi_p0_rddata[37] <= wl7ddrphy0_bitslip371[0];
+    wl7ddrphy0_dfi_p0_rddata[109] <= wl7ddrphy0_bitslip371[1];
+    wl7ddrphy0_dfi_p1_rddata[37] <= wl7ddrphy0_bitslip371[2];
+    wl7ddrphy0_dfi_p1_rddata[109] <= wl7ddrphy0_bitslip371[3];
+    wl7ddrphy0_dfi_p2_rddata[37] <= wl7ddrphy0_bitslip371[4];
+    wl7ddrphy0_dfi_p2_rddata[109] <= wl7ddrphy0_bitslip371[5];
+    wl7ddrphy0_dfi_p3_rddata[37] <= wl7ddrphy0_bitslip371[6];
+    wl7ddrphy0_dfi_p3_rddata[109] <= wl7ddrphy0_bitslip371[7];
+    wl7ddrphy0_dfi_p0_rddata[38] <= wl7ddrphy0_bitslip381[0];
+    wl7ddrphy0_dfi_p0_rddata[110] <= wl7ddrphy0_bitslip381[1];
+    wl7ddrphy0_dfi_p1_rddata[38] <= wl7ddrphy0_bitslip381[2];
+    wl7ddrphy0_dfi_p1_rddata[110] <= wl7ddrphy0_bitslip381[3];
+    wl7ddrphy0_dfi_p2_rddata[38] <= wl7ddrphy0_bitslip381[4];
+    wl7ddrphy0_dfi_p2_rddata[110] <= wl7ddrphy0_bitslip381[5];
+    wl7ddrphy0_dfi_p3_rddata[38] <= wl7ddrphy0_bitslip381[6];
+    wl7ddrphy0_dfi_p3_rddata[110] <= wl7ddrphy0_bitslip381[7];
+    wl7ddrphy0_dfi_p0_rddata[39] <= wl7ddrphy0_bitslip391[0];
+    wl7ddrphy0_dfi_p0_rddata[111] <= wl7ddrphy0_bitslip391[1];
+    wl7ddrphy0_dfi_p1_rddata[39] <= wl7ddrphy0_bitslip391[2];
+    wl7ddrphy0_dfi_p1_rddata[111] <= wl7ddrphy0_bitslip391[3];
+    wl7ddrphy0_dfi_p2_rddata[39] <= wl7ddrphy0_bitslip391[4];
+    wl7ddrphy0_dfi_p2_rddata[111] <= wl7ddrphy0_bitslip391[5];
+    wl7ddrphy0_dfi_p3_rddata[39] <= wl7ddrphy0_bitslip391[6];
+    wl7ddrphy0_dfi_p3_rddata[111] <= wl7ddrphy0_bitslip391[7];
+    wl7ddrphy0_dfi_p0_rddata[40] <= wl7ddrphy0_bitslip401[0];
+    wl7ddrphy0_dfi_p0_rddata[112] <= wl7ddrphy0_bitslip401[1];
+    wl7ddrphy0_dfi_p1_rddata[40] <= wl7ddrphy0_bitslip401[2];
+    wl7ddrphy0_dfi_p1_rddata[112] <= wl7ddrphy0_bitslip401[3];
+    wl7ddrphy0_dfi_p2_rddata[40] <= wl7ddrphy0_bitslip401[4];
+    wl7ddrphy0_dfi_p2_rddata[112] <= wl7ddrphy0_bitslip401[5];
+    wl7ddrphy0_dfi_p3_rddata[40] <= wl7ddrphy0_bitslip401[6];
+    wl7ddrphy0_dfi_p3_rddata[112] <= wl7ddrphy0_bitslip401[7];
+    wl7ddrphy0_dfi_p0_rddata[41] <= wl7ddrphy0_bitslip411[0];
+    wl7ddrphy0_dfi_p0_rddata[113] <= wl7ddrphy0_bitslip411[1];
+    wl7ddrphy0_dfi_p1_rddata[41] <= wl7ddrphy0_bitslip411[2];
+    wl7ddrphy0_dfi_p1_rddata[113] <= wl7ddrphy0_bitslip411[3];
+    wl7ddrphy0_dfi_p2_rddata[41] <= wl7ddrphy0_bitslip411[4];
+    wl7ddrphy0_dfi_p2_rddata[113] <= wl7ddrphy0_bitslip411[5];
+    wl7ddrphy0_dfi_p3_rddata[41] <= wl7ddrphy0_bitslip411[6];
+    wl7ddrphy0_dfi_p3_rddata[113] <= wl7ddrphy0_bitslip411[7];
+    wl7ddrphy0_dfi_p0_rddata[42] <= wl7ddrphy0_bitslip421[0];
+    wl7ddrphy0_dfi_p0_rddata[114] <= wl7ddrphy0_bitslip421[1];
+    wl7ddrphy0_dfi_p1_rddata[42] <= wl7ddrphy0_bitslip421[2];
+    wl7ddrphy0_dfi_p1_rddata[114] <= wl7ddrphy0_bitslip421[3];
+    wl7ddrphy0_dfi_p2_rddata[42] <= wl7ddrphy0_bitslip421[4];
+    wl7ddrphy0_dfi_p2_rddata[114] <= wl7ddrphy0_bitslip421[5];
+    wl7ddrphy0_dfi_p3_rddata[42] <= wl7ddrphy0_bitslip421[6];
+    wl7ddrphy0_dfi_p3_rddata[114] <= wl7ddrphy0_bitslip421[7];
+    wl7ddrphy0_dfi_p0_rddata[43] <= wl7ddrphy0_bitslip431[0];
+    wl7ddrphy0_dfi_p0_rddata[115] <= wl7ddrphy0_bitslip431[1];
+    wl7ddrphy0_dfi_p1_rddata[43] <= wl7ddrphy0_bitslip431[2];
+    wl7ddrphy0_dfi_p1_rddata[115] <= wl7ddrphy0_bitslip431[3];
+    wl7ddrphy0_dfi_p2_rddata[43] <= wl7ddrphy0_bitslip431[4];
+    wl7ddrphy0_dfi_p2_rddata[115] <= wl7ddrphy0_bitslip431[5];
+    wl7ddrphy0_dfi_p3_rddata[43] <= wl7ddrphy0_bitslip431[6];
+    wl7ddrphy0_dfi_p3_rddata[115] <= wl7ddrphy0_bitslip431[7];
+    wl7ddrphy0_dfi_p0_rddata[44] <= wl7ddrphy0_bitslip441[0];
+    wl7ddrphy0_dfi_p0_rddata[116] <= wl7ddrphy0_bitslip441[1];
+    wl7ddrphy0_dfi_p1_rddata[44] <= wl7ddrphy0_bitslip441[2];
+    wl7ddrphy0_dfi_p1_rddata[116] <= wl7ddrphy0_bitslip441[3];
+    wl7ddrphy0_dfi_p2_rddata[44] <= wl7ddrphy0_bitslip441[4];
+    wl7ddrphy0_dfi_p2_rddata[116] <= wl7ddrphy0_bitslip441[5];
+    wl7ddrphy0_dfi_p3_rddata[44] <= wl7ddrphy0_bitslip441[6];
+    wl7ddrphy0_dfi_p3_rddata[116] <= wl7ddrphy0_bitslip441[7];
+    wl7ddrphy0_dfi_p0_rddata[45] <= wl7ddrphy0_bitslip451[0];
+    wl7ddrphy0_dfi_p0_rddata[117] <= wl7ddrphy0_bitslip451[1];
+    wl7ddrphy0_dfi_p1_rddata[45] <= wl7ddrphy0_bitslip451[2];
+    wl7ddrphy0_dfi_p1_rddata[117] <= wl7ddrphy0_bitslip451[3];
+    wl7ddrphy0_dfi_p2_rddata[45] <= wl7ddrphy0_bitslip451[4];
+    wl7ddrphy0_dfi_p2_rddata[117] <= wl7ddrphy0_bitslip451[5];
+    wl7ddrphy0_dfi_p3_rddata[45] <= wl7ddrphy0_bitslip451[6];
+    wl7ddrphy0_dfi_p3_rddata[117] <= wl7ddrphy0_bitslip451[7];
+    wl7ddrphy0_dfi_p0_rddata[46] <= wl7ddrphy0_bitslip461[0];
+    wl7ddrphy0_dfi_p0_rddata[118] <= wl7ddrphy0_bitslip461[1];
+    wl7ddrphy0_dfi_p1_rddata[46] <= wl7ddrphy0_bitslip461[2];
+    wl7ddrphy0_dfi_p1_rddata[118] <= wl7ddrphy0_bitslip461[3];
+    wl7ddrphy0_dfi_p2_rddata[46] <= wl7ddrphy0_bitslip461[4];
+    wl7ddrphy0_dfi_p2_rddata[118] <= wl7ddrphy0_bitslip461[5];
+    wl7ddrphy0_dfi_p3_rddata[46] <= wl7ddrphy0_bitslip461[6];
+    wl7ddrphy0_dfi_p3_rddata[118] <= wl7ddrphy0_bitslip461[7];
+    wl7ddrphy0_dfi_p0_rddata[47] <= wl7ddrphy0_bitslip471[0];
+    wl7ddrphy0_dfi_p0_rddata[119] <= wl7ddrphy0_bitslip471[1];
+    wl7ddrphy0_dfi_p1_rddata[47] <= wl7ddrphy0_bitslip471[2];
+    wl7ddrphy0_dfi_p1_rddata[119] <= wl7ddrphy0_bitslip471[3];
+    wl7ddrphy0_dfi_p2_rddata[47] <= wl7ddrphy0_bitslip471[4];
+    wl7ddrphy0_dfi_p2_rddata[119] <= wl7ddrphy0_bitslip471[5];
+    wl7ddrphy0_dfi_p3_rddata[47] <= wl7ddrphy0_bitslip471[6];
+    wl7ddrphy0_dfi_p3_rddata[119] <= wl7ddrphy0_bitslip471[7];
+    wl7ddrphy0_dfi_p0_rddata[48] <= wl7ddrphy0_bitslip481[0];
+    wl7ddrphy0_dfi_p0_rddata[120] <= wl7ddrphy0_bitslip481[1];
+    wl7ddrphy0_dfi_p1_rddata[48] <= wl7ddrphy0_bitslip481[2];
+    wl7ddrphy0_dfi_p1_rddata[120] <= wl7ddrphy0_bitslip481[3];
+    wl7ddrphy0_dfi_p2_rddata[48] <= wl7ddrphy0_bitslip481[4];
+    wl7ddrphy0_dfi_p2_rddata[120] <= wl7ddrphy0_bitslip481[5];
+    wl7ddrphy0_dfi_p3_rddata[48] <= wl7ddrphy0_bitslip481[6];
+    wl7ddrphy0_dfi_p3_rddata[120] <= wl7ddrphy0_bitslip481[7];
+    wl7ddrphy0_dfi_p0_rddata[49] <= wl7ddrphy0_bitslip491[0];
+    wl7ddrphy0_dfi_p0_rddata[121] <= wl7ddrphy0_bitslip491[1];
+    wl7ddrphy0_dfi_p1_rddata[49] <= wl7ddrphy0_bitslip491[2];
+    wl7ddrphy0_dfi_p1_rddata[121] <= wl7ddrphy0_bitslip491[3];
+    wl7ddrphy0_dfi_p2_rddata[49] <= wl7ddrphy0_bitslip491[4];
+    wl7ddrphy0_dfi_p2_rddata[121] <= wl7ddrphy0_bitslip491[5];
+    wl7ddrphy0_dfi_p3_rddata[49] <= wl7ddrphy0_bitslip491[6];
+    wl7ddrphy0_dfi_p3_rddata[121] <= wl7ddrphy0_bitslip491[7];
+    wl7ddrphy0_dfi_p0_rddata[50] <= wl7ddrphy0_bitslip501[0];
+    wl7ddrphy0_dfi_p0_rddata[122] <= wl7ddrphy0_bitslip501[1];
+    wl7ddrphy0_dfi_p1_rddata[50] <= wl7ddrphy0_bitslip501[2];
+    wl7ddrphy0_dfi_p1_rddata[122] <= wl7ddrphy0_bitslip501[3];
+    wl7ddrphy0_dfi_p2_rddata[50] <= wl7ddrphy0_bitslip501[4];
+    wl7ddrphy0_dfi_p2_rddata[122] <= wl7ddrphy0_bitslip501[5];
+    wl7ddrphy0_dfi_p3_rddata[50] <= wl7ddrphy0_bitslip501[6];
+    wl7ddrphy0_dfi_p3_rddata[122] <= wl7ddrphy0_bitslip501[7];
+    wl7ddrphy0_dfi_p0_rddata[51] <= wl7ddrphy0_bitslip511[0];
+    wl7ddrphy0_dfi_p0_rddata[123] <= wl7ddrphy0_bitslip511[1];
+    wl7ddrphy0_dfi_p1_rddata[51] <= wl7ddrphy0_bitslip511[2];
+    wl7ddrphy0_dfi_p1_rddata[123] <= wl7ddrphy0_bitslip511[3];
+    wl7ddrphy0_dfi_p2_rddata[51] <= wl7ddrphy0_bitslip511[4];
+    wl7ddrphy0_dfi_p2_rddata[123] <= wl7ddrphy0_bitslip511[5];
+    wl7ddrphy0_dfi_p3_rddata[51] <= wl7ddrphy0_bitslip511[6];
+    wl7ddrphy0_dfi_p3_rddata[123] <= wl7ddrphy0_bitslip511[7];
+    wl7ddrphy0_dfi_p0_rddata[52] <= wl7ddrphy0_bitslip521[0];
+    wl7ddrphy0_dfi_p0_rddata[124] <= wl7ddrphy0_bitslip521[1];
+    wl7ddrphy0_dfi_p1_rddata[52] <= wl7ddrphy0_bitslip521[2];
+    wl7ddrphy0_dfi_p1_rddata[124] <= wl7ddrphy0_bitslip521[3];
+    wl7ddrphy0_dfi_p2_rddata[52] <= wl7ddrphy0_bitslip521[4];
+    wl7ddrphy0_dfi_p2_rddata[124] <= wl7ddrphy0_bitslip521[5];
+    wl7ddrphy0_dfi_p3_rddata[52] <= wl7ddrphy0_bitslip521[6];
+    wl7ddrphy0_dfi_p3_rddata[124] <= wl7ddrphy0_bitslip521[7];
+    wl7ddrphy0_dfi_p0_rddata[53] <= wl7ddrphy0_bitslip531[0];
+    wl7ddrphy0_dfi_p0_rddata[125] <= wl7ddrphy0_bitslip531[1];
+    wl7ddrphy0_dfi_p1_rddata[53] <= wl7ddrphy0_bitslip531[2];
+    wl7ddrphy0_dfi_p1_rddata[125] <= wl7ddrphy0_bitslip531[3];
+    wl7ddrphy0_dfi_p2_rddata[53] <= wl7ddrphy0_bitslip531[4];
+    wl7ddrphy0_dfi_p2_rddata[125] <= wl7ddrphy0_bitslip531[5];
+    wl7ddrphy0_dfi_p3_rddata[53] <= wl7ddrphy0_bitslip531[6];
+    wl7ddrphy0_dfi_p3_rddata[125] <= wl7ddrphy0_bitslip531[7];
+    wl7ddrphy0_dfi_p0_rddata[54] <= wl7ddrphy0_bitslip541[0];
+    wl7ddrphy0_dfi_p0_rddata[126] <= wl7ddrphy0_bitslip541[1];
+    wl7ddrphy0_dfi_p1_rddata[54] <= wl7ddrphy0_bitslip541[2];
+    wl7ddrphy0_dfi_p1_rddata[126] <= wl7ddrphy0_bitslip541[3];
+    wl7ddrphy0_dfi_p2_rddata[54] <= wl7ddrphy0_bitslip541[4];
+    wl7ddrphy0_dfi_p2_rddata[126] <= wl7ddrphy0_bitslip541[5];
+    wl7ddrphy0_dfi_p3_rddata[54] <= wl7ddrphy0_bitslip541[6];
+    wl7ddrphy0_dfi_p3_rddata[126] <= wl7ddrphy0_bitslip541[7];
+    wl7ddrphy0_dfi_p0_rddata[55] <= wl7ddrphy0_bitslip551[0];
+    wl7ddrphy0_dfi_p0_rddata[127] <= wl7ddrphy0_bitslip551[1];
+    wl7ddrphy0_dfi_p1_rddata[55] <= wl7ddrphy0_bitslip551[2];
+    wl7ddrphy0_dfi_p1_rddata[127] <= wl7ddrphy0_bitslip551[3];
+    wl7ddrphy0_dfi_p2_rddata[55] <= wl7ddrphy0_bitslip551[4];
+    wl7ddrphy0_dfi_p2_rddata[127] <= wl7ddrphy0_bitslip551[5];
+    wl7ddrphy0_dfi_p3_rddata[55] <= wl7ddrphy0_bitslip551[6];
+    wl7ddrphy0_dfi_p3_rddata[127] <= wl7ddrphy0_bitslip551[7];
+    wl7ddrphy0_dfi_p0_rddata[56] <= wl7ddrphy0_bitslip561[0];
+    wl7ddrphy0_dfi_p0_rddata[128] <= wl7ddrphy0_bitslip561[1];
+    wl7ddrphy0_dfi_p1_rddata[56] <= wl7ddrphy0_bitslip561[2];
+    wl7ddrphy0_dfi_p1_rddata[128] <= wl7ddrphy0_bitslip561[3];
+    wl7ddrphy0_dfi_p2_rddata[56] <= wl7ddrphy0_bitslip561[4];
+    wl7ddrphy0_dfi_p2_rddata[128] <= wl7ddrphy0_bitslip561[5];
+    wl7ddrphy0_dfi_p3_rddata[56] <= wl7ddrphy0_bitslip561[6];
+    wl7ddrphy0_dfi_p3_rddata[128] <= wl7ddrphy0_bitslip561[7];
+    wl7ddrphy0_dfi_p0_rddata[57] <= wl7ddrphy0_bitslip571[0];
+    wl7ddrphy0_dfi_p0_rddata[129] <= wl7ddrphy0_bitslip571[1];
+    wl7ddrphy0_dfi_p1_rddata[57] <= wl7ddrphy0_bitslip571[2];
+    wl7ddrphy0_dfi_p1_rddata[129] <= wl7ddrphy0_bitslip571[3];
+    wl7ddrphy0_dfi_p2_rddata[57] <= wl7ddrphy0_bitslip571[4];
+    wl7ddrphy0_dfi_p2_rddata[129] <= wl7ddrphy0_bitslip571[5];
+    wl7ddrphy0_dfi_p3_rddata[57] <= wl7ddrphy0_bitslip571[6];
+    wl7ddrphy0_dfi_p3_rddata[129] <= wl7ddrphy0_bitslip571[7];
+    wl7ddrphy0_dfi_p0_rddata[58] <= wl7ddrphy0_bitslip581[0];
+    wl7ddrphy0_dfi_p0_rddata[130] <= wl7ddrphy0_bitslip581[1];
+    wl7ddrphy0_dfi_p1_rddata[58] <= wl7ddrphy0_bitslip581[2];
+    wl7ddrphy0_dfi_p1_rddata[130] <= wl7ddrphy0_bitslip581[3];
+    wl7ddrphy0_dfi_p2_rddata[58] <= wl7ddrphy0_bitslip581[4];
+    wl7ddrphy0_dfi_p2_rddata[130] <= wl7ddrphy0_bitslip581[5];
+    wl7ddrphy0_dfi_p3_rddata[58] <= wl7ddrphy0_bitslip581[6];
+    wl7ddrphy0_dfi_p3_rddata[130] <= wl7ddrphy0_bitslip581[7];
+    wl7ddrphy0_dfi_p0_rddata[59] <= wl7ddrphy0_bitslip591[0];
+    wl7ddrphy0_dfi_p0_rddata[131] <= wl7ddrphy0_bitslip591[1];
+    wl7ddrphy0_dfi_p1_rddata[59] <= wl7ddrphy0_bitslip591[2];
+    wl7ddrphy0_dfi_p1_rddata[131] <= wl7ddrphy0_bitslip591[3];
+    wl7ddrphy0_dfi_p2_rddata[59] <= wl7ddrphy0_bitslip591[4];
+    wl7ddrphy0_dfi_p2_rddata[131] <= wl7ddrphy0_bitslip591[5];
+    wl7ddrphy0_dfi_p3_rddata[59] <= wl7ddrphy0_bitslip591[6];
+    wl7ddrphy0_dfi_p3_rddata[131] <= wl7ddrphy0_bitslip591[7];
+    wl7ddrphy0_dfi_p0_rddata[60] <= wl7ddrphy0_bitslip601[0];
+    wl7ddrphy0_dfi_p0_rddata[132] <= wl7ddrphy0_bitslip601[1];
+    wl7ddrphy0_dfi_p1_rddata[60] <= wl7ddrphy0_bitslip601[2];
+    wl7ddrphy0_dfi_p1_rddata[132] <= wl7ddrphy0_bitslip601[3];
+    wl7ddrphy0_dfi_p2_rddata[60] <= wl7ddrphy0_bitslip601[4];
+    wl7ddrphy0_dfi_p2_rddata[132] <= wl7ddrphy0_bitslip601[5];
+    wl7ddrphy0_dfi_p3_rddata[60] <= wl7ddrphy0_bitslip601[6];
+    wl7ddrphy0_dfi_p3_rddata[132] <= wl7ddrphy0_bitslip601[7];
+    wl7ddrphy0_dfi_p0_rddata[61] <= wl7ddrphy0_bitslip611[0];
+    wl7ddrphy0_dfi_p0_rddata[133] <= wl7ddrphy0_bitslip611[1];
+    wl7ddrphy0_dfi_p1_rddata[61] <= wl7ddrphy0_bitslip611[2];
+    wl7ddrphy0_dfi_p1_rddata[133] <= wl7ddrphy0_bitslip611[3];
+    wl7ddrphy0_dfi_p2_rddata[61] <= wl7ddrphy0_bitslip611[4];
+    wl7ddrphy0_dfi_p2_rddata[133] <= wl7ddrphy0_bitslip611[5];
+    wl7ddrphy0_dfi_p3_rddata[61] <= wl7ddrphy0_bitslip611[6];
+    wl7ddrphy0_dfi_p3_rddata[133] <= wl7ddrphy0_bitslip611[7];
+    wl7ddrphy0_dfi_p0_rddata[62] <= wl7ddrphy0_bitslip621[0];
+    wl7ddrphy0_dfi_p0_rddata[134] <= wl7ddrphy0_bitslip621[1];
+    wl7ddrphy0_dfi_p1_rddata[62] <= wl7ddrphy0_bitslip621[2];
+    wl7ddrphy0_dfi_p1_rddata[134] <= wl7ddrphy0_bitslip621[3];
+    wl7ddrphy0_dfi_p2_rddata[62] <= wl7ddrphy0_bitslip621[4];
+    wl7ddrphy0_dfi_p2_rddata[134] <= wl7ddrphy0_bitslip621[5];
+    wl7ddrphy0_dfi_p3_rddata[62] <= wl7ddrphy0_bitslip621[6];
+    wl7ddrphy0_dfi_p3_rddata[134] <= wl7ddrphy0_bitslip621[7];
+    wl7ddrphy0_dfi_p0_rddata[63] <= wl7ddrphy0_bitslip631[0];
+    wl7ddrphy0_dfi_p0_rddata[135] <= wl7ddrphy0_bitslip631[1];
+    wl7ddrphy0_dfi_p1_rddata[63] <= wl7ddrphy0_bitslip631[2];
+    wl7ddrphy0_dfi_p1_rddata[135] <= wl7ddrphy0_bitslip631[3];
+    wl7ddrphy0_dfi_p2_rddata[63] <= wl7ddrphy0_bitslip631[4];
+    wl7ddrphy0_dfi_p2_rddata[135] <= wl7ddrphy0_bitslip631[5];
+    wl7ddrphy0_dfi_p3_rddata[63] <= wl7ddrphy0_bitslip631[6];
+    wl7ddrphy0_dfi_p3_rddata[135] <= wl7ddrphy0_bitslip631[7];
+    wl7ddrphy0_dfi_p0_rddata[64] <= wl7ddrphy0_bitslip641[0];
+    wl7ddrphy0_dfi_p0_rddata[136] <= wl7ddrphy0_bitslip641[1];
+    wl7ddrphy0_dfi_p1_rddata[64] <= wl7ddrphy0_bitslip641[2];
+    wl7ddrphy0_dfi_p1_rddata[136] <= wl7ddrphy0_bitslip641[3];
+    wl7ddrphy0_dfi_p2_rddata[64] <= wl7ddrphy0_bitslip641[4];
+    wl7ddrphy0_dfi_p2_rddata[136] <= wl7ddrphy0_bitslip641[5];
+    wl7ddrphy0_dfi_p3_rddata[64] <= wl7ddrphy0_bitslip641[6];
+    wl7ddrphy0_dfi_p3_rddata[136] <= wl7ddrphy0_bitslip641[7];
+    wl7ddrphy0_dfi_p0_rddata[65] <= wl7ddrphy0_bitslip651[0];
+    wl7ddrphy0_dfi_p0_rddata[137] <= wl7ddrphy0_bitslip651[1];
+    wl7ddrphy0_dfi_p1_rddata[65] <= wl7ddrphy0_bitslip651[2];
+    wl7ddrphy0_dfi_p1_rddata[137] <= wl7ddrphy0_bitslip651[3];
+    wl7ddrphy0_dfi_p2_rddata[65] <= wl7ddrphy0_bitslip651[4];
+    wl7ddrphy0_dfi_p2_rddata[137] <= wl7ddrphy0_bitslip651[5];
+    wl7ddrphy0_dfi_p3_rddata[65] <= wl7ddrphy0_bitslip651[6];
+    wl7ddrphy0_dfi_p3_rddata[137] <= wl7ddrphy0_bitslip651[7];
+    wl7ddrphy0_dfi_p0_rddata[66] <= wl7ddrphy0_bitslip661[0];
+    wl7ddrphy0_dfi_p0_rddata[138] <= wl7ddrphy0_bitslip661[1];
+    wl7ddrphy0_dfi_p1_rddata[66] <= wl7ddrphy0_bitslip661[2];
+    wl7ddrphy0_dfi_p1_rddata[138] <= wl7ddrphy0_bitslip661[3];
+    wl7ddrphy0_dfi_p2_rddata[66] <= wl7ddrphy0_bitslip661[4];
+    wl7ddrphy0_dfi_p2_rddata[138] <= wl7ddrphy0_bitslip661[5];
+    wl7ddrphy0_dfi_p3_rddata[66] <= wl7ddrphy0_bitslip661[6];
+    wl7ddrphy0_dfi_p3_rddata[138] <= wl7ddrphy0_bitslip661[7];
+    wl7ddrphy0_dfi_p0_rddata[67] <= wl7ddrphy0_bitslip671[0];
+    wl7ddrphy0_dfi_p0_rddata[139] <= wl7ddrphy0_bitslip671[1];
+    wl7ddrphy0_dfi_p1_rddata[67] <= wl7ddrphy0_bitslip671[2];
+    wl7ddrphy0_dfi_p1_rddata[139] <= wl7ddrphy0_bitslip671[3];
+    wl7ddrphy0_dfi_p2_rddata[67] <= wl7ddrphy0_bitslip671[4];
+    wl7ddrphy0_dfi_p2_rddata[139] <= wl7ddrphy0_bitslip671[5];
+    wl7ddrphy0_dfi_p3_rddata[67] <= wl7ddrphy0_bitslip671[6];
+    wl7ddrphy0_dfi_p3_rddata[139] <= wl7ddrphy0_bitslip671[7];
+    wl7ddrphy0_dfi_p0_rddata[68] <= wl7ddrphy0_bitslip681[0];
+    wl7ddrphy0_dfi_p0_rddata[140] <= wl7ddrphy0_bitslip681[1];
+    wl7ddrphy0_dfi_p1_rddata[68] <= wl7ddrphy0_bitslip681[2];
+    wl7ddrphy0_dfi_p1_rddata[140] <= wl7ddrphy0_bitslip681[3];
+    wl7ddrphy0_dfi_p2_rddata[68] <= wl7ddrphy0_bitslip681[4];
+    wl7ddrphy0_dfi_p2_rddata[140] <= wl7ddrphy0_bitslip681[5];
+    wl7ddrphy0_dfi_p3_rddata[68] <= wl7ddrphy0_bitslip681[6];
+    wl7ddrphy0_dfi_p3_rddata[140] <= wl7ddrphy0_bitslip681[7];
+    wl7ddrphy0_dfi_p0_rddata[69] <= wl7ddrphy0_bitslip691[0];
+    wl7ddrphy0_dfi_p0_rddata[141] <= wl7ddrphy0_bitslip691[1];
+    wl7ddrphy0_dfi_p1_rddata[69] <= wl7ddrphy0_bitslip691[2];
+    wl7ddrphy0_dfi_p1_rddata[141] <= wl7ddrphy0_bitslip691[3];
+    wl7ddrphy0_dfi_p2_rddata[69] <= wl7ddrphy0_bitslip691[4];
+    wl7ddrphy0_dfi_p2_rddata[141] <= wl7ddrphy0_bitslip691[5];
+    wl7ddrphy0_dfi_p3_rddata[69] <= wl7ddrphy0_bitslip691[6];
+    wl7ddrphy0_dfi_p3_rddata[141] <= wl7ddrphy0_bitslip691[7];
+    wl7ddrphy0_dfi_p0_rddata[70] <= wl7ddrphy0_bitslip701[0];
+    wl7ddrphy0_dfi_p0_rddata[142] <= wl7ddrphy0_bitslip701[1];
+    wl7ddrphy0_dfi_p1_rddata[70] <= wl7ddrphy0_bitslip701[2];
+    wl7ddrphy0_dfi_p1_rddata[142] <= wl7ddrphy0_bitslip701[3];
+    wl7ddrphy0_dfi_p2_rddata[70] <= wl7ddrphy0_bitslip701[4];
+    wl7ddrphy0_dfi_p2_rddata[142] <= wl7ddrphy0_bitslip701[5];
+    wl7ddrphy0_dfi_p3_rddata[70] <= wl7ddrphy0_bitslip701[6];
+    wl7ddrphy0_dfi_p3_rddata[142] <= wl7ddrphy0_bitslip701[7];
+    wl7ddrphy0_dfi_p0_rddata[71] <= wl7ddrphy0_bitslip711[0];
+    wl7ddrphy0_dfi_p0_rddata[143] <= wl7ddrphy0_bitslip711[1];
+    wl7ddrphy0_dfi_p1_rddata[71] <= wl7ddrphy0_bitslip711[2];
+    wl7ddrphy0_dfi_p1_rddata[143] <= wl7ddrphy0_bitslip711[3];
+    wl7ddrphy0_dfi_p2_rddata[71] <= wl7ddrphy0_bitslip711[4];
+    wl7ddrphy0_dfi_p2_rddata[143] <= wl7ddrphy0_bitslip711[5];
+    wl7ddrphy0_dfi_p3_rddata[71] <= wl7ddrphy0_bitslip711[6];
+    wl7ddrphy0_dfi_p3_rddata[143] <= wl7ddrphy0_bitslip711[7];
     wl7ddrphy0_tappeddelayline0_tappeddelayline00 <= wl7ddrphy0_tappeddelayline00;
     wl7ddrphy0_tappeddelayline0_tappeddelayline01 <= wl7ddrphy0_tappeddelayline0_tappeddelayline00;
     wl7ddrphy0_dqspattern0_o1 <= wl7ddrphy0_dqspattern0_o0;
@@ -55116,9 +54528,10 @@ always @(posedge sys_clk_1) begin
     wl7ddrphy0_tappeddelayline07 <= wl7ddrphy0_tappeddelayline06;
     wl7ddrphy0_tappeddelayline08 <= wl7ddrphy0_tappeddelayline07;
     wl7ddrphy0_tappeddelayline09 <= wl7ddrphy0_tappeddelayline08;
-    wl7ddrphy0_tappeddelayline010 <= (((wl7ddrphy0_dfi_p0_wrdata_en | wl7ddrphy0_dfi_p1_wrdata_en) | wl7ddrphy0_dfi_p2_wrdata_en) | wl7ddrphy0_dfi_p3_wrdata_en);
-    wl7ddrphy0_tappeddelayline011 <= wl7ddrphy0_tappeddelayline010;
+    wl7ddrphy0_tappeddelayline010 <= wl7ddrphy0_tappeddelayline09;
+    wl7ddrphy0_tappeddelayline011 <= (((wl7ddrphy0_dfi_p0_wrdata_en | wl7ddrphy0_dfi_p1_wrdata_en) | wl7ddrphy0_dfi_p2_wrdata_en) | wl7ddrphy0_dfi_p3_wrdata_en);
     wl7ddrphy0_tappeddelayline012 <= wl7ddrphy0_tappeddelayline011;
+    wl7ddrphy0_tappeddelayline013 <= wl7ddrphy0_tappeddelayline012;
     if (litedramcore0_csr_dfi_p0_rddata_valid) begin
         litedramcore0_phaseinjector0_rddata_status <= litedramcore0_csr_dfi_p0_rddata;
     end
@@ -56425,8 +55838,8 @@ always @(posedge sys_clk_1) begin
     litedramcore0_new_master_rdata_valid6 <= litedramcore0_new_master_rdata_valid5;
     litedramcore0_new_master_rdata_valid7 <= litedramcore0_new_master_rdata_valid6;
     litedramcore0_new_master_rdata_valid8 <= litedramcore0_new_master_rdata_valid7;
-    litedramcore0_new_master_rdata_valid9 <= ((((((((1'd0 | ((litedramcore0_roundrobin0_grant == 1'd1) & litedramcore0_interface_bank0_rdata_valid)) | ((litedramcore0_roundrobin1_grant == 1'd1) & litedramcore0_interface_bank1_rdata_valid)) | ((litedramcore0_roundrobin2_grant == 1'd1) & litedramcore0_interface_bank2_rdata_valid)) | ((litedramcore0_roundrobin3_grant == 1'd1) & litedramcore0_interface_bank3_rdata_valid)) | ((litedramcore0_roundrobin4_grant == 1'd1) & litedramcore0_interface_bank4_rdata_valid)) | ((litedramcore0_roundrobin5_grant == 1'd1) & litedramcore0_interface_bank5_rdata_valid)) | ((litedramcore0_roundrobin6_grant == 1'd1) & litedramcore0_interface_bank6_rdata_valid)) | ((litedramcore0_roundrobin7_grant == 1'd1) & litedramcore0_interface_bank7_rdata_valid));
-    litedramcore0_new_master_rdata_valid10 <= litedramcore0_new_master_rdata_valid9;
+    litedramcore0_new_master_rdata_valid9 <= litedramcore0_new_master_rdata_valid8;
+    litedramcore0_new_master_rdata_valid10 <= ((((((((1'd0 | ((litedramcore0_roundrobin0_grant == 1'd1) & litedramcore0_interface_bank0_rdata_valid)) | ((litedramcore0_roundrobin1_grant == 1'd1) & litedramcore0_interface_bank1_rdata_valid)) | ((litedramcore0_roundrobin2_grant == 1'd1) & litedramcore0_interface_bank2_rdata_valid)) | ((litedramcore0_roundrobin3_grant == 1'd1) & litedramcore0_interface_bank3_rdata_valid)) | ((litedramcore0_roundrobin4_grant == 1'd1) & litedramcore0_interface_bank4_rdata_valid)) | ((litedramcore0_roundrobin5_grant == 1'd1) & litedramcore0_interface_bank5_rdata_valid)) | ((litedramcore0_roundrobin6_grant == 1'd1) & litedramcore0_interface_bank6_rdata_valid)) | ((litedramcore0_roundrobin7_grant == 1'd1) & litedramcore0_interface_bank7_rdata_valid));
     litedramcore0_new_master_rdata_valid11 <= litedramcore0_new_master_rdata_valid10;
     litedramcore0_new_master_rdata_valid12 <= litedramcore0_new_master_rdata_valid11;
     litedramcore0_new_master_rdata_valid13 <= litedramcore0_new_master_rdata_valid12;
@@ -56434,6 +55847,8 @@ always @(posedge sys_clk_1) begin
     litedramcore0_new_master_rdata_valid15 <= litedramcore0_new_master_rdata_valid14;
     litedramcore0_new_master_rdata_valid16 <= litedramcore0_new_master_rdata_valid15;
     litedramcore0_new_master_rdata_valid17 <= litedramcore0_new_master_rdata_valid16;
+    litedramcore0_new_master_rdata_valid18 <= litedramcore0_new_master_rdata_valid17;
+    litedramcore0_new_master_rdata_valid19 <= litedramcore0_new_master_rdata_valid18;
     if (litedramcore0_roundrobin0_ce) begin
         case (litedramcore0_roundrobin0_grant)
             1'd0: begin
@@ -56676,6 +56091,582 @@ always @(posedge sys_clk_1) begin
             writeclocks1_drp_dat_r_status <= writeclocks16;
         end
     end
+    wl7ddrphy1_dfi_p0_rddata[0] <= wl7ddrphy1_bitslip721[0];
+    wl7ddrphy1_dfi_p0_rddata[72] <= wl7ddrphy1_bitslip721[1];
+    wl7ddrphy1_dfi_p1_rddata[0] <= wl7ddrphy1_bitslip721[2];
+    wl7ddrphy1_dfi_p1_rddata[72] <= wl7ddrphy1_bitslip721[3];
+    wl7ddrphy1_dfi_p2_rddata[0] <= wl7ddrphy1_bitslip721[4];
+    wl7ddrphy1_dfi_p2_rddata[72] <= wl7ddrphy1_bitslip721[5];
+    wl7ddrphy1_dfi_p3_rddata[0] <= wl7ddrphy1_bitslip721[6];
+    wl7ddrphy1_dfi_p3_rddata[72] <= wl7ddrphy1_bitslip721[7];
+    wl7ddrphy1_dfi_p0_rddata[1] <= wl7ddrphy1_bitslip731[0];
+    wl7ddrphy1_dfi_p0_rddata[73] <= wl7ddrphy1_bitslip731[1];
+    wl7ddrphy1_dfi_p1_rddata[1] <= wl7ddrphy1_bitslip731[2];
+    wl7ddrphy1_dfi_p1_rddata[73] <= wl7ddrphy1_bitslip731[3];
+    wl7ddrphy1_dfi_p2_rddata[1] <= wl7ddrphy1_bitslip731[4];
+    wl7ddrphy1_dfi_p2_rddata[73] <= wl7ddrphy1_bitslip731[5];
+    wl7ddrphy1_dfi_p3_rddata[1] <= wl7ddrphy1_bitslip731[6];
+    wl7ddrphy1_dfi_p3_rddata[73] <= wl7ddrphy1_bitslip731[7];
+    wl7ddrphy1_dfi_p0_rddata[2] <= wl7ddrphy1_bitslip741[0];
+    wl7ddrphy1_dfi_p0_rddata[74] <= wl7ddrphy1_bitslip741[1];
+    wl7ddrphy1_dfi_p1_rddata[2] <= wl7ddrphy1_bitslip741[2];
+    wl7ddrphy1_dfi_p1_rddata[74] <= wl7ddrphy1_bitslip741[3];
+    wl7ddrphy1_dfi_p2_rddata[2] <= wl7ddrphy1_bitslip741[4];
+    wl7ddrphy1_dfi_p2_rddata[74] <= wl7ddrphy1_bitslip741[5];
+    wl7ddrphy1_dfi_p3_rddata[2] <= wl7ddrphy1_bitslip741[6];
+    wl7ddrphy1_dfi_p3_rddata[74] <= wl7ddrphy1_bitslip741[7];
+    wl7ddrphy1_dfi_p0_rddata[3] <= wl7ddrphy1_bitslip751[0];
+    wl7ddrphy1_dfi_p0_rddata[75] <= wl7ddrphy1_bitslip751[1];
+    wl7ddrphy1_dfi_p1_rddata[3] <= wl7ddrphy1_bitslip751[2];
+    wl7ddrphy1_dfi_p1_rddata[75] <= wl7ddrphy1_bitslip751[3];
+    wl7ddrphy1_dfi_p2_rddata[3] <= wl7ddrphy1_bitslip751[4];
+    wl7ddrphy1_dfi_p2_rddata[75] <= wl7ddrphy1_bitslip751[5];
+    wl7ddrphy1_dfi_p3_rddata[3] <= wl7ddrphy1_bitslip751[6];
+    wl7ddrphy1_dfi_p3_rddata[75] <= wl7ddrphy1_bitslip751[7];
+    wl7ddrphy1_dfi_p0_rddata[4] <= wl7ddrphy1_bitslip761[0];
+    wl7ddrphy1_dfi_p0_rddata[76] <= wl7ddrphy1_bitslip761[1];
+    wl7ddrphy1_dfi_p1_rddata[4] <= wl7ddrphy1_bitslip761[2];
+    wl7ddrphy1_dfi_p1_rddata[76] <= wl7ddrphy1_bitslip761[3];
+    wl7ddrphy1_dfi_p2_rddata[4] <= wl7ddrphy1_bitslip761[4];
+    wl7ddrphy1_dfi_p2_rddata[76] <= wl7ddrphy1_bitslip761[5];
+    wl7ddrphy1_dfi_p3_rddata[4] <= wl7ddrphy1_bitslip761[6];
+    wl7ddrphy1_dfi_p3_rddata[76] <= wl7ddrphy1_bitslip761[7];
+    wl7ddrphy1_dfi_p0_rddata[5] <= wl7ddrphy1_bitslip771[0];
+    wl7ddrphy1_dfi_p0_rddata[77] <= wl7ddrphy1_bitslip771[1];
+    wl7ddrphy1_dfi_p1_rddata[5] <= wl7ddrphy1_bitslip771[2];
+    wl7ddrphy1_dfi_p1_rddata[77] <= wl7ddrphy1_bitslip771[3];
+    wl7ddrphy1_dfi_p2_rddata[5] <= wl7ddrphy1_bitslip771[4];
+    wl7ddrphy1_dfi_p2_rddata[77] <= wl7ddrphy1_bitslip771[5];
+    wl7ddrphy1_dfi_p3_rddata[5] <= wl7ddrphy1_bitslip771[6];
+    wl7ddrphy1_dfi_p3_rddata[77] <= wl7ddrphy1_bitslip771[7];
+    wl7ddrphy1_dfi_p0_rddata[6] <= wl7ddrphy1_bitslip781[0];
+    wl7ddrphy1_dfi_p0_rddata[78] <= wl7ddrphy1_bitslip781[1];
+    wl7ddrphy1_dfi_p1_rddata[6] <= wl7ddrphy1_bitslip781[2];
+    wl7ddrphy1_dfi_p1_rddata[78] <= wl7ddrphy1_bitslip781[3];
+    wl7ddrphy1_dfi_p2_rddata[6] <= wl7ddrphy1_bitslip781[4];
+    wl7ddrphy1_dfi_p2_rddata[78] <= wl7ddrphy1_bitslip781[5];
+    wl7ddrphy1_dfi_p3_rddata[6] <= wl7ddrphy1_bitslip781[6];
+    wl7ddrphy1_dfi_p3_rddata[78] <= wl7ddrphy1_bitslip781[7];
+    wl7ddrphy1_dfi_p0_rddata[7] <= wl7ddrphy1_bitslip791[0];
+    wl7ddrphy1_dfi_p0_rddata[79] <= wl7ddrphy1_bitslip791[1];
+    wl7ddrphy1_dfi_p1_rddata[7] <= wl7ddrphy1_bitslip791[2];
+    wl7ddrphy1_dfi_p1_rddata[79] <= wl7ddrphy1_bitslip791[3];
+    wl7ddrphy1_dfi_p2_rddata[7] <= wl7ddrphy1_bitslip791[4];
+    wl7ddrphy1_dfi_p2_rddata[79] <= wl7ddrphy1_bitslip791[5];
+    wl7ddrphy1_dfi_p3_rddata[7] <= wl7ddrphy1_bitslip791[6];
+    wl7ddrphy1_dfi_p3_rddata[79] <= wl7ddrphy1_bitslip791[7];
+    wl7ddrphy1_dfi_p0_rddata[8] <= wl7ddrphy1_bitslip801[0];
+    wl7ddrphy1_dfi_p0_rddata[80] <= wl7ddrphy1_bitslip801[1];
+    wl7ddrphy1_dfi_p1_rddata[8] <= wl7ddrphy1_bitslip801[2];
+    wl7ddrphy1_dfi_p1_rddata[80] <= wl7ddrphy1_bitslip801[3];
+    wl7ddrphy1_dfi_p2_rddata[8] <= wl7ddrphy1_bitslip801[4];
+    wl7ddrphy1_dfi_p2_rddata[80] <= wl7ddrphy1_bitslip801[5];
+    wl7ddrphy1_dfi_p3_rddata[8] <= wl7ddrphy1_bitslip801[6];
+    wl7ddrphy1_dfi_p3_rddata[80] <= wl7ddrphy1_bitslip801[7];
+    wl7ddrphy1_dfi_p0_rddata[9] <= wl7ddrphy1_bitslip811[0];
+    wl7ddrphy1_dfi_p0_rddata[81] <= wl7ddrphy1_bitslip811[1];
+    wl7ddrphy1_dfi_p1_rddata[9] <= wl7ddrphy1_bitslip811[2];
+    wl7ddrphy1_dfi_p1_rddata[81] <= wl7ddrphy1_bitslip811[3];
+    wl7ddrphy1_dfi_p2_rddata[9] <= wl7ddrphy1_bitslip811[4];
+    wl7ddrphy1_dfi_p2_rddata[81] <= wl7ddrphy1_bitslip811[5];
+    wl7ddrphy1_dfi_p3_rddata[9] <= wl7ddrphy1_bitslip811[6];
+    wl7ddrphy1_dfi_p3_rddata[81] <= wl7ddrphy1_bitslip811[7];
+    wl7ddrphy1_dfi_p0_rddata[10] <= wl7ddrphy1_bitslip821[0];
+    wl7ddrphy1_dfi_p0_rddata[82] <= wl7ddrphy1_bitslip821[1];
+    wl7ddrphy1_dfi_p1_rddata[10] <= wl7ddrphy1_bitslip821[2];
+    wl7ddrphy1_dfi_p1_rddata[82] <= wl7ddrphy1_bitslip821[3];
+    wl7ddrphy1_dfi_p2_rddata[10] <= wl7ddrphy1_bitslip821[4];
+    wl7ddrphy1_dfi_p2_rddata[82] <= wl7ddrphy1_bitslip821[5];
+    wl7ddrphy1_dfi_p3_rddata[10] <= wl7ddrphy1_bitslip821[6];
+    wl7ddrphy1_dfi_p3_rddata[82] <= wl7ddrphy1_bitslip821[7];
+    wl7ddrphy1_dfi_p0_rddata[11] <= wl7ddrphy1_bitslip831[0];
+    wl7ddrphy1_dfi_p0_rddata[83] <= wl7ddrphy1_bitslip831[1];
+    wl7ddrphy1_dfi_p1_rddata[11] <= wl7ddrphy1_bitslip831[2];
+    wl7ddrphy1_dfi_p1_rddata[83] <= wl7ddrphy1_bitslip831[3];
+    wl7ddrphy1_dfi_p2_rddata[11] <= wl7ddrphy1_bitslip831[4];
+    wl7ddrphy1_dfi_p2_rddata[83] <= wl7ddrphy1_bitslip831[5];
+    wl7ddrphy1_dfi_p3_rddata[11] <= wl7ddrphy1_bitslip831[6];
+    wl7ddrphy1_dfi_p3_rddata[83] <= wl7ddrphy1_bitslip831[7];
+    wl7ddrphy1_dfi_p0_rddata[12] <= wl7ddrphy1_bitslip841[0];
+    wl7ddrphy1_dfi_p0_rddata[84] <= wl7ddrphy1_bitslip841[1];
+    wl7ddrphy1_dfi_p1_rddata[12] <= wl7ddrphy1_bitslip841[2];
+    wl7ddrphy1_dfi_p1_rddata[84] <= wl7ddrphy1_bitslip841[3];
+    wl7ddrphy1_dfi_p2_rddata[12] <= wl7ddrphy1_bitslip841[4];
+    wl7ddrphy1_dfi_p2_rddata[84] <= wl7ddrphy1_bitslip841[5];
+    wl7ddrphy1_dfi_p3_rddata[12] <= wl7ddrphy1_bitslip841[6];
+    wl7ddrphy1_dfi_p3_rddata[84] <= wl7ddrphy1_bitslip841[7];
+    wl7ddrphy1_dfi_p0_rddata[13] <= wl7ddrphy1_bitslip851[0];
+    wl7ddrphy1_dfi_p0_rddata[85] <= wl7ddrphy1_bitslip851[1];
+    wl7ddrphy1_dfi_p1_rddata[13] <= wl7ddrphy1_bitslip851[2];
+    wl7ddrphy1_dfi_p1_rddata[85] <= wl7ddrphy1_bitslip851[3];
+    wl7ddrphy1_dfi_p2_rddata[13] <= wl7ddrphy1_bitslip851[4];
+    wl7ddrphy1_dfi_p2_rddata[85] <= wl7ddrphy1_bitslip851[5];
+    wl7ddrphy1_dfi_p3_rddata[13] <= wl7ddrphy1_bitslip851[6];
+    wl7ddrphy1_dfi_p3_rddata[85] <= wl7ddrphy1_bitslip851[7];
+    wl7ddrphy1_dfi_p0_rddata[14] <= wl7ddrphy1_bitslip861[0];
+    wl7ddrphy1_dfi_p0_rddata[86] <= wl7ddrphy1_bitslip861[1];
+    wl7ddrphy1_dfi_p1_rddata[14] <= wl7ddrphy1_bitslip861[2];
+    wl7ddrphy1_dfi_p1_rddata[86] <= wl7ddrphy1_bitslip861[3];
+    wl7ddrphy1_dfi_p2_rddata[14] <= wl7ddrphy1_bitslip861[4];
+    wl7ddrphy1_dfi_p2_rddata[86] <= wl7ddrphy1_bitslip861[5];
+    wl7ddrphy1_dfi_p3_rddata[14] <= wl7ddrphy1_bitslip861[6];
+    wl7ddrphy1_dfi_p3_rddata[86] <= wl7ddrphy1_bitslip861[7];
+    wl7ddrphy1_dfi_p0_rddata[15] <= wl7ddrphy1_bitslip871[0];
+    wl7ddrphy1_dfi_p0_rddata[87] <= wl7ddrphy1_bitslip871[1];
+    wl7ddrphy1_dfi_p1_rddata[15] <= wl7ddrphy1_bitslip871[2];
+    wl7ddrphy1_dfi_p1_rddata[87] <= wl7ddrphy1_bitslip871[3];
+    wl7ddrphy1_dfi_p2_rddata[15] <= wl7ddrphy1_bitslip871[4];
+    wl7ddrphy1_dfi_p2_rddata[87] <= wl7ddrphy1_bitslip871[5];
+    wl7ddrphy1_dfi_p3_rddata[15] <= wl7ddrphy1_bitslip871[6];
+    wl7ddrphy1_dfi_p3_rddata[87] <= wl7ddrphy1_bitslip871[7];
+    wl7ddrphy1_dfi_p0_rddata[16] <= wl7ddrphy1_bitslip881[0];
+    wl7ddrphy1_dfi_p0_rddata[88] <= wl7ddrphy1_bitslip881[1];
+    wl7ddrphy1_dfi_p1_rddata[16] <= wl7ddrphy1_bitslip881[2];
+    wl7ddrphy1_dfi_p1_rddata[88] <= wl7ddrphy1_bitslip881[3];
+    wl7ddrphy1_dfi_p2_rddata[16] <= wl7ddrphy1_bitslip881[4];
+    wl7ddrphy1_dfi_p2_rddata[88] <= wl7ddrphy1_bitslip881[5];
+    wl7ddrphy1_dfi_p3_rddata[16] <= wl7ddrphy1_bitslip881[6];
+    wl7ddrphy1_dfi_p3_rddata[88] <= wl7ddrphy1_bitslip881[7];
+    wl7ddrphy1_dfi_p0_rddata[17] <= wl7ddrphy1_bitslip891[0];
+    wl7ddrphy1_dfi_p0_rddata[89] <= wl7ddrphy1_bitslip891[1];
+    wl7ddrphy1_dfi_p1_rddata[17] <= wl7ddrphy1_bitslip891[2];
+    wl7ddrphy1_dfi_p1_rddata[89] <= wl7ddrphy1_bitslip891[3];
+    wl7ddrphy1_dfi_p2_rddata[17] <= wl7ddrphy1_bitslip891[4];
+    wl7ddrphy1_dfi_p2_rddata[89] <= wl7ddrphy1_bitslip891[5];
+    wl7ddrphy1_dfi_p3_rddata[17] <= wl7ddrphy1_bitslip891[6];
+    wl7ddrphy1_dfi_p3_rddata[89] <= wl7ddrphy1_bitslip891[7];
+    wl7ddrphy1_dfi_p0_rddata[18] <= wl7ddrphy1_bitslip901[0];
+    wl7ddrphy1_dfi_p0_rddata[90] <= wl7ddrphy1_bitslip901[1];
+    wl7ddrphy1_dfi_p1_rddata[18] <= wl7ddrphy1_bitslip901[2];
+    wl7ddrphy1_dfi_p1_rddata[90] <= wl7ddrphy1_bitslip901[3];
+    wl7ddrphy1_dfi_p2_rddata[18] <= wl7ddrphy1_bitslip901[4];
+    wl7ddrphy1_dfi_p2_rddata[90] <= wl7ddrphy1_bitslip901[5];
+    wl7ddrphy1_dfi_p3_rddata[18] <= wl7ddrphy1_bitslip901[6];
+    wl7ddrphy1_dfi_p3_rddata[90] <= wl7ddrphy1_bitslip901[7];
+    wl7ddrphy1_dfi_p0_rddata[19] <= wl7ddrphy1_bitslip911[0];
+    wl7ddrphy1_dfi_p0_rddata[91] <= wl7ddrphy1_bitslip911[1];
+    wl7ddrphy1_dfi_p1_rddata[19] <= wl7ddrphy1_bitslip911[2];
+    wl7ddrphy1_dfi_p1_rddata[91] <= wl7ddrphy1_bitslip911[3];
+    wl7ddrphy1_dfi_p2_rddata[19] <= wl7ddrphy1_bitslip911[4];
+    wl7ddrphy1_dfi_p2_rddata[91] <= wl7ddrphy1_bitslip911[5];
+    wl7ddrphy1_dfi_p3_rddata[19] <= wl7ddrphy1_bitslip911[6];
+    wl7ddrphy1_dfi_p3_rddata[91] <= wl7ddrphy1_bitslip911[7];
+    wl7ddrphy1_dfi_p0_rddata[20] <= wl7ddrphy1_bitslip921[0];
+    wl7ddrphy1_dfi_p0_rddata[92] <= wl7ddrphy1_bitslip921[1];
+    wl7ddrphy1_dfi_p1_rddata[20] <= wl7ddrphy1_bitslip921[2];
+    wl7ddrphy1_dfi_p1_rddata[92] <= wl7ddrphy1_bitslip921[3];
+    wl7ddrphy1_dfi_p2_rddata[20] <= wl7ddrphy1_bitslip921[4];
+    wl7ddrphy1_dfi_p2_rddata[92] <= wl7ddrphy1_bitslip921[5];
+    wl7ddrphy1_dfi_p3_rddata[20] <= wl7ddrphy1_bitslip921[6];
+    wl7ddrphy1_dfi_p3_rddata[92] <= wl7ddrphy1_bitslip921[7];
+    wl7ddrphy1_dfi_p0_rddata[21] <= wl7ddrphy1_bitslip931[0];
+    wl7ddrphy1_dfi_p0_rddata[93] <= wl7ddrphy1_bitslip931[1];
+    wl7ddrphy1_dfi_p1_rddata[21] <= wl7ddrphy1_bitslip931[2];
+    wl7ddrphy1_dfi_p1_rddata[93] <= wl7ddrphy1_bitslip931[3];
+    wl7ddrphy1_dfi_p2_rddata[21] <= wl7ddrphy1_bitslip931[4];
+    wl7ddrphy1_dfi_p2_rddata[93] <= wl7ddrphy1_bitslip931[5];
+    wl7ddrphy1_dfi_p3_rddata[21] <= wl7ddrphy1_bitslip931[6];
+    wl7ddrphy1_dfi_p3_rddata[93] <= wl7ddrphy1_bitslip931[7];
+    wl7ddrphy1_dfi_p0_rddata[22] <= wl7ddrphy1_bitslip941[0];
+    wl7ddrphy1_dfi_p0_rddata[94] <= wl7ddrphy1_bitslip941[1];
+    wl7ddrphy1_dfi_p1_rddata[22] <= wl7ddrphy1_bitslip941[2];
+    wl7ddrphy1_dfi_p1_rddata[94] <= wl7ddrphy1_bitslip941[3];
+    wl7ddrphy1_dfi_p2_rddata[22] <= wl7ddrphy1_bitslip941[4];
+    wl7ddrphy1_dfi_p2_rddata[94] <= wl7ddrphy1_bitslip941[5];
+    wl7ddrphy1_dfi_p3_rddata[22] <= wl7ddrphy1_bitslip941[6];
+    wl7ddrphy1_dfi_p3_rddata[94] <= wl7ddrphy1_bitslip941[7];
+    wl7ddrphy1_dfi_p0_rddata[23] <= wl7ddrphy1_bitslip951[0];
+    wl7ddrphy1_dfi_p0_rddata[95] <= wl7ddrphy1_bitslip951[1];
+    wl7ddrphy1_dfi_p1_rddata[23] <= wl7ddrphy1_bitslip951[2];
+    wl7ddrphy1_dfi_p1_rddata[95] <= wl7ddrphy1_bitslip951[3];
+    wl7ddrphy1_dfi_p2_rddata[23] <= wl7ddrphy1_bitslip951[4];
+    wl7ddrphy1_dfi_p2_rddata[95] <= wl7ddrphy1_bitslip951[5];
+    wl7ddrphy1_dfi_p3_rddata[23] <= wl7ddrphy1_bitslip951[6];
+    wl7ddrphy1_dfi_p3_rddata[95] <= wl7ddrphy1_bitslip951[7];
+    wl7ddrphy1_dfi_p0_rddata[24] <= wl7ddrphy1_bitslip961[0];
+    wl7ddrphy1_dfi_p0_rddata[96] <= wl7ddrphy1_bitslip961[1];
+    wl7ddrphy1_dfi_p1_rddata[24] <= wl7ddrphy1_bitslip961[2];
+    wl7ddrphy1_dfi_p1_rddata[96] <= wl7ddrphy1_bitslip961[3];
+    wl7ddrphy1_dfi_p2_rddata[24] <= wl7ddrphy1_bitslip961[4];
+    wl7ddrphy1_dfi_p2_rddata[96] <= wl7ddrphy1_bitslip961[5];
+    wl7ddrphy1_dfi_p3_rddata[24] <= wl7ddrphy1_bitslip961[6];
+    wl7ddrphy1_dfi_p3_rddata[96] <= wl7ddrphy1_bitslip961[7];
+    wl7ddrphy1_dfi_p0_rddata[25] <= wl7ddrphy1_bitslip971[0];
+    wl7ddrphy1_dfi_p0_rddata[97] <= wl7ddrphy1_bitslip971[1];
+    wl7ddrphy1_dfi_p1_rddata[25] <= wl7ddrphy1_bitslip971[2];
+    wl7ddrphy1_dfi_p1_rddata[97] <= wl7ddrphy1_bitslip971[3];
+    wl7ddrphy1_dfi_p2_rddata[25] <= wl7ddrphy1_bitslip971[4];
+    wl7ddrphy1_dfi_p2_rddata[97] <= wl7ddrphy1_bitslip971[5];
+    wl7ddrphy1_dfi_p3_rddata[25] <= wl7ddrphy1_bitslip971[6];
+    wl7ddrphy1_dfi_p3_rddata[97] <= wl7ddrphy1_bitslip971[7];
+    wl7ddrphy1_dfi_p0_rddata[26] <= wl7ddrphy1_bitslip981[0];
+    wl7ddrphy1_dfi_p0_rddata[98] <= wl7ddrphy1_bitslip981[1];
+    wl7ddrphy1_dfi_p1_rddata[26] <= wl7ddrphy1_bitslip981[2];
+    wl7ddrphy1_dfi_p1_rddata[98] <= wl7ddrphy1_bitslip981[3];
+    wl7ddrphy1_dfi_p2_rddata[26] <= wl7ddrphy1_bitslip981[4];
+    wl7ddrphy1_dfi_p2_rddata[98] <= wl7ddrphy1_bitslip981[5];
+    wl7ddrphy1_dfi_p3_rddata[26] <= wl7ddrphy1_bitslip981[6];
+    wl7ddrphy1_dfi_p3_rddata[98] <= wl7ddrphy1_bitslip981[7];
+    wl7ddrphy1_dfi_p0_rddata[27] <= wl7ddrphy1_bitslip991[0];
+    wl7ddrphy1_dfi_p0_rddata[99] <= wl7ddrphy1_bitslip991[1];
+    wl7ddrphy1_dfi_p1_rddata[27] <= wl7ddrphy1_bitslip991[2];
+    wl7ddrphy1_dfi_p1_rddata[99] <= wl7ddrphy1_bitslip991[3];
+    wl7ddrphy1_dfi_p2_rddata[27] <= wl7ddrphy1_bitslip991[4];
+    wl7ddrphy1_dfi_p2_rddata[99] <= wl7ddrphy1_bitslip991[5];
+    wl7ddrphy1_dfi_p3_rddata[27] <= wl7ddrphy1_bitslip991[6];
+    wl7ddrphy1_dfi_p3_rddata[99] <= wl7ddrphy1_bitslip991[7];
+    wl7ddrphy1_dfi_p0_rddata[28] <= wl7ddrphy1_bitslip1001[0];
+    wl7ddrphy1_dfi_p0_rddata[100] <= wl7ddrphy1_bitslip1001[1];
+    wl7ddrphy1_dfi_p1_rddata[28] <= wl7ddrphy1_bitslip1001[2];
+    wl7ddrphy1_dfi_p1_rddata[100] <= wl7ddrphy1_bitslip1001[3];
+    wl7ddrphy1_dfi_p2_rddata[28] <= wl7ddrphy1_bitslip1001[4];
+    wl7ddrphy1_dfi_p2_rddata[100] <= wl7ddrphy1_bitslip1001[5];
+    wl7ddrphy1_dfi_p3_rddata[28] <= wl7ddrphy1_bitslip1001[6];
+    wl7ddrphy1_dfi_p3_rddata[100] <= wl7ddrphy1_bitslip1001[7];
+    wl7ddrphy1_dfi_p0_rddata[29] <= wl7ddrphy1_bitslip1011[0];
+    wl7ddrphy1_dfi_p0_rddata[101] <= wl7ddrphy1_bitslip1011[1];
+    wl7ddrphy1_dfi_p1_rddata[29] <= wl7ddrphy1_bitslip1011[2];
+    wl7ddrphy1_dfi_p1_rddata[101] <= wl7ddrphy1_bitslip1011[3];
+    wl7ddrphy1_dfi_p2_rddata[29] <= wl7ddrphy1_bitslip1011[4];
+    wl7ddrphy1_dfi_p2_rddata[101] <= wl7ddrphy1_bitslip1011[5];
+    wl7ddrphy1_dfi_p3_rddata[29] <= wl7ddrphy1_bitslip1011[6];
+    wl7ddrphy1_dfi_p3_rddata[101] <= wl7ddrphy1_bitslip1011[7];
+    wl7ddrphy1_dfi_p0_rddata[30] <= wl7ddrphy1_bitslip1021[0];
+    wl7ddrphy1_dfi_p0_rddata[102] <= wl7ddrphy1_bitslip1021[1];
+    wl7ddrphy1_dfi_p1_rddata[30] <= wl7ddrphy1_bitslip1021[2];
+    wl7ddrphy1_dfi_p1_rddata[102] <= wl7ddrphy1_bitslip1021[3];
+    wl7ddrphy1_dfi_p2_rddata[30] <= wl7ddrphy1_bitslip1021[4];
+    wl7ddrphy1_dfi_p2_rddata[102] <= wl7ddrphy1_bitslip1021[5];
+    wl7ddrphy1_dfi_p3_rddata[30] <= wl7ddrphy1_bitslip1021[6];
+    wl7ddrphy1_dfi_p3_rddata[102] <= wl7ddrphy1_bitslip1021[7];
+    wl7ddrphy1_dfi_p0_rddata[31] <= wl7ddrphy1_bitslip1031[0];
+    wl7ddrphy1_dfi_p0_rddata[103] <= wl7ddrphy1_bitslip1031[1];
+    wl7ddrphy1_dfi_p1_rddata[31] <= wl7ddrphy1_bitslip1031[2];
+    wl7ddrphy1_dfi_p1_rddata[103] <= wl7ddrphy1_bitslip1031[3];
+    wl7ddrphy1_dfi_p2_rddata[31] <= wl7ddrphy1_bitslip1031[4];
+    wl7ddrphy1_dfi_p2_rddata[103] <= wl7ddrphy1_bitslip1031[5];
+    wl7ddrphy1_dfi_p3_rddata[31] <= wl7ddrphy1_bitslip1031[6];
+    wl7ddrphy1_dfi_p3_rddata[103] <= wl7ddrphy1_bitslip1031[7];
+    wl7ddrphy1_dfi_p0_rddata[32] <= wl7ddrphy1_bitslip1041[0];
+    wl7ddrphy1_dfi_p0_rddata[104] <= wl7ddrphy1_bitslip1041[1];
+    wl7ddrphy1_dfi_p1_rddata[32] <= wl7ddrphy1_bitslip1041[2];
+    wl7ddrphy1_dfi_p1_rddata[104] <= wl7ddrphy1_bitslip1041[3];
+    wl7ddrphy1_dfi_p2_rddata[32] <= wl7ddrphy1_bitslip1041[4];
+    wl7ddrphy1_dfi_p2_rddata[104] <= wl7ddrphy1_bitslip1041[5];
+    wl7ddrphy1_dfi_p3_rddata[32] <= wl7ddrphy1_bitslip1041[6];
+    wl7ddrphy1_dfi_p3_rddata[104] <= wl7ddrphy1_bitslip1041[7];
+    wl7ddrphy1_dfi_p0_rddata[33] <= wl7ddrphy1_bitslip1051[0];
+    wl7ddrphy1_dfi_p0_rddata[105] <= wl7ddrphy1_bitslip1051[1];
+    wl7ddrphy1_dfi_p1_rddata[33] <= wl7ddrphy1_bitslip1051[2];
+    wl7ddrphy1_dfi_p1_rddata[105] <= wl7ddrphy1_bitslip1051[3];
+    wl7ddrphy1_dfi_p2_rddata[33] <= wl7ddrphy1_bitslip1051[4];
+    wl7ddrphy1_dfi_p2_rddata[105] <= wl7ddrphy1_bitslip1051[5];
+    wl7ddrphy1_dfi_p3_rddata[33] <= wl7ddrphy1_bitslip1051[6];
+    wl7ddrphy1_dfi_p3_rddata[105] <= wl7ddrphy1_bitslip1051[7];
+    wl7ddrphy1_dfi_p0_rddata[34] <= wl7ddrphy1_bitslip1061[0];
+    wl7ddrphy1_dfi_p0_rddata[106] <= wl7ddrphy1_bitslip1061[1];
+    wl7ddrphy1_dfi_p1_rddata[34] <= wl7ddrphy1_bitslip1061[2];
+    wl7ddrphy1_dfi_p1_rddata[106] <= wl7ddrphy1_bitslip1061[3];
+    wl7ddrphy1_dfi_p2_rddata[34] <= wl7ddrphy1_bitslip1061[4];
+    wl7ddrphy1_dfi_p2_rddata[106] <= wl7ddrphy1_bitslip1061[5];
+    wl7ddrphy1_dfi_p3_rddata[34] <= wl7ddrphy1_bitslip1061[6];
+    wl7ddrphy1_dfi_p3_rddata[106] <= wl7ddrphy1_bitslip1061[7];
+    wl7ddrphy1_dfi_p0_rddata[35] <= wl7ddrphy1_bitslip1071[0];
+    wl7ddrphy1_dfi_p0_rddata[107] <= wl7ddrphy1_bitslip1071[1];
+    wl7ddrphy1_dfi_p1_rddata[35] <= wl7ddrphy1_bitslip1071[2];
+    wl7ddrphy1_dfi_p1_rddata[107] <= wl7ddrphy1_bitslip1071[3];
+    wl7ddrphy1_dfi_p2_rddata[35] <= wl7ddrphy1_bitslip1071[4];
+    wl7ddrphy1_dfi_p2_rddata[107] <= wl7ddrphy1_bitslip1071[5];
+    wl7ddrphy1_dfi_p3_rddata[35] <= wl7ddrphy1_bitslip1071[6];
+    wl7ddrphy1_dfi_p3_rddata[107] <= wl7ddrphy1_bitslip1071[7];
+    wl7ddrphy1_dfi_p0_rddata[36] <= wl7ddrphy1_bitslip1081[0];
+    wl7ddrphy1_dfi_p0_rddata[108] <= wl7ddrphy1_bitslip1081[1];
+    wl7ddrphy1_dfi_p1_rddata[36] <= wl7ddrphy1_bitslip1081[2];
+    wl7ddrphy1_dfi_p1_rddata[108] <= wl7ddrphy1_bitslip1081[3];
+    wl7ddrphy1_dfi_p2_rddata[36] <= wl7ddrphy1_bitslip1081[4];
+    wl7ddrphy1_dfi_p2_rddata[108] <= wl7ddrphy1_bitslip1081[5];
+    wl7ddrphy1_dfi_p3_rddata[36] <= wl7ddrphy1_bitslip1081[6];
+    wl7ddrphy1_dfi_p3_rddata[108] <= wl7ddrphy1_bitslip1081[7];
+    wl7ddrphy1_dfi_p0_rddata[37] <= wl7ddrphy1_bitslip1091[0];
+    wl7ddrphy1_dfi_p0_rddata[109] <= wl7ddrphy1_bitslip1091[1];
+    wl7ddrphy1_dfi_p1_rddata[37] <= wl7ddrphy1_bitslip1091[2];
+    wl7ddrphy1_dfi_p1_rddata[109] <= wl7ddrphy1_bitslip1091[3];
+    wl7ddrphy1_dfi_p2_rddata[37] <= wl7ddrphy1_bitslip1091[4];
+    wl7ddrphy1_dfi_p2_rddata[109] <= wl7ddrphy1_bitslip1091[5];
+    wl7ddrphy1_dfi_p3_rddata[37] <= wl7ddrphy1_bitslip1091[6];
+    wl7ddrphy1_dfi_p3_rddata[109] <= wl7ddrphy1_bitslip1091[7];
+    wl7ddrphy1_dfi_p0_rddata[38] <= wl7ddrphy1_bitslip1101[0];
+    wl7ddrphy1_dfi_p0_rddata[110] <= wl7ddrphy1_bitslip1101[1];
+    wl7ddrphy1_dfi_p1_rddata[38] <= wl7ddrphy1_bitslip1101[2];
+    wl7ddrphy1_dfi_p1_rddata[110] <= wl7ddrphy1_bitslip1101[3];
+    wl7ddrphy1_dfi_p2_rddata[38] <= wl7ddrphy1_bitslip1101[4];
+    wl7ddrphy1_dfi_p2_rddata[110] <= wl7ddrphy1_bitslip1101[5];
+    wl7ddrphy1_dfi_p3_rddata[38] <= wl7ddrphy1_bitslip1101[6];
+    wl7ddrphy1_dfi_p3_rddata[110] <= wl7ddrphy1_bitslip1101[7];
+    wl7ddrphy1_dfi_p0_rddata[39] <= wl7ddrphy1_bitslip1111[0];
+    wl7ddrphy1_dfi_p0_rddata[111] <= wl7ddrphy1_bitslip1111[1];
+    wl7ddrphy1_dfi_p1_rddata[39] <= wl7ddrphy1_bitslip1111[2];
+    wl7ddrphy1_dfi_p1_rddata[111] <= wl7ddrphy1_bitslip1111[3];
+    wl7ddrphy1_dfi_p2_rddata[39] <= wl7ddrphy1_bitslip1111[4];
+    wl7ddrphy1_dfi_p2_rddata[111] <= wl7ddrphy1_bitslip1111[5];
+    wl7ddrphy1_dfi_p3_rddata[39] <= wl7ddrphy1_bitslip1111[6];
+    wl7ddrphy1_dfi_p3_rddata[111] <= wl7ddrphy1_bitslip1111[7];
+    wl7ddrphy1_dfi_p0_rddata[40] <= wl7ddrphy1_bitslip1121[0];
+    wl7ddrphy1_dfi_p0_rddata[112] <= wl7ddrphy1_bitslip1121[1];
+    wl7ddrphy1_dfi_p1_rddata[40] <= wl7ddrphy1_bitslip1121[2];
+    wl7ddrphy1_dfi_p1_rddata[112] <= wl7ddrphy1_bitslip1121[3];
+    wl7ddrphy1_dfi_p2_rddata[40] <= wl7ddrphy1_bitslip1121[4];
+    wl7ddrphy1_dfi_p2_rddata[112] <= wl7ddrphy1_bitslip1121[5];
+    wl7ddrphy1_dfi_p3_rddata[40] <= wl7ddrphy1_bitslip1121[6];
+    wl7ddrphy1_dfi_p3_rddata[112] <= wl7ddrphy1_bitslip1121[7];
+    wl7ddrphy1_dfi_p0_rddata[41] <= wl7ddrphy1_bitslip1131[0];
+    wl7ddrphy1_dfi_p0_rddata[113] <= wl7ddrphy1_bitslip1131[1];
+    wl7ddrphy1_dfi_p1_rddata[41] <= wl7ddrphy1_bitslip1131[2];
+    wl7ddrphy1_dfi_p1_rddata[113] <= wl7ddrphy1_bitslip1131[3];
+    wl7ddrphy1_dfi_p2_rddata[41] <= wl7ddrphy1_bitslip1131[4];
+    wl7ddrphy1_dfi_p2_rddata[113] <= wl7ddrphy1_bitslip1131[5];
+    wl7ddrphy1_dfi_p3_rddata[41] <= wl7ddrphy1_bitslip1131[6];
+    wl7ddrphy1_dfi_p3_rddata[113] <= wl7ddrphy1_bitslip1131[7];
+    wl7ddrphy1_dfi_p0_rddata[42] <= wl7ddrphy1_bitslip1141[0];
+    wl7ddrphy1_dfi_p0_rddata[114] <= wl7ddrphy1_bitslip1141[1];
+    wl7ddrphy1_dfi_p1_rddata[42] <= wl7ddrphy1_bitslip1141[2];
+    wl7ddrphy1_dfi_p1_rddata[114] <= wl7ddrphy1_bitslip1141[3];
+    wl7ddrphy1_dfi_p2_rddata[42] <= wl7ddrphy1_bitslip1141[4];
+    wl7ddrphy1_dfi_p2_rddata[114] <= wl7ddrphy1_bitslip1141[5];
+    wl7ddrphy1_dfi_p3_rddata[42] <= wl7ddrphy1_bitslip1141[6];
+    wl7ddrphy1_dfi_p3_rddata[114] <= wl7ddrphy1_bitslip1141[7];
+    wl7ddrphy1_dfi_p0_rddata[43] <= wl7ddrphy1_bitslip1151[0];
+    wl7ddrphy1_dfi_p0_rddata[115] <= wl7ddrphy1_bitslip1151[1];
+    wl7ddrphy1_dfi_p1_rddata[43] <= wl7ddrphy1_bitslip1151[2];
+    wl7ddrphy1_dfi_p1_rddata[115] <= wl7ddrphy1_bitslip1151[3];
+    wl7ddrphy1_dfi_p2_rddata[43] <= wl7ddrphy1_bitslip1151[4];
+    wl7ddrphy1_dfi_p2_rddata[115] <= wl7ddrphy1_bitslip1151[5];
+    wl7ddrphy1_dfi_p3_rddata[43] <= wl7ddrphy1_bitslip1151[6];
+    wl7ddrphy1_dfi_p3_rddata[115] <= wl7ddrphy1_bitslip1151[7];
+    wl7ddrphy1_dfi_p0_rddata[44] <= wl7ddrphy1_bitslip1161[0];
+    wl7ddrphy1_dfi_p0_rddata[116] <= wl7ddrphy1_bitslip1161[1];
+    wl7ddrphy1_dfi_p1_rddata[44] <= wl7ddrphy1_bitslip1161[2];
+    wl7ddrphy1_dfi_p1_rddata[116] <= wl7ddrphy1_bitslip1161[3];
+    wl7ddrphy1_dfi_p2_rddata[44] <= wl7ddrphy1_bitslip1161[4];
+    wl7ddrphy1_dfi_p2_rddata[116] <= wl7ddrphy1_bitslip1161[5];
+    wl7ddrphy1_dfi_p3_rddata[44] <= wl7ddrphy1_bitslip1161[6];
+    wl7ddrphy1_dfi_p3_rddata[116] <= wl7ddrphy1_bitslip1161[7];
+    wl7ddrphy1_dfi_p0_rddata[45] <= wl7ddrphy1_bitslip1171[0];
+    wl7ddrphy1_dfi_p0_rddata[117] <= wl7ddrphy1_bitslip1171[1];
+    wl7ddrphy1_dfi_p1_rddata[45] <= wl7ddrphy1_bitslip1171[2];
+    wl7ddrphy1_dfi_p1_rddata[117] <= wl7ddrphy1_bitslip1171[3];
+    wl7ddrphy1_dfi_p2_rddata[45] <= wl7ddrphy1_bitslip1171[4];
+    wl7ddrphy1_dfi_p2_rddata[117] <= wl7ddrphy1_bitslip1171[5];
+    wl7ddrphy1_dfi_p3_rddata[45] <= wl7ddrphy1_bitslip1171[6];
+    wl7ddrphy1_dfi_p3_rddata[117] <= wl7ddrphy1_bitslip1171[7];
+    wl7ddrphy1_dfi_p0_rddata[46] <= wl7ddrphy1_bitslip1181[0];
+    wl7ddrphy1_dfi_p0_rddata[118] <= wl7ddrphy1_bitslip1181[1];
+    wl7ddrphy1_dfi_p1_rddata[46] <= wl7ddrphy1_bitslip1181[2];
+    wl7ddrphy1_dfi_p1_rddata[118] <= wl7ddrphy1_bitslip1181[3];
+    wl7ddrphy1_dfi_p2_rddata[46] <= wl7ddrphy1_bitslip1181[4];
+    wl7ddrphy1_dfi_p2_rddata[118] <= wl7ddrphy1_bitslip1181[5];
+    wl7ddrphy1_dfi_p3_rddata[46] <= wl7ddrphy1_bitslip1181[6];
+    wl7ddrphy1_dfi_p3_rddata[118] <= wl7ddrphy1_bitslip1181[7];
+    wl7ddrphy1_dfi_p0_rddata[47] <= wl7ddrphy1_bitslip1191[0];
+    wl7ddrphy1_dfi_p0_rddata[119] <= wl7ddrphy1_bitslip1191[1];
+    wl7ddrphy1_dfi_p1_rddata[47] <= wl7ddrphy1_bitslip1191[2];
+    wl7ddrphy1_dfi_p1_rddata[119] <= wl7ddrphy1_bitslip1191[3];
+    wl7ddrphy1_dfi_p2_rddata[47] <= wl7ddrphy1_bitslip1191[4];
+    wl7ddrphy1_dfi_p2_rddata[119] <= wl7ddrphy1_bitslip1191[5];
+    wl7ddrphy1_dfi_p3_rddata[47] <= wl7ddrphy1_bitslip1191[6];
+    wl7ddrphy1_dfi_p3_rddata[119] <= wl7ddrphy1_bitslip1191[7];
+    wl7ddrphy1_dfi_p0_rddata[48] <= wl7ddrphy1_bitslip1201[0];
+    wl7ddrphy1_dfi_p0_rddata[120] <= wl7ddrphy1_bitslip1201[1];
+    wl7ddrphy1_dfi_p1_rddata[48] <= wl7ddrphy1_bitslip1201[2];
+    wl7ddrphy1_dfi_p1_rddata[120] <= wl7ddrphy1_bitslip1201[3];
+    wl7ddrphy1_dfi_p2_rddata[48] <= wl7ddrphy1_bitslip1201[4];
+    wl7ddrphy1_dfi_p2_rddata[120] <= wl7ddrphy1_bitslip1201[5];
+    wl7ddrphy1_dfi_p3_rddata[48] <= wl7ddrphy1_bitslip1201[6];
+    wl7ddrphy1_dfi_p3_rddata[120] <= wl7ddrphy1_bitslip1201[7];
+    wl7ddrphy1_dfi_p0_rddata[49] <= wl7ddrphy1_bitslip1211[0];
+    wl7ddrphy1_dfi_p0_rddata[121] <= wl7ddrphy1_bitslip1211[1];
+    wl7ddrphy1_dfi_p1_rddata[49] <= wl7ddrphy1_bitslip1211[2];
+    wl7ddrphy1_dfi_p1_rddata[121] <= wl7ddrphy1_bitslip1211[3];
+    wl7ddrphy1_dfi_p2_rddata[49] <= wl7ddrphy1_bitslip1211[4];
+    wl7ddrphy1_dfi_p2_rddata[121] <= wl7ddrphy1_bitslip1211[5];
+    wl7ddrphy1_dfi_p3_rddata[49] <= wl7ddrphy1_bitslip1211[6];
+    wl7ddrphy1_dfi_p3_rddata[121] <= wl7ddrphy1_bitslip1211[7];
+    wl7ddrphy1_dfi_p0_rddata[50] <= wl7ddrphy1_bitslip1221[0];
+    wl7ddrphy1_dfi_p0_rddata[122] <= wl7ddrphy1_bitslip1221[1];
+    wl7ddrphy1_dfi_p1_rddata[50] <= wl7ddrphy1_bitslip1221[2];
+    wl7ddrphy1_dfi_p1_rddata[122] <= wl7ddrphy1_bitslip1221[3];
+    wl7ddrphy1_dfi_p2_rddata[50] <= wl7ddrphy1_bitslip1221[4];
+    wl7ddrphy1_dfi_p2_rddata[122] <= wl7ddrphy1_bitslip1221[5];
+    wl7ddrphy1_dfi_p3_rddata[50] <= wl7ddrphy1_bitslip1221[6];
+    wl7ddrphy1_dfi_p3_rddata[122] <= wl7ddrphy1_bitslip1221[7];
+    wl7ddrphy1_dfi_p0_rddata[51] <= wl7ddrphy1_bitslip1231[0];
+    wl7ddrphy1_dfi_p0_rddata[123] <= wl7ddrphy1_bitslip1231[1];
+    wl7ddrphy1_dfi_p1_rddata[51] <= wl7ddrphy1_bitslip1231[2];
+    wl7ddrphy1_dfi_p1_rddata[123] <= wl7ddrphy1_bitslip1231[3];
+    wl7ddrphy1_dfi_p2_rddata[51] <= wl7ddrphy1_bitslip1231[4];
+    wl7ddrphy1_dfi_p2_rddata[123] <= wl7ddrphy1_bitslip1231[5];
+    wl7ddrphy1_dfi_p3_rddata[51] <= wl7ddrphy1_bitslip1231[6];
+    wl7ddrphy1_dfi_p3_rddata[123] <= wl7ddrphy1_bitslip1231[7];
+    wl7ddrphy1_dfi_p0_rddata[52] <= wl7ddrphy1_bitslip1241[0];
+    wl7ddrphy1_dfi_p0_rddata[124] <= wl7ddrphy1_bitslip1241[1];
+    wl7ddrphy1_dfi_p1_rddata[52] <= wl7ddrphy1_bitslip1241[2];
+    wl7ddrphy1_dfi_p1_rddata[124] <= wl7ddrphy1_bitslip1241[3];
+    wl7ddrphy1_dfi_p2_rddata[52] <= wl7ddrphy1_bitslip1241[4];
+    wl7ddrphy1_dfi_p2_rddata[124] <= wl7ddrphy1_bitslip1241[5];
+    wl7ddrphy1_dfi_p3_rddata[52] <= wl7ddrphy1_bitslip1241[6];
+    wl7ddrphy1_dfi_p3_rddata[124] <= wl7ddrphy1_bitslip1241[7];
+    wl7ddrphy1_dfi_p0_rddata[53] <= wl7ddrphy1_bitslip1251[0];
+    wl7ddrphy1_dfi_p0_rddata[125] <= wl7ddrphy1_bitslip1251[1];
+    wl7ddrphy1_dfi_p1_rddata[53] <= wl7ddrphy1_bitslip1251[2];
+    wl7ddrphy1_dfi_p1_rddata[125] <= wl7ddrphy1_bitslip1251[3];
+    wl7ddrphy1_dfi_p2_rddata[53] <= wl7ddrphy1_bitslip1251[4];
+    wl7ddrphy1_dfi_p2_rddata[125] <= wl7ddrphy1_bitslip1251[5];
+    wl7ddrphy1_dfi_p3_rddata[53] <= wl7ddrphy1_bitslip1251[6];
+    wl7ddrphy1_dfi_p3_rddata[125] <= wl7ddrphy1_bitslip1251[7];
+    wl7ddrphy1_dfi_p0_rddata[54] <= wl7ddrphy1_bitslip1261[0];
+    wl7ddrphy1_dfi_p0_rddata[126] <= wl7ddrphy1_bitslip1261[1];
+    wl7ddrphy1_dfi_p1_rddata[54] <= wl7ddrphy1_bitslip1261[2];
+    wl7ddrphy1_dfi_p1_rddata[126] <= wl7ddrphy1_bitslip1261[3];
+    wl7ddrphy1_dfi_p2_rddata[54] <= wl7ddrphy1_bitslip1261[4];
+    wl7ddrphy1_dfi_p2_rddata[126] <= wl7ddrphy1_bitslip1261[5];
+    wl7ddrphy1_dfi_p3_rddata[54] <= wl7ddrphy1_bitslip1261[6];
+    wl7ddrphy1_dfi_p3_rddata[126] <= wl7ddrphy1_bitslip1261[7];
+    wl7ddrphy1_dfi_p0_rddata[55] <= wl7ddrphy1_bitslip1271[0];
+    wl7ddrphy1_dfi_p0_rddata[127] <= wl7ddrphy1_bitslip1271[1];
+    wl7ddrphy1_dfi_p1_rddata[55] <= wl7ddrphy1_bitslip1271[2];
+    wl7ddrphy1_dfi_p1_rddata[127] <= wl7ddrphy1_bitslip1271[3];
+    wl7ddrphy1_dfi_p2_rddata[55] <= wl7ddrphy1_bitslip1271[4];
+    wl7ddrphy1_dfi_p2_rddata[127] <= wl7ddrphy1_bitslip1271[5];
+    wl7ddrphy1_dfi_p3_rddata[55] <= wl7ddrphy1_bitslip1271[6];
+    wl7ddrphy1_dfi_p3_rddata[127] <= wl7ddrphy1_bitslip1271[7];
+    wl7ddrphy1_dfi_p0_rddata[56] <= wl7ddrphy1_bitslip1281[0];
+    wl7ddrphy1_dfi_p0_rddata[128] <= wl7ddrphy1_bitslip1281[1];
+    wl7ddrphy1_dfi_p1_rddata[56] <= wl7ddrphy1_bitslip1281[2];
+    wl7ddrphy1_dfi_p1_rddata[128] <= wl7ddrphy1_bitslip1281[3];
+    wl7ddrphy1_dfi_p2_rddata[56] <= wl7ddrphy1_bitslip1281[4];
+    wl7ddrphy1_dfi_p2_rddata[128] <= wl7ddrphy1_bitslip1281[5];
+    wl7ddrphy1_dfi_p3_rddata[56] <= wl7ddrphy1_bitslip1281[6];
+    wl7ddrphy1_dfi_p3_rddata[128] <= wl7ddrphy1_bitslip1281[7];
+    wl7ddrphy1_dfi_p0_rddata[57] <= wl7ddrphy1_bitslip1291[0];
+    wl7ddrphy1_dfi_p0_rddata[129] <= wl7ddrphy1_bitslip1291[1];
+    wl7ddrphy1_dfi_p1_rddata[57] <= wl7ddrphy1_bitslip1291[2];
+    wl7ddrphy1_dfi_p1_rddata[129] <= wl7ddrphy1_bitslip1291[3];
+    wl7ddrphy1_dfi_p2_rddata[57] <= wl7ddrphy1_bitslip1291[4];
+    wl7ddrphy1_dfi_p2_rddata[129] <= wl7ddrphy1_bitslip1291[5];
+    wl7ddrphy1_dfi_p3_rddata[57] <= wl7ddrphy1_bitslip1291[6];
+    wl7ddrphy1_dfi_p3_rddata[129] <= wl7ddrphy1_bitslip1291[7];
+    wl7ddrphy1_dfi_p0_rddata[58] <= wl7ddrphy1_bitslip1301[0];
+    wl7ddrphy1_dfi_p0_rddata[130] <= wl7ddrphy1_bitslip1301[1];
+    wl7ddrphy1_dfi_p1_rddata[58] <= wl7ddrphy1_bitslip1301[2];
+    wl7ddrphy1_dfi_p1_rddata[130] <= wl7ddrphy1_bitslip1301[3];
+    wl7ddrphy1_dfi_p2_rddata[58] <= wl7ddrphy1_bitslip1301[4];
+    wl7ddrphy1_dfi_p2_rddata[130] <= wl7ddrphy1_bitslip1301[5];
+    wl7ddrphy1_dfi_p3_rddata[58] <= wl7ddrphy1_bitslip1301[6];
+    wl7ddrphy1_dfi_p3_rddata[130] <= wl7ddrphy1_bitslip1301[7];
+    wl7ddrphy1_dfi_p0_rddata[59] <= wl7ddrphy1_bitslip1311[0];
+    wl7ddrphy1_dfi_p0_rddata[131] <= wl7ddrphy1_bitslip1311[1];
+    wl7ddrphy1_dfi_p1_rddata[59] <= wl7ddrphy1_bitslip1311[2];
+    wl7ddrphy1_dfi_p1_rddata[131] <= wl7ddrphy1_bitslip1311[3];
+    wl7ddrphy1_dfi_p2_rddata[59] <= wl7ddrphy1_bitslip1311[4];
+    wl7ddrphy1_dfi_p2_rddata[131] <= wl7ddrphy1_bitslip1311[5];
+    wl7ddrphy1_dfi_p3_rddata[59] <= wl7ddrphy1_bitslip1311[6];
+    wl7ddrphy1_dfi_p3_rddata[131] <= wl7ddrphy1_bitslip1311[7];
+    wl7ddrphy1_dfi_p0_rddata[60] <= wl7ddrphy1_bitslip1321[0];
+    wl7ddrphy1_dfi_p0_rddata[132] <= wl7ddrphy1_bitslip1321[1];
+    wl7ddrphy1_dfi_p1_rddata[60] <= wl7ddrphy1_bitslip1321[2];
+    wl7ddrphy1_dfi_p1_rddata[132] <= wl7ddrphy1_bitslip1321[3];
+    wl7ddrphy1_dfi_p2_rddata[60] <= wl7ddrphy1_bitslip1321[4];
+    wl7ddrphy1_dfi_p2_rddata[132] <= wl7ddrphy1_bitslip1321[5];
+    wl7ddrphy1_dfi_p3_rddata[60] <= wl7ddrphy1_bitslip1321[6];
+    wl7ddrphy1_dfi_p3_rddata[132] <= wl7ddrphy1_bitslip1321[7];
+    wl7ddrphy1_dfi_p0_rddata[61] <= wl7ddrphy1_bitslip1331[0];
+    wl7ddrphy1_dfi_p0_rddata[133] <= wl7ddrphy1_bitslip1331[1];
+    wl7ddrphy1_dfi_p1_rddata[61] <= wl7ddrphy1_bitslip1331[2];
+    wl7ddrphy1_dfi_p1_rddata[133] <= wl7ddrphy1_bitslip1331[3];
+    wl7ddrphy1_dfi_p2_rddata[61] <= wl7ddrphy1_bitslip1331[4];
+    wl7ddrphy1_dfi_p2_rddata[133] <= wl7ddrphy1_bitslip1331[5];
+    wl7ddrphy1_dfi_p3_rddata[61] <= wl7ddrphy1_bitslip1331[6];
+    wl7ddrphy1_dfi_p3_rddata[133] <= wl7ddrphy1_bitslip1331[7];
+    wl7ddrphy1_dfi_p0_rddata[62] <= wl7ddrphy1_bitslip1341[0];
+    wl7ddrphy1_dfi_p0_rddata[134] <= wl7ddrphy1_bitslip1341[1];
+    wl7ddrphy1_dfi_p1_rddata[62] <= wl7ddrphy1_bitslip1341[2];
+    wl7ddrphy1_dfi_p1_rddata[134] <= wl7ddrphy1_bitslip1341[3];
+    wl7ddrphy1_dfi_p2_rddata[62] <= wl7ddrphy1_bitslip1341[4];
+    wl7ddrphy1_dfi_p2_rddata[134] <= wl7ddrphy1_bitslip1341[5];
+    wl7ddrphy1_dfi_p3_rddata[62] <= wl7ddrphy1_bitslip1341[6];
+    wl7ddrphy1_dfi_p3_rddata[134] <= wl7ddrphy1_bitslip1341[7];
+    wl7ddrphy1_dfi_p0_rddata[63] <= wl7ddrphy1_bitslip1351[0];
+    wl7ddrphy1_dfi_p0_rddata[135] <= wl7ddrphy1_bitslip1351[1];
+    wl7ddrphy1_dfi_p1_rddata[63] <= wl7ddrphy1_bitslip1351[2];
+    wl7ddrphy1_dfi_p1_rddata[135] <= wl7ddrphy1_bitslip1351[3];
+    wl7ddrphy1_dfi_p2_rddata[63] <= wl7ddrphy1_bitslip1351[4];
+    wl7ddrphy1_dfi_p2_rddata[135] <= wl7ddrphy1_bitslip1351[5];
+    wl7ddrphy1_dfi_p3_rddata[63] <= wl7ddrphy1_bitslip1351[6];
+    wl7ddrphy1_dfi_p3_rddata[135] <= wl7ddrphy1_bitslip1351[7];
+    wl7ddrphy1_dfi_p0_rddata[64] <= wl7ddrphy1_bitslip1361[0];
+    wl7ddrphy1_dfi_p0_rddata[136] <= wl7ddrphy1_bitslip1361[1];
+    wl7ddrphy1_dfi_p1_rddata[64] <= wl7ddrphy1_bitslip1361[2];
+    wl7ddrphy1_dfi_p1_rddata[136] <= wl7ddrphy1_bitslip1361[3];
+    wl7ddrphy1_dfi_p2_rddata[64] <= wl7ddrphy1_bitslip1361[4];
+    wl7ddrphy1_dfi_p2_rddata[136] <= wl7ddrphy1_bitslip1361[5];
+    wl7ddrphy1_dfi_p3_rddata[64] <= wl7ddrphy1_bitslip1361[6];
+    wl7ddrphy1_dfi_p3_rddata[136] <= wl7ddrphy1_bitslip1361[7];
+    wl7ddrphy1_dfi_p0_rddata[65] <= wl7ddrphy1_bitslip1371[0];
+    wl7ddrphy1_dfi_p0_rddata[137] <= wl7ddrphy1_bitslip1371[1];
+    wl7ddrphy1_dfi_p1_rddata[65] <= wl7ddrphy1_bitslip1371[2];
+    wl7ddrphy1_dfi_p1_rddata[137] <= wl7ddrphy1_bitslip1371[3];
+    wl7ddrphy1_dfi_p2_rddata[65] <= wl7ddrphy1_bitslip1371[4];
+    wl7ddrphy1_dfi_p2_rddata[137] <= wl7ddrphy1_bitslip1371[5];
+    wl7ddrphy1_dfi_p3_rddata[65] <= wl7ddrphy1_bitslip1371[6];
+    wl7ddrphy1_dfi_p3_rddata[137] <= wl7ddrphy1_bitslip1371[7];
+    wl7ddrphy1_dfi_p0_rddata[66] <= wl7ddrphy1_bitslip1381[0];
+    wl7ddrphy1_dfi_p0_rddata[138] <= wl7ddrphy1_bitslip1381[1];
+    wl7ddrphy1_dfi_p1_rddata[66] <= wl7ddrphy1_bitslip1381[2];
+    wl7ddrphy1_dfi_p1_rddata[138] <= wl7ddrphy1_bitslip1381[3];
+    wl7ddrphy1_dfi_p2_rddata[66] <= wl7ddrphy1_bitslip1381[4];
+    wl7ddrphy1_dfi_p2_rddata[138] <= wl7ddrphy1_bitslip1381[5];
+    wl7ddrphy1_dfi_p3_rddata[66] <= wl7ddrphy1_bitslip1381[6];
+    wl7ddrphy1_dfi_p3_rddata[138] <= wl7ddrphy1_bitslip1381[7];
+    wl7ddrphy1_dfi_p0_rddata[67] <= wl7ddrphy1_bitslip1391[0];
+    wl7ddrphy1_dfi_p0_rddata[139] <= wl7ddrphy1_bitslip1391[1];
+    wl7ddrphy1_dfi_p1_rddata[67] <= wl7ddrphy1_bitslip1391[2];
+    wl7ddrphy1_dfi_p1_rddata[139] <= wl7ddrphy1_bitslip1391[3];
+    wl7ddrphy1_dfi_p2_rddata[67] <= wl7ddrphy1_bitslip1391[4];
+    wl7ddrphy1_dfi_p2_rddata[139] <= wl7ddrphy1_bitslip1391[5];
+    wl7ddrphy1_dfi_p3_rddata[67] <= wl7ddrphy1_bitslip1391[6];
+    wl7ddrphy1_dfi_p3_rddata[139] <= wl7ddrphy1_bitslip1391[7];
+    wl7ddrphy1_dfi_p0_rddata[68] <= wl7ddrphy1_bitslip1401[0];
+    wl7ddrphy1_dfi_p0_rddata[140] <= wl7ddrphy1_bitslip1401[1];
+    wl7ddrphy1_dfi_p1_rddata[68] <= wl7ddrphy1_bitslip1401[2];
+    wl7ddrphy1_dfi_p1_rddata[140] <= wl7ddrphy1_bitslip1401[3];
+    wl7ddrphy1_dfi_p2_rddata[68] <= wl7ddrphy1_bitslip1401[4];
+    wl7ddrphy1_dfi_p2_rddata[140] <= wl7ddrphy1_bitslip1401[5];
+    wl7ddrphy1_dfi_p3_rddata[68] <= wl7ddrphy1_bitslip1401[6];
+    wl7ddrphy1_dfi_p3_rddata[140] <= wl7ddrphy1_bitslip1401[7];
+    wl7ddrphy1_dfi_p0_rddata[69] <= wl7ddrphy1_bitslip1411[0];
+    wl7ddrphy1_dfi_p0_rddata[141] <= wl7ddrphy1_bitslip1411[1];
+    wl7ddrphy1_dfi_p1_rddata[69] <= wl7ddrphy1_bitslip1411[2];
+    wl7ddrphy1_dfi_p1_rddata[141] <= wl7ddrphy1_bitslip1411[3];
+    wl7ddrphy1_dfi_p2_rddata[69] <= wl7ddrphy1_bitslip1411[4];
+    wl7ddrphy1_dfi_p2_rddata[141] <= wl7ddrphy1_bitslip1411[5];
+    wl7ddrphy1_dfi_p3_rddata[69] <= wl7ddrphy1_bitslip1411[6];
+    wl7ddrphy1_dfi_p3_rddata[141] <= wl7ddrphy1_bitslip1411[7];
+    wl7ddrphy1_dfi_p0_rddata[70] <= wl7ddrphy1_bitslip1421[0];
+    wl7ddrphy1_dfi_p0_rddata[142] <= wl7ddrphy1_bitslip1421[1];
+    wl7ddrphy1_dfi_p1_rddata[70] <= wl7ddrphy1_bitslip1421[2];
+    wl7ddrphy1_dfi_p1_rddata[142] <= wl7ddrphy1_bitslip1421[3];
+    wl7ddrphy1_dfi_p2_rddata[70] <= wl7ddrphy1_bitslip1421[4];
+    wl7ddrphy1_dfi_p2_rddata[142] <= wl7ddrphy1_bitslip1421[5];
+    wl7ddrphy1_dfi_p3_rddata[70] <= wl7ddrphy1_bitslip1421[6];
+    wl7ddrphy1_dfi_p3_rddata[142] <= wl7ddrphy1_bitslip1421[7];
+    wl7ddrphy1_dfi_p0_rddata[71] <= wl7ddrphy1_bitslip1431[0];
+    wl7ddrphy1_dfi_p0_rddata[143] <= wl7ddrphy1_bitslip1431[1];
+    wl7ddrphy1_dfi_p1_rddata[71] <= wl7ddrphy1_bitslip1431[2];
+    wl7ddrphy1_dfi_p1_rddata[143] <= wl7ddrphy1_bitslip1431[3];
+    wl7ddrphy1_dfi_p2_rddata[71] <= wl7ddrphy1_bitslip1431[4];
+    wl7ddrphy1_dfi_p2_rddata[143] <= wl7ddrphy1_bitslip1431[5];
+    wl7ddrphy1_dfi_p3_rddata[71] <= wl7ddrphy1_bitslip1431[6];
+    wl7ddrphy1_dfi_p3_rddata[143] <= wl7ddrphy1_bitslip1431[7];
     wl7ddrphy1_tappeddelayline1_tappeddelayline10 <= wl7ddrphy1_tappeddelayline10;
     wl7ddrphy1_tappeddelayline1_tappeddelayline11 <= wl7ddrphy1_tappeddelayline1_tappeddelayline10;
     wl7ddrphy1_dqspattern1_o1 <= wl7ddrphy1_dqspattern1_o0;
@@ -57760,9 +57751,10 @@ always @(posedge sys_clk_1) begin
     wl7ddrphy1_tappeddelayline17 <= wl7ddrphy1_tappeddelayline16;
     wl7ddrphy1_tappeddelayline18 <= wl7ddrphy1_tappeddelayline17;
     wl7ddrphy1_tappeddelayline19 <= wl7ddrphy1_tappeddelayline18;
-    wl7ddrphy1_tappeddelayline110 <= (((wl7ddrphy1_dfi_p0_wrdata_en | wl7ddrphy1_dfi_p1_wrdata_en) | wl7ddrphy1_dfi_p2_wrdata_en) | wl7ddrphy1_dfi_p3_wrdata_en);
-    wl7ddrphy1_tappeddelayline111 <= wl7ddrphy1_tappeddelayline110;
+    wl7ddrphy1_tappeddelayline110 <= wl7ddrphy1_tappeddelayline19;
+    wl7ddrphy1_tappeddelayline111 <= (((wl7ddrphy1_dfi_p0_wrdata_en | wl7ddrphy1_dfi_p1_wrdata_en) | wl7ddrphy1_dfi_p2_wrdata_en) | wl7ddrphy1_dfi_p3_wrdata_en);
     wl7ddrphy1_tappeddelayline112 <= wl7ddrphy1_tappeddelayline111;
+    wl7ddrphy1_tappeddelayline113 <= wl7ddrphy1_tappeddelayline112;
     if (litedramcore1_csr_dfi_p0_rddata_valid) begin
         litedramcore1_phaseinjector4_rddata_status <= litedramcore1_csr_dfi_p0_rddata;
     end
@@ -59069,8 +59061,8 @@ always @(posedge sys_clk_1) begin
     litedramcore1_new_master_rdata_valid6 <= litedramcore1_new_master_rdata_valid5;
     litedramcore1_new_master_rdata_valid7 <= litedramcore1_new_master_rdata_valid6;
     litedramcore1_new_master_rdata_valid8 <= litedramcore1_new_master_rdata_valid7;
-    litedramcore1_new_master_rdata_valid9 <= ((((((((1'd0 | ((litedramcore1_roundrobin8_grant == 1'd1) & litedramcore1_interface_bank0_rdata_valid)) | ((litedramcore1_roundrobin9_grant == 1'd1) & litedramcore1_interface_bank1_rdata_valid)) | ((litedramcore1_roundrobin10_grant == 1'd1) & litedramcore1_interface_bank2_rdata_valid)) | ((litedramcore1_roundrobin11_grant == 1'd1) & litedramcore1_interface_bank3_rdata_valid)) | ((litedramcore1_roundrobin12_grant == 1'd1) & litedramcore1_interface_bank4_rdata_valid)) | ((litedramcore1_roundrobin13_grant == 1'd1) & litedramcore1_interface_bank5_rdata_valid)) | ((litedramcore1_roundrobin14_grant == 1'd1) & litedramcore1_interface_bank6_rdata_valid)) | ((litedramcore1_roundrobin15_grant == 1'd1) & litedramcore1_interface_bank7_rdata_valid));
-    litedramcore1_new_master_rdata_valid10 <= litedramcore1_new_master_rdata_valid9;
+    litedramcore1_new_master_rdata_valid9 <= litedramcore1_new_master_rdata_valid8;
+    litedramcore1_new_master_rdata_valid10 <= ((((((((1'd0 | ((litedramcore1_roundrobin8_grant == 1'd1) & litedramcore1_interface_bank0_rdata_valid)) | ((litedramcore1_roundrobin9_grant == 1'd1) & litedramcore1_interface_bank1_rdata_valid)) | ((litedramcore1_roundrobin10_grant == 1'd1) & litedramcore1_interface_bank2_rdata_valid)) | ((litedramcore1_roundrobin11_grant == 1'd1) & litedramcore1_interface_bank3_rdata_valid)) | ((litedramcore1_roundrobin12_grant == 1'd1) & litedramcore1_interface_bank4_rdata_valid)) | ((litedramcore1_roundrobin13_grant == 1'd1) & litedramcore1_interface_bank5_rdata_valid)) | ((litedramcore1_roundrobin14_grant == 1'd1) & litedramcore1_interface_bank6_rdata_valid)) | ((litedramcore1_roundrobin15_grant == 1'd1) & litedramcore1_interface_bank7_rdata_valid));
     litedramcore1_new_master_rdata_valid11 <= litedramcore1_new_master_rdata_valid10;
     litedramcore1_new_master_rdata_valid12 <= litedramcore1_new_master_rdata_valid11;
     litedramcore1_new_master_rdata_valid13 <= litedramcore1_new_master_rdata_valid12;
@@ -59078,6 +59070,8 @@ always @(posedge sys_clk_1) begin
     litedramcore1_new_master_rdata_valid15 <= litedramcore1_new_master_rdata_valid14;
     litedramcore1_new_master_rdata_valid16 <= litedramcore1_new_master_rdata_valid15;
     litedramcore1_new_master_rdata_valid17 <= litedramcore1_new_master_rdata_valid16;
+    litedramcore1_new_master_rdata_valid18 <= litedramcore1_new_master_rdata_valid17;
+    litedramcore1_new_master_rdata_valid19 <= litedramcore1_new_master_rdata_valid18;
     if (litedramcore1_roundrobin8_ce) begin
         case (litedramcore1_roundrobin8_grant)
             1'd0: begin
@@ -60557,6 +60551,10 @@ always @(posedge sys_clk_1) begin
         wl7ddrphy0_wrphase_wr_stb <= 1'd0;
         wl7ddrphy0_dly_sel_bits_storage <= 8'hff;
         wl7ddrphy0_dly_sel_bits_wr_stb <= 1'd0;
+        wl7ddrphy0_dfi_p0_rddata <= 144'd0;
+        wl7ddrphy0_dfi_p1_rddata <= 144'd0;
+        wl7ddrphy0_dfi_p2_rddata <= 144'd0;
+        wl7ddrphy0_dfi_p3_rddata <= 144'd0;
         wl7ddrphy0_tappeddelayline0_tappeddelayline00 <= 1'd0;
         wl7ddrphy0_tappeddelayline0_tappeddelayline01 <= 1'd0;
         wl7ddrphy0_dqspattern0_o1 <= 8'd0;
@@ -60726,6 +60724,7 @@ always @(posedge sys_clk_1) begin
         wl7ddrphy0_tappeddelayline010 <= 1'd0;
         wl7ddrphy0_tappeddelayline011 <= 1'd0;
         wl7ddrphy0_tappeddelayline012 <= 1'd0;
+        wl7ddrphy0_tappeddelayline013 <= 1'd0;
         litedramcore0_storage <= 4'd1;
         litedramcore0_wr_stb <= 1'd0;
         litedramcore0_phaseinjector0_command_storage <= 8'd0;
@@ -60992,6 +60991,10 @@ always @(posedge sys_clk_1) begin
         wl7ddrphy1_wrphase_wr_stb <= 1'd0;
         wl7ddrphy1_dly_sel_bits_storage <= 8'hff;
         wl7ddrphy1_dly_sel_bits_wr_stb <= 1'd0;
+        wl7ddrphy1_dfi_p0_rddata <= 144'd0;
+        wl7ddrphy1_dfi_p1_rddata <= 144'd0;
+        wl7ddrphy1_dfi_p2_rddata <= 144'd0;
+        wl7ddrphy1_dfi_p3_rddata <= 144'd0;
         wl7ddrphy1_tappeddelayline1_tappeddelayline10 <= 1'd0;
         wl7ddrphy1_tappeddelayline1_tappeddelayline11 <= 1'd0;
         wl7ddrphy1_dqspattern1_o1 <= 8'd0;
@@ -61161,6 +61164,7 @@ always @(posedge sys_clk_1) begin
         wl7ddrphy1_tappeddelayline110 <= 1'd0;
         wl7ddrphy1_tappeddelayline111 <= 1'd0;
         wl7ddrphy1_tappeddelayline112 <= 1'd0;
+        wl7ddrphy1_tappeddelayline113 <= 1'd0;
         litedramcore1_storage <= 4'd1;
         litedramcore1_wr_stb <= 1'd0;
         litedramcore1_phaseinjector4_command_storage <= 8'd0;
@@ -61458,6 +61462,8 @@ always @(posedge sys_clk_1) begin
         litedramcore0_new_master_rdata_valid15 <= 1'd0;
         litedramcore0_new_master_rdata_valid16 <= 1'd0;
         litedramcore0_new_master_rdata_valid17 <= 1'd0;
+        litedramcore0_new_master_rdata_valid18 <= 1'd0;
+        litedramcore0_new_master_rdata_valid19 <= 1'd0;
         litedramcore1_refresher1_state <= 2'd0;
         litedramcore1_bankmachine8_state <= 4'd0;
         litedramcore1_bankmachine9_state <= 4'd0;
@@ -61498,6 +61504,8 @@ always @(posedge sys_clk_1) begin
         litedramcore1_new_master_rdata_valid15 <= 1'd0;
         litedramcore1_new_master_rdata_valid16 <= 1'd0;
         litedramcore1_new_master_rdata_valid17 <= 1'd0;
+        litedramcore1_new_master_rdata_valid18 <= 1'd0;
+        litedramcore1_new_master_rdata_valid19 <= 1'd0;
         axilite2wishbone_state <= 3'd0;
         wishbone2csr_state <= 2'd0;
     end
@@ -88052,5 +88060,5 @@ FDPE #(
 endmodule
 
 // -----------------------------------------------------------------------------
-//  Auto-Generated by LiteX on 2026-09-29 11:29:39.
+//  Auto-Generated by LiteX on 2026-09-29 12:51:59.
 //------------------------------------------------------------------------------

@@ -13,7 +13,7 @@
   "phy": "wl",
   "groups0": "0,0,0,0,0,0,0,0,0",
   "groups1": "0,0,0,0,0,0,0,0,0",
-  "generator_commit": "litedram-int 8cbfd3b, wlrst max_delay 3.0 ns (ld-top)"
+  "generator_commit": "litedram-int 86bee3c"
  },
  "python": "3.11.15",
  "packages": {
@@ -32,7 +32,7 @@
  },
  "generated": "2026-09-29",
  "sha256": {
-  "otpu_litedram.v": "8fa289c3c66a94823493f1019cec77b7ef1c6acb2e0ac6a072f1c490fe5c3aab",
+  "otpu_litedram.v": "506c05b3267b616b707acbf92eff9ef5ce7517f1504e03e635c2a94ab238d406",
   "otpu_litedram.xdc": "91991c2b6b41b9d98579d8b9515b634cdb9028a51dfa6f2e6ab608772a1b122e",
   "otpu_litedram_mem.init": "3539495b12fca557dbbe9fb3252bbb64acfe31c06f69ef5a810ac76b70da5cc5"
  },
