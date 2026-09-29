@@ -343,7 +343,10 @@ class Run:
             rec["diff"] = git("diff", "--stat", cwd=wt)
             pdir = self.dir / "patches"                # the full change, kept for every outcome
             pdir.mkdir(exist_ok=True)
-            (pdir / f"{sid}.patch").write_text(git("diff", cwd=wt) + "\n")
+            # the diff as git writes it: git() strips, which cuts a hunk's last context line
+            # when it is empty (" "), and the patch no longer applies
+            (pdir / f"{sid}.patch").write_text(subprocess.run(
+                ["git", "diff"], cwd=wt, capture_output=True, text=True, check=True).stdout)
             gate("lint", G.lint, wt)
             rec["fast"] = gate("fast", G.pytest, wt, self.comp["tests"]["fast"], None, "fast")
             rec["board"] = gate("board", G.pytest, wt, self.comp["tests"]["board"], G.BOARD_ENV,
