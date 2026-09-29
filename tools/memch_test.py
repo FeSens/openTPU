@@ -1,14 +1,14 @@
-"""Build and run tb_memch (sim/verilator/tb_memch.sv: otpu_mem_ch in front of the MIG and LiteDRAM
-native-port models) over its scenarios, its throughput runs and its mutation checks. Verilator
-builds are heavy: run it on omarchy, one at a time:
+"""Build and run tb_memch (sim/verilator/tb_memch.sv: otpu_mem_ch in front of LiteDRAM native-port
+models) over its scenarios, its throughput runs and its mutation checks. Verilator builds are
+heavy: run it on omarchy, one at a time:
 
     tools/omarchy_test.sh --exec python tools/memch_test.py [suite ...]
 
-suites: quick, func (default), perf, mut (or mut=I,J: those mutations), all. One line per run: the build (tb_memch's B0 / B1 /
-ARD), the scenario, PASS / FAIL / TIMEOUT / ABORT (a model's $fatal or an RTL $error), and each
-master's beats per cycle of its own clock. A mutation is a text substitution in a scratch copy of
-otpu_mem_ch.sv; it is caught when one of its runs does not PASS. Exit status 1 if a plain run does
-not pass or a mutation is not caught.
+suites: quick, func (default), perf, mut (or mut=I,J: those mutations), all. One line per run: the
+build (tb_memch's ARD), the scenario, PASS / FAIL / TIMEOUT / ABORT (a model's $fatal or an RTL
+$error), and each master's beats per cycle of its own clock. A mutation is a text substitution in
+a scratch copy of otpu_mem_ch.sv; it is caught when one of its runs does not PASS. Exit status 1 if
+a plain run does not pass or a mutation is not caught.
 """
 from __future__ import annotations
 
@@ -25,18 +25,14 @@ OUT = Path(os.environ.get("MEMCH_OUT", ROOT / "build" / "memch"))
 RTL = ROOT / "rtl" / "boards" / "ypcb-00338"
 TB = ROOT / "sim" / "verilator"
 SRC = [RTL / "otpu_afifo.sv", RTL / "otpu_axi_split2.sv", RTL / "otpu_mem_ch.sv",
-       RTL / "otpu_mig_native.sv", TB / "otpu_mig_model.sv", TB / "otpu_ldn_model.sv",
-       TB / "tb_memch.sv"]
+       TB / "otpu_ldn_model.sv", TB / "tb_memch.sv"]
 JOBS = os.environ.get("MEMCH_JOBS", "4")      # C++ compile jobs per build
 PAR = int(os.environ.get("MEMCH_PAR", "3"))   # simulations at once
 
-# builds: tb_memch parameters (B0 / B1: 0 MIG with wr_bytes, 1 LiteDRAM, 2 MIG with RMW = 1)
+# builds: tb_memch parameters (cred: a 16-beat accelerator read-data FIFO)
 BUILDS = {
-    "mix": dict(B0=0, B1=1),
-    "ldn": dict(B0=1, B1=1),
-    "mig": dict(B0=0, B1=0),
-    "migr": dict(B0=2, B1=2),
-    "cred": dict(B0=0, B1=1, ARD=16),
+    "ldn": dict(),
+    "cred": dict(ARD=16),
 }
 
 SCEN = {
@@ -86,22 +82,17 @@ for i in range(10, 30):
 # functional runs: 3000 runs or bursts per master unless the scenario says otherwise (the first
 # plusarg of a name wins)
 FBASE = ["+ntx=3000", "+tmax=100000000"]
-FUNC = [("mix", s) for s in ["default", "seed2", "seed3", "seed4", "xreset", "areset", "resets",
+FUNC = [("ldn", s) for s in ["default", "seed2", "seed3", "seed4", "xreset", "areset", "resets",
                              "lateresets", "xresetlat", "aresetlat", "xresetrep", "aresetrep", "resetsrep", "aresetshort", "xresetshort", "xresetshortsh", "mstall70", "nogaps", "partial", "rawpart", "ctlstall", "fastcore",
                              "slowcore", "shared", "long", "seqrd", "seqwr", "seqmix"]]
-FUNC += [("mix", f"s{i}") for i in range(10, 30)]
-FUNC += [("ldn", s) for s in ["default", "partial", "rawpart", "xreset", "areset", "resets", "xresetlat", "aresetlat", "xresetrep", "aresetrep", "resetsrep", "aresetshort", "xresetshort", "xresetshortsh", "ctlstall",
-                              "shared", "fastcore", "slowcore"]]
 FUNC += [("ldn", f"s{i}") for i in range(10, 30)]
-FUNC += [("mig", s) for s in ["default", "partial", "xreset", "areset", "ctlstall", "shared"]]
-FUNC += [("migr", s) for s in ["default", "partial", "areset", "xreset", "resetsrep", "shared"]]
 FUNC += [("cred", s) for s in ["default", "credstress"]]
 
 # throughput: sequential 32-beat runs (64-beat bursts for XDMA), one kind of master at a time,
 # whole beats unless the run says otherwise (the first plusarg of a name wins)
 PERF_BASE = ["+seq=1", "+mstall=0", "+gapw=0", "+ntx=200", "+ldn_busy=0", "+ppct=0", "+xfull=100"]
 PERF = []
-for b in ["mig", "ldn"]:
+for b in ["ldn"]:
     PERF += [(b, "acc seq rd", ["+wpct=0", "+xdma_ntx=0"] + PERF_BASE),
              (b, "acc seq wr", ["+wpct=100", "+xdma_ntx=0"] + PERF_BASE),
              (b, "acc seq rd lat40", ["+wpct=0", "+xdma_ntx=0", "+axi_lat=40"] + PERF_BASE),
@@ -111,27 +102,27 @@ for b in ["mig", "ldn"]:
              (b, "xdma seq wr", ["+wpct=100", "+acc0_ntx=0", "+acc1_ntx=0"] + PERF_BASE)]
 PERF += [("ldn", "acc seq rd busy2", ["+wpct=0", "+xdma_ntx=0", "+ldn_busy=2"] + PERF_BASE),
          ("ldn", "acc seq wr busy2", ["+wpct=100", "+xdma_ntx=0", "+ldn_busy=2"] + PERF_BASE),
-         ("mig", "acc seq rd stall10", ["+wpct=0", "+xdma_ntx=0", "+axi_stall=10"] + PERF_BASE),
-         ("mig", "acc seq wr stall10", ["+wpct=100", "+xdma_ntx=0", "+axi_stall=10"] + PERF_BASE)]
+         ("ldn", "acc seq rd stall10", ["+wpct=0", "+xdma_ntx=0", "+axi_stall=10"] + PERF_BASE),
+         ("ldn", "acc seq wr stall10", ["+wpct=100", "+xdma_ntx=0", "+axi_stall=10"] + PERF_BASE)]
 
 # mutations: (name, build, substitutions, scenarios[, "missed": a known blind spot])
 MUT = [
-    ("rmw merge: old bytes in the written lanes", "mix",
+    ("rmw merge: old bytes in the written lanes", "ldn",
      [("(rm_ret && !wd[512 + k])", "(rm_ret && wd[512 + k])")], ["partial", "rawpart", "default"]),
-    ("rmw merge: no merge (lanes not written left as sent)", "mix",
+    ("rmw merge: no merge (lanes not written left as sent)", "ldn",
      [("(rm_ret && !wd[512 + k])", "1'b0")], ["partial", "default"]),
     ("credits: accelerator reads without credits", "cred",
      [("a_rok <= (a_out + ar_used) <= AOW'(ARD - 2);", "a_rok <= 1'b1;")], ["credstress", "default"]),
-    ("credits: XDMA reads without credits", "mix",
+    ("credits: XDMA reads without credits", "ldn",
      [("x_rok <= (x_out + xr_used) <= XOW'(XRD - 2);", "x_rok <= 1'b1;")], ["mstall70", "default"]),
-    ("credits: one beat less margin", "mix",
+    ("credits: one beat less margin", "ldn",
      [("x_rok <= (x_out + xr_used) <= XOW'(XRD - 2);", "x_rok <= (x_out + xr_used) <= XOW'(XRD - 1);")],
      ["mstall70", "default"]),
-    ("n_wdone: gray code not decoded", "mix",
+    ("n_wdone: gray code not decoded", "ldn",
      [("n_wdone <= g2b(a_wacc_s2);", "n_wdone <= a_wacc_s2;")], ["default"]),
-    ("n_wdone: reads counted too", "mix",
-     [("else if (opop && oc0[27] && !oc0[25]) a_wacc", "else if (opop && !oc0[25]) a_wacc")], ["default"]),
-    ("n_wdone: counted on the core side once command and data are in (before the controller)", "mix",
+    ("n_wdone: reads counted too", "ldn",
+     [("else if (opop && oc0[26] && !oc0[25]) a_wacc", "else if (opop && !oc0[25]) a_wacc")], ["default"]),
+    ("n_wdone: counted on the core side once command and data are in (before the controller)", "ldn",
      [("  assign ar_rr    = 1'b1;\n", "  assign ar_rr    = 1'b1;\n  logic [15:0] mu_c, mu_d;\n"),
       ("if (a_crst) begin a_wacc_s1 <= '0; a_wacc_s2 <= '0; n_wdone <= '0; end",
        "if (a_crst) begin a_wacc_s1 <= '0; a_wacc_s2 <= '0; n_wdone <= '0; mu_c <= '0; mu_d <= '0; end"),
@@ -140,19 +131,19 @@ MUT = [
      ["shared", "default"]),
     # expected to be missed: the core issues reads no faster than it drains them, so a 64-beat FIFO
     # does not fill without credits in any traffic here (ARD 16 does, above)
-    ("credits: accelerator reads without credits, ARD 64", "mix",
+    ("credits: accelerator reads without credits, ARD 64", "ldn",
      [("a_rok <= (a_out + ar_used) <= AOW'(ARD - 2);", "a_rok <= 1'b1;")], ["slowcore", "credstress", "default"],
      "missed"),
     ("credits: accelerator reads without credits, the FIFO-full assertion removed", "cred",
      [("a_rok <= (a_out + ar_used) <= AOW'(ARD - 2);", "a_rok <= 1'b1;"),
       ('if (ar_wv && !ar_wr) $error("otpu_mem_ch: accelerator read-data FIFO full");', "")], ["credstress"]),
-    ("credits: XDMA reads without credits, the FIFO-full assertion removed", "mix",
+    ("credits: XDMA reads without credits, the FIFO-full assertion removed", "ldn",
      [("x_rok <= (x_out + xr_used) <= XOW'(XRD - 2);", "x_rok <= 1'b1;"),
       ('if (xr_wv && !xr_wr) $error("otpu_mem_ch: XDMA read-data FIFO full");', "")], ["mstall70"]),
-    ("reset hold: XDMA's does not wait for its reads in flight", "mix",
+    ("reset hold: XDMA's does not wait for its reads in flight", "ldn",
      [("(x_hcnt != 0 || x_out != 0 ||", "(x_hcnt != 0 ||")],
      ["xresetrep", "resetsrep", "xresetlat", "xreset"]),
-    ("reset hold: the accelerator's does not wait for its reads in flight", "mix",
+    ("reset hold: the accelerator's does not wait for its reads in flight", "ldn",
      [("(a_hcnt != 0 || a_out != 0 ||", "(a_hcnt != 0 ||")],
      ["aresetrep", "resetsrep", "aresetlat", "areset"]),
     ("reset hold: XDMA's does not wait for its commands in the output register", "ldn",
@@ -168,9 +159,9 @@ MUT = [
     ("reset hold: XDMA's does not wait for its commands, the hold-over assertion removed", "ldn",
      [("(rm_busy && rm_x) || x_oc)", "(rm_busy && rm_x))"),
       ("if (x_hold_q && !x_hold && x_oc) $error", "if (1'b0) $error")], ["xresetshortsh"], "missed"),
-    ("reset: XDMA's request not kept up until its hold is seen (a short reset)", "mix",
+    ("reset: XDMA's request not kept up until its hold is seen (a short reset)", "ldn",
      [("x_req <= xrst || (x_req && !x_hs2);", "x_req <= xrst;")], ["xresetshort"]),
-    ("reset: the accelerator's request not kept up until its hold is seen (a short reset)", "mix",
+    ("reset: the accelerator's request not kept up until its hold is seen (a short reset)", "ldn",
      [("a_req <= rst || (a_req && !a_hs2);", "a_req <= rst;")], ["aresetshort"]),
 ]
 
@@ -230,8 +221,8 @@ def main(argv: list[str]) -> int:
     ok = True
     jobs = []                                   # (label, exe, log, args)
     if "quick" in suites:
-        exe = build("mix", BUILDS["mix"])
-        jobs.append(("mix default", exe, OUT / "mix" / "default.log", SCEN["default"]))
+        exe = build("ldn", BUILDS["ldn"])
+        jobs.append(("ldn default", exe, OUT / "ldn" / "default.log", SCEN["default"]))
     if "func" in suites:
         for b, s in FUNC:
             exe = build(b, BUILDS[b])

@@ -174,7 +174,7 @@ def _deltas(t, prog, img):
 
 def test_counter_snapshots_bracket_a_run(have_verilator):
     """Deltas between two snapshots around a run: RUNNING is the run's CYCLES, INSTR its ICOUNT,
-    and the DRAM beats are the port B requests' (otpu_axi_dram.sv): the DMA requests each chunk
+    and the DRAM beats are the port B requests' (otpu_native_dram.sv): the DMA requests each chunk
     once, and a read or a whole-chunk write takes a beat on each channel."""
     t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=4, params={"TRACE_DEPTH": 1024})
     prog = [I.ld(0, 0, 4096), I.st(0x20000, 0, 4096), I.ld(0x8000, 4096, 1024),
@@ -200,40 +200,38 @@ def test_counter_snapshots_bracket_a_run(have_verilator):
     assert d["TMEM_DENY"] >= 0
 
 
-@pytest.mark.skipif(bool(rtlsim.MEMORY["NATIVE"]), reason="AXI read bursts (native: no transactions)")
 def test_mxu_starve_counter(have_verilator):
     """MXU_STARVE: cycles the MXU streams a command and its chunk FIFO is empty -- exactly the
-    ms of the slice's Q records (+trace), summed. Under a cost of 4 cycles per AXI read
-    transaction (as on the card), single-beat reads (AXI_BL=1) keep the MXU waiting for chunks
-    (starved, ms, or blocked on the chunks it holds, mb) for most of its busy time, while
-    DRAM_WAIT stays 0 (the adapter takes every request; the data comes late), as on the card.
-    Where the wait lands depends on the MXU: the adder tree and the cascade (MXU_IMPL 0 / 1)
-    consume a row chunk by chunk, as the chunks arrive, so the FIFO runs empty and the wait is
-    starved; the systolic array (2) starts a row only once all of its chunks are in (a row never
-    stalls in the pipeline; docs/mxu_systolic.md), so it waits mostly on a partial row, blocked,
-    and MXU_STARVE sees only the gaps with the FIFO empty. Read bursts remove most of the wait
-    and shorten the run."""
+    ms of the slice's Q records (+trace), summed. With a long read latency on the channels
+    (+axi_lat 400: the read credits run out, the data comes late) the MXU does little but wait for
+    chunks (starved, ms, or blocked on the chunks it holds, mb): its busy time is its MACs and the
+    wait, while DRAM_WAIT stays near 0 (the adapter takes nearly every request). Where the wait
+    lands depends on the MXU: the adder tree and the cascade (MXU_IMPL 0 / 1) consume a row chunk
+    by chunk, as the chunks arrive, so the wait is all starved; the systolic array (2) starts a row
+    only once all of its chunks are in (a row never stalls in the pipeline; docs/mxu_systolic.md),
+    so it waits on a partial row, blocked, about as long as on an empty FIFO, and MXU_STARVE sees
+    about half of its wait. A short latency (20) removes nearly all of the wait."""
     cfg, img, prog = _kernel("mlp")
     c, cyc, q = {}, {}, {}
-    for bl in (1, 8):
-        t = SimTransport(ch_bytes=cfg.DRAM_BYTES, stall=0, plusargs=["+axi_arc=4", "+trace"],
-                         params={"TRACE_DEPTH": 1024, "AXI_BL": bl})
+    for lat in (400, 20):
+        t = SimTransport(ch_bytes=cfg.DRAM_BYTES, stall=0, plusargs=[f"+axi_lat={lat}", "+trace"],
+                         params={"TRACE_DEPTH": 1024})
         r = run_traced(t, img, prog, trace_ctrl=0, snap=True)
         assert r["status"] & ST_HALTED
-        c[bl], cyc[bl] = r["counters"], r["cycles"]
+        c[lat], cyc[lat] = r["counters"], r["cycles"]
         ql = [dict(re.findall(r"(\w+)=(\d+)", line)) for line in r["sim"] if line.split()[1] == "Q"]
-        q[bl] = {k: sum(int(d[k]) for d in ql) for k in ("n", "ms", "mb")}
-        assert q[bl]["n"] == cyc[bl] and c[bl]["MXU_STARVE"] == q[bl]["ms"], (c[bl], q[bl])
-        assert c[bl]["MXU_BUSY"] >= q[bl]["ms"] + q[bl]["mb"], (c[bl], q[bl])
-    wait = {bl: q[bl]["ms"] + q[bl]["mb"] for bl in q}
-    assert wait[1] > c[1]["MXU_BUSY"] // 2 and c[1]["DRAM_WAIT"] == 0, (c[1], q[1])
+        q[lat] = {k: sum(int(d[k]) for d in ql) for k in ("n", "ms", "mb")}
+        assert q[lat]["n"] == cyc[lat] and c[lat]["MXU_STARVE"] == q[lat]["ms"], (c[lat], q[lat])
+        assert c[lat]["MXU_BUSY"] >= c[lat]["MXU_MAC"] + q[lat]["ms"] + q[lat]["mb"], (c[lat], q[lat])
+    wait = {lat: q[lat]["ms"] + q[lat]["mb"] for lat in q}
+    assert wait[400] > 0.9 * (c[400]["MXU_BUSY"] - c[400]["MXU_MAC"]), (c[400], q[400])
+    assert c[400]["DRAM_WAIT"] < wait[400] // 100 and c[20]["DRAM_WAIT"] == 0, (c[400], c[20])
     if rtlsim.UARCH.get("MXU_IMPL", 0) == 2:
-        assert q[1]["mb"] > 2 * q[1]["ms"], q[1]
+        assert min(q[400]["ms"], q[400]["mb"]) > wait[400] // 3, q[400]
     else:
-        assert c[1]["MXU_STARVE"] > c[1]["MXU_BUSY"] // 4, c[1]
-        assert c[8]["MXU_STARVE"] < c[1]["MXU_STARVE"] // 4, (c[1], c[8])
-    assert wait[8] < wait[1] // 2, (q[1], q[8])
-    assert cyc[8] < 0.75 * cyc[1], cyc
+        assert q[400]["mb"] < wait[400] // 50, q[400]
+    assert wait[20] < wait[400] // 20, (q[400], q[20])
+    assert cyc[20] < 0.3 * cyc[400], cyc
 
 
 # ------------------------------------------------------------------------------ trace

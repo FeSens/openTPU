@@ -22,7 +22,7 @@ EXEC   ?= remote
 export EXEC
 # the units on the current full build's worst paths first (docs/tourney.md)
 FMAX_COMPS ?= otpu_xunit otpu_tmem otpu_vpu otpu_mxu otpu_coll otpu_seq otpu_quant otpu_dma \
-              otpu_actram otpu_axi_dram otpu_fp
+              otpu_actram otpu_native_dram otpu_fp
 export MODEL_HYP MODEL_IMPL MODEL_SCRIBE EFFORT_HYP EFFORT_IMPL EFFORT_SCRIBE
 
 .PHONY: tourney tourney-baseline tourney-report test-tourney tourney-fmax tourney-fmax-baseline \

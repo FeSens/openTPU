@@ -14,7 +14,7 @@
 # K=2 agent slots per round; K_<comp>=n overrides one component (e.g. K_otpu_mxu=3).
 set -u
 cd "$(git rev-parse --show-toplevel)"
-COMPS=${FOREVER_COMPS:-"otpu_dma otpu_seq otpu_tmem otpu_coll otpu_xunit otpu_mxu otpu_axi_dram otpu_vpu otpu_quant otpu_actram"}
+COMPS=${FOREVER_COMPS:-"otpu_dma otpu_seq otpu_tmem otpu_coll otpu_xunit otpu_mxu otpu_native_dram otpu_vpu otpu_quant otpu_actram"}
 COMPS_FILE=${FOREVER_COMPS_FILE:-/tmp/otpu-tourney-comps}
 WHOLE=(${FOREVER_WHOLE:-otpu_full otpu_impl})
 WHOLE_FILE=${FOREVER_WHOLE_FILE:-/tmp/otpu-tourney-whole}

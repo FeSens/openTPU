@@ -95,11 +95,7 @@ C = {
                "tests/test_rtl.py::test_fuzz_two_slices[0]",
                "tests/test_rtl.py::test_scoreboard_stress_two_slices[0]",
                "tests/test_rtl.py::test_attention_decode_rtl[2-8-2-100]"]),
-    "otpu_axi_dram": dict(
-        files=["rtl/mem/otpu_axi_dram.sv"], top="otpu_axi_dram",
-        params=dict(D=128),
-        desc="AXI DRAM adapter: slice ports A (words), B (chunks) and the QST write port onto two "
-             "512-bit AXI4 channels, 64-byte interleave, per-channel queues and response FIFOs, "
+    "512-bit AXI4 channels, 64-byte interleave, per-channel queues and response FIFOs, "
              "A-beat reuse, write acknowledges (wr_idle).",
         extra=[],
         board_extra=["tests/test_rtl.py::test_board_memory_path_stress[0-0]",
@@ -111,7 +107,7 @@ C = {
     "otpu_native_dram": dict(
         files=["rtl/mem/otpu_native_dram.sv"], top="otpu_native_dram",
         params=dict(D=128),
-        desc="Native DRAM adapter (the LiteDRAM build's): slice ports A (words), B (chunks) and "
+        desc="Native DRAM adapter (the board's): slice ports A (words), B (chunks) and "
              "the QST write port onto the two channels' native ports, one command per 64-byte "
              "beat, 64-byte interleave (hashed), per-channel queues, in-order read merge, A-beat "
              "reuse, the SW queue's read-fill with its hazard buckets, write acknowledges "
@@ -157,8 +153,8 @@ XUNIT = {
                    "TMEM port muxes, DRAM ports), otpu_top, otpu_pkg, the board wrappers "
                    "(otpu_board: PCIe bridge, DRAM adapter, control registers, trace; "
                    "otpu_native_sys: the channels' bridges (otpu_mem_ch, otpu_afifo) and XDMA's "
-                   "split (otpu_axi_split2); otpu_fpga_top_ld: clocks and resets; the MIG builds' "
-                   "tops) and the core timing constraints (otpu_top_ld.xdc: pblocks, "
+                   "split (otpu_axi_split2); otpu_fpga_top_ld: clocks and resets) and the core timing "
+                   "constraints (otpu_top_ld.xdc: pblocks, "
                    "placement, no timing exceptions or clock changes). Changes here target paths that cross "
                    "unit boundaries: register slices on inter-unit buses, fanout of broadcast "
                    "signals, placement.",
@@ -167,8 +163,6 @@ XUNIT = {
                 "rtl/boards/ypcb-00338/otpu_native_sys.sv", "rtl/boards/ypcb-00338/otpu_mem_ch.sv",
                 "rtl/boards/ypcb-00338/otpu_afifo.sv", "rtl/boards/ypcb-00338/otpu_axi_split2.sv",
                 "rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv", "rtl/boards/ypcb-00338/otpu_trace.sv",
-                "rtl/boards/ypcb-00338/otpu_fpga_top.sv", "rtl/boards/ypcb-00338/otpu_fpga_top_mn.sv",
-                "rtl/boards/ypcb-00338/otpu_mig_native.sv",
                 "boards/ypcb-00338/constraints/otpu_top_ld.xdc"],
     "synth": {"parts": []},
     "objectives": ["fmax"],

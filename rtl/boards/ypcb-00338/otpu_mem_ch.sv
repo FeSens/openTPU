@@ -1,8 +1,7 @@
-// One DDR3 channel's user side, in front of either controller: the accelerator's native master
-// (otpu_native_dram, core clock, one 64-byte beat per command) and XDMA's AXI master (host loads
-// and reads, axi_aclk, 128-bit) onto one native port of the channel's controller (uclk:
-// LiteDRAM's sys, or the MIG's ui_clk through otpu_mig_native). With otpu_axi_split2 it replaces
-// the SmartConnect and the MIG's AXI front end.
+// One DDR3 channel's user side: the accelerator's native master (otpu_native_dram, core clock,
+// one 64-byte beat per command) and XDMA's AXI master (host loads and reads, axi_aclk, 128-bit)
+// onto one native port of the channel's controller (uclk: LiteDRAM's sys). With otpu_axi_split2
+// it replaced the MIG builds' SmartConnect and the MIG's AXI front end.
 //
 // Each master's commands cross into uclk through its own asynchronous FIFOs (commands, write
 // data) and its read data comes back through another; an arbiter in uclk takes up to RUN commands
@@ -24,18 +23,15 @@
 // in front of the crossbar that takes the head as soon as it is empty; it is loaded well before
 // the bank asks, which is at least 4 cycles after the command. Its rdata ready must be tied high.)
 //
-// Partial beats (any byte not written):
-//   RMW = 0 (MIG): the byte enables go with the data and c_cmd_partial is set; otpu_mig_native
-//     makes it the ECC controller's wr_bytes (a read-modify-write inside the MIG).
-//   RMW = 1 (LiteDRAM's ECC port rejects partial writes, and the board has no DM pins): the
-//     read-modify-write is done here. The arbiter issues a read of the beat and stops; the write's
-//     command and data stay at the heads of their master's FIFOs; when the read's data comes back
-//     (its tag), the old bytes fill the lanes not written and the whole beat is written, and only
-//     then does the arbiter go on. So nothing reaches the controller between the read and the
-//     write: the read comes after every command issued before it, the write before every command
-//     issued after it, and the controller keeps one port's commands in order (LiteDRAM locks a
-//     port to one bank until that bank's queue has drained; each bank machine is a FIFO). A
-//     partial beat costs about one read latency of the whole channel.
+// Partial beats (any byte not written): LiteDRAM's ECC port rejects partial writes, and the board
+// has no DM pins, so the read-modify-write is done here. The arbiter issues a read of the beat and
+// stops; the write's command and data stay at the heads of their master's FIFOs; when the read's
+// data comes back (its tag), the old bytes fill the lanes not written and the whole beat is
+// written, and only then does the arbiter go on. So nothing reaches the controller between the
+// read and the write: the read comes after every command issued before it, the write before every
+// command issued after it, and the controller keeps one port's commands in order (LiteDRAM locks a
+// port to one bank until that bank's queue has drained; each bank machine is a FIFO). A partial
+// beat costs about one read latency of the whole channel.
 //
 // n_wdone counts the accelerator's write beats the controller has taken (the command handshake;
 // the data is then already in the output FIFO), gray-coded across into the core clock. Every
@@ -69,8 +65,7 @@ module otpu_mem_ch #(
   parameter int ARD  = 64,        // accelerator read-data FIFO (read credits), beats
   parameter int XRD  = 16,        // XDMA read-data FIFO, beats
   parameter int RUN  = 32,        // commands from one master before the arbiter may switch
-  parameter int OD   = 32,        // output write-data FIFO: writes issued, data not yet taken
-  parameter bit RMW  = 1'b1       // 1: partial beats by read-modify-write here (LiteDRAM ECC port)
+  parameter int OD   = 32         // output write-data FIFO: writes issued, data not yet taken
 ) (
   // accelerator (otpu_native_dram), core clock
   input  logic            clk,
@@ -121,17 +116,15 @@ module otpu_mem_ch #(
   input  logic            c_cmd_ready,
   output logic            c_cmd_we,
   output logic [24:0]     c_cmd_addr,
-  output logic            c_cmd_partial,  // RMW = 0: a byte not written (hint)
   output logic            c_wdata_valid,
   input  logic            c_wdata_ready,
   output logic [511:0]    c_wdata_data,
-  output logic [63:0]     c_wdata_we,     // 1 = write the byte (all ones with RMW = 1)
+  output logic [63:0]     c_wdata_we,     // 1 = write the byte (all ones: whole beats)
   input  logic            c_rdata_valid,  // in command order, no backpressure
   input  logic [511:0]    c_rdata_data
 );
   localparam int QW = 26;                  // command: {write, beat[24:0]}
   localparam int DW = 577;                 // write data: {partial, byte enables[63:0], data[511:0]}
-  localparam int OW = RMW ? 512 : 576;     // output write data: {byte enables (RMW = 0), data}
   localparam int CW = 16;                  // write-accept counters (beats, modulo 2^16)
   localparam int AOW = $clog2(ARD) + 1;
   localparam int XOW = $clog2(XRD) + 1;
@@ -159,7 +152,7 @@ module otpu_mem_ch #(
   logic [XOW-1:0] x_out;
   logic rm_busy, rm_x;                     // a read-modify-write in progress, and its master
   logic [1:0]  on;                         // output command register: entries
-  logic [27:0] oc0, oc1;                   //   {write, partial, xdma, beat}
+  logic [26:0] oc0, oc1;                   //   {write, xdma, beat}
   logic a_oc, x_oc;                        // a command of the master's in it
   assign a_oc = (on[0] && !oc0[25]) || (on[1] && !oc1[25]);
   assign x_oc = (on[0] && oc0[25]) || (on[1] && oc1[25]);
@@ -360,7 +353,7 @@ module otpu_mem_ch #(
   logic [24:0]   addr;
   logic [DW-1:0] wd;
   logic          of_wv, of_wr, of_rv;      // output write-data FIFO
-  logic [OW-1:0] of_wd, of_rd;
+  logic [511:0]  of_wd, of_rd;
   logic          rm_ret, rm_ok;
   logic          tg_wr, tg_rv;             // read tags
   logic [1:0]    tg_rd;
@@ -375,12 +368,12 @@ module otpu_mem_ch #(
   assign addr  = sel_x ? xq_rd[24:0] : aq_rd[24:0];
   assign wd    = sel_x ? xd_rd : ad_rd;
   assign part  = we && wd[DW-1];
-  assign rmw   = RMW && part;
+  assign rmw   = part;
   assign go    = !rm_busy && (pick_x ? x_ok : a_ok) && !on[1] && (!we || of_wr);
 
-  // read-modify-write (RMW = 1): the read goes with an RMW tag, the write's command and data stay
-  // at the heads; its data merges the returning beat into the lanes not written
-  assign rm_ret = RMW && c_rdata_valid && tg_rd[1];
+  // read-modify-write: the read goes with an RMW tag, the write's command and data stay at the
+  // heads; its data merges the returning beat into the lanes not written
+  assign rm_ret = c_rdata_valid && tg_rd[1];
   assign rm_ok  = rm_ret && (rm_x ? !x_hold : !a_hold);
   always_ff @(posedge uclk) begin
     if (urst) rm_busy <= 1'b0;
@@ -394,29 +387,24 @@ module otpu_mem_ch #(
   assign ad_rr = (go && !pick_x && we && !rmw) || (rm_ret && !rm_x);
   assign xd_rr = (go && pick_x && we && !rmw) || (rm_ret && rm_x);
 
-  // output write data: pushed with the write's command (RMW = 1: whole beats, a merged one with
-  // the read's data in the lanes not written)
+  // output write data: pushed with the write's command (whole beats, a merged one with the read's
+  // data in the lanes not written)
   assign of_wv = (go && we && !rmw) || rm_ok;
-  if (RMW) begin : g_ow
-    always_comb
-      for (int k = 0; k < 64; k++)
-        of_wd[8 * k +: 8] = (rm_ret && !wd[512 + k]) ? c_rdata_data[8 * k +: 8] : wd[8 * k +: 8];
-    assign c_wdata_we = '1;
-  end else begin : g_ow
-    assign of_wd      = wd[575:0];
-    assign c_wdata_we = of_rd[575:512];
-  end
-  otpu_sfifo #(.W(OW), .DEPTH(OD)) u_of (.clk(uclk), .rst(urst), .wvalid(of_wv), .wready(of_wr),
+  always_comb
+    for (int k = 0; k < 64; k++)
+      of_wd[8 * k +: 8] = (rm_ret && !wd[512 + k]) ? c_rdata_data[8 * k +: 8] : wd[8 * k +: 8];
+  assign c_wdata_we = '1;
+  otpu_sfifo #(.W(512), .DEPTH(OD)) u_of (.clk(uclk), .rst(urst), .wvalid(of_wv), .wready(of_wr),
     .wdata(of_wd), .rvalid(of_rv), .rready(c_wdata_ready), .rdata(of_rd));
   assign c_wdata_valid = of_rv;
   assign c_wdata_data  = of_rd[511:0];
 
-  // output command register (2 entries: go needs no c_cmd_ready): {write, partial, xdma, beat}
-  logic [27:0] ocn;
+  // output command register (2 entries: go needs no c_cmd_ready): {write, xdma, beat}
+  logic [26:0] ocn;
   logic        opush, opop;
   assign opush = go || rm_ok;
   assign opop  = on[0] && c_cmd_ready;
-  assign ocn   = {rm_ok || (we && !rmw), !RMW && part, sel_x, addr};
+  assign ocn   = {rm_ok || (we && !rmw), sel_x, addr};
   always_ff @(posedge uclk) begin
     if (urst) on <= 2'b00;
     else if (opush && !opop) on <= {on[0], 1'b1};
@@ -426,8 +414,7 @@ module otpu_mem_ch #(
     if (opush && on[0] && !opop) oc1 <= ocn;
   end
   assign c_cmd_valid   = on[0];
-  assign c_cmd_we      = oc0[27];
-  assign c_cmd_partial = oc0[26];
+  assign c_cmd_we      = oc0[26];
   assign c_cmd_addr    = oc0[24:0];
 
   // each read's tag, in command order: {read-modify-write, xdma}; its data to that master (dropped
@@ -450,8 +437,8 @@ module otpu_mem_ch #(
       a_out <= a_out + AOW'(go && !we && !pick_x) - AOW'(c_rdata_valid && tg_rd == 2'b00);
       x_out <= x_out + XOW'(go && !we && pick_x) - XOW'(c_rdata_valid && tg_rd == 2'b01);
     end
-    if (a_hold) a_wacc <= '0; else if (opop && oc0[27] && !oc0[25]) a_wacc <= a_wacc + 1'b1;
-    if (x_hold) x_wacc <= '0; else if (opop && oc0[27] && oc0[25]) x_wacc <= x_wacc + 1'b1;
+    if (a_hold) a_wacc <= '0; else if (opop && oc0[26] && !oc0[25]) a_wacc <= a_wacc + 1'b1;
+    if (x_hold) x_wacc <= '0; else if (opop && oc0[26] && oc0[25]) x_wacc <= x_wacc + 1'b1;
     a_wacc_g <= b2g(a_wacc);
     x_wacc_g <= b2g(x_wacc);
   end

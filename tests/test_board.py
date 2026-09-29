@@ -37,7 +37,7 @@ class MemTransport:
 
 
 def test_split_matches_the_rtl_interleave():
-    """Logical beat b lives on channel b % 2 at offset (b // 2) * 64 (otpu_axi_dram.sv)."""
+    """Logical beat b lives on channel b % 2 at offset (b // 2) * 64 (otpu_native_dram.sv)."""
     data = np.arange(8 * BEAT, dtype=np.uint32).astype(np.uint8)
     parts = split(256, data)
     for c, off, part in parts:
@@ -52,7 +52,7 @@ def test_split_matches_the_rtl_interleave():
 
 def test_split_hashed_interleave():
     """CHASH: logical beat b of chunk m = b // 2 is on channel (b % 2) ^ parity(m), at channel
-    offset m * 64 (otpu_axi_dram.sv), so a column at a power-of-two chunk stride is spread
+    offset m * 64 (otpu_native_dram.sv), so a column at a power-of-two chunk stride is spread
     over both channels."""
     data = np.arange(64 * BEAT, dtype=np.uint32).astype(np.uint8)
     parts = split(512, data, chash=True)
@@ -105,8 +105,8 @@ def test_program_on_board_model(have_verilator):
 
 @pytest.mark.parametrize("seed", [3, 4])
 def test_program_on_native_board_model(have_verilator, seed):
-    """The same on the board model's native memory path (MEM_NATIVE: otpu_native_dram in front of
-    the native memory model), whatever OTPU_NATIVE says; and the partial writes."""
+    """The same on the native memory model alone (MEM_NATIVE=1: otpu_native_dram in front of
+    otpu_native_mem), whatever OTPU_NATIVE says; and the partial writes."""
     b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=seed, native=True))
     ok, msg, st = run_demo(b, CFG)
     assert ok, msg
@@ -116,13 +116,11 @@ def test_program_on_native_board_model(have_verilator, seed):
     assert st["a_writes"] > 500 and st["b_writes"] > 20
 
 
-@pytest.mark.parametrize("ctrl", ["mig", "ld"])
-def test_program_on_channel_board_model(have_verilator, ctrl):
-    """The same on the native-channel builds' channels (MEM_NATIVE=3 / 2: otpu_native_dram, then
-    per channel otpu_mem_ch in front of a model of the controller in its own clock: the MIG's
-    native interface through otpu_mig_native, partial beats as wr_bytes; or LiteDRAM's native
-    port, partial beats read-modified-written in otpu_mem_ch), whatever OTPU_NATIVE says."""
-    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=3, native=ctrl))
+def test_program_on_channel_board_model(have_verilator):
+    """The same on the build's channels (MEM_NATIVE=2: otpu_native_dram, then per channel
+    otpu_mem_ch in front of a model of LiteDRAM's native port in its own clock, partial beats
+    read-modified-written in otpu_mem_ch), whatever OTPU_NATIVE says."""
+    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=3, native="ld"))
     ok, msg, st = run_demo(b, CFG)
     assert ok, msg
     assert st["b_reads"] > 0 and st["a_writes"] > 0 and st["cycles"] > 0

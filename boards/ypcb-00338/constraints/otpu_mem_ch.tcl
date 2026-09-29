@@ -4,12 +4,12 @@
 # constraint file (.tcl), not an XDC:
 #   non-project:  read_xdc -unmanaged -ref otpu_mem_ch otpu_mem_ch.tcl     (after create_clock)
 #   project:      in constrs_1 with SCOPED_TO_REF otpu_mem_ch, PROCESSING_ORDER LATE and
-#                 USED_IN_SYNTHESIS false (create_project.tcl, MEM=litedram)
+#                 USED_IN_SYNTHESIS false (create_project.tcl)
 # tools/memch_ooc.tcl checks it out of context (report_cdc, report_methodology, and every source
 # of a path between the clocks against the crossings constrained here).
 #
-# The module's clocks: clk (the core clock), uclk (the controller's user clock: LiteDRAM's sys or
-# the MIG's ui_clk), xclk (XDMA's axi_aclk). Every path between two of them inside the module is
+# The module's clocks: clk (the core clock), uclk (the controller's user clock: LiteDRAM's sys),
+# xclk (XDMA's axi_aclk). Every path between two of them inside the module is
 # a synchronizer (ASYNC_REG in the RTL) or data that a synchronized pointer guards, and each gets
 # set_max_delay -datapath_only here, so all of them are timed, without clock skew:
 #   - gray-coded buses: the FIFOs' pointers and the write-accept counters behind n_wdone and

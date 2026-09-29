@@ -1,8 +1,8 @@
 """DDR3 tests for otpu-diag, on one channel through raw channel addresses (transport.mem_write /
 mem_read) or through the accelerator's interleave (Board).
 
-Byte lanes: each channel is 64 data bits (plus an ECC byte the host never sees) behind a MIG
-with a 512-bit AXI port; one 64-byte AXI beat is one BL8 burst, so byte b of a channel offset
+Byte lanes: each channel is 64 data bits (plus an ECC byte the host never sees) behind a
+controller with a 512-bit port; one 64-byte beat is one BL8 burst, so byte b of a channel offset
 travels on DQ byte lane b % 8 (DQ[8L+7:8L]). Error counts come per byte lane and per DQ bit
 (64), from which otpu-diag names the failing lane.
 

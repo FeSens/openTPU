@@ -1636,7 +1636,7 @@ def test_setup_pcie_package():
     assert '"@VERSION@"' in open(os.path.join(host, "pcie", "dkms.conf")).read()
     rules = open(os.path.join(host, "pcie", "59-otpu-xdma.rules")).read()
     assert 'ATTR{device}=="0x7028"' in rules and 'ATTR{subsystem_device}=="0x4f54"' in rules
-    bd = open(os.path.join(ROOT, "boards", "ypcb-00338", "vivado", "bd.tcl")).read()
+    bd = open(os.path.join(ROOT, "boards", "ypcb-00338", "vivado", "bd_native.tcl")).read()
     assert "CONFIG.pf0_device_id {7028}" in bd and "CONFIG.pf0_subsystem_id {4F54}" in bd
     subprocess.run(["bash", "-n", str(pcie_setup.SCRIPT)], check=True)
     r = subprocess.run(["bash", str(pcie_setup.SCRIPT), "--help"], capture_output=True, text=True)

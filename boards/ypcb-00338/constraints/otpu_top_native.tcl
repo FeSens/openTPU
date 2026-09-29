@@ -1,20 +1,19 @@
-# Clock-domain crossings of the native-channel tops (create_project.tcl MEM=mig_native:
-# otpu_fpga_top_mn; MEM=litedram: otpu_fpga_top_ld) outside otpu_mem_ch (whose own are in
-# otpu_mem_ch.tcl, scoped to the module). Unmanaged Tcl, read in implementation only and late
-# (PROCESSING_ORDER LATE: after the IP's and LiteX's constraints, on the netlist synthesis made),
-# because it selects cells by clock and by fan-out.
+# Clock-domain crossings of the top (create_project.tcl: otpu_fpga_top_ld) outside otpu_mem_ch
+# (whose own are in otpu_mem_ch.tcl, scoped to the module). Unmanaged Tcl, read in implementation
+# only and late (PROCESSING_ORDER LATE: after the IP's and LiteX's constraints, on the netlist
+# synthesis made), because it selects cells by clock and by fan-out.
 #
-# The clocks: core_clk (the block design's MMCM) and each channel's controller clock (a MIG's
-# ui_clk, from its own MMCM on the block design's clk_mig / clk_200; or the LiteDRAM core's sys,
-# its MMCM on the same 50 MHz buffer) all come from the 50 MHz oscillator, so Vivado relates them;
+# The clocks: core_clk (the block design's MMCM) and the channels' controller clock (the
+# LiteDRAM core's sys, its MMCM on the same 50 MHz buffer) come from the 50 MHz oscillator, so
+# Vivado relates them;
 # xdma_aclk (125 MHz) comes from the PCIe reference clock and is asynchronous to all of them, but
 # nothing declares it so: no set_clock_groups and no clock-to-clock false path, which would take
 # priority over otpu_mem_ch's set_max_delay -datapath_only and leave its crossings untimed. Every
 # path between two of the clocks is therefore a max delay without clock skew, here, in
 # otpu_mem_ch.tcl, in LiteX's XDC (its synchronizers' first stages are false paths by their
 # mr_ff / ars_ff attributes), in the SmartConnect's own constraints (the control registers,
-# xdma_aclk -> core_clk) or a false path into a 2-flip-flop synchronizer (the MIG build's
-# otpu_top.xdc: the calibration flags, the temperature, the I2C pins).
+# xdma_aclk -> core_clk) or a false path into a 2-flip-flop synchronizer (otpu_top_ld.xdc: the
+# temperature, the I2C pins).
 #
 # The clocks by the pins of otpu_mem_ch u_sys/u_ch0, the ones its scoped constraints use.
 set c_core [get_clocks -quiet -of_objects [get_pins -quiet u_sys/u_ch0/clk]]
@@ -29,7 +28,7 @@ set t_core [get_property -quiet -min PERIOD $c_core]
 set t_ucl  [get_property -quiet -min PERIOD $c_ucl]
 set t_x    [get_property -quiet -min PERIOD $c_x]
 
-# ---- LiteDRAM only (u_ld)
+# ---- the LiteDRAM core (u_ld)
 if {[llength [get_cells -quiet u_ld]]} {
   # The core's CSR port (BAR0 0x10000), AXI-Lite in xdma_aclk, crossed into sys (both channels'
   # controller clock, c_ucl) by LiteX's AXILiteClockDomainCrossing (stream AsyncFIFOs: gray
@@ -58,7 +57,7 @@ if {[llength [get_cells -quiet u_ld]]} {
   }
   # The calibration flags (the core's cal_ready CSRs, sys) into the accelerator's synchronizer
   # (STATUS CALIB0/1; 2 flip-flops, ASYNC_REG): one core_clk period, datapath only (otpu_top_ld.xdc
-  # has no false path for them, unlike the MIG builds' otpu_top.xdc).
+  # has no false path for them).
   set cal_s1 [get_cells -quiet -hier -filter {NAME =~ u_sys/u_board/cal_s1_reg*}]
   if {[llength $cal_s1] && [llength $c_ucl] == 1 && [llength $c_core] == 1} {
     set_max_delay -datapath_only -from $c_ucl -to $cal_s1 $t_core

@@ -181,7 +181,7 @@ class Run:
         reads (rtl/, boards/), not the commit: a champion that only took host or doc commits
         from main is not rebuilt. A result cached under the commit (older runs) is moved over."""
         from . import remote as R
-        args = "".join(f"-{a.replace('=', '')}" for a in R.BUILD_ARGS)   # e.g. -AXI_BL16
+        args = "".join(f"-{a.replace('=', '')}" for a in R.BUILD_ARGS)   # e.g. -FAST1
         trees = "".join(git("rev-parse", f"{sha}:{d}", cwd=self.repo)[:6] for d in ("rtl", "boards"))
         key = self.fulldir / f"t{trees}-{self.a.target_mhz:g}{args}.json"
         old = self.fulldir / f"{sha[:12]}-{self.a.target_mhz:g}{args}.json"

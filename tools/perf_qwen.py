@@ -1,5 +1,5 @@
 """Profile one decode token on the RTL at the board configuration (the board's memory path:
-the native one, rtlsim.MEMORY; OTPU_NATIVE=0 the MIG AXI build's).
+otpu_native_dram in front of the native memory model, sim/verilator/otpu_native_mem.sv).
 
     python3 tools/perf_qwen.py [--model qwen3|lfm2|qwen35|DIR] [--layers N] [--pos P]
                                [--bw 100] [--check] [--wformat int8|int4|fp4]
@@ -13,8 +13,8 @@ cycles per phase of the token (DeltaNet, attention, MLP, LM head) with their byt
 kernel source line, and the MXU idle gaps with their causes.
 
 --ddr MTS: the DDR3 bank model calibrated on the card (opentpu.profile.ddr3_plusargs; ROW_BANK_
-COLUMN, 4 cycles per AXI read transaction, 300 ns latency) at DDR3-MTS with the core at --mhz
-(the MIG's ui_clk is MTS / 8). DRAM efficiency = the token's DRAM bytes (weights, scales, KV,
+COLUMN, 300 ns latency) at DDR3-MTS with the core at --mhz (the controller clock, LiteDRAM's sys,
+is MTS / 8). DRAM efficiency = the token's DRAM bytes (weights, scales, KV,
 I/O, reads and writes) / (its time x the DDR3 peak, 16 bytes x MTS: 17.07 GB/s at 1066).
 """
 from __future__ import annotations
@@ -129,18 +129,12 @@ def main():
     ap.add_argument("--lat", type=int, default=None, help="read latency, core cycles "
                     "(default 30; with --ddr 300 ns)")
     ap.add_argument("--stall", type=int, default=0)
-    ap.add_argument("--arc", type=int, default=0,
-                    help="cycles per AXI read transaction and channel (the board's is about 4)")
-    ap.add_argument("--bl", type=int, default=8,
-                    help="AXI read burst, beats (1: single-beat reads, as before bursts)")
-    ap.add_argument("--wbl", type=int, default=8,
-                    help="AXI write burst, beats (1: single-beat writes, as before bursts)")
     ap.add_argument("--dram", choices=["off", "brc", "rbc"], default="off",
-                    help="DDR3 bank / row timing (otpu_axi_mem.sv) with the MIG's address map "
-                         "BANK_ROW_COLUMN or ROW_BANK_COLUMN (replaces --bw)")
+                    help="DDR3 bank / row timing (otpu_native_mem.sv) with the address map "
+                         "BANK_ROW_COLUMN or ROW_BANK_COLUMN (LiteDRAM's; replaces --bw)")
     ap.add_argument("--ddr", type=float, default=None,
                     help="DDR3 MT/s of the calibrated bank model (800, 1066, 1300; sets "
-                         "--dram rbc --arc 4 and the timings)")
+                         "--dram rbc and the timings)")
     ap.add_argument("--mhz", type=float, default=100.0, help="core clock (tokens/s; --ddr)")
     ap.add_argument("--plus", action="append", default=[],
                     help="extra simulator argument, e.g. --plus +axi_trfc=26 (repeatable)")
@@ -173,7 +167,6 @@ def main():
         a.ddr = {1066: 3200 / 3, 1333: 4000 / 3}.get(int(a.ddr), a.ddr)
         plus = plus + ddr3_plusargs(a.ddr, a.mhz)[2:]   # the first of a plusarg wins
         a.dram = "rbc" if a.dram == "off" else a.dram
-        a.arc = a.arc or 4
         a.lat = a.lat if a.lat is not None else round(0.3 * a.mhz)
     a.lat = 30 if a.lat is None else a.lat
     path = model_dir(a.model)
@@ -221,8 +214,8 @@ def main():
         progs = img.compile_step(a.pos, *([a.block] if a.block else []))
     t = time.time()
     drams, _, st = rtlsim.run(cfg, progs, [dram], trace=True,
-                              uarch={**rtlsim.BOARD_UARCH, "AXI_BL": a.bl, "AXI_WBL": a.wbl},
-                              axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat, arc=a.arc,
+                              uarch=rtlsim.BOARD_UARCH,
+                              axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat,
                               max_cycles=1 << 40, args=args,
                               plusargs=([] if a.dram == "off" else
                                         ["+axi_dram=1", f"+axi_map={int(a.dram == 'rbc')}"])
@@ -244,9 +237,9 @@ def main():
           f"efficiency {100 * ideal / p.cycles:.1f}%")
     ar = st.get("axi_reads", [])
     if ar:
-        print("AXI reads per channel (transactions, beats, beats/transaction): " +
-              ", ".join(f"{n}, {b}, {b / max(n, 1):.2f}" for n, b in ar) +
-              f"; arc={a.arc} bl={a.bl} wbl={a.wbl} dram={a.dram}")
+        print("DRAM read / write beats per channel: " +
+              ", ".join(f"{r} / {w}" for (r, _), (w, _) in zip(ar, st["axi_writes"])) +
+              f"; dram={a.dram}")
     b = p.buckets[0]
     if b.get("ms") is not None:
         mxb = sum(b.get("mx", []))

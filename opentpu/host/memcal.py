@@ -1,6 +1,6 @@
 """otpu-memcal: the host's DDR3 calibration for a bitstream whose memory controllers are
-LiteDRAM (CAPS bit27, docs/litedram.md section 7). The MIG bitstreams calibrate themselves in
-hardware; LiteDRAM's A7DDRPHY is calibrated from the host, through each controller's CSRs in the
+LiteDRAM (CAPS bit27, docs/litedram.md section 7). The MIG bitstreams (before LiteDRAM)
+calibrate themselves in hardware; LiteDRAM's A7DDRPHY is calibrated from the host, through each controller's CSRs in the
 BAR0 window at R_MEMCAL (0x10000), by opentpu.host.ddrcal: per channel the write DQS phase is
 scanned over one tCK with the channel's BIST as the traffic check, the phase goes to the centre
 of the window common to all nine byte lanes, write latency and read leveling are set there, and

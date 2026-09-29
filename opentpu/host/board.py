@@ -8,7 +8,7 @@ The card exposes, through the XDMA bridge:
 
 The accelerator addresses one logical DRAM interleaved over the channels in 64-byte beats:
 logical beat b of chunk m = b // 2 lives at BASE[c] + m * 64 on channel c = b % 2, or, on a
-bitstream with CAPS.chash, c = (b % 2) ^ parity(m) (rtl/mem/otpu_axi_dram.sv). This driver
+bitstream with CAPS.chash, c = (b % 2) ^ parity(m) (rtl/mem/otpu_native_dram.sv). This driver
 applies the same map, so the host works with logical addresses only.
 
 BoardBackend implements the Engine backend interface (write / read / run, plus prepare and
@@ -173,9 +173,10 @@ class XdmaTransport:
         except BaseException:
             self.close()
             raise
-        # BAR0 (1 MiB, the XDMA AXI-Lite master in bd.tcl / bd_native.tcl since the first
-        # bitstream) through its four 64 KiB windows: the control registers (their first 4 KiB),
-        # the LiteDRAM CSRs (R_MEMCAL: memcal) or the MIGs' ECC registers, and the XADC (0x30000)
+        # BAR0 (1 MiB, the XDMA AXI-Lite master in the block design since the first bitstream)
+        # through its four 64 KiB windows: the control registers (their first 4 KiB), the
+        # LiteDRAM CSRs (R_MEMCAL: memcal; the MIG bitstreams' ECC registers), and the XADC
+        # (0x30000)
         self.regs = mmap.mmap(fd, 0x40000, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
         os.close(fd)
         # One 32-bit load / store per register access. A slice of the mmap is copied byte by
@@ -333,9 +334,9 @@ class SimTransport:
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.stall, self.seed = stall, seed
         self.params = params or {}
-        self.native = native                    # the native memory path (rtlsim.MEMORY);
-                                                # "ld" / "mig": the LiteDRAM / native MIG
-                                                # build's channels (otpu_chmem)
+        self.native = native                    # the channels (rtlsim.MEMORY["NATIVE"]):
+                                                # "ld" the LiteDRAM build's (otpu_chmem), True
+                                                # the native memory model alone
         self.plusargs = list(plusargs or [])     # extra simulator arguments (e.g. "+trace")
         self.out = ""                            # the last flush's simulator output
         self.script: list[str] = []
@@ -390,13 +391,8 @@ class SimTransport:
         if (board / "otpu_trace.sv").exists():             # register map 2
             srcs.insert(-2, board / "otpu_trace.sv")
         native = rtlsim.MEMORY["NATIVE"] if self.native is None else self.native
-        srcs += [rtlsim.TB / "otpu_axi_mem.sv"]
-        if native in ("ld", "mig"):             # otpu_mem_ch + a LiteDRAM / MIG model
-            srcs += [board / "otpu_afifo.sv", board / "otpu_mem_ch.sv", rtlsim.TB / "otpu_chmem.sv"]
-            srcs += [rtlsim.TB / "otpu_ldn_model.sv"] if native == "ld" else \
-                [board / "otpu_mig_native.sv", rtlsim.TB / "otpu_mig_model.sv"]
-        elif native:
-            srcs += [rtlsim.TB / "otpu_native_mem.sv"]
+        srcs += [rtlsim.TB / "otpu_native_mem.sv", board / "otpu_afifo.sv", board / "otpu_mem_ch.sv",
+                 rtlsim.TB / "otpu_chmem.sv", rtlsim.TB / "otpu_ldn_model.sv"]
         srcs += [rtlsim.TB / "tb_board.sv"]
         from opentpu.isasim import board_config
         cfg = board_config()                        # OTPU_MCOLS / OTPU_LANES: the "bitstream"
@@ -404,10 +400,8 @@ class SimTransport:
         p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": cfg.MCOLS, "LANES": cfg.LANES,
              "ACT_ROWS": cfg.act_rows,
              "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8),
-             "MXU_IMPL": rtlsim.UARCH.get("MXU_IMPL", 0),
-             "AXI_BL": rtlsim.UARCH.get("AXI_BL", 8), "AXI_WBL": rtlsim.UARCH.get("AXI_WBL", 8)}
-        if native:
-            p["MEM_NATIVE"] = {"ld": 2, "mig": 3}.get(native, 1)
+             "MXU_IMPL": rtlsim.UARCH.get("MXU_IMPL", 2),
+             "MEM_NATIVE": 2 if native == "ld" else 1}
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
         with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:

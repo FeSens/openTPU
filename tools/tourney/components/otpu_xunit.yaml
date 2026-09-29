@@ -2,8 +2,8 @@ name: otpu_xunit
 description: 'Cross-unit paths: otpu_slice (the units and their wiring: scoreboard grants, TMEM port muxes,
   DRAM ports), otpu_top, otpu_pkg, the board wrappers (otpu_board: PCIe bridge, DRAM adapter, control
   registers, trace; otpu_native_sys: the channels'' bridges (otpu_mem_ch, otpu_afifo) and XDMA''s split
-  (otpu_axi_split2); otpu_fpga_top_ld: clocks and resets; the MIG builds'' tops) and the core timing constraints
-  (otpu_top_ld.xdc: pblocks, placement, no timing exceptions or clock changes). Changes here target paths
+  (otpu_axi_split2); otpu_fpga_top_ld: clocks and resets) and the core timing constraints (otpu_top_ld.xdc:
+  pblocks, placement, no timing exceptions or clock changes). Changes here target paths
   that cross unit boundaries: register slices on inter-unit buses, fanout of broadcast signals, placement.'
 allowed:
 - rtl/top/otpu_slice.sv
@@ -17,9 +17,6 @@ allowed:
 - rtl/boards/ypcb-00338/otpu_axi_split2.sv
 - rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv
 - rtl/boards/ypcb-00338/otpu_trace.sv
-- rtl/boards/ypcb-00338/otpu_fpga_top.sv
-- rtl/boards/ypcb-00338/otpu_fpga_top_mn.sv
-- rtl/boards/ypcb-00338/otpu_mig_native.sv
 - boards/ypcb-00338/constraints/otpu_top_ld.xdc
 synth:
   parts: []

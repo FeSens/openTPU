@@ -185,8 +185,10 @@ def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
                      "or the slot's width")
     for c in (0, 1):
         if st.get(f"DDR3 calibration channel {c}") == FAIL:
-            hints.append(f"channel {c} did not calibrate: MIG pinout / clocking of that channel, "
-                         "memory voltage (board.md section 6.2)")
+            hints.append(f"channel {c} did not calibrate: LiteDRAM bitstreams: the host's "
+                         "calibration (otpu-memcal show, otpu-memcal cal --force); MIG bitstreams: "
+                         "the MIG pinout / clocking of that channel; memory voltage (board.md "
+                         "section 6.2)")
     # memory: byte lanes and address bits, per channel
     for c in (0, 1):
         lanes, bits, addr = np.zeros(8, int), np.zeros(64, int), {}
@@ -207,11 +209,11 @@ def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
                          f"calibration of that lane{one}")
         for b, how in sorted(addr.items(), key=lambda x: int(x[0])):
             hints.append(f"channel {c} address bit {b} {how} -> that address line (A / BA "
-                         "pinout) or the MIG address width")
+                         "pinout) or the controller's address width")
     if st.get("interleave patterns") == FAIL and not any(
             "channel" in h and "lane" in h for h in hints):
         hints.append("the channels pass alone but the interleave fails: the host map "
-                     "(board.py split / join) against rtl/mem/otpu_axi_dram.sv")
+                     "(board.py split / join) against rtl/mem/otpu_native_dram.sv")
     # instruction set
     g = _groups(rows, "isa")
     fails = {k for k, (p, f) in g.items() if f}
@@ -229,7 +231,7 @@ def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
         if "control" in fails:
             hints.append("control flow fails: the sequencer (LI / ADDI / LOOP registers)")
         if "dma" in fails:
-            hints.append("LD / ST fail: the DMA unit or otpu_axi_dram (unaligned and short "
+            hints.append("LD / ST fail: the DMA unit or otpu_native_dram (unaligned and short "
                          "transfers go through its byte shifter and write masks)")
         if "mxu" in fails and g["mxu"][0] == 0 and not fails & {"vpu", "dma"}:
             hints.append("all MXU rows fail but the VPU and DMA pass -> MXU / DSP path")
@@ -249,7 +251,7 @@ def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
     for r in rows:
         if r.section == "i2c" and r.status == FAIL:
             hints.append(f"{r.name}: {r.msg} -> a line without its pull-up, a device holding it, "
-                         "or the pin assignment (constraints/otpu_top.xdc)")
+                         "or the pin assignment (constraints/otpu_top_ld.xdc)")
     soak = [r for r in rows if r.name.startswith("soak") and r.status == FAIL]
     if soak:
         hints.append("intermittent failures under repetition: timing margin (WNS), "
@@ -358,7 +360,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
         if i["regmap"] < 2 or not i["caps"]["temp"]:
             return SKIP, "no temperature sensor in this bitstream"
         if i["temp_c"] is None:
-            return False, "TEMP not valid (the XADC reports through channel 0's MIG)"
+            return False, "TEMP not valid (the XADC; on MIG bitstreams, channel 0's MIG)"
         return 0 < i["temp_c"] < 85, f"{i['temp_c']:.1f} C"
     d.check("platform", "die temperature", temp, ["configuration (VERSION)"])
 

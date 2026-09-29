@@ -397,7 +397,7 @@ class I2CPins(LiteXModule):
         self.comb += self.levels.status.eq(s1)
 
 
-# as constraints/otpu_top.xdc
+# as constraints/otpu_top_ld.xdc
 I2C_IO = [(n, 0, Pins(p), IOStandard("LVCMOS18"), Misc("PULLUP=TRUE"),
            *([Misc("DRIVE=4"), Misc("SLEW=SLOW")] if n != "lm73_alert_n" else []))
           for n, p in [("lm73_scl", "N24"), ("lm73_sda", "N25"), ("lm73_alert_n", "P25"),
@@ -511,10 +511,10 @@ class LDTest(SoCCore):
                       platform.request("user_led", 2).eq(self.crg.mmcm.locked)]
 
         # XDMA IP (created in the Vivado run) and the GT channel LOCs of the production design
-        # (constraints/otpu_top.xdc), in an XDC read LATE so they override the IP's own
+        # (constraints/otpu_top_ld.xdc), in an XDC read LATE so they override the IP's own
         # XDMA is created and synthesized with the design. After synthesis, before placement,
         # its GT channels move to the card's lanes (lane i on GTXE2_CHANNEL_X0Y(23 - i), as
-        # constraints/otpu_top.xdc: the IP's own XDC puts them one quad lower) -- all eight
+        # constraints/otpu_top_ld.xdc: the IP's own XDC puts them one quad lower) -- all eight
         # cleared first, since a lane's new site may be another lane's old one -- and the BAR0
         # crossing's clocks are declared asynchronous (the AXI-Lite CDC's FIFOs cross them).
         gt = "[get_cells -hier -filter {NAME =~ *pipe_lane[%d].gt_wrapper_i/gtx_channel.gtxe2_channel_i}]"

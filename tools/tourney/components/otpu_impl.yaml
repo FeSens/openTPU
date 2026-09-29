@@ -3,12 +3,12 @@ description: 'The whole design''s implementation, no RTL: the Vivado run propert
   boards/ypcb-00338/vivado/impl_directives.tcl (one `set_property <PROP> <value> [get_runs
   synth_1|impl_1]` per line: synthesis options such as retiming, flatten, fanout limits; opt / place /
   phys_opt / route directives; post-route phys_opt) and placement in the core constraints
-  (boards/ypcb-00338/constraints/otpu_top.xdc: pblocks, LOC / BEL-free placement hints, MAX_FANOUT and
+  (boards/ypcb-00338/constraints/otpu_top_ld.xdc: pblocks, LOC / BEL-free placement hints, MAX_FANOUT and
   register-duplication properties; no timing exceptions or clock changes). Judged only by the full
   build: its WNS and its area.'
 allowed:
 - boards/ypcb-00338/vivado/impl_directives.tcl
-- boards/ypcb-00338/constraints/otpu_top.xdc
+- boards/ypcb-00338/constraints/otpu_top_ld.xdc
 synth:
   parts: []
 objectives:

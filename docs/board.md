@@ -1,22 +1,27 @@
 # openTPU on the Inspur YPCB-00338
 
-The board build: one openTPU slice (D = 128, 2 MXU columns, 8 VPU lanes, 64K-word TMEM) on a
-Kintex-7 xc7k480t-ffg1156-2, with both DDR3 channels (2 x 2 GiB) behind Xilinx MIG
-controllers, and the host PC over PCIe Gen1 x8 (Xilinx XDMA). The host compiles each token's
+The board build: one openTPU slice (D = 128, 4 MXU columns with the systolic MXU, 8 VPU lanes,
+64K-word TMEM) on a Kintex-7 xc7k480t-ffg1156-2, with both DDR3 channels (2 x 2 GiB) behind the
+LiteDRAM core ([litedram.md](litedram.md)), and the host PC over PCIe Gen1 x8 (Xilinx XDMA). The host compiles each token's
 program, loads it and runs it; `otpu-chat --backend board` chats with Qwen3-0.6B (or LFM2.5-230M,
 or Qwen3.5-0.8B) on it.
 
 ```
- host PC ── PCIe Gen1 x8 ── XDMA ──┬── AXI-Lite (BAR0) ─────────────── control registers ┐
-                                   └── AXI4 128b @125 MHz ──┐                             │
-                                                            SmartConnect ── MIG0 ── DDR3 CH0 (2 GiB)
-               otpu_board (core_clk 100 MHz) ── m0 512b ──┤            └── MIG1 ── DDR3 CH1 (2 GiB)
-                 slice + otpu_axi_dram       ── m1 512b ──┘
+ host PC ── PCIe Gen1 x8 ── XDMA ──┬── AXI-Lite (BAR0) ── control registers, LiteDRAM CSRs, XADC
+                                   └── AXI4 128b @125 MHz ── otpu_axi_split2 ──┐ (bit 31: channel)
+                                                                               │
+    otpu_board (core_clk) ── native 512b ch0 ── otpu_mem_ch ── LiteDRAM ch0 ── DDR3 CH0 (2 GiB)
+      slice + otpu_native_dram ── ch1 ───────── otpu_mem_ch ── LiteDRAM ch1 ── DDR3 CH1 (2 GiB)
 ```
 
-Files: `rtl/boards/ypcb-00338/` (otpu_fpga_top, otpu_board, otpu_ctrl),
-`boards/ypcb-00338/` (constraints, Vivado Tcl, MIG generator, build and program scripts,
-self-test), `opentpu/host/` (driver and tools, [host.md](host.md)).
+Files: `rtl/boards/ypcb-00338/` (otpu_fpga_top_ld, otpu_native_sys, otpu_mem_ch, otpu_board,
+otpu_ctrl), `boards/ypcb-00338/` (constraints, Vivado Tcl, the generated LiteDRAM core, build and
+program scripts, self-test), `opentpu/host/` (driver and tools, [host.md](host.md)).
+
+The MIG builds (the two MIGs' AXI ports behind a SmartConnect, `otpu_axi_dram`, `bd.tcl`; and
+the parked native-MIG build, `otpu_mig_native`) were the production images until the LiteDRAM
+build qualified on the card, and were then removed (their history below stays as it was
+written; the images in the table of section 2 still load and run: the host follows CAPS).
 
 ## 1. Build the bitstream
 
@@ -25,13 +30,13 @@ device: use a paid license or AMD's 30-day evaluation license (see "License" bel
 
 ```sh
 cd boards/ypcb-00338
-make lint          # offline: Tcl syntax, XDC vs top ports, Verilator lint (the default build)
-make bit           # = MEM=litedram MCOLS=4 ./run_vivado.sh 1066 -> build/vivado/otpu.bit, otpu.mcs,
-                   # reports/: the default build. The LiteDRAM core (WL7DDRPHY, DDR3-1066, host
+make lint          # offline: Tcl syntax, XDC vs top ports, Verilator lint of the top
+make bit           # = MCOLS=4 ./run_vivado.sh 1066 -> build/vivado/otpu.bit, otpu.mcs, reports/.
+                   # The LiteDRAM core (WL7DDRPHY, DDR3-1066, the speed it is generated for; host
                    # calibration; per channel behind otpu_mem_ch, which also takes XDMA's
-                   # traffic; no SmartConnect; docs/litedram.md section 9), 4 MXU columns and the
-                   # systolic MXU (docs/mxu_systolic.md; the host reads MCOLS and LANES from the
-                   # bitstream's VERSION register)
+                   # traffic; docs/litedram.md section 9), 4 MXU columns and the systolic MXU
+                   # (docs/mxu_systolic.md; the host reads MCOLS and LANES from the bitstream's
+                   # VERSION register)
 make bit FAST=1    # the same as a development build at 100 MHz (below)
 make bit MCOLS=2   # 2 MXU columns
 make bit CORE_MHZ=80   # accelerator clock fallback when 100 MHz does not close (800/D MHz, D in 1/8 steps)
@@ -41,21 +46,10 @@ make bit LANES=16  # 16 VPU lanes / TMEM banks (the MXU and quantizer stay on 8)
                    # cycles at 80% bw, -13% at 100% (simulated). Does not route on the xc7k480t
                    # (measured, MCOLS=4 VPU_CL=2 with the r3-route area cuts: 212K LUT placed,
                    # route_design stops at global congestion level 6); kept for larger parts
-make bit MEM=mig   # the two MIGs' AXI ports behind the SmartConnect instead of LiteDRAM (the
-                   # production image until the LiteDRAM build qualified; DDR3-1066 by default)
-make bit MEM=mig DDR=800   # DDR3-800, the MIG bring-up speed
-make bit MEM=mig DDR=1300  # DDR3-1300 / 1333 / 1600: OUT OF SPEC (outside MIG's range for these HR
-                   # banks; 1333 and 1600 also patch MIG's PHY). Experiments only, never a
-                   # default; see "Faster DDR3" in section 5
-make bit MEM=mig_native  # the MIGs' native ports instead of AXI (per channel otpu_mig_native
-                   # behind otpu_mem_ch): parked. Not built
-make lint-mig / make lint-mn   # the offline checks and Verilator lint of those two builds' tops
 ```
 
 `run_vivado.sh` runs `vivado/create_project.tcl` (project, block design `vivado/bd_native.tcl`,
-constraints; with MEM=mig first `scripts/gen_mig_prj.py`, the MIG configuration from the board pin
-lists, and the block design `vivado/bd.tcl`) and
-`vivado/build.tcl` (synthesis, implementation with post-route phys_opt, reports, bitstream,
+constraints) and `vivado/build.tcl` (synthesis, implementation with post-route phys_opt, reports, bitstream,
 BPI flash image). Expect 1.5-3 h. Look at `build/vivado/reports/SUMMARY.txt` first: WNS/WHS and
 the achieved frequency per clock; then `timing_summary.rpt`, `util_hier.rpt`, `cdc.rpt`.
 
@@ -63,8 +57,8 @@ the achieved frequency per clock; then `timing_summary.rpt`, `util_hier.rpt`, `c
 before the clock. It uses the default CORE_MHZ=100, Vivado's default synthesis (no retiming) and
 default implementation (no post-route phys_opt, no `impl_directives.tcl`). The block design's IP
 synthesis is cached per host in `~/.cache/otpu-vivado-ip` (`OTPU_IP_CACHE`; empty turns it off).
-Every build used to be a fresh project, so the IP runs never hit a cache, and they took about 9
-minutes of each build: the two MIGs, xdma and sc_mem about 3 minutes each.
+Every build used to be a fresh project, so the IP runs never hit a cache (on the MIG builds they
+took about 9 minutes of each build: the two MIGs, xdma and sc_mem about 3 minutes each).
 
 Measured (Vivado 2026.1, 2026-09-24; default build: MCOLS=2, core 100 MHz, DDR3-800, PCIe Gen1
 x8): all timing constraints met, WNS +0.082 ns, WHS +0.016 ns. Utilization: 187,852 LUT
@@ -556,6 +550,10 @@ at that data rate and core clock and prints both efficiencies. Every figure it p
 simulated. [lfm2.md](lfm2.md) has the LFM2 numbers.
 
 ### Faster DDR3
+
+This section measured the MIG builds, since removed. The LiteDRAM core is generated for DDR3-1066
+(`make bit` takes no other speed); a faster one means regenerating it (tools/litedram/gen_core.py,
+docs/litedram.md).
 
 The core takes at most 12.8 GB/s (one 128-byte chunk per 100 MHz cycle, a 512-bit port per
 channel), so a faster DDR3 helps only up to that point. It lets the controllers keep the port
@@ -1182,6 +1180,9 @@ the next power cycle.
 | 1600 (out of spec) | `make bit DDR=1600` | no (79-155, PHY patched) | not pursued: 1333 already fails | | | |
 
 ## 6. What to check on first build (assumptions made without Vivado)
+
+The first MIG build's checklist (the MIG builds are removed; the board facts stay true: the DDR3
+pins are `constraints/ddr3_ch*.pins.xdc`, LiteDRAM's in `litedram/otpu_litedram.xdc`).
 
 1. **MIG configuration** (`vivado/mig/mig_ddr3_ch*.prj`, generated): 9 x MT41K256M8DA-125 per
    channel, 72-bit with **ECC enabled**, no data mask, DDR3-800, 4:1, AXI 512-bit, internal

@@ -61,22 +61,20 @@ def dram_efficiency(nbytes: float, cycles: float, mts: float, mhz: float) -> flo
 
 
 def ddr3_plusargs(mts: float, mhz: float) -> list[str]:
-    """Simulator arguments of the DDR3 bank model (sim/verilator/otpu_axi_mem.sv) for DDR3-`mts`
-    with the core at `mhz`: the MIG's ui_clk is mts / 8 (4:1), the data-sheet tRAS / tRC /
-    tRFC / tREFI in ui_clk cycles, and two of the parameters fitted on the card at DDR3-800
-    (docs/board.md: tRP = tRCD = 3 controller cycles, a read-modify-write holds the channel
-    230 ns). Three more are fitted at DDR3-1066 / 120.755 MHz (docs/board.md section 4: LFM2 and
-    Qwen3.5 decode and tools/rw_bench.py at AXI read bursts of 8 and 16): each AXI read
-    transaction costs the data bus 1.22 controller cycles (tgap) plus 0.06 per beat (bgap), each
-    write transaction 2 (wgap), and a read/write turnaround 4 (tturn). The caller sets the other fitted one, 4 core cycles per AXI read
-    transaction (rtlsim arc), and the read latency (tools/perf_qwen.py: 300 ns)."""
+    """Simulator arguments of the DDR3 bank model (sim/verilator/otpu_native_mem.sv) for
+    DDR3-`mts` with the core at `mhz`: the controller clock is mts / 8 (4:1; LiteDRAM's sys, as
+    the MIG's ui_clk was), the data-sheet tRAS / tRC / tRFC / tREFI in controller cycles, and two
+    of the parameters fitted on the card at DDR3-800 (docs/board.md: tRP = tRCD = 3 controller
+    cycles, a read-modify-write holds the channel 230 ns). A read/write turnaround costs 4
+    controller cycles (tturn, fitted at DDR3-1066 / 120.755 MHz on the MIG bitstreams, docs/board.md
+    section 4, with their per-transaction costs, which a native command does not have). The
+    caller sets the read latency (tools/perf_qwen.py: 300 ns)."""
     import math
     fu = mts / 8                       # MHz
     ps = lambda f: round(1e6 / f)      # clock period in ps, the model's tick
     cyc = lambda ns: math.ceil(ns * fu / 1e3 - 1e-3)
     t = dict(tpc=ps(mhz), tpu=ps(fu), trp=3, trcd=3, tras=cyc(37.5), trc=cyc(50.625),
-             trfc=cyc(160), trefi=round(7.8 * fu), trmw=round(0.23 * mhz), tgap=122, bgap=6, wgap=200,
-             tturn=4)
+             trfc=cyc(160), trefi=round(7.8 * fu), trmw=round(0.23 * mhz), tturn=4)
     return ["+axi_dram=1", "+axi_map=1"] + [f"+axi_{k}={v}" for k, v in t.items()]
 
 

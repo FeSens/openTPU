@@ -1,5 +1,5 @@
 name: otpu_native_dram
-description: 'Native DRAM adapter (the LiteDRAM build''s): slice ports A (words), B (chunks) and the QST
+description: 'Native DRAM adapter (the board''s): slice ports A (words), B (chunks) and the QST
   write port onto the two channels'' native ports, one command per 64-byte beat, 64-byte interleave (hashed),
   per-channel queues, in-order read merge, A-beat reuse, the SW queue''s read-fill with its hazard buckets,
   write acknowledges (n_wdone, wr_idle).'

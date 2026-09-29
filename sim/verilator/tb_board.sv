@@ -1,9 +1,8 @@
-// Board-level simulation: otpu_board (control registers, slice, DRAM adapter) in front of the
-// two-channel AXI memory model holding the channels' physical images (ch0.bin, ch1.bin) -- with
-// MEM_NATIVE, the native adapter in front of the native memory model (otpu_native_mem; 2 / 3: the
-// LiteDRAM / native MIG build's channels, otpu_mem_ch in front of a controller model: otpu_chmem)
-// -- driven by a host script (+dir=<d>, <d>/host.txt) -- the same register and memory protocol
-// the PCIe host driver uses (opentpu/host/board.py). Script lines:
+// Board-level simulation: otpu_board (control registers, slice, the native DRAM adapter) in front
+// of the channels' memory holding their physical images (ch0.bin, ch1.bin): MEM_NATIVE 2 (the
+// default) the build's channels, otpu_mem_ch in front of a LiteDRAM native-port model
+// (otpu_chmem); 1 the native memory model alone (otpu_native_mem) -- driven by a host script
+// (+dir=<d>, <d>/host.txt) -- the same register and memory protocol the PCIe host driver uses (opentpu/host/board.py). Script lines:
 //   W <addr> <value>          AXI-Lite write
 //   P <addr> <mask> <value>   poll until (read(addr) & mask) == value
 //   R <addr>                  read, printed as "REG <addr> <value>"
@@ -15,14 +14,14 @@
 module tb_board;
   parameter int WORDS      = 1 << 20;     // logical memory words (both channels)
   parameter int D          = 128;
-  parameter int MCOLS      = 2;
+  parameter int MCOLS      = 4;
   parameter int ACT_ROWS   = MCOLS;
   parameter int ACT_BLOCKS = 128;
   parameter int TMEM_WORDS = 1 << 16;
   parameter int IMEM_WORDS = 1 << 15;
   parameter int LANES      = 8;
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1;
-  parameter int MXU_IMPL   = 0;      // MXU dot product: 0 adder tree, 2 systolic (docs/mxu_systolic.md)
+  parameter int MXU_IMPL   = 2;      // MXU dot product: 2 systolic (docs/mxu_systolic.md), 0 adder tree
   parameter int ULANES     = LANES;
   parameter int WIN        = 16;
   parameter int LAT        = 20;
@@ -32,11 +31,9 @@ module tb_board;
   parameter int TRACE_DEPTH = 16384;
   parameter int TRACE_QD   = 32;
   parameter int PQ_WIN     = 1024;
-  parameter int AXI_BL     = 8;
-  parameter int AXI_WBL    = 8;
   parameter bit DSTEP      = 1'b1;
-  parameter int MEM_NATIVE = 0;            // otpu_board's native memory path: 1 otpu_native_mem,
-                                           // 2 / 3 otpu_chmem (otpu_mem_ch; LiteDRAM / MIG model)
+  parameter int MEM_NATIVE = 2;            // the channels: 2 otpu_chmem (otpu_mem_ch and a LiteDRAM
+                                           // model), 1 otpu_native_mem
   parameter bit HOSTCAL    = 1'b0;         // CAPS bit27 (the host calibrates the controllers)
   parameter logic [11:0] TEMP = 12'hA1A;  // the XADC code of 45 C
 
@@ -52,18 +49,6 @@ module tb_board;
   logic [1:0]  bresp, rresp;
   logic [2:0]  led;
 
-  // AXI channels
-  logic [1:0] awv, awr, awi, wv, wr, wl, bv, br, bi, arv, arr, ari, rv, rr, ri, rl;
-  logic [1:0][31:0] awa, ara;
-  logic [1:0][7:0] arl, awl;
-  logic [1:0][511:0] wd, rd;
-  logic [1:0][63:0] ws;
-  logic [1:0][1:0] bre, rre;
-  logic [7:0] unused8 [8];
-  logic [2:0] unused3 [8];
-  logic [1:0] unused2 [4];
-  logic [3:0] unused4 [12];
-  logic       unusedl [6];
   // native channels
   logic [1:0] ncv, ncr, ncwe, nwv, nwr, nrv;
   logic [1:0][24:0] nca;
@@ -79,8 +64,7 @@ module tb_board;
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
                .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .MXU_IMPL(MXU_IMPL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
-               .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .DSTEP(DSTEP),
-               .MEM_NATIVE(MEM_NATIVE != 0), .HOSTCAL(HOSTCAL)) dut (
+               .PQ_WIN(PQ_WIN), .DSTEP(DSTEP), .HOSTCAL(HOSTCAL)) dut (
     .clk, .rst, .calib(2'b11), .temp(TEMP), .led,
     .i2c_lo, .i2c_pin(~({1'b0, i2c_lo} | i2c_hold)),
     .s_ctl_awaddr(awaddr), .s_ctl_awvalid(awvalid), .s_ctl_awready(awready),
@@ -88,57 +72,21 @@ module tb_board;
     .s_ctl_bresp(bresp), .s_ctl_bvalid(bvalid), .s_ctl_bready(bready),
     .s_ctl_araddr(araddr), .s_ctl_arvalid(arvalid), .s_ctl_arready(arready),
     .s_ctl_rdata(rdata), .s_ctl_rresp(rresp), .s_ctl_rvalid(rvalid), .s_ctl_rready(rready),
-    .m0_axi_awid(awi[0]), .m0_axi_awaddr(awa[0]), .m0_axi_awlen(awl[0]),
-    .m0_axi_awsize(unused3[0]), .m0_axi_awburst(unused2[0]), .m0_axi_awlock(unusedl[0]),
-    .m0_axi_awcache(unused4[0]), .m0_axi_awprot(unused3[1]), .m0_axi_awqos(unused4[1]),
-    .m0_axi_awvalid(awv[0]), .m0_axi_awready(awr[0]), .m0_axi_wdata(wd[0]),
-    .m0_axi_wstrb(ws[0]), .m0_axi_wlast(wl[0]), .m0_axi_wvalid(wv[0]),
-    .m0_axi_wready(wr[0]), .m0_axi_bid(bi[0]), .m0_axi_bresp(bre[0]), .m0_axi_bvalid(bv[0]),
-    .m0_axi_bready(br[0]), .m0_axi_arid(ari[0]), .m0_axi_araddr(ara[0]),
-    .m0_axi_arlen(arl[0]), .m0_axi_arsize(unused3[2]), .m0_axi_arburst(unused2[1]),
-    .m0_axi_arlock(unusedl[2]), .m0_axi_arcache(unused4[2]), .m0_axi_arprot(unused3[3]),
-    .m0_axi_arqos(unused4[3]), .m0_axi_arvalid(arv[0]), .m0_axi_arready(arr[0]),
-    .m0_axi_rid(ri[0]), .m0_axi_rdata(rd[0]), .m0_axi_rresp(rre[0]), .m0_axi_rlast(rl[0]),
-    .m0_axi_rvalid(rv[0]), .m0_axi_rready(rr[0]),
-    .m1_axi_awid(awi[1]), .m1_axi_awaddr(awa[1]), .m1_axi_awlen(awl[1]),
-    .m1_axi_awsize(unused3[4]), .m1_axi_awburst(unused2[2]), .m1_axi_awlock(unusedl[3]),
-    .m1_axi_awcache(unused4[4]), .m1_axi_awprot(unused3[5]), .m1_axi_awqos(unused4[5]),
-    .m1_axi_awvalid(awv[1]), .m1_axi_awready(awr[1]), .m1_axi_wdata(wd[1]),
-    .m1_axi_wstrb(ws[1]), .m1_axi_wlast(wl[1]), .m1_axi_wvalid(wv[1]),
-    .m1_axi_wready(wr[1]), .m1_axi_bid(bi[1]), .m1_axi_bresp(bre[1]), .m1_axi_bvalid(bv[1]),
-    .m1_axi_bready(br[1]), .m1_axi_arid(ari[1]), .m1_axi_araddr(ara[1]),
-    .m1_axi_arlen(arl[1]), .m1_axi_arsize(unused3[6]), .m1_axi_arburst(unused2[3]),
-    .m1_axi_arlock(unusedl[5]), .m1_axi_arcache(unused4[6]), .m1_axi_arprot(unused3[7]),
-    .m1_axi_arqos(unused4[7]), .m1_axi_arvalid(arv[1]), .m1_axi_arready(arr[1]),
-    .m1_axi_rid(ri[1]), .m1_axi_rdata(rd[1]), .m1_axi_rresp(rre[1]), .m1_axi_rlast(rl[1]),
-    .m1_axi_rvalid(rv[1]), .m1_axi_rready(rr[1]),
     .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv), .n_wready(nwr),
     .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd), .n_wdone(nwdone));
 
-  if (MEM_NATIVE >= 2) begin : g_ch
-    otpu_chmem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1), .LITEDRAM(MEM_NATIVE == 2)) u_mem (
+  if (MEM_NATIVE == 2) begin : g_ch
+    otpu_chmem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (
       .clk, .rst,
       .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv),
       .n_wready(nwr), .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd),
       .n_wdone(nwdone), .dump);
-    assign {awr, wr, bv, bi, bre, arr, rv, ri, rd, rre, rl} = '0;
-  end else if (MEM_NATIVE != 0) begin : g_native
+  end else begin : g_native
     otpu_native_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (
       .clk, .rst,
       .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv),
       .n_wready(nwr), .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd),
       .n_wdone(nwdone), .dump);
-    assign {awr, wr, bv, bi, bre, arr, rv, ri, rd, rre, rl} = '0;
-  end else begin : g_axi
-    otpu_axi_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (
-      .clk, .rst,
-      .s_awvalid(awv), .s_awready(awr), .s_awaddr(awa), .s_awid(awi), .s_awlen(awl),
-      .s_wvalid(wv), .s_wready(wr), .s_wdata(wd), .s_wstrb(ws), .s_wlast(wl),
-      .s_bvalid(bv), .s_bready(br), .s_bid(bi), .s_bresp(bre),
-      .s_arvalid(arv), .s_arready(arr), .s_araddr(ara), .s_arlen(arl), .s_arid(ari),
-      .s_rvalid(rv), .s_rready(rr), .s_rid(ri), .s_rdata(rd), .s_rresp(rre), .s_rlast(rl),
-      .dump);
-    assign {ncr, nwr, nrv, nrd, nwdone} = '0;
   end
 
   longint cyc = 0;

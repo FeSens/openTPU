@@ -177,7 +177,7 @@ def test_sandbox_rejects(tmp_path):
 # ------------------------------------------------------------------------------ components
 def test_component_configs_are_consistent():
     comps = sorted((ROOT / "tools" / "tourney" / "components").glob("*.yaml"))
-    assert len(comps) == 14
+    assert len(comps) == 13
     for p in comps:
         c = yaml.safe_load(p.read_text())
         assert c["name"] == p.stem
@@ -226,7 +226,8 @@ def test_path_summary_groups_units():
     assert AG.unit_of("u_board/u_mem/qc_reg[0][19]/C") == "u_mem"
     # the LiteDRAM build: otpu_native_sys around the board, the channels' bridges, the core
     assert AG.unit_of("u_sys/u_board/u_slice/u_mxu/q_h_reg/C") == "u_mxu"
-    assert AG.unit_of("u_sys/u_board/g_native.u_nmem/whb_reg[0][62][1]/R") == "u_nmem"
+    assert AG.unit_of("u_sys/u_board/u_mem/whb_reg[0][62][1]/R") == "u_mem"
+    assert AG.unit_of("u_sys/u_board/u_slice/g_x.u_dma/cleft_reg[28]/C") == "u_dma"
     assert AG.unit_of("u_sys/u_ch1/u_xr/mem_reg_0_63_0_2/RAMA/CLK") == "u_ch"
     assert AG.unit_of("u_sys/u_split/o_q_reg[3]/C") == "u_split"
     assert AG.unit_of("u_sys/cal_s1_reg[0]/C") == "u_sys"
@@ -235,7 +236,7 @@ def test_path_summary_groups_units():
     assert s[0].startswith("- u_dma -> u_mem: 1 of the paths, worst -0.586 ns, up to 20 levels")
     assert s[1] == ("- u_mxu -> u_tmem: 2 of the paths, worst -0.582 ns, up to 14 levels, "
                     "route 75% of the data delay")
-    assert "u_mem = rtl/mem/otpu_axi_dram.sv" in s[-1]
+    assert "u_mem = rtl/mem/otpu_native_dram.sv" in s[-1]
     assert AG.path_summary("") == "(no paths parsed)"
 
 
@@ -740,9 +741,8 @@ def test_fmax_prompt_and_xunit(tmp_path):
     assert "straight to the full build" in p and "=== rtl/top/otpu_slice.sv ===" in p
     assert AG.expand(ROOT, ["rtl/boards/ypcb-00338/*.sv"]) == [
         f"rtl/boards/ypcb-00338/{n}.sv" for n in (
-            "otpu_afifo", "otpu_axi_split2", "otpu_board", "otpu_ctrl", "otpu_fpga_top",
-            "otpu_fpga_top_ld", "otpu_fpga_top_mn", "otpu_mem_ch", "otpu_mig_native",
-            "otpu_native_sys", "otpu_trace")]
+            "otpu_afifo", "otpu_axi_split2", "otpu_board", "otpu_ctrl", "otpu_fpga_top_ld",
+            "otpu_mem_ch", "otpu_native_sys", "otpu_trace")]
 
 
 # ------------------------------------------------------------------------------ fmax: the round's full build
@@ -878,12 +878,12 @@ def test_full_result_cached(tmp_path, monkeypatch):
     run.repo = tmp_path
     trees = {"rtl": "r" * 40, "boards": "b" * 40}
     monkeypatch.setattr(O, "git", lambda *a, **k: trees[a[1].split(":")[1]])
-    monkeypatch.setattr(RM, "BUILD_ARGS", ["AXI_BL=16"])
+    monkeypatch.setattr(RM, "BUILD_ARGS", ["FAST=1"])
     # an older result cached under the commit moves to the tree key
-    (tmp_path / f"{'a' * 12}-133.33-AXI_BL16.json").write_text(json.dumps(full(wns=0.1)))
+    (tmp_path / f"{'a' * 12}-133.33-FAST1.json").write_text(json.dumps(full(wns=0.1)))
     monkeypatch.setattr(O.G, "full_design", lambda *a: pytest.fail("rebuilt a cached commit"))
     assert run.full_result("a" * 40, None)["wns"] == 0.1
-    assert (tmp_path / "trrrrrrbbbbbb-133.33-AXI_BL16.json").exists()
+    assert (tmp_path / "trrrrrrbbbbbb-133.33-FAST1.json").exists()
     # another commit with the same rtl/ and boards/ trees reuses it
     assert run.full_result("c" * 40, None)["wns"] == 0.1
 

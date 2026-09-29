@@ -1,4 +1,5 @@
-# XDMA as an RTL IP (not in a block design), configured as boards/ypcb-00338/vivado/bd.tcl's xdma_0
+# XDMA as an RTL IP (not in a block design), configured as boards/ypcb-00338/vivado/bd_native.tcl's
+# xdma_0
 # but subsystem 4C44 ("LD": the LiteDRAM test image, so the openTPU tools do not take it for theirs).
 # Sourced by the LiteDRAM test image's Vivado build (pre-synthesis) and, alone, to get the port list.
 proc otpu_xdma_ip {dir} {

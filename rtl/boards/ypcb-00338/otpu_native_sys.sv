@@ -1,14 +1,10 @@
-// The accelerator and XDMA's DMA on two native memory channels, for the board tops whose
-// controllers have native ports (otpu_fpga_top_mn: the MIGs' native interface through
-// otpu_mig_native; otpu_fpga_top_ld: LiteDRAM): otpu_board with MEM_NATIVE (otpu_native_dram on
-// the channels' native masters n_*), XDMA's AXI master split by address bit 31 onto the channels
-// (otpu_axi_split2), and one otpu_mem_ch per channel in front of that channel's controller port
-// c_* in the controller's clock (uclk[c]). It replaces the AXI build's SmartConnect and the
-// MIGs' AXI front ends. Its crossings' constraints: constraints/otpu_mem_ch.tcl (scoped to each
-// otpu_mem_ch) and otpu_top_native.tcl.
-//   RMW: 0 for the MIG (partial beats go as wr_bytes, the ECC controller's read-modify-write),
-//        1 for LiteDRAM (whose ECC port takes whole beats only: otpu_mem_ch reads, merges and
-//        writes).
+// The accelerator and XDMA's DMA on two native memory channels (otpu_fpga_top_ld: LiteDRAM's
+// native ports): otpu_board (otpu_native_dram on the channels' native masters n_*), XDMA's AXI
+// master split by address bit 31 onto the channels (otpu_axi_split2), and one otpu_mem_ch per
+// channel in front of that channel's controller port c_* in the controller's clock (uclk[c];
+// partial beats read-modify-written there: LiteDRAM's ECC port takes whole beats only). Its
+// crossings' constraints: constraints/otpu_mem_ch.tcl (scoped to each otpu_mem_ch) and
+// otpu_top_native.tcl.
 //   HOSTCAL: the host calibrates the controllers (CAPS bit27: LiteDRAM, whose calibration the
 //        host runs through its CSRs; opentpu/host/memcal.py).
 //   calib: each channel's calibration flag in its controller's clock (STATUS CALIB0/1; synchronized
@@ -24,9 +20,6 @@ module otpu_native_sys #(
   parameter logic [31:0] BUILD_ID = 32'h0,
   parameter int DDR_MTS = 0,
   parameter bit DSTEP = 1'b1,
-  parameter int AXI_BL = 8,
-  parameter int AXI_WBL = 8,
-  parameter bit RMW = 1'b0,
   parameter bit HOSTCAL = 1'b0
 ) (
   // core clock and reset (synchronous, high), XDMA's clock and reset
@@ -91,7 +84,6 @@ module otpu_native_sys #(
   input  logic [1:0]            c_cmd_ready,
   output logic [1:0]            c_cmd_we,
   output logic [1:0][24:0]      c_cmd_addr,
-  output logic [1:0]            c_cmd_partial,
   output logic [1:0]            c_wdata_valid,
   input  logic [1:0]            c_wdata_ready,
   output logic [1:0][511:0]     c_wdata_data,
@@ -125,7 +117,7 @@ module otpu_native_sys #(
 
   // one bridge per channel; XDMA's address, ID, length and write data go to both (the split's
   // valids select one)
-  otpu_mem_ch #(.XIDW(4), .RMW(RMW)) u_ch0 (
+  otpu_mem_ch #(.XIDW(4)) u_ch0 (
     .clk, .rst,
     .n_cvalid(n_cvalid[0]), .n_cready(n_cready[0]), .n_cwe(n_cwe[0]), .n_caddr(n_caddr[0]),
     .n_wvalid(n_wvalid[0]), .n_wready(n_wready[0]), .n_wdata(n_wdata[0]), .n_wmask(n_wmask[0]),
@@ -139,11 +131,11 @@ module otpu_native_sys #(
     .x_rresp(m_rresp[0]), .x_rlast(m_rlast[0]),
     .uclk(uclk[0]), .urst(urst[0]),
     .c_cmd_valid(c_cmd_valid[0]), .c_cmd_ready(c_cmd_ready[0]), .c_cmd_we(c_cmd_we[0]),
-    .c_cmd_addr(c_cmd_addr[0]), .c_cmd_partial(c_cmd_partial[0]),
+    .c_cmd_addr(c_cmd_addr[0]),
     .c_wdata_valid(c_wdata_valid[0]), .c_wdata_ready(c_wdata_ready[0]),
     .c_wdata_data(c_wdata_data[0]), .c_wdata_we(c_wdata_we[0]),
     .c_rdata_valid(c_rdata_valid[0]), .c_rdata_data(c_rdata_data[0]));
-  otpu_mem_ch #(.XIDW(4), .RMW(RMW)) u_ch1 (
+  otpu_mem_ch #(.XIDW(4)) u_ch1 (
     .clk, .rst,
     .n_cvalid(n_cvalid[1]), .n_cready(n_cready[1]), .n_cwe(n_cwe[1]), .n_caddr(n_caddr[1]),
     .n_wvalid(n_wvalid[1]), .n_wready(n_wready[1]), .n_wdata(n_wdata[1]), .n_wmask(n_wmask[1]),
@@ -157,36 +149,19 @@ module otpu_native_sys #(
     .x_rresp(m_rresp[1]), .x_rlast(m_rlast[1]),
     .uclk(uclk[1]), .urst(urst[1]),
     .c_cmd_valid(c_cmd_valid[1]), .c_cmd_ready(c_cmd_ready[1]), .c_cmd_we(c_cmd_we[1]),
-    .c_cmd_addr(c_cmd_addr[1]), .c_cmd_partial(c_cmd_partial[1]),
+    .c_cmd_addr(c_cmd_addr[1]),
     .c_wdata_valid(c_wdata_valid[1]), .c_wdata_ready(c_wdata_ready[1]),
     .c_wdata_data(c_wdata_data[1]), .c_wdata_we(c_wdata_we[1]),
     .c_rdata_valid(c_rdata_valid[1]), .c_rdata_data(c_rdata_data[1]));
 
-  // the accelerator's AXI masters are unused here (MEM_NATIVE): outputs left open, inputs idle
   otpu_board #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .MXU_IMPL(MXU_IMPL),
                .LANES(LANES), .ULANES(ULANES),
                .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .DSTEP(DSTEP),
-               .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .MEM_NATIVE(1'b1), .HOSTCAL(HOSTCAL)) u_board (
+               .HOSTCAL(HOSTCAL)) u_board (
     .clk, .rst, .calib, .temp, .led, .i2c_lo, .i2c_pin,
     .s_ctl_awaddr, .s_ctl_awvalid, .s_ctl_awready, .s_ctl_wdata, .s_ctl_wstrb, .s_ctl_wvalid,
     .s_ctl_wready, .s_ctl_bresp, .s_ctl_bvalid, .s_ctl_bready, .s_ctl_araddr, .s_ctl_arvalid,
     .s_ctl_arready, .s_ctl_rdata, .s_ctl_rresp, .s_ctl_rvalid, .s_ctl_rready,
-    .m0_axi_awid(), .m0_axi_awaddr(), .m0_axi_awlen(), .m0_axi_awsize(), .m0_axi_awburst(),
-    .m0_axi_awlock(), .m0_axi_awcache(), .m0_axi_awprot(), .m0_axi_awqos(), .m0_axi_awvalid(),
-    .m0_axi_awready(1'b0), .m0_axi_wdata(), .m0_axi_wstrb(), .m0_axi_wlast(), .m0_axi_wvalid(),
-    .m0_axi_wready(1'b0), .m0_axi_bid(1'b0), .m0_axi_bresp(2'b00), .m0_axi_bvalid(1'b0),
-    .m0_axi_bready(), .m0_axi_arid(), .m0_axi_araddr(), .m0_axi_arlen(), .m0_axi_arsize(),
-    .m0_axi_arburst(), .m0_axi_arlock(), .m0_axi_arcache(), .m0_axi_arprot(), .m0_axi_arqos(),
-    .m0_axi_arvalid(), .m0_axi_arready(1'b0), .m0_axi_rid(1'b0), .m0_axi_rdata(512'h0),
-    .m0_axi_rresp(2'b00), .m0_axi_rlast(1'b0), .m0_axi_rvalid(1'b0), .m0_axi_rready(),
-    .m1_axi_awid(), .m1_axi_awaddr(), .m1_axi_awlen(), .m1_axi_awsize(), .m1_axi_awburst(),
-    .m1_axi_awlock(), .m1_axi_awcache(), .m1_axi_awprot(), .m1_axi_awqos(), .m1_axi_awvalid(),
-    .m1_axi_awready(1'b0), .m1_axi_wdata(), .m1_axi_wstrb(), .m1_axi_wlast(), .m1_axi_wvalid(),
-    .m1_axi_wready(1'b0), .m1_axi_bid(1'b0), .m1_axi_bresp(2'b00), .m1_axi_bvalid(1'b0),
-    .m1_axi_bready(), .m1_axi_arid(), .m1_axi_araddr(), .m1_axi_arlen(), .m1_axi_arsize(),
-    .m1_axi_arburst(), .m1_axi_arlock(), .m1_axi_arcache(), .m1_axi_arprot(), .m1_axi_arqos(),
-    .m1_axi_arvalid(), .m1_axi_arready(1'b0), .m1_axi_rid(1'b0), .m1_axi_rdata(512'h0),
-    .m1_axi_rresp(2'b00), .m1_axi_rlast(1'b0), .m1_axi_rvalid(1'b0), .m1_axi_rready(),
     .n_cvalid, .n_cready, .n_cwe, .n_caddr, .n_wvalid, .n_wready, .n_wdata, .n_wmask,
     .n_rvalid, .n_rdata, .n_wdone);
 endmodule

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build the openTPU bitstream for the YPCB-00338 in Vivado batch mode, natively or in Docker.
 #
-#   ./run_vivado.sh [800|1066|1300|1333|1600] # native: `vivado` on PATH (x86-64 Linux / Windows WSL)
-#                                         # the default build: the LiteDRAM core (DDR3-1066 whatever the
-#                                         # speed argument; host calibration), MCOLS=4, the systolic MXU
+#   ./run_vivado.sh [1066]                # native: `vivado` on PATH (x86-64 Linux / Windows WSL)
+#                                         # the LiteDRAM core (DDR3-1066, the one speed it is generated
+#                                         # for; host calibration), MCOLS=4, the systolic MXU
 #   MCOLS=2 ./run_vivado.sh               # 2 MXU columns (4, the default: faster prefill / batched decode)
 #   VPU_CL=4 ./run_vivado.sh              # 4 VPU lanes with exp2/recip/rsqrt (faster softmax)
 #   LANES=16 ./run_vivado.sh              # 16 VPU lanes / TMEM banks
@@ -14,14 +14,6 @@
 #   VIVADO_AS_USER=1                      # Docker on Linux: run as the calling user (see run())
 #   STEP=impl ./run_vivado.sh             # rerun implementation only (keeps project and synthesis)
 #   IMPL_STRATEGY=Performance_Explore     # a stronger implementation strategy (with bit or impl)
-#   MIG_ADDR_MAP=BANK_ROW_COLUMN          # the MIG address map (default ROW_BANK_COLUMN; gen_mig_prj.py)
-#   MIG_BANK_MACHINES=8 MIG_ORDERING=Strict # the MIG controllers' bank machines (4) and ordering (Normal)
-#   MEM=mig ./run_vivado.sh 1066          # the MIGs' AXI ports behind the SmartConnect instead of LiteDRAM
-#                                         # (otpu_fpga_top, bd.tcl; gen_mig_prj.py)
-#   MEM=mig_native ./run_vivado.sh 1066   # the MIGs' native ports behind otpu_mem_ch
-#                                         # (otpu_fpga_top_mn, bd_native.tcl; gen_mig_prj.py --native)
-#   MEM=litedram ./run_vivado.sh          # the default: LiteDRAM (DDR3-1066, host calibration:
-#                                         # otpu_fpga_top_ld, bd_native.tcl; the speed argument is ignored)
 #   The xc7k480t needs a paid or 30-day evaluation license, node-locked to a MAC address. In Docker
 #   set VIVADO_MAC (the MAC the license was issued for) and XILINXD_LICENSE_FILE (path to the .lic).
 #
@@ -37,23 +29,15 @@ vpu_cl="${VPU_CL:-2}"          # VPU lanes with the composite functions (timing 
 lanes="${LANES:-8}"            # VPU lanes / TMEM banks (likewise in VERSION)
 act_rows="${ACT_ROWS:-$mcols}" # ACT RAM rows (> MCOLS: MM replay; the ACT_ROWS register)
 dstep="${DSTEP:-1}"            # 0: no DSTEP datapath in the DMA (CAPS bit6 = 0)
-axi_bl="${AXI_BL:-32}"         # port B read burst, beats (32 default, the production image; up to 64)
 core_mhz="${CORE_MHZ:-100}"   # accelerator clock; lower it (80, 75) if timing does not close
 # BUILD_ID register: the git commit's first 8 hex digits, taken here (Vivado may run in Docker)
 build_id="${BUILD_ID:-$(git -C "$root" rev-parse HEAD 2>/dev/null | cut -c1-8)}"
 build_id="${build_id:-0}"
 
-mem="${MEM:-litedram}"          # litedram (the default), mig or mig_native
-case "$mem" in
-  mig|mig_native)
-    native=(); mem_arg=()
-    if [[ "$mem" == mig_native ]]; then native=(--native); mem_arg=(mig_native); fi
-    python3 "$here/scripts/gen_mig_prj.py" --speed "$speed" ${MIG_ADDR_MAP:+--addr-map "$MIG_ADDR_MAP"} \
-      ${MIG_BANK_MACHINES:+--bank-machines "$MIG_BANK_MACHINES"} ${MIG_ORDERING:+--ordering "$MIG_ORDERING"} \
-      ${native[@]+"${native[@]}"};;
-  litedram) speed=1066; mem_arg=(litedram);;
-  *) echo "MEM must be mig, mig_native or litedram, not $mem" >&2; exit 2;;
-esac
+if [[ "$speed" != 1066 ]]; then
+  echo "DDR3-$speed: the LiteDRAM core is generated for DDR3-1066 (tools/litedram/gen_core.py)" >&2
+  exit 2
+fi
 
 run() {  # run a Vivado Tcl script with arguments
   local script="$1"; shift
@@ -88,7 +72,7 @@ export OTPU_FAST="${FAST:-0}"
 if [[ "${STEP:-}" == impl ]]; then
   run "$here/vivado/build.tcl" "$out" "$jobs" impl "${IMPL_STRATEGY:-}"
 else
-  run "$here/vivado/create_project.tcl" "$speed" "$out" "$mcols" "$core_mhz" "$build_id" "$vpu_cl" "$lanes" "$act_rows" "$dstep" "$axi_bl" ${mem_arg[@]+"${mem_arg[@]}"}
+  run "$here/vivado/create_project.tcl" "$speed" "$out" "$mcols" "$core_mhz" "$build_id" "$vpu_cl" "$lanes" "$act_rows" "$dstep"
   run "$here/vivado/build.tcl" "$out" "$jobs" full "${IMPL_STRATEGY:-}"
 fi
 echo "done: $out/otpu.bit"

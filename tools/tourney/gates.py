@@ -286,7 +286,7 @@ def _rtl_sources(wt: Path) -> list[str]:
 def lint(wt: Path, timeout: int = 900) -> None:
     """Verilator lint of the simulation top and of the board top (errors fail, warnings pass)."""
     rtl = [f"rtl/{s}" for s in _rtl_sources(wt)]
-    sim = rtl + ["sim/verilator/otpu_axi_mem.sv"]
+    sim = rtl + ["sim/verilator/otpu_native_mem.sv"]
     board = [s for s in rtl if not s.endswith("otpu_top.sv")] + [
         "rtl/boards/ypcb-00338/otpu_ctrl.sv", "rtl/boards/ypcb-00338/otpu_trace.sv",
         "rtl/boards/ypcb-00338/otpu_board.sv"]

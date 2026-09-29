@@ -11,7 +11,7 @@ it exists.
 - **Flash:** parallel NOR, BPI x16, 64 MB. The vendor constraints
   (`constraints/vendor_ypcb003381p1.xdc`) wire flash A1..A25, DQ[15:0], CE#, OE#, WE# and ADV#
   to the FPGA's BPI configuration pins. They wire no RS[1:0], WAIT or CLK pins.
-- **Configuration settings** (`constraints/otpu_top.xdc`):
+- **Configuration settings** (`constraints/otpu_top_ld.xdc`):
   - banks at 1.8 V: CFGBVS GND, CONFIG_VOLTAGE 1.8;
   - `CONFIG_MODE BPI16`;
   - `BPI_SYNC_MODE DISABLE` (asynchronous reads);

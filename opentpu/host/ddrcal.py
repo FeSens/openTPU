@@ -1,6 +1,6 @@
 """DDR3 calibration for LiteDRAM's A7DDRPHY from the host (docs/litedram.md, section 7): the
-LiteDRAM test image (tools/litedram/ld_host.py) and, once LiteDRAM replaces the MIG, the board's
-bring-up use it. Stdlib only, no package imports, so a copy next to ld_host.py works on a card
+LiteDRAM test image (tools/litedram/ld_host.py) and the board's bring-up (opentpu/host/memcal.py)
+use it. Stdlib only, no package imports, so a copy next to ld_host.py works on a card
 host whose installed opentpu package predates it.
 
 The CSRs are reached through `csr`, any object with w(name, value) / r(name) on LiteX CSR names

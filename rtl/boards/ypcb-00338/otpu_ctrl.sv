@@ -9,7 +9,7 @@
 //                      only while RUN = 0)
 //                      bit2 CLEAR: zero the per-run counters (0x18 .. 0x34)
 //   0x0C STATUS    RO  bit0 HALTED, bit1 ERROR (illegal instruction), bit2 LOADING,
-//                      bit3 WR_IDLE, bit4 AXI_ERR (sticky), bit5 CALIB0, bit6 CALIB1, bit7 RUN
+//                      bit3 WR_IDLE, bit4 AXI_ERR (sticky; the AXI memory path had it: 0), bit5 CALIB0, bit6 CALIB1, bit7 RUN
 //   0x10 PROG_ADDR RW  program byte address in the slice's DRAM (chunk aligned)
 //   0x14 PROG_N    RW  program length in instructions
 //   0x18 CYCLES    RO  core cycles since RUN rose, until HALTED (low 32 bits)
@@ -25,7 +25,7 @@
 //   0x40 CAPS      RO  bit0 trace buffer, bit1 temperature, bit2 I2C pins, bit3 DDR_MTS,
 //                      bit4 4-bit MM weights (MM flags WF, docs/isa.md), bit5 column reuse (MM
 //                      PAIR / QACT DUP), bit6 DSTEP (the DMA's DeltaNet head step), bit7
-//                      hashed channel interleave (otpu_axi_dram CHASH), bit24 ACT_ROWS,
+//                      hashed channel interleave (otpu_native_dram CHASH), bit24 ACT_ROWS,
 //                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles),
 //                      bit25 the run's arguments (ARG0..7), bit26 STREAM (the stream engine's
 //                      hardware subset, docs/stream.md; with DSTEP), bit27 the DDR3
@@ -67,8 +67,8 @@ module otpu_ctrl #(
   parameter int TRACE_DEPTH = 16384,     // 0: no trace buffer
   parameter int PQ_WIN = 1024,           // the trace's P/Q window (cycles)
   parameter bit HAS_TEMP = 1'b1,
-  parameter bit HAS_I2C = 1'b1,          // CAPS bit2: the I2C pins are wired (otpu_fpga_top)
-  parameter bit CHASH = 1'b0,            // CAPS bit7: the hashed channel interleave (otpu_axi_dram)
+  parameter bit HAS_I2C = 1'b1,          // CAPS bit2: the I2C pins are wired (otpu_fpga_top_ld)
+  parameter bit CHASH = 1'b0,            // CAPS bit7: the hashed channel interleave (otpu_native_dram)
   parameter bit DSTEP = 1'b1,            // CAPS bit6 and bit26: the stream engine (DSTEP, STREAM)
   parameter bit HOSTCAL = 1'b0           // CAPS bit27: the host calibrates the DDR3 controllers
 ) (

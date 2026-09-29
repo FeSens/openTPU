@@ -1,34 +1,18 @@
-# Block design "otpu_bd" for the YPCB-00338 builds whose memory channels are native ports behind
-# otpu_mem_ch (create_project.tcl MEM=mig_native or MEM=litedram; bd.tcl is the AXI MIG build's):
-# PCIe (XDMA), the core clock, resets, the XADC and the control interconnect. No memory
-# controllers and no memory interconnect: the accelerator (otpu_board with MEM_NATIVE) and XDMA's
-# DMA meet on each channel in otpu_mem_ch (otpu_native_sys), outside the block design, in front
-# of the LiteDRAM core or of the two MIGs, which are RTL-level IP in the top for mig_native (IP
-# integrator takes the MIG with its AXI interface only). The same name as bd.tcl's design, so
-# build.tcl serves every build. External interfaces:
+# Block design "otpu_bd" for the YPCB-00338 (create_project.tcl): PCIe (XDMA), the core clock,
+# resets, the XADC and the control interconnect. No memory controllers and no memory
+# interconnect: the accelerator (otpu_board) and XDMA's DMA meet on each channel in otpu_mem_ch
+# (otpu_native_sys), outside the block design, in front of the LiteDRAM core. External interfaces:
 #   M_AXI_CTL     AXI4-Lite master -> the accelerator's control registers (BAR0 0x0000, core_clk)
 #   M_AXI_DMA     AXI4 master, 128b -> the channels (XDMA's DMA, xdma_aclk; bit 31 = channel)
-#   M_AXI_MEMCAL  (litedram) AXI4-Lite master -> the LiteDRAM core's CSRs (BAR0 0x10000, 64 KB,
-#                 xdma_aclk: the core crosses them into its own clock; opentpu/host/memcal.py)
-# and device_temp (the XADC die-temperature code, core_clk; BAR0 0x30000: the XADC registers; for
-# mig_native also the MIGs' device_temp_i, as in bd.tcl). mig_native also exports what the MIGs
-# take from bd.tcl's block design: mig_sys_clk (their system clock: clk_mig for DDR3-1066 / 1333,
-# clk_200 otherwise), mig_ref_clk (clk_200, their IDELAYCTRL reference) and mig_locked (the clock
-# wizard's lock, their active-low sys_rst). BAR0 0x10000 / 0x20000 (the AXI MIGs' ECC registers
-# in bd.tcl) are unmapped for mig_native: their S_AXI_CTRL comes with the AXI interface.
+#   M_AXI_MEMCAL  AXI4-Lite master -> the LiteDRAM core's CSRs (BAR0 0x10000, 64 KB, xdma_aclk:
+#                 the core crosses them into its own clock; opentpu/host/memcal.py)
+# and device_temp (the XADC die-temperature code, core_clk; BAR0 0x30000: the XADC registers).
 #
-# Clocks: mig_native as bd.tcl (the 50 MHz pin into the clock wizard: core_clk, clk_200 and
-# clk_mig at VCO / 3). litedram: the 50 MHz clock arrives already on a global buffer
-# (otpu_fpga_top_ld.sv: the LiteDRAM core's MMCMs share it), so the clock wizard has no input
-# buffer and makes core_clk only. xdma_aclk 125 MHz (Gen1 x8, 128 bits).
+# Clocks: the 50 MHz clock arrives already on a global buffer (otpu_fpga_top_ld.sv: the LiteDRAM
+# core's MMCMs share it), so the clock wizard has no input buffer and makes core_clk only.
+# xdma_aclk 125 MHz (Gen1 x8, 128 bits).
 #
-# Variables (set before sourcing): MEM (mig_native | litedram), DDR_SPEED (mig_native: 800 |
-# 1066 | 1300 | 1333 | 1600), CORE_MHZ.
-
-if {![info exists MEM]} { set MEM mig_native }
-if {$MEM ni {mig_native litedram}} { error "bd_native.tcl: MEM is $MEM (mig_native or litedram)" }
-set mig [expr {$MEM eq "mig_native"}]
-if {![info exists DDR_SPEED]} { set DDR_SPEED 800 }
+# Variables (set before sourcing): CORE_MHZ.
 
 # the newest installed version of an IP
 proc ip_vlnv {name} {
@@ -40,9 +24,9 @@ proc ip_vlnv {name} {
 create_bd_design otpu_bd
 current_bd_design otpu_bd
 
-# core clock: CORE_MHZ rounded to the MMCM's 1/8 divider steps of its VCO (as bd.tcl)
+# core clock: CORE_MHZ rounded to the MMCM's 1/8 divider steps of its VCO
 if {![info exists CORE_MHZ]} { set CORE_MHZ 100 }
-set VCO [expr {$mig && $DDR_SPEED == 1333 ? 1000 : 800}]
+set VCO 800
 set CORE_DIV [expr {round(double($VCO) / $CORE_MHZ * 8) / 8.0}]
 set CORE_MHZ_ACT [format %.3f [expr {double($VCO) / $CORE_DIV}]]
 set CORE_HZ [expr {int(floor($VCO * 1.0e6 / $CORE_DIV))}]
@@ -60,53 +44,33 @@ create_bd_port -dir O -type clk xdma_aclk
 create_bd_port -dir O -type rst xdma_aresetn
 create_bd_port -dir O -from 11 -to 0 device_temp
 create_bd_port -dir O pcie_link_up
-if {$mig} {
-  create_bd_port -dir O mig_sys_clk
-  create_bd_port -dir O mig_ref_clk
-  create_bd_port -dir O mig_locked
-}
 
-set lites [expr {$mig ? {M_AXI_CTL} : {M_AXI_CTL M_AXI_MEMCAL}}]
+set lites {M_AXI_CTL M_AXI_MEMCAL}
 foreach p $lites {
   set m [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 $p]
   set_property -dict [list CONFIG.PROTOCOL AXI4LITE CONFIG.DATA_WIDTH 32 CONFIG.ADDR_WIDTH 32 \
     CONFIG.HAS_BURST 0 CONFIG.HAS_LOCK 0 CONFIG.HAS_PROT 0 CONFIG.HAS_CACHE 0 CONFIG.HAS_QOS 0 \
     CONFIG.HAS_REGION 0] $m
 }
-if {!$mig} { set_property CONFIG.FREQ_HZ 125000000 [get_bd_intf_ports M_AXI_MEMCAL] }
+set_property CONFIG.FREQ_HZ 125000000 [get_bd_intf_ports M_AXI_MEMCAL]
 set_property CONFIG.ASSOCIATED_BUSIF {M_AXI_CTL} [get_bd_ports core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_rstn} [get_bd_ports core_clk]
 set_property CONFIG.FREQ_HZ $CORE_HZ [get_bd_ports core_clk]
 
 # ------------------------------------------------------------------ clocks and resets
 set clk [create_bd_cell -type ip -vlnv [ip_vlnv clk_wiz] clk_wiz_0]
-if {$mig} {
-  set_property -dict [list \
-    CONFIG.PRIM_IN_FREQ {50.000} CONFIG.PRIM_SOURCE {Single_ended_clock_capable_pin} \
-    CONFIG.USE_RESET {false} CONFIG.USE_LOCKED {true} \
-    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $CORE_MHZ_ACT \
-    CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000} \
-    CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT3_REQUESTED_OUT_FREQ [format %.3f [expr {$VCO / 3.0}]] \
-    CONFIG.NUM_OUT_CLKS {3} CONFIG.MMCM_DIVCLK_DIVIDE {1} \
-    CONFIG.MMCM_CLKFBOUT_MULT_F [format %.3f [expr {$VCO / 50.0}]] \
-    CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV CONFIG.MMCM_CLKOUT1_DIVIDE [expr {$VCO / 200}] \
-    CONFIG.MMCM_CLKOUT2_DIVIDE {3} \
-    CONFIG.CLK_OUT1_PORT {core_clk} CONFIG.CLK_OUT2_PORT {clk_200} CONFIG.CLK_OUT3_PORT {clk_mig} \
-  ] $clk
-} else {
-  set_property -dict [list \
-    CONFIG.PRIM_IN_FREQ {50.000} CONFIG.PRIM_SOURCE {No_buffer} \
-    CONFIG.USE_RESET {false} CONFIG.USE_LOCKED {true} \
-    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $CORE_MHZ_ACT CONFIG.NUM_OUT_CLKS {1} \
-    CONFIG.MMCM_DIVCLK_DIVIDE {1} \
-    CONFIG.MMCM_CLKFBOUT_MULT_F [format %.3f [expr {$VCO / 50.0}]] \
-    CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV CONFIG.CLK_OUT1_PORT {core_clk} \
-  ] $clk
-}
+set_property -dict [list \
+  CONFIG.PRIM_IN_FREQ {50.000} CONFIG.PRIM_SOURCE {No_buffer} \
+  CONFIG.USE_RESET {false} CONFIG.USE_LOCKED {true} \
+  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $CORE_MHZ_ACT CONFIG.NUM_OUT_CLKS {1} \
+  CONFIG.MMCM_DIVCLK_DIVIDE {1} \
+  CONFIG.MMCM_CLKFBOUT_MULT_F [format %.3f [expr {$VCO / 50.0}]] \
+  CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV CONFIG.CLK_OUT1_PORT {core_clk} \
+] $clk
 connect_bd_net [get_bd_ports sys_clk_50] [get_bd_pins clk_wiz_0/clk_in1]
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_ports core_clk]
 
-# core reset: until the MMCM locks, and while the host asserts PCIe PERST# (as bd.tcl)
+# core reset: until the MMCM locks, and while the host asserts PCIe PERST#
 set rst_core [create_bd_cell -type ip -vlnv [ip_vlnv proc_sys_reset] rst_core]
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_pins rst_core/slowest_sync_clk]
 connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins rst_core/dcm_locked]
@@ -114,8 +78,8 @@ connect_bd_net [get_bd_ports pcie_perstn] [get_bd_pins rst_core/ext_reset_in]
 connect_bd_net [get_bd_pins rst_core/peripheral_aresetn] [get_bd_ports core_rstn]
 
 # ------------------------------------------------------------------ PCIe: XDMA, Gen1 x8
-# The production settings and identity, exactly as bd.tcl (the host tells the memory build from
-# CAPS, not from the PCI identity).
+# The production settings and identity, those of every bitstream since the first (the host tells
+# the memory build from CAPS, not from the PCI identity).
 set ibuf [create_bd_cell -type ip -vlnv [ip_vlnv util_ds_buf] refclk_buf]
 set_property CONFIG.C_BUF_TYPE {IBUFDSGTE} $ibuf
 connect_bd_intf_net $pcie_refclk [get_bd_intf_pins refclk_buf/CLK_IN_D]
@@ -151,22 +115,12 @@ connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_ports xdma_aresetn]
 # XDMA's DMA master leaves the design as it is (otpu_axi_split2 takes it in the top)
 make_bd_intf_pins_external [get_bd_intf_pins xdma_0/M_AXI]
 set_property NAME M_AXI_DMA [get_bd_intf_ports -of [get_bd_intf_nets -of [get_bd_intf_pins xdma_0/M_AXI]]]
-set_property CONFIG.ASSOCIATED_BUSIF [expr {$mig ? "M_AXI_DMA" : "M_AXI_DMA:M_AXI_MEMCAL"}] [get_bd_ports xdma_aclk]
+set_property CONFIG.ASSOCIATED_BUSIF {M_AXI_DMA:M_AXI_MEMCAL} [get_bd_ports xdma_aclk]
 set_property CONFIG.ASSOCIATED_RESET {xdma_aresetn} [get_bd_ports xdma_aclk]
 set_property CONFIG.FREQ_HZ 125000000 [get_bd_ports xdma_aclk]
 
-# ------------------------------------------------------------------ the MIGs' clocks (mig_native)
-# The system clock, reference clock and reset bd.tcl gives its MIG cells, for the MIG IP in the top
-if {$mig} {
-  set sysclk [expr {$DDR_SPEED in {1066 1333} ? "clk_wiz_0/clk_mig" : "clk_wiz_0/clk_200"}]
-  connect_bd_net [get_bd_pins $sysclk] [get_bd_ports mig_sys_clk]
-  connect_bd_net [get_bd_pins clk_wiz_0/clk_200] [get_bd_ports mig_ref_clk]
-  connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_ports mig_locked]
-}
-
 # ------------------------------------------------------------------ XADC (die temperature)
-# As bd.tcl: temp_out for the accelerator's TEMP register (and, in the top, the MIGs'
-# temperature-compensated read timing), the XADC registers at BAR0 0x30000.
+# temp_out for the accelerator's TEMP register, the XADC registers at BAR0 0x30000.
 set xadc [create_bd_cell -type ip -vlnv [ip_vlnv xadc_wiz] xadc_temp]
 set_property -dict [list CONFIG.INTERFACE_SELECTION {Enable_AXI} CONFIG.DCLK_FREQUENCY {100} \
   CONFIG.XADC_STARUP_SELECTION {single_channel} CONFIG.SINGLE_CHANNEL_SELECTION {TEMPERATURE} \
@@ -178,27 +132,25 @@ connect_bd_net [get_bd_pins rst_core/peripheral_aresetn] [get_bd_pins xadc_temp/
 connect_bd_net [get_bd_pins xadc_temp/temp_out] [get_bd_ports device_temp]
 
 # ------------------------------------------------------------------ control interconnect
-# XDMA's AXI-Lite master (BAR0): the control registers (into core_clk), the XADC (core_clk) and,
-# for litedram, the LiteDRAM CSRs (in xdma_aclk)
+# XDMA's AXI-Lite master (BAR0): the control registers (into core_clk), the XADC (core_clk) and
+# the LiteDRAM CSRs (in xdma_aclk)
 set scl [create_bd_cell -type ip -vlnv [ip_vlnv smartconnect] sc_ctl]
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI [expr {$mig ? 2 : 3}] CONFIG.NUM_CLKS {2}] $scl
+set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {3} CONFIG.NUM_CLKS {2}] $scl
 connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_pins sc_ctl/aclk]
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_pins sc_ctl/aclk1]
 connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins sc_ctl/aresetn]
 connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI_LITE] [get_bd_intf_pins sc_ctl/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins sc_ctl/M00_AXI] [get_bd_intf_ports M_AXI_CTL]
 connect_bd_intf_net [get_bd_intf_pins sc_ctl/M01_AXI] [get_bd_intf_pins xadc_temp/s_axi_lite]
-if {!$mig} { connect_bd_intf_net [get_bd_intf_pins sc_ctl/M02_AXI] [get_bd_intf_ports M_AXI_MEMCAL] }
+connect_bd_intf_net [get_bd_intf_pins sc_ctl/M02_AXI] [get_bd_intf_ports M_AXI_MEMCAL]
 
 # ------------------------------------------------------------------ address map
-# BAR0: 0x0 the control registers, 0x10000 the LiteDRAM CSRs (litedram: R_MEMCAL; both
-# channels', by csr.csv), 0x30000 the XADC. XDMA's DMA: the whole 32-bit space to M_AXI_DMA
+# BAR0: 0x0 the control registers, 0x10000 the LiteDRAM CSRs (R_MEMCAL; both channels', by
+# csr.csv), 0x30000 the XADC. XDMA's DMA: the whole 32-bit space to M_AXI_DMA
 # (channel 0 at 0x0000_0000, channel 1 at 0x8000_0000, 2 GiB each: opentpu/host/board.py)
 set lite [get_bd_addr_spaces xdma_0/M_AXI_LITE]
 assign_bd_address -offset 0x00000000 -range 64K -target_address_space $lite [get_bd_addr_segs M_AXI_CTL/Reg] -force
-if {!$mig} {
-  assign_bd_address -offset 0x00010000 -range 64K -target_address_space $lite [get_bd_addr_segs M_AXI_MEMCAL/Reg] -force
-}
+assign_bd_address -offset 0x00010000 -range 64K -target_address_space $lite [get_bd_addr_segs M_AXI_MEMCAL/Reg] -force
 assign_bd_address -offset 0x00030000 -range 64K -target_address_space $lite \
   [get_bd_addr_segs -of [get_bd_intf_pins xadc_temp/s_axi_lite]] -force
 assign_bd_address -offset 0x00000000 -range 4G -target_address_space [get_bd_addr_spaces xdma_0/M_AXI] \
@@ -209,11 +161,6 @@ validate_bd_design
 # the external ports the top connects to (IP integrator renames a clashing port silently)
 foreach p [concat {pcie_mgt pcie_refclk M_AXI_DMA} $lites] {
   if {[get_bd_intf_ports $p] eq ""} { error "block design port $p missing: [get_bd_intf_ports]" }
-}
-if {$mig} {
-  foreach p {mig_sys_clk mig_ref_clk mig_locked} {
-    if {[get_bd_ports -quiet $p] eq ""} { error "block design port $p missing" }
-  }
 }
 if {[llength [get_bd_nets -of [get_bd_ports device_temp]]] == 0 || \
     [get_bd_pins -of [get_bd_nets -of [get_bd_ports device_temp]] -filter {DIR == O}] eq ""} {

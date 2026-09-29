@@ -1,10 +1,9 @@
-// Unit test of the memory channel path (rtl/boards/ypcb-00338: otpu_mem_ch, otpu_mig_native,
-// otpu_axi_split2, otpu_afifo) in front of both controllers: two random native masters (the
-// accelerator's side, core clock), one per channel, and an XDMA master (128-bit AXI, axi_aclk)
-// through the split onto both channels; each channel's controller is a MIG model behind
-// otpu_mig_native or a LiteDRAM native-port model (ui_clk / sys). Three unrelated clocks (+cp= /
-// +up= / +xp=: half periods). B0 / B1 pick each channel's controller: 0 MIG (RMW = 0: wr_bytes),
-// 1 LiteDRAM (RMW = 1: otpu_mem_ch's read-modify-write), 2 MIG with RMW = 1.
+// Unit test of the memory channel path (rtl/boards/ypcb-00338: otpu_mem_ch, otpu_axi_split2,
+// otpu_afifo) in front of the controllers: two random native masters (the accelerator's side,
+// core clock), one per channel, and an XDMA master (128-bit AXI, axi_aclk) through the split onto
+// both channels; each channel's controller is a LiteDRAM native-port model (sys), which takes whole
+// beats only (otpu_mem_ch's read-modify-write). Three unrelated clocks (+cp= / +up= / +xp=: half
+// periods).
 //
 // The native master runs a program of random runs of 1 to 32 beats over its window (reads or
 // writes, +wpct=P percent writes; +ppct=P percent of the write beats partial, with one byte, all
@@ -51,8 +50,6 @@ package tb_memch_pkg;
 endpackage
 
 module tb_memch #(
-  parameter int B0  = 0,
-  parameter int B1  = 1,
   parameter int ARD = 64,
   parameter int XRD = 16
 );
@@ -112,7 +109,7 @@ module tb_memch #(
   logic [1:0][15:0] nwdone;
   logic [1:0][31:0] a2x_pub, x2a_pub;
   logic [1:0] adone, abad;
-  logic [1:0] ccv, ccr, ccwe, ccp, cwv, cwr, crv;
+  logic [1:0] ccv, ccr, ccwe, cwv, cwr, crv;
   logic [1:0][24:0] cca;
   logic [1:0][511:0] cwd, crd;
   logic [1:0][63:0] cwe;
@@ -131,7 +128,6 @@ module tb_memch #(
   logic dump = 1'b0;
 
   for (genvar c = 0; c < 2; c++) begin : g_ch
-    localparam int BK = (c == 0) ? B0 : B1;
     tb_memch_nat #(.CH(c), .NB(NB), .A2X(A2X), .X2A(X2A), .NS(NS), .SPL(SPL), .NSP(NSP), .NAME(c ? "acc1" : "acc0")) u_acc (
       .clk, .rst,
       .n_cvalid(ncv[c]), .n_cready(ncr[c]), .n_cwe(ncwe[c]), .n_caddr(nca[c]),
@@ -139,7 +135,7 @@ module tb_memch #(
       .n_rvalid(nrv[c]), .n_rdata(nrd[c]), .n_wdone(nwdone[c]),
       .a2x_pub(a2x_pub[c]), .x2a_pub(x2a_pub[c]), .done(adone[c]), .bad(abad[c]));
 
-    otpu_mem_ch #(.XIDW(4), .ARD(ARD), .XRD(XRD), .RMW(BK != 0)) u_ch (
+    otpu_mem_ch #(.XIDW(4), .ARD(ARD), .XRD(XRD)) u_ch (
       .clk, .rst,
       .n_cvalid(ncv[c]), .n_cready(ncr[c]), .n_cwe(ncwe[c]), .n_caddr(nca[c]),
       .n_wvalid(nwv[c]), .n_wready(nwr[c]), .n_wdata(nwd[c]), .n_wmask(nwm[c]),
@@ -153,32 +149,14 @@ module tb_memch #(
       .x_rlast(crl[c]),
       .uclk, .urst,
       .c_cmd_valid(ccv[c]), .c_cmd_ready(ccr[c]), .c_cmd_we(ccwe[c]), .c_cmd_addr(cca[c]),
-      .c_cmd_partial(ccp[c]), .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
+      .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
       .c_wdata_we(cwe[c]), .c_rdata_valid(crv[c]), .c_rdata_data(crd[c]));
 
-    if (BK == 1) begin : g_ldn
-      otpu_ldn_model #(.BEATS(BEATS), .CH(c)) u_mem (
-        .clk(uclk), .rst(urst),
-        .c_cmd_valid(ccv[c]), .c_cmd_ready(ccr[c]), .c_cmd_we(ccwe[c]), .c_cmd_addr(cca[c]),
-        .c_cmd_partial(ccp[c]), .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
-        .c_wdata_we(cwe[c]), .c_rdata_valid(crv[c]), .c_rdata_data(crd[c]), .dump);
-    end else begin : g_mig
-      logic [28:0] app_addr;
-      logic [2:0] app_cmd;
-      logic app_en, app_rdy, app_wdf_wren, app_wdf_end, app_wdf_rdy, app_rd_data_valid;
-      logic [511:0] app_wdf_data, app_rd_data;
-      logic [63:0] app_wdf_mask;
-      otpu_mig_native u_shim (
-        .c_cmd_valid(ccv[c]), .c_cmd_ready(ccr[c]), .c_cmd_we(ccwe[c]), .c_cmd_addr(cca[c]),
-        .c_cmd_partial(ccp[c]), .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
-        .c_wdata_we(cwe[c]), .c_rdata_valid(crv[c]), .c_rdata_data(crd[c]),
-        .app_addr, .app_cmd, .app_en, .app_rdy, .app_wdf_data, .app_wdf_mask, .app_wdf_wren,
-        .app_wdf_end, .app_wdf_rdy, .app_rd_data, .app_rd_data_valid);
-      otpu_mig_model #(.BEATS(BEATS), .CH(c)) u_mem (
-        .clk(uclk), .rst(urst),
-        .app_addr, .app_cmd, .app_en, .app_rdy, .app_wdf_data, .app_wdf_mask, .app_wdf_wren,
-        .app_wdf_end, .app_wdf_rdy, .app_rd_data, .app_rd_data_valid, .dump);
-    end
+    otpu_ldn_model #(.BEATS(BEATS), .CH(c)) u_mem (
+      .clk(uclk), .rst(urst),
+      .c_cmd_valid(ccv[c]), .c_cmd_ready(ccr[c]), .c_cmd_we(ccwe[c]), .c_cmd_addr(cca[c]),
+      .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
+      .c_wdata_we(cwe[c]), .c_rdata_valid(crv[c]), .c_rdata_data(crd[c]), .dump);
   end
 
   tb_memch_axi #(.IDW(4), .WIN0(XWIN), .WIN1(XWIN | 32'h8000_0000), .SPAN(SPAN), .LMAX(64),
@@ -210,7 +188,7 @@ module tb_memch #(
     if (&adone && xdone) begin
       dump <= 1'b1;
       repeat (4) @(posedge clk);
-      $display("%s cycles=%0d backends=%0d/%0d", (|abad || xbad) ? "FAIL" : "PASS", ccyc, B0, B1);
+      $display("%s cycles=%0d", (|abad || xbad) ? "FAIL" : "PASS", ccyc);
       $finish;
     end
     if (ccyc > tmax) begin
