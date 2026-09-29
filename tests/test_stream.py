@@ -408,3 +408,82 @@ def test_every_vop_family_maps_to_a_descriptor():
     b = _run_dram([I.stream(DESC, 0, 0, 1000, 2000, 3000, 0, src_t=True, dst_t=True),
                    I.halt()], None, _with_desc(tm, d), CFG)
     assert np.array_equal(a.tmem[:R * C], b.tmem[:R * C])
+
+
+# ------------------------------------------------------------------------ the RTL
+def _stream_rtl_program(rng, n_steps=8):
+    """The board's subset (isa.stream_hw_cfg): STREAMs with random state-step descriptors
+    (every dmode, gate, A slot, Q on or off, the zero flag) and DSTEPs on a few DRAM states,
+    their inputs LDed or FILLed just before (RAW), VOPs reading o right after, an input
+    overwritten right after (WAR), STs between them. The descriptors are FILLed at the start,
+    as the compiler does."""
+    from opentpu import rtlsim  # noqa: F401
+    NDATA = 4096
+    progs = [(dp, a, g, q) for dp in (I.D_DELTA, I.D_DELTA1, I.D_SCALE, I.D_DOT)
+             for a in (1, 2) for g in ("const", "col", "one") for q in (True, False)]
+    heads, state = [], 0x10000
+    for _ in range(3):
+        rows = int(rng.choice([1, 7, 64, 128, 129, 256]))
+        cols = int(rng.choice([64, 128, 192, 256]))
+        heads.append((state, rows, cols))
+        state += -(-rows * cols * 4 // 128) * 128 + 128 * int(rng.integers(0, 3))
+    steps, descs = [], {}
+    for i in range(n_steps):
+        d, rows, cols = heads[int(rng.integers(len(heads)))] if i else heads[0]
+        if rng.integers(4) == 0:
+            steps.append((d, None, rows, cols))
+            continue
+        desc = I.state_desc(rows, cols, *progs[int(rng.integers(len(progs)))])
+        assert I.stream_hw_cfg(desc) is not None
+        descs.setdefault(tuple(desc.words()), 60000 + 8 * len(descs))
+        steps.append((d, desc, rows, cols))
+    prog = [I.vop(I.V_FILL, at + j, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR,
+                  imm=np.uint32(w).view(np.float32))
+            for words, at in descs.items() for j, w in enumerate(words)]
+    prog.append(I.ld(0, 0, NDATA))
+    o, st = 8000, 0xE0000
+    for i, (d, desc, rows, cols) in enumerate(steps):
+        vec, v, g = 10000 + 1100 * (i % 4), 6000 + 2 * i, 7000 + 4 * i
+        ks = int(rng.integers(1, 3))
+        nvec = 2 * cols if desc is None else 4 * cols
+        prog += [I.ld(4 * int(rng.integers(0, NDATA - nvec)), vec, nvec),
+                 I.ld(4 * int(rng.integers(0, NDATA - rows)), v, rows),
+                 I.vop(I.V_FILL, g, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, float(rng.uniform(.2, 1))),
+                 I.vop(I.V_FILL, g + ks, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR,
+                       float(rng.uniform(-1, 1)))]
+        if desc is not None and desc.g_src == I.G_SLOT:     # a decay column in (0.2, 1)
+            prog.append(I.vop(I.V_ABS, vec + 3 * cols, vec + 3 * cols, 0, 1, cols, 0, 0, 0))
+        zero = bool(rng.integers(4) == 0)
+        if desc is None:
+            prog.append(I.dstep(d, vec, v, rows, cols, g, ks, o, zero=zero))
+        else:
+            prog.append(I.stream(descs[tuple(desc.words())], d, d, vec, v, g, o, ks=ks,
+                                 zero=zero))
+        prog += [I.vop(I.V_MUL, o + 300, o, o, 1, rows, 0, rows, rows, I.B_FULL),
+                 I.vop(I.V_FILL, vec, 0, 0, 1, 2 * cols, 0, 0, 0, I.B_SCALAR, 3.0)]
+        if rng.integers(2):
+            prog.append(I.st(st, o, rows))
+            st += 4 * rows + 64
+        o += 600
+    prog.append(I.halt())
+    return prog
+
+
+@pytest.mark.parametrize("uarch,seed", [({}, 0), ("board", 1), ("board", 2), ("board", 3)])
+def test_stream_rtl_bit_exact(have_verilator, uarch, seed):
+    """STREAM (the board's subset) and DSTEP through the stream engine on the RTL, beside VOPs,
+    against the ISA simulator word for word (TMEM and DRAM)."""
+    from opentpu import rtlsim
+    cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20, DSTEP=True, STREAM=True)
+    uarch = dict(rtlsim.BOARD_UARCH) if uarch == "board" else uarch
+    r = np.random.default_rng(1900 + seed)
+    prog = _stream_rtl_program(r)
+    img = np.zeros(1 << 20, np.uint8)
+    img[:4 * 4096] = (_special(r, 4096) if seed > 1 else f(r.standard_normal(4096))).view(np.uint8)
+    img[0x10000:0x10000 + 4 * 65536] = f(0.3 * r.standard_normal(65536)).view(np.uint8)
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], uarch=uarch)
+    bad = np.nonzero(tmems[0] != m.slices[0].tmem)[0]
+    assert len(bad) == 0, f"{len(bad)} TMEM words differ, first at {bad[:8]}"
+    bad = np.nonzero(drams[0] != m.slices[0].dram)[0]
+    assert len(bad) == 0, f"{len(bad)} DRAM bytes differ, first at {bad[:8]}"
