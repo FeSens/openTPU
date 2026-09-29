@@ -22,6 +22,7 @@ module tb_board;
   parameter int IMEM_WORDS = 1 << 15;
   parameter int LANES      = 8;
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1;
+  parameter int MXU_IMPL   = 0;      // MXU dot product: 0 adder tree, 2 systolic (docs/mxu_systolic.md)
   parameter int ULANES     = LANES;
   parameter int WIN        = 16;
   parameter int LAT        = 20;
@@ -76,7 +77,7 @@ module tb_board;
   initial void'($value$plusargs("i2c_hold=%h", i2c_hold));
 
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
-               .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
+               .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .MXU_IMPL(MXU_IMPL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
                .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .DSTEP(DSTEP),
                .MEM_NATIVE(MEM_NATIVE != 0), .HOSTCAL(HOSTCAL)) dut (

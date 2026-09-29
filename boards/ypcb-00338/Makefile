@@ -34,8 +34,12 @@ RTL := $(addprefix $(ROOT)/rtl/, vpu/otpu_fp.sv vpu/otpu_fpipe.sv top/otpu_pkg.s
   boards/ypcb-00338/otpu_ctrl.sv boards/ypcb-00338/otpu_trace.sv boards/ypcb-00338/otpu_board.sv)
 RTL_NATIVE := $(RTL) $(addprefix $(ROOT)/rtl/, mem/otpu_native_dram.sv boards/ypcb-00338/otpu_afifo.sv \
   boards/ypcb-00338/otpu_mem_ch.sv boards/ypcb-00338/otpu_axi_split2.sv boards/ypcb-00338/otpu_native_sys.sv)
+# MXU_IMPL: the MXU create_project.tcl builds (MXU systolic, the default: 2); the systolic cells'
+# DSP48E1 comes from a lint stub
+MXU_IMPL ?= 2
 LINT := verilator --lint-only -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDSIGNAL \
-  -Wno-UNUSEDPARAM -DSYNTHESIS -GMCOLS=$(MCOLS) -GACT_ROWS=$(ACT_ROWS) -GVPU_CL=$(VPU_CL) -GLANES=$(LANES)
+  -Wno-UNUSEDPARAM -DSYNTHESIS -GMCOLS=$(MCOLS) -GACT_ROWS=$(ACT_ROWS) -GVPU_CL=$(VPU_CL) -GLANES=$(LANES) \
+  -GMXU_IMPL=$(MXU_IMPL) sim/unisim_dsp48e1_stub.sv
 
 .PHONY: lint lint-mn lint-ld mig bit impl program program-vivado flash
 mig:
@@ -43,8 +47,7 @@ mig:
 
 lint: mig
 	python3 scripts/check_offline.py
-	verilator --lint-only -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDSIGNAL \
-	  -Wno-UNUSEDPARAM -DSYNTHESIS --top-module otpu_fpga_top -GMCOLS=$(MCOLS) -GACT_ROWS=$(ACT_ROWS) -GVPU_CL=$(VPU_CL) -GLANES=$(LANES) $(RTL) \
+	$(LINT) --top-module otpu_fpga_top $(RTL) \
 	  sim/otpu_bd_wrapper_stub.sv $(ROOT)/rtl/boards/ypcb-00338/otpu_fpga_top.sv
 
 lint-mn:

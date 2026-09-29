@@ -27,7 +27,7 @@ module otpu_slice
   parameter int WIN        = 32,
   parameter int RPB        = 4,       // TMEM reads per bank per cycle
   parameter int WPB        = 2,       // TMEM writes per bank per cycle
-  parameter int MXU_IMPL   = 0,       // MXU dot product: 0 adder tree, 1 DSP cascade chains
+  parameter int MXU_IMPL   = 0,       // MXU dot product: 0 adder tree, 1 DSP cascade chains, 2 systolic
   parameter int MXU_CL     = 16,      // cascade chain length
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with the composite functions
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer (<= LANES)

@@ -1,5 +1,5 @@
 # Create the Vivado project for openTPU on the YPCB-00338.
-#   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL] [LANES] [ACT_ROWS] [DSTEP] [AXI_BL] [MEM]
+#   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL] [LANES] [ACT_ROWS] [DSTEP] [AXI_BL] [MEM] [MXU]
 # DDR_SPEED: 800 (default), 1066, or the out-of-spec 1300, 1333, 1600 (docs/board.md). OUT_DIR: default ../../../build/vivado (repository build/).
 # BUILD_ID: 8 hex digits for the BUILD_ID register (default: the first 8 hex digits of the
 # repository's git commit, else 0).
@@ -28,6 +28,9 @@ set AXI_BL [expr {[llength $argv] > 9 ? [lindex $argv 9] : 8}]
 set MEM [expr {[llength $argv] > 10 ? [lindex $argv 10] : "mig"}]
 if {$MEM ni {mig mig_native litedram}} { error "MEM must be mig, mig_native or litedram, not $MEM" }
 if {$MEM eq "litedram"} { set DDR_SPEED 1066 }
+# MXU: the MXU's dot product (docs/mxu_systolic.md): systolic (MXU_IMPL 2, the default) or tree (0)
+set MXU [expr {[llength $argv] > 11 ? [lindex $argv 11] : "systolic"}]
+set MXU_IMPL [expr {$MXU eq "tree" ? 0 : 2}]
 if {$BUILD_ID eq ""} {
   if {[catch {exec git -C $root rev-parse HEAD} BUILD_ID]} { set BUILD_ID 0 }
   set BUILD_ID [string range $BUILD_ID 0 7]
@@ -37,7 +40,7 @@ if {![regexp {^[0-9a-fA-F]{1,8}$} $BUILD_ID]} { set BUILD_ID 0 }
 # steps of its VCO, 1000 MHz for DDR3-1333, else 800), for the CORE_KHZ register
 set VCO [expr {$DDR_SPEED == 1333 ? 1000 : 800}]
 set CORE_KHZ [expr {round($VCO * 1000.0 / (round(double($VCO) / $CORE_MHZ * 8) / 8.0))}]
-puts "CORE_KHZ $CORE_KHZ, BUILD_ID $BUILD_ID"
+puts "CORE_KHZ $CORE_KHZ, BUILD_ID $BUILD_ID, MXU_IMPL $MXU_IMPL"
 set MIG_DIR [expr {$MEM eq "mig_native" ? "$here/mig_native" : "$here/mig"}]
 
 if {$MEM eq "mig" && ![file exists $MIG_DIR/mig_ddr3_ch0.prj]} {
@@ -117,7 +120,7 @@ source $here/[expr {$MEM eq "mig" ? "bd.tcl" : "bd_native.tcl"}]
 make_wrapper -files [get_files otpu_bd.bd] -top
 add_files -norecurse [glob $out/otpu.gen/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v]
 set_property top [dict get {mig otpu_fpga_top mig_native otpu_fpga_top_mn litedram otpu_fpga_top_ld} $MEM] [current_fileset]
-set_property generic "MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DDR_MTS=$DDR_SPEED DSTEP=1'b$DSTEP AXI_BL=$AXI_BL" [current_fileset]
+set_property generic "MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DDR_MTS=$DDR_SPEED DSTEP=1'b$DSTEP AXI_BL=$AXI_BL MXU_IMPL=$MXU_IMPL" [current_fileset]
 
 # ---- constraints
 if {$MEM ne "litedram"} {

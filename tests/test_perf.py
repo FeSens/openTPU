@@ -37,8 +37,10 @@ def test_mlp_small_batch_near_roofline(have_verilator):
     p = profile(mlp, design_config(), **a)
     # 0.915, was 0.92: the MXU tree is two stages longer for 4-bit weights (a register after the
     # weight decode, the sub-block multipliers), +64 cycles here (92.1% -> 91.9%); a two-layer
-    # Qwen3 token does not change (-20 cycles of 1.9M)
-    assert _eff(p) > 0.915, p.summary()
+    # Qwen3 token does not change (-20 cycles of 1.9M). 0.914, was 0.915: the pair sums moved
+    # into the DSP cascade, one more stage (+32 cycles here, 91.6% -> 91.45%); Qwen3.5 and LFM2
+    # decode at MCOLS=4 are unchanged (-865 / -310 cycles)
+    assert _eff(p) > 0.914, p.summary()
 
 
 @pytest.mark.parametrize("Hq,Hkv,T", [(16, 4, 1024), (6, 1, 2048)])

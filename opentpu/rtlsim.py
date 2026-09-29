@@ -119,6 +119,9 @@ if os.environ.get("OTPU_UARCH") == "board":
 if os.environ.get("OTPU_MXU") == "cascade":
     UARCH["MXU_IMPL"] = 1
     UARCH["MXU_CL"] = int(os.environ.get("OTPU_MXU_CL", "16"))
+# OTPU_MXU=systolic: the 2D systolic array (weights hop column to column; docs/mxu_systolic.md)
+if os.environ.get("OTPU_MXU") == "systolic":
+    UARCH["MXU_IMPL"] = 2
 # VPU lanes with the composite functions (exp2, recip, rsqrt; timing only): OTPU_VPU_CL=4
 if os.environ.get("OTPU_VPU_CL"):
     UARCH["VPU_CL"] = int(os.environ["OTPU_VPU_CL"])
