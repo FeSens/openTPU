@@ -1162,3 +1162,38 @@ channel's traffic stopped (the scan writes the first 64 MiB and moves CK), so th
 it: it quiesces the channel, sets `selfcal_config` to that channel and releases the CPU, which
 recalibrates it as at reset. Firmware that tracks drift in place (a narrow scan around the
 current phase, the BIST on a reserved region) can be loaded later without a new bitstream.
+
+### The fused image with the CPU on the card (08b898d5, 2026-09-29): qualified
+
+The production design with the CPU in its core: main f1f635a + ld-cpu2 (the core above, rd_reg
+off), MEM=litedram, MCOLS=4, FAST=1 at 100 MHz. Routed on opentpu (Vivado 2026.1): WNS +0.043 ns
+(LiteDRAM sys at 133.33 MHz; the 100 MHz core +0.171), every constraint met. On the card after
+a JTAG load and a warm reboot, host tree = this branch at 08b898d5; logs in
+`~/otpu-build/fused-sc-08b898d5` on opentpu. FPGA 59.9 C at the start, 64-67 C in the soak. All
+**measured**.
+
+| | channel 0 | channel 1 |
+|---|---|---|
+| the CPU at configuration | 6.27 s (the whole run 12.09 s) | 5.82 s |
+| CK phase, common run | +50, 44 steps / 737 ps | -47 (= +65), 72 steps / 1205 ps |
+| write latency | 6 on every lane | 0 on every lane |
+| bits read off their lane's bitslip | none | none |
+| BIST, 2 GiB x 2 x 2 | 0 errors | 0 errors |
+| after a new firmware (below) | 6.29 s, CK +50, 44 steps, BIST 0 errors | 5.83 s, CK -47, 72 steps, BIST 0 errors |
+
+- Within a step of the isolated image's run (45 / 73 steps) and equal to 5e5a58ab's host
+  calibration (44 / 737 ps, 72 / 1205 ps).
+- **A new firmware on the card:** `otpu-memcal selfcal --firmware` with the same source built
+  as FW_ID 0xb0b0cafe (5 bytes differ: the ID): 9892 bytes loaded into the 16384 and read back,
+  the CPU done 11.9 s later, its mailbox giving the new ID.
+- **`otpu-selftest` ALL PASS:** its calib stage found both channels calibrated by the core's CPU
+  (0.0 s, no host calibration).
+- **`tools/qual/qual.sh fast` (LOAD=0), 37 min, 0 FAIL lines:** token-exact against the ISA
+  simulator 12 / 12 (Qwen3-0.6B, LFM2.5-230M, Qwen3.5-0.8B; int8 and fp4 with an int8 head;
+  per-position and resident), every Mcycles/token equal to 5e5a58ab's (e.g. fp4 decode 3.30 /
+  1.27 / 4.64); int8 decode counters 5.444 / 1.988 / 6.573 Mcycles/token (5e5a58ab: 5.445 /
+  1.988 / 6.573); streamed decode (`decode_profile`, fp4) 28.9 / 73.1 / 21.3 tok/s wall; a
+  3 min warm soak; `otpu-diag` with the quick memory test ALL PASS; the final selftest ALL PASS.
+- A first qual run from a host tree without its `models` link failed every model phase
+  (FileNotFoundError) and still printed "0 FAIL lines": qual.sh counts `[FAIL]` lines only.
+- Afterwards the card went back to se-cand3 (build 002569bc), whose selftest passed.
