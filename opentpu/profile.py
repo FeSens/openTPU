@@ -37,8 +37,8 @@ from . import isa as I
 from . import rtlsim
 
 UNITS = ["DMA", "MXU", "QUANT", "VPU", "COLL"]
-OPNAMES = {I.LD: "LD", I.ST: "ST", I.DSTEP: "DSTEP", I.MM: "MM", I.QACT: "QACT", I.QST: "QST",
-           I.VOP: "VOP", I.GATHER: "GATHER", I.BAR: "BAR"}
+OPNAMES = {I.LD: "LD", I.ST: "ST", I.DSTEP: "DSTEP", I.STREAM: "STREAM", I.MM: "MM",
+           I.QACT: "QACT", I.QST: "QST", I.VOP: "VOP", I.GATHER: "GATHER", I.BAR: "BAR"}
 VFUNCS = {I.V_ADD: "add", I.V_SUB: "sub", I.V_RSUB: "rsub", I.V_MUL: "mul", I.V_MAX: "max",
           I.V_MIN: "min", I.V_COPY: "copy", I.V_EXP2: "exp2", I.V_RECIP: "recip",
           I.V_RSQRT: "rsqrt", I.V_ABS: "abs", I.V_FILL: "fill", I.V_EXP2SUB: "exp2sub",
@@ -117,6 +117,14 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
         n = -(-rows * cols * 4 // D)
         return ("DSTEP", f"{rows}x{cols}{' zero' if ins.flags & I.F_DZERO else ''}",
                 -(-rows * cols // I.DSTEP_LANES), n if ins.flags & I.F_DZERO else 2 * n, 0)
+    if op == I.STREAM:
+        # the shape is in the TMEM descriptor; the compiler's comment names it ("stream RxC")
+        m = re.search(r"stream (\d+)x(\d+)", ins.comment)
+        rows, cols = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+        n = -(-rows * cols * 4 // D)
+        zero = ins.flags & I.F_SZERO
+        return ("STREAM", f"{rows}x{cols}{' zero' if zero else ''}",
+                -(-rows * cols // I.DSTEP_LANES), n if zero else 2 * n, 0)
     if op == I.MM:
         N, KB, M = w[3] & 0xFFFF, w[3] >> 16, (w[5] >> 16) & 0xFF
         acc = " +acc" if ins.flags & I.F_ACC else ""
@@ -312,7 +320,7 @@ def parse(trace: str, cfg, programs, name: str = "") -> Profile:
             slot, pc, op = int(kv["s"]), int(kv["pc"]), int(kv["op"], 16)
             ins = programs[s][pc]
             nm, det, work, pb, pa = _describe(ins, cfg)
-            unit = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.MM: 1, I.QACT: 2, I.QST: 2,
+            unit = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.STREAM: 0, I.MM: 1, I.QACT: 2, I.QST: 2,
                     I.VOP: 3}.get(op, 4)
             r = Rec(s, counts[s], pc, op, unit, c, name=nm, detail=det, comment=ins.comment,
                     work=work, portb=pb, porta=pa)
