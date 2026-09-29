@@ -44,8 +44,9 @@ module otpu_mxu
   parameter int ROWS  = MCOLS,   // ACT RAM rows: the most stationary rows of a command
   parameter int DEPTH = 16,
   parameter int LANES = 8,       // TMEM banks (MCOLS > LANES drains a row in several cycles)
-  parameter int IMPL  = 0,       // integer dot product: 0 adder tree, 1 DSP cascade chains
-  parameter int CL    = 16,      // IMPL 1: products per cascade chain (D / CL chains)
+  parameter int IMPL  = 0,       // integer dot product: 0 adder tree, 1 DSP cascade chains,
+                                 // 2 systolic array (docs/mxu_systolic.md)
+  parameter int CL    = 16,      // IMPL 1, 2: products per cascade chain (D / CL chains)
   parameter int SID   = 0
 ) (
   input  logic                  clk,
@@ -392,7 +393,9 @@ module otpu_mxu
   // products, pairs (two: the DSP cascade), groups, sub-blocks times their multipliers, block sum)
   localparam int NG = D / CL;
   localparam int TL = (NG <= 1) ? 0 : (NG <= 4) ? 1 : (NG <= 16) ? 2 : 3;
-  localparam int LDOT = (IMPL == 0) ? 7 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
+  localparam int CLS = (D / 4 < CL) ? D / 4 : CL;    // IMPL 2's chains: within a 4-bit sub-block
+  localparam int LDOT = (IMPL == 0) ? 7 : (IMPL == 2) ? CLS + MCOLS + 3
+                                          : CL + 1 + TL - (TL >= 3 ? 1 : 0);
 
   // ---- S1 .. S4: the exact integer dot products of the chunk with every column's ACT block;
   // s4 (with m4, ws4) is the chunk's result LDOT cycles after S0.
@@ -517,7 +520,7 @@ module otpu_mxu
       mt4 <= m3; wt4 <= ws3; wt4h <= ws3h;
       m4 <= mt4; ws4 <= wt4; ws4h <= wt4h;
     end
-  end else begin : g_casc
+  end else if (IMPL == 1) begin : g_casc
     // Systolic accumulate chains (DSP48 A*B + PCIN cascades): the D positions form NG = D / CL
     // chains of CL; position i = g*CL + k enters stage k of chain g k cycles after S0 (operand
     // skew in shift registers), so a new chunk enters every cycle. Stage k: a registered product
@@ -581,6 +584,67 @@ module otpu_mxu
         s4[j] = SW'(t);
       end
     // the meta and the weight scale travel alongside (S0 -> S4 position)
+    otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));
+    otpu_delay #(.W(32), .N(LDOT)) u_ws4 (.clk, .en(en_c), .d(ws0), .q(ws4));
+    otpu_delay #(.W(32), .N(LDOT)) u_ws4h (.clk, .en(en_c), .d(ws0h), .q(ws4h));
+  end else begin : g_sys
+    // A 2D systolic array (docs/mxu_systolic.md). The chunk is decoded once (S1), position i is
+    // delayed by its chain stage k = i % CL, and the weights then move one register hop per
+    // column: column j sees them j cycles after column 0 (fan-out 2, no broadcast). Both streams
+    // flow: the low block (or the 4-bit half of a non-PAIR advance) and PAIR's high block; each
+    // column takes one by its per-command hi0[j]. Column j's activation byte i is delayed
+    // 1 + k + j (one shift register per bit). Along D: chains of CL products, one per DSP48E1
+    // (M register, P = PCIN + M). The 4-bit sub-blocks are two chains each, so the sub-block
+    // multipliers apply at the chain ends, as in IMPL 0; column j's s4 is then delayed
+    // MCOLS - 1 - j cycles, and all columns reach the epilogue together (LDOT = CLS + MCOLS + 3).
+    // Exact integers: bit-identical to IMPL 0. Chains of CLS = min(CL, D/4) positions, so a
+    // sub-block (D/4 positions) is CPS whole chains.
+    localparam int CPS = D / 4 / CLS;
+    initial if ((D / 4) % CLS != 0) $fatal(1, "otpu_mxu: IMPL 2 needs CL to divide D/4");
+    logic [D-1:0][15:0] wd;                             // S1: {high block, low block / half}
+    always_ff @(posedge clk) if (en_c)
+      for (int i = 0; i < D; i++) wd[i] <= {wsel(w0, i, 1'b1, wf0), wsel(w0, i, m0.h, wf0)};
+    logic [D-1:0][15:0] wc [MCOLS];                    // the streams at column j
+    for (genvar i = 0; i < D; i++) begin : g_wsk
+      otpu_skew #(.W(16), .N(i % CLS)) u_w (.clk, .en(en_c), .d(wd[i]), .q(wc[0][i]));
+    end
+    always_ff @(posedge clk) if (en_c)
+      for (int j = 1; j < MCOLS; j++) wc[j] <= wc[j-1];
+    logic [7:0] as_k [MCOLS][D];
+    for (genvar j = 0; j < MCOLS; j++) begin : g_ask
+      for (genvar i = 0; i < D; i++) begin : g_p
+        otpu_skew #(.W(8), .N(1 + i % CLS + j)) u_a (.clk, .en(en_c), .d(a0[(j*D + i)*8 +: 8]),
+                                                   .q(as_k[j][i]));
+      end
+    end
+    logic signed [15:0] mreg [MCOLS][D];                // products (M registers)
+    logic signed [23:0] preg [MCOLS][D];                // running sums (P registers)
+    always_ff @(posedge clk) if (en_c)
+      for (int j = 0; j < MCOLS; j++)
+        for (int i = 0; i < D; i++) begin
+          mreg[j][i] <= 16'(int'($signed(as_k[j][i])) *
+                            int'($signed(hi0[j] ? wc[j][i][15:8] : wc[j][i][7:0])));
+          preg[j][i] <= ((i % CLS == 0) ? 24'sd0 : preg[j][i - 1]) + 24'(mreg[j][i]);
+        end
+    // chain ends (S0 + CLS + 2 + j): the sub-block sums times their multipliers, then the block
+    // sum; the multipliers of column j (its block's under PAIR) travel alongside
+    logic [SW-1:0] vs [MCOLS][4];
+    logic signed [SW-1:0] s4r [MCOLS];
+    for (genvar j = 0; j < MCOLS; j++) begin : g_col_end
+      logic [15:0] mbd;
+      otpu_skew #(.W(16), .N(CLS + 2 + j)) u_mb (.clk, .en(en_c), .d(hi0[j] ? mb0h : mb0),
+                                               .q(mbd));
+      always_ff @(posedge clk) if (en_c) begin
+        for (int b = 0; b < 4; b++) begin
+          logic [SW-1:0] t;
+          t = '0;
+          for (int c = 0; c < CPS; c++) t = t + SW'(preg[j][(b*CPS + c)*CLS + CLS - 1]);
+          vs[j][b] <= SW'(t * SW'(mbd[4*b +: 4]));
+        end
+        s4r[j] <= $signed(vs[j][0] + vs[j][1] + vs[j][2] + vs[j][3]);
+      end
+      otpu_skew #(.W(SW), .N(MCOLS - 1 - j)) u_dsk (.clk, .en(en_c), .d(s4r[j]), .q(s4[j]));
+    end
     otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));
     otpu_delay #(.W(32), .N(LDOT)) u_ws4 (.clk, .en(en_c), .d(ws0), .q(ws4));
     otpu_delay #(.W(32), .N(LDOT)) u_ws4h (.clk, .en(en_c), .d(ws0h), .q(ws4h));
@@ -1116,4 +1180,25 @@ module otpu_ram_sdp #(parameter int W = 32, parameter int N = 1024) (
   (* ram_style = "block" *) logic [W-1:0] mem [N];
   always_ff @(posedge clk) if (we) mem[wa] <= wd;
   always_ff @(posedge clk) if (re) rd <= mem[ra];
+endmodule
+
+// N-cycle delay line with an enable: no reset and no forced last flip-flop (unlike otpu_delay), so
+// a long one maps to shift-register LUTs and its last stage may move into a DSP48's input register
+// (the systolic MXU's operand skews)
+module otpu_skew #(parameter int W = 8, parameter int N = 1) (
+  input  logic         clk,
+  input  logic         en,
+  input  logic [W-1:0] d,
+  output logic [W-1:0] q
+);
+  if (N == 0) begin : g_wire
+    assign q = d;
+  end else begin : g_regs
+    logic [W-1:0] r [N];
+    always_ff @(posedge clk) if (en) begin
+      r[0] <= d;
+      for (int k = 1; k < N; k++) r[k] <= r[k-1];
+    end
+    assign q = r[N-1];
+  end
 endmodule
