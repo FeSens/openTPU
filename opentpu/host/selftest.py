@@ -164,8 +164,12 @@ def main(argv=None) -> int:
         if memcal.hostcal(t):
             t0 = time.time()
             res = memcal.ensure(t, log=lambda m: print(f"         {m}", flush=True))
-            how = (f" (host calibration: channel {', '.join(map(str, res['channels']))} in "
-                   f"{time.time() - t0:.1f}s)" if res else " (host calibration: done before)")
+            who = {"selfcal": "the core's CPU", "selfcal+host": "the core's CPU and the host"}.get(
+                (res or {}).get("by"), "host calibration")
+            how = (f" ({who}: channel {', '.join(map(str, res['channels']))} in "
+                   f"{time.time() - t0:.1f}s)" if res else
+                   " (calibrated by the core's CPU)" if memcal.core_cpu(t) else
+                   " (host calibration: done before)")
         deadline = time.time() + (0 if a.sim else 5)
         while True:
             st = t.reg_read(R_STATUS)

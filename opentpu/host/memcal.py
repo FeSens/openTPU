@@ -60,6 +60,11 @@ def csr(t, data: Path = DATA):
                           base=R.R_MEMCAL)
 
 
+def core_cpu(t, data: Path = DATA) -> bool:
+    """The bitstream's LiteDRAM core calibrates itself (its CPU, opentpu.host.selfcal)."""
+    return hostcal(t) and selfcal.present(csr(t, data))
+
+
 def uncalibrated(t, force: bool = False) -> list:
     st = t.reg_read(R.R_STATUS)
     return [ch for ch, bit in enumerate(CALIB) if force or not st & bit]
@@ -174,7 +179,7 @@ def main(argv: list[str] | None = None, open_transport=None) -> int:
     with Board(t, calibrate=False) as b:
         st = b.t.reg_read(R.R_STATUS)
         hc = hostcal(b.t)
-        own = hc and selfcal.present(csr(b.t, DATA))
+        own = core_cpu(b.t, DATA)
         kind = ("LiteDRAM, calibrated by the core's CPU" if own else
                 "LiteDRAM (host calibration)" if hc else "self-calibrating (MIG)")
         print(f"controllers: {kind}; STATUS calibration: " + ", ".join(

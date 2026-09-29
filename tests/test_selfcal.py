@@ -363,6 +363,20 @@ def test_memcal_selfcal_new_firmware(fws, run_dir, tmp_path, capsys):
         S.load(SelfcalCsr(fws(SELF), build=DATA / "litedram_core_wl"), img)
 
 
+@pytest.mark.parametrize("lazy", [False, True])
+def test_selftest_calib_on_a_self_calibrating_card(fws, run_dir, monkeypatch, tmp_path, capsys, lazy):
+    # otpu-selftest's calib stage: the channels found calibrated by the core's CPU, or its run
+    # waited for (no host calibration either way)
+    from test_ddrcal import FusedCard, _selftest_to_calib
+    card = FusedCard()
+    card.cal = SelfcalCard(fws(SELF), lazy=lazy)
+    _selftest_to_calib(monkeypatch, tmp_path, card)
+    out = capsys.readouterr().out
+    how = "(the core's CPU: channel 0, 1 in" if lazy else "(calibrated by the core's CPU)"
+    assert f"[PASS] calib      channel 0 ok, channel 1 ok {how}" in out, out
+    assert card.cal.cpu_runs == 1 and not card.cal.host_writes
+
+
 def test_ld_host_selfcal(fws, capsys):
     # tools/litedram/ld_host.py selfcal --rerun --soak --compare on a simulated image
     import importlib.util
