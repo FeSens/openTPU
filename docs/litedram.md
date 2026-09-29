@@ -337,3 +337,37 @@ The same model reproduces the card within about 1-2% (docs/board.md).
      hardware calibration.
 3. **No faster DDR3.** Neither controller goes past the HR banks' 1066 in spec, and the core port
    caps the gain.
+
+## 7. The one-channel test image (LiteDRAM first, 2026-09-29)
+
+On 2026-09-29 the plan changed. LiteDRAM became the primary path and stage 1 became the
+fallback: MIG native with our own arbiter, committed and unit-tested (`otpu_mig_ch`, `tb_mig`),
+but not yet integrated. The key unknown for LiteDRAM is calibration and write timing on all 9
+lanes without ODELAY. The test image measures exactly that. It is built by
+`tools/litedram/ld_test.py` and driven by `tools/litedram/ld_host.py`.
+
+**Design**
+- **Memory:** DDR3 channel 0 at 72 bits (all 9 x8 chips). A7DDRPHY at DDR3-1066, with CL 7 /
+  CWL 6 as in the MIG project. LiteDRAM's controller with MT41K256M8 and tRFC 160 ns. The pins
+  are litex-boards', checked one by one against `constraints/ddr3_ch0.pins.xdc`.
+- **PCIe:** XDMA as an RTL IP with the production settings, subsystem 10ee:4C44. BAR0 goes to a
+  CPU-less LiteX SoC's CSR bus. XDMA's DMA master is answered by a stub.
+- **Memory test:** a 576-bit BIST (LiteDRAM's BIST needs a power-of-two width). It covers
+  sequential writes and read-checks over any range, with random data or address data. It keeps
+  an error count per lane and a cycle count, from which bandwidth is computed.
+- **Write DQS:** the write DQS clock comes from an MMCM output with fine phase shift, 1/56 of the
+  1066.67 MHz VCO period, i.e. 16.7 ps per step. The host moves it (`phase_dqs_shift`). Without
+  write leveling this one knob sets every lane's DQS-to-CK timing, so a scan of it measures the
+  write margin.
+- **Clocks:** the 50 MHz oscillator, as in production, drives an integer MMCM (sys, sys4x,
+  sys4x_dqs) and a PLL for the 200 MHz IDELAYCTRL reference.
+
+**Host calibration (`ld_host.py`)**
+- Runs the JEDEC init through DFII, then write-latency calibration, then read leveling. The
+  algorithm is the one in liblitedram's `sdram.c`, but every scan covers all 9 lanes at once
+  (`dly_sel` = all lanes; each lane's bytes are checked separately).
+- `all` first scans the DQS phase over one tCK. At each step it recalibrates the write latency and
+  records, per lane, the widest read window. The lane's write margin is the run of phases where
+  that window is at least 3 taps. It then centres DQS in the range common to all lanes,
+  calibrates, and runs the BIST over the whole 2 GiB channel.
+- `selftest` checks the algorithm against a simulated PHY.
