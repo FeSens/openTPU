@@ -17,6 +17,12 @@
 # full (~45 min): also a cold diag with the full march C- (2 x 2.6 min), decode_profile for all
 #   six, rw_bench, a 5 min soak and the full march in the warm diag.
 # Every phase prints its duration; the table is at the end and in $OUT/phases.tsv.
+#
+# A check that crashes counts: every step's output goes to $OUT/logs/, and a step that exits
+# non-zero (a timeout too) or prints a Python exception is a FAIL line in $OUT/checks.txt, as is
+# a token-exact run that did not pass. The model phases need the tree's checkpoints (models/, as
+# opentpu.llm.model_dir finds them: a staged tree needs its models link); without them they are
+# skipped and that is a FAIL line. SOAK (seconds) overrides the profile's warm soak.
 set -u
 DEP=${1:?deploy dir}; PROFILE=${2:-fast}
 case $DEP in /*) BIT=$DEP/otpu.bit ;; *) BIT=~/otpu-build/$DEP/otpu.bit ;; esac
@@ -26,19 +32,19 @@ REST=${REST:-$BIT}; OUT=${OUT:-/tmp/qual-$NAME}; mkdir -p "$OUT"
 cd "$H" || exit 1; export PYTHONPATH=$H
 RUNS="qwen3:int8:- lfm2:int8:- qwen35:int8:- qwen3:fp4:int8 lfm2:fp4:int8 qwen35:fp4:int8"
 if [ "$PROFILE" = full ]; then
-  SOAK=300; COLD=1; WARM_MEM=full; DP_RUNS=$RUNS; RW=1
+  SOAK=${SOAK:-300}; COLD=1; WARM_MEM=full; DP_RUNS=$RUNS; RW=1
 else
-  SOAK=180; COLD=0; WARM_MEM=quick; DP_RUNS="qwen3:fp4:int8 lfm2:fp4:int8 qwen35:fp4:int8"; RW=0
+  SOAK=${SOAK:-180}; COLD=0; WARM_MEM=quick; DP_RUNS="qwen3:fp4:int8 lfm2:fp4:int8 qwen35:fp4:int8"; RW=0
 fi
-: > "$OUT/phases.tsv"
+: > "$OUT/phases.tsv"; : > "$OUT/checks.txt"; mkdir -p "$OUT/logs"
 PH=""; PT=0; T00=$(date +%s)
-memgb() { awk '/MemAvailable/ {printf "%.1f", $2 / 1048576}' /proc/meminfo; }
+memgb() { awk '/MemAvailable/ {printf "%.1f", $2 / 1048576}' /proc/meminfo 2>/dev/null; }
 phase() {
   local now; now=$(date +%s)
   if [ -n "$PH" ]; then printf '%s\t%d\n' "$PH" $((now - PT)) >> "$OUT/phases.tsv"
     echo "--- $PH: $((now - PT)) s"; fi
   PH=$1; PT=$now
-  [ -n "$PH" ] && echo "=== $PH $(date +%T)  load $(cut -d' ' -f1 /proc/loadavg), MemAvailable $(memgb) GiB"
+  [ -n "$PH" ] && echo "=== $PH $(date +%T)  load $(cut -d' ' -f1 /proc/loadavg 2>/dev/null), MemAvailable $(memgb) GiB"
 }
 # root helpers: opentpu has narrow sudo rules (/etc/sudoers.d/60-otpu-card) for these exact commands
 rescan() { if [ -x /usr/local/sbin/otpu-rescan ]; then sudo -n /usr/local/sbin/otpu-rescan; else sudo ~/otpu-venv/bin/otpu-setup --rescan; fi; }
@@ -52,18 +58,50 @@ load() {
     rescan 2>&1 | tee -a "$OUT/rescan.log" | tail -1 | tee "$OUT/rescan"   # rescan.log: every step (relink)
     grep -q "ID 0x4f545055" "$OUT/rescan" && return 0; sleep 10; done
   echo "rescan failed for 10 minutes"; return 1; }
-selftest() { timeout 1800 $P -m opentpu.host.selftest 2>&1 \
+# a FAIL line: into checks.txt, and on stderr (not into the callers' filters and tees)
+fail() { echo "  [FAIL] $PH: $*" >> "$OUT/checks.txt"; echo "  [FAIL] $PH: $*" >&2; }
+# run LABEL CMD...: CMD's output (stdout and stderr) into $OUT/logs/NNN-LABEL.txt, then printed
+# for the caller's filter. A non-zero exit (timeout's 124 too) or a Python exception is a FAIL
+# line: a crash never passes silently through the filters below. Returns 1 when it is one.
+EXC='^Traceback \(most recent call last\)|^([A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*(Error|Exception)(: |$)'
+run() {
+  local label=$1; shift
+  local n; n=$(( $(ls "$OUT/logs" | wc -l) + 1 ))        # counted: run may be in a subshell
+  local log; log="$OUT/logs/$(printf %03d $n)-$(printf %s "$label" | tr -c 'A-Za-z0-9_.-' _).txt"
+  "$@" > "$log" 2>&1; local rc=$?
+  local exc; exc=$(grep -E "$EXC" "$log" | grep -v '^Traceback' | tail -1 | cut -c1-200)
+  local bad=0
+  if [ $rc -ne 0 ] || grep -qE "$EXC" "$log"; then
+    fail "$label: exit $rc${exc:+, $exc} ($log)"; bad=1
+  fi
+  cat "$log"
+  return $bad
+}
+selftest() { run selftest timeout 1800 $P -m opentpu.host.selftest \
   | grep -E "\[(PASS|FAIL)\]|config|ALL|stopped|hint" | tee -a "$OUT/checks.txt"; }
 diag() {  # $1 label, $2 quick|full
-  timeout 3600 $P -m opentpu.host.diag --mem "$2" --soak 20 > "$OUT/diag-$1.txt" 2>&1
+  run "diag $1" timeout 3600 $P -m opentpu.host.diag --mem "$2" --soak 20 > "$OUT/diag-$1.txt"
   grep -E "\[(PASS|FAIL)\].*(RDOT|OUTER|LOG2)" "$OUT/diag-$1.txt"
   sed -n '/^summary/,$p' "$OUT/diag-$1.txt" | tee -a "$OUT/checks.txt"
+}
+# the model phases' checkpoints, where the tools look for them (opentpu.llm.model_dir)
+models_ok() {
+  local m d bad=""
+  for m in $(for r in $RUNS; do echo "${r%%:*}"; done | sort -u); do
+    d=$($P -c "from opentpu.llm import model_dir; print(model_dir('$m'))" 2>/dev/null)
+    [ -n "$d" ] && [ -f "$d/config.json" ] || bad="$bad $m (${d:-model_dir failed})"
+  done
+  [ -z "$bad" ] && return 0
+  fail "no checkpoint for$bad: $H/models does not hold the models (a staged tree needs its" \
+       "models link, e.g. models -> ~/openTPU/models); the model phases are skipped"
+  return 1
 }
 temp() { $P -m opentpu.host.smi 2>&1 | grep -oE "Temp [^ ]+ [^ │]+" | head -1; }
 finish() {
   phase ""
   echo "=== phases ($PROFILE)"; column -t -s $'\t' "$OUT/phases.tsv"
-  echo "total $(( ($(date +%s) - T00) / 60 )) min; $(cat "$OUT/checks.txt" 2>/dev/null | grep -c '\[FAIL\]') FAIL lines; results in $OUT"
+  echo "total $(( ($(date +%s) - T00) / 60 )) min; $(grep -c '\[FAIL\]' "$OUT/checks.txt") FAIL lines" \
+       "($(grep -c '\[PASS\]' "$OUT/checks.txt") PASS); results in $OUT"
   echo "QUAL DONE $NAME $(date +%T)"
 }
 trap finish EXIT
@@ -73,47 +111,63 @@ phase "load + selftest"
 if [ "${LOAD:-1}" = 0 ]; then echo "LOAD=0: no JTAG load, the card keeps its bitstream"
 else load "$BIT" || exit 1; fi
 selftest
-$P tools/qual/refs.py cfg "$OUT/cfg.pkl" --name "$NAME" | cut -c1-200
+run "refs cfg" $P tools/qual/refs.py cfg "$OUT/cfg.pkl" --name "$NAME" | cut -c1-200
+MODELS=1; models_ok || MODELS=0
 
-phase "references (background)"
-( $P tools/qual/refs.py compute "$OUT/cfg.pkl" > "$OUT/refs.log" 2>&1; echo "refs exit $?" >> "$OUT/refs.log" ) &
-sleep 3; head -8 "$OUT/refs.log"
+if [ $MODELS = 1 ]; then phase "references (background)"
+  ( $P tools/qual/refs.py compute "$OUT/cfg.pkl" > "$OUT/refs.log" 2>&1; echo "refs exit $?" >> "$OUT/refs.log" ) &
+  sleep 3; head -8 "$OUT/refs.log"
+fi
 
 if [ $COLD = 1 ]; then phase "diag cold (full march)"; temp; diag cold full; fi
 
+if [ $MODELS = 1 ]; then
 phase "prefill + decode counters (6)"
 for r in $RUNS; do IFS=: read -r m w h <<< "$r"
-  timeout 1800 $P tools/qual/perf.py "$m" "$w" "$h" 2>&1 | grep -vE "Warning|warn\("
+  run "perf $m $w $h" timeout 1800 $P tools/qual/perf.py "$m" "$w" "$h" | grep -vE "Warning|warn\("
 done
 
-phase "decode_profile ($(echo $DP_RUNS | wc -w))"
+phase "decode_profile ($(set -- $DP_RUNS; echo $#))"
 for r in $DP_RUNS; do IFS=: read -r m w h <<< "$r"; args="--wformat $w"; [ "$h" != "-" ] && args="$args --head-format $h"
-  timeout 1800 $P tools/decode_profile.py --model "$m" --greedy --tokens 96 $args \
-    --json "$OUT/dp-$m-$w-$h.json" > "$OUT/dp-$m-$w-$h.txt" 2>&1
+  run "decode_profile $m $w $h" timeout 1800 $P tools/decode_profile.py --model "$m" --greedy \
+    --tokens 96 $args --json "$OUT/dp-$m-$w-$h.json" > "$OUT/dp-$m-$w-$h.txt"
   grep -E " on board|^host critical|^wall|Error" "$OUT/dp-$m-$w-$h.txt"
 done
+fi
 
 if [ $RW = 1 ]; then phase "rw_bench"
-  timeout 900 $P tools/rw_bench.py card --modes mm,mm+st,mm+dstep,dstep 2>&1 | tail -4; fi
+  run rw_bench timeout 900 $P tools/rw_bench.py card --modes mm,mm+st,mm+dstep,dstep | tail -4; fi
 
+if [ $MODELS = 1 ]; then
 phase "warm soak ${SOAK} s"; temp
 t0=$(date +%s); n=0
 while [ $(( $(date +%s) - t0 )) -lt $SOAK ]; do
-  timeout 900 $P tools/decode_profile.py --model qwen3 --greedy --tokens 256 \
-    --prompt "Write a long essay about the history of France." 2>&1 | grep -E "^wall|Error|error"
+  run "soak run $((n + 1))" timeout 900 $P tools/decode_profile.py --model qwen3 --greedy \
+    --tokens 256 --prompt "Write a long essay about the history of France." > "$OUT/soak-run.txt"
+  ok=$?; grep -E "^wall|Error|error" "$OUT/soak-run.txt"
   n=$((n+1))
+  [ $ok = 0 ] || break          # a failed run ends the soak (its FAIL line), not a loop of them
 done; echo "warm soak: $n runs in $(( $(date +%s) - t0 )) s"; temp
+fi
 
 phase "diag warm ($WARM_MEM memory test)"; diag warm $WARM_MEM
 
+if [ $MODELS = 1 ]; then
 phase "token-exact after the soak (6 x per-position + resident)"
 grep -E "FAILED|refs exit" "$OUT/refs.log"
+p0=$(grep -c '\[PASS\] model' "$OUT/checks.txt")
 for r in $RUNS; do IFS=: read -r m w h <<< "$r"
   for res in "" --resident; do
-    timeout 1800 $P tools/qual/refs.py card "$OUT/cfg.pkl" "$m" "$w" "$h" 32 $res 2>&1 \
+    run "token-exact $m $w $h$res" timeout 1800 $P tools/qual/refs.py card "$OUT/cfg.pkl" "$m" "$w" "$h" 32 $res \
       | grep -E "\] model|Error|Traceback" | tee -a "$OUT/checks.txt"
   done
 done
+want=$(( $(echo $RUNS | wc -w) * 2 )); got=$(( $(grep -c '\[PASS\] model' "$OUT/checks.txt") - p0 ))
+[ "$got" -eq "$want" ] || fail "$got of $want token-exact runs passed"
+wait                            # the references' job (refs.py card waited for what it needed)
+rc=$(sed -n 's/^refs exit //p' "$OUT/refs.log" | tail -1)
+{ [ "${rc:-?}" = 0 ] && ! grep -qE "$EXC" "$OUT/refs.log"; } || fail "refs compute: exit ${rc:-?} ($OUT/refs.log)"
+fi
 
 phase "final selftest"
 if [ "$REST" != "$BIT" ] && [ "${LOAD:-1}" != 0 ]; then load "$REST" || exit 1; fi
