@@ -165,6 +165,26 @@ cycles the chunk FIFO is empty while streaming (the weight stream, not the array
 is 63% of the cycles with the longest MXU gap (0.61M cycles) after the attention setup's QACT
 (`attention.py:42`).
 
+## Measured: the full build at MCOLS 4 (se-sys `2f80230`, 2026-09-29)
+
+`make bit DDR=1066 AXI_BL=32 MCOLS=4 SE=v2`, CORE_MHZ 120.755, Vivado 2026.1 on omarchy (the
+stream engine v2 with its timing fixes, `202856d`, and `MXU_IMPL=2`). Timing not met: WNS
+-0.381 ns (fmax 115.4 MHz), TNS -312 ns on 2,320 endpoints, WHS +0.016 ns.
+
+| build | fmax | LUT | FF | slices | DSP | u_mxu LUT / FF / DSP |
+|---|---|---|---|---|---|---|
+| SE v2, MCOLS 2, IMPL 0 (`600c087`) | 117.9 MHz | 206,064 | | 64,441 (86.3%) | 301 | 19,600 / 10,435 / 142 |
+| SE v2, MCOLS 4, IMPL 2 (`2f80230`) | 115.4 MHz | 210,766 | 178,678 | 68,898 (92.3%) | 713 | 25,418 / 31,570 / 554 |
+| SE v1, MCOLS 4, IMPL 0 (m4b, 2026-09-28) | 115.8 MHz | 227,516 | 175,643 | ~72.3K (96.9%) | 493 | 31,459 / 19,662 / 282 |
+
+MCOLS 2 -> 4 costs +4.7K LUT and +4.5K slices with the systolic MXU (+15.6K LUT with the tree),
+so the design is 4.6 points of slices below the MCOLS 4 cliff. It still does not make
+120.755 MHz: the failing paths are spread over the MXU's drain control (`q_h` -> `mk` CE and
+`rx` resets, 15-16 levels, 89% route; `u_seq` -> `c_left`), the TMEM port-1 BRAM -> DMA `lb`
+register (BRAM to BRAM, 5-6 levels), the AXI adapter (`qc` -> `qb_n` / `k1r_n`, 17-18 levels,
+failing at MCOLS 2 too), and a few VPU / sequencer paths, all within -0.35 to -0.38 ns. The
+compute array itself (hops, chains, skews) is not among them.
+
 ## Plan and status
 
 1. Done: `IMPL=2` dot product with the unchanged epilogue, bit-exact on the MM / 4-bit / PAIR RTL
@@ -175,5 +195,8 @@ is 63% of the cycles with the longest MXU gap (0.61M cycles) after the attention
 5. The combined build (branch `se-sys`: the stream engine v2 + `MXU_IMPL=2`, MCOLS 4). `make bit`
    selects the MXU through `create_project.tcl`'s MXU argument (systolic, the default on this
    branch, or tree). MCOLS 8 after the LiteDRAM memory path frees its area.
-6. Later: a registered copy of `hi0` per chain (the INMODE fan-out); the fp epilogue's area (now
+6. Next (the full build above): the drain's command state from separate head / next registers
+   for IMPL 2 as well (the tournament's `5cd6c39` does it for IMPL 0), a register between TMEM
+   and the DMA's `lb`; the adapter's paths go with the LiteDRAM memory path.
+7. Later: a registered copy of `hi0` per chain (the INMODE fan-out); the fp epilogue's area (now
    the MXU's largest LUT consumer per column).
