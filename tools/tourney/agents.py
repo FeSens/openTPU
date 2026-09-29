@@ -282,7 +282,7 @@ def expand(wt: Path, globs: list[str]) -> list[str]:
 UNIT_FILES = {
     "u_seq": "rtl/seq/otpu_seq.sv", "u_tmem": "rtl/mem/otpu_tmem.sv",
     "u_act": "rtl/mem/otpu_actram.sv", "u_dma": "rtl/dma/otpu_dma.sv",
-    "u_dma/u_ds": "rtl/dma/otpu_dstep.sv", "u_mxu": "rtl/mxu/otpu_mxu.sv",
+    "u_vpu/u_tail": "rtl/vpu/otpu_se_tail.sv", "u_mxu": "rtl/mxu/otpu_mxu.sv",
     "u_quant": "rtl/vpu/otpu_quant.sv", "u_vpu": "rtl/vpu/otpu_vpu.sv",
     "u_mem": "rtl/mem/otpu_axi_dram.sv", "u_coll": "rtl/top/otpu_coll.sv",
     "u_ctrl": "rtl/boards/ypcb-00338/otpu_ctrl.sv", "u_trace": "rtl/boards/ypcb-00338/otpu_trace.sv",
@@ -296,7 +296,8 @@ _PATH_RE = re.compile(r"^\s*(-?[\d.]+) ns \S+ (\S+) -> (\S+) levels (\d+), data 
 
 def unit_of(cell: str) -> str:
     """The unit of a timing-path pin (`u_board/u_slice/u_dma/cleft_reg[28]/C` -> `u_dma`):
-    the first instance under the slice (or the board); `u_dma/u_ds` for the DSTEP datapath;
+    the first instance under the slice (or the board); `u_vpu/u_tail` for the stream engine's
+    tail;
     the slice / board itself for their own registers."""
     parts = cell.split("/")[:-1]                     # the pin name goes
     if parts and parts[0] == "u_board":
@@ -309,8 +310,8 @@ def unit_of(cell: str) -> str:
         parts = parts[1:] if parts else []
     if len(parts) < 2 or not parts[0].startswith("u_"):   # a register of the top itself
         return top
-    if parts[0] == "u_dma" and len(parts) > 2 and parts[1] == "u_ds":
-        return "u_dma/u_ds"
+    if parts[0] == "u_vpu" and len(parts) > 2 and parts[1].split(".")[-1] == "u_tail":
+        return "u_vpu/u_tail"
     return parts[0]
 
 

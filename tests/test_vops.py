@@ -419,12 +419,84 @@ def test_vops_rtl_bit_exact(have_verilator, lanes, uarch, seed):
     assert np.array_equal(drams[0], m.slices[0].dram)
 
 
+DIRECT = [I.V_EXP2SUB, I.V_MIN, I.V_RSUB, I.V_ABS, I.V_FILL, I.V_COPY]
+
+
+def _direct_program(rng, n_ops=48):
+    """EXP2SUB, MIN, RSUB, ABS, FILL and COPY on their own and mixed with ADD, EXP2 and RECIP
+    (other latencies, so elementwise instructions overlap in the lanes): every B mode, row
+    strides, odd shapes, the B_ROW word and the immediate from the special values. The data
+    is the special values (words 0..8191) and values spread over EXP2's range and past it
+    (8192..12287: exponents near -126 and 128, the clamps)."""
+    NDATA = 12288
+    prog = [I.ld(0, 0, NDATA)]
+    nxt = NDATA
+    ops = []
+
+    def fresh(n):
+        nonlocal nxt
+        a = nxt
+        nxt += n + int(rng.integers(0, 3))
+        return a
+
+    def src(n):
+        return int(rng.integers(0, NDATA - n))
+
+    for i in range(n_ops):
+        func = DIRECT[i % len(DIRECT)] if i < 2 * len(DIRECT) else \
+            int(rng.choice(DIRECT + [I.V_ADD, I.V_EXP2, I.V_RECIP]))
+        rows, cols = int(rng.integers(1, 6)), int(rng.integers(1, 300))
+        ars, drs = cols + int(rng.integers(0, 3)), cols + int(rng.integers(0, 2))
+        bmode = int(rng.integers(0, 4)) if func in I.READS_B else I.B_FULL
+        brs, b = 0, 0
+        if bmode == I.B_FULL:
+            brs = cols + int(rng.integers(0, 3))
+            b = src(rows * brs)
+        elif bmode == I.B_ROW:
+            brs = int(rng.integers(0, 3))
+            b = src(rows * brs + 1)
+        elif bmode == I.B_COL:
+            b = src(cols)
+        imm = float(rng.choice(_special(rng, 64)))
+        if func == I.V_EXP2SUB and rng.integers(2):
+            imm = float(rng.uniform(-140, 140))
+        a = src(rows * ars) if func != I.V_FILL else 0
+        prog.append(I.vop(func, fresh(rows * drs), a, b, rows, cols, drs, ars, brs, bmode,
+                          imm=imm))
+        ops.append(func)
+    prog.append(I.halt())
+    assert set(DIRECT) <= set(ops)
+    return prog
+
+
+@pytest.mark.parametrize("lanes,uarch,seed", [(8, {}, 0), (8, "board", 1), (8, "board4", 2),
+                                              (16, {}, 3), (4, {}, 4)])
+def test_direct_vops_rtl_bit_exact(have_verilator, lanes, uarch, seed):
+    """EXP2SUB, MIN, RSUB, ABS, FILL and COPY, RTL against the ISA simulator bit for bit."""
+    cfg = Config(S=1, LANES=lanes, MCOLS=min(8, lanes))
+    if uarch == "board":
+        uarch = dict(rtlsim.BOARD_UARCH)
+    elif uarch == "board4":
+        uarch = dict(rtlsim.BOARD_UARCH, VPU_CL=4)
+    r = np.random.default_rng(700 + seed)
+    prog = _direct_program(r)
+    img = np.zeros(1 << 20, np.uint8)
+    img[:4 * 8192] = _special(r, 8192).view(np.uint8)
+    wide = f(r.standard_normal(4096) * np.float32(60)) * np.where(r.random(4096) < 0.1, 2, 1)
+    img[4 * 8192:4 * 12288] = f(wide).view(np.uint8)
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], uarch=uarch)
+    bad = np.nonzero(tmems[0] != m.slices[0].tmem)[0]
+    assert len(bad) == 0, f"{len(bad)} TMEM words differ, first at {bad[:8]}"
+
+
 @pytest.mark.parametrize("uarch,seed", [({}, 0), ("board", 1)])
 def test_many_small_composites_rtl_bit_exact(have_verilator, uarch, seed):
     """Runs of independent tiny composite VOPs (1..3 elements, often one row of one column, as
     RMSNorm's rsqrt), so many are in flight in the VPU at once (one may start every other
-    cycle, each ~66 cycles long: more than 15, and at the board's WIN = 16 all 16 window
-    entries), in rising and falling latency order, RTL against the ISA simulator bit for bit."""
+    cycle, each ~66 cycles long, ~100 with COMP8's RSQRT/LOG2: more than 15, and at the
+    board's WIN = 16 all 16 window entries), in rising and falling latency order, RTL
+    against the ISA simulator bit for bit."""
     cfg = Config(S=1)
     uarch = dict(rtlsim.BOARD_UARCH) if uarch == "board" else uarch
     r = np.random.default_rng(900 + seed)
@@ -442,6 +514,12 @@ def test_many_small_composites_rtl_bit_exact(have_verilator, uarch, seed):
             prog.append(I.vop(fn, dst, a, int(r.integers(0, 4000)), rows, cols, cols, cols, cols,
                               bm, float(r.uniform(-3, 3))))
             dst += rows * cols + int(r.integers(0, 2))
+        # independent of the run (no dependency holds them back): a reduction and an ADD may
+        # start only once every composite has left the lanes
+        prog.append(I.vop(I.V_RSUM, dst, int(r.integers(0, 3000)), 0, 4, 200, 1, 200, 0))
+        prog.append(I.vop(I.V_ADD, dst + 8, int(r.integers(0, 3000)), int(r.integers(0, 3000)),
+                          2, 40, 40, 40, 40))
+        dst += 100
     prog.append(I.halt())
     m = Machine(cfg, [prog], [img.copy()]).run()
     drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], uarch=uarch)

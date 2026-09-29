@@ -387,7 +387,9 @@ class SimTransport:
         p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": cfg.MCOLS, "LANES": cfg.LANES,
              "ACT_ROWS": cfg.act_rows,
              "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8),
-             "AXI_BL": rtlsim.UARCH.get("AXI_BL", 8), "AXI_WBL": rtlsim.UARCH.get("AXI_WBL", 8)}
+             "AXI_BL": rtlsim.UARCH.get("AXI_BL", 8), "AXI_WBL": rtlsim.UARCH.get("AXI_WBL", 8),
+             "SE_COMP8": rtlsim.UARCH.get("SE_COMP8", 0),
+             "SE_ONE_TREE": rtlsim.UARCH.get("SE_ONE_TREE", 0)}
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
         with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:
@@ -770,8 +772,8 @@ class ConfigMismatch(RuntimeError):
 
 def device_config(info: dict, **kw):
     """The board_config of the bitstream that `info` (Board.info()) describes: MCOLS and LANES
-    come from its VERSION register, PAIR from CAPS bit5 and DSTEP from bit6, so the card needs
-    no OTPU_MCOLS / OTPU_LANES / OTPU_PAIR / OTPU_DSTEP. When one is set in the environment it
+    come from its VERSION register, PAIR from CAPS bit5, DSTEP from bit6 and STREAM from bit26,
+    so the card needs no OTPU_MCOLS / OTPU_LANES / OTPU_PAIR / OTPU_DSTEP / OTPU_STREAM. When one is set in the environment it
     must name the bitstream's value (ConfigMismatch otherwise). Keyword arguments set other fields (DRAM_BYTES)."""
     from opentpu.isasim import board_config
     for k in ("MCOLS", "LANES"):
@@ -782,8 +784,10 @@ def device_config(info: dict, **kw):
                                  f"a {k}={env} bitstream")
     caps = info.get("caps") or {}
     pair, dstep = bool(caps.get("pair")), bool(caps.get("dstep"))
+    stream = bool(caps.get("stream"))
     for k, have, what in (("PAIR", pair, "column reuse (CAPS bit5)"),
-                          ("DSTEP", dstep, "DSTEP (CAPS bit6)")):
+                          ("DSTEP", dstep, "DSTEP (CAPS bit6)"),
+                          ("STREAM", stream, "the stream engine (CAPS bit26)")):
         env = os.environ.get(f"OTPU_{k}")
         if env is not None and bool(int(env)) != have:
             raise ConfigMismatch(f"the bitstream {'has' if have else 'lacks'} {what} but "
@@ -791,7 +795,8 @@ def device_config(info: dict, **kw):
                                  f"bitstream)")
     rows = info.get("act_rows") or 0              # 0: MCOLS rows (no MM replay)
     cfg = board_config(**{"MCOLS": info["MCOLS"], "LANES": info["LANES"], "PAIR": pair,
-                          "DSTEP": dstep, "ACT_ROWS": rows if rows > info["MCOLS"] else 0,
+                          "DSTEP": dstep, "STREAM": stream,
+                          "ACT_ROWS": rows if rows > info["MCOLS"] else 0,
                           **kw})
     if info["D"] != cfg.D:
         raise ConfigMismatch(f"the bitstream has D={info['D']}, the board configuration "
@@ -923,6 +928,10 @@ class BoardBackend:
             self.board.close()
             raise ConfigMismatch("the programs use DSTEP and this bitstream lacks it (CAPS bit6 "
                                  "clear): use device_config")
+        if self.cfg.STREAM and not caps.get("stream"):
+            self.board.close()
+            raise ConfigMismatch("the programs use STREAM and this bitstream lacks the stream "
+                                 "engine (CAPS bit26 clear): use device_config")
         self.engine = engine
         if self.status is not None:
             self.status.update(dram=self._layout())

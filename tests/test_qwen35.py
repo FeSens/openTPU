@@ -144,18 +144,22 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, config, first, chunk, dstep):
 
 
 @pytest.mark.parametrize("config", ["design", "board"])
-def test_tiny_dstep_is_bit_exact(tiny, config):
+@pytest.mark.parametrize("unit", ["dstep", "stream"])
+def test_tiny_dstep_is_bit_exact(tiny, config, unit):
     """DSTEP (the DMA streams each DeltaNet head's state through its datapath) gives the same
     logits, DeltaNet state, conv ring and KV cache as the VPU's RDOT / OUTER passes, word for
-    word, from position 0 on; chunked prefill (the VPU path) continues from its state."""
+    word, from position 0 on; chunked prefill (the VPU path) continues from its state. unit
+    "stream": a stream-engine machine without DSTEP runs each step as STREAM (isa.gdn_desc)."""
     import dataclasses
     from opentpu.isasim import design_config
     _, W, spec = tiny
     base = board_config(DRAM_BYTES=1 << 24) if config == "board" else design_config()
     toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 9)]
     ref = Engine(spec, W, cap=256, cfg=base)
-    eng = Engine(spec, W, cap=256, cfg=dataclasses.replace(base, DSTEP=True))
-    assert any(i.op == 0x12 for i in eng.image.compile_step(1)[0])
+    kw = {"DSTEP": True} if unit == "dstep" else {"STREAM": True}
+    eng = Engine(spec, W, cap=256, cfg=dataclasses.replace(base, **kw))
+    assert any(i.op == (0x12 if unit == "dstep" else 0x13)
+               for i in eng.image.compile_step(1)[0])
     for t in toks[:6]:
         assert np.array_equal(ref.step(t).view(np.uint32), eng.step(t).view(np.uint32))
     assert all(np.array_equal(a, b) for a, b in zip(_layers_dram(eng), _layers_dram(ref)))
@@ -200,14 +204,16 @@ def test_tiny_resident_decode_is_bit_exact(tiny, dstep):
     assert np.array_equal(ma, mb)
 
 
-@pytest.mark.parametrize("dstep,resident", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("dstep,resident", [(False, False), (True, False), (True, True),
+                                            ("stream", False)])
 def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep, resident):
     """The board model through the host driver, through a full turn of the convolution window:
     logits bit-identical to the ISA simulator (with and without DSTEP; resident: from position
-    3 on the resident decode program, its token and position as run arguments)."""
+    3 on the resident decode program, its token and position as run arguments; "stream": each
+    DeltaNet head step as a STREAM on the stream engine instead of DSTEP)."""
     from opentpu.host.board import BoardBackend, SimTransport
     _, W, spec = tiny
-    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep)
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep is True, STREAM=dstep == "stream")
     isa = Engine(spec, W, cap=256, cfg=cfg)
     tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
     brd = Engine(spec, W, cap=256, cfg=cfg, resident=resident,

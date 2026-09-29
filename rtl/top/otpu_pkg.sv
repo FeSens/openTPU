@@ -3,7 +3,8 @@
 package otpu_pkg;
   localparam logic [7:0] OP_NOP = 8'h00, OP_HALT = 8'h01, OP_LI = 8'h02, OP_ADDI = 8'h03,
                          OP_LOOP = 8'h04, OP_BAR = 8'h05, OP_LD = 8'h10, OP_ST = 8'h11,
-                         OP_DSTEP = 8'h12, OP_MM = 8'h20, OP_QACT = 8'h21, OP_QST = 8'h22,
+                         OP_DSTEP = 8'h12, OP_STREAM = 8'h13, OP_MM = 8'h20, OP_QACT = 8'h21,
+                         OP_QST = 8'h22,
                          OP_VOP = 8'h30, OP_GATHER = 8'h40;
 
   localparam logic [7:0] V_ADD = 0, V_SUB = 1, V_RSUB = 2, V_MUL = 3, V_MAX = 4, V_MIN = 5,
@@ -12,10 +13,32 @@ package otpu_pkg;
                          V_RMAX = 17, V_RSSQ = 18, V_RDOT = 19;
   // VOP OUTER flags: one decay word T[d] for all columns / decay 1.0 (T[d] not read)
   localparam int VF_DSCALAR = 0, VF_DONE = 1;
-  // DSTEP flags: the state starts at +0 (DRAM not read)
-  localparam int DF_ZERO = 0;
+  // DSTEP / STREAM flags: the state starts at +0 (DRAM not read); STREAM's TMEM source and
+  // destination and no write-back (not in the hardware subset)
+  localparam int DF_ZERO = 0, STF_SRC_T = 1, STF_DST_T = 2, STF_NODST = 3;
 
   localparam logic [1:0] B_FULL = 0, B_ROW = 1, B_COL = 2, B_SCALAR = 3;
+
+  // The stream engine (docs/stream.md, section 4.3): the tail's modes of a DRAM stream (DSTEP
+  // or STREAM), set by the DMA while it holds SE (ss_req)
+  typedef struct packed {
+    logic [5:0] ns;      // segments per row (cols / 8)
+    logic [8:0] rows;    // 1..256
+    logic       a_en;    // REDUCE A on (else kv = +0)
+    logic       a_sel;   // A's vector: 0 slot 1 (k), 1 slot 2 (a)
+    logic [1:0] dmode;   // 0 DELTA, 1 DELTA1, 2 SCALE, 3 DOT
+    logic [1:0] g_src;   // 0 K0, 1 slot 3 column, 2 one
+    logic       q_en;    // O on
+    logic       pad64;   // cols = 64 presented as ns = 16: columns 64..127 read +0 (ONE_TREE)
+  } ss_cfg_t;
+  localparam logic [1:0] SD_DELTA = 0, SD_DELTA1 = 1, SD_SCALE = 2, SD_DOT = 3;
+  localparam logic [1:0] SG_K0 = 0, SG_COL = 1, SG_ONE = 2;
+  typedef struct packed {  // the X-stage meta of a segment (otpu_se_tail's xm)
+    logic v, first, final_, row_last; logic [7:0] sub; logic [4:0] j;
+  } ss_meta_t;
+  // the fill's kinds: q (slot 0), k (slot 1), x (the rows), K0, K1, a (slot 2), g (slot 3)
+  localparam logic [2:0] SF_NONE = 0, SF_Q = 1, SF_K = 2, SF_X = 3, SF_K0 = 4, SF_K1 = 5,
+                         SF_A = 6, SF_G = 7;
 
   // Execution units. Each runs its own instructions in program order; different units run
   // concurrently whenever their memory footprints do not conflict.
@@ -44,7 +67,7 @@ package otpu_pkg;
 
   function automatic int unit_of(input logic [7:0] op);
     case (op)
-      OP_LD, OP_ST, OP_DSTEP: return U_DMA;
+      OP_LD, OP_ST, OP_DSTEP, OP_STREAM: return U_DMA;
       OP_MM:             return U_MXU;
       OP_QACT, OP_QST:   return U_Q;
       OP_VOP:            return U_VPU;
@@ -194,6 +217,18 @@ package otpu_pkg;
       OP_ST: begin
         f.rd[0] = mk(SP_TMEM, c.w2, c.w3);
         f.wr[0] = mk(SP_DRAM, c.w1, c.w3 << 2);
+      end
+      OP_STREAM: begin
+        // the shape is in the descriptor, which the sequencer cannot read: the hardware
+        // subset's largest (rows, cols <= 256; docs/stream.md 4.4), read and written in place
+        // (dst = src); o written; read: the descriptor's first 8 words (w1 = desc | ks << 16),
+        // the 4 column slots, x, and the constants K0 = T[k], K1 = T[k + ks]
+        f.wr[0] = mk(SP_DRAM, c.w2, 32'(4 * 256 * 256));
+        f.wr[1] = mk(SP_TMEM, c.w7, 32'd256);
+        f.rd[0] = mk(SP_TMEM, 32'(c.w1[15:0]), 32'd8);
+        f.rd[1] = mk(SP_TMEM, c.w4, 32'(4 * 256));
+        f.rd[2] = mk(SP_TMEM, c.w5, 32'd256);
+        f.rd[3] = mk(SP_TMEM, c.w6, 32'(c.w1[31:16]) + 32'd1);
       end
       OP_DSTEP: begin
         // the state is read and written in place (a write range); q | k, v, decay .. beta

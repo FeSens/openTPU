@@ -17,9 +17,9 @@ BUILD = ROOT / "build" / "verilator"
 RTL_SOURCES = [
     "vpu/otpu_fp.sv", "vpu/otpu_fpipe.sv", "top/otpu_pkg.sv", "mem/otpu_dram.sv", "mem/otpu_tmem.sv",
     "mem/otpu_axi_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv", "vpu/otpu_vtree.sv",
-    "dma/otpu_dstep.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv",
-    "vpu/otpu_quant.sv", "vpu/otpu_vpu.sv", "top/otpu_coll.sv", "top/otpu_slice.sv",
-    "top/otpu_top.sv",
+    "dma/otpu_dma.sv", "mxu/otpu_mxu.sv",
+    "vpu/otpu_quant.sv", "vpu/otpu_se_comp.sv", "vpu/otpu_se_tail.sv", "vpu/otpu_vpu.sv",
+    "top/otpu_coll.sv", "top/otpu_slice.sv", "top/otpu_top.sv",
 ]
 
 
@@ -128,6 +128,12 @@ if os.environ.get("OTPU_VPU_CL"):
 for _k in ("AXI_BL", "AXI_WBL"):
     if os.environ.get("OTPU_" + _k):
         UARCH[_k] = BOARD_UARCH[_k] = int(os.environ["OTPU_" + _k])
+# The stream engine's v2 (docs/stream.md 11): OTPU_SE=v2 builds otpu_vpu with COMP8 and ONE_TREE
+# (OTPU_SE=comp8 / onetree, or OTPU_SE_COMP8=1 / OTPU_SE_ONE_TREE=1: one of them)
+if os.environ.get("OTPU_SE") in ("v2", "comp8") or os.environ.get("OTPU_SE_COMP8") == "1":
+    UARCH["SE_COMP8"] = 1
+if os.environ.get("OTPU_SE") in ("v2", "onetree") or os.environ.get("OTPU_SE_ONE_TREE") == "1":
+    UARCH["SE_ONE_TREE"] = 1
 # TMEM lanes of the MXU and the quantizer when fewer than LANES (timing only): OTPU_ULANES=8
 if os.environ.get("OTPU_ULANES"):
     UARCH["ULANES"] = int(os.environ["OTPU_ULANES"])
