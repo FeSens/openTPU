@@ -385,19 +385,36 @@ module otpu_se_comp
     if (!rst && ret != (lp_v && !fin)) $fatal(1, "otpu_se_comp: ret out of step");
 `endif
 
-  // per-stage control: operand selects and constants at the input, destination at the output
+  // per-stage control: operand selects and constants at the input, destination at the output.
+  // The output side's (uco) is registered from the chunk's (function, pass) SL - 1 cycles
+  // after the input, so the result's path to the next stage (y, the destination mux, RR)
+  // starts at flip-flops, as does RR's flags' (pass 0 of EXP2 / LOG2)
   uc_t uci [NS], uco [NS];
+  logic rr_e, rr_g;
   for (genvar s = 0; s < NS; s++) begin : g_uc
     if (s == 0) begin : g_u0
       assign uci[s] = ret ? uc_rt : uc_rom(f_cc(in_f), 4'd0, 0);
     end else begin : g_un
       assign uci[s] = uc_rom(mi[s].cls, mi[s].pass, s);
     end
-    assign uco[s] = uc_rom(mo[s].cls, mo[s].pass, s);
+    logic [6:0] cp;                        // {cls, pass}: mo[s]'s a cycle early
+    otpu_delay #(.W(7), .N(SL - 1)) u_cp (.clk, .en, .d({mi[s].cls, mi[s].pass}), .q(cp));
+    always_ff @(posedge clk) if (en) uco[s] <= uc_rom(cp[6:4], cp[3:0], s);
+    if (s == 0) begin : g_rrf
+      always_ff @(posedge clk) if (en) begin
+        rr_e <= (cp[3:0] == 0) && (cp[6:4] == CC_EXP || cp[6:4] == CC_EXS);
+        rr_g <= (cp[3:0] == 0) && (cp[6:4] == CC_LOG);
+      end
+    end
   end
-  // RR's flags, from the meta after S0: EXP2's range reduction / LOG2's i2f(e), pass 0 only
-  wire rr_e = (mo[0].pass == 0) && (mo[0].cls == CC_EXP || mo[0].cls == CC_EXS);
-  wire rr_g = (mo[0].pass == 0) && (mo[0].cls == CC_LOG);
+`ifndef SYNTHESIS
+  for (genvar s = 0; s < NS; s++) begin : g_ucchk
+    always_ff @(posedge clk)
+      if (!rst && vpos[s_off(s) + SL - 1] && (uco[s] != uc_rom(mo[s].cls, mo[s].pass, s) ||
+          s == 0 && rr_e != (mo[0].pass == 0 && (mo[0].cls == CC_EXP || mo[0].cls == CC_EXS))))
+        $fatal(1, "otpu_se_comp: output control out of step");
+  end
+`endif
   logic e1, e2, g1, g2;
   always_ff @(posedge clk) if (en) begin
     e1 <= rr_e; g1 <= rr_g;
