@@ -645,8 +645,9 @@ module otpu_mxu
                                                    .q(as_k[j][i]));
       end
     end
-    logic signed [15:0] mreg [MCOLS][D];                // products (M registers)
-    logic signed [23:0] preg [MCOLS][D];                // running sums (P registers)
+    // (use_dsp: Vivado keeps 8 x 8 products and their sums in fabric by default)
+    (* use_dsp = "yes" *) logic signed [15:0] mreg [MCOLS][D];   // products (M registers)
+    (* use_dsp = "yes" *) logic signed [23:0] preg [MCOLS][D];   // running sums (P registers)
     always_ff @(posedge clk) if (en_c)
       for (int j = 0; j < MCOLS; j++)
         for (int i = 0; i < D; i++) begin
@@ -656,7 +657,7 @@ module otpu_mxu
         end
     // chain ends (S0 + CLS + 2 + j): the sub-block sums times their multipliers, then the block
     // sum; the multipliers of column j (its block's under PAIR) travel alongside
-    logic [SW-1:0] vs [MCOLS][4];
+    (* use_dsp = "yes" *) logic [SW-1:0] vs [MCOLS][4];
     logic signed [SW-1:0] s4r [MCOLS];
     for (genvar j = 0; j < MCOLS; j++) begin : g_col_end
       logic [15:0] mbd;
