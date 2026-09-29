@@ -218,18 +218,16 @@ package otpu_pkg;
         f.wr[0] = mk(SP_DRAM, c.w1, c.w3 << 2);
       end
       OP_STREAM: begin
-        // the shape (rows, cols <= 256) and ks are in the descriptor, which the sequencer
-        // cannot read: the hardware subset's largest stream (docs/stream.md 4.4), read and
-        // written in place (dst = src); o written; the descriptor's first 8 words, the 4 column
-        // slots, and x and the constants (K1 = T[k + ks]) as [min(x, k), top of TMEM)
+        // the shape is in the descriptor, which the sequencer cannot read: the hardware
+        // subset's largest (rows, cols <= 256; docs/stream.md 4.4), read and written in place
+        // (dst = src); o written; read: the descriptor's first 8 words (w1 = desc | ks << 16),
+        // the 4 column slots, x, and the constants K0 = T[k], K1 = T[k + ks]
         f.wr[0] = mk(SP_DRAM, c.w2, 32'(4 * 256 * 256));
         f.wr[1] = mk(SP_TMEM, c.w7, 32'd256);
         f.rd[0] = mk(SP_TMEM, 32'(c.w1[15:0]), 32'd8);
         f.rd[1] = mk(SP_TMEM, c.w4, 32'(4 * 256));
-        f.rd[2].v = 1'b1;
-        f.rd[2].sp = SP_TMEM;
-        f.rd[2].lo = (c.w5 < c.w6) ? c.w5 : c.w6;
-        f.rd[2].hi = 32'h0001_0000;
+        f.rd[2] = mk(SP_TMEM, c.w5, 32'd256);
+        f.rd[3] = mk(SP_TMEM, c.w6, 32'(c.w1[31:16]) + 32'd1);
       end
       OP_DSTEP: begin
         // the state is read and written in place (a write range); q | k, v, decay .. beta

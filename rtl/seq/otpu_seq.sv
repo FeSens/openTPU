@@ -80,7 +80,8 @@ module otpu_seq
   // which overlaps nothing (b.lo < 0 is false) -- exactly ov()'s v terms. Routing (fp_seg):
   //   LD:     d[0] = rd0          t[0] = wr0 W
   //   ST:     d[0] = wr0 (dw)     t[0] = rd0
-  //   DSTEP, STREAM:  d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2
+  //   DSTEP:  d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2
+  //   STREAM: d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2, t4 = rd3
   //   MM:     d = rd0, rd1        t[0] = wr0 W, t[1] = wr1 W (RMAX), t2 = rd3 (ASCALE), a = rd2
   //   QACT:                       t[0] = rd0, t[1] = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
   //   QST:    d = wr0, wr1 (dw)   t[0] = rd0
@@ -102,6 +103,7 @@ module otpu_seq
     rtw_t  [1:0]     t;         // TMEM
     rt_t             t2;        // TMEM, always a read
     rt_t             t3;        // TMEM, always a read
+    rt_t             t4;        // TMEM, always a read (STREAM's constants)
     logic            aw;        // ACT
     logic [7:0]      alo;
     logic [16:0]     ahi;
@@ -126,9 +128,9 @@ module otpu_seq
 
   function automatic fps_t fp_seg(input logic [7:0] op, input fp_t f);
     fps_t s;
-    rng_t a, t0, t1, t2, t3;      // ACT; TMEM t[0], t[1], t2, t3
+    rng_t a, t0, t1, t2, t3, t4;  // ACT; TMEM t[0], t[1], t2, t3, t4
     logic w0, w1;
-    s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; t3 = '0; w0 = 1'b0; w1 = 1'b0;
+    s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; t3 = '0; t4 = '0; w0 = 1'b0; w1 = 1'b0;
     case (op)
       OP_LD: begin
         s.d[0] = r32(f.rd[0]); t0 = f.wr[0]; w0 = 1'b1;
@@ -138,7 +140,7 @@ module otpu_seq
       end
       OP_DSTEP, OP_STREAM: begin
         s.dw = 1'b1; s.d[0] = r32(f.wr[0]);
-        t0 = f.wr[1]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1]; t3 = f.rd[2];
+        t0 = f.wr[1]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1]; t3 = f.rd[2]; t4 = f.rd[3];
       end
       OP_MM: begin
         s.d[0] = r32(f.rd[0]); s.d[1] = r32(f.rd[1]);
@@ -161,11 +163,12 @@ module otpu_seq
       end
       default: ;   // BAR: all
     endcase
-    s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2) || tovf(t3);
+    s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2) || tovf(t3) || tovf(t4);
     s.t[0].w = w0; s.t[0].r = rt(t0);
     s.t[1].w = w1; s.t[1].r = rt(t1);
     s.t2 = rt(t2);
     s.t3 = rt(t3);
+    s.t4 = rt(t4);
     s.alo = a.lo[7:0]; s.ahi = a.v ? a.hi[16:0] : '0;
     return s;
   endfunction
@@ -180,7 +183,8 @@ module otpu_seq
   endfunction
 
   // {conflict, conflict_dram} (otpu_pkg) on segregated footprints: the same-space pairs with at
-  // least one write -- 4 DRAM, 8 TMEM and 1 ACT range pair
+  // least one write -- 4 DRAM, 16 TMEM (t[i] x t[j]; t[i] x t2..t4 both ways) and 1 ACT range
+  // pair
   function automatic logic [1:0] conf_s(input fps_t n, input fps_t e);
     logic any, dram;
     any = n.all || e.all; dram = any;
@@ -189,8 +193,10 @@ module otpu_seq
         if ((n.dw || e.dw) && ovr(n.d[i], e.d[j])) begin any = 1'b1; dram = 1'b1; end
         if ((n.t[i].w || e.t[j].w) && ovr_t(n.t[i].r, e.t[j].r)) any = 1'b1;
       end
-      if (n.t[i].w && (ovr_t(n.t[i].r, e.t2) || ovr_t(n.t[i].r, e.t3))) any = 1'b1;
-      if (e.t[i].w && (ovr_t(n.t2, e.t[i].r) || ovr_t(n.t3, e.t[i].r))) any = 1'b1;
+      if (n.t[i].w && (ovr_t(n.t[i].r, e.t2) || ovr_t(n.t[i].r, e.t3) ||
+                       ovr_t(n.t[i].r, e.t4))) any = 1'b1;
+      if (e.t[i].w && (ovr_t(n.t2, e.t[i].r) || ovr_t(n.t3, e.t[i].r) ||
+                       ovr_t(n.t4, e.t[i].r))) any = 1'b1;
     end
     if ((n.aw || e.aw) && {9'd0, n.alo} < e.ahi && {9'd0, e.alo} < n.ahi) any = 1'b1;
     return {any, dram};

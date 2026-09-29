@@ -229,15 +229,16 @@ module otpu_dma
     end
 `ifndef SYNTHESIS
     always_ff @(posedge clk)
-      if (!rst && is_ds) $fatal(1, "otpu_dma: no streams here (W = %0d, LANES = %0d, HAS_DSTEP = %0d)",
-                                W, LANES, HAS_DSTEP);
+      if (!rst && is_ds)
+        $fatal(1, "otpu_dma: no streams here (W = %0d, LANES = %0d, HAS_DSTEP = %0d)", W, LANES,
+               HAS_DSTEP);
 `endif
   end
 
   // ---- a stream's setup (ds_su): a DSTEP's from its command (GDN); a STREAM's from its
-  // command and its descriptor (docs/stream.md 3.2: float-safe words, the payload is the sign
-  // bit and the mantissa), which must be in the hardware subset (4.4, opentpu.isa
-  // .stream_hw_cfg): its scalar op list names dmode
+  // command (w1 = desc | ks << 16) and its descriptor (docs/stream.md 3.2: float-safe words,
+  // the payload is the sign bit and the mantissa), which must be in the hardware subset (4.4,
+  // opentpu.isa.stream_hw_cfg): its scalar op list names dmode
   function automatic logic [23:0] dpl(input logic [31:0] w);
     return {w[31], w[22:0]};
   endfunction
@@ -293,7 +294,7 @@ module otpu_dma
     su_cfg.g_src = g;
     su_cfg.q_en = d1[20];
     su_src = sc.w2; su_dst = sc.w3; su_vec = sc.w4; su_x = sc.w5; su_k = sc.w6;
-    su_ks = 32'(d3[15:0]); su_out = sc.w7;
+    su_ks = 32'(sc.w1[31:16]); su_out = sc.w7;
     su_ok = fs_ok && dm_ok && g_ok && a_ok && rows != 0 && rows <= 12'd256 &&
             cols[5:0] == 0 && cols != 0 && cols <= 12'd256 && d4 == 0 &&
             d1[6:5] == 2'd1 && d1[13:12] == 2'd0 && d1[16:14] == 3'd1 && d1[19:17] == 3'd2 &&
