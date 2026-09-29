@@ -1,0 +1,33 @@
+write latency: m0:0 m1:0 m2:0 m3:6 m4:6 m5:6 m6:6 m7:6 m8:6
+  wb0:  9 10 10  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb2:  0  0  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb4:  0  0  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb6:  0  0  0 10 10 11 11 10  9  (widest read window per lane, taps)
+read leveling:
+  m0: b4 |00000000011111111110000000000000| window 10 taps (781 ps), tap 14
+  m1: b4 |00000000011111111110000000000000| window 10 taps (781 ps), tap 14
+  m2: b4 |00000000111111111100000000000000| window 10 taps (781 ps), tap 13
+  m3: b4 |00000000011111111110000000000000| window 10 taps (781 ps), tap 14
+  m4: b4 |01111111111000000000000000000000| window 10 taps (781 ps), tap 6
+  m5: b4 |01111111111100000000000000000000| window 11 taps (859 ps), tap 6
+  m6: b4 |11111111111000000000000000000000| window 11 taps (859 ps), tap 5
+  m7: b4 |01111111111000000000000000000000| window 10 taps (781 ps), tap 6
+  m8: b4 |00011111111100000000000000000000| window 9 taps (703 ps), tap 7
+  check at the chosen taps: pass
+calibration: PASS
+read taps under traffic (1: no wrong beat, x: < 1% wrong, 0: more):
+  m0: b4 |00000000011111111100000000000000| 9 taps under traffic (DFI window centre 14, traffic centre 13)
+  m1: b4 |000000000011111111x0000000000000| 8 taps under traffic (DFI window centre 14, traffic centre 14)
+  m2: b4 |00000000000000000000000000000000| 0 taps under traffic
+  m3: b4 |000000000xxxxxxxxxx0000000000000| 0 taps under traffic
+  m4: b4 |0111111111x000000000000000000000| 9 taps under traffic (DFI window centre 6, traffic centre 5)
+  m5: b4 |0x111111111000000000000000000000| 9 taps under traffic (DFI window centre 6, traffic centre 6)
+  m6: b4 |x111111111x000000000000000000000| 9 taps under traffic (DFI window centre 5, traffic centre 5)
+  m7: b4 |0011111111x000000000000000000000| 8 taps under traffic (DFI window centre 6, traffic centre 6)
+  m8: b4 |000x1111111100000000000000000000| 8 taps under traffic (DFI window centre 7, traffic centre 8)
+BIST over 2 GiB:
+  pass 0 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 11027254 (per lane [0, 0, 11027233, 23, 0, 0, 0, 0, 0], bits 0xff00000)
+  pass 0 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 166251 (per lane [0, 0, 166251, 0, 0, 0, 0, 0, 0], bits 0xf00000)
+  pass 1 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 13908358 (per lane [0, 0, 13908343, 16, 0, 0, 0, 0, 0], bits 0xff00000)
+  pass 1 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 421612 (per lane [0, 0, 421612, 0, 0, 0, 0, 0, 0], bits 0xf00000)
+BIST: FAIL

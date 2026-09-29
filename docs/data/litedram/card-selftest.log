@@ -1,0 +1,12 @@
+openTPU self-test on /dev/xdma0
+  [PASS] link       ID 0x4f545055  (0.0s)
+  [PASS] config     D=128 MCOLS=2 LANES=8, register map 3, core 120.755 MHz, DDR3-1066, build e2521032  (0.0s)
+  [PASS] calib      channel 0 ok, channel 1 ok  (0.0s)
+  [PASS] scrub      4 GiB written in 2.7s (ECC check bits initialized)  (2.7s)
+  [PASS] regs       SCRATCH ok  (0.0s)
+  [PASS] addr       channel 0 ok; channel 1 ok  (0.0s)
+  [PASS] pattern    6 regions, 2106514 bytes; 200 partial writes; 200 partial writes  (0.0s)
+  [PASS] bandwidth  host->card 1.35 GB/s, card->host 1.03 GB/s  (1.9s)
+  [PASS] kernel     all units: 9473 cycles (b_reads=2137, a_writes=132); partial writes: 11337 cycles (b_writes=33, a_writes=903)  (0.1s)
+  [PASS] vops       RDOT / OUTER / LOG2 ok (9829 cycles); 12 op checks ok  (0.3s)
+ALL PASS

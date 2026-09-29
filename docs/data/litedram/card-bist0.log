@@ -1,0 +1,6 @@
+BIST over 2 GiB:
+  pass 0 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 14177330 (per lane [0, 0, 14177311, 32, 0, 0, 0, 0, 0], bits 0xff00000)
+  pass 0 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 203907 (per lane [0, 0, 203907, 0, 0, 0, 0, 0, 0], bits 0xf00000)
+  pass 1 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 16490248 (per lane [0, 0, 16490231, 23, 0, 0, 0, 0, 0], bits 0xff00000)
+  pass 1 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 457207 (per lane [0, 0, 457207, 0, 0, 0, 0, 0, 0], bits 0xf00000)
+BIST: FAIL

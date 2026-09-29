@@ -1,0 +1,167 @@
+--- test image attempt 1 01:26:28
+[1m== rescan[0m
+   note  removing 0000:01:00.0
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- test image attempt 2 01:26:44
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- test image attempt 3 01:27:01
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- test image attempt 4 01:27:18
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- test image attempt 5 01:27:35
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- test image attempt 6 01:27:52
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- test image attempt 7 01:28:09
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- test image attempt 8 01:28:26
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- test image attempt 9 01:28:44
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- test image attempt 10 01:29:00
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- production attempt 1 01:54:29
+[1m== rescan[0m
+   note  removing 0000:01:00.0
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- production attempt 2 01:54:45
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- production attempt 3 01:55:02
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- production attempt 4 01:55:19
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
+--- production attempt 5 01:55:35
+[1m== rescan[0m
+   note  no card after the rescan
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: disable and re-enable the link (Link Control: Link Disable)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+   note  0000:00:01.0: secondary bus reset (Bridge Control)
+   note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
+[31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
