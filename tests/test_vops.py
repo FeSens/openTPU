@@ -494,8 +494,9 @@ def test_direct_vops_rtl_bit_exact(have_verilator, lanes, uarch, seed):
 def test_many_small_composites_rtl_bit_exact(have_verilator, uarch, seed):
     """Runs of independent tiny composite VOPs (1..3 elements, often one row of one column, as
     RMSNorm's rsqrt), so many are in flight in the VPU at once (one may start every other
-    cycle; up to ~50 with COMP8's 100-cycle RSQRT/LOG2), in rising and falling latency order,
-    RTL against the ISA simulator bit for bit."""
+    cycle, each ~66 cycles long, ~100 with COMP8's RSQRT/LOG2: more than 15, and at the
+    board's WIN = 16 all 16 window entries), in rising and falling latency order, RTL
+    against the ISA simulator bit for bit."""
     cfg = Config(S=1)
     uarch = dict(rtlsim.BOARD_UARCH) if uarch == "board" else uarch
     r = np.random.default_rng(900 + seed)

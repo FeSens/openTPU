@@ -49,7 +49,7 @@ load() {
   quiet || return 1
   openFPGALoader -c digilent_hs2 --freq 10000000 "$1" 2>&1 | tail -1
   for _ in $(seq 60); do
-    rescan 2>&1 | tail -1 | tee "$OUT/rescan"
+    rescan 2>&1 | tee -a "$OUT/rescan.log" | tail -1 | tee "$OUT/rescan"   # rescan.log: every step (relink)
     grep -q "ID 0x4f545055" "$OUT/rescan" && return 0; sleep 10; done
   echo "rescan failed for 10 minutes"; return 1; }
 selftest() { timeout 1800 $P -m opentpu.host.selftest 2>&1 \
@@ -63,7 +63,7 @@ temp() { $P -m opentpu.host.smi 2>&1 | grep -oE "Temp [^ ]+ [^ │]+" | head -1;
 finish() {
   phase ""
   echo "=== phases ($PROFILE)"; column -t -s $'\t' "$OUT/phases.tsv"
-  echo "total $(( ($(date +%s) - T00) / 60 )) min; $(grep -c '\[FAIL\]' "$OUT/checks.txt" 2>/dev/null || echo 0) FAIL lines; results in $OUT"
+  echo "total $(( ($(date +%s) - T00) / 60 )) min; $(cat "$OUT/checks.txt" 2>/dev/null | grep -c '\[FAIL\]') FAIL lines; results in $OUT"
   echo "QUAL DONE $NAME $(date +%T)"
 }
 trap finish EXIT

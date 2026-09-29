@@ -224,7 +224,9 @@ Control files: `/tmp/otpu-tourney-stop` (stop before the next round), `/tmp/otpu
 (wait while it exists), `/tmp/otpu-tourney-hosts` (build hosts and caps, read per job),
 `/tmp/otpu-tourney-comps` (the components of the next pass, in order, in place of
 `FOREVER_COMPS`; a component listed twice runs twice per pass; read at the start of each pass, so
-priorities change without a restart).
+priorities change without a restart), `/tmp/otpu-tourney-whole` (the whole-design components that
+take turns, in place of `FOREVER_WHOLE`, read before each whole-design round; e.g. `otpu_impl`
+alone while RTL rewrites are under way elsewhere).
 
 ### The whole-design RTL component `otpu_full`
 

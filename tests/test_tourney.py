@@ -826,6 +826,23 @@ def test_accept_fmax_counts_cycles():
     assert A.accept_fmax(old, full(wns=-0.20), 1000, 1004)[0]        # +0.9% net
 
 
+def test_saved_patch_applies(tmp_path):
+    """A diff whose last hunk ends in an empty context line survives being saved (git()
+    strips its output, which cut that line and made the patch corrupt)."""
+    from tools.tourney import orchestrator as O
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    f = tmp_path / "a.sv"
+    f.write_text("a\nb\nc\n\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "a.sv"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t",
+                    "-c", "commit.gpgsign=false", "commit", "-qm", "a"], check=True)
+    f.write_text("A\nb\nc\n\n")
+    raw = subprocess.run(["git", "diff"], cwd=tmp_path, capture_output=True, text=True).stdout
+    assert raw != O.git("diff", cwd=tmp_path) + "\n"          # the stripped form differs
+    src = (ROOT / "tools" / "tourney" / "orchestrator.py").read_text()
+    assert 'write_text(git("diff", cwd=wt)' not in src         # patches are saved raw
+
+
 def test_full_result_cached(tmp_path, monkeypatch):
     O, run = _run(tmp_path)
     run.repo = tmp_path

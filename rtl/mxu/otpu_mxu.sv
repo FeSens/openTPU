@@ -149,39 +149,73 @@ module otpu_mxu
     if (!rst && start && cmd_tz != (cmd_total == 0))
       $fatal(1, "otpu_mxu: cmd_tz %0d but total %0d", cmd_tz, cmd_total);
 `endif
-  logic [31:0] q_out [2], q_total [2];
-  logic        q_tz [2];                      // q_total == 0 (registered: off the drain path)
-  logic [15:0] q_KB [2], q_KBa [2], q_ors [2];   // KBa: advances per row
-  logic        q_pair [2];
-  logic [MCOLS-1:0] q_hi [2];                 // PAIR: the columns that take the odd blocks (j >= M)
-  logic [31:0] q_mxo [2];                     // RMAX output base: out + M * ors (no multiply later)
-  logic [7:0]  q_M [2], q_ab [2];
-  logic [MW-1:0] q_run [2];                  // drain lanes per cycle without a bank conflict
-  logic        q_unit [2], q_acc [2], q_rmax [2], q_asc [2], q_go [2];
-  logic [1:0]  q_wf [2];
-  logic [31:0] q_asa [2];
-  logic [31:0] q_jo [2][MCOLS];            // j * ors
-  logic [7:0]  q_G [2];                     // groups: ceil(M / MCOLS)
-  logic [MW-1:0] q_Ml [2];                  // rows of the last group
-  logic [31:0] q_gs [2];                    // drain address step to the next group
-                                            // (MCOLS * ors)
-  logic        q_h;
+  // The two entries are the head (h) and the next command (n), not two slots and a head pointer:
+  // every head field is its own flop, with no 2:1 mux on a pointer in front of the consumer and
+  // the drain. Completing the head swaps them (n keeps the old head, as the idle slot did).
+  typedef struct packed {
+    logic [31:0]      out, total;
+    logic             tz;              // total == 0 (registered: off the drain path)
+    logic [15:0]      KB, KBa;         // KBa: advances per row
+    logic             pair;
+    logic [MCOLS-1:0] hi;              // PAIR: the columns that take the odd blocks (j >= M)
+    logic [31:0]      mxo;             // RMAX output base: out + M * ors (no multiply later)
+    logic [7:0]       M, ab;
+    logic [MW-1:0]    run;             // drain lanes per cycle without a bank conflict
+    logic             unit, acc, rmax, asc, go;
+    logic [1:0]       wf;
+    logic [31:0]      asa;
+    logic [MCOLS-1:0][31:0] jo;        // j * ors
+    logic [7:0]       G;               // groups: ceil(M / MCOLS)
+    logic [MW-1:0]    Ml;              // rows of the last group
+    logic [31:0]      gs;              // drain address step to the next group (MCOLS * ors)
+  } qent_t;
+  qent_t       h, n;                    // the head, the next command
+  qent_t       cmd_e;                   // cmd as an entry (not yet released)
   logic [1:0]  q_n;
 
-  wire [31:0] c_out = q_out[q_h];
-  wire        c_tz = q_tz[q_h];
-  wire [15:0] c_KB = q_KB[q_h], c_KBa = q_KBa[q_h];
-  wire        c_pair = q_pair[q_h];
-  wire [MCOLS-1:0] c_hi = q_hi[q_h];
-  wire [7:0]  c_M = q_M[q_h], c_ab = q_ab[q_h];
-  wire [MW-1:0] c_run = q_run[q_h];
-  wire        c_unit = q_unit[q_h], c_acc = q_acc[q_h], c_rmax = q_rmax[q_h];
-  wire        c_asc = q_asc[q_h];
-  wire [1:0]  c_wf = q_wf[q_h];
+  always_comb begin
+    int g;
+    cmd_e = '0;
+    cmd_e.out   = cmd.w3;
+    cmd_e.total = cmd_total;
+    cmd_e.tz    = cmd_tz;
+    cmd_e.KB    = cmd.w4[31:16];
+    cmd_e.KBa   = cmd_KBa;
+    cmd_e.pair  = cmd_pair;
+    for (int j = 0; j < MCOLS; j++) cmd_e.hi[j] = cmd_pair && 32'(j) >= 32'(cmd.w6[23:16]);
+    cmd_e.mxo   = cmd.w3 + 32'(cmd.w6[23:16]) * 32'(cmd.w6[15:0]);
+    cmd_e.M     = cmd.w6[23:16];
+    cmd_e.run   = drain_run(cmd.w6[15:0]);
+    cmd_e.ab    = cmd.w6[31:24];
+    cmd_e.unit  = cmd.flags[0];
+    cmd_e.wf    = cmd.flags[5:4];
+    cmd_e.acc   = cmd.flags[1];
+    cmd_e.rmax  = cmd.flags[2];
+    cmd_e.asc   = cmd.flags[3];
+    cmd_e.go    = 1'b0;
+    cmd_e.asa   = cmd.w2;
+    for (int j = 0; j < MCOLS; j++) cmd_e.jo[j] = 32'(j) * 32'(cmd.w6[15:0]);
+    g = (int'(cmd.w6[23:16]) + MCOLS - 1) / MCOLS;
+    if (g < 1) g = 1;
+    cmd_e.G     = 8'(g);
+    cmd_e.Ml    = MW'(int'(cmd.w6[23:16]) - (g - 1) * MCOLS);
+    cmd_e.gs    = 32'(MCOLS) * 32'(cmd.w6[15:0]);
+  end
+
+  wire [31:0] c_out = h.out;
+  wire        c_tz = h.tz;
+  wire [15:0] c_KB = h.KB, c_KBa = h.KBa;
+  wire        c_pair = h.pair;
+  wire [MCOLS-1:0] c_hi = h.hi;
+  wire [7:0]  c_M = h.M, c_ab = h.ab;
+  wire [MW-1:0] c_run = h.run;
+  wire        c_unit = h.unit, c_acc = h.acc, c_rmax = h.rmax;
+  wire        c_asc = h.asc;
+  wire [1:0]  c_wf = h.wf;
   wire        c_w4 = (c_wf != WF_W8);
-  wire [31:0] c_asa = q_asa[q_h];
-  wire        c_act = (q_n != 0) && q_go[q_h];
-  wire [7:0]  c_G = q_G[q_h];
+  wire [31:0] c_asa = h.asa;
+  wire        c_act = (q_n != 0) && h.go;
+  wire [7:0]  c_G = h.G;
   logic [31:0] alpha [MCOLS];
   logic [1:0]  al_st;                       // ASCALE factors: 0 to load, 1 loading, 2 loaded
   logic [7:0]  al_i, mx_i;                  // next ASCALE factor to load / RMAX value to write
@@ -666,7 +700,7 @@ module otpu_mxu
                                              // dg -> dg + 1 == c_G -> drain lanes -> TMEM grant
                                              // -> mk / dad / drow enables, 16 levels, -0.287 ns)
   wire           d_last = (dg1 == c_G);
-  wire  [MW-1:0] c_Mn = d_last ? q_Ml[q_h] : MW'(MCOLS);   // its results
+  wire  [MW-1:0] c_Mn = d_last ? h.Ml : MW'(MCOLS);   // its results
   logic [LANES-1:0][31:0] daddr_l, dval_l;
   logic [LANES-1:0][7:0]  dcol_l;
   wire  drain_go = (rf_n != 0) && (!c_asc || al_st == 2'd2);
@@ -724,8 +758,8 @@ module otpu_mxu
   // r1: r0 one granted cycle later, with the old values registered (xo): no path from the TMEM
   // block RAMs into the fmadd's DSP inputs in one cycle. The ASCALE factor (alr) is selected from
   // r0 as it moves into r1, so the fmadd's b operand is a flop too (no mux in front of the DSP);
-  // c_asc and alpha cannot change while a valid entry sits in r0/r1 (q_h flips only once drained,
-  // alpha loads only before an ASCALE command drains)
+  // c_asc and alpha cannot change while a valid entry sits in r0/r1 (the head changes only once
+  // drained, alpha loads only before an ASCALE command drains)
   rmw_t r1;
   f32_t xo [NL], alr [NL];
   always_ff @(posedge clk)
@@ -754,7 +788,7 @@ module otpu_mxu
   endfunction
   // rw's column hits, one-hot, computed from r1 and carried alongside u_rw (same length and
   // enable); the last stage is a reset flop, not an SRL tap. c_rmax is fixed while entries are
-  // in flight (q_h flips only once drained)
+  // in flight (the head changes only once drained)
   logic [NL-1:0][MCOLS-1:0] rh, rh_p, rwh, rxh;
   always_comb
     for (int k = 0; k < NL; k++)
@@ -845,7 +879,7 @@ module otpu_mxu
       for (int k = 0; k < LANES; k++) begin
         if (32'(mx_i) + 32'(k) < 32'(c_M)) begin
           t_wen[k] = 1'b1;
-          t_waddr[k] = q_mxo[q_h] + 32'(mx_i) + 32'(k);
+          t_waddr[k] = h.mxo + 32'(mx_i) + 32'(k);
           t_wdata[k] = unkey(mk[MW'(32'(mx_i) + 32'(k))]);
         end
       end
@@ -867,7 +901,7 @@ module otpu_mxu
     pf_u <= 1'b0;
     if (rst) begin
       i_act <= 1'b0;
-      q_h <= 1'b0; q_n <= '0;
+      q_n <= '0;
       occ <= '0;
       f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
@@ -882,42 +916,18 @@ module otpu_mxu
       logic [1:0] qn;
       logic [RFW:0] rn;
       logic [RFW:0] rl;
+      qent_t hn, nn;                            // the entries' next values (before a swap)
       qn = q_n;
       rn = rf_n;
       rl = rows_live;
-      // ---- accept a command
+      hn = h;
+      nn = n;
+      // ---- accept a command (the head if the queue is empty, else the next entry)
       if (start) begin
-        logic qi;
-        qi = q_h ^ (q_n != 0);
-        q_out[qi]   <= cmd.w3;
-        q_total[qi] <= cmd_total;
-        q_tz[qi]    <= cmd_tz;
-        if (q_n == 0) c_left <= cmd_total;          // becomes the head now
-        q_KB[qi]    <= cmd.w4[31:16];
-        q_KBa[qi]   <= cmd_KBa;
-        q_pair[qi]  <= cmd_pair;
-        for (int j = 0; j < MCOLS; j++) q_hi[qi][j] <= cmd_pair && 32'(j) >= 32'(cmd.w6[23:16]);
-        q_ors[qi]   <= cmd.w6[15:0];
-        q_mxo[qi]   <= cmd.w3 + 32'(cmd.w6[23:16]) * 32'(cmd.w6[15:0]);
-        q_M[qi]     <= cmd.w6[23:16];
-        q_run[qi]   <= drain_run(cmd.w6[15:0]);
-        q_ab[qi]    <= cmd.w6[31:24];
-        q_unit[qi]  <= cmd.flags[0];
-        q_wf[qi]    <= cmd.flags[5:4];
-        q_acc[qi]   <= cmd.flags[1];
-        q_rmax[qi]  <= cmd.flags[2];
-        q_asc[qi]   <= cmd.flags[3];
-        q_go[qi]    <= 1'b0;
-        q_asa[qi]   <= cmd.w2;
-        for (int j = 0; j < MCOLS; j++) q_jo[qi][j] <= 32'(j) * 32'(cmd.w6[15:0]);
-        begin
-          int g;
-          g = (int'(cmd.w6[23:16]) + MCOLS - 1) / MCOLS;
-          if (g < 1) g = 1;
-          q_G[qi]  <= 8'(g);
-          q_Ml[qi] <= MW'(int'(cmd.w6[23:16]) - (g - 1) * MCOLS);
-          q_gs[qi] <= 32'(MCOLS) * 32'(cmd.w6[15:0]);
-        end
+        if (q_n == 0) begin
+          hn = cmd_e;
+          c_left <= cmd_total;                    // becomes the head now
+        end else nn = cmd_e;
         qn = qn + 1;
         if (cmd.w4[15:0] != 0 && cmd.w4[31:16] != 0) begin
           i_act  <= 1'b1;
@@ -935,8 +945,8 @@ module otpu_mxu
       end
       // ---- release (in order): the head if not yet released, else the second entry
       if (go) begin
-        if (q_n != 0 && !q_go[q_h]) q_go[q_h] <= 1'b1;
-        else q_go[~q_h] <= 1'b1;
+        if (q_n != 0 && !h.go) hn.go = 1'b1;
+        else nn.go = 1'b1;
       end
       // ---- issue one chunk request
       if (go_iss) begin
@@ -1012,7 +1022,7 @@ module otpu_mxu
               end
             end else begin                          // the next group of this row
               dg <= dg + 8'd1; dg1 <= dg1 + 8'd1;
-              for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + q_gs[q_h];
+              for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + h.gs;
             end
             rf_h <= rf_h + 1;
             rn = rn - 1;
@@ -1059,17 +1069,16 @@ module otpu_mxu
       // ---- the consumer's command is complete
       if (c_fin && !pop) begin
         done <= 1'b1;
-        q_h <= ~q_h;
         qn = qn - 1;
         ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1;
         // the next head's chunk count: the queued entry, or a command accepted this cycle
-        c_left <= (q_n == 2'd2) ? q_total[~q_h] : (start ? cmd_total : '0);
+        c_left <= (q_n == 2'd2) ? n.total : (start ? cmd_total : '0);
         dj <= '0;
         for (int j = 0; j < MCOLS; j++) begin
           dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
-                                           : q_out[~q_h] + q_jo[~q_h][j];
+                                           : n.out + n.jo[j];
           drow[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
-                                            : q_out[~q_h] + q_jo[~q_h][j];
+                                            : n.out + n.jo[j];
         end
         mx_done <= 1'b0; mx_have <= '0;
         al_st <= 2'd0; al_i <= '0; mx_i <= '0;
@@ -1085,9 +1094,24 @@ module otpu_mxu
           drow[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
         end
       end
+      // the entries: completing the head swaps them (the next entry, or the command accepted
+      // this cycle, becomes the head; the old head stays in n)
+      if (c_fin && !pop) begin
+        h <= nn; n <= hn;
+      end else begin
+        h <= hn; n <= nn;
+      end
       q_n <= qn;
     end
   end
+`ifndef SYNTHESIS
+  // the head / next mapping relies on the rdy contract (start only with a free entry), and a
+  // command never completes while it pops (c_fin needs c_left == 0, pop c_left != 0)
+  always @(posedge clk) if (!rst) begin
+    if (start && q_n >= 2'd2) $fatal(1, "otpu_mxu: start with %0d commands queued", q_n);
+    if (c_fin && pop) $fatal(1, "otpu_mxu: the head completes while it pops");
+  end
+`endif
 
 endmodule
 
