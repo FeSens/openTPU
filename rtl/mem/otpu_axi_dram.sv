@@ -200,6 +200,9 @@ module otpu_axi_dram #(
   logic [KD-1:0] k1r [2], k1w [2];
   logic [KW:0]  k1r_h [2], k1r_n [2], k1w_h [2], k1w_n [2];
   logic [WW-1:0] rix_o [2];                      // rix at rix_h: the oldest SW read's slot
+  // ... registered (rix_o, a LUT RAM read, went to every write address of wrm: 8 ns of wire
+  // at MCOLS=4); replicated with the write address fan-out
+  (* max_fanout = 64 *) logic [WW-1:0] rix_q [2];
   logic [WW-1:0] rix_h [2];
   logic [WW:0]  rix_n [2];
   // SW gather buffers (see the top): valid, beat, bytes written, cycles since the last merge
@@ -314,9 +317,13 @@ module otpu_axi_dram #(
 
   // ------------------------------------------------------------------ response FIFOs
   logic [RW:0]  rb_n [2], rb_res [2];          // stored; stored + in flight
-  logic [RW-1:0] rb_h [2], rb_t [2];
+  logic [RW-1:0] rb_h [2];
   logic [AW_:0] ra_n [2], ra_res [2];
-  logic [AW_-1:0] ra_h [2], ra_t [2];
+  logic [AW_-1:0] ra_h [2];
+  // the write addresses of the 512-bit LUT RAMs rbm and ram (a few thousand WADR pins each):
+  // replicated (rb_t's, placed apart, were 8 ns of wire at MCOLS=4)
+  (* max_fanout = 64 *) logic [RW-1:0] rb_t [2];
+  (* max_fanout = 64 *) logic [AW_-1:0] ra_t [2];
 
   // ------------------------------------------------------------------ queue and FIFO memories
   // (per channel; written in their own processes so they map to LUT RAM)
@@ -381,11 +388,22 @@ module otpu_axi_dram #(
     always_ff @(posedge clk)
       if (m_arvalid[c] && m_arready[c] && ar_w[c]) rixm[WW'(rix_h[c] + rix_n[c])] <= qw_r[c];
     assign rix_o[c] = rixm[rix_h[c]];
+    // rix_q = rix_o whenever reads are in flight: a pop loads the next slot, or the one pushed
+    // now (at rix_h + 1); an empty queue loads the slot a push would write
+    wire rix_pop = m_rvalid[c] && m_rid[c] && k1r[c][k1r_h[c][KW-1:0]];
+    always_ff @(posedge clk)
+      if (rix_pop) rix_q[c] <= (rix_n[c] == 1) ? qw_r[c] : rixm[WW'(rix_h[c] + 1'b1)];
+      else if (rix_n[c] == 0) rix_q[c] <= qw_r[c];
+`ifndef SYNTHESIS
+    always_ff @(posedge clk)
+      if (!rst && rix_n[c] != 0 && rix_q[c] != rix_o[c])
+        $fatal(1, "otpu_axi_dram: rix_q %0d != rix_o %0d (channel %0d)", rix_q[c], rix_o[c], c);
+`endif
     logic [511:0] wrm [WQD];                // the queue's read data, per slot
     always_ff @(posedge clk)
       if (m_rvalid[c] && m_rid[c] && !k1r[c][k1r_h[c][KW-1:0]]) ram[ra_t[c]] <= m_rdata[c];
     always_ff @(posedge clk)
-      if (m_rvalid[c] && m_rid[c] && k1r[c][k1r_h[c][KW-1:0]]) wrm[rix_o[c]] <= m_rdata[c];
+      if (rix_pop) wrm[rix_q[c]] <= m_rdata[c];
     assign wr_head[c] = wrm[qw_h[c]];
     assign hb[c] = qb_t'(qbm[qb_h[c]]);
     assign ha[c] = qa_t'(qam[qa_h[c]]);
@@ -679,7 +697,7 @@ module otpu_axi_dram #(
           if (m_rresp[c][1]) err <= 1'b1;
           if (m_rid[c]) begin
             if (k1r[c][k1r_h[c][KW-1:0]]) begin  // the SW queue's read: its slot has the data
-              wgot[c][rix_o[c]] <= 1'b1;
+              wgot[c][rix_q[c]] <= 1'b1;
               rix_h[c] <= rix_h[c] + 1;
               nrx = nrx - 1;
             end else begin
