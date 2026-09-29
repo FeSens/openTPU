@@ -46,16 +46,15 @@ def design_config(**kw) -> Config:
 
 def board_config(**kw) -> Config:
     """The configuration built for the YPCB-00338 board (xc7k480t, 2 x DDR3, PCIe): one slice,
-    128-deep MXU x 2 columns (Qwen3 query groups are 2 rows), 8 VPU lanes / TMEM banks,
-    64K-word TMEM, 128 ACT RAM blocks (K <= 16384), 4K-instruction IMEM, 4 GiB DRAM.
-    OTPU_MCOLS in the environment selects the MXU column count (default 2; make -C
-    boards/ypcb-00338 bit MCOLS=4), OTPU_LANES the VPU lanes / TMEM banks (default 8; bit
+    128-deep MXU x 4 columns, 8 VPU lanes / TMEM banks, 64K-word TMEM, 128 ACT RAM blocks
+    (K <= 16384), 4K-instruction IMEM, 4 GiB DRAM. OTPU_MCOLS in the environment selects the MXU
+    column count (default 4, as make -C boards/ypcb-00338 bit builds; 2: bit MCOLS=2), OTPU_LANES the VPU lanes / TMEM banks (default 8; bit
     LANES=16; timing only, the programs do not change), OTPU_PAIR=1 column reuse (MM PAIR /
     QACT DUP), OTPU_DSTEP=1 the DMA's DSTEP, OTPU_STREAM=1 the stream engine, OTPU_ACT_ROWS the ACT RAM rows (default MCOLS;
     more: the MXU replays each weight chunk for MCOLS rows at a time). They configure the
     simulators and the board model; on the card, opentpu.host.board.device_config takes them
     from the bitstream."""
-    base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 2)), ACT_BLOCKS=128,
+    base = dict(S=1, D=128, MCOLS=int(os.environ.get("OTPU_MCOLS", 4)), ACT_BLOCKS=128,
                 LANES=int(os.environ.get("OTPU_LANES", 8)),
                 ACT_ROWS=int(os.environ.get("OTPU_ACT_ROWS", 0)), TMEM_WORDS=1 << 16,
                 IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32,

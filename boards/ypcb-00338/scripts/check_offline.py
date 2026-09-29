@@ -6,8 +6,9 @@
   - every top-level port bit has a location (except the GT lanes and the refclk N side, which
     the XDMA IP / the GT reference-clock buffer place);
   - no package pin is assigned twice, and every pin exists in the xc7k480t-ffg1156 IOB map.
-With --mem mig_native the top is otpu_fpga_top_mn (the MIG build's XDCs). With --mem litedram
-it is otpu_fpga_top_ld (otpu_top_ld.xdc and the LiteDRAM core's XDC, whose pins are LOCs), and
+The top is the default build's, otpu_fpga_top_ld (--mem litedram: otpu_top_ld.xdc and the
+LiteDRAM core's XDC, whose pins are LOCs), with --mem mig otpu_fpga_top (otpu_top.xdc and the MIG
+pins), with --mem mig_native otpu_fpga_top_mn (the MIG build's XDCs). For the LiteDRAM build
 also:
   - otpu_top_ld.xdc has every board line of otpu_top.xdc (all but the MIG's and cal_s1's);
   - the lint stub sim/otpu_litedram_stub.sv has the core's port list (litedram/otpu_litedram.v).
@@ -53,7 +54,7 @@ def module_header(path: Path, name: str) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="offline checks of the Vivado flow")
-    ap.add_argument("--mem", choices=("mig", "mig_native", "litedram"), default="mig")
+    ap.add_argument("--mem", choices=("mig", "mig_native", "litedram"), default="litedram")
     mem = ap.parse_args().mem
     bad = []
     # ---- Tcl

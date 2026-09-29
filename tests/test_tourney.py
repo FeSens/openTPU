@@ -177,7 +177,7 @@ def test_sandbox_rejects(tmp_path):
 # ------------------------------------------------------------------------------ components
 def test_component_configs_are_consistent():
     comps = sorted((ROOT / "tools" / "tourney" / "components").glob("*.yaml"))
-    assert len(comps) == 13
+    assert len(comps) == 14
     for p in comps:
         c = yaml.safe_load(p.read_text())
         assert c["name"] == p.stem
@@ -224,6 +224,13 @@ def test_path_summary_groups_units():
     assert AG.unit_of("u_board/u_slice/u_vpu/g_se.u_tail/x_reg/C") == "u_vpu/u_tail"
     assert AG.unit_of("u_board/u_slice/cnt_reg/D") == "u_slice"
     assert AG.unit_of("u_board/u_mem/qc_reg[0][19]/C") == "u_mem"
+    # the LiteDRAM build: otpu_native_sys around the board, the channels' bridges, the core
+    assert AG.unit_of("u_sys/u_board/u_slice/u_mxu/q_h_reg/C") == "u_mxu"
+    assert AG.unit_of("u_sys/u_board/g_native.u_nmem/whb_reg[0][62][1]/R") == "u_nmem"
+    assert AG.unit_of("u_sys/u_ch1/u_xr/mem_reg_0_63_0_2/RAMA/CLK") == "u_ch"
+    assert AG.unit_of("u_sys/u_split/o_q_reg[3]/C") == "u_split"
+    assert AG.unit_of("u_sys/cal_s1_reg[0]/C") == "u_sys"
+    assert AG.unit_of("u_ld/litedramnativeportecc1_ded_errors_status_reg[16]/CE") == "u_ld"
     s = AG.path_summary(t).splitlines()
     assert s[0].startswith("- u_dma -> u_mem: 1 of the paths, worst -0.586 ns, up to 20 levels")
     assert s[1] == ("- u_mxu -> u_tmem: 2 of the paths, worst -0.582 ns, up to 14 levels, "
@@ -732,8 +739,10 @@ def test_fmax_prompt_and_xunit(tmp_path):
     assert "PATH-LIST" in p and "CONG-TABLE" in p and "122.97 MHz" in p
     assert "straight to the full build" in p and "=== rtl/top/otpu_slice.sv ===" in p
     assert AG.expand(ROOT, ["rtl/boards/ypcb-00338/*.sv"]) == [
-        f"rtl/boards/ypcb-00338/{n}.sv" for n in ("otpu_board", "otpu_ctrl", "otpu_fpga_top",
-                                                  "otpu_trace")]
+        f"rtl/boards/ypcb-00338/{n}.sv" for n in (
+            "otpu_afifo", "otpu_axi_split2", "otpu_board", "otpu_ctrl", "otpu_fpga_top",
+            "otpu_fpga_top_ld", "otpu_fpga_top_mn", "otpu_mem_ch", "otpu_mig_native",
+            "otpu_native_sys", "otpu_trace")]
 
 
 # ------------------------------------------------------------------------------ fmax: the round's full build

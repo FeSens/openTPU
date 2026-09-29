@@ -114,14 +114,12 @@ UARCH = {"WIN": 32, "RPB": 4, "WPB": 2}
 BOARD_UARCH = {"WIN": 16, "RPB": 128, "WPB": 1, "FIFO_DEPTH": 1024}
 if os.environ.get("OTPU_UARCH") == "board":
     UARCH = dict(BOARD_UARCH)
-# MXU dot-product implementation (timing only): OTPU_MXU=cascade selects the DSP cascade
-# chains (OTPU_MXU_CL products per chain) instead of the adder tree.
-if os.environ.get("OTPU_MXU") == "cascade":
-    UARCH["MXU_IMPL"] = 1
+# MXU dot-product implementation (timing only): the 2D systolic array, as the board builds it
+# (weights hop column to column; docs/mxu_systolic.md); OTPU_MXU=tree the adder tree,
+# OTPU_MXU=cascade the DSP cascade chains (OTPU_MXU_CL products per chain).
+UARCH["MXU_IMPL"] = {"tree": 0, "cascade": 1}.get(os.environ.get("OTPU_MXU", "systolic"), 2)
+if UARCH["MXU_IMPL"] == 1:
     UARCH["MXU_CL"] = int(os.environ.get("OTPU_MXU_CL", "16"))
-# OTPU_MXU=systolic: the 2D systolic array (weights hop column to column; docs/mxu_systolic.md)
-if os.environ.get("OTPU_MXU") == "systolic":
-    UARCH["MXU_IMPL"] = 2
 # VPU lanes with the composite functions (exp2, recip, rsqrt; timing only): OTPU_VPU_CL=4
 if os.environ.get("OTPU_VPU_CL"):
     UARCH["VPU_CL"] = int(os.environ["OTPU_VPU_CL"])
@@ -139,15 +137,16 @@ if os.environ.get("OTPU_ULANES"):
 # random stalls (percent) and latency (D = 128 only; other configurations keep the behavioural
 # DRAM). BOOT: the program is placed in DRAM and copied into IMEM by the slice's loader, as on
 # the board. The environment (OTPU_AXI=1, OTPU_BOOT=1, OTPU_STALL=n) sets the defaults, so the
-# whole suite can be run on the board's memory path. NATIVE (OTPU_NATIVE=1): that memory path is
-# the native one wherever it is used -- the AXI runs here (the adapter otpu_native_dram and the
-# native memory model sim/verilator/otpu_native_mem.sv, which takes the same +axi_* arguments
-# except the per-transaction costs) and the board model (tb_board with MEM_NATIVE=1).
-# OTPU_NATIVE=ld / mig: the board model on the LiteDRAM / native MIG build's channels instead
-# (otpu_mem_ch in front of a LiteDRAM native-port / MIG native-interface model:
-# sim/verilator/otpu_chmem.sv, MEM_NATIVE=2 / 3); the AXI runs here take the native path as with 1.
+# whole suite can be run on the board's memory path. NATIVE: that memory path is the native one
+# wherever it is used, as the board builds it -- the AXI runs here (the adapter otpu_native_dram
+# and the native memory model sim/verilator/otpu_native_mem.sv, which takes the same +axi_*
+# arguments except the per-transaction costs) and the board model: by default (OTPU_NATIVE=ld)
+# on the LiteDRAM build's channels (otpu_mem_ch in front of a LiteDRAM native-port model:
+# sim/verilator/otpu_chmem.sv, tb_board MEM_NATIVE=2), with OTPU_NATIVE=1 on otpu_native_mem
+# (MEM_NATIVE=1), with OTPU_NATIVE=mig on the native MIG build's channels (MEM_NATIVE=3).
+# OTPU_NATIVE=0: the MIG AXI build's path (otpu_axi_dram: the AXI runs and tb_board MEM_NATIVE=0).
 MEMORY = {"AXI": os.environ.get("OTPU_AXI", "0") == "1",
-          "NATIVE": {"1": True, "ld": "ld", "mig": "mig"}.get(os.environ.get("OTPU_NATIVE", "0"),
+          "NATIVE": {"1": True, "ld": "ld", "mig": "mig"}.get(os.environ.get("OTPU_NATIVE", "ld"),
                                                                False),
           "BOOT": os.environ.get("OTPU_BOOT", "0") == "1",
           "STALL": int(os.environ.get("OTPU_STALL", "20")),

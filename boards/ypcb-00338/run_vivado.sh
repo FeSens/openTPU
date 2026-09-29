@@ -2,7 +2,9 @@
 # Build the openTPU bitstream for the YPCB-00338 in Vivado batch mode, natively or in Docker.
 #
 #   ./run_vivado.sh [800|1066|1300|1333|1600] # native: `vivado` on PATH (x86-64 Linux / Windows WSL)
-#   MCOLS=4 ./run_vivado.sh               # 4 MXU columns (faster prefill / batched decode)
+#                                         # the default build: the LiteDRAM core (DDR3-1066 whatever the
+#                                         # speed argument; host calibration), MCOLS=4, the systolic MXU
+#   MCOLS=2 ./run_vivado.sh               # 2 MXU columns (4, the default: faster prefill / batched decode)
 #   VPU_CL=4 ./run_vivado.sh              # 4 VPU lanes with exp2/recip/rsqrt (faster softmax)
 #   LANES=16 ./run_vivado.sh              # 16 VPU lanes / TMEM banks
 #   CORE_MHZ=80 ./run_vivado.sh           # slower core clock when 100 MHz does not close
@@ -14,9 +16,11 @@
 #   IMPL_STRATEGY=Performance_Explore     # a stronger implementation strategy (with bit or impl)
 #   MIG_ADDR_MAP=BANK_ROW_COLUMN          # the MIG address map (default ROW_BANK_COLUMN; gen_mig_prj.py)
 #   MIG_BANK_MACHINES=8 MIG_ORDERING=Strict # the MIG controllers' bank machines (4) and ordering (Normal)
-#   MEM=mig_native ./run_vivado.sh 1066   # the MIGs' native ports behind otpu_mem_ch instead of AXI
+#   MEM=mig ./run_vivado.sh 1066          # the MIGs' AXI ports behind the SmartConnect instead of LiteDRAM
+#                                         # (otpu_fpga_top, bd.tcl; gen_mig_prj.py)
+#   MEM=mig_native ./run_vivado.sh 1066   # the MIGs' native ports behind otpu_mem_ch
 #                                         # (otpu_fpga_top_mn, bd_native.tcl; gen_mig_prj.py --native)
-#   MEM=litedram ./run_vivado.sh          # LiteDRAM instead of the MIGs (DDR3-1066, host calibration:
+#   MEM=litedram ./run_vivado.sh          # the default: LiteDRAM (DDR3-1066, host calibration:
 #                                         # otpu_fpga_top_ld, bd_native.tcl; the speed argument is ignored)
 #   The xc7k480t needs a paid or 30-day evaluation license, node-locked to a MAC address. In Docker
 #   set VIVADO_MAC (the MAC the license was issued for) and XILINXD_LICENSE_FILE (path to the .lic).
@@ -25,10 +29,10 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-speed="${1:-800}"
+speed="${1:-1066}"
 out="${OUT_DIR:-$root/build/vivado}"
 jobs="${JOBS:-8}"
-mcols="${MCOLS:-2}"            # MXU columns (the host reads them from the VERSION register)
+mcols="${MCOLS:-4}"            # MXU columns (the host reads them from the VERSION register)
 vpu_cl="${VPU_CL:-2}"          # VPU lanes with the composite functions (timing only)
 lanes="${LANES:-8}"            # VPU lanes / TMEM banks (likewise in VERSION)
 act_rows="${ACT_ROWS:-$mcols}" # ACT RAM rows (> MCOLS: MM replay; the ACT_ROWS register)
@@ -39,7 +43,7 @@ core_mhz="${CORE_MHZ:-100}"   # accelerator clock; lower it (80, 75) if timing d
 build_id="${BUILD_ID:-$(git -C "$root" rev-parse HEAD 2>/dev/null | cut -c1-8)}"
 build_id="${build_id:-0}"
 
-mem="${MEM:-mig}"               # mig (the default), mig_native or litedram
+mem="${MEM:-litedram}"          # litedram (the default), mig or mig_native
 case "$mem" in
   mig|mig_native)
     native=(); mem_arg=()

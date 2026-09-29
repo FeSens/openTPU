@@ -25,32 +25,36 @@ device: use a paid license or AMD's 30-day evaluation license (see "License" bel
 
 ```sh
 cd boards/ypcb-00338
-make lint          # offline: MIG pin check, Tcl syntax, XDC vs top ports, Verilator lint
-make bit           # = ./run_vivado.sh 1066 -> build/vivado/otpu.bit, otpu.mcs, reports/
-                   # DDR3-1066 (533 MHz, MIG ui_clk 133 MHz): the default and production speed
-make bit DDR=800   # DDR3-800, the bring-up speed
-make bit DDR=1300  # DDR3-1300 / 1333 / 1600: OUT OF SPEC (outside MIG's range for these HR
-                   # banks; 1333 and 1600 also patch MIG's PHY). Experiments only, never a
-                   # default; see "Faster DDR3" in section 5
+make lint          # offline: Tcl syntax, XDC vs top ports, Verilator lint (the default build)
+make bit           # = MEM=litedram MCOLS=4 ./run_vivado.sh 1066 -> build/vivado/otpu.bit, otpu.mcs,
+                   # reports/: the default build. The LiteDRAM core (WL7DDRPHY, DDR3-1066, host
+                   # calibration; per channel behind otpu_mem_ch, which also takes XDMA's
+                   # traffic; no SmartConnect; docs/litedram.md section 9), 4 MXU columns and the
+                   # systolic MXU (docs/mxu_systolic.md; the host reads MCOLS and LANES from the
+                   # bitstream's VERSION register)
+make bit FAST=1    # the same as a development build at 100 MHz (below)
+make bit MCOLS=2   # 2 MXU columns
 make bit CORE_MHZ=80   # accelerator clock fallback when 100 MHz does not close (800/D MHz, D in 1/8 steps)
-make bit MCOLS=4   # 4 MXU columns: ~1.7x prefill and batched decode, ~67% LUT (the host
-                   # reads MCOLS and LANES from the bitstream's VERSION register)
 make bit VPU_CL=4  # 4 VPU lanes with exp2/recip/rsqrt (2 by default): ~75% -> ~89% of the
                    # roofline on long-context attention; timing only, programs unchanged
 make bit LANES=16  # 16 VPU lanes / TMEM banks (the MXU and quantizer stay on 8): Qwen3.5 -4%
                    # cycles at 80% bw, -13% at 100% (simulated). Does not route on the xc7k480t
                    # (measured, MCOLS=4 VPU_CL=2 with the r3-route area cuts: 212K LUT placed,
                    # route_design stops at global congestion level 6); kept for larger parts
-make bit MEM=litedram    # the LiteDRAM core (WL7DDRPHY) instead of the MIGs (DDR3-1066, host
-                   # calibration; per channel behind otpu_mem_ch, which also takes XDMA's
-                   # traffic; no SmartConnect; docs/litedram.md section 9). Not yet built
+make bit MEM=mig   # the two MIGs' AXI ports behind the SmartConnect instead of LiteDRAM (the
+                   # production image until the LiteDRAM build qualified; DDR3-1066 by default)
+make bit MEM=mig DDR=800   # DDR3-800, the MIG bring-up speed
+make bit MEM=mig DDR=1300  # DDR3-1300 / 1333 / 1600: OUT OF SPEC (outside MIG's range for these HR
+                   # banks; 1333 and 1600 also patch MIG's PHY). Experiments only, never a
+                   # default; see "Faster DDR3" in section 5
 make bit MEM=mig_native  # the MIGs' native ports instead of AXI (per channel otpu_mig_native
-                   # behind otpu_mem_ch): LiteDRAM's fallback, parked. Not built
-make lint-mn / make lint-ld   # the offline checks and Verilator lint of those two builds' tops
+                   # behind otpu_mem_ch): parked. Not built
+make lint-mig / make lint-mn   # the offline checks and Verilator lint of those two builds' tops
 ```
 
-`run_vivado.sh` runs `scripts/gen_mig_prj.py` (MIG configuration from the board pin lists),
-`vivado/create_project.tcl` (project, block design `vivado/bd.tcl`, constraints) and
+`run_vivado.sh` runs `vivado/create_project.tcl` (project, block design `vivado/bd_native.tcl`,
+constraints; with MEM=mig first `scripts/gen_mig_prj.py`, the MIG configuration from the board pin
+lists, and the block design `vivado/bd.tcl`) and
 `vivado/build.tcl` (synthesis, implementation with post-route phys_opt, reports, bitstream,
 BPI flash image). Expect 1.5-3 h. Look at `build/vivado/reports/SUMMARY.txt` first: WNS/WHS and
 the achieved frequency per clock; then `timing_summary.rpt`, `util_hier.rpt`, `cdc.rpt`.

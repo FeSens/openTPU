@@ -3,7 +3,7 @@ description: 'The whole design''s RTL, for paths that cross modules: any file in
   slice and board tops, the shared fp operators), so one change can register a bus between two units,
   retime logic across a unit boundary, replicate a high-fanout driver in the unit that drives it, or move
   logic to the other side of a pipeline register. The worst full-build paths are the input: aim at a path''s
-  source and destination units together. Constraints, clocks and the block design (MIG, XDMA) are not
+  source and destination units together. Constraints, clocks and the block design (LiteDRAM, XDMA) are not
   part of it (otpu_impl, otpu_xunit).'
 allowed:
 - rtl/*/*.sv

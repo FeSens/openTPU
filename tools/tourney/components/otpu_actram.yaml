@@ -9,7 +9,7 @@ synth:
     weight: 1
     params:
       D: 128
-      MCOLS: 2
+      MCOLS: 4
       BLOCKS: 128
       LANES: 8
     sources:

@@ -1,4 +1,5 @@
-"""Profile one decode token on the RTL at the board configuration (AXI memory path).
+"""Profile one decode token on the RTL at the board configuration (the board's memory path:
+the native one, rtlsim.MEMORY; OTPU_NATIVE=0 the MIG AXI build's).
 
     python3 tools/perf_qwen.py [--model qwen3|lfm2|qwen35|DIR] [--layers N] [--pos P]
                                [--bw 100] [--check] [--wformat int8|int4|fp4]
@@ -149,7 +150,7 @@ def main():
                          "decode step")
     ap.add_argument("--logits", choices=["last", "all", "none"], default="last",
                     help="--rows: which rows get logits (prefill: last or none; verify: all)")
-    ap.add_argument("--mcols", type=int, default=None, help="MXU columns (default OTPU_MCOLS or 2)")
+    ap.add_argument("--mcols", type=int, default=None, help="MXU columns (default OTPU_MCOLS or 4)")
     ap.add_argument("--block", type=int, default=None, help="attention block (tokens)")
     ap.add_argument("--depth", type=int, default=None, help="attention score blocks in flight")
     ap.add_argument("--check", action="store_true", help="compare with the ISA simulator")

@@ -1,26 +1,21 @@
-name: otpu_mxu
-description: 'MXU: streams int8 weight chunks (D bytes/cycle) through a prefetch FIFO against up to MCOLS
-  stationary int8 rows in ACT RAM; products in the systolic array (IMPL 2: a DSP48E1 per position, weights
-  hopping column to column), i2f, scale multiplies, isum_4 partial loop, result FIFO, drain with ACC/ASCALE
-  read-modify-write, RMAX.'
+name: otpu_native_dram
+description: 'Native DRAM adapter (the LiteDRAM build''s): slice ports A (words), B (chunks) and the QST
+  write port onto the two channels'' native ports, one command per 64-byte beat, 64-byte interleave (hashed),
+  per-channel queues, in-order read merge, A-beat reuse, the SW queue''s read-fill with its hazard buckets,
+  write acknowledges (n_wdone, wr_idle).'
 allowed:
-- rtl/mxu/otpu_mxu.sv
+- rtl/mem/otpu_native_dram.sv
 synth:
   parts:
-  - top: otpu_mxu
+  - top: otpu_native_dram
     weight: 1
     params:
       D: 128
-      MCOLS: 4
-      DEPTH: 1024
-      LANES: 8
-      IMPL: 2
-      SID: 0
     sources:
     - rtl/vpu/otpu_fp.sv
     - rtl/vpu/otpu_fpipe.sv
     - rtl/top/otpu_pkg.sv
-    - rtl/mxu/otpu_mxu.sv
+    - rtl/mem/otpu_native_dram.sv
 target_mhz: 110
 tests:
   fast:
@@ -33,11 +28,16 @@ tests:
   - tests/test_rtl.py::test_scoreboard_stress_single_slice[0]
   - tests/test_rtl.py::test_scoreboard_stress_single_slice[1]
   - tests/test_rtl.py::test_scoreboard_stress_single_slice[2]
-  - tests/test_rtl.py::test_attention_layer_rtl[1]
-  - tests/test_rtl.py::test_mlp_rtl[2]
   board:
   - tests/test_rtl.py::test_design_size_block_128_rtl
   - tests/test_rtl.py::test_board_memory_path_stress[1-30]
   - tests/test_rtl.py::test_board_memory_path_stress[4-80]
   - tests/test_rtl.py::test_board_memory_path_fuzz[0-40]
+  - tests/test_rtl.py::test_native_memory_path[hazard-1-50-20]
+  - tests/test_rtl.py::test_native_memory_path[hazard-2-80-120]
+  - tests/test_rtl.py::test_native_memory_path[random-3-40-20]
+  - tests/test_rtl.py::test_native_memory_path[random-4-70-400]
+  - tests/test_rtl.py::test_board_memory_path_stress[2-60]
+  - tests/test_rtl.py::test_board_memory_path_fuzz[1-70]
+  - tests/test_board.py
 perf: true

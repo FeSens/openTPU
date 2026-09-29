@@ -1,21 +1,23 @@
 # Create the Vivado project for openTPU on the YPCB-00338.
 #   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL] [LANES] [ACT_ROWS] [DSTEP] [AXI_BL] [MEM] [MXU]
-# DDR_SPEED: 800 (default), 1066, or the out-of-spec 1300, 1333, 1600 (docs/board.md). OUT_DIR: default ../../../build/vivado (repository build/).
+# The defaults build the LiteDRAM core, MCOLS=4 and the systolic MXU.
+# DDR_SPEED: 1066 (default), 800, or the out-of-spec 1300, 1333, 1600 (docs/board.md; the MIG
+# builds only). OUT_DIR: default ../../../build/vivado (repository build/).
 # BUILD_ID: 8 hex digits for the BUILD_ID register (default: the first 8 hex digits of the
 # repository's git commit, else 0).
 # MEM: the memory controllers and how the accelerator and XDMA reach them.
-#   mig (default)  the two MIGs' AXI ports behind the SmartConnect (bd.tcl, otpu_fpga_top)
+#   mig            the two MIGs' AXI ports behind the SmartConnect (bd.tcl, otpu_fpga_top)
 #   mig_native     the two MIGs' native ports, each behind otpu_mig_native and otpu_mem_ch
 #                  (bd_native.tcl, otpu_fpga_top_mn; gen_mig_prj.py --native for the .prj files;
 #                  the MIGs are RTL-level IP here, IP integrator takes the MIG with AXI only)
-#   litedram       the LiteDRAM core boards/ypcb-00338/litedram/, each channel behind otpu_mem_ch
+#   litedram       (default) the LiteDRAM core boards/ypcb-00338/litedram/, each channel behind otpu_mem_ch
 #                  (bd_native.tcl, otpu_fpga_top_ld; DDR3-1066 whatever DDR_SPEED says)
 
 set here [file normalize [file dirname [info script]]]
 set root [file normalize $here/../../..]
-set DDR_SPEED [expr {[llength $argv] > 0 ? [lindex $argv 0] : 800}]
+set DDR_SPEED [expr {[llength $argv] > 0 ? [lindex $argv 0] : 1066}]
 set out [expr {[llength $argv] > 1 ? [file normalize [lindex $argv 1]] : "$root/build/vivado"}]
-set MCOLS [expr {[llength $argv] > 2 ? [lindex $argv 2] : 2}]
+set MCOLS [expr {[llength $argv] > 2 ? [lindex $argv 2] : 4}]
 set CORE_MHZ [expr {[llength $argv] > 3 ? [lindex $argv 3] : 100}]
 set BUILD_ID [expr {[llength $argv] > 4 ? [lindex $argv 4] : ""}]
 set VPU_CL [expr {[llength $argv] > 5 ? [lindex $argv 5] : 2}]
@@ -23,9 +25,10 @@ set LANES [expr {[llength $argv] > 6 ? [lindex $argv 6] : 8}]
 set ACT_ROWS [expr {[llength $argv] > 7 ? [lindex $argv 7] : $MCOLS}]
 # DSTEP 0: the DMA's DeltaNet head step left out (CAPS bit6 = 0; the compiler emits VOPs)
 set DSTEP [expr {[llength $argv] > 8 ? [lindex $argv 8] : 1}]
-# AXI_BL: the accelerator's port B read burst, beats (8 default, up to 64; bd.tcl's MAX_BURST_LENGTH follows)
-set AXI_BL [expr {[llength $argv] > 9 ? [lindex $argv 9] : 8}]
-set MEM [expr {[llength $argv] > 10 ? [lindex $argv 10] : "mig"}]
+# AXI_BL: the accelerator's port B read burst, beats (32 default, as run_vivado.sh; up to 64;
+# bd.tcl's MAX_BURST_LENGTH follows)
+set AXI_BL [expr {[llength $argv] > 9 ? [lindex $argv 9] : 32}]
+set MEM [expr {[llength $argv] > 10 ? [lindex $argv 10] : "litedram"}]
 if {$MEM ni {mig mig_native litedram}} { error "MEM must be mig, mig_native or litedram, not $MEM" }
 if {$MEM eq "litedram"} { set DDR_SPEED 1066 }
 # MXU: the MXU's dot product (docs/mxu_systolic.md): systolic (MXU_IMPL 2, the default) or tree (0)

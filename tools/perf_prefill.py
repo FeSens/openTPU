@@ -92,7 +92,7 @@ class Bench:
     def cycles(self, n: int, kind: str, p0: int, rows: int = 1, head: bool = True) -> int:
         """Cycles of one run of the n-layer prefix: a decode step at p0 ("step") or `rows`
         prompt rows at p0 .. ("rows"; logits for the last one with `head`)."""
-        key = f"{self.path.name}|{os.environ.get('OTPU_MCOLS', '2')}|" \
+        key = f"{self.path.name}|{board_config().MCOLS}|" \
               f"{os.environ.get('OTPU_ACT_ROWS', '0')}|{self.bw}|" \
               f"{self.lat}|{n}|{kind}|{p0}|{rows}|{head}"
         if key in self.results:

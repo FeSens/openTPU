@@ -209,8 +209,8 @@ def test_device_config_takes_dstep_from_caps(no_cfg_env):
 
 
 def test_board_backend_rejects_another_configuration(no_cfg_env):
-    card = FakeTransport(devname="fake6", MCOLS=4)
-    with pytest.raises(ConfigMismatch, match="MCOLS=4 LANES=8, the configuration D=128 MCOLS=2"):
+    card = FakeTransport(devname="fake6", MCOLS=2)
+    with pytest.raises(ConfigMismatch, match="MCOLS=2 LANES=8, the configuration D=128 MCOLS=4"):
         BoardBackend(board_config(DRAM_BYTES=1 << 21), [np.zeros(4096, np.uint8)],
                      transport=card)
     Board(FakeTransport(devname="fake6")).close()             # the lock was released

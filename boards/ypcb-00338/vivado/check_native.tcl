@@ -1,6 +1,6 @@
 # Vivado check of a native-channel build's project and top without a build (minutes, not hours):
-# create_project.tcl with MEM=mig_native (default; the .prj files regenerated with
-# gen_mig_prj.py --native first, the MIGs made as RTL-level IP) or MEM=litedram, so bd_native.tcl
+# create_project.tcl with MEM=litedram (default) or MEM=mig_native (the .prj files regenerated
+# with gen_mig_prj.py --native first, the MIGs made as RTL-level IP), so bd_native.tcl
 # is built and validated and its wrapper made; the constraint files' properties; the block
 # design's synthesis sources; for mig_native the generated MIGs' parameters; then RTL elaboration
 # of the top (synth_design -rtl): the instances, their modules, black boxes, and the
@@ -13,15 +13,16 @@ set root [file normalize [file dirname [info script]]/../../..]
 # small footprint: the check shares its host with builds
 set_param general.maxThreads 2
 set out [file normalize [lindex $argv 0]]
-set mem [expr {[llength $argv] > 1 ? [lindex $argv 1] : "mig_native"}]
+set mem [expr {[llength $argv] > 1 ? [lindex $argv 1] : "litedram"}]
 set logf [file normalize [expr {[llength $argv] > 2 ? [lindex $argv 2] : "vivado.log"}]]
 if {$mem ni {mig_native litedram}} { error "MEM is $mem: mig_native or litedram" }
 set bad {}
 if {$mem eq "mig_native"} {
   puts [exec python3 $root/boards/ypcb-00338/scripts/gen_mig_prj.py --speed 1066 --native]
 }
-# create_project.tcl's arguments as run_vivado.sh passes them (DDR3-1066, AXI_BL 32)
-set argv [list 1066 $out 2 100 "" 2 8 2 1 32 $mem]
+# create_project.tcl's arguments as run_vivado.sh passes them by default (DDR3-1066, MCOLS 4,
+# ACT_ROWS 4, AXI_BL 32; the systolic MXU)
+set argv [list 1066 $out 4 100 "" 2 8 4 1 32 $mem]
 set argc [llength $argv]
 source $root/boards/ypcb-00338/vivado/create_project.tcl
 

@@ -1,11 +1,13 @@
 # openTPU on the Inspur YPCB-00338.
-#   make lint       offline: MIG pin check, Tcl syntax, XDC ports vs the top, Verilator lint
+#   make lint       offline: Tcl syntax, XDC ports vs the top, Verilator lint of the default build
+#                   (LiteDRAM, otpu_fpga_top_ld; lint-ld is the same)
+#   make lint-mig   the same for the MIG AXI build (otpu_fpga_top, MEM=mig; MIG pin check)
 #   make lint-mn    the same for the native MIG build (otpu_fpga_top_mn, MEM=mig_native)
-#   make lint-ld    the same for the LiteDRAM build (otpu_fpga_top_ld; no MIG files needed)
 #   make mig        regenerate the MIG .prj files and DDR3 pin XDC (DDR=800|1066|1300|1333|1600)
 #   make bit        Vivado batch build (MCOLS=2|4, VPU_CL=2|4, LANES=8|16, CORE_MHZ=100|80|75) -> build/vivado/otpu.bit (VIVADO_DOCKER=image for Docker)
-#                   MEM=mig_native: the MIGs' native ports behind otpu_mem_ch instead of AXI
-#                   MEM=litedram: the LiteDRAM core instead of the MIGs (DDR3-1066; DDR ignored)
+#                   the default: the LiteDRAM core (DDR3-1066, host calibration), MCOLS=4, the
+#                   systolic MXU; MEM=mig: the MIGs' AXI ports behind the SmartConnect instead,
+#                   MEM=mig_native: the MIGs' native ports behind otpu_mem_ch
 #   make impl       rerun implementation only on the existing project (constraint changes)
 #   make program    JTAG load (openFPGALoader; BIT=path, default build/vivado/otpu.bit); make program-vivado with Vivado's hw_server
 #   make flash      write the BPI flash (permanent; MCS=path, default build/vivado/otpu.mcs)
@@ -20,9 +22,10 @@ DDR ?= 1066
 # ACT_ROWS: ACT RAM rows, the most rows of one MM (default MCOLS; 8: prefill's 8-row MMs stream
 #   each weight once, the MXU replaying it per MCOLS rows)
 # BUILD_ID: the BUILD_ID register (8 hex digits; default: the git commit)
-# MEM: mig (default), mig_native or litedram (run_vivado.sh)
+# MEM: litedram (default), mig or mig_native (run_vivado.sh)
+MEM ?= litedram
 CORE_MHZ ?= 100
-MCOLS ?= 2
+MCOLS ?= 4
 VPU_CL ?= 2
 LANES ?= 8
 ACT_ROWS ?= $(MCOLS)
@@ -41,12 +44,14 @@ LINT := verilator --lint-only -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-U
   -Wno-UNUSEDPARAM -DSYNTHESIS -GMCOLS=$(MCOLS) -GACT_ROWS=$(ACT_ROWS) -GVPU_CL=$(VPU_CL) -GLANES=$(LANES) \
   -GMXU_IMPL=$(MXU_IMPL) sim/unisim_dsp48e1_stub.sv
 
-.PHONY: lint lint-mn lint-ld mig bit impl program program-vivado flash
+.PHONY: lint lint-mig lint-mn lint-ld mig bit impl program program-vivado flash
 mig:
 	python3 scripts/gen_mig_prj.py --speed $(DDR)
 
-lint: mig
-	python3 scripts/check_offline.py
+lint: lint-ld
+
+lint-mig: mig
+	python3 scripts/check_offline.py --mem mig
 	$(LINT) --top-module otpu_fpga_top $(RTL) \
 	  sim/otpu_bd_wrapper_stub.sv $(ROOT)/rtl/boards/ypcb-00338/otpu_fpga_top.sv
 
@@ -61,10 +66,10 @@ lint-ld:
 	  sim/otpu_bd_ld_wrapper_stub.sv sim/otpu_litedram_stub.sv $(ROOT)/rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv
 
 bit:
-	$(if $(MEM),MEM=$(MEM)) $(if $(AXI_BL),AXI_BL=$(AXI_BL)) MCOLS=$(MCOLS) ACT_ROWS=$(ACT_ROWS) VPU_CL=$(VPU_CL) LANES=$(LANES) CORE_MHZ=$(CORE_MHZ) $(if $(BUILD_ID),BUILD_ID=$(BUILD_ID)) ./run_vivado.sh $(DDR)
+	MEM=$(MEM) $(if $(AXI_BL),AXI_BL=$(AXI_BL)) MCOLS=$(MCOLS) ACT_ROWS=$(ACT_ROWS) VPU_CL=$(VPU_CL) LANES=$(LANES) CORE_MHZ=$(CORE_MHZ) $(if $(BUILD_ID),BUILD_ID=$(BUILD_ID)) ./run_vivado.sh $(DDR)
 
 impl:
-	$(if $(MEM),MEM=$(MEM)) STEP=impl ./run_vivado.sh $(DDR)
+	MEM=$(MEM) STEP=impl ./run_vivado.sh $(DDR)
 
 program:
 	./program.sh $(BIT)
