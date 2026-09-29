@@ -372,6 +372,17 @@ def wl_scan(a, c, period):
             print(f"  m{m} wl {wl}: " + (", ".join(
                 f"+{r['first']}..+{r['last']} ({r['width']} / {r['width'] * dqs.step_ps:.0f} ps; "
                 f"edges {r['edge_lo']} / {r['edge_hi']})" for r in rr) or "none"))
+    # per write clock group (a WL7DDRPHY image): the steps where every lane of the group passes
+    # at one of the forced latencies, as the calibration would pick it per lane
+    groups = d.phy.get("groups", {}).get(str(c.ch)) or [0] * d.nm
+    ok = lambda r: r[0] >= MIN_WINDOW and not r[1] and not r[2]
+    for g in sorted(set(groups)):
+        lanes = [m for m in range(d.nm) if groups[m] == g]
+        good = {k for k in raw[wls[0]] if all(any(ok(raw[wl][k][m]) for wl in wls) for m in lanes)}
+        rr = sorted(runs({k // a.stride for k in good}, period // a.stride), key=lambda r: r[0] - r[1])
+        print(f"  group {g} (lanes {lanes}), best latency per lane: " + (", ".join(
+            f"+{s * a.stride}..+{e * a.stride} ({(e - s + 1) * a.stride} / "
+            f"{(e - s + 1) * a.stride * dqs.step_ps:.0f} ps)" for s, e in rr) or "none"))
     out = Path(getattr(a, "json_dir", None) or a.build) / f"wscan_ch{c.ch}.json"
     out.write_text(json.dumps({"channel": c.ch, "start": start, "stride": a.stride, "mib": a.mib,
                                "beats": beats, "step_ps": dqs.step_ps, "period": period,
