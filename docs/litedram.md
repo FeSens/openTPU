@@ -839,3 +839,44 @@ The first fused image: accelerator plus this PHY. It ran on opentpu with host tr
 - **Not run:** token-exact against the ISA simulator. The qual run was stopped for the next
   build (5e5a58ab: the same core, all timing met). Then the card's JTAG chain went empty and a
   cold power cycle brought back the factory image.
+
+### The merge candidate on the card (ld-top 5e5a58ab, 2026-09-29): qualified
+
+Changes from 14875bf:
+- the same core (8cbfd3b), with the serializer resets' max delay at 3.0 ns;
+- a scoped false path for the reset strobe into the 50 MHz domain;
+- the SW hazard counts in `otpu_native_dram` without a reset;
+- the strategy `Performance_ExplorePostRoutePhysOpt` at a 100 MHz core.
+
+Routed: WNS +0.128 ns, WHS +0.016 ns, every constraint met. It ran on opentpu with host tree
+ld-qual b719cd3, whose `otpu-selftest` calibrates a HOSTCAL image itself. Logs are in
+`~/otpu-build/fused-5e5a58ab` on opentpu. **Measured:**
+
+| check | channel 0 | channel 1 |
+|---|---|---|
+| `ld_host.py --fused all`: common window | 44 steps (737 ps), CK +49 | 72 steps (1205 ps), CK +64 |
+| write latency | every lane at bitslip 6 | every lane at bitslip 0 |
+| bits off their lane's read framing | none | lane 3 bit 1 |
+| BIST, 2 GiB x 2 x 2 | 0 errors | 0 errors |
+| 300 s soak | 268 passes, 0 errors | 268 passes, 0 errors |
+
+**Channel 1's bits off their lane's framing, across four builds:**
+- `ldtest3d`: lane 3 bit 3 at +2, lane 8 bits 0 and 3 at -2;
+- `ldtest3e`: lane 3 bit 3, lane 8 bits 1, 2, 5 and 7, all at +2;
+- 14875bf: lane 3 bits 1 and 3, lane 8 bit 6, all at +2;
+- 5e5a58ab: lane 3 bit 1 at +2.
+
+Channel 0 needed none in any build. The 3.0 ns reset constraint added no misframed bits.
+
+**`tools/qual/qual.sh fast`, 38 min, 0 FAIL lines:**
+- **`otpu-selftest` ALL PASS**, before and after. Its calib stage calibrated both channels
+  through `memcal.ensure` in 50.7 s.
+- **Token-exact against the ISA simulator:** all 12 pass (Qwen3-0.6B, LFM2.5-230M and
+  Qwen3.5-0.8B, in int8 and in fp4 with an int8 head, each per-position and resident).
+- **Decode:** 5.445, 1.988 and 6.573 Mcycles/token (int8); 3.731, 1.357 and 4.673 (fp4).
+  DRAM ran at 11.9-12.5 GB/s while busy.
+- **Streamed decode (`decode_profile`, fp4):** 28.9, 73.6 and 21.1 tok/s wall.
+- **Warm soak and diag:** a 3 min warm soak, FPGA 64 to 66 C. Then `otpu-diag` with the quick
+  memory test: 129 PASS, 0 FAIL (isa 93 / 93, mem 11 / 11).
+
+Afterwards the card went back to se-cand3 (build 002569bc), whose selftest passed.
