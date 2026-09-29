@@ -419,6 +419,77 @@ def test_vops_rtl_bit_exact(have_verilator, lanes, uarch, seed):
     assert np.array_equal(drams[0], m.slices[0].dram)
 
 
+DIRECT = [I.V_EXP2SUB, I.V_MIN, I.V_RSUB, I.V_ABS, I.V_FILL, I.V_COPY]
+
+
+def _direct_program(rng, n_ops=48):
+    """EXP2SUB, MIN, RSUB, ABS, FILL and COPY on their own and mixed with ADD, EXP2 and RECIP
+    (other latencies, so elementwise instructions overlap in the lanes): every B mode, row
+    strides, odd shapes, the B_ROW word and the immediate from the special values. The data
+    is the special values (words 0..8191) and values spread over EXP2's range and past it
+    (8192..12287: exponents near -126 and 128, the clamps)."""
+    NDATA = 12288
+    prog = [I.ld(0, 0, NDATA)]
+    nxt = NDATA
+    ops = []
+
+    def fresh(n):
+        nonlocal nxt
+        a = nxt
+        nxt += n + int(rng.integers(0, 3))
+        return a
+
+    def src(n):
+        return int(rng.integers(0, NDATA - n))
+
+    for i in range(n_ops):
+        func = DIRECT[i % len(DIRECT)] if i < 2 * len(DIRECT) else \
+            int(rng.choice(DIRECT + [I.V_ADD, I.V_EXP2, I.V_RECIP]))
+        rows, cols = int(rng.integers(1, 6)), int(rng.integers(1, 300))
+        ars, drs = cols + int(rng.integers(0, 3)), cols + int(rng.integers(0, 2))
+        bmode = int(rng.integers(0, 4)) if func in I.READS_B else I.B_FULL
+        brs, b = 0, 0
+        if bmode == I.B_FULL:
+            brs = cols + int(rng.integers(0, 3))
+            b = src(rows * brs)
+        elif bmode == I.B_ROW:
+            brs = int(rng.integers(0, 3))
+            b = src(rows * brs + 1)
+        elif bmode == I.B_COL:
+            b = src(cols)
+        imm = float(rng.choice(_special(rng, 64)))
+        if func == I.V_EXP2SUB and rng.integers(2):
+            imm = float(rng.uniform(-140, 140))
+        a = src(rows * ars) if func != I.V_FILL else 0
+        prog.append(I.vop(func, fresh(rows * drs), a, b, rows, cols, drs, ars, brs, bmode,
+                          imm=imm))
+        ops.append(func)
+    prog.append(I.halt())
+    assert set(DIRECT) <= set(ops)
+    return prog
+
+
+@pytest.mark.parametrize("lanes,uarch,seed", [(8, {}, 0), (8, "board", 1), (8, "board4", 2),
+                                              (16, {}, 3), (4, {}, 4)])
+def test_direct_vops_rtl_bit_exact(have_verilator, lanes, uarch, seed):
+    """EXP2SUB, MIN, RSUB, ABS, FILL and COPY, RTL against the ISA simulator bit for bit."""
+    cfg = Config(S=1, LANES=lanes, MCOLS=min(8, lanes))
+    if uarch == "board":
+        uarch = dict(rtlsim.BOARD_UARCH)
+    elif uarch == "board4":
+        uarch = dict(rtlsim.BOARD_UARCH, VPU_CL=4)
+    r = np.random.default_rng(700 + seed)
+    prog = _direct_program(r)
+    img = np.zeros(1 << 20, np.uint8)
+    img[:4 * 8192] = _special(r, 8192).view(np.uint8)
+    wide = f(r.standard_normal(4096) * np.float32(60)) * np.where(r.random(4096) < 0.1, 2, 1)
+    img[4 * 8192:4 * 12288] = f(wide).view(np.uint8)
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], uarch=uarch)
+    bad = np.nonzero(tmems[0] != m.slices[0].tmem)[0]
+    assert len(bad) == 0, f"{len(bad)} TMEM words differ, first at {bad[:8]}"
+
+
 def _dstep_rtl_program(rng, n_steps=6):
     """DSTEPs on a few DRAM states (odd rows, 64..256 columns, the zero flag) with their inputs
     LDed into TMEM just before (RAW), VOPs reading o right after, the same state stepped twice
