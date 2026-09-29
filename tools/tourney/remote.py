@@ -51,6 +51,7 @@ NATIVE_PATH = "export PATH=$HOME/.local/bin:$PATH; "
 def native(host: str | None = None) -> bool:
     return (host or HOST) not in DOCKER_HOSTS
 REMOTE_DIR = os.environ.get("OTPU_BUILD_DIR", "otpu-build")        # relative to the remote $HOME
+KEEP_DCPS = int(os.environ.get("OTPU_KEEP_DCPS", "4"))  # full builds' routed checkpoints kept (full())
 MAX_JOBS = int(os.environ.get("OTPU_MAX_VIVADO", "2"))
 # per-host caps (host=n,...): opentpu takes one full build at a time. Two builds' IP synthesis
 # phases (JOBS=2 each) filled its 31 GB and pushed 11 GB to swap (2026-09-28 00:07)
@@ -434,8 +435,14 @@ def full(wt: Path, name: str, core_mhz: float, build_id: str, timeout: int = 4 *
         return res
     finally:
         if not keep and idle(tree, "full", host):
-            # the reports stay (small), the tree goes
-            ssh(f"mkdir -p {remote_home(host)}/{REMOTE_DIR}/reports && "
-                f"cp -r {tree}/build/vivado/reports {remote_home(host)}/{REMOTE_DIR}/reports/"
-                f"tv-{name} 2>/dev/null; true", timeout=300, check=False, host=host)
+            # the reports stay (small), the tree goes. So does the routed checkpoint (impl_1's
+            # last: post-route phys_opt's if it ran), as reports/tv-<name>/routed.dcp, for path
+            # and placement analysis afterwards; the newest KEEP_DCPS of them are kept
+            reps = f"{remote_home(host)}/{REMOTE_DIR}/reports"
+            impl = f"{tree}/build/vivado/otpu.runs/impl_1"
+            ssh(f"mkdir -p {reps} && cp -r {tree}/build/vivado/reports {reps}/tv-{name} "
+                f"2>/dev/null; dcp=$(ls -t {impl}/*_postroute_physopt.dcp {impl}/*_routed.dcp "
+                f"2>/dev/null | head -1); [ -n \"$dcp\" ] && cp \"$dcp\" {reps}/tv-{name}/routed.dcp; "
+                f"ls -t {reps}/*/routed.dcp 2>/dev/null | tail -n +{KEEP_DCPS + 1} | xargs -r rm -f; "
+                f"true", timeout=600, check=False, host=host)
             remove(name, host)

@@ -295,8 +295,9 @@ none: `make bit`'s defaults (the LiteDRAM core, MCOLS=4, the systolic MXU, LANES
 DSTEP=1); the cached full result's name carries them (`OTPU_BUILD_ARGS=FAST=1`:
 `<trees>-133.33-FAST1.json`; the MIG builds' results carry `-AXI_BL32`). `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
 Vivado in the `vivado:2026.1` Docker image instead. After a full build its reports are kept on
-the host in `~/otpu-build/reports/tv-<name>`; the tree is removed once its job has finished (never
-while it runs).
+the host in `~/otpu-build/reports/tv-<name>`, with its routed checkpoint as `routed.dcp` (the
+newest `OTPU_KEEP_DCPS`, default 4, are kept: for path and placement analysis afterwards); the tree
+is removed once its job has finished (never while it runs).
 
 At most **2 Vivado jobs** run on each build host at a time (`OTPU_MAX_VIVADO`), counting
 **every** job there, not only the tournament's. The count is taken over ssh:
