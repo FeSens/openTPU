@@ -18,7 +18,11 @@
 //   U   Y[r, c] = S[r, c] * G(c) + d * B(c) (the VPU's OUTER), G = K0, slot 3 or 1.0, B slot
 //       1; S read back from a delay buffer T_U cycles after X; the updated segment leaves (y)
 //   Q   o = isum_64(Y[r, c] * Q(c)), Q slot 0: a partial loop and tree; o leaves (o_v) with
-//       cfg.q_en
+//       cfg.q_en. ONE_TREE: no tree here; Q's final partials go to the VPU's u_vt
+//       (qp_*) in windows between A's, and the root comes back (qo_*): T_U is padded so that
+//       a row's Q window is DQ = 104 pe cycles after its A window (see T_U). cfg.pad64 (with
+//       ONE_TREE): cols = 64 presented as 16 segments per row, the last 8 +0 (the DMA drops
+//       their Y); the column buffers read +0 there
 //
 // A's vector: slot 1 (k) or slot 2 (a, cfg.a_sel) have one buffer at X. An SF_K fill writes
 // it unless a_sel, an SF_A fill always, so xa needs no mux. B keeps its own copy of slot 1.
@@ -33,7 +37,11 @@ module otpu_se_tail
   import otpu_fp::*;
 #(
   parameter int LANES = 8,
-  parameter int TA    = 7        // pe cycles from the X registers to A's partials (VPU slot 0)
+  parameter int TA    = 7,       // pe cycles from the X registers to A's partials (VPU slot 0)
+  // ONE_TREE: Q's final partials go to the VPU's tree (qp_*, QD registers there) and its root
+  // comes back (qo_*): no tree of its own (docs/stream.md 11.3)
+  parameter bit ONE_TREE = 1'b0,
+  parameter int QD    = 1
 ) (
   input  logic             clk,
   input  logic             rst,
@@ -55,7 +63,14 @@ module otpu_se_tail
   output logic             y_v,         // an updated segment (with pe)
   output f32_t             y_d [LANES],
   output logic             o_v,         // a row's o (with pe)
-  output f32_t             o_d
+  output f32_t             o_d,
+  // ONE_TREE: Q's final partials to the VPU's tree (with pe), the row's o back
+  output logic             qp_cap,
+  output logic             qp_row_last,
+  output logic [7:0]       qp_sub,
+  output f32_t             qp_d [LANES],
+  input  logic             qo_v,
+  input  f32_t             qo_d
 );
   localparam int L = LANES;
   localparam int LM = 2, LA = 4;
@@ -69,7 +84,19 @@ module otpu_se_tail
   // (otpu_vtree: at most 28 for LANES 8), d three multiply-adds (3 SL) and a FIFO write after
   // that; a row's first segment is ns - 1 ahead of its last (ns <= CBD)
   localparam int RD_MAX = 28;
-  localparam int T_U = (CBD - 1) + TA + RD_MAX + 3 * SL + 3;
+  localparam int T_U0 = (CBD - 1) + TA + RD_MAX + 3 * SL + 3;
+  // ONE_TREE: a row's Q window reaches the shared tree DQ = T_U + SL + LM + LA + QD - TA pe
+  // cycles after its A window. At ns = 16, 24 and 32 the windows (the last RL segments of each
+  // row) never meet, and stay aligned mod RL, iff DQ = RL * o with o odd and not a multiple of
+  // 3: T_U is padded to the smallest such DQ (DQ 97 -> 104 at TA 7, QD 1)
+  function automatic int q_pad(input int t0);
+    int d, o;
+    d = t0 + SL + LM + LA + QD - TA;
+    o = (d + RL - 1) / RL;
+    while (o % 2 == 0 || o % 3 == 0) o++;
+    return o * RL - d;
+  endfunction
+  localparam int T_U = T_U0 + (ONE_TREE ? q_pad(T_U0) : 0);
   localparam int UBD = 128;                   // delay buffer (> T_U)
   localparam int DFD = 8;                     // d FIFO
   initial if (L != 8 || T_U >= UBD || RL < LA + 1)
@@ -81,7 +108,7 @@ module otpu_se_tail
   // registered from cfg (it is set before the fill and holds through the stream) and from
   // K0 (set by the fill, before the stream)
   logic [5:0] ns;
-  logic       c_asel, c_kz, c_a2p, c_c2z, c_gcol, c_qen;
+  logic       c_asel, c_kz, c_a2p, c_c2z, c_gcol, c_qen, c_pad;
   f32_t       e, beta;                        // K0, K1
   f32_t       b1, gk;                         // slot 1's b (K0 or 1); G unless a column
   always_ff @(posedge clk) begin
@@ -92,6 +119,7 @@ module otpu_se_tail
     c_c2z  <= cfg.dmode == SD_SCALE || cfg.dmode == SD_DOT; // slot 2's c = -0 (else -p1)
     c_gcol <= cfg.g_src == SG_COL;
     c_qen  <= cfg.q_en;
+    c_pad  <= ONE_TREE && cfg.pad64;
     b1     <= (cfg.dmode == SD_DELTA) ? e : F_ONE;
     gk     <= (cfg.g_src == SG_ONE) ? F_ONE : e;
   end
@@ -115,10 +143,11 @@ module otpu_se_tail
       if (fk == SF_X) vb[fi] <= fd[l];
       if (fk == SF_G) gb[fi] <= fd[l];
     end
-    assign kx[l] = kb[xj];
-    assign ku[l] = kb2[uj];
-    assign qu[l] = qb[uj];
-    assign gu[l] = gb[uj];
+    // pad64: the columns past 64 (segments 8..15) read +0
+    assign kx[l] = (c_pad && xj[CBW-1:3] != '0) ? F_ZERO : kb[xj];
+    assign ku[l] = (c_pad && uj[CBW-1:3] != '0) ? F_ZERO : kb2[uj];
+    assign qu[l] = (c_pad && uj[CBW-1:3] != '0) ? F_ZERO : qb[uj];
+    assign gu[l] = (c_pad && uj[CBW-1:3] != '0) ? F_ZERO : gb[uj];
     assign vl[l] = vb[rv[7:LW]];
   end
   assign vr = vl[rv[LW-1:0]];
@@ -246,13 +275,17 @@ module otpu_se_tail
   f32_t d_row;
   assign d_row = (um.v && um.j == '0) ? dq[dq_h] : d_cur;
 
-  // Y = S G + d B: the VPU's OUTER slot (a*b + c*e), inputs registered
+  // Y = S G + d B: the VPU's OUTER slot (a*b + c*e), inputs registered. pad64: a padded
+  // segment (S = +0 from the DMA, B = +0) also takes G = d = +0, so its Y is +0 (no inf * 0
+  // reaches Q) and its Q terms are +0 (its Y is dropped by the DMA)
   f32_t  nw [L];
   ss_meta_t um_y;
+  wire   upad = c_pad && um.j[4:3] != '0;
   for (genvar l = 0; l < L; l++) begin : g_u
     f32_t ra, rg, rc, re;
     always_ff @(posedge clk) if (pe) begin
-      ra <= ud[l]; rg <= c_gcol ? gu[l] : gk; rc <= d_row; re <= ku[l];
+      ra <= ud[l]; rg <= upad ? F_ZERO : c_gcol ? gu[l] : gk; rc <= upad ? F_ZERO : d_row;
+      re <= ku[l];
     end
     otpu_fmma #(.LM(LM), .LA(LA)) u_ma (.clk, .en(pe), .a(ra), .b(rg), .c(rc), .e(re), .y(nw[l]));
   end
@@ -279,9 +312,25 @@ module otpu_se_tail
     assign prev = fbq;
     otpu_fadd #(.LAT(LA)) u_a (.clk, .en(pe), .a(prev), .b(tq), .y(pq[l]));
   end
-  logic  qo_v;
-  otpu_vtree #(.LANES(L), .LA(LA)) u_tq (.clk, .rst(rst || init), .en(pe), .pacc(pq),
-                                         .cap(yq_t.v && yq_t.final_), .row_last(yq_t.row_last),
-                                         .sub(yq_t.sub), .root(o_d), .root_v(qo_v));
-  assign o_v = qo_v && c_qen;
+  if (ONE_TREE) begin : g_q1
+    // the final partials to the VPU's tree (in Q's windows, see T_U), the root back
+    assign qp_cap = yq_t.v && yq_t.final_ && c_qen;
+    assign qp_row_last = yq_t.row_last;
+    assign qp_sub = yq_t.sub;
+    assign qp_d = pq;
+    assign o_d = qo_d;
+    assign o_v = qo_v && c_qen;
+  end else begin : g_q2
+    logic tq_v;
+    otpu_vtree #(.LANES(L), .LA(LA)) u_tq (.clk, .rst(rst || init), .en(pe), .pacc(pq),
+                                           .cap(yq_t.v && yq_t.final_), .row_last(yq_t.row_last),
+                                           .sub(yq_t.sub), .root(o_d), .root_v(tq_v));
+    assign o_v = tq_v && c_qen;
+    assign qp_cap = 1'b0;
+    assign qp_row_last = 1'b0;
+    assign qp_sub = '0;
+    for (genvar l = 0; l < L; l++) begin : g_qz
+      assign qp_d[l] = '0;
+    end
+  end
 endmodule

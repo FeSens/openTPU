@@ -5,12 +5,13 @@
 // must drain them before the grant, and they resume after it. The VOPs share slot 0's partial
 // loop and u_vt with the streams (RSUM/RSSQ/RDOT).
 // Input (+in=, hex words): the VOPs, "nvop" then nvop lines "op flags w1 .. w7"; then per stream
-//   1 ns rows a_en a_sel dmode g_src q_en nfill nseg pe_pct nrel delay
+//   1 ns rows a_en a_sel dmode g_src q_en nfill nseg pe_pct nrel delay pad64
 // (nrel: VOPs released so far; delay: cycles from their release to ss_req), nfill lines
 // "fk fi d0 .. d7" and nseg lines "d0 .. d7"; a 0 ends the file. +tmem= preloads the TMEM
 // (readmemh). Output (+out=): per stream "Y d0 .. d7" per updated segment and "O d" per row
 // output, then "E"; at the end "T" and the TMEM words (+dump= of them), one per line.
-module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter int GNT_PCT = 80);
+module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter bit ONE_TREE = 1'b0,
+                   parameter int GNT_PCT = 80);
   import otpu_pkg::*;
   import otpu_fp::*;
   localparam int L = 8;
@@ -36,7 +37,7 @@ module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter int GNT_PCT = 80);
   logic [2:0] ss_fk = SF_NONE;
   logic [4:0] ss_fi = '0;
 
-  otpu_vpu #(.LANES(L), .WBUF(WBUF), .HAS_SE(1'b1)) dut (
+  otpu_vpu #(.LANES(L), .WBUF(WBUF), .HAS_SE(1'b1), .ONE_TREE(ONE_TREE)) dut (
     .clk, .rst, .start, .cmd, .rdy, .done, .gnt, .ren, .ta_en, .ta_addr, .ta_data, .tb_en,
     .tb_addr, .tb_data, .tw_en, .tw_addr, .tw_data, .pf_u, .pf_frz,
     .ss_req, .ss_gnt, .ss_cfg, .ss_pe, .ss_in_v, .ss_in_d, .ss_fk, .ss_fi, .ss_fd, .ss_y_v,
@@ -94,7 +95,7 @@ module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter int GNT_PCT = 80);
 
   logic [31:0] seg [MAXSEG][L];
   int fin, n, hdr, i, nfill, nseg, pct, nxt, rows_q, qen_q, fk_i, fi_i, spin, y0, o0, dly;
-  int h [12];
+  int h [13];
   logic [31:0] w [L], op, fl;
   string fname_in, fname_out, fname_tm, fname_dump;
   initial begin
@@ -123,7 +124,7 @@ module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter int GNT_PCT = 80);
     forever begin
       n = $fscanf(fin, "%h", hdr);
       if (n != 1 || hdr == 0) break;
-      for (i = 0; i < 12; i++) n = $fscanf(fin, "%h", h[i]);
+      for (i = 0; i < 13; i++) n = $fscanf(fin, "%h", h[i]);
       nfill = h[7]; nseg = h[8]; pct = h[9]; dly = h[11];
       if (nseg > MAXSEG) $fatal(1, "too many segments");
       // release VOPs, then ask for SE a little later (they may be queued or in flight)
@@ -131,7 +132,7 @@ module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter int GNT_PCT = 80);
       repeat (dly) @(negedge clk);
       ss_cfg.ns = 6'(h[0]); ss_cfg.rows = 9'(h[1]); ss_cfg.a_en = h[2][0];
       ss_cfg.a_sel = h[3][0]; ss_cfg.dmode = 2'(h[4]); ss_cfg.g_src = 2'(h[5]);
-      ss_cfg.q_en = h[6][0];
+      ss_cfg.q_en = h[6][0]; ss_cfg.pad64 = h[12][0];
       rows_q = h[1]; qen_q = h[6];
       ss_req = 1'b1;
       spin = 0;

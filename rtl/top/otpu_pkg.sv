@@ -27,6 +27,7 @@ package otpu_pkg;
     logic [1:0] dmode;   // 0 DELTA, 1 DELTA1, 2 SCALE, 3 DOT
     logic [1:0] g_src;   // 0 K0, 1 slot 3 column, 2 one
     logic       q_en;    // O on
+    logic       pad64;   // cols = 64 presented as ns = 16: columns 64..127 read +0 (ONE_TREE)
   } ss_cfg_t;
   localparam logic [1:0] SD_DELTA = 0, SD_DELTA1 = 1, SD_SCALE = 2, SD_DOT = 3;
   localparam logic [1:0] SG_K0 = 0, SG_COL = 1, SG_ONE = 2;
