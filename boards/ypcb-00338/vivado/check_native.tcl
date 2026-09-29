@@ -20,8 +20,8 @@ set bad {}
 if {$mem eq "mig_native"} {
   puts [exec python3 $root/boards/ypcb-00338/scripts/gen_mig_prj.py --speed 1066 --native]
 }
-# create_project.tcl's arguments as run_vivado.sh passes them (DDR3-1066, AXI_BL 32, SE v2)
-set argv [list 1066 $out 2 100 "" 2 8 2 1 32 v2 $mem]
+# create_project.tcl's arguments as run_vivado.sh passes them (DDR3-1066, AXI_BL 32)
+set argv [list 1066 $out 2 100 "" 2 8 2 1 32 $mem]
 set argc [llength $argv]
 source $root/boards/ypcb-00338/vivado/create_project.tcl
 

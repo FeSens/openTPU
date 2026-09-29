@@ -401,9 +401,7 @@ class SimTransport:
         p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": cfg.MCOLS, "LANES": cfg.LANES,
              "ACT_ROWS": cfg.act_rows,
              "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8),
-             "AXI_BL": rtlsim.UARCH.get("AXI_BL", 8), "AXI_WBL": rtlsim.UARCH.get("AXI_WBL", 8),
-             "SE_COMP8": rtlsim.UARCH.get("SE_COMP8", 1),
-             "SE_ONE_TREE": rtlsim.UARCH.get("SE_ONE_TREE", 1)}
+             "AXI_BL": rtlsim.UARCH.get("AXI_BL", 8), "AXI_WBL": rtlsim.UARCH.get("AXI_WBL", 8)}
         if native:
             p["MEM_NATIVE"] = {"ld": 2, "mig": 3}.get(native, 1)
         p.update(self.params)
