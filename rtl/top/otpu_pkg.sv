@@ -33,7 +33,7 @@ package otpu_pkg;
   } ss_cfg_t;
   localparam logic [1:0] SD_DELTA = 0, SD_DELTA1 = 1, SD_SCALE = 2, SD_DOT = 3;
   localparam logic [1:0] SG_K0 = 0, SG_COL = 1, SG_ONE = 2;
-  typedef struct packed {  // the X-stage meta of a segment (otpu_dstep's sm_t)
+  typedef struct packed {  // the X-stage meta of a segment (otpu_se_tail's xm)
     logic v, first, final_, row_last; logic [7:0] sub; logic [4:0] j;
   } ss_meta_t;
   // the fill's kinds: q (slot 0), k (slot 1), x (the rows), K0, K1, a (slot 2), g (slot 3)

@@ -42,7 +42,7 @@ set_property default_lib xil_defaultlib [current_project]
 set rtl [list \
   rtl/vpu/otpu_fp.sv rtl/vpu/otpu_fpipe.sv rtl/top/otpu_pkg.sv \
   rtl/mem/otpu_tmem.sv rtl/mem/otpu_axi_dram.sv rtl/mem/otpu_actram.sv \
-  rtl/seq/otpu_seq.sv rtl/vpu/otpu_vtree.sv rtl/dma/otpu_dstep.sv rtl/dma/otpu_dma.sv \
+  rtl/seq/otpu_seq.sv rtl/vpu/otpu_vtree.sv rtl/dma/otpu_dma.sv \
   rtl/mxu/otpu_mxu.sv \
   rtl/vpu/otpu_quant.sv rtl/vpu/otpu_se_tail.sv rtl/vpu/otpu_vpu.sv rtl/top/otpu_coll.sv \
   rtl/top/otpu_slice.sv \
