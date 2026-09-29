@@ -8,6 +8,8 @@
 #   /tmp/otpu-tourney-hosts          the Vivado hosts and their caps (remote.py), read per job
 #   /tmp/otpu-tourney-comps          the components of the next pass (whitespace separated; a
 #                                    component listed twice runs twice per pass), read per pass
+#   /tmp/otpu-tourney-whole          the whole-design components to take turns (in place of
+#                                    FOREVER_WHOLE), read before each whole-design round
 # Each round's champion first merges BASE (origin/main, fetched per round) when it has moved.
 # K=2 agent slots per round; K_<comp>=n overrides one component (e.g. K_otpu_mxu=3).
 set -u
@@ -15,6 +17,7 @@ cd "$(git rev-parse --show-toplevel)"
 COMPS=${FOREVER_COMPS:-"otpu_dma otpu_seq otpu_tmem otpu_coll otpu_xunit otpu_mxu otpu_axi_dram otpu_vpu otpu_quant otpu_actram"}
 COMPS_FILE=${FOREVER_COMPS_FILE:-/tmp/otpu-tourney-comps}
 WHOLE=(${FOREVER_WHOLE:-otpu_full otpu_impl})
+WHOLE_FILE=${FOREVER_WHOLE_FILE:-/tmp/otpu-tourney-whole}
 EVERY=${WHOLE_EVERY:-3}
 K=${K:-2}
 BASE=${BASE:-origin/main}
@@ -34,6 +37,13 @@ round() {   # one round of component $1
     || echo "[forever] $(date '+%F %T') $c: round failed (exit $?); going on"
 }
 
+whole() {   # the whole-design components: the whole file when it names some, else WHOLE
+  local f=""
+  [[ -f $WHOLE_FILE ]] && f=$(tr -s '[:space:]' ' ' < "$WHOLE_FILE")
+  f=${f# }; f=${f% }
+  echo "${f:-${WHOLE[*]}}"
+}
+
 comps() {   # the next pass: the comps file when it names components, else COMPS
   local f=""
   [[ -f $COMPS_FILE ]] && f=$(tr -s '[:space:]' ' ' < "$COMPS_FILE")
@@ -49,7 +59,8 @@ while :; do
     round "$c"
     n=$((n + 1))
     if (( n % EVERY == 0 )); then
-      round "${WHOLE[w % ${#WHOLE[@]}]}"
+      read -r -a ws <<< "$(whole)"
+      round "${ws[w % ${#ws[@]}]}"
       w=$((w + 1))
     fi
   done
