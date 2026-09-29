@@ -35,6 +35,11 @@ module otpu_coll
   // address was a 0.24 ns path at 125.49 MHz)
   logic [31:0]      ra;
   logic [LANES-1:0] rm;
+  // the read requests from flip-flops: rd_on is st == C_RUN && issuing, ssel the one-hot of s
+  // (a 32-bit compare of s and the enable gating were in front of the TMEM read address: the
+  // build's u_coll s -> TMEM block RAM address path)
+  logic             rd_on;
+  logic [S-1:0]     ssel;
   // the write stage's address base and lane mask, registered with pcl (they feed the TMEM
   // arbiter, so no adder or compare sits in front of it)
   logic [31:0]      pwa;
@@ -50,15 +55,12 @@ module otpu_coll
     ack = (st == C_ACK);
     r_en = '0; r_addr = '0;
     w_en = '0; w_addr = '0; w_data = '0;
-    if (st == C_RUN && issuing) begin
-      for (int k = 0; k < S; k++)
-        if (k == int'(s))
-          for (int l = 0; l < LANES; l++)
-            if (rm[l]) begin
-              r_en[k][l] = 1'b1;
-              r_addr[k][l] = ra + 32'(l);
-            end
-    end
+    for (int k = 0; k < S; k++)
+      for (int l = 0; l < LANES; l++)
+        if (rd_on && ssel[k] && rm[l]) begin
+          r_en[k][l] = 1'b1;
+          r_addr[k][l] = ra + 32'(l);
+        end
     if (st == C_RUN && qv) begin
       for (int l = 0; l < LANES; l++)
         if (qm[l]) begin
@@ -74,6 +76,7 @@ module otpu_coll
       st <= C_IDLE;
       pv <= 1'b0;
       qv <= 1'b0;
+      rd_on <= 1'b0;
     end else begin
       case (st)
         C_IDLE: if (&req) begin
@@ -86,6 +89,7 @@ module otpu_coll
             drs  <= cmds[0].w5;
             seg  <= cmds[0].w6;
             s <= '0; r <= '0; c <= '0;
+            ssel <= S'(1);
             rrow <= cmds[0].w1;
             ra <= cmds[0].w1;
             for (int l = 0; l < LANES; l++) rm[l] <= (l < int'(cmds[0].w3[31:16]));
@@ -93,6 +97,7 @@ module otpu_coll
             pv <= 1'b0;
             qv <= 1'b0;
             issuing <= 1'b1;
+            rd_on <= 1'b1;
             st <= C_RUN;
           end
         end
@@ -114,9 +119,12 @@ module otpu_coll
               nc = '0;
               if (r + 1 == 32'(rows)) begin
                 r <= '0;
-                if (s + 1 == S) issuing <= 1'b0;
-                else begin
+                if (s + 1 == S) begin
+                  issuing <= 1'b0;
+                  rd_on <= 1'b0;
+                end else begin
                   s <= s + 1;
+                  ssel <= ssel << 1;
                   for (int k = 0; k < S; k++) if (k == int'(s) + 1) nrrow = cmds[k].w1;
                   wseg <= wseg + seg;
                   wrow <= wseg + seg;
@@ -146,4 +154,10 @@ module otpu_coll
       endcase
     end
   end
+`ifndef SYNTHESIS
+  always @(posedge clk)
+    if (!rst && (rd_on != (st == C_RUN && issuing) || (rd_on && ssel != S'(1) << s)))
+      $fatal(1, "otpu_coll: rd_on %0d / ssel %b do not match st %0d issuing %0d s %0d",
+             rd_on, ssel, st, issuing, s);
+`endif
 endmodule

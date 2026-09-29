@@ -389,7 +389,8 @@ class SimTransport:
              "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8),
              "MXU_IMPL": rtlsim.UARCH.get("MXU_IMPL", 0),
              "SE_COMP8": rtlsim.UARCH.get("SE_COMP8", 0),
-             "SE_ONE_TREE": rtlsim.UARCH.get("SE_ONE_TREE", 0)}
+             "SE_ONE_TREE": rtlsim.UARCH.get("SE_ONE_TREE", 0),
+             "AXI_BL": rtlsim.UARCH.get("AXI_BL", 8), "AXI_WBL": rtlsim.UARCH.get("AXI_WBL", 8)}
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
         with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:

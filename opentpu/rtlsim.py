@@ -131,6 +131,12 @@ if os.environ.get("OTPU_SE") in ("v2", "comp8") or os.environ.get("OTPU_SE_COMP8
     UARCH["SE_COMP8"] = 1
 if os.environ.get("OTPU_SE") in ("v2", "onetree") or os.environ.get("OTPU_SE_ONE_TREE") == "1":
     UARCH["SE_ONE_TREE"] = 1
+# The board adapter's port B read / write bursts, beats (timing only; tb_top's and tb_board's
+# defaults 8, the production image 32 / 8): OTPU_AXI_BL=32 OTPU_AXI_WBL=1. Tests that set them
+# (the uarch argument) keep theirs
+for _k in ("AXI_BL", "AXI_WBL"):
+    if os.environ.get("OTPU_" + _k):
+        UARCH[_k] = BOARD_UARCH[_k] = int(os.environ["OTPU_" + _k])
 # TMEM lanes of the MXU and the quantizer when fewer than LANES (timing only): OTPU_ULANES=8
 if os.environ.get("OTPU_ULANES"):
     UARCH["ULANES"] = int(os.environ["OTPU_ULANES"])
