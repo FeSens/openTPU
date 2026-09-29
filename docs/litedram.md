@@ -798,3 +798,44 @@ place and route) takes those paths from 9 levels (5.50 ns) to 6 or 8 (4.02 ns).
   not a data eye.
 - **Temperature coverage:** the run held the FPGA near 55 C. It does not cover a cold start or
   a hot card; the rescans give the host the drift to recalibrate on if the window moves.
+
+### The production image on the card (ld-top 14875bf, 2026-09-29)
+
+The first fused image: accelerator plus this PHY. It ran on opentpu with host tree ld-top
+5e5a58a. Build facts:
+- MEM=litedram, MCOLS=4 (systolic MXU), core 100 MHz, FAST=1;
+- core at 8cbfd3b, without `rd_reg`;
+- routed WNS -2.78 ns. The failing paths were the ECC counters, a reset strobe into the 50 MHz
+  domain and the serializer resets; none are read-data paths.
+
+**Measured** (logs in `~/otpu-build/fused-14875bf` on opentpu):
+
+| check | channel 0 | channel 1 |
+|---|---|---|
+| `ld_host.py --fused all`: common window | 44 steps (737 ps), CK +50 | 73 steps (1222 ps), CK +64 |
+| write latency | every lane at bitslip 6 | every lane at bitslip 0 |
+| bits off their lane's read framing | none | lane 3 bits 1, 3; lane 8 bit 6 |
+| BIST, 2 GiB x 2 x 2 | 0 errors | 0 errors |
+| 300 s soak | 268 passes, 0 errors | 268 passes, 0 errors |
+| `otpu-memcal cal --force` (HOSTCAL, the `memcal.ensure` path) | 25.1 s, same phase and window | 26.0 s, same phase and window |
+
+- **Channel 1's misframed bits differ in each build.** dq27 (lane 3 bit 3) was off in all three
+  builds (`ldtest3d`, `ldtest3e`, 14875bf); the other bits moved from build to build. The
+  per-bit framing absorbed every case.
+- **`otpu-selftest`, ALL PASS:** it ran after the calibration. ld-top's selftest did not yet
+  calibrate a HOSTCAL image itself (fixed in 1b97d90).
+  - scrub: 4 GiB in 2.8 s;
+  - host to card 1.37 GB/s, card to host 1.02 GB/s;
+  - kernel, vops and stream all pass.
+- **Prefill and decode counters, 6 configurations (`tools/qual/perf.py`):** decode was 5.448,
+  1.988 and 6.573 Mcycles/token for Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B in int8, and 3.730,
+  1.357 and 4.673 in fp4.
+  - DRAM ran at 11.9-12.5 GB/s while busy, 70-74% of the DDR3-1066 peak. This is an
+    **estimate**, from arithmetic: at a 100 MHz core the 128-byte port caps the path at
+    12.8 GB/s, so it ran at 93-98% of that cap.
+  - For comparison, se-cand3 (MIG, MCOLS=2, 120.755 MHz) took 5.566, 2.049, 6.907, 3.792, 1.397
+    and 4.950 Mcycles/token. The core clocks differ, so the cycle counts are not a like-for-like
+    comparison.
+- **Not run:** token-exact against the ISA simulator. The qual run was stopped for the next
+  build (5e5a58ab: the same core, all timing met). Then the card's JTAG chain went empty and a
+  cold power cycle brought back the factory image.
