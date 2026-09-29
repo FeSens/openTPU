@@ -34,10 +34,13 @@ tests:
   - tests/test_rtl.py::test_scoreboard_stress_single_slice[2]
   - tests/test_rtl.py::test_fuzz_single_slice[2]
   - tests/test_rtl.py::test_fuzz_single_slice[3]
+  - tests/test_vops.py::test_dstep_rtl_bit_exact
   board:
   - tests/test_rtl.py::test_design_size_block_128_rtl
   - tests/test_rtl.py::test_board_memory_path_stress[1-30]
   - tests/test_rtl.py::test_board_memory_path_stress[4-80]
   - tests/test_rtl.py::test_board_memory_path_fuzz[0-40]
   - tests/test_rtl.py::test_board_memory_path_stress[2-60]
+  - tests/test_qwen35.py::test_tiny_prefill_rows_dstep_on_rtl
+  - tests/test_qwen35.py::test_tiny_qwen35_on_board_model[True-False]
 perf: true

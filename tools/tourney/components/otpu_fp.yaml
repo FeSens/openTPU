@@ -36,6 +36,7 @@ tests:
   - tests/test_perf.py
   - tests/test_fp.py
   - tests/test_rtl.py
+  - tests/test_vops.py::test_dstep_rtl_bit_exact
   board:
   - tests/test_rtl.py
 perf: true

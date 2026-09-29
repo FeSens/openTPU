@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The fmax tournament, continuously (docs/tourney.md, "Running continuously"): one round per
-# component in turn, and a whole-design round (FOREVER_WHOLE) after every WHOLE_EVERY component
-# rounds. It never finishes on its own:
+# component in turn, and after every WHOLE_EVERY component rounds one whole-design round, the
+# FOREVER_WHOLE components in turn (otpu_full: RTL across modules; otpu_impl: Vivado directives
+# and placement). It never finishes on its own:
 #   touch /tmp/otpu-tourney-stop     stop before the next round (the running round completes)
 #   touch /tmp/otpu-tourney-pause    wait before the next round while the file exists
 #   /tmp/otpu-tourney-hosts          the Vivado hosts and their caps (remote.py), read per job
@@ -13,8 +14,8 @@ set -u
 cd "$(git rev-parse --show-toplevel)"
 COMPS=${FOREVER_COMPS:-"otpu_dma otpu_seq otpu_tmem otpu_coll otpu_xunit otpu_mxu otpu_axi_dram otpu_vpu otpu_quant otpu_actram"}
 COMPS_FILE=${FOREVER_COMPS_FILE:-/tmp/otpu-tourney-comps}
-WHOLE=${FOREVER_WHOLE:-"otpu_impl"}
-EVERY=${WHOLE_EVERY:-4}
+WHOLE=(${FOREVER_WHOLE:-otpu_full otpu_impl})
+EVERY=${WHOLE_EVERY:-3}
 K=${K:-2}
 BASE=${BASE:-origin/main}
 TARGET=${TARGET_MHZ:-125.49}
@@ -40,7 +41,7 @@ comps() {   # the next pass: the comps file when it names components, else COMPS
   echo "${f:-$COMPS}"
 }
 
-n=0
+n=0 w=0
 while :; do
   pass=$(comps)
   echo "[forever] $(date '+%F %T') pass: $pass"
@@ -48,7 +49,8 @@ while :; do
     round "$c"
     n=$((n + 1))
     if (( n % EVERY == 0 )); then
-      for w in $WHOLE; do round "$w"; done
+      round "${WHOLE[w % ${#WHOLE[@]}]}"
+      w=$((w + 1))
     fi
   done
 done

@@ -1,0 +1,27 @@
+name: otpu_full
+description: 'The whole design''s RTL, for paths that cross modules: any file in rtl/ may change (units,
+  slice and board tops, the shared fp operators), so one change can register a bus between two units,
+  retime logic across a unit boundary, replicate a high-fanout driver in the unit that drives it, or move
+  logic to the other side of a pipeline register. The worst full-build paths are the input: aim at a path''s
+  source and destination units together. Constraints, clocks and the block design (MIG, XDMA) are not
+  part of it (otpu_impl, otpu_xunit).'
+allowed:
+- rtl/*/*.sv
+- rtl/boards/ypcb-00338/*.sv
+source: paths
+synth:
+  parts: []
+objectives:
+- fmax
+target_mhz: 125.49
+tests:
+  fast:
+  - tests/test_perf.py
+  - tests/test_fp.py
+  - tests/test_rtl.py
+  - tests/test_vops.py::test_dstep_rtl_bit_exact
+  board:
+  - tests/test_board.py
+  - tests/test_qwen35.py::test_tiny_prefill_rows_dstep_on_rtl
+  - tests/test_qwen35.py::test_tiny_qwen35_on_board_model[True-False]
+perf: true

@@ -177,17 +177,70 @@ def test_sandbox_rejects(tmp_path):
 # ------------------------------------------------------------------------------ components
 def test_component_configs_are_consistent():
     comps = sorted((ROOT / "tools" / "tourney" / "components").glob("*.yaml"))
-    assert len(comps) == 12
+    assert len(comps) == 14
     for p in comps:
         c = yaml.safe_load(p.read_text())
         assert c["name"] == p.stem
         for f in c["allowed"]:
-            assert (ROOT / f).exists(), f
+            assert AG.expand(ROOT, [f]) and all((ROOT / g).exists() for g in AG.expand(ROOT, [f])), f
+        for t in c["tests"]["fast"] + c["tests"]["board"]:
+            assert (ROOT / t.split("::")[0]).exists(), t
         for part in c["synth"]["parts"]:
             for s in part["sources"]:
                 assert (ROOT / s).exists(), s
             assert set(part["sources"]) & set(c["allowed"])
         assert c["tests"]["fast"] and c["tests"]["board"]
+
+
+def test_every_module_has_a_component():
+    """Every RTL file of the board build is some unit component's (otpu_full aside, which may
+    change them all); otpu_dram.sv is the simulation's DRAM, not in the build."""
+    import fnmatch
+    comps = [yaml.safe_load(p.read_text())
+             for p in (ROOT / "tools" / "tourney" / "components").glob("*.yaml")]
+    rtl = [str(p.relative_to(ROOT)) for p in (ROOT / "rtl").rglob("*.sv")]
+    unit = [g for c in comps if c["name"] != "otpu_full" for g in c["allowed"]]
+    full = next(c for c in comps if c["name"] == "otpu_full")
+    for f in rtl:
+        assert any(fnmatch.fnmatch(f, g) for g in full["allowed"]), f
+        if f != "rtl/mem/otpu_dram.sv":
+            assert any(fnmatch.fnmatch(f, g) for g in unit), f
+    # the components that can change the DSTEP datapath run its RTL test
+    for c in comps:
+        if any(fnmatch.fnmatch(f, g) for g in c["allowed"]
+               for f in ("rtl/dma/otpu_dstep.sv", "rtl/vpu/otpu_vtree.sv", "rtl/vpu/otpu_fp.sv")):
+            assert "tests/test_vops.py::test_dstep_rtl_bit_exact" in c["tests"]["fast"], c["name"]
+
+
+def test_path_summary_groups_units():
+    t = ("-0.586 ns VIOLATED u_board/u_slice/u_dma/cleft_reg[28]/C -> u_board/u_mem/qb_n_reg[1][5]/D"
+         " levels 20, data 8.329 ns (logic 1.493, route 6.836)\n"
+         "-0.582 ns VIOLATED u_board/u_slice/u_mxu/q_h_reg/C -> u_board/u_slice/u_tmem/pw_a_reg[5]/D"
+         " levels 14, data 8.000 ns (logic 1.000, route 7.000)\n"
+         "-0.500 ns VIOLATED u_board/u_slice/u_mxu/q_h_reg/C -> u_board/u_slice/u_tmem/pw_b_reg[1]/D"
+         " levels 12, data 8.000 ns (logic 3.000, route 5.000)\n"
+         "-0.400 ns VIOLATED u_board/u_slice/u_dma/g_ds.u_ds/x_reg/C -> u_board/u_slice/cnt_reg/D"
+         " levels 3, data 7.000 ns (logic 3.500, route 3.500)\n")
+    assert AG.unit_of("u_board/u_slice/u_dma/u_ds/x_reg/C") == "u_dma/u_ds"
+    assert AG.unit_of("u_board/u_slice/cnt_reg/D") == "u_slice"
+    assert AG.unit_of("u_board/u_mem/qc_reg[0][19]/C") == "u_mem"
+    s = AG.path_summary(t).splitlines()
+    assert s[0].startswith("- u_dma -> u_mem: 1 of the paths, worst -0.586 ns, up to 20 levels")
+    assert s[1] == ("- u_mxu -> u_tmem: 2 of the paths, worst -0.582 ns, up to 14 levels, "
+                    "route 75% of the data delay")
+    assert "u_mem = rtl/mem/otpu_axi_dram.sv" in s[-1]
+    assert AG.path_summary("") == "(no paths parsed)"
+
+
+def test_full_component_prompt_does_not_quote_the_rtl():
+    c = yaml.safe_load((ROOT / "tools" / "tourney" / "components" / "otpu_full.yaml").read_text())
+    champ = {"sha": "x", "full": {"fmax": 116.9, "period": 7.969, "wns": -0.586,
+                                  "timing": "PATH-LIST", "congestion_report": "CONG"}}
+    p = AG.hypothesis_prompt_fmax(c, ROOT, champ, "(none)", "(none)", AG.FMAX_CATEGORIES[0],
+                                  125.49)
+    assert "=== rtl/" not in p and "read the ones on the paths you target" in p
+    assert "rtl/dma/otpu_dstep.sv" in p and "rtl/boards/ypcb-00338/otpu_board.sv" in p
+    assert len(p) < 40000
 
 
 # ------------------------------------------------------------------------------ agents

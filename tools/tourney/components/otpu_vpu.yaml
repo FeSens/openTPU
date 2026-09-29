@@ -33,6 +33,7 @@ tests:
   - tests/test_rtl.py::test_lane_count_does_not_change_results[4]
   - tests/test_rtl.py::test_lane_count_does_not_change_results[16]
   - tests/test_rtl.py::test_attention_layer_rtl[1]
+  - tests/test_vops.py::test_dstep_rtl_bit_exact
   board:
   - tests/test_rtl.py::test_design_size_block_128_rtl
   - tests/test_rtl.py::test_board_memory_path_stress[1-30]

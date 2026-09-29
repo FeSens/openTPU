@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -190,6 +191,14 @@ def _src(wt: Path, files: list[str]) -> str:
                        for f in files)
 
 
+def _src_paths(files: list[str]) -> str:
+    """For a component whose files are too many to quote (the whole RTL): where to read."""
+    return ("The files are not quoted here (the whole RTL is too large): read the ones on the "
+            "paths you target, using the unit map under the path summary above (the unit's file, "
+            "then the slice / board top that wires it to the other unit). Files you may change: "
+            + ", ".join(files) + ".")
+
+
 def hypothesis_prompt(comp: dict, wt: Path, champ: dict, lessons: str, recent: str,
                       category: str, critical: str) -> str:
     files = comp["allowed"]
@@ -269,6 +278,67 @@ def expand(wt: Path, globs: list[str]) -> list[str]:
     return out
 
 
+# the units of the board build (instance names under otpu_fpga_top/u_board) and their RTL
+UNIT_FILES = {
+    "u_seq": "rtl/seq/otpu_seq.sv", "u_tmem": "rtl/mem/otpu_tmem.sv",
+    "u_act": "rtl/mem/otpu_actram.sv", "u_dma": "rtl/dma/otpu_dma.sv",
+    "u_dma/u_ds": "rtl/dma/otpu_dstep.sv", "u_mxu": "rtl/mxu/otpu_mxu.sv",
+    "u_quant": "rtl/vpu/otpu_quant.sv", "u_vpu": "rtl/vpu/otpu_vpu.sv",
+    "u_mem": "rtl/mem/otpu_axi_dram.sv", "u_coll": "rtl/top/otpu_coll.sv",
+    "u_ctrl": "rtl/boards/ypcb-00338/otpu_ctrl.sv", "u_trace": "rtl/boards/ypcb-00338/otpu_trace.sv",
+    "u_slice": "rtl/top/otpu_slice.sv (its own logic)",
+    "u_board": "rtl/boards/ypcb-00338/otpu_board.sv (its own logic)",
+    "u_bd": "the block design (MIG, XDMA IP): not RTL",
+}
+_PATH_RE = re.compile(r"^\s*(-?[\d.]+) ns \S+ (\S+) -> (\S+) levels (\d+), data ([\d.]+) ns "
+                      r"\(logic ([\d.]+), route ([\d.]+)\)")
+
+
+def unit_of(cell: str) -> str:
+    """The unit of a timing-path pin (`u_board/u_slice/u_dma/cleft_reg[28]/C` -> `u_dma`):
+    the first instance under the slice (or the board); `u_dma/u_ds` for the DSTEP datapath;
+    the slice / board itself for their own registers."""
+    parts = cell.split("/")[:-1]                     # the pin name goes
+    if parts and parts[0] == "u_board":
+        parts = parts[1:]
+        top = "u_board"
+        if parts and parts[0] == "u_slice":
+            parts, top = parts[1:], "u_slice"
+    else:
+        top = parts[0] if parts else "?"
+        parts = parts[1:] if parts else []
+    if len(parts) < 2 or not parts[0].startswith("u_"):   # a register of the top itself
+        return top
+    if parts[0] == "u_dma" and len(parts) > 2 and parts[1] == "u_ds":
+        return "u_dma/u_ds"
+    return parts[0]
+
+
+def path_summary(timing: str) -> str:
+    """The worst paths grouped by source and destination unit: how many, the worst slack, the
+    logic levels and the share of the data delay that is routing."""
+    groups: dict = {}
+    for line in (timing or "").splitlines():
+        m = _PATH_RE.match(line)
+        if not m:
+            continue
+        slack, src, dst, lv, data, _logic, route = m.groups()
+        g = groups.setdefault((unit_of(src), unit_of(dst)), [0, 0.0, 0, 0.0, 0.0])
+        g[0] += 1
+        g[1] = min(g[1], float(slack)) if g[0] > 1 else float(slack)
+        g[2] = max(g[2], int(lv))
+        g[3] += float(data)
+        g[4] += float(route)
+    if not groups:
+        return "(no paths parsed)"
+    rows = sorted(groups.items(), key=lambda kv: kv[1][1])
+    out = [f"- {a} -> {b}: {n} of the paths, worst {w:+.3f} ns, up to {lv} levels, "
+           f"route {r / d:.0%} of the data delay" for (a, b), (n, w, lv, d, r) in rows]
+    units = sorted({u for k in groups for u in k})
+    out.append("Units: " + "; ".join(f"{u} = {UNIT_FILES.get(u, '?')}" for u in units))
+    return "\n".join(out)
+
+
 def hypothesis_prompt_fmax(comp: dict, wt: Path, champ: dict, lessons: str, recent: str,
                            category: str, target_mhz: float) -> str:
     """The hypothesis prompt of the fmax objective: the whole board's post-route timing is the
@@ -304,6 +374,9 @@ BRAM36 {full.get('bram36')} (xc7k480t: 298,600 LUT, 1,920 DSP, 955 BRAM36).
 The 30 worst setup paths of the whole design (slack, start -> end, logic levels, data delay):
 {full.get('timing') or '(not available)'}
 
+The same paths by source and destination unit:
+{path_summary(full.get('timing') or '')}
+
 Congestion (report_design_analysis -congestion):
 {full.get('congestion_report') or '(not available)'}
 
@@ -324,8 +397,8 @@ Congestion (report_design_analysis -congestion):
    where area_eq = LUT + LUTRAM + 0.5 FF + 40 DSP + 80 BRAM36 of the whole board, and the score
    (fmax change - area_eq change - cycle change) is positive. Timing wins count fmax minus
    cycles. A winner is confirmed by a second full build with another placement, which must
-   pass too. One full build runs per round (about two hours), so aim at the worst paths above
-   or at a large block of logic, not at small wins.
+   pass too. One or two full builds run per round (one to two hours each), so aim at the
+   worst paths above or at a large block of logic, not at small wins.
 
 ## Focus for this slot
 {category}
@@ -338,7 +411,7 @@ Lessons from earlier rounds:
 {lessons}
 
 ## Source
-{_src(wt, files)}
+{_src(wt, files) if comp.get("source") != "paths" else _src_paths(files)}
 
 ## Instructions
 Read the code (and docs/isa.md, the neighbouring units in rtl/ if you need the protocols). Then

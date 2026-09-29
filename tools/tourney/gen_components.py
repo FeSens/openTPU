@@ -1,5 +1,7 @@
-"""Regenerates tools/tourney/components/*.yaml (the component definitions). Edit here, run
-`python3 -m tools.tourney.gen_components`, commit the YAML."""
+"""Regenerates tools/tourney/components/*.yaml (the component definitions). The YAML has since
+been edited by hand (test_perf.py and the DSTEP RTL test in the gates, notes on known timing
+paths; otpu_impl, otpu_dstep and otpu_full are hand-written): edit the YAML, and port those edits
+here before regenerating (docs/tourney.md, "Config drift")."""
 from pathlib import Path
 
 import yaml
