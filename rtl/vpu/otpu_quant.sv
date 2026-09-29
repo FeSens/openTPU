@@ -640,4 +640,13 @@ module otpu_quant
       end
     end
   end
+`ifndef SYNTHESIS
+  // the ACT RAM write above takes a QACT write as a whole LANES-aligned chunk (act_we from
+  // mask[0], act_idx with its low bits cleared): check that every QACT write is one
+  always @(posedge clk)
+    if (!rst && busy && !ackw && wqd.v && !wqd.st
+        && (wqd.mask != '1 || (wqd.idx & 32'(LANES - 1)) != 0))
+      $fatal(1, "otpu_quant: QACT write not a whole LANES-aligned chunk (mask %b, idx %0d)",
+             wqd.mask, wqd.idx);
+`endif
 endmodule
