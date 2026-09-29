@@ -27,7 +27,9 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
                after its program: a bitstream that has the functions must pass them all (a
                125 MHz build computed the vops program right but returned the previous
                program's RDOT result)
- 10 model      (with --model) greedy decoding of Qwen3, LFM2 or Qwen3.5 on the card equals the
+ 10 stream     (a bitstream with the stream engine, CAPS bit26) STREAM in every mode of the
+               board's subset and a DSTEP against the ISA simulator
+ 11 model      (with --model) greedy decoding of Qwen3, LFM2 or Qwen3.5 on the card equals the
                ISA simulator, token for token, and the answer to "What is the capital of France?"
 """
 from __future__ import annotations
@@ -42,7 +44,7 @@ from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST
                                 ST_CALIB1, Board, SimTransport, XdmaTransport, device_config)
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
                                  model_check, partial_writes, pattern_test, run_demo,
-                                 vops_check)
+                                 stream_check, vops_check)
 
 HINTS = {
     "link": "Is the card enumerated (lspci -d 10ee:), the XDMA driver loaded (lsmod | grep "
@@ -77,6 +79,9 @@ HINTS = {
             "program passes and only the op checks fail, the bitstream itself misbehaves "
             "(e.g. a core clock without enough timing margin): load a slower build and run "
             "otpu-diag.",
+    "stream": "The stream engine computed a STREAM or DSTEP differently from the ISA "
+              "simulator: run tests/test_stream.py -k rtl and the stream stage on the board "
+              "model (tests/test_board.py::test_stream_on_board_model).",
     "model": "Kernels pass but the model differs: compare per-token logits against "
              "IsaBackend with opentpu.llm.qwen3.Engine; check that the image fits the DRAM.",
 }
@@ -215,6 +220,9 @@ def main(argv=None) -> int:
             type(load_spec(model_dir(a.model))).__module__.endswith(".qwen35")
         return vops_check(board, cfg, need=qwen35)
 
+    def stream():
+        return stream_check(board, cfg)
+
     def model():
         return model_check(t, cfg, a.model, a.tokens, a.sim, a.wformat, a.head_format)
 
@@ -228,6 +236,7 @@ def main(argv=None) -> int:
     r.stage("bandwidth", bw)
     r.stage("kernel", kernel)
     r.stage("vops", vops)
+    r.stage("stream", stream)
     if a.model:
         r.stage("model", model)
     print("ALL PASS" if not r.failed else f"stopped at stage '{r.failed}'")

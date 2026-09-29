@@ -75,6 +75,62 @@ def vops_program() -> list:
     ]
 
 
+STATES = 0x100000              # stream_program's DRAM states (below PROG_AT)
+
+
+def stream_program() -> list:
+    """The stream engine's subset (docs/stream.md 4.4) on states in DRAM: every dmode (DELTA,
+    DELTA1, SCALE, DOT) with each gate (a constant, a column, one), A on slot 1 or 2, Q on or
+    off, the ZERO flag, 64..256 columns, and a DSTEP; descriptors FILLed at the start as the
+    compiler does. The states (copies of DATA) are stepped in place and the row outputs
+    stored."""
+    combos = [(I.D_DELTA, 1, "const", True, False), (I.D_DELTA, 2, "col", False, False),
+              (I.D_DELTA1, 1, "one", True, False), (I.D_DELTA1, 2, "col", True, False),
+              (I.D_SCALE, 1, "col", True, False), (I.D_SCALE, 1, "const", False, True),
+              (I.D_DOT, 2, "col", True, False), (I.D_DOT, 1, "one", False, False),
+              (I.D_SCALE, 1, "one", True, False)]
+    shapes = [(16, 128), (7, 64), (9, 256), (32, 192)]
+    DESC = 60000
+    steps, descs = [], {}
+    for i, (dp, a, g, q, zero) in enumerate(combos):
+        rows, cols = shapes[i % len(shapes)]
+        d = I.state_desc(rows, cols, dp, a, g, q)
+        descs.setdefault(tuple(d.words()), DESC + 8 * len(descs))
+        steps.append((d, rows, cols, zero))
+    prog = [I.vop(I.V_FILL, at + j, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR,
+                  imm=np.uint32(w).view(np.float32))
+            for words, at in descs.items() for j, w in enumerate(words)]
+    prog += [I.ld(DATA, 0, 4096),                                   # vectors, rows, states
+             I.vop(I.V_ABS, 4096, 0, 0, 1, 1024, 0, 0, 0),           # decay columns in (0, 0.5]
+             I.vop(I.V_MUL, 4096, 4096, 0, 1, 1024, 0, 0, 0, I.B_SCALAR, 0.25),
+             I.vop(I.V_FILL, 5200, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 0.875),   # K0
+             I.vop(I.V_FILL, 5202, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 0.5)]     # K1 (ks 2)
+    o = 6000
+    for i, (d, rows, cols, zero) in enumerate(steps):
+        st = STATES + 0x10000 * i
+        vec = 8192 + 1024 * (i % 4)
+        prog += [I.st(st, 64 * i, rows * cols),                      # the state: DATA words
+                 I.vop(I.V_COPY, vec, 1024 * (i % 3), 0, 1, 3 * cols, 0, 0, 0),
+                 I.vop(I.V_COPY, vec + 3 * cols, 4096, 0, 1, cols, 0, 0, 0),
+                 I.stream(descs[tuple(d.words())], st, st, vec, 512 + 16 * i, 5200, o, ks=2,
+                          zero=zero)]
+        if d.q_en:
+            prog.append(I.st(OUT + 0x24000 + 1024 * i, o, rows))
+        o += 300
+    prog += [I.dstep(STATES + 0x10000 * len(steps), 8192, 512, 16, 128, 5200, 2, o),
+             I.st(OUT + 0x24000 + 1024 * len(steps), o, 16), I.halt()]
+    return prog
+
+
+def stream_check(board, cfg) -> tuple[bool, str]:
+    """otpu-selftest's stream stage: stream_program() against the ISA simulator (a bitstream
+    with the stream engine, CAPS bit26); others pass with a note."""
+    if not cfg.STREAM:
+        return True, "note: no stream engine (CAPS bit26 clear)"
+    ok, msg, _ = run_demo(board, cfg, stream_program())
+    return ok, f"STREAM (every mode) and DSTEP: {msg}"
+
+
 def vops_check(board, cfg, need: bool = False) -> tuple[bool, str]:
     """otpu-selftest's vops stage: vops_program() against the ISA simulator. Wrong results fail
     on a bitstream that has the functions (register map >= VOPS_SINCE), and on an older one

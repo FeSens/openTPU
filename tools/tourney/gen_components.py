@@ -49,7 +49,8 @@ C = {
         extra=["tests/test_rtl.py::test_attention_layer_rtl[1]",
                "tests/test_rtl.py::test_scoreboard_stress_single_slice[3]"]),
     "otpu_vpu": dict(
-        files=["rtl/vpu/otpu_vtree.sv", "rtl/vpu/otpu_se_tail.sv", "rtl/vpu/otpu_vpu.sv"],
+        files=["rtl/vpu/otpu_vtree.sv", "rtl/vpu/otpu_se_comp.sv", "rtl/vpu/otpu_se_tail.sv",
+               "rtl/vpu/otpu_vpu.sv"],
         top="otpu_vpu",
         params=dict(LANES=8, SID=0),
         desc="VPU: elementwise fp32 ops on LANES lanes (split lanes: CL composite lanes with 10 "
