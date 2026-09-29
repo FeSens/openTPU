@@ -123,10 +123,10 @@ if os.environ.get("OTPU_MXU") == "cascade":
 if os.environ.get("OTPU_VPU_CL"):
     UARCH["VPU_CL"] = int(os.environ["OTPU_VPU_CL"])
 # The stream engine's v2 (docs/stream.md 11): OTPU_SE=v2 builds otpu_vpu with COMP8 and ONE_TREE
-# (OTPU_SE=comp8 / onetree: one of them)
-if os.environ.get("OTPU_SE") in ("v2", "comp8"):
+# (OTPU_SE=comp8 / onetree, or OTPU_SE_COMP8=1 / OTPU_SE_ONE_TREE=1: one of them)
+if os.environ.get("OTPU_SE") in ("v2", "comp8") or os.environ.get("OTPU_SE_COMP8") == "1":
     UARCH["SE_COMP8"] = 1
-if os.environ.get("OTPU_SE") in ("v2", "onetree"):
+if os.environ.get("OTPU_SE") in ("v2", "onetree") or os.environ.get("OTPU_SE_ONE_TREE") == "1":
     UARCH["SE_ONE_TREE"] = 1
 # TMEM lanes of the MXU and the quantizer when fewer than LANES (timing only): OTPU_ULANES=8
 if os.environ.get("OTPU_ULANES"):

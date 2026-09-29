@@ -77,7 +77,8 @@ def run_front(streams, vops, rels, tm0, rng, tmp_path, wbuf, one_tree=False, com
         S = np.concatenate([st["S"], np.zeros_like(st["S"])], 1) if pad else st["S"]
         segs = F.bits(S).reshape(-1, L)
         pct = int(rng.choice([100, 70, 40]))
-        lines.append(" ".join(f"{v:x}" for v in [1, S.shape[1] // L, rows, int(st["a_en"]),
+        drain = 3 if rng.integers(2) else 1        # pe after the last output or not
+        lines.append(" ".join(f"{v:x}" for v in [drain, S.shape[1] // L, rows, int(st["a_en"]),
                                                   int(st["a_sel"]), st["dmode"], st["g_src"],
                                                   int(st["q_en"]), len(fills), len(segs), pct,
                                                   nrel, dly, int(pad)]))
