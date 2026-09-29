@@ -1,0 +1,17 @@
+write latency: m0:0 m1:0 m2:0 m3:6 m4:6 m5:6 m6:6 m7:6 m8:6
+  wb0:  9 10 10  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb2:  0  0  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb4:  0  0  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb6:  0  0  0 10 10 11 10 10  9  (widest read window per lane, taps)
+read leveling:
+  m0: b4 |00000000011111111100000000000000| window 9 taps (703 ps), tap 13
+  m1: b4 |00000000011111111100000000000000| window 9 taps (703 ps), tap 13
+  m2: b5 |00000000000000000000111111111100| window 10 taps (781 ps), tap 25
+  m3: b4 |00000000011111111110000000000000| window 10 taps (781 ps), tap 14
+  m4: b4 |01111111111000000000000000000000| window 10 taps (781 ps), tap 6
+  m5: b4 |01111111111100000000000000000000| window 11 taps (859 ps), tap 6
+  m6: b5 |00000000000011111111111000000000| window 11 taps (859 ps), tap 17
+  m7: b4 |01111111111000000000000000000000| window 10 taps (781 ps), tap 6
+  m8: b4 |00011111111100000000000000000000| window 9 taps (703 ps), tap 7
+  check at the chosen taps: pass
+calibration: PASS

@@ -281,36 +281,51 @@ class DqsPhase:
             self.c.w("phase_dqs_shift", 1 if target > s else 0)
 
 
-def dqs_scan(dram, dqs, period_steps, stride, seeds=(42,)):
-    """Per DQS phase step, per lane: the widest read window over the write bitslips."""
+def dqs_scan(dram, dqs, period_steps, stride, seeds=(42,), csr=None, mib=64):
+    """Per DQS phase step: calibrate (write latency, read leveling) and, with `csr`, write and
+    read back `mib` MiB with the BIST. Per lane: the read window (taps) if its DFI check and its
+    BIST beats are all right, else 0 (the BIST's wrong beats are printed)."""
     table = {}
     start = dqs.steps()
     for k in range(0, period_steps + 1, stride):
         dqs.move(start + k)
-        dram.init()
-        _, res = dram.write_latency(seeds, verbose=False)
-        table[k] = [max(res[w][m][0] for w in res) for m in range(dram.nm)]
-        print(f"  dqs +{k:3d} ({k * dqs.step_ps:6.0f} ps): " + " ".join(f"{n:2d}" for n in table[k]))
+        wl, rl, err = dram.calibrate(seeds, verbose=False)
+        win = [n if w >= 0 and not e else 0 for (n, _, _), w, e in zip(rl, wl, err)]
+        bad = [0] * dram.nm
+        if csr is not None:
+            dram.hardware()
+            beats = mib * (1 << 20) // 64
+            bist(csr, beats, 0, 0x0123456789ABCDEF + k, dram.phy["sys_hz"])
+            bad = bist(csr, beats, 1, 0x0123456789ABCDEF + k, dram.phy["sys_hz"])["lanes"]
+            win = [0 if b else n for n, b in zip(win, bad)]
+        table[k] = win
+        print(f"  dqs +{k:3d} ({k * dqs.step_ps:6.0f} ps): windows " + " ".join(f"{n:2d}" for n in win)
+              + "  write latency " + "".join("-" if w < 0 else str(w) for w in wl)
+              + ("  BIST wrong beats " + " ".join(str(x) for x in bad) if any(bad) else ""))
     dqs.move(start)
     return table
 
 
-def margins(table, nm, min_window=MIN_WINDOW):
+def margins(table, nm, min_window=MIN_WINDOW, period=None):
     """Per lane, the passing phase steps; the common passing set; the chosen step (the centre
-    of the longest common run)."""
+    of the longest common run, taken around the circle when the scan covers a whole tCK of
+    `period` steps: the phase wraps) and that run."""
     ks = sorted(table)
     per = [[k for k in ks if table[k][m] >= min_window] for m in range(nm)]
     common = [k for k in ks if all(table[k][m] >= min_window for m in range(nm))]
-    # longest run of consecutive scanned steps in `common`
+    circular = period is not None and ks[-1] - ks[0] >= period
+    seq = [k for k in ks if not (circular and k - ks[0] >= period)]     # one period, no repeat
+    order = seq + seq if circular else seq
     best, cur = [], []
-    for k in ks:
+    for k in order:
         if k in common:
             cur.append(k)
-            if len(cur) > len(best):
+            if len(cur) > len(best) and len(cur) <= len(seq):
                 best = list(cur)
         else:
             cur = []
-    return per, common, (best[len(best) // 2] if best else None), best
+    pick = best[len(best) // 2] if best else None
+    return per, common, pick, best
 
 
 # ------------------------------------------------------------------------------ BIST
@@ -350,6 +365,28 @@ def run_bist(csr, sys_hz, gib, passes=2):
                   f"errors {r['errors']} (per lane {r['lanes']}, bits {r['bits']:#x})")
             ok &= r["errors"] == 0 and r["beats"] == beats
     return ok
+
+
+def bist_read_scan(csr, dram, sys_hz, mib=256, seed=0x0123456789ABCDEF, mode=0):
+    """Read windows under traffic: write a region once (BIST), then for every read tap (all
+    lanes at the same tap, each lane at its calibrated bitslip) read it back with the BIST and
+    count each lane's wrong beats. Returns err[tap][lane]; leaves every lane at the centre of
+    its passing run under traffic (or its calibrated tap if none)."""
+    beats = mib * (1 << 20) // 64
+    w = bist(csr, beats, mode, seed, sys_hz)
+    table = []
+    dram.strobe("ddrphy_rdly_dq_rst", dram.all)
+    for tap in range(dram.phy["delays"]):
+        r = bist(csr, beats, mode | 1, seed, sys_hz)
+        table.append(r["lanes"])
+        dram.strobe("ddrphy_rdly_dq_inc", dram.all)
+    for m in range(dram.nm):
+        line = "".join("1" if row[m] == 0 else ("0" if row[m] > beats // 100 else "x") for row in table)
+        start, n = Dram.windows([row[m] for row in table])
+        print(f"  m{m}: b{dram.rb[m]} |{line}| {n} taps under traffic"
+              + (f" (DFI window centre {dram.rd[m]}, traffic centre {start + n // 2})" if n else ""))
+        dram.set_rdelay(m, start + n // 2 if n else dram.rd[m])
+    return table
 
 
 # ------------------------------------------------------------------------------ simulated PHY
@@ -442,7 +479,9 @@ def selftest(build):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("build", type=Path)
-    ap.add_argument("what", choices=["info", "cal", "bist", "all", "selftest", "dqs"])
+    ap.add_argument("what", choices=["info", "cal", "bist", "all", "selftest", "dqs", "rscan", "soak"])
+    ap.add_argument("--seconds", type=float, default=300, help="soak: how long to repeat the BIST")
+    ap.add_argument("--span", type=int, help="all: scan only this many steps (default one tCK)")
     ap.add_argument("--gib", type=float, default=2.0, help="BIST size (the channel: 2 GiB)")
     ap.add_argument("--stride", type=int, default=4, help="DQS scan stride, fine steps")
     ap.add_argument("--dev", default="/dev/xdma0_user")
@@ -455,8 +494,8 @@ def main():
     dqs = DqsPhase(csr, d.phy["vco_hz"])
     period = round(56 * d.phy["vco_hz"] / (4 * d.phy["sys_hz"]))     # fine steps per tCK
     if a.what in ("info", "all"):
-        csr.w("ctrl_scratch", 0x12345678)
-        s = csr.r("ctrl_scratch")
+        csr.w("ctrl_scratch", 0xA5C3_5A3C)
+        s = csr.r("ctrl_scratch") ^ 0xA5C3_5A3C ^ 0x12345678      # 0x12345678 when it holds
         print(f"scratch {s:#x} ({'ok' if s == 0x12345678 else 'BAD'}), bus errors "
               f"{csr.r('ctrl_bus_errors')}, DQS phase {dqs.steps()} steps "
               f"({dqs.step_ps:.1f} ps each, {period} per tCK), sys {d.phy['sys_hz'] / 1e6:.2f} MHz, "
@@ -468,9 +507,10 @@ def main():
         print("DQS phase", dqs.steps())
     if a.what == "all":
         print(f"DQS phase scan (every {a.stride} steps = {a.stride * dqs.step_ps:.0f} ps over one "
-              f"tCK; per lane the widest read window over the write latencies, taps):")
-        table = dqs_scan(d, dqs, period, a.stride)
-        per, common, pick, run = margins(table, d.nm)
+              f"tCK; per lane: calibrated read window in taps, 0 if its calibration check or a "
+              f"64 MiB BIST write / read failed):")
+        table = dqs_scan(d, dqs, a.span or period, a.stride, csr=csr)
+        per, common, pick, run = margins(table, d.nm, period=a.span or period)
         for m in range(d.nm):
             ks = per[m]
             print(f"  lane {m}: writes at {len(ks)} of {len(table)} phases"
@@ -478,16 +518,37 @@ def main():
         if pick is None:
             print("no DQS phase works for every lane: FAIL")
             return 1
-        print(f"common: {len(run) * a.stride * dqs.step_ps:.0f} ps "
-              f"(steps +{run[0]}..+{run[-1]}); DQS at +{pick} steps ({pick * dqs.step_ps:.0f} ps)")
+        print(f"common: {len(run)} scanned phases, {(len(run) - 1) * a.stride * dqs.step_ps:.0f} ps "
+              f"from first to last (steps +{run[0]}..+{run[-1]}, around the tCK); DQS at +{pick} "
+              f"steps ({pick * dqs.step_ps:.0f} ps)")
         dqs.move(dqs.steps() + pick)
-    if a.what in ("cal", "all"):
+    if a.what in ("cal", "all", "rscan"):
         wl, rl, err = d.calibrate()
         d.hardware()
         if any(err) or min(w for w in wl) < 0:
             print("calibration: FAIL")
             return 1
         print("calibration: PASS")
+    if a.what == "soak":
+        # the current DQS phase: calibrate, then repeat the 2 GiB BIST (both data modes) until
+        # `seconds` have passed, new seeds every pass
+        wl, rl, err = d.calibrate(verbose=False)
+        d.hardware()
+        t0, n, bad = time.time(), 0, 0
+        while time.time() - t0 < a.seconds:
+            ok = run_bist(csr, d.phy["sys_hz"], a.gib, passes=1) if n % 10 == 0 else \
+                all(bist(csr, int(a.gib * (1 << 30)) // 64, mode | 1, seed, d.phy["sys_hz"])["errors"] == 0
+                    for mode, seed in [(0, n * 7919 + 1), (2, n * 104729 + 3)]
+                    if bist(csr, int(a.gib * (1 << 30)) // 64, mode, seed, d.phy["sys_hz"]) is not None)
+            n += 1
+            bad += not ok
+        print(f"soak: {n} passes of {a.gib:g} GiB (x2 data modes) in {time.time() - t0:.0f} s at DQS "
+              f"{dqs.steps()} steps, {bad} with errors: " + ("PASS" if not bad else "FAIL"))
+        return 1 if bad else 0
+    if a.what == "rscan":
+        print("read taps under traffic (1: no wrong beat, x: < 1% wrong, 0: more):")
+        bist_read_scan(csr, d, d.phy["sys_hz"])
+        a.what = "bist"
     if a.what in ("bist", "all"):
         print(f"BIST over {a.gib:g} GiB:")
         ok = run_bist(csr, d.phy["sys_hz"], a.gib)

@@ -1,0 +1,148 @@
+scratch 0x12345678 (ok), bus errors 0, DQS phase 16 steps (16.7 ps each, 112 per tCK), sys 133.33 MHz, CL 7 CWL 6
+DQS phase scan (every 1 steps = 17 ps over one tCK; per lane: calibrated read window in taps, 0 if its calibration check or a 64 MiB BIST write / read failed):
+  dqs +  0 (     0 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +  1 (    17 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +  2 (    33 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +  3 (    50 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +  4 (    67 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +  5 (    84 ps): windows 10 10 10 10 10 10 11 11  0  write latency 000066666  BIST wrong beats 0 0 0 0 0 0 0 0 203742
+  dqs +  6 (   100 ps): windows 10 10 10 10 10 11 11 11  0  write latency 000066666  BIST wrong beats 0 0 0 0 0 0 0 0 1025140
+  dqs +  7 (   117 ps): windows 10 10 10 10 10 11 11 11  0  write latency 00006666-  BIST wrong beats 0 0 0 0 0 0 0 0 1048576
+  dqs +  8 (   134 ps): windows 11 10 10 10 10 11 11 11  0  write latency 00006666-  BIST wrong beats 0 0 0 0 0 0 0 0 1048576
+  dqs +  9 (   151 ps): windows  0  0  0 10 10 11 11  0  0  write latency 000066660  BIST wrong beats 45 21715 12162 0 0 0 0 19 1048576
+  dqs + 10 (   167 ps): windows  0  0  0 10 10  0  0  0  0  write latency 000066660  BIST wrong beats 20812 192957 138550 0 0 13 35 6092 1040130
+  dqs + 11 (   184 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---066660  BIST wrong beats 1048576 1048576 1048576 188366 27569 76722 64216 237487 131515
+  dqs + 12 (   201 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 13 (   218 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 14 (   234 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 15 (   251 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 16 (   268 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 17 (   285 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 18 (   301 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 19 (   318 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 20 (   335 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 21 (   352 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 22 (   368 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 23 (   385 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 24 (   402 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 25 (   419 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 26 (   435 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 27 (   452 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 28 (   469 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 29 (   485 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 30 (   502 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 31 (   519 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 32 (   536 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 33 (   552 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 34 (   569 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 35 (   586 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 36 (   603 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 37 (   619 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 38 (   636 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 39 (   653 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 40 (   670 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 41 (   686 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 42 (   703 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 43 (   720 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 44 (   737 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 45 (   753 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 46 (   770 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 47 (   787 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 48 (   804 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 49 (   820 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 50 (   837 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 51 (   854 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 52 (   871 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 53 (   887 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 54 (   904 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 55 (   921 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 56 (   937 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 57 (   954 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 58 (   971 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 59 (   988 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 60 (  1004 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 61 (  1021 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 62 (  1038 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 63 (  1055 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 64 (  1071 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 65 (  1088 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 66 (  1105 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 67 (  1122 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 68 (  1138 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 69 (  1155 ps): windows  0  0  0  0  0  0  0  0  0  write latency ---------  BIST wrong beats 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 70 (  1172 ps): windows  0  0  0  0  0  0  0  0  0  write latency 66-------  BIST wrong beats 1040985 941079 1048576 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 71 (  1189 ps): windows  0  0  0  0  0  0  0  0  0  write latency 666------  BIST wrong beats 768350 243493 950122 1048576 1048576 1048576 1048576 1048576 1048576
+  dqs + 72 (  1205 ps): windows  0  0  0  0  0  0  0  0  0  write latency 6666-6---  BIST wrong beats 343849 24598 443627 307138 1048576 877455 1048576 1048576 1048576
+  dqs + 73 (  1222 ps): windows  0  0  0  0  0  0  0  0  0  write latency -666-6666  BIST wrong beats 1048576 407 102216 40036 1048576 263939 14208 161176 646748
+  dqs + 74 (  1239 ps): windows  0 10  0  0  0  0  0  0  0  write latency -666-6666  BIST wrong beats 1048576 0 16539 426 1048576 46006 307 21854 184751
+  dqs + 75 (  1256 ps): windows  0  0  0 10  0  0 11  0  0  write latency -66666666  BIST wrong beats 1048576 960 962 0 9575 1998 0 649 28626
+  dqs + 76 (  1272 ps): windows  0  0  0 10  0  0 11  0  0  write latency -66666666  BIST wrong beats 1039067 202727 20 0 224 58 0 30 5605
+  dqs + 77 (  1289 ps): windows  0  0 10 10 10 11 11 11  0  write latency 0-6666666  BIST wrong beats 13423 1048576 0 0 0 0 0 0 96
+  dqs + 78 (  1306 ps): windows 11  0 10 10 10 10 11 11 11  write latency 0-6666666  BIST wrong beats 0 1048576 0 0 0 0 0 0 0
+  dqs + 79 (  1323 ps): windows 11  0 10 10 10 11 11 11 10  write latency 0-6666666  BIST wrong beats 0 1048576 0 0 0 0 0 0 0
+  dqs + 80 (  1339 ps): windows 10  0 10 10 10 11 11 11 10  write latency 006666666  BIST wrong beats 0 136504 0 0 0 0 0 0 0
+  dqs + 81 (  1356 ps): windows 10  0 11 10 10 11 11 11 11  write latency 006666666  BIST wrong beats 0 85 0 0 0 0 0 0 0
+  dqs + 82 (  1373 ps): windows 10 10 10 10 10 11 11 11 10  write latency 006666666
+  dqs + 83 (  1390 ps): windows 10 10 10 10 10 11 11 10 10  write latency 006666666
+  dqs + 84 (  1406 ps): windows 11 10 10 10 10 11 11 10 10  write latency 006666666
+  dqs + 85 (  1423 ps): windows 10 10 10 10 10 11 11 11 11  write latency 006666666
+  dqs + 86 (  1440 ps): windows 10 10 10 10 10 11 11 11 11  write latency 006666666
+  dqs + 87 (  1456 ps): windows 10 10 10 10 10 11 11 11 10  write latency 006666666
+  dqs + 88 (  1473 ps): windows  9 10 10 10 10 11 11 11 10  write latency 006666666
+  dqs + 89 (  1490 ps): windows 10 10 10 10 10 11 11 11 10  write latency 006666666
+  dqs + 90 (  1507 ps): windows 10 10 10 10 10 11 11 11 11  write latency 006666666
+  dqs + 91 (  1523 ps): windows 10 10 10 10 10 11 11 11 11  write latency 006666666
+  dqs + 92 (  1540 ps): windows 10 10  0 10 10 11 11 11 10  write latency 006666666  BIST wrong beats 0 0 61308 0 0 0 0 0 0
+  dqs + 93 (  1557 ps): windows 10 10  0 10 10 11 11 11 10  write latency 006666666  BIST wrong beats 0 0 1037649 0 0 0 0 0 0
+  dqs + 94 (  1574 ps): windows 10 10  0 10 10 11 11 11 10  write latency 00-666666  BIST wrong beats 0 0 1048576 0 0 0 0 0 0
+  dqs + 95 (  1590 ps): windows 11 10  0 10 10 11 11 11 10  write latency 00-666666  BIST wrong beats 0 0 1048576 0 0 0 0 0 0
+  dqs + 96 (  1607 ps): windows 11 10  0 10 10 11 11 11 10  write latency 000666666  BIST wrong beats 0 0 312896 0 0 0 0 0 0
+  dqs + 97 (  1624 ps): windows 10 10  0  0 10 10 11 11 10  write latency 000666666  BIST wrong beats 0 0 76 113855 0 0 0 0 0
+  dqs + 98 (  1641 ps): windows 10 10 10  0 10 11 11 11 10  write latency 000666666  BIST wrong beats 0 0 0 1039536 0 0 0 0 0
+  dqs + 99 (  1657 ps): windows 10 10 10  0 10 11 11 11 11  write latency 000-66666  BIST wrong beats 0 0 0 1048576 0 0 0 0 0
+  dqs +100 (  1674 ps): windows 10 10 10  0 10 11 11 10 10  write latency 000-66666  BIST wrong beats 0 0 0 1048576 0 0 0 0 0
+  dqs +101 (  1691 ps): windows 10 10 10  0 10 11 11 11 10  write latency 000066666  BIST wrong beats 0 0 0 1022095 0 0 0 0 0
+  dqs +102 (  1708 ps): windows 10 10 10  0 10 11 11 11 10  write latency 000066666  BIST wrong beats 0 0 0 42290 0 0 0 0 0
+  dqs +103 (  1724 ps): windows 10 10 10 10 10 11 11 11 11  write latency 000066666
+  dqs +104 (  1741 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +105 (  1758 ps): windows 10 10 10 10 10 10 11 11 10  write latency 000066666
+  dqs +106 (  1775 ps): windows 10 10 10 10 10 10 11 11 10  write latency 000066666
+  dqs +107 (  1791 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +108 (  1808 ps): windows 10 10 10 10 10 11 11 11 11  write latency 000066666
+  dqs +109 (  1825 ps): windows 11 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +110 (  1842 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +111 (  1858 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  dqs +112 (  1875 ps): windows 10 10 10 10 10 11 11 11 10  write latency 000066666
+  lane 0: writes at 44 of 113 phases, 0..1875 ps
+  lane 1: writes at 41 of 113 phases, 0..1875 ps
+  lane 2: writes at 39 of 113 phases, 0..1875 ps
+  lane 3: writes at 43 of 113 phases, 0..1875 ps
+  lane 4: writes at 47 of 113 phases, 0..1875 ps
+  lane 5: writes at 46 of 113 phases, 0..1875 ps
+  lane 6: writes at 48 of 113 phases, 0..1875 ps
+  lane 7: writes at 45 of 113 phases, 0..1875 ps
+  lane 8: writes at 40 of 113 phases, 0..1875 ps
+common: 167 ps (steps +82..+91); DQS at +87 steps (1456 ps)
+write latency: m0:0 m1:0 m2:6 m3:6 m4:6 m5:6 m6:6 m7:6 m8:6
+  wb0: 10  9  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb2:  0  0  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb4:  0  0  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb6:  0  0 10 10 10 11 11 10  9  (widest read window per lane, taps)
+read leveling:
+  m0: b4 |00000000111111111100000000000000| window 10 taps (781 ps), tap 13
+  m1: b4 |00000000011111111110000000000000| window 10 taps (781 ps), tap 14
+  m2: b4 |00000000111111111100000000000000| window 10 taps (781 ps), tap 13
+  m3: b4 |00000000011111111110000000000000| window 10 taps (781 ps), tap 14
+  m4: b4 |01111111111000000000000000000000| window 10 taps (781 ps), tap 6
+  m5: b4 |01111111111100000000000000000000| window 11 taps (859 ps), tap 6
+  m6: b4 |11111111111000000000000000000000| window 11 taps (859 ps), tap 5
+  m7: b4 |01111111111000000000000000000000| window 10 taps (781 ps), tap 6
+  m8: b4 |00011111111100000000000000000000| window 9 taps (703 ps), tap 7
+  check at the chosen taps: pass
+calibration: PASS
+BIST over 2 GiB:
+  pass 0 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 0 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+BIST: PASS

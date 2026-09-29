@@ -9,7 +9,7 @@
 # after how many), runs ld_host.py DIR all, then loads PRODUCTION_BIT, rescans until the ID
 # register reads OTPU and runs the selftest. Stops (production not reloaded) only if the test
 # image's link does not come back: then the card host needs a warm reboot, and production is
-# loaded after it.
+# loaded after it. LOAD=0: the card already runs the test image (after a warm reboot): no load.
 set -u
 DIR=${1:?dir}; PROD=${2:?production bitstream}; shift 2
 P=${PYTHON:-$HOME/otpu-venv/bin/python}
@@ -36,9 +36,14 @@ bring_up() {
   echo "no link after 10 rescans"; tail -5 rescan.out; return 1
 }
 
-log "load the LiteDRAM test image"
-load ld_test.bit || exit 1
-bring_up "" "test image" || exit 2
+if [ "${LOAD:-1}" = 0 ]; then
+  log "LOAD=0: the card already runs the test image (e.g. after a warm reboot)"
+  [ -e /dev/xdma0_user ] || { echo "no /dev/xdma0_user"; exit 2; }
+else
+  log "load the LiteDRAM test image"
+  load ld_test.bit || exit 1
+  bring_up "" "test image" || exit 2
+fi
 log "ld_host.py $DIR all $*"
 $P ld_host.py "$DIR" info && $P ld_host.py "$DIR" all "$@" 2>&1 | tee host.log
 log "restore production: $PROD"

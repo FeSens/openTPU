@@ -371,3 +371,60 @@ lanes without ODELAY. The test image measures exactly that. It is built by
   that window is at least 3 taps. It then centres DQS in the range common to all lanes,
   calibrates, and runs the BIST over the whole 2 GiB channel.
 - `selftest` checks the algorithm against a simulated PHY.
+
+### Results on the card (2026-09-29, opentpu, DDR3-1066, channel 0, 72 bits)
+
+The logs are in `docs/data/litedram/card-*.log`.
+
+**Build**
+- Vivado 2026.1 met timing: WNS +0.857 ns, WHS +0.046 ns, with the GT lanes on X0Y23..16.
+- Controller, PHY, BIST and CSR bus take 6.7K LUT and 6.1K FF. XDMA takes 15.2K LUT.
+
+**Calibration** (host-driven over BAR0; about 0.1 s per full calibration)
+- **Read leveling:** windows of 9 to 11 taps (703 to 859 ps of the 938 ps bit), bitslip 4 on
+  every lane.
+- **Read window under traffic:** 8 to 9 taps. This is a BIST read of 256 MiB at each tap
+  (`rscan`).
+- **Write latency:** follows the fly-by. Lanes 0-3 need bitslip 0 and lanes 4-8 need bitslip 6
+  (one tCK earlier) at the chosen phase.
+
+**Write margin** (DQS phase scan in 16.7 ps steps over one tCK = 112 steps; at each step: full
+calibration, then a 64 MiB BIST write and read-back per lane)
+- Each lane writes correctly over 39 to 48 steps, i.e. 650 to 800 ps.
+- The lanes are skewed against each other by fly-by, so their windows only partly overlap. All
+  nine pass together in two places:
+  - window A: +7 to +20 steps from 90°, 14 steps, 234 ps;
+  - window B: 10 steps, 167 ps.
+- Between the two windows, lanes 2 and 3 cross their write-latency boundary: they fail at
+  either latency. About 70 steps fail on every lane.
+- **LiteX's default 90° phase fails lane 2 under traffic, although its DFI calibration check
+  passes.** The single-burst check is not enough: the DQS phase must be chosen with a traffic
+  test (`ld_host.py all` does this).
+
+**Soak and bandwidth**
+- At the centre of window A (+13), 266 passes in 300 s with 0 errors. Each pass writes and reads
+  back 2 GiB of random data and 2 GiB of address data.
+- At the window's edges (+7, +20), 40 passes each with 0 errors.
+- BIST bandwidth (sequential, one port): write 7.69 GB/s (90.1% of 8.53 GB/s), read 7.76 GB/s
+  (91.0%). This matches the controller simulation in section 4.
+
+**PCIe**
+- After each JTAG load, test image and production alike, `otpu-rescan`'s retrain did not bring
+  the card back. It tried Retrain Link, Link Disable and secondary bus reset, 15 attempts in all.
+  The root port stayed at LnkSta 0x1081 and nothing appeared on bus 01.
+- A warm reboot brought each image up: the test image enumerated as 10ee:7028/4C44, and
+  production passed its selftest afterwards.
+- On opentpu, a reload therefore costs a reboot.
+
+### Decision
+
+**Go for LiteDRAM, with two conditions.**
+1. **Two DQS clock groups.** The common write window (234 ps, about ±117 ps) is thin. The cause
+   is that this PHY drives one DQS clock for all lanes: the HR banks have no ODELAY, and the PHY
+   does not use the phasers that the MIG uses for write leveling. The fix: give lanes 0-3 and
+   lanes 4-8 each their own MMCM output with fine phase shift (the MMCM has spare outputs). Each
+   group should then get a window the size of a single lane's, 650 to 800 ps.
+2. **Channel 1.** It is not tested yet, and its fly-by split may differ. It needs its own run of
+   the test image.
+
+In production, calibration must choose the DQS phase(s) with a traffic check.
