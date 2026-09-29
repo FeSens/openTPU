@@ -183,6 +183,9 @@ module otpu_dma
   // latency); other widths have no streams (the compiler emits the VOP sequence)
   localparam bit HAS_SS = HAS_DSTEP && W == 8 && LANES == 8;
   logic [31:0]  ds_oa, ds_wb;                        // o (TMEM), the stream's write (DRAM words)
+  // the stream's next chunk write, ds_wb + ds_wch * CW, as a register: the adder ran into port B's
+  // address and its channel parity (b_par), the DMA -> memory path left after 23ee14c
+  logic [31:0]  ds_wa;
   // pad64 (SE's one tree, cols = 64): a row is its 8 segments and 8 of +0 (not read), and the Y of
   // those is dropped (docs/stream.md 11.3); ds_sj / ds_yj: the segment fed / out in its row
   logic         ds_pad;
@@ -194,6 +197,11 @@ module otpu_dma
   logic [8:0]   ds_ocnt;                             // o values out of SE
   logic [15:0]  ds_wch;                              // chunks written
   logic [7:0]   ds_nv;                               // o segments (rows / W, rounded up)
+`ifndef SYNTHESIS
+  always_ff @(posedge clk)
+    if (!rst && busy && is_ds && ds_wreq && ds_wa != ds_wb + 32'(ds_wch) * CW)
+      $fatal(1, "otpu_dma: ds_wa %h but ds_wb %h + %0d chunks", ds_wa, ds_wb, ds_wch);
+`endif
   // before the run: a STREAM's descriptor read (ds_dsc) and capture (ds_dsd), the setup (ds_su;
   // a DSTEP's from its command), SE's grant (ds_wait), the fill (ds_fill)
   cmd_t         sc;                                  // the DSTEP / STREAM
@@ -495,7 +503,7 @@ module otpu_dma
     if (ds_wreq) begin                    // a stream: the head chunk of the gather
       b_req = 1'b1;
       b_we = 1'b1;
-      b_addr = ds_wb + 32'(ds_wch) * CW;
+      b_addr = ds_wa;
       for (int p = 0; p < SPC; p++)
         for (int l = 0; l < W; l++) begin
           b_wmask[p * W + l] = 1'b1;
@@ -639,6 +647,7 @@ module otpu_dma
           cl_one <= !ds_zero && !prod_lt(su_cfg.rows, su_ns, SPC) &&
                     prod_lt(su_cfg.rows, su_ns, 2 * SPC);
           ds_wb <= su_dst >> 2;
+          ds_wa <= su_dst >> 2;
           ds_oa <= su_out;
           ds_rows <= su_cfg.rows; ds_qen <= su_cfg.q_en; ds_pad <= su_cfg.pad64;
           ds_sj <= '0; ds_yj <= '0;
@@ -671,6 +680,7 @@ module otpu_dma
         if (ds_wreq && b_gnt) begin
           gh <= gh + 1'b1;
           ds_wch <= ds_wch + 1'b1;
+          ds_wa <= ds_wa + CW;
         end
         og <= og_nx;
         ds_wr <= ds_wr_nx;

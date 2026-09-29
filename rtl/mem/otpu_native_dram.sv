@@ -210,10 +210,23 @@ module otpu_native_dram #(
   logic [TW:0]  tg_n [2];
   logic [TW-1:0] tg_h [2];
   tg_t          tgh [2], tg_in [2], tg_nx1 [2];
-  // SW gather buffers (see the top): valid, beat, bytes written, cycles since the last merge
+  // SW gather buffers (see the top): valid, beat and bytes written, cycles since the last merge.
+  // Their data (gd) takes an SW write a cycle after it is taken (gw_*: taken last cycle, to the
+  // buffer's beat), so the take (at the end of QUANT's TMEM grant) enables only gb's 89
+  // flip-flops per channel, not the data's 512 (the 5e5a build's widest DMA -> memory group:
+  // sleft -> gb data, 2048 endpoints); a gathered beat's data goes into the SW queue a cycle
+  // after it is pushed (qwd)
+  typedef struct packed {
+    logic [24:0]  m;
+    logic [63:0]  strb;
+  } gs_t;
   logic [1:0]   gv;
-  qw_t          gb [2];
+  gs_t          gb [2];
+  logic [511:0] gd [2];
   logic [2:0]   gage [2];
+  logic [1:0]   gw_v, gw_same;
+  logic [3:0]   gw_word, gw_be;
+  logic [31:0]  gw_wdata;
 
   // order of B reads (tags) and of A reads (channel, word, reuse)
   logic [1:0]   bt_q [OD];                     // LUT RAM: tag, halves swapped (CHASH)
@@ -282,7 +295,6 @@ module otpu_native_dram #(
   logic [1:0]   qb_push, qa_push, qw_push;
   qb_t          qb_e [2];
   qa_t          qa_e [2];
-  qw_t          qw_e [2];
   qb_t          hb [2];
   qa_t          ha [2];
   qw_t          hw [2];
@@ -315,9 +327,24 @@ module otpu_native_dram #(
       // no SW write this cycle and room in the queue, full or idle
       qw_push[c] = gv[c] && (sw_take && sw_ch == c[0] ? gb[c].m != sw_m
                    : qw_n[c] < WQD && (&gb[c].strb || gage[c] >= 3'(WGATHER)));
-      qw_e[c] = gb[c];
     end
   end
+  // the SW gather buffers' data: last cycle's write merged (see gd); last cycle's tail slot
+  logic [WW-1:0] ql_t [2];
+  logic [1:0]    ql_v;
+  always_ff @(posedge clk) begin
+    for (int c = 0; c < 2; c++) begin
+      ql_t[c] <= WW'(qw_f[c] + qw_n[c]);
+      ql_v[c] <= !qw_n[c][WW];
+      gw_same[c] <= gv[c] && gb[c].m == sw_m;
+      if (gw_v[c])
+        for (int k = 0; k < 64; k++)
+          gd[c][8 * k +: 8] <= gw_word == 4'(k / 4) && gw_be[k % 4] ? gw_wdata[8 * (k % 4) +: 8]
+                               : gw_same[c] ? gd[c][8 * k +: 8] : 8'h00;
+    end
+    gw_word <= sw_addr[3:0]; gw_wdata <= sw_wdata; gw_be <= sw_be;
+  end
+
   for (genvar c = 0; c < 2; c++) begin : g_mem
     // flat vectors: Vivado builds a RAM of structs from registers
     // qbm: 2 QD slots for at most QD entries (b_rdy), so the slot at the tail is never live and
@@ -327,7 +354,8 @@ module otpu_native_dram #(
     // -0.390 ns at 133.33 MHz). At QD = 16 the RAM32Ms hold 32 slots already
     logic [$bits(qb_t)-1:0] qbm [2 * QD];
     logic [$bits(qa_t)-1:0] qam [QD];
-    logic [$bits(qw_t)-1:0] qwm [WQD];
+    logic [$bits(gs_t)-1:0] qwm [WQD];      // per slot: the beat and its bytes written
+    logic [511:0] qwd [WQD];                // and their data (see gd)
     logic [24:0] wam [WQD];                 // per slot: the beat
     logic [HW-1:0] whm [WQD];               // per slot: its hazard bucket
     logic [$bits(tg_t)-1:0] tgm [TD];       // the reads in flight
@@ -338,10 +366,13 @@ module otpu_native_dram #(
     always_ff @(posedge clk) if (qa_push[c]) qam[QW'(qa_h[c] + qa_n[c])] <= qa_e[c];
     // the SW queue's tail slot (not live unless the queue is full) takes the gathered beat every
     // cycle: its write enables are registers, not the push (an SW write's take comes at the end
-    // of QUANT's TMEM grant; the 5e5a build's worst DMA -> memory paths ran into qwm's WE)
-    always_ff @(posedge clk) if (!qw_n[c][WW]) qwm[WW'(qw_f[c] + qw_n[c])] <= qw_e[c];
-    always_ff @(posedge clk) if (!qw_n[c][WW]) wam[WW'(qw_f[c] + qw_n[c])] <= qw_e[c].m;
-    always_ff @(posedge clk) if (!qw_n[c][WW]) whm[WW'(qw_f[c] + qw_n[c])] <= whash(qw_e[c].m);
+    // of QUANT's TMEM grant; the 5e5a build's worst DMA -> memory paths ran into qwm's WE). The
+    // data goes into last cycle's tail slot (ql_t, ql_v) a cycle later, as gd has it: a slot
+    // pushed last cycle is at the read point or before it, and its data is read (hw) only past it
+    always_ff @(posedge clk) if (!qw_n[c][WW]) qwm[WW'(qw_f[c] + qw_n[c])] <= gb[c];
+    always_ff @(posedge clk) if (ql_v[c]) qwd[ql_t[c]] <= gd[c];
+    always_ff @(posedge clk) if (!qw_n[c][WW]) wam[WW'(qw_f[c] + qw_n[c])] <= gb[c].m;
+    always_ff @(posedge clk) if (!qw_n[c][WW]) whm[WW'(qw_f[c] + qw_n[c])] <= whash(gb[c].m);
     always_ff @(posedge clk) if (rtk[c]) tgm[TW'(tg_h[c] + tg_n[c])] <= tg_in[c];
     assign tg_nx1[c] = tg_t'(tgm[TW'(tg_h[c] + 1'b1)]);
     assign wadr_n[c] = wam[WW'(qw_r[c] + 1'b1)];
@@ -360,7 +391,9 @@ module otpu_native_dram #(
     assign wr_head[c] = wrm[qw_f[c]];
     assign hb[c] = qb_t'(qbm[qb_h[c]]);
     assign ha[c] = qa_t'(qam[qa_h[c]]);
-    assign hw[c] = qw_t'(qwm[qw_f[c]]);
+    gs_t hs;
+    assign hs = gs_t'(qwm[qw_f[c]]);
+    assign hw[c] = qw_t'{m: hs.m, data: qwd[qw_f[c]], strb: hs.strb};
     assign rb_head[c] = rbm[rb_h[c]];
     assign ra_head[c] = ram[AW_'(ra_h[c] + AW_'(aoh.drop))];
   end
@@ -507,7 +540,7 @@ module otpu_native_dram #(
       al_v <= 1'b0;
       pv <= '0; pfl[0] <= '0; pfl[1] <= '0;
       wq_n <= '0; wacc_q <= '0;
-      gv <= '0; gage[0] <= '0; gage[1] <= '0;
+      gv <= '0; gage[0] <= '0; gage[1] <= '0; gw_v <= '0;
       hv <= '0; c_done <= '0; d_done <= '0;
     end else begin
       // writes accepted (the take strobes: an A or an SW write goes to exactly one channel, so
@@ -531,7 +564,7 @@ module otpu_native_dram #(
         if (!qw_n[c][WW]) begin                // the tail slot, as qwm (see g_mem)
           logic [WW-1:0] t;
           t = WW'(qw_f[c] + qw_n[c]);
-          wpart[c][t] <= !(&qw_e[c].strb);
+          wpart[c][t] <= !(&gb[c].strb);
           wgot[c][t] <= 1'b0;
         end
         // ---- the command stream: a shown command is shown again until taken, a write until
@@ -600,19 +633,15 @@ module otpu_native_dram #(
       end
       // ---- SW gather: merge into the beat, or start a new one (the old one was pushed)
       for (int c = 0; c < 2; c++) begin
+        gw_v[c] <= sw_take && sw_ch == c[0];
         if (sw_take && sw_ch == c[0]) begin
           logic same;
           same = gv[c] && gb[c].m == sw_m;
           gv[c] <= 1'b1;
           gage[c] <= '0;
           gb[c].m <= sw_m;
-          for (int k = 0; k < 64; k++) begin
-            logic hit;
-            hit = sw_addr[3:0] == 4'(k / 4) && sw_be[k % 4];
-            gb[c].data[8 * k +: 8] <= hit ? sw_wdata[8 * (k % 4) +: 8]
-                                     : same ? gb[c].data[8 * k +: 8] : 8'h00;
-            gb[c].strb[k] <= hit || (same && gb[c].strb[k]);
-          end
+          for (int k = 0; k < 64; k++)
+            gb[c].strb[k] <= (sw_addr[3:0] == 4'(k / 4) && sw_be[k % 4]) || (same && gb[c].strb[k]);
         end else if (qw_push[c]) begin
           gv[c] <= 1'b0;
         end else if (gv[c] && gage[c] != '1) begin
@@ -668,7 +697,7 @@ module otpu_native_dram #(
       logic tw;
       tw = !qw_n[c][WW] && qw_rn[c] == (h_inc[c] ? (WW + 1)'(1) : (WW + 1)'(0));
       if (tw) begin
-        wadr_r[c] <= qw_e[c].m; wh_r[c] <= whash(qw_e[c].m); wp_r[c] <= !(&qw_e[c].strb);
+        wadr_r[c] <= gb[c].m; wh_r[c] <= whash(gb[c].m); wp_r[c] <= !(&gb[c].strb);
       end else if (h_inc[c]) begin
         wadr_r[c] <= wadr_n[c]; wh_r[c] <= wh_n[c]; wp_r[c] <= wpart[c][WW'(qw_r[c] + 1'b1)];
       end
@@ -725,18 +754,47 @@ module otpu_native_dram #(
         $fatal(1, "otpu_native_dram: B tag %0d at %0d, expected %0d", bth, bt_h, btr[bt_h]);
     end
 
+  // gb and, a cycle later, gd are, while valid, what a buffer merging each write as it is taken
+  // holds (gb_ref)
+  qw_t gb_ref [2];
+  logic [511:0] gd_ref [2];
+  logic [1:0] gd_rv;
+  always_ff @(posedge clk)
+    for (int c = 0; c < 2; c++) begin
+      if (!rst && gv[c] && (gb[c].m != gb_ref[c].m || gb[c].strb != gb_ref[c].strb))
+        $fatal(1, "otpu_native_dram: channel %0d SW gather buffer %h differs from %h", c, gb[c].m,
+               gb_ref[c].m);
+      if (!rst && gd_rv[c] && gd[c] != gd_ref[c])
+        $fatal(1, "otpu_native_dram: channel %0d SW gather data differs", c);
+      gd_ref[c] <= gb_ref[c].data;
+      gd_rv[c] <= gv[c];
+      if (sw_take && sw_ch == c[0]) begin
+        logic same;
+        same = gv[c] && gb_ref[c].m == sw_m;
+        gb_ref[c].m <= sw_m;
+        for (int k = 0; k < 64; k++) begin
+          logic hit;
+          hit = sw_addr[3:0] == 4'(k / 4) && sw_be[k % 4];
+          gb_ref[c].data[8 * k +: 8] <= hit ? sw_wdata[8 * (k % 4) +: 8]
+                                        : same ? gb_ref[c].data[8 * k +: 8] : 8'h00;
+          gb_ref[c].strb[k] <= hit || (same && gb_ref[c].strb[k]);
+        end
+      end
+    end
+
   // The SW queue's slots are written at the tail every cycle as well: its slots at the read point
-  // (qw_r) and at the head (qw_f) are what a queue written on a push only holds; the read point's
-  // registers (wadr_r, wh_r, wp_r) are what its slot holds
+  // (qw_r) and at the head (qw_f) are what a queue written on a push only holds (the head's beat,
+  // once past the read point: see qwd); the read point's registers (wadr_r, wh_r, wp_r) are what
+  // its slot holds
   logic [$bits(qw_t)-1:0] qwr [2][WQD];
   logic [24:0] war [2][WQD];
   logic [WQD-1:0] wpr [2], wgr [2];
   always_ff @(posedge clk)
     for (int c = 0; c < 2; c++) begin
       if (qw_push[c]) begin
-        qwr[c][WW'(qw_f[c] + qw_n[c])] <= qw_e[c];
-        war[c][WW'(qw_f[c] + qw_n[c])] <= qw_e[c].m;
-        wpr[c][WW'(qw_f[c] + qw_n[c])] <= !(&qw_e[c].strb);
+        qwr[c][WW'(qw_f[c] + qw_n[c])] <= gb_ref[c];
+        war[c][WW'(qw_f[c] + qw_n[c])] <= gb[c].m;
+        wpr[c][WW'(qw_f[c] + qw_n[c])] <= !(&gb[c].strb);
         wgr[c][WW'(qw_f[c] + qw_n[c])] <= 1'b0;
       end
       if (n_rvalid[c] && tgh[c].k == K_W) wgr[c][tgh[c].slot] <= 1'b1;
@@ -753,9 +811,11 @@ module otpu_native_dram #(
         if (qw_rn[c] != 0 && (wadr_r[c] != war[c][qw_r[c]] || wh_r[c] != whash(war[c][qw_r[c]]) ||
                               wp_r[c] != wpr[c][qw_r[c]]))
           $fatal(1, "otpu_native_dram: channel %0d SW slot %0d at the read point differs", c, qw_r[c]);
-        if (qw_n[c] != 0 && (hw[c] != qw_t'(qwr[c][qw_f[c]]) || wh_f[c] != whash(war[c][qw_f[c]]) ||
-                             wpart[c][qw_f[c]] != wpr[c][qw_f[c]] || wgot[c][qw_f[c]] != wgr[c][qw_f[c]]))
+        if (qw_n[c] != 0 && (wh_f[c] != whash(war[c][qw_f[c]]) || wpart[c][qw_f[c]] != wpr[c][qw_f[c]] ||
+                             wgot[c][qw_f[c]] != wgr[c][qw_f[c]]))
           $fatal(1, "otpu_native_dram: channel %0d SW head slot %0d differs", c, qw_f[c]);
+        if (qw_n[c] != qw_rn[c] && hw[c] != qw_t'(qwr[c][qw_f[c]]))
+          $fatal(1, "otpu_native_dram: channel %0d SW head slot %0d's beat differs", c, qw_f[c]);
       end
 
   // Read data never arrives without a read in flight or without room reserved for it (the
