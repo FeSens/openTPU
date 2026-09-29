@@ -207,9 +207,11 @@ module otpu_vpu
   logic        cq_h;
   logic [3:0]  ew_n;                          // elementwise instructions issued, not done
   logic [3:0]  last_tap;                      // slots of the last one started
-  // stream mode (ss_gnt); SE takes no VOP while a stream asks for it
+  // stream mode (ss_gnt); SE takes no VOP while a stream asks for it (ss_rq: ss_req registered,
+  // so no path runs from the DMA through rdy into the sequencer)
   (* max_fanout = 64 *) logic ss_act;
-  assign rdy = (cq_n < 2) && !(SE && ss_req);
+  logic ss_rq;
+  assign rdy = (cq_n < 2) && !(SE && ss_rq);
   // the stream: the ss_* inputs registered (sen: its pe; s_init: its first granted cycle), the
   // tail's X registers (s_xd, s_xa, s_xm), and s_xm at slot 0's pacc (s_mt)
   (* max_fanout = 64 *) logic sen;
@@ -941,19 +943,21 @@ module otpu_vpu
   end
 
   // ------------------------------------------------------------------ stream engine
-  // The grant: a stream asks (ss_req), rdy is low, and once nothing is starting (the sequencer's
-  // start follows rdy a cycle late), queued, issuing, reducing, in the lanes or waiting to be
-  // written (nor a done pending), ss_act rises (s_init with it) and holds until ss_req falls.
-  // The DMA fills and streams only after ss_gnt, and drops ss_req after its last O, when the
-  // stream's partials, kv and tail have drained.
+  // The grant: a stream asks (ss_req; rdy falls a cycle later, with ss_rq), and once nothing is
+  // starting (the sequencer's start follows rdy a cycle late), queued, issuing, reducing, in the
+  // lanes or waiting to be written (nor a done pending), ss_act rises (s_init with it) and holds
+  // until ss_req falls (ss_gnt falls the next cycle). The DMA fills and streams only after
+  // ss_gnt, and drops ss_req after its last O, when the stream's partials, kv and tail have
+  // drained.
   if (SE) begin : g_se
     wire idle = !start && (cq_n == 0) && !busy && !done_i && !dpend && wb_e;
     always_ff @(posedge clk) begin
       if (rst) begin
-        ss_act <= 1'b0; s_init <= 1'b0; sen <= 1'b0; s_fk <= SF_NONE;
+        ss_rq <= 1'b0; ss_act <= 1'b0; s_init <= 1'b0; sen <= 1'b0; s_fk <= SF_NONE;
       end else begin
-        ss_act <= ss_req && (ss_act || idle);
-        s_init <= ss_req && !ss_act && idle;
+        ss_rq <= ss_req;
+        ss_act <= ss_req && ss_rq && (ss_act || idle);
+        s_init <= ss_req && ss_rq && !ss_act && idle;
         sen <= ss_act && ss_pe;
         s_fk <= ss_act ? ss_fk : SF_NONE;
       end
@@ -973,6 +977,7 @@ module otpu_vpu
     assign ss_y_v = sen && t_yv;
     assign ss_o_v = sen && t_ov;
   end else begin : g_nse
+    assign ss_rq = 1'b0;
     assign ss_act = 1'b0;
     assign ss_gnt = 1'b0;
     assign sen = 1'b0;
