@@ -1,0 +1,14 @@
+ch0 lane 7 (write bitslips [6, 6, 6, 6, 6, 6, 6, -1, 6]; lane read bitslip 4 tap 4, 24 wrong bits): a single 1 per burst, beats 0..7 as read
+  dq61 (bit 5) 1 at beat 2: column 0 10001000   column 4 10000000
+  dq61 (bit 5) 1 at beat 6: column 0 10000000   column 4 10001000
+  dq60 (bit 4) 1 at beat 2: column 0 10001000   column 4 10000000
+  dq60 (bit 4) 1 at beat 6: column 0 10000000   column 4 10001000
+  dq56 (bit 0) 1 at beat 2: column 0 00100000   column 4 00000010
+  dq56 (bit 0) 1 at beat 6: column 0 00000010   column 4 00100000
+ch1 lane 8 (write bitslips [6, 6, 6, 6, 6, 6, 6, 6, -1]; lane read bitslip 4 tap 11, 23 wrong bits): a single 1 per burst, beats 0..7 as read
+  dq65 (bit 1) 1 at beat 2: column 0 00001000   column 4 00000000
+  dq65 (bit 1) 1 at beat 6: column 0 00000000   column 4 00001000
+  dq71 (bit 7) 1 at beat 2: column 0 11001000   column 4 10000000
+  dq71 (bit 7) 1 at beat 6: column 0 10000000   column 4 10001000
+  dq64 (bit 0) 1 at beat 2: column 0 00100000   column 4 00000010
+  dq64 (bit 0) 1 at beat 6: column 0 00000010   column 4 00100000

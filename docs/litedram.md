@@ -539,14 +539,15 @@ DQS against CK, in two groups per channel. Built by `ld_test.py --phy wl`
 
 **The PHY (`WL7DDRPHY`).** It is LiteDRAM's A7DDRPHY with its clocks split. Each byte lane's
 write side (its 8 DQ serializers, DQS serializer, and their CLKDIV) runs on its group's static
-clocks. CK, the commands and the read capture run on the clocks that the fine phase shift moves:
+clocks, and so does the read capture (since d2c1ede; `ldtest3` captured on the shifted pair, see
+below). CK and the commands run on the clocks that the fine phase shift moves:
 
 | clock | MMCM output | frequency | phase | drives |
 |---|---|---|---|---|
-| `sysc` | CLKOUT0 | 133.33 MHz | fine PS | CLKDIV of CK, commands, reads |
-| `sys4xc` | CLKOUT1 | 533.33 MHz | fine PS | CK, commands, the read ISERDES |
-| `sysw` | CLKOUT2 | 133.33 MHz | 0 (sys's phase) | CLKDIV of every write serializer |
-| `sys4xw a` | CLKOUT3 | 533.33 MHz | 0 | group 0's DQ |
+| `sysc` | CLKOUT0 | 133.33 MHz | fine PS | CLKDIV of CK and the commands |
+| `sys4xc` | CLKOUT1 | 533.33 MHz | fine PS | CK, commands |
+| `sysw` | CLKOUT2 | 133.33 MHz | 0 (sys's phase) | CLKDIV of every write serializer and read ISERDES |
+| `sys4xw a` | CLKOUT3 | 533.33 MHz | 0 | group 0's DQ, every read ISERDES |
 | `sys4xw a dqs` | CLKOUT4 | 533.33 MHz | 90 deg | group 0's DQS |
 | `sys4xw b` | CLKOUT5 | 533.33 MHz | offset | group 1's DQ |
 | `sys4xw b dqs` | CLKOUT6 | 533.33 MHz | offset + 90 deg | group 1's DQS |
@@ -562,19 +563,20 @@ clocks. CK, the commands and the read capture run on the clocks that the fine ph
 - **One MMCM per channel.** All of a channel's interface clocks, CK included, come from one VCO,
   so no clock pair in the DDR3 interface carries another MMCM's jitter. The MMCM has exactly the
   7 outputs this takes.
-- **Group 1's offset from group 0.** The host sets it through the MMCM's DRP: CLKOUT5/6's
-  PHASE_MUX and DELAY_TIME (static outputs), in 1/8 VCO steps (117 ps = 7 fine steps). The MMCM
-  is held in reset meanwhile, so the channel's PHY clocks stop and the DRAM gets its reset and
-  init again. Group 1's CLK is offset from its CLKDIV (`sysw`) by that amount, as A7DDRPHY's DQS
-  serializer already is by 90 deg. A whole-tCK slip of the load is absorbed by the lane's write
-  latency.
+- **Group 1's offset from group 0 (dropped: measured on `ldtest3`, every lane of the group
+  failed).** The host set it through the MMCM's DRP: CLKOUT5/6's PHASE_MUX and DELAY_TIME (static
+  outputs), in 1/8 VCO steps (117 ps = 7 fine steps), with the MMCM held in reset. It moved only
+  group 1's serializer CLK against its CLKDIV (`sysw`). Every offset tried lost every group 1
+  lane: 1, 2, 3, 13, 14 and 15 eighths on channel 0, 6 on channel 1. The whole write side moved
+  together (CLK and CLKDIV) worked at 4 eighths and failed at 1, 2, 3 and 5. The groups remain in
+  the code; every lane is in group 0 by default, and the host leaves group 1 at 0.
 - **Cascaded from `sys` at DIVCLK_DIVIDE 1**, with the feedback through a BUFG. The outputs keep a
   fixed phase to `sys`, so Vivado times the paths from `sys` (the controller and the PHY's
   logic) to `sysw` as synchronous. A cascade from the 50 MHz oscillator would need DIVCLK_DIVIDE 3
   for 1066.67 MHz, and the phase against the controller's clock would then be one of three
   values after each lock. The top MMCM (`sys` only) runs at 1200 MHz VCO with DIVCLK 1.
-- **Commands and read data cross between `sys` and the shifted `sysc` through registers on
-  `sys`'s falling edge.** The host keeps `sysc` within half a tCK (0.94 ns) of `sys`. Every phase
+- **Commands cross from `sys` to the shifted `sysc` through registers on `sys`'s falling edge**
+  (the read data did too until d2c1ede). The host keeps `sysc` within half a tCK (0.94 ns) of `sys`. Every phase
   has an equivalent a tCK away against CK, and the write latency calibration absorbs the tCK
   (`DqsPhase` wraps its targets into [-56, +56) steps). Registered half a cycle (3.75 ns) away
   from the other side's edge, the data keep about 2.8 ns of setup and hold. The build constrains
@@ -586,14 +588,11 @@ clocks. CK, the commands and the read capture run on the clocks that the fine ph
 - channel 0: group 0 = bank 11 (lanes 0-3), group 1 = banks 12 and 13 (lanes 4-8);
 - channel 1: group 0 = bank 16 (lanes 0, 1, 3, 8), group 1 = banks 17 and 18 (lanes 2, 4, 5, 6, 7).
 
-**Calibration (`calibrate_groups`).**
-1. Group 1 is put onto group 0 (offset 0), and the common phase is scanned over a tCK. Each step
-   gets a full calibration plus a 64 MiB BIST per lane.
-2. Each group's longest common run is found. Group 1's offset is set to the multiple of 7 steps
-   that brings its run's centre onto group 0's. The phase shift moves CK, so an offset of 7e
-   steps later on group 1's DQ moves its run 7e steps later too.
-3. A second scan at that offset. The common phase goes to the centre of the run common to all
-   lanes, and the channel is calibrated there.
+**Calibration (`calibrate_groups`, since d2c1ede).** Group 1 at offset 0; the common CK phase is
+scanned over a tCK, each step with a full calibration (per-lane write latency, read leveling) and
+a 64 MiB BIST per lane; the phase goes to the centre of the longest run common to all lanes, and
+the channel is calibrated there. (Until d2c1ede a second step set group 1's offset to bring its
+run onto group 0's and scanned again; see above for why it is gone.)
 
 The temperature run rescans every 5 minutes and logs each group's run.
 
@@ -650,4 +649,48 @@ The temperature run rescans every 5 minutes and logs each group's run.
 
   Bitstream md5: 1ae9ef50d2ddec89f3282e29104178bf.
 
-**Status:** built from `litedram-int`; results below when measured.
+### `ldtest3` on the card (2026-09-29, opentpu, both channels, FPGA 54-55 C)
+
+The session stopped after each channel's calibration and forced-latency scan: calibration failed
+on both channels (one dead lane each), so the soak and the temperature run would have run
+uncalibrated. The card went back to production (se-cand3, build 002569bc) afterwards; its
+selftest passed (11 of 11). Logs: `docs/data/litedram/card3-*.log`.
+
+**Every lane but one per channel: the CK shift works.** The forced-latency scan at group 1
+offset 0, write bitslips 0, 2, 4 and 6, a 64 MiB BIST per fine step (`card3-wscan4-ch*.log`).
+Each lane fails only where its write latency flips, 6-10 steps wide (both channels' zones as
+sharp as channel 0's were on `ldtest2`); with each lane at its own latency, the steps where every
+lane passes (**measured**, the complement of the zones):
+
+| channel | lanes | failing zones (CK steps) | common run |
+|---|---|---|---|
+| 0 | 0-6, 8 | -42..-22, -7..+3, +14..+24 | **45 steps (750 ps)**, +25..-43 across the wrap; also 14, 14, 10 |
+| 1 | 0-7 | -3..+3, +6..+17, +24..+29 | **79 steps (1.32 ns)**, +30..-4 across the wrap |
+
+For comparison, `ldtest2` (DQS shifted alone) had 12 steps on channel 0 and none usable on
+channel 1. One write group is enough: the offset is not needed (and did not work, above).
+
+**The dead lanes: one DQ bit a tCK late on the read.** Channel 0's lane 7 and channel 1's lane 8
+fail at every CK phase and every write bitslip. With marked data (beat k = 0x11 (k + 1)) at the
+lane's least bad read setting, 7 of its 8 bits are right and one reads the pattern 2 beats (one
+tCK) late: channel 0 dq61 (and dq60 at times), channel 1 dq65 (and dq71 at times). The same bits
+at CK steps -45, -10, +20 and +40 and after every PHY reset (`card3-bits*.log`). A single 1
+written at beat 2 or 6 and read from column 0 and from column 4 (DDR3 reads column 4 as beats
+4-7, 0-3; writes ignore it) tells a late write from a late read: the 1 written at beat 6 shows
+at position 4 from column 4, and the one at beat 2 does not show from column 4. So the write is
+right and the bit comes out of its ISERDES a CLK after its lane (`card3-burst-order.log`). The
+bits are the DQ pins nearest their bank's end: IOB Y51 and Y53 in bank 12, Y252 and Y253 in bank
+16. `ldtest3`'s ISERDES were on the shifted pair (`sys4xc` / `sysc`); `ldtest2` captured on
+static clocks and had no late bit on either channel, and `ldtest3`'s write serializers on the
+static pair, the same pins among them, wrote every bit right. The reset's timing is not the
+cause: the late bits did not change when it arrived 1.4 ns later against the capture clock
+(the CK phase scan) or 470 ps later against the write clocks (below). d2c1ede moves the read
+ISERDES onto the static pair and gives every lane's serializers their own reset register
+(constrained to 1.2 ns).
+
+**The DRP offsets (`card3-g1-offsets.log`, `card3-write-shift.log`).** Group 1 alone at 1, 2, 3,
+13, 14, 15 eighths (channel 0, CK at +40): every group 1 lane lost its read window. The whole
+write side (CLKOUT2-6 together, CK moved with it): 4 eighths as at 0 (the same late bit), 1, 2, 3
+and 5 eighths every lane lost.
+
+**Status:** d2c1ede (read capture static, one group) building; the checkpoint run follows.

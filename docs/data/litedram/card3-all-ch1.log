@@ -1,0 +1,7 @@
+scratch 0x12345678 (ok), bus errors 0, channels [0, 1], DQS phase steps ch1 0 (16.7 ps each, 112 per tCK), sys 133.33 MHz, CL 7 CWL 6, FPGA 54.9 C, board 48.0 C
+ch1 write clocks: groups [0, 0, 1, 0, 1, 1, 1, 1, 0], group 1 offset 0 x 1/8 VCO (CLKOUT3..6 static phases {3: 0, 4: 4, 5: 0, 6: 4}), MMCM locked 1
+write clock groups [0, 0, 1, 0, 1, 1, 1, 1, 0]: scan of the common phase with group 1 on group 0, every 1 steps, a 64 MiB BIST per step:
+  group 0 (lanes [0, 1, 3, 8]): 1 steps (17 ps) around +3
+  group 1 (lanes [2, 4, 5, 6, 7]): 80 steps (1339 ps) around +70
+  group 1 offset 6 x 1/8 VCO (42 steps); groups now 0 0 steps, 1 0 steps; all lanes 0 steps (0 ps)
+  no common phase with group 1 at its offset: FAIL
