@@ -120,9 +120,7 @@ class OTPULiteDRAM(SoCCore):
                 p = ClockDomainsRenamer(wc.domains)(WL7DDRPHY(
                     platform.request("ddram", ch), groups=groups[ch], sys_clk_freq=f,
                     iodelay_clk_freq=200e6, cl=cl, cwl=cwl))
-                # the serializer resets at 2.0 ns, not WL7DDRPHY's default 1.2: ldtest3d routed them
-                # at 1.66 ns (WNS -0.967 at 1.2, 308 reset pins only); 2.0 as ldphy sized it
-                for c in wc.constraints(hier=True) + (WL7DDRPHY.constraints(ns=2.0) if ch == 0 else []):
+                for c in wc.constraints(hier=True) + (WL7DDRPHY.constraints() if ch == 0 else []):
                     platform.add_platform_command(c.replace("{", "{{").replace("}", "}}"))
             else:
                 p = s7ddrphy.A7DDRPHY(platform.request("ddram", ch), memtype="DDR3", nphases=4,

@@ -11,7 +11,7 @@
 // Device     : xc7k480t-ffg1156-2
 // Hierarchy  : disabled
 // LiteX sha1 : --------
-// Date       : 2026-09-29 11:16:19
+// Date       : 2026-09-29 11:29:22
 //------------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -311,13 +311,15 @@ OTPULiteDRAM
 │    ├── bitslip_152 (BitSlip) [Gen]
 │    ├── tappeddelayline_2 (TappedDelayLine) [Gen]
 │    ├── tappeddelayline_3 (TappedDelayLine) [Gen]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -345,27 +347,7 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -390,6 +372,12 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
@@ -408,7 +396,20 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -565,42 +566,35 @@ OTPULiteDRAM
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUFDS]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
@@ -613,6 +607,9 @@ OTPULiteDRAM
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -651,12 +648,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -667,8 +660,12 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -683,8 +680,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -707,8 +704,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
@@ -739,8 +736,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -751,8 +748,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -767,8 +764,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -791,8 +788,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
@@ -823,16 +820,20 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -851,22 +852,21 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    └── [BB:IDELAYE2]
+│    └── [BB:IOBUF]
 ├── sdram (LiteDRAMCore)
 │    ├── dfii (DFIInjector)
 │    │    ├── pi0 (PhaseInjector)
@@ -1179,6 +1179,28 @@ OTPULiteDRAM
 │    ├── bitslip_152 (BitSlip) [Gen]
 │    ├── tappeddelayline_2 (TappedDelayLine) [Gen]
 │    ├── tappeddelayline_3 (TappedDelayLine) [Gen]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OBUFDS]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -1187,29 +1209,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -1229,6 +1228,7 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -1453,12 +1453,12 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1481,8 +1481,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1497,8 +1497,12 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1509,8 +1513,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1541,8 +1545,8 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1565,8 +1569,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1577,12 +1581,12 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1593,8 +1597,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1625,8 +1629,8 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1649,8 +1653,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1665,8 +1669,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1677,8 +1681,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1709,12 +1713,8 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1733,8 +1733,8 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    └── [BB:IDELAYE2]
+│    ├── [BB:IDELAYE2]
+│    └── [BB:IOBUF]
 ├── sdram1 (LiteDRAMCore)
 │    ├── dfii (DFIInjector)
 │    │    ├── pi0 (PhaseInjector)
@@ -1963,14 +1963,16 @@ OTPULiteDRAM
 │    │    ├── csrstorage_2 (CSRStorage) [Gen]
 │    │    ├── csrstorage_3 (CSRStorage) [Gen]
 │    │    ├── csrstorage_4 (CSRStorage) [Gen]
-│    │    └── csrstorage_5 (CSRStorage) [Gen]
+│    │    ├── csrstorage_5 (CSRStorage) [Gen]
+│    │    └── csrstorage_6 (CSRStorage) [Gen]
 │    ├── csrbank_6 (CSRBank) [Gen]
 │    │    ├── csrstorage_0 (CSRStorage) [Gen]
 │    │    ├── csrstorage_1 (CSRStorage) [Gen]
 │    │    ├── csrstorage_2 (CSRStorage) [Gen]
 │    │    ├── csrstorage_3 (CSRStorage) [Gen]
 │    │    ├── csrstorage_4 (CSRStorage) [Gen]
-│    │    └── csrstorage_5 (CSRStorage) [Gen]
+│    │    ├── csrstorage_5 (CSRStorage) [Gen]
+│    │    └── csrstorage_6 (CSRStorage) [Gen]
 │    ├── csrbank_7 (CSRBank) [Gen]
 │    │    ├── csrstorage_0 (CSRStorage) [Gen]
 │    │    ├── csrstatus_0 (CSRStatus) [Gen]
@@ -3493,6 +3495,10 @@ reg           csr_bankarray_csrbank4_scratch_re = 1'd0;
 wire   [31:0] csr_bankarray_csrbank4_scratch_w;
 reg           csr_bankarray_csrbank4_scratch_we = 1'd0;
 wire          csr_bankarray_csrbank4_sel;
+wire    [7:0] csr_bankarray_csrbank5_dly_sel_bits_r;
+reg           csr_bankarray_csrbank5_dly_sel_bits_re = 1'd0;
+wire    [7:0] csr_bankarray_csrbank5_dly_sel_bits_w;
+reg           csr_bankarray_csrbank5_dly_sel_bits_we = 1'd0;
 wire    [8:0] csr_bankarray_csrbank5_dly_sel_r;
 reg           csr_bankarray_csrbank5_dly_sel_re = 1'd0;
 wire    [8:0] csr_bankarray_csrbank5_dly_sel_w;
@@ -3518,6 +3524,10 @@ wire    [1:0] csr_bankarray_csrbank5_wrphase_r;
 reg           csr_bankarray_csrbank5_wrphase_re = 1'd0;
 wire    [1:0] csr_bankarray_csrbank5_wrphase_w;
 reg           csr_bankarray_csrbank5_wrphase_we = 1'd0;
+wire    [7:0] csr_bankarray_csrbank6_dly_sel_bits_r;
+reg           csr_bankarray_csrbank6_dly_sel_bits_re = 1'd0;
+wire    [7:0] csr_bankarray_csrbank6_dly_sel_bits_w;
+reg           csr_bankarray_csrbank6_dly_sel_bits_we = 1'd0;
 wire    [8:0] csr_bankarray_csrbank6_dly_sel_r;
 reg           csr_bankarray_csrbank6_dly_sel_re = 1'd0;
 wire    [8:0] csr_bankarray_csrbank6_dly_sel_w;
@@ -15091,6 +15101,8 @@ wire          wl7ddrphy0_dfi_p3_we_n;
 wire  [143:0] wl7ddrphy0_dfi_p3_wrdata;
 wire          wl7ddrphy0_dfi_p3_wrdata_en;
 wire   [17:0] wl7ddrphy0_dfi_p3_wrdata_mask;
+reg     [7:0] wl7ddrphy0_dly_sel_bits_storage = 8'hff;
+reg           wl7ddrphy0_dly_sel_bits_wr_stb = 1'd0;
 reg     [8:0] wl7ddrphy0_dly_sel_storage = 9'd0;
 reg           wl7ddrphy0_dly_sel_wr_stb = 1'd0;
 wire          wl7ddrphy0_dq_i0;
@@ -15409,6 +15421,7 @@ reg     [7:0] wl7ddrphy0_dqspattern0_o0 = 8'd0;
 reg     [7:0] wl7ddrphy0_dqspattern0_o1 = 8'd0;
 reg     [4:0] wl7ddrphy0_half_sys8x_taps_storage = 5'd6;
 reg           wl7ddrphy0_half_sys8x_taps_wr_stb = 1'd0;
+wire          wl7ddrphy0_lane_all;
 wire    [2:0] wl7ddrphy0_pads_ba;
 wire          wl7ddrphy0_rd_rst_r0;
 wire          wl7ddrphy0_rd_rst_r1;
@@ -16107,6 +16120,8 @@ wire          wl7ddrphy1_dfi_p3_we_n;
 wire  [143:0] wl7ddrphy1_dfi_p3_wrdata;
 wire          wl7ddrphy1_dfi_p3_wrdata_en;
 wire   [17:0] wl7ddrphy1_dfi_p3_wrdata_mask;
+reg     [7:0] wl7ddrphy1_dly_sel_bits_storage = 8'hff;
+reg           wl7ddrphy1_dly_sel_bits_wr_stb = 1'd0;
 reg     [8:0] wl7ddrphy1_dly_sel_storage = 9'd0;
 reg           wl7ddrphy1_dly_sel_wr_stb = 1'd0;
 wire          wl7ddrphy1_dq_i0;
@@ -16425,6 +16440,7 @@ reg     [7:0] wl7ddrphy1_dqspattern1_o0 = 8'd0;
 reg     [7:0] wl7ddrphy1_dqspattern1_o1 = 8'd0;
 reg     [4:0] wl7ddrphy1_half_sys8x_taps_storage = 5'd6;
 reg           wl7ddrphy1_half_sys8x_taps_wr_stb = 1'd0;
+wire          wl7ddrphy1_lane_all;
 wire    [2:0] wl7ddrphy1_pads_ba;
 wire          wl7ddrphy1_rd_rst_r0;
 wire          wl7ddrphy1_rd_rst_r1;
@@ -16762,6 +16778,7 @@ assign bus_errors_status = bus_errors;
 assign writeclocks0_rst = (sys_rst_1 | writeclocks0_mmcm_reset_storage);
 assign writeclocks0_mmcm_locked_status = writeclocks0_locked;
 assign writeclocks0_ps_ready = (writeclocks0_locked & (~writeclocks0_mmcm_reset_storage));
+assign wl7ddrphy0_lane_all = (wl7ddrphy0_dly_sel_bits_storage == 8'hff);
 assign ddram0_ba = wl7ddrphy0_pads_ba;
 assign wl7ddrphy0_tappeddelayline00 = ((wl7ddrphy0_dqs_preamble | wl7ddrphy0_dqs_oe) | wl7ddrphy0_dqs_postamble);
 assign wl7ddrphy0_tappeddelayline01 = ((wl7ddrphy0_dqs_preamble | wl7ddrphy0_dq_oe) | wl7ddrphy0_dqs_postamble);
@@ -32424,6 +32441,7 @@ end
 assign writeclocks1_rst = (sys_rst_1 | writeclocks1_mmcm_reset_storage);
 assign writeclocks1_mmcm_locked_status = writeclocks1_locked;
 assign writeclocks1_ps_ready = (writeclocks1_locked & (~writeclocks1_mmcm_reset_storage));
+assign wl7ddrphy1_lane_all = (wl7ddrphy1_dly_sel_bits_storage == 8'hff);
 assign ddram1_ba = wl7ddrphy1_pads_ba;
 assign wl7ddrphy1_tappeddelayline10 = ((wl7ddrphy1_dqs_preamble | wl7ddrphy1_dqs_oe) | wl7ddrphy1_dqs_postamble);
 assign wl7ddrphy1_tappeddelayline11 = ((wl7ddrphy1_dqs_preamble | wl7ddrphy1_dq_oe) | wl7ddrphy1_dqs_postamble);
@@ -49201,12 +49219,22 @@ always @(*) begin
         csr_bankarray_csrbank5_wrphase_we = csr_bankarray_interface5_bank_bus_re;
     end
 end
+assign csr_bankarray_csrbank5_dly_sel_bits_r = csr_bankarray_interface5_bank_bus_dat_w[7:0];
+always @(*) begin
+    csr_bankarray_csrbank5_dly_sel_bits_re = 1'd0;
+    csr_bankarray_csrbank5_dly_sel_bits_we = 1'd0;
+    if ((csr_bankarray_csrbank5_sel & (csr_bankarray_interface5_bank_bus_adr[8:0] == 4'd13))) begin
+        csr_bankarray_csrbank5_dly_sel_bits_re = csr_bankarray_interface5_bank_bus_we;
+        csr_bankarray_csrbank5_dly_sel_bits_we = csr_bankarray_interface5_bank_bus_re;
+    end
+end
 assign csr_bankarray_csrbank5_rst_w = wl7ddrphy0_rst_storage;
 assign csr_bankarray_csrbank5_dly_sel_w = wl7ddrphy0_dly_sel_storage;
 assign csr_bankarray_csrbank5_half_sys8x_taps_w = wl7ddrphy0_half_sys8x_taps_storage;
 assign csr_bankarray_csrbank5_wlevel_en_w = wl7ddrphy0_wlevel_en_storage;
 assign csr_bankarray_csrbank5_rdphase_w = wl7ddrphy0_rdphase_storage;
 assign csr_bankarray_csrbank5_wrphase_w = wl7ddrphy0_wrphase_storage;
+assign csr_bankarray_csrbank5_dly_sel_bits_w = wl7ddrphy0_dly_sel_bits_storage;
 assign csr_bankarray_csrbank6_sel = (csr_bankarray_interface6_bank_bus_adr[13:9] == 3'd6);
 assign csr_bankarray_csrbank6_rst_r = csr_bankarray_interface6_bank_bus_dat_w[0];
 always @(*) begin
@@ -49325,12 +49353,22 @@ always @(*) begin
         csr_bankarray_csrbank6_wrphase_we = csr_bankarray_interface6_bank_bus_re;
     end
 end
+assign csr_bankarray_csrbank6_dly_sel_bits_r = csr_bankarray_interface6_bank_bus_dat_w[7:0];
+always @(*) begin
+    csr_bankarray_csrbank6_dly_sel_bits_re = 1'd0;
+    csr_bankarray_csrbank6_dly_sel_bits_we = 1'd0;
+    if ((csr_bankarray_csrbank6_sel & (csr_bankarray_interface6_bank_bus_adr[8:0] == 4'd13))) begin
+        csr_bankarray_csrbank6_dly_sel_bits_re = csr_bankarray_interface6_bank_bus_we;
+        csr_bankarray_csrbank6_dly_sel_bits_we = csr_bankarray_interface6_bank_bus_re;
+    end
+end
 assign csr_bankarray_csrbank6_rst_w = wl7ddrphy1_rst_storage;
 assign csr_bankarray_csrbank6_dly_sel_w = wl7ddrphy1_dly_sel_storage;
 assign csr_bankarray_csrbank6_half_sys8x_taps_w = wl7ddrphy1_half_sys8x_taps_storage;
 assign csr_bankarray_csrbank6_wlevel_en_w = wl7ddrphy1_wlevel_en_storage;
 assign csr_bankarray_csrbank6_rdphase_w = wl7ddrphy1_rdphase_storage;
 assign csr_bankarray_csrbank6_wrphase_w = wl7ddrphy1_wrphase_storage;
+assign csr_bankarray_csrbank6_dly_sel_bits_w = wl7ddrphy1_dly_sel_bits_storage;
 assign csr_bankarray_csrbank7_sel = (csr_bankarray_interface7_bank_bus_adr[13:9] == 3'd7);
 assign csr_bankarray_csrbank7_enable_r = csr_bankarray_interface7_bank_bus_dat_w[0];
 always @(*) begin
@@ -53997,1076 +54035,1076 @@ always @(posedge sys_clk_1) begin
     wl7ddrphy0_tappeddelayline0_tappeddelayline00 <= wl7ddrphy0_tappeddelayline00;
     wl7ddrphy0_tappeddelayline0_tappeddelayline01 <= wl7ddrphy0_tappeddelayline0_tappeddelayline00;
     wl7ddrphy0_dqspattern0_o1 <= wl7ddrphy0_dqspattern0_o0;
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip0_value0 <= (wl7ddrphy0_bitslip0_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip0_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip0_r0 <= {wl7ddrphy0_dqspattern0_o1, wl7ddrphy0_bitslip0_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip1_value0 <= (wl7ddrphy0_bitslip1_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip1_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip1_r0 <= {wl7ddrphy0_dqspattern0_o1, wl7ddrphy0_bitslip1_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip2_value0 <= (wl7ddrphy0_bitslip2_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip2_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip2_r0 <= {wl7ddrphy0_dqspattern0_o1, wl7ddrphy0_bitslip2_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip3_value0 <= (wl7ddrphy0_bitslip3_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip3_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip3_r0 <= {wl7ddrphy0_dqspattern0_o1, wl7ddrphy0_bitslip3_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip4_value0 <= (wl7ddrphy0_bitslip4_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip4_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip4_r0 <= {wl7ddrphy0_dqspattern0_o1, wl7ddrphy0_bitslip4_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip5_value0 <= (wl7ddrphy0_bitslip5_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip5_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip5_r0 <= {wl7ddrphy0_dqspattern0_o1, wl7ddrphy0_bitslip5_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip6_value0 <= (wl7ddrphy0_bitslip6_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip6_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip6_r0 <= {wl7ddrphy0_dqspattern0_o1, wl7ddrphy0_bitslip6_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip7_value0 <= (wl7ddrphy0_bitslip7_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip7_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip7_r0 <= {wl7ddrphy0_dqspattern0_o1, wl7ddrphy0_bitslip7_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip8_value0 <= (wl7ddrphy0_bitslip8_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_lane_all) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip8_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip8_r0 <= {wl7ddrphy0_dqspattern0_o1, wl7ddrphy0_bitslip8_r0[15:8]};
     wl7ddrphy0_tappeddelayline0_tappeddelayline02 <= wl7ddrphy0_tappeddelayline01;
     wl7ddrphy0_tappeddelayline0_tappeddelayline03 <= wl7ddrphy0_tappeddelayline0_tappeddelayline02;
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip0_value1 <= (wl7ddrphy0_bitslip0_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip0_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip0_r1 <= {{wl7ddrphy0_dfi_p3_wrdata[72], wl7ddrphy0_dfi_p3_wrdata[0], wl7ddrphy0_dfi_p2_wrdata[72], wl7ddrphy0_dfi_p2_wrdata[0], wl7ddrphy0_dfi_p1_wrdata[72], wl7ddrphy0_dfi_p1_wrdata[0], wl7ddrphy0_dfi_p0_wrdata[72], wl7ddrphy0_dfi_p0_wrdata[0]}, wl7ddrphy0_bitslip0_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip0_value2 <= (wl7ddrphy0_bitslip0_value2 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip0_value2 <= 3'd7;
     end
     wl7ddrphy0_bitslip0_r2 <= {wl7ddrphy0_dfi_name0, wl7ddrphy0_bitslip0_r2[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip1_value1 <= (wl7ddrphy0_bitslip1_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip1_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip1_r1 <= {{wl7ddrphy0_dfi_p3_wrdata[73], wl7ddrphy0_dfi_p3_wrdata[1], wl7ddrphy0_dfi_p2_wrdata[73], wl7ddrphy0_dfi_p2_wrdata[1], wl7ddrphy0_dfi_p1_wrdata[73], wl7ddrphy0_dfi_p1_wrdata[1], wl7ddrphy0_dfi_p0_wrdata[73], wl7ddrphy0_dfi_p0_wrdata[1]}, wl7ddrphy0_bitslip1_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip1_value2 <= (wl7ddrphy0_bitslip1_value2 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip1_value2 <= 3'd7;
     end
     wl7ddrphy0_bitslip1_r2 <= {wl7ddrphy0_dfi_name1, wl7ddrphy0_bitslip1_r2[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip2_value1 <= (wl7ddrphy0_bitslip2_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip2_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip2_r1 <= {{wl7ddrphy0_dfi_p3_wrdata[74], wl7ddrphy0_dfi_p3_wrdata[2], wl7ddrphy0_dfi_p2_wrdata[74], wl7ddrphy0_dfi_p2_wrdata[2], wl7ddrphy0_dfi_p1_wrdata[74], wl7ddrphy0_dfi_p1_wrdata[2], wl7ddrphy0_dfi_p0_wrdata[74], wl7ddrphy0_dfi_p0_wrdata[2]}, wl7ddrphy0_bitslip2_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip2_value2 <= (wl7ddrphy0_bitslip2_value2 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip2_value2 <= 3'd7;
     end
     wl7ddrphy0_bitslip2_r2 <= {wl7ddrphy0_dfi_name2, wl7ddrphy0_bitslip2_r2[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip3_value1 <= (wl7ddrphy0_bitslip3_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip3_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip3_r1 <= {{wl7ddrphy0_dfi_p3_wrdata[75], wl7ddrphy0_dfi_p3_wrdata[3], wl7ddrphy0_dfi_p2_wrdata[75], wl7ddrphy0_dfi_p2_wrdata[3], wl7ddrphy0_dfi_p1_wrdata[75], wl7ddrphy0_dfi_p1_wrdata[3], wl7ddrphy0_dfi_p0_wrdata[75], wl7ddrphy0_dfi_p0_wrdata[3]}, wl7ddrphy0_bitslip3_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip3_value2 <= (wl7ddrphy0_bitslip3_value2 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip3_value2 <= 3'd7;
     end
     wl7ddrphy0_bitslip3_r2 <= {wl7ddrphy0_dfi_name3, wl7ddrphy0_bitslip3_r2[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip4_value1 <= (wl7ddrphy0_bitslip4_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip4_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip4_r1 <= {{wl7ddrphy0_dfi_p3_wrdata[76], wl7ddrphy0_dfi_p3_wrdata[4], wl7ddrphy0_dfi_p2_wrdata[76], wl7ddrphy0_dfi_p2_wrdata[4], wl7ddrphy0_dfi_p1_wrdata[76], wl7ddrphy0_dfi_p1_wrdata[4], wl7ddrphy0_dfi_p0_wrdata[76], wl7ddrphy0_dfi_p0_wrdata[4]}, wl7ddrphy0_bitslip4_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip4_value2 <= (wl7ddrphy0_bitslip4_value2 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip4_value2 <= 3'd7;
     end
     wl7ddrphy0_bitslip4_r2 <= {wl7ddrphy0_dfi_name4, wl7ddrphy0_bitslip4_r2[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip5_value1 <= (wl7ddrphy0_bitslip5_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip5_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip5_r1 <= {{wl7ddrphy0_dfi_p3_wrdata[77], wl7ddrphy0_dfi_p3_wrdata[5], wl7ddrphy0_dfi_p2_wrdata[77], wl7ddrphy0_dfi_p2_wrdata[5], wl7ddrphy0_dfi_p1_wrdata[77], wl7ddrphy0_dfi_p1_wrdata[5], wl7ddrphy0_dfi_p0_wrdata[77], wl7ddrphy0_dfi_p0_wrdata[5]}, wl7ddrphy0_bitslip5_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip5_value2 <= (wl7ddrphy0_bitslip5_value2 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip5_value2 <= 3'd7;
     end
     wl7ddrphy0_bitslip5_r2 <= {wl7ddrphy0_dfi_name5, wl7ddrphy0_bitslip5_r2[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip6_value1 <= (wl7ddrphy0_bitslip6_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip6_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip6_r1 <= {{wl7ddrphy0_dfi_p3_wrdata[78], wl7ddrphy0_dfi_p3_wrdata[6], wl7ddrphy0_dfi_p2_wrdata[78], wl7ddrphy0_dfi_p2_wrdata[6], wl7ddrphy0_dfi_p1_wrdata[78], wl7ddrphy0_dfi_p1_wrdata[6], wl7ddrphy0_dfi_p0_wrdata[78], wl7ddrphy0_dfi_p0_wrdata[6]}, wl7ddrphy0_bitslip6_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip6_value2 <= (wl7ddrphy0_bitslip6_value2 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip6_value2 <= 3'd7;
     end
     wl7ddrphy0_bitslip6_r2 <= {wl7ddrphy0_dfi_name6, wl7ddrphy0_bitslip6_r2[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip7_value1 <= (wl7ddrphy0_bitslip7_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip7_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip7_r1 <= {{wl7ddrphy0_dfi_p3_wrdata[79], wl7ddrphy0_dfi_p3_wrdata[7], wl7ddrphy0_dfi_p2_wrdata[79], wl7ddrphy0_dfi_p2_wrdata[7], wl7ddrphy0_dfi_p1_wrdata[79], wl7ddrphy0_dfi_p1_wrdata[7], wl7ddrphy0_dfi_p0_wrdata[79], wl7ddrphy0_dfi_p0_wrdata[7]}, wl7ddrphy0_bitslip7_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip7_value2 <= (wl7ddrphy0_bitslip7_value2 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[0] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip7_value2 <= 3'd7;
     end
     wl7ddrphy0_bitslip7_r2 <= {wl7ddrphy0_dfi_name7, wl7ddrphy0_bitslip7_r2[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip8_value1 <= (wl7ddrphy0_bitslip8_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip8_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip8_r1 <= {{wl7ddrphy0_dfi_p3_wrdata[80], wl7ddrphy0_dfi_p3_wrdata[8], wl7ddrphy0_dfi_p2_wrdata[80], wl7ddrphy0_dfi_p2_wrdata[8], wl7ddrphy0_dfi_p1_wrdata[80], wl7ddrphy0_dfi_p1_wrdata[8], wl7ddrphy0_dfi_p0_wrdata[80], wl7ddrphy0_dfi_p0_wrdata[8]}, wl7ddrphy0_bitslip8_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip8_value2 <= (wl7ddrphy0_bitslip8_value2 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip8_value2 <= 3'd7;
     end
     wl7ddrphy0_bitslip8_r2 <= {wl7ddrphy0_dfi_name8, wl7ddrphy0_bitslip8_r2[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip9_value0 <= (wl7ddrphy0_bitslip9_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip9_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip9_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[81], wl7ddrphy0_dfi_p3_wrdata[9], wl7ddrphy0_dfi_p2_wrdata[81], wl7ddrphy0_dfi_p2_wrdata[9], wl7ddrphy0_dfi_p1_wrdata[81], wl7ddrphy0_dfi_p1_wrdata[9], wl7ddrphy0_dfi_p0_wrdata[81], wl7ddrphy0_dfi_p0_wrdata[9]}, wl7ddrphy0_bitslip9_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip9_value1 <= (wl7ddrphy0_bitslip9_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip9_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip9_r1 <= {wl7ddrphy0_dfi_name9, wl7ddrphy0_bitslip9_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip10_value0 <= (wl7ddrphy0_bitslip10_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip10_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip10_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[82], wl7ddrphy0_dfi_p3_wrdata[10], wl7ddrphy0_dfi_p2_wrdata[82], wl7ddrphy0_dfi_p2_wrdata[10], wl7ddrphy0_dfi_p1_wrdata[82], wl7ddrphy0_dfi_p1_wrdata[10], wl7ddrphy0_dfi_p0_wrdata[82], wl7ddrphy0_dfi_p0_wrdata[10]}, wl7ddrphy0_bitslip10_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip10_value1 <= (wl7ddrphy0_bitslip10_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip10_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip10_r1 <= {wl7ddrphy0_dfi_name10, wl7ddrphy0_bitslip10_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip11_value0 <= (wl7ddrphy0_bitslip11_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip11_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip11_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[83], wl7ddrphy0_dfi_p3_wrdata[11], wl7ddrphy0_dfi_p2_wrdata[83], wl7ddrphy0_dfi_p2_wrdata[11], wl7ddrphy0_dfi_p1_wrdata[83], wl7ddrphy0_dfi_p1_wrdata[11], wl7ddrphy0_dfi_p0_wrdata[83], wl7ddrphy0_dfi_p0_wrdata[11]}, wl7ddrphy0_bitslip11_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip11_value1 <= (wl7ddrphy0_bitslip11_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip11_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip11_r1 <= {wl7ddrphy0_dfi_name11, wl7ddrphy0_bitslip11_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip12_value0 <= (wl7ddrphy0_bitslip12_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip12_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip12_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[84], wl7ddrphy0_dfi_p3_wrdata[12], wl7ddrphy0_dfi_p2_wrdata[84], wl7ddrphy0_dfi_p2_wrdata[12], wl7ddrphy0_dfi_p1_wrdata[84], wl7ddrphy0_dfi_p1_wrdata[12], wl7ddrphy0_dfi_p0_wrdata[84], wl7ddrphy0_dfi_p0_wrdata[12]}, wl7ddrphy0_bitslip12_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip12_value1 <= (wl7ddrphy0_bitslip12_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip12_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip12_r1 <= {wl7ddrphy0_dfi_name12, wl7ddrphy0_bitslip12_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip13_value0 <= (wl7ddrphy0_bitslip13_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip13_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip13_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[85], wl7ddrphy0_dfi_p3_wrdata[13], wl7ddrphy0_dfi_p2_wrdata[85], wl7ddrphy0_dfi_p2_wrdata[13], wl7ddrphy0_dfi_p1_wrdata[85], wl7ddrphy0_dfi_p1_wrdata[13], wl7ddrphy0_dfi_p0_wrdata[85], wl7ddrphy0_dfi_p0_wrdata[13]}, wl7ddrphy0_bitslip13_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip13_value1 <= (wl7ddrphy0_bitslip13_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip13_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip13_r1 <= {wl7ddrphy0_dfi_name13, wl7ddrphy0_bitslip13_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip14_value0 <= (wl7ddrphy0_bitslip14_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip14_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip14_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[86], wl7ddrphy0_dfi_p3_wrdata[14], wl7ddrphy0_dfi_p2_wrdata[86], wl7ddrphy0_dfi_p2_wrdata[14], wl7ddrphy0_dfi_p1_wrdata[86], wl7ddrphy0_dfi_p1_wrdata[14], wl7ddrphy0_dfi_p0_wrdata[86], wl7ddrphy0_dfi_p0_wrdata[14]}, wl7ddrphy0_bitslip14_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip14_value1 <= (wl7ddrphy0_bitslip14_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip14_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip14_r1 <= {wl7ddrphy0_dfi_name14, wl7ddrphy0_bitslip14_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip15_value0 <= (wl7ddrphy0_bitslip15_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip15_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip15_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[87], wl7ddrphy0_dfi_p3_wrdata[15], wl7ddrphy0_dfi_p2_wrdata[87], wl7ddrphy0_dfi_p2_wrdata[15], wl7ddrphy0_dfi_p1_wrdata[87], wl7ddrphy0_dfi_p1_wrdata[15], wl7ddrphy0_dfi_p0_wrdata[87], wl7ddrphy0_dfi_p0_wrdata[15]}, wl7ddrphy0_bitslip15_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip15_value1 <= (wl7ddrphy0_bitslip15_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[1] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip15_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip15_r1 <= {wl7ddrphy0_dfi_name15, wl7ddrphy0_bitslip15_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip16_value0 <= (wl7ddrphy0_bitslip16_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip16_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip16_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[88], wl7ddrphy0_dfi_p3_wrdata[16], wl7ddrphy0_dfi_p2_wrdata[88], wl7ddrphy0_dfi_p2_wrdata[16], wl7ddrphy0_dfi_p1_wrdata[88], wl7ddrphy0_dfi_p1_wrdata[16], wl7ddrphy0_dfi_p0_wrdata[88], wl7ddrphy0_dfi_p0_wrdata[16]}, wl7ddrphy0_bitslip16_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip16_value1 <= (wl7ddrphy0_bitslip16_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip16_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip16_r1 <= {wl7ddrphy0_dfi_name16, wl7ddrphy0_bitslip16_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip17_value0 <= (wl7ddrphy0_bitslip17_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip17_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip17_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[89], wl7ddrphy0_dfi_p3_wrdata[17], wl7ddrphy0_dfi_p2_wrdata[89], wl7ddrphy0_dfi_p2_wrdata[17], wl7ddrphy0_dfi_p1_wrdata[89], wl7ddrphy0_dfi_p1_wrdata[17], wl7ddrphy0_dfi_p0_wrdata[89], wl7ddrphy0_dfi_p0_wrdata[17]}, wl7ddrphy0_bitslip17_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip17_value1 <= (wl7ddrphy0_bitslip17_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip17_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip17_r1 <= {wl7ddrphy0_dfi_name17, wl7ddrphy0_bitslip17_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip18_value0 <= (wl7ddrphy0_bitslip18_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip18_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip18_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[90], wl7ddrphy0_dfi_p3_wrdata[18], wl7ddrphy0_dfi_p2_wrdata[90], wl7ddrphy0_dfi_p2_wrdata[18], wl7ddrphy0_dfi_p1_wrdata[90], wl7ddrphy0_dfi_p1_wrdata[18], wl7ddrphy0_dfi_p0_wrdata[90], wl7ddrphy0_dfi_p0_wrdata[18]}, wl7ddrphy0_bitslip18_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip18_value1 <= (wl7ddrphy0_bitslip18_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip18_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip18_r1 <= {wl7ddrphy0_dfi_name18, wl7ddrphy0_bitslip18_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip19_value0 <= (wl7ddrphy0_bitslip19_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip19_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip19_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[91], wl7ddrphy0_dfi_p3_wrdata[19], wl7ddrphy0_dfi_p2_wrdata[91], wl7ddrphy0_dfi_p2_wrdata[19], wl7ddrphy0_dfi_p1_wrdata[91], wl7ddrphy0_dfi_p1_wrdata[19], wl7ddrphy0_dfi_p0_wrdata[91], wl7ddrphy0_dfi_p0_wrdata[19]}, wl7ddrphy0_bitslip19_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip19_value1 <= (wl7ddrphy0_bitslip19_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip19_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip19_r1 <= {wl7ddrphy0_dfi_name19, wl7ddrphy0_bitslip19_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip20_value0 <= (wl7ddrphy0_bitslip20_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip20_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip20_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[92], wl7ddrphy0_dfi_p3_wrdata[20], wl7ddrphy0_dfi_p2_wrdata[92], wl7ddrphy0_dfi_p2_wrdata[20], wl7ddrphy0_dfi_p1_wrdata[92], wl7ddrphy0_dfi_p1_wrdata[20], wl7ddrphy0_dfi_p0_wrdata[92], wl7ddrphy0_dfi_p0_wrdata[20]}, wl7ddrphy0_bitslip20_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip20_value1 <= (wl7ddrphy0_bitslip20_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip20_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip20_r1 <= {wl7ddrphy0_dfi_name20, wl7ddrphy0_bitslip20_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip21_value0 <= (wl7ddrphy0_bitslip21_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip21_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip21_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[93], wl7ddrphy0_dfi_p3_wrdata[21], wl7ddrphy0_dfi_p2_wrdata[93], wl7ddrphy0_dfi_p2_wrdata[21], wl7ddrphy0_dfi_p1_wrdata[93], wl7ddrphy0_dfi_p1_wrdata[21], wl7ddrphy0_dfi_p0_wrdata[93], wl7ddrphy0_dfi_p0_wrdata[21]}, wl7ddrphy0_bitslip21_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip21_value1 <= (wl7ddrphy0_bitslip21_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip21_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip21_r1 <= {wl7ddrphy0_dfi_name21, wl7ddrphy0_bitslip21_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip22_value0 <= (wl7ddrphy0_bitslip22_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip22_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip22_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[94], wl7ddrphy0_dfi_p3_wrdata[22], wl7ddrphy0_dfi_p2_wrdata[94], wl7ddrphy0_dfi_p2_wrdata[22], wl7ddrphy0_dfi_p1_wrdata[94], wl7ddrphy0_dfi_p1_wrdata[22], wl7ddrphy0_dfi_p0_wrdata[94], wl7ddrphy0_dfi_p0_wrdata[22]}, wl7ddrphy0_bitslip22_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip22_value1 <= (wl7ddrphy0_bitslip22_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip22_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip22_r1 <= {wl7ddrphy0_dfi_name22, wl7ddrphy0_bitslip22_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip23_value0 <= (wl7ddrphy0_bitslip23_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip23_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip23_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[95], wl7ddrphy0_dfi_p3_wrdata[23], wl7ddrphy0_dfi_p2_wrdata[95], wl7ddrphy0_dfi_p2_wrdata[23], wl7ddrphy0_dfi_p1_wrdata[95], wl7ddrphy0_dfi_p1_wrdata[23], wl7ddrphy0_dfi_p0_wrdata[95], wl7ddrphy0_dfi_p0_wrdata[23]}, wl7ddrphy0_bitslip23_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip23_value1 <= (wl7ddrphy0_bitslip23_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[2] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip23_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip23_r1 <= {wl7ddrphy0_dfi_name23, wl7ddrphy0_bitslip23_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip24_value0 <= (wl7ddrphy0_bitslip24_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip24_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip24_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[96], wl7ddrphy0_dfi_p3_wrdata[24], wl7ddrphy0_dfi_p2_wrdata[96], wl7ddrphy0_dfi_p2_wrdata[24], wl7ddrphy0_dfi_p1_wrdata[96], wl7ddrphy0_dfi_p1_wrdata[24], wl7ddrphy0_dfi_p0_wrdata[96], wl7ddrphy0_dfi_p0_wrdata[24]}, wl7ddrphy0_bitslip24_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip24_value1 <= (wl7ddrphy0_bitslip24_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip24_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip24_r1 <= {wl7ddrphy0_dfi_name24, wl7ddrphy0_bitslip24_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip25_value0 <= (wl7ddrphy0_bitslip25_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip25_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip25_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[97], wl7ddrphy0_dfi_p3_wrdata[25], wl7ddrphy0_dfi_p2_wrdata[97], wl7ddrphy0_dfi_p2_wrdata[25], wl7ddrphy0_dfi_p1_wrdata[97], wl7ddrphy0_dfi_p1_wrdata[25], wl7ddrphy0_dfi_p0_wrdata[97], wl7ddrphy0_dfi_p0_wrdata[25]}, wl7ddrphy0_bitslip25_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip25_value1 <= (wl7ddrphy0_bitslip25_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip25_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip25_r1 <= {wl7ddrphy0_dfi_name25, wl7ddrphy0_bitslip25_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip26_value0 <= (wl7ddrphy0_bitslip26_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip26_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip26_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[98], wl7ddrphy0_dfi_p3_wrdata[26], wl7ddrphy0_dfi_p2_wrdata[98], wl7ddrphy0_dfi_p2_wrdata[26], wl7ddrphy0_dfi_p1_wrdata[98], wl7ddrphy0_dfi_p1_wrdata[26], wl7ddrphy0_dfi_p0_wrdata[98], wl7ddrphy0_dfi_p0_wrdata[26]}, wl7ddrphy0_bitslip26_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip26_value1 <= (wl7ddrphy0_bitslip26_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip26_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip26_r1 <= {wl7ddrphy0_dfi_name26, wl7ddrphy0_bitslip26_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip27_value0 <= (wl7ddrphy0_bitslip27_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip27_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip27_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[99], wl7ddrphy0_dfi_p3_wrdata[27], wl7ddrphy0_dfi_p2_wrdata[99], wl7ddrphy0_dfi_p2_wrdata[27], wl7ddrphy0_dfi_p1_wrdata[99], wl7ddrphy0_dfi_p1_wrdata[27], wl7ddrphy0_dfi_p0_wrdata[99], wl7ddrphy0_dfi_p0_wrdata[27]}, wl7ddrphy0_bitslip27_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip27_value1 <= (wl7ddrphy0_bitslip27_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip27_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip27_r1 <= {wl7ddrphy0_dfi_name27, wl7ddrphy0_bitslip27_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip28_value0 <= (wl7ddrphy0_bitslip28_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip28_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip28_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[100], wl7ddrphy0_dfi_p3_wrdata[28], wl7ddrphy0_dfi_p2_wrdata[100], wl7ddrphy0_dfi_p2_wrdata[28], wl7ddrphy0_dfi_p1_wrdata[100], wl7ddrphy0_dfi_p1_wrdata[28], wl7ddrphy0_dfi_p0_wrdata[100], wl7ddrphy0_dfi_p0_wrdata[28]}, wl7ddrphy0_bitslip28_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip28_value1 <= (wl7ddrphy0_bitslip28_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip28_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip28_r1 <= {wl7ddrphy0_dfi_name28, wl7ddrphy0_bitslip28_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip29_value0 <= (wl7ddrphy0_bitslip29_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip29_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip29_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[101], wl7ddrphy0_dfi_p3_wrdata[29], wl7ddrphy0_dfi_p2_wrdata[101], wl7ddrphy0_dfi_p2_wrdata[29], wl7ddrphy0_dfi_p1_wrdata[101], wl7ddrphy0_dfi_p1_wrdata[29], wl7ddrphy0_dfi_p0_wrdata[101], wl7ddrphy0_dfi_p0_wrdata[29]}, wl7ddrphy0_bitslip29_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip29_value1 <= (wl7ddrphy0_bitslip29_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip29_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip29_r1 <= {wl7ddrphy0_dfi_name29, wl7ddrphy0_bitslip29_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip30_value0 <= (wl7ddrphy0_bitslip30_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip30_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip30_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[102], wl7ddrphy0_dfi_p3_wrdata[30], wl7ddrphy0_dfi_p2_wrdata[102], wl7ddrphy0_dfi_p2_wrdata[30], wl7ddrphy0_dfi_p1_wrdata[102], wl7ddrphy0_dfi_p1_wrdata[30], wl7ddrphy0_dfi_p0_wrdata[102], wl7ddrphy0_dfi_p0_wrdata[30]}, wl7ddrphy0_bitslip30_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip30_value1 <= (wl7ddrphy0_bitslip30_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip30_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip30_r1 <= {wl7ddrphy0_dfi_name30, wl7ddrphy0_bitslip30_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip31_value0 <= (wl7ddrphy0_bitslip31_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip31_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip31_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[103], wl7ddrphy0_dfi_p3_wrdata[31], wl7ddrphy0_dfi_p2_wrdata[103], wl7ddrphy0_dfi_p2_wrdata[31], wl7ddrphy0_dfi_p1_wrdata[103], wl7ddrphy0_dfi_p1_wrdata[31], wl7ddrphy0_dfi_p0_wrdata[103], wl7ddrphy0_dfi_p0_wrdata[31]}, wl7ddrphy0_bitslip31_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip31_value1 <= (wl7ddrphy0_bitslip31_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[3] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip31_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip31_r1 <= {wl7ddrphy0_dfi_name31, wl7ddrphy0_bitslip31_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip32_value0 <= (wl7ddrphy0_bitslip32_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip32_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip32_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[104], wl7ddrphy0_dfi_p3_wrdata[32], wl7ddrphy0_dfi_p2_wrdata[104], wl7ddrphy0_dfi_p2_wrdata[32], wl7ddrphy0_dfi_p1_wrdata[104], wl7ddrphy0_dfi_p1_wrdata[32], wl7ddrphy0_dfi_p0_wrdata[104], wl7ddrphy0_dfi_p0_wrdata[32]}, wl7ddrphy0_bitslip32_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip32_value1 <= (wl7ddrphy0_bitslip32_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip32_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip32_r1 <= {wl7ddrphy0_dfi_name32, wl7ddrphy0_bitslip32_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip33_value0 <= (wl7ddrphy0_bitslip33_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip33_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip33_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[105], wl7ddrphy0_dfi_p3_wrdata[33], wl7ddrphy0_dfi_p2_wrdata[105], wl7ddrphy0_dfi_p2_wrdata[33], wl7ddrphy0_dfi_p1_wrdata[105], wl7ddrphy0_dfi_p1_wrdata[33], wl7ddrphy0_dfi_p0_wrdata[105], wl7ddrphy0_dfi_p0_wrdata[33]}, wl7ddrphy0_bitslip33_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip33_value1 <= (wl7ddrphy0_bitslip33_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip33_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip33_r1 <= {wl7ddrphy0_dfi_name33, wl7ddrphy0_bitslip33_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip34_value0 <= (wl7ddrphy0_bitslip34_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip34_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip34_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[106], wl7ddrphy0_dfi_p3_wrdata[34], wl7ddrphy0_dfi_p2_wrdata[106], wl7ddrphy0_dfi_p2_wrdata[34], wl7ddrphy0_dfi_p1_wrdata[106], wl7ddrphy0_dfi_p1_wrdata[34], wl7ddrphy0_dfi_p0_wrdata[106], wl7ddrphy0_dfi_p0_wrdata[34]}, wl7ddrphy0_bitslip34_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip34_value1 <= (wl7ddrphy0_bitslip34_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip34_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip34_r1 <= {wl7ddrphy0_dfi_name34, wl7ddrphy0_bitslip34_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip35_value0 <= (wl7ddrphy0_bitslip35_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip35_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip35_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[107], wl7ddrphy0_dfi_p3_wrdata[35], wl7ddrphy0_dfi_p2_wrdata[107], wl7ddrphy0_dfi_p2_wrdata[35], wl7ddrphy0_dfi_p1_wrdata[107], wl7ddrphy0_dfi_p1_wrdata[35], wl7ddrphy0_dfi_p0_wrdata[107], wl7ddrphy0_dfi_p0_wrdata[35]}, wl7ddrphy0_bitslip35_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip35_value1 <= (wl7ddrphy0_bitslip35_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip35_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip35_r1 <= {wl7ddrphy0_dfi_name35, wl7ddrphy0_bitslip35_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip36_value0 <= (wl7ddrphy0_bitslip36_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip36_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip36_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[108], wl7ddrphy0_dfi_p3_wrdata[36], wl7ddrphy0_dfi_p2_wrdata[108], wl7ddrphy0_dfi_p2_wrdata[36], wl7ddrphy0_dfi_p1_wrdata[108], wl7ddrphy0_dfi_p1_wrdata[36], wl7ddrphy0_dfi_p0_wrdata[108], wl7ddrphy0_dfi_p0_wrdata[36]}, wl7ddrphy0_bitslip36_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip36_value1 <= (wl7ddrphy0_bitslip36_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip36_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip36_r1 <= {wl7ddrphy0_dfi_name36, wl7ddrphy0_bitslip36_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip37_value0 <= (wl7ddrphy0_bitslip37_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip37_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip37_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[109], wl7ddrphy0_dfi_p3_wrdata[37], wl7ddrphy0_dfi_p2_wrdata[109], wl7ddrphy0_dfi_p2_wrdata[37], wl7ddrphy0_dfi_p1_wrdata[109], wl7ddrphy0_dfi_p1_wrdata[37], wl7ddrphy0_dfi_p0_wrdata[109], wl7ddrphy0_dfi_p0_wrdata[37]}, wl7ddrphy0_bitslip37_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip37_value1 <= (wl7ddrphy0_bitslip37_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip37_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip37_r1 <= {wl7ddrphy0_dfi_name37, wl7ddrphy0_bitslip37_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip38_value0 <= (wl7ddrphy0_bitslip38_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip38_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip38_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[110], wl7ddrphy0_dfi_p3_wrdata[38], wl7ddrphy0_dfi_p2_wrdata[110], wl7ddrphy0_dfi_p2_wrdata[38], wl7ddrphy0_dfi_p1_wrdata[110], wl7ddrphy0_dfi_p1_wrdata[38], wl7ddrphy0_dfi_p0_wrdata[110], wl7ddrphy0_dfi_p0_wrdata[38]}, wl7ddrphy0_bitslip38_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip38_value1 <= (wl7ddrphy0_bitslip38_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip38_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip38_r1 <= {wl7ddrphy0_dfi_name38, wl7ddrphy0_bitslip38_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip39_value0 <= (wl7ddrphy0_bitslip39_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip39_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip39_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[111], wl7ddrphy0_dfi_p3_wrdata[39], wl7ddrphy0_dfi_p2_wrdata[111], wl7ddrphy0_dfi_p2_wrdata[39], wl7ddrphy0_dfi_p1_wrdata[111], wl7ddrphy0_dfi_p1_wrdata[39], wl7ddrphy0_dfi_p0_wrdata[111], wl7ddrphy0_dfi_p0_wrdata[39]}, wl7ddrphy0_bitslip39_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip39_value1 <= (wl7ddrphy0_bitslip39_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[4] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip39_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip39_r1 <= {wl7ddrphy0_dfi_name39, wl7ddrphy0_bitslip39_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip40_value0 <= (wl7ddrphy0_bitslip40_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip40_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip40_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[112], wl7ddrphy0_dfi_p3_wrdata[40], wl7ddrphy0_dfi_p2_wrdata[112], wl7ddrphy0_dfi_p2_wrdata[40], wl7ddrphy0_dfi_p1_wrdata[112], wl7ddrphy0_dfi_p1_wrdata[40], wl7ddrphy0_dfi_p0_wrdata[112], wl7ddrphy0_dfi_p0_wrdata[40]}, wl7ddrphy0_bitslip40_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip40_value1 <= (wl7ddrphy0_bitslip40_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip40_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip40_r1 <= {wl7ddrphy0_dfi_name40, wl7ddrphy0_bitslip40_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip41_value0 <= (wl7ddrphy0_bitslip41_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip41_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip41_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[113], wl7ddrphy0_dfi_p3_wrdata[41], wl7ddrphy0_dfi_p2_wrdata[113], wl7ddrphy0_dfi_p2_wrdata[41], wl7ddrphy0_dfi_p1_wrdata[113], wl7ddrphy0_dfi_p1_wrdata[41], wl7ddrphy0_dfi_p0_wrdata[113], wl7ddrphy0_dfi_p0_wrdata[41]}, wl7ddrphy0_bitslip41_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip41_value1 <= (wl7ddrphy0_bitslip41_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip41_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip41_r1 <= {wl7ddrphy0_dfi_name41, wl7ddrphy0_bitslip41_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip42_value0 <= (wl7ddrphy0_bitslip42_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip42_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip42_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[114], wl7ddrphy0_dfi_p3_wrdata[42], wl7ddrphy0_dfi_p2_wrdata[114], wl7ddrphy0_dfi_p2_wrdata[42], wl7ddrphy0_dfi_p1_wrdata[114], wl7ddrphy0_dfi_p1_wrdata[42], wl7ddrphy0_dfi_p0_wrdata[114], wl7ddrphy0_dfi_p0_wrdata[42]}, wl7ddrphy0_bitslip42_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip42_value1 <= (wl7ddrphy0_bitslip42_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip42_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip42_r1 <= {wl7ddrphy0_dfi_name42, wl7ddrphy0_bitslip42_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip43_value0 <= (wl7ddrphy0_bitslip43_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip43_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip43_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[115], wl7ddrphy0_dfi_p3_wrdata[43], wl7ddrphy0_dfi_p2_wrdata[115], wl7ddrphy0_dfi_p2_wrdata[43], wl7ddrphy0_dfi_p1_wrdata[115], wl7ddrphy0_dfi_p1_wrdata[43], wl7ddrphy0_dfi_p0_wrdata[115], wl7ddrphy0_dfi_p0_wrdata[43]}, wl7ddrphy0_bitslip43_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip43_value1 <= (wl7ddrphy0_bitslip43_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip43_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip43_r1 <= {wl7ddrphy0_dfi_name43, wl7ddrphy0_bitslip43_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip44_value0 <= (wl7ddrphy0_bitslip44_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip44_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip44_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[116], wl7ddrphy0_dfi_p3_wrdata[44], wl7ddrphy0_dfi_p2_wrdata[116], wl7ddrphy0_dfi_p2_wrdata[44], wl7ddrphy0_dfi_p1_wrdata[116], wl7ddrphy0_dfi_p1_wrdata[44], wl7ddrphy0_dfi_p0_wrdata[116], wl7ddrphy0_dfi_p0_wrdata[44]}, wl7ddrphy0_bitslip44_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip44_value1 <= (wl7ddrphy0_bitslip44_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip44_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip44_r1 <= {wl7ddrphy0_dfi_name44, wl7ddrphy0_bitslip44_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip45_value0 <= (wl7ddrphy0_bitslip45_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip45_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip45_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[117], wl7ddrphy0_dfi_p3_wrdata[45], wl7ddrphy0_dfi_p2_wrdata[117], wl7ddrphy0_dfi_p2_wrdata[45], wl7ddrphy0_dfi_p1_wrdata[117], wl7ddrphy0_dfi_p1_wrdata[45], wl7ddrphy0_dfi_p0_wrdata[117], wl7ddrphy0_dfi_p0_wrdata[45]}, wl7ddrphy0_bitslip45_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip45_value1 <= (wl7ddrphy0_bitslip45_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip45_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip45_r1 <= {wl7ddrphy0_dfi_name45, wl7ddrphy0_bitslip45_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip46_value0 <= (wl7ddrphy0_bitslip46_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip46_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip46_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[118], wl7ddrphy0_dfi_p3_wrdata[46], wl7ddrphy0_dfi_p2_wrdata[118], wl7ddrphy0_dfi_p2_wrdata[46], wl7ddrphy0_dfi_p1_wrdata[118], wl7ddrphy0_dfi_p1_wrdata[46], wl7ddrphy0_dfi_p0_wrdata[118], wl7ddrphy0_dfi_p0_wrdata[46]}, wl7ddrphy0_bitslip46_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip46_value1 <= (wl7ddrphy0_bitslip46_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip46_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip46_r1 <= {wl7ddrphy0_dfi_name46, wl7ddrphy0_bitslip46_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip47_value0 <= (wl7ddrphy0_bitslip47_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip47_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip47_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[119], wl7ddrphy0_dfi_p3_wrdata[47], wl7ddrphy0_dfi_p2_wrdata[119], wl7ddrphy0_dfi_p2_wrdata[47], wl7ddrphy0_dfi_p1_wrdata[119], wl7ddrphy0_dfi_p1_wrdata[47], wl7ddrphy0_dfi_p0_wrdata[119], wl7ddrphy0_dfi_p0_wrdata[47]}, wl7ddrphy0_bitslip47_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip47_value1 <= (wl7ddrphy0_bitslip47_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[5] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip47_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip47_r1 <= {wl7ddrphy0_dfi_name47, wl7ddrphy0_bitslip47_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip48_value0 <= (wl7ddrphy0_bitslip48_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip48_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip48_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[120], wl7ddrphy0_dfi_p3_wrdata[48], wl7ddrphy0_dfi_p2_wrdata[120], wl7ddrphy0_dfi_p2_wrdata[48], wl7ddrphy0_dfi_p1_wrdata[120], wl7ddrphy0_dfi_p1_wrdata[48], wl7ddrphy0_dfi_p0_wrdata[120], wl7ddrphy0_dfi_p0_wrdata[48]}, wl7ddrphy0_bitslip48_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip48_value1 <= (wl7ddrphy0_bitslip48_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip48_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip48_r1 <= {wl7ddrphy0_dfi_name48, wl7ddrphy0_bitslip48_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip49_value0 <= (wl7ddrphy0_bitslip49_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip49_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip49_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[121], wl7ddrphy0_dfi_p3_wrdata[49], wl7ddrphy0_dfi_p2_wrdata[121], wl7ddrphy0_dfi_p2_wrdata[49], wl7ddrphy0_dfi_p1_wrdata[121], wl7ddrphy0_dfi_p1_wrdata[49], wl7ddrphy0_dfi_p0_wrdata[121], wl7ddrphy0_dfi_p0_wrdata[49]}, wl7ddrphy0_bitslip49_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip49_value1 <= (wl7ddrphy0_bitslip49_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip49_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip49_r1 <= {wl7ddrphy0_dfi_name49, wl7ddrphy0_bitslip49_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip50_value0 <= (wl7ddrphy0_bitslip50_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip50_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip50_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[122], wl7ddrphy0_dfi_p3_wrdata[50], wl7ddrphy0_dfi_p2_wrdata[122], wl7ddrphy0_dfi_p2_wrdata[50], wl7ddrphy0_dfi_p1_wrdata[122], wl7ddrphy0_dfi_p1_wrdata[50], wl7ddrphy0_dfi_p0_wrdata[122], wl7ddrphy0_dfi_p0_wrdata[50]}, wl7ddrphy0_bitslip50_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip50_value1 <= (wl7ddrphy0_bitslip50_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip50_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip50_r1 <= {wl7ddrphy0_dfi_name50, wl7ddrphy0_bitslip50_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip51_value0 <= (wl7ddrphy0_bitslip51_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip51_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip51_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[123], wl7ddrphy0_dfi_p3_wrdata[51], wl7ddrphy0_dfi_p2_wrdata[123], wl7ddrphy0_dfi_p2_wrdata[51], wl7ddrphy0_dfi_p1_wrdata[123], wl7ddrphy0_dfi_p1_wrdata[51], wl7ddrphy0_dfi_p0_wrdata[123], wl7ddrphy0_dfi_p0_wrdata[51]}, wl7ddrphy0_bitslip51_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip51_value1 <= (wl7ddrphy0_bitslip51_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip51_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip51_r1 <= {wl7ddrphy0_dfi_name51, wl7ddrphy0_bitslip51_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip52_value0 <= (wl7ddrphy0_bitslip52_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip52_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip52_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[124], wl7ddrphy0_dfi_p3_wrdata[52], wl7ddrphy0_dfi_p2_wrdata[124], wl7ddrphy0_dfi_p2_wrdata[52], wl7ddrphy0_dfi_p1_wrdata[124], wl7ddrphy0_dfi_p1_wrdata[52], wl7ddrphy0_dfi_p0_wrdata[124], wl7ddrphy0_dfi_p0_wrdata[52]}, wl7ddrphy0_bitslip52_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip52_value1 <= (wl7ddrphy0_bitslip52_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip52_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip52_r1 <= {wl7ddrphy0_dfi_name52, wl7ddrphy0_bitslip52_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip53_value0 <= (wl7ddrphy0_bitslip53_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip53_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip53_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[125], wl7ddrphy0_dfi_p3_wrdata[53], wl7ddrphy0_dfi_p2_wrdata[125], wl7ddrphy0_dfi_p2_wrdata[53], wl7ddrphy0_dfi_p1_wrdata[125], wl7ddrphy0_dfi_p1_wrdata[53], wl7ddrphy0_dfi_p0_wrdata[125], wl7ddrphy0_dfi_p0_wrdata[53]}, wl7ddrphy0_bitslip53_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip53_value1 <= (wl7ddrphy0_bitslip53_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip53_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip53_r1 <= {wl7ddrphy0_dfi_name53, wl7ddrphy0_bitslip53_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip54_value0 <= (wl7ddrphy0_bitslip54_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip54_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip54_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[126], wl7ddrphy0_dfi_p3_wrdata[54], wl7ddrphy0_dfi_p2_wrdata[126], wl7ddrphy0_dfi_p2_wrdata[54], wl7ddrphy0_dfi_p1_wrdata[126], wl7ddrphy0_dfi_p1_wrdata[54], wl7ddrphy0_dfi_p0_wrdata[126], wl7ddrphy0_dfi_p0_wrdata[54]}, wl7ddrphy0_bitslip54_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip54_value1 <= (wl7ddrphy0_bitslip54_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip54_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip54_r1 <= {wl7ddrphy0_dfi_name54, wl7ddrphy0_bitslip54_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip55_value0 <= (wl7ddrphy0_bitslip55_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip55_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip55_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[127], wl7ddrphy0_dfi_p3_wrdata[55], wl7ddrphy0_dfi_p2_wrdata[127], wl7ddrphy0_dfi_p2_wrdata[55], wl7ddrphy0_dfi_p1_wrdata[127], wl7ddrphy0_dfi_p1_wrdata[55], wl7ddrphy0_dfi_p0_wrdata[127], wl7ddrphy0_dfi_p0_wrdata[55]}, wl7ddrphy0_bitslip55_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip55_value1 <= (wl7ddrphy0_bitslip55_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[6] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip55_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip55_r1 <= {wl7ddrphy0_dfi_name55, wl7ddrphy0_bitslip55_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip56_value0 <= (wl7ddrphy0_bitslip56_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip56_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip56_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[128], wl7ddrphy0_dfi_p3_wrdata[56], wl7ddrphy0_dfi_p2_wrdata[128], wl7ddrphy0_dfi_p2_wrdata[56], wl7ddrphy0_dfi_p1_wrdata[128], wl7ddrphy0_dfi_p1_wrdata[56], wl7ddrphy0_dfi_p0_wrdata[128], wl7ddrphy0_dfi_p0_wrdata[56]}, wl7ddrphy0_bitslip56_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip56_value1 <= (wl7ddrphy0_bitslip56_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip56_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip56_r1 <= {wl7ddrphy0_dfi_name56, wl7ddrphy0_bitslip56_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip57_value0 <= (wl7ddrphy0_bitslip57_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip57_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip57_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[129], wl7ddrphy0_dfi_p3_wrdata[57], wl7ddrphy0_dfi_p2_wrdata[129], wl7ddrphy0_dfi_p2_wrdata[57], wl7ddrphy0_dfi_p1_wrdata[129], wl7ddrphy0_dfi_p1_wrdata[57], wl7ddrphy0_dfi_p0_wrdata[129], wl7ddrphy0_dfi_p0_wrdata[57]}, wl7ddrphy0_bitslip57_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip57_value1 <= (wl7ddrphy0_bitslip57_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip57_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip57_r1 <= {wl7ddrphy0_dfi_name57, wl7ddrphy0_bitslip57_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip58_value0 <= (wl7ddrphy0_bitslip58_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip58_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip58_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[130], wl7ddrphy0_dfi_p3_wrdata[58], wl7ddrphy0_dfi_p2_wrdata[130], wl7ddrphy0_dfi_p2_wrdata[58], wl7ddrphy0_dfi_p1_wrdata[130], wl7ddrphy0_dfi_p1_wrdata[58], wl7ddrphy0_dfi_p0_wrdata[130], wl7ddrphy0_dfi_p0_wrdata[58]}, wl7ddrphy0_bitslip58_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip58_value1 <= (wl7ddrphy0_bitslip58_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip58_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip58_r1 <= {wl7ddrphy0_dfi_name58, wl7ddrphy0_bitslip58_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip59_value0 <= (wl7ddrphy0_bitslip59_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip59_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip59_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[131], wl7ddrphy0_dfi_p3_wrdata[59], wl7ddrphy0_dfi_p2_wrdata[131], wl7ddrphy0_dfi_p2_wrdata[59], wl7ddrphy0_dfi_p1_wrdata[131], wl7ddrphy0_dfi_p1_wrdata[59], wl7ddrphy0_dfi_p0_wrdata[131], wl7ddrphy0_dfi_p0_wrdata[59]}, wl7ddrphy0_bitslip59_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip59_value1 <= (wl7ddrphy0_bitslip59_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip59_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip59_r1 <= {wl7ddrphy0_dfi_name59, wl7ddrphy0_bitslip59_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip60_value0 <= (wl7ddrphy0_bitslip60_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip60_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip60_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[132], wl7ddrphy0_dfi_p3_wrdata[60], wl7ddrphy0_dfi_p2_wrdata[132], wl7ddrphy0_dfi_p2_wrdata[60], wl7ddrphy0_dfi_p1_wrdata[132], wl7ddrphy0_dfi_p1_wrdata[60], wl7ddrphy0_dfi_p0_wrdata[132], wl7ddrphy0_dfi_p0_wrdata[60]}, wl7ddrphy0_bitslip60_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip60_value1 <= (wl7ddrphy0_bitslip60_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip60_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip60_r1 <= {wl7ddrphy0_dfi_name60, wl7ddrphy0_bitslip60_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip61_value0 <= (wl7ddrphy0_bitslip61_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip61_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip61_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[133], wl7ddrphy0_dfi_p3_wrdata[61], wl7ddrphy0_dfi_p2_wrdata[133], wl7ddrphy0_dfi_p2_wrdata[61], wl7ddrphy0_dfi_p1_wrdata[133], wl7ddrphy0_dfi_p1_wrdata[61], wl7ddrphy0_dfi_p0_wrdata[133], wl7ddrphy0_dfi_p0_wrdata[61]}, wl7ddrphy0_bitslip61_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip61_value1 <= (wl7ddrphy0_bitslip61_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip61_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip61_r1 <= {wl7ddrphy0_dfi_name61, wl7ddrphy0_bitslip61_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip62_value0 <= (wl7ddrphy0_bitslip62_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip62_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip62_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[134], wl7ddrphy0_dfi_p3_wrdata[62], wl7ddrphy0_dfi_p2_wrdata[134], wl7ddrphy0_dfi_p2_wrdata[62], wl7ddrphy0_dfi_p1_wrdata[134], wl7ddrphy0_dfi_p1_wrdata[62], wl7ddrphy0_dfi_p0_wrdata[134], wl7ddrphy0_dfi_p0_wrdata[62]}, wl7ddrphy0_bitslip62_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip62_value1 <= (wl7ddrphy0_bitslip62_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip62_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip62_r1 <= {wl7ddrphy0_dfi_name62, wl7ddrphy0_bitslip62_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip63_value0 <= (wl7ddrphy0_bitslip63_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip63_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip63_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[135], wl7ddrphy0_dfi_p3_wrdata[63], wl7ddrphy0_dfi_p2_wrdata[135], wl7ddrphy0_dfi_p2_wrdata[63], wl7ddrphy0_dfi_p1_wrdata[135], wl7ddrphy0_dfi_p1_wrdata[63], wl7ddrphy0_dfi_p0_wrdata[135], wl7ddrphy0_dfi_p0_wrdata[63]}, wl7ddrphy0_bitslip63_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip63_value1 <= (wl7ddrphy0_bitslip63_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[7] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip63_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip63_r1 <= {wl7ddrphy0_dfi_name63, wl7ddrphy0_bitslip63_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip64_value0 <= (wl7ddrphy0_bitslip64_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip64_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip64_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[136], wl7ddrphy0_dfi_p3_wrdata[64], wl7ddrphy0_dfi_p2_wrdata[136], wl7ddrphy0_dfi_p2_wrdata[64], wl7ddrphy0_dfi_p1_wrdata[136], wl7ddrphy0_dfi_p1_wrdata[64], wl7ddrphy0_dfi_p0_wrdata[136], wl7ddrphy0_dfi_p0_wrdata[64]}, wl7ddrphy0_bitslip64_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip64_value1 <= (wl7ddrphy0_bitslip64_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[0]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip64_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip64_r1 <= {wl7ddrphy0_dfi_name64, wl7ddrphy0_bitslip64_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip65_value0 <= (wl7ddrphy0_bitslip65_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip65_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip65_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[137], wl7ddrphy0_dfi_p3_wrdata[65], wl7ddrphy0_dfi_p2_wrdata[137], wl7ddrphy0_dfi_p2_wrdata[65], wl7ddrphy0_dfi_p1_wrdata[137], wl7ddrphy0_dfi_p1_wrdata[65], wl7ddrphy0_dfi_p0_wrdata[137], wl7ddrphy0_dfi_p0_wrdata[65]}, wl7ddrphy0_bitslip65_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip65_value1 <= (wl7ddrphy0_bitslip65_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[1]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip65_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip65_r1 <= {wl7ddrphy0_dfi_name65, wl7ddrphy0_bitslip65_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip66_value0 <= (wl7ddrphy0_bitslip66_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip66_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip66_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[138], wl7ddrphy0_dfi_p3_wrdata[66], wl7ddrphy0_dfi_p2_wrdata[138], wl7ddrphy0_dfi_p2_wrdata[66], wl7ddrphy0_dfi_p1_wrdata[138], wl7ddrphy0_dfi_p1_wrdata[66], wl7ddrphy0_dfi_p0_wrdata[138], wl7ddrphy0_dfi_p0_wrdata[66]}, wl7ddrphy0_bitslip66_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip66_value1 <= (wl7ddrphy0_bitslip66_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[2]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip66_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip66_r1 <= {wl7ddrphy0_dfi_name66, wl7ddrphy0_bitslip66_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip67_value0 <= (wl7ddrphy0_bitslip67_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip67_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip67_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[139], wl7ddrphy0_dfi_p3_wrdata[67], wl7ddrphy0_dfi_p2_wrdata[139], wl7ddrphy0_dfi_p2_wrdata[67], wl7ddrphy0_dfi_p1_wrdata[139], wl7ddrphy0_dfi_p1_wrdata[67], wl7ddrphy0_dfi_p0_wrdata[139], wl7ddrphy0_dfi_p0_wrdata[67]}, wl7ddrphy0_bitslip67_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip67_value1 <= (wl7ddrphy0_bitslip67_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[3]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip67_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip67_r1 <= {wl7ddrphy0_dfi_name67, wl7ddrphy0_bitslip67_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip68_value0 <= (wl7ddrphy0_bitslip68_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip68_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip68_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[140], wl7ddrphy0_dfi_p3_wrdata[68], wl7ddrphy0_dfi_p2_wrdata[140], wl7ddrphy0_dfi_p2_wrdata[68], wl7ddrphy0_dfi_p1_wrdata[140], wl7ddrphy0_dfi_p1_wrdata[68], wl7ddrphy0_dfi_p0_wrdata[140], wl7ddrphy0_dfi_p0_wrdata[68]}, wl7ddrphy0_bitslip68_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip68_value1 <= (wl7ddrphy0_bitslip68_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[4]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip68_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip68_r1 <= {wl7ddrphy0_dfi_name68, wl7ddrphy0_bitslip68_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip69_value0 <= (wl7ddrphy0_bitslip69_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip69_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip69_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[141], wl7ddrphy0_dfi_p3_wrdata[69], wl7ddrphy0_dfi_p2_wrdata[141], wl7ddrphy0_dfi_p2_wrdata[69], wl7ddrphy0_dfi_p1_wrdata[141], wl7ddrphy0_dfi_p1_wrdata[69], wl7ddrphy0_dfi_p0_wrdata[141], wl7ddrphy0_dfi_p0_wrdata[69]}, wl7ddrphy0_bitslip69_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip69_value1 <= (wl7ddrphy0_bitslip69_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[5]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip69_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip69_r1 <= {wl7ddrphy0_dfi_name69, wl7ddrphy0_bitslip69_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip70_value0 <= (wl7ddrphy0_bitslip70_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip70_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip70_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[142], wl7ddrphy0_dfi_p3_wrdata[70], wl7ddrphy0_dfi_p2_wrdata[142], wl7ddrphy0_dfi_p2_wrdata[70], wl7ddrphy0_dfi_p1_wrdata[142], wl7ddrphy0_dfi_p1_wrdata[70], wl7ddrphy0_dfi_p0_wrdata[142], wl7ddrphy0_dfi_p0_wrdata[70]}, wl7ddrphy0_bitslip70_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip70_value1 <= (wl7ddrphy0_bitslip70_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[6]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip70_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip70_r1 <= {wl7ddrphy0_dfi_name70, wl7ddrphy0_bitslip70_r1[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip71_value0 <= (wl7ddrphy0_bitslip71_value0 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_wdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip71_value0 <= 3'd7;
     end
     wl7ddrphy0_bitslip71_r0 <= {{wl7ddrphy0_dfi_p3_wrdata[143], wl7ddrphy0_dfi_p3_wrdata[71], wl7ddrphy0_dfi_p2_wrdata[143], wl7ddrphy0_dfi_p2_wrdata[71], wl7ddrphy0_dfi_p1_wrdata[143], wl7ddrphy0_dfi_p1_wrdata[71], wl7ddrphy0_dfi_p0_wrdata[143], wl7ddrphy0_dfi_p0_wrdata[71]}, wl7ddrphy0_bitslip71_r0[15:8]};
-    if ((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_re)) begin
         wl7ddrphy0_bitslip71_value1 <= (wl7ddrphy0_bitslip71_value1 + 1'd1);
     end
-    if (((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
+    if ((((wl7ddrphy0_dly_sel_storage[8] & wl7ddrphy0_dly_sel_bits_storage[7]) & wl7ddrphy0_rdly_dq_bitslip_rst_re) | wl7ddrphy0_rst_storage)) begin
         wl7ddrphy0_bitslip71_value1 <= 3'd7;
     end
     wl7ddrphy0_bitslip71_r1 <= {wl7ddrphy0_dfi_name71, wl7ddrphy0_bitslip71_r1[15:8]};
@@ -56641,1076 +56679,1076 @@ always @(posedge sys_clk_1) begin
     wl7ddrphy1_tappeddelayline1_tappeddelayline10 <= wl7ddrphy1_tappeddelayline10;
     wl7ddrphy1_tappeddelayline1_tappeddelayline11 <= wl7ddrphy1_tappeddelayline1_tappeddelayline10;
     wl7ddrphy1_dqspattern1_o1 <= wl7ddrphy1_dqspattern1_o0;
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip9_value <= (wl7ddrphy1_bitslip9_value + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip9_value <= 3'd7;
     end
     wl7ddrphy1_bitslip9_r <= {wl7ddrphy1_dqspattern1_o1, wl7ddrphy1_bitslip9_r[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip10_value <= (wl7ddrphy1_bitslip10_value + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip10_value <= 3'd7;
     end
     wl7ddrphy1_bitslip10_r <= {wl7ddrphy1_dqspattern1_o1, wl7ddrphy1_bitslip10_r[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip11_value <= (wl7ddrphy1_bitslip11_value + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip11_value <= 3'd7;
     end
     wl7ddrphy1_bitslip11_r <= {wl7ddrphy1_dqspattern1_o1, wl7ddrphy1_bitslip11_r[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip12_value <= (wl7ddrphy1_bitslip12_value + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip12_value <= 3'd7;
     end
     wl7ddrphy1_bitslip12_r <= {wl7ddrphy1_dqspattern1_o1, wl7ddrphy1_bitslip12_r[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip13_value <= (wl7ddrphy1_bitslip13_value + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip13_value <= 3'd7;
     end
     wl7ddrphy1_bitslip13_r <= {wl7ddrphy1_dqspattern1_o1, wl7ddrphy1_bitslip13_r[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip14_value <= (wl7ddrphy1_bitslip14_value + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip14_value <= 3'd7;
     end
     wl7ddrphy1_bitslip14_r <= {wl7ddrphy1_dqspattern1_o1, wl7ddrphy1_bitslip14_r[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip15_value <= (wl7ddrphy1_bitslip15_value + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip15_value <= 3'd7;
     end
     wl7ddrphy1_bitslip15_r <= {wl7ddrphy1_dqspattern1_o1, wl7ddrphy1_bitslip15_r[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip16_value <= (wl7ddrphy1_bitslip16_value + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip16_value <= 3'd7;
     end
     wl7ddrphy1_bitslip16_r <= {wl7ddrphy1_dqspattern1_o1, wl7ddrphy1_bitslip16_r[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip17_value <= (wl7ddrphy1_bitslip17_value + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_lane_all) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip17_value <= 3'd7;
     end
     wl7ddrphy1_bitslip17_r <= {wl7ddrphy1_dqspattern1_o1, wl7ddrphy1_bitslip17_r[15:8]};
     wl7ddrphy1_tappeddelayline1_tappeddelayline12 <= wl7ddrphy1_tappeddelayline11;
     wl7ddrphy1_tappeddelayline1_tappeddelayline13 <= wl7ddrphy1_tappeddelayline1_tappeddelayline12;
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip72_value0 <= (wl7ddrphy1_bitslip72_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip72_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip72_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[72], wl7ddrphy1_dfi_p3_wrdata[0], wl7ddrphy1_dfi_p2_wrdata[72], wl7ddrphy1_dfi_p2_wrdata[0], wl7ddrphy1_dfi_p1_wrdata[72], wl7ddrphy1_dfi_p1_wrdata[0], wl7ddrphy1_dfi_p0_wrdata[72], wl7ddrphy1_dfi_p0_wrdata[0]}, wl7ddrphy1_bitslip72_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip72_value1 <= (wl7ddrphy1_bitslip72_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip72_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip72_r1 <= {wl7ddrphy1_dfi_name0, wl7ddrphy1_bitslip72_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip73_value0 <= (wl7ddrphy1_bitslip73_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip73_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip73_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[73], wl7ddrphy1_dfi_p3_wrdata[1], wl7ddrphy1_dfi_p2_wrdata[73], wl7ddrphy1_dfi_p2_wrdata[1], wl7ddrphy1_dfi_p1_wrdata[73], wl7ddrphy1_dfi_p1_wrdata[1], wl7ddrphy1_dfi_p0_wrdata[73], wl7ddrphy1_dfi_p0_wrdata[1]}, wl7ddrphy1_bitslip73_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip73_value1 <= (wl7ddrphy1_bitslip73_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip73_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip73_r1 <= {wl7ddrphy1_dfi_name1, wl7ddrphy1_bitslip73_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip74_value0 <= (wl7ddrphy1_bitslip74_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip74_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip74_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[74], wl7ddrphy1_dfi_p3_wrdata[2], wl7ddrphy1_dfi_p2_wrdata[74], wl7ddrphy1_dfi_p2_wrdata[2], wl7ddrphy1_dfi_p1_wrdata[74], wl7ddrphy1_dfi_p1_wrdata[2], wl7ddrphy1_dfi_p0_wrdata[74], wl7ddrphy1_dfi_p0_wrdata[2]}, wl7ddrphy1_bitslip74_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip74_value1 <= (wl7ddrphy1_bitslip74_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip74_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip74_r1 <= {wl7ddrphy1_dfi_name2, wl7ddrphy1_bitslip74_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip75_value0 <= (wl7ddrphy1_bitslip75_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip75_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip75_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[75], wl7ddrphy1_dfi_p3_wrdata[3], wl7ddrphy1_dfi_p2_wrdata[75], wl7ddrphy1_dfi_p2_wrdata[3], wl7ddrphy1_dfi_p1_wrdata[75], wl7ddrphy1_dfi_p1_wrdata[3], wl7ddrphy1_dfi_p0_wrdata[75], wl7ddrphy1_dfi_p0_wrdata[3]}, wl7ddrphy1_bitslip75_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip75_value1 <= (wl7ddrphy1_bitslip75_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip75_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip75_r1 <= {wl7ddrphy1_dfi_name3, wl7ddrphy1_bitslip75_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip76_value0 <= (wl7ddrphy1_bitslip76_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip76_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip76_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[76], wl7ddrphy1_dfi_p3_wrdata[4], wl7ddrphy1_dfi_p2_wrdata[76], wl7ddrphy1_dfi_p2_wrdata[4], wl7ddrphy1_dfi_p1_wrdata[76], wl7ddrphy1_dfi_p1_wrdata[4], wl7ddrphy1_dfi_p0_wrdata[76], wl7ddrphy1_dfi_p0_wrdata[4]}, wl7ddrphy1_bitslip76_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip76_value1 <= (wl7ddrphy1_bitslip76_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip76_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip76_r1 <= {wl7ddrphy1_dfi_name4, wl7ddrphy1_bitslip76_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip77_value0 <= (wl7ddrphy1_bitslip77_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip77_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip77_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[77], wl7ddrphy1_dfi_p3_wrdata[5], wl7ddrphy1_dfi_p2_wrdata[77], wl7ddrphy1_dfi_p2_wrdata[5], wl7ddrphy1_dfi_p1_wrdata[77], wl7ddrphy1_dfi_p1_wrdata[5], wl7ddrphy1_dfi_p0_wrdata[77], wl7ddrphy1_dfi_p0_wrdata[5]}, wl7ddrphy1_bitslip77_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip77_value1 <= (wl7ddrphy1_bitslip77_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip77_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip77_r1 <= {wl7ddrphy1_dfi_name5, wl7ddrphy1_bitslip77_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip78_value0 <= (wl7ddrphy1_bitslip78_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip78_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip78_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[78], wl7ddrphy1_dfi_p3_wrdata[6], wl7ddrphy1_dfi_p2_wrdata[78], wl7ddrphy1_dfi_p2_wrdata[6], wl7ddrphy1_dfi_p1_wrdata[78], wl7ddrphy1_dfi_p1_wrdata[6], wl7ddrphy1_dfi_p0_wrdata[78], wl7ddrphy1_dfi_p0_wrdata[6]}, wl7ddrphy1_bitslip78_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip78_value1 <= (wl7ddrphy1_bitslip78_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip78_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip78_r1 <= {wl7ddrphy1_dfi_name6, wl7ddrphy1_bitslip78_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip79_value0 <= (wl7ddrphy1_bitslip79_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip79_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip79_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[79], wl7ddrphy1_dfi_p3_wrdata[7], wl7ddrphy1_dfi_p2_wrdata[79], wl7ddrphy1_dfi_p2_wrdata[7], wl7ddrphy1_dfi_p1_wrdata[79], wl7ddrphy1_dfi_p1_wrdata[7], wl7ddrphy1_dfi_p0_wrdata[79], wl7ddrphy1_dfi_p0_wrdata[7]}, wl7ddrphy1_bitslip79_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip79_value1 <= (wl7ddrphy1_bitslip79_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[0] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip79_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip79_r1 <= {wl7ddrphy1_dfi_name7, wl7ddrphy1_bitslip79_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip80_value0 <= (wl7ddrphy1_bitslip80_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip80_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip80_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[80], wl7ddrphy1_dfi_p3_wrdata[8], wl7ddrphy1_dfi_p2_wrdata[80], wl7ddrphy1_dfi_p2_wrdata[8], wl7ddrphy1_dfi_p1_wrdata[80], wl7ddrphy1_dfi_p1_wrdata[8], wl7ddrphy1_dfi_p0_wrdata[80], wl7ddrphy1_dfi_p0_wrdata[8]}, wl7ddrphy1_bitslip80_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip80_value1 <= (wl7ddrphy1_bitslip80_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip80_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip80_r1 <= {wl7ddrphy1_dfi_name8, wl7ddrphy1_bitslip80_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip81_value0 <= (wl7ddrphy1_bitslip81_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip81_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip81_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[81], wl7ddrphy1_dfi_p3_wrdata[9], wl7ddrphy1_dfi_p2_wrdata[81], wl7ddrphy1_dfi_p2_wrdata[9], wl7ddrphy1_dfi_p1_wrdata[81], wl7ddrphy1_dfi_p1_wrdata[9], wl7ddrphy1_dfi_p0_wrdata[81], wl7ddrphy1_dfi_p0_wrdata[9]}, wl7ddrphy1_bitslip81_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip81_value1 <= (wl7ddrphy1_bitslip81_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip81_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip81_r1 <= {wl7ddrphy1_dfi_name9, wl7ddrphy1_bitslip81_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip82_value0 <= (wl7ddrphy1_bitslip82_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip82_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip82_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[82], wl7ddrphy1_dfi_p3_wrdata[10], wl7ddrphy1_dfi_p2_wrdata[82], wl7ddrphy1_dfi_p2_wrdata[10], wl7ddrphy1_dfi_p1_wrdata[82], wl7ddrphy1_dfi_p1_wrdata[10], wl7ddrphy1_dfi_p0_wrdata[82], wl7ddrphy1_dfi_p0_wrdata[10]}, wl7ddrphy1_bitslip82_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip82_value1 <= (wl7ddrphy1_bitslip82_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip82_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip82_r1 <= {wl7ddrphy1_dfi_name10, wl7ddrphy1_bitslip82_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip83_value0 <= (wl7ddrphy1_bitslip83_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip83_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip83_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[83], wl7ddrphy1_dfi_p3_wrdata[11], wl7ddrphy1_dfi_p2_wrdata[83], wl7ddrphy1_dfi_p2_wrdata[11], wl7ddrphy1_dfi_p1_wrdata[83], wl7ddrphy1_dfi_p1_wrdata[11], wl7ddrphy1_dfi_p0_wrdata[83], wl7ddrphy1_dfi_p0_wrdata[11]}, wl7ddrphy1_bitslip83_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip83_value1 <= (wl7ddrphy1_bitslip83_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip83_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip83_r1 <= {wl7ddrphy1_dfi_name11, wl7ddrphy1_bitslip83_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip84_value0 <= (wl7ddrphy1_bitslip84_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip84_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip84_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[84], wl7ddrphy1_dfi_p3_wrdata[12], wl7ddrphy1_dfi_p2_wrdata[84], wl7ddrphy1_dfi_p2_wrdata[12], wl7ddrphy1_dfi_p1_wrdata[84], wl7ddrphy1_dfi_p1_wrdata[12], wl7ddrphy1_dfi_p0_wrdata[84], wl7ddrphy1_dfi_p0_wrdata[12]}, wl7ddrphy1_bitslip84_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip84_value1 <= (wl7ddrphy1_bitslip84_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip84_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip84_r1 <= {wl7ddrphy1_dfi_name12, wl7ddrphy1_bitslip84_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip85_value0 <= (wl7ddrphy1_bitslip85_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip85_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip85_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[85], wl7ddrphy1_dfi_p3_wrdata[13], wl7ddrphy1_dfi_p2_wrdata[85], wl7ddrphy1_dfi_p2_wrdata[13], wl7ddrphy1_dfi_p1_wrdata[85], wl7ddrphy1_dfi_p1_wrdata[13], wl7ddrphy1_dfi_p0_wrdata[85], wl7ddrphy1_dfi_p0_wrdata[13]}, wl7ddrphy1_bitslip85_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip85_value1 <= (wl7ddrphy1_bitslip85_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip85_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip85_r1 <= {wl7ddrphy1_dfi_name13, wl7ddrphy1_bitslip85_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip86_value0 <= (wl7ddrphy1_bitslip86_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip86_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip86_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[86], wl7ddrphy1_dfi_p3_wrdata[14], wl7ddrphy1_dfi_p2_wrdata[86], wl7ddrphy1_dfi_p2_wrdata[14], wl7ddrphy1_dfi_p1_wrdata[86], wl7ddrphy1_dfi_p1_wrdata[14], wl7ddrphy1_dfi_p0_wrdata[86], wl7ddrphy1_dfi_p0_wrdata[14]}, wl7ddrphy1_bitslip86_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip86_value1 <= (wl7ddrphy1_bitslip86_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip86_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip86_r1 <= {wl7ddrphy1_dfi_name14, wl7ddrphy1_bitslip86_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip87_value0 <= (wl7ddrphy1_bitslip87_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip87_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip87_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[87], wl7ddrphy1_dfi_p3_wrdata[15], wl7ddrphy1_dfi_p2_wrdata[87], wl7ddrphy1_dfi_p2_wrdata[15], wl7ddrphy1_dfi_p1_wrdata[87], wl7ddrphy1_dfi_p1_wrdata[15], wl7ddrphy1_dfi_p0_wrdata[87], wl7ddrphy1_dfi_p0_wrdata[15]}, wl7ddrphy1_bitslip87_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip87_value1 <= (wl7ddrphy1_bitslip87_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[1] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip87_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip87_r1 <= {wl7ddrphy1_dfi_name15, wl7ddrphy1_bitslip87_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip88_value0 <= (wl7ddrphy1_bitslip88_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip88_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip88_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[88], wl7ddrphy1_dfi_p3_wrdata[16], wl7ddrphy1_dfi_p2_wrdata[88], wl7ddrphy1_dfi_p2_wrdata[16], wl7ddrphy1_dfi_p1_wrdata[88], wl7ddrphy1_dfi_p1_wrdata[16], wl7ddrphy1_dfi_p0_wrdata[88], wl7ddrphy1_dfi_p0_wrdata[16]}, wl7ddrphy1_bitslip88_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip88_value1 <= (wl7ddrphy1_bitslip88_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip88_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip88_r1 <= {wl7ddrphy1_dfi_name16, wl7ddrphy1_bitslip88_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip89_value0 <= (wl7ddrphy1_bitslip89_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip89_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip89_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[89], wl7ddrphy1_dfi_p3_wrdata[17], wl7ddrphy1_dfi_p2_wrdata[89], wl7ddrphy1_dfi_p2_wrdata[17], wl7ddrphy1_dfi_p1_wrdata[89], wl7ddrphy1_dfi_p1_wrdata[17], wl7ddrphy1_dfi_p0_wrdata[89], wl7ddrphy1_dfi_p0_wrdata[17]}, wl7ddrphy1_bitslip89_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip89_value1 <= (wl7ddrphy1_bitslip89_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip89_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip89_r1 <= {wl7ddrphy1_dfi_name17, wl7ddrphy1_bitslip89_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip90_value0 <= (wl7ddrphy1_bitslip90_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip90_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip90_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[90], wl7ddrphy1_dfi_p3_wrdata[18], wl7ddrphy1_dfi_p2_wrdata[90], wl7ddrphy1_dfi_p2_wrdata[18], wl7ddrphy1_dfi_p1_wrdata[90], wl7ddrphy1_dfi_p1_wrdata[18], wl7ddrphy1_dfi_p0_wrdata[90], wl7ddrphy1_dfi_p0_wrdata[18]}, wl7ddrphy1_bitslip90_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip90_value1 <= (wl7ddrphy1_bitslip90_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip90_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip90_r1 <= {wl7ddrphy1_dfi_name18, wl7ddrphy1_bitslip90_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip91_value0 <= (wl7ddrphy1_bitslip91_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip91_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip91_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[91], wl7ddrphy1_dfi_p3_wrdata[19], wl7ddrphy1_dfi_p2_wrdata[91], wl7ddrphy1_dfi_p2_wrdata[19], wl7ddrphy1_dfi_p1_wrdata[91], wl7ddrphy1_dfi_p1_wrdata[19], wl7ddrphy1_dfi_p0_wrdata[91], wl7ddrphy1_dfi_p0_wrdata[19]}, wl7ddrphy1_bitslip91_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip91_value1 <= (wl7ddrphy1_bitslip91_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip91_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip91_r1 <= {wl7ddrphy1_dfi_name19, wl7ddrphy1_bitslip91_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip92_value0 <= (wl7ddrphy1_bitslip92_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip92_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip92_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[92], wl7ddrphy1_dfi_p3_wrdata[20], wl7ddrphy1_dfi_p2_wrdata[92], wl7ddrphy1_dfi_p2_wrdata[20], wl7ddrphy1_dfi_p1_wrdata[92], wl7ddrphy1_dfi_p1_wrdata[20], wl7ddrphy1_dfi_p0_wrdata[92], wl7ddrphy1_dfi_p0_wrdata[20]}, wl7ddrphy1_bitslip92_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip92_value1 <= (wl7ddrphy1_bitslip92_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip92_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip92_r1 <= {wl7ddrphy1_dfi_name20, wl7ddrphy1_bitslip92_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip93_value0 <= (wl7ddrphy1_bitslip93_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip93_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip93_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[93], wl7ddrphy1_dfi_p3_wrdata[21], wl7ddrphy1_dfi_p2_wrdata[93], wl7ddrphy1_dfi_p2_wrdata[21], wl7ddrphy1_dfi_p1_wrdata[93], wl7ddrphy1_dfi_p1_wrdata[21], wl7ddrphy1_dfi_p0_wrdata[93], wl7ddrphy1_dfi_p0_wrdata[21]}, wl7ddrphy1_bitslip93_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip93_value1 <= (wl7ddrphy1_bitslip93_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip93_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip93_r1 <= {wl7ddrphy1_dfi_name21, wl7ddrphy1_bitslip93_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip94_value0 <= (wl7ddrphy1_bitslip94_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip94_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip94_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[94], wl7ddrphy1_dfi_p3_wrdata[22], wl7ddrphy1_dfi_p2_wrdata[94], wl7ddrphy1_dfi_p2_wrdata[22], wl7ddrphy1_dfi_p1_wrdata[94], wl7ddrphy1_dfi_p1_wrdata[22], wl7ddrphy1_dfi_p0_wrdata[94], wl7ddrphy1_dfi_p0_wrdata[22]}, wl7ddrphy1_bitslip94_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip94_value1 <= (wl7ddrphy1_bitslip94_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip94_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip94_r1 <= {wl7ddrphy1_dfi_name22, wl7ddrphy1_bitslip94_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip95_value0 <= (wl7ddrphy1_bitslip95_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip95_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip95_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[95], wl7ddrphy1_dfi_p3_wrdata[23], wl7ddrphy1_dfi_p2_wrdata[95], wl7ddrphy1_dfi_p2_wrdata[23], wl7ddrphy1_dfi_p1_wrdata[95], wl7ddrphy1_dfi_p1_wrdata[23], wl7ddrphy1_dfi_p0_wrdata[95], wl7ddrphy1_dfi_p0_wrdata[23]}, wl7ddrphy1_bitslip95_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip95_value1 <= (wl7ddrphy1_bitslip95_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[2] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip95_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip95_r1 <= {wl7ddrphy1_dfi_name23, wl7ddrphy1_bitslip95_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip96_value0 <= (wl7ddrphy1_bitslip96_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip96_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip96_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[96], wl7ddrphy1_dfi_p3_wrdata[24], wl7ddrphy1_dfi_p2_wrdata[96], wl7ddrphy1_dfi_p2_wrdata[24], wl7ddrphy1_dfi_p1_wrdata[96], wl7ddrphy1_dfi_p1_wrdata[24], wl7ddrphy1_dfi_p0_wrdata[96], wl7ddrphy1_dfi_p0_wrdata[24]}, wl7ddrphy1_bitslip96_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip96_value1 <= (wl7ddrphy1_bitslip96_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip96_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip96_r1 <= {wl7ddrphy1_dfi_name24, wl7ddrphy1_bitslip96_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip97_value0 <= (wl7ddrphy1_bitslip97_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip97_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip97_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[97], wl7ddrphy1_dfi_p3_wrdata[25], wl7ddrphy1_dfi_p2_wrdata[97], wl7ddrphy1_dfi_p2_wrdata[25], wl7ddrphy1_dfi_p1_wrdata[97], wl7ddrphy1_dfi_p1_wrdata[25], wl7ddrphy1_dfi_p0_wrdata[97], wl7ddrphy1_dfi_p0_wrdata[25]}, wl7ddrphy1_bitslip97_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip97_value1 <= (wl7ddrphy1_bitslip97_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip97_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip97_r1 <= {wl7ddrphy1_dfi_name25, wl7ddrphy1_bitslip97_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip98_value0 <= (wl7ddrphy1_bitslip98_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip98_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip98_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[98], wl7ddrphy1_dfi_p3_wrdata[26], wl7ddrphy1_dfi_p2_wrdata[98], wl7ddrphy1_dfi_p2_wrdata[26], wl7ddrphy1_dfi_p1_wrdata[98], wl7ddrphy1_dfi_p1_wrdata[26], wl7ddrphy1_dfi_p0_wrdata[98], wl7ddrphy1_dfi_p0_wrdata[26]}, wl7ddrphy1_bitslip98_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip98_value1 <= (wl7ddrphy1_bitslip98_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip98_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip98_r1 <= {wl7ddrphy1_dfi_name26, wl7ddrphy1_bitslip98_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip99_value0 <= (wl7ddrphy1_bitslip99_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip99_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip99_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[99], wl7ddrphy1_dfi_p3_wrdata[27], wl7ddrphy1_dfi_p2_wrdata[99], wl7ddrphy1_dfi_p2_wrdata[27], wl7ddrphy1_dfi_p1_wrdata[99], wl7ddrphy1_dfi_p1_wrdata[27], wl7ddrphy1_dfi_p0_wrdata[99], wl7ddrphy1_dfi_p0_wrdata[27]}, wl7ddrphy1_bitslip99_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip99_value1 <= (wl7ddrphy1_bitslip99_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip99_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip99_r1 <= {wl7ddrphy1_dfi_name27, wl7ddrphy1_bitslip99_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip100_value0 <= (wl7ddrphy1_bitslip100_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip100_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip100_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[100], wl7ddrphy1_dfi_p3_wrdata[28], wl7ddrphy1_dfi_p2_wrdata[100], wl7ddrphy1_dfi_p2_wrdata[28], wl7ddrphy1_dfi_p1_wrdata[100], wl7ddrphy1_dfi_p1_wrdata[28], wl7ddrphy1_dfi_p0_wrdata[100], wl7ddrphy1_dfi_p0_wrdata[28]}, wl7ddrphy1_bitslip100_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip100_value1 <= (wl7ddrphy1_bitslip100_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip100_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip100_r1 <= {wl7ddrphy1_dfi_name28, wl7ddrphy1_bitslip100_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip101_value0 <= (wl7ddrphy1_bitslip101_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip101_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip101_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[101], wl7ddrphy1_dfi_p3_wrdata[29], wl7ddrphy1_dfi_p2_wrdata[101], wl7ddrphy1_dfi_p2_wrdata[29], wl7ddrphy1_dfi_p1_wrdata[101], wl7ddrphy1_dfi_p1_wrdata[29], wl7ddrphy1_dfi_p0_wrdata[101], wl7ddrphy1_dfi_p0_wrdata[29]}, wl7ddrphy1_bitslip101_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip101_value1 <= (wl7ddrphy1_bitslip101_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip101_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip101_r1 <= {wl7ddrphy1_dfi_name29, wl7ddrphy1_bitslip101_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip102_value0 <= (wl7ddrphy1_bitslip102_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip102_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip102_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[102], wl7ddrphy1_dfi_p3_wrdata[30], wl7ddrphy1_dfi_p2_wrdata[102], wl7ddrphy1_dfi_p2_wrdata[30], wl7ddrphy1_dfi_p1_wrdata[102], wl7ddrphy1_dfi_p1_wrdata[30], wl7ddrphy1_dfi_p0_wrdata[102], wl7ddrphy1_dfi_p0_wrdata[30]}, wl7ddrphy1_bitslip102_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip102_value1 <= (wl7ddrphy1_bitslip102_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip102_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip102_r1 <= {wl7ddrphy1_dfi_name30, wl7ddrphy1_bitslip102_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip103_value0 <= (wl7ddrphy1_bitslip103_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip103_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip103_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[103], wl7ddrphy1_dfi_p3_wrdata[31], wl7ddrphy1_dfi_p2_wrdata[103], wl7ddrphy1_dfi_p2_wrdata[31], wl7ddrphy1_dfi_p1_wrdata[103], wl7ddrphy1_dfi_p1_wrdata[31], wl7ddrphy1_dfi_p0_wrdata[103], wl7ddrphy1_dfi_p0_wrdata[31]}, wl7ddrphy1_bitslip103_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip103_value1 <= (wl7ddrphy1_bitslip103_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[3] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip103_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip103_r1 <= {wl7ddrphy1_dfi_name31, wl7ddrphy1_bitslip103_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip104_value0 <= (wl7ddrphy1_bitslip104_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip104_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip104_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[104], wl7ddrphy1_dfi_p3_wrdata[32], wl7ddrphy1_dfi_p2_wrdata[104], wl7ddrphy1_dfi_p2_wrdata[32], wl7ddrphy1_dfi_p1_wrdata[104], wl7ddrphy1_dfi_p1_wrdata[32], wl7ddrphy1_dfi_p0_wrdata[104], wl7ddrphy1_dfi_p0_wrdata[32]}, wl7ddrphy1_bitslip104_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip104_value1 <= (wl7ddrphy1_bitslip104_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip104_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip104_r1 <= {wl7ddrphy1_dfi_name32, wl7ddrphy1_bitslip104_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip105_value0 <= (wl7ddrphy1_bitslip105_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip105_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip105_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[105], wl7ddrphy1_dfi_p3_wrdata[33], wl7ddrphy1_dfi_p2_wrdata[105], wl7ddrphy1_dfi_p2_wrdata[33], wl7ddrphy1_dfi_p1_wrdata[105], wl7ddrphy1_dfi_p1_wrdata[33], wl7ddrphy1_dfi_p0_wrdata[105], wl7ddrphy1_dfi_p0_wrdata[33]}, wl7ddrphy1_bitslip105_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip105_value1 <= (wl7ddrphy1_bitslip105_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip105_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip105_r1 <= {wl7ddrphy1_dfi_name33, wl7ddrphy1_bitslip105_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip106_value0 <= (wl7ddrphy1_bitslip106_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip106_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip106_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[106], wl7ddrphy1_dfi_p3_wrdata[34], wl7ddrphy1_dfi_p2_wrdata[106], wl7ddrphy1_dfi_p2_wrdata[34], wl7ddrphy1_dfi_p1_wrdata[106], wl7ddrphy1_dfi_p1_wrdata[34], wl7ddrphy1_dfi_p0_wrdata[106], wl7ddrphy1_dfi_p0_wrdata[34]}, wl7ddrphy1_bitslip106_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip106_value1 <= (wl7ddrphy1_bitslip106_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip106_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip106_r1 <= {wl7ddrphy1_dfi_name34, wl7ddrphy1_bitslip106_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip107_value0 <= (wl7ddrphy1_bitslip107_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip107_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip107_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[107], wl7ddrphy1_dfi_p3_wrdata[35], wl7ddrphy1_dfi_p2_wrdata[107], wl7ddrphy1_dfi_p2_wrdata[35], wl7ddrphy1_dfi_p1_wrdata[107], wl7ddrphy1_dfi_p1_wrdata[35], wl7ddrphy1_dfi_p0_wrdata[107], wl7ddrphy1_dfi_p0_wrdata[35]}, wl7ddrphy1_bitslip107_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip107_value1 <= (wl7ddrphy1_bitslip107_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip107_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip107_r1 <= {wl7ddrphy1_dfi_name35, wl7ddrphy1_bitslip107_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip108_value0 <= (wl7ddrphy1_bitslip108_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip108_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip108_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[108], wl7ddrphy1_dfi_p3_wrdata[36], wl7ddrphy1_dfi_p2_wrdata[108], wl7ddrphy1_dfi_p2_wrdata[36], wl7ddrphy1_dfi_p1_wrdata[108], wl7ddrphy1_dfi_p1_wrdata[36], wl7ddrphy1_dfi_p0_wrdata[108], wl7ddrphy1_dfi_p0_wrdata[36]}, wl7ddrphy1_bitslip108_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip108_value1 <= (wl7ddrphy1_bitslip108_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip108_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip108_r1 <= {wl7ddrphy1_dfi_name36, wl7ddrphy1_bitslip108_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip109_value0 <= (wl7ddrphy1_bitslip109_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip109_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip109_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[109], wl7ddrphy1_dfi_p3_wrdata[37], wl7ddrphy1_dfi_p2_wrdata[109], wl7ddrphy1_dfi_p2_wrdata[37], wl7ddrphy1_dfi_p1_wrdata[109], wl7ddrphy1_dfi_p1_wrdata[37], wl7ddrphy1_dfi_p0_wrdata[109], wl7ddrphy1_dfi_p0_wrdata[37]}, wl7ddrphy1_bitslip109_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip109_value1 <= (wl7ddrphy1_bitslip109_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip109_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip109_r1 <= {wl7ddrphy1_dfi_name37, wl7ddrphy1_bitslip109_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip110_value0 <= (wl7ddrphy1_bitslip110_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip110_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip110_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[110], wl7ddrphy1_dfi_p3_wrdata[38], wl7ddrphy1_dfi_p2_wrdata[110], wl7ddrphy1_dfi_p2_wrdata[38], wl7ddrphy1_dfi_p1_wrdata[110], wl7ddrphy1_dfi_p1_wrdata[38], wl7ddrphy1_dfi_p0_wrdata[110], wl7ddrphy1_dfi_p0_wrdata[38]}, wl7ddrphy1_bitslip110_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip110_value1 <= (wl7ddrphy1_bitslip110_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip110_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip110_r1 <= {wl7ddrphy1_dfi_name38, wl7ddrphy1_bitslip110_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip111_value0 <= (wl7ddrphy1_bitslip111_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip111_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip111_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[111], wl7ddrphy1_dfi_p3_wrdata[39], wl7ddrphy1_dfi_p2_wrdata[111], wl7ddrphy1_dfi_p2_wrdata[39], wl7ddrphy1_dfi_p1_wrdata[111], wl7ddrphy1_dfi_p1_wrdata[39], wl7ddrphy1_dfi_p0_wrdata[111], wl7ddrphy1_dfi_p0_wrdata[39]}, wl7ddrphy1_bitslip111_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip111_value1 <= (wl7ddrphy1_bitslip111_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[4] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip111_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip111_r1 <= {wl7ddrphy1_dfi_name39, wl7ddrphy1_bitslip111_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip112_value0 <= (wl7ddrphy1_bitslip112_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip112_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip112_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[112], wl7ddrphy1_dfi_p3_wrdata[40], wl7ddrphy1_dfi_p2_wrdata[112], wl7ddrphy1_dfi_p2_wrdata[40], wl7ddrphy1_dfi_p1_wrdata[112], wl7ddrphy1_dfi_p1_wrdata[40], wl7ddrphy1_dfi_p0_wrdata[112], wl7ddrphy1_dfi_p0_wrdata[40]}, wl7ddrphy1_bitslip112_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip112_value1 <= (wl7ddrphy1_bitslip112_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip112_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip112_r1 <= {wl7ddrphy1_dfi_name40, wl7ddrphy1_bitslip112_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip113_value0 <= (wl7ddrphy1_bitslip113_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip113_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip113_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[113], wl7ddrphy1_dfi_p3_wrdata[41], wl7ddrphy1_dfi_p2_wrdata[113], wl7ddrphy1_dfi_p2_wrdata[41], wl7ddrphy1_dfi_p1_wrdata[113], wl7ddrphy1_dfi_p1_wrdata[41], wl7ddrphy1_dfi_p0_wrdata[113], wl7ddrphy1_dfi_p0_wrdata[41]}, wl7ddrphy1_bitslip113_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip113_value1 <= (wl7ddrphy1_bitslip113_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip113_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip113_r1 <= {wl7ddrphy1_dfi_name41, wl7ddrphy1_bitslip113_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip114_value0 <= (wl7ddrphy1_bitslip114_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip114_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip114_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[114], wl7ddrphy1_dfi_p3_wrdata[42], wl7ddrphy1_dfi_p2_wrdata[114], wl7ddrphy1_dfi_p2_wrdata[42], wl7ddrphy1_dfi_p1_wrdata[114], wl7ddrphy1_dfi_p1_wrdata[42], wl7ddrphy1_dfi_p0_wrdata[114], wl7ddrphy1_dfi_p0_wrdata[42]}, wl7ddrphy1_bitslip114_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip114_value1 <= (wl7ddrphy1_bitslip114_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip114_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip114_r1 <= {wl7ddrphy1_dfi_name42, wl7ddrphy1_bitslip114_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip115_value0 <= (wl7ddrphy1_bitslip115_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip115_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip115_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[115], wl7ddrphy1_dfi_p3_wrdata[43], wl7ddrphy1_dfi_p2_wrdata[115], wl7ddrphy1_dfi_p2_wrdata[43], wl7ddrphy1_dfi_p1_wrdata[115], wl7ddrphy1_dfi_p1_wrdata[43], wl7ddrphy1_dfi_p0_wrdata[115], wl7ddrphy1_dfi_p0_wrdata[43]}, wl7ddrphy1_bitslip115_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip115_value1 <= (wl7ddrphy1_bitslip115_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip115_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip115_r1 <= {wl7ddrphy1_dfi_name43, wl7ddrphy1_bitslip115_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip116_value0 <= (wl7ddrphy1_bitslip116_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip116_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip116_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[116], wl7ddrphy1_dfi_p3_wrdata[44], wl7ddrphy1_dfi_p2_wrdata[116], wl7ddrphy1_dfi_p2_wrdata[44], wl7ddrphy1_dfi_p1_wrdata[116], wl7ddrphy1_dfi_p1_wrdata[44], wl7ddrphy1_dfi_p0_wrdata[116], wl7ddrphy1_dfi_p0_wrdata[44]}, wl7ddrphy1_bitslip116_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip116_value1 <= (wl7ddrphy1_bitslip116_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip116_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip116_r1 <= {wl7ddrphy1_dfi_name44, wl7ddrphy1_bitslip116_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip117_value0 <= (wl7ddrphy1_bitslip117_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip117_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip117_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[117], wl7ddrphy1_dfi_p3_wrdata[45], wl7ddrphy1_dfi_p2_wrdata[117], wl7ddrphy1_dfi_p2_wrdata[45], wl7ddrphy1_dfi_p1_wrdata[117], wl7ddrphy1_dfi_p1_wrdata[45], wl7ddrphy1_dfi_p0_wrdata[117], wl7ddrphy1_dfi_p0_wrdata[45]}, wl7ddrphy1_bitslip117_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip117_value1 <= (wl7ddrphy1_bitslip117_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip117_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip117_r1 <= {wl7ddrphy1_dfi_name45, wl7ddrphy1_bitslip117_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip118_value0 <= (wl7ddrphy1_bitslip118_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip118_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip118_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[118], wl7ddrphy1_dfi_p3_wrdata[46], wl7ddrphy1_dfi_p2_wrdata[118], wl7ddrphy1_dfi_p2_wrdata[46], wl7ddrphy1_dfi_p1_wrdata[118], wl7ddrphy1_dfi_p1_wrdata[46], wl7ddrphy1_dfi_p0_wrdata[118], wl7ddrphy1_dfi_p0_wrdata[46]}, wl7ddrphy1_bitslip118_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip118_value1 <= (wl7ddrphy1_bitslip118_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip118_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip118_r1 <= {wl7ddrphy1_dfi_name46, wl7ddrphy1_bitslip118_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip119_value0 <= (wl7ddrphy1_bitslip119_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip119_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip119_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[119], wl7ddrphy1_dfi_p3_wrdata[47], wl7ddrphy1_dfi_p2_wrdata[119], wl7ddrphy1_dfi_p2_wrdata[47], wl7ddrphy1_dfi_p1_wrdata[119], wl7ddrphy1_dfi_p1_wrdata[47], wl7ddrphy1_dfi_p0_wrdata[119], wl7ddrphy1_dfi_p0_wrdata[47]}, wl7ddrphy1_bitslip119_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip119_value1 <= (wl7ddrphy1_bitslip119_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[5] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip119_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip119_r1 <= {wl7ddrphy1_dfi_name47, wl7ddrphy1_bitslip119_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip120_value0 <= (wl7ddrphy1_bitslip120_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip120_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip120_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[120], wl7ddrphy1_dfi_p3_wrdata[48], wl7ddrphy1_dfi_p2_wrdata[120], wl7ddrphy1_dfi_p2_wrdata[48], wl7ddrphy1_dfi_p1_wrdata[120], wl7ddrphy1_dfi_p1_wrdata[48], wl7ddrphy1_dfi_p0_wrdata[120], wl7ddrphy1_dfi_p0_wrdata[48]}, wl7ddrphy1_bitslip120_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip120_value1 <= (wl7ddrphy1_bitslip120_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip120_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip120_r1 <= {wl7ddrphy1_dfi_name48, wl7ddrphy1_bitslip120_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip121_value0 <= (wl7ddrphy1_bitslip121_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip121_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip121_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[121], wl7ddrphy1_dfi_p3_wrdata[49], wl7ddrphy1_dfi_p2_wrdata[121], wl7ddrphy1_dfi_p2_wrdata[49], wl7ddrphy1_dfi_p1_wrdata[121], wl7ddrphy1_dfi_p1_wrdata[49], wl7ddrphy1_dfi_p0_wrdata[121], wl7ddrphy1_dfi_p0_wrdata[49]}, wl7ddrphy1_bitslip121_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip121_value1 <= (wl7ddrphy1_bitslip121_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip121_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip121_r1 <= {wl7ddrphy1_dfi_name49, wl7ddrphy1_bitslip121_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip122_value0 <= (wl7ddrphy1_bitslip122_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip122_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip122_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[122], wl7ddrphy1_dfi_p3_wrdata[50], wl7ddrphy1_dfi_p2_wrdata[122], wl7ddrphy1_dfi_p2_wrdata[50], wl7ddrphy1_dfi_p1_wrdata[122], wl7ddrphy1_dfi_p1_wrdata[50], wl7ddrphy1_dfi_p0_wrdata[122], wl7ddrphy1_dfi_p0_wrdata[50]}, wl7ddrphy1_bitslip122_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip122_value1 <= (wl7ddrphy1_bitslip122_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip122_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip122_r1 <= {wl7ddrphy1_dfi_name50, wl7ddrphy1_bitslip122_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip123_value0 <= (wl7ddrphy1_bitslip123_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip123_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip123_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[123], wl7ddrphy1_dfi_p3_wrdata[51], wl7ddrphy1_dfi_p2_wrdata[123], wl7ddrphy1_dfi_p2_wrdata[51], wl7ddrphy1_dfi_p1_wrdata[123], wl7ddrphy1_dfi_p1_wrdata[51], wl7ddrphy1_dfi_p0_wrdata[123], wl7ddrphy1_dfi_p0_wrdata[51]}, wl7ddrphy1_bitslip123_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip123_value1 <= (wl7ddrphy1_bitslip123_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip123_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip123_r1 <= {wl7ddrphy1_dfi_name51, wl7ddrphy1_bitslip123_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip124_value0 <= (wl7ddrphy1_bitslip124_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip124_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip124_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[124], wl7ddrphy1_dfi_p3_wrdata[52], wl7ddrphy1_dfi_p2_wrdata[124], wl7ddrphy1_dfi_p2_wrdata[52], wl7ddrphy1_dfi_p1_wrdata[124], wl7ddrphy1_dfi_p1_wrdata[52], wl7ddrphy1_dfi_p0_wrdata[124], wl7ddrphy1_dfi_p0_wrdata[52]}, wl7ddrphy1_bitslip124_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip124_value1 <= (wl7ddrphy1_bitslip124_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip124_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip124_r1 <= {wl7ddrphy1_dfi_name52, wl7ddrphy1_bitslip124_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip125_value0 <= (wl7ddrphy1_bitslip125_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip125_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip125_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[125], wl7ddrphy1_dfi_p3_wrdata[53], wl7ddrphy1_dfi_p2_wrdata[125], wl7ddrphy1_dfi_p2_wrdata[53], wl7ddrphy1_dfi_p1_wrdata[125], wl7ddrphy1_dfi_p1_wrdata[53], wl7ddrphy1_dfi_p0_wrdata[125], wl7ddrphy1_dfi_p0_wrdata[53]}, wl7ddrphy1_bitslip125_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip125_value1 <= (wl7ddrphy1_bitslip125_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip125_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip125_r1 <= {wl7ddrphy1_dfi_name53, wl7ddrphy1_bitslip125_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip126_value0 <= (wl7ddrphy1_bitslip126_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip126_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip126_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[126], wl7ddrphy1_dfi_p3_wrdata[54], wl7ddrphy1_dfi_p2_wrdata[126], wl7ddrphy1_dfi_p2_wrdata[54], wl7ddrphy1_dfi_p1_wrdata[126], wl7ddrphy1_dfi_p1_wrdata[54], wl7ddrphy1_dfi_p0_wrdata[126], wl7ddrphy1_dfi_p0_wrdata[54]}, wl7ddrphy1_bitslip126_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip126_value1 <= (wl7ddrphy1_bitslip126_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip126_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip126_r1 <= {wl7ddrphy1_dfi_name54, wl7ddrphy1_bitslip126_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip127_value0 <= (wl7ddrphy1_bitslip127_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip127_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip127_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[127], wl7ddrphy1_dfi_p3_wrdata[55], wl7ddrphy1_dfi_p2_wrdata[127], wl7ddrphy1_dfi_p2_wrdata[55], wl7ddrphy1_dfi_p1_wrdata[127], wl7ddrphy1_dfi_p1_wrdata[55], wl7ddrphy1_dfi_p0_wrdata[127], wl7ddrphy1_dfi_p0_wrdata[55]}, wl7ddrphy1_bitslip127_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip127_value1 <= (wl7ddrphy1_bitslip127_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[6] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip127_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip127_r1 <= {wl7ddrphy1_dfi_name55, wl7ddrphy1_bitslip127_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip128_value0 <= (wl7ddrphy1_bitslip128_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip128_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip128_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[128], wl7ddrphy1_dfi_p3_wrdata[56], wl7ddrphy1_dfi_p2_wrdata[128], wl7ddrphy1_dfi_p2_wrdata[56], wl7ddrphy1_dfi_p1_wrdata[128], wl7ddrphy1_dfi_p1_wrdata[56], wl7ddrphy1_dfi_p0_wrdata[128], wl7ddrphy1_dfi_p0_wrdata[56]}, wl7ddrphy1_bitslip128_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip128_value1 <= (wl7ddrphy1_bitslip128_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip128_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip128_r1 <= {wl7ddrphy1_dfi_name56, wl7ddrphy1_bitslip128_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip129_value0 <= (wl7ddrphy1_bitslip129_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip129_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip129_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[129], wl7ddrphy1_dfi_p3_wrdata[57], wl7ddrphy1_dfi_p2_wrdata[129], wl7ddrphy1_dfi_p2_wrdata[57], wl7ddrphy1_dfi_p1_wrdata[129], wl7ddrphy1_dfi_p1_wrdata[57], wl7ddrphy1_dfi_p0_wrdata[129], wl7ddrphy1_dfi_p0_wrdata[57]}, wl7ddrphy1_bitslip129_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip129_value1 <= (wl7ddrphy1_bitslip129_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip129_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip129_r1 <= {wl7ddrphy1_dfi_name57, wl7ddrphy1_bitslip129_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip130_value0 <= (wl7ddrphy1_bitslip130_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip130_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip130_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[130], wl7ddrphy1_dfi_p3_wrdata[58], wl7ddrphy1_dfi_p2_wrdata[130], wl7ddrphy1_dfi_p2_wrdata[58], wl7ddrphy1_dfi_p1_wrdata[130], wl7ddrphy1_dfi_p1_wrdata[58], wl7ddrphy1_dfi_p0_wrdata[130], wl7ddrphy1_dfi_p0_wrdata[58]}, wl7ddrphy1_bitslip130_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip130_value1 <= (wl7ddrphy1_bitslip130_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip130_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip130_r1 <= {wl7ddrphy1_dfi_name58, wl7ddrphy1_bitslip130_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip131_value0 <= (wl7ddrphy1_bitslip131_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip131_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip131_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[131], wl7ddrphy1_dfi_p3_wrdata[59], wl7ddrphy1_dfi_p2_wrdata[131], wl7ddrphy1_dfi_p2_wrdata[59], wl7ddrphy1_dfi_p1_wrdata[131], wl7ddrphy1_dfi_p1_wrdata[59], wl7ddrphy1_dfi_p0_wrdata[131], wl7ddrphy1_dfi_p0_wrdata[59]}, wl7ddrphy1_bitslip131_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip131_value1 <= (wl7ddrphy1_bitslip131_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip131_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip131_r1 <= {wl7ddrphy1_dfi_name59, wl7ddrphy1_bitslip131_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip132_value0 <= (wl7ddrphy1_bitslip132_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip132_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip132_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[132], wl7ddrphy1_dfi_p3_wrdata[60], wl7ddrphy1_dfi_p2_wrdata[132], wl7ddrphy1_dfi_p2_wrdata[60], wl7ddrphy1_dfi_p1_wrdata[132], wl7ddrphy1_dfi_p1_wrdata[60], wl7ddrphy1_dfi_p0_wrdata[132], wl7ddrphy1_dfi_p0_wrdata[60]}, wl7ddrphy1_bitslip132_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip132_value1 <= (wl7ddrphy1_bitslip132_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip132_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip132_r1 <= {wl7ddrphy1_dfi_name60, wl7ddrphy1_bitslip132_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip133_value0 <= (wl7ddrphy1_bitslip133_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip133_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip133_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[133], wl7ddrphy1_dfi_p3_wrdata[61], wl7ddrphy1_dfi_p2_wrdata[133], wl7ddrphy1_dfi_p2_wrdata[61], wl7ddrphy1_dfi_p1_wrdata[133], wl7ddrphy1_dfi_p1_wrdata[61], wl7ddrphy1_dfi_p0_wrdata[133], wl7ddrphy1_dfi_p0_wrdata[61]}, wl7ddrphy1_bitslip133_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip133_value1 <= (wl7ddrphy1_bitslip133_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip133_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip133_r1 <= {wl7ddrphy1_dfi_name61, wl7ddrphy1_bitslip133_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip134_value0 <= (wl7ddrphy1_bitslip134_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip134_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip134_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[134], wl7ddrphy1_dfi_p3_wrdata[62], wl7ddrphy1_dfi_p2_wrdata[134], wl7ddrphy1_dfi_p2_wrdata[62], wl7ddrphy1_dfi_p1_wrdata[134], wl7ddrphy1_dfi_p1_wrdata[62], wl7ddrphy1_dfi_p0_wrdata[134], wl7ddrphy1_dfi_p0_wrdata[62]}, wl7ddrphy1_bitslip134_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip134_value1 <= (wl7ddrphy1_bitslip134_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip134_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip134_r1 <= {wl7ddrphy1_dfi_name62, wl7ddrphy1_bitslip134_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip135_value0 <= (wl7ddrphy1_bitslip135_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip135_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip135_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[135], wl7ddrphy1_dfi_p3_wrdata[63], wl7ddrphy1_dfi_p2_wrdata[135], wl7ddrphy1_dfi_p2_wrdata[63], wl7ddrphy1_dfi_p1_wrdata[135], wl7ddrphy1_dfi_p1_wrdata[63], wl7ddrphy1_dfi_p0_wrdata[135], wl7ddrphy1_dfi_p0_wrdata[63]}, wl7ddrphy1_bitslip135_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip135_value1 <= (wl7ddrphy1_bitslip135_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[7] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip135_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip135_r1 <= {wl7ddrphy1_dfi_name63, wl7ddrphy1_bitslip135_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip136_value0 <= (wl7ddrphy1_bitslip136_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip136_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip136_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[136], wl7ddrphy1_dfi_p3_wrdata[64], wl7ddrphy1_dfi_p2_wrdata[136], wl7ddrphy1_dfi_p2_wrdata[64], wl7ddrphy1_dfi_p1_wrdata[136], wl7ddrphy1_dfi_p1_wrdata[64], wl7ddrphy1_dfi_p0_wrdata[136], wl7ddrphy1_dfi_p0_wrdata[64]}, wl7ddrphy1_bitslip136_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip136_value1 <= (wl7ddrphy1_bitslip136_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[0]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip136_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip136_r1 <= {wl7ddrphy1_dfi_name64, wl7ddrphy1_bitslip136_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip137_value0 <= (wl7ddrphy1_bitslip137_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip137_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip137_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[137], wl7ddrphy1_dfi_p3_wrdata[65], wl7ddrphy1_dfi_p2_wrdata[137], wl7ddrphy1_dfi_p2_wrdata[65], wl7ddrphy1_dfi_p1_wrdata[137], wl7ddrphy1_dfi_p1_wrdata[65], wl7ddrphy1_dfi_p0_wrdata[137], wl7ddrphy1_dfi_p0_wrdata[65]}, wl7ddrphy1_bitslip137_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip137_value1 <= (wl7ddrphy1_bitslip137_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[1]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip137_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip137_r1 <= {wl7ddrphy1_dfi_name65, wl7ddrphy1_bitslip137_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip138_value0 <= (wl7ddrphy1_bitslip138_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip138_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip138_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[138], wl7ddrphy1_dfi_p3_wrdata[66], wl7ddrphy1_dfi_p2_wrdata[138], wl7ddrphy1_dfi_p2_wrdata[66], wl7ddrphy1_dfi_p1_wrdata[138], wl7ddrphy1_dfi_p1_wrdata[66], wl7ddrphy1_dfi_p0_wrdata[138], wl7ddrphy1_dfi_p0_wrdata[66]}, wl7ddrphy1_bitslip138_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip138_value1 <= (wl7ddrphy1_bitslip138_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[2]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip138_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip138_r1 <= {wl7ddrphy1_dfi_name66, wl7ddrphy1_bitslip138_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip139_value0 <= (wl7ddrphy1_bitslip139_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip139_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip139_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[139], wl7ddrphy1_dfi_p3_wrdata[67], wl7ddrphy1_dfi_p2_wrdata[139], wl7ddrphy1_dfi_p2_wrdata[67], wl7ddrphy1_dfi_p1_wrdata[139], wl7ddrphy1_dfi_p1_wrdata[67], wl7ddrphy1_dfi_p0_wrdata[139], wl7ddrphy1_dfi_p0_wrdata[67]}, wl7ddrphy1_bitslip139_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip139_value1 <= (wl7ddrphy1_bitslip139_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[3]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip139_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip139_r1 <= {wl7ddrphy1_dfi_name67, wl7ddrphy1_bitslip139_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip140_value0 <= (wl7ddrphy1_bitslip140_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip140_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip140_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[140], wl7ddrphy1_dfi_p3_wrdata[68], wl7ddrphy1_dfi_p2_wrdata[140], wl7ddrphy1_dfi_p2_wrdata[68], wl7ddrphy1_dfi_p1_wrdata[140], wl7ddrphy1_dfi_p1_wrdata[68], wl7ddrphy1_dfi_p0_wrdata[140], wl7ddrphy1_dfi_p0_wrdata[68]}, wl7ddrphy1_bitslip140_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip140_value1 <= (wl7ddrphy1_bitslip140_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[4]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip140_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip140_r1 <= {wl7ddrphy1_dfi_name68, wl7ddrphy1_bitslip140_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip141_value0 <= (wl7ddrphy1_bitslip141_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip141_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip141_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[141], wl7ddrphy1_dfi_p3_wrdata[69], wl7ddrphy1_dfi_p2_wrdata[141], wl7ddrphy1_dfi_p2_wrdata[69], wl7ddrphy1_dfi_p1_wrdata[141], wl7ddrphy1_dfi_p1_wrdata[69], wl7ddrphy1_dfi_p0_wrdata[141], wl7ddrphy1_dfi_p0_wrdata[69]}, wl7ddrphy1_bitslip141_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip141_value1 <= (wl7ddrphy1_bitslip141_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[5]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip141_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip141_r1 <= {wl7ddrphy1_dfi_name69, wl7ddrphy1_bitslip141_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip142_value0 <= (wl7ddrphy1_bitslip142_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip142_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip142_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[142], wl7ddrphy1_dfi_p3_wrdata[70], wl7ddrphy1_dfi_p2_wrdata[142], wl7ddrphy1_dfi_p2_wrdata[70], wl7ddrphy1_dfi_p1_wrdata[142], wl7ddrphy1_dfi_p1_wrdata[70], wl7ddrphy1_dfi_p0_wrdata[142], wl7ddrphy1_dfi_p0_wrdata[70]}, wl7ddrphy1_bitslip142_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip142_value1 <= (wl7ddrphy1_bitslip142_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[6]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip142_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip142_r1 <= {wl7ddrphy1_dfi_name70, wl7ddrphy1_bitslip142_r1[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip143_value0 <= (wl7ddrphy1_bitslip143_value0 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_wdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip143_value0 <= 3'd7;
     end
     wl7ddrphy1_bitslip143_r0 <= {{wl7ddrphy1_dfi_p3_wrdata[143], wl7ddrphy1_dfi_p3_wrdata[71], wl7ddrphy1_dfi_p2_wrdata[143], wl7ddrphy1_dfi_p2_wrdata[71], wl7ddrphy1_dfi_p1_wrdata[143], wl7ddrphy1_dfi_p1_wrdata[71], wl7ddrphy1_dfi_p0_wrdata[143], wl7ddrphy1_dfi_p0_wrdata[71]}, wl7ddrphy1_bitslip143_r0[15:8]};
-    if ((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_re)) begin
+    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_re)) begin
         wl7ddrphy1_bitslip143_value1 <= (wl7ddrphy1_bitslip143_value1 + 1'd1);
     end
-    if (((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
+    if ((((wl7ddrphy1_dly_sel_storage[8] & wl7ddrphy1_dly_sel_bits_storage[7]) & wl7ddrphy1_rdly_dq_bitslip_rst_re) | wl7ddrphy1_rst_storage)) begin
         wl7ddrphy1_bitslip143_value1 <= 3'd7;
     end
     wl7ddrphy1_bitslip143_r1 <= {wl7ddrphy1_dfi_name71, wl7ddrphy1_bitslip143_r1[15:8]};
@@ -59610,6 +59648,9 @@ always @(posedge sys_clk_1) begin
             4'd12: begin
                 csr_bankarray_interface5_bank_bus_dat_r <= csr_bankarray_csrbank5_wrphase_w;
             end
+            4'd13: begin
+                csr_bankarray_interface5_bank_bus_dat_r <= csr_bankarray_csrbank5_dly_sel_bits_w;
+            end
         endcase
     end
     if (csr_bankarray_csrbank5_rst_re) begin
@@ -59636,6 +59677,10 @@ always @(posedge sys_clk_1) begin
         wl7ddrphy0_wrphase_storage <= csr_bankarray_csrbank5_wrphase_r;
     end
     wl7ddrphy0_wrphase_wr_stb <= csr_bankarray_csrbank5_wrphase_re;
+    if (csr_bankarray_csrbank5_dly_sel_bits_re) begin
+        wl7ddrphy0_dly_sel_bits_storage <= csr_bankarray_csrbank5_dly_sel_bits_r;
+    end
+    wl7ddrphy0_dly_sel_bits_wr_stb <= csr_bankarray_csrbank5_dly_sel_bits_re;
     csr_bankarray_interface6_bank_bus_dat_r <= 1'd0;
     if (csr_bankarray_csrbank6_sel) begin
         case (csr_bankarray_interface6_bank_bus_adr[8:0])
@@ -59678,6 +59723,9 @@ always @(posedge sys_clk_1) begin
             4'd12: begin
                 csr_bankarray_interface6_bank_bus_dat_r <= csr_bankarray_csrbank6_wrphase_w;
             end
+            4'd13: begin
+                csr_bankarray_interface6_bank_bus_dat_r <= csr_bankarray_csrbank6_dly_sel_bits_w;
+            end
         endcase
     end
     if (csr_bankarray_csrbank6_rst_re) begin
@@ -59704,6 +59752,10 @@ always @(posedge sys_clk_1) begin
         wl7ddrphy1_wrphase_storage <= csr_bankarray_csrbank6_wrphase_r;
     end
     wl7ddrphy1_wrphase_wr_stb <= csr_bankarray_csrbank6_wrphase_re;
+    if (csr_bankarray_csrbank6_dly_sel_bits_re) begin
+        wl7ddrphy1_dly_sel_bits_storage <= csr_bankarray_csrbank6_dly_sel_bits_r;
+    end
+    wl7ddrphy1_dly_sel_bits_wr_stb <= csr_bankarray_csrbank6_dly_sel_bits_re;
     csr_bankarray_interface7_bank_bus_dat_r <= 1'd0;
     if (csr_bankarray_csrbank7_sel) begin
         case (csr_bankarray_interface7_bank_bus_adr[8:0])
@@ -60503,6 +60555,8 @@ always @(posedge sys_clk_1) begin
         wl7ddrphy0_rdphase_wr_stb <= 1'd0;
         wl7ddrphy0_wrphase_storage <= 2'd2;
         wl7ddrphy0_wrphase_wr_stb <= 1'd0;
+        wl7ddrphy0_dly_sel_bits_storage <= 8'hff;
+        wl7ddrphy0_dly_sel_bits_wr_stb <= 1'd0;
         wl7ddrphy0_tappeddelayline0_tappeddelayline00 <= 1'd0;
         wl7ddrphy0_tappeddelayline0_tappeddelayline01 <= 1'd0;
         wl7ddrphy0_dqspattern0_o1 <= 8'd0;
@@ -60936,6 +60990,8 @@ always @(posedge sys_clk_1) begin
         wl7ddrphy1_rdphase_wr_stb <= 1'd0;
         wl7ddrphy1_wrphase_storage <= 2'd2;
         wl7ddrphy1_wrphase_wr_stb <= 1'd0;
+        wl7ddrphy1_dly_sel_bits_storage <= 8'hff;
+        wl7ddrphy1_dly_sel_bits_wr_stb <= 1'd0;
         wl7ddrphy1_tappeddelayline1_tappeddelayline10 <= 1'd0;
         wl7ddrphy1_tappeddelayline1_tappeddelayline11 <= 1'd0;
         wl7ddrphy1_dqspattern1_o1 <= 8'd0;
@@ -87996,5 +88052,5 @@ FDPE #(
 endmodule
 
 // -----------------------------------------------------------------------------
-//  Auto-Generated by LiteX on 2026-09-29 11:16:36.
+//  Auto-Generated by LiteX on 2026-09-29 11:29:39.
 //------------------------------------------------------------------------------
