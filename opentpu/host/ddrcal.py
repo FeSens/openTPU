@@ -719,11 +719,19 @@ def calibrate_channel(csr, config, stride=1, mib=64, log=print):
     has_ready = has_csr(csr, "cal_ready")          # production's core: the accelerator waits for it
     if has_ready:
         csr.w("cal_ready", 0)
-    table = dqs_scan(d, dqs, period, stride, csr=csr if has_bist else None, mib=mib, show=False)
-    per, common, pick, run = margins(table, d.nm, period=period)
-    if pick is None:
-        raise CalError("no DQS phase works for every lane")
-    dqs.move(dqs.steps() + pick)
+    groups = d.phy.get("groups", {}).get(str(getattr(csr, "ch", 0)))
+    extra = {}
+    if d.phy.get("phy") == "wl" and groups:     # WL7DDRPHY: group 1's offset, then the phase
+        g = calibrate_groups(d, dqs, WriteClocks(csr), groups, period, stride=stride,
+                             csr=csr if has_bist else None, mib=mib, log=log)
+        table, run = g["scan1"], g["run"]
+        extra = {"group1_eighths": g["offset_eighths"], "group_runs_steps": g["group_runs"]}
+    else:
+        table = dqs_scan(d, dqs, period, stride, csr=csr if has_bist else None, mib=mib, show=False)
+        per, common, pick, run = margins(table, d.nm, period=period)
+        if pick is None:
+            raise CalError("no DQS phase works for every lane")
+        dqs.move(dqs.steps() + pick)
     wl, rl, err = d.calibrate(verbose=False)
     if any(err) or min(wl) < 0:
         raise CalError(f"calibration at DQS step {dqs.steps()} failed: write latency {wl}, "
@@ -735,7 +743,7 @@ def calibrate_channel(csr, config, stride=1, mib=64, log=print):
            "window_ps": round(len(run) * stride * dqs.step_ps), "traffic_checked": has_bist,
            "write_latency": wl, "read": [{"taps": n, "bitslip": b, "tap": s + n // 2}
                                          for n, b, s in rl],
-           "lanes": pass_map(table, d.nm, period)}
+           "lanes": pass_map(table, d.nm, period), **extra}
     log(f"DQS step {res['dqs_steps']}, common write window {res['window_ps']} ps"
         f"{'' if has_bist else ' (DFII check only: no BIST)'}, write latency {wl}, read windows "
         f"{[n for n, _, _ in rl]} taps")

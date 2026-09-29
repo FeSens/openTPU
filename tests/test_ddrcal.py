@@ -67,6 +67,19 @@ def test_write_clock_groups_on_the_simulated_phy():
     assert not any(err) and all(fake.good(m) for m in range(fake.nm))
 
 
+def test_calibrate_channel_write_clock_groups():
+    # a WL7DDRPHY channel (the WL image's settings: phy "wl", groups per channel) through the
+    # production entry point
+    wl = DATA.parent / "litedram_wl"
+    board = C.FakeBoard(wl)
+    f = board.ch[1]
+    for m in range(f.nm):
+        f.WLO[m], f.WHI[m] = (20 + m, 60 - m) if f.groups[m] == 0 else (62 + m, 102 - m)
+    res = C.calibrate_channel(C.Chan(board, 1), wl, stride=2, log=lambda *_: None)
+    assert res["group1_eighths"] == 6 and board.ch[0].steps == 0
+    assert all(f.good(m) for m in range(f.nm))
+
+
 def test_word_csr_most_significant_word_first():
     mem = {}
     regs = {"a": (0x10, 1), "seed": (0x20, 2)}
