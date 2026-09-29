@@ -409,6 +409,62 @@ module otpu_axi_dram #(
   // beats leave the queue as their W beats go), W beats left; the lengths of the bursts whose
   // response is due (in order: one B response per burst)
   logic [WLW-1:0] wrun [2], wlen_q [2], wleft [2];
+  // The head runs are registered: scanning qc from the head (up to BL - 1 serial steps) was in
+  // front of ARVALID / AWVALID and the queue's pops (the MCOLS 4 builds' qc -> qb_n / k1r_n paths,
+  // -0.418 ns, 17-18 levels). Each cycle the scan runs on the queue as it is and lands in a
+  // register, for the head (run0_q, wrun0_q) and for the head after one pop (run1_q, wrun1_q),
+  // with the entry count it saw (n0_q, n1_q). A cycle later the queue may have grown (a push
+  // only extends a run: the registered one is never longer than the real one) or popped: one
+  // entry (a W beat, a one-beat read burst: the +1 scan is the queue's), or a longer read burst
+  // (its runs are stale: rs_v blocks the B AR and the start of a B write burst for that cycle).
+  // A burst's length is then at most the real run; the go test uses the count the scan saw, so a
+  // run is not cut short by a request pushed after its scan
+  logic [LW-1:0]  run0_q [2], run1_q [2], run_u [2];
+  logic [WLW-1:0] wrun0_q [2], wrun1_q [2], wrun_u [2];
+  logic [QW:0]    n0_q [2], n1_q [2], n_u [2];
+  logic [1:0]     rs_v, rs_1;
+  function automatic logic [6:0] scan(input logic [QD-1:0] q, input logic [QW-1:0] h,
+                                      input logic [QW:0] n, input int cap);
+    logic [6:0] r;
+    logic stop;
+    r = 7'd1;
+    stop = 1'b0;
+    for (int k = 1; k < cap; k++)
+      if (!stop && (QW + 1)'(k) < n && q[QW'(h + QW'(k))]) r = 7'(k + 1);
+      else stop = 1'b1;
+    return r;
+  endfunction
+  always_ff @(posedge clk)
+    for (int c = 0; c < 2; c++) begin
+      logic [QW:0] n1;
+      n1 = (qb_n[c] != 0) ? qb_n[c] - 1'b1 : '0;
+      run0_q[c]  <= LW'(scan(qc[c], qb_h[c], qb_n[c], BL));
+      run1_q[c]  <= LW'(scan(qc[c], qb_h[c] + 1'b1, n1, BL));
+      wrun0_q[c] <= WLW'(scan(qc[c], qb_h[c], qb_n[c], WBL));
+      wrun1_q[c] <= WLW'(scan(qc[c], qb_h[c] + 1'b1, n1, WBL));
+      n0_q[c] <= qb_n[c];
+      n1_q[c] <= n1;
+    end
+  always_comb
+    for (int c = 0; c < 2; c++) begin
+      run_u[c]  = rs_1[c] ? run1_q[c] : run0_q[c];
+      wrun_u[c] = rs_1[c] ? wrun1_q[c] : wrun0_q[c];
+      n_u[c]    = rs_1[c] ? n1_q[c] : n0_q[c];
+    end
+`ifndef SYNTHESIS
+  // the registered runs describe the queue: never longer than its runs now, from no more
+  // entries than it holds
+  always @(posedge clk)
+    if (!rst)
+      for (int c = 0; c < 2; c++)
+        if (rs_v[c] && qb_n[c] != 0) begin
+          if (32'(run_u[c]) > 32'(scan(qc[c], qb_h[c], qb_n[c], BL)) ||
+              32'(wrun_u[c]) > 32'(scan(qc[c], qb_h[c], qb_n[c], WBL)) || n_u[c] > qb_n[c])
+            $fatal(1, "otpu_axi_dram: ch%0d registered run %0d / %0d (of %0d) beyond the queue's %0d / %0d (%0d)",
+                   c, run_u[c], wrun_u[c], n_u[c], scan(qc[c], qb_h[c], qb_n[c], BL),
+                   scan(qc[c], qb_h[c], qb_n[c], WBL), qb_n[c]);
+        end
+`endif
   logic [31:0] waddr_q [2];
   logic [WLW-1:0] blq [2][BQD];
   logic [BQW-1:0] blq_h [2];
@@ -426,19 +482,11 @@ module otpu_axi_dram #(
       // reads: A first (rare), then B; each needs reserved response room. A B read waits for
       // its run to fill (see the top); an AR shown on the bus stays as it is until taken
       begin
-        logic stop, go;
-        run[c] = LW'(1);
-        stop = 1'b0;
-        for (int k = 1; k < BL; k++)
-          if (!stop && (QW + 1)'(k) < qb_n[c] && qc[c][QW'(qb_h[c] + QW'(k))]) run[c] = LW'(k + 1);
-          else stop = 1'b1;
-        go = run[c] == LW'(BL) || (QW + 1)'(run[c]) < qb_n[c] || qi[c] >= 3'(GATHER) ||
-             rb_res[c] == 0;
-        wrun[c] = WLW'(1);
-        stop = 1'b0;
-        for (int k = 1; k < WBL; k++)
-          if (!stop && (QW + 1)'(k) < qb_n[c] && qc[c][QW'(qb_h[c] + QW'(k))]) wrun[c] = WLW'(k + 1);
-          else stop = 1'b1;
+        logic go;
+        run[c] = run_u[c];
+        go = rs_v[c] && (run[c] == LW'(BL) || (QW + 1)'(run[c]) < n_u[c] || qi[c] >= 3'(GATHER) ||
+             rb_res[c] == 0);
+        wrun[c] = wrun_u[c];
         // the SW queue's next partial beat: blocked while an older live entry may have its
         // address (one in its bucket; a hash collision only delays the read)
         w_blk[c] = wnz[c][wh_r[c]];
@@ -472,7 +520,8 @@ module otpu_axi_dram #(
                  !w_hold[c] && (k1w_n[c] < (KW + 1)'(KD));
         w_a[c] = !w_w[c] && (qa_n[c] != 0) && ha[c].we && (k1w_n[c] < (KW + 1)'(KD));
         w_b[c] = !w_w[c] && !w_a[c] && (qb_n[c] != 0) && hb[c].we && blq_n[c] != (BQW + 1)'(BQD) &&
-                 (wrun[c] == WLW'(WBL) || (QW + 1)'(wrun[c]) < qb_n[c] || qi[c] >= 3'(GATHER));
+                 rs_v[c] && (wrun[c] == WLW'(WBL) || (QW + 1)'(wrun[c]) < n_u[c] ||
+                 qi[c] >= 3'(GATHER));
       end
       hs[c] = ha[c];
       m_awvalid[c] = (w_w[c] || w_a[c] || w_b[c]) && !aw_done[c];
@@ -562,6 +611,7 @@ module otpu_axi_dram #(
       gv <= '0; gage[0] <= '0; gage[1] <= '0;
       aw_done <= '0; w_done <= '0; wcur <= '0;
       arh <= '0; arh_w <= '0; lb_rd <= 1'b0;
+      rs_v <= '0; rs_1 <= '0;
       qi[0] <= '0; qi[1] <= '0;
       wsrc[0] <= '0; wsrc[1] <= '0;
       err <= 1'b0;
@@ -672,6 +722,9 @@ module otpu_axi_dram #(
           end
         end
         if (popb) begin qb_h[c] <= qb_h[c] + QW'(popn); nb = nb - (QW + 1)'(popn); end
+        // the registered runs next cycle: the head's, the head + 1's (one entry popped), or none
+        rs_v[c] <= !popb || popn == LW'(1);
+        rs_1[c] <= popb && popn == LW'(1);
         if (popa) begin qa_h[c] <= qa_h[c] + 1; na = na - 1; end
         if (popw) begin qw_h[c] <= qw_h[c] + 1; nwb = nwb + 1; end
         // ---- R

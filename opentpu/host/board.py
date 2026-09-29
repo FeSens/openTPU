@@ -386,7 +386,8 @@ class SimTransport:
         # VPU_CL and ULANES as the bitstream builds them (make bit: VPU_CL 2, ULANES 8)
         p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": cfg.MCOLS, "LANES": cfg.LANES,
              "ACT_ROWS": cfg.act_rows,
-             "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8)}
+             "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8),
+             "AXI_BL": rtlsim.UARCH.get("AXI_BL", 8), "AXI_WBL": rtlsim.UARCH.get("AXI_WBL", 8)}
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
         with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:
