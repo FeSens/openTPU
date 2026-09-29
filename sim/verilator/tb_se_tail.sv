@@ -1,6 +1,7 @@
 // Unit test of rtl/vpu/otpu_se_tail.sv (tests/test_se_tail.py): the tail with a stand-in for
 // the VPU's slot-0 partial loop (RDOT: pacc = S * xa + prev through a registered multiply-add,
-// TA = 1 + LM + LA from X) and its folding tree (otpu_vtree), fed streams with random pe stalls.
+// TA = 1 + LM + LA from X) and its folding tree (otpu_vtree), fed streams with random pe stalls,
+// back to back (pe stops after a stream's last output, as the DMA stops it, or after a drain).
 // Input (+in=, hex words): per stream a header
 //   1 ns rows a_en a_sel dmode g_src q_en nfill nseg pe_pct
 // then nfill lines "fk fi d0 .. d7" and nseg lines "d0 .. d7" (the stream's segments); a 0
@@ -118,10 +119,16 @@ module tb_se_tail;
         if (++spin > 100000) $fatal(1, "stream hangs: %0d/%0d segments, %0d/%0d o", ny - y0,
                                     nseg, no - o0, rows_q);
       end
-      pe = 1'b0;
       in_v = 1'b0;
-      // a few more pe cycles: nothing else may come out
-      for (i = 0; i < 300; i++) begin
+      // half the streams: a few more pe cycles, where nothing else may come out; the others
+      // stop at once, as the DMA does (one more pe at most), leaving what the pipeline still
+      // holds to the next stream (which must not see it)
+      if (($urandom % 2) == 0) begin
+        for (i = 0; i < 300; i++) begin
+          pe = ($urandom % 2) == 0;
+          @(negedge clk);
+        end
+      end else begin
         pe = ($urandom % 2) == 0;
         @(negedge clk);
       end

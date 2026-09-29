@@ -4,6 +4,7 @@ description: 'VPU: elementwise fp32 ops on LANES lanes (split lanes: CL composit
   column buffers), RMAX, RSUM/RSSQ/RDOT (isum_64 partial loop and folding trees; RDOT buffers its row sums).'
 allowed:
 - rtl/vpu/otpu_vtree.sv
+- rtl/vpu/otpu_se_tail.sv
 - rtl/vpu/otpu_vpu.sv
 synth:
   parts:
@@ -17,6 +18,7 @@ synth:
     - rtl/vpu/otpu_fpipe.sv
     - rtl/top/otpu_pkg.sv
     - rtl/vpu/otpu_vtree.sv
+    - rtl/vpu/otpu_se_tail.sv
     - rtl/vpu/otpu_vpu.sv
 target_mhz: 110
 tests:
@@ -34,6 +36,8 @@ tests:
   - tests/test_rtl.py::test_lane_count_does_not_change_results[16]
   - tests/test_rtl.py::test_attention_layer_rtl[1]
   - tests/test_vops.py::test_dstep_rtl_bit_exact
+  - tests/test_se_tail.py
+  - tests/test_stream.py::test_stream_rtl_bit_exact
   board:
   - tests/test_rtl.py::test_design_size_block_128_rtl
   - tests/test_rtl.py::test_board_memory_path_stress[1-30]
