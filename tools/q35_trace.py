@@ -93,8 +93,8 @@ def main(argv=None) -> int:
         dram[img.io[key]:img.io[key] + b.size] = b
     progs = img.compile_step(a.pos)
     mts = 3200 / 3
-    _, _, st = rtlsim.run(cfg, progs, [dram], trace=True, uarch={**rtlsim.BOARD_UARCH, "AXI_BL": 8},
-                          axi=True, boot=True, stall=0, bw=100, lat=round(0.3 * a.mhz), arc=4,
+    _, _, st = rtlsim.run(cfg, progs, [dram], trace=True, uarch=rtlsim.BOARD_UARCH,
+                          axi=True, boot=True, stall=0, bw=100, lat=round(0.3 * a.mhz),
                           max_cycles=1 << 40, plusargs=ddr3_plusargs(mts, a.mhz))
     p = parse(st["trace"], cfg, progs, "sim")
     _dump(p, progs, st["cycles"], a.out, {})

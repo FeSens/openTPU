@@ -3,8 +3,8 @@
 Draft, 2026-09-29. This is an investigation; the design is unchanged. Labels: **measured** means
 a Vivado run, a simulation or a card run that was actually done (tool and version given).
 **estimate** means arithmetic. Sections 1-6 predate the card; sections 7 and 8 are the card runs
-(the test images, then the production image); section 9 is the native-channel build; section
-10 is the calibration CPU in the core.
+(the test images, then the production image); section 9 is the board build; section 10 is
+the calibration CPU in the core.
 
 The question: could [LiteDRAM](https://github.com/enjoy-digital/litedram) replace the two Xilinx
 MIG controllers, the SmartConnect in front of them and the AXI side of `otpu_axi_dram`? Its
@@ -204,7 +204,8 @@ room and `wr_idle`.
 
 **The adapter as built** (2026-09-29): `rtl/mem/otpu_native_dram.sv`, one native master per
 channel for `otpu_mem_ch`, selected in `otpu_board` by `MEM_NATIVE` (default 0: production keeps
-`otpu_axi_dram`). Its header comment has the details; in short:
+`otpu_axi_dram`; since `ld-default` it is the only adapter). Its header comment has the details;
+in short:
 
 - **One command per beat, per core cycle and channel**, from the A queue (a run of APF read
   commands, or a byte-enabled write), the SW queue's fill reads and writes, and the B queue.
@@ -218,10 +219,11 @@ channel for `otpu_mem_ch`, selected in `otpu_board` by `MEM_NATIVE` (default 0: 
   `wr_idle` waits for `n_wdone`.
 - **Simulation:** `sim/verilator/otpu_native_mem.sv` (random command and write-data
   backpressure, in-order read data with jitter, late `n_wdone`, the DDR3 bank model of
-  `otpu_axi_mem`); `OTPU_NATIVE=1` runs the AXI-path tests and the board model on it.
+  `otpu_axi_mem`); `OTPU_NATIVE=1` runs the AXI-path tests and the board model on it (since
+  `ld-default` the AXI-path runs always do; `otpu_axi_mem` is removed).
 - **Area, yosys** (`synth_xilinx`, **measured**): 10,620 LUTs, 3,364 FFs, 1,492 LUT RAM cells,
   against `otpu_axi_dram`'s 13,464, 4,914 and 1,880. Logic depth 4.57 ns against 6.01 ns.
-- **Cycles, simulation (measured,** `tools/litedram/path_bench.py`**):** the DDR3-1066 bank
+- **Cycles, simulation (measured,** `tools/litedram/path_bench.py`**, removed with the AXI path):** the DDR3-1066 bank
   model at 120.755 MHz and 300 ns latency, the AXI path with its fitted per-transaction costs
   (as calibrated on the card) / without them / native:
 
@@ -934,37 +936,30 @@ Channel 0 needed none in any build. The 3.0 ns reset constraint added no misfram
 
 Afterwards the card went back to se-cand3 (build 002569bc), whose selftest passed.
 
-## 9. The native-channel builds (branch `ld-top`, 2026-09-29)
+## 9. The board build (branch `ld-top`, 2026-09-29; the only build since `ld-default`)
 
-The accelerator and XDMA now reach the DDR3 channels through native ports, with no
-SmartConnect and no AXI front end in the controllers. The build option `MEM` picks the
-controllers (`create_project.tcl`'s 11th argument; `make bit MEM=...`):
+The accelerator and XDMA reach the DDR3 channels through native ports, with no SmartConnect and
+no AXI front end in the controllers: the committed LiteDRAM core with WL7DDRPHY (section 8;
+`boards/ypcb-00338/litedram/`, `tools/litedram/check_core.sh`), top `otpu_fpga_top_ld`, block
+design `bd_native.tcl`. `make bit` builds it.
 
-| `MEM` | Controllers | Top | Block design | Status |
-|---|---|---|---|---|
-| `mig` (default) | the MIGs' AXI ports behind the SmartConnect | `otpu_fpga_top` | `bd.tcl` | today's production build, unchanged |
-| `mig_native` | the MIGs' native interface (`gen_mig_prj.py --native`), per channel `otpu_mig_native` | `otpu_fpga_top_mn` | `bd_native.tcl` | parked: LiteDRAM's fallback if its checkpoint fails. Vivado check (project, block design, MIG parameters, `synth_design -rtl`) passes; not built |
-| `litedram` | the committed LiteDRAM core with WL7DDRPHY (section 8; `boards/ypcb-00338/litedram/`, `tools/litedram/check_core.sh`) | `otpu_fpga_top_ld` | `bd_native.tcl` | primary: qualified on the card (ld-top 5e5a58ab, section 8) |
+Until `ld-default`, `create_project.tcl` also built the MIG controllers (`MEM=mig`: the MIGs'
+AXI ports behind the SmartConnect, `otpu_fpga_top`, `bd.tcl`, the production images until this
+build qualified; `MEM=mig_native`: the MIGs' native interface behind `otpu_mig_native`,
+`otpu_fpga_top_mn`, parked as LiteDRAM's fallback and never built). Once this build qualified on
+the card (ld-top 5e5a58ab, section 8) they were removed, with their adapter `otpu_axi_dram`,
+their simulation models and tests (`git log` on `ld-default` has them).
 
-**Shared by both native builds:** `otpu_native_sys` holds:
-- `otpu_board` with `MEM_NATIVE` (`otpu_native_dram` on the native masters);
+`otpu_native_sys` holds:
+- `otpu_board` (`otpu_native_dram` on the native masters);
 - XDMA's DMA master, split by address bit 31 (`otpu_axi_split2`);
 - one `otpu_mem_ch` per channel, in front of that channel's controller port, in the
-  controller's clock. It uses `RMW = 0` for the MIG, which sends partial beats as `wr_bytes`, and
-  `RMW = 1` for LiteDRAM, whose ECC port takes whole beats only.
+  controller's clock. LiteDRAM's ECC port takes whole beats only, so `otpu_mem_ch`
+  read-modify-writes partial beats.
 
-**`bd_native.tcl`** keeps `bd.tcl`'s XDMA, XADC and control SmartConnect. XDMA's `M_AXI` is
-exported as `M_AXI_DMA`.
-- `mig_native` keeps `bd.tcl`'s clock wizard and exports the MIGs' system clock, their 200 MHz
-  reference clock, the wizard's lock (the MIGs' active-low `sys_rst`) and the XADC temperature.
-  The MIGs themselves are RTL-level IP: IP integrator takes the MIG with AXI only ("MIG supports
-  only AXI designs in IPI flow"). `create_project.tcl` makes `mig_ddr3_ch0` / `1` with
-  `create_ip` from the native `.prj` files, as `bd.tcl` does its MIG cells, and creates their
-  out-of-context runs. `otpu_fpga_top_mn` instantiates them as `u_mig/mig_0` / `mig_1`. There is
-  no `S_AXI_CTRL`, so BAR0 0x10000 / 0x20000 are unmapped; no host code reads them. Not at
-  DDR3-1333 / 1600: `build.tcl`'s MIG PHY patch covers the block design's MIGs only.
-- `litedram` adds the CSR window at BAR0 0x10000. The 50 MHz clock sits on one BUFG shared with
-  the core's MMCMs.
+**`bd_native.tcl`**: XDMA, the XADC and the control SmartConnect (the MIG build's `bd.tcl` had
+the same). XDMA's `M_AXI` is exported as `M_AXI_DMA`; the CSR window is at BAR0 0x10000. The
+50 MHz clock sits on one BUFG shared with the core's MMCMs.
 
 **The LiteDRAM core** is `gen_core.py --phy wl` (the arguments are in `core.json`, which
 `check_core.sh` regenerates with). It has the same ports as the A7DDRPHY core it replaced; its CSRs
@@ -982,27 +977,21 @@ with `add_false_path_constraints`.
 `otpu_top_ld.xdc` places the two write clock MMCMs at X0Y2 / X0Y6, as on the card images.
 
 **Constraints:**
-- `mig_native` uses `otpu_top.xdc` and `otpu_ddr3_pins.xdc` unchanged: the DDR3 port names are
-  the same, and the ILOGIC LOC's `*/mig_0/*` pattern matches `u_mig/mig_0` as it does the block
-  design's `mig_0`.
-- `litedram` uses `otpu_top_ld.xdc` plus the core's XDC. `otpu_top_ld.xdc` holds `otpu_top.xdc`'s
-  board lines verbatim; `check_offline.py --mem litedram` checks that.
-- Both then read, late and in implementation only, `otpu_mem_ch.tcl` (scoped to each
-  `otpu_mem_ch`) and `otpu_top_native.tcl`. The latter has the report_cdc waivers for XDMA's read
-  data, the TIMING-9 waiver and, for LiteDRAM, max delays for LiteX's CSR crossing and the
-  calibration flags.
+- `otpu_top_ld.xdc` (the board: the MIG builds' `otpu_top.xdc` less the MIG's lines) plus the
+  core's XDC.
+- Then, late and in implementation only, `otpu_mem_ch.tcl` (scoped to each `otpu_mem_ch`) and
+  `otpu_top_native.tcl`. The latter has the report_cdc waivers for XDMA's read data, the TIMING-9
+  waiver and max delays for LiteX's CSR crossing and the calibration flags.
 - No `set_clock_groups` and no clock-level false paths anywhere: they would override
   `otpu_mem_ch`'s max delays.
 
 **Checks:**
-- Offline: `make lint-mn` / `make lint-ld`.
+- Offline: `make lint` (`lint-ld` is the same).
 - In Vivado without a build: `vivado/check_native.tcl`. It runs the project, validates the block
-  design, checks the generated MIGs' parameters in their `mig.v` (ECC on, tCK 1875 ps, CL 7,
-  CWL 6, 4:1, 29-bit `app_addr`, native interface), then runs `synth_design -rtl` and checks the
-  instances.
-- Board model: `tb_board` with `MEM_NATIVE=3` / `2` puts `otpu_mem_ch` and a controller model
-  (`sim/verilator/otpu_chmem.sv`) behind the native adapter, each channel in its own clock
-  (`OTPU_NATIVE=mig` / `ld`).
+  design, then runs `synth_design -rtl` and checks the instances.
+- Board model: `tb_board` with `MEM_NATIVE=2` (the default) puts `otpu_mem_ch` and a controller
+  model (`sim/verilator/otpu_chmem.sv`) behind the native adapter, each channel in its own clock
+  (`OTPU_NATIVE=ld`, the default; `OTPU_NATIVE=1`: the native memory model alone).
 
 ## 10. Calibration on the card: the core's own CPU (2026-09-29)
 

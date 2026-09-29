@@ -36,7 +36,14 @@ SHARED = ("build", "models")
 
 LINT_FLAGS = ["--lint-only", "-Wno-fatal", "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC",
               "-Wno-UNUSEDSIGNAL", "-Wno-UNUSEDPARAM", "-Wno-DECLFILENAME", "--timing"]
-BOARD_ENV = {"OTPU_UARCH": "board", "OTPU_AXI": "1", "OTPU_BOOT": "1"}
+# the board tests: the board's micro-architecture and memory path (otpu_native_dram in front of
+# the native memory model; the board model on the LiteDRAM channels, otpu_mem_ch and a LiteDRAM
+# native-port model), the program booted from DRAM
+BOARD_ENV = {"OTPU_UARCH": "board", "OTPU_AXI": "1", "OTPU_BOOT": "1", "OTPU_NATIVE": "ld"}
+# the configuration a gate must not inherit from the orchestrator's environment (the board
+# build's defaults: MCOLS=4, the systolic MXU)
+GATE_ENV = ("OTPU_UARCH", "OTPU_AXI", "OTPU_BOOT", "OTPU_NATIVE", "OTPU_MCOLS", "OTPU_MXU",
+            "OTPU_LANES")
 
 
 class GateFailure(Exception):
@@ -102,7 +109,7 @@ def command(wt: Path, cmd: list[str], env_extra: dict | None = None,
     slot tree `wt`, here or on the build host."""
     mode = mode or exec_mode()
     env = dict(os.environ)
-    for k in ("OTPU_UARCH", "OTPU_AXI", "OTPU_BOOT"):
+    for k in GATE_ENV:
         env.pop(k, None)
     if mode == "local":
         env.update(env_extra or {})
@@ -286,11 +293,11 @@ def _rtl_sources(wt: Path) -> list[str]:
 def lint(wt: Path, timeout: int = 900) -> None:
     """Verilator lint of the simulation top and of the board top (errors fail, warnings pass)."""
     rtl = [f"rtl/{s}" for s in _rtl_sources(wt)]
-    sim = rtl + ["sim/verilator/otpu_axi_mem.sv"]
+    sim = rtl + ["sim/verilator/otpu_native_mem.sv"]
     board = [s for s in rtl if not s.endswith("otpu_top.sv")] + [
         "rtl/boards/ypcb-00338/otpu_ctrl.sv", "rtl/boards/ypcb-00338/otpu_trace.sv",
         "rtl/boards/ypcb-00338/otpu_board.sv"]
-    for top, srcs, params in (("otpu_top", sim, ["-GD=128", "-GMCOLS=2", "-GAXI=1"]),
+    for top, srcs, params in (("otpu_top", sim, ["-GD=128", "-GMCOLS=4", "-GAXI=1"]),
                               ("otpu_board", board, [])):
         cmd = ["verilator", *LINT_FLAGS, "--top-module", top, *params, *srcs]
         r = execute(wt, cmd, "lint", timeout)

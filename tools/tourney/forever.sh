@@ -14,14 +14,16 @@
 # K=2 agent slots per round; K_<comp>=n overrides one component (e.g. K_otpu_mxu=3).
 set -u
 cd "$(git rev-parse --show-toplevel)"
-COMPS=${FOREVER_COMPS:-"otpu_dma otpu_seq otpu_tmem otpu_coll otpu_xunit otpu_mxu otpu_axi_dram otpu_vpu otpu_quant otpu_actram"}
+# the units on the measured worst path families first (the DRAM adapter's command picker, TMEM's
+# bank arbiter, MXU control and drain, the sequencer, the DMA), then the rest
+COMPS=${FOREVER_COMPS:-"otpu_native_dram otpu_tmem otpu_mxu otpu_seq otpu_dma otpu_xunit otpu_vpu otpu_quant otpu_coll otpu_actram"}
 COMPS_FILE=${FOREVER_COMPS_FILE:-/tmp/otpu-tourney-comps}
 WHOLE=(${FOREVER_WHOLE:-otpu_full otpu_impl})
 WHOLE_FILE=${FOREVER_WHOLE_FILE:-/tmp/otpu-tourney-whole}
 EVERY=${WHOLE_EVERY:-3}
 K=${K:-2}
 BASE=${BASE:-origin/main}
-TARGET=${TARGET_MHZ:-125.49}
+TARGET=${TARGET_MHZ:-133.33}
 STOP=/tmp/otpu-tourney-stop PAUSE=/tmp/otpu-tourney-pause
 
 round() {   # one round of component $1

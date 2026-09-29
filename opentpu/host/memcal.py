@@ -1,10 +1,10 @@
 """otpu-memcal: the DDR3 calibration of a bitstream whose memory controllers are LiteDRAM (CAPS
-bit27, docs/litedram.md sections 7 and 10). The MIG bitstreams calibrate themselves in hardware.
-LiteDRAM's PHY is calibrated through each controller's CSRs in the BAR0 window at R_MEMCAL
-(0x10000) by opentpu.host.ddrcal's algorithm: per channel the CK phase is scanned over one tCK
-with the channel's BIST as the traffic check, the phase goes to the centre of the window common
-to all nine byte lanes, write latency and read leveling are set there, and the channel's ready
-bit (STATUS CALIB0 / CALIB1) rises.
+bit27, docs/litedram.md sections 7 and 10). The MIG bitstreams (before LiteDRAM) calibrate
+themselves in hardware. LiteDRAM's PHY is calibrated through each controller's CSRs in the BAR0
+window at R_MEMCAL (0x10000) by opentpu.host.ddrcal's algorithm: per channel the CK phase is
+scanned over one tCK with the channel's BIST as the traffic check, the phase goes to the centre of
+the window common to all nine byte lanes, write latency and read leveling are set there, and the
+channel's ready bit (STATUS CALIB0 / CALIB1) rises.
 
 Two ways to run it:
 - by the core itself (gen_core.py --selfcal, opentpu.host.selfcal): a small CPU in the LiteDRAM

@@ -1,16 +1,16 @@
 // Simulation model of one LiteDRAM native port as LiteDRAMCrossbar serves a single master (64-byte
-// beats: 576 bits with ECC, 512 to the user; beat addresses), as otpu_mem_ch drives it with RMW = 1.
+// beats: 576 bits with ECC, 512 to the user; beat addresses), as otpu_mem_ch drives it.
 // cmd ready is randomly withheld (+axi_stall=percent) and drops while QD commands are held (the
 // bank's command buffer and pipeline). Commands are performed in command order, at most one per
 // cycle, each 1 to WJ cycles after it was taken or later (default QD 12, WJ 12), never during a
 // busy stretch (refresh, row changes: +ldn_busy=N, a 10-49 cycle pause with probability N per
 // mille per cycle). A write is performed by asking for its data (wdata ready for one cycle) and
 // taking whatever is on wdata, as the crossbar does, without looking at valid: data not valid then
-// is an error, and so is any byte not written (LiteDRAMNativePortECC rejects partial writes) or a
-// partial hint. A read returns the memory as it is when it is performed, LAT to LAT + 7 cycles
-// later (+axi_lat=N), in command order, never held back.
+// is an error, and so is any byte not written (LiteDRAMNativePortECC rejects partial writes). A
+// read returns the memory as it is when it is performed, LAT to LAT + 7 cycles later (+axi_lat=N),
+// in command order, never held back.
 // With IMG = 1 the channel's memory loads from <dir>/ch<CH>.bin and dumps to <dir>/ch<CH>_out.bin
-// on dump, as otpu_mig_model.
+// on dump.
 module otpu_ldn_model #(
   parameter int BEATS = 1 << 12,
   parameter int LAT   = 20,
@@ -25,7 +25,6 @@ module otpu_ldn_model #(
   output logic         c_cmd_ready,
   input  logic         c_cmd_we,
   input  logic [24:0]  c_cmd_addr,
-  input  logic         c_cmd_partial,
   input  logic         c_wdata_valid,
   output logic         c_wdata_ready,
   input  logic [511:0] c_wdata_data,
@@ -59,7 +58,6 @@ module otpu_ldn_model #(
       // a command taken
       if (c_cmd_valid && c_cmd_ready) begin
         longint t;
-        if (c_cmd_partial) $fatal(1, "otpu_ldn_model ch%0d: partial hint", CH);
         if (c_cmd_addr >= BEATS) $fatal(1, "otpu_ldn_model ch%0d: beat %0d beyond the memory", CH, c_cmd_addr);
         t = cyc + 1 + longint'($urandom % WJ);
         if (t <= texec) t = texec + 1;

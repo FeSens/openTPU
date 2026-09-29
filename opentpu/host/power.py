@@ -6,7 +6,7 @@ The card cannot measure its power, so otpu-smi estimates it (docs/observability.
 
 where units[u] is the dynamic power report_power attributes to the unit's instances (at the
 vectorless default activity, read as "the unit busy") and fixed_w is everything else: device
-static power, the PCIe/XDMA block, the MIG controllers, clocking, the control block -- counted
+static power, the PCIe/XDMA block, the DDR3 controllers, clocking, the control block -- counted
 in full whatever the load. It is a model, not a measurement: good for relative numbers (idle vs
 decoding) and the order of magnitude.
 
@@ -22,8 +22,8 @@ power.json (written by build.tcl through `python3 -m opentpu.host.power`):
      "hierarchy": [[depth, "name", W], ...]}                     # By Hierarchy, in order
 
 Units are found by instance name under u_board (UNIT_INSTANCES; the outermost match counts, so
-nothing is counted twice). "DRAM" (the AXI DRAM adapter; the MIG is fixed) scales with DRAM
-beats per cycle.
+nothing is counted twice). "DRAM" (the DRAM adapter, otpu_native_dram; the controllers are
+fixed) scales with DRAM beats per cycle.
 
     python3 -m opentpu.host.power build/vivado/reports/power.xml -o build/vivado/reports/power.json
     python3 -m opentpu.host.power build/vivado/reports/power.rpt     # prints the JSON
@@ -41,7 +41,7 @@ FORMAT, VERSION = "openTPU-power", 1
 # instance name (rtl/top/otpu_slice.sv, rtl/boards/ypcb-00338/otpu_board.sv) -> unit
 UNIT_INSTANCES = {"u_mxu": "MXU", "u_act": "MXU", "u_vpu": "VPU", "u_quant": "QNT",
                   "u_dma": "DMA", "u_tmem": "TMEM", "u_seq": "SEQ", "u_mem": "DRAM"}
-BOARD_INSTANCE = "u_board"          # otpu_board in otpu_fpga_top: the accelerator
+BOARD_INSTANCE = "u_board"          # otpu_board in otpu_fpga_top_ld: the accelerator
 # unit -> the free-running counter whose utilization scales its dynamic power ("DRAM": beats
 # per cycle, from DRAM_RD + DRAM_WR)
 UNIT_UTIL = {"MXU": "MXU_BUSY", "VPU": "VPU_BUSY", "QNT": "QNT_BUSY", "DMA": "DMA_BUSY",

@@ -1,7 +1,8 @@
 name: otpu_mxu
 description: 'MXU: streams int8 weight chunks (D bytes/cycle) through a prefetch FIFO against up to MCOLS
-  stationary int8 rows in ACT RAM; products, adder tree, i2f, scale multiplies, isum_4 partial loop, result
-  FIFO, drain with ACC/ASCALE read-modify-write, RMAX.'
+  stationary int8 rows in ACT RAM; products in the systolic array (IMPL 2: a DSP48E1 per position, weights
+  hopping column to column), i2f, scale multiplies, isum_4 partial loop, result FIFO, drain with ACC/ASCALE
+  read-modify-write, RMAX.'
 allowed:
 - rtl/mxu/otpu_mxu.sv
 synth:
@@ -10,9 +11,10 @@ synth:
     weight: 1
     params:
       D: 128
-      MCOLS: 2
+      MCOLS: 4
       DEPTH: 1024
       LANES: 8
+      IMPL: 2
       SID: 0
     sources:
     - rtl/vpu/otpu_fp.sv

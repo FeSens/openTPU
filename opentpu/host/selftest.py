@@ -55,21 +55,23 @@ HINTS = {
     "config": "The host follows the bitstream's VERSION register: unset OTPU_MCOLS / "
               "OTPU_LANES, or load the bitstream built for them (docs/board.md, which bitstream "
               "to load). D must be 128.",
-    "calib": "A DDR3 controller did not calibrate. MIG bitstreams: check the MIG pinout / "
-             "clocking in the bitstream (docs/board.md) and the memory voltage. LiteDRAM "
-             "bitstreams (CAPS bit27): the host calibrates them (otpu-memcal cal --force "
-             "redoes it, otpu-memcal shows the last result; docs/litedram.md). STATUS bit5 = "
-             "channel 0, bit6 = channel 1.",
+    "calib": "A DDR3 controller did not calibrate. LiteDRAM bitstreams (CAPS bit27): the "
+             "core's own CPU calibrates them at configuration, or the host does for a core "
+             "without one (otpu-memcal shows the result and the CPU's errors, otpu-memcal cal "
+             "--force redoes it from the host; docs/litedram.md). MIG bitstreams (before "
+             "LiteDRAM): check the MIG pinout / clocking in the bitstream (docs/board.md). "
+             "Either: the memory voltage. STATUS bit5 = channel 0, bit6 = channel 1.",
     "scrub": "Writing the DRAM failed or timed out: DMA host->card is broken (dmesg: XDMA "
              "errors); try the driver in poll mode (sudo otpu-setup --poll).",
     "regs": "Register writes do not stick: the AXI-Lite path (XDMA BAR0 -> otpu_ctrl) is "
             "broken, or the core clock / reset is not running.",
-    "addr": "An address line of that channel is stuck or aliased: DDR3 pinout / MIG address "
-            "width, or the interconnect address map (channel 1 must be at 0x8000_0000).",
+    "addr": "An address line of that channel is stuck or aliased: DDR3 pinout / the "
+            "controller's address width, or the XDMA address map (channel 1 must be at "
+            "0x8000_0000).",
     "pattern": "Data errors: if only one channel fails, suspect its byte lanes / calibration; "
                "if errors follow the 64-byte interleave, suspect the host mapping "
                "(opentpu/host/board.py) "
-               "against rtl/mem/otpu_axi_dram.sv.",
+               "against rtl/mem/otpu_native_dram.sv.",
     "bandwidth": "DMA is slow or failed: check the PCIe link width and speed (lspci -vv, "
                  "LnkSta should be 2.5GT/s x8).",
     "kernel": "The accelerator computed something different from the ISA simulator: run the "

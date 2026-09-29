@@ -1,10 +1,10 @@
 // Slice DRAM ports (as otpu_dram) on the two DDR3 channels' native ports, 512-bit data: one
-// command per 64-byte beat (LiteDRAM's native port, or the MIG's native interface, behind
-// otpu_mem_ch; docs/litedram.md section 3). The slice side, the address map and the behaviour
-// are otpu_axi_dram's. What existed only for AXI and the MIG's AXI front end, whose transactions
-// cost a lot, is gone: read and write bursts, their gather timers and 4 KB splits, AXI IDs, write
-// responses and err. A native command costs nothing per transaction, so a request goes out as
-// soon as it may, one command per beat.
+// command per 64-byte beat (LiteDRAM's native port behind otpu_mem_ch; docs/litedram.md section
+// 3). The slice side, the address map and the behaviour are those of otpu_axi_dram, the MIG AXI
+// builds' adapter it replaced. What existed only for AXI and the MIG's AXI front end, whose
+// transactions cost a lot, is gone: read and write bursts, their gather timers and 4 KB splits,
+// AXI IDs, write responses and err. A native command costs nothing per transaction, so a request
+// goes out as soon as it may, one command per beat.
 //
 // Address map: the slice's byte address space is interleaved over the channels in 64-byte beats:
 // logical beat b = addr / 64 (chunk m = b / 2) is channel beat m (n_caddr: the channel address's

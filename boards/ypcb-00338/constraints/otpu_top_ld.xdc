@@ -1,7 +1,6 @@
-# openTPU on the Inspur YPCB-00338 with LiteDRAM (create_project.tcl MEM=litedram; top
-# otpu_fpga_top_ld): board pins, clocks, configuration. The same board constraints as the MIG
-# build's otpu_top.xdc (scripts/check_offline.py --mem litedram checks that the shared lines are
-# identical); the DDR3 pins, I/O standards and VREF are the LiteDRAM core's
+# openTPU on the Inspur YPCB-00338 with LiteDRAM (create_project.tcl; top otpu_fpga_top_ld):
+# board pins, clocks, configuration (the MIG builds' otpu_top.xdc, less the MIG's lines, until
+# those builds were removed); the DDR3 pins, I/O standards and VREF are the LiteDRAM core's
 # (boards/ypcb-00338/litedram/otpu_litedram.xdc), the clock-domain crossings that need the
 # implemented netlist are in otpu_top_native.tcl (unmanaged, read late) and otpu_mem_ch.tcl.
 
@@ -58,7 +57,7 @@ set_property PULLUP true [get_ports pcie_perstn]
 set_false_path -from [get_ports pcie_perstn]
 
 # ---------------------------------------------------------------- clock domain crossings
-# As otpu_top.xdc: the accelerator synchronizes the die-temperature code and the I2C pin levels
+# The accelerator synchronizes the die-temperature code and the I2C pin levels
 # itself (2 flip-flops per bit, ASYNC_REG; the temperature is taken only when two samples
 # agree). The calibration flags (the LiteDRAM core's c0_ready / c1_ready, in its sys clock) get
 # a max delay instead of a false path, in otpu_top_native.tcl: sys and core_clk are also one of

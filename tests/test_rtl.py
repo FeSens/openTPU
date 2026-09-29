@@ -405,8 +405,8 @@ def test_board_memory_path_fuzz(have_verilator, seed, stall):
 
 # The native memory path (otpu_native_dram, one command per beat, in front of the native memory
 # model: commands and write data taken independently, read data with jitter and no backpressure,
-# n_wdone late), whatever OTPU_NATIVE says: the hazard and random programs, bit-exact; the
-# DDR3 model with long latencies for some.
+# n_wdone late): the hazard and random programs, bit-exact; the DDR3 model with long latencies
+# for some.
 @pytest.mark.parametrize("prog,seed,stall,lat", [("hazard", 0, 0, 20), ("hazard", 1, 50, 20),
                                                  ("hazard", 2, 80, 120), ("random", 3, 40, 20),
                                                  ("random", 4, 70, 400)])
@@ -417,7 +417,7 @@ def test_native_memory_path(have_verilator, prog, seed, stall, lat):
     imgs = _images(rng, 1)
     m = Machine(cfg, [p], [i.copy() for i in imgs]).run()
     drams, tmems, st = rtlsim.run(cfg, [p], [i.copy() for i in imgs], axi=True, boot=True,
-                                  native=True, stall=stall, seed=seed + 1, lat=lat,
+                                  stall=stall, seed=seed + 1, lat=lat,
                                   plusargs=["+axi_dram=1"] if seed % 2 else [])
     assert np.array_equal(tmems[0], m.slices[0].tmem)
     assert np.array_equal(drams[0], m.slices[0].dram)
@@ -473,12 +473,10 @@ def test_dma_alignment_stress(have_verilator, D, lanes, axi, stall):
     assert np.array_equal(drams[0], m.slices[0].dram)
 
 
-# Port B streams leave the AXI adapter as read bursts (up to 8 beats per channel). Long loads
-# that start and end mid-burst and cross 4 KB channel pages (the memory model stops on a burst
-# that crosses one), a store read back at once, backpressure and a per-transaction cost: results
-# bit-exact, and the streams mostly in full bursts.
-@pytest.mark.parametrize("stall,arc", [(0, 4), (50, 4), (30, 0)])
-def test_axi_read_bursts(have_verilator, stall, arc):
+# Port B streams on the board's memory path: long loads that start and end mid-chunk and cross
+# 4 KB channel pages, a store read back at once, under backpressure: results bit-exact.
+@pytest.mark.parametrize("stall", [0, 30, 50])
+def test_axi_read_bursts(have_verilator, stall):
     cfg = Config(S=1, D=128, ACT_BLOCKS=16)
     CW, PAGE = cfg.D // 4, 2 * 4096                 # a 4 KB page on each channel
     loads = [(PAGE - 3 * cfg.D, 40 * CW + 5), (3 * PAGE + 5 * cfg.D + 28, 70 * CW + 3),
@@ -491,40 +489,17 @@ def test_axi_read_bursts(have_verilator, stall, arc):
              I.halt()]
     img = np.random.default_rng(8000).integers(0, 256, 1 << 20, dtype=np.uint8)
     m = Machine(cfg, [prog], [img.copy()]).run()
-    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
-                                  seed=stall + 11, arc=arc, uarch=rtlsim.BOARD_UARCH)
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                 seed=stall + 11, uarch=rtlsim.BOARD_UARCH)
     assert np.array_equal(tmems[0], m.slices[0].tmem)
     assert np.array_equal(drams[0], m.slices[0].dram)
-    if not rtlsim.MEMORY["NATIVE"]:                 # (a native command is one beat)
-        (ar0, b0), (ar1, b1) = st["axi_reads"]
-        assert (b0 + b1) / (ar0 + ar1) > 4, st["axi_reads"]
 
 
-@pytest.mark.skipif(bool(rtlsim.MEMORY["NATIVE"]), reason="AXI read bursts (native: no transactions)")
-def test_axi_burst_throughput(have_verilator):
-    """A long load at a cost of 16 cycles per read transaction: single-beat reads (AXI_BL=1) take
-    16 cycles per chunk; in bursts the load keeps the pace it has with no cost (4 cycles per
-    chunk, TMEM's 8 lanes)."""
-    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
-    n = 2000 * cfg.D // 4
-    prog = [I.ld(0, 0, n), I.halt()]
-    img = np.random.default_rng(8100).integers(0, 256, 1 << 20, dtype=np.uint8)
-    cyc = {}
-    for arc, bl in ((0, 8), (16, 8), (16, 1), (16, 32)):
-        _, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=0,
-                                  arc=arc, uarch={**rtlsim.BOARD_UARCH, "AXI_BL": bl})
-        assert np.array_equal(tmems[0][:n], img[:4 * n].view("<u4"))
-        cyc[arc, bl] = st["cycles"]
-    assert cyc[16, 8] < 1.1 * cyc[0, 8], cyc
-    assert cyc[16, 32] < 1.1 * cyc[0, 8], cyc       # bursts over 16 beats (the queue follows BL)
-    assert cyc[16, 1] > 3 * cyc[0, 8], cyc
-
-
-# QST stores go out as single bytes (one byte-enabled word per cycle). The AXI adapter gathers
-# an SW beat until another beat is written or it has been idle, so a contiguous store (a K row)
+# QST stores go out as single bytes (one byte-enabled word per cycle). The adapter gathers an
+# SW beat until another beat is written or it has been idle, so a contiguous store (a K row)
 # costs one write per 64-byte beat; a beat left partial (a transposed V column: one byte per
-# beat) is read and written whole. No write reaches the memory with a partial strobe (the board's
-# controller would do an ECC read-modify-write). Results bit-exact under random stalls.
+# beat) is read and written whole. No write reaches the memory with a partial byte mask (the
+# channel would read-modify-write it). Results bit-exact under random stalls.
 @pytest.mark.parametrize("stall", [0, 40])
 def test_axi_sw_write_gather(have_verilator, stall):
     cfg = Config(S=1, D=128, ACT_BLOCKS=16)
@@ -610,16 +585,15 @@ def test_axi_sw_rmw_fuzz(have_verilator, seed):
 # A transposed V append (8 KV heads x 128 values, each value to its own beat: element stride =
 # the cache capacity) on the calibrated DDR3 model: every beat is a read-modify-write, and the
 # SW queue (WQD beats per channel) keeps enough of them in flight that the appends cost about
-# the channel's read transactions. All the beats of one token fall on one channel (the rows are
-# chunk aligned). Also with the interconnect's outstanding-transaction limits (vivado/bd.tcl).
-@pytest.mark.parametrize("limits", [[], ["+axi_rout=64", "+axi_wout=64"]])
-def test_axi_vt_append_throughput(have_verilator, limits):
+# the channel's reads. All the beats of one token fall on one channel (the rows are chunk
+# aligned).
+def test_axi_vt_append_throughput(have_verilator):
     cfg = Config(S=1, D=128, ACT_BLOCKS=16)
     D, CAP, H = cfg.D, 256, 8
     rng = np.random.default_rng(8500)
     img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
     img[:4 * H * D] = rng.standard_normal(H * D).astype(np.float32).view(np.uint8)
-    plus = limits + ["+axi_dram=1", "+axi_map=1", "+axi_arc=4", "+axi_tpc=16", "+axi_tpu=15",
+    plus = ["+axi_dram=1", "+axi_map=1", "+axi_tpc=16", "+axi_tpu=15",
                      "+axi_trp=3", "+axi_trcd=3", "+axi_tras=5", "+axi_trc=7", "+axi_trfc=22",
                      "+axi_trefi=1040", "+axi_trmw=29"]
     cyc = []
@@ -633,15 +607,16 @@ def test_axi_vt_append_throughput(have_verilator, limits):
         assert np.array_equal(drams[0], m.slices[0].dram)
         assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
         cyc.append(st["cycles"])
-    # 1024 read-modify-writes on one channel, a read transaction per 4 cycles: ~4.1K cycles;
-    # with a 16-deep SW queue this was ~7.7K
+    # 1024 read-modify-writes on one channel: ~4.1K cycles; with a 16-deep SW queue this was
+    # ~7.7K
     per = (cyc[1] - cyc[0]) / 3
     assert per < 5300, cyc
 
 
-# The MXU's scale stream (port A, one word per chunk) goes out as runs of up to 8 beats per AXI
-# read; a QST between the MMs rewrites some scales (so a run fetched before it must not be used
-# after it), under random stalls: bit-exact, and far fewer A transactions than scale beats.
+# The MXU's scale stream (port A, one word per chunk) goes out as runs of beats (a read reuses
+# the beat of the previous one); a QST between the MMs rewrites some scales (so a run fetched
+# before it must not be used after it), under random stalls: bit-exact, and far fewer A reads
+# than scale beats.
 @pytest.mark.parametrize("stall,seed", [(0, 1), (40, 2), (70, 3)])
 def test_axi_scale_runs(have_verilator, stall, seed):
     cfg = Config(S=1, D=128, ACT_BLOCKS=16)
@@ -674,7 +649,7 @@ def test_axi_scale_runs(have_verilator, stall, seed):
 # The DMA's chunk writes (an ST; a DSTEP's state write-back) beside the MXU's scale stream: writes
 # to other addresses leave the scale runs alone, a write into scales that a run may hold drops
 # it (and every run fetched while the writes were outstanding), under random stalls: bit-exact,
-# and still far fewer A transactions than scale beats (a B write once dropped every run).
+# and still far fewer A reads than scale beats (a B write once dropped every run).
 @pytest.mark.parametrize("stall,seed", [(0, 1), (40, 2), (70, 3)])
 def test_axi_scale_runs_beside_dma_writes(have_verilator, stall, seed):
     cfg = Config(S=1, D=128, ACT_BLOCKS=16)
@@ -702,14 +677,12 @@ def test_axi_scale_runs_beside_dma_writes(have_verilator, stall, seed):
     assert ar_a < scale_beats // 3, (ar_a, scale_beats)
 
 
-@pytest.mark.parametrize("wbl,stall,seed", [(8, 0, 1), (8, 40, 2), (8, 70, 3), (1, 40, 4),
-                                           (4, 30, 5)])
-def test_axi_write_bursts(have_verilator, wbl, stall, seed):
-    """Port B writes in AXI bursts of up to WBL beats (a DMA ST's chunk runs): STs of whole and
-    partial chunks at various offsets and lengths (masked first / last beats, a run cut at a
-    4 KB page), each read back by an LD that depends on it, beside an MM's weight and scale
-    stream, under random AXI stalls: bit-exact with the ISA simulator; with WBL > 1 the long
-    STs go out in bursts (few AWs per beat), with WBL = 1 one AW per beat."""
+@pytest.mark.parametrize("stall,seed", [(0, 1), (40, 2), (70, 3), (40, 4), (30, 5)])
+def test_axi_write_bursts(have_verilator, stall, seed):
+    """Port B writes (a DMA ST's chunk runs): STs of whole and partial chunks at various offsets
+    and lengths (masked first / last beats, a run across a 4 KB page), each read back by an LD
+    that depends on it, beside an MM's weight and scale stream, under random stalls: bit-exact
+    with the ISA simulator, one write command per beat."""
     cfg = Config(S=1, D=128, ACT_BLOCKS=16)
     D = cfg.D
     rng = np.random.default_rng(8700 + seed)
@@ -728,17 +701,13 @@ def test_axi_write_bursts(have_verilator, wbl, stall, seed):
     prog += [I.halt()]
     m = Machine(cfg, [prog], [img.copy()]).run()
     drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
-                                  seed=seed, uarch={**rtlsim.BOARD_UARCH, "AXI_WBL": wbl},
-                                  plusargs=["+axi_dram=1"])
+                                  seed=seed, uarch=rtlsim.BOARD_UARCH, plusargs=["+axi_dram=1"])
     assert np.array_equal(tmems[0], m.slices[0].tmem)
     assert np.array_equal(drams[0], m.slices[0].dram)
     aw = sum(a for a, _ in st["axi_writes"])
     beats = sum(b for _, b in st["axi_writes"])
     assert beats >= (2048 + 1000 + 700 + 3 + 4096) // 16
-    if rtlsim.MEMORY["NATIVE"] or wbl == 1:        # (a native command is one beat)
-        assert aw == beats
-    else:
-        assert aw <= beats // (wbl // 2 + 1) + 16, (aw, beats)
+    assert aw == beats
 
 
 def test_tmem_random_traffic(have_verilator):

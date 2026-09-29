@@ -34,9 +34,10 @@ C = {
                "tests/test_rtl.py::test_scoreboard_stress_two_slices[0]"]),
     "otpu_mxu": dict(
         files=["rtl/mxu/otpu_mxu.sv"], top="otpu_mxu",
-        params=dict(D=128, MCOLS=2, DEPTH=1024, LANES=8, SID=0),
+        params=dict(D=128, MCOLS=4, DEPTH=1024, LANES=8, IMPL=2, SID=0),
         desc="MXU: streams int8 weight chunks (D bytes/cycle) through a prefetch FIFO against up to "
-             "MCOLS stationary int8 rows in ACT RAM; products, adder tree, i2f, scale multiplies, "
+             "MCOLS stationary int8 rows in ACT RAM; products in the systolic array (IMPL 2: a "
+             "DSP48E1 per position, weights hopping column to column), i2f, scale multiplies, "
              "isum_4 partial loop, result FIFO, drain with ACC/ASCALE read-modify-write, RMAX.",
         extra=["tests/test_rtl.py::test_attention_layer_rtl[1]",
                "tests/test_rtl.py::test_mlp_rtl[2]"]),
@@ -81,7 +82,7 @@ C = {
         board_extra=["tests/test_rtl.py::test_board_memory_path_stress[2-60]"]),
     "otpu_actram": dict(
         files=["rtl/mem/otpu_actram.sv"], top="otpu_actram",
-        params=dict(D=128, MCOLS=2, BLOCKS=128, LANES=8),
+        params=dict(D=128, MCOLS=4, BLOCKS=128, LANES=8),
         desc="ACT RAM: MCOLS rows x BLOCKS blocks of D int8 plus block scales; written by the "
              "quantizer, read one block per cycle by the MXU.",
         extra=["tests/test_rtl.py::test_attention_layer_rtl[1]"]),
@@ -94,17 +95,29 @@ C = {
                "tests/test_rtl.py::test_fuzz_two_slices[0]",
                "tests/test_rtl.py::test_scoreboard_stress_two_slices[0]",
                "tests/test_rtl.py::test_attention_decode_rtl[2-8-2-100]"]),
-    "otpu_axi_dram": dict(
-        files=["rtl/mem/otpu_axi_dram.sv"], top="otpu_axi_dram",
-        params=dict(D=128),
-        desc="AXI DRAM adapter: slice ports A (words), B (chunks) and the QST write port onto two "
-             "512-bit AXI4 channels, 64-byte interleave, per-channel queues and response FIFOs, "
+    "512-bit AXI4 channels, 64-byte interleave, per-channel queues and response FIFOs, "
              "A-beat reuse, write acknowledges (wr_idle).",
         extra=[],
         board_extra=["tests/test_rtl.py::test_board_memory_path_stress[0-0]",
                      "tests/test_rtl.py::test_board_memory_path_stress[2-60]",
                      "tests/test_rtl.py::test_board_memory_path_stress[3-30]",
                      "tests/test_rtl.py::test_board_memory_path_stress[5-50]",
+                     "tests/test_rtl.py::test_board_memory_path_fuzz[1-70]",
+                     "tests/test_board.py"]),
+    "otpu_native_dram": dict(
+        files=["rtl/mem/otpu_native_dram.sv"], top="otpu_native_dram",
+        params=dict(D=128),
+        desc="Native DRAM adapter (the board's): slice ports A (words), B (chunks) and "
+             "the QST write port onto the two channels' native ports, one command per 64-byte "
+             "beat, 64-byte interleave (hashed), per-channel queues, in-order read merge, A-beat "
+             "reuse, the SW queue's read-fill with its hazard buckets, write acknowledges "
+             "(n_wdone, wr_idle).",
+        extra=[],
+        board_extra=["tests/test_rtl.py::test_native_memory_path[hazard-1-50-20]",
+                     "tests/test_rtl.py::test_native_memory_path[hazard-2-80-120]",
+                     "tests/test_rtl.py::test_native_memory_path[random-3-40-20]",
+                     "tests/test_rtl.py::test_native_memory_path[random-4-70-400]",
+                     "tests/test_rtl.py::test_board_memory_path_stress[2-60]",
                      "tests/test_rtl.py::test_board_memory_path_fuzz[1-70]",
                      "tests/test_board.py"]),
 }
@@ -138,15 +151,19 @@ XUNIT = {
     "name": "otpu_xunit",
     "description": "Cross-unit paths: otpu_slice (the units and their wiring: scoreboard grants, "
                    "TMEM port muxes, DRAM ports), otpu_top, otpu_pkg, the board wrappers "
-                   "(otpu_board: PCIe/AXI bridge, control registers, trace; otpu_fpga_top: clocks "
-                   "and resets) and the core timing constraints (otpu_top.xdc: pblocks, placement, "
-                   "no timing exceptions or clock changes). Changes here target paths that cross "
+                   "(otpu_board: PCIe bridge, DRAM adapter, control registers, trace; "
+                   "otpu_native_sys: the channels' bridges (otpu_mem_ch, otpu_afifo) and XDMA's "
+                   "split (otpu_axi_split2); otpu_fpga_top_ld: clocks and resets) and the core timing "
+                   "constraints (otpu_top_ld.xdc: pblocks, "
+                   "placement, no timing exceptions or clock changes). Changes here target paths that cross "
                    "unit boundaries: register slices on inter-unit buses, fanout of broadcast "
                    "signals, placement.",
     "allowed": ["rtl/top/otpu_slice.sv", "rtl/top/otpu_top.sv", "rtl/top/otpu_pkg.sv",
                 "rtl/boards/ypcb-00338/otpu_board.sv", "rtl/boards/ypcb-00338/otpu_ctrl.sv",
-                "rtl/boards/ypcb-00338/otpu_fpga_top.sv", "rtl/boards/ypcb-00338/otpu_trace.sv",
-                "boards/ypcb-00338/constraints/otpu_top.xdc"],
+                "rtl/boards/ypcb-00338/otpu_native_sys.sv", "rtl/boards/ypcb-00338/otpu_mem_ch.sv",
+                "rtl/boards/ypcb-00338/otpu_afifo.sv", "rtl/boards/ypcb-00338/otpu_axi_split2.sv",
+                "rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv", "rtl/boards/ypcb-00338/otpu_trace.sv",
+                "boards/ypcb-00338/constraints/otpu_top_ld.xdc"],
     "synth": {"parts": []},
     "objectives": ["fmax"],
     "target_mhz": 133.33,

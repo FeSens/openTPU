@@ -109,7 +109,7 @@ module otpu_dma
   // ---- LD: chunk requests (address ic, cleft left), the chunk buffer, segment delivery
   logic [31:0]   ic, cleft;
   // cleft != 0 and cleft == 1, registered with cleft: no 32-bit compare on b_req's path into
-  // otpu_axi_dram's queue (the build's DMA -> memory path)
+  // otpu_native_dram's queue (the build's DMA -> memory path)
   logic          cl_nz, cl_one;
   // r * n < lim (lim <= 2 * SPC), without an r x n multiply: both factors are below lim then,
   // so their product on clog2(2 * SPC) bits each decides

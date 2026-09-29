@@ -5,9 +5,10 @@ arithmetic or a simulation of the RTL, not a measurement on the card.
 
 ## Where the bandwidth goes today
 
-The MXU consumes one D = 128-byte weight chunk per core cycle. `otpu_axi_dram` splits it into
-one 64-byte beat per DDR3 channel, and each channel's accelerator port on the SmartConnect is
-512 bits wide at core_clk. At 100 MHz that is 12.8 GB/s, whatever the DDR3 speed.
+The MXU consumes one D = 128-byte weight chunk per core cycle. The DRAM adapter
+(`otpu_native_dram`; `otpu_axi_dram` on the MIG builds) splits it into one 64-byte beat per DDR3
+channel, and each channel's accelerator port (`otpu_mem_ch`; the SmartConnect on the MIG builds)
+is 512 bits wide at core_clk. At 100 MHz that is 12.8 GB/s, whatever the DDR3 speed.
 
 | DDR3 | CK | MIG ui_clk | peak, both channels | at 70-85 % efficiency (*estimate*) | what the core can take |
 |---|---|---|---|---|---|
@@ -48,7 +49,7 @@ If the card tops out at 1300 or 1333, the DRAM limits the path to about 15-18 GB
 - The channel interleave changes. A 256-byte chunk becomes one 128-byte beat per channel, and
   the host's address map in `opentpu/host/board.py` must follow. A cheaper option keeps the
   64-byte interleave and issues two beats per channel per cycle, but that doubles the request
-  rate in `otpu_axi_dram`.
+  rate in the adapter.
 - Read data in flight doubles for the same latency. Today RD = 128 beats × 64 B = 8 KB per
   channel; the wide path needs 16 KB per channel, about +8 BRAM36 per channel (*estimate*).
 - The MIG's 512-bit ECC path and SmartConnect's MIG-side logic must close timing at the faster

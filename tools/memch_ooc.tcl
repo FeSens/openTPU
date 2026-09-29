@@ -8,16 +8,15 @@
 # checked against the crossings the XDC constrains. Non-project mode, on omarchy (never on the
 # Mac):
 #
-#   vivado -mode batch -nojournal -source tools/memch_ooc.tcl -tclargs <outdir> [RMW] [ROUTE]
+#   vivado -mode batch -nojournal -source tools/memch_ooc.tcl -tclargs <outdir> [ROUTE]
 #
-# RMW: 1 (LiteDRAM, the default) or 0 (MIG). ROUTE: 0 (the default) or 1. Clock periods (ns) from
+# ROUTE: 0 (the default) or 1. Clock periods (ns) from
 # the environment: MEMCH_CLK (core, default 7.968: 125.5 MHz, about the best routed core clock),
 # MEMCH_UCLK (7.5: 133.33 MHz, DDR3-1066), MEMCH_XCLK (8.0: axi_aclk). The module's ports get
 # input and output delays of 30% of their clock's period (n_* rst: clk, x_* xrst: xclk, c_* urst:
 # uclk), so every path is timed. Reports go to <outdir>; the summary is printed at the end.
 set out [file normalize [lindex $argv 0]]
-set rmw [expr {[llength $argv] > 1 ? [lindex $argv 1] : 1}]
-set route [expr {[llength $argv] > 2 ? [lindex $argv 2] : 0}]
+set route [expr {[llength $argv] > 1 ? [lindex $argv 1] : 0}]
 set root [file normalize [file join [file dirname [info script]] ..]]
 proc env_or {name dflt} { if {[info exists ::env($name)]} { return $::env($name) }; return $dflt }
 set t_clk [env_or MEMCH_CLK 7.968]
@@ -27,7 +26,7 @@ file mkdir $out
 
 set_part xc7k480t-ffg1156-2
 read_verilog -sv [list $root/rtl/boards/ypcb-00338/otpu_afifo.sv $root/rtl/boards/ypcb-00338/otpu_mem_ch.sv]
-synth_design -top otpu_mem_ch -mode out_of_context -generic RMW=$rmw -flatten_hierarchy rebuilt
+synth_design -top otpu_mem_ch -mode out_of_context -flatten_hierarchy rebuilt
 
 create_clock -name clk -period $t_clk [get_ports clk]
 create_clock -name uclk -period $t_ucl [get_ports uclk]
@@ -61,10 +60,9 @@ set pats {a_rs1_reg x_rs1_reg a_hs1_reg x_hs1_reg a_wacc_g_reg[*] a_wacc_s1_reg[
 foreach f {u_aq u_ad u_ar u_xq u_xd u_xr} {
   lappend pats $f/wgray_reg\[*\] $f/wbin_reg\[*\] $f/wgray_r1_reg\[*\] $f/rgray_reg\[*\] $f/rbin_reg\[*\]* $f/rgray_w1_reg\[*\]
 }
-# the waivers' endpoints (rm_busy and rm_x exist with RMW = 1 only)
+# the waivers' endpoints
 lappend pats oc0_reg\[*\] oc1_reg\[*\] on_reg\[*\] run_reg\[*\] cur_x_reg a_out_reg\[*\] x_out_reg\[*\] \
-  u_of/wp_reg* u_tag/wp_reg* n_rdata_reg\[*\]
-if {$rmw} { lappend pats rm_busy_reg rm_x_reg }
+  u_of/wp_reg* u_tag/wp_reg* n_rdata_reg\[*\] rm_busy_reg rm_x_reg
 set qlog {}
 foreach p $pats {
   set n [llength [get_cells -quiet $p]]
@@ -163,7 +161,7 @@ if {$route} {
 }
 if {[catch {cross_sources $xs_expect} xs]} { set xs [list "?" [list "  cross_sources failed: $xs"]] }
 
-puts "==== otpu_mem_ch OOC (RMW=$rmw, route=$route, clk $t_clk / uclk $t_ucl / xclk $t_xcl ns): $out"
+puts "==== otpu_mem_ch OOC (route=$route, clk $t_clk / uclk $t_ucl / xclk $t_xcl ns): $out"
 puts [expr {$scoped ? "XDC read scoped (-ref otpu_mem_ch)" : "XDC: the scoped read applied nothing; read unscoped instead"}]
 puts "XDC set_max_delay: $nmd active of $n_xmd in the file, $nmd_ign ignored (overridden); waivers: $nwv (the file has $n_xwv create_waiver)"
 puts "XDC queries:"

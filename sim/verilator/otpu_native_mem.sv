@@ -1,7 +1,7 @@
 // Simulation model of the board memory behind the two channels' native ports (the n_* interface
 // of otpu_native_dram, as otpu_mem_ch presents it: one command per 64-byte beat), in front of one
 // logical DRAM image with otpu_native_dram's channel interleave (with its CHASH: the chunk halves
-// swapped by the chunk index's parity). The counterpart of otpu_axi_mem for the native path.
+// swapped by the chunk index's parity).
 //
 // Per channel, the model takes commands (n_cready) and write data (n_wready) independently, each
 // randomly withheld (seed +axi_seed=N, probability +axi_stall=percent) and each into its own FIFO
@@ -15,11 +15,10 @@
 // by more than 1 a cycle). Bandwidth: +axi_bw=P limits each channel to P percent of one command
 // per cycle (100 = no limit).
 //
-// DDR3 timing (+axi_dram=1, replaces +axi_bw): otpu_axi_mem's bank model (the same plusargs:
-// +axi_map, +axi_trcd +axi_trp +axi_tras +axi_trc +axi_trtp +axi_trefi +axi_trfc +axi_tturn,
-// +axi_tpc / +axi_tpu, +axi_trmw for a write whose mask is not whole), with no per-transaction
-// cost (a native command has none: +axi_arc, +axi_tgap, +axi_wgap and +axi_bgap only apply to
-// AXI). A command is performed once the data bus's backlog is below +nat_ahead=N controller
+// DDR3 timing (+axi_dram=1, replaces +axi_bw): a bank model (+axi_map, +axi_trcd +axi_trp
+// +axi_tras +axi_trc +axi_trtp +axi_trefi +axi_trfc +axi_tturn, +axi_tpc / +axi_tpu, +axi_trmw
+// for a write whose mask is not whole; the names are the MIG AXI path's model's, whose bank model
+// this is), with no per-transaction cost (a native command has none). A command is performed once the data bus's backlog is below +nat_ahead=N controller
 // cycles, so a busy channel fills the command FIFO and withholds n_cready.
 // Images load from dram_<SID>.bin and dump to dram_out_<SID>.bin, as otpu_dram. With PHYS = 1
 // the files are the channels' own memories instead, as the host sees them: ch<c>.bin (big-endian
@@ -55,7 +54,7 @@ module otpu_native_mem #(
   int wdl = 4;                           // n_wdone lag, cycles (+ 0..7)
   int ahead = 16;                        // DDR3 model: data-bus backlog, controller cycles
   longint n_rd [2], n_wr [2], n_miss [2], n_rmw [2];
-  // DDR3 model (otpu_axi_mem's)
+  // DDR3 model
   int dram = 0, amap = 0;
   int trcd = 2, trp = 2, tras = 4, trc = 6, trtp = 1, trefi = 780, trfc = 16, tturn = 2;
   int trmw = 12;                         // core cycles
@@ -76,8 +75,8 @@ module otpu_native_mem #(
   bit     wdir [2];
   int     orow [2][8];
   longint tact [2][8], tcol [2][8];
-  // the core cycle a beat's column command goes out (and the controller's state after it); as
-  // otpu_axi_mem's dram_slot, with the channel offset m * 64
+  // the core cycle a beat's column command goes out (and the controller's state after it), with
+  // the channel offset m * 64
   function automatic longint dram_slot(input int c, input logic [24:0] m, input bit wr,
                                        input longint arrive_cyc);
     logic [30:0] off;

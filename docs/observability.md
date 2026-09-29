@@ -87,9 +87,11 @@ its operands).
 
 The systolic MXU (MXU_IMPL 2) starts a row only once all of the row's chunks are in the FIFO, so
 it waits for memory mostly with part of a row in the FIFO: blocked (the Q line's mb), not starved.
-With single-beat reads (the mlp kernel, 4 cycles per read transaction) the tree MXU counts 34303
-starved and 2051 blocked cycles, and the systolic MXU 10788 and 26258 (tests/test_observability.py
-test_mxu_starve_counter). Both wait for about 0.73 of their busy time. Follow-up: otpu-smi's
+With late reads (the mlp kernel on the native path, a 400-cycle read latency:
+tests/test_observability.py test_mxu_starve_counter) the tree MXU counts 53971 starved and 5
+blocked cycles, and the systolic MXU 26811 and 27857; both wait for about 0.8 of their busy
+time. (On the removed MIG AXI path, single-beat reads at 4 cycles per read transaction gave
+34303 / 2051 and 10788 / 26258.) Follow-up: otpu-smi's
 "MXU-starve" reads only MXU_STARVE and so reads low on a systolic card. It needs mb, or a
 starve that includes a row still filling.
 

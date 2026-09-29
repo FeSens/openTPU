@@ -31,7 +31,7 @@ CAP_DDR, R_DDR_MTS = 8, 0x54
 # CAPS bit4: the MXU runs 4-bit weights (MM WF); bit5: column reuse (MM PAIR + QACT DUP);
 # bit6: DSTEP (the DMA's Gated DeltaNet head step, docs/isa.md)
 CAP_W4, CAP_PAIR, CAP_DSTEP = 16, 32, 64
-# CAPS bit7: CHASH, the hashed channel interleave (rtl/mem/otpu_axi_dram.sv): chunk m's two
+# CAPS bit7: CHASH, the hashed channel interleave (rtl/mem/otpu_native_dram.sv): chunk m's two
 # beats swap channels when m has odd parity. Older bitstreams: plain interleave.
 CAP_CHASH = 0x80
 # CAPS bit24: ACT_ROWS holds the ACT RAM rows (the most rows of one MM; older bitstreams: MCOLS)
@@ -44,7 +44,7 @@ CAP_ARGS, R_ARG0 = 1 << 25, 0x60
 CAP_STREAM = 1 << 26
 # CAPS bit27: the DDR3 controllers are LiteDRAM (docs/litedram.md): the host calibrates them
 # (opentpu/host/memcal.py) through their CSRs in the BAR0 window at R_MEMCAL; STATUS CALIB0/1
-# rise when it has. The MIG bitstreams calibrate themselves.
+# rise when it has. The MIG bitstreams (before LiteDRAM) calibrate themselves.
 CAP_HOSTCAL, R_MEMCAL = 1 << 27, 0x10000
 TEMP_VALID = 1 << 31
 

@@ -25,25 +25,6 @@ if {!$fast && [file exists $here/impl_directives.tcl]} { source $here/impl_direc
 if {!$impl_only} {
   # ---- IP (block design) out-of-context runs first
   generate_target all [get_files otpu_bd.bd]
-  # Out-of-spec DDR3-1333 / 1600 (docs/board.md, "Faster DDR3"): at tCK <= 1500 ps MIG's byte
-  # groups instantiate IDELAYE2_FINEDELAY, which stays a black box in this design (opt_design
-  # DRC INBB-3). Patch the generated PHY to the plain IDELAYE2 it uses above 1500 ps.
-  foreach mig [glob -nocomplain $out/otpu.gen/sources_1/bd/otpu_bd/ip/otpu_bd_mig_?_0] {
-    set name [file tail $mig]
-    # an IP cache hit (create_project.tcl) brings the cached, already patched netlist
-    if {![file exists $mig/$name/user_design/rtl/${name}_mig.v]} { continue }
-    set fh [open $mig/$name/user_design/rtl/${name}_mig.v]; set top [read $fh]; close $fh
-    if {![regexp {parameter\s+tCK\s*=\s*(\d+)} $top -> tck] || $tck > 1500} { continue }
-    set f $mig/$name/user_design/rtl/phy/mig_7series_v4_2_ddr_byte_group_io.v
-    set fh [open $f]; set src [read $fh]; close $fh
-    set old {IDELAY_FINEDELAY_USE          = (TCK > 1500) ? "FALSE" : "TRUE";}
-    if {[string first $old $src] < 0} { error "$f: IDELAY_FINEDELAY_USE not found, cannot patch" }
-    set fh [open $f w]
-    puts -nonewline $fh [string map [list $old \
-      {IDELAY_FINEDELAY_USE          = "FALSE"; // openTPU: HR banks, no IDELAYE2_FINEDELAY}] $src]
-    close $fh
-    puts "CRITICAL WARNING: \[openTPU\] $name: tCK $tck ps, MIG PHY patched to IDELAYE2 (out of spec)"
-  }
   export_ip_user_files -of_objects [get_files otpu_bd.bd] -no_script -sync -force -quiet
   create_ip_run [get_files otpu_bd.bd]
 
@@ -121,7 +102,6 @@ close $fh
 puts [exec cat $out/reports/SUMMARY.txt]
 
 # ---- bitstream, written from the routed design opened above
-source $here/bitstream_pre.tcl
 write_bitstream -force $out/otpu.bit
 if {[llength [get_debug_cores -quiet]]} { write_debug_probes -force $out/otpu.ltx }
 # BPI x16 flash image (for a permanent load; see docs/board.md). The flash has address lines

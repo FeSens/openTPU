@@ -2,7 +2,7 @@
 
     python3 -m tools.tourney.orchestrator --comp otpu_coll --rounds 1 --slots 1 [--agent claude]
         [--eval yosys|vivado-remote] [--base main] [--reset] [--keep] [--no-scribe] [--baseline-only]
-        [--objective area|fmax] [--target-mhz 125.49]
+        [--objective area|fmax] [--target-mhz 133.33]
 
 Each component evolves on its own champion branch `tourney/<comp>` (created from --base, i.e.
 main, the first time; --reset recreates it). A round runs K slots in parallel, each in its own
@@ -181,7 +181,7 @@ class Run:
         reads (rtl/, boards/), not the commit: a champion that only took host or doc commits
         from main is not rebuilt. A result cached under the commit (older runs) is moved over."""
         from . import remote as R
-        args = "".join(f"-{a.replace('=', '')}" for a in R.BUILD_ARGS)   # e.g. -AXI_BL16
+        args = "".join(f"-{a.replace('=', '')}" for a in R.BUILD_ARGS)   # e.g. -FAST1
         trees = "".join(git("rev-parse", f"{sha}:{d}", cwd=self.repo)[:6] for d in ("rtl", "boards"))
         key = self.fulldir / f"t{trees}-{self.a.target_mhz:g}{args}.json"
         old = self.fulldir / f"{sha[:12]}-{self.a.target_mhz:g}{args}.json"
@@ -592,7 +592,7 @@ def main(argv=None):
     ap.add_argument("--objective", choices=("area", "fmax"),
                     default=os.environ.get("OBJECTIVE", "area"))
     ap.add_argument("--target-mhz", type=float, default=float(os.environ.get("TARGET_MHZ",
-                                                                             "125.49")))
+                                                                             "133.33")))
     Run(ap.parse_args(argv)).main()
 
 

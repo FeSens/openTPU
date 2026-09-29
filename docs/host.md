@@ -307,8 +307,8 @@ The self-test prints a hint under the failing stage; in more detail:
 | config | The message names the bitstream's value and the environment's: `unset OTPU_MCOLS OTPU_LANES`, or load the bitstream built for them (board.md, "Which bitstream to load") |
 | calib | A DDR3 channel did not calibrate: STATUS bit 5 = channel 0, bit 6 = channel 1 (`otpu-smi` shows both). One channel only: its byte lanes / pinout (board.md section 6.2). Both: the 200 MHz reference clock, or the memory supply |
 | regs | SCRATCH does not hold writes: the AXI-Lite write path, or core_clk / reset not running (the heartbeat LED) |
-| addr | The message names the channel and the address bit that aliases or is stuck: MIG address width / pinout of that channel, or the interconnect map (channel 1 at 0x8000_0000) |
-| pattern | Errors on one channel only: its byte lanes. Errors every other 64-byte beat: the host interleave vs `rtl/mem/otpu_axi_dram.sv`. Only the partial writes fail: the MIG ECC read-modify-write (board.md section 6.1) |
+| addr | The message names the channel and the address bit that aliases or is stuck: the controller's address width / pinout of that channel, or the XDMA address map (channel 1 at 0x8000_0000) |
+| pattern | Errors on one channel only: its byte lanes. Errors every other 64-byte beat: the host interleave vs `rtl/mem/otpu_native_dram.sv`. Only the partial writes fail: `otpu_mem_ch`'s read-modify-write (MIG bitstreams: the MIG's ECC read-modify-write, board.md section 6.1) |
 | bandwidth | Below 0.5 GB/s: `LnkSta` width / speed, the IOMMU (`iommu=pt`), or the driver in a slow mode. A DMA call that hangs: interrupts (reload with `poll_mode=1`) |
 | kernel | `retired n of m instructions`: the core stopped early (illegal instruction, AXI error). DRAM differs: run `pytest tests/test_board.py` (the same program on the RTL model) and compare the counters with `otpu-smi -q` |
 | vops | With `--model qwen35` only: the bitstream predates RDOT / OUTER / LOG2; load one that has them |

@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """Offline checks of the Vivado flow (no Vivado needed):
   - every Tcl script is complete (balanced braces/quotes, via tclsh `info complete`);
-  - every proc_sys_reset in bd.tcl and bd_native.tcl has its derived reset polarity checked;
+  - every proc_sys_reset in bd_native.tcl has its derived reset polarity checked;
   - every port an XDC constrains exists on the top, with a valid bit index;
   - every top-level port bit has a location (except the GT lanes and the refclk N side, which
     the XDMA IP / the GT reference-clock buffer place);
   - no package pin is assigned twice, and every pin exists in the xc7k480t-ffg1156 IOB map.
-With --mem mig_native the top is otpu_fpga_top_mn (the MIG build's XDCs). With --mem litedram
-it is otpu_fpga_top_ld (otpu_top_ld.xdc and the LiteDRAM core's XDC, whose pins are LOCs), and
-also:
-  - otpu_top_ld.xdc has every board line of otpu_top.xdc (all but the MIG's and cal_s1's);
-  - the lint stub sim/otpu_litedram_stub.sv has the core's port list (litedram/otpu_litedram.v).
+The top is otpu_fpga_top_ld (otpu_top_ld.xdc and the LiteDRAM core's XDC, whose pins are LOCs).
+Also: the lint stub sim/otpu_litedram_stub.sv has the core's port list (litedram/otpu_litedram.v).
 """
 from __future__ import annotations
 
@@ -23,12 +20,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BOARD = HERE.parent
 ROOT = BOARD.parent.parent
-TOPS = {"mig": ROOT / "rtl/boards/ypcb-00338/otpu_fpga_top.sv",
-        "mig_native": ROOT / "rtl/boards/ypcb-00338/otpu_fpga_top_mn.sv",
-        "litedram": ROOT / "rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv"}
-XDCS = {"mig": [BOARD / "constraints/otpu_top.xdc", BOARD / "constraints/otpu_ddr3_pins.xdc"],
-        "litedram": [BOARD / "constraints/otpu_top_ld.xdc", BOARD / "litedram/otpu_litedram.xdc"]}
-XDCS["mig_native"] = XDCS["mig"]
+TOP = ROOT / "rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv"
+XDCS = [BOARD / "constraints/otpu_top_ld.xdc", BOARD / "litedram/otpu_litedram.xdc"]
 CORE = BOARD / "litedram/otpu_litedram.v"
 CORE_STUB = BOARD / "sim/otpu_litedram_stub.sv"
 GT_PINS = {"J8"}          # MGTREFCLK: not an IOB
@@ -52,9 +45,7 @@ def module_header(path: Path, name: str) -> list[str]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="offline checks of the Vivado flow")
-    ap.add_argument("--mem", choices=("mig", "mig_native", "litedram"), default="mig")
-    mem = ap.parse_args().mem
+    argparse.ArgumentParser(description="offline checks of the Vivado flow").parse_args()
     bad = []
     # ---- Tcl
     for tcl in sorted((BOARD / "vivado").glob("*.tcl")) + sorted((BOARD / "constraints").glob("*.tcl")):
@@ -66,8 +57,8 @@ def main() -> int:
             bad.append(tcl.name)
     # ---- reset polarity: C_EXT_RESET_HIGH is read-only, derived from the driving pin's POLARITY
     # at validation. A wrong one (e.g. active-high on a *_n source) holds the design in reset, so
-    # bd.tcl checks every proc_sys_reset's derived value after validate_bd_design.
-    for bdf in ("bd.tcl", "bd_native.tcl"):
+    # bd_native.tcl checks every proc_sys_reset's derived value after validate_bd_design.
+    for bdf in ("bd_native.tcl",):
         bd = (BOARD / "vivado" / bdf).read_text()
         chk = re.search(r"foreach \{cell want\} \{([^}]*)\}", bd)
         checked = set(chk[1].split()[0::2]) if chk else set()
@@ -77,20 +68,14 @@ def main() -> int:
                 bad.append(f"{bdf}: proc_sys_reset {n} has no post-validation polarity check")
         if "C_EXT_RESET_HIGH {" in bd:
             bad.append(f"{bdf}: C_EXT_RESET_HIGH is read-only in IP integrator; set the source POLARITY")
-    # ---- the LiteDRAM build's copies: the MIG build's board constraints, the core's port list
-    if mem == "litedram":
-        ld = set((BOARD / "constraints/otpu_top_ld.xdc").read_text().split("\n"))
-        for n, line in enumerate((BOARD / "constraints/otpu_top.xdc").read_text().split("\n"), 1):
-            if line.strip() and not line.lstrip().startswith("#") and "mig_" not in line \
-                    and "cal_s1" not in line and line not in ld:
-                bad.append(f"otpu_top.xdc:{n}: not in otpu_top_ld.xdc: {line}")
-        if module_header(CORE, "otpu_litedram") != module_header(CORE_STUB, "otpu_litedram"):
-            bad.append(f"{CORE_STUB.name}: port list differs from {CORE.name}'s (copy it over)")
+    # ---- the lint stub's copy of the core's port list
+    if module_header(CORE, "otpu_litedram") != module_header(CORE_STUB, "otpu_litedram"):
+        bad.append(f"{CORE_STUB.name}: port list differs from {CORE.name}'s (copy it over)")
     # ---- XDC vs ports
-    ports = top_ports(TOPS[mem])
+    ports = top_ports(TOP)
     sites = {l.split()[0] for l in (HERE / "xc7k480t_ffg1156_iob.txt").read_text().split("\n") if l}
     placed, pads = set(), {}
-    for x in XDCS[mem]:
+    for x in XDCS:
         for n, line in enumerate(x.read_text().split("\n"), 1):
             if line.lstrip().startswith("#"):
                 continue
