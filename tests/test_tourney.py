@@ -663,16 +663,18 @@ def test_fmax_prompt_and_xunit(tmp_path):
 
 
 # ------------------------------------------------------------------------------ fmax: the round's full build
-def _run(tmp_path):
+def _run(tmp_path, monkeypatch=None, slots=1):
     from tools.tourney import orchestrator as O
     r = object.__new__(O.Run)
     r.a = type("A", (), {"comp": "otpu_vpu", "target_mhz": 133.33})()
     r.fulldir = tmp_path
+    if monkeypatch is not None:              # free build slots, without asking the hosts
+        monkeypatch.setattr(O.G, "free_build_slots", lambda: slots)
     return O, r
 
 
 def test_full_step_builds_one_candidate(tmp_path, monkeypatch):
-    O, run = _run(tmp_path)
+    O, run = _run(tmp_path, monkeypatch)
     built = []
 
     def fake_full(wt, name, mhz, build_id):
@@ -694,7 +696,7 @@ def test_full_step_builds_one_candidate(tmp_path, monkeypatch):
 
 
 def test_full_step_broken_build(tmp_path, monkeypatch):
-    O, run = _run(tmp_path)
+    O, run = _run(tmp_path, monkeypatch)
 
     def fail(*a):
         raise G.GateFailure("full", "no core_clk timing")
@@ -707,13 +709,61 @@ def test_full_step_broken_build(tmp_path, monkeypatch):
 
 def test_full_step_unconfirmed(tmp_path, monkeypatch):
     """A winner whose second placement does not pass the rule is not accepted."""
-    O, run = _run(tmp_path)
+    O, run = _run(tmp_path, monkeypatch)
     draws = iter([full(wns=-0.20), full(wns=-0.29)])                 # +1.3%, then +0.13%
     monkeypatch.setattr(O.G, "full_design", lambda *a: next(draws))
     recs = [{"id": "s0", "outcome": "candidate", "reason": "a", "ooc_gain": 0.01, "wt": "w0",
              "perf_cycles": 1000}]
     run.full_step(recs, {"full": full(wns=-0.30), "perf_cycles": 1000})
     assert recs[0]["outcome"] == "unconfirmed" and "-0.200 / -0.290" in recs[0]["reason"]
+
+
+def test_full_step_two_free_slots(tmp_path, monkeypatch):
+    """Both hosts free: the two best candidates are built at once; the better one that
+    confirms wins, the other one that passed is the runner-up."""
+    O, run = _run(tmp_path, monkeypatch, slots=2)
+    wns = {"otpu_vpu-s0": -0.25, "otpu_vpu-s1": -0.20, "otpu_vpu-s0-c": -0.25,
+           "otpu_vpu-s1-c": -0.20}
+    built = []
+
+    def fake_full(wt, name, mhz, build_id):
+        built.append(name)
+        return full(wns=wns[name])
+
+    monkeypatch.setattr(O.G, "full_design", fake_full)
+    recs = [{"id": "s0", "outcome": "candidate", "reason": "a", "ooc_gain": 0.03, "wt": "w0"},
+            {"id": "s1", "outcome": "candidate", "reason": "b", "ooc_gain": 0.02, "wt": "w1"},
+            {"id": "s2", "outcome": "candidate", "reason": "c", "ooc_gain": 0.01, "wt": "w2"}]
+    run.full_step(recs, {"full": full(wns=-0.30)})
+    assert sorted(built[:2]) == ["otpu_vpu-s0", "otpu_vpu-s1"]    # both builds, s2 left out
+    assert built[2:] == ["otpu_vpu-s1-c"]                          # s1 scores higher: confirmed
+    assert [x["outcome"] for x in recs] == ["runner_up", "improvement", "not_built"]
+    assert "went to s0, s1" in recs[2]["reason"] and "winner is s1" in recs[0]["reason"]
+
+
+def test_full_step_confirms_the_next(tmp_path, monkeypatch):
+    """The best build's confirmation fails: the next one that passed is confirmed instead."""
+    O, run = _run(tmp_path, monkeypatch, slots=2)
+    wns = {"otpu_vpu-s0": -0.25, "otpu_vpu-s1": -0.20, "otpu_vpu-s1-c": -0.29,
+           "otpu_vpu-s0-c": -0.24}
+    monkeypatch.setattr(O.G, "full_design", lambda wt, name, *a: full(wns=wns[name]))
+    recs = [{"id": "s0", "outcome": "candidate", "reason": "a", "ooc_gain": 0.03, "wt": "w0"},
+            {"id": "s1", "outcome": "candidate", "reason": "b", "ooc_gain": 0.02, "wt": "w1"}]
+    run.full_step(recs, {"full": full(wns=-0.30)})
+    assert [x["outcome"] for x in recs] == ["improvement", "unconfirmed"]
+    assert "confirmed: WNS -0.250 / -0.240 ns" in recs[0]["reason"]
+
+
+def test_free_slots(monkeypatch):
+    monkeypatch.setattr(RM, "_override", lambda: (["a", "b", "c"], {"a": 1, "b": 1, "c": 0}))
+    counts = {"a": 0, "b": 1, "c": 0}
+    assert RM.free_slots(lambda h: counts[h]) == 1              # a free, b full, c capped at 0
+    counts["b"] = 0
+    assert RM.free_slots(lambda h: counts[h]) == 2
+
+    def down(h):
+        raise OSError("ssh")
+    assert RM.free_slots(down) == 0                             # unreachable: no room
 
 
 def test_accept_fmax_counts_cycles():

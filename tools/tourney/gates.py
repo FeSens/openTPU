@@ -382,6 +382,16 @@ def synthesize(wt: Path, comp: dict, backend: str, out: Path,
 
 
 # ------------------------------------------------------------------------------ full design
+def free_build_slots() -> int:
+    """How many full builds the build hosts could start now (at least 1: a round always gets
+    its one build, waiting for a host if none has room)."""
+    from . import remote as R
+    try:
+        return max(R.free_slots(), 1)
+    except Exception:  # noqa: BLE001 -- when in doubt, one build
+        return 1
+
+
 def full_design(wt: Path, name: str, core_mhz: float, build_id: str) -> dict:
     """The whole board built on the build host at core_mhz (the fmax objective's last gate).
     Raises when the build gives no core_clk timing; the accept rule judges the rest."""

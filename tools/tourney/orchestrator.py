@@ -393,16 +393,39 @@ class Run:
         rec["outcome"], rec["reason"] = ("candidate", why) if ok else ("no_gain", f"ooc: {why}")
 
     def full_step(self, recs: list[dict], champ: dict) -> None:
-        """The round's one full build: the candidate with the best OOC gain (ties: slot order).
-        The other candidates are logged `not_built` (their patches stay in patches/)."""
+        """The round's full builds: the candidates with the best OOC gains (ties: slot order),
+        as many at once as the build hosts have free slots (at least one; the others are logged
+        `not_built`, their patches stay in patches/). The builds that pass the rule are
+        confirmed in score order until one confirms; the others that passed are `runner_up`."""
         cands = sorted((x for x in recs if x["outcome"] == "candidate"),
                        key=lambda x: -x.get("ooc_gain", 0.0))
         if not cands:
             return
-        w = cands[0]
-        for x in cands[1:]:
+        n = min(len(cands), G.free_build_slots())
+        build, rest = cands[:n], cands[n:]
+        for x in rest:
             x["outcome"] = "not_built"
-            x["reason"] += f"; the round's one full build went to {w['id']}"
+            x["reason"] += (f"; the round's full build{'s' if n > 1 else ''} went to "
+                            + ", ".join(w["id"] for w in build))
+        if n > 1:
+            print(f"[tourney] {n} free build slots: full builds of "
+                  + ", ".join(w["id"] for w in build), flush=True)
+            with ThreadPoolExecutor(n) as ex:
+                list(ex.map(lambda w: self.full_build(w, champ), build))
+        else:
+            self.full_build(build[0], champ)
+        passed = sorted((w for w in build if w["outcome"] == "improvement"),
+                        key=lambda w: -w["gain"])
+        for k, w in enumerate(passed):
+            if self.confirm(w, champ):
+                for x in passed[k + 1:]:
+                    x["outcome"] = "runner_up"
+                    x["reason"] += f"; the round's winner is {w['id']} (confirmed)"
+                return
+
+    def full_build(self, w: dict, champ: dict) -> None:
+        """A candidate's full build, judged by the full-design rule: outcome `improvement`
+        (to be confirmed), `no_gain` or `broken`."""
         t = time.time()
         try:
             full = G.full_design(Path(w["wt"]), f"{self.a.comp}-{w['id']}", self.a.target_mhz,
@@ -426,30 +449,35 @@ class Run:
         w["outcome"], w["reason"] = ("improvement" if ok else "no_gain"), why
         w["gain"] = A.score((full["fmax"] - champ["full"]["fmax"]) / champ["full"]["fmax"],
                             ad["area_eq"], dc)
-        if not ok:
-            return
-        # confirmation: a second placement of the same tree must pass the rule as well
+
+    def confirm(self, w: dict, champ: dict) -> bool:
+        """The confirmation: a second placement of the same tree must pass the rule as well.
+        False leaves w `unconfirmed`."""
+        full, why = w["_full"], w["reason"]
+        cyc = (champ.get("perf_cycles"), w.get("perf_cycles"))
         t = time.time()
         try:
             conf = G.full_design(Path(w["wt"]), f"{self.a.comp}-{w['id']}-c", self.a.target_mhz,
                                  CONFIRM_BUILD_ID)
         except G.GateFailure as e:
             w["outcome"], w["reason"] = "unconfirmed", why + f"; confirmation build broken: {e.tail[-300:]}"
-            return
+            return False
         finally:
-            w["gate_seconds"]["confirm"] = round(time.time() - t, 1)
+            w.setdefault("gate_seconds", {})["confirm"] = round(time.time() - t, 1)
         w["confirm"] = {q: conf.get(q) for q in ("period", "wns", "whs", "fmax", "lut", "lutram",
                                                   "ff", "dsp", "bram36", "congested", "host")}
         ok2, why2 = A.accept_fmax(champ["full"], conf, *cyc)
         both = f"WNS {full['wns']:+.3f} / {conf['wns']:+.3f} ns (build / confirmation)"
         if not ok2:
             w["outcome"], w["reason"] = "unconfirmed", f"{why}; confirmation failed: {why2}; {both}"
-            return
+            return False
         w["reason"] = f"{why}; confirmed: {both}"
         # rank on the worse of the two draws
         w["gain"] = min(w["gain"], A.score((conf["fmax"] - champ["full"]["fmax"]) /
                                            champ["full"]["fmax"],
-                                           A.area_delta(champ["full"], conf)["area_eq"], dc))
+                                           A.area_delta(champ["full"], conf)["area_eq"],
+                                           w["cycles_delta"]))
+        return True
 
     # ---- rounds
     def round(self, r: int) -> None:

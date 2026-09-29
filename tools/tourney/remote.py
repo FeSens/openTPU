@@ -164,6 +164,14 @@ def _count(count, host: str) -> int:
         return 1 << 20
 
 
+def free_slots(count=jobs) -> int:
+    """Vivado jobs the build hosts could start now (their caps less what runs there; an
+    unreachable host counts as full). A round full-builds that many candidates at once."""
+    o_hosts, caps = _override()
+    return sum(max(max_jobs_on(h, MAX_JOBS, caps) - _count(count, h), 0)
+               for h in (o_hosts or HOSTS))
+
+
 @contextmanager
 def acquire(poll: int = 60, count=jobs, sleep=time.sleep, log=print, max_jobs: int = MAX_JOBS,
             hosts: list[str] | None = None):

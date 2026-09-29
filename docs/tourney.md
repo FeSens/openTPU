@@ -198,9 +198,13 @@ A winner is **confirmed** before it becomes the champion: a second full build of
 with another `BUILD_ID` constant (another netlist hash, so another placement: Vivado has no
 placer seed) must pass the same rule; otherwise the slot ends `unconfirmed`. The reason and
 `WINNERS.jsonl` give both builds' WNS, and the score used is the worse draw's. At the OOC step a unit also earns the full build with area_eq -1% at no more than -1% OOC
-fmax, and the round's one full build goes to the best OOC score (the same combination). The
-steps are smaller than place-and-route noise (0.1-0.2 ns between builds here), hence the
-confirmation build.
+fmax. The round's full builds go to the best OOC scores (the same combination), as many at
+once as the build hosts have free slots when the OOC step ends (`remote.free_slots`: each
+host's cap in `/tmp/otpu-tourney-hosts` less the Vivado jobs running there, anyone's; at least
+one, which waits for a host). The builds that pass are confirmed in score order until one
+confirms; that one is the round's winner, the others that passed end `runner_up`, the
+candidates left unbuilt `not_built`. The steps are smaller than place-and-route noise
+(0.1-0.2 ns between builds here), hence the confirmation build.
 
 Accepted winners are also appended to `runs/fmax/WINNERS.jsonl` (component, commit, reason,
 score, full result, area changes, perf cycles).
@@ -331,7 +335,7 @@ omarchy. "Estimate" numbers have not been run.
 | agent cost | about $1.8 per slot on area prompts. The fmax prompt adds the full-design reports (about 10k tokens), and `otpu_xunit` about 40k tokens of source: **about $2-4 per slot, $4-8 per round** | measured / estimate |
 | test gates | lint 2 s, fast 26 s, board 7 s, perf 29 s per slot on the Mac. On omarchy (`EXEC=remote`, 2 at a time) add about 3-5 s of shipping per gate and the niced CPU: about 2-4 min per round (`otpu_fp`, which runs the whole RTL suite: about 30 min+) | measured (Mac) / estimate (omarchy) |
 | OOC | 2 jobs in parallel, **about 10-40 min each** (the champion's once per commit per component) | estimate, not run yet |
-| full build | **at most one per round**, 40-85 min per build (39, 73 and 84 min on omarchy; `JOBS=2` is at the slow end), plus the champion's when main moves | build host |
+| full build | **one per round, two when both hosts have a free slot** (built at once), 40-85 min per build (39, 73 and 84 min on omarchy; `JOBS=2` is at the slow end), plus the champion's when main moves | build host |
 | **round** | **about 1.5-2.5 h wall; 80-170 Vivado-minutes; 6 Opus calls** | estimate |
 
 One pass over the 11 components is about 11 rounds: **roughly 16-28 hours** and 66 Opus calls,
