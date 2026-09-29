@@ -306,7 +306,9 @@ The full semantics, the descriptor format and the model mappings (Gated DeltaNet
 KDA, GLA, RetNet, Mamba2, mLSTM, RWKV-7, RMSNorm, attention's reductions) are in
 [stream.md](stream.md). The ISA simulator runs all of it.
 
-The board runs the subset `opentpu.isa.stream_hw_cfg` accepts, announced by CAPS bit26:
+The board runs the subset `opentpu.isa.stream_hw_cfg` accepts, announced by **CAPS bit26 =
+STREAM** (`regs.CAP_STREAM`; bit26 is taken; the full CAPS list is the register table in
+[observability.md](observability.md)):
 - DRAM state in place, rows ≤ 256, cols 64..256;
 - the state-step modes.
 
