@@ -274,7 +274,11 @@ module otpu_se_comp
   logic         lp_v, ret, fin;
   assign lp_v = vpos[T-1];
   assign fin  = (lp_m.pass + 4'd1 >= n_pass(lp_m.cls));
-  assign ret  = lp_v && !fin;             // it returns to S0 this cycle
+  // ret: it returns to S0 this cycle (= lp_v && !fin), decided a cycle early from the chunk
+  // entering the loop register, with S0's control for it (uc_rt): S0's operand selects then
+  // leave flip-flops
+  logic         ret_r;
+  assign ret  = ret_r;
   assign hold = cpos[T - HA - 1];         // it will return HA cycles from now
   assign out_v = lp_v && fin;
   assign out_m = lp_m.mask;
@@ -322,11 +326,25 @@ module otpu_se_comp
     end
   end
   always_ff @(posedge clk) if (en) lp_m <= mp[NS - 1];
+  uc_t uc_rt;
+  always_ff @(posedge clk)
+    if (rst) ret_r <= 1'b0;
+    else if (en) ret_r <= vpos[T-2] && (mp[NS - 1].pass + 4'd1 < n_pass(mp[NS - 1].cls));
+  always_ff @(posedge clk)
+    if (en) uc_rt <= ucode(mp[NS - 1].cls, (int'(mp[NS - 1].pass) + 1) * NS);
+`ifndef SYNTHESIS
+  always_ff @(posedge clk)
+    if (!rst && ret != (lp_v && !fin)) $fatal(1, "otpu_se_comp: ret out of step");
+`endif
 
   // per-stage control: operand selects and constants at the input, destination at the output
   uc_t uci [NS], uco [NS];
   for (genvar s = 0; s < NS; s++) begin : g_uc
-    assign uci[s] = ucode(mi[s].cls, int'(mi[s].pass) * NS + s);
+    if (s == 0) begin : g_u0
+      assign uci[s] = ret ? uc_rt : ucode(f_cc(in_f), 0);
+    end else begin : g_un
+      assign uci[s] = ucode(mi[s].cls, int'(mi[s].pass) * NS + s);
+    end
     assign uco[s] = ucode(mo[s].cls, int'(mo[s].pass) * NS + s);
   end
   // RR's flags, from the meta after S0: EXP2's range reduction / LOG2's i2f(e), pass 0 only
