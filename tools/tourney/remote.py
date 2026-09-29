@@ -177,15 +177,18 @@ def acquire(poll: int = 60, count=jobs, sleep=time.sleep, log=print, max_jobs: i
             hosts: list[str] | None = None):
     """Blocks until a host (in priority order) runs fewer than max_jobs Vivado jobs, then holds
     the local start lock while the caller starts its job there (release happens once the job is
-    visible remotely, i.e. when the with-block ends). Yields (host, jobs running there)."""
+    visible remotely, i.e. when the with-block ends). Yields (host, jobs running there).
+    Without `hosts`, the hosts file is re-read at every poll, so a wait that started at cap 0
+    picks up a raised cap (or a host taken out of the list)."""
     caps = None
-    if hosts is None:
-        o_hosts, o_jobs = _override()
-        hosts, caps = o_hosts or HOSTS, o_jobs
+    from_file = hosts is None
     START_LOCK.parent.mkdir(parents=True, exist_ok=True)
     with START_LOCK.open("w") as f:
         waited = False
         while True:
+            if from_file:
+                o_hosts, caps = _override()
+                hosts = o_hosts or HOSTS
             fcntl.flock(f, fcntl.LOCK_EX)
             ns = []
             for h in hosts:

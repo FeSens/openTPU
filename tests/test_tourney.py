@@ -494,6 +494,27 @@ def test_acquire_hosts_file_overrides(tmp_path, monkeypatch):
         assert (h, n) == ("b", 0)                  # a is at its file cap of 1
 
 
+def test_acquire_rereads_hosts_file_while_waiting(tmp_path, monkeypatch):
+    """A wait that started with every host capped at 0 takes the raised cap (and the shorter
+    host list) written while it waits."""
+    monkeypatch.setattr(RM, "START_LOCK", tmp_path / "v.lock")
+    monkeypatch.setattr(RM, "HOSTS_FILE", tmp_path / "hosts")
+    monkeypatch.setattr(RM, "HOSTS", ["a"])
+    hf = tmp_path / "hosts"
+    hf.write_text("hosts=a,b\njobs=a=0,b=0\n")
+    counted = []
+
+    def count(h):
+        counted.append(h)
+        return 1 if h == "b" else 0
+
+    def sleep(s):
+        hf.write_text("hosts=b\njobs=a=0,b=2\n")
+    with RM.acquire(poll=1, count=count, sleep=sleep, log=lambda m: None, max_jobs=2) as (h, n):
+        assert (h, n) == ("b", 1)
+    assert counted == ["a", "b", "b"]              # a is no longer counted after the edit
+
+
 def test_acquire_serializes_starts(tmp_path, monkeypatch):
     """Two threads see room for one more job; the start lock makes the second re-count after
     the first has started (count goes 1 -> 2 once a job is started)."""
