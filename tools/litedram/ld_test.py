@@ -66,15 +66,18 @@ class MT41K256M8_tRFC160(MT41K256M8):
 
 
 class CRG(LiteXModule):
-    def __init__(self, platform, f, dqs_phase, two=False):
+    """clk50: the 50 MHz clock after its BUFG (production's top shares it with the core clock's
+    MMCM), or None: the pad, buffered here (the test image)."""
+    def __init__(self, platform, f, dqs_phase, two=False, clk50=None):
         self.rst = Signal()
         self.cd_sys = ClockDomain()
         self.cd_sys4x = ClockDomain()
         self.cd_sys4x_dqs = ClockDomain()
         self.cd_idelay = ClockDomain()
-        clk50_pad = platform.request("clk50")
-        clk50 = Signal()
-        self.specials += Instance("BUFG", i_I=clk50_pad, o_O=clk50)   # feeds an MMCM and a PLL
+        if clk50 is None:
+            clk50_pad = platform.request("clk50")
+            clk50 = Signal()
+            self.specials += Instance("BUFG", i_I=clk50_pad, o_O=clk50)   # an MMCM and a PLL
         # MMCM, integer multiply / divide (fine phase shift needs it): 50 / 3 * 64 = 1066.67 MHz
         # VCO for DDR3-1066 (133.33 / 533.33), 50 * 16 = 800 for DDR3-800 (100 / 400)
         self.mmcm = mmcm = S7MMCM(speedgrade=-2, fractional=False)

@@ -33,7 +33,7 @@ TAP_PS = 1e12 / (32 * 2 * 200e6)   # IDELAYE2 tap at a 200 MHz reference: 78.125
 SEEDS = (42, 84, 36)
 
 
-PREFIXES = ("ddrphy", "sdram", "bist", "phase")
+PREFIXES = ("ddrphy", "sdram", "bist", "phase", "ecc", "cal")
 
 
 class Chan:
@@ -553,11 +553,16 @@ def calibrate_channel(csr, config, stride=1, mib=64, log=print):
     """One channel from reset to the controller: the DQS phase scan (a BIST traffic test per
     phase when the channel has one, else the DFII check only), the phase at the centre of the
     window common to all lanes, write latency and read leveling there, then the controller
-    takes the PHY. Returns the result; raises CalError when no phase or calibration works."""
+    takes the PHY and (production's core, tools/litedram/gen_core.py) cal_ready goes to 1; it
+    is 0 from the start. The scan writes over the channel's first `mib` MiB. Returns the
+    result; raises CalError when no phase or calibration works."""
     d = Dram(csr, config)
     dqs = DqsPhase(csr, d.phy["vco_hz"])
     period = round(56 * d.phy["vco_hz"] / (4 * d.phy["sys_hz"]))     # fine steps per tCK
     has_bist = has_csr(csr, "bist_start")
+    has_ready = has_csr(csr, "cal_ready")          # production's core: the accelerator waits for it
+    if has_ready:
+        csr.w("cal_ready", 0)
     table = dqs_scan(d, dqs, period, stride, csr=csr if has_bist else None, mib=mib, show=False)
     per, common, pick, run = margins(table, d.nm, period=period)
     if pick is None:
@@ -568,6 +573,8 @@ def calibrate_channel(csr, config, stride=1, mib=64, log=print):
         raise CalError(f"calibration at DQS step {dqs.steps()} failed: write latency {wl}, "
                        f"errors per lane {err}")
     d.hardware()
+    if has_ready:
+        csr.w("cal_ready", 1)
     res = {"dqs_steps": dqs.steps(), "window_steps": len(run) * stride,
            "window_ps": round(len(run) * stride * dqs.step_ps), "traffic_checked": has_bist,
            "write_latency": wl, "read": [{"taps": n, "bitslip": b, "tap": s + n // 2}
