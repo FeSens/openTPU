@@ -96,6 +96,17 @@ foreach f $late {
   }
 }
 
+# FLOORPLAN=1 (run_vivado.sh): soft Pblocks that keep the accelerator's units by their partners
+# (constraints/otpu_floorplan.tcl), unmanaged Tcl read late in implementation like the crossings
+# above; off by default
+if {[info exists ::env(OTPU_FLOORPLAN)] && $::env(OTPU_FLOORPLAN) ni {"" 0}} {
+  set fp $cons/otpu_floorplan.tcl
+  add_files -fileset constrs_1 -norecurse $fp
+  set_property PROCESSING_ORDER LATE [get_files $fp]
+  set_property USED_IN_SYNTHESIS false [get_files $fp]
+  puts "floorplan: $fp"
+}
+
 # ---- strategies: timing-driven, the accelerator is the critical part. OTPU_FAST=1 (run_vivado.sh
 # FAST=1): a development build at a relaxed clock (CORE_MHZ 100), with Vivado's default synthesis
 # (no retiming) and implementation (build.tcl: no post-route phys_opt, no impl_directives.tcl)
