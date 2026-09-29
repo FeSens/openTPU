@@ -69,6 +69,20 @@ set_property -dict [list \
 ] $clk
 connect_bd_net [get_bd_ports sys_clk_50] [get_bd_pins clk_wiz_0/clk_in1]
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_ports core_clk]
+# With one output the wizard picks its own M / D / O and may miss VCO / CORE_DIV
+# (133.33: M 62.625, D 4, O 5.875 = 133.245 MHz; 150: 148.828 for 148.837) and validation fails
+# on core_clk's FREQ_HZ. Then the MMCM settings are the ones above, in override mode. Where the
+# wizard's own are exact they stay (100: M 20 / O 10, VCO 1000, the qualified images; 120.755).
+if {[get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/core_clk]] != $CORE_HZ} {
+  set_property -dict [list CONFIG.OVERRIDE_MMCM {true} CONFIG.MMCM_DIVCLK_DIVIDE {1} \
+    CONFIG.MMCM_CLKFBOUT_MULT_F [format %.3f [expr {$VCO / 50.0}]] \
+    CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV] $clk
+}
+# core_clk as the MMCM makes it: the port's FREQ_HZ and create_project.tcl's CORE_KHZ assume it
+set f [get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/core_clk]]
+if {$f != $CORE_HZ} { error "bd_native.tcl: the clock wizard makes core_clk at $f Hz, not $CORE_HZ" }
+puts "core_clk: $f Hz (MMCM M [get_property CONFIG.MMCM_CLKFBOUT_MULT_F $clk],\
+  D [get_property CONFIG.MMCM_DIVCLK_DIVIDE $clk], O [get_property CONFIG.MMCM_CLKOUT0_DIVIDE_F $clk])"
 
 # core reset: until the MMCM locks, and while the host asserts PCIe PERST#
 set rst_core [create_bd_cell -type ip -vlnv [ip_vlnv proc_sys_reset] rst_core]
