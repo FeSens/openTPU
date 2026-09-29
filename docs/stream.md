@@ -479,34 +479,32 @@ parameters to it. Both 0 is v1, and the 05:00 checkpoint picks the values.
 
 ### 11.1 otpu_se_comp (owner se-v2), inside otpu_vpu
 
+The module as built (rtl/vpu/otpu_se_comp.sv, branch se-v2):
+
 ```systemverilog
 module otpu_se_comp import otpu_pkg::*; import otpu_fp::*;
-#(parameter int LANES = 8, parameter int MW = 64) (   // MW: the core's opaque chunk meta
-  input  logic clk, rst, en,                          // en: the VPU's enable (VOP mode)
-  input  logic             in_v,                      // a composite chunk enters (at S0's mux)
-  input  logic [7:0]       in_f,                      // V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2
-  input  f32_t             in_a [LANES], in_b [LANES],// in_b: EXP2SUB's B
-  input  logic [LANES-1:0] in_m,
-  input  logic [MW-1:0]    in_meta,
-  output logic             hold,     // S0 is taken HOLD_AHEAD = 2 en-cycles from now: issue no chunk then
-  output logic [2:0]       st_sel,   // stage s (0 S0, 1 U, 2 Q) takes comp's operands this cycle
-  output f32_t             st_a [3][LANES], st_b [3][LANES], st_c [3][LANES], st_e [3][LANES],
-  input  f32_t             st_y [3][LANES],           // stage s's result, SL en-cycles later
-  output logic             out_v,                     // the result chunk, a fixed latency L(f) after in_v
-  output f32_t             out_d [LANES],
-  output logic [LANES-1:0] out_m,
-  output logic [MW-1:0]    out_meta);
+#(parameter int LANES = 8, NS = 3,     // NS stages per lane: S0 (slot 0), U, Q
+  parameter int MW = 1,                // meta bits carried with a chunk
+  parameter int HA = 2,                // `hold` leads the S0 cycle it protects by HA cycles
+  parameter bit EXT = 1'b0) (          // 1: the stage units are the owner's (in SE)
+  input  logic clk, rst, en,
+  input  logic in_v, input logic [7:0] in_f, input logic [MW-1:0] in_m,
+  input  f32_t in_x [LANES], in_y [LANES],             // A, and EXP2SUB's B
+  output logic hold,                                   // an entry HA cycles from now would collide
+  output logic out_v, output logic [MW-1:0] out_m, output f32_t out_d [LANES],
+  output logic u_sel [NS],                             // stage s takes u_a*u_b + u_c this cycle
+  output f32_t u_a [NS][LANES], u_b [NS][LANES], u_c [NS][LANES],
+  input  f32_t u_y [NS][LANES]);                       // its result, SL = 7 en-cycles later
 ```
 
-- **Core side (R-A).**
-  - S0's operand mux takes `st_*[0]` when `st_sel[0]`.
-  - Issue respects `hold`.
-  - `out_*` joins the write path in start order. The core's latency rule stays: L(f) is a
-    fixed function of the function, so an elementwise VOP starts only when its latency ≥
-    those in flight.
-  - `st_y[0]` is S0's result.
-- **Standalone test (se-v2).** The module with generic stage models (parameter EXT = 0),
-  bit-exact against fp32.py on specials and random values.
+- **Stages are y = a*b + c.** S0 and U are otpu_fmma, run with e = 1.0 (c*1 = c for every
+  flushed value). Q is fmul + fadd.
+- **Timing.** T = NS*SL + RR (3) + 1 = 25 cycles from S0 to S0. A chunk with P passes finishes
+  P*T cycles after it enters: EXP2/EXP2SUB 3 passes, RECIP 2, RSQRT/LOG2 4. Chunks finish in
+  entry order under the VPU's latency rule.
+- **Core side (R-A).** S0's input registers take u_*[0] when u_sel[0]. Issue holds when `hold`
+  is set: read address → mi → m0 → S0 is HA = 2. out_* joins the write path. u_*[1] and
+  u_*[2] go to the tail's U and Q.
 
 ### 11.2 otpu_se_tail additions
 
@@ -516,8 +514,8 @@ The owner is se-tail (R-B). se-v2 may make the COMP8 part on its branch, and str
   // COMP8: the tail's U and Q as generic stages for otpu_se_comp in VOP mode
   input  logic        cm,                        // VOP mode (!ss_gnt): U and Q advance on cen
   input  logic        cen,                       // the VPU's en
-  input  logic        u_sel, input f32_t u_a [LANES], u_b [LANES], u_c [LANES], u_e [LANES],
-  output f32_t        u_y [LANES],               // SL cen-cycles after u_sel
+  input  logic        u_sel, input f32_t u_a [LANES], u_b [LANES], u_c [LANES],
+  output f32_t        u_y [LANES],               // a*b + c (e = 1), SL cen-cycles after u_sel
   input  logic        q_sel, input f32_t q_a [LANES], q_b [LANES], q_c [LANES],
   output f32_t        q_y [LANES],               // a*b + c, SL cen-cycles after q_sel
   // ONE_TREE: Q's final partials to the core's u_vt, its root back
