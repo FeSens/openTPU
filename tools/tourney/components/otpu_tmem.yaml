@@ -25,6 +25,7 @@ synth:
 target_mhz: 110
 tests:
   fast:
+  - tests/test_perf.py
   - tests/test_rtl.py::test_mlp_rtl[1]
   - tests/test_rtl.py::test_attention_decode_rtl[1-8-2-100]
   - tests/test_rtl.py::test_design_size_block_128_rtl
