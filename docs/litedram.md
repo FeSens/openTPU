@@ -920,11 +920,11 @@ up calibrated, and the host only reads the result.
   - every PHY, controller and BIST CSR access leaves the SoC on a port that the testbench
     serves from a `FakeBoard`;
   - the CSR write sequence equals `ddrcal`'s (643,724 writes at stride 16, 1,064,298 at
-    stride 8), `c0_ready` / `c1_ready` rise, and the decoded results equal `ddrcal`'s;
+    stride 8; 6,951,674 at stride 1 with the binary in the card's test image, run from reset
+    as on the card), `c0_ready` / `c1_ready` rise, and the decoded results equal `ddrcal`'s;
   - held mid-scan, the CPU makes no access in the next 2M cycles; released, it calibrates both
     channels again.
-- **Time:** 31 ms per scan step in simulation (**measured**, the simulated BIST completes at
-  once). That makes about 3.5 s per channel at stride 1, plus about 2 s of BIST
-  (113 x 2 x 64 MiB at ~7.7 GB/s): about 5.5 s per channel (**estimate**), against 25 s from
-  the host. The CPU spends most of its time on instructions (CPI about 2.5, no bypassing),
+- **Time:** 2.9 s per channel at stride 1 in simulation, 25 ms per scan step (**measured**;
+  the simulated BIST completes at once). With the BIST (113 x 2 x 64 MiB at ~7.7 GB/s, about
+  2 s) that is about 5 s per channel (**estimate**), against 25 s from the host. The CPU spends most of its time on instructions (CPI about 2.5, no bypassing),
   not on the bus (a CSR access on the bus in 2% of the cycles).
