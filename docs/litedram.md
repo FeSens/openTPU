@@ -200,6 +200,46 @@ What goes away: the SmartConnect, the MIG AXI front end, and `otpu_axi_dram`'s A
 (CHASH), the store gathering and read-modify-write, the A prefetch runs, the reserved response
 room and `wr_idle`.
 
+**The adapter as built** (2026-09-29): `rtl/mem/otpu_native_dram.sv`, one native master per
+channel for `otpu_mem_ch`, selected in `otpu_board` by `MEM_NATIVE` (default 0: production keeps
+`otpu_axi_dram`). Its header comment has the details; in short:
+
+- **One command per beat, per core cycle and channel**, from the A queue (a run of APF read
+  commands, or a byte-enabled write), the SW queue's fill reads and writes, and the B queue.
+  Write data goes with its command; partial beats of ports A and B keep their byte mask (the
+  channel module does the read-modify-write). The SW port keeps its gather and read-fill.
+- **Read data** returns in command order, so a tag FIFO per channel routes each beat to B, A or
+  an SW slot; room is reserved before a read goes out, and simulation checks for overflow.
+- **Ordering by the command stream instead of write responses.** An SW fill read waits until
+  the older SW writes of its beat have entered the stream, not until they are done. A write
+  drops the A run or reused beat it touches when it goes out, not when it is answered.
+  `wr_idle` waits for `n_wdone`.
+- **Simulation:** `sim/verilator/otpu_native_mem.sv` (random command and write-data
+  backpressure, in-order read data with jitter, late `n_wdone`, the DDR3 bank model of
+  `otpu_axi_mem`); `OTPU_NATIVE=1` runs the AXI-path tests and the board model on it.
+- **Area, yosys** (`synth_xilinx`, **measured**): 10,620 LUTs, 3,364 FFs, 1,492 LUT RAM cells,
+  against `otpu_axi_dram`'s 13,464, 4,914 and 1,880. Logic depth 4.57 ns against 6.01 ns.
+- **Cycles, simulation (measured,** `tools/litedram/path_bench.py`**):** the DDR3-1066 bank
+  model at 120.755 MHz and 300 ns latency, the AXI path with its fitted per-transaction costs
+  (as calibrated on the card) / without them / native:
+
+  | Workload | AXI | AXI, no costs | native |
+  |---|---|---|---|
+  | Qwen3-0.6B decode, 2 layers, pos 300 | 1,736,120 | 1,534,272 | 1,548,978 (-10.8%) |
+  | fp4 weight stream, 2 MB (`rw_bench mm`) | 20,068 | 17,760 | 17,900 (-10.8%) |
+  | the same beside 64 KiB loads (`mm+ld`) | 140,487 | 140,566 | 142,222 (+1.2%) |
+  | the same beside 64 KiB stores (`mm+st`) | 141,932 | 140,482 | 137,441 (-3.2%) |
+  | transposed V append, 4 tokens | 15,375 | 10,593 | 11,706 (-23.9%) |
+  | K append, 16 tokens | 13,624 | 13,063 | 12,047 (-11.6%) |
+
+  The percentages are against the AXI path with its costs, the one the card has. `mm+ld` is the
+  native model's lookahead: with 256 cycles of it instead of 16, 140,897 (+0.3%).
+- **Limit:** one command per core cycle and channel is 90.6% of DDR3-1066's peak at 120.755 MHz,
+  the same as port B's cap, but B, A and SW traffic now share it (AXI's read and write channels
+  did not). Decode saturates it (0.98 read beats per cycle and channel), which is most of the 1%
+  to the cost-free AXI model; a transposed V append needs two commands per beat (the fill read
+  and the write). A second command per cycle, or a faster command clock, would lift it.
+
 ## 4. Measured
 
 ### Area and timing

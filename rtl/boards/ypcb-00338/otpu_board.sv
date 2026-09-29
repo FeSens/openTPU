@@ -1,7 +1,10 @@
 // The accelerator as built for the YPCB-00338 board: one slice, the DRAM adapter onto the two
 // DDR3 channels (AXI4 masters m0/m1, 512-bit, single beats) and the host control registers
 // (AXI4-Lite slave). Everything runs on the core clock; the block design's interconnect does
-// the clock and width conversion to the memory controllers and the PCIe bridge. The control
+// the clock and width conversion to the memory controllers and the PCIe bridge. With MEM_NATIVE
+// the adapter is otpu_native_dram instead, on the channels' native ports n_* (one command per
+// 64-byte beat, for otpu_mem_ch: LiteDRAM's native port or the MIG's native interface), and the
+// AXI masters are tied off; without it the n_* outputs are. The control
 // block also holds the free-running activity counters and reads out the hardware trace
 // (otpu_trace; docs/observability.md); it also drives the I2C pins low when the host asks and
 // reads their levels back (the host bit-bangs I2C).
@@ -34,7 +37,8 @@ module otpu_board #(
   parameter int AXI_WBL     = 8,       // port B write burst, beats (1: single-beat writes; <= 8, bd.tcl)
   parameter bit HAS_I2C     = 1'b1,    // the I2C pins are wired (CAPS bit2)
   parameter bit CHASH       = 1'b1,    // hashed channel interleave (otpu_axi_dram; CAPS bit7)
-  parameter bit DSTEP       = 1'b1     // the DMA's DSTEP datapath (CAPS bit6; 0 leaves it out)
+  parameter bit DSTEP       = 1'b1,    // the DMA's DSTEP datapath (CAPS bit6; 0 leaves it out)
+  parameter bit MEM_NATIVE  = 1'b0     // the memory adapter drives the native ports n_*, not m0/m1
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
@@ -137,7 +141,19 @@ module otpu_board #(
   input  logic [1:0]   m1_axi_rresp,
   input  logic         m1_axi_rlast,
   input  logic         m1_axi_rvalid,
-  output logic         m1_axi_rready
+  output logic         m1_axi_rready,
+  // ---- memory channels 0 and 1 ([1:0]): native masters (MEM_NATIVE; otpu_native_dram)
+  output logic [1:0]        n_cvalid,
+  input  logic [1:0]        n_cready,
+  output logic [1:0]        n_cwe,
+  output logic [1:0][24:0]  n_caddr,   // the 64-byte beat in the channel (address bits 30:6)
+  output logic [1:0]        n_wvalid,  // write data: a beat per write command, in their order
+  input  logic [1:0]        n_wready,
+  output logic [1:0][511:0] n_wdata,
+  output logic [1:0][63:0]  n_wmask,   // 1 = write the byte
+  input  logic [1:0]        n_rvalid,  // read data in read-command order, no backpressure
+  input  logic [1:0][511:0] n_rdata,
+  input  logic [1:0][15:0]  n_wdone    // write beats the controller has taken (mod 2^16)
 );
   import otpu_pkg::*;
 
@@ -211,8 +227,10 @@ module otpu_board #(
     .mxu_busy(pf.sq.busy[U_MXU]), .mxu_mac(pf.mac), .mxu_starve(pf.starve),
     .vpu_busy(pf.sq.busy[U_VPU]),
     .qnt_busy(pf.sq.busy[U_Q]), .dma_busy(pf.sq.busy[U_DMA]), .tmem_deny(pf.deny),
-    .dram_rd(2'(rvalid[0] && rready[0]) + 2'(rvalid[1] && rready[1])),
-    .dram_wr(2'(wvalid[0] && wready[0]) + 2'(wvalid[1] && wready[1])),
+    .dram_rd(MEM_NATIVE ? 2'(n_rvalid[0]) + 2'(n_rvalid[1])
+                        : 2'(rvalid[0] && rready[0]) + 2'(rvalid[1] && rready[1])),
+    .dram_wr(MEM_NATIVE ? 2'(n_wvalid[0] && n_wready[0]) + 2'(n_wvalid[1] && n_wready[1])
+                        : 2'(wvalid[0] && wready[0]) + 2'(wvalid[1] && wready[1])),
     .dram_wait((b_req && !b_rdy) || (a_req && !a_rdy) || (sw_req && !sw_rdy)),
     .instr(pf.sq.ret),
     .tr_en, .tr_stop, .tr_clear, .tr_addr, .tr_count, .tr_drop, .tr_busy, .tr_rdata,
@@ -263,26 +281,64 @@ module otpu_board #(
     .r_en(coll_ren), .r_addr(coll_raddr), .r_data(coll_rdata),
     .w_en(coll_wen), .w_addr(coll_waddr), .w_data(coll_wdata));
 
-  // ---- memory
-  logic [1:0][31:0]  awaddr, araddr;
-  logic [1:0][7:0]   arlen, awlen;
-  logic [1:0]        wlast;
-  logic [1:0][511:0] wdata, rdata;
-  logic [1:0][63:0]  wstrb;
+  // ---- memory. u_mem, the AXI adapter, keeps its place in the hierarchy (the build's reports
+  // and tools name it); with MEM_NATIVE it takes no requests, nothing uses its outputs (the AXI
+  // masters are tied off) and synthesis removes it, and g_native.u_nmem serves the slice.
+  logic [1:0][31:0]  awaddr, araddr, x_awaddr, x_araddr;
+  logic [1:0][7:0]   arlen, awlen, x_arlen, x_awlen;
+  logic [1:0]        wlast, x_wlast;
+  logic [1:0][511:0] wdata, rdata, x_wdata;
+  logic [1:0][63:0]  wstrb, x_wstrb;
   logic [1:0][1:0]   bresp, rresp;
+  logic [1:0]        x_awvalid, x_awid, x_wvalid, x_bready, x_arvalid, x_arid, x_rready;
+  logic        x_a_rdy, x_a_rvalid, x_sw_rdy, x_b_rdy, x_b_rvalid, x_b_rtag, x_wr_idle;
+  logic [31:0] x_a_rdata, x_a_rdata2;
+  logic [D*8-1:0] x_b_rdata;
   otpu_axi_dram #(.D(D), .BL(AXI_BL), .WBL(AXI_WBL), .CHASH(CHASH), .BASE0(BASE0), .BASE1(BASE1)) u_mem (
     .clk, .rst,
-    .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
-        .a_be_x(a_be), .a_rvalid, .a_rdata, .a_rdata2,
-    .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
-    .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
-    .wr_idle,
-    .m_awvalid(awvalid), .m_awready(awready), .m_awaddr(awaddr), .m_awid(awid), .m_awlen(awlen),
-    .m_wvalid(wvalid), .m_wready(wready), .m_wdata(wdata), .m_wstrb(wstrb), .m_wlast(wlast),
-    .m_bvalid(bvalid), .m_bready(bready), .m_bid(bid), .m_bresp(bresp),
-    .m_arvalid(arvalid), .m_arready(arready), .m_araddr(araddr), .m_arlen(arlen), .m_arid(arid),
-    .m_rvalid(rvalid), .m_rready(rready), .m_rid(rid), .m_rdata(rdata), .m_rresp(rresp),
+    .a_rdy_x(x_a_rdy), .a_req_x(a_req && !MEM_NATIVE), .a_we_x(a_we), .a_addr_x(a_addr),
+        .a_wdata_x(a_wdata), .a_be_x(a_be), .a_rvalid(x_a_rvalid), .a_rdata(x_a_rdata),
+        .a_rdata2(x_a_rdata2),
+    .sw_rdy(x_sw_rdy), .sw_req(sw_req && !MEM_NATIVE), .sw_addr, .sw_wdata, .sw_be,
+    .b_rdy(x_b_rdy), .b_req(b_req && !MEM_NATIVE), .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr,
+        .b_rvalid(x_b_rvalid), .b_rtag(x_b_rtag), .b_rdata(x_b_rdata),
+    .wr_idle(x_wr_idle),
+    .m_awvalid(x_awvalid), .m_awready(awready), .m_awaddr(x_awaddr), .m_awid(x_awid),
+    .m_awlen(x_awlen), .m_wvalid(x_wvalid), .m_wready(wready), .m_wdata(x_wdata),
+    .m_wstrb(x_wstrb), .m_wlast(x_wlast),
+    .m_bvalid(bvalid), .m_bready(x_bready), .m_bid(bid), .m_bresp(bresp),
+    .m_arvalid(x_arvalid), .m_arready(arready), .m_araddr(x_araddr), .m_arlen(x_arlen),
+    .m_arid(x_arid),
+    .m_rvalid(rvalid), .m_rready(x_rready), .m_rid(rid), .m_rdata(rdata), .m_rresp(rresp),
     .m_rlast(rlast), .err(axi_err));
+  assign {awvalid, awid, wvalid, bready, arvalid, arid, rready} = MEM_NATIVE ? '0
+      : {x_awvalid, x_awid, x_wvalid, x_bready, x_arvalid, x_arid, x_rready};
+  assign {awaddr, awlen, wdata, wstrb, wlast, araddr, arlen} = MEM_NATIVE ? '0
+      : {x_awaddr, x_awlen, x_wdata, x_wstrb, x_wlast, x_araddr, x_arlen};
+
+  if (MEM_NATIVE) begin : g_native
+    logic        y_a_rdy, y_a_rvalid, y_sw_rdy, y_b_rdy, y_b_rvalid, y_b_rtag, y_wr_idle;
+    logic [31:0] y_a_rdata, y_a_rdata2;
+    logic [D*8-1:0] y_b_rdata;
+    otpu_native_dram #(.D(D), .CHASH(CHASH)) u_nmem (
+      .clk, .rst,
+      .a_rdy_x(y_a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+          .a_be_x(a_be), .a_rvalid(y_a_rvalid), .a_rdata(y_a_rdata), .a_rdata2(y_a_rdata2),
+      .sw_rdy(y_sw_rdy), .sw_req, .sw_addr, .sw_wdata, .sw_be,
+      .b_rdy(y_b_rdy), .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr,
+          .b_rvalid(y_b_rvalid), .b_rtag(y_b_rtag), .b_rdata(y_b_rdata),
+      .wr_idle(y_wr_idle),
+      .n_cvalid, .n_cready, .n_cwe, .n_caddr, .n_wvalid, .n_wready, .n_wdata, .n_wmask,
+      .n_rvalid, .n_rdata, .n_wdone);
+    assign {a_rdy, a_rvalid, a_rdata, a_rdata2, sw_rdy, b_rdy, b_rvalid, b_rtag, b_rdata, wr_idle} =
+        {y_a_rdy, y_a_rvalid, y_a_rdata, y_a_rdata2, y_sw_rdy, y_b_rdy, y_b_rvalid, y_b_rtag,
+         y_b_rdata, y_wr_idle};
+  end else begin : g_axi
+    assign {a_rdy, a_rvalid, a_rdata, a_rdata2, sw_rdy, b_rdy, b_rvalid, b_rtag, b_rdata, wr_idle} =
+        {x_a_rdy, x_a_rvalid, x_a_rdata, x_a_rdata2, x_sw_rdy, x_b_rdy, x_b_rvalid, x_b_rtag,
+         x_b_rdata, x_wr_idle};
+    assign {n_cvalid, n_cwe, n_caddr, n_wvalid, n_wdata, n_wmask} = '0;
+  end
 
   // 64-byte beats, incrementing, normal non-cacheable bufferable; port B reads and writes in
   // bursts (runs of up to AXI_BL / AXI_WBL beats)

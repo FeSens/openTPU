@@ -403,6 +403,27 @@ def test_board_memory_path_fuzz(have_verilator, seed, stall):
     assert np.array_equal(tmems[0], m.slices[0].tmem)
 
 
+# The native memory path (otpu_native_dram, one command per beat, in front of the native memory
+# model: commands and write data taken independently, read data with jitter and no backpressure,
+# n_wdone late), whatever OTPU_NATIVE says: the hazard and random programs, bit-exact; the
+# DDR3 model with long latencies for some.
+@pytest.mark.parametrize("prog,seed,stall,lat", [("hazard", 0, 0, 20), ("hazard", 1, 50, 20),
+                                                 ("hazard", 2, 80, 120), ("random", 3, 40, 20),
+                                                 ("random", 4, 70, 400)])
+def test_native_memory_path(have_verilator, prog, seed, stall, lat):
+    rng = np.random.default_rng(6100 + seed)
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    p = (_hazard_program if prog == "hazard" else _random_program)(rng, cfg)
+    imgs = _images(rng, 1)
+    m = Machine(cfg, [p], [i.copy() for i in imgs]).run()
+    drams, tmems, st = rtlsim.run(cfg, [p], [i.copy() for i in imgs], axi=True, boot=True,
+                                  native=True, stall=stall, seed=seed + 1, lat=lat,
+                                  plusargs=["+axi_dram=1"] if seed % 2 else [])
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert sum(n["part_sw"] for n in st["native"]) == 0, st["native"]
+
+
 def _dma_program(rng, cfg: Config, n_ops=70):
     """LD / ST only: every alignment within a chunk, lengths around the segment and chunk sizes
     and past the DMA's chunk buffer (32 chunks), stores that share chunks, and loads of what
@@ -474,10 +495,12 @@ def test_axi_read_bursts(have_verilator, stall, arc):
                                   seed=stall + 11, arc=arc, uarch=rtlsim.BOARD_UARCH)
     assert np.array_equal(tmems[0], m.slices[0].tmem)
     assert np.array_equal(drams[0], m.slices[0].dram)
-    (ar0, b0), (ar1, b1) = st["axi_reads"]
-    assert (b0 + b1) / (ar0 + ar1) > 4, st["axi_reads"]
+    if not rtlsim.MEMORY["NATIVE"]:                 # (a native command is one beat)
+        (ar0, b0), (ar1, b1) = st["axi_reads"]
+        assert (b0 + b1) / (ar0 + ar1) > 4, st["axi_reads"]
 
 
+@pytest.mark.skipif(rtlsim.MEMORY["NATIVE"], reason="AXI read bursts (native: no transactions)")
 def test_axi_burst_throughput(have_verilator):
     """A long load at a cost of 16 cycles per read transaction: single-beat reads (AXI_BL=1) take
     16 cycles per chunk; in bursts the load keeps the pace it has with no cost (4 cycles per
@@ -712,7 +735,7 @@ def test_axi_write_bursts(have_verilator, wbl, stall, seed):
     aw = sum(a for a, _ in st["axi_writes"])
     beats = sum(b for _, b in st["axi_writes"])
     assert beats >= (2048 + 1000 + 700 + 3 + 4096) // 16
-    if wbl == 1:
+    if rtlsim.MEMORY["NATIVE"] or wbl == 1:        # (a native command is one beat)
         assert aw == beats
     else:
         assert aw <= beats // (wbl // 2 + 1) + 16, (aw, beats)

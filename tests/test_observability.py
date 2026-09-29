@@ -12,7 +12,7 @@ from opentpu.host.board import (CTRL_CLEAR, CTRL_RUN, R_B_RD, R_B_WR, R_CTRL, R_
                         R_ICOUNT, R_SCRATCH, R_STATUS, R_VERSION, ST_HALTED, Board, SimTransport)
 from opentpu.host import regs as R
 from opentpu.host.checks import PROG_AT, demo_image, demo_program
-from opentpu import isa as I
+from opentpu import isa as I, rtlsim
 from opentpu.hwtrace import (R_TRACE_ADDR, R_TRACE_COUNT, R_TRACE_CTRL, R_TRACE_DROP,
                              R_TRACE_HI, R_TRACE_LO, TRACE_BUSY, TRACE_CLEAR, TRACE_ENABLE,
                              TRACE_STOP_WHEN_FULL, records_to_trace, ring_order)
@@ -186,6 +186,7 @@ def test_counter_snapshots_bracket_a_run(have_verilator):
     assert d["TMEM_DENY"] >= 0
 
 
+@pytest.mark.skipif(rtlsim.MEMORY["NATIVE"], reason="AXI read bursts (native: no transactions)")
 def test_mxu_starve_counter(have_verilator):
     """MXU_STARVE: cycles the MXU streams a command and no chunk has arrived. Under a cost of 4
     cycles per AXI read transaction (as on the card), single-beat reads (AXI_BL=1) starve the

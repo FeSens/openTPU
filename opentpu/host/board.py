@@ -325,10 +325,12 @@ class SimTransport:
     keeps_state = False         # IMEM and the ARG registers start from reset every flush
 
     def __init__(self, ch_bytes: int = 1 << 24, stall: int = 20, seed: int = 1,
-                 params: dict | None = None, plusargs: list | None = None):
+                 params: dict | None = None, plusargs: list | None = None,
+                 native: bool | None = None):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.stall, self.seed = stall, seed
         self.params = params or {}
+        self.native = native                    # the native memory path (rtlsim.MEMORY)
         self.plusargs = list(plusargs or [])     # extra simulator arguments (e.g. "+trace")
         self.out = ""                            # the last flush's simulator output
         self.script: list[str] = []
@@ -382,13 +384,18 @@ class SimTransport:
         srcs += [board / "otpu_ctrl.sv", board / "otpu_board.sv"]
         if (board / "otpu_trace.sv").exists():             # register map 2
             srcs.insert(-2, board / "otpu_trace.sv")
-        srcs += [rtlsim.TB / "otpu_axi_mem.sv", rtlsim.TB / "tb_board.sv"]
+        native = rtlsim.MEMORY["NATIVE"] if self.native is None else self.native
+        srcs += [rtlsim.TB / "otpu_axi_mem.sv"]
+        srcs += [rtlsim.TB / "otpu_native_mem.sv"] if native else []
+        srcs += [rtlsim.TB / "tb_board.sv"]
         from opentpu.isasim import board_config
         cfg = board_config()                        # OTPU_MCOLS / OTPU_LANES: the "bitstream"
         # VPU_CL and ULANES as the bitstream builds them (make bit: VPU_CL 2, ULANES 8)
         p = {"WORDS": 2 * len(self.ch[0]) // 4, "MCOLS": cfg.MCOLS, "LANES": cfg.LANES,
              "ACT_ROWS": cfg.act_rows,
              "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8)}
+        if native:
+            p["MEM_NATIVE"] = 1
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
         with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:
