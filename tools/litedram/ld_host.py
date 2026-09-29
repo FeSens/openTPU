@@ -8,6 +8,12 @@ calibrated from the host over BAR0 (/dev/xdma0_user), then tested with the image
                                               # current DQS phase
     python3 ld_host.py BUILD_DIR bist [--gib 2]
     python3 ld_host.py BUILD_DIR temp [--minutes 35 --every 300]   # the temperature run
+    python3 ld_host.py BUILD_DIR wscan [--wl 0,6 --stride 1]  # DQS scan, write latency forced
+    python3 ld_host.py BUILD_DIR g1 --eighths N   # WL7DDRPHY image: group 1's offset (DRP)
+
+WL7DDRPHY images (ld_test.py --phy wl, docs/litedram.md section 8): the DQS phase moves each
+channel's whole write side (DQ with its DQS) in two clock groups; `all` and `temp` pick group 1's
+static offset (ddrcal.calibrate_groups) before the common phase.
     python3 ld_host.py BUILD_DIR selftest     # the calibration logic against a simulated PHY
 
 --ch 0, 1 or both (default: every channel of the image, one after the other; `temp` runs them
@@ -43,9 +49,9 @@ except ImportError:         # a card host whose installed opentpu predates ddrca
     sys.path.insert(0, str(HERE))
     import ddrcal
 sys.modules.setdefault("ddrcal", ddrcal)
-from ddrcal import (Chan, Dram, DqsPhase, FakeBoard, FakeCsr, bist_read_scan,  # noqa: E402
-                    bist, bist_start, bist_wait, csr_map, dqs_scan, margins, offsets, pass_map,
-                    run_bist)
+from ddrcal import (MIN_WINDOW, CalError, Chan, Dram, DqsPhase, FakeBoard, FakeCsr,  # noqa: E402
+                    WriteClocks, bist_read_scan, bist, bist_start, bist_wait, calibrate_groups,
+                    csr_map, dqs_scan, group_windows, margins, offsets, pass_map, run_bist)
 # ------------------------------------------------------------------------------ CSR access
 class Bar0:
     """CSRs over /dev/xdma0_user: one 32-bit load / store per word (see board.py's transport)."""
@@ -138,6 +144,20 @@ def selftest(build):
     assert temp_run(a, board, [0, 1], 112) == 0
     for f in board.ch:
         assert all(f.good(m) for m in range(f.nm))
+    # the forced write latency scan: each lane's run at its latency is its write range
+    import json
+    import tempfile
+    board = FakeBoard(build)
+    tmp = Path(tempfile.mkdtemp())
+    assert wl_scan(argparse.Namespace(build=build, stride=4, mib=1, wl="0,2,4", json_dir=tmp),
+                   Chan(board, 1), 112) == 0
+    s = json.loads((tmp / "wscan_ch1.json").read_text())["summary"]
+    f = board.ch[1]
+    for m in range(f.nm):
+        r = s[str(m)][str(f.WB[m])]
+        assert len(r) == 1 and r[0]["first"] - 4 < f.WLO[m] <= r[0]["first"] \
+            and r[0]["last"] <= f.WHI[m] < r[0]["last"] + 4, (m, r, f.WLO[m], f.WHI[m])
+        assert all(not s[str(m)][str(w)] for w in (0, 2, 4) if w != f.WB[m]), m
     print("selftest: PASS")
 
 
@@ -154,11 +174,22 @@ def temp_run(a, csr, chans, period):
         c = Chan(csr, ch)
         d = Dram(c, a.build)
         dqs = DqsPhase(c, d.phy["vco_hz"])
-        table = dqs_scan(d, dqs, period, a.stride, csr=c, show=False)
-        per, common, pick, run = margins(table, d.nm, period=period)
+        groups = d.phy["groups"][str(ch)] if d.phy.get("phy") == "wl" else None
+        if groups:                  # group 1's offset first (it resets the DQS phase to 0)
+            try:
+                res = calibrate_groups(d, dqs, WriteClocks(c), groups, period, stride=a.stride,
+                                       csr=c, log=lambda s: print(f"{stamp()} ch{ch} {s.strip()}"))
+            except CalError as e:
+                print(f"channel {ch}: {e}: FAIL")
+                return 1
+            table, pick, run = res["scan1"], res["pick"], res["run"]
+            dqs.move(0)             # the scan's start: the pick is from there
+        else:
+            table = dqs_scan(d, dqs, period, a.stride, csr=c, show=False)
+            per, common, pick, run = margins(table, d.nm, period=period)
         print(f"{stamp()} channel {ch} scan from step {dqs.steps()}, {Temps.fmt(temps.read())}:")
         for m, line in enumerate(pass_map(table, d.nm, period)):
-            print(f"    m{m} {line}")
+            print(f"    m{m}{f' g{groups[m]}' if groups else ''} {line}")
         if pick is None:
             print(f"channel {ch}: no DQS phase works for every lane: FAIL")
             return 1
@@ -172,6 +203,7 @@ def temp_run(a, csr, chans, period):
               f" runs at its centre, step {dqs.steps()}; write latency {wl}, read windows "
               f"{[n for n, _, _ in rl]}")
         st[ch] = {"c": c, "d": d, "dqs": dqs, "home": dqs.steps(), "passes": 0, "errors": 0,
+                  "groups": groups, "group_scans": [],
                   "lanes": [0] * d.nm, "scans": [(0.0, len(run) * a.stride, offsets(
                       [(k - pick) % period for k in run], period))]}
     sys_hz = st[chans[0]]["d"].phy["sys_hz"]
@@ -206,13 +238,22 @@ def temp_run(a, csr, chans, period):
                 off = offsets(run, period) if run else None
                 t = (time.time() - t0) / 60
                 s_["scans"].append((t, len(run) * a.stride, off))
+                gtxt = ""
+                if s_["groups"]:        # each group's own run (the scan moves both groups)
+                    gw = group_windows(table, s_["groups"], period)
+                    s_["group_scans"].append((t, {g: len(r) * a.stride for g, (_, _, _, r) in gw.items()}))
+                    gtxt = "; groups " + ", ".join(
+                        f"{g} {len(r) * a.stride} steps" + (
+                            f" ({offsets(r, period)[0]:+d}..{offsets(r, period)[1]:+d})"
+                            if r and offsets(r, period) else " (running phase outside)")
+                        for g, (_, _, _, r) in gw.items())
                 print(f"{stamp()} channel {ch} rescan from its step {s_['home']}, "
                       f"{Temps.fmt(temps.read())}: common window {len(run) * a.stride} steps "
                       f"({len(run) * a.stride * s_['dqs'].step_ps:.0f} ps), "
                       + (f"from {off[0]:+d} to {off[1]:+d} around the running phase" if off else
-                         "the running phase is OUTSIDE it"))
+                         "the running phase is OUTSIDE it") + gtxt)
                 for m, line in enumerate(pass_map(table, s_["d"].nm, period)):
-                    print(f"    m{m} {line}")
+                    print(f"    m{m}{' g%d' % s_['groups'][m] if s_['groups'] else ''} {line}")
                 s_["dqs"].move(s_["home"])
                 wl, rl, err = s_["d"].calibrate(verbose=False)
                 s_["d"].hardware()
@@ -233,9 +274,109 @@ def temp_run(a, csr, chans, period):
         for t, w, o in s_["scans"]:
             print(f"    {t:5.1f} min: {w:3d} steps ({w * step_ps:4.0f} ps)"
                   + (f", margins {o[0]:+d} / {o[1]:+d} steps" if o else ", running phase outside"))
+        if s_["groups"] and s_["group_scans"]:
+            for g in sorted(s_["group_scans"][0][1]):
+                ws = [gs[g] for _, gs in s_["group_scans"]]
+                print(f"    group {g}: {min(ws) * step_ps:.0f} to {max(ws) * step_ps:.0f} ps over "
+                      f"{len(ws)} rescans")
         ok &= s_["errors"] == 0 and inside
     print("temperature run:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
+
+
+# ------------------------------------------------------------------------------ forced write latency
+def runs(steps, period):
+    """The runs of consecutive steps in `steps` (a set of steps within one period; a run may
+    wrap): [(first, last)], last past period - 1 for a run around the wrap."""
+    if len(steps) == period:
+        return [(0, period - 1)]
+    out = []
+    for k in sorted(steps):
+        if (k - 1) % period in steps:
+            continue                      # not a run's first step
+        e = k
+        while (e + 1) % period in steps:
+            e += 1
+        out.append((k, e))
+    return out
+
+
+def wl_scan(a, c, period):
+    """The write DQS phase over one tCK with every lane's write latency forced to each of --wl
+    (bitslips 0 and 6, the two the calibration picks between), so that each lane's window at a
+    latency shows whole instead of cut where the calibration flips it. Per step: init, the
+    forced bitslip, read leveling, a --mib MiB BIST write and read-back. A lane passes a step
+    when its read window is >= MIN_WINDOW taps, its DFI check passes and the BIST has no wrong
+    beat. Per lane and latency: the passing runs, and each run's edges (steps from its last
+    passing step to the first with half the beats wrong, or no read window: how steep the error
+    rate rises). The raw table goes to BUILD_DIR/wscan_ch<ch>.json."""
+    import json
+    d = Dram(c, a.build)
+    dqs = DqsPhase(c, d.phy["vco_hz"])
+    sys_hz = d.phy["sys_hz"]
+    beats = a.mib * (1 << 20) // 64
+    start = dqs.steps()
+    wls = [int(x) for x in a.wl.split(",")]
+    temps = Temps(c.csr)
+    print(f"forced write latency scan, channel {c.ch}, from step {start}, every {a.stride} steps "
+          f"({a.stride * dqs.step_ps:.1f} ps), {a.mib} MiB BIST per step, {Temps.fmt(temps.read())}")
+    raw = {}
+    for wl in wls:
+        rows = {}
+        for k in range(0, period, a.stride):
+            dqs.move(start + k)
+            d.init()
+            d.strobe("ddrphy_wdly_dq_bitslip", d.all, wl)
+            d.wb = [wl] * d.nm
+            rl, err = d.read_leveling(verbose=False)
+            d.hardware()
+            seed = 0x0123456789ABCDEF + 7919 * k + wl
+            bist(c, beats, 0, seed, sys_hz)
+            bad = bist(c, beats, 1, seed, sys_hz)["lanes"]
+            rows[k] = [[n, e, b] for (n, _, _), e, b in zip(rl, err, bad)]
+            print(f"  wl {wl} +{k:3d} "
+                  + "".join("#" if n >= MIN_WINDOW and not e and not b else "." for n, e, b in rows[k])
+                  + "  windows " + " ".join(f"{n:2d}" for n, _, _ in rows[k])
+                  + "  BIST wrong beats " + " ".join(str(b) for _, _, b in rows[k]), flush=True)
+        raw[wl] = rows
+    dqs.move(start)
+    d.calibrate(verbose=False)
+    d.hardware()
+
+    def wrong(rows, k, m):                  # the fraction of lane m's beats wrong at step k
+        r = rows.get(k % period)
+        return None if r is None else 1.0 if r[m][0] == 0 else r[m][2] / beats
+
+    def edge(rows, k, m, sign):
+        for i in range(1, period):
+            f = wrong(rows, k + sign * i, m)
+            if f is not None and f >= 0.5:
+                return i
+        return None
+
+    print(f"per lane and write latency: the passing runs in steps from {start} (width in steps / "
+          f"ps; edges: steps from the run's end to half the beats wrong), {Temps.fmt(temps.read())}")
+    summary = {}
+    for wl in wls:
+        rows = raw[wl]
+        for m in range(d.nm):
+            good = {k for k, r in rows.items() if r[m][0] >= MIN_WINDOW and not r[m][1] and not r[m][2]}
+            rr = []
+            for s, e in runs({k // a.stride for k in good}, period // a.stride):
+                s, e = s * a.stride, e * a.stride
+                rr.append({"first": s, "last": e, "width": e - s + a.stride,
+                           "edge_lo": edge(rows, s, m, -1), "edge_hi": edge(rows, e, m, 1)})
+            rr.sort(key=lambda r: -r["width"])
+            summary.setdefault(m, {})[wl] = rr
+            print(f"  m{m} wl {wl}: " + (", ".join(
+                f"+{r['first']}..+{r['last']} ({r['width']} / {r['width'] * dqs.step_ps:.0f} ps; "
+                f"edges {r['edge_lo']} / {r['edge_hi']})" for r in rr) or "none"))
+    out = Path(getattr(a, "json_dir", None) or a.build) / f"wscan_ch{c.ch}.json"
+    out.write_text(json.dumps({"channel": c.ch, "start": start, "stride": a.stride, "mib": a.mib,
+                               "beats": beats, "step_ps": dqs.step_ps, "period": period,
+                               "raw": raw, "summary": summary}))
+    print(f"raw data: {out}")
+    return 0
 
 
 # ------------------------------------------------------------------------------ main
@@ -243,7 +384,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("build", type=Path)
     ap.add_argument("what", choices=["info", "cal", "bist", "all", "selftest", "dqs", "rscan", "soak",
-                                     "temp"])
+                                     "temp", "wscan", "g1"])
     ap.add_argument("--ch", help="0, 1 or both (default: every channel of the image)")
     ap.add_argument("--seconds", type=float, default=300, help="soak: how long to repeat the BIST")
     ap.add_argument("--minutes", type=float, default=35, help="temp: how long to run the BIST")
@@ -253,6 +394,9 @@ def main():
     ap.add_argument("--stride", type=int, default=4, help="DQS scan stride, fine steps")
     ap.add_argument("--dev", default="/dev/xdma0_user")
     ap.add_argument("--steps", type=int, help="dqs: move the DQS phase to this step")
+    ap.add_argument("--wl", default="0,6", help="wscan: the forced write latencies (bitslips)")
+    ap.add_argument("--mib", type=int, default=64, help="wscan: BIST size per step, MiB")
+    ap.add_argument("--eighths", type=int, help="g1: group 1's offset, 1/8 VCO periods (7 steps)")
     a = ap.parse_args()
     if a.what == "selftest":
         return selftest(a.build)
@@ -273,6 +417,13 @@ def main():
               + (f", {Temps.fmt(Temps(csr).read())}" if "xadc_temperature" in csr.regs else ""))
         if s != 0x12345678:
             return 1
+        if phy.get("phy") == "wl":
+            for ch in chans:
+                w = WriteClocks(Chan(csr, ch))
+                p = w.check()
+                print(f"ch{ch} write clocks: groups {phy['groups'][str(ch)]}, group 1 offset "
+                      f"{w.group1()} x 1/8 VCO (CLKOUT3..6 static phases {p}), MMCM locked "
+                      f"{Chan(csr, ch).r('wclk_mmcm_locked')}")
     if a.what == "temp":
         return temp_run(a, csr, chans, period)
     rc = 0
@@ -284,12 +435,42 @@ def main():
 
 
 def channel(a, csr, period):
+    if a.what == "wscan":
+        return wl_scan(a, csr, period)
     d = Dram(csr, a.build)
     dqs = DqsPhase(csr, d.phy["vco_hz"])
+    wl_phy = d.phy.get("phy") == "wl"
+    if a.what == "g1":
+        w = WriteClocks(csr)
+        w.set_group1(a.eighths)
+        d.ctl(0)                                  # the DRAM's reset: its clocks stopped
+        time.sleep(0.001)
+        print(f"group 1 offset {w.group1()} x 1/8 VCO, DQS phase {dqs.steps()} (after the MMCM reset)")
+        a.what = "cal"
     if a.what == "dqs":
         dqs.move(a.steps)
         print("DQS phase", dqs.steps())
-    if a.what == "all":
+    if a.what == "all" and wl_phy:
+        groups = d.phy["groups"][str(csr.ch)]
+        print(f"write clock groups {groups}: scan of the common phase with group 1 on group 0, "
+              f"every {a.stride} steps, a 64 MiB BIST per step:")
+        try:
+            res = calibrate_groups(d, dqs, WriteClocks(csr), groups, period, stride=a.stride,
+                                   csr=csr)
+        except CalError as e:
+            print(f"  {e}: FAIL")
+            return 1
+        for name, t in (("group 1 at 0", res["scan0"]),
+                        (f"group 1 at {res['offset_eighths']}/8", res["scan1"])):
+            print(f"  lanes, {name} (phase steps from -{period // 2} to +{period // 2}):")
+            for m, line in enumerate(pass_map(t, d.nm, period)):
+                print(f"    m{m} g{groups[m]} {line}")
+        run = res["run"]
+        print(f"common: {len(run) * a.stride} steps ({len(run) * a.stride * dqs.step_ps:.0f} ps; "
+              f"groups alone at offset 0: " + ", ".join(
+                  f"{g} {w} steps ({w * dqs.step_ps:.0f} ps)" for g, w in res["group_runs"].items())
+              + f"); DQS at +{res['pick']} steps")
+    elif a.what == "all":
         print(f"DQS phase scan (every {a.stride} steps = {a.stride * dqs.step_ps:.0f} ps over one "
               f"tCK; per lane: calibrated read window in taps, 0 if its calibration check or a "
               f"64 MiB BIST write / read failed):")

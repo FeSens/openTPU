@@ -34,6 +34,7 @@ a PLL: the 200 MHz IDELAYCTRL reference.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -45,7 +46,8 @@ from litex.soc.cores.xadc import S7SystemMonitor
 from litex.soc.interconnect import wishbone
 from litex.soc.interconnect.axi import (AXILiteInterface, AXILiteClockDomainCrossing,
                                         AXILite2Wishbone)
-from litex.soc.interconnect.csr import CSRStatus, CSRStorage, AutoCSR
+from litex.soc.interconnect.csr import CSR, CSRStatus, CSRStorage, AutoCSR
+from migen.genlib.resetsync import AsyncResetSynchronizer
 from litex.soc.integration.soc_core import SoCCore
 from litex.soc.integration.builder import Builder
 
@@ -56,6 +58,7 @@ from litedram.init import get_sdram_phy_py_header
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import ypcb_platform as ypcb     # litex-boards' ypcb_00338_1p1 platform (pins checked against ours)
+from wl7ddrphy import WL7DDRPHY  # noqa: E402
 
 
 class MT41K256M8_tRFC160(MT41K256M8):
@@ -114,6 +117,30 @@ class CRG(LiteXModule):
         self.idelayctrl = S7IDELAYCTRL(self.cd_idelay)
 
 
+class WLCRG(LiteXModule):
+    """The clocks of the write-leveled image (--phy wl): clk50 -> MMCM: sys (the SoC, the
+    controllers and BISTs; each channel's WriteClocks MMCM is cascaded from it); a PLL: the
+    200 MHz IDELAYCTRL reference. clk50 as CRG's."""
+    def __init__(self, platform, f, clk50=None):
+        self.rst = Signal()
+        self.cd_sys = ClockDomain()
+        self.cd_idelay = ClockDomain()
+        if clk50 is None:
+            clk50_pad = platform.request("clk50")
+            clk50 = Signal()
+            self.specials += Instance("BUFG", i_I=clk50_pad, o_O=clk50)
+        self.mmcm = mmcm = S7MMCM(speedgrade=-2, fractional=False)
+        mmcm.register_clkin(clk50, 50e6)
+        mmcm.create_clkout(self.cd_sys, f)
+        self.comb += mmcm.reset.eq(self.rst)
+        platform.add_false_path_constraints(self.cd_sys.clk, mmcm.clkin)
+        self.pll = pll = S7PLL(speedgrade=-2)
+        self.comb += pll.reset.eq(self.rst)
+        pll.register_clkin(clk50, 50e6)
+        pll.create_clkout(self.cd_idelay, 200e6)
+        self.idelayctrl = S7IDELAYCTRL(self.cd_idelay)
+
+
 class DQSPhase(LiteXModule):
     """The write DQS clock's phase: each write of dqs_shift moves it one fine step (1/56 of the
     VCO period: 16.7 ps at 1066.67 MHz) later (bit0 = 1) or earlier (0), once the MMCM has done
@@ -130,8 +157,93 @@ class DQSPhase(LiteXModule):
                 mmcm.psen.eq(1), mmcm.psincdec.eq(self.dqs_shift.storage[0]), busy.eq(1),
                 If(self.dqs_shift.storage[0], steps.eq(steps + 1)).Else(steps.eq(steps - 1)),
             ).Elif(mmcm.psdone, busy.eq(0)),
+            # an MMCM with a reset of its own (WriteClocks) starts again from its static phases
+            If(~getattr(mmcm, "ps_ready", 1), busy.eq(0), steps.eq(0)),
         ]
         self.comb += [self.dqs_busy.status.eq(busy), self.dqs_steps.status.eq(steps)]
+
+
+class WriteClocks(LiteXModule):
+    """One DDR3 channel's PHY clocks (tools/litedram/wl7ddrphy.py, docs/litedram.md section 8)
+    from one MMCM, cascaded from sys at DIVCLK_DIVIDE 1 with its feedback through a BUFG: its
+    outputs keep a fixed phase to sys, so the controller (sys) and the PHY (sysc) are timed as one
+    synchronous clock. Fixed: CLKOUT0 sysc (f; the PHY's logic, CLKDIV of CK / commands / reads;
+    falling edge: sysc_n), CLKOUT1 sys4xc (4f). Fine phase shift, all moved together by the host
+    (DQSPhase): CLKOUT2 sysw (f, CLKDIV of the write OSERDES), CLKOUT3 / 4 group 0's DQ and DQS
+    (4f at 0 and 90 deg), CLKOUT5 / 6 group 1's (4f at group1_deg and group1_deg + 90). Group 1's
+    static offset can be reprogrammed through the DRP (drp_*, mmcm_reset: the host holds the MMCM
+    in reset for the write, 1/8 VCO period = 22.5 deg per step), the PHY's clocks stopping
+    meanwhile. `domains` maps the PHY's domain names to this channel's."""
+    OUTS = ("sys", "sys4x", "sys_w", "sys4x_w0", "sys4x_w0_dqs", "sys4x_w1", "sys4x_w1_dqs")
+
+    def __init__(self, c, f, group1_deg=0.0):
+        n = {"sys": f"sysc{c}", "sys4x": f"sys4xc{c}", "sys_w": f"sysw{c}",
+             "sys4x_w0": f"sys4xw{c}a", "sys4x_w0_dqs": f"sys4xw{c}a_dqs",
+             "sys4x_w1": f"sys4xw{c}b", "sys4x_w1_dqs": f"sys4xw{c}b_dqs", "sys_n": f"sysc{c}_n"}
+        self.domains = n
+        cd = {k: ClockDomain(v, reset_less=k not in ("sys", "sys_n")) for k, v in n.items()}
+        for k, d in cd.items():
+            setattr(self, "cd_" + d.name, d)
+        self.mmcm_reset = CSRStorage(1, description="1: this channel's MMCM held in reset.")
+        self.mmcm_locked = CSRStatus(1)
+        self.drp_adr = CSRStorage(7, reset_less=True)
+        self.drp_dat_w = CSRStorage(16, reset_less=True)
+        self.drp_dat_r = CSRStatus(16)
+        self.drp_read = CSR()
+        self.drp_write = CSR()
+        self.drp_drdy = CSRStatus(1)
+        self.locked = Signal()
+        self.ps_ready = Signal()
+        self.psen, self.psincdec, self.psdone = Signal(), Signal(), Signal()
+        self.group1_deg, self.f, self.name_of = group1_deg, f, f"ldmmcm{c}"
+
+        den, dwe, drdy, do = Signal(), Signal(), Signal(), Signal(16)
+        self.sync += [
+            den.eq(self.drp_read.re | self.drp_write.re),
+            dwe.eq(self.drp_write.re),
+            If(self.drp_read.re | self.drp_write.re, self.drp_drdy.status.eq(0))
+            .Elif(drdy, self.drp_drdy.status.eq(1), self.drp_dat_r.status.eq(do)),
+        ]
+        rst = Signal()
+        self.comb += [rst.eq(ResetSignal("sys") | self.mmcm_reset.storage),
+                      self.mmcm_locked.status.eq(self.locked),
+                      self.ps_ready.eq(self.locked & ~self.mmcm_reset.storage)]
+        fb, fb_buf = Signal(), Signal()
+        outs = [Signal() for _ in self.OUTS]
+        phase = {"sys4x_w0_dqs": 90.0, "sys4x_w1": group1_deg, "sys4x_w1_dqs": group1_deg + 90.0}
+        div = {"sys": 8, "sys_w": 8}
+        p = {}
+        for i, k in enumerate(self.OUTS):
+            d = div.get(k, 2)
+            p[f"p_CLKOUT{i}_DIVIDE" + ("_F" if i == 0 else "")] = float(d) if i == 0 else d
+            p[f"p_CLKOUT{i}_PHASE"] = phase.get(k, 0.0)
+            p[f"p_CLKOUT{i}_DUTY_CYCLE"] = 0.5
+            p[f"p_CLKOUT{i}_USE_FINE_PS"] = "FALSE" if k in ("sys", "sys4x") else "TRUE"
+            p[f"o_CLKOUT{i}"] = outs[i]
+        self.specials += Instance("MMCME2_ADV", name=f"ldmmcm{c}",
+            p_BANDWIDTH="OPTIMIZED", p_COMPENSATION="ZHOLD", p_STARTUP_WAIT="FALSE",
+            p_CLKIN1_PERIOD=1e9 / f, p_REF_JITTER1=0.01, p_DIVCLK_DIVIDE=1,
+            p_CLKFBOUT_MULT_F=8.0, p_CLKFBOUT_PHASE=0.0, p_CLKFBOUT_USE_FINE_PS="FALSE",
+            i_CLKIN1=ClockSignal("sys"), i_CLKIN2=0, i_CLKINSEL=1,
+            i_CLKFBIN=fb_buf, o_CLKFBOUT=fb, i_RST=rst, i_PWRDWN=0, o_LOCKED=self.locked,
+            i_PSCLK=ClockSignal("sys"), i_PSEN=self.psen, i_PSINCDEC=self.psincdec,
+            o_PSDONE=self.psdone,
+            i_DCLK=ClockSignal("sys"), i_DEN=den, i_DWE=dwe, i_DADDR=self.drp_adr.storage,
+            i_DI=self.drp_dat_w.storage, o_DO=do, o_DRDY=drdy, **p)
+        self.specials += Instance("BUFG", i_I=fb, o_O=fb_buf)
+        for k, o in zip(self.OUTS, outs):
+            self.specials += Instance("BUFG", i_I=o, o_O=cd[k].clk)
+        self.comb += [cd["sys_n"].clk.eq(~cd["sys"].clk), cd["sys_n"].rst.eq(cd["sys"].rst)]
+        self.specials += AsyncResetSynchronizer(cd["sys"], ~self.locked)
+
+    def constraints(self):
+        """Pre-placement Tcl: the write data cross from sysc_n (sysc's falling edge) to sysw,
+        which the host moves up to a tCK (a quarter of sysc) either way: that much uncertainty on
+        both setup and hold."""
+        c = lambda i: f"[get_clocks -of_objects [get_pins {self.name_of}/CLKOUT{i}]]"
+        tck = 1e9 / (4 * self.f)
+        return [f"set_clock_uncertainty -setup {tck:.3f} -from {c(0)} -to {c(2)}",
+                f"set_clock_uncertainty -hold {tck:.3f} -from {c(0)} -to {c(2)}"]
 
 
 XDMA_IN = ("awready", "wready", "bid", "bresp", "bvalid", "arready", "rid", "rdata", "rresp",
@@ -293,10 +405,15 @@ I2C_IO = [(n, 0, Pins(p), IOStandard("LVCMOS18"), Misc("PULLUP=TRUE"),
 class LDTest(SoCCore):
     mem_map = {"csr": 0x0000_0000}          # CSRs at BAR0 offset 0
 
-    def __init__(self, f, dqs_phase=90, xdma_tcl=None, channels=(0, 1)):
+    def __init__(self, f, dqs_phase=90, xdma_tcl=None, channels=(0, 1), phy="a7", groups=None,
+                 group1_deg=None):
+        """phy: "a7" (A7DDRPHY, the DQS clock alone shifted) or "wl" (WL7DDRPHY: per channel a
+        WriteClocks MMCM, the write side in two clock groups; groups[ch]: each lane's group,
+        group1_deg[ch]: group 1's static offset at configuration)."""
         platform = ypcb.Platform()
         platform.add_extension(I2C_IO)
-        self.crg = CRG(platform, f, dqs_phase, two=1 in channels)
+        self.phy_kind = phy
+        self.crg = CRG(platform, f, dqs_phase, two=1 in channels) if phy == "a7" else WLCRG(platform, f)
         SoCCore.__init__(self, platform, f, ident="openTPU LiteDRAM test image", cpu_type=None,
                          integrated_rom_size=0, integrated_sram_size=0, with_uart=False,
                          with_timer=False, csr_data_width=32)
@@ -307,16 +424,26 @@ class LDTest(SoCCore):
         # ---- the DDR3 channels, 72 bits each
         # CL / CWL as the MIG project (LiteDRAM's table would take 533.33 MHz for DDR3-1333's bin)
         cl, cwl = (7, 6) if f > 101e6 else (6, 5)
+        esc = lambda cs: [c.replace("{", "{{").replace("}", "}}") for c in cs]
         for ch in channels:
             sfx = "" if ch == 0 else str(ch)
-            phy = s7ddrphy.A7DDRPHY(platform.request("ddram", ch), memtype="DDR3", nphases=4,
-                                    sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
-                                    write_latency_calibration=True, ddr_clk="sys4x" + sfx)
-            setattr(self, "ddrphy" + sfx, phy)
-            self.add_sdram("sdram" + sfx, phy=phy, module=MT41K256M8_tRFC160(f, "1:4"),
+            if phy == "wl":
+                wc = WriteClocks(ch, f, group1_deg[ch])
+                setattr(self, "wclk" + sfx, wc)
+                p = ClockDomainsRenamer(wc.domains)(WL7DDRPHY(
+                    platform.request("ddram", ch), groups=groups[ch], sys_clk_freq=f,
+                    iodelay_clk_freq=200e6, cl=cl, cwl=cwl))
+                platform.toolchain.pre_placement_commands += esc(wc.constraints())
+            else:
+                p = s7ddrphy.A7DDRPHY(platform.request("ddram", ch), memtype="DDR3", nphases=4,
+                                      sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
+                                      write_latency_calibration=True, ddr_clk="sys4x" + sfx)
+            setattr(self, "ddrphy" + sfx, p)
+            self.add_sdram("sdram" + sfx, phy=p, module=MT41K256M8_tRFC160(f, "1:4"),
                            with_soc_interconnect=False)
             setattr(self, "bist" + sfx, BIST(getattr(self, "sdram" + sfx).crossbar.get_port(), modules=9))
-            setattr(self, "phase" + sfx, DQSPhase(self.crg.mmcm if ch == 0 else self.crg.mmcm1))
+            setattr(self, "phase" + sfx, DQSPhase(getattr(self, "wclk" + sfx) if phy == "wl" else
+                                                  self.crg.mmcm if ch == 0 else self.crg.mmcm1))
 
         # ---- PCIe: XDMA as an RTL IP; BAR0 (AXI-Lite, axi_aclk) -> CSR bus (sys)
         self.cd_xdma = ClockDomain()
@@ -397,7 +524,6 @@ class LDTest(SoCCore):
             "report_property [lindex " + gt % 0 + " 0] LOC",
         ]
         # (LiteX formats these commands: braces doubled)
-        esc = lambda cs: [c.replace("{", "{{").replace("}", "}}") for c in cs]
         platform.toolchain.pre_synthesis_commands += esc(pre_synth)
         platform.toolchain.pre_placement_commands += esc(pre_place)
         platform.add_platform_command("set_property PULLUP true [get_ports {{pcie_x8_rst_n}}]")
@@ -423,19 +549,35 @@ def main():
                     help="static sys4x_dqs phase, degrees (the host shifts it from there)")
     ap.add_argument("--channels", default="0,1", help="DDR3 channels: 0,1 (default), 0 or 1")
     ap.add_argument("--out", default="build_ldtest2")
+    ap.add_argument("--phy", default="a7", choices=["a7", "wl"],
+                    help="a7: A7DDRPHY (DQS alone shifted); wl: WL7DDRPHY (docs section 8)")
+    ap.add_argument("--groups0", default="0,0,0,0,1,1,1,1,1",
+                    help="wl: channel 0's lanes' write clock groups (group 0 = bank 11)")
+    ap.add_argument("--groups1", default="0,0,1,0,1,1,1,1,0",
+                    help="wl: channel 1's lanes' write clock groups (group 0 = bank 16)")
+    ap.add_argument("--group1-deg", default="0,0",
+                    help="wl: group 1's static offset per channel at configuration, degrees of sys4x "
+                         "(multiples of 22.5; the host reprograms it over the DRP)")
     a = ap.parse_args()
     channels = tuple(int(c) for c in a.channels.split(","))
+    groups = {0: [int(x) for x in a.groups0.split(",")], 1: [int(x) for x in a.groups1.split(",")]}
+    g1deg = dict(enumerate(float(x) for x in a.group1_deg.split(",")))
     out = Path(a.out).resolve()
     (out / "gateware").mkdir(parents=True, exist_ok=True)
     xdma_tcl = out / "gateware" / "xdma_ip.tcl"
     xdma_tcl.write_text((HERE / "xdma_ip.tcl").read_text())
-    soc = LDTest(a.sys_mhz * 1e6, a.dqs_phase, xdma_tcl="xdma_ip.tcl", channels=channels)
+    soc = LDTest(a.sys_mhz * 1e6, a.dqs_phase, xdma_tcl="xdma_ip.tcl", channels=channels,
+                 phy=a.phy, groups=groups, group1_deg=g1deg)
     b = Builder(soc, output_dir=str(out), compile_software=False, compile_gateware=False,
                 csr_csv=str(out / "csr.csv"))
     b.build(build_name="ld_test", vivado_place_directive="Explore",
             vivado_post_place_phys_opt_directive="AggressiveExplore",
             vivado_route_directive="Explore",
             vivado_post_route_phys_opt_directive="AggressiveExplore")
+    # the Tcl runs on a build host: the Verilog from its own directory
+    tcl = out / "gateware" / "ld_test.tcl"
+    tcl.write_text(re.sub(r"read_verilog \{[^}]*/ld_test\.v\}", "read_verilog {./ld_test.v}",
+                          tcl.read_text()))
     # the host's calibration inputs
     ps = getattr(soc, "ddrphy" + ("" if channels[0] == 0 else str(channels[0]))).settings
     ctl = getattr(soc, "sdram" + ("" if channels[0] == 0 else str(channels[0])))
@@ -445,8 +587,11 @@ def main():
             "modules": ps.databits // 8, "delays": 32, "bitslips": 8, "cl": ps.cl, "cwl": ps.cwl,
             "read_latency": ps.read_latency, "write_latency": ps.write_latency,
             "vco_hz": soc.crg.mmcm.compute_config()["vco"], "dqs_phase": a.dqs_phase,
-            "channels": list(channels)}
-    if 1 in channels:       # one fine step is 1/56 of the VCO period: both MMCMs must agree
+            "channels": list(channels), "phy": a.phy}
+    if a.phy == "wl":       # the write clocks' MMCMs: 8 x sys
+        info.update(vco_hz=8 * a.sys_mhz * 1e6, groups={ch: groups[ch] for ch in channels},
+                    group1_deg={ch: g1deg[ch] for ch in channels})
+    elif 1 in channels:     # one fine step is 1/56 of the VCO period: both MMCMs must agree
         assert soc.crg.mmcm1.compute_config()["vco"] == info["vco_hz"], "MMCM VCOs differ"
     (out / "sdram_init.py").write_text(hdr + "\nphy = " + json.dumps(info, indent=1) + "\n")
     print(json.dumps(info))

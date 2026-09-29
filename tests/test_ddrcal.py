@@ -49,6 +49,24 @@ def test_margins_wrap_around_the_tck():
     assert C.offsets([(k - pick) % period for k in run], period) == (-10, 10)
 
 
+def test_write_clock_groups_on_the_simulated_phy():
+    # a WL7DDRPHY channel whose two groups write in disjoint phase ranges: no common phase with
+    # group 1 on group 0, a 25-step one with group 1 six eighths (42 steps) ahead
+    groups = [0, 0, 0, 0, 1, 1, 1, 1, 1]
+    fake = C.FakeCsr(DATA, groups=groups)
+    for m in range(fake.nm):
+        fake.WLO[m], fake.WHI[m] = (20 + m, 60 - m) if groups[m] == 0 else (62 + m, 102 - m)
+    d = C.Dram(fake, DATA)
+    dqs = C.DqsPhase(fake, d.phy["vco_hz"])
+    w = C.WriteClocks(fake)
+    assert w.check() == {3: 0, 4: 4, 5: 0, 6: 4}
+    res = C.calibrate_groups(d, dqs, w, groups, 112, stride=1, csr=fake, mib=1, log=lambda *_: None)
+    assert res["offset_eighths"] == 6 and w.group1() == 6 and w.check()[6] == 10
+    assert res["group_runs"] == {0: 35, 1: 25} and len(res["run"]) == 25
+    wl, rl, err = d.calibrate(verbose=False)
+    assert not any(err) and all(fake.good(m) for m in range(fake.nm))
+
+
 def test_word_csr_most_significant_word_first():
     mem = {}
     regs = {"a": (0x10, 1), "seed": (0x20, 2)}
@@ -61,6 +79,17 @@ def test_ld_host_selftest():
     r = subprocess.run([sys.executable, str(ROOT / "tools/litedram/ld_host.py"), str(DATA), "selftest"],
                        capture_output=True, text=True, timeout=120)
     assert r.returncode in (0, None) and "selftest: PASS" in r.stdout, r.stdout[-2000:] + r.stderr
+
+
+def test_ld_host_selftest_write_clock_groups(tmp_path):
+    # the WL7DDRPHY image's CSR map and settings (ld_test.py --phy wl): the temperature run picks
+    # each channel's group 1 offset first
+    for f in ("csr.csv", "sdram_init.py"):
+        (tmp_path / f).write_text((DATA.parent / "litedram_wl" / f).read_text())
+    r = subprocess.run([sys.executable, str(ROOT / "tools/litedram/ld_host.py"), str(tmp_path),
+                        "selftest"], capture_output=True, text=True, timeout=300)
+    assert r.returncode in (0, None) and "selftest: PASS" in r.stdout, r.stdout[-2000:] + r.stderr
+    assert "group 1 offset" in r.stdout
 
 
 # ------------------------------------------------------------------------------ otpu-memcal
