@@ -409,6 +409,103 @@ module otpu_axi_dram #(
   // beats leave the queue as their W beats go), W beats left; the lengths of the bursts whose
   // response is due (in order: one B response per burst)
   logic [WLW-1:0] wrun [2], wlen_q [2], wleft [2];
+  // The head runs are registered: scanning qc from the head (up to BL - 1 serial steps) was in
+  // front of ARVALID / AWVALID and the queue's pops (the MCOLS 4 builds' qc -> qb_n / k1r_n paths,
+  // -0.418 ns, 17-18 levels). Each cycle the scan runs on the queue as it is and lands in a
+  // register, for the head (run0_q, wrun0_q) and for the head after one pop (run1_q, wrun1_q),
+  // with the entry count it saw (n0_q, n1_q). A cycle later the queue may have grown (a push
+  // only extends a run: the registered one is never longer than the real one) or popped: one
+  // entry (a W beat, a one-beat read burst: the +1 scan is the queue's), or a longer read burst
+  // (its runs are stale: rs_v blocks the B AR and the start of a B write burst for that cycle).
+  // A burst's length is then at most the real run; the go test uses the count the scan saw, so a
+  // run is not cut short by a request pushed after its scan
+  logic [LW-1:0]  run0_q [2], run1_q [2], run_u [2];
+  logic [WLW-1:0] wrun0_q [2], wrun1_q [2], wrun_u [2];
+  logic [QW:0]    n0_q [2], n1_q [2], n_u [2];
+  logic [1:0]     rs_v, rs_1;
+  // the request pushed last cycle (at most one per channel): it is the entry right after the
+  // scanned ones, and it extends their run if the run covers them all and it continues it; so
+  // the runs used are the queue's exactly (the check below), a cycle's pushes included
+  logic [1:0]     psh_q, pc_q;
+  logic [LW-1:0]  run_e [2];
+  logic [WLW-1:0] wrun_e [2];
+  // the scan: qc rotated to the head once (rq[k]: entry k from the head), then the run from the
+  // entry at offset o is 1 + the leading entries after it that continue and are queued: a
+  // priority encoder over the first zero (every term in parallel), not a serial chain
+  function automatic logic [6:0] lead(input logic [QD-1:0] rq, input logic [QW:0] n, input int o,
+                                      input int cap);
+    logic [6:0] r;
+    r = 7'(cap);
+    for (int k = cap - 1; k >= 1; k--)
+      if (!(rq[(k + o) % QD] && (QW + 1)'(k + o) < n)) r = 7'(k);
+    return r;
+  endfunction
+  always_ff @(posedge clk)
+    for (int c = 0; c < 2; c++) begin
+      logic [2*QD-1:0] qq;
+      logic [QD-1:0] rq;
+      qq = {qc[c], qc[c]} >> qb_h[c];
+      rq = qq[QD-1:0];
+      run0_q[c]  <= LW'(lead(rq, qb_n[c], 0, BL));
+      run1_q[c]  <= LW'(lead(rq, qb_n[c], 1, BL));
+      wrun0_q[c] <= WLW'(lead(rq, qb_n[c], 0, WBL));
+      wrun1_q[c] <= WLW'(lead(rq, qb_n[c], 1, WBL));
+      n0_q[c] <= qb_n[c];
+      n1_q[c] <= (qb_n[c] != 0) ? qb_n[c] - 1'b1 : '0;
+      psh_q[c] <= !rst && qb_push[c];
+      pc_q[c] <= b_we ? bw_cont[c] : b_cont;
+    end
+  always_comb
+    for (int c = 0; c < 2; c++) begin
+      run_u[c]  = rs_1[c] ? run1_q[c] : run0_q[c];
+      wrun_u[c] = rs_1[c] ? wrun1_q[c] : wrun0_q[c];
+      n_u[c]    = rs_1[c] ? n1_q[c] : n0_q[c];
+      run_e[c]  = run_u[c] + LW'(psh_q[c] && pc_q[c] && (QW + 1)'(run_u[c]) == n_u[c] &&
+                                 run_u[c] != LW'(BL));
+      wrun_e[c] = wrun_u[c] + WLW'(psh_q[c] && pc_q[c] && (QW + 1)'(wrun_u[c]) == n_u[c] &&
+                                   wrun_u[c] != WLW'(WBL));
+    end
+`ifndef SYNTHESIS
+  // the run from the head as the queue holds it now (a serial scan, the reference)
+  function automatic logic [6:0] scan(input logic [QD-1:0] q, input logic [QW-1:0] h,
+                                      input logic [QW:0] n, input int cap);
+    logic [6:0] r;
+    logic stop;
+    r = 7'd1;
+    stop = 1'b0;
+    for (int k = 1; k < cap; k++)
+      if (!stop && (QW + 1)'(k) < n && q[QW'(h + QW'(k))]) r = 7'(k + 1);
+      else stop = 1'b1;
+    return r;
+  endfunction
+  // the parallel scan is the serial one, for the head and for the head after one pop
+  always @(posedge clk)
+    if (!rst)
+      for (int c = 0; c < 2; c++) begin
+        logic [2*QD-1:0] qq;
+        logic [QW:0] n1;
+        qq = {qc[c], qc[c]} >> qb_h[c];
+        n1 = (qb_n[c] != 0) ? qb_n[c] - 1'b1 : '0;
+        if (lead(qq[QD-1:0], qb_n[c], 0, BL) != scan(qc[c], qb_h[c], qb_n[c], BL) ||
+            lead(qq[QD-1:0], qb_n[c], 0, WBL) != scan(qc[c], qb_h[c], qb_n[c], WBL) ||
+            (qb_n[c] > 1 && lead(qq[QD-1:0], qb_n[c], 1, BL) != scan(qc[c], qb_h[c] + 1'b1, n1, BL)) ||
+            (qb_n[c] > 1 && lead(qq[QD-1:0], qb_n[c], 1, WBL) != scan(qc[c], qb_h[c] + 1'b1, n1, WBL)))
+          $fatal(1, "otpu_axi_dram: ch%0d parallel run scan differs from the serial one", c);
+      end
+  // the runs used are the queue's runs now (so bursts are what the serial scan gave), from the
+  // entries it holds
+  always @(posedge clk)
+    if (!rst)
+      for (int c = 0; c < 2; c++)
+        if (rs_v[c] && qb_n[c] != 0) begin
+          if (32'(run_e[c]) != 32'(scan(qc[c], qb_h[c], qb_n[c], BL)) ||
+              32'(wrun_e[c]) != 32'(scan(qc[c], qb_h[c], qb_n[c], WBL)) ||
+              n_u[c] + (QW + 1)'(psh_q[c]) != qb_n[c])
+            $fatal(1, "otpu_axi_dram: ch%0d registered run %0d / %0d (of %0d + %0d) is not the queue's %0d / %0d (%0d)",
+                   c, run_e[c], wrun_e[c], n_u[c], psh_q[c], scan(qc[c], qb_h[c], qb_n[c], BL),
+                   scan(qc[c], qb_h[c], qb_n[c], WBL), qb_n[c]);
+        end
+`endif
   logic [31:0] waddr_q [2];
   logic [WLW-1:0] blq [2][BQD];
   logic [BQW-1:0] blq_h [2];
@@ -426,19 +523,11 @@ module otpu_axi_dram #(
       // reads: A first (rare), then B; each needs reserved response room. A B read waits for
       // its run to fill (see the top); an AR shown on the bus stays as it is until taken
       begin
-        logic stop, go;
-        run[c] = LW'(1);
-        stop = 1'b0;
-        for (int k = 1; k < BL; k++)
-          if (!stop && (QW + 1)'(k) < qb_n[c] && qc[c][QW'(qb_h[c] + QW'(k))]) run[c] = LW'(k + 1);
-          else stop = 1'b1;
-        go = run[c] == LW'(BL) || (QW + 1)'(run[c]) < qb_n[c] || qi[c] >= 3'(GATHER) ||
-             rb_res[c] == 0;
-        wrun[c] = WLW'(1);
-        stop = 1'b0;
-        for (int k = 1; k < WBL; k++)
-          if (!stop && (QW + 1)'(k) < qb_n[c] && qc[c][QW'(qb_h[c] + QW'(k))]) wrun[c] = WLW'(k + 1);
-          else stop = 1'b1;
+        logic go;
+        run[c] = run_e[c];
+        go = rs_v[c] && (run[c] == LW'(BL) || (QW + 1)'(run[c]) < qb_n[c] || qi[c] >= 3'(GATHER) ||
+             rb_res[c] == 0);
+        wrun[c] = wrun_e[c];
         // the SW queue's next partial beat: blocked while an older live entry may have its
         // address (one in its bucket; a hash collision only delays the read)
         w_blk[c] = wnz[c][wh_r[c]];
@@ -472,7 +561,8 @@ module otpu_axi_dram #(
                  !w_hold[c] && (k1w_n[c] < (KW + 1)'(KD));
         w_a[c] = !w_w[c] && (qa_n[c] != 0) && ha[c].we && (k1w_n[c] < (KW + 1)'(KD));
         w_b[c] = !w_w[c] && !w_a[c] && (qb_n[c] != 0) && hb[c].we && blq_n[c] != (BQW + 1)'(BQD) &&
-                 (wrun[c] == WLW'(WBL) || (QW + 1)'(wrun[c]) < qb_n[c] || qi[c] >= 3'(GATHER));
+                 rs_v[c] && (wrun[c] == WLW'(WBL) || (QW + 1)'(wrun[c]) < qb_n[c] ||
+                 qi[c] >= 3'(GATHER));
       end
       hs[c] = ha[c];
       m_awvalid[c] = (w_w[c] || w_a[c] || w_b[c]) && !aw_done[c];
@@ -562,6 +652,7 @@ module otpu_axi_dram #(
       gv <= '0; gage[0] <= '0; gage[1] <= '0;
       aw_done <= '0; w_done <= '0; wcur <= '0;
       arh <= '0; arh_w <= '0; lb_rd <= 1'b0;
+      rs_v <= '0; rs_1 <= '0;
       qi[0] <= '0; qi[1] <= '0;
       wsrc[0] <= '0; wsrc[1] <= '0;
       err <= 1'b0;
@@ -672,6 +763,9 @@ module otpu_axi_dram #(
           end
         end
         if (popb) begin qb_h[c] <= qb_h[c] + QW'(popn); nb = nb - (QW + 1)'(popn); end
+        // the registered runs next cycle: the head's, the head + 1's (one entry popped), or none
+        rs_v[c] <= !popb || popn == LW'(1);
+        rs_1[c] <= popb && popn == LW'(1);
         if (popa) begin qa_h[c] <= qa_h[c] + 1; na = na - 1; end
         if (popw) begin qw_h[c] <= qw_h[c] + 1; nwb = nwb + 1; end
         // ---- R
