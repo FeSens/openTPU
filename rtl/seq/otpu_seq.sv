@@ -211,7 +211,6 @@ module otpu_seq
   logic [WIN-1:0]  sdepd [WIN];              // the DRAM part of sdep (MXU stream start)
   logic [WIN-1:0]  srel;                     // MXU: released
   logic [SW:0]     uq_r;                     // MXU: next started slot to release
-  cmd_t            scmd [WIN];
   fps_t            sfp  [WIN];
   logic [31:0]     srdy_c [WIN];
   // per-unit queues of started slot ids, in start (= completion) order
@@ -425,12 +424,18 @@ module otpu_seq
   wire [SW-1:0] rel_slot = uq[U_MXU][uq_r[SW-1:0]];
   wire          can_rel  = (uq_r != uq_t[U_MXU]) && (sdep[rel_slot] & ~same_started[U_MXU]) == '0;
 
-  // Each unit's command is read from the window at the slot it last started: a slot's scmd is
+  // Each unit's command is read from the window at the slot it last started: a slot's command is
   // written only at dispatch and stays until the slot completes, so it holds the command for as
   // long as the unit reads it (at ustart; the collective until its udone). After completion the
   // slot may be reused and ucmd shows the new occupant -- no unit reads it then.
+  // The command store is one distributed RAM per unit (1 write, 1 asynchronous read, no reset):
+  // a single read port each, so it infers as LUT-RAM and trims the fields its unit never reads.
   logic [SW-1:0] ucs [NUNITS];
-  always_comb for (int u = 0; u < NUNITS; u++) ucmd[u] = scmd[ucs[u]];
+  for (genvar u = 0; u < NUNITS; u++) begin : g_cmd
+    (* ram_style = "distributed" *) logic [$bits(cmd_t)-1:0] m [WIN];
+    always_ff @(posedge clk) if (!rst && c_go) m[free_slot] <= c_cmd;
+    assign ucmd[u] = cmd_t'(m[ucs[u]]);
+  end
 
 `ifndef SYNTHESIS
   // shadow of c_fp / sfp in otpu_pkg form: the scoreboard is checked against conflict()
@@ -537,7 +542,6 @@ module otpu_seq
         sready[free_slot] <= 1'b0;
         sdep[free_slot] <= ndep;
         sdepd[free_slot] <= ndepd;
-        scmd[free_slot] <= c_cmd;
         sfp[free_slot] <= c_fp;
 `ifndef SYNTHESIS
         sfp_ref[free_slot] <= c_ref;
