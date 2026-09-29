@@ -27,9 +27,10 @@
 //                      PAIR / QACT DUP), bit6 DSTEP (the DMA's DeltaNet head step), bit7
 //                      hashed channel interleave (otpu_axi_dram CHASH), bit24 ACT_ROWS,
 //                      [15:8] log2(trace depth), [23:16] log2(P/Q window cycles),
-//                      bit25 the run's arguments (ARG0..7), bit27 the DDR3 controllers want
-//                      the host's calibration (LiteDRAM: opentpu/host/memcal.py; bit26 is the
-//                      stream engine's)
+//                      bit25 the run's arguments (ARG0..7), bit26 STREAM (the stream engine's
+//                      hardware subset, docs/stream.md; with DSTEP), bit27 the DDR3
+//                      controllers want the host's calibration (LiteDRAM:
+//                      opentpu/host/memcal.py)
 //   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
 //   0x48 BUILD_ID  RO  build parameter (the low 32 bits of the git commit)
 //   0x4C TEMP      RO  bit31 valid, [11:0] XADC die-temperature code
@@ -68,7 +69,7 @@ module otpu_ctrl #(
   parameter bit HAS_TEMP = 1'b1,
   parameter bit HAS_I2C = 1'b1,          // CAPS bit2: the I2C pins are wired (otpu_fpga_top)
   parameter bit CHASH = 1'b0,            // CAPS bit7: the hashed channel interleave (otpu_axi_dram)
-  parameter bit DSTEP = 1'b1,            // CAPS bit6: the DMA runs DSTEP
+  parameter bit DSTEP = 1'b1,            // CAPS bit6 and bit26: the stream engine (DSTEP, STREAM)
   parameter bit HOSTCAL = 1'b0           // CAPS bit27: the host calibrates the DDR3 controllers
 ) (
   input  logic        clk,
@@ -127,7 +128,7 @@ module otpu_ctrl #(
   input  logic [4:0]  i2c_in
 );
   localparam int NFR = 13;
-  localparam logic [31:0] CAPS = {4'd0, HOSTCAL, 3'd3,  // bit27 HOSTCAL, bit25 ARG, bit24 ACT_ROWS
+  localparam logic [31:0] CAPS = {4'd0, HOSTCAL, DSTEP, 2'd3,  // bit27 HOSTCAL, bit26 STREAM, bit25 ARG, bit24 ACT_ROWS
                                   8'($clog2(PQ_WIN)),
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
                                   CHASH, DSTEP, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,

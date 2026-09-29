@@ -17,6 +17,8 @@ module otpu_native_sys #(
   parameter int MCOLS = 2,
   parameter int ACT_ROWS = MCOLS,
   parameter int VPU_CL = 2,
+  parameter bit SE_COMP8 = 1'b1,         // the stream engine's v2 (docs/stream.md 11)
+  parameter bit SE_ONE_TREE = 1'b1,
   parameter int LANES = 8,
   parameter int ULANES = 8,
   parameter int CORE_KHZ = 100000,
@@ -162,7 +164,8 @@ module otpu_native_sys #(
     .c_rdata_valid(c_rdata_valid[1]), .c_rdata_data(c_rdata_data[1]));
 
   // the accelerator's AXI masters are unused here (MEM_NATIVE): outputs left open, inputs idle
-  otpu_board #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .LANES(LANES), .ULANES(ULANES),
+  otpu_board #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .SE_COMP8(SE_COMP8),
+               .SE_ONE_TREE(SE_ONE_TREE), .LANES(LANES), .ULANES(ULANES),
                .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .DSTEP(DSTEP),
                .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .MEM_NATIVE(1'b1), .HOSTCAL(HOSTCAL)) u_board (
     .clk, .rst, .calib, .temp, .led, .i2c_lo, .i2c_pin,

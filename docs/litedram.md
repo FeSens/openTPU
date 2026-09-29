@@ -698,7 +698,7 @@ The temperature run rescans every 5 minutes and logs each group's run.
 
 The accelerator and XDMA now reach the DDR3 channels through native ports, with no
 SmartConnect and no AXI front end in the controllers. The build option `MEM` picks the
-controllers (`create_project.tcl`'s 11th argument; `make bit MEM=...`):
+controllers (`create_project.tcl`'s 12th argument, after the stream engine's SE; `make bit MEM=...`):
 
 | `MEM` | Controllers | Top | Block design | Status |
 |---|---|---|---|---|

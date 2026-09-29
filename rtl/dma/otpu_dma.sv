@@ -14,17 +14,21 @@
 //       priority on port B, so no MXU read comes between them, and the DRAM sees one read /
 //       write turnaround per run instead of one per chunk (a chunk every SPC cycles, the MXU's
 //       weight reads in between).
-//   DSTEP one Gated DeltaNet head step on an fp32 state in DRAM (docs/isa.md), updated in place:
-//       q | k, v, the decay and beta are first read from TMEM into the datapath (otpu_dstep);
-//       then the state's chunks are requested like an LD's and their segments fed to the
-//       datapath, one per cycle, and the updated segments gathered into chunks and written
-//       back; finally o goes to TMEM through the write register. The DRAM sees runs: the
-//       state's reads go out RUN chunks at a time (one burst per channel) and the writes once
-//       RUN chunks are gathered (NGC-chunk gather), so a read / write turnaround and a read
-//       transaction's fixed cost are paid per run, not per chunk; a run of one kind never
-//       starts inside a run of the other. The datapath advances with `pe`, a register: a
-//       cycle it may take a segment (or, after the last one, a bubble) needs a segment in the
-//       buffer and room for two more updated segments.
+//   DSTEP / STREAM  a stream (docs/stream.md): an fp32 matrix in DRAM passed row by row through
+//       the stream engine (SE, the VPU's slot-0 reduction and its tail otpu_se_tail, in
+//       otpu_vpu) and written back (DSTEP: one Gated DeltaNet head step, docs/isa.md). The
+//       DMA holds SE for the whole instruction (ss_req, granted with ss_gnt once SE has no
+//       VOP in flight). A STREAM first reads its descriptor (8 TMEM words) into ss_cfg and the
+//       addresses; DSTEP's are its fields (GDN). The stream's vectors and scalars are then read
+//       from TMEM into SE (the fill, ss_fk); then the stream's chunks are requested like an
+//       LD's and their segments fed to SE, one per cycle, and the updated segments gathered
+//       into chunks and written back; finally the row outputs o go to TMEM through the write
+//       register. The DRAM sees runs: the stream's reads go out RUN chunks at a time (one
+//       burst per channel) and the writes once RUN chunks are gathered (NGC-chunk gather), so
+//       a read / write turnaround and a read transaction's fixed cost are paid per run, not
+//       per chunk; a run of one kind never starts inside a run of the other. SE advances with
+//       `pe` (ss_pe), a register: a cycle it may take a segment (or, after the last one, a
+//       bubble) needs a segment in the buffer and room for two more updated segments.
 // The DRAM port may refuse a request (b_gnt low) and read data may take any time to return (in
 // order). An ST or a DSTEP completes once the DRAM has acknowledged all its writes (wr_idle).
 module otpu_dma
@@ -33,7 +37,9 @@ module otpu_dma
   parameter int D     = 32,
   parameter int LANES = 8,
   parameter int DEPTH = 128,                          // LD chunk buffer (a power of two)
-  parameter bit HAS_DSTEP = 1'b1                      // the DSTEP datapath (0: none, ~30K LUT)
+  parameter bit HAS_DSTEP = 1'b1,                     // streams: DSTEP, STREAM (SE's tail in u_vpu)
+  parameter bit ONE_TREE  = 1'b1                      // SE folds A and Q on one tree: cols = 64
+                                                      // runs as 16 segments per row (pad64)
 ) (
   input  logic                    clk,
   input  logic                    rst,
@@ -57,7 +63,24 @@ module otpu_dma
   input  logic [LANES-1:0][31:0]  t_rdata,
   output logic [LANES-1:0]        t_wen,
   output logic [LANES-1:0][31:0]  t_waddr,
-  output logic [LANES-1:0][31:0]  t_wdata
+  output logic [LANES-1:0][31:0]  t_wdata,
+  // the stream engine (otpu_vpu, docs/stream.md 8), held from ss_req until it falls; the fill
+  // (ss_fk: SF_*, one step of W words) and the stream (ss_pe, ss_in_*) start after ss_gnt. SE
+  // registers these a cycle; the updated segments (ss_y_*) and the row outputs (ss_o_*) come
+  // back qualified with SE's pe (one each cycle ss_y_v / ss_o_v is up)
+  output logic                    ss_req,
+  input  logic                    ss_gnt,
+  output ss_cfg_t                 ss_cfg,
+  output logic                    ss_pe,
+  output logic                    ss_in_v,
+  output logic [31:0]             ss_in_d [LANES],
+  output logic [2:0]              ss_fk,
+  output logic [4:0]              ss_fi,
+  output logic [31:0]             ss_fd [LANES],
+  input  logic                    ss_y_v,
+  input  logic [31:0]             ss_y_d [LANES],
+  input  logic                    ss_o_v,
+  input  logic [31:0]             ss_o_d
 );
   localparam int CW  = D / 4;                         // words per chunk
   localparam int W   = (CW < LANES) ? CW : LANES;     // words per segment
@@ -87,6 +110,17 @@ module otpu_dma
 
   // ---- LD: chunk requests (address ic, cleft left), the chunk buffer, segment delivery
   logic [31:0]   ic, cleft;
+  // cleft != 0 and cleft == 1, registered with cleft: no 32-bit compare on b_req's path into
+  // otpu_axi_dram's queue (the build's DMA -> memory path)
+  logic          cl_nz, cl_one;
+  // r * n < lim (lim <= 2 * SPC), without an r x n multiply: both factors are below lim then,
+  // so their product on clog2(2 * SPC) bits each decides
+  localparam int PLM = (1 << $clog2(2 * SPC)) - 1;
+  function automatic logic prod_lt(input logic [8:0] r, input logic [5:0] n, input int lim);
+    if (r == 0 || n == 0) return 1'b1;
+    if (32'(r) >= lim || 32'(n) >= lim) return 1'b0;
+    return (32'(r) & PLM) * (32'(n) & PLM) < lim;
+  endfunction
   logic [PW:0]   occ, cnt;             // chunks requested / received, and not yet delivered
   logic [PW-1:0] wp, rp;               // buffer slot of the next chunk received / delivered
   logic ds_wreq, ds_eat;                                    // DSTEP: a chunk write; a chunk used
@@ -96,7 +130,12 @@ module otpu_dma
   initial if (SRUN > DEPTH) $fatal(1, "otpu_dma: SRUN > DEPTH");
   logic ds_rr;                                        // DSTEP: inside a read run
   logic [$clog2(RUN)-1:0] ds_rc;                      // ... its chunks issued
-  wire ld_req = ld_act && (cleft != 0) && (occ != (PW+1)'(DEPTH)) &&
+`ifndef SYNTHESIS
+  always_ff @(posedge clk)
+    if (!rst && busy && (cl_nz != (cleft != 0) || cl_one != (cleft == 1)))
+      $fatal(1, "otpu_dma: cl_nz %0d cl_one %0d but cleft %0d", cl_nz, cl_one, cleft);
+`endif
+  wire ld_req = ld_act && cl_nz && (occ != (PW+1)'(DEPTH)) &&
                 (!is_ds || ds_rr || (!ds_wreq && occ <= (PW+1)'(DEPTH - RUN)));
   wire ld_iss = ld_req && b_gnt && !ds_wreq;
   wire ld_dv  = ld_act && (sleft != 0) && (cnt != 0);       // deliver the segment at sw
@@ -118,20 +157,32 @@ module otpu_dma
   end
   always_ff @(posedge clk)
     if (st_push) lm[wp] <= st_cm;
-  // ---- DSTEP
+  // ---- streams (DSTEP, STREAM; docs/stream.md)
   localparam int NGC = 2 * RUN;                      // output gather (chunks)
   localparam int NG = NGC * SPC;                     // ... in segments
   localparam int GW = $clog2(NG) + 1;
-  localparam int CBD = 256 / W;                      // column / row buffers per lane
-  logic [31:0]  ds_qa, ds_va, ds_ga, ds_gs, ds_oa, ds_wb;
-  logic [5:0]   ds_ns;                               // segments per state row
+  localparam int CBD = 256 / W;                      // row output buffer per lane
+  // SE's tail is built for 8 lanes (its isum_64 partial loops need 64 / W > the adder's
+  // latency); other widths have no streams (the compiler emits the VOP sequence)
+  localparam bit HAS_SS = HAS_DSTEP && W == 8 && LANES == 8;
+  logic [31:0]  ds_oa, ds_wb;                        // o (TMEM), the stream's write (DRAM words)
+  // pad64 (ONE_TREE, cols = 64): a row is its 8 segments and 8 of +0 (not read), and the Y of
+  // those is dropped (docs/stream.md 11.3); ds_sj / ds_yj: the segment fed / out in its row
+  logic         ds_pad;
+  logic [3:0]   ds_sj, ds_yj;
+  wire          ds_spad = ds_pad && ds_sj[3];         // the segment to feed is padding
   logic [8:0]   ds_rows;
-  logic [15:0]  ds_nseg, ds_left, ds_ycnt;           // segments: all, still to feed, updated
-  logic [8:0]   ds_ocnt;                             // o values out of the datapath
+  logic         ds_qen;                              // the stream has row outputs o
+  logic [15:0]  ds_nseg, ds_left, ds_ycnt;           // segments: all, still to feed, out of SE
+  logic [8:0]   ds_ocnt;                             // o values out of SE
   logic [15:0]  ds_wch;                              // chunks written
-  // fill: step fk of fn (q segments, k segments, v segments, decay, beta), data a cycle later
-  logic [7:0]   fk, fn, ds_nq, ds_nv;
-  logic [2:0]   fr_k;                                // the step read last cycle: 1 q .. 5 beta
+  logic [7:0]   ds_nv;                               // o segments (rows / W, rounded up)
+  // before the run: a STREAM's descriptor read (ds_dsc) and capture (ds_dsd), the setup (ds_su;
+  // a DSTEP's from its command), SE's grant (ds_wait), the fill (ds_fill)
+  cmd_t         sc;                                  // the DSTEP / STREAM
+  logic         ds_dsc, ds_dsd, ds_su, ds_wait;
+  logic [31:0]  dsw [8];                             // the STREAM's descriptor words
+  logic [2:0]   fr_k;                                // the fill step read last cycle (SF_*)
   logic [4:0]   fr_i;
   logic [$clog2(SPC > 1 ? SPC : 2)-1:0] ds_pos, pe_pos;   // segment within the chunk at rp
   (* max_fanout = 64 *) logic pe;
@@ -141,46 +192,58 @@ module otpu_dma
   (* max_fanout = 64 *) logic [$clog2(NGC)-1:0] gh;  // the chunk to write next
   logic [W*32-1:0] y_p, gq [SPC];                   // gq[p]: segment p of chunk gh
   logic         y_v, o_v;
-  logic [31:0]  y_d [W], in_d [W], fdat [W], o_d;
+  wire          y_keep = y_v && !(ds_pad && ds_yj[3]);   // a Y segment kept (not pad64's)
+  logic [31:0]  y_d [W], in_d [W], o_d;
   logic [31:0]  ob [W][CBD];
   logic [7:0]   oi;                                  // o segment written to TMEM next
-  wire  ds_room = ({1'b0, og} + (GW+1)'(pe && y_v)) <= (GW+1)'(NG - 1);
-  wire  ds_take = ds_run && (ds_left != 0) && (ds_zero || cnt != 0) && ds_room;
-  wire  ds_flushed = (ds_ycnt == ds_nseg) && (ds_ocnt == ds_rows);
+  // SE runs up to SE_LAG cycles behind pe (otpu_vpu registers the ss_* inputs) and qualifies
+  // y_v and o_v with its own pe: taking one more segment needs room for it, this cycle's y and
+  // the segments of the last SE_LAG pe cycles (pe's counted, the older ones as always taken)
+  localparam int SE_LAG = 2;
+  wire  ds_room = ({1'b0, og} + (GW+1)'(y_v) + (GW+1)'(pe)) <= (GW+1)'(NG - SE_LAG);
+  wire  ds_take = ds_run && (ds_left != 0) && (ds_zero || ds_spad || cnt != 0) && ds_room;
+  wire  ds_flushed = (ds_ycnt == ds_nseg) && (!ds_qen || ds_ocnt == ds_rows);
   wire  ds_drain = ds_run && (ds_left == 0) && !ds_flushed && ds_room;
-  assign ds_eat = ds_take && !ds_zero && (32'(ds_pos) == SPC - 1);
+  assign ds_eat = ds_take && !ds_zero && !ds_spad && (32'(ds_pos) == SPC - 1);
   // a registered request (it selects the 1024-bit write data: replicated, no decode on the
-  // path); it follows og, which only counts during a DSTEP
+  // path); it follows og, which only counts during a stream
   (* max_fanout = 64 *) logic ds_wr;
-  wire  [GW-1:0] og_nx = og + GW'(pe && y_v) - ((ds_wreq && b_gnt) ? GW'(SPC) : GW'(0));
-  wire  ds_rr_nx = ds_rr && !(ld_iss && (32'(ds_rc) == RUN - 1 || cleft == 1));
+  wire  [GW-1:0] og_nx = og + GW'(y_keep) - ((ds_wreq && b_gnt) ? GW'(SPC) : GW'(0));
+  wire  ds_rr_nx = ds_rr && !(ld_iss && (32'(ds_rc) == RUN - 1 || cl_one));
   // a write run: once RUN chunks are in (or the stream has ended), then while chunks are in
   wire  ds_wr_nx = (og_nx >= GW'(SPC)) &&
                    (ds_wr || (!ds_rr_nx && (og_nx >= GW'(RUN * SPC) || ds_left == 0)));
   assign ds_wreq = ds_wr;
-  // the gather: one simple dual-port RAM per segment position (write: the segment from the
-  // datapath at chunk gt / SPC; read: chunk gh)
+  // the gather: one simple dual-port RAM per segment position (write: the segment from SE at
+  // chunk gt / SPC; read: chunk gh)
   for (genvar p = 0; p < SPC; p++) begin : g_gb
     (* ram_style = "distributed" *) logic [W*32-1:0] gb [NGC];
     always_ff @(posedge clk)
-      if (pe && y_v && 32'(gt) % SPC == p) gb[32'(gt) / SPC] <= y_p;
+      if (y_keep && 32'(gt) % SPC == p) gb[32'(gt) / SPC] <= y_p;
     assign gq[p] = gb[gh];
   end
   always_comb
     for (int l = 0; l < W; l++) begin
       y_p[32 * l +: 32] = y_d[l];
       in_d[l] = pe_zero ? 32'd0 : lb_q[32 * (32'(pe_pos) * W + l) +: 32];
-      fdat[l] = t_rdata[l];
     end
 
-  // the datapath is built for 8 lanes (its isum_64 partial loop needs 64 / W > the adder's
-  // latency); other widths have no DSTEP (the compiler emits the VOP sequence)
-  if (W == 8 && HAS_DSTEP) begin : g_ds
-    otpu_dstep #(.LANES(W)) u_ds (
-      .clk, .rst, .init(start), .ns(ds_ns),
-      .fq(fr_k == 3'd1), .fk(fr_k == 3'd2), .fv(fr_k == 3'd3), .fe(fr_k == 3'd4),
-      .fb(fr_k == 3'd5), .fi(fr_i), .fd(fdat),
-      .pe, .in_v(pe_in), .in_d, .y_v, .y_d, .o_v, .o_d);
+  // SE's ports (the tail and the reduction live in otpu_vpu)
+  assign ss_pe = pe;
+  assign ss_in_v = pe_in;
+  assign ss_fk = fr_k;
+  assign ss_fi = fr_i;
+  for (genvar l = 0; l < LANES; l++) begin : g_ss
+    assign ss_in_d[l] = (l < W) ? in_d[l % W] : 32'd0;
+    assign ss_fd[l] = t_rdata[l];
+  end
+  if (HAS_SS) begin : g_ss_on
+    assign y_v = ss_y_v;
+    assign o_v = ss_o_v;
+    assign o_d = ss_o_d;
+    for (genvar l = 0; l < W; l++) begin : g_y
+      assign y_d[l] = ss_y_d[l];
+    end
   end else begin : g_nods
     assign y_v = 1'b0;
     assign o_v = 1'b0;
@@ -190,42 +253,157 @@ module otpu_dma
     end
 `ifndef SYNTHESIS
     always_ff @(posedge clk)
-      if (!rst && is_ds) $fatal(1, "otpu_dma: no DSTEP here (W = %0d, HAS_DSTEP = %0d)", W, HAS_DSTEP);
+      if (!rst && is_ds)
+        $fatal(1, "otpu_dma: no streams here (W = %0d, LANES = %0d, HAS_DSTEP = %0d)", W, LANES,
+               HAS_DSTEP);
 `endif
   end
 
-  // the fill's TMEM read this cycle: kind, index, address, lanes. Step fk's are registered
-  // (fs_*), computed a cycle ahead from fk_nx: the compare / subtract chain on fk and the
-  // counts stays off the TMEM read address (it was clk125's DSTEP path at 125.49 MHz:
-  // ds_nq -> compares -> fk_a -> t_raddr -> TMEM bank address, 13 levels). A DSTEP primes
-  // the first step for a cycle (ds_prime) before its fill starts.
-  logic        ds_prime;
-  logic [2:0]  fk_k, fs_k, fn_k;
-  logic [4:0]  fk_i, fs_i, fn_i;
-  logic [31:0] fk_a, fs_a, fn_a;
-  logic [W-1:0] fk_m, fs_m, fn_m;
-  wire  [7:0]  fk_nx = ds_prime ? 8'd0 : fk + 8'd1;
+  // ---- a stream's setup (ds_su): a DSTEP's from its command (GDN); a STREAM's from its
+  // command (w1 = desc | ks << 16) and its descriptor (docs/stream.md 3.2: float-safe words,
+  // the payload is the sign bit and the mantissa), which must be in the hardware subset (4.4,
+  // opentpu.isa.stream_hw_cfg): its scalar op list names dmode
+  function automatic logic [23:0] dpl(input logic [31:0] w);
+    return {w[31], w[22:0]};
+  endfunction
+  function automatic logic [23:0] dop(input int op, input int dst, input int a, input int b);
+    return 24'(op | (dst << 4) | (a << 7) | (b << 11));
+  endfunction
+  localparam int SC_SUB = 1, SC_MUL = 2, O_A = 8, O_X = 9, O_K0 = 10, O_K1 = 11;
+  ss_cfg_t     su_cfg;
+  logic [31:0] su_src, su_dst, su_vec, su_x, su_k, su_ks, su_out;
+  logic [15:0] su_nseg;                  // segments SE takes (pad64: 16 per row)
+  logic [5:0]  su_ns;                    // the stream's own segments per row (the fill's)
+  logic        su_ok;
   always_comb begin
-    fn_k = 3'd0; fn_i = '0; fn_a = '0; fn_m = '0;
-    if (fk_nx < ds_nq) begin
-      fn_k = 3'd1; fn_i = 5'(fk_nx); fn_a = ds_qa + 32'(fk_nx) * W; fn_m = '1;
-    end else if (fk_nx < 2 * ds_nq) begin
-      fn_k = 3'd2; fn_i = 5'(fk_nx - ds_nq); fn_a = ds_qa + 32'(fk_nx) * W; fn_m = '1;
-    end else if (fk_nx < 2 * ds_nq + ds_nv) begin
-      fn_k = 3'd3; fn_i = 5'(fk_nx - 2 * ds_nq); fn_a = ds_va + 32'(fn_i) * W;
-      for (int l = 0; l < W; l++) fn_m[l] = (32'(fn_i) * W + l) < 32'(ds_rows);
-    end else if (fk_nx == 2 * ds_nq + ds_nv) begin
-      fn_k = 3'd4; fn_a = ds_ga; fn_m[0] = 1'b1;
-    end else begin
-      fn_k = 3'd5; fn_a = ds_ga + ds_gs; fn_m[0] = 1'b1;
+    logic [23:0] d0, d1, d2, d3, d4, o5, o6, o7;
+    logic [11:0] rows, cols;
+    logic [1:0]  dm, g;
+    logic        dm_ok, g_ok, a_ok, fs_ok;
+    d0 = dpl(dsw[0]); d1 = dpl(dsw[1]); d2 = dpl(dsw[2]); d3 = dpl(dsw[3]);
+    d4 = dpl(dsw[4]); o5 = dpl(dsw[5]); o6 = dpl(dsw[6]); o7 = dpl(dsw[7]);
+    // dmode from the op list (d2[3:0] ops)
+    dm = SD_DELTA; dm_ok = 1'b1;
+    if (d2[3:0] == 4'd3 && o5 == dop(SC_MUL, 0, O_A, O_K0) && o6 == dop(SC_SUB, 1, O_X, 0) &&
+        o7 == dop(SC_MUL, 2, 1, O_K1))
+      dm = SD_DELTA;
+    else if (d2[3:0] == 4'd2 && o5 == dop(SC_SUB, 1, O_X, O_A) && o6 == dop(SC_MUL, 2, 1, O_K1))
+      dm = SD_DELTA1;
+    else if (d2[3:0] == 4'd1 && o5 == dop(SC_MUL, 2, O_X, O_K1))
+      dm = SD_SCALE;
+    else if (d2[3:0] == 4'd1 && o5 == dop(SC_MUL, 2, O_A, O_K1))
+      dm = SD_DOT;
+    else
+      dm_ok = 1'b0;
+    // G: a constant K0, slot 3 or one (g_src: 0 reg, 1 slot, 2 const, 3 one; g_idx)
+    g = SG_K0; g_ok = 1'b1;
+    if (d1[8:7] == 2'd2 && d1[11:9] == 3'd0) g = SG_K0;
+    else if (d1[8:7] == 2'd1 && d1[11:9] == 3'd3) g = SG_COL;
+    else if (d1[8:7] == 2'd3) g = SG_ONE;
+    else g_ok = 1'b0;
+    // A on slot 1 or 2 exactly when the op list reads it
+    a_ok = (d1[0] == (dm != SD_SCALE)) && (!d1[0] || (d1[2:1] == 2'd0 &&
+                                                       (d1[4:3] == 2'd1 || d1[4:3] == 2'd2)));
+    fs_ok = 1'b1;
+    for (int i = 0; i < 8; i++)
+      if ((i < 5 || i < 5 + int'(d2[3:0])) && dsw[i][30:23] != 8'h80) fs_ok = 1'b0;
+    rows = d0[11:0]; cols = d0[23:12];
+    if (sc.op == OP_DSTEP) begin
+      rows = 12'(sc.w4[15:0]); cols = 12'(sc.w4[31:16]);
     end
+    su_cfg.ns = 6'(cols / W);
+    su_cfg.rows = 9'(rows);
+    su_cfg.a_en = d1[0];
+    su_cfg.a_sel = d1[4:3] == 2'd2;
+    su_cfg.dmode = dm;
+    su_cfg.g_src = g;
+    su_cfg.q_en = d1[20];
+    su_src = sc.w2; su_dst = sc.w3; su_vec = sc.w4; su_x = sc.w5; su_k = sc.w6;
+    su_ks = 32'(sc.w1[31:16]); su_out = sc.w7;
+    su_ok = fs_ok && dm_ok && g_ok && a_ok && rows != 0 && rows <= 12'd256 &&
+            cols[5:0] == 0 && cols != 0 && cols <= 12'd256 && d4 == 0 &&
+            d1[6:5] == 2'd1 && d1[13:12] == 2'd0 && d1[16:14] == 3'd1 && d1[19:17] == 3'd2 &&
+            (!d1[20] || d1[22:21] == 2'd0) && !d1[23] && d2[13:4] == 0 &&
+            !sc.flags[STF_SRC_T] && !sc.flags[STF_DST_T] && !sc.flags[STF_NODST];
+    if (sc.op == OP_DSTEP) begin
+      su_cfg.a_en = 1'b1; su_cfg.a_sel = 1'b0; su_cfg.dmode = SD_DELTA; su_cfg.g_src = SG_K0;
+      su_cfg.q_en = 1'b1;
+      su_src = sc.w1; su_dst = sc.w1; su_vec = sc.w2; su_x = sc.w3; su_k = sc.w5;
+      su_ks = sc.w7; su_out = sc.w6;
+      su_ok = 1'b1;
+    end
+    su_ns = su_cfg.ns;
+    su_cfg.pad64 = ONE_TREE && su_ns == 6'd8;
+    if (su_cfg.pad64) su_cfg.ns = 6'd16;
+    su_nseg = 16'(32'(su_cfg.rows) * 32'(su_cfg.ns));
   end
+`ifndef SYNTHESIS
   always_ff @(posedge clk)
-    if (ds_prime || (ds_fill && fk != fn)) begin
-      fs_k <= fn_k; fs_i <= fn_i; fs_a <= fn_a; fs_m <= fn_m;
+    if (!rst && ds_su && sc.op == OP_STREAM &&
+        (!su_ok || su_src % D != 0 ||
+         (su_dst != su_src && su_dst < su_src + 32'(su_cfg.rows) * su_ns * W * 4 &&
+          su_src < su_dst + 32'(su_cfg.rows) * su_ns * W * 4)))
+      $fatal(1, "otpu_dma: STREAM's descriptor at %0d is not in the hardware subset", sc.w1[15:0]);
+`endif
+
+  // the fill: one TMEM read of W words per cycle. Its step (fs_*: kind SF_*, index, address,
+  // lanes) is registered and the next one computed a cycle ahead, so the counts stay off the
+  // TMEM read address (clk125's DSTEP path at 125.49 MHz was counts -> compares -> address ->
+  // TMEM bank address). The kinds go in the order q, k, a, g, x, K0, K1 (docs/stream.md 4.3),
+  // skipping those the stream does not use (f_nk).
+  logic [2:0]  fk_k, fs_k;
+  logic [4:0]  fk_i, fs_i;
+  logic [31:0] fk_a, fs_a;
+  logic [W-1:0] fk_m, fs_m;
+  logic [2:0]  f_nk [8];                   // the kind after each kind (SF_NONE: the fill ends)
+  logic [4:0]  f_kn [8];                   // each kind's steps less one
+  logic [31:0] f_ka [8];                   // each kind's first address
+  function automatic logic [W-1:0] f_mask(input logic [2:0] k, input logic [4:0] i,
+                                          input logic [8:0] rows);
+    logic [W-1:0] m;
+    for (int l = 0; l < W; l++)
+      m[l] = (k == SF_X) ? ((32'(i) * W + l) < 32'(rows)) : ((k != SF_K0 && k != SF_K1) || l == 0);
+    return m;
+  endfunction
+  wire fk_on = ds_fill && fs_k != SF_NONE;
+  wire [2:0] f_nx = f_nk[fs_k];
+  always_ff @(posedge clk) begin
+    if (ds_su) begin
+      logic [31:0] cw;
+      logic [4:0]  nsm;
+      cw = 32'(su_ns) * W;
+      nsm = 5'(su_ns - 1'b1);
+      f_nk[SF_NONE] <= SF_NONE;
+      f_nk[SF_Q] <= SF_K;
+      f_nk[SF_K] <= su_cfg.a_en && su_cfg.a_sel ? SF_A : su_cfg.g_src == SG_COL ? SF_G : SF_X;
+      f_nk[SF_A] <= su_cfg.g_src == SG_COL ? SF_G : SF_X;
+      f_nk[SF_G] <= SF_X;
+      f_nk[SF_X] <= SF_K0;
+      f_nk[SF_K0] <= SF_K1;
+      f_nk[SF_K1] <= SF_NONE;
+      f_kn[SF_NONE] <= '0;
+      f_kn[SF_Q] <= nsm; f_kn[SF_K] <= nsm; f_kn[SF_A] <= nsm; f_kn[SF_G] <= nsm;
+      f_kn[SF_X] <= 5'((32'(su_cfg.rows) + W - 1) / W - 1);
+      f_kn[SF_K0] <= '0; f_kn[SF_K1] <= '0;
+      f_ka[SF_NONE] <= '0;
+      f_ka[SF_Q] <= su_vec; f_ka[SF_K] <= su_vec + cw; f_ka[SF_A] <= su_vec + 2 * cw;
+      f_ka[SF_G] <= su_vec + 3 * cw; f_ka[SF_X] <= su_x;
+      f_ka[SF_K0] <= su_k; f_ka[SF_K1] <= su_k + su_ks;
+      fs_k <= su_cfg.q_en ? SF_Q : SF_K;
+      fs_i <= '0;
+      fs_a <= su_cfg.q_en ? su_vec : su_vec + cw;
+      fs_m <= '1;
+    end else if (fk_on) begin
+      if (fs_i == f_kn[fs_k]) begin
+        fs_k <= f_nx; fs_i <= '0; fs_a <= f_ka[f_nx]; fs_m <= f_mask(f_nx, 5'd0, ds_rows);
+      end else begin
+        fs_i <= fs_i + 1'b1; fs_a <= fs_a + W; fs_m <= f_mask(fs_k, fs_i + 1'b1, ds_rows);
+      end
     end
-  wire fk_on = ds_fill && fk != fn;
-  assign fk_k = fk_on ? fs_k : 3'd0;
+    if (ds_dsd)
+      for (int i = 0; i < 8; i++) dsw[i] <= t_rdata[i % LANES];
+  end
+  assign fk_k = fk_on ? fs_k : SF_NONE;
   assign fk_i = fk_on ? fs_i : 5'd0;
   assign fk_a = fk_on ? fs_a : 32'd0;
   assign fk_m = fk_on ? fs_m : '0;
@@ -258,8 +436,16 @@ module otpu_dma
     t_wdata <= lw_data;
   end
 
-  // ---- ST: the segment read last cycle, pending in t_rdata (its position, lanes, chunk, and
-  // whether it ends its chunk), and the chunk gathered so far
+  // ---- ST: a two-stage read pipeline. The segment read last cycle is in t_rdata (pa: its
+  // position, lanes, whether it ends its chunk), the one before in t_rq, a register (st_pend,
+  // pp, pm, pl), and the chunk gathered so far in cb: the buffer's write data (st_cd) comes from
+  // flip-flops, not from TMEM's block RAMs through its read path in the same cycle (the se-sys
+  // build's TMEM port 1 -> lb DI paths, BRAM to BRAM, -0.38 ns). Both stages move with adv;
+  // while they hold, t_rdata holds too (no new read)
+  logic                   pa, pla;
+  int                     ppa;
+  logic [W-1:0]           pma;
+  logic [W-1:0][31:0]     t_rq;
   logic                   st_pend, pl;
   (* max_fanout = 64 *) int pp;   // selects every data bit of b_wdata: replicated
   logic [W-1:0]           pm;
@@ -279,11 +465,11 @@ module otpu_dma
     for (int p = 0; p < SPC; p++)
       for (int l = 0; l < W; l++) begin
         st_cm[p * W + l] = cbm[p * W + l] || (pp == p && pm[l]);
-        st_cd[32 * (p * W + l) +: 32] = (pp == p) ? t_rdata[l] : cb[p * W + l];
+        st_cd[32 * (p * W + l) +: 32] = (pp == p) ? t_rq[l] : cb[p * W + l];
       end
     b_wmask = lm[rp];
     b_wdata = lb_q;
-    if (ds_wreq) begin                    // DSTEP: the head chunk of the gather
+    if (ds_wreq) begin                    // a stream: the head chunk of the gather
       b_req = 1'b1;
       b_we = 1'b1;
       b_addr = ds_wb + 32'(ds_wch) * CW;
@@ -297,6 +483,11 @@ module otpu_dma
       for (int l = 0; l < W; l++) begin
         t_ren[l] = fk_m[l];
         t_raddr[l] = fk_a + 32'(l);
+      end
+    if (ds_dsc)                           // a STREAM's descriptor
+      for (int l = 0; l < W; l++) begin
+        t_ren[l] = 1'b1;
+        t_raddr[l] = 32'(sc.w1[15:0]) + 32'(l);
       end
     if (busy && is_st && !ackw) begin
       b_addr = ic;
@@ -313,11 +504,11 @@ module otpu_dma
   end
 
   always_ff @(posedge clk) begin
-    fr_k <= rst ? 3'd0 : fk_k;
+    fr_k <= rst ? SF_NONE : fk_k;
     fr_i <= fk_i;
     pe <= !rst && (ds_take || ds_drain);
     pe_in <= ds_take;
-    pe_zero <= ds_zero;
+    pe_zero <= ds_zero || ds_spad;
     pe_pos <= ds_pos;
   end
   assign ds_ow = ds_out;
@@ -335,43 +526,32 @@ module otpu_dma
       ld_fin <= 1'b0;
       dv_v <= 1'b0;
       busy <= 1'b0;
-      st_pend <= 1'b0;
+      st_pend <= 1'b0; pa <= 1'b0;
       st_wq <= 1'b0;
       ackw <= 1'b0;
       ds_wr <= 1'b0;
       ds_rr <= 1'b0;
-      ds_prime <= 1'b0;
-    end else if (start && cmd.op == OP_DSTEP) begin
-      logic [31:0] a;
-      logic [8:0]  rows;
-      logic [8:0]  cols;
-      logic [5:0]  ns;
-      logic [7:0]  nv;
-      a = cmd.w1 >> 2;
-      rows = 9'(cmd.w4[15:0]);
-      cols = 9'(cmd.w4[31:16]);
-      ns = 6'(cols / W);
-      nv = 8'((32'(rows) + W - 1) / W);
+      ds_dsc <= 1'b0; ds_dsd <= 1'b0; ds_su <= 1'b0; ds_wait <= 1'b0;
+      ds_fill <= 1'b0; ds_run <= 1'b0; ds_out <= 1'b0;
+      ss_req <= 1'b0;
+    end else if (start && (cmd.op == OP_DSTEP || cmd.op == OP_STREAM)) begin
+      // the reads start at the setup: a DSTEP's next cycle, a STREAM's once its descriptor is in
+      sc <= cmd;
       is_ds <= 1'b1; is_st <= 1'b0; ds_zero <= cmd.flags[DF_ZERO];
       sleft <= '0;                               // no LD delivery into TMEM
-      ic <= a;
-      cleft <= cmd.flags[DF_ZERO] ? '0 : (32'(rows) * 32'(cols)) >> CWL;
+      cleft <= '0; cl_nz <= 1'b0; cl_one <= 1'b0;
       occ <= '0; cnt <= '0; wp <= '0; rp <= '0;
-      ds_qa <= cmd.w2; ds_va <= cmd.w3; ds_ga <= cmd.w5; ds_oa <= cmd.w6; ds_gs <= cmd.w7;
-      ds_wb <= a;
-      ds_ns <= ns; ds_rows <= rows;
-      ds_nseg <= 16'(32'(rows) * 32'(ns)); ds_left <= 16'(32'(rows) * 32'(ns));
       ds_ycnt <= '0; ds_ocnt <= '0; ds_wch <= '0;
-      ds_nq <= 8'(ns); ds_nv <= nv; fk <= '0; fn <= 8'(2 * ns) + nv + 8'd2;
-      ds_fill <= 1'b0; ds_prime <= 1'b1; ds_run <= 1'b0; ds_out <= 1'b0;
+      ds_dsc <= cmd.op == OP_STREAM; ds_dsd <= 1'b0; ds_su <= cmd.op == OP_DSTEP;
+      ds_wait <= 1'b0; ds_fill <= 1'b0; ds_run <= 1'b0; ds_out <= 1'b0;
       og <= '0; gt <= '0; gh <= '0; ds_pos <= '0; oi <= '0; ds_wr <= 1'b0;
       ds_rr <= 1'b0; ds_rc <= '0;
-      st_pend <= 1'b0;
+      st_pend <= 1'b0; pa <= 1'b0;
       ackw <= 1'b0;
       busy <= 1'b1;
     end else if (start) begin
       // one carry chain each: the counts from the start's offset in its segment / chunk
-      logic [31:0] a, n, ow, oc;
+      logic [31:0] a, n, ow, oc, nc;
       a = cmd.w1 >> 2;
       n = cmd.w3;
       ow = a % W;
@@ -385,9 +565,10 @@ module otpu_dma
       for (int l = 0; l < W; l++) sm[l] <= (32'(l) >= ow) && (n > 32'(l) - ow);
       sleft <= (n + (ow + (W - 1))) >> SWL;
       ic <= a & ~32'(CW - 1);
-      cleft <= (n + (oc + (CW - 1))) >> CWL;
+      nc = (n + (oc + (CW - 1))) >> CWL;
+      cleft <= nc; cl_nz <= nc != 0; cl_one <= nc == 1;
       occ <= '0; cnt <= '0; wp <= '0; rp <= '0;
-      st_pend <= 1'b0;
+      st_pend <= 1'b0; pa <= 1'b0;
       st_wq <= 1'b0;
       st_fin <= 1'b0;
       cbm <= '0;
@@ -403,27 +584,55 @@ module otpu_dma
       end
     end else if (busy) begin
       if (is_ds) begin
-        // fill: one TMEM read per cycle, captured by the datapath a cycle later
-        if (ds_prime) begin
-          ds_prime <= 1'b0;
+        // a STREAM's descriptor: read, then captured (dsw)
+        if (ds_dsc) begin
+          ds_dsc <= 1'b0;
+          ds_dsd <= 1'b1;
+        end
+        if (ds_dsd) begin
+          ds_dsd <= 1'b0;
+          ds_su <= 1'b1;
+        end
+        // the setup: the reads start, SE is requested (ss_cfg valid while ss_req)
+        if (ds_su) begin
+          ds_su <= 1'b0;
+          ic <= su_src >> 2;
+          // cleft = rows * ns / SPC chunks; its flags from the factors, not the product (the
+          // multiply's output feeds cleft alone)
+          cleft <= ds_zero ? '0 : (32'(su_cfg.rows) * su_ns) >> (CWL - SWL);
+          cl_nz <= !ds_zero && !prod_lt(su_cfg.rows, su_ns, SPC);
+          cl_one <= !ds_zero && !prod_lt(su_cfg.rows, su_ns, SPC) &&
+                    prod_lt(su_cfg.rows, su_ns, 2 * SPC);
+          ds_wb <= su_dst >> 2;
+          ds_oa <= su_out;
+          ds_rows <= su_cfg.rows; ds_qen <= su_cfg.q_en; ds_pad <= su_cfg.pad64;
+          ds_sj <= '0; ds_yj <= '0;
+          ds_nseg <= su_nseg; ds_left <= su_nseg;
+          ds_nv <= 8'((32'(su_cfg.rows) + W - 1) / W);
+          ss_cfg <= su_cfg;
+          ss_req <= 1'b1;
+          ds_wait <= 1'b1;
+        end
+        // the fill once SE is granted: one TMEM read per cycle, captured by SE a cycle later
+        if (ds_wait && ss_gnt) begin
+          ds_wait <= 1'b0;
           ds_fill <= 1'b1;
         end
-        if (ds_fill) begin
-          if (fk != fn) fk <= fk + 1'b1;
-          else begin
-            ds_fill <= 1'b0;
-            ds_run <= 1'b1;
-          end
+        if (ds_fill && fs_k == SF_NONE) begin
+          ds_fill <= 1'b0;
+          ds_run <= 1'b1;
         end
         if (ds_take) begin
           ds_left <= ds_left - 1'b1;
-          if (!ds_zero) ds_pos <= ds_eat ? '0 : ds_pos + 1'b1;
+          if (!ds_zero && !ds_spad) ds_pos <= ds_eat ? '0 : ds_pos + 1'b1;
+          ds_sj <= ds_sj + 1'b1;                   // pad64 rows are 16 segments
         end
         // the updated segments into the gather, a chunk out per write
-        if (pe && y_v) begin
-          gt <= gt + 1'b1;
+        if (y_v) begin
           ds_ycnt <= ds_ycnt + 1'b1;
+          ds_yj <= ds_yj + 1'b1;
         end
+        if (y_keep) gt <= gt + 1'b1;
         if (ds_wreq && b_gnt) begin
           gh <= gh + 1'b1;
           ds_wch <= ds_wch + 1'b1;
@@ -432,14 +641,18 @@ module otpu_dma
         ds_wr <= ds_wr_nx;
         // a read run: starts with a request when RUN slots are free, ends after RUN chunks
         if (ld_iss) ds_rc <= (32'(ds_rc) == RUN - 1) ? '0 : ds_rc + 1'b1;
-        ds_rr <= ds_rr_nx || (ld_iss && !ds_rr && RUN > 1 && cleft != 1);
-        if (pe && o_v) begin
+        ds_rr <= ds_rr_nx || (ld_iss && !ds_rr && RUN > 1 && !cl_one);
+        if (o_v) begin
           ob[ds_ocnt % W][ds_ocnt / W] <= o_d;
           ds_ocnt <= ds_ocnt + 1'b1;
         end
+        // SE is done once every updated segment and o is out (pe's last cycle is this one at
+        // the latest, and SE sees it while ss_gnt holds)
+        if (ds_run && ds_flushed) ss_req <= 1'b0;
         if (ds_run && ds_flushed && og == 0) begin
           ds_run <= 1'b0;
-          ds_out <= 1'b1;
+          if (ds_qen) ds_out <= 1'b1;
+          else ackw <= 1'b1;
         end
         if (ds_out) begin
           oi <= oi + 1'b1;
@@ -459,6 +672,7 @@ module otpu_dma
         if (ld_iss) begin
           ic <= ic + CW;
           cleft <= cleft - 1;
+          cl_nz <= !cl_one; cl_one <= cleft == 2;
         end
         occ <= occ + (PW+1)'(ld_iss) - (PW+1)'(ld_eat);
         cnt <= cnt + (PW+1)'(b_rvalid) - (PW+1)'(ld_eat);
@@ -491,15 +705,20 @@ module otpu_dma
             if (pl) cbm <= '0;                  // the chunk goes into the buffer this cycle
             else
               for (int l = 0; l < W; l++) begin
-                cb[pp * W + l] <= t_rdata[l];
+                cb[pp * W + l] <= t_rq[l];
                 cbm[pp * W + l] <= pm[l];
               end
           end
-          st_pend <= st_rd;
-          pp <= pos_of(sw);
-          pm <= sm;
-          pl <= seg_end;
-          if (st_pend && sleft == 0) begin      // the last chunk goes into the buffer
+          st_pend <= pa;
+          pp <= ppa;
+          pm <= pma;
+          pl <= pla;
+          t_rq <= t_rdata;
+          pa <= st_rd;
+          ppa <= pos_of(sw);
+          pma <= sm;
+          pla <= seg_end;
+          if (st_pend && !pa && sleft == 0) begin  // the last chunk goes into the buffer
             st_pend <= 1'b0;
             st_fin <= 1'b1;
           end

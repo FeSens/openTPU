@@ -20,6 +20,8 @@ DDR ?= 1066
 # ACT_ROWS: ACT RAM rows, the most rows of one MM (default MCOLS; 8: prefill's 8-row MMs stream
 #   each weight once, the MXU replaying it per MCOLS rows)
 # BUILD_ID: the BUILD_ID register (8 hex digits; default: the git commit)
+# SE: the stream engine, v2 (default, the production image; docs/stream.md 11: composites on the 8
+#   lanes, one tree) or v1
 # MEM: mig (default), mig_native or litedram (run_vivado.sh)
 CORE_MHZ ?= 100
 MCOLS ?= 2
@@ -28,7 +30,8 @@ LANES ?= 8
 ACT_ROWS ?= $(MCOLS)
 RTL := $(addprefix $(ROOT)/rtl/, vpu/otpu_fp.sv vpu/otpu_fpipe.sv top/otpu_pkg.sv \
   mem/otpu_tmem.sv mem/otpu_axi_dram.sv mem/otpu_actram.sv seq/otpu_seq.sv vpu/otpu_vtree.sv \
-  dma/otpu_dstep.sv dma/otpu_dma.sv mxu/otpu_mxu.sv vpu/otpu_quant.sv vpu/otpu_vpu.sv \
+  dma/otpu_dma.sv mxu/otpu_mxu.sv vpu/otpu_quant.sv vpu/otpu_se_comp.sv vpu/otpu_se_tail.sv \
+  vpu/otpu_vpu.sv \
   top/otpu_coll.sv top/otpu_slice.sv \
   boards/ypcb-00338/otpu_ctrl.sv boards/ypcb-00338/otpu_trace.sv boards/ypcb-00338/otpu_board.sv)
 RTL_NATIVE := $(RTL) $(addprefix $(ROOT)/rtl/, mem/otpu_native_dram.sv boards/ypcb-00338/otpu_afifo.sv \
@@ -57,7 +60,7 @@ lint-ld:
 	  sim/otpu_bd_ld_wrapper_stub.sv sim/otpu_litedram_stub.sv $(ROOT)/rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv
 
 bit:
-	$(if $(MEM),MEM=$(MEM)) $(if $(AXI_BL),AXI_BL=$(AXI_BL)) MCOLS=$(MCOLS) ACT_ROWS=$(ACT_ROWS) VPU_CL=$(VPU_CL) LANES=$(LANES) CORE_MHZ=$(CORE_MHZ) $(if $(BUILD_ID),BUILD_ID=$(BUILD_ID)) ./run_vivado.sh $(DDR)
+	$(if $(MEM),MEM=$(MEM)) $(if $(AXI_BL),AXI_BL=$(AXI_BL)) $(if $(SE),SE=$(SE)) MCOLS=$(MCOLS) ACT_ROWS=$(ACT_ROWS) VPU_CL=$(VPU_CL) LANES=$(LANES) CORE_MHZ=$(CORE_MHZ) $(if $(BUILD_ID),BUILD_ID=$(BUILD_ID)) ./run_vivado.sh $(DDR)
 
 impl:
 	$(if $(MEM),MEM=$(MEM)) STEP=impl ./run_vivado.sh $(DDR)

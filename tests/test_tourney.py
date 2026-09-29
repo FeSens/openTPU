@@ -177,7 +177,7 @@ def test_sandbox_rejects(tmp_path):
 # ------------------------------------------------------------------------------ components
 def test_component_configs_are_consistent():
     comps = sorted((ROOT / "tools" / "tourney" / "components").glob("*.yaml"))
-    assert len(comps) == 14
+    assert len(comps) == 13
     for p in comps:
         c = yaml.safe_load(p.read_text())
         assert c["name"] == p.stem
@@ -208,7 +208,7 @@ def test_every_module_has_a_component():
     # the components that can change the DSTEP datapath run its RTL test
     for c in comps:
         if any(fnmatch.fnmatch(f, g) for g in c["allowed"]
-               for f in ("rtl/dma/otpu_dstep.sv", "rtl/vpu/otpu_vtree.sv", "rtl/vpu/otpu_fp.sv")):
+               for f in ("rtl/vpu/otpu_se_tail.sv", "rtl/vpu/otpu_vtree.sv", "rtl/vpu/otpu_fp.sv")):
             assert "tests/test_vops.py::test_dstep_rtl_bit_exact" in c["tests"]["fast"], c["name"]
 
 
@@ -219,9 +219,9 @@ def test_path_summary_groups_units():
          " levels 14, data 8.000 ns (logic 1.000, route 7.000)\n"
          "-0.500 ns VIOLATED u_board/u_slice/u_mxu/q_h_reg/C -> u_board/u_slice/u_tmem/pw_b_reg[1]/D"
          " levels 12, data 8.000 ns (logic 3.000, route 5.000)\n"
-         "-0.400 ns VIOLATED u_board/u_slice/u_dma/g_ds.u_ds/x_reg/C -> u_board/u_slice/cnt_reg/D"
+         "-0.400 ns VIOLATED u_board/u_slice/u_vpu/g_se.u_tail/x_reg/C -> u_board/u_slice/cnt_reg/D"
          " levels 3, data 7.000 ns (logic 3.500, route 3.500)\n")
-    assert AG.unit_of("u_board/u_slice/u_dma/u_ds/x_reg/C") == "u_dma/u_ds"
+    assert AG.unit_of("u_board/u_slice/u_vpu/g_se.u_tail/x_reg/C") == "u_vpu/u_tail"
     assert AG.unit_of("u_board/u_slice/cnt_reg/D") == "u_slice"
     assert AG.unit_of("u_board/u_mem/qc_reg[0][19]/C") == "u_mem"
     s = AG.path_summary(t).splitlines()
@@ -239,7 +239,7 @@ def test_full_component_prompt_does_not_quote_the_rtl():
     p = AG.hypothesis_prompt_fmax(c, ROOT, champ, "(none)", "(none)", AG.FMAX_CATEGORIES[0],
                                   125.49)
     assert "=== rtl/" not in p and "read the ones on the paths you target" in p
-    assert "rtl/dma/otpu_dstep.sv" in p and "rtl/boards/ypcb-00338/otpu_board.sv" in p
+    assert "rtl/vpu/otpu_se_tail.sv" in p and "rtl/boards/ypcb-00338/otpu_board.sv" in p
     assert len(p) < 40000
 
 
@@ -492,6 +492,27 @@ def test_acquire_hosts_file_overrides(tmp_path, monkeypatch):
     (tmp_path / "hosts").write_text("hosts=a,b\njobs=a=1,b=1\n")
     with RM.acquire(count=lambda h: 1 if h == "a" else 0, max_jobs=2) as (h, n):
         assert (h, n) == ("b", 0)                  # a is at its file cap of 1
+
+
+def test_acquire_rereads_hosts_file_while_waiting(tmp_path, monkeypatch):
+    """A wait that started with every host capped at 0 takes the raised cap (and the shorter
+    host list) written while it waits."""
+    monkeypatch.setattr(RM, "START_LOCK", tmp_path / "v.lock")
+    monkeypatch.setattr(RM, "HOSTS_FILE", tmp_path / "hosts")
+    monkeypatch.setattr(RM, "HOSTS", ["a"])
+    hf = tmp_path / "hosts"
+    hf.write_text("hosts=a,b\njobs=a=0,b=0\n")
+    counted = []
+
+    def count(h):
+        counted.append(h)
+        return 1 if h == "b" else 0
+
+    def sleep(s):
+        hf.write_text("hosts=b\njobs=a=0,b=2\n")
+    with RM.acquire(poll=1, count=count, sleep=sleep, log=lambda m: None, max_jobs=2) as (h, n):
+        assert (h, n) == ("b", 1)
+    assert counted == ["a", "b", "b"]              # a is no longer counted after the edit
 
 
 def test_acquire_serializes_starts(tmp_path, monkeypatch):

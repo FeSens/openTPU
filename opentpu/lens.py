@@ -245,7 +245,7 @@ def isa_data(name: str, cfg, programs: list, images: list, uarch: dict | None = 
         sl.execute = execute
     m.run()
     src = _Sources()
-    unit_of = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.MM: 1, I.QACT: 2, I.QST: 2, I.VOP: 3,
+    unit_of = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.STREAM: 0, I.MM: 1, I.QACT: 2, I.QST: 2, I.VOP: 3,
                I.GATHER: 4}
     instrs, cycles, per = [], 0, []
     for s in range(cfg.S):

@@ -27,7 +27,9 @@ module otpu_top
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer
   parameter int AXI        = 0,       // memory path: see the top
   parameter int AXI_BL     = 8,       // AXI adapter: port B read burst, beats (timing only)
-  parameter int AXI_WBL    = 8        // AXI adapter: port B write burst, beats (timing only)
+  parameter int AXI_WBL    = 8,       // AXI adapter: port B write burst, beats (timing only)
+  parameter bit SE_COMP8   = 1'b1,    // the stream engine's v2 (docs/stream.md 11)
+  parameter bit SE_ONE_TREE = 1'b1
 ) (
   input  logic          clk,
   input  logic          sys_rst,
@@ -140,7 +142,8 @@ module otpu_top
     otpu_slice #(.SID(s), .S(S), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .ACT_ROWS(ACT_ROWS),
                  .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS),
                  .FIFO_DEPTH(FIFO_DEPTH), .LANES(LANES), .WIN(WIN), .RPB(RPB),
-                 .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES)) u_slice (
+                 .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES),
+                 .SE_COMP8(SE_COMP8), .SE_ONE_TREE(SE_ONE_TREE)) u_slice (
       .clk, .sys_rst, .rst, .rinit, .ld_start, .ld_addr, .ld_n, .ld_busy(ldb[s]),
       .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
       .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,

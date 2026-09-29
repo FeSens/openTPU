@@ -17,9 +17,9 @@ BUILD = ROOT / "build" / "verilator"
 RTL_SOURCES = [
     "vpu/otpu_fp.sv", "vpu/otpu_fpipe.sv", "top/otpu_pkg.sv", "mem/otpu_dram.sv", "mem/otpu_tmem.sv",
     "mem/otpu_axi_dram.sv", "mem/otpu_native_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv",
-    "vpu/otpu_vtree.sv", "dma/otpu_dstep.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv",
-    "vpu/otpu_quant.sv", "vpu/otpu_vpu.sv", "top/otpu_coll.sv", "top/otpu_slice.sv",
-    "top/otpu_top.sv",
+    "vpu/otpu_vtree.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv",
+    "vpu/otpu_quant.sv", "vpu/otpu_se_comp.sv", "vpu/otpu_se_tail.sv", "vpu/otpu_vpu.sv",
+    "top/otpu_coll.sv", "top/otpu_slice.sv", "top/otpu_top.sv",
 ]
 
 
@@ -122,6 +122,21 @@ if os.environ.get("OTPU_MXU") == "cascade":
 # VPU lanes with the composite functions (exp2, recip, rsqrt; timing only): OTPU_VPU_CL=4
 if os.environ.get("OTPU_VPU_CL"):
     UARCH["VPU_CL"] = int(os.environ["OTPU_VPU_CL"])
+# The board adapter's port B read / write bursts, beats (timing only; tb_top's and tb_board's
+# defaults 8, the production image 32 / 8): OTPU_AXI_BL=32 OTPU_AXI_WBL=1. Tests that set them
+# (the uarch argument) keep theirs
+for _k in ("AXI_BL", "AXI_WBL"):
+    if os.environ.get("OTPU_" + _k):
+        UARCH[_k] = BOARD_UARCH[_k] = int(os.environ["OTPU_" + _k])
+# The stream engine (docs/stream.md 11): v2, COMP8 and ONE_TREE (the production image), unless
+# OTPU_SE=v1; OTPU_SE=comp8 / onetree builds one of them, and OTPU_SE_COMP8 / OTPU_SE_ONE_TREE
+# (0 or 1) set each
+_se = os.environ.get("OTPU_SE", "v2")
+UARCH["SE_COMP8"] = int(_se in ("v2", "comp8"))
+UARCH["SE_ONE_TREE"] = int(_se in ("v2", "onetree"))
+for _k in ("SE_COMP8", "SE_ONE_TREE"):
+    if os.environ.get("OTPU_" + _k) in ("0", "1"):
+        UARCH[_k] = int(os.environ["OTPU_" + _k])
 # TMEM lanes of the MXU and the quantizer when fewer than LANES (timing only): OTPU_ULANES=8
 if os.environ.get("OTPU_ULANES"):
     UARCH["ULANES"] = int(os.environ["OTPU_ULANES"])

@@ -187,7 +187,7 @@ passed with it loaded over JTAG, as now.
   - Optional: 0x318 BOOTSTS, read through ICAPE2, so the host sees a fallback.
 - **Estimate:** about 50 LUT, about 80 FF, 1 ICAPE2, 1 BUFG.
 
-**CAPS:** bit 26 for the flash controller, bit 27 for the reboot.
+**CAPS:** bit 28 for the flash controller, bit 29 for the reboot. Bit 26 is the stream engine's (STREAM, se-main) and bit 27 LiteDRAM's host calibration (HOSTCAL, litedram-int / ld-top).
 
 **Area and timing.** Both parts together come to about 300 LUT and 250 FF, about 0.1% of the
 xc7k480t's 298,600 LUTs (area_eq about +0.1%).

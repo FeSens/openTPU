@@ -147,6 +147,16 @@ def test_vops_on_board_model(have_verilator):
     assert ok, msg
 
 
+def test_stream_on_board_model(have_verilator):
+    """STREAM in every mode of the board's subset and a DSTEP (the selftest's stream stage) on
+    the board model."""
+    import dataclasses
+    from opentpu.host.checks import stream_program
+    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=20, seed=6))
+    ok, msg, _ = run_demo(b, dataclasses.replace(CFG, DSTEP=True, STREAM=True), stream_program())
+    assert ok, msg
+
+
 @pytest.mark.parametrize("group,name,prog", op_checks(CFG),
                          ids=[name for _, name, _ in op_checks(CFG)])
 def test_op_check_on_board_model(have_verilator, group, name, prog):

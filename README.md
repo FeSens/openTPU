@@ -50,6 +50,17 @@ about 0.18 ms on omarchy. So wall is lower: LFM2 4-bit decodes at 86.8 tok/s (me
 85.5 to 87.1). The single runs of the others: LFM2 int8 58.1, Qwen3 int8 22.6, Qwen3 4-bit
 33.7, Qwen3.5 int8 17.1, Qwen3.5 4-bit 24.0 tok/s.
 
+Since 2026-09-29 the production image is `deploy_secand3_02569bc`, measured on opentpu. It
+carries the stream engine ([docs/stream.md](docs/stream.md)), one programmable unit that
+replaces the VPU's composite chains and the DMA's DeltaNet step: 21% fewer LUTs and 52 fewer
+DSPs in the VPU and DMA, at the same device speed.
+- 4-bit decode: LFM2 90.5, Qwen3 34.5 and Qwen3.5 24.65 device tok/s, against the table's
+  90.2, 34.2 and 24.7.
+- Prefill: equal, and 5% faster for Qwen3.5.
+- Every configuration is still token for token equal to the simulator.
+
+The table above was measured with the previous image.
+
 4-bit weights ([docs/quant.md](docs/quant.md)) use FP4 values with two-level block scales, 4.25
 bits per weight, and keep the LM head in int8 for accuracy. They cut the bytes per token by about
 a third and raise decode speed by 40% (Qwen3.5) to 50% (Qwen3), at a measurable cost in
