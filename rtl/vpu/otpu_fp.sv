@@ -305,8 +305,16 @@ package otpu_fp;
     return a[31] ? ~a : {1'b1, a[30:0]};
   endfunction
 
+  // fkey(a) > fkey(b), with the flush beside the comparator instead of in front of it: the
+  // unflushed keys order every pair with nonzero exponents the same, and a flushed operand is
+  // a signed zero, which the other's sign alone orders (above every negative, below every
+  // positive; +0 > -0)
   function automatic logic fp_gt(input f32_t a, input f32_t b);
-    return fkey(a) > fkey(b);
+    logic za, zb, gr;
+    za = (a[30:23] == 8'd0);
+    zb = (b[30:23] == 8'd0);
+    gr = (a[31] ? ~a : {1'b1, a[30:0]}) > (b[31] ? ~b : {1'b1, b[30:0]});
+    return za ? (zb ? (!a[31] && b[31]) : b[31]) : (zb ? !a[31] : gr);
   endfunction
 
   function automatic f32_t fp_max(input f32_t a, input f32_t b);
@@ -315,6 +323,12 @@ package otpu_fp;
 
   function automatic f32_t fp_min(input f32_t a, input f32_t b);
     return fp_gt(b, a) ? ftz(a) : ftz(b);
+  endfunction
+
+  // fp_max (mn = 0) or fp_min (mn = 1) on one comparator: when neither operand is above the
+  // other their keys are equal, and so are their flushed values (fkey is one-to-one)
+  function automatic f32_t fp_mm(input f32_t a, input f32_t b, input logic mn);
+    return (fp_gt(a, b) ^ mn) ? ftz(a) : ftz(b);
   endfunction
 
   // i2f in two stages: magnitude + leading zeros | normalize + round.

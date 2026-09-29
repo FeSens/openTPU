@@ -497,7 +497,8 @@ module otpu_se_comp import otpu_pkg::*; import otpu_fp::*;
   parameter bit EXT = 1'b1) (                        // 1: the stage units are the owner's
   input  logic clk, rst, en,                         // en: the VPU's enable (VOP mode)
   input  logic             in_v,                     // a composite chunk enters (at S0's mux)
-  input  logic [7:0]       in_f,                     // V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2
+  input  logic [2:0]       in_c,                     // f_cc(func) of V_EXP2, V_EXP2SUB, V_RECIP,
+                                                     // V_RSQRT, V_LOG2 (otpu_pkg), from a flip-flop
   input  f32_t             in_a [LANES], in_b [LANES], // in_b: EXP2SUB's B
   input  logic [LANES-1:0] in_m,
   input  logic [MW-1:0]    in_meta,

@@ -53,6 +53,20 @@ def _vectors(n=20000):
                          F.from_bits(0x3F3504F3 + np.arange(-8, 8)),
                          F.from_bits(0x3FB504F3 + np.arange(-8, 8))])
     add(12, lg, lg, F.bits(F.log2(lg)))
+    # the compares on every pair of classes (signed zeros, subnormals, normals, inf, the
+    # canonical NaN) and ties: fp_gt fixes up the flushed operands beside its comparator;
+    # fp_mm is MAX / MIN on one
+    cls = np.array([(s << 31) | (e << 23) | m for s in (0, 1) for e in (0, 1, 0x7F, 0xFE)
+                    for m in (0, 1, 0x2AAAAA, 0x7FFFFF)]
+                   + [0x7F800000, 0xFF800000, 0x7FC00000], np.uint32)
+    ca, cb = (F.from_bits(x).copy() for x in np.meshgrid(cls, cls))
+    ca, cb = np.concatenate([ca.ravel(), a]), np.concatenate([cb.ravel(), a])
+    add(10, ca, cb, F.gt(ca, cb).astype(np.uint32))
+    add(3, ca, cb, F.bits(F.fmax(ca, cb)))
+    add(4, ca, cb, F.bits(F.fmin(ca, cb)))
+    for x, y in ((a, b), (ca, cb)):
+        add(13, x, y, F.bits(F.fmax(x, y)))
+        add(14, x, y, F.bits(F.fmin(x, y)))
     return np.concatenate(rows)
 
 
