@@ -69,16 +69,26 @@ deskew: column j's s4 delayed MCOLS-1-j cycles -> all columns aligned for the ep
 Today every compute-pipeline register has the clock enable `en_c` (the pipeline freezes when a
 row's next chunk has not arrived). Its fan-out and the control logic in front of it are the MXU's
 worst paths on the board (the MXU `q_h` -> `mk` CE / tree / combine CE paths: 15-16 levels, ~88%
-route).
+route). IMPL 2 removes it:
 
-- The per-chunk meta (valid, first, last, partial index, 4-bit half) already travels with the data
-  (`cm_t`), and the epilogue already treats invalid slots (bubbles) between rows.
-- **Row-gated pops (phase 2):** a row's first block pops only when all of the row's chunks and
-  scales are in the FIFOs (the FIFO holds a whole row already: replay requires KB <= DEPTH). A row
-  then never stalls in its middle, `en_c` is constant 1, and the compute pipeline (array and
-  epilogue) has no clock enable at all: bubbles are invalid slots. The only cost is when the
-  weight stream is slower than the MXU (DRAM-bound decode): a row starts once complete instead of
-  chunk by chunk, so the last row of a command finishes up to one row (KB advances) later.
+- **Row-gated pops.** A row's first block pops only when all of the row's chunks and scales are
+  in the FIFOs (the FIFO holds a whole row already: replay requires KB <= DEPTH). A row then never
+  stalls in its middle, `en_c` is constant 1, and the compute pipeline (array and epilogue) has no
+  clock enable at all: a cycle without a pop is a bubble (an invalid slot), which the epilogue
+  already handles between rows. The simulation checks that no row stalls.
+- **Commands overlap.** The consumer used to run one command at a time: the next command's pops
+  waited for the previous command's full drain (pipeline + epilogue + drain), so every MM paid the
+  pipeline's latency, and IMPL 2's longer dot product (MCOLS + 19 cycles against 7) made that 16-20
+  cycles more per MM. Now there are two heads: the drain head `q_h` (the oldest command: its
+  results, its ACC / ASCALE / RMAX state, its completion) and the pop head `q_p`, which moves to
+  the next command as soon as the head's chunks have all popped, provided the pipeline treats both
+  alike (the same PAIR and, under PAIR, the same M: `pr0`, `hi0` and `M0` are the only per-command
+  state read after S0). The next command's rows follow the head's through the pipeline; the drain
+  takes the head's rows (counted in `rows_live`, the pop head's in `rows_p`) and then moves on.
+  IMPL 0 / 1 keep one head (`q_p = q_h`, compiled out).
+- **The result FIFO** is 64 rows for IMPL 2 (32 before): a row pops only while fewer than RF rows
+  are between the pop and the drain, and one-block rows (attention scores, K = 128) fill the longer
+  pipeline one per cycle; 32 blocked the pops (MLP decode +18%, LFM2 decode +4.8%).
 - The drain keeps its own enable (the TMEM grant); it is outside the compute pipeline.
 
 ## Area expectation (per column, MCOLS 4, Vivado OOC of otpu_mxu)
