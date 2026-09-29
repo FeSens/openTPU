@@ -17,12 +17,12 @@ must share their sub-VCO phase fraction, so DQ at 0 and DQS at 90 deg cannot bot
 
 The PHY's logic runs in sys (the controller's clock). The data to and from the shifted clocks
 (command serializer inputs, read deserializer outputs, their resets) go through registers on
-sys's falling edge (domain sys_n): sys_ck may sit up to half a tCK either side of sys and the
+sys's falling edge (FDREs with IS_C_INVERTED): sys_ck may sit up to half a tCK either side of sys and the
 serializers still see about 2.8 ns of setup and hold (the build constrains the crossing with that
 uncertainty). With the phase at 0 the timing is the stock PHY's, cycle for cycle. The tristate
 controls (T1, OSERDES TQ in BUF mode, not clocked) stay as the stock PHY's.
 
-Every domain name above except sys / sys_n is the PHY's own; the SoC maps them per channel with
+Every domain name above except sys is the PHY's own; the SoC maps them per channel with
 ClockDomainsRenamer. The CSRs and settings are A7DDRPHY's (phytype A7DDRPHY).
 
 Derived from LiteDRAM (BSD-2-Clause): Copyright (c) 2015-2020 Florent Kermarrec, (c) 2015 Sebastien
@@ -113,9 +113,13 @@ class WL7DDRPHY(Module, AutoCSR):
                 i_OCE=1, o_OQ=o, **kw)
 
         def nreg(x):
-            """x through a register on sys's falling edge: to or from the shifted sys_ck."""
-            r = Signal(len(x), reset_less=True)
-            self.sync.sys_n += r.eq(x)
+            """x through a register on sys's falling edge, to or from the shifted sys_ck: FDREs
+            with the clock inverted in the slice (a migen falling-edge domain would put a LUT in
+            the clock path: 3 ns of skew in the first build)."""
+            r = Signal(len(x))
+            for i in range(len(x)):
+                self.specials += Instance("FDRE", p_INIT=0, p_IS_C_INVERTED=1,
+                                          i_C=ClockSignal("sys"), i_CE=1, i_R=0, i_D=x[i], o_Q=r[i])
             return r
 
         sys_rst = ResetSignal("sys") | self._rst.storage

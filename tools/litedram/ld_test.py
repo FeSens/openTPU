@@ -119,8 +119,8 @@ class CRG(LiteXModule):
 
 class WLCRG(LiteXModule):
     """The clocks of the write-leveled image (--phy wl): clk50 -> MMCM: sys (the SoC, the
-    controllers, BISTs and PHYs' logic; each channel's WriteClocks MMCM is cascaded from it) and
-    sys_n (its falling edge); a PLL: the 200 MHz IDELAYCTRL reference. clk50 as CRG's."""
+    controllers, BISTs and PHYs' logic; each channel's WriteClocks MMCM is cascaded from it); a
+    PLL: the 200 MHz IDELAYCTRL reference. clk50 as CRG's."""
     def __init__(self, platform, f, clk50=None):
         self.rst = Signal()
         self.cd_sys = ClockDomain()
@@ -134,9 +134,6 @@ class WLCRG(LiteXModule):
         mmcm.create_clkout(self.cd_sys, f)
         self.comb += mmcm.reset.eq(self.rst)
         platform.add_false_path_constraints(self.cd_sys.clk, mmcm.clkin)
-        # sys's falling edge: WL7DDRPHY's registers to and from the shifted CK clocks
-        self.cd_sys_n = ClockDomain()
-        self.comb += [self.cd_sys_n.clk.eq(~self.cd_sys.clk), self.cd_sys_n.rst.eq(self.cd_sys.rst)]
         self.pll = pll = S7PLL(speedgrade=-2)
         self.comb += pll.reset.eq(self.rst)
         pll.register_clkin(clk50, 50e6)
