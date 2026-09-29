@@ -1031,6 +1031,9 @@ module otpu_mxu
       logic [RFW:0] rn;
       logic [RFW:0] rl, rp;
       qent_t hn, nn;                            // the entries' next values (before a swap)
+      qent_t hp, np;                            // the same without this cycle's accept (pop_q's:
+                                                // a command accepted this cycle is not popped
+                                                // before cl_ld, which reloads pop_q)
       logic pnx;
       qn = q_n;
       rn = rf_n;
@@ -1038,6 +1041,8 @@ module otpu_mxu
       rp = rows_p;
       hn = h;
       nn = n;
+      hp = h;
+      np = n;
       pnx = pn;
       cl_ld <= 1'b0;
       if (cl_ld) c_left <= h.total;
@@ -1064,8 +1069,11 @@ module otpu_mxu
       end
       // ---- release (in order): the head if not yet released, else the second entry
       if (go) begin
-        if (q_n != 0 && !h.go) hn.go = 1'b1;
-        else nn.go = 1'b1;
+        if (q_n != 0 && !h.go) begin
+          hn.go = 1'b1; hp.go = 1'b1;
+        end else begin
+          nn.go = 1'b1; np.go = 1'b1;
+        end
       end
       // ---- issue one chunk request
       if (go_iss) begin
@@ -1236,14 +1244,17 @@ module otpu_mxu
       // the entries: completing the head swaps them (the next entry, or the command accepted
       // this cycle, becomes the head; the old head stays in n)
       begin
-        qent_t hx, nx;
+        qent_t hx, nx, hpx, npx;
         if (c_done) begin
-          hx = nn; nx = hn;
+          hx = nn; nx = hn; hpx = np; npx = hp;
         end else begin
-          hx = hn; nx = nn;
+          hx = hn; nx = nn; hpx = hp; npx = np;
         end
         h <= hx; n <= nx;
-        pop_q <= pnx ? nx : hx;                 // the pop head's entry (OVL)
+        // the pop head's entry (OVL), from the entries, not from the command being accepted: a
+        // command that becomes the head as it is accepted gets its entry a cycle later (cl_ld;
+        // the pipeline is empty then, and nothing pops before c_left loads)
+        pop_q <= pnx ? npx : hpx;
       end
       pn <= pnx;
       q_n <= qn;
@@ -1255,7 +1266,7 @@ module otpu_mxu
   always @(posedge clk) if (!rst) begin
     if (start && q_n >= 2'd2) $fatal(1, "otpu_mxu: start with %0d commands queued", q_n);
     if (!OVL && c_fin && pop) $fatal(1, "otpu_mxu: the head completes while it pops");
-    if (OVL && q_n != 0 && pop_q != (pn ? n : h))
+    if (OVL && q_n != 0 && !cl_ld && pop_q != (pn ? n : h))
       $fatal(1, "otpu_mxu: pop_q is not the pop head's entry");
   end
 `endif
