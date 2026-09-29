@@ -607,4 +607,32 @@ The temperature run rescans every 5 minutes and logs each group's run.
 - **Channel 0 in two groups:** group 0 (crossings -21..+4) about 78 steps; group 1 (lane 8 at
   +25, lanes 4-7 somewhere beyond +29) probably at least 40.
 
+### Builds (Vivado 2026.1, omarchy)
+
+- **First attempt (DQ/DQS shifted):** routed, but bitgen refused it (FINE_PS_FRAC, above).
+- **CK shifted, falling-edge registers as a migen domain:** WNS -2.226 ns, 711 failing endpoints,
+  all on the `sys` -> `sysc` crossings. Vivado absorbed none of the clock inversions: the
+  registers were clocked through a LUT, with 3.3-3.6 ns of skew. Now they are FDREs with
+  IS_C_INVERTED on the global `sys` (1572 of them).
+- **CK shifted, FDREs (76c1e7e):** WNS +0.176 ns, WHS +0.018 ns, all constraints met, 24 of 32
+  BUFGs. The crossings through the cascaded MMCMs, **measured** on the routed design (worst path
+  of each; uncertainty = the 1.0 ns phase range plus 0.25 ns of jitter and phase error):
+
+  | crossing | setup slack | hold slack | uncertainty |
+  |---|---|---|---|
+  | sys -> sysc0 (commands, resets) | +0.176 ns | +2.098 ns | 1.248 ns |
+  | sysc0 -> sys (read data) | +0.506 ns | +2.577 ns | 1.253 ns |
+  | sys -> sysw0 (write side, static) | +1.349 ns | +0.105 ns | 0.248 ns |
+  | sys -> sysc1 | +0.300 ns | +1.931 ns | 1.248 ns |
+  | sysc1 -> sys | +0.852 ns | +2.582 ns | 1.253 ns |
+  | sys -> sysw1 | +1.107 ns | +0.104 ns | 0.248 ns |
+
+- **Clock primitives:** the `sys` MMCM, each channel's MMCM, the IDELAYCTRL reference PLL, and
+  XDMA's pipe-clock MMCM. Six IDELAYCTRLs, replicated by Vivado into the six DDR3 bank regions
+  from the one 200 MHz reference. The banks are in clock regions X0Y0-2 (channel 0: banks 11, 12,
+  13) and X0Y5-7 (channel 1: banks 16, 17, 18). The placer had put channel 0's MMCM at X0Y5 and
+  channel 1's at X0Y0, each among the other channel's banks. `--mmcm-locs` now places them in
+  their own regions: X0Y2 (bank 13) and X0Y6 (bank 17, the command bank). XDMA's MMCM is at X0Y1,
+  the `sys` MMCM at X0Y4, the PLL at X0Y1. All the PHY clocks leave through BUFGs.
+
 **Status:** built from `litedram-int`; results below when measured.
