@@ -218,7 +218,7 @@ module otpu_slice
   logic [31:0] ss_in_d [LANES], ss_fd [LANES], ss_y_d [LANES];
   logic [31:0] ss_o_d;
 
-  otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_SS)) u_dma (
+  otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_SS), .ONE_TREE(SE_ONE_TREE)) u_dma (
     .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
     .b_req(dma_breq), .b_gnt(b_rdy), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
     .b_addr(dma_baddr), .b_rvalid(b_rvalid && b_rtag), .b_rdata, .wr_idle,
