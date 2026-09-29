@@ -61,3 +61,74 @@ def test_ld_host_selftest():
     r = subprocess.run([sys.executable, str(ROOT / "tools/litedram/ld_host.py"), str(DATA), "selftest"],
                        capture_output=True, text=True, timeout=120)
     assert r.returncode in (0, None) and "selftest: PASS" in r.stdout, r.stdout[-2000:] + r.stderr
+
+
+# ------------------------------------------------------------------------------ otpu-memcal
+from opentpu.host import memcal, regs as R          # noqa: E402
+
+
+class FakeCard:
+    """BAR0 of a host-calibrated bitstream: REGMAP 3, CAPS bit26 (unless `hostcal` is off),
+    STATUS CALIB0/1 from the two simulated channels' cal_ready, and their CSRs (the production
+    core's map, opentpu/host/litedram/csr.csv) in the window at R_MEMCAL."""
+    devname = None
+
+    def __init__(self, hostcal=True):
+        self.b = C.FakeBoard(memcal.DATA)
+        self.caps = R.CAP_HOSTCAL if hostcal else 0
+        self.words = {off + 4 * i: (name, i, n) for name, (off, n) in self.b.regs.items()
+                      for i in range(n)}
+        self.pending, self.csr_ops = {}, 0
+
+    def reg_read(self, off):
+        if off == R.R_ID:
+            return R.ID_OTPU
+        if off == R.R_REGMAP:
+            return 3
+        if off == R.R_CAPS:
+            return self.caps
+        if off == R.R_STATUS:
+            return (R.ST_CALIB0 if self.b.r("cal_ready") else 0) | \
+                   (R.ST_CALIB1 if self.b.r("cal1_ready") else 0)
+        name, i, n = self.words[off - R.R_MEMCAL]
+        self.csr_ops += 1
+        return (self.b.r(name) >> (32 * (n - 1 - i))) & 0xFFFFFFFF
+
+    def reg_write(self, off, v):
+        name, i, n = self.words[off - R.R_MEMCAL]
+        self.csr_ops += 1
+        acc = (self.pending.pop(name, 0) << 32) | v          # most significant word first
+        if i == n - 1:
+            self.b.w(name, acc)
+        else:
+            self.pending[name] = acc
+
+
+def test_memcal_calibrates_each_channel_once(monkeypatch, tmp_path):
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    card = FakeCard()
+    res = memcal.ensure(card, stride=4, log=lambda *_: None)
+    assert sorted(res["channels"]) == [0, 1]
+    assert card.reg_read(R.R_STATUS) & (R.ST_CALIB0 | R.ST_CALIB1) == R.ST_CALIB0 | R.ST_CALIB1
+    for ch, f in enumerate(card.b.ch):
+        assert all(f.good(m) for m in range(f.nm)) and res["channels"][ch]["write_latency"] == f.WB
+    assert memcal.ensure(card, log=lambda *_: None) is None            # calibrated: nothing to do
+    assert memcal.last(card)["channels"]["1"]["traffic_checked"]
+
+
+def test_memcal_leaves_mig_bitstreams_alone():
+    card = FakeCard(hostcal=False)
+    assert memcal.ensure(card, log=lambda *_: None) is None and card.csr_ops == 0
+
+
+def test_board_open_calibrates(monkeypatch, tmp_path):
+    from opentpu.host.board import Board
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    ensure = memcal.ensure
+    monkeypatch.setattr(memcal, "ensure", lambda t, **k: ensure(t, stride=8, **k))
+    card = FakeCard()
+    Board(card, lock=False).close()
+    assert card.reg_read(R.R_STATUS) & (R.ST_CALIB0 | R.ST_CALIB1) == R.ST_CALIB0 | R.ST_CALIB1
+    ops = card.csr_ops
+    Board(card, lock=False).close()                  # calibrated: no CSR access
+    assert card.csr_ops == ops

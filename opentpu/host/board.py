@@ -28,6 +28,7 @@ import concurrent.futures
 import mmap
 import os
 import struct
+import sys
 import tempfile
 import time
 from dataclasses import replace
@@ -35,6 +36,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import memcal
 from . import regs as R
 from .regs import *  # noqa: F401,F403  (the v1 names stay importable from here)
 from .regs import (CTRL_CLEAR, CTRL_LOAD, CTRL_RUN, ID_OTPU, R_CTRL, R_CYCLES, R_CYCLES_HI,
@@ -448,7 +450,11 @@ class Board:
     """Logical-address access to the card's DRAM, program loading and runs, the counters and
     the trace buffer."""
 
-    def __init__(self, transport=None, check: bool = True, lock: bool = True):
+    def __init__(self, transport=None, check: bool = True, lock: bool = True,
+                 calibrate: bool = True):
+        """check: the card must answer as openTPU; calibrate: then calibrate its DDR3 if the
+        bitstream wants the host to (LiteDRAM, CAPS bit26: memcal.ensure; once per
+        configuration, as the STATUS calibration bits say)."""
         self.t = transport or XdmaTransport()
         self.lock = _lock(self.t) if lock else None
         self._info = None
@@ -460,6 +466,12 @@ class Board:
             if ident != ID_OTPU:
                 self.close()
                 raise RuntimeError(f"no openTPU on the card (ID register {ident:#x})")
+            if calibrate:
+                try:
+                    memcal.ensure(self.t, log=lambda m: print(m, file=sys.stderr))
+                except Exception:
+                    self.close()
+                    raise
 
     def close(self) -> None:
         """Release the device lock (for every Board on this transport)."""

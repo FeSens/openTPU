@@ -19,9 +19,10 @@ otpu-diag = "opentpu.host.diag:main"
 otpu-chat = "opentpu.host.chat:main"
 otpu-setup = "opentpu.host.pcie_setup:main"
 otpu-i2c = "opentpu.host.i2c:main"
+otpu-memcal = "opentpu.host.memcal:main"
 
 [tool.setuptools.packages.find]
 include = ["opentpu*"]
 
 [tool.setuptools.package-data]
-opentpu = ["lens_app.html", "host/setup_pcie.sh", "host/pcie/*"]
+opentpu = ["lens_app.html", "host/setup_pcie.sh", "host/pcie/*", "host/litedram/*"]
