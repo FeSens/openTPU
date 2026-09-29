@@ -423,6 +423,38 @@ module otpu_axi_dram #(
   logic [WLW-1:0] wrun0_q [2], wrun1_q [2], wrun_u [2];
   logic [QW:0]    n0_q [2], n1_q [2], n_u [2];
   logic [1:0]     rs_v, rs_1;
+  // the scan: qc rotated to the head once (rq[k]: entry k from the head), then the run from the
+  // entry at offset o is 1 + the leading entries after it that continue and are queued: a
+  // priority encoder over the first zero (every term in parallel), not a serial chain
+  function automatic logic [6:0] lead(input logic [QD-1:0] rq, input logic [QW:0] n, input int o,
+                                      input int cap);
+    logic [6:0] r;
+    r = 7'(cap);
+    for (int k = cap - 1; k >= 1; k--)
+      if (!(rq[(k + o) % QD] && (QW + 1)'(k + o) < n)) r = 7'(k);
+    return r;
+  endfunction
+  always_ff @(posedge clk)
+    for (int c = 0; c < 2; c++) begin
+      logic [2*QD-1:0] qq;
+      logic [QD-1:0] rq;
+      qq = {qc[c], qc[c]} >> qb_h[c];
+      rq = qq[QD-1:0];
+      run0_q[c]  <= LW'(lead(rq, qb_n[c], 0, BL));
+      run1_q[c]  <= LW'(lead(rq, qb_n[c], 1, BL));
+      wrun0_q[c] <= WLW'(lead(rq, qb_n[c], 0, WBL));
+      wrun1_q[c] <= WLW'(lead(rq, qb_n[c], 1, WBL));
+      n0_q[c] <= qb_n[c];
+      n1_q[c] <= (qb_n[c] != 0) ? qb_n[c] - 1'b1 : '0;
+    end
+  always_comb
+    for (int c = 0; c < 2; c++) begin
+      run_u[c]  = rs_1[c] ? run1_q[c] : run0_q[c];
+      wrun_u[c] = rs_1[c] ? wrun1_q[c] : wrun0_q[c];
+      n_u[c]    = rs_1[c] ? n1_q[c] : n0_q[c];
+    end
+`ifndef SYNTHESIS
+  // the run from the head as the queue holds it now (a serial scan, the reference)
   function automatic logic [6:0] scan(input logic [QD-1:0] q, input logic [QW-1:0] h,
                                       input logic [QW:0] n, input int cap);
     logic [6:0] r;
@@ -434,24 +466,20 @@ module otpu_axi_dram #(
       else stop = 1'b1;
     return r;
   endfunction
-  always_ff @(posedge clk)
-    for (int c = 0; c < 2; c++) begin
-      logic [QW:0] n1;
-      n1 = (qb_n[c] != 0) ? qb_n[c] - 1'b1 : '0;
-      run0_q[c]  <= LW'(scan(qc[c], qb_h[c], qb_n[c], BL));
-      run1_q[c]  <= LW'(scan(qc[c], qb_h[c] + 1'b1, n1, BL));
-      wrun0_q[c] <= WLW'(scan(qc[c], qb_h[c], qb_n[c], WBL));
-      wrun1_q[c] <= WLW'(scan(qc[c], qb_h[c] + 1'b1, n1, WBL));
-      n0_q[c] <= qb_n[c];
-      n1_q[c] <= n1;
-    end
-  always_comb
-    for (int c = 0; c < 2; c++) begin
-      run_u[c]  = rs_1[c] ? run1_q[c] : run0_q[c];
-      wrun_u[c] = rs_1[c] ? wrun1_q[c] : wrun0_q[c];
-      n_u[c]    = rs_1[c] ? n1_q[c] : n0_q[c];
-    end
-`ifndef SYNTHESIS
+  // the parallel scan is the serial one, for the head and for the head after one pop
+  always @(posedge clk)
+    if (!rst)
+      for (int c = 0; c < 2; c++) begin
+        logic [2*QD-1:0] qq;
+        logic [QW:0] n1;
+        qq = {qc[c], qc[c]} >> qb_h[c];
+        n1 = (qb_n[c] != 0) ? qb_n[c] - 1'b1 : '0;
+        if (lead(qq[QD-1:0], qb_n[c], 0, BL) != scan(qc[c], qb_h[c], qb_n[c], BL) ||
+            lead(qq[QD-1:0], qb_n[c], 0, WBL) != scan(qc[c], qb_h[c], qb_n[c], WBL) ||
+            (qb_n[c] > 1 && lead(qq[QD-1:0], qb_n[c], 1, BL) != scan(qc[c], qb_h[c] + 1'b1, n1, BL)) ||
+            (qb_n[c] > 1 && lead(qq[QD-1:0], qb_n[c], 1, WBL) != scan(qc[c], qb_h[c] + 1'b1, n1, WBL)))
+          $fatal(1, "otpu_axi_dram: ch%0d parallel run scan differs from the serial one", c);
+      end
   // the registered runs describe the queue: never longer than its runs now, from no more
   // entries than it holds
   always @(posedge clk)
