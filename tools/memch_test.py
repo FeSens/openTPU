@@ -70,16 +70,27 @@ SCEN["aresetlat"] = ["+areset=3000", "+axi_lat=150", "+seed=9"]
 SCEN["xresetrep"] = ["+xreset=3000", "+xrep=7919", "+axi_lat=150", "+seed=11"]
 SCEN["aresetrep"] = ["+areset=3000", "+arep=7919", "+axi_lat=150", "+seed=12"]
 SCEN["resetsrep"] = ["+areset=2000", "+arep=6007", "+xreset=3000", "+xrep=4001", "+seed=13"]
+# short resets while the controller stalls: the master's commands still in the output command
+# register after its hold would otherwise be counted (n_wdone, B) after its reset
+SCEN["aresetshort"] = ["+areset=2000", "+arep=3001", "+arlen=2", "+axi_stall=85", "+ldn_busy=30",
+                       "+wpct=80", "+seed=14"]
+SCEN["xresetshort"] = ["+xreset=2000", "+xrep=3001", "+xrlen=2", "+axi_stall=85", "+ldn_busy=30",
+                       "+wpct=80", "+seed=15"]
+# the same with many shared operations: after a count too many, XDMA's B for a one-beat burst
+# comes before its beat is taken, and the accelerator, told by it, reads the old data (the
+# controller takes a command in 3% of its cycles, so the output register outlasts the hold,
+# and XDMA writes only, so the hold does not wait for its reads)
+SCEN["xresetshortsh"] = ["+psh=60", "+axi_stall=97", "+wpct=100", "+ntx=1000"] + SCEN["xresetshort"]
 for i in range(10, 30):
     SCEN[f"s{i}"] = [f"+seed={i}", f"+psh={5 + i % 4 * 15}", f"+ppct={i % 5 * 20}", f"+wpct={30 + i % 3 * 20}"]
 # functional runs: 3000 runs or bursts per master unless the scenario says otherwise (the first
 # plusarg of a name wins)
 FBASE = ["+ntx=3000", "+tmax=100000000"]
 FUNC = [("mix", s) for s in ["default", "seed2", "seed3", "seed4", "xreset", "areset", "resets",
-                             "lateresets", "xresetlat", "aresetlat", "xresetrep", "aresetrep", "resetsrep", "mstall70", "nogaps", "partial", "rawpart", "ctlstall", "fastcore",
+                             "lateresets", "xresetlat", "aresetlat", "xresetrep", "aresetrep", "resetsrep", "aresetshort", "xresetshort", "xresetshortsh", "mstall70", "nogaps", "partial", "rawpart", "ctlstall", "fastcore",
                              "slowcore", "shared", "long", "seqrd", "seqwr", "seqmix"]]
 FUNC += [("mix", f"s{i}") for i in range(10, 30)]
-FUNC += [("ldn", s) for s in ["default", "partial", "rawpart", "xreset", "areset", "resets", "xresetlat", "aresetlat", "xresetrep", "aresetrep", "resetsrep", "ctlstall",
+FUNC += [("ldn", s) for s in ["default", "partial", "rawpart", "xreset", "areset", "resets", "xresetlat", "aresetlat", "xresetrep", "aresetrep", "resetsrep", "aresetshort", "xresetshort", "xresetshortsh", "ctlstall",
                               "shared", "fastcore", "slowcore"]]
 FUNC += [("ldn", f"s{i}") for i in range(10, 30)]
 FUNC += [("mig", s) for s in ["default", "partial", "xreset", "areset", "ctlstall", "shared"]]
@@ -139,11 +150,28 @@ MUT = [
      [("x_rok <= (x_out + xr_used) <= XOW'(XRD - 2);", "x_rok <= 1'b1;"),
       ('if (xr_wv && !xr_wr) $error("otpu_mem_ch: XDMA read-data FIFO full");', "")], ["mstall70"]),
     ("reset hold: XDMA's does not wait for its reads in flight", "mix",
-     [("(x_hcnt != 0 || x_out != 0 || (rm_busy && rm_x))", "(x_hcnt != 0 || (rm_busy && rm_x))")],
+     [("(x_hcnt != 0 || x_out != 0 ||", "(x_hcnt != 0 ||")],
      ["xresetrep", "resetsrep", "xresetlat", "xreset"]),
     ("reset hold: the accelerator's does not wait for its reads in flight", "mix",
-     [("(a_hcnt != 0 || a_out != 0 || (rm_busy && !rm_x))", "(a_hcnt != 0 || (rm_busy && !rm_x))")],
+     [("(a_hcnt != 0 || a_out != 0 ||", "(a_hcnt != 0 ||")],
      ["aresetrep", "resetsrep", "aresetlat", "areset"]),
+    ("reset hold: XDMA's does not wait for its commands in the output register", "ldn",
+     [("(rm_busy && rm_x) || x_oc)", "(rm_busy && rm_x))")], ["xresetshortsh", "xresetshort"]),
+    ("reset hold: the accelerator's does not wait for its commands in the output register", "ldn",
+     [("(rm_busy && !rm_x) || a_oc)", "(rm_busy && !rm_x))")], ["aresetshort", "resetsrep"]),
+    # without the hold-over assertion: the accelerator's extra count breaks n_wdone's exact check;
+    # XDMA's makes a B one beat early, which this bench cannot see (its W beats have all been given
+    # by then, and no other master reads XDMA's window)
+    ("reset hold: the accelerator's does not wait for its commands, the hold-over assertion removed",
+     "ldn", [("(rm_busy && !rm_x) || a_oc)", "(rm_busy && !rm_x))"),
+             ("if (a_hold_q && !a_hold && a_oc) $error", "if (1'b0) $error")], ["aresetshort"]),
+    ("reset hold: XDMA's does not wait for its commands, the hold-over assertion removed", "ldn",
+     [("(rm_busy && rm_x) || x_oc)", "(rm_busy && rm_x))"),
+      ("if (x_hold_q && !x_hold && x_oc) $error", "if (1'b0) $error")], ["xresetshortsh"], "missed"),
+    ("reset: XDMA's request not kept up until its hold is seen (a short reset)", "mix",
+     [("x_req <= xrst || (x_req && !x_hs2);", "x_req <= xrst;")], ["xresetshort"]),
+    ("reset: the accelerator's request not kept up until its hold is seen (a short reset)", "mix",
+     [("a_req <= rst || (a_req && !a_hs2);", "a_req <= rst;")], ["aresetshort"]),
 ]
 
 

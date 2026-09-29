@@ -50,13 +50,17 @@
 // supported (XDMA issues none). Its reads return in order (legal for any IDs); responses are OKAY.
 //
 // Resets: each master's path has a hold in uclk -- the controller's reset, or the master's own
-// reset (synchronized), then 16 cycles, and on until its reads in flight have come back (their
-// data is dropped) and a read-modify-write of its own is done -- and the same hold, synchronized,
-// in the master's clock. The clock-crossing FIFOs reset only on the hold, in both clocks, so
-// neither side ever sees the other's pointers reset under it; the master's side of the bridge
-// resets on its reset or the hold. What the arbiter has issued is finished regardless (a merged
-// write whose master is held is dropped: its data went with the FIFO). So a PCIe link reset
-// (XDMA's axi_aresetn) while the accelerator runs costs neither the other master nor the memory.
+// reset (synchronized, and kept up until the hold is seen in the master's clock, so that a reset
+// of a cycle gets a whole hold too), then 16 cycles, and on until its reads in flight have come
+// back (their data is dropped), a read-modify-write of its own is done and no command of its own
+// is left in the output command register (a write counted after the hold would count one the
+// master issued before its reset: its write count restarts from n_wdone's reset value, 0) -- and
+// the same hold, synchronized, in the master's clock. The clock-crossing FIFOs reset only on the
+// hold, in both clocks, so neither side ever sees the other's pointers reset under it; the
+// master's side of the bridge resets on its reset or the hold. What the arbiter has issued is
+// finished regardless (a merged write whose master is held is dropped: its data went with the
+// FIFO). So a PCIe link reset (XDMA's axi_aresetn) while the accelerator runs costs neither the
+// other master nor the memory.
 //
 // Clock-domain crossings: every synchronizer carries ASYNC_REG; their constraints (max delay
 // without skew, bus skew for the gray counts) are in boards/ypcb-00338/constraints/otpu_mem_ch.xdc.
@@ -150,24 +154,37 @@ module otpu_mem_ch #(
   logic a_hold = 1'b1, x_hold = 1'b1;
   logic [3:0] a_hcnt, x_hcnt;
   logic a_crst = 1'b1, x_crst = 1'b1;      // the masters' sides of the bridge
+  logic a_req = 1'b0, x_req = 1'b0;        // a master's reset, held until its hold is seen back
   logic [AOW-1:0] a_out;                   // reads in flight (issued, data not yet in the FIFO)
   logic [XOW-1:0] x_out;
   logic rm_busy, rm_x;                     // a read-modify-write in progress, and its master
+  logic [1:0]  on;                         // output command register: entries
+  logic [27:0] oc0, oc1;                   //   {write, partial, xdma, beat}
+  logic a_oc, x_oc;                        // a command of the master's in it
+  assign a_oc = (on[0] && !oc0[25]) || (on[1] && !oc1[25]);
+  assign x_oc = (on[0] && oc0[25]) || (on[1] && oc1[25]);
   always_ff @(posedge uclk) begin
-    a_rs1 <= rst;  a_rs2 <= a_rs1;
-    x_rs1 <= xrst; x_rs2 <= x_rs1;
+    a_rs1 <= a_req; a_rs2 <= a_rs1;
+    x_rs1 <= x_req; x_rs2 <= x_rs1;
     a_hcnt <= (urst || a_rs2) ? 4'hF : (a_hcnt != 0) ? a_hcnt - 1'b1 : a_hcnt;
     x_hcnt <= (urst || x_rs2) ? 4'hF : (x_hcnt != 0) ? x_hcnt - 1'b1 : x_hcnt;
-    a_hold <= urst || a_rs2 || (a_hold && (a_hcnt != 0 || a_out != 0 || (rm_busy && !rm_x)));
-    x_hold <= urst || x_rs2 || (x_hold && (x_hcnt != 0 || x_out != 0 || (rm_busy && rm_x)));
+    a_hold <= urst || a_rs2 ||
+              (a_hold && (a_hcnt != 0 || a_out != 0 || (rm_busy && !rm_x) || a_oc));
+    x_hold <= urst || x_rs2 ||
+              (x_hold && (x_hcnt != 0 || x_out != 0 || (rm_busy && rm_x) || x_oc));
   end
+  // A reset shorter than the round trip through the synchronizers would otherwise release the
+  // master's side before its hold arrives, with the old read data still in its FIFO: the request
+  // stays up until the hold is seen here, and the side stays in reset until the hold is over.
   always_ff @(posedge clk) begin
+    a_req <= rst || (a_req && !a_hs2);
     a_hs1 <= a_hold; a_hs2 <= a_hs1;
-    a_crst <= rst || a_hs2;
+    a_crst <= rst || a_req || a_hs2;
   end
   always_ff @(posedge xclk) begin
+    x_req <= xrst || (x_req && !x_hs2);
     x_hs1 <= x_hold; x_hs2 <= x_hs1;
-    x_crst <= xrst || x_hs2;
+    x_crst <= xrst || x_req || x_hs2;
   end
 
   // ================================================================ clock crossings
@@ -342,7 +359,6 @@ module otpu_mem_ch #(
   logic [5:0]    run;
   logic [24:0]   addr;
   logic [DW-1:0] wd;
-  logic [1:0]    on;                       // output command register: entries
   logic          of_wv, of_wr, of_rv;      // output write-data FIFO
   logic [OW-1:0] of_wd, of_rd;
   logic          rm_ret, rm_ok;
@@ -396,7 +412,7 @@ module otpu_mem_ch #(
   assign c_wdata_data  = of_rd[511:0];
 
   // output command register (2 entries: go needs no c_cmd_ready): {write, partial, xdma, beat}
-  logic [27:0] oc0, oc1, ocn;
+  logic [27:0] ocn;
   logic        opush, opop;
   assign opush = go || rm_ok;
   assign opop  = on[0] && c_cmd_ready;
@@ -451,6 +467,14 @@ module otpu_mem_ch #(
     if (rm_ok && (on != 0 || !of_wr)) $error("otpu_mem_ch: no room for the merged write");
   end
   always_ff @(posedge uclk) if (!urst && go && (!we || rmw) && !tg_wr) $error("otpu_mem_ch: tag FIFO full");
+  // a hold ends with none of its master's commands left to count (n_wdone / B restart from 0)
+  logic a_hold_q, x_hold_q;
+  always_ff @(posedge uclk) begin
+    a_hold_q <= a_hold;
+    x_hold_q <= x_hold;
+    if (a_hold_q && !a_hold && a_oc) $error("otpu_mem_ch: accelerator hold over, command pending");
+    if (x_hold_q && !x_hold && x_oc) $error("otpu_mem_ch: XDMA hold over, command pending");
+  end
 `endif
 endmodule
 

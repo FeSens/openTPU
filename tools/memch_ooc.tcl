@@ -90,8 +90,8 @@ foreach f {u_of u_tag} {
 # FIFOs' RAMs and pointers (a pointer's top bit may sit in the binary register), the reset and
 # hold synchronizers' sources and the write-accept gray counts.
 set xs_expect {
-  clk>uclk  {^(u_aq|u_ad)/(mem_reg|wgray_reg|wbin_reg)$|^u_ar/(rgray_reg|rbin_reg)$|^rst$}
-  xclk>uclk {^(u_xq|u_xd)/(mem_reg|wgray_reg|wbin_reg)$|^u_xr/(rgray_reg|rbin_reg)$|^xrst$}
+  clk>uclk  {^(u_aq|u_ad)/(mem_reg|wgray_reg|wbin_reg)$|^u_ar/(rgray_reg|rbin_reg)$|^a_req_reg$}
+  xclk>uclk {^(u_xq|u_xd)/(mem_reg|wgray_reg|wbin_reg)$|^u_xr/(rgray_reg|rbin_reg)$|^x_req_reg$}
   uclk>clk  {^u_ar/(mem_reg|wgray_reg|wbin_reg)$|^(u_aq|u_ad)/(rgray_reg|rbin_reg)$|^(a_hold_reg|a_wacc_g_reg)$}
   uclk>xclk {^u_xr/(mem_reg|wgray_reg|wbin_reg)$|^(u_xq|u_xd)/(rgray_reg|rbin_reg)$|^(x_hold_reg|x_wacc_g_reg)$}
 }

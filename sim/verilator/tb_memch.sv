@@ -29,8 +29,8 @@
 // with partial writes at random and read them back, so a read-modify-write that let the other
 // master's write in between its read and its write would undo that write.
 // +xreset=N / +areset=N: reset the XDMA master (and the split, and the bridges' XDMA sides) / the
-// accelerators at cycle N of their clock, for 40 cycles, mid-traffic (+xrep=P / +arep=P: again
-// every P cycles); the bytes of the writes then in flight become unknown (not checked) until
+// accelerators at cycle N of their clock, for 40 cycles (+xrlen=L / +arlen=L: L cycles),
+// mid-traffic (+xrep=P / +arep=P: again every P cycles); the bytes of the writes then in flight become unknown (not checked) until
 // written again, and unpublished shared beats are written again. +ntx=N runs or bursts per master (+acc0_ntx, +acc1_ntx, +xdma_ntx).
 // Throughput: +seq=1 (back-to-back 32-beat runs / 64-beat bursts through the window, no shared
 // operations); each master prints its data beats per cycle of its clock, from its first command
@@ -77,12 +77,14 @@ module tb_memch #(
   // resets
   logic rst = 1'b1, urst = 1'b1, xrst = 1'b1;
   longint ccyc = 0, xcyc = 0, ucyc = 0;
-  longint areset = -1, xreset = -1, arep = 0, xrep = 0;
+  longint areset = -1, xreset = -1, arep = 0, xrep = 0, arlen = 40, xrlen = 40;
   initial begin
     void'($value$plusargs("areset=%d", areset));
     void'($value$plusargs("xreset=%d", xreset));
     void'($value$plusargs("arep=%d", arep));
     void'($value$plusargs("xrep=%d", xrep));
+    void'($value$plusargs("arlen=%d", arlen));
+    void'($value$plusargs("xrlen=%d", xrlen));
   end
   // cycle c of a reset that starts at s and repeats every p cycles (p = 0: once)
   function automatic bit at(input longint c, input longint s, input longint p);
@@ -93,13 +95,13 @@ module tb_memch #(
     ccyc <= ccyc + 1;
     if (ccyc == 30) rst <= 1'b0;
     if (at(ccyc, areset, arep)) rst <= 1'b1;
-    if (at(ccyc, areset + 40, arep)) rst <= 1'b0;
+    if (at(ccyc, areset + arlen, arep)) rst <= 1'b0;
   end
   always @(posedge xclk) begin
     xcyc <= xcyc + 1;
     if (xcyc == 40) xrst <= 1'b0;
     if (at(xcyc, xreset, xrep)) xrst <= 1'b1;
-    if (at(xcyc, xreset + 40, xrep)) xrst <= 1'b0;
+    if (at(xcyc, xreset + xrlen, xrep)) xrst <= 1'b0;
   end
 
   // ---- accelerator masters (one per channel), the bridges and the controllers
@@ -545,6 +547,7 @@ module tb_memch_axi #(
   x_t bq [$], rdq [$];
   int ntx = 400, issued = 0, nerr = 0;
   longint nrb = 0, nwb = 0, nsh = 0, nsp = 0;
+  longint nwl = 0, nbr = 0;                 // bursts whose last W beat went, B responses
   int gapw = 20, mstall = 30, wpct = 50, seq = 0, xfull = 70, psh = 10, psp = 10;
   int a2x_rd [2], a2x_chk [2], x2a_wr [2];
   logic [31:0] nexto = 0;                   // +seq: the next burst's offset
@@ -588,13 +591,16 @@ module tb_memch_axi #(
       for (int i = 0; i < 2 * NSP; i++) begin swp[i] = 0; srp[i] = 0; end
       for (int c = 0; c < 2; c++) begin x2a_wr[c] = int'(x2a_pub[c]); a2x_rd[c] = a2x_chk[c]; end
       wq.delete(); rq.delete(); bq.delete(); rdq.delete();
+      nwl = 0; nbr = 0;
       awvalid <= 1'b0; wvalid <= 1'b0; arvalid <= 1'b0; bready <= 1'b0; rready <= 1'b0;
     end else begin
       bit whs;
       // ---- responses
       if (bvalid && bready) begin
         if (bq.size() == 0) begin $display("ERROR %s: B without a write", NAME); nerr++; end
-        else begin
+        else if (nbr >= nwl) begin
+          $display("ERROR %s: B id %h before its burst's last W beat", NAME, bid); nerr++;
+        end else begin
           if (bid != bq[0].id || bresp != 0) begin
             $display("ERROR %s: B id %h resp %h, expected id %h", NAME, bid, bresp, bq[0].id); nerr++;
           end
@@ -602,6 +608,7 @@ module tb_memch_axi #(
           if (bq[0].sc >= 0) x2a_pub[bq[0].sc] <= x2a_pub[bq[0].sc] + 1;
           if (bq[0].sp >= 0) swp[bq[0].sp]--;
           void'(bq.pop_front());
+          nbr++;
         end
       end
       if (rvalid && rready) begin
@@ -635,7 +642,7 @@ module tb_memch_axi #(
       rready <= ($urandom % 100) >= mstall;
       // ---- W
       whs = wvalid && wready;
-      if (whs) begin void'(wq.pop_front()); nwb++; end
+      if (whs) begin void'(wq.pop_front()); nwb++; if (wlast) nwl++; end
       if (!wvalid || whs) begin
         if (wq.size() != 0 && ($urandom % 100) >= gapw) begin
           wvalid <= 1'b1; wdata <= wq[0].d; wstrb <= wq[0].s; wlast <= wq[0].last;

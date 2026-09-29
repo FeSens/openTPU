@@ -17,10 +17,10 @@
 #   - a FIFO's distributed RAM, written in one clock and read (asynchronously) in the other: one
 #     destination period. An entry is read no sooner than two destination cycles after its write
 #     pointer crossed, and the pointer is written in the same source cycle as the entry;
-#   - the reset and hold synchronizers (a level held for many cycles): one source period.
+#   - the reset-request and hold synchronizers (levels held for many cycles): one source period.
 # The top level must therefore not make these clock pairs asynchronous with set_clock_groups or
-# set_false_path (either takes priority over set_max_delay and leaves the crossings untimed), and
-# the resets on rst and xrst should come from registers in clk and xclk. The report_cdc waivers
+# set_false_path (either takes priority over set_max_delay and leaves the crossings untimed).
+# rst and xrst cross only as the registered requests a_req and x_req. The report_cdc waivers
 # at the end cover the structures report_cdc cannot classify as safe (the FIFO heads read across
 # the clocks), each by its two ends.
 
@@ -34,7 +34,8 @@ set k_cu  [expr {min($t_clk, $t_ucl)}]
 set k_xu  [expr {min($t_xcl, $t_ucl)}]
 
 # ---------------------------------------------------------------- resets and holds
-# rst (clk) and xrst (xclk) into uclk; the per-master holds (uclk) into clk and xclk
+# the masters' reset requests a_req (clk) and x_req (xclk) into uclk; the per-master holds (uclk)
+# into clk and xclk
 set_max_delay -datapath_only -from $c_clk -to [get_cells a_rs1_reg] $t_clk
 set_max_delay -datapath_only -from $c_xcl -to [get_cells x_rs1_reg] $t_xcl
 set_max_delay -datapath_only -from $c_ucl -to [get_cells a_hs1_reg] $t_ucl
