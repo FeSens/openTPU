@@ -186,10 +186,11 @@ module otpu_dma
   logic [W-1:0][CBD-1:0] ow_e;
   (* max_fanout = 32 *) logic [31:0] o_q;
   logic [7:0]   oi;                                  // o segment written to TMEM next
-  // SE runs a cycle behind pe (otpu_vpu registers the ss_* inputs) and qualifies y_v and o_v
-  // with its own pe: the segment of pe's cycle arrives a cycle later, so taking one more needs
-  // room for it, pe's and this cycle's y
-  wire  ds_room = ({1'b0, og} + (GW+1)'(y_v) + (GW+1)'(pe)) <= (GW+1)'(NG - 1);
+  // SE runs up to SE_LAG cycles behind pe (otpu_vpu registers the ss_* inputs) and qualifies
+  // y_v and o_v with its own pe: taking one more segment needs room for it, this cycle's y and
+  // the segments of the last SE_LAG pe cycles (pe's counted, the older ones as always taken)
+  localparam int SE_LAG = 2;
+  wire  ds_room = ({1'b0, og} + (GW+1)'(y_v) + (GW+1)'(pe)) <= (GW+1)'(NG - SE_LAG);
   wire  ds_take = ds_run && (ds_left != 0) && (ds_zero || ds_spad || cnt != 0) && ds_room;
   wire  ds_flushed = (ds_ycnt == ds_nseg) && (!ds_qen || ds_ocnt == ds_rows);
   wire  ds_drain = ds_run && (ds_left == 0) && !ds_flushed && ds_room;

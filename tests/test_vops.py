@@ -513,6 +513,12 @@ def test_many_small_composites_rtl_bit_exact(have_verilator, uarch, seed):
             prog.append(I.vop(fn, dst, a, int(r.integers(0, 4000)), rows, cols, cols, cols, cols,
                               bm, float(r.uniform(-3, 3))))
             dst += rows * cols + int(r.integers(0, 2))
+        # independent of the run (no dependency holds them back): a reduction and an ADD may
+        # start only once every composite has left the lanes
+        prog.append(I.vop(I.V_RSUM, dst, int(r.integers(0, 3000)), 0, 4, 200, 1, 200, 0))
+        prog.append(I.vop(I.V_ADD, dst + 8, int(r.integers(0, 3000)), int(r.integers(0, 3000)),
+                          2, 40, 40, 40, 40))
+        dst += 100
     prog.append(I.halt())
     m = Machine(cfg, [prog], [img.copy()]).run()
     drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], uarch=uarch)

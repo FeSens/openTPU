@@ -568,3 +568,48 @@ v2 goes to the full build if:
 - no model is slower in Verilator.
 
 Otherwise v1 (both 0) builds ~07:00.
+
+### 11.5 COMP8 as built (se-v2's notes)
+
+- **The op lists on the loop.** Op k runs at stage k mod 3 of pass k / 3. An op's factors may
+  come in either order, since the multiply is commutative bit for bit.
+
+| function | ops | pass 0 (S0, U, Q) | later passes | P | latency |
+|---|---|---|---|---|---|
+| EXP2 / EXP2SUB | 9 | x·1 + (-0 or -y); RR; f = xf·1 - i2f(i); C7·f + C6 | the 6 Horner steps C5 .. C0 | 3 | 75 |
+| RECIP | 6 | 2 - \|x\|y; t·y; 2 - \|x\|y | t·y; 2 - \|x\|y; t·y → v | 2 | 50 |
+| RSQRT | 10 | -(x·0.5); y·y; 1.5 - (y·y)h | two Newton steps, then t·y → v | 4 | 100 |
+| LOG2 | 10 | m·1 - 1; RR (i2f(e)); C9·t + C8; q·t + C7 | C6 .. C1, then q·t + i2f(e) | 4 | 100 |
+
+  - The first Horner coefficient (C7 or C9) is written into v by the op before it.
+  - At elaboration, each stage keeps only the mux inputs its ops use (`st_use`). At NS = 3,
+    Q's c is always a constant and Q writes only v.
+  - RR's floor is ffloor on its domain (|x| < 128). Its i2f is a 9-bit exact one.
+  - EXP2's range flags don't clamp x. A flagged result is +0 or +inf whatever the steps
+    compute.
+- **`hold`** is a tap of a T-bit shift register ("a continuing chunk was presented T - 2
+  cycles ago"). `ret` and S0's control are registered a cycle early, so S0's selects leave
+  flip-flops.
+- **A bug fixed on the way (v1 too).** otpu_vpu's count of elementwise VOPs in flight (`ew_n`)
+  was 4 bits. One VOP may start every other cycle, so up to latency / 2 can be in flight:
+  about 33 in v1 and about 50 with COMP8's RSQRT/LOG2. The count wrapped, and busy, the
+  latency rule and ss_gnt went wrong. It is now 7 bits.
+  `tests/test_vops.py::test_many_small_composites_rtl_bit_exact` tests runs of 20-40
+  independent 1-element composites.
+- **NaN inputs** (isa.md: none are expected). The RTL gives a signed zero for recip(±NaN) and
+  +0 for rsqrt(-NaN). That holds for the chains, `otpu_fp` and COMP8 alike, and COMP8 keeps
+  those bits. fp32.py gives NaN for both.
+- **Area, yosys** (synth_xilinx, flattened; otpu_vpu with the tail, HAS_SE, WBUF; LUT + SRL,
+  DSP):
+
+| build | LUT | SRL | DSP |
+|---|---|---|---|
+| v1 | 45,945 | 2,701 | 120 |
+| ONE_TREE | 40,715 | 2,696 | 120 |
+| COMP8 | 41,396 | 3,446 | 84 |
+| v2 (both) | 36,558 | 2,924 | 84 |
+
+  - These were measured before otpu_se_comp's last cut (513776f), which took it from 7,208
+    to 6,347 LUT (EXT, MW 21).
+  - otpu_se_comp's own path: 8,576 → 7,231 → 6,347 LUT, with 2.2K SRL16 (the k1/k2/ii/f
+    delays: 76 bits × 3 stages × 8 lanes).
