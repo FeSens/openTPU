@@ -21,7 +21,7 @@
 // the drain; the drain steps its TMEM addresses by MCOLS * ors per group.
 //
 // Pipelined for the FPGA clock:
-//   pop | operands | products | +4 | +4 | tree | i2f (2) | *ws (2) | *ascale (2) | [pair (4)]
+//   pop | operands | products | pairs (2) | +4 | tree | i2f (2) | *ws (2) | *ascale (2) | [pair (4)]
 //   | partial loop (4) | combine
 // (pair: PAIR only, t + the partner column's t; other MMs skip its four stages: a command's
 // blocks never share the pipeline with another command's, so the latency may differ by mode)
@@ -44,8 +44,9 @@ module otpu_mxu
   parameter int ROWS  = MCOLS,   // ACT RAM rows: the most stationary rows of a command
   parameter int DEPTH = 16,
   parameter int LANES = 8,       // TMEM banks (MCOLS > LANES drains a row in several cycles)
-  parameter int IMPL  = 0,       // integer dot product: 0 adder tree, 1 DSP cascade chains
-  parameter int CL    = 16,      // IMPL 1: products per cascade chain (D / CL chains)
+  parameter int IMPL  = 0,       // integer dot product: 0 adder tree, 1 DSP cascade chains,
+                                 // 2 systolic array (docs/mxu_systolic.md)
+  parameter int CL    = 16,      // IMPL 1, 2: products per cascade chain (D / CL chains)
   parameter int SID   = 0
 ) (
   input  logic                  clk,
@@ -96,7 +97,10 @@ module otpu_mxu
   localparam int PW = $clog2(DEPTH);
   localparam int LM = 2, LA = 4;
   localparam int NPART = 4;                 // MM partials (isum_4)
-  localparam int RF = 32;                   // result FIFO rows
+  // result FIFO rows: a row pops only while fewer than RF are between the pop and the drain, so
+  // RF covers the pipeline's rows in flight (one-block rows: one per cycle of its latency); IMPL 2's
+  // longer dot product needs 64
+  localparam int RF = (IMPL == 2) ? 64 : 32;
   localparam int RFW = $clog2(RF);
   localparam int MW = $clog2(MCOLS) + 1;
   localparam int NL = (LANES < MCOLS) ? LANES : MCOLS;   // lanes the drain can fill
@@ -202,16 +206,31 @@ module otpu_mxu
     cmd_e.gs    = 32'(MCOLS) * 32'(cmd.w6[15:0]);
   end
 
+  // Two heads (IMPL 2: commands overlap in the pipeline; docs/mxu_systolic.md). The drain's head
+  // is h, the oldest command: its results are drained, its completion signalled. The pop head is
+  // h, or n once the head's chunks have all popped (pn), if the pipeline treats n alike (the same
+  // PAIR and M, the only per-command state read after S0): the next command's rows then enter the
+  // pipeline behind the head's instead of after its drain. pop_q is the pop head's entry, a register
+  // loaded with h and n (pn ? n : h), so neither the pop nor the drain reads its command through a
+  // mux. OVL = 0 (IMPL 0 / 1): the pop head is h.
+  localparam bit OVL = (IMPL == 2);
+  logic        pn;
+  qent_t       pop_q, pop_e;
+  assign pop_e = OVL ? pop_q : h;
+
   wire [31:0] c_out = h.out;
   wire        c_tz = h.tz;
-  wire [15:0] c_KB = h.KB, c_KBa = h.KBa;
-  wire        c_pair = h.pair;
-  wire [MCOLS-1:0] c_hi = h.hi;
-  wire [7:0]  c_M = h.M, c_ab = h.ab;
+  // the pop head's (c_KB .. c_wf, p_*) and the drain head's (the rest)
+  wire [15:0] c_KB = pop_e.KB, c_KBa = pop_e.KBa;
+  wire        c_pair = pop_e.pair;
+  wire [MCOLS-1:0] c_hi = pop_e.hi;
+  wire [7:0]  c_M = h.M, c_ab = pop_e.ab;
+  wire [7:0]  p_M = pop_e.M, p_G = pop_e.G;
+  wire        p_act = (q_n != 0) && pop_e.go;
   wire [MW-1:0] c_run = h.run;
-  wire        c_unit = h.unit, c_acc = h.acc, c_rmax = h.rmax;
+  wire        c_unit = pop_e.unit, c_acc = h.acc, c_rmax = h.rmax;
   wire        c_asc = h.asc;
-  wire [1:0]  c_wf = h.wf;
+  wire [1:0]  c_wf = pop_e.wf;
   wire        c_w4 = (c_wf != WF_W8);
   wire [31:0] c_asa = h.asa;
   wire        c_act = (q_n != 0) && h.go;
@@ -240,26 +259,40 @@ module otpu_mxu
   // ================================================================== consumer control
   logic [15:0] ck;
   logic [7:0]  cg;                          // the group of the row being consumed (replay)
-  logic [31:0] c_left;                      // chunks of the head command not yet freed
-  logic [RFW:0] rows_live;                  // rows popped (first block) and not yet drained
+  logic [31:0] c_left;                      // chunks of the pop head not yet freed
+  logic [RFW:0] rows_live;                  // the head's rows popped (first block), not drained
+  logic [RFW:0] rows_p;                     // the pop head's, while it is not the head (OVL)
   wire last_k   = (ck + 1 == c_KBa);
-  wire last_g   = (cg + 1 == c_G);          // the row's last group: its pops free FIFO entries
-  wire more     = c_act && (c_left != 0);
+  wire last_g   = (cg + 1 == p_G);          // the row's last group: its pops free FIFO entries
+  wire more     = p_act && (c_left != 0);
   // the chunk of advance ck (4-bit without PAIR: two advances a chunk) and whether the advance
   // finishes it
   wire [15:0] ckc = (c_w4 && !c_pair) ? {1'b0, ck[15:1]} : ck;
   wire cdone    = !c_w4 || c_pair || ck[0] || last_k;
   // advance ck's chunk and scale are in the FIFO: the next entries (one group), or entry ck of
   // the row (group 0 of several; the later groups find the whole row)
-  wire f_av     = (c_G == 8'd1) ? (f_count != 0) : (cg != 0 || 32'(f_count) > 32'(ckc));
-  wire s_av     = (c_G == 8'd1) ? (s_count != 0) : (cg != 0 || 32'(s_count) > 32'(ck));
+  wire f_av     = (p_G == 8'd1) ? (f_count != 0) : (cg != 0 || 32'(f_count) > 32'(ckc));
+  wire s_av     = (p_G == 8'd1) ? (s_count != 0) : (cg != 0 || 32'(s_count) > 32'(ck));
   // pop: one block (PAIR: one chunk) advances into the pipeline; fpop: its chunk leaves the
   // FIFO (4-bit without PAIR: after the high half, or after the row's last block; replay: in the
   // row's last group)
-  wire pop      = more && f_av && (c_unit || s_av) && (ck != 0 || rows_live < RF);
+  // IMPL 2 (docs/mxu_systolic.md): a row's first advance pops only once all of the row's chunks
+  // and scales are in the FIFOs (a later group finds them there), so a row never stalls in its
+  // middle and the compute pipeline needs no clock enable: en_c is 1, and a cycle without a pop
+  // is a bubble between rows, as at every row start today
+  wire [15:0] c_rch = (c_w4 && !c_pair) ? 16'((32'(c_KBa) + 1) / 2) : c_KBa;   // chunks a row
+  wire row_in   = (IMPL != 2) || cg != 0 ||
+                  (32'(f_count) >= 32'(c_rch) && (c_unit || 32'(s_count) >= 32'(c_KBa)));
+  wire pop      = more && f_av && (c_unit || s_av) &&
+                  (ck != 0 || (row_in && (OVL ? (RFW+2)'(rows_live) + (RFW+2)'(rows_p) < (RFW+2)'(RF)
+                                              : rows_live < RF)));
   wire fpop     = pop && last_g && cdone;
-  wire en_c     = pop || !(more && ck != 0);       // freeze only in the middle of a row
+  wire en_c     = (IMPL == 2) || pop || !(more && ck != 0);   // freeze only in the middle of a row
 `ifndef SYNTHESIS
+  always @(posedge clk) if (!rst && IMPL == 2) begin
+    if (more && ck != 0 && !pop) $fatal(1, "otpu_mxu: IMPL 2 row stalled at advance %0d", ck);
+    if (more && 32'(c_rch) > DEPTH) $fatal(1, "otpu_mxu: IMPL 2 needs a row (%0d chunks) to fit the FIFO", c_rch);
+  end
   always @(posedge clk) if (!rst && more) begin
     if (f_rd != (last_g ? f_head : f_head + PW'(ckc)))
       $fatal(1, "otpu_mxu: FIFO read address %0d, head %0d, k %0d", f_rd, f_head, ck);
@@ -422,11 +455,13 @@ module otpu_mxu
     for (int j = 0; j < MCOLS; j++)
       if (rst) ws6[j] <= '0; else if (en_c) ws6[j] <= hi0[j] ? ws5h : ws5;
 
-  // dot-product latency S0 -> s4 (the tree: 6 register levels: operands (the decoded weights),
-  // products, pairs, groups, sub-blocks times their multipliers, block sum)
+  // dot-product latency S0 -> s4 (the tree: 7 register levels: operands (the decoded weights),
+  // products, pairs (two: the DSP cascade), groups, sub-blocks times their multipliers, block sum)
   localparam int NG = D / CL;
   localparam int TL = (NG <= 1) ? 0 : (NG <= 4) ? 1 : (NG <= 16) ? 2 : 3;
-  localparam int LDOT = (IMPL == 0) ? 6 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
+  localparam int CLS = (D / 4 < CL) ? D / 4 : CL;    // IMPL 2's chains: within a 4-bit sub-block
+  localparam int LDOT = (IMPL == 0) ? 7 : (IMPL == 2) ? CLS + MCOLS + 3
+                                          : CL + 1 + TL - (TL >= 3 ? 1 : 0);
 
   // ---- S1 .. S4: the exact integer dot products of the chunk with every column's ACT block;
   // s4 (with m4, ws4) is the chunk's result LDOT cycles after S0.
@@ -434,7 +469,10 @@ module otpu_mxu
     // products, pair sums, then an 8 / D/16 adder tree (one register level each)
     // Columns 2p and 2p+1 share the weight byte, so one multiplier (a DSP48 with its pre-adder)
     // makes both: pm = (a0*2^16 + a1) * w = (a0*w)*2^16 + a1*w (a 25-bit A: shift 17 overflows).
-    // The DSP post-adders sum positions 2q and 2q+1 (DSP 2q: M + PK, DSP 2q+1: M + that, PREG):
+    // The DSP post-adders sum positions 2q and 2q+1 in a systolic pair: DSP 2q makes M + PK (PREG),
+    // DSP 2q+1 takes its operands a stage later (pre-adder register ADREG, BREG = 2) and adds that
+    // through its cascade input (M + PCIN, PREG), so the sum needs no fabric adder or register
+    // (a one-cycle M + M + PK was built in fabric: 44 flip-flops and 11 CARRY4s per pair sum):
     // pq = E*2^16 + (O + PK), E / O the pair sums of columns 2p / 2p+1, both in [-32512, 32768].
     // O + PK is in [1, 65281], so the fields need no borrow: E = pq[32:16] (signed) and
     // O + PK = pq[15:0] (unsigned); column 2p+1's group sums start at -(GS/2)*PK. PK is odd
@@ -451,18 +489,21 @@ module otpu_mxu
     // that are mapped to fabric flops after DSP packing; signed fields are read through $signed().
     localparam int NDP = MCOLS / 2;                     // DSP pairs
     localparam logic [43:0] PK = 44'd32513, PK2 = 44'h000_1000_1000;
-    logic [NP-1:0][D-1:0][43:0]   pm;
+    logic [NP-1:0][D/2-1:0][43:0] pme, pmo;             // positions 2q / 2q+1: M registers
+    logic [NP-1:0][D/2-1:0][43:0] pe;                   // DSP 2q's P: M + PK (to 2q+1's PCIN)
+    logic [NP-1:0][D/2-1:0][24:0] pao;                  // DSP 2q+1's pre-adder output (ADREG)
+    logic [NP-1:0][D/2-1:0][17:0] wro;                  // DSP 2q+1's B, a stage later (BREG 2)
     logic [NP-1:0][D/2-1:0][43:0] pq;
     logic [D-1:0][15:0]           pr;
-    logic [D/2-1:0][16:0]         prq;
+    logic [D/2-1:0][16:0]         prq, prq2;
     // group sums of GS positions (16; D/4 when smaller), GPB groups per 4-bit sub-block
     localparam int GS = (D / 4 < 16) ? D / 4 : 16;
     localparam int NG3 = D / GS, GPB = NG3 / 4;
     logic signed [19:0] s3 [MCOLS][NG3];
     logic [SW-1:0] v [MCOLS][4];
-    logic [15:0] mbz, mb1, mb2, mb3, mbzh, mb1h, mb2h, mb3h;
-    cm_t  mz, mt4;
-    f32_t wz, wt4, wzh, wt4h;
+    logic [15:0] mbz, mb1, mbc, mb2, mb3, mbzh, mb1h, mbch, mb2h, mb3h;
+    cm_t  mz, mc, mt4;
+    f32_t wz, wc, wt4, wzh, wch, wt4h;
     // the operands registered once more (the multipliers' input registers): the weight decode
     // sits between the chunk FIFO's read register and here, not in front of the multipliers
     logic [MCOLS*D*8-1:0]       ar;
@@ -488,20 +529,24 @@ module otpu_mxu
       end
       if (MCOLS % 2 == 1)
         for (int i = 0; i < D; i++) wrl[i] <= wsel(w0, i, pr0 ? hi0[MCOLS-1] : m0.h, wf0);
-      for (int p = 0; p < NDP; p++) begin
-        for (int i = 0; i < D; i++) begin
+      for (int p = 0; p < NDP; p++)
+        for (int q = 0; q < D / 2; q++) begin
           logic signed [24:0] pa;
-          pa = $signed({ar[(2*p*D + i)*8 +: 8], 16'b0}) + 25'($signed(ar[((2*p+1)*D + i)*8 +: 8]));
-          pm[p][i] <= 44'(pa) * 44'($signed(wr[p][i]));
+          pa = $signed({ar[(2*p*D + 2*q)*8 +: 8], 16'b0}) + 25'($signed(ar[((2*p+1)*D + 2*q)*8 +: 8]));
+          pme[p][q] <= 44'(pa) * 44'($signed(wr[p][2*q]));
+          pe[p][q] <= pme[p][q] + pkr[p];
+          pao[p][q] <= $signed({ar[(2*p*D + 2*q+1)*8 +: 8], 16'b0}) +
+                       25'($signed(ar[((2*p+1)*D + 2*q+1)*8 +: 8]));
+          wro[p][q] <= wr[p][2*q+1];
+          pmo[p][q] <= 44'($signed(pao[p][q])) * 44'($signed(wro[p][q]));
+          pq[p][q] <= pmo[p][q] + pe[p][q];
         end
-        for (int q = 0; q < D / 2; q++)
-          pq[p][q] <= pm[p][2*q+1] + (pm[p][2*q] + pkr[p]);
-      end
       if (MCOLS % 2 == 1) begin
         for (int i = 0; i < D; i++)
           pr[i] <= 16'(int'($signed(ar[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(wrl[i])));
         for (int q = 0; q < D / 2; q++)
           prq[q] <= 17'($signed(pr[2*q])) + 17'($signed(pr[2*q+1]));
+        prq2 <= prq;                                   // with the pairs' second stage
       end
       for (int j = 0; j < MCOLS; j++) begin
         for (int g = 0; g < NG3; g++) begin
@@ -515,7 +560,7 @@ module otpu_mxu
             else if (j + 1 < MCOLS)
               t = t + (sp[j/2] ? 20'($signed(pq[j/2][GS/2*g+k][43:29]))
                                : 20'($signed(pq[j/2][GS/2*g+k][32:16])));
-            else t = t + 20'($signed(prq[GS/2*g+k]));
+            else t = t + 20'($signed(prq2[GS/2*g+k]));
           s3[j][g] <= t;
         end
         // sub-block sums times their multipliers (a DSP pre-adder and multiplier), then the
@@ -535,12 +580,13 @@ module otpu_mxu
       end
       mz <= m0; wz <= ws0; mbz <= mb0; wzh <= ws0h; mbzh <= mb0h;
       m1 <= mz; ws1 <= wz; mb1 <= mbz; ws1h <= wzh; mb1h <= mbzh;
-      m2 <= m1; ws2 <= ws1; mb2 <= mb1; ws2h <= ws1h; mb2h <= mb1h;
+      mc <= m1; wc <= ws1; mbc <= mb1; wch <= ws1h; mbch <= mb1h;
+      m2 <= mc; ws2 <= wc; mb2 <= mbc; ws2h <= wch; mb2h <= mbch;
       m3 <= m2; ws3 <= ws2; mb3 <= mb2; ws3h <= ws2h; mb3h <= mb2h;
       mt4 <= m3; wt4 <= ws3; wt4h <= ws3h;
       m4 <= mt4; ws4 <= wt4; ws4h <= wt4h;
     end
-  end else begin : g_casc
+  end else if (IMPL == 1) begin : g_casc
     // Systolic accumulate chains (DSP48 A*B + PCIN cascades): the D positions form NG = D / CL
     // chains of CL; position i = g*CL + k enters stage k of chain g k cycles after S0 (operand
     // skew in shift registers), so a new chunk enters every cycle. Stage k: a registered product
@@ -607,6 +653,65 @@ module otpu_mxu
     otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));
     otpu_delay #(.W(32), .N(LDOT)) u_ws4 (.clk, .en(en_c), .d(ws0), .q(ws4));
     otpu_delay #(.W(32), .N(LDOT)) u_ws4h (.clk, .en(en_c), .d(ws0h), .q(ws4h));
+  end else begin : g_sys
+    // A 2D systolic array (docs/mxu_systolic.md). The chunk is decoded once (S1), position i is
+    // delayed by its chain stage k = i % CL, and the weights then move one register hop per
+    // column: column j sees them j cycles after column 0 (fan-out 2, no broadcast). Both streams
+    // flow: the low block (or the 4-bit half of a non-PAIR advance) and PAIR's high block; each
+    // column takes one in its DSPs' pre-adder (A = low, D = high, INMODE by its per-command
+    // hi0[j]: no fabric select). Column j's activation byte i is delayed k + j (shift registers)
+    // into the DSP's B register. Along D: chains of CL products, one per DSP48E1 (otpu_pe: M
+    // register, P = PCIN + M). The 4-bit sub-blocks are two chains each, so the sub-block
+    // multipliers apply at the chain ends, as in IMPL 0; column j's s4 is then delayed
+    // MCOLS - 1 - j cycles, and all columns reach the epilogue together (LDOT = CLS + MCOLS + 3).
+    // Exact integers: bit-identical to IMPL 0. Chains of CLS = min(CL, D/4) positions, so a
+    // sub-block (D/4 positions) is CPS whole chains.
+    localparam int CPS = D / 4 / CLS;
+    initial if ((D / 4) % CLS != 0) $fatal(1, "otpu_mxu: IMPL 2 needs CL to divide D/4");
+    logic [D-1:0][15:0] wd;                             // S1: {high block, low block / half}
+    always_ff @(posedge clk) if (en_c)
+      for (int i = 0; i < D; i++) wd[i] <= {wsel(w0, i, 1'b1, wf0), wsel(w0, i, m0.h, wf0)};
+    logic [D-1:0][15:0] wc [MCOLS];                    // the streams at column j
+    for (genvar i = 0; i < D; i++) begin : g_wsk
+      otpu_skew #(.W(16), .N(i % CLS)) u_w (.clk, .en(en_c), .d(wd[i]), .q(wc[0][i]));
+    end
+    always_ff @(posedge clk) if (en_c)
+      for (int j = 1; j < MCOLS; j++) wc[j] <= wc[j-1];
+    logic [7:0] as_k [MCOLS][D];
+    logic signed [23:0] preg [MCOLS][D];                // running sums (the DSPs' P registers)
+    logic [47:0] pc [MCOLS][D];                         // their cascade outputs
+    for (genvar j = 0; j < MCOLS; j++) begin : g_ask
+      for (genvar i = 0; i < D; i++) begin : g_p
+        otpu_skew #(.W(8), .N(i % CLS + j)) u_a (.clk, .en(en_c), .d(a0[(j*D + i)*8 +: 8]),
+                                               .q(as_k[j][i]));
+        otpu_pe #(.FIRST(i % CLS == 0)) u_pe (.clk, .en(en_c), .act(as_k[j][i]),
+          .wlo(wc[j][i][7:0]), .whi(wc[j][i][15:8]), .sel(hi0[j]),
+          .pcin((i % CLS == 0) ? 48'd0 : pc[j][(i % CLS == 0) ? i : i - 1]), .pcout(pc[j][i]),
+          .p(preg[j][i]));
+      end
+    end
+    // chain ends (S0 + CLS + 2 + j): the sub-block sums times their multipliers, then the block
+    // sum; the multipliers of column j (its block's under PAIR) travel alongside
+    (* use_dsp = "yes" *) logic [SW-1:0] vs [MCOLS][4];
+    logic signed [SW-1:0] s4r [MCOLS];
+    for (genvar j = 0; j < MCOLS; j++) begin : g_col_end
+      logic [15:0] mbd;
+      otpu_skew #(.W(16), .N(CLS + 2 + j)) u_mb (.clk, .en(en_c), .d(hi0[j] ? mb0h : mb0),
+                                               .q(mbd));
+      always_ff @(posedge clk) if (en_c) begin
+        for (int b = 0; b < 4; b++) begin
+          logic [SW-1:0] t;
+          t = '0;
+          for (int c = 0; c < CPS; c++) t = t + SW'(preg[j][(b*CPS + c)*CLS + CLS - 1]);
+          vs[j][b] <= SW'(t * SW'(mbd[4*b +: 4]));
+        end
+        s4r[j] <= $signed(vs[j][0] + vs[j][1] + vs[j][2] + vs[j][3]);
+      end
+      otpu_skew #(.W(SW), .N(MCOLS - 1 - j)) u_dsk (.clk, .en(en_c), .d(s4r[j]), .q(s4[j]));
+    end
+    otpu_delay #(.W($bits(cm_t)), .N(LDOT)) u_m4 (.clk, .en(en_c), .d(m0), .q(m4));
+    otpu_delay #(.W(32), .N(LDOT)) u_ws4 (.clk, .en(en_c), .d(ws0), .q(ws4));
+    otpu_delay #(.W(32), .N(LDOT)) u_ws4h (.clk, .en(en_c), .d(ws0h), .q(ws4h));
   end
 
   // the ACT scale travels with the chunk to the second multiplier (S0 + LDOT + 2 + LM)
@@ -614,7 +719,7 @@ module otpu_mxu
   cm_t  mt_p, mt, mq_p, mq, mx, ma;          // meta at the pair adder input and output, the loop
                                              // adder input (mq under PAIR, else mt), its output
   logic [7:0] M0;                            // the command's M (constant while its blocks flow)
-  always_ff @(posedge clk) if (en_c) M0 <= c_M;
+  always_ff @(posedge clk) if (en_c) M0 <= p_M;
   // the delay lines into the fp operands end in reset flops (a reset can't go into an SRL, so the
   // last stage is an FDRE with a fast clock-to-out); same total length and enable
   otpu_delay #(.W($bits(cm_t)), .N(2 * LM - 1)) u_mt (.clk, .en(en_c), .d(m6), .q(mt_p));
@@ -703,7 +808,8 @@ module otpu_mxu
   wire  [MW-1:0] c_Mn = d_last ? h.Ml : MW'(MCOLS);   // its results
   logic [LANES-1:0][31:0] daddr_l, dval_l;
   logic [LANES-1:0][7:0]  dcol_l;
-  wire  drain_go = (rf_n != 0) && (!c_asc || al_st == 2'd2);
+  // (OVL: the result FIFO's head row is the head command's while it has rows not yet drained)
+  wire  drain_go = (rf_n != 0) && (!OVL || rows_live != 0) && (!c_asc || al_st == 2'd2);
 `ifndef SYNTHESIS
   always @(posedge clk) if (!rst && drain_go && dg1 != dg + 8'd1) $fatal(1, "otpu_mxu: dg1 %0d, dg %0d", dg1, dg);
 `endif
@@ -830,7 +936,8 @@ module otpu_mxu
       end
 `endif
 
-  wire c_drained = c_act && (c_left == 0) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
+  wire c_drained = c_act && (pn || c_left == 0) && (rows_live == 0) && (rmw_n == 0) &&
+                   !r0.v && !r1.v && !rx.v;
   // RMAX writes start a cycle after the head has drained: mx_q registers the test, so the
   // drained compares (c_left == 0, rows_live, rmw_n, ...) are off the TMEM write request and the
   // grant it feeds (clk125 at 125.49 MHz: c_left -> drained test -> MXU write request -> TMEM
@@ -840,6 +947,8 @@ module otpu_mxu
   logic mx_q;
   wire mx_go     = mx_q && !mx_done;
   wire c_fin     = c_drained && (!c_rmax || mx_done || c_tz);
+  // the head completes (OVL: while the pop head may pop the next command's chunks)
+  wire c_done    = c_fin && (OVL || !pop);
   wire al_go     = c_act && c_asc && al_st == 2'd0;
 
   always_comb begin
@@ -901,7 +1010,7 @@ module otpu_mxu
     pf_u <= 1'b0;
     if (rst) begin
       i_act <= 1'b0;
-      q_n <= '0;
+      q_n <= '0; pn <= 1'b0; rows_p <= '0;
       occ <= '0;
       f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
@@ -915,13 +1024,16 @@ module otpu_mxu
     end else begin
       logic [1:0] qn;
       logic [RFW:0] rn;
-      logic [RFW:0] rl;
+      logic [RFW:0] rl, rp;
       qent_t hn, nn;                            // the entries' next values (before a swap)
+      logic pnx;
       qn = q_n;
       rn = rf_n;
       rl = rows_live;
+      rp = rows_p;
       hn = h;
       nn = n;
+      pnx = pn;
       // ---- accept a command (the head if the queue is empty, else the next entry)
       if (start) begin
         if (q_n == 0) begin
@@ -984,7 +1096,10 @@ module otpu_mxu
         if (last_k && !last_g) f_rd <= f_head;
         else if (cdone) f_rd <= f_rd + 1;
         if (!c_unit) s_rd <= (last_k && !last_g) ? s_head : s_rd + 1;
-        if (ck == 0) rl = rl + 1;
+        if (ck == 0) begin
+          if (!OVL || !pn) rl = rl + 1;
+          else rp = rp + 1;
+        end
         ck <= last_k ? '0 : ck + 1;
         if (last_k) cg <= last_g ? '0 : cg + 1;
       end
@@ -1057,22 +1172,37 @@ module otpu_mxu
       end
       rf_n <= rn;
       rows_live <= rl;
+      rows_p <= rp;
+      // OVL: the pop head moves to the next command once the head's chunks have all popped, if
+      // the pipeline treats both alike (PAIR, and M under PAIR: pr0, hi0 and M0 are read late)
+      if (OVL && !pn && c_left == 0 && q_n == 2'd2 && n.go && !c_done &&
+          n.pair == h.pair && (!h.pair || n.M == h.M)) begin
+        pnx = 1'b1;
+        c_left <= n.total;
+      end
       // ---- statistics
       st_c <= {want_iss && !go_iss, !t_gnt && (drain_go || rw.v || mx_go || al_go),
                more && f_count != 0 && !pop, more && f_count == 0};
-      st_f <= c_fin && !pop;
+      st_f <= c_done;
       mx_q <= c_drained && c_rmax && !mx_done && !c_tz;
       st_starve <= st_starve + 32'(st_g[0]);
       st_bp <= st_bp + 32'(st_g[1]);
       st_frz <= st_frz + 32'(st_g[2]);
       st_deny <= st_deny + 32'(st_g[3]);
       // ---- the consumer's command is complete
-      if (c_fin && !pop) begin
+      if (c_done) begin
         done <= 1'b1;
         qn = qn - 1;
-        ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1;
-        // the next head's chunk count: the queued entry, or a command accepted this cycle
-        c_left <= (q_n == 2'd2) ? n.total : (start ? cmd_total : '0);
+        dg <= '0; dg1 <= 8'd1;
+        if (!pn) begin                            // the pop head moves along
+          ck <= '0; cg <= '0;
+          // the next head's chunk count: the queued entry, or a command accepted this cycle
+          c_left <= (q_n == 2'd2) ? n.total : (start ? cmd_total : '0);
+        end else begin                            // it already runs the next command: its rows
+          rows_live <= rp;
+          rows_p <= '0;
+        end
+        pnx = 1'b0;                               // the next command is both heads now
         dj <= '0;
         for (int j = 0; j < MCOLS; j++) begin
           dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
@@ -1096,11 +1226,17 @@ module otpu_mxu
       end
       // the entries: completing the head swaps them (the next entry, or the command accepted
       // this cycle, becomes the head; the old head stays in n)
-      if (c_fin && !pop) begin
-        h <= nn; n <= hn;
-      end else begin
-        h <= hn; n <= nn;
+      begin
+        qent_t hx, nx;
+        if (c_done) begin
+          hx = nn; nx = hn;
+        end else begin
+          hx = hn; nx = nn;
+        end
+        h <= hx; n <= nx;
+        pop_q <= pnx ? nx : hx;                 // the pop head's entry (OVL)
       end
+      pn <= pnx;
       q_n <= qn;
     end
   end
@@ -1109,7 +1245,9 @@ module otpu_mxu
   // command never completes while it pops (c_fin needs c_left == 0, pop c_left != 0)
   always @(posedge clk) if (!rst) begin
     if (start && q_n >= 2'd2) $fatal(1, "otpu_mxu: start with %0d commands queued", q_n);
-    if (c_fin && pop) $fatal(1, "otpu_mxu: the head completes while it pops");
+    if (!OVL && c_fin && pop) $fatal(1, "otpu_mxu: the head completes while it pops");
+    if (OVL && q_n != 0 && pop_q != (pn ? n : h))
+      $fatal(1, "otpu_mxu: pop_q is not the pop head's entry");
   end
 `endif
 
@@ -1129,4 +1267,74 @@ module otpu_ram_sdp #(parameter int W = 32, parameter int N = 1024) (
   (* ram_style = "block" *) logic [W-1:0] mem [N];
   always_ff @(posedge clk) if (we) mem[wa] <= wd;
   always_ff @(posedge clk) if (re) rd <= mem[ra];
+endmodule
+
+// N-cycle delay line with an enable: no reset and no forced last flip-flop (unlike otpu_delay), so
+// a long one maps to shift-register LUTs and its last stage may move into a DSP48's input register
+// (the systolic MXU's operand skews)
+module otpu_skew #(parameter int W = 8, parameter int N = 1) (
+  input  logic         clk,
+  input  logic         en,
+  input  logic [W-1:0] d,
+  output logic [W-1:0] q
+);
+  if (N == 0) begin : g_wire
+    assign q = d;
+  end else begin : g_regs
+    logic [W-1:0] r [N];
+    always_ff @(posedge clk) if (en) begin
+      r[0] <= d;
+      for (int k = 1; k < N; k++) r[k] <= r[k-1];
+    end
+    assign q = r[N-1];
+  end
+endmodule
+
+// One position of the systolic MXU (IMPL 2): a DSP48E1 with the activation in its B register
+// (BREG 1), the two weight streams on A (low) and D (high), one selected by the pre-adder's input
+// gates (INMODE: sel 0 -> A, 1 -> D), the product in M and the chain's running sum in P:
+// P = PCIN + M (FIRST: P = M). Simulation uses the equivalent behavioural model.
+module otpu_pe #(parameter bit FIRST = 1'b0) (
+  input  logic               clk,
+  input  logic               en,
+  input  logic [7:0]         act,
+  input  logic [7:0]         wlo,
+  input  logic [7:0]         whi,
+  input  logic               sel,
+  input  logic [47:0]        pcin,
+  output logic [47:0]        pcout,
+  output logic signed [23:0] p
+);
+`ifdef SYNTHESIS
+  logic [47:0] pf;
+  DSP48E1 #(
+    .A_INPUT("DIRECT"), .B_INPUT("DIRECT"), .USE_DPORT("TRUE"), .USE_MULT("MULTIPLY"),
+    .USE_SIMD("ONE48"), .AREG(0), .ACASCREG(0), .BREG(1), .BCASCREG(1), .CREG(0), .DREG(0),
+    .ADREG(0), .MREG(1), .PREG(1), .INMODEREG(0), .OPMODEREG(0), .ALUMODEREG(0),
+    .CARRYINREG(0), .CARRYINSELREG(0), .USE_PATTERN_DETECT("NO_PATDET"),
+    .AUTORESET_PATDET("NO_RESET"), .MASK(48'h3fffffffffff), .PATTERN(48'h0),
+    .SEL_MASK("MASK"), .SEL_PATTERN("PATTERN")
+  ) u_dsp (
+    .CLK(clk),
+    .A({{22{wlo[7]}}, wlo}), .B({{10{act[7]}}, act}), .C(48'd0), .D({{17{whi[7]}}, whi}),
+    .INMODE({2'b00, sel, sel, 1'b0}), .OPMODE(FIRST ? 7'b000_01_01 : 7'b001_01_01),
+    .ALUMODE(4'b0000), .CARRYIN(1'b0), .CARRYINSEL(3'b000),
+    .CEA1(1'b0), .CEA2(1'b0), .CEB1(en), .CEB2(en), .CEC(1'b0), .CED(1'b0), .CEAD(1'b0),
+    .CEM(en), .CEP(en), .CEALUMODE(1'b0), .CECTRL(1'b0), .CECARRYIN(1'b0), .CEINMODE(1'b0),
+    .RSTA(1'b0), .RSTB(1'b0), .RSTC(1'b0), .RSTD(1'b0), .RSTM(1'b0), .RSTP(1'b0),
+    .RSTALLCARRYIN(1'b0), .RSTALUMODE(1'b0), .RSTCTRL(1'b0), .RSTINMODE(1'b0),
+    .ACIN(30'd0), .BCIN(18'd0), .PCIN(pcin), .CARRYCASCIN(1'b0), .MULTSIGNIN(1'b0),
+    .ACOUT(), .BCOUT(), .PCOUT(pcout), .P(pf), .CARRYCASCOUT(), .MULTSIGNOUT(), .CARRYOUT(),
+    .OVERFLOW(), .UNDERFLOW(), .PATTERNDETECT(), .PATTERNBDETECT());
+  assign p = pf[23:0];
+`else
+  logic [7:0] br;
+  logic signed [15:0] m;
+  always_ff @(posedge clk) if (en) begin
+    br <= act;
+    m <= 16'(int'($signed(br)) * int'($signed(sel ? whi : wlo)));
+    p <= (FIRST ? 24'sd0 : $signed(pcin[23:0])) + 24'(m);
+  end
+  assign pcout = 48'(p);
+`endif
 endmodule

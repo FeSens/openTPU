@@ -195,6 +195,12 @@ module otpu_dma
   wire          y_keep = y_v && !(ds_pad && ds_yj[3]);   // a Y segment kept (not pad64's)
   logic [31:0]  y_d [W], in_d [W], o_d;
   logic [31:0]  ob [W][CBD];
+  // an o value lands in ob a cycle after it leaves the datapath: its one-hot entry enable and
+  // the value, registered (o_d went to all 256 entries, their enables decoded from ds_ocnt:
+  // 8 ns of wire at MCOLS=4). ds_out, the first read of ob, starts on the edge that writes
+  // the last o at the earliest
+  logic [W-1:0][CBD-1:0] ow_e;
+  (* max_fanout = 32 *) logic [31:0] o_q;
   logic [7:0]   oi;                                  // o segment written to TMEM next
   // SE runs up to SE_LAG cycles behind pe (otpu_vpu registers the ss_* inputs) and qualifies
   // y_v and o_v with its own pe: taking one more segment needs room for it, this cycle's y and
@@ -504,10 +510,21 @@ module otpu_dma
     pe_pos <= ds_pos;
   end
   assign ds_ow = ds_out;
+  always_ff @(posedge clk) begin
+    for (int l = 0; l < W; l++)
+      for (int e = 0; e < CBD; e++)
+        if (ow_e[l][e]) ob[l][e] <= o_q;
+    o_q <= o_d;
+  end
+`ifndef SYNTHESIS
+  always_ff @(posedge clk)
+    if (!rst && ds_out && ow_e != '0) $fatal(1, "otpu_dma: ob read before its last o landed");
+`endif
 
   logic ld_fin;                          // LD: the last write is in the write register
   always_ff @(posedge clk) begin
     done <= ld_fin;                      // an LD is done once its last TMEM write has landed
+    ow_e <= '0;                          // set below for the o value taken this cycle
     ld_fin <= 1'b0;
     ld_last <= 1'b0;
     dv_v <= ld_dv;
@@ -635,7 +652,7 @@ module otpu_dma
         if (ld_iss) ds_rc <= (32'(ds_rc) == RUN - 1) ? '0 : ds_rc + 1'b1;
         ds_rr <= ds_rr_nx || (ld_iss && !ds_rr && RUN > 1 && !cl_one);
         if (o_v) begin
-          ob[ds_ocnt % W][ds_ocnt / W] <= o_d;
+          ow_e[ds_ocnt % W][ds_ocnt / W] <= 1'b1;
           ds_ocnt <= ds_ocnt + 1'b1;
         end
         // SE is done once every updated segment and o is out (pe's last cycle is this one at
