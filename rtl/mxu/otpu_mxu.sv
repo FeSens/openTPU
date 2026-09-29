@@ -169,19 +169,30 @@ module otpu_mxu
   logic [MW-1:0] q_Ml [2];                  // rows of the last group
   logic [31:0] q_gs [2];                    // drain address step to the next group
                                             // (MCOLS * ors)
-  logic        q_h;
+  // Two heads (IMPL 2: commands overlap in the pipeline; docs/mxu_systolic.md). q_h is the drain's
+  // head, the oldest command: its results are drained, its completion signalled. q_p is the pop
+  // head: q_h, or, once the head's chunks have all popped, the next command if the pipeline treats
+  // it alike (the same PAIR and M, the only per-command state read after S0). The next command's
+  // rows then enter the pipeline behind the head's instead of after its drain. OVL = 0 keeps
+  // q_p = q_h (one command in the pipeline at a time).
+  localparam bit OVL = (IMPL == 2);
+  logic        q_h, q_pr;
+  wire         q_p = OVL ? q_pr : q_h;
   logic [1:0]  q_n;
 
   wire [31:0] c_out = q_out[q_h];
   wire        c_tz = q_tz[q_h];
-  wire [15:0] c_KB = q_KB[q_h], c_KBa = q_KBa[q_h];
-  wire        c_pair = q_pair[q_h];
-  wire [MCOLS-1:0] c_hi = q_hi[q_h];
-  wire [7:0]  c_M = q_M[q_h], c_ab = q_ab[q_h];
+  // the pop head's (c_KB .. c_wf, p_*) and the drain head's (the rest)
+  wire [15:0] c_KB = q_KB[q_p], c_KBa = q_KBa[q_p];
+  wire        c_pair = q_pair[q_p];
+  wire [MCOLS-1:0] c_hi = q_hi[q_p];
+  wire [7:0]  c_M = q_M[q_h], c_ab = q_ab[q_p];
+  wire [7:0]  p_M = q_M[q_p], p_G = q_G[q_p];
+  wire        p_act = (q_n != 0) && q_go[q_p];
   wire [MW-1:0] c_run = q_run[q_h];
-  wire        c_unit = q_unit[q_h], c_acc = q_acc[q_h], c_rmax = q_rmax[q_h];
+  wire        c_unit = q_unit[q_p], c_acc = q_acc[q_h], c_rmax = q_rmax[q_h];
   wire        c_asc = q_asc[q_h];
-  wire [1:0]  c_wf = q_wf[q_h];
+  wire [1:0]  c_wf = q_wf[q_p];
   wire        c_w4 = (c_wf != WF_W8);
   wire [31:0] c_asa = q_asa[q_h];
   wire        c_act = (q_n != 0) && q_go[q_h];
@@ -210,26 +221,40 @@ module otpu_mxu
   // ================================================================== consumer control
   logic [15:0] ck;
   logic [7:0]  cg;                          // the group of the row being consumed (replay)
-  logic [31:0] c_left;                      // chunks of the head command not yet freed
-  logic [RFW:0] rows_live;                  // rows popped (first block) and not yet drained
+  logic [31:0] c_left;                      // chunks of the pop head not yet freed
+  logic [RFW:0] rows_live;                  // the head's rows popped (first block), not drained
+  logic [RFW:0] rows_p;                     // the pop head's, while it is not the head (OVL)
   wire last_k   = (ck + 1 == c_KBa);
-  wire last_g   = (cg + 1 == c_G);          // the row's last group: its pops free FIFO entries
-  wire more     = c_act && (c_left != 0);
+  wire last_g   = (cg + 1 == p_G);          // the row's last group: its pops free FIFO entries
+  wire more     = p_act && (c_left != 0);
   // the chunk of advance ck (4-bit without PAIR: two advances a chunk) and whether the advance
   // finishes it
   wire [15:0] ckc = (c_w4 && !c_pair) ? {1'b0, ck[15:1]} : ck;
   wire cdone    = !c_w4 || c_pair || ck[0] || last_k;
   // advance ck's chunk and scale are in the FIFO: the next entries (one group), or entry ck of
   // the row (group 0 of several; the later groups find the whole row)
-  wire f_av     = (c_G == 8'd1) ? (f_count != 0) : (cg != 0 || 32'(f_count) > 32'(ckc));
-  wire s_av     = (c_G == 8'd1) ? (s_count != 0) : (cg != 0 || 32'(s_count) > 32'(ck));
+  wire f_av     = (p_G == 8'd1) ? (f_count != 0) : (cg != 0 || 32'(f_count) > 32'(ckc));
+  wire s_av     = (p_G == 8'd1) ? (s_count != 0) : (cg != 0 || 32'(s_count) > 32'(ck));
   // pop: one block (PAIR: one chunk) advances into the pipeline; fpop: its chunk leaves the
   // FIFO (4-bit without PAIR: after the high half, or after the row's last block; replay: in the
   // row's last group)
-  wire pop      = more && f_av && (c_unit || s_av) && (ck != 0 || rows_live < RF);
+  // IMPL 2 (docs/mxu_systolic.md): a row's first advance pops only once all of the row's chunks
+  // and scales are in the FIFOs (a later group finds them there), so a row never stalls in its
+  // middle and the compute pipeline needs no clock enable: en_c is 1, and a cycle without a pop
+  // is a bubble between rows, as at every row start today
+  wire [15:0] c_rch = (c_w4 && !c_pair) ? 16'((32'(c_KBa) + 1) / 2) : c_KBa;   // chunks a row
+  wire row_in   = (IMPL != 2) || cg != 0 ||
+                  (32'(f_count) >= 32'(c_rch) && (c_unit || 32'(s_count) >= 32'(c_KBa)));
+  wire pop      = more && f_av && (c_unit || s_av) &&
+                  (ck != 0 || (row_in && (OVL ? (RFW+2)'(rows_live) + (RFW+2)'(rows_p) < (RFW+2)'(RF)
+                                              : rows_live < RF)));
   wire fpop     = pop && last_g && cdone;
-  wire en_c     = pop || !(more && ck != 0);       // freeze only in the middle of a row
+  wire en_c     = (IMPL == 2) || pop || !(more && ck != 0);   // freeze only in the middle of a row
 `ifndef SYNTHESIS
+  always @(posedge clk) if (!rst && IMPL == 2) begin
+    if (more && ck != 0 && !pop) $fatal(1, "otpu_mxu: IMPL 2 row stalled at advance %0d", ck);
+    if (more && 32'(c_rch) > DEPTH) $fatal(1, "otpu_mxu: IMPL 2 needs a row (%0d chunks) to fit the FIFO", c_rch);
+  end
   always @(posedge clk) if (!rst && more) begin
     if (f_rd != (last_g ? f_head : f_head + PW'(ckc)))
       $fatal(1, "otpu_mxu: FIFO read address %0d, head %0d, k %0d", f_rd, f_head, ck);
@@ -658,7 +683,7 @@ module otpu_mxu
   cm_t  mt_p, mt, mq_p, mq, mx, ma;          // meta at the pair adder input and output, the loop
                                              // adder input (mq under PAIR, else mt), its output
   logic [7:0] M0;                            // the command's M (constant while its blocks flow)
-  always_ff @(posedge clk) if (en_c) M0 <= c_M;
+  always_ff @(posedge clk) if (en_c) M0 <= p_M;
   // the delay lines into the fp operands end in reset flops (a reset can't go into an SRL, so the
   // last stage is an FDRE with a fast clock-to-out); same total length and enable
   otpu_delay #(.W($bits(cm_t)), .N(2 * LM - 1)) u_mt (.clk, .en(en_c), .d(m6), .q(mt_p));
@@ -747,7 +772,8 @@ module otpu_mxu
   wire  [MW-1:0] c_Mn = d_last ? q_Ml[q_h] : MW'(MCOLS);   // its results
   logic [LANES-1:0][31:0] daddr_l, dval_l;
   logic [LANES-1:0][7:0]  dcol_l;
-  wire  drain_go = (rf_n != 0) && (!c_asc || al_st == 2'd2);
+  // (OVL: the result FIFO's head row is the head command's while it has rows not yet drained)
+  wire  drain_go = (rf_n != 0) && (!OVL || rows_live != 0) && (!c_asc || al_st == 2'd2);
 `ifndef SYNTHESIS
   always @(posedge clk) if (!rst && drain_go && dg1 != dg + 8'd1) $fatal(1, "otpu_mxu: dg1 %0d, dg %0d", dg1, dg);
 `endif
@@ -874,7 +900,8 @@ module otpu_mxu
       end
 `endif
 
-  wire c_drained = c_act && (c_left == 0) && (rows_live == 0) && (rmw_n == 0) && !r0.v && !r1.v && !rx.v;
+  wire c_drained = c_act && (q_p != q_h || c_left == 0) && (rows_live == 0) && (rmw_n == 0) &&
+                   !r0.v && !r1.v && !rx.v;
   // RMAX writes start a cycle after the head has drained: mx_q registers the test, so the
   // drained compares (c_left == 0, rows_live, rmw_n, ...) are off the TMEM write request and the
   // grant it feeds (clk125 at 125.49 MHz: c_left -> drained test -> MXU write request -> TMEM
@@ -884,6 +911,8 @@ module otpu_mxu
   logic mx_q;
   wire mx_go     = mx_q && !mx_done;
   wire c_fin     = c_drained && (!c_rmax || mx_done || c_tz);
+  // the head completes (OVL: while the pop head may pop the next command's chunks)
+  wire c_done    = c_fin && (OVL || !pop);
   wire al_go     = c_act && c_asc && al_st == 2'd0;
 
   always_comb begin
@@ -945,7 +974,7 @@ module otpu_mxu
     pf_u <= 1'b0;
     if (rst) begin
       i_act <= 1'b0;
-      q_h <= 1'b0; q_n <= '0;
+      q_h <= 1'b0; q_pr <= 1'b0; q_n <= '0; rows_p <= '0;
       occ <= '0;
       f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
@@ -959,10 +988,11 @@ module otpu_mxu
     end else begin
       logic [1:0] qn;
       logic [RFW:0] rn;
-      logic [RFW:0] rl;
+      logic [RFW:0] rl, rp;
       qn = q_n;
       rn = rf_n;
       rl = rows_live;
+      rp = rows_p;
       // ---- accept a command
       if (start) begin
         logic qi;
@@ -1052,7 +1082,10 @@ module otpu_mxu
         if (last_k && !last_g) f_rd <= f_head;
         else if (cdone) f_rd <= f_rd + 1;
         if (!c_unit) s_rd <= (last_k && !last_g) ? s_head : s_rd + 1;
-        if (ck == 0) rl = rl + 1;
+        if (ck == 0) begin
+          if (!OVL || q_p == q_h) rl = rl + 1;
+          else rp = rp + 1;
+        end
         ck <= last_k ? '0 : ck + 1;
         if (last_k) cg <= last_g ? '0 : cg + 1;
       end
@@ -1125,23 +1158,38 @@ module otpu_mxu
       end
       rf_n <= rn;
       rows_live <= rl;
+      rows_p <= rp;
+      // OVL: the pop head moves to the next command once the head's chunks have all popped, if
+      // the pipeline treats both alike (PAIR, and M under PAIR: pr0, hi0 and M0 are read late)
+      if (OVL && q_p == q_h && c_left == 0 && q_n == 2'd2 && q_go[~q_h] && !c_done &&
+          q_pair[~q_h] == q_pair[q_h] && (!q_pair[q_h] || q_M[~q_h] == q_M[q_h])) begin
+        q_pr <= ~q_h;
+        c_left <= q_total[~q_h];
+      end
       // ---- statistics
       st_c <= {want_iss && !go_iss, !t_gnt && (drain_go || rw.v || mx_go || al_go),
                more && f_count != 0 && !pop, more && f_count == 0};
-      st_f <= c_fin && !pop;
+      st_f <= c_done;
       mx_q <= c_drained && c_rmax && !mx_done && !c_tz;
       st_starve <= st_starve + 32'(st_g[0]);
       st_bp <= st_bp + 32'(st_g[1]);
       st_frz <= st_frz + 32'(st_g[2]);
       st_deny <= st_deny + 32'(st_g[3]);
       // ---- the consumer's command is complete
-      if (c_fin && !pop) begin
+      if (c_done) begin
         done <= 1'b1;
         q_h <= ~q_h;
         qn = qn - 1;
-        ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1;
-        // the next head's chunk count: the queued entry, or a command accepted this cycle
-        c_left <= (q_n == 2'd2) ? q_total[~q_h] : (start ? cmd_total : '0);
+        dg <= '0; dg1 <= 8'd1;
+        if (q_p == q_h) begin                     // the pop head moves along
+          q_pr <= ~q_h;
+          ck <= '0; cg <= '0;
+          // the next head's chunk count: the queued entry, or a command accepted this cycle
+          c_left <= (q_n == 2'd2) ? q_total[~q_h] : (start ? cmd_total : '0);
+        end else begin                            // it already runs the next command: its rows
+          rows_live <= rp;
+          rows_p <= '0;
+        end
         dj <= '0;
         for (int j = 0; j < MCOLS; j++) begin
           dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
