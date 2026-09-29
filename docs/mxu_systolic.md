@@ -144,7 +144,7 @@ none`).
 | Qwen3 decode | | | 3,541,285 | |
 | LFM2 prefill, 6 rows | | | 2,949,361 | 1,736,596 (-41%) |
 | Qwen3.5 prefill, 6 rows | | 12,059,908 | 11,998,949 (-0.5%) | 9,323,037 (-22%) |
-| Qwen3 prefill, 6 rows | | | 8,979,279 | |
+| Qwen3 prefill, 6 rows | | | 8,979,279 | 5,837,044 (-35%) |
 
 (Percentages: decode against IMPL 0 at MCOLS 2; prefill at MCOLS 8 against IMPL 2 at MCOLS 4.)
 
@@ -155,7 +155,10 @@ the cycles: 6 rows leave 2 of 8 columns idle). Qwen3.5's is not: DeltaNet is 65%
 the DSTEP head steps (serial per token, 3.54M cycles of work in 9.32M, the same at any MCOLS) set
 the pace, and the MXU waits 5.3M cycles in gaps after the QACT flush (`qwen35.py:1029`) and the
 state window stores (`qwen35.py:1104`) in front of them. More columns do not help there; the
-stream engine's state step does.
+stream engine's state step does. Qwen3 sits between the two: MXU busy 90%, MAC 73.8%, but 9.7% of the
+cycles the chunk FIFO is empty while streaming (the weight stream, not the array), and attention
+is 63% of the cycles with the longest MXU gap (0.61M cycles) after the attention setup's QACT
+(`attention.py:42`).
 
 ## Plan and status
 
