@@ -15,7 +15,9 @@ out of the buffer) and TRACE_DROP = `trace_drop`.
 With `i2c` (two fake_i2c.OpenDrainBus, e.g. fake_i2c.card_buses()) CAPS announces the I2C pins
 and I2C_CTRL / I2C_IN drive and read those bus models. With `ddr_mts` CAPS bit3 announces the
 DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams. With
-`args` CAPS bit25 announces the ARG0..7 registers (kept, read back).
+`args` CAPS bit25 announces the ARG0..7 registers (kept, read back). Its identity (VERSION: D,
+MCOLS, LANES) is by default the configuration the environment asks for (board_config:
+OTPU_MCOLS, OTPU_LANES), as a card built for it would report.
 """
 from __future__ import annotations
 
@@ -37,7 +39,8 @@ class FakeTransport:
                  run_s: float = 0.0, cycles: int = 1_000_000, core_khz: int = 100_000,
                  build_id: int = 0x1234ABCD, temp_code: int = 0x9C4, trace_log2: int = 12,
                  step: int = 1_000_000, trace: list[int] | None = None, trace_extra: int = 0,
-                 trace_drop: int = 0, D: int = 128, MCOLS: int = 2, LANES: int = 8,
+                 trace_drop: int = 0, D: int | None = None, MCOLS: int | None = None,
+                 LANES: int | None = None,
                  i2c: list | None = None, ddr_mts: int | None = None,
                  w4: bool = True, pair: bool = False, dstep: bool = False,
                  args: bool = False, stream: bool = False):
@@ -47,6 +50,11 @@ class FakeTransport:
         self.core_khz, self.build_id, self.temp_code = core_khz, build_id, temp_code
         self.trace_log2, self.step = trace_log2, step
         self.trace, self.trace_extra, self.trace_drop = list(trace or []), trace_extra, trace_drop
+        if None in (D, MCOLS, LANES):
+            from ..isasim import board_config
+            c = board_config()
+            D, MCOLS, LANES = (c.D if D is None else D, c.MCOLS if MCOLS is None else MCOLS,
+                               c.LANES if LANES is None else LANES)
         self.version = D << 16 | MCOLS << 8 | LANES
         self.i2c = i2c
         self.ddr_mts = ddr_mts          # None: a bitstream without the DDR_MTS register

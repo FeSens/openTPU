@@ -173,7 +173,11 @@ class XdmaTransport:
         except BaseException:
             self.close()
             raise
-        self.regs = mmap.mmap(fd, 4096, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+        # BAR0 (1 MiB, the XDMA AXI-Lite master in bd.tcl / bd_native.tcl since the first
+        # bitstream) up to the end of the LiteDRAM CSR window (R_MEMCAL, 64 KiB: memcal); the
+        # control registers are its first 4 KiB
+        self.regs = mmap.mmap(fd, R.R_MEMCAL + 0x10000, mmap.MAP_SHARED,
+                              mmap.PROT_READ | mmap.PROT_WRITE)
         os.close(fd)
         # One 32-bit load / store per register access. A slice of the mmap is copied byte by
         # byte (CPython 3.14): four 1-byte AXI-Lite writes, and otpu_ctrl, which takes the

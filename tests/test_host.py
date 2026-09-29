@@ -924,7 +924,8 @@ def test_smi_json(tmp_path, capsys):
     assert rc == 0
     (d,) = json.loads(capsys.readouterr().out)
     assert d["device"] == "/dev/fake5" and d["ok"] and d["regmap"] == 3
-    assert d["bitstream"] == {"D": 128, "MCOLS": 2, "LANES": 8, "core_mhz": 100.0,
+    cfg = board_config()                        # the fake card reports the configuration asked for
+    assert d["bitstream"] == {"D": cfg.D, "MCOLS": cfg.MCOLS, "LANES": cfg.LANES, "core_mhz": 100.0,
                               "build_id": 0x1234ABCD, "ddr_mts": None}
     assert d["calib"] == [True, True] and d["temp_c"] == pytest.approx(34.45, abs=0.01)
     for k, v in RATES.items():
@@ -1668,6 +1669,21 @@ def test_xdma_transport_locks_before_opening(tmp_path, monkeypatch):
     with pytest.raises(FileNotFoundError):          # free: now it opens (no such device here)
         XdmaTransport(str(tmp_path / "xdmaT"))
     rs.DeviceLock("xdmaT", wait=0).release()        # and the failed open released the lock
+
+
+def test_xdma_transport_maps_the_memcal_window(tmp_path):
+    """BAR0 is mapped through the LiteDRAM CSR window (R_MEMCAL, 64 KiB): memcal reaches the
+    controllers' CSRs by reg_read / reg_write at R_MEMCAL + a, which a map of the control
+    registers' 4 KiB alone turned into an IndexError. A file of BAR0's size (1 MiB) stands in
+    for /dev/xdma0_user."""
+    from opentpu.host.board import XdmaTransport
+    (tmp_path / "xdmaT_user").write_bytes(bytes(1 << 20))
+    t = XdmaTransport(str(tmp_path / "xdmaT"), dma=False)
+    try:
+        t.reg_write(R.R_MEMCAL + 0xFFFC, 0x12345678)
+        assert t.reg_read(R.R_MEMCAL + 0xFFFC) == 0x12345678 and t.reg_read(R.R_MEMCAL) == 0
+    finally:
+        t.close()
 
 
 def test_device_lock_waits_for_a_busy_card(tmp_path, monkeypatch):
