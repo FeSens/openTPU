@@ -1215,7 +1215,8 @@ a JTAG load and a warm reboot, host tree = this branch at 08b898d5; logs in
   lock held).
 - **The rescan:** hold the CPU, set `selfcal_config` to the channel, release. This takes about 6
   s per channel, during which the channel's `cal_ready` is low and the accelerator must not use
-  it.
+  it. The firmware clears the whole mailbox when it starts, so afterwards the mailbox holds only
+  that channel's result; `memcal` keeps the other channel's from its saved record.
 - **The data:** the scan's BIST writes the channel's first 64 MiB. Either the host keeps that
   region out of its allocations (the weights and KV cache then live above it), or it saves and
   restores the region around a rescan. Either way, the scanned region is scrubbed again (ECC
