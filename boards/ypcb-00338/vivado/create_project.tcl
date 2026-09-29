@@ -107,7 +107,8 @@ if {$MEM eq "mig_native"} {
   }
   set migs [get_ips {mig_ddr3_ch0 mig_ddr3_ch1}]
   generate_target all $migs
-  create_ip_run $migs
+  # one IP per create_ip_run (a collection: "[Vivado 12-3445] ... provide only one sub-design")
+  foreach ch {0 1} { create_ip_run [get_files [get_property IP_FILE [get_ips mig_ddr3_ch$ch]]] }
 }
 
 # ---- block design
