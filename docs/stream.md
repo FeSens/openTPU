@@ -649,6 +649,14 @@ Otherwise v1 (both 0) builds ~07:00.
 "Simulated" means Verilator or the ISA sim. "Measured" means Vivado 2026.1 on omarchy or the
 card. Rows still marked "pending" were not in when this was written.
 
+**Outcome.** v2 is the build candidate se-cand3 (02569bc, branch `se-cand3`: se-int with main
+merged in, both comp cuts, main's 5cd6c39 MXU queue, and three small timing cuts).
+- It closes at 120.755 MHz (WNS +0.031 ns).
+- It is qualified on the card: 0 FAIL, and all 12 token-exact checks pass.
+- It decodes at production speed.
+- VPU + DMA take 20.7% fewer LUTs and 52 fewer DSPs than production (pn32), with 83.9% of
+  slices against 94.8%.
+
 ### 12.1 Bit-exactness (simulated)
 
 | tree | config | result |
@@ -657,7 +665,10 @@ card. Rows still marked "pending" were not in when this was written.
 | se-int 8576057 | v2 | R-A's full suite: 37 + 31 passed; R-B's stream/DSTEP 10/10 (v1 and v2), tiny models 10/10 |
 | se-v2 | v2 | VOPs 15, fuzz + stream 16, tiny models 9 |
 | 96d4a24 (= se-int 202856d) | unit | test_se_comp + test_se_vpu + test_se_tail: 29 passed |
-| 96d4a24 | v1, v2 | RTL suite (stream, DSTEP, VOPs, fp, fuzz 27): pending |
+| se-cand 44dfeb2 | v1, v2 | omarchy: 120 passed per config (stream + stream_rtl + se_comp/vpu/tail + vops/fp rtl 52; qwen35 board model / on_rtl / dstep 11; test_rtl fuzz / mlp / attention / mm_replay / scoreboard 57) |
+| se-cand2 0d1f3ed | v1, v2 | omarchy: 151 passed per config (the above plus test_rtl dma / axi / run_arguments: 88); Mac: 122 per config |
+| se-cand3 02569bc | v1, v2 | omarchy: 151 passed per config |
+| se-cand3 on the card | v2 | measured: 12/12 token-exact against the ISA simulator (Qwen3, LFM2, Qwen3.5; int8 and 4-bit; per-position and resident), 12.5 |
 
 - `test_stream_rtl_bit_exact` found one real RTL bug: with Q off (`q_en = 0`), rows still
   entered Q and shifted the next stream's O. Fixed in ab1f03d.
@@ -685,6 +696,9 @@ card. Rows still marked "pending" were not in when this was written.
     - VOP.rsqrt busy on Qwen3.5 goes 11,541 → 14,196;
     - Qwen3.5 DeltaNet +90 cycles per layer (the gate is 2.7K), attention +32;
     - Qwen3 attention +65 per layer.
+- **The candidates are cycle-neutral.** se-cand2 (0d1f3ed, v2) gives the same three numbers
+  as 202856d. se-cand3's store register (TMEM read data registered before the chunk buffer) is
+  +1 cycle per ST: Qwen3.5 -182, LFM2 +2, Qwen3 +7.
 - **Prefill** (6 rows, MCOLS 2 and 4; Qwen3.5 and LFM2), v1 against v2: pending. The
   norm → quantize chain is where RSQRT's latency could show. Above ~0.5%, an RSQRT latency fix
   goes on the list.
@@ -727,6 +741,16 @@ Full build, routed (se-int 600c087, SE=v2, against pn32; LUT / FF / DSP):
 
 The routed design is 8.5 points less dense. The MCOLS = 4 density cliff was at ~97% slices.
 
+**se-cand3 (02569bc), routed: the shipped v2 image** (against pn32; LUT / FF / DSP):
+
+| block | pn32 | se-cand3 |
+|---|---|---|
+| u_vpu | 29,287 / 21,642 / 68 | 38,700 / 31,687 / 86 |
+| u_dma | 37,438 / 30,150 / 70 | 14,204 / 11,300 / 0 |
+| **VPU + DMA** | **66,725 / 51,792 / 138** | **52,904 / 42,987 / 86 (-20.7% LUT, -17.0% FF, -52 DSP)** |
+| whole design | 214,900 LUT / 577 BRAM / 353 DSP | 202,757 / 569 / 301 |
+| slices | 70,764 (94.8%) | 62,639 (83.9%) |
+
 yosys (logic only, flattened) for VPU + DMA: main 63.7K, v1 55.1K, ONE_TREE 50.2K, v2 46.1K.
 
 ### 12.4 Timing (120.755 MHz, 8.281 ns)
@@ -750,13 +774,46 @@ yosys (logic only, flattened) for VPU + DMA: main 63.7K, v1 55.1K, ONE_TREE 50.2
     - u_dma `cleft` → u_mem `lw_nx`: -0.118.
     - The reset fanout to u_vpu: -0.107, 0 levels.
   - pn32 closed with the same u_mem code at +0.013, so the non-SE paths are placement-dependent.
-- **Candidate se-cand 44dfeb2** (se-int, main, both comp cuts, main's MXU queue): full build
-  pending the user's go-ahead.
+- **se-cand3 02569bc closes: WNS +0.031 ns, TNS 0 (0 of 610,014 endpoints), WHS +0.016 ns,
+  WPWS +0.093.** The routed WNS was -0.218 ns (TNS -0.555); post-route physopt closed it.
+  After placement it was +0.050, against 600c087's -0.295. On top of se-int, se-cand3 carries:
+  - both comp cuts: the ROM over (function, pass), and bc05dd5's registered output control;
+  - main's 5cd6c39: the MXU queue as head / next registers, with no `q_total` LUTRAM;
+  - `cleft != 0` / `cleft == 1` as registers (`cl_nz`, `cl_one`). cleft → b_req goes from 5
+    LUT levels to none, with the DMA's worst logic path unchanged at 4.23 ns;
+  - a second reset stage for Q and the VPU, so their replicas load next to the units. They
+    leave reset two cycles after the sequencer, and a simulation check guards every start;
+  - qwen35's TMEM read data registered (`t_rq`) before the chunk buffer. yosys: t_rdata → lb
+    was 1 LUT into the BRAM, and is now a register. This was the class that failed main's own
+    07:00 build (-0.426).
 
 ### 12.5 Card (measured)
 
-Pending: qual.sh and selftest (with the new "stream" stage) on the first v2 bitstream that
-closes, then decode and prefill against production.
+Measured on opentpu, 2026-09-29:
+- **How it ran:** `deploy_secand3_02569bc` loaded over JTAG, then a warm reboot, then
+  `LOAD=0 tools/qual/qual.sh ... fast` (42 min).
+- **Result: 0 FAIL, 44 PASS.**
+- **Selftest, first and final: ALL PASS.** That includes `stream` (STREAM in every mode, plus
+  DSTEP) and the VOP op checks.
+- **Warm diag** (quick memory test) passes after the 180 s soak, at 58-61 °C.
+- **Token-exact:** 12/12 against the ISA simulator (6 configurations, each per-position and
+  resident). Qwen3.5's DeltaNet layers run on SE.
+
+Decode (`tools/decode_profile.py`, greedy, 96 tokens; device cycles, independent of the host),
+against pn32's qualification (docs/board.md):
+
+| model, 4-bit, int8 head | se-cand3 device | pn32 device | change | se-cand3 wall (opentpu) |
+|---|---|---|---|---|
+| Qwen3-0.6B | 34.46 tok/s (3.504 Mcycles) | 34.26 (3.524) | +0.6% | 34.06 |
+| LFM2.5-230M | 90.52 tok/s (1.334) | 90.21 (1.339) | +0.3% | 87.17 |
+| Qwen3.5-0.8B | 24.65 tok/s (4.899) | 24.65 (4.899) | 0.0% | 24.18 |
+
+- **Prefill** (512 tokens, device), int8 / 4-bit:
+  - Qwen3 55.0 / 58.5 and LFM2 161.5 / 169.7, both equal to pn32;
+  - Qwen3.5 46.3 / 48.8, against pn32's 44.1 / 46.3.
+- **DRAM read per token** equals pn32's in all six configurations.
+- **Attribution.** se-cand3 also carries main's commits since pn32 (5cd6c39 among them), so the
+  small decode gains and Qwen3.5's +5% prefill are not SE's alone.
 
 ### 12.6 Limits, as shipped
 
