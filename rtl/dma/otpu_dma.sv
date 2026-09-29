@@ -97,6 +97,9 @@ module otpu_dma
   // (registered: the TMEM arbiter sees these lanes), and the segments left
   logic [31:0]  sw, so, sleft;
   logic [W-1:0] sm;
+  // sleft != 0 and sleft == 1, registered with sleft (as cl_nz / cl_one): an ST's TMEM read runs
+  // from them into the TMEM arbiter and, through QUANT's grant, into otpu_native_dram's SW port
+  logic         sl_nz, sl_one;
 
   function automatic logic in_rng(input logic [31:0] a);
     return (a >= dw) && (a < de);
@@ -104,7 +107,7 @@ module otpu_dma
   function automatic int pos_of(input logic [31:0] a);     // segment index within its chunk
     return int'((a % CW) / W);
   endfunction
-  wire seg_end = (pos_of(sw) == SPC - 1) || (sleft == 1);   // the segment at sw ends its chunk
+  wire seg_end = (pos_of(sw) == SPC - 1) || sl_one;        // the segment at sw ends its chunk
 
   // ---- LD: chunk requests (address ic, cleft left), the chunk buffer, segment delivery
   logic [31:0]   ic, cleft;
@@ -128,15 +131,31 @@ module otpu_dma
   initial if (SRUN > DEPTH) $fatal(1, "otpu_dma: SRUN > DEPTH");
   logic ds_rr;                                        // DSTEP: inside a read run
   logic [$clog2(RUN)-1:0] ds_rc;                      // ... its chunks issued
+  // occ != DEPTH and occ <= DEPTH - RUN, registered with occ (oc_nf, oc_lr): b_req's compares of
+  // occ ran on into the port B grant, the MXU's request and otpu_native_dram's queues (the
+  // 959b425 build's DMA -> memory paths started at occ). occ moves by at most one a cycle, so the
+  // next flags pick among compares of occ - 1, occ and occ + 1 by the late increment / decrement
+  logic          oc_nf, oc_lr;
+  function automatic logic [1:0] oc_of(input logic [PW:0] o);
+    return {o != (PW+1)'(DEPTH), o <= (PW+1)'(DEPTH - RUN)};
+  endfunction
+  function automatic logic [1:0] oc_nx(input logic [PW:0] o, input logic inc, input logic dec);
+    return (inc && !dec) ? oc_of(o + 1'b1) : (dec && !inc) ? oc_of(o - 1'b1) : oc_of(o);
+  endfunction
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
     if (!rst && busy && (cl_nz != (cleft != 0) || cl_one != (cleft == 1)))
       $fatal(1, "otpu_dma: cl_nz %0d cl_one %0d but cleft %0d", cl_nz, cl_one, cleft);
+  always_ff @(posedge clk)
+    if (!rst && busy && {oc_nf, oc_lr} != oc_of(occ))
+      $fatal(1, "otpu_dma: oc_nf %0d oc_lr %0d but occ %0d", oc_nf, oc_lr, occ);
+  always_ff @(posedge clk)
+    if (!rst && busy && (sl_nz != (sleft != 0) || sl_one != (sleft == 1)))
+      $fatal(1, "otpu_dma: sl_nz %0d sl_one %0d but sleft %0d", sl_nz, sl_one, sleft);
 `endif
-  wire ld_req = ld_act && cl_nz && (occ != (PW+1)'(DEPTH)) &&
-                (!is_ds || ds_rr || (!ds_wreq && occ <= (PW+1)'(DEPTH - RUN)));
+  wire ld_req = ld_act && cl_nz && oc_nf && (!is_ds || ds_rr || (!ds_wreq && oc_lr));
   wire ld_iss = ld_req && b_gnt && !ds_wreq;
-  wire ld_dv  = ld_act && (sleft != 0) && (cnt != 0);       // deliver the segment at sw
+  wire ld_dv  = ld_act && sl_nz && (cnt != 0);              // deliver the segment at sw
   wire ld_eat = (ld_dv && seg_end) || ds_eat;               // ... which frees its chunk's slot
 
   // block RAM, written in its own reset-free process (see otpu_mxu); read every cycle
@@ -458,8 +477,8 @@ module otpu_dma
   logic                   st_fin;                   // every chunk is in the buffer
   logic [PW:0]            st_wn;                    // chunks left in the write run
   wire st_wr = st_pend && pl;                       // the chunk is complete
-  wire adv   = !st_wr || (occ != (PW+1)'(DEPTH));   // the read -> buffer pipeline moves
-  wire st_rd = busy && is_st && !ackw && (sleft != 0) && adv;
+  wire adv   = !st_wr || oc_nf;                     // the read -> buffer pipeline moves
+  wire st_rd = busy && is_st && !ackw && sl_nz && adv;
   assign st_push = busy && is_st && !ackw && st_wr && adv;
   assign st_iss  = st_wq && b_gnt;
 
@@ -553,9 +572,9 @@ module otpu_dma
       // the reads start at the setup: a DSTEP's next cycle, a STREAM's once its descriptor is in
       sc <= cmd;
       is_ds <= 1'b1; is_st <= 1'b0; ds_zero <= cmd.flags[DF_ZERO];
-      sleft <= '0;                               // no LD delivery into TMEM
+      sleft <= '0; sl_nz <= 1'b0; sl_one <= 1'b0;   // no LD delivery into TMEM
       cleft <= '0; cl_nz <= 1'b0; cl_one <= 1'b0;
-      occ <= '0; cnt <= '0; wp <= '0; rp <= '0;
+      occ <= '0; {oc_nf, oc_lr} <= oc_of('0); cnt <= '0; wp <= '0; rp <= '0;
       ds_ycnt <= '0; ds_ocnt <= '0; ds_wch <= '0;
       ds_dsc <= cmd.op == OP_STREAM; ds_dsd <= 1'b0; ds_su <= cmd.op == OP_DSTEP;
       ds_wait <= 1'b0; ds_fill <= 1'b0; ds_run <= 1'b0; ds_out <= 1'b0;
@@ -566,7 +585,7 @@ module otpu_dma
       busy <= 1'b1;
     end else if (start) begin
       // one carry chain each: the counts from the start's offset in its segment / chunk
-      logic [31:0] a, n, ow, oc, nc;
+      logic [31:0] a, n, ow, oc, nc, ns;
       a = cmd.w1 >> 2;
       n = cmd.w3;
       ow = a % W;
@@ -578,11 +597,12 @@ module otpu_dma
       sw <= a & ~32'(W - 1);
       so <= cmd.w2 - ow;
       for (int l = 0; l < W; l++) sm[l] <= (32'(l) >= ow) && (n > 32'(l) - ow);
-      sleft <= (n + (ow + (W - 1))) >> SWL;
+      ns = (n + (ow + (W - 1))) >> SWL;
+      sleft <= ns; sl_nz <= ns != 0; sl_one <= ns == 1;
       ic <= a & ~32'(CW - 1);
       nc = (n + (oc + (CW - 1))) >> CWL;
       cleft <= nc; cl_nz <= nc != 0; cl_one <= nc == 1;
-      occ <= '0; cnt <= '0; wp <= '0; rp <= '0;
+      occ <= '0; {oc_nf, oc_lr} <= oc_of('0); cnt <= '0; wp <= '0; rp <= '0;
       st_pend <= 1'b0; pa <= 1'b0;
       st_wq <= 1'b0;
       st_fin <= 1'b0;
@@ -681,6 +701,7 @@ module otpu_dma
         sw <= sw + W;
         so <= so + W;
         sleft <= sleft - 1;
+        sl_nz <= !sl_one; sl_one <= sleft == 2;
         for (int l = 0; l < W; l++) sm[l] <= in_rng(sw + W + 32'(l));
       end
       if (!is_st) begin
@@ -690,10 +711,11 @@ module otpu_dma
           cl_nz <= !cl_one; cl_one <= cleft == 2;
         end
         occ <= occ + (PW+1)'(ld_iss) - (PW+1)'(ld_eat);
+        {oc_nf, oc_lr} <= oc_nx(occ, ld_iss, ld_eat);
         cnt <= cnt + (PW+1)'(b_rvalid) - (PW+1)'(ld_eat);
         if (b_rvalid) wp <= wp + 1'b1;
         if (ld_eat) rp <= rp + 1'b1;
-        if (ld_dv && sleft == 1) ld_last <= 1'b1;
+        if (ld_dv && sl_one) ld_last <= 1'b1;
         if (ld_last) begin
           busy <= 1'b0;
           ld_fin <= 1'b1;
@@ -703,6 +725,7 @@ module otpu_dma
         // A run starts once SRUN chunks are in (or all of them are), counted a cycle late so
         // that its chunks' buffer writes have landed before the reads that follow them
         occ <= occ + (PW+1)'(st_push) - (PW+1)'(st_iss);
+        {oc_nf, oc_lr} <= oc_nx(occ, st_push, st_iss);
         if (st_push) wp <= wp + 1'b1;
         if (st_iss) begin
           rp <= rp + 1'b1;
@@ -733,7 +756,7 @@ module otpu_dma
           ppa <= pos_of(sw);
           pma <= sm;
           pla <= seg_end;
-          if (st_pend && !pa && sleft == 0) begin  // the last chunk goes into the buffer
+          if (st_pend && !pa && !sl_nz) begin     // the last chunk goes into the buffer
             st_pend <= 1'b0;
             st_fin <= 1'b1;
           end

@@ -66,6 +66,7 @@ module otpu_slice
   output logic [D/4-1:0] b_wmask,
   output logic [D*8-1:0] b_wdata,
   output logic [31:0]   b_addr,
+  output logic          b_par,      // ^b_addr[31:5] (the memory's channel hash; see the port mux)
   input  logic          b_rvalid,
   input  logic          b_rtag,
   input  logic [D*8-1:0] b_rdata,
@@ -168,18 +169,18 @@ module otpu_slice
   logic [MCOLS-1:0]       act_rhi;
   logic [7:0]             act_rgrp;
   logic                   act_ren;
+  logic                   mxu_pop;       // the MXU consumes a block this cycle (its ACT read)
   logic [MCOLS*D*8-1:0]   act_rdata;
   logic [MCOLS*32-1:0]    act_rscale;
   otpu_actram #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES)) u_act (
     .clk, .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data), .w_dup(act_dup),
     .w_off(act_off), .swe(asc_we),
-    .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_blk(act_rblk),
+    .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_use(mxu_pop), .r_blk(act_rblk),
     .r_blk2(act_rblk2), .r_hi(act_rhi), .r_grp(act_rgrp),
     .r_data(act_rdata), .r_scale(act_rscale));
 
   // ---- units
   logic [NG-1:0] gnt;
-  logic        mxu_pop;
   logic        q3_en;
   logic [31:0] q3_addr;
   logic d_dma, d_mxu, d_q, d_vpu, r_dma, r_mxu, r_q, r_vpu;
@@ -432,8 +433,13 @@ module otpu_slice
     b_wmask = dma_bwmask;
     b_wdata = dma_bwdata;
     b_addr  = dma_breq ? dma_baddr : mxu_baddr;
+    // the address's parity from each source's own address (their registers), muxed with it:
+    // the parity of the muxed address ran on from the DMA's request and the MXU's grant into
+    // every write of otpu_native_dram's queues (DMA occ -> qbm, 11 levels, the 959b425 build's
+    // worst DMA -> memory paths, -0.390 ns at 133.33 MHz)
+    b_par   = dma_breq ? ^dma_baddr[31:5] : ^mxu_baddr[31:5];
     if (ld_busy) begin                // the units are held in reset
-      b_req = ld_req; b_tag = 1'b1; b_we = 1'b0; b_addr = ld_a;
+      b_req = ld_req; b_tag = 1'b1; b_we = 1'b0; b_addr = ld_a; b_par = ^ld_a[31:5];
     end
   end
 
