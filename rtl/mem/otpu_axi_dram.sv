@@ -239,6 +239,7 @@ module otpu_axi_dram #(
   // A beat reuse
   logic         al_v;
   logic [27:0]  al_beat;
+  logic [31:0]  a_addr, a_wdata;               // the registered port A request (below)
   wire  [27:0]  a_beat = a_addr[31:4];
 
   assign b_rdy = (qb_n[0] < QD) && (qb_n[1] < QD) && (bt_n < OD);
@@ -247,7 +248,6 @@ module otpu_axi_dram #(
   // on into the channel hash, the run compare and the queue writes in one cycle (0.004 ns at
   // 120.755 MHz). The register takes a request when it is empty or its request is taken.
   logic        a_v, a_req, a_we, a_rdy;
-  logic [31:0] a_addr, a_wdata;
   logic [3:0]  a_be;
   assign a_req = a_v;
   assign a_rdy = (qa_n[0] < QD) && (qa_n[1] < QD) && (ao_n < OD);
