@@ -78,6 +78,10 @@ class Dram:
         self.wb = [0] * self.nm            # write bitslip per lane (as set)
         self.rb = [0] * self.nm            # read bitslip
         self.rd = [0] * self.nm            # read delay (taps)
+        # WL7DDRPHY with ddrphy_dly_sel_bits: each DQ bit's read bitslip settable on its own, for
+        # a bit whose ISERDES frames its word a CLK off the rest of its lane (docs section 8)
+        self.per_bit = has_csr(csr, "ddrphy_dly_sel_bits")
+        self.boff = [[0] * 8 for _ in range(self.nm)]     # per-bit read bitslip offsets (as set)
 
     # DFII
     def ctl(self, v):
@@ -96,7 +100,12 @@ class Dram:
     def test(self, seeds=SEEDS):
         """Write / read back LFSR data on row 0; the wrong bits per lane (rising and falling
         edge bytes of every phase)."""
-        err = [0] * self.nm
+        e = self.test_bits(seeds)
+        return [sum(e[8 * m:8 * m + 8]) for m in range(self.nm)]
+
+    def test_bits(self, seeds=SEEDS):
+        """test(), per DQ bit: its wrong reads (both edges of every phase)."""
+        err = [0] * self.db
         for s in seeds:
             pat = self.pattern(s)
             self.cmd(0, self.RAS | self.CS)                                  # activate row 0
@@ -107,9 +116,10 @@ class Dram:
             self.cmd(0, self.RAS | self.WE | self.CS)                        # precharge
             for ph in range(self.nph):
                 x = self.c.r(f"sdram_dfii_pi{ph}_rddata") ^ pat[ph]
-                for m in range(self.nm):
-                    err[m] += bin((x >> (8 * m)) & 0xFF).count("1") + \
-                              bin((x >> (self.db + 8 * m)) & 0xFF).count("1")
+                while x:
+                    low = x & -x
+                    err[(low.bit_length() - 1) % self.db] += 1
+                    x ^= low
         return err
 
     # PHY: dly_sel selects the lanes the next strobes act on
@@ -131,6 +141,17 @@ class Dram:
         self.strobe("ddrphy_rdly_dq_bitslip_rst", 1 << m)
         self.strobe("ddrphy_rdly_dq_bitslip", 1 << m, v)
         self.rb[m] = v
+        self.boff[m] = [0] * 8
+
+    def set_rbitslip_bit(self, m, i, v):
+        """Bit i of lane m alone (ddrphy_dly_sel_bits masks the lane's bitslip strobes)."""
+        self.c.w("ddrphy_dly_sel_bits", 1 << i)
+        try:
+            self.strobe("ddrphy_rdly_dq_bitslip_rst", 1 << m)
+            self.strobe("ddrphy_rdly_dq_bitslip", 1 << m, v)
+        finally:
+            self.c.w("ddrphy_dly_sel_bits", 0xFF)
+        self.boff[m][i] = v - self.rb[m]
 
     def set_rdelay(self, m, v):
         self.strobe("ddrphy_rdly_dq_rst", 1 << m)
@@ -141,6 +162,8 @@ class Dram:
         """PHY reset, the JEDEC sequence, every delay and bitslip reset (software control)."""
         self.c.w("ddrphy_rdphase", self.phy["rdphase"])
         self.c.w("ddrphy_wrphase", self.phy["wrphase"])
+        if self.per_bit:
+            self.c.w("ddrphy_dly_sel_bits", 0xFF)
         self.ctl(self.CTL_CKE | self.CTL_ODT | self.CTL_RESET_N)
         self.c.w("ddrphy_rst", 1)
         time.sleep(0.001)
@@ -158,13 +181,14 @@ class Dram:
         for name in ("ddrphy_wdly_dq_bitslip_rst", "ddrphy_rdly_dq_rst", "ddrphy_rdly_dq_bitslip_rst"):
             self.strobe(name, self.all)
         self.wb, self.rb, self.rd = [0] * self.nm, [0] * self.nm, [0] * self.nm
+        self.boff = [[0] * 8 for _ in range(self.nm)]
 
     def hardware(self):
         self.ctl(self.CTL_SEL)
 
     # scans (all lanes at once)
     def read_scan(self, seeds=SEEDS):
-        """err[bitslip][tap][lane] at the current write bitslips."""
+        """err[bitslip][tap][DQ bit] at the current write bitslips (every bit at the bitslip)."""
         d, nb = self.phy["delays"], self.phy["bitslips"]
         out = []
         self.strobe("ddrphy_rdly_dq_bitslip_rst", self.all)
@@ -172,7 +196,7 @@ class Dram:
             self.strobe("ddrphy_rdly_dq_rst", self.all)
             row = []
             for t in range(d):
-                row.append(self.test(seeds))
+                row.append(self.test_bits(seeds))
                 self.strobe("ddrphy_rdly_dq_inc", self.all)
             out.append(row)
             self.strobe("ddrphy_rdly_dq_bitslip", self.all)
@@ -196,11 +220,31 @@ class Dram:
 
     def lane_best(self, scan, m):
         """(window length, bitslip, window start) of lane m's best read bitslip in a scan."""
-        best = (0, 0, 0)
-        for b, rows in enumerate(scan):
-            start, n = self.windows([r[m] for r in rows])
-            if n > best[0]:
-                best = (n, b, start)
+        return self.lane_best_bits(scan, m)[:3]
+
+    def lane_best_bits(self, scan, m):
+        """lane_best() and the per-bit bitslip offsets. Every bit of a lane reads at the lane's
+        IDELAY tap. With per_bit, a bit may read at a bitslip two away from its lane's: its
+        ISERDES framed the word a CLK off (ldtest3d: ch1 dq27 +2; dq64, dq67 -2 against the
+        other six of their lane), the same eye at the same taps. The offset per bit is the one
+        that reads right over most of the lane's window."""
+        nb, nd = len(scan), len(scan[0])
+        offsets = (0, 2, -2) if self.per_bit else (0,)
+        best = (0, 0, 0, [0] * 8)
+        for b in range(nb):
+            ok = {(i, o): [0 <= b + o < nb and scan[b + o][t][8 * m + i] == 0 for t in range(nd)]
+                  for i in range(8) for o in offsets}
+            some = [0 if all(any(ok[i, o][t] for o in offsets) for i in range(8)) else 1
+                    for t in range(nd)]
+            start, n = self.windows(some)
+            if n < best[0]:
+                continue
+            offs = [max(offsets, key=lambda o: sum(ok[i, o][start:start + n])) for i in range(8)]
+            start, n = self.windows([0 if all(ok[i, offs[i]][t] for i in range(8)) else 1
+                                     for t in range(nd)])
+            # the widest window; between equals, the fewest bits off the lane's bitslip
+            if (n, -sum(map(bool, offs))) > (best[0], -sum(map(bool, best[3]))):
+                best = (n, b, start, offs)
         return best
 
     def write_latency(self, seeds=SEEDS, verbose=True):
@@ -227,12 +271,18 @@ class Dram:
         scan = self.read_scan(seeds)
         out = []
         for m in range(self.nm):
-            n, b, start = self.lane_best(scan, m)
+            n, b, start, offs = self.lane_best_bits(scan, m)
             if verbose:
-                line = "".join("1" if r[m] == 0 else "0" for r in scan[b])
+                line = "".join("1" if all(0 <= b + o < len(scan) and scan[b + o][t][8 * m + i] == 0
+                                          for i, o in enumerate(offs)) else "0"
+                               for t in range(len(scan[0])))
                 print(f"  m{m}: b{b} |{line}| window {n} taps ({n * TAP_PS:.0f} ps)"
-                      + (f", tap {start + n // 2}" if n else ""))
+                      + (f", tap {start + n // 2}" if n else "")
+                      + (f", bits' bitslip offsets {offs}" if any(offs) else ""))
             self.set_rbitslip(m, b)
+            for i, o in enumerate(offs):
+                if o and n:
+                    self.set_rbitslip_bit(m, i, b + o)
             self.set_rdelay(m, start + n // 2 if n else 0)
             out.append((n, b, start))
         err = self.test(seeds)
@@ -533,7 +583,9 @@ class FakeCsr:
     """A PHY model for `selftest`: lane m reads back right only at its read bitslip RB[m], taps
     in [LO[m], HI[m]], and its write bitslip WB[m] (+-0 tCK), when the DQS phase step is within
     its write range. With `groups` (a WL7DDRPHY channel), a group 1 lane's step is the DQS
-    step plus group 1's offset (7 steps per 1/8 VCO in the modelled DRP registers)."""
+    step plus group 1's offset (7 steps per 1/8 VCO in the modelled DRP registers). BOFF[m, i]:
+    DQ bit i of lane m reads right at RB[m] + BOFF instead (its ISERDES framed a CLK off); its
+    read bitslip is its own when the CSR map has ddrphy_dly_sel_bits."""
     def __init__(self, build, nm=9, seed=1, groups=None, ps_moves_ck=False):
         self.regs = csr_map(Path(build) / "csr.csv")
         rnd = random.Random(seed)
@@ -545,7 +597,9 @@ class FakeCsr:
         self.WLO = [rnd.randrange(10, 30) for _ in range(nm)]
         self.WHI = [lo + rnd.randrange(40, 70) for lo in self.WLO]
         self.v = {}
-        self.sel, self.rb, self.wb, self.rd = 0, [0] * nm, [0] * nm, [0] * nm
+        self.sel, self.wb, self.rd = 0, [0] * nm, [0] * nm
+        self.rbb = [[0] * 8 for _ in range(nm)]     # read bitslip per DQ bit
+        self.BOFF = {}
         self.wr = {}
         self.steps = 0
         self.groups = groups or [0] * nm
@@ -561,9 +615,20 @@ class FakeCsr:
         off = 7 * (ph(0x06, 0x07) - ph(0x0E, 0x0F))
         return self.steps - off if self.ck else self.steps + off
 
+    @property
+    def rb(self):
+        return [r[0] for r in self.rbb]
+
+    def bit_ok(self, m, i):
+        return (self.rbb[m][i] == (self.RB[m] + self.BOFF.get((m, i), 0)) % 8
+                and self.LO[m] <= self.rd[m] <= self.HI[m] and self.wb[m] == self.WB[m]
+                and self.WLO[m] <= self.step_of(m) % 112 <= self.WHI[m])
+
     def w(self, name, v):
         self.v[name] = v
         lanes = [m for m in range(self.nm) if self.sel >> m & 1]
+        bits = [i for i in range(8) if self.v.get("ddrphy_dly_sel_bits", 0xFF) >> i & 1]
+        whole = len(bits) == 8
         if name == "ddrphy_dly_sel":
             self.sel = v
         elif name == "ddrphy_rdly_dq_rst":
@@ -571,12 +636,14 @@ class FakeCsr:
         elif name == "ddrphy_rdly_dq_inc":
             for m in lanes: self.rd[m] = (self.rd[m] + 1) % 32
         elif name == "ddrphy_rdly_dq_bitslip_rst":
-            for m in lanes: self.rb[m] = 0
+            for m in lanes:
+                for i in bits: self.rbb[m][i] = 0
         elif name == "ddrphy_rdly_dq_bitslip":
-            for m in lanes: self.rb[m] = (self.rb[m] + 1) % 8
-        elif name == "ddrphy_wdly_dq_bitslip_rst":
+            for m in lanes:
+                for i in bits: self.rbb[m][i] = (self.rbb[m][i] + 1) % 8
+        elif name == "ddrphy_wdly_dq_bitslip_rst" and whole:
             for m in lanes: self.wb[m] = 0
-        elif name == "ddrphy_wdly_dq_bitslip":
+        elif name == "ddrphy_wdly_dq_bitslip" and whole:
             for m in lanes: self.wb[m] = (self.wb[m] + 1) % 8
         elif name == "phase_dqs_shift":
             self.steps += 1 if v else -1
@@ -595,17 +662,13 @@ class FakeCsr:
                 for p in range(4):
                     x = self.wr.get(p, 0)
                     for m in range(self.nm):
-                        good = (self.rb[m] == self.RB[m] and self.LO[m] <= self.rd[m] <= self.HI[m]
-                                and self.wb[m] == self.WB[m]
-                                and self.WLO[m] <= self.step_of(m) % 112 <= self.WHI[m])
-                        if not good:
-                            for sh in (8 * m, 72 + 8 * m):
-                                x ^= (random.getrandbits(8) | 1) << sh
+                        for i in range(8):
+                            if not self.bit_ok(m, i):
+                                x ^= (1 << (8 * m + i)) | (1 << (72 + 8 * m + i))
                     self.v[f"sdram_dfii_pi{p}_rddata"] = x
 
     def good(self, m):
-        return (self.rb[m] == self.RB[m] and self.LO[m] <= self.rd[m] <= self.HI[m]
-                and self.wb[m] == self.WB[m] and self.WLO[m] <= self.step_of(m) % 112 <= self.WHI[m])
+        return all(self.bit_ok(m, i) for i in range(8))
 
     def r(self, name):
         if name == "phase_dqs_steps":
