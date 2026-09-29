@@ -206,3 +206,66 @@ def test_board_open_calibrates(monkeypatch, tmp_path):
     ops = card.csr_ops
     Board(card, lock=False).close()                  # calibrated: no CSR access
     assert card.csr_ops == ops
+
+
+class FusedCard:
+    """A LiteDRAM card for otpu-selftest: FakeTransport's registers, with CAPS bit27 and STATUS
+    CALIB0/1 and the CSR window of FakeCard's two simulated channels."""
+
+    def __init__(self):
+        from opentpu.host.fake import FakeTransport
+        self.f, self.cal = FakeTransport(devname=None), FakeCard()
+        self.devname = None
+
+    def __getattr__(self, name):
+        return getattr(self.f, name)
+
+    def reg_read(self, off):
+        if off == R.R_CAPS:
+            return self.f.reg_read(off) | R.CAP_HOSTCAL
+        if off == R.R_STATUS:
+            return self.f.reg_read(off) & ~(R.ST_CALIB0 | R.ST_CALIB1) | self.cal.reg_read(off)
+        if R.R_MEMCAL <= off < R.R_MEMCAL + 0x10000:
+            return self.cal.reg_read(off)
+        return self.f.reg_read(off)
+
+    def reg_write(self, off, v):
+        if R.R_MEMCAL <= off < R.R_MEMCAL + 0x10000:
+            return self.cal.reg_write(off, v)
+        return self.f.reg_write(off, v)
+
+    def reg_read_many(self, offs):
+        return [self.reg_read(o) for o in offs]
+
+
+def _selftest_to_calib(monkeypatch, tmp_path, card):
+    """otpu-selftest on `card`, stopped after its calib stage (the scrub fails)."""
+    from opentpu.host import selftest
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(selftest, "XdmaTransport", lambda dev: card)
+    monkeypatch.setattr(selftest.Board, "scrub", lambda self: 1 / 0)
+    assert selftest.main([]) == 1
+
+
+def test_selftest_calibrates_a_host_calibrated_card(monkeypatch, tmp_path, capsys):
+    """otpu-selftest opens its Board without check (its link stage reads the ID itself), so
+    the calib stage calibrates a LiteDRAM bitstream's channels (memcal.ensure) before it reads
+    STATUS; a second run finds them calibrated."""
+    ensure = memcal.ensure
+    monkeypatch.setattr(memcal, "ensure", lambda t, **k: ensure(t, stride=8, **k))
+    card = FusedCard()
+    for how in ("host calibration: channel 0, 1 in", "host calibration: done before"):
+        _selftest_to_calib(monkeypatch, tmp_path, card)
+        out = capsys.readouterr().out
+        assert "[PASS] calib      channel 0 ok, channel 1 ok" in out and how in out, out
+        assert "stopped at stage 'scrub'" in out
+
+
+def test_selftest_calib_fails_on_a_calibration_error(monkeypatch, tmp_path, capsys):
+    def fail(t, **k):
+        raise C.CalError("channel 1: no read window")
+    monkeypatch.setattr(memcal, "ensure", fail)
+    _selftest_to_calib(monkeypatch, tmp_path, FusedCard())
+    out = capsys.readouterr().out
+    assert "[FAIL] calib      CalError: channel 1: no read window" in out
+    assert "otpu-memcal cal --force" in out and "stopped at stage 'calib'" in out
