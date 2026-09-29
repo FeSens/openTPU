@@ -537,43 +537,50 @@ DQS against CK, in two groups per channel. Built by `ld_test.py --phy wl`
 (`tools/litedram/wl7ddrphy.py`), calibrated by `ld_host.py all` / `temp`
 (`opentpu/host/ddrcal.py`: `WriteClocks`, `calibrate_groups`).
 
-**The PHY (`WL7DDRPHY`).** It is LiteDRAM's A7DDRPHY with one change. Each byte lane's write side
-(its 8 DQ serializers, DQS serializer and the CLKDIV of all of them) runs on its group's clocks:
+**The PHY (`WL7DDRPHY`).** It is LiteDRAM's A7DDRPHY with its clocks split. Each byte lane's
+write side (its 8 DQ serializers, DQS serializer, and their CLKDIV) runs on its group's static
+clocks. CK, the commands and the read capture run on the clocks that the fine phase shift moves:
 
 | clock | MMCM output | frequency | phase | drives |
 |---|---|---|---|---|
-| `sysc` | CLKOUT0 | 133.33 MHz | fixed 0 | PHY logic; CLKDIV of CK, commands, reads |
-| `sys4xc` | CLKOUT1 | 533.33 MHz | fixed 0 | CK, commands, the read ISERDES |
-| `sysw` | CLKOUT2 | 133.33 MHz | fine PS | CLKDIV of every write serializer |
-| `sys4xw a` | CLKOUT3 | 533.33 MHz | fine PS | group 0's DQ |
-| `sys4xw a dqs` | CLKOUT4 | 533.33 MHz | fine PS + 90 deg | group 0's DQS |
-| `sys4xw b` | CLKOUT5 | 533.33 MHz | fine PS + offset | group 1's DQ |
-| `sys4xw b dqs` | CLKOUT6 | 533.33 MHz | fine PS + offset + 90 deg | group 1's DQS |
+| `sysc` | CLKOUT0 | 133.33 MHz | fine PS | CLKDIV of CK, commands, reads |
+| `sys4xc` | CLKOUT1 | 533.33 MHz | fine PS | CK, commands, the read ISERDES |
+| `sysw` | CLKOUT2 | 133.33 MHz | 0 (sys's phase) | CLKDIV of every write serializer |
+| `sys4xw a` | CLKOUT3 | 533.33 MHz | 0 | group 0's DQ |
+| `sys4xw a dqs` | CLKOUT4 | 533.33 MHz | 90 deg | group 0's DQS |
+| `sys4xw b` | CLKOUT5 | 533.33 MHz | offset | group 1's DQ |
+| `sys4xw b dqs` | CLKOUT6 | 533.33 MHz | offset + 90 deg | group 1's DQS |
 
 - **DQ keeps its DQS at 90 deg**, which is the measured eye centre (channel 0's eye is centred
-  within 2 steps of it). The pair then moves against CK, so the eye no longer limits the phase;
-  only the lanes' tDQSS crossings do. Every lane still picks its own write latency (bitslip).
+  within 2 steps of it). CK moves against the pair, so the eye no longer limits the phase; only
+  the lanes' tDQSS crossings do. Every lane still picks its own write latency (bitslip).
+- **Why CK moves and not DQ/DQS (measured, the first build):** Vivado's bitgen rejects an MMCM
+  whose fine-phase outputs differ in their sub-VCO phase fraction (DRC 12-1117, FINE_PS_FRAC). So
+  DQ at 0 and DQS at 90 deg cannot both be fine-phase outputs of one MMCM, and a DRP offset in
+  1/8 VCO steps cannot go on one either. CK and its CLKDIV both sit at 0 deg, and moving CK
+  against static DQ/DQS gives the same relative motion.
 - **One MMCM per channel.** All of a channel's interface clocks, CK included, come from one VCO,
   so no clock pair in the DDR3 interface carries another MMCM's jitter. The MMCM has exactly the
-  7 outputs this takes. The fine phase shift moves CLKOUT2-6 together.
-- **Group 1's offset from group 0 is static.** The host sets it through the MMCM's DRP: CLKOUT5/6's
-  PHASE_MUX and DELAY_TIME, in 1/8 VCO steps (117 ps = 7 fine steps). The MMCM is held in reset
-  meanwhile, so the channel's PHY clocks stop and the DRAM gets its reset and init again.
-  CLKOUT5/6's CLK is offset from its CLKDIV (`sysw`) by that amount, as A7DDRPHY's DQS serializer
-  already is by 90 deg. A whole-tCK slip of the load is absorbed by the lane's write latency.
+  7 outputs this takes.
+- **Group 1's offset from group 0.** The host sets it through the MMCM's DRP: CLKOUT5/6's
+  PHASE_MUX and DELAY_TIME (static outputs), in 1/8 VCO steps (117 ps = 7 fine steps). The MMCM
+  is held in reset meanwhile, so the channel's PHY clocks stop and the DRAM gets its reset and
+  init again. Group 1's CLK is offset from its CLKDIV (`sysw`) by that amount, as A7DDRPHY's DQS
+  serializer already is by 90 deg. A whole-tCK slip of the load is absorbed by the lane's write
+  latency.
 - **Cascaded from `sys` at DIVCLK_DIVIDE 1**, with the feedback through a BUFG. The outputs keep a
-  fixed phase to `sys`, so Vivado times the controller (`sys`) to PHY (`sysc`) paths as
-  synchronous. A cascade from the 50 MHz oscillator would need DIVCLK_DIVIDE 3 for 1066.67 MHz,
-  and the phase against the controller's clock would then be one of three values after each lock.
-  The top MMCM (`sys` only) runs at 1200 MHz VCO with DIVCLK 1.
-- **The write data cross from `sysc` to `sysw` through a register on `sysc`'s falling edge.**
-  The host keeps `sysw` within half a tCK (0.94 ns) of `sysc`: every phase has an equivalent a
-  tCK away, against CK, and the write latency calibration absorbs the tCK (`DqsPhase` wraps its
-  targets into [-56, +56) steps). Launched half a cycle (3.75 ns) before the capture edge, the
-  data keep at least 2.8 ns of setup and hold. The build constrains the crossing with 1.0 ns of
-  clock uncertainty on setup and on hold. At `sysw` = `sysc` the write timing is A7DDRPHY's,
-  cycle for cycle. The tristate controls (TQ in BUF mode, not clocked by the serializer) stay as
-  A7DDRPHY has them.
+  fixed phase to `sys`, so Vivado times the paths from `sys` (the controller and the PHY's
+  logic) to `sysw` as synchronous. A cascade from the 50 MHz oscillator would need DIVCLK_DIVIDE 3
+  for 1066.67 MHz, and the phase against the controller's clock would then be one of three
+  values after each lock. The top MMCM (`sys` only) runs at 1200 MHz VCO with DIVCLK 1.
+- **Commands and read data cross between `sys` and the shifted `sysc` through registers on
+  `sys`'s falling edge.** The host keeps `sysc` within half a tCK (0.94 ns) of `sys`. Every phase
+  has an equivalent a tCK away against CK, and the write latency calibration absorbs the tCK
+  (`DqsPhase` wraps its targets into [-56, +56) steps). Registered half a cycle (3.75 ns) away
+  from the other side's edge, the data keep about 2.8 ns of setup and hold. The build constrains
+  both directions with 1.0 ns of clock uncertainty on setup and on hold. At phase 0 the PHY's
+  timing is A7DDRPHY's, cycle for cycle. The tristate controls (TQ in BUF mode, not clocked by
+  the serializer) stay as A7DDRPHY has them.
 
 **Groups (by bank).** Each group's clocks then reach only its own banks' clock regions:
 - channel 0: group 0 = bank 11 (lanes 0-3), group 1 = banks 12 and 13 (lanes 4-8);
@@ -583,7 +590,8 @@ DQS against CK, in two groups per channel. Built by `ld_test.py --phy wl`
 1. Group 1 is put onto group 0 (offset 0), and the common phase is scanned over a tCK. Each step
    gets a full calibration plus a 64 MiB BIST per lane.
 2. Each group's longest common run is found. Group 1's offset is set to the multiple of 7 steps
-   that brings its run's centre onto group 0's.
+   that brings its run's centre onto group 0's. The phase shift moves CK, so an offset of 7e
+   steps later on group 1's DQ moves its run 7e steps later too.
 3. A second scan at that offset. The common phase goes to the centre of the run common to all
    lanes, and the channel is calibrated there.
 

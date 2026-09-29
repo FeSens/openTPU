@@ -2,25 +2,28 @@
 leveling by clock groups (docs/litedram.md, section 8).
 
 The stock PHY serializes DQ and DM on sys4x and DQS on sys4x_dqs (sys4x + 90 deg), all with
-CLKDIV = sys. Shifting sys4x_dqs moves DQS alone: DQS against CK (tDQSS) but also DQS against its
-own DQ, so a lane's write window is the DQ-DQS eye cut by its tDQSS crossing, and the eye does not
-move (section 7). Here each byte lane's write side (DQ, DM, DQS) is serialized on its group's
-clocks, which the channel's MMCM shifts together (fine phase shift):
+CLKDIV = sys, and shifts sys4x_dqs: DQS moves alone, against CK (tDQSS) but also against its own
+DQ, so a lane's write window is the DQ-DQS eye cut by its tDQSS crossing (section 7). Here the
+channel's MMCM shifts the other side: CK, the commands and the read capture move together
+(fine phase shift), while each byte lane's write side (DQ, DM, DQS) stays on its group's static
+clocks, DQS 90 deg after its DQ (the eye centre). So DQ and DQS move together against CK, and the
+phase that works is limited only by the lanes' tDQSS crossings. (An MMCM's fine-phase outputs
+must share their sub-VCO phase fraction, so DQ at 0 and DQS at 90 deg cannot both shift.)
 
-    sys_w          CLKDIV of every write OSERDES (sys, shifted)
-    sys4x_w<g>     group g's DQ / DM (sys4x, shifted, plus the group's static offset)
-    sys4x_w<g>_dqs group g's DQS (sys4x_w<g> + 90 deg)
+    sys4x_ck, sys_ck    CK, commands, read ISERDES (CLK, CLKDIV): shifted by the host
+    sys_w               CLKDIV of every write OSERDES (static, sys's phase)
+    sys4x_w<g>          group g's DQ / DM (static, plus the group's offset)
+    sys4x_w<g>_dqs      group g's DQS (sys4x_w<g> + 90 deg)
 
-so DQ keeps its DQS at 90 deg (the eye centre) while the pair moves against CK: the phase that
-works is limited only by the lanes' tDQSS crossings. CK, the commands and the whole read side stay
-on sys4x / sys, unshifted. The write data leave the sys domain through a register on sys's falling
-edge (domain sys_n): sys_w may sit up to a tCK (a quarter of sys) either side of sys and the
-OSERDES still sees at least 1.8 ns of setup and hold (the build constrains the crossing with that
-uncertainty). The tristate controls (T1, OSERDES TQ in BUF mode, not clocked) stay as the stock
-PHY's. At sys_w = sys the write timing is the stock PHY's.
+The PHY's logic runs in sys (the controller's clock). The data to and from the shifted clocks
+(command serializer inputs, read deserializer outputs, their resets) go through registers on
+sys's falling edge (domain sys_n): sys_ck may sit up to half a tCK either side of sys and the
+serializers still see about 2.8 ns of setup and hold (the build constrains the crossing with that
+uncertainty). With the phase at 0 the timing is the stock PHY's, cycle for cycle. The tristate
+controls (T1, OSERDES TQ in BUF mode, not clocked) stay as the stock PHY's.
 
-Every domain name above is the PHY's own; the SoC maps them per channel with ClockDomainsRenamer.
-The CSRs and settings are A7DDRPHY's (phytype A7DDRPHY), so the host's calibration is unchanged.
+Every domain name above except sys / sys_n is the PHY's own; the SoC maps them per channel with
+ClockDomainsRenamer. The CSRs and settings are A7DDRPHY's (phytype A7DDRPHY).
 
 Derived from LiteDRAM (BSD-2-Clause): Copyright (c) 2015-2020 Florent Kermarrec, (c) 2015 Sebastien
 Bourdeauducq, (c) 2021 Antmicro.
@@ -109,23 +112,21 @@ class WL7DDRPHY(Module, AutoCSR):
                 **{f"i_D{n + 1}": d[n] for n in range(8)},
                 i_OCE=1, o_OQ=o, **kw)
 
-        def wreg(x):
-            """x (sys) through a register on sys's falling edge, for a write OSERDES on sys_w."""
+        def nreg(x):
+            """x through a register on sys's falling edge: to or from the shifted sys_ck."""
             r = Signal(len(x), reset_less=True)
             self.sync.sys_n += r.eq(x)
             return r
 
         sys_rst = ResetSignal("sys") | self._rst.storage
-        # the write OSERDES' reset: per lane, through sys_n like their data
-        wrst = [Signal(reset_less=True) for _ in range(strobes)]
-        for i in range(strobes):
-            self.sync.sys_n += wrst[i].eq(sys_rst)
+        ck_rst = nreg(sys_rst)                  # the command serializers' reset (one bank)
+        rd_rst = [nreg(sys_rst) for _ in range(strobes)]    # the read deserializers', per lane
 
         # Clock ---------------------------------------------------------------------------------
         for i in range(len(pads.clk_p)):
             clk_o = Signal()
             self.specials += oserdes([(0b10101010 >> n) & 1 for n in range(8)],
-                                     ClockSignal("sys4x"), ClockSignal("sys"), sys_rst, clk_o)
+                                     ClockSignal("sys4x_ck"), ClockSignal("sys_ck"), ck_rst, clk_o)
             self.specials += Instance("OBUFDS", i_I=clk_o, o_O=pads.clk_p[i], o_OB=pads.clk_n[i])
 
         # Commands ------------------------------------------------------------------------------
@@ -138,8 +139,9 @@ class WL7DDRPHY(Module, AutoCSR):
                 assert pad_name in ("reset_n", "cs_n", "cke", "odt"), pad_name
                 continue
             for i in range(len(pad)):
-                self.specials += oserdes([getattr(dfi.phases[n // 2], dfi_name)[i] for n in range(8)],
-                                         ClockSignal("sys4x"), ClockSignal("sys"), sys_rst, pad[i])
+                self.specials += oserdes(nreg(Cat(*[getattr(dfi.phases[n // 2], dfi_name)[i]
+                                                    for n in range(8)])),
+                                         ClockSignal("sys4x_ck"), ClockSignal("sys_ck"), ck_rst, pad[i])
         self.comb += pads.ba.eq(pads_ba)
 
         # DQS -----------------------------------------------------------------------------------
@@ -159,8 +161,8 @@ class WL7DDRPHY(Module, AutoCSR):
                                   rst=(self._dly_sel.storage[i] & wdly_dq_bitslip_rst) | self._rst.storage,
                                   slp=self._dly_sel.storage[i] & wdly_dq_bitslip, cycles=1)
             self.submodules += dqs_bitslip
-            self.specials += oserdes(wreg(dqs_bitslip.o), ClockSignal(f"sys4x_w{g}_dqs"),
-                                     ClockSignal("sys_w"), wrst[i], dqs_o,
+            self.specials += oserdes(dqs_bitslip.o, ClockSignal(f"sys4x_w{g}_dqs"),
+                                     ClockSignal("sys_w"), sys_rst, dqs_o,
                                      t1=~dqs_oe_delay.output, tq=dqs_t)
             self.specials += Instance("IOBUFDS", i_T=dqs_t, i_I=dqs_o,
                                       io_IO=pads.dqs_p[i], io_IOB=pads.dqs_n[i])
@@ -174,8 +176,8 @@ class WL7DDRPHY(Module, AutoCSR):
                                        rst=(self._dly_sel.storage[i] & wdly_dq_bitslip_rst) | self._rst.storage,
                                        slp=self._dly_sel.storage[i] & wdly_dq_bitslip, cycles=1)
                 self.submodules += dm_o_bitslip
-                self.specials += oserdes(wreg(dm_o_bitslip.o), ClockSignal(f"sys4x_w{g}"),
-                                         ClockSignal("sys_w"), wrst[i], pads.dm[i])
+                self.specials += oserdes(dm_o_bitslip.o, ClockSignal(f"sys4x_w{g}"),
+                                         ClockSignal("sys_w"), sys_rst, pads.dm[i])
 
         # DQ ------------------------------------------------------------------------------------
         dq_oe = Signal()
@@ -194,19 +196,20 @@ class WL7DDRPHY(Module, AutoCSR):
                 rst=(self._dly_sel.storage[lane] & wdly_dq_bitslip_rst) | self._rst.storage,
                 slp=self._dly_sel.storage[lane] & wdly_dq_bitslip, cycles=1)
             self.submodules += dq_o_bitslip
-            self.specials += oserdes(wreg(dq_o_bitslip.o), ClockSignal(f"sys4x_w{g}"),
-                                     ClockSignal("sys_w"), wrst[lane], dq_o,
+            self.specials += oserdes(dq_o_bitslip.o, ClockSignal(f"sys4x_w{g}"),
+                                     ClockSignal("sys_w"), sys_rst, dq_o,
                                      t1=~dq_oe_delay.output, tq=dq_t)
-            dq_i_bitslip = BitSlip(8,
+            dq_q = Signal(8)
+            dq_i_bitslip = BitSlip(8, i=nreg(dq_q),
                 rst=(self._dly_sel.storage[lane] & rdly_dq_bitslip_rst) | self._rst.storage,
                 slp=self._dly_sel.storage[lane] & rdly_dq_bitslip, cycles=1)
             self.submodules += dq_i_bitslip
             self.specials += Instance("ISERDESE2",
                 p_SERDES_MODE="MASTER", p_INTERFACE_TYPE="NETWORKING", p_DATA_WIDTH=2 * nphases,
                 p_DATA_RATE="DDR", p_NUM_CE=1, p_IOBDELAY="IFD",
-                i_RST=sys_rst, i_CLK=ClockSignal("sys4x"), i_CLKB=~ClockSignal("sys4x"),
-                i_CLKDIV=ClockSignal("sys"), i_BITSLIP=0, i_CE1=1, i_DDLY=dq_i_delayed,
-                **{f"o_Q{n + 1}": dq_i_bitslip.i[8 - 1 - n] for n in range(8)})
+                i_RST=rd_rst[lane], i_CLK=ClockSignal("sys4x_ck"), i_CLKB=~ClockSignal("sys4x_ck"),
+                i_CLKDIV=ClockSignal("sys_ck"), i_BITSLIP=0, i_CE1=1, i_DDLY=dq_i_delayed,
+                **{f"o_Q{n + 1}": dq_q[8 - 1 - n] for n in range(8)})
             for n in range(8):
                 self.comb += dfi.phases[n // 2].rddata[n % 2 * databits + i].eq(dq_i_bitslip.o[n])
             self.specials += Instance("IDELAYE2",

@@ -76,7 +76,8 @@ def test_calibrate_channel_write_clock_groups():
     for m in range(f.nm):
         f.WLO[m], f.WHI[m] = (20 + m, 60 - m) if f.groups[m] == 0 else (62 + m, 102 - m)
     res = C.calibrate_channel(C.Chan(board, 1), wl, stride=2, log=lambda *_: None)
-    assert res["group1_eighths"] == 6 and board.ch[0].steps == 0
+    # the WL image's phase shift moves CK: group 1's DQ goes 70 steps later (= 42 earlier)
+    assert f.ck and res["group1_eighths"] == 10 and board.ch[0].steps == 0
     assert all(f.good(m) for m in range(f.nm))
 
 

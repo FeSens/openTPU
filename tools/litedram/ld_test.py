@@ -119,8 +119,8 @@ class CRG(LiteXModule):
 
 class WLCRG(LiteXModule):
     """The clocks of the write-leveled image (--phy wl): clk50 -> MMCM: sys (the SoC, the
-    controllers and BISTs; each channel's WriteClocks MMCM is cascaded from it); a PLL: the
-    200 MHz IDELAYCTRL reference. clk50 as CRG's."""
+    controllers, BISTs and PHYs' logic; each channel's WriteClocks MMCM is cascaded from it) and
+    sys_n (its falling edge); a PLL: the 200 MHz IDELAYCTRL reference. clk50 as CRG's."""
     def __init__(self, platform, f, clk50=None):
         self.rst = Signal()
         self.cd_sys = ClockDomain()
@@ -134,6 +134,9 @@ class WLCRG(LiteXModule):
         mmcm.create_clkout(self.cd_sys, f)
         self.comb += mmcm.reset.eq(self.rst)
         platform.add_false_path_constraints(self.cd_sys.clk, mmcm.clkin)
+        # sys's falling edge: WL7DDRPHY's registers to and from the shifted CK clocks
+        self.cd_sys_n = ClockDomain()
+        self.comb += [self.cd_sys_n.clk.eq(~self.cd_sys.clk), self.cd_sys_n.rst.eq(self.cd_sys.rst)]
         self.pll = pll = S7PLL(speedgrade=-2)
         self.comb += pll.reset.eq(self.rst)
         pll.register_clkin(clk50, 50e6)
@@ -166,22 +169,24 @@ class DQSPhase(LiteXModule):
 class WriteClocks(LiteXModule):
     """One DDR3 channel's PHY clocks (tools/litedram/wl7ddrphy.py, docs/litedram.md section 8)
     from one MMCM, cascaded from sys at DIVCLK_DIVIDE 1 with its feedback through a BUFG: its
-    outputs keep a fixed phase to sys, so the controller (sys) and the PHY (sysc) are timed as one
-    synchronous clock. Fixed: CLKOUT0 sysc (f; the PHY's logic, CLKDIV of CK / commands / reads;
-    falling edge: sysc_n), CLKOUT1 sys4xc (4f). Fine phase shift, all moved together by the host
-    (DQSPhase): CLKOUT2 sysw (f, CLKDIV of the write OSERDES), CLKOUT3 / 4 group 0's DQ and DQS
-    (4f at 0 and 90 deg), CLKOUT5 / 6 group 1's (4f at group1_deg and group1_deg + 90). Group 1's
-    static offset can be reprogrammed through the DRP (drp_*, mmcm_reset: the host holds the MMCM
-    in reset for the write, 1/8 VCO period = 22.5 deg per step), the PHY's clocks stopping
-    meanwhile. `domains` maps the PHY's domain names to this channel's."""
-    OUTS = ("sys", "sys4x", "sys_w", "sys4x_w0", "sys4x_w0_dqs", "sys4x_w1", "sys4x_w1_dqs")
+    outputs keep a fixed phase to sys (the PHY's logic and the controller run in sys). Fine phase
+    shift, moved together by the host (DQSPhase): CLKOUT0 sysc (f) and CLKOUT1 sys4xc (4f), the
+    CLKDIV / CLK of CK, the commands and the read capture. Static: CLKOUT2 sysw (f, CLKDIV of the
+    write OSERDES, sys's phase), CLKOUT3 / 4 group 0's DQ and DQS (4f at 0 and 90 deg), CLKOUT5 / 6
+    group 1's (4f at group1_deg and group1_deg + 90). (An MMCM's fine-phase outputs must share
+    their sub-VCO phase fraction: DQ and DQS 90 deg apart cannot both shift, so CK does.) Group
+    1's offset can be reprogrammed through the DRP (drp_*, mmcm_reset: the host holds the MMCM in
+    reset for the write, 1/8 VCO period = 22.5 deg per step), the PHY's clocks stopping
+    meanwhile. `domains` maps the PHY's clock names to this channel's."""
+    OUTS = ("sys_ck", "sys4x_ck", "sys_w", "sys4x_w0", "sys4x_w0_dqs", "sys4x_w1", "sys4x_w1_dqs")
+    SHIFTED = ("sys_ck", "sys4x_ck")
 
     def __init__(self, c, f, group1_deg=0.0):
-        n = {"sys": f"sysc{c}", "sys4x": f"sys4xc{c}", "sys_w": f"sysw{c}",
+        n = {"sys_ck": f"sysc{c}", "sys4x_ck": f"sys4xc{c}", "sys_w": f"sysw{c}",
              "sys4x_w0": f"sys4xw{c}a", "sys4x_w0_dqs": f"sys4xw{c}a_dqs",
-             "sys4x_w1": f"sys4xw{c}b", "sys4x_w1_dqs": f"sys4xw{c}b_dqs", "sys_n": f"sysc{c}_n"}
+             "sys4x_w1": f"sys4xw{c}b", "sys4x_w1_dqs": f"sys4xw{c}b_dqs"}
         self.domains = n
-        cd = {k: ClockDomain(v, reset_less=k not in ("sys", "sys_n")) for k, v in n.items()}
+        cd = {k: ClockDomain(v, reset_less=True) for k, v in n.items()}   # clock pins only
         for k, d in cd.items():
             setattr(self, "cd_" + d.name, d)
         self.mmcm_reset = CSRStorage(1, description="1: this channel's MMCM held in reset.")
@@ -211,14 +216,14 @@ class WriteClocks(LiteXModule):
         fb, fb_buf = Signal(), Signal()
         outs = [Signal() for _ in self.OUTS]
         phase = {"sys4x_w0_dqs": 90.0, "sys4x_w1": group1_deg, "sys4x_w1_dqs": group1_deg + 90.0}
-        div = {"sys": 8, "sys_w": 8}
+        div = {"sys_ck": 8, "sys_w": 8}
         p = {}
         for i, k in enumerate(self.OUTS):
             d = div.get(k, 2)
             p[f"p_CLKOUT{i}_DIVIDE" + ("_F" if i == 0 else "")] = float(d) if i == 0 else d
             p[f"p_CLKOUT{i}_PHASE"] = phase.get(k, 0.0)
             p[f"p_CLKOUT{i}_DUTY_CYCLE"] = 0.5
-            p[f"p_CLKOUT{i}_USE_FINE_PS"] = "FALSE" if k in ("sys", "sys4x") else "TRUE"
+            p[f"p_CLKOUT{i}_USE_FINE_PS"] = "TRUE" if k in self.SHIFTED else "FALSE"
             p[f"o_CLKOUT{i}"] = outs[i]
         self.specials += Instance("MMCME2_ADV", name=f"ldmmcm{c}",
             p_BANDWIDTH="OPTIMIZED", p_COMPENSATION="ZHOLD", p_STARTUP_WAIT="FALSE",
@@ -233,19 +238,17 @@ class WriteClocks(LiteXModule):
         self.specials += Instance("BUFG", i_I=fb, o_O=fb_buf)
         for k, o in zip(self.OUTS, outs):
             self.specials += Instance("BUFG", i_I=o, o_O=cd[k].clk)
-        self.comb += [cd["sys_n"].clk.eq(~cd["sys"].clk), cd["sys_n"].rst.eq(cd["sys"].rst)]
-        self.specials += AsyncResetSynchronizer(cd["sys"], ~self.locked)
 
     def constraints(self, ns=1.0, hier=False):
-        """Pre-placement Tcl / XDC: the write data cross from sysc_n (sysc's falling edge) to
-        sysw, which the host keeps within half a tCK (0.94 ns) of sysc (ddrcal.DqsPhase's wrap):
-        `ns` of uncertainty on both setup and hold. hier: the MMCM found anywhere in the
-        hierarchy (the production core inside the board top)."""
-        pin = (lambda i: f"[get_pins -hierarchical -filter {{NAME =~ */{self.name_of}/CLKOUT{i}}}]") \
-            if hier else (lambda i: f"[get_pins {self.name_of}/CLKOUT{i}]")
-        c = lambda i: f"[get_clocks -of_objects {pin(i)}]"
-        return [f"set_clock_uncertainty -setup {ns:.3f} -from {c(0)} -to {c(2)}",
-                f"set_clock_uncertainty -hold {ns:.3f} -from {c(0)} -to {c(2)}"]
+        """Pre-placement Tcl / XDC: commands and read data cross between sys (falling edge) and
+        sysc, which the host keeps within half a tCK (0.94 ns) of sys (ddrcal.DqsPhase's wrap):
+        `ns` of uncertainty both ways, setup and hold. sys is the MMCM's CLKIN1 clock. hier: the
+        MMCM found anywhere in the hierarchy (the production core inside the board top)."""
+        pin = (lambda p: f"[get_pins -hierarchical -filter {{NAME =~ */{self.name_of}/{p}}}]") \
+            if hier else (lambda p: f"[get_pins {self.name_of}/{p}]")
+        sys_, ck = (f"[get_clocks -of_objects {pin(p)}]" for p in ("CLKIN1", "CLKOUT0"))
+        return [f"set_clock_uncertainty -{k} {ns:.3f} -from {a} -to {b}"
+                for a, b in ((sys_, ck), (ck, sys_)) for k in ("setup", "hold")]
 
 
 XDMA_IN = ("awready", "wready", "bid", "bresp", "bvalid", "arready", "rid", "rdata", "rresp",
@@ -592,7 +595,7 @@ def main():
             "channels": list(channels), "phy": a.phy}
     if a.phy == "wl":       # the write clocks' MMCMs: 8 x sys
         info.update(vco_hz=8 * a.sys_mhz * 1e6, groups={ch: groups[ch] for ch in channels},
-                    group1_deg={ch: g1deg[ch] for ch in channels})
+                    group1_deg={ch: g1deg[ch] for ch in channels}, ps_moves="ck")
     elif 1 in channels:     # one fine step is 1/56 of the VCO period: both MMCMs must agree
         assert soc.crg.mmcm1.compute_config()["vco"] == info["vco_hz"], "MMCM VCOs differ"
     (out / "sdram_init.py").write_text(hdr + "\nphy = " + json.dumps(info, indent=1) + "\n")

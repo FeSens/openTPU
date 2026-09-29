@@ -221,7 +221,8 @@ def main():
             "write_latency": ps.write_latency, "vco_hz": soc.crg.mmcm.compute_config()["vco"],
             "dqs_phase": 90.0, "channels": [0, 1], "phy": a.phy}
     if a.phy == "wl":
-        info.update(vco_hz=8 * a.sys_mhz * 1e6, groups=groups, group1_deg={0: 0.0, 1: 0.0})
+        info.update(vco_hz=8 * a.sys_mhz * 1e6, groups=groups, group1_deg={0: 0.0, 1: 0.0},
+                    ps_moves="ck")
     else:
         assert soc.crg.mmcm1.compute_config()["vco"] == info["vco_hz"], "MMCM VCOs differ"
     (out / "sdram_init.py").write_text(hdr + "\nphy = " + json.dumps(info, indent=1) + "\n")
