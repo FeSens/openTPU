@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""LiteDRAM test image for the YPCB-00338: DDR3 channel 0 at its full 72 bits behind LiteDRAM,
-calibrated by the host over PCIe (docs/litedram.md, "Test image").
+"""LiteDRAM test image for the YPCB-00338: both DDR3 channels at their full 72 bits behind
+LiteDRAM, calibrated by the host over PCIe (docs/litedram.md, "Test image").
 
-    python3 ld_test.py --sys-mhz 133.333 --out build_ldtest   # DDR3-1066
-    python3 ld_test.py --sys-mhz 100 --out build_ldtest800     # DDR3-800
+    python3 ld_test.py --sys-mhz 133.333 --out build_ldtest2   # DDR3-1066, channels 0 and 1
+    python3 ld_test.py --channels 0 --out build_ldtest         # channel 0 only (the first image)
+    python3 ld_test.py --sys-mhz 100 --out build_ldtest800      # DDR3-800
 
 Generates the gateware (Verilog, XDC, Vivado Tcl) and, for the host (tools/litedram/ld_host.py):
 csr.csv and sdram_init.py (the DDR3 init sequence and PHY settings). Then run Vivado on a build
@@ -11,18 +12,25 @@ host in <out>/gateware: vivado -mode batch -source ld_test.tcl.
 
 The design: XDMA (Gen1 x8, the production image's settings, device 10ee:7028 so the host's XDMA
 driver binds, subsystem 4C44 so the openTPU tools do not take it for an openTPU image) whose
-AXI-Lite master (BAR0, 1 MB) reaches a CPU-less LiteX SoC's CSR bus at BAR0 offset 0. The SoC:
-A7DDRPHY on channel 0's 9 byte lanes (the banks are HR: no ODELAY, so no write leveling; write
-latency by bitslip, read by IDELAY taps and bitslip), LiteDRAM's controller (MT41K256M8, 2 Gb
-parts, tRFC 160 ns as the MIG project), and LiteDRAM's BIST generator and checker on the full
-576-bit port (memtest and bandwidth, started by the host). The DQS output clock (sys4x_dqs) comes
-from an MMCM output with fine phase shift (1/56 of the VCO period per step) under host control, so
-the host can scan the write DQS phase: without write leveling this is the write margin. XDMA's
-DMA master is answered by a stub (OKAY, zeros): the test image moves no data over DMA.
+AXI-Lite master (BAR0, 1 MB) reaches a CPU-less LiteX SoC's CSR bus at BAR0 offset 0. The SoC,
+per channel: A7DDRPHY on the channel's 9 byte lanes (the banks are HR: no ODELAY, so no write
+leveling; write latency by bitslip, read by IDELAY taps and bitslip), LiteDRAM's controller
+(MT41K256M8, 2 Gb parts, tRFC 160 ns as the MIG project), and a BIST generator and checker on the
+full 576-bit port (memtest and bandwidth, started by the host). Each channel's DQS output clock
+comes from an MMCM output with fine phase shift (1/56 of the VCO period per step) under host
+control, so the host can scan each channel's write DQS phase: without write leveling this is the
+write margin. One MMCM shifts all of its fine-phase outputs together, so channel 1's DQS clock
+comes from a second MMCM (same input, same VCO; its static offset to the first does not matter,
+the host scans a whole tCK). Channel 0 keeps the names of the one-channel image (ddrphy, sdram,
+bist, phase); channel 1's CSRs are ddrphy1, sdram1, bist1, phase1. Also: the XADC (die
+temperature and supplies: xadc_*) and the two I2C buses as production's I2C_CTRL / I2C_IN
+(i2c_ctrl / i2c_in, the same bits), so the host reads the board's LM73 with opentpu.host.i2c.
+XDMA's DMA master is answered by a stub (OKAY, zeros): the test image moves no data over DMA.
 
 Clocks: the 50 MHz oscillator (AA28; the board's reset pin R28 is not wired, and the 200 MHz inputs
 are not used by the production design) -> MMCM (integer, for the fine phase shift): sys, sys4x,
-sys4x_dqs; a PLL: the 200 MHz IDELAYCTRL reference.
+sys4x_dqs (channel 0); a second MMCM: sys4x1_dqs (channel 1; its DQ use sys4x, as channel 0's);
+a PLL: the 200 MHz IDELAYCTRL reference.
 """
 import argparse
 import json
@@ -33,6 +41,7 @@ from migen import *
 from litex.gen import LiteXModule
 from litex.build.generic_platform import Pins, IOStandard, Subsignal, Misc
 from litex.soc.cores.clock import S7MMCM, S7PLL, S7IDELAYCTRL
+from litex.soc.cores.xadc import S7SystemMonitor
 from litex.soc.interconnect import wishbone
 from litex.soc.interconnect.axi import (AXILiteInterface, AXILiteClockDomainCrossing,
                                         AXILite2Wishbone)
@@ -57,7 +66,7 @@ class MT41K256M8_tRFC160(MT41K256M8):
 
 
 class CRG(LiteXModule):
-    def __init__(self, platform, f, dqs_phase):
+    def __init__(self, platform, f, dqs_phase, two=False):
         self.rst = Signal()
         self.cd_sys = ClockDomain()
         self.cd_sys4x = ClockDomain()
@@ -69,7 +78,6 @@ class CRG(LiteXModule):
         # MMCM, integer multiply / divide (fine phase shift needs it): 50 / 3 * 64 = 1066.67 MHz
         # VCO for DDR3-1066 (133.33 / 533.33), 50 * 16 = 800 for DDR3-800 (100 / 400)
         self.mmcm = mmcm = S7MMCM(speedgrade=-2, fractional=False)
-        self.comb += mmcm.reset.eq(self.rst)
         mmcm.register_clkin(clk50, 50e6)
         mmcm.create_clkout(self.cd_sys, f)                            # CLKOUT0
         mmcm.create_clkout(self.cd_sys4x, 4 * f)                      # CLKOUT1
@@ -77,6 +85,24 @@ class CRG(LiteXModule):
         mmcm.params["p_CLKOUT2_USE_FINE_PS"] = "TRUE"
         mmcm.expose_dps("sys", with_csr=False)          # driven by DQSPhase
         platform.add_false_path_constraints(self.cd_sys.clk, mmcm.clkin)
+        if two:
+            # channel 1: its DQ on sys4x (sys4x1 is the same clock under the name the PHY
+            # derives its DQS clock's from), its DQS on the second MMCM's fine-phase output. The
+            # first MMCM (so sys) is held in reset until the second has locked: the PHYs come out
+            # of reset with every clock running.
+            self.cd_sys4x1 = ClockDomain()
+            self.cd_sys4x1_dqs = ClockDomain()
+            self.comb += [self.cd_sys4x1.clk.eq(self.cd_sys4x.clk),
+                          self.cd_sys4x1.rst.eq(self.cd_sys4x.rst)]
+            self.mmcm1 = mmcm1 = S7MMCM(speedgrade=-2, fractional=False)
+            self.comb += mmcm1.reset.eq(self.rst)
+            mmcm1.register_clkin(clk50, 50e6)
+            mmcm1.create_clkout(self.cd_sys4x1_dqs, 4 * f, phase=dqs_phase)   # CLKOUT0 (fine PS)
+            mmcm1.params["p_CLKOUT0_USE_FINE_PS"] = "TRUE"
+            mmcm1.expose_dps("sys", with_csr=False)
+            self.comb += mmcm.reset.eq(self.rst | ~mmcm1.locked)
+        else:
+            self.comb += mmcm.reset.eq(self.rst)
         # IDELAYCTRL reference: a PLL of its own (200 MHz is no integer divide of 1066.67)
         self.pll = pll = S7PLL(speedgrade=-2)
         self.comb += pll.reset.eq(self.rst)
@@ -237,26 +263,57 @@ def reduce_or8(bits, n):
     return r
 
 
+class I2CPins(LiteXModule):
+    """The card's two I2C buses as production's I2C_CTRL / I2C_IN (otpu_ctrl, opentpu/host/i2c.py):
+    i2c_ctrl bit 2b drives bus b's SCL low, bit 2b+1 its SDA (1 = low, 0 = released); i2c_in reads
+    the levels the same way, plus the LM73's ALERT (active low) at bit 4."""
+    def __init__(self, platform):
+        self.ctrl = CSRStorage(4)                        # i2c_ctrl
+        self.levels = CSRStatus(5, name="in")            # i2c_in
+        pads = [platform.request(n) for n in ("lm73_scl", "lm73_sda", "smb_scl", "smb_sda")]
+        lvl = Signal(4)
+        for i, p in enumerate(pads):
+            self.specials += Instance("IOBUF", io_IO=p, i_I=0, i_T=~self.ctrl.storage[i],
+                                      o_O=lvl[i])
+        s0, s1 = Signal(5), Signal(5)
+        self.sync += [s0.eq(Cat(lvl, platform.request("lm73_alert_n"))), s1.eq(s0)]
+        self.comb += self.levels.status.eq(s1)
+
+
+# as constraints/otpu_top.xdc
+I2C_IO = [(n, 0, Pins(p), IOStandard("LVCMOS18"), Misc("PULLUP=TRUE"),
+           *([Misc("DRIVE=4"), Misc("SLEW=SLOW")] if n != "lm73_alert_n" else []))
+          for n, p in [("lm73_scl", "N24"), ("lm73_sda", "N25"), ("lm73_alert_n", "P25"),
+                       ("smb_scl", "R26"), ("smb_sda", "R27")]]
+
+
 class LDTest(SoCCore):
     mem_map = {"csr": 0x0000_0000}          # CSRs at BAR0 offset 0
 
-    def __init__(self, f, dqs_phase=90, xdma_tcl=None):
+    def __init__(self, f, dqs_phase=90, xdma_tcl=None, channels=(0, 1)):
         platform = ypcb.Platform()
-        self.crg = CRG(platform, f, dqs_phase)
+        platform.add_extension(I2C_IO)
+        self.crg = CRG(platform, f, dqs_phase, two=1 in channels)
         SoCCore.__init__(self, platform, f, ident="openTPU LiteDRAM test image", cpu_type=None,
                          integrated_rom_size=0, integrated_sram_size=0, with_uart=False,
                          with_timer=False, csr_data_width=32)
-        self.phase = DQSPhase(self.crg.mmcm)
+        self.channels = channels
+        self.xadc = S7SystemMonitor()
+        self.i2c = I2CPins(platform)
 
-        # ---- DDR3 channel 0, 72 bits
+        # ---- the DDR3 channels, 72 bits each
         # CL / CWL as the MIG project (LiteDRAM's table would take 533.33 MHz for DDR3-1333's bin)
         cl, cwl = (7, 6) if f > 101e6 else (6, 5)
-        self.ddrphy = s7ddrphy.A7DDRPHY(platform.request("ddram", 0), memtype="DDR3", nphases=4,
-                                        sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
-                                        write_latency_calibration=True)
-        self.add_sdram("sdram", phy=self.ddrphy, module=MT41K256M8_tRFC160(f, "1:4"),
-                       with_soc_interconnect=False)
-        self.bist = BIST(self.sdram.crossbar.get_port(), modules=9)
+        for ch in channels:
+            sfx = "" if ch == 0 else str(ch)
+            phy = s7ddrphy.A7DDRPHY(platform.request("ddram", ch), memtype="DDR3", nphases=4,
+                                    sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
+                                    write_latency_calibration=True, ddr_clk="sys4x" + sfx)
+            setattr(self, "ddrphy" + sfx, phy)
+            self.add_sdram("sdram" + sfx, phy=phy, module=MT41K256M8_tRFC160(f, "1:4"),
+                           with_soc_interconnect=False)
+            setattr(self, "bist" + sfx, BIST(getattr(self, "sdram" + sfx).crossbar.get_port(), modules=9))
+            setattr(self, "phase" + sfx, DQSPhase(self.crg.mmcm if ch == 0 else self.crg.mmcm1))
 
         # ---- PCIe: XDMA as an RTL IP; BAR0 (AXI-Lite, axi_aclk) -> CSR bus (sys)
         self.cd_xdma = ClockDomain()
@@ -361,13 +418,15 @@ def main():
     ap.add_argument("--sys-mhz", type=float, default=133.333)
     ap.add_argument("--dqs-phase", type=float, default=90.0,
                     help="static sys4x_dqs phase, degrees (the host shifts it from there)")
-    ap.add_argument("--out", default="build_ldtest")
+    ap.add_argument("--channels", default="0,1", help="DDR3 channels: 0,1 (default), 0 or 1")
+    ap.add_argument("--out", default="build_ldtest2")
     a = ap.parse_args()
+    channels = tuple(int(c) for c in a.channels.split(","))
     out = Path(a.out).resolve()
     (out / "gateware").mkdir(parents=True, exist_ok=True)
     xdma_tcl = out / "gateware" / "xdma_ip.tcl"
     xdma_tcl.write_text((HERE / "xdma_ip.tcl").read_text())
-    soc = LDTest(a.sys_mhz * 1e6, a.dqs_phase, xdma_tcl="xdma_ip.tcl")
+    soc = LDTest(a.sys_mhz * 1e6, a.dqs_phase, xdma_tcl="xdma_ip.tcl", channels=channels)
     b = Builder(soc, output_dir=str(out), compile_software=False, compile_gateware=False,
                 csr_csv=str(out / "csr.csv"))
     b.build(build_name="ld_test", vivado_place_directive="Explore",
@@ -375,13 +434,17 @@ def main():
             vivado_route_directive="Explore",
             vivado_post_route_phys_opt_directive="AggressiveExplore")
     # the host's calibration inputs
-    ps = soc.ddrphy.settings
-    hdr = get_sdram_phy_py_header(ps, soc.sdram.controller.settings.timing)
+    ps = getattr(soc, "ddrphy" + ("" if channels[0] == 0 else str(channels[0]))).settings
+    ctl = getattr(soc, "sdram" + ("" if channels[0] == 0 else str(channels[0])))
+    hdr = get_sdram_phy_py_header(ps, ctl.controller.settings.timing)
     info = {"sys_hz": a.sys_mhz * 1e6, "nphases": ps.nphases, "rdphase": reset_value(ps.rdphase),
             "wrphase": reset_value(ps.wrphase), "databits": ps.databits, "dfi_databits": ps.dfi_databits,
             "modules": ps.databits // 8, "delays": 32, "bitslips": 8, "cl": ps.cl, "cwl": ps.cwl,
             "read_latency": ps.read_latency, "write_latency": ps.write_latency,
-            "vco_hz": soc.crg.mmcm.compute_config()["vco"], "dqs_phase": a.dqs_phase}
+            "vco_hz": soc.crg.mmcm.compute_config()["vco"], "dqs_phase": a.dqs_phase,
+            "channels": list(channels)}
+    if 1 in channels:       # one fine step is 1/56 of the VCO period: both MMCMs must agree
+        assert soc.crg.mmcm1.compute_config()["vco"] == info["vco_hz"], "MMCM VCOs differ"
     (out / "sdram_init.py").write_text(hdr + "\nphy = " + json.dumps(info, indent=1) + "\n")
     print(json.dumps(info))
 

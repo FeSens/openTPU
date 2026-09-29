@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host side of the LiteDRAM test image (tools/litedram/ld_test.py): DDR3 channel 0 at 72 bits,
+"""Host side of the LiteDRAM test image (tools/litedram/ld_test.py): its DDR3 channels at 72 bits,
 calibrated from the host over BAR0 (/dev/xdma0_user), then tested with the image's BIST.
 
     python3 ld_host.py BUILD_DIR all          # init, DQS scan, calibration, BIST (the report)
@@ -7,7 +7,20 @@ calibrated from the host over BAR0 (/dev/xdma0_user), then tested with the image
     python3 ld_host.py BUILD_DIR cal          # init + write latency + read leveling at the
                                               # current DQS phase
     python3 ld_host.py BUILD_DIR bist [--gib 2]
+    python3 ld_host.py BUILD_DIR temp [--minutes 35 --every 300]   # the temperature run
     python3 ld_host.py BUILD_DIR selftest     # the calibration logic against a simulated PHY
+
+--ch 0, 1 or both (default: every channel of the image, one after the other; `temp` runs them
+together). Channel 0's CSRs keep the one-channel image's names, channel 1's carry a 1 (Chan).
+
+The temperature run: per channel a DQS scan with a BIST per phase picks the phase (the centre of
+the window common to all lanes) and calibrates; then both channels run the BIST back to back for
+--minutes (2 GiB write + read-check per pass, random and address data in turn, new seeds), which
+also heats the card, and every --every seconds each channel's window is scanned again from the
+phase it runs at (so the scan's offsets are that phase's margins) before it goes back to that
+phase and recalibrates (write latency, read leveling), as production would on a temperature
+change. The FPGA die temperature (XADC) and the board's LM73 (over the image's I2C pins with
+opentpu.host.i2c, when that package is importable) are logged with every line.
 
 BUILD_DIR holds csr.csv and sdram_init.py (written by ld_test.py). Only numpy-free stdlib.
 
@@ -64,6 +77,70 @@ class Bar0:
         for i in range(n):
             v = (v << 32) | self.words[(a >> 2) + i]
         return v
+
+
+PREFIXES = ("ddrphy", "sdram", "bist", "phase")
+
+
+class Chan:
+    """Channel ch's view of the CSRs: channel 0 keeps the one-channel image's names (ddrphy_*,
+    sdram_*, bist_*, phase_*), channel 1's are ddrphy1_*, sdram1_*, bist1_*, phase1_*."""
+    def __init__(self, csr, ch):
+        self.csr, self.ch, self.sfx = csr, ch, "" if ch == 0 else str(ch)
+
+    def name(self, n):
+        p, _, rest = n.partition("_")
+        return f"{p}{self.sfx}_{rest}" if self.sfx and p in PREFIXES else n
+
+    def w(self, n, v):
+        self.csr.w(self.name(n), v)
+
+    def r(self, n):
+        return self.csr.r(self.name(n))
+
+
+class Temps:
+    """The FPGA die temperature (XADC) and the board's LM73, read over the image's i2c_ctrl /
+    i2c_in (production's I2C_CTRL / I2C_IN bits) with opentpu.host.i2c when it is importable."""
+    def __init__(self, csr):
+        self.c, self.bus, self.addr, self.note = csr, None, None, ""
+        try:
+            from opentpu.host import i2c
+        except ImportError as e:
+            self.note = f"no board sensor (opentpu.host.i2c: {e})"
+            return
+
+        class T:                        # a transport as i2c.Bus wants it
+            devname = None              # no I2C lock file: the test image is ours alone
+            def reg_read(_, a):
+                return csr.r({0x220: "i2c_ctrl", 0x224: "i2c_in"}[a])
+            def reg_write(_, a, v):
+                csr.w({0x220: "i2c_ctrl"}[a], v)
+        self.i2c, self.bus = i2c, i2c.Bus(T(), 0)
+        try:
+            with self.bus:
+                for a in i2c.LM73_ADDRS:
+                    if i2c.lm73_identify(self.bus, a):
+                        self.addr = a
+                        break
+            self.note = f"LM73 at {self.addr:#x}" if self.addr is not None else "no LM73 found"
+        except Exception as e:          # a stuck bus must not stop the DRAM run
+            self.note = f"LM73 bus error: {e}"
+
+    def read(self):
+        d = {"fpga_c": self.c.r("xadc_temperature") * 503.975 / 4096 - 273.15}
+        if self.addr is not None:
+            try:
+                with self.bus:
+                    d["board_c"] = self.i2c.lm73_temp(
+                        int.from_bytes(self.bus.read(self.addr, 0x00, 2), "big"))
+            except Exception:
+                pass
+        return d
+
+    @staticmethod
+    def fmt(d):
+        return f"FPGA {d['fpga_c']:.1f} C" + (f", board {d['board_c']:.1f} C" if "board_c" in d else "")
 
 
 # ------------------------------------------------------------------------------ DRAM
@@ -281,7 +358,7 @@ class DqsPhase:
             self.c.w("phase_dqs_shift", 1 if target > s else 0)
 
 
-def dqs_scan(dram, dqs, period_steps, stride, seeds=(42,), csr=None, mib=64):
+def dqs_scan(dram, dqs, period_steps, stride, seeds=(42,), csr=None, mib=64, show=True):
     """Per DQS phase step: calibrate (write latency, read leveling) and, with `csr`, write and
     read back `mib` MiB with the BIST. Per lane: the read window (taps) if its DFI check and its
     BIST beats are all right, else 0 (the BIST's wrong beats are printed)."""
@@ -299,9 +376,10 @@ def dqs_scan(dram, dqs, period_steps, stride, seeds=(42,), csr=None, mib=64):
             bad = bist(csr, beats, 1, 0x0123456789ABCDEF + k, dram.phy["sys_hz"])["lanes"]
             win = [0 if b else n for n, b in zip(win, bad)]
         table[k] = win
-        print(f"  dqs +{k:3d} ({k * dqs.step_ps:6.0f} ps): windows " + " ".join(f"{n:2d}" for n in win)
-              + "  write latency " + "".join("-" if w < 0 else str(w) for w in wl)
-              + ("  BIST wrong beats " + " ".join(str(x) for x in bad) if any(bad) else ""))
+        if show:
+            print(f"  dqs +{k:3d} ({k * dqs.step_ps:6.0f} ps): windows " + " ".join(f"{n:2d}" for n in win)
+                  + "  write latency " + "".join("-" if w < 0 else str(w) for w in wl)
+                  + ("  BIST wrong beats " + " ".join(str(x) for x in bad) if any(bad) else ""))
     dqs.move(start)
     return table
 
@@ -330,17 +408,25 @@ def margins(table, nm, min_window=MIN_WINDOW, period=None):
 
 # ------------------------------------------------------------------------------ BIST
 def bist(csr, beats, mode, seed, sys_hz, timeout=60.0):
+    bist_start(csr, beats, mode, seed)
+    return bist_wait(csr, beats, mode, sys_hz, timeout)
+
+
+def bist_start(csr, beats, mode, seed):
     csr.w("bist_base", 0)
     csr.w("bist_length", beats)
     csr.w("bist_mode", mode)
     csr.w("bist_seed", seed)
     csr.w("bist_start", 1)
+
+
+def bist_wait(csr, beats, mode, sys_hz, timeout=60.0):
     t0 = time.time()
     while not csr.r("bist_done"):
         if time.time() - t0 > timeout:
             raise TimeoutError(f"BIST mode {mode} not done after {timeout} s "
                                f"({csr.r('bist_beats')} of {beats} beats)")
-        time.sleep(0.01)
+        time.sleep(0.005)
     ticks = csr.r("bist_ticks")
     r = {"beats": csr.r("bist_beats"), "ticks": ticks,
          "gbs": beats * 64 / (ticks / sys_hz) / 1e9 if ticks else 0.0}
@@ -394,12 +480,12 @@ class FakeCsr:
     """A PHY model for `selftest`: lane m reads back right only at its read bitslip RB[m], taps
     in [LO[m], HI[m]], and its write bitslip WB[m] (+-0 tCK), when the DQS phase step is within
     its write range."""
-    def __init__(self, build, nm=9):
+    def __init__(self, build, nm=9, seed=1):
         self.regs = {}
         for row in csv.reader(open(build / "csr.csv")):
             if row and row[0] == "csr_register":
                 self.regs[row[1]] = (int(row[2], 16), int(row[3]))
-        rnd = random.Random(1)
+        rnd = random.Random(seed)
         self.nm = nm
         self.RB = [rnd.randrange(8) for _ in range(nm)]
         self.WB = [rnd.choice((0, 2, 4)) for _ in range(nm)]
@@ -448,12 +534,53 @@ class FakeCsr:
                                 x ^= (random.getrandbits(8) | 1) << sh
                     self.v[f"sdram_dfii_pi{p}_rddata"] = x
 
+    def good(self, m):
+        return (self.rb[m] == self.RB[m] and self.LO[m] <= self.rd[m] <= self.HI[m]
+                and self.wb[m] == self.WB[m] and self.WLO[m] <= self.steps % 112 <= self.WHI[m])
+
     def r(self, name):
         if name == "phase_dqs_steps":
             return self.steps & 0xFFFFFFFF
-        if name == "phase_dqs_busy":
+        if name in ("phase_dqs_busy", "ctrl_bus_errors"):
             return 0
+        n = self.v.get("bist_length", 0)
+        bad = [0 if self.good(m) else n for m in range(self.nm)] if self.v.get("bist_mode", 0) & 1 \
+            else [0] * self.nm
+        if name == "bist_done":
+            return 1
+        if name in ("bist_beats", "bist_ticks"):
+            return n
+        if name == "bist_errors":
+            return max(bad)
+        if name.startswith("bist_lane") and name.endswith("_errors"):
+            return bad[int(name[len("bist_lane"):-len("_errors")])]
+        if name == "xadc_temperature":
+            return round((45 + 273.15) * 4096 / 503.975)
+        if name == "i2c_in":
+            return 0x1F                 # every line released (high): no device answers
         return self.v.get(name, 0)
+
+
+class FakeBoard:
+    """Two FakeCsr channels behind one CSR space: channel 1's names (ddrphy1_*, ...) go to the
+    second, with its own lanes."""
+    def __init__(self, build):
+        self.ch = [FakeCsr(build), FakeCsr(build, seed=2)]
+        self.regs = self.ch[0].regs
+
+    def route(self, name):
+        p, _, rest = name.partition("_")
+        if p.endswith("1") and p[:-1] in PREFIXES:
+            return self.ch[1], f"{p[:-1]}_{rest}"
+        return self.ch[0], name
+
+    def w(self, name, v):
+        f, n = self.route(name)
+        f.w(n, v)
+
+    def r(self, name):
+        f, n = self.route(name)
+        return f.r(n)
 
 
 def selftest(build):
@@ -472,15 +599,143 @@ def selftest(build):
         n, b, start = rl[m]
         assert b == fake.RB[m] and start == fake.LO[m] and n == fake.HI[m] - fake.LO[m] + 1, (m, rl[m])
     assert not any(err)
+    # two channels (Chan's names), the temperature run's loop and its verdict
+    assert Chan(None, 1).name("ddrphy_dly_sel") == "ddrphy1_dly_sel"
+    assert Chan(None, 1).name("xadc_temperature") == "xadc_temperature"
+    assert Chan(None, 0).name("bist_start") == "bist_start"
+    board = FakeBoard(build)
+    a = argparse.Namespace(build=build, minutes=0.05, every=1.0, stride=8, gib=1 / 1024)
+    assert temp_run(a, board, [0, 1], 112) == 0
+    for f in board.ch:
+        assert all(f.good(m) for m in range(f.nm))
     print("selftest: PASS")
+
+
+# ------------------------------------------------------------------------------ temperature run
+def pass_map(table, nm, period, min_window=MIN_WINDOW):
+    """Per lane, the scan as one character per step from -period/2 to +period/2 around the
+    scan's start (the phase the channel runs at): '#' = writes and reads right, '.' = not, ' ' =
+    not scanned."""
+    ks = range(-(period // 2), period // 2 + 1)
+    return ["".join(" " if k % period not in table else "#" if table[k % period][m] >= min_window
+                    else "." for k in ks) for m in range(nm)]
+
+
+def offsets(run, period):
+    """The common window `run` (scan steps from the start, possibly around the tCK) as signed
+    offsets from the start: (lo, hi), or None when the start is not in it."""
+    signed = sorted(k if k <= period // 2 else k - period for k in run)
+    if 0 not in signed and period not in run:
+        return None
+    return signed[0], signed[-1]
+
+
+def temp_run(a, csr, chans, period):
+    temps = Temps(csr)
+    t0 = time.time()
+    stamp = lambda: f"{int((time.time() - t0) // 60):3d}:{int((time.time() - t0) % 60):02d}"
+    print(f"temperature run: channels {chans}, {a.minutes:g} min of BIST, window rescans every "
+          f"{a.every:g} s (scan stride {a.stride}); {temps.note}")
+    print(f"{stamp()} {Temps.fmt(temps.read())}")
+    st = {}
+    for ch in chans:
+        c = Chan(csr, ch)
+        d = Dram(c, a.build)
+        dqs = DqsPhase(c, d.phy["vco_hz"])
+        table = dqs_scan(d, dqs, period, a.stride, csr=c, show=False)
+        per, common, pick, run = margins(table, d.nm, period=period)
+        print(f"{stamp()} channel {ch} scan from step {dqs.steps()}, {Temps.fmt(temps.read())}:")
+        for m, line in enumerate(pass_map(table, d.nm, period)):
+            print(f"    m{m} {line}")
+        if pick is None:
+            print(f"channel {ch}: no DQS phase works for every lane: FAIL")
+            return 1
+        dqs.move(dqs.steps() + pick)
+        wl, rl, err = d.calibrate(verbose=False)
+        d.hardware()
+        if any(err) or min(wl) < 0:
+            print(f"channel {ch}: calibration at step {dqs.steps()}: FAIL")
+            return 1
+        print(f"    common window {len(run) * a.stride} steps ({len(run) * a.stride * dqs.step_ps:.0f} ps);"
+              f" runs at its centre, step {dqs.steps()}; write latency {wl}, read windows "
+              f"{[n for n, _, _ in rl]}")
+        st[ch] = {"c": c, "d": d, "dqs": dqs, "home": dqs.steps(), "passes": 0, "errors": 0,
+                  "lanes": [0] * d.nm, "scans": [(0.0, len(run) * a.stride, offsets(
+                      [(k - pick) % period for k in run], period))]}
+    sys_hz = st[chans[0]]["d"].phy["sys_hz"]
+    beats = int(a.gib * (1 << 30)) // 64
+    n, last_line, last_scan, since = 0, time.time(), time.time(), {ch: 0 for ch in chans}
+    while time.time() - t0 < a.minutes * 60:
+        mode = 0 if n % 2 == 0 else 2
+        seed = (0x0123456789ABCDEF ^ (n * 0x9E3779B97F4A7C15)) & ((1 << 64) - 1)
+        for ch in chans:
+            bist_start(st[ch]["c"], beats, mode, seed)
+        for ch in chans:
+            bist_wait(st[ch]["c"], beats, mode, sys_hz)
+        for ch in chans:
+            bist_start(st[ch]["c"], beats, mode | 1, seed)
+        for ch in chans:
+            r = bist_wait(st[ch]["c"], beats, mode | 1, sys_hz)
+            s_ = st[ch]
+            s_["passes"] += 1
+            s_["errors"] += r["errors"] + (beats - r["beats"])
+            since[ch] += r["errors"]
+            s_["lanes"] = [x + y for x, y in zip(s_["lanes"], r["lanes"])]
+        n += 1
+        if time.time() - last_line >= 60:
+            print(f"{stamp()} {Temps.fmt(temps.read())}; BIST passes {n}, wrong beats in the last "
+                  f"minute: " + ", ".join(f"ch{ch} {since[ch]}" for ch in chans))
+            last_line, since = time.time(), {ch: 0 for ch in chans}
+        if time.time() - last_scan >= a.every:
+            for ch in chans:
+                s_ = st[ch]
+                table = dqs_scan(s_["d"], s_["dqs"], period, a.stride, csr=s_["c"], show=False)
+                per, common, pick, run = margins(table, s_["d"].nm, period=period)
+                off = offsets(run, period) if run else None
+                t = (time.time() - t0) / 60
+                s_["scans"].append((t, len(run) * a.stride, off))
+                print(f"{stamp()} channel {ch} rescan from its step {s_['home']}, "
+                      f"{Temps.fmt(temps.read())}: common window {len(run) * a.stride} steps "
+                      f"({len(run) * a.stride * s_['dqs'].step_ps:.0f} ps), "
+                      + (f"from {off[0]:+d} to {off[1]:+d} around the running phase" if off else
+                         "the running phase is OUTSIDE it"))
+                for m, line in enumerate(pass_map(table, s_["d"].nm, period)):
+                    print(f"    m{m} {line}")
+                s_["dqs"].move(s_["home"])
+                wl, rl, err = s_["d"].calibrate(verbose=False)
+                s_["d"].hardware()
+                if any(err) or min(wl) < 0:
+                    print(f"    channel {ch}: recalibration at step {s_['home']}: FAIL")
+            last_scan = time.time()
+    ok = True
+    print(f"{stamp()} {Temps.fmt(temps.read())}; done: {n} BIST passes of {a.gib:g} GiB per channel")
+    for ch in chans:
+        s_ = st[ch]
+        step_ps = s_["dqs"].step_ps
+        widths = [w for _, w, _ in s_["scans"]]
+        inside = all(o is not None for _, _, o in s_["scans"])
+        print(f"channel {ch}: {s_['passes']} passes, {s_['errors']} wrong beats (per lane "
+              f"{s_['lanes']}); common window {min(widths) * step_ps:.0f} to "
+              f"{max(widths) * step_ps:.0f} ps over {len(widths)} scans; the running phase "
+              + ("stayed inside every window" if inside else "fell OUTSIDE a window"))
+        for t, w, o in s_["scans"]:
+            print(f"    {t:5.1f} min: {w:3d} steps ({w * step_ps:4.0f} ps)"
+                  + (f", margins {o[0]:+d} / {o[1]:+d} steps" if o else ", running phase outside"))
+        ok &= s_["errors"] == 0 and inside
+    print("temperature run:", "PASS" if ok else "FAIL")
+    return 0 if ok else 1
 
 
 # ------------------------------------------------------------------------------ main
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("build", type=Path)
-    ap.add_argument("what", choices=["info", "cal", "bist", "all", "selftest", "dqs", "rscan", "soak"])
+    ap.add_argument("what", choices=["info", "cal", "bist", "all", "selftest", "dqs", "rscan", "soak",
+                                     "temp"])
+    ap.add_argument("--ch", help="0, 1 or both (default: every channel of the image)")
     ap.add_argument("--seconds", type=float, default=300, help="soak: how long to repeat the BIST")
+    ap.add_argument("--minutes", type=float, default=35, help="temp: how long to run the BIST")
+    ap.add_argument("--every", type=float, default=300, help="temp: seconds between window scans")
     ap.add_argument("--span", type=int, help="all: scan only this many steps (default one tCK)")
     ap.add_argument("--gib", type=float, default=2.0, help="BIST size (the channel: 2 GiB)")
     ap.add_argument("--stride", type=int, default=4, help="DQS scan stride, fine steps")
@@ -490,18 +745,35 @@ def main():
     if a.what == "selftest":
         return selftest(a.build)
     csr = Bar0(a.build, a.dev)
-    d = Dram(csr, a.build)
-    dqs = DqsPhase(csr, d.phy["vco_hz"])
-    period = round(56 * d.phy["vco_hz"] / (4 * d.phy["sys_hz"]))     # fine steps per tCK
-    if a.what in ("info", "all"):
+    phy = Dram(csr, a.build).phy
+    chans = phy.get("channels", [0])
+    if a.ch:
+        chans = [0, 1] if a.ch == "both" else [int(a.ch)]
+    period = round(56 * phy["vco_hz"] / (4 * phy["sys_hz"]))     # fine steps per tCK
+    if a.what in ("info", "all", "temp"):
         csr.w("ctrl_scratch", 0xA5C3_5A3C)
         s = csr.r("ctrl_scratch") ^ 0xA5C3_5A3C ^ 0x12345678      # 0x12345678 when it holds
         print(f"scratch {s:#x} ({'ok' if s == 0x12345678 else 'BAD'}), bus errors "
-              f"{csr.r('ctrl_bus_errors')}, DQS phase {dqs.steps()} steps "
-              f"({dqs.step_ps:.1f} ps each, {period} per tCK), sys {d.phy['sys_hz'] / 1e6:.2f} MHz, "
-              f"CL {d.phy['cl']} CWL {d.phy['cwl']}")
+              f"{csr.r('ctrl_bus_errors')}, channels {phy.get('channels', [0])}, DQS phase steps "
+              + ", ".join(f"ch{ch} {DqsPhase(Chan(csr, ch), phy['vco_hz']).steps()}" for ch in chans)
+              + f" ({1e12 / phy['vco_hz'] / 56:.1f} ps each, {period} per tCK), sys "
+              f"{phy['sys_hz'] / 1e6:.2f} MHz, CL {phy['cl']} CWL {phy['cwl']}"
+              + (f", {Temps.fmt(Temps(csr).read())}" if "xadc_temperature" in csr.regs else ""))
         if s != 0x12345678:
             return 1
+    if a.what == "temp":
+        return temp_run(a, csr, chans, period)
+    rc = 0
+    for ch in chans:
+        if len(chans) > 1:
+            print(f"==== channel {ch}")
+        rc |= channel(a, Chan(csr, ch), period)
+    return rc
+
+
+def channel(a, csr, period):
+    d = Dram(csr, a.build)
+    dqs = DqsPhase(csr, d.phy["vco_hz"])
     if a.what == "dqs":
         dqs.move(a.steps)
         print("DQS phase", dqs.steps())
