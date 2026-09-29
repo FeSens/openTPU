@@ -235,12 +235,22 @@ module otpu_slice
     .a_req(q_areq), .a_we(q_awe), .a_addr(q_aaddr), .a_wdata(q_awdata), .a_be(q_abe),
     .pf_u(q_u), .pf_frz(q_frz));
 
-  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK)) u_vpu (
+  // the stream engine's ports: idle (no stream asks) until the DMA's side is wired
+  logic [31:0] ss_zd [LANES], ss_yd [LANES];
+  logic [31:0] ss_od;
+  logic        ss_gnt, ss_yv, ss_ov;
+  for (genvar l = 0; l < LANES; l++) begin : g_ssz
+    assign ss_zd[l] = '0;
+  end
+  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK), .HAS_SE(HAS_DSTEP)) u_vpu (
     .clk, .rst(rst_vpu), .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
     .gnt(gnt[G_VPU]), .ren(v_ren),
     .ta_en(va_ren), .ta_addr(va_raddr), .ta_data(r_data[P_VA]),
     .tb_en(vb_ren), .tb_addr(vb_raddr), .tb_data(r_data[P_VB]),
-    .tw_en(v_wen), .tw_addr(v_waddr), .tw_data(v_wdata), .pf_u(v_u), .pf_frz(v_frz));
+    .tw_en(v_wen), .tw_addr(v_waddr), .tw_data(v_wdata), .pf_u(v_u), .pf_frz(v_frz),
+    .ss_req(1'b0), .ss_gnt, .ss_cfg('0), .ss_pe(1'b0), .ss_in_v(1'b0), .ss_in_d(ss_zd),
+    .ss_fk(3'd0), .ss_fi(5'd0), .ss_fd(ss_zd), .ss_y_v(ss_yv), .ss_y_d(ss_yd), .ss_o_v(ss_ov),
+    .ss_o_d(ss_od));
 
   // collective: request from start until acknowledged
   always_ff @(posedge clk) begin
