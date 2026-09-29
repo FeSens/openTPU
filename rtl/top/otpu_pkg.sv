@@ -17,6 +17,26 @@ package otpu_pkg;
 
   localparam logic [1:0] B_FULL = 0, B_ROW = 1, B_COL = 2, B_SCALAR = 3;
 
+  // The stream engine (docs/stream.md, section 4.3): the tail's modes of a DRAM stream (DSTEP
+  // or STREAM), set by the DMA while it holds SE (ss_req)
+  typedef struct packed {
+    logic [5:0] ns;      // segments per row (cols / 8)
+    logic [8:0] rows;    // 1..256
+    logic       a_en;    // REDUCE A on (else kv = +0)
+    logic       a_sel;   // A's vector: 0 slot 1 (k), 1 slot 2 (a)
+    logic [1:0] dmode;   // 0 DELTA, 1 DELTA1, 2 SCALE, 3 DOT
+    logic [1:0] g_src;   // 0 K0, 1 slot 3 column, 2 one
+    logic       q_en;    // O on
+  } ss_cfg_t;
+  localparam logic [1:0] SD_DELTA = 0, SD_DELTA1 = 1, SD_SCALE = 2, SD_DOT = 3;
+  localparam logic [1:0] SG_K0 = 0, SG_COL = 1, SG_ONE = 2;
+  typedef struct packed {  // the X-stage meta of a segment (otpu_dstep's sm_t)
+    logic v, first, final_, row_last; logic [7:0] sub; logic [4:0] j;
+  } ss_meta_t;
+  // the fill's kinds: q (slot 0), k (slot 1), x (the rows), K0, K1, a (slot 2), g (slot 3)
+  localparam logic [2:0] SF_NONE = 0, SF_Q = 1, SF_K = 2, SF_X = 3, SF_K0 = 4, SF_K1 = 5,
+                         SF_A = 6, SF_G = 7;
+
   // Execution units. Each runs its own instructions in program order; different units run
   // concurrently whenever their memory footprints do not conflict.
   localparam int U_DMA = 0, U_MXU = 1, U_Q = 2, U_VPU = 3, U_COLL = 4, NUNITS = 5;
