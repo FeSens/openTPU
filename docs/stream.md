@@ -715,7 +715,17 @@ Full build, post-synthesis hierarchy (se-int 600c087, SE=v2, against production 
 
 - pn32 is not built from the same main commit, so the small deltas elsewhere (u_seq +1.5K
   for STREAM's footprint, u_quant -1.6K) are not all SE.
-- Placed and routed utilization: pending (build running).
+Full build, routed (se-int 600c087, SE=v2, against pn32; LUT / FF / DSP):
+
+| block | pn32 | SE v2 |
+|---|---|---|
+| u_vpu | 29,287 / 21,642 / 68 | 39,701 / 30,998 / 86 |
+| u_dma | 37,438 / 30,150 / 70 | 12,172 / 11,011 / 0 |
+| **VPU + DMA** | **66,725 / 51,792 / 138** | **51,873 / 42,009 / 86 (-22.3% LUT, -52 DSP)** |
+| whole design | 214,900 LUT / 577 BRAM | 206,064 / 569 |
+| slices | 70,764 (94.8%) | 64,441 (86.3%) |
+
+The routed design is 8.5 points less dense. The MCOLS = 4 density cliff was at ~97% slices.
 
 yosys (logic only, flattened) for VPU + DMA: main 63.7K, v1 55.1K, ONE_TREE 50.2K, v2 46.1K.
 
@@ -727,8 +737,21 @@ yosys (logic only, flattened) for VPU + DMA: main 63.7K, v1 55.1K, ONE_TREE 50.2
   - The OOC of 202856d was stopped for memory. It was not rerun.
 - **yosys logic-only STA** (se-v2, 202856d): v2 5.67 ns, v1 5.43 ns. v2's worst path is now
   a DSP cascade in the tail's Q multiplier.
-- **Full build:** se-int 600c087 (v2, without the two cuts) on omarchy: pending. The 202856d
-  build on opentpu was not started.
+- **Full build, se-int 600c087** (v2, without either comp cut): **fails, WNS -0.199 ns**.
+  - TNS -8.944 ns over 102 endpoints; hold met (+0.038). Post-route physopt did not help.
+  - The 50 worst paths, by group:
+    - comp, ~36 of them, worst -0.199: `u_md` (stage-0 meta) → `g_rr.q0` reset pins, 22
+      levels (12 CARRY4, the k arithmetic in the decode). 202856d's ROM and bc05dd5's
+      registered output control remove this path's logic.
+    - u_mem, not SE: -0.177, the AXI_BL=32 run-length chain `qc` → `qb_n`, 17-19 levels,
+      80% route.
+    - seq → MXU: -0.137, the command total into the `q_total` LUTRAM, 7 levels. main's
+      5cd6c39 replaces the LUTRAM with registers.
+    - u_dma `cleft` → u_mem `lw_nx`: -0.118.
+    - The reset fanout to u_vpu: -0.107, 0 levels.
+  - pn32 closed with the same u_mem code at +0.013, so the non-SE paths are placement-dependent.
+- **Candidate se-cand 44dfeb2** (se-int, main, both comp cuts, main's MXU queue): full build
+  pending the user's go-ahead.
 
 ### 12.5 Card (measured)
 
