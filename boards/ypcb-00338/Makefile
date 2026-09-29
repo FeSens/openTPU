@@ -16,6 +16,7 @@ DDR ?= 1066
 # ACT_ROWS: ACT RAM rows, the most rows of one MM (default MCOLS; 8: prefill's 8-row MMs stream
 #   each weight once, the MXU replaying it per MCOLS rows)
 # BUILD_ID: the BUILD_ID register (8 hex digits; default: the git commit)
+# SE: the stream engine, v1 (default) or v2 (docs/stream.md 11: composites on the 8 lanes, one tree)
 CORE_MHZ ?= 100
 MCOLS ?= 2
 VPU_CL ?= 2
@@ -39,7 +40,7 @@ lint: mig
 	  sim/otpu_bd_wrapper_stub.sv $(ROOT)/rtl/boards/ypcb-00338/otpu_fpga_top.sv
 
 bit:
-	$(if $(AXI_BL),AXI_BL=$(AXI_BL)) MCOLS=$(MCOLS) ACT_ROWS=$(ACT_ROWS) VPU_CL=$(VPU_CL) LANES=$(LANES) CORE_MHZ=$(CORE_MHZ) $(if $(BUILD_ID),BUILD_ID=$(BUILD_ID)) ./run_vivado.sh $(DDR)
+	$(if $(AXI_BL),AXI_BL=$(AXI_BL)) $(if $(SE),SE=$(SE)) MCOLS=$(MCOLS) ACT_ROWS=$(ACT_ROWS) VPU_CL=$(VPU_CL) LANES=$(LANES) CORE_MHZ=$(CORE_MHZ) $(if $(BUILD_ID),BUILD_ID=$(BUILD_ID)) ./run_vivado.sh $(DDR)
 
 impl:
 	STEP=impl ./run_vivado.sh $(DDR)
