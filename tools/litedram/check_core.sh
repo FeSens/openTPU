@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Is the committed LiteDRAM core what tools/litedram/gen_core.py makes? Regenerates it and compares
-# it with boards/ypcb-00338/litedram/ (otpu_litedram.v, otpu_litedram.xdc, the sha256s in
+# it with boards/ypcb-00338/litedram/ (otpu_litedram.v, otpu_litedram.xdc, otpu_litedram_mem.init
+# -- the identifier ROM the Verilog $readmemh's --, the sha256s in
 # core.json) and its csr.csv / sdram_init.py with opentpu/host/litedram/. Exit 1 on any drift.
 #
 #   tools/litedram/check_core.sh                  # PYTHON (default: $LITEX_VENV/bin/python)
@@ -51,14 +52,14 @@ norm_v() { awk '$0 == "/*" {skip = 1} !skip && !/Date       :/ && !/Auto-Generat
 norm_csv() { grep -v '^#' "$1"; }
 
 if [[ $update == 1 ]]; then
-  cp "$new/otpu_litedram.v" "$new/otpu_litedram.xdc" "$core/"
+  cp "$new/otpu_litedram.v" "$new/otpu_litedram.xdc" "$new/gateware/otpu_litedram_mem.init" "$core/"
   cp "$new/csr.csv" "$new/sdram_init.py" "$host/"
   python3 - "$core/core.json" "$core" <<'EOF'
 import hashlib, json, sys
 from pathlib import Path
 p, d = Path(sys.argv[1]), Path(sys.argv[2])
 info = json.loads(p.read_text())
-info["sha256"] = {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(d.glob("otpu_litedram.*"))}
+info["sha256"] = {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(d.glob("otpu_litedram*"))}
 p.write_text(json.dumps(info, indent=1) + "\n")
 EOF
   echo "core updated in $core (and csr.csv, sdram_init.py in $host); commit them together"
@@ -81,6 +82,7 @@ if ! diff -q <(norm_v "$core/otpu_litedram.v") <(norm_v "$new/otpu_litedram.v") 
   echo "otpu_litedram.v differs from gen_core.py's:"; diff <(norm_v "$core/otpu_litedram.v") <(norm_v "$new/otpu_litedram.v") | head -20; fail=1
 fi
 cmp -s "$core/otpu_litedram.xdc" "$new/otpu_litedram.xdc" || { echo "otpu_litedram.xdc differs"; fail=1; }
+cmp -s "$core/otpu_litedram_mem.init" "$new/gateware/otpu_litedram_mem.init" || { echo "otpu_litedram_mem.init differs"; fail=1; }
 diff -q <(norm_csv "$host/csr.csv") <(norm_csv "$new/csr.csv") > /dev/null || { echo "csr.csv differs"; fail=1; }
 cmp -s "$host/sdram_init.py" "$new/sdram_init.py" || { echo "sdram_init.py differs"; fail=1; }
 if [[ $fail == 0 ]]; then echo "LiteDRAM core: matches gen_core.py"; else echo "LiteDRAM core: DRIFT"; fi

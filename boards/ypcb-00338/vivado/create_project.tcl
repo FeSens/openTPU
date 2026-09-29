@@ -86,6 +86,10 @@ if {$MEM ne "mig"} {
   } else {
     lappend rtl rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv
     add_files -norecurse $root/boards/ypcb-00338/litedram/otpu_litedram.v
+    # the core's identifier ROM ("openTPU LiteDRAM"), which the Verilog $readmemh's by file name:
+    # synthesis finds it as a project file
+    add_files -norecurse $root/boards/ypcb-00338/litedram/otpu_litedram_mem.init
+    set_property FILE_TYPE {Memory Initialization Files} [get_files otpu_litedram_mem.init]
   }
 }
 foreach f $rtl {

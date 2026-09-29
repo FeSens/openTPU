@@ -32,8 +32,9 @@
  },
  "generated": "2026-09-29",
  "sha256": {
-  "otpu_litedram.v": "0a973e2ad1df92360bb343de2f191628a3f9bd9fdc79c9c0555d35e9f5259265",
-  "otpu_litedram.xdc": "69af4ef39c293f966698b886735e1fc64ab502e7953e1742e82a00ee2ca169c4"
+  "otpu_litedram.v": "3c78921857d39b107884e8c346ea871036e3dba8c9ca2831e862fbe157cf7922",
+  "otpu_litedram.xdc": "69af4ef39c293f966698b886735e1fc64ab502e7953e1742e82a00ee2ca169c4",
+  "otpu_litedram_mem.init": "3539495b12fca557dbbe9fb3252bbb64acfe31c06f69ef5a810ac76b70da5cc5"
  },
  "host_files": {
   "csr.csv": "opentpu/host/litedram/csr.csv",
