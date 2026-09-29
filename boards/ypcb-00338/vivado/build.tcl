@@ -17,8 +17,10 @@ set strategy [lindex $argv 3]
 
 open_project $out/otpu.xpr
 file mkdir $out/reports
-# run properties (synthesis options, implementation directives): impl_directives.tcl
-if {[file exists $here/impl_directives.tcl]} { source $here/impl_directives.tcl }
+# run properties (synthesis options, implementation directives): impl_directives.tcl; not in a
+# FAST development build (create_project.tcl)
+set fast [expr {[info exists ::env(OTPU_FAST)] && $::env(OTPU_FAST) eq "1"}]
+if {!$fast && [file exists $here/impl_directives.tcl]} { source $here/impl_directives.tcl }
 
 if {!$impl_only} {
   # ---- IP (block design) out-of-context runs first
@@ -28,6 +30,8 @@ if {!$impl_only} {
   # DRC INBB-3). Patch the generated PHY to the plain IDELAYE2 it uses above 1500 ps.
   foreach mig [glob -nocomplain $out/otpu.gen/sources_1/bd/otpu_bd/ip/otpu_bd_mig_?_0] {
     set name [file tail $mig]
+    # an IP cache hit (create_project.tcl) brings the cached, already patched netlist
+    if {![file exists $mig/$name/user_design/rtl/${name}_mig.v]} { continue }
     set fh [open $mig/$name/user_design/rtl/${name}_mig.v]; set top [read $fh]; close $fh
     if {![regexp {parameter\s+tCK\s*=\s*(\d+)} $top -> tck] || $tck > 1500} { continue }
     set f $mig/$name/user_design/rtl/phy/mig_7series_v4_2_ddr_byte_group_io.v
@@ -71,7 +75,7 @@ if {!$impl_only} {
 
 # ---- implementation to the routed design
 if {$strategy ne ""} { set_property strategy $strategy [get_runs impl_1] }
-set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+if {!$fast} { set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1] }
 reset_run impl_1
 launch_runs impl_1 -jobs $jobs
 wait_on_run impl_1
