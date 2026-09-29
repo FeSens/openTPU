@@ -277,11 +277,41 @@ A bitstream without it leaves CAPS bit6 clear; the compiler then emits the VOP s
 (`Config.DSTEP = False`, the default of `board_config`; the host takes it from CAPS through
 `device_config`).
 
-The board's datapath (`rtl/dma/otpu_dstep.sv`) takes 8 state words per cycle: a head of
-128 x 128 is 2,048 cycles of datapath plus about 200 of fill and pipeline, against 1,024
-cycles of port-B chunks (64 KiB read, 64 KiB written). The DMA reads the state 16 chunks at a
-time and writes it back in runs of 16 gathered chunks (DRAM bursts; timing only). Only an
-8-lane DMA (W = 8) has DSTEP.
+On the board DSTEP runs on the stream engine (`docs/stream.md`): the DMA moves the state, and
+the VPU's slot-0 partial loop and tree plus the tail (`rtl/vpu/otpu_se_tail.sv`) compute. It
+takes 8 state words per cycle: a head of 128 x 128 is 2,048 cycles of datapath plus about 200
+of fill and pipeline, against 1,024 cycles of port-B chunks (64 KiB read, 64 KiB written).
+The DMA reads the state 16 chunks at a time and writes it back in runs of 16 gathered chunks
+(DRAM bursts; timing only). The VOPs wait while a DSTEP holds the engine. Only an 8-lane
+build (W = 8) has DSTEP.
+
+### STREAM
+
+`STREAM` (0x13) generalizes DSTEP. A descriptor of float-safe TMEM words (written by FILLs)
+programs a pass over the rows of a stream:
+- **A:** a row dot;
+- **SCALAR:** a few scalar ops per row;
+- **U:** `Y = S*G + D*B`;
+- **Q:** a dot of Y.
+
+Fields:
+- `w1` = desc [15:0] | ks [31:16]
+- `src = R[ra]+w2`, `dst = R[ra]+w3`
+- column slots `vec = R[rb]+w4`, row scalars `x = R[rc]+w5`
+- constants `K_j = T[R[rd]+w6 + j*ks]`
+- row outputs `o = w7`
+- flags: ZERO, SRC_T, DST_T, NODST
+
+The full semantics, the descriptor format and the model mappings (Gated DeltaNet, DeltaNet,
+KDA, GLA, RetNet, Mamba2, mLSTM, RWKV-7, RMSNorm, attention's reductions) are in
+[stream.md](stream.md). The ISA simulator runs all of it.
+
+The board runs the subset `opentpu.isa.stream_hw_cfg` accepts, announced by CAPS bit26:
+- DRAM state in place, rows ≤ 256, cols 64..256;
+- the state-step modes.
+
+The compiler (`ol.state_step`) falls back to VOPs otherwise. DSTEP is STREAM with
+`isa.gdn_desc` and ks = gs.
 
 ### GATHER
 
