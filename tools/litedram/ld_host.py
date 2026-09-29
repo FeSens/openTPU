@@ -30,6 +30,11 @@ opentpu.host.i2c, when that package is importable) are logged with every line.
 
 BUILD_DIR holds csr.csv and sdram_init.py (written by ld_test.py). Only numpy-free stdlib.
 
+--fused: the production image (MEM=litedram, gen_core.py --phy wl): the same PHY, BIST, phase and
+wclk CSRs through BAR0's window at 0x10000, BUILD_DIR = its host tree's opentpu/host/litedram.
+The commands run the same and leave cal_ready as they find it: the accelerator gets the channels
+from memcal (otpu-memcal cal --force, or Board() on a channel whose STATUS bit is low).
+
 The calibration itself (DFII init, write latency, read leveling, the DQS phase scan, the BIST
 helpers, a simulated PHY) is opentpu/host/ddrcal.py; on a card host whose installed opentpu
 predates it, a copy next to this file is used.
@@ -55,32 +60,48 @@ from ddrcal import (MIN_WINDOW, CalError, Chan, Dram, DqsPhase, FakeBoard, FakeC
                     csr_map, dqs_scan, group_windows, margins, offsets, pass_map, run_bist)
 # ------------------------------------------------------------------------------ CSR access
 class Bar0:
-    """CSRs over /dev/xdma0_user: one 32-bit load / store per word (see board.py's transport)."""
-    def __init__(self, build: Path, dev: str = "/dev/xdma0_user"):
+    """CSRs over /dev/xdma0_user: one 32-bit load / store per word (see board.py's transport).
+    `fused`: the production image, whose LiteDRAM core's CSRs sit in BAR0's window at R_MEMCAL
+    (0x10000, opentpu/host/memcal.py) and whose board registers (temperature, I2C pins) are at
+    their regs.py offsets; the test image's CSRs start at 0."""
+    R_MEMCAL, R_TEMP, TEMP_VALID = 0x10000, 0x4C, 1 << 31
+
+    def __init__(self, build: Path, dev: str = "/dev/xdma0_user", fused: bool = False):
         self.regs = csr_map(build / "csr.csv")
+        self.fused, self.base = fused, self.R_MEMCAL if fused else 0
         fd = os.open(dev, os.O_RDWR | os.O_SYNC)
-        self.mm = mmap.mmap(fd, 1 << 16, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+        self.mm = mmap.mmap(fd, 2 << 16 if fused else 1 << 16, mmap.MAP_SHARED,
+                            mmap.PROT_READ | mmap.PROT_WRITE)
         os.close(fd)
         self.words = memoryview(self.mm).cast("I")
 
     def w(self, name, v):
         a, n = self.regs[name]
         for i in range(n):            # most significant word first
-            self.words[(a >> 2) + i] = (v >> (32 * (n - 1 - i))) & 0xFFFFFFFF
+            self.words[((self.base + a) >> 2) + i] = (v >> (32 * (n - 1 - i))) & 0xFFFFFFFF
 
     def r(self, name):
         a, n = self.regs[name]
         v = 0
         for i in range(n):
-            v = (v << 32) | self.words[(a >> 2) + i]
+            v = (v << 32) | self.words[((self.base + a) >> 2) + i]
         return v
+
+    def raw_r(self, off):
+        """A board register of the fused image (BAR0 offset)."""
+        return self.words[off >> 2]
+
+    def raw_w(self, off, v):
+        self.words[off >> 2] = v & 0xFFFFFFFF
 
 
 class Temps:
     """The FPGA die temperature (XADC) and the board's LM73, read over the image's i2c_ctrl /
-    i2c_in (production's I2C_CTRL / I2C_IN bits) with opentpu.host.i2c when it is importable."""
+    i2c_in (production's I2C_CTRL / I2C_IN bits) with opentpu.host.i2c when it is importable.
+    On the fused image (Bar0.fused): the board registers TEMP and I2C_CTRL / I2C_IN."""
     def __init__(self, csr):
         self.c, self.bus, self.addr, self.note = csr, None, None, ""
+        fused = getattr(csr, "fused", False)
         try:
             from opentpu.host import i2c
         except ImportError as e:
@@ -88,11 +109,14 @@ class Temps:
             return
 
         class T:                        # a transport as i2c.Bus wants it
-            devname = None              # no I2C lock file: the test image is ours alone
+            devname = None              # no I2C lock file: the card session is ours alone
             def reg_read(_, a):
-                return csr.r({0x220: "i2c_ctrl", 0x224: "i2c_in"}[a])
+                return csr.raw_r(a) if fused else csr.r({0x220: "i2c_ctrl", 0x224: "i2c_in"}[a])
             def reg_write(_, a, v):
-                csr.w({0x220: "i2c_ctrl"}[a], v)
+                if fused:
+                    csr.raw_w(a, v)
+                else:
+                    csr.w({0x220: "i2c_ctrl"}[a], v)
         self.i2c, self.bus = i2c, i2c.Bus(T(), 0)
         try:
             with self.bus:
@@ -105,7 +129,12 @@ class Temps:
             self.note = f"LM73 bus error: {e}"
 
     def read(self):
-        d = {"fpga_c": self.c.r("xadc_temperature") * 503.975 / 4096 - 273.15}
+        if getattr(self.c, "fused", False):
+            v = self.c.raw_r(Bar0.R_TEMP)
+            d = {"fpga_c": (v & 0xFFF) * 503.975 / 4096 - 273.15 if v & Bar0.TEMP_VALID
+                 else float("nan")}
+        else:
+            d = {"fpga_c": self.c.r("xadc_temperature") * 503.975 / 4096 - 273.15}
         if self.addr is not None:
             try:
                 with self.bus:
@@ -405,6 +434,9 @@ def main():
     ap.add_argument("--gib", type=float, default=2.0, help="BIST size (the channel: 2 GiB)")
     ap.add_argument("--stride", type=int, default=4, help="DQS scan stride, fine steps")
     ap.add_argument("--dev", default="/dev/xdma0_user")
+    ap.add_argument("--fused", action="store_true",
+                    help="the production image: BUILD_DIR is its host tree's opentpu/host/litedram, "
+                         "the core's CSRs are at BAR0 0x10000 (open no Board: it would calibrate)")
     ap.add_argument("--steps", type=int, help="dqs: move the DQS phase to this step")
     ap.add_argument("--wl", default="0,6", help="wscan: the forced write latencies (bitslips)")
     ap.add_argument("--mib", type=int, default=64, help="wscan: BIST size per step, MiB")
@@ -412,7 +444,7 @@ def main():
     a = ap.parse_args()
     if a.what == "selftest":
         return selftest(a.build)
-    csr = Bar0(a.build, a.dev)
+    csr = Bar0(a.build, a.dev, fused=a.fused)
     phy = Dram(csr, a.build).phy
     chans = phy.get("channels", [0])
     if a.ch:
@@ -426,7 +458,8 @@ def main():
               + ", ".join(f"ch{ch} {DqsPhase(Chan(csr, ch), phy['vco_hz']).steps()}" for ch in chans)
               + f" ({1e12 / phy['vco_hz'] / 56:.1f} ps each, {period} per tCK), sys "
               f"{phy['sys_hz'] / 1e6:.2f} MHz, CL {phy['cl']} CWL {phy['cwl']}"
-              + (f", {Temps.fmt(Temps(csr).read())}" if "xadc_temperature" in csr.regs else ""))
+              + (f", {Temps.fmt(Temps(csr).read())}" if "xadc_temperature" in csr.regs or a.fused
+                 else ""))
         if s != 0x12345678:
             return 1
         if phy.get("phy") == "wl":
