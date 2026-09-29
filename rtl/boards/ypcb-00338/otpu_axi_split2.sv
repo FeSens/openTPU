@@ -1,5 +1,5 @@
 // AXI4 1-to-2 split by address bit 31 (XDMA's M_AXI onto the two channels' bridges,
-// otpu_mig_ch; channel 0 at 0x0000_0000, channel 1 at 0x8000_0000, as the address map of
+// otpu_mem_ch; channel 0 at 0x0000_0000, channel 1 at 0x8000_0000, as the address map of
 // opentpu/host/board.py). One clock. W beats follow their AW's channel; B and R responses come
 // back in the order of their AW / AR, whatever the IDs (legal, and XDMA's own order), so a
 // response from the other channel waits for the older ones. Up to OD transactions of each kind

@@ -1,10 +1,10 @@
 // Simulation model of one MIG 7-series channel's native user interface (4:1, BL8, 512-bit, ECC:
-// 64-byte beats, app_addr = {rank, beat, 3'b000}), as otpu_mig_ch drives it. app_rdy and
+// 64-byte beats, app_addr = {rank, beat, 3'b000}), as otpu_mig_native drives it. app_rdy and
 // app_wdf_rdy are randomly withheld (+axi_stall=percent, +axi_seed=N as otpu_axi_mem) and a read's
 // data comes LAT to LAT + 7 cycles after its command (+axi_lat=N), in command order and never
 // held back. A command is performed when it is accepted: a read returns the memory as it was
 // then, a write lands then, so the order of accesses to one address is the command order (the
-// MIG keeps it). Write commands must come with their data in the same cycle (otpu_mig_ch
+// MIG keeps it). Write commands must come with their data in the same cycle (otpu_mig_native
 // does); a write with any mask bit set must be wr_bytes (011: ECC read-modify-write), a plain
 // write (000) whole.
 // With IMG = 1 the channel's memory loads from <dir>/ch<CH>.bin (big-endian words, as $fread

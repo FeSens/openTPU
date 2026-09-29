@@ -4,7 +4,7 @@
 //
 // wused counts the entries the write side still has to consider occupied: what it wrote minus
 // what the read side has popped as last seen through the synchronizer (so at most a few cycles
-// stale, always on the safe side). The MIG bridge uses it for read credits.
+// stale, always on the safe side). The channel bridge uses it for read credits.
 module otpu_afifo #(
   parameter int W = 32,
   parameter int DEPTH = 16

@@ -342,7 +342,9 @@ The same model reproduces the card within about 1-2% (docs/board.md).
 
 On 2026-09-29 the plan changed. LiteDRAM became the primary path and stage 1 became the
 fallback: MIG native with our own arbiter, committed and unit-tested (`otpu_mig_ch`, `tb_mig`),
-but not yet integrated. The key unknown for LiteDRAM is calibration and write timing on all 9
+but not yet integrated. (Since generalized into `otpu_mem_ch`, which drives either controller's
+native port, with `otpu_mig_native` for the MIG; tested by `tb_memch` via `tools/memch_test.py`.)
+The key unknown for LiteDRAM is calibration and write timing on all 9
 lanes without ODELAY. The test image measures exactly that. It is built by
 `tools/litedram/ld_test.py` and driven by `tools/litedram/ld_host.py`.
 
