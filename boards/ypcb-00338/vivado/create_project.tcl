@@ -61,6 +61,13 @@ if {$MEM eq "mig_native"} {
 }
 
 create_project -force otpu $out -part xc7k480tffg1156-2
+# The block design's IP synthesis (~9 min: the MIGs, xdma and sc_mem ~3 min each) in a cache shared
+# by every build on the host (OTPU_IP_CACHE, run_vivado.sh): each build is a fresh project, so the
+# project's own cache never hit. Keyed on the IP's configuration, part and Vivado version.
+if {[info exists ::env(OTPU_IP_CACHE)] && $::env(OTPU_IP_CACHE) ne ""} {
+  file mkdir $::env(OTPU_IP_CACHE)
+  config_ip_cache -use_cache_location $::env(OTPU_IP_CACHE)
+}
 set_property target_language Verilog [current_project]
 set_property default_lib xil_defaultlib [current_project]
 
@@ -153,9 +160,19 @@ if {$MEM ne "mig"} {
   }
 }
 
-# ---- strategies: timing-driven, the accelerator is the critical part
-set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
-set_property STEPS.SYNTH_DESIGN.ARGS.RETIMING true [get_runs synth_1]
-set_property strategy Performance_ExplorePostRoutePhysOpt [get_runs impl_1]
+# ---- strategies: timing-driven, the accelerator is the critical part. OTPU_FAST=1 (run_vivado.sh
+# FAST=1): a development build at a relaxed clock (CORE_MHZ 100), with Vivado's default synthesis
+# (no retiming) and implementation (build.tcl: no post-route phys_opt, no impl_directives.tcl)
+if {[info exists ::env(OTPU_FAST)] && $::env(OTPU_FAST) eq "1"} {
+  set_property strategy {Vivado Synthesis Defaults} [get_runs synth_1]
+  set_property strategy {Vivado Implementation Defaults} [get_runs impl_1]
+} else {
+  set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
+  set_property STEPS.SYNTH_DESIGN.ARGS.RETIMING true [get_runs synth_1]
+  set_property strategy Performance_ExplorePostRoutePhysOpt [get_runs impl_1]
+}
+# build.tcl writes its own reports from the opened runs: none inside the runs
+set_property report_strategy {No Reports} [get_runs synth_1]
+set_property report_strategy {No Reports} [get_runs impl_1]
 
 puts "project created in $out (DDR3-$DDR_SPEED, $MEM)"

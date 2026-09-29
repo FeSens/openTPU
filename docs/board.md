@@ -55,6 +55,13 @@ make lint-mn / make lint-ld   # the offline checks and Verilator lint of those t
 BPI flash image). Expect 1.5-3 h. Look at `build/vivado/reports/SUMMARY.txt` first: WNS/WHS and
 the achieved frequency per clock; then `timing_summary.rpt`, `util_hier.rpt`, `cdc.rpt`.
 
+`FAST=1` is the development build for new architecture and IP work, where the function comes
+before the clock. It uses the default CORE_MHZ=100, Vivado's default synthesis (no retiming) and
+default implementation (no post-route phys_opt, no `impl_directives.tcl`). The block design's IP
+synthesis is cached per host in `~/.cache/otpu-vivado-ip` (`OTPU_IP_CACHE`; empty turns it off).
+Every build used to be a fresh project, so the IP runs never hit a cache, and they took about 9
+minutes of each build: the two MIGs, xdma and sc_mem about 3 minutes each.
+
 Measured (Vivado 2026.1, 2026-09-24; default build: MCOLS=2, core 100 MHz, DDR3-800, PCIe Gen1
 x8): all timing constraints met, WNS +0.082 ns, WHS +0.016 ns. Utilization: 187,852 LUT
 (62.9%), 126,679 FF (21.2%), 635 BRAM36 tiles (66.5%), 267 DSP48 (13.9%). Vivado's power

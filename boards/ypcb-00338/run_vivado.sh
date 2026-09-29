@@ -6,6 +6,8 @@
 #   VPU_CL=4 ./run_vivado.sh              # 4 VPU lanes with exp2/recip/rsqrt (faster softmax)
 #   LANES=16 ./run_vivado.sh              # 16 VPU lanes / TMEM banks
 #   CORE_MHZ=80 ./run_vivado.sh           # slower core clock when 100 MHz does not close
+#   FAST=1 ./run_vivado.sh                # development build: default strategies, no retiming or post-route
+#                                         # phys_opt (with the default CORE_MHZ=100); about half the time
 #   VIVADO_DOCKER=image ./run_vivado.sh   # Docker (e.g. Apple Silicon with Rosetta), see docs/board.md
 #   VIVADO_AS_USER=1                      # Docker on Linux: run as the calling user (see run())
 #   STEP=impl ./run_vivado.sh             # rerun implementation only (keeps project and synthesis)
@@ -76,6 +78,9 @@ run() {  # run a Vivado Tcl script with arguments
 }
 
 mkdir -p "$out"
+# the IP synthesis cache shared by this host's builds (create_project.tcl); OTPU_IP_CACHE= turns it off
+export OTPU_IP_CACHE="${OTPU_IP_CACHE-$HOME/.cache/otpu-vivado-ip}"
+export OTPU_FAST="${FAST:-0}"
 if [[ "${STEP:-}" == impl ]]; then
   run "$here/vivado/build.tcl" "$out" "$jobs" impl "${IMPL_STRATEGY:-}"
 else
