@@ -1,0 +1,14 @@
+==== channel 0
+BIST over 2 GiB:
+  pass 0 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 0 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+BIST: PASS
+==== channel 1
+BIST over 2 GiB:
+  pass 0 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 0 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+BIST: PASS

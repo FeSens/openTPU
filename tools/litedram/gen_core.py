@@ -96,7 +96,7 @@ class Cal(Module, AutoCSR):
 class OTPULiteDRAM(SoCCore):
     mem_map = {"csr": 0x0000_0000}
 
-    def __init__(self, f=133.333e6, dqs_phase=90, bist=True, phy="a7", groups=None):
+    def __init__(self, f=133.333e6, dqs_phase=90, bist=True, phy="a7", groups=None, rd_reg=False):
         """phy "wl": WL7DDRPHY with each channel's WriteClocks MMCM (docs/litedram.md section 8;
         groups[ch]: its lanes' write clock groups)."""
         platform = ypcb.Platform()
@@ -119,7 +119,7 @@ class OTPULiteDRAM(SoCCore):
                 setattr(self, "wclk" + sfx, wc)
                 p = ClockDomainsRenamer(wc.domains)(WL7DDRPHY(
                     platform.request("ddram", ch), groups=groups[ch], sys_clk_freq=f,
-                    iodelay_clk_freq=200e6, cl=cl, cwl=cwl))
+                    iodelay_clk_freq=200e6, cl=cl, cwl=cwl, rd_reg=rd_reg))
                 for c in wc.constraints(hier=True) + (WL7DDRPHY.constraints() if ch == 0 else []):
                     platform.add_platform_command(c.replace("{", "{{").replace("}", "}}"))
             else:
@@ -185,10 +185,13 @@ def main():
                     help="a7: A7DDRPHY; wl: WL7DDRPHY, write leveling by clock groups (section 8)")
     ap.add_argument("--groups0", default="0,0,0,0,0,0,0,0,0", help="wl: channel 0's lane groups")
     ap.add_argument("--groups1", default="0,0,0,0,0,0,0,0,0", help="wl: channel 1's lane groups")
+    ap.add_argument("--rd-reg", action="store_true",
+                    help="wl: a register after the read bitslip mux, read latency + 1 (WL7DDRPHY rd_reg)")
     a = ap.parse_args()
     out = Path(a.out).resolve()
     groups = {0: [int(x) for x in a.groups0.split(",")], 1: [int(x) for x in a.groups1.split(",")]}
-    soc = OTPULiteDRAM(a.sys_mhz * 1e6, bist=not a.no_bist, phy=a.phy, groups=groups)
+    soc = OTPULiteDRAM(a.sys_mhz * 1e6, bist=not a.no_bist, phy=a.phy, groups=groups,
+                       rd_reg=a.rd_reg)
     b = Builder(soc, output_dir=str(out), compile_software=False, compile_gateware=False,
                 csr_csv=str(out / "csr.csv"))
     b.build(build_name="otpu_litedram", run=False)

@@ -1,0 +1,5 @@
+scratch 0x12345678 (ok), bus errors 0, channels [0, 1], DQS phase steps ch0 0, ch1 0 (16.7 ps each, 112 per tCK), sys 133.33 MHz, CL 7 CWL 6, FPGA 53.6 C, board 47.2 C
+ch0 write clocks: groups [0, 0, 0, 0, 0, 0, 0, 0, 0], group 1 offset 0 x 1/8 VCO (CLKOUT3..6 static phases {3: 0, 4: 4, 5: 0, 6: 4}), MMCM locked 1
+ch1 write clocks: groups [0, 0, 0, 0, 0, 0, 0, 0, 0], group 1 offset 0 x 1/8 VCO (CLKOUT3..6 static phases {3: 0, 4: 4, 5: 0, 6: 4}), MMCM locked 1
+==== channel 0
+==== channel 1
