@@ -1,8 +1,9 @@
 # Vivado check of a native-channel build's project and top without a build (minutes, not hours):
 # create_project.tcl with MEM=mig_native (default; the .prj files regenerated with
-# gen_mig_prj.py --native first) or MEM=litedram, so bd_native.tcl is built and validated and its
-# wrapper made; the constraint files' properties; the block design's synthesis sources; then RTL
-# elaboration of the top (synth_design -rtl): the instances, their modules, black boxes, and the
+# gen_mig_prj.py --native first, the MIGs made as RTL-level IP) or MEM=litedram, so bd_native.tcl
+# is built and validated and its wrapper made; the constraint files' properties; the block
+# design's synthesis sources; for mig_native the generated MIGs' parameters; then RTL elaboration
+# of the top (synth_design -rtl): the instances, their modules, black boxes, and the
 # elaboration's messages about the top's own sources.
 #   vivado -mode batch -log LOG -source boards/ypcb-00338/vivado/check_native.tcl \
 #     -tclargs OUT_DIR [MEM] [LOG]
@@ -44,22 +45,24 @@ generate_target synthesis [get_files otpu_bd.bd]
 # app_wdf_mask otherwise), DDR3-1066 at 4:1 (tCK 1875 ps, CL 7, CWL 6), 29-bit app_addr, and no
 # AXI slave
 if {$mem eq "mig_native"} {
-  set migs [glob -nocomplain $out/otpu.gen/sources_1/bd/otpu_bd/ip/otpu_bd_mig_?_0]
-  if {[llength $migs] != 2} { lappend bad "generated MIGs: [llength $migs] (expected 2)" }
-  foreach m $migs {
-    set name [file tail $m]
-    set f $m/$name/user_design/rtl/${name}_mig.v
-    if {![file exists $f]} { lappend bad "$name: no $f"; continue }
-    set fh [open $f]; set v [read $fh]; close $fh
-    set got {}
-    foreach {k want} {ECC {"ON"} tCK 1875 CL 7 CWL 6 nCK_PER_CLK 4 ADDR_WIDTH 29 DATA_WIDTH 64 DQ_WIDTH 72} {
-      if {![regexp "parameter\\s+$k\\s*=\\s*(\[^,;\\s\]+)" $v -> x]} { set x ? }
-      lappend got "$k=$x"
-      if {$x ne $want} { lappend bad "$name: $k = $x, expected $want" }
+  foreach ch {0 1} {
+    set name mig_ddr3_ch$ch
+    # every copy the IP's generation left (the .gen tree's, and any other)
+    if {[catch {exec find $out -name ${name}_mig.v} fs] || [llength $fs] == 0} {
+      lappend bad "$name: no generated ${name}_mig.v under $out"; continue
     }
-    puts "$name: [join $got {, }]"
-    if {[regexp {s_axi_awaddr} $v]} { lappend bad "$name: has an AXI slave (s_axi_awaddr)" }
-    if {![regexp {app_wdf_mask} $v]} { lappend bad "$name: no native interface (app_wdf_mask)" }
+    foreach f $fs {
+      set fh [open $f]; set v [read $fh]; close $fh
+      set got {}
+      foreach {k want} {ECC {"ON"} tCK 1875 CL 7 CWL 6 nCK_PER_CLK 4 ADDR_WIDTH 29 DATA_WIDTH 64 DQ_WIDTH 72} {
+        if {![regexp "parameter\\s+$k\\s*=\\s*(\[^,;\\s\]+)" $v -> x]} { set x ? }
+        lappend got "$k=$x"
+        if {$x ne $want} { lappend bad "$f: $k = $x, expected $want" }
+      }
+      puts "$f: [join $got {, }]"
+      if {[regexp {s_axi_awaddr} $v]} { lappend bad "$f: has an AXI slave (s_axi_awaddr)" }
+      if {![regexp {app_wdf_mask} $v]} { lappend bad "$f: no native interface (app_wdf_mask)" }
+    }
   }
 }
 
@@ -68,7 +71,7 @@ synth_design -rtl -name rtl_1
 puts "---- instances"
 set want {u_bd u_sys u_sys/u_split u_sys/u_ch0 u_sys/u_ch1 u_sys/u_board}
 if {$mem eq "mig_native"} {
-  lappend want {g_mig[0].u_mn} {g_mig[1].u_mn}
+  lappend want u_mig u_mig/u_mn0 u_mig/u_mn1 u_mig/mig_0 u_mig/mig_1
 } else {
   lappend want u_ld u_ibuf50 u_bufg50
 }
@@ -86,8 +89,8 @@ set bb [get_cells -quiet -hierarchical -filter {IS_BLACKBOX == 1}]
 puts "black boxes: [llength $bb]"
 foreach c [lsort [lrange $bb 0 29]] { puts "  $c ([get_property REF_NAME $c])" }
 foreach c $bb {
-  # the block design's out-of-context IP
-  if {[string match u_bd/* $c]} { continue }
+  # the block design's and the MIGs' out-of-context IP
+  if {[string match u_bd/* $c] || [regexp {^u_mig/mig_[01]$} $c]} { continue }
   lappend bad "black box $c ([get_property REF_NAME $c])"
 }
 

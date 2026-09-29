@@ -1,34 +1,16 @@
-// Lint-only stand-in for the Vivado-generated block design wrapper of the native MIG build
-// (boards/ypcb-00338/vivado/bd_native.tcl, MEM=mig_native): the ports Vivado will generate, no
-// behaviour. Used by `make lint-mn` to check otpu_fpga_top_mn offline; Vivado builds with the
-// real otpu_bd_wrapper.v (and the unisim IOBUF). The DDR3 ports as bd.tcl's
-// (otpu_bd_wrapper_stub.sv), each MIG's native interface as mig<c>_<pin>, M_AXI_DMA as XDMA's
-// M_AXI.
+// Lint-only stand-ins for the native MIG build (MEM=mig_native): the block design wrapper
+// (boards/ypcb-00338/vivado/bd_native.tcl) and the two MIG IP modules create_project.tcl makes
+// (mig_ddr3_ch0 / 1: native interface, ECC, no DM pins, XADC and clock buffers outside), with the
+// ports Vivado will generate and no behaviour. Used by `make lint-mn` to check otpu_fpga_top_mn
+// offline; Vivado builds with the real ones (and the unisim IOBUF). M_AXI_DMA is XDMA's M_AXI.
 module otpu_bd_wrapper (
   input  logic        sys_clk_50,
   input  logic        pcie_refclk_clk_p, pcie_refclk_clk_n, pcie_perstn,
   input  logic [7:0]  pcie_mgt_rxp, pcie_mgt_rxn,
   output logic [7:0]  pcie_mgt_txp, pcie_mgt_txn,
   output logic        pcie_link_up, core_clk, core_rstn, xdma_aclk, xdma_aresetn,
-  output logic [1:0]  calib,
   output logic [11:0] device_temp,
-  inout  wire  [71:0] DDR3_0_dq, DDR3_1_dq,
-  inout  wire  [8:0]  DDR3_0_dqs_p, DDR3_0_dqs_n, DDR3_1_dqs_p, DDR3_1_dqs_n,
-  output logic [14:0] DDR3_0_addr, DDR3_1_addr,
-  output logic [2:0]  DDR3_0_ba, DDR3_1_ba,
-  output logic        DDR3_0_ras_n, DDR3_0_cas_n, DDR3_0_we_n, DDR3_0_reset_n,
-  output logic        DDR3_1_ras_n, DDR3_1_cas_n, DDR3_1_we_n, DDR3_1_reset_n,
-  output logic [0:0]  DDR3_0_ck_p, DDR3_0_ck_n, DDR3_0_cke, DDR3_0_cs_n, DDR3_0_odt,
-  output logic [0:0]  DDR3_1_ck_p, DDR3_1_ck_n, DDR3_1_cke, DDR3_1_cs_n, DDR3_1_odt,
-`define STUB_MIG(P) \
-  output logic         P``_ui_clk, P``_ui_clk_sync_rst, \
-  input  logic [28:0]  P``_app_addr, \
-  input  logic [2:0]   P``_app_cmd, \
-  input  logic         P``_app_en, P``_app_wdf_wren, P``_app_wdf_end, \
-  input  logic [511:0] P``_app_wdf_data, \
-  input  logic [63:0]  P``_app_wdf_mask, \
-  output logic         P``_app_rdy, P``_app_wdf_rdy, P``_app_rd_data_valid, \
-  output logic [511:0] P``_app_rd_data
+  output logic        mig_sys_clk, mig_ref_clk, mig_locked,
 `define STUB_L(P) \
   output logic [31:0] P``_awaddr, P``_araddr, P``_wdata, \
   output logic [3:0]  P``_wstrb, \
@@ -37,8 +19,6 @@ module otpu_bd_wrapper (
   input  logic [1:0]  P``_bresp, P``_rresp, \
   input  logic [31:0] P``_rdata
   `STUB_L(M_AXI_CTL),
-  `STUB_MIG(mig0),
-  `STUB_MIG(mig1),
   output logic [3:0]   M_AXI_DMA_awid, M_AXI_DMA_arid,
   output logic [63:0]  M_AXI_DMA_awaddr, M_AXI_DMA_araddr,
   output logic [7:0]   M_AXI_DMA_awlen, M_AXI_DMA_arlen,
@@ -57,8 +37,35 @@ module otpu_bd_wrapper (
   input  logic [127:0] M_AXI_DMA_rdata
 );
 `undef STUB_L
-`undef STUB_MIG
 endmodule
+
+// The MIG 7-series native top as mig_ddr3_ch<c> (the .prj's ModuleName)
+`define STUB_MIG(M) \
+module M ( \
+  inout  wire  [71:0]  ddr3_dq, \
+  inout  wire  [8:0]   ddr3_dqs_p, ddr3_dqs_n, \
+  output logic [14:0]  ddr3_addr, \
+  output logic [2:0]   ddr3_ba, \
+  output logic         ddr3_ras_n, ddr3_cas_n, ddr3_we_n, ddr3_reset_n, \
+  output logic [0:0]   ddr3_ck_p, ddr3_ck_n, ddr3_cke, ddr3_cs_n, ddr3_odt, \
+  input  logic [28:0]  app_addr, \
+  input  logic [2:0]   app_cmd, \
+  input  logic         app_en, app_wdf_end, app_wdf_wren, \
+  input  logic [511:0] app_wdf_data, \
+  input  logic [63:0]  app_wdf_mask, \
+  output logic [511:0] app_rd_data, \
+  output logic         app_rd_data_end, app_rd_data_valid, app_rdy, app_wdf_rdy, \
+  input  logic         app_sr_req, app_ref_req, app_zq_req, \
+  output logic         app_sr_active, app_ref_ack, app_zq_ack, \
+  output logic [7:0]   app_ecc_multiple_err, \
+  output logic         ui_clk, ui_clk_sync_rst, init_calib_complete, \
+  input  logic         sys_clk_i, clk_ref_i, \
+  input  logic [11:0]  device_temp_i, \
+  input  logic         sys_rst); \
+endmodule
+`STUB_MIG(mig_ddr3_ch0)
+`STUB_MIG(mig_ddr3_ch1)
+`undef STUB_MIG
 
 // The Xilinx IOBUF primitive (unisim) as otpu_fpga_top_mn uses it: T = 1 floats the pad.
 module IOBUF (inout wire IO, input logic I, input logic T, output logic O);

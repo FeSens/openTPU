@@ -6,7 +6,8 @@
 # MEM: the memory controllers and how the accelerator and XDMA reach them.
 #   mig (default)  the two MIGs' AXI ports behind the SmartConnect (bd.tcl, otpu_fpga_top)
 #   mig_native     the two MIGs' native ports, each behind otpu_mig_native and otpu_mem_ch
-#                  (bd_native.tcl, otpu_fpga_top_mn; gen_mig_prj.py --native for the .prj files)
+#                  (bd_native.tcl, otpu_fpga_top_mn; gen_mig_prj.py --native for the .prj files;
+#                  the MIGs are RTL-level IP here, IP integrator takes the MIG with AXI only)
 #   litedram       the LiteDRAM core boards/ypcb-00338/litedram/, each channel behind otpu_mem_ch
 #                  (bd_native.tcl, otpu_fpga_top_ld; DDR3-1066 whatever DDR_SPEED says)
 
@@ -42,8 +43,10 @@ set MIG_DIR [expr {$MEM eq "mig_native" ? "$here/mig_native" : "$here/mig"}]
 if {$MEM eq "mig" && ![file exists $MIG_DIR/mig_ddr3_ch0.prj]} {
   error "run boards/ypcb-00338/scripts/gen_mig_prj.py first (it writes vivado/mig/*.prj)"
 }
-# mig_native: .prj files with the native interface (an AXI one would build the AXI MIG)
+# mig_native: .prj files with the native interface (an AXI one would build the AXI MIG). Not at
+# DDR3-1333 / 1600: build.tcl's IDELAYE2_FINEDELAY patch covers the block design's MIGs only.
 if {$MEM eq "mig_native"} {
+  if {$DDR_SPEED in {1333 1600}} { error "MEM=mig_native: DDR3-$DDR_SPEED is not supported (build.tcl's MIG PHY patch)" }
   foreach ch {0 1} {
     set f $MIG_DIR/mig_ddr3_ch${ch}.prj
     if {![file exists $f]} { error "run boards/ypcb-00338/scripts/gen_mig_prj.py --native first" }
@@ -87,6 +90,25 @@ foreach f $rtl {
 }
 # SYNTHESIS removes the simulation-only checks and dumps
 set_property verilog_define {SYNTHESIS} [get_filesets sources_1]
+
+# mig_native: the two MIGs as RTL-level IP, instantiated in otpu_fpga_top_mn (u_mig/mig_<c>),
+# each from its native .prj as bd.tcl gives its MIG cells theirs; the module is the .prj's
+# ModuleName, mig_ddr3_ch<c>. Their out-of-context runs are made here, so synth_1 runs them first
+# as it does the block design's.
+if {$MEM eq "mig_native"} {
+  set migdef [lindex [lsort -decreasing [get_ipdefs -all xilinx.com:ip:mig_7series:*]] 0]
+  if {$migdef eq ""} { error "IP mig_7series not found in this Vivado installation" }
+  foreach ch {0 1} {
+    create_ip -vlnv $migdef -module_name mig_ddr3_ch$ch
+    set ip [get_ips mig_ddr3_ch$ch]
+    file copy -force $MIG_DIR/mig_ddr3_ch${ch}.prj [get_property IP_DIR $ip]/mig_ddr3_ch${ch}.prj
+    set_property -dict [list CONFIG.BOARD_MIG_PARAM {Custom} CONFIG.MIG_DONT_TOUCH_PARAM {Custom} \
+      CONFIG.RESET_BOARD_INTERFACE {Custom} CONFIG.XML_INPUT_FILE mig_ddr3_ch${ch}.prj] $ip
+  }
+  set migs [get_ips {mig_ddr3_ch0 mig_ddr3_ch1}]
+  generate_target all $migs
+  create_ip_run $migs
+}
 
 # ---- block design
 source $here/[expr {$MEM eq "mig" ? "bd.tcl" : "bd_native.tcl"}]
