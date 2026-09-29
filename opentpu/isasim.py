@@ -27,6 +27,7 @@ class Config:
     LANES: int = 8           # VPU lanes == TMEM banks (timing only; results do not depend on it)
     PAIR: bool = False       # MM PAIR / QACT DUP: 4-bit MMs of M <= MCOLS/2 rows at full rate
     DSTEP: bool = False      # the DMA runs DSTEP (Gated DeltaNet head steps on DRAM state)
+    STREAM: bool = False     # the stream engine runs STREAM's hardware subset (docs/stream.md)
     ACT_ROWS: int = 0        # ACT RAM rows == max stationary rows of one MM (0: MCOLS); more
     #                          than MCOLS: the MXU replays each streamed chunk (docs/isa.md, MM)
 
@@ -50,7 +51,7 @@ def board_config(**kw) -> Config:
     OTPU_MCOLS in the environment selects the MXU column count (default 2; make -C
     boards/ypcb-00338 bit MCOLS=4), OTPU_LANES the VPU lanes / TMEM banks (default 8; bit
     LANES=16; timing only, the programs do not change), OTPU_PAIR=1 column reuse (MM PAIR /
-    QACT DUP), OTPU_DSTEP=1 the DMA's DSTEP, OTPU_ACT_ROWS the ACT RAM rows (default MCOLS;
+    QACT DUP), OTPU_DSTEP=1 the DMA's DSTEP, OTPU_STREAM=1 the stream engine, OTPU_ACT_ROWS the ACT RAM rows (default MCOLS;
     more: the MXU replays each weight chunk for MCOLS rows at a time). They configure the
     simulators and the board model; on the card, opentpu.host.board.device_config takes them
     from the bitstream."""
@@ -59,7 +60,8 @@ def board_config(**kw) -> Config:
                 ACT_ROWS=int(os.environ.get("OTPU_ACT_ROWS", 0)), TMEM_WORDS=1 << 16,
                 IMEM_WORDS=1 << 15, DRAM_BYTES=1 << 32,
                 PAIR=bool(int(os.environ.get("OTPU_PAIR", 0))),
-                DSTEP=bool(int(os.environ.get("OTPU_DSTEP", 0))))
+                DSTEP=bool(int(os.environ.get("OTPU_DSTEP", 0))),
+                STREAM=bool(int(os.environ.get("OTPU_STREAM", 0))))
     base.update(kw)
     return Config(**base)
 
@@ -182,6 +184,8 @@ class Slice:
             return
         if op == I.DSTEP:
             return self._dstep(ins)
+        if op == I.STREAM:
+            return self._stream(ins)
         if op == I.MM:
             return self._mm(ins)
         if op == I.QACT:
@@ -221,6 +225,150 @@ class Slice:
         oo = F.rdot(S, q)
         self.m32[wi] = F.f32(S).reshape(-1).view(np.uint32)
         self.tput(o + np.arange(rows), oo)
+
+    def _stream(self, ins: I.Instr) -> None:
+        """STREAM (docs/stream.md, 3): the descriptor, the column slots, the row scalars and the
+        constants are read first; row r of the stream is written after row r is read (a later
+        row reads what an earlier row wrote); O and the saved registers are written last."""
+        w, fl, D = ins.w, ins.flags, self.cfg.D
+        at, ks = w[0] & 0xFFFF, w[0] >> 16
+        n = min(I.STREAM_DESC_FIXED + I.STREAM_MAX_OPS, self.cfg.TMEM_WORDS - at)
+        try:
+            d = I.StreamDesc.decode(self.tmem[self._tidx(at + np.arange(max(n, 0)))])
+        except (ValueError, IndexError) as e:
+            raise SimError(f"STREAM: {e}") from None
+        src = (self.reg(ins.ra) + w[1]) & 0xFFFFFFFF
+        dst = (self.reg(ins.ra) + w[2]) & 0xFFFFFFFF
+        vec = (self.reg(ins.rb) + w[3]) & 0xFFFFFFFF
+        xa = (self.reg(ins.rc) + w[4]) & 0xFFFFFFFF
+        ka = (self.reg(ins.rd) + w[5]) & 0xFFFFFFFF
+        out = w[6]
+        rows, cols = d.rows, d.cols
+        if not rows or not cols:
+            raise SimError("STREAM: rows and cols must be nonzero")
+        if d.q_en and d.o_reg_en:
+            raise SimError("STREAM: O is either Q's dot or a register")
+        if any(op > I.SC_EXP2SUB for op, _, _, _ in d.ops):
+            raise SimError("STREAM: bad scalar op")
+        uses_g = d.u_mode in (I.U_FMMA, I.U_MUL)
+        uses_b = d.u_mode in (I.U_FMMA, I.U_ADD)
+        unary = (I.SC_MOV, I.SC_RSQRT, I.SC_RECIP, I.SC_EXP2, I.SC_LOG2)
+        opnds = [c for op, _, a, b in d.ops for c in ((a,) if op in unary else (a, b))]
+        slots, consts = set(), {j for j in range(4) if d.rinit >> j & 1}
+        consts |= {c - I.OP_K0 for c in opnds if I.OP_K0 <= c < I.OP_K0 + 4}
+        for on, src_, idx, s_slot, s_const in (
+                (d.a_en, d.a_op, d.a_idx, I.A_SLOT, I.A_CONST),
+                (uses_g, d.g_src, d.g_idx, I.G_SLOT, I.G_CONST),
+                (uses_b, d.b_src, d.b_idx, I.B_SLOT, I.B_CONST)):
+            if on and src_ in (s_slot, s_const):
+                if idx >= I.STREAM_SLOTS:
+                    raise SimError("STREAM: slot or constant index out of range")
+                (slots if src_ == s_slot else consts).add(idx)
+        if (d.q_en and not d.q_self) or d.out_p2:
+            slots.add(d.q_idx)
+        # ---- the inputs, before anything is written
+        C = {i: self.tget(vec + i * cols + np.arange(cols))[None, :] for i in sorted(slots)}
+        K = {j: self.tget(np.array([ka + j * ks])) for j in sorted(consts)}
+        X = self.tget(xa + np.arange(rows)) if I.OP_X in opnds else None
+        in_t, out_t = bool(fl & I.F_SRC_T), bool(fl & I.F_DST_T)
+        zero, nodst = bool(fl & I.F_SZERO), bool(fl & I.F_NODST)
+        r, c = np.arange(rows)[:, None], np.arange(cols)[None, :]
+        sidx = src + r * (d.srs or cols) + c if in_t else src + 4 * (r * cols + c)
+        didx = dst + r * (d.drs or cols) + c if out_t else dst + 4 * (r * cols + c)
+        if (not in_t and not zero and src % D) or (not out_t and not nodst and dst % D):
+            raise SimError("STREAM: a DRAM stream must be DRAM-chunk aligned")
+        if not in_t and not zero:
+            sidx = self._widx(sidx)
+        if not out_t and not nodst:
+            didx = self._widx(didx)
+        # rows that read what an earlier row wrote run one at a time
+        same = in_t == out_t and not zero and not nodst
+        seq = same and not np.array_equal(sidx, didx) and \
+            np.intersect1d(sidx, didx).size > 0
+        regs = [np.zeros(1, np.float32)] * 8
+        for j in range(4):
+            if d.rinit >> j & 1:
+                regs[4 + j] = K[j]
+        written, carried = set(), False
+        for op, dst_, a, b in d.ops:
+            carried |= any(x < 8 and x not in written and x in {o[1] for o in d.ops}
+                           for x in ((a,) if op in unary else (a, b)))
+            written.add(dst_)
+        one = np.ones(1, np.float32)
+
+        def value(code, A, Xr):
+            return (regs[code] if code < 8 else A if code == I.OP_A else Xr if code == I.OP_X
+                    else K[code - I.OP_K0] if code < I.OP_ZERO
+                    else np.zeros(1, np.float32) if code == I.OP_ZERO else one)
+
+        def scalar(A, Xr):
+            for op, dst_, a, b in d.ops:
+                x, y = value(a, A, Xr), value(b, A, Xr)
+                regs[dst_] = {
+                    I.SC_ADD: F.add, I.SC_SUB: F.sub, I.SC_MUL: F.mul, I.SC_MAX: F.fmax,
+                    I.SC_MIN: F.fmin, I.SC_MOV: lambda p, q: F.ftz(p),
+                    I.SC_RSQRT: lambda p, q: F.rsqrt(p), I.SC_RECIP: lambda p, q: F.recip(p),
+                    I.SC_EXP2: lambda p, q: F.exp2(p), I.SC_LOG2: lambda p, q: F.log2(p),
+                    I.SC_EXP2SUB: lambda p, q: F.exp2(F.sub(p, q))}[op](x, y)
+            return [regs[d.d_reg], regs[d.g_idx & 7], regs[d.b_idx & 7], regs[d.o_reg]]
+
+        def block(S, lo, hi):
+            n = hi - lo
+            if not d.a_en:
+                A = np.zeros(n, np.float32)
+            elif d.a_op == I.A_MAX:
+                A = F.chain_max(S)
+            else:
+                opA = {I.A_SLOT: lambda: C.get(d.a_idx), I.A_SELF: lambda: S,
+                       I.A_CONST: lambda: K.get(d.a_idx, one)[None, :]}[d.a_op]()
+                A = F.rdot(S, opA)
+            Xb = X[lo:hi] if X is not None else None
+            if carried:
+                per = [scalar(A[i:i + 1], Xb[i:i + 1] if Xb is not None else None)
+                       for i in range(n)]
+                Dv, Gr, Br, Or = (np.concatenate([p[k] for p in per]) for k in range(4))
+            else:
+                Dv, Gr, Br, Or = (np.broadcast_to(v, (n,)).astype(np.float32)
+                                  for v in scalar(A, Xb))
+            G = {I.G_REG: lambda: Gr[:, None], I.G_SLOT: lambda: C.get(d.g_idx),
+                 I.G_CONST: lambda: K.get(d.g_idx, one)[None, :],
+                 I.G_ONE: lambda: one[None, :]}[d.g_src]() if uses_g else None
+            B = {I.B_SLOT: lambda: C.get(d.b_idx), I.B_CONST: lambda: K.get(d.b_idx, one)[None, :],
+                 I.B_REG: lambda: Br[:, None]}.get(d.b_src, lambda: None)() if uses_b else None
+            if uses_b and B is None:
+                raise SimError("STREAM: bad B source")
+            Y = {I.U_PASS: lambda: F.ftz(S), I.U_FMMA: lambda: F.outer(S, G, Dv[:, None], B),
+                 I.U_MUL: lambda: F.mul(S, G),
+                 I.U_ADD: lambda: F.add(S, F.mul(Dv[:, None], B))}[d.u_mode]()
+            O = (F.rdot(Y, Y if d.q_self else C[d.q_idx]) if d.q_en
+                 else Or if d.o_reg_en else None)
+            return (F.mul(Y, C[d.q_idx]) if d.out_p2 else Y), O
+
+        def load(lo, hi):
+            if zero:
+                return np.zeros((hi - lo, cols), np.float32)
+            if in_t:
+                return self.tget(sidx[lo:hi])
+            return self.m32[sidx[lo:hi]].view(np.float32)
+
+        def store(lo, hi, Y):
+            if nodst:
+                return
+            if out_t:
+                self.tput(didx[lo:hi], Y)
+            else:
+                self.m32[didx[lo:hi]] = F.f32(Y).view(np.uint32)
+
+        Os = []
+        for lo, hi in ([(i, i + 1) for i in range(rows)] if seq else [(0, rows)]):
+            Y, O = block(load(lo, hi), lo, hi)
+            store(lo, hi, Y)
+            Os.append(O)
+        if d.q_en or d.o_reg_en:
+            self.tput(out + np.arange(rows), np.concatenate(Os))
+        for j in range(4):
+            if d.rsave >> j & 1:
+                self.tput(np.array([ka + j * ks]), regs[4 + j][-1:])
 
     # ---------------------------------------------------------------- MXU
     def _mm(self, ins: I.Instr) -> None:

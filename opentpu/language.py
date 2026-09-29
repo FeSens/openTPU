@@ -213,8 +213,80 @@ def deltanet_step(state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile, o: 
 
 
 def has_dstep() -> bool:
-    """The DMA runs DSTEP (Config.DSTEP; CAPS bit7 on the card)."""
-    return current().cfg.DSTEP
+    """deltanet_step runs on the state in DRAM: the DMA's DSTEP (Config.DSTEP; CAPS bit6 on
+    the card) or the stream engine (Config.STREAM; CAPS bit26)."""
+    cfg = current().cfg
+    return cfg.DSTEP or cfg.STREAM
+
+
+def has_stream() -> bool:
+    """The stream engine runs STREAM's hardware subset (Config.STREAM; CAPS bit26)."""
+    return current().cfg.STREAM
+
+
+_DPROGS = {"delta": I.D_DELTA, "delta1": I.D_DELTA1, "scale": I.D_SCALE, "dot": I.D_DOT}
+
+
+def state_step(state: Tensor, vec: Tile, x: Tile | None, k0: Tile | None, k1: Tile,
+               o: Tile | None = None, mode: str = "delta", a_slot: int = 1,
+               gate: str = "const", zero: bool = False, tmp: Tile | None = None) -> None:
+    """One step of a linear recurrence on the fp32 state [rows, cols] in DRAM, updated in
+    place, row by row (docs/stream.md, 5.2). vec holds column slots of cols words: q (slot
+    0), k (1), a (2), the gate column (3), as many as are used. x [rows] holds the rows'
+    inputs, k0 and k1 are [1] tiles (k1 after k0 in TMEM; k0 may be None when unused):
+      A    = S[r] . slot[a_slot]                              (modes delta, delta1, dot)
+      d    = delta: (x[r] - A*k0)*k1 | delta1: (x[r] - A)*k1 | scale: x[r]*k1 | dot: A*k1
+      S[r] = S[r]*G + d*k,  G = k0 ("const"), slot 3 ("col") or 1 ("one")
+      o[r] = S[r] . q                                         (when o is given)
+    Gated DeltaNet is mode "delta" with gate "const"; DeltaNet "delta1"/"one"; KDA "delta1"
+    with a = alpha*k in slot 2 and gate "col"; GLA "scale"/"col"; RetNet, Mamba2 and mLSTM
+    "scale"/"const". On a Config.STREAM machine it is one STREAM; otherwise the same rounding
+    as VOPs on the loaded state (in `tmp`, [rows, cols], or a new tile). `zero`: the state
+    starts at +0."""
+    b = current()
+    rows, cols = state.shape
+    if mode not in _DPROGS or gate not in ("const", "col", "one") or a_slot not in (1, 2):
+        raise CompileError("state_step: mode delta/delta1/scale/dot, gate const/col/one, "
+                           "a_slot 1 or 2")
+    uses_a = mode != "scale"
+    if (mode == "delta" or gate == "const") and k0 is None:
+        raise CompileError(f"state_step: mode {mode} with gate {gate} needs k0")
+    if k0 is not None and k1.base - k0.base <= 0:
+        raise CompileError("state_step: k1 must follow k0 in TMEM")
+    ks = 1 if k0 is None else k1.base - k0.base
+    nslot = builtins.max(1, a_slot if uses_a else 0, 3 if gate == "col" else 0) + 1
+    if not isinstance(vec, Tile) or vec.cols < nslot * cols:
+        raise CompileError(f"state_step: vec must hold {nslot} slots of {cols} words")
+    if mode != "dot" and (x is None or x.cols != rows):
+        raise CompileError(f"state_step: x must be a [{rows}] tile")
+    d = I.state_desc(rows, cols, _DPROGS[mode], a_slot, gate, q=o is not None)
+    if b.cfg.STREAM and I.stream_hw_cfg(d) is not None:
+        # without k0 (never read), K0's word is the one before k1 (ks = 1)
+        b.stream(d, state, vec, x, k1 if k0 is None else k0, o, zero, ks=ks,
+                 k_off=-1 if k0 is None else 0)
+        return
+    slot = [vec[i * cols:(i + 1) * cols] for i in builtins.range(4) if (i + 1) * cols <= vec.cols]
+    St = empty([rows * cols]).reshape(rows, cols) if tmp is None else tmp
+    if zero:
+        St.set(0.0)
+    else:
+        load(state, out=St)
+    w = empty([rows])
+    if uses_a:
+        w.set(St @ slot[a_slot])
+    if mode == "delta":
+        w.set((x - w * k0) * k1)
+    elif mode == "delta1":
+        w.set((x - w) * k1)
+    elif mode == "scale":
+        w.set(x * k1)
+    else:
+        w.set(w * k1)
+    outer(w, slot[1], acc=St, decay={"const": k0, "col": slot[3] if gate == "col" else None,
+                                     "one": None}[gate])
+    if o is not None:
+        o.set(St @ slot[0])
+    store(state, St)
 
 
 # ---- control

@@ -40,7 +40,7 @@ class FakeTransport:
                  trace_drop: int = 0, D: int = 128, MCOLS: int = 2, LANES: int = 8,
                  i2c: list | None = None, ddr_mts: int | None = None,
                  w4: bool = True, pair: bool = False, dstep: bool = False,
-                 args: bool = False):
+                 args: bool = False, stream: bool = False):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.v, self.devname, self.dev = regmap, devname, devname and f"/dev/{devname}"
         self.run_s, self.cycles_per_run = run_s, cycles
@@ -54,6 +54,7 @@ class FakeTransport:
         self.pair = pair                # CAPS bit5: MM PAIR / QACT DUP
         self.dstep = dstep              # CAPS bit6: DSTEP
         self.args = args                # CAPS bit25: ARG0..7 (R_ARG0 + 4k, read back)
+        self.stream = stream            # CAPS bit26: the stream engine
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
                      R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0, R.R_I2C_CTRL: 0}
         self.count = {k: 0 for k in R.counters(regmap)}
@@ -166,6 +167,7 @@ class FakeTransport:
                     | (R.CAP_DDR if self.ddr_mts else 0) | (R.CAP_W4 if self.w4 else 0)
                     | (R.CAP_PAIR if self.pair else 0)
                     | (R.CAP_DSTEP if self.dstep else 0) | (R.CAP_ARGS if self.args else 0)
+                    | (R.CAP_STREAM if self.stream else 0)
                     | self.trace_log2 << 8 | 6 << 16)
         if off == R.R_CORE_KHZ:
             return self.core_khz

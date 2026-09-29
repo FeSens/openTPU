@@ -266,7 +266,7 @@ def main():
             return r.portb * D + r.porta * 4
         if r.op in (I.LD, I.ST):
             return 4 * progs[0][r.pc].w[2]
-        if r.op == I.DSTEP:
+        if r.op in (I.DSTEP, I.STREAM):
             return r.portb * D
         return r.porta if r.op == I.QST else 0
 
