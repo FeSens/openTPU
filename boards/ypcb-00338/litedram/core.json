@@ -38,7 +38,7 @@
  },
  "generated": "2026-09-29",
  "sha256": {
-  "otpu_litedram.v": "d9f3505e64c20252545d2bdd97c23c933c0a05b0c6600a65d7b49fc4d55c607f",
+  "otpu_litedram.v": "0f85719e12c18ebb2120c8fe4bb0169d0f7feb584b423d404e1bcbe4b7bdeb72",
   "otpu_litedram.xdc": "91991c2b6b41b9d98579d8b9515b634cdb9028a51dfa6f2e6ab608772a1b122e",
   "otpu_litedram_mem.init": "3539495b12fca557dbbe9fb3252bbb64acfe31c06f69ef5a810ac76b70da5cc5"
  },

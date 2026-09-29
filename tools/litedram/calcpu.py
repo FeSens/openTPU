@@ -82,7 +82,11 @@ class SelfCal(LiteXModule):
         mem = Memory(32, words, init=list(firmware) if firmware is not None else None,
                      name="selfcal_mem")
         ip = mem.get_port()
-        dp = mem.get_port(write_capable=True, we_granularity=8)
+        # READ_FIRST: a registered read (LiteX writes a byte-writable WRITE_FIRST port as an
+        # asynchronous read of a registered address, which synthesis maps to a block RAM whose
+        # collisions differ from the RTL: Synth 8-6430, which build.tcl stops on). The CPU never
+        # reads the word it writes in the same cycle, so the mode is not seen.
+        dp = mem.get_port(write_capable=True, we_granularity=8, mode=READ_FIRST)
         mbox = Memory(32, MBOX_WORDS, name="selfcal_mbox")
         mw = mbox.get_port(write_capable=True)
         mr = mbox.get_port()
