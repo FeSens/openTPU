@@ -1,5 +1,6 @@
 // Board-level simulation: otpu_board (control registers, slice, DRAM adapter) in front of the
-// two-channel AXI memory model holding the channels' physical images (ch0.bin, ch1.bin), driven
+// two-channel AXI memory model holding the channels' physical images (ch0.bin, ch1.bin) -- with
+// MEM_NATIVE, the native adapter in front of the native memory model (otpu_native_mem) -- driven
 // by a host script (+dir=<d>, <d>/host.txt) -- the same register and memory protocol the PCIe
 // host driver uses (opentpu/host/board.py). Script lines:
 //   W <addr> <value>          AXI-Lite write
@@ -32,6 +33,7 @@ module tb_board;
   parameter int AXI_BL     = 8;
   parameter int AXI_WBL    = 8;
   parameter bit DSTEP      = 1'b1;
+  parameter bit MEM_NATIVE = 1'b0;         // otpu_board's native memory path (otpu_native_mem)
   parameter logic [11:0] TEMP = 12'hA1A;  // the XADC code of 45 C
 
   logic clk = 1'b0, rst = 1'b1, dump = 1'b0;
@@ -58,6 +60,12 @@ module tb_board;
   logic [1:0] unused2 [4];
   logic [3:0] unused4 [12];
   logic       unusedl [6];
+  // native channels
+  logic [1:0] ncv, ncr, ncwe, nwv, nwr, nrv;
+  logic [1:0][24:0] nca;
+  logic [1:0][511:0] nwd, nrd;
+  logic [1:0][63:0] nwm;
+  logic [1:0][15:0] nwdone;
 
   // I2C: wired AND of the board's drive-low bits and the outside's holds, pulled up
   logic [3:0] i2c_lo;
@@ -67,7 +75,8 @@ module tb_board;
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
                .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
-               .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .DSTEP(DSTEP)) dut (
+               .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .DSTEP(DSTEP),
+               .MEM_NATIVE(MEM_NATIVE)) dut (
     .clk, .rst, .calib(2'b11), .temp(TEMP), .led,
     .i2c_lo, .i2c_pin(~({1'b0, i2c_lo} | i2c_hold)),
     .s_ctl_awaddr(awaddr), .s_ctl_awvalid(awvalid), .s_ctl_awready(awready),
@@ -98,16 +107,28 @@ module tb_board;
     .m1_axi_arlock(unusedl[5]), .m1_axi_arcache(unused4[6]), .m1_axi_arprot(unused3[7]),
     .m1_axi_arqos(unused4[7]), .m1_axi_arvalid(arv[1]), .m1_axi_arready(arr[1]),
     .m1_axi_rid(ri[1]), .m1_axi_rdata(rd[1]), .m1_axi_rresp(rre[1]), .m1_axi_rlast(rl[1]),
-    .m1_axi_rvalid(rv[1]), .m1_axi_rready(rr[1]));
+    .m1_axi_rvalid(rv[1]), .m1_axi_rready(rr[1]),
+    .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv), .n_wready(nwr),
+    .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd), .n_wdone(nwdone));
 
-  otpu_axi_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (
-    .clk, .rst,
-    .s_awvalid(awv), .s_awready(awr), .s_awaddr(awa), .s_awid(awi), .s_awlen(awl),
-    .s_wvalid(wv), .s_wready(wr), .s_wdata(wd), .s_wstrb(ws), .s_wlast(wl),
-    .s_bvalid(bv), .s_bready(br), .s_bid(bi), .s_bresp(bre),
-    .s_arvalid(arv), .s_arready(arr), .s_araddr(ara), .s_arlen(arl), .s_arid(ari),
-    .s_rvalid(rv), .s_rready(rr), .s_rid(ri), .s_rdata(rd), .s_rresp(rre), .s_rlast(rl),
-    .dump);
+  if (MEM_NATIVE) begin : g_native
+    otpu_native_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (
+      .clk, .rst,
+      .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv),
+      .n_wready(nwr), .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd),
+      .n_wdone(nwdone), .dump);
+    assign {awr, wr, bv, bi, bre, arr, rv, ri, rd, rre, rl} = '0;
+  end else begin : g_axi
+    otpu_axi_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (
+      .clk, .rst,
+      .s_awvalid(awv), .s_awready(awr), .s_awaddr(awa), .s_awid(awi), .s_awlen(awl),
+      .s_wvalid(wv), .s_wready(wr), .s_wdata(wd), .s_wstrb(ws), .s_wlast(wl),
+      .s_bvalid(bv), .s_bready(br), .s_bid(bi), .s_bresp(bre),
+      .s_arvalid(arv), .s_arready(arr), .s_araddr(ara), .s_arlen(arl), .s_arid(ari),
+      .s_rvalid(rv), .s_rready(rr), .s_rid(ri), .s_rdata(rd), .s_rresp(rre), .s_rlast(rl),
+      .dump);
+    assign {ncr, nwr, nrv, nrd, nwdone} = '0;
+  end
 
   longint cyc = 0;
   always @(posedge clk) cyc <= cyc + 1;

@@ -16,8 +16,8 @@ BUILD = ROOT / "build" / "verilator"
 
 RTL_SOURCES = [
     "vpu/otpu_fp.sv", "vpu/otpu_fpipe.sv", "top/otpu_pkg.sv", "mem/otpu_dram.sv", "mem/otpu_tmem.sv",
-    "mem/otpu_axi_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv", "vpu/otpu_vtree.sv",
-    "dma/otpu_dstep.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv",
+    "mem/otpu_axi_dram.sv", "mem/otpu_native_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv",
+    "vpu/otpu_vtree.sv", "dma/otpu_dstep.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv",
     "vpu/otpu_quant.sv", "vpu/otpu_vpu.sv", "top/otpu_coll.sv", "top/otpu_slice.sv",
     "top/otpu_top.sv",
 ]
@@ -130,8 +130,12 @@ if os.environ.get("OTPU_ULANES"):
 # random stalls (percent) and latency (D = 128 only; other configurations keep the behavioural
 # DRAM). BOOT: the program is placed in DRAM and copied into IMEM by the slice's loader, as on
 # the board. The environment (OTPU_AXI=1, OTPU_BOOT=1, OTPU_STALL=n) sets the defaults, so the
-# whole suite can be run on the board's memory path.
+# whole suite can be run on the board's memory path. NATIVE (OTPU_NATIVE=1): that memory path is
+# the native one wherever it is used -- the AXI runs here (the adapter otpu_native_dram and the
+# native memory model sim/verilator/otpu_native_mem.sv, which takes the same +axi_* arguments
+# except the per-transaction costs) and the board model (tb_board with MEM_NATIVE=1).
 MEMORY = {"AXI": os.environ.get("OTPU_AXI", "0") == "1",
+          "NATIVE": os.environ.get("OTPU_NATIVE", "0") == "1",
           "BOOT": os.environ.get("OTPU_BOOT", "0") == "1",
           "STALL": int(os.environ.get("OTPU_STALL", "20")),
           "SEED": int(os.environ.get("OTPU_SEED", "1")),
@@ -141,23 +145,24 @@ MEMORY = {"AXI": os.environ.get("OTPU_AXI", "0") == "1",
 
 
 def top_params(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = False,
-               dram_bytes: int | None = None) -> dict:
+               dram_bytes: int | None = None, native: bool = False) -> dict:
     p = {"S": cfg.S, "D": cfg.D, "MCOLS": cfg.MCOLS, "ACT_BLOCKS": cfg.ACT_BLOCKS,
          "ACT_ROWS": cfg.act_rows,
          "TMEM_WORDS": cfg.TMEM_WORDS, "IMEM_WORDS": cfg.IMEM_WORDS,
          "DRAM_WORDS": (dram_bytes or cfg.DRAM_BYTES) // 4, "DRAM_LAT": dram_lat,
          "LANES": cfg.LANES,
-         "AXI": int(axi)}
+         "AXI": (2 if native else 1) if axi else 0}      # otpu_top's memory path
     p.update(UARCH)
     p.update(uarch or {})
     return p
 
 
 def build_top(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = False,
-              dram_bytes: int | None = None) -> Path:
+              dram_bytes: int | None = None, native: bool = False) -> Path:
     return build("tb_top", [RTL / s for s in RTL_SOURCES] +
-                 [TB / "otpu_axi_mem.sv", TB / "tb_top.sv"],
-                 top_params(cfg, dram_lat, uarch, axi, dram_bytes))
+                 [TB / "otpu_axi_mem.sv"] + ([TB / "otpu_native_mem.sv"] if native and axi else [])
+                 + [TB / "tb_top.sv"],
+                 top_params(cfg, dram_lat, uarch, axi, dram_bytes, native))
 
 
 def run(cfg, programs: list, images: list, *args, keep: Path | None = None, **kw):
@@ -174,13 +179,16 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         keep: Path | None = None, trace: bool = False, uarch: dict | None = None,
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
         seed: int | None = None, bw: int | None = None, lat: int | None = None,
-        arc: int | None = None, plusargs: list | None = None, args=None):
+        arc: int | None = None, plusargs: list | None = None, args=None,
+        native: bool | None = None):
     """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats). args: the
-    run's arguments (R8..R15 at the start, as isasim.Machine)."""
+    run's arguments (R8..R15 at the start, as isasim.Machine). native: the AXI memory path is
+    the native one (default MEMORY["NATIVE"])."""
     from . import isa as I
     run_args = args
     axi = MEMORY["AXI"] if axi is None else axi
     axi = axi and cfg.D == 128
+    native = MEMORY["NATIVE"] if native is None else native
     boot = MEMORY["BOOT"] if boot is None else boot
     stall = MEMORY["STALL"] if stall is None else stall
     seed = MEMORY["SEED"] if seed is None else seed
@@ -202,7 +210,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     if grow:
         at = cfg.DRAM_BYTES
     exe = build_top(cfg, 20 if axi else dram_lat, uarch, axi,
-                    2 * cfg.DRAM_BYTES if grow else None)
+                    2 * cfg.DRAM_BYTES if grow else None, native)
     for s in range(cfg.S):
         img = imgs[s]
         if boot:
@@ -241,7 +249,23 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
             drams[s][at:at + 4 * len(progs[s])] = 0
     tmems = [_read_hex(tmp / f"tmem_{s}.hex", cfg.TMEM_WORDS) for s in range(cfg.S)]
     stats = {"cycles": cycles, "instructions": icounts}
-    if axi:                            # per channel: AXI read / write transactions and beats
+    if axi and native:
+        # per channel: the model's reads, writes, row opens and partial writes, and the adapter's
+        # counters; in the AXI runs' terms (a native command is one beat): reads and writes as
+        # (commands, beats), and as ID 1 reads the A runs and SW fill reads, as ID 1 partial
+        # writes (rmw_a) the A and SW writes with a partial byte mask
+        mem = [dict(zip(("rd", "wr", "row_miss", "rmw"), map(int, m))) for m in
+               re.findall(r"MEM ch\d rd=(\d+) wr=(\d+) row_miss=(\d+) rmw=(\d+)", out)]
+        nat = [dict(kv.split("=") for kv in m.split()) for m in
+               re.findall(r"NATIVE ch\d (.*)", out)]
+        nat = [{k: int(v) for k, v in d.items()} for d in nat]
+        stats["native"] = nat
+        stats["axi_reads"] = [(m["rd"], m["rd"]) for m in mem]
+        stats["axi_writes"] = [(m["wr"], m["wr"]) for m in mem]
+        stats["axi_detail"] = [{"ar_a": n["a_runs"] + n["sw_rd"], "row_miss": m["row_miss"],
+                                "rmw": m["rmw"], "rmw_a": n["part_a"] + n["part_sw"]}
+                               for m, n in zip(mem, nat)]
+    elif axi:                          # per channel: AXI read / write transactions and beats
         stats["axi_reads"] = [(int(a), int(b)) for a, b in
                               re.findall(r"AXI ch\d ar=(\d+) beats=(\d+)", out)]
         stats["axi_writes"] = [(int(a), int(b)) for a, b in

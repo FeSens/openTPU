@@ -18,7 +18,7 @@ module tb_top;
   parameter int MXU_CL     = 16;
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1;
   parameter int ULANES     = LANES;
-  parameter int AXI        = 0;
+  parameter int AXI        = 0;       // otpu_top's memory path (2: native)
   parameter int FIFO_DEPTH = 128;
   parameter int AXI_BL     = 8;
   parameter int AXI_WBL    = 8;

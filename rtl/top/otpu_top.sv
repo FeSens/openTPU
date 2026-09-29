@@ -1,7 +1,9 @@
 // openTPU: S slices, each with its own DRAM, plus the collective unit (simulation top).
 // AXI = 0: the behavioural fixed-latency DRAM. AXI = 1: the board's memory path -- the AXI
 // adapter (otpu_axi_dram) in front of a two-channel AXI memory model with random stalls and
-// latency (sim/verilator/otpu_axi_mem.sv; requires D = 128).
+// latency (sim/verilator/otpu_axi_mem.sv; requires D = 128). AXI = 2: the native memory path --
+// the native adapter (otpu_native_dram) in front of a two-channel native memory model
+// (sim/verilator/otpu_native_mem.sv; requires D = 128); the dump prints the adapter's counters.
 module otpu_top
   import otpu_pkg::*;
 #(
@@ -23,7 +25,7 @@ module otpu_top
   parameter int MXU_CL     = 16,
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer
-  parameter int AXI        = 0,
+  parameter int AXI        = 0,       // memory path: see the top
   parameter int AXI_BL     = 8,       // AXI adapter: port B read burst, beats (timing only)
   parameter int AXI_WBL    = 8        // AXI adapter: port B write burst, beats (timing only)
 ) (
@@ -70,6 +72,36 @@ module otpu_top
         .clk, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
         .sw_req, .sw_addr, .sw_wdata, .sw_be,
         .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata, .dump);
+    end else if (AXI == 2) begin : g_native
+      logic [1:0] cvalid, cready, cwe, wvalid, wready, rvalid;
+      logic [1:0][24:0] caddr;
+      logic [1:0][511:0] wdata, rdata;
+      logic [1:0][63:0] wmask;
+      logic [1:0][15:0] wdone;
+      otpu_native_dram #(.D(D)) u_adapt (
+        .clk, .rst(sys_rst),
+        .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+        .a_be_x(a_be), .a_rvalid, .a_rdata, .a_rdata2,
+        .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
+        .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
+        .wr_idle,
+        .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
+        .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
+        .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone));
+      otpu_native_mem #(.WORDS(DRAM_WORDS), .LAT(DRAM_LAT), .SID(s)) u_mem (
+        .clk, .rst(sys_rst),
+        .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
+        .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
+        .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone), .dump);
+      // the adapter's counters (rtlsim: A runs and fill reads, the partial writes by source)
+      always @(posedge clk) if (dump)
+        for (int c = 0; c < 2; c++) begin
+          $write("NATIVE ch%0d a_runs=%0d a_rd=%0d b_rd=%0d sw_rd=%0d ", c, u_adapt.st_arun[c],
+                 u_adapt.st_ard[c], u_adapt.st_brd[c], u_adapt.st_srd[c]);
+          $display("b_wr=%0d a_wr=%0d sw_wr=%0d part_b=%0d part_a=%0d part_sw=%0d",
+                   u_adapt.st_bwr[c], u_adapt.st_awr[c], u_adapt.st_swr[c], u_adapt.st_pb[c],
+                   u_adapt.st_pa[c], u_adapt.st_ps[c]);
+        end
     end else begin : g_axi
       logic [1:0] awvalid, awready, awid, wvalid, wready, bvalid, bready, bid;
       logic [1:0] arvalid, arready, arid, rvalid, rready, rid, rlast;

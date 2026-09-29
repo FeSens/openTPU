@@ -103,6 +103,19 @@ def test_program_on_board_model(have_verilator):
     assert st["b_reads"] > 0 and st["a_writes"] > 0 and st["cycles"] > 0
 
 
+@pytest.mark.parametrize("seed", [3, 4])
+def test_program_on_native_board_model(have_verilator, seed):
+    """The same on the board model's native memory path (MEM_NATIVE: otpu_native_dram in front of
+    the native memory model), whatever OTPU_NATIVE says; and the partial writes."""
+    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=seed, native=True))
+    ok, msg, st = run_demo(b, CFG)
+    assert ok, msg
+    assert st["b_reads"] > 0 and st["a_writes"] > 0 and st["cycles"] > 0
+    ok, msg, st = run_demo(b, CFG, masked_program())
+    assert ok, msg
+    assert st["a_writes"] > 500 and st["b_writes"] > 20
+
+
 def test_partial_dram_writes_on_board_model(have_verilator):
     """QST byte writes and short word-masked stores (read-modify-writes in the board's memory
     controllers, which have no DDR3 data-mask pins)."""

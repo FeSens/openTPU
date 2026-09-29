@@ -153,7 +153,9 @@ module otpu_fpga_top #(
     .s_ctl_arready(ctl_arready), .s_ctl_rdata(ctl_rdata), .s_ctl_rresp(ctl_rresp),
     .s_ctl_rvalid(ctl_rvalid), .s_ctl_rready(ctl_rready),
     `OTPU_AXI(m0_axi, m0, s0),
-    `OTPU_AXI(m1_axi, m1, s1)
+    `OTPU_AXI(m1_axi, m1, s1),
+    .n_cvalid(), .n_cready('0), .n_cwe(), .n_caddr(), .n_wvalid(), .n_wready('0), .n_wdata(),
+    .n_wmask(), .n_rvalid('0), .n_rdata('0), .n_wdone('0)   // the native ports: not built yet
   );
 
   // LEDs (polarity unverified on this card): led[0] red = heartbeat, led[1] green = PCIe link
