@@ -307,7 +307,6 @@ class LDTest(SoCCore):
         wb = wishbone.Interface(data_width=32, address_width=32, addressing="word")
         self.axil2wb = AXILite2Wishbone(axil_s, wb)
         self.bus.add_master(name="pcie", master=wb)
-        platform.add_false_path_constraints(self.crg.cd_sys.clk, self.cd_xdma.clk)
 
         # link LED: green = PCIe link up, yellow = sys MMCM locked, red = blink (sys alive)
         blink = Signal(27)
@@ -318,23 +317,29 @@ class LDTest(SoCCore):
 
         # XDMA IP (created in the Vivado run) and the GT channel LOCs of the production design
         # (constraints/otpu_top.xdc), in an XDC read LATE so they override the IP's own
-        cmds = [
+        # XDMA is created and synthesized with the design. After synthesis, before placement,
+        # its GT channels move to the card's lanes (lane i on GTXE2_CHANNEL_X0Y(23 - i), as
+        # constraints/otpu_top.xdc: the IP's own XDC puts them one quad lower) -- all eight
+        # cleared first, since a lane's new site may be another lane's old one -- and the BAR0
+        # crossing's clocks are declared asynchronous (the AXI-Lite CDC's FIFOs cross them).
+        gt = "[get_cells -hier -filter {NAME =~ *pipe_lane[%d].gt_wrapper_i/gtx_channel.gtxe2_channel_i}]"
+        pre_synth = [
             f"source {{{xdma_tcl}}}",
             "file mkdir ip",
             "otpu_xdma_ip [pwd]/ip",
             "generate_target all [get_ips xdma_0]",
-            "synth_ip [get_ips xdma_0] -force",
-            "set fh [open gt_loc.xdc w]",
-        ] + ["puts $fh {set_property LOC GTXE2_CHANNEL_X0Y%d [get_cells -hier -filter "
-             "{NAME =~ *pipe_lane[%d].gt_wrapper_i/gtx_channel.gtxe2_channel_i}]}" % (23 - i, i)
-             for i in range(8)] + [
-            "close $fh",
-            "read_xdc gt_loc.xdc",
-            "set_property PROCESSING_ORDER LATE [get_files gt_loc.xdc]",
+            "synth_ip [get_ips xdma_0] -force",     # flagged in project mode, but links the IP
+        ]
+        pre_place = ["reset_property LOC " + gt % i for i in range(8)] + \
+            ["set_property LOC GTXE2_CHANNEL_X0Y%d " % (23 - i) + gt % i for i in range(8)] + [
+            "set_clock_groups -asynchronous -group [get_clocks -of_objects [get_pins xdma_0/axi_aclk]]"
+            " -group [get_clocks -of_objects [get_nets sys_clk]]",
+            "report_property [lindex " + gt % 0 + " 0] LOC",
         ]
         # (LiteX formats these commands: braces doubled)
-        platform.toolchain.pre_synthesis_commands += [
-            c.replace("{", "{{").replace("}", "}}") for c in cmds]
+        esc = lambda cs: [c.replace("{", "{{").replace("}", "}}") for c in cs]
+        platform.toolchain.pre_synthesis_commands += esc(pre_synth)
+        platform.toolchain.pre_placement_commands += esc(pre_place)
         platform.add_platform_command("set_property PULLUP true [get_ports {{pcie_x8_rst_n}}]")
         platform.add_platform_command("set_false_path -from [get_ports {{pcie_x8_rst_n}}]")
         # configuration as the production image (BPI x16 flash, 1.8 V configuration banks)
@@ -365,7 +370,10 @@ def main():
     soc = LDTest(a.sys_mhz * 1e6, a.dqs_phase, xdma_tcl="xdma_ip.tcl")
     b = Builder(soc, output_dir=str(out), compile_software=False, compile_gateware=False,
                 csr_csv=str(out / "csr.csv"))
-    b.build(build_name="ld_test")
+    b.build(build_name="ld_test", vivado_place_directive="Explore",
+            vivado_post_place_phys_opt_directive="AggressiveExplore",
+            vivado_route_directive="Explore",
+            vivado_post_route_phys_opt_directive="AggressiveExplore")
     # the host's calibration inputs
     ps = soc.ddrphy.settings
     hdr = get_sdram_phy_py_header(ps, soc.sdram.controller.settings.timing)
