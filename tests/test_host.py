@@ -1672,16 +1672,18 @@ def test_xdma_transport_locks_before_opening(tmp_path, monkeypatch):
 
 
 def test_xdma_transport_maps_the_memcal_window(tmp_path):
-    """BAR0 is mapped through the LiteDRAM CSR window (R_MEMCAL, 64 KiB): memcal reaches the
-    controllers' CSRs by reg_read / reg_write at R_MEMCAL + a, which a map of the control
-    registers' 4 KiB alone turned into an IndexError. A file of BAR0's size (1 MiB) stands in
-    for /dev/xdma0_user."""
+    """BAR0 is mapped through the LiteDRAM CSR window (R_MEMCAL, 64 KiB) and the XADC's
+    (0x30000): memcal reaches the controllers' CSRs by reg_read / reg_write at R_MEMCAL + a,
+    which a map of the control registers' 4 KiB alone turned into an IndexError. A file of
+    BAR0's size (1 MiB) stands in for /dev/xdma0_user."""
     from opentpu.host.board import XdmaTransport
     (tmp_path / "xdmaT_user").write_bytes(bytes(1 << 20))
     t = XdmaTransport(str(tmp_path / "xdmaT"), dma=False)
     try:
         t.reg_write(R.R_MEMCAL + 0xFFFC, 0x12345678)
+        t.reg_write(0x3FFFC, 0x9ABCDEF0)
         assert t.reg_read(R.R_MEMCAL + 0xFFFC) == 0x12345678 and t.reg_read(R.R_MEMCAL) == 0
+        assert t.reg_read(0x3FFFC) == 0x9ABCDEF0
     finally:
         t.close()
 
