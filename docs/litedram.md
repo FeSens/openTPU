@@ -634,5 +634,20 @@ The temperature run rescans every 5 minutes and logs each group's run.
   channel 1's at X0Y0, each among the other channel's banks. `--mmcm-locs` now places them in
   their own regions: X0Y2 (bank 13) and X0Y6 (bank 17, the command bank). XDMA's MMCM is at X0Y1,
   the `sys` MMCM at X0Y4, the PLL at X0Y1. All the PHY clocks leave through BUFGs.
+- **CK shifted, MMCMs placed (5cc8986, the card image `ldtest3`):** the same Verilog plus the two
+  LOCs. WNS +0.096 ns, WHS +0.032 ns, all constraints met. ldmmcm0 is at X0Y2 and ldmmcm1 at X0Y6.
+  The placer then moved the `sys` MMCM to X0Y5 and the PLL to X0Y7; XDMA's MMCM stays at X0Y1.
+  The crossings, **measured** as above:
+
+  | crossing | setup slack | hold slack | uncertainty |
+  |---|---|---|---|
+  | sys -> sysc0 | +0.096 ns | +2.191 ns | 1.248 ns |
+  | sysc0 -> sys | +0.530 ns | +2.586 ns | 1.253 ns |
+  | sys -> sysw0 | +1.701 ns | +0.081 ns | 0.248 ns |
+  | sys -> sysc1 | +0.224 ns | +1.955 ns | 1.248 ns |
+  | sysc1 -> sys | +0.492 ns | +2.578 ns | 1.253 ns |
+  | sys -> sysw1 | +1.358 ns | +0.101 ns | 0.248 ns |
+
+  Bitstream md5: 1ae9ef50d2ddec89f3282e29104178bf.
 
 **Status:** built from `litedram-int`; results below when measured.
