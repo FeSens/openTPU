@@ -8,7 +8,8 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
   1 link       the control registers answer (ID register)
   2 config     the bitstream's VERSION (D / MCOLS / LANES) gives the host configuration
                (opentpu.host.board.device_config); OTPU_MCOLS / OTPU_LANES, when set, must agree
-  3 calib      both DDR3 controllers report calibration done
+  3 calib      both DDR3 controllers report calibration done (a LiteDRAM bitstream's, CAPS
+               bit27, calibrated by the host first: memcal, as Board does when it opens)
      scrub      zeros over the whole DRAM once per configuration (Board.scrub): with ECC, a read
                of a beat never written since power-up hangs
   4 regs       SCRATCH register write / read
@@ -39,6 +40,7 @@ import sys
 import time
 import traceback
 
+from opentpu.host import memcal
 from opentpu.host.runstate import busy_exits
 from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST_CALIB0,
                                 ST_CALIB1, Board, SimTransport, XdmaTransport, device_config)
@@ -53,9 +55,11 @@ HINTS = {
     "config": "The host follows the bitstream's VERSION register: unset OTPU_MCOLS / "
               "OTPU_LANES, or load the bitstream built for them (docs/board.md, which bitstream "
               "to load). D must be 128.",
-    "calib": "A DDR3 controller did not calibrate: check the MIG pinout / clocking in the "
-             "bitstream (docs/board.md) and the memory voltage; STATUS bit5 = channel 0, "
-             "bit6 = channel 1.",
+    "calib": "A DDR3 controller did not calibrate. MIG bitstreams: check the MIG pinout / "
+             "clocking in the bitstream (docs/board.md) and the memory voltage. LiteDRAM "
+             "bitstreams (CAPS bit27): the host calibrates them (otpu-memcal cal --force "
+             "redoes it, otpu-memcal shows the last result; docs/litedram.md). STATUS bit5 = "
+             "channel 0, bit6 = channel 1.",
     "scrub": "Writing the DRAM failed or timed out: DMA host->card is broken (dmesg: XDMA "
              "errors); try the driver in poll mode (sudo otpu-setup --poll).",
     "regs": "Register writes do not stick: the AXI-Lite path (XDMA BAR0 -> otpu_ctrl) is "
@@ -153,13 +157,22 @@ def main(argv=None) -> int:
         return True, msg
 
     def calib():
+        # a host-calibrated bitstream (LiteDRAM): the channels not calibrated since configuration
+        # first (the Board above opens without check, so it has not; a ddrcal.CalError fails
+        # the stage)
+        how = ""
+        if memcal.hostcal(t):
+            t0 = time.time()
+            res = memcal.ensure(t, log=lambda m: print(f"         {m}", flush=True))
+            how = (f" (host calibration: channel {', '.join(map(str, res['channels']))} in "
+                   f"{time.time() - t0:.1f}s)" if res else " (host calibration: done before)")
         deadline = time.time() + (0 if a.sim else 5)
         while True:
             st = t.reg_read(R_STATUS)
             c0, c1 = bool(st & ST_CALIB0), bool(st & ST_CALIB1)
             if (c0 and c1) or time.time() > deadline:
                 return c0 and c1, f"channel 0 {'ok' if c0 else 'NOT calibrated'}, " \
-                                  f"channel 1 {'ok' if c1 else 'NOT calibrated'}"
+                                  f"channel 1 {'ok' if c1 else 'NOT calibrated'}{how}"
             time.sleep(0.1)
 
     def scrub():
