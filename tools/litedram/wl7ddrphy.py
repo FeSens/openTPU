@@ -122,15 +122,38 @@ class WL7DDRPHY(Module, AutoCSR):
                                           i_C=ClockSignal("sys"), i_CE=1, i_R=0, i_D=x[i], o_Q=r[i])
             return r
 
+        def serdes_rst(x, clk):
+            """x registered again in the serializers' CLKDIV domain, one register per group of
+            serializers (a lane, or eight command pads). A SERDES retimes its reset's
+            deassertion to the first CLK edge after it arrives, so the serializers of one word
+            must all see it within the same sys4x period (1.875 ns). One net from sys reached
+            them up to 5.3 ns after the edge, and one DQ bit per channel came out of reset a CLK
+            later than the rest of its lane: a tCK off, the lane dead at every phase (ldtest3:
+            ch0 dq61, ch1 dq65). The build constrains these registers to their SERDES
+            (constraints()); DONT_TOUCH keeps synthesis from merging the copies."""
+            r = Signal()
+            self.specials += Instance("FDRE", name="wlrst", p_INIT=1, i_C=ClockSignal(clk),
+                                      i_CE=1, i_R=0, i_D=x, o_Q=r, attr={("DONT_TOUCH", "TRUE")})
+            return r
+
         sys_rst = ResetSignal("sys") | self._rst.storage
-        ck_rst = nreg(sys_rst)                  # the command serializers' reset (one bank)
-        rd_rst = [nreg(sys_rst) for _ in range(strobes)]    # the read deserializers', per lane
+        ck_rst_n = nreg(sys_rst)                # to the shifted domain, then one per 8 pads
+        ck_rsts = []
+
+        def ck_rst():
+            if len(ck_rsts) % 8 == 0:
+                ck_rsts.append(serdes_rst(ck_rst_n, "sys_ck"))
+            else:
+                ck_rsts.append(ck_rsts[-1])
+            return ck_rsts[-1]
+        rd_rst = [serdes_rst(nreg(sys_rst), "sys_ck") for _ in range(strobes)]   # per lane
+        wr_rst = [serdes_rst(sys_rst, "sys_w") for _ in range(strobes)]          # per lane
 
         # Clock ---------------------------------------------------------------------------------
         for i in range(len(pads.clk_p)):
             clk_o = Signal()
             self.specials += oserdes([(0b10101010 >> n) & 1 for n in range(8)],
-                                     ClockSignal("sys4x_ck"), ClockSignal("sys_ck"), ck_rst, clk_o)
+                                     ClockSignal("sys4x_ck"), ClockSignal("sys_ck"), ck_rst(), clk_o)
             self.specials += Instance("OBUFDS", i_I=clk_o, o_O=pads.clk_p[i], o_OB=pads.clk_n[i])
 
         # Commands ------------------------------------------------------------------------------
@@ -145,7 +168,7 @@ class WL7DDRPHY(Module, AutoCSR):
             for i in range(len(pad)):
                 self.specials += oserdes(nreg(Cat(*[getattr(dfi.phases[n // 2], dfi_name)[i]
                                                     for n in range(8)])),
-                                         ClockSignal("sys4x_ck"), ClockSignal("sys_ck"), ck_rst, pad[i])
+                                         ClockSignal("sys4x_ck"), ClockSignal("sys_ck"), ck_rst(), pad[i])
         self.comb += pads.ba.eq(pads_ba)
 
         # DQS -----------------------------------------------------------------------------------
@@ -166,7 +189,7 @@ class WL7DDRPHY(Module, AutoCSR):
                                   slp=self._dly_sel.storage[i] & wdly_dq_bitslip, cycles=1)
             self.submodules += dqs_bitslip
             self.specials += oserdes(dqs_bitslip.o, ClockSignal(f"sys4x_w{g}_dqs"),
-                                     ClockSignal("sys_w"), sys_rst, dqs_o,
+                                     ClockSignal("sys_w"), wr_rst[i], dqs_o,
                                      t1=~dqs_oe_delay.output, tq=dqs_t)
             self.specials += Instance("IOBUFDS", i_T=dqs_t, i_I=dqs_o,
                                       io_IO=pads.dqs_p[i], io_IOB=pads.dqs_n[i])
@@ -181,7 +204,7 @@ class WL7DDRPHY(Module, AutoCSR):
                                        slp=self._dly_sel.storage[i] & wdly_dq_bitslip, cycles=1)
                 self.submodules += dm_o_bitslip
                 self.specials += oserdes(dm_o_bitslip.o, ClockSignal(f"sys4x_w{g}"),
-                                         ClockSignal("sys_w"), sys_rst, pads.dm[i])
+                                         ClockSignal("sys_w"), wr_rst[i], pads.dm[i])
 
         # DQ ------------------------------------------------------------------------------------
         dq_oe = Signal()
@@ -201,7 +224,7 @@ class WL7DDRPHY(Module, AutoCSR):
                 slp=self._dly_sel.storage[lane] & wdly_dq_bitslip, cycles=1)
             self.submodules += dq_o_bitslip
             self.specials += oserdes(dq_o_bitslip.o, ClockSignal(f"sys4x_w{g}"),
-                                     ClockSignal("sys_w"), sys_rst, dq_o,
+                                     ClockSignal("sys_w"), wr_rst[lane], dq_o,
                                      t1=~dq_oe_delay.output, tq=dq_t)
             dq_q = Signal(8)
             dq_i_bitslip = BitSlip(8, i=nreg(dq_q),
@@ -244,3 +267,13 @@ class WL7DDRPHY(Module, AutoCSR):
         self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dq_oe))
         self.comb += dqs_preamble.eq(wrdata_en.taps[wrtap - 1] & ~wrdata_en.taps[wrtap + 0])
         self.comb += dqs_postamble.eq(wrdata_en.taps[wrtap + 1] & ~wrdata_en.taps[wrtap + 0])
+
+    @staticmethod
+    def constraints(ns=1.2):
+        """XDC: every serializer reset register (serdes_rst) reaches its SERDES' RST within `ns`
+        of its CLKDIV edge (the same clock at both ends: the clock skew counts), so that the
+        deassertion lands before the first CLK edge after it, 1.875 ns on."""
+        src = "[get_cells -hierarchical -filter {NAME =~ *wlrst*}]"
+        dst = ("[get_pins -of_objects [get_cells -hierarchical -filter "
+               "{REF_NAME == OSERDESE2 || REF_NAME == ISERDESE2}] -filter {REF_PIN_NAME == RST}]")
+        return [f"set_max_delay {ns:.3f} -from {src} -to {dst}"]

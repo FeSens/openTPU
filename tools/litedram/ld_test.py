@@ -436,6 +436,9 @@ class LDTest(SoCCore):
                     platform.request("ddram", ch), groups=groups[ch], sys_clk_freq=f,
                     iodelay_clk_freq=200e6, cl=cl, cwl=cwl))
                 platform.toolchain.pre_placement_commands += esc(wc.constraints())
+                if ch == channels[0]:
+                    for c in esc(WL7DDRPHY.constraints()):
+                        platform.add_platform_command(c)
                 if mmcm_locs:   # the channel's MMCM in its own banks' clock regions
                     platform.add_platform_command(
                         f"set_property LOC MMCME2_ADV_{mmcm_locs[ch]} [get_cells {wc.name_of}]")
@@ -556,10 +559,11 @@ def main():
     ap.add_argument("--out", default="build_ldtest2")
     ap.add_argument("--phy", default="a7", choices=["a7", "wl"],
                     help="a7: A7DDRPHY (DQS alone shifted); wl: WL7DDRPHY (docs section 8)")
-    ap.add_argument("--groups0", default="0,0,0,0,1,1,1,1,1",
-                    help="wl: channel 0's lanes' write clock groups (group 0 = bank 11)")
-    ap.add_argument("--groups1", default="0,0,1,0,1,1,1,1,0",
-                    help="wl: channel 1's lanes' write clock groups (group 0 = bank 16)")
+    ap.add_argument("--groups0", default="0,0,0,0,0,0,0,0,0",
+                    help="wl: channel 0's lanes' write clock groups (default: one group; a group "
+                         "1 offset moves only its serializers' CLK, which they do not take)")
+    ap.add_argument("--groups1", default="0,0,0,0,0,0,0,0,0",
+                    help="wl: channel 1's lanes' write clock groups (default: one group)")
     ap.add_argument("--group1-deg", default="0,0",
                     help="wl: group 1's static offset per channel at configuration, degrees of sys4x "
                          "(multiples of 22.5; the host reprograms it over the DRP)")

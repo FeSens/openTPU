@@ -120,7 +120,7 @@ class OTPULiteDRAM(SoCCore):
                 p = ClockDomainsRenamer(wc.domains)(WL7DDRPHY(
                     platform.request("ddram", ch), groups=groups[ch], sys_clk_freq=f,
                     iodelay_clk_freq=200e6, cl=cl, cwl=cwl))
-                for c in wc.constraints(hier=True):
+                for c in wc.constraints(hier=True) + (WL7DDRPHY.constraints() if ch == 0 else []):
                     platform.add_platform_command(c.replace("{", "{{").replace("}", "}}"))
             else:
                 p = s7ddrphy.A7DDRPHY(platform.request("ddram", ch), memtype="DDR3", nphases=4,
@@ -183,8 +183,8 @@ def main():
     ap.add_argument("--out", default="build_core")
     ap.add_argument("--phy", default="a7", choices=["a7", "wl"],
                     help="a7: A7DDRPHY; wl: WL7DDRPHY, write leveling by clock groups (section 8)")
-    ap.add_argument("--groups0", default="0,0,0,0,1,1,1,1,1", help="wl: channel 0's lane groups")
-    ap.add_argument("--groups1", default="0,0,1,0,1,1,1,1,0", help="wl: channel 1's lane groups")
+    ap.add_argument("--groups0", default="0,0,0,0,0,0,0,0,0", help="wl: channel 0's lane groups")
+    ap.add_argument("--groups1", default="0,0,0,0,0,0,0,0,0", help="wl: channel 1's lane groups")
     a = ap.parse_args()
     out = Path(a.out).resolve()
     groups = {0: [int(x) for x in a.groups0.split(",")], 1: [int(x) for x in a.groups1.split(",")]}
