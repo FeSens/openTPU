@@ -81,13 +81,20 @@ route). IMPL 2 removes it:
 - **Commands overlap.** The consumer used to run one command at a time: the next command's pops
   waited for the previous command's full drain (pipeline + epilogue + drain), so every MM paid the
   pipeline's latency, and IMPL 2's longer dot product (MCOLS + 19 cycles against 7) made that 16-20
-  cycles more per MM. Now there are two heads: the drain head `q_h` (the oldest command: its
-  results, its ACC / ASCALE / RMAX state, its completion) and the pop head `q_p`, which moves to
-  the next command as soon as the head's chunks have all popped, provided the pipeline treats both
-  alike (the same PAIR and, under PAIR, the same M: `pr0`, `hi0` and `M0` are the only per-command
-  state read after S0). The next command's rows follow the head's through the pipeline; the drain
-  takes the head's rows (counted in `rows_live`, the pop head's in `rows_p`) and then moves on.
-  IMPL 0 / 1 keep one head (`q_p = q_h`, compiled out).
+  cycles more per MM. Now there are two heads over the command queue's two entries, the head `h`
+  and the next command `n` (the tournament's `5cd6c39`: separate registers, no head pointer). The
+  drain's head is `h` (the oldest command: its results, its ACC / ASCALE / RMAX state, its
+  completion); the pop head moves to `n` (`pn`) as soon as the head's chunks have all popped,
+  provided the pipeline treats both alike (the same PAIR and, under PAIR, the same M: `pr0`,
+  `hi0` and `M0` are the only per-command state read after S0). The pop reads its command from
+  `pop_q`, a register copy of the pop head's entry loaded with `h` and `n`, so neither side reads
+  its command through a mux. The next command's rows follow the head's through the pipeline; the
+  drain takes the head's rows (counted in `rows_live`, the pop head's in `rows_p`) and then moves
+  on. IMPL 0 / 1 pop from `h` (no overlap).
+- **Off the sequencer's path.** A command that becomes the head as it is accepted takes its chunk
+  count (`c_left`) and its pop entry a cycle later, from `h` (`cl_ld`), not from the command
+  (through the 16 x 16 multiply of its total) in the start cycle: it cannot pop before its release
+  anyway, the pipeline is empty then, and the drained test waits for the load.
 - **The result FIFO** is 64 rows for IMPL 2 (32 before): a row pops only while fewer than RF rows
   are between the pop and the drain, and one-block rows (attention scores, K = 128) fill the longer
   pipeline one per cycle; 32 blocked the pops (MLP decode +18%, LFM2 decode +4.8%).
@@ -195,8 +202,9 @@ compute array itself (hops, chains, skews) is not among them.
 5. The combined build (branch `se-sys`: the stream engine v2 + `MXU_IMPL=2`, MCOLS 4). `make bit`
    selects the MXU through `create_project.tcl`'s MXU argument (systolic, the default on this
    branch, or tree). MCOLS 8 after the LiteDRAM memory path frees its area.
-6. Next (the full build above): the drain's command state from separate head / next registers
-   for IMPL 2 as well (the tournament's `5cd6c39` does it for IMPL 0), a register between TMEM
-   and the DMA's `lb`; the adapter's paths go with the LiteDRAM memory path.
+6. Done on `se-sys2` (se-cand2 + se-sys): the drain's and the pop's command state from the head /
+   next registers and `pop_q` (no head-pointer mux; `c_left` off the sequencer's path), and the
+   DMA's ST read data registered before the buffer (TMEM -> `lb`). The adapter's paths go with the
+   LiteDRAM memory path. The next full build waits for the user's OK.
 7. Later: a registered copy of `hi0` per chain (the INMODE fan-out); the fp epilogue's area (now
    the MXU's largest LUT consumer per column).
