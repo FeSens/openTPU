@@ -57,6 +57,9 @@
 // resets on its reset or the hold. What the arbiter has issued is finished regardless (a merged
 // write whose master is held is dropped: its data went with the FIFO). So a PCIe link reset
 // (XDMA's axi_aresetn) while the accelerator runs costs neither the other master nor the memory.
+//
+// Clock-domain crossings: every synchronizer carries ASYNC_REG; their constraints (max delay
+// without skew, bus skew for the gray counts) are in boards/ypcb-00338/constraints/otpu_mem_ch.xdc.
 module otpu_mem_ch #(
   parameter int XIDW = 4,         // XDMA M_AXI ID width
   parameter int ARD  = 64,        // accelerator read-data FIFO (read credits), beats
