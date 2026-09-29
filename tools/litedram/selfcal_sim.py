@@ -8,7 +8,7 @@ the core's CSR bus would. A second port is the host's (BAR0): it reads the mailb
 releases the CPU. ddrcal itself runs on an identical FakeBoard; the two CSR write sequences must be
 the same, and c0_ready / c1_ready must rise.
 
-    python3 selfcal_sim.py CORE_DIR [--stride 8] [--seed 0] [--hold-test]
+    python3 selfcal_sim.py CORE_DIR [--stride 8] [--seed 0] [--hold-test] [--upload-test]
 
 CORE_DIR: a gen_core.py --selfcal output (csr.csv, sdram_init.py, selfcal_fw/selfcal.bin). Needs
 LiteX (the SoC's Verilog), Verilator and a C++ compiler; ddrcal from this tree.
@@ -304,6 +304,8 @@ def main():
     ap.add_argument("--seed", type=int, default=0, help="0: ldtest3e's channel 1 framing")
     ap.add_argument("--hold-test", action="store_true",
                     help="also: hold the CPU mid-scan, check it stops, release, calibrate again")
+    ap.add_argument("--upload-test", action="store_true",
+                    help="also: a second firmware loaded by the host (selfcal.load), then run")
     a = ap.parse_args()
     sys.path.insert(0, str(ROOT))
     sys.path.insert(0, str(ROOT / "tests"))
@@ -363,10 +365,48 @@ def main():
         print(f"channel {ch}: {d.get('state')}, CK {d.get('dqs_steps')}, window {d.get('window_steps')} "
               f"steps, wl {d.get('write_latency')}, {d.get('seconds')} s; result "
               + ("equal to ddrcal's" if eq else f"DIFFERS: ddrcal {r}"))
+    first = list(t.log)
+    if a.upload_test:
+        ok &= upload_test(sim, a.core, out, t, first, dec, S)
     if a.hold_test:
         ok &= hold_test(sim, t, S)
     print("selfcal_sim: " + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
+
+
+def upload_test(sim, core, out, t, first, dec, S, fw_id=0xB0B0CAFE):
+    """A new firmware without a new bitstream: the same source built with another FW_ID. A write
+    to the memory while the CPU runs is dropped; selfcal.load writes the image into the held
+    CPU's memory and reads it back; released, the CPU runs it (the mailbox's firmware word) and
+    calibrates again: the same CSR writes as its first run, the same result."""
+    import fw
+    words = fw.words((Path(core) / "selfcal_fw" / "selfcal.bin").read_bytes())
+    sim.w("selfcal_mem_adr", 5)
+    sim.w("selfcal_mem_dat", 0xDEADBEEF)                  # not held: dropped
+    S.hold(sim)
+    sim.w("selfcal_mem_adr", 5)
+    kept = sim.r("selfcal_mem_rdat") == words[5]
+    data = fw.target(core, Path(out) / "fw_upload", fw_id=fw_id)
+    t0 = time.time()
+    n = S.load(sim, data)
+    print(f"upload: a write while the CPU ran {'dropped' if kept else 'NOT dropped'}; "
+          f"{len(data)} bytes into {4 * n}, read back, in {time.time() - t0:.1f} s wall "
+          f"({sim.cycles()} cycles)")
+    n0 = len(t.log)
+    S.release(sim)
+    run_until_done(sim, sim.cycles() + 60 * 133_333_000)
+    again = t.log[n0:]
+    mb = S.mailbox(sim)
+    p = fw.config(core)[1].phy
+    dec2 = S.decode(mb, p, p.get("groups"))
+    same_log, same_res = again == first, dec2.keys() == dec.keys() and all(
+        {k: v for k, v in dec2[ch].items() if k != "seconds"} ==
+        {k: v for k, v in dec[ch].items() if k != "seconds"} for ch in dec)
+    print(f"the new firmware: id {mb[1]:#x} (want {fw_id:#x}), CSR writes "
+          + ("identical to its first run's" if same_log else "DIFFERENT: " + __import__(
+              "selfcal_harness").first_diff(first, again))
+          + f", result {'the same' if same_res else 'DIFFERENT'}, c0/c1_ready {sim.ready():#x}")
+    return kept and mb[1] == fw_id and same_log and same_res and sim.ready() == 3
 
 
 def hold_test(sim, t, S):

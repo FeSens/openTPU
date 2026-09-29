@@ -961,9 +961,19 @@ up calibrated, and the host only reads the result.
 
 **The CPU (`tools/litedram/calcpu.py`).**
 - VexRiscv, LiteX's `minimal` variant: RV32I, no caches, no bypassing, the prebuilt
-  `VexRiscv_Min.v`. yosys `synth_xilinx` puts it at about 1070 LUTs, 860 FFs and 2 RAMB18 (its
-  register file). **measured**, yosys, not Vivado. SERV would be about 200 LUTs, but at ~40
-  cycles per instruction the calibration would take minutes.
+  `VexRiscv_Min.v`. SERV would be about 200 LUTs, but at ~40 cycles per instruction the
+  calibration would take minutes.
+- **Area, measured** (Vivado 2026.1, the placed test image `ldcpu-d5eb5270`): the VexRiscv
+  1104 LUTs, 726 FFs, 2 RAMB18 (its register file). The whole image against `ldtest3e`, the
+  same design without the CPU: +1026 LUTs, +4 RAMB36 (the firmware memory), +3 RAMB18 (the
+  CPU's two, the mailbox), +2128 FFs, of which about 1152 are `rd_reg`'s (on in this image, not
+  in `ldtest3e`). CPU and glue: about 1.0K LUTs, 1.0K FFs, 4 RAMB36 and 3 RAMB18.
+- **A hard FSM instead (estimate, not built):** the same algorithm (the per-bit pass masks over
+  8 bitslips x 32 taps x 72 bits, the window search with the +-2 framing, the circular margins,
+  the DRP and init sequences) would need 1.0-1.5K LUTs, 0.5-0.8K FFs and 1 RAMB18: about
+  the CPU's LUTs, 4 RAMB36 fewer. Every change to it would be RTL and a new bitstream. The
+  CPU runs `ddrcal`'s algorithm, checked write for write against it, and takes a new
+  firmware from the host (below).
 - It runs in the core's sys domain (133.33 MHz) and has its own memory: 16 KB, true dual-port
   (instructions on one port, data on the other; 4 BRAM36). The memory's initial content is the
   firmware. A read-ahead on the instruction port answers sequential fetches in one cycle.
@@ -971,7 +981,7 @@ up calibrated, and the host only reads the result.
 - Its window onto the core's CSR bus is a second master beside the host's, behind LiteX's
   round-robin arbiter. After each CPU access the window leaves the bus free for a cycle, so a
   waiting host access goes next. The SoC's memory map and every existing CSR address are
-  unchanged: the core's `csr.csv` equals ld-top 14875bf's plus the `selfcal` block, which is
+  unchanged: the core's `csr.csv` equals main's (14875bf's) plus the `selfcal` block, which is
   pinned at location 16 (0x8000).
 - The CPU's Verilog is appended to `otpu_litedram.v`, its modules renamed `otpu_selfcal_*`, and
   the firmware is inlined as the memory's initial value, so the core stays one file.
@@ -997,9 +1007,20 @@ up calibrated, and the host only reads the result.
 |---|---|
 | `selfcal_hold` | 1: the CPU is held in reset. It takes effect between two of the CPU's bus accesses (an access under way finishes), so the host's own accesses never collide with a half-done one. 0: the firmware starts over and recalibrates, dropping each channel's `cal_ready` as it reaches it. |
 | `selfcal_config` | bits 1:0 the channels (reset 0b11), 15:8 the scan stride (reset 1), read when the firmware starts |
-| `selfcal_status` | bits 31:16 `0x5CA1` (the core has the CPU), bit 0 held |
+| `selfcal_status` | bits 31:16 `0x5CA1` (the core has the CPU; an older core reads 0 there), bits 4:1 the firmware memory's size (2^12 words), bit 0 held |
 | `selfcal_state` | written by the firmware: 2 bits per channel (idle, running, ok, failed), bit 7 done, each channel's error code |
 | `selfcal_mbox_adr` / `_dat` | the mailbox: per channel the CK phase, the common run, write latency per lane, read window / bitslip / tap per lane, per-bit read offsets, each lane's pass map over the scan, cycles |
+| `selfcal_mem_adr` / `_dat` / `_rdat` | while the CPU is held, the firmware memory's data port is the host's: `_dat` writes the word at `_adr`, `_rdat` reads it (a write while the CPU runs is dropped) |
+
+**A new firmware without a new bitstream.** `fw.py target BUILD_DIR OUT_DIR --fw-id ID` builds
+the firmware for a core (its `csr.csv` and `sdram_init.py`), and `otpu-memcal selfcal --firmware
+OUT_DIR/selfcal.bin` loads and runs it. `selfcal.load()` holds the CPU, writes every word of its
+memory (the image, then zeros), reads the memory back, and the release restarts the CPU from
+address 0 on the new code. The firmware has no initialised data (`link.ld` checks), so a restart
+needs nothing but the image. The mailbox's word 1 gives the running firmware's ID. The loaded
+firmware stays until the FPGA is configured again; the bitstream's own comes back then. A
+permanent change is the firmware in the bitstream (the core regenerated, or `updatemem` on the
+memory's BRAMs; not set up).
 
 **The host (`opentpu/host/memcal.py`).**
 - `ensure()` on a core with the CPU:
@@ -1008,7 +1029,7 @@ up calibrated, and the host only reads the result.
   - a channel the CPU failed: the host holds the CPU and calibrates that channel.
 - `otpu-memcal cal --force` holds the CPU and calibrates from the host. The CPU stays held, so
   it does not recalibrate behind the host's back.
-- `otpu-memcal selfcal` has the CPU calibrate again.
+- `otpu-memcal selfcal` has the CPU calibrate again (`--firmware`: a new firmware first).
 - `otpu-memcal` (status) prints the CPU's state and result.
 - `ld_host.py selfcal [--rerun] [--soak] [--compare]` does the same for the test image, with the
   BIST, the soak and a host calibration to compare against.
@@ -1035,8 +1056,64 @@ up calibrated, and the host only reads the result.
     stride 8; 6,951,674 at stride 1 with the binary in the card's test image, run from reset
     as on the card), `c0_ready` / `c1_ready` rise, and the decoded results equal `ddrcal`'s;
   - held mid-scan, the CPU makes no access in the next 2M cycles; released, it calibrates both
-    channels again.
+    channels again;
+  - `--upload-test` (the core with the upload CSRs, stride 16): a write to the memory while the
+    CPU runs is dropped; `selfcal.load` puts a second build of the firmware (another ID) in the
+    held CPU's memory and reads it back (33,810 cycles); released, the CPU reports the new ID,
+    and its 643,724 CSR writes and its result equal its first run's.
 - **Time:** 2.9 s per channel at stride 1 in simulation, 25 ms per scan step (**measured**;
-  the simulated BIST completes at once). With the BIST (113 x 2 x 64 MiB at ~7.7 GB/s, about
-  2 s) that is about 5 s per channel (**estimate**), against 25 s from the host. The CPU spends most of its time on instructions (CPI about 2.5, no bypassing),
-  not on the bus (a CSR access on the bus in 2% of the cycles).
+  the simulated BIST completes at once). On the card, with the BIST: 6.3 s and 5.8 s (below),
+  against 25 s per channel from the host. The CPU spends most of its time on instructions (CPI
+  about 2.5, no bypassing), not on the bus (a CSR access on the bus in 2% of the cycles).
+
+### The test image on the card (`ldcpu-d5eb5270`, 2026-09-29, opentpu)
+
+The isolated image: `ld_test.py --selfcal` (litedram-int dfa6a74 with the CPU at d5eb527, so
+`rd_reg` on: its first card run), both channels, stride 1. Session: `card_session.sh selfcal`,
+after a JTAG load and a warm reboot. FPGA 58.3 C, board 50.8 C at the start. All **measured**.
+
+| | channel 0 | channel 1 |
+|---|---|---|
+| the CPU at configuration | 6.28 s (the whole run 12.10 s, the CPU's cycle counter) | 5.83 s |
+| CK phase, common run | +50, 45 steps / 753 ps | -48 (= +64), 73 steps / 1222 ps |
+| write latency | 6 on every lane | 0 on every lane |
+| bits read off their lane's bitslip | none | lane 3 bit 3 +2, lane 8 bits 0 and 3 -2 |
+| the host (`ddrcal`, the CPU held) | CK +50, 45 steps, write latency 6, no bit off | CK -48, 73 steps, write latency 0, the same three bits |
+| BIST (2 GiB x 2 modes x 2 passes) | 0 errors after the CPU's, the host's and the rerun's calibration | the same |
+| 300 s soak at the CPU's calibration | 267 passes, 0 errors | 267 passes, 0 errors |
+| the CPU again (hold, release) | 6.3 s: CK +50, 44 steps / 737 ps | 5.84 s: CK -48, 73 steps / 1222 ps, the same three bits |
+
+- The CPU and the host agree on the CK phase, the window (within a step), write latency and
+  the per-bit framing. ldtest3e's host runs found the same (45 / 73 steps at CK +50 / +64, the
+  same misframed bits on channel 1 but for lane 8's).
+- Read leveling: the same windows (9-11 taps). On channel 0, lanes 3, 5 and 6 sometimes take an
+  equal-width window at the adjacent bitslip; that flips between the CPU's own two runs too.
+- The host's calibration of the same channels: about 25 s each (the step's time less its BIST
+  runs; not timed directly), as HOSTCAL on the fused image (section 8).
+- After the session: se-cand3 loaded back, warm reboot, `otpu-selftest` ALL PASS.
+- Logs: `ldcpu-d5eb5270/selfcal*.log` on opentpu.
+- One host fix came out of it before the rerun ran: `selfcal.release()` clears `selfcal_state`
+  first. The firmware writes the state only once it starts, a millisecond after the release, and
+  until then `wait()` saw the last run's done bit.
+
+### The production core with the CPU
+
+`boards/ypcb-00338/litedram/otpu_litedram.v` is main's core (14875bf's, the serializer resets at
+3.0 ns) regenerated with `--selfcal` (`core.json`: `--phy wl --selfcal --fw-id 4461c052`, the
+firmware built with riscv64-elf-gcc 15.2.0). `check_core.sh` regenerates it byte for byte.
+Against the core without the CPU:
+- `csr.csv` is the same plus the `selfcal` block; `sdram_init.py`, the XDC and the ID ROM are
+  byte-identical, and the port list is the same (`check_offline.py --mem litedram`);
+- every line of the Verilog is in the new core (CSR banks matched by location) except the
+  one-master bus arbiter and the CSR read-data OR, which now include the CPU;
+- `gen_core.py --rd-reg` adds `wl7ddrphy.py`'s read register (off here, as in main's core).
+
+memcal detects the CPU by the magic in `selfcal_status`. A bitstream built on an older core
+reads 0 there, and the host calibrates it as before.
+
+**Temperature rescans (designed for, not built).** The mailbox keeps each lane's pass map over the
+scan and the run the CPU chose, so a drift shows as a moved or narrowed run. A rescan needs the
+channel's traffic stopped (the scan writes the first 64 MiB and moves CK), so the host schedules
+it: it quiesces the channel, sets `selfcal_config` to that channel and releases the CPU, which
+recalibrates it as at reset. Firmware that tracks drift in place (a narrow scan around the
+current phase, the BIST on a reserved region) can be loaded later without a new bitstream.
