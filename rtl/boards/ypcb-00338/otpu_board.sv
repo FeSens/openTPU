@@ -21,6 +21,8 @@ module otpu_board #(
   parameter int MXU_IMPL   = 0,
   parameter int MXU_CL     = 16,
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with exp2/recip/rsqrt
+  parameter bit SE_COMP8  = 1'b0,   // the stream engine's v2 (docs/stream.md 11)
+  parameter bit SE_ONE_TREE = 1'b0,
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer
   parameter logic [31:0] BASE0 = 32'h0000_0000,
   parameter logic [31:0] BASE1 = 32'h8000_0000,
@@ -246,7 +248,7 @@ module otpu_board #(
   otpu_slice #(.SID(0), .S(1), .D(D), .MCOLS(MCOLS), .ACT_BLOCKS(ACT_BLOCKS), .ACT_ROWS(ACT_ROWS),
                .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS), .FIFO_DEPTH(FIFO_DEPTH),
                .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL),
-               .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN),
+               .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .SE_COMP8(SE_COMP8), .SE_ONE_TREE(SE_ONE_TREE), .ULANES(ULANES), .PQ_WIN(PQ_WIN),
                .HAS_DSTEP(DSTEP)) u_slice (
     .clk, .sys_rst(rst), .rst(core_rst), .rinit(arg), .ld_start, .ld_addr, .ld_n, .ld_busy,
     .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
