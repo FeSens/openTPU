@@ -1,0 +1,39 @@
+scratch 0x12345678 (ok), bus errors 0, channels [0, 1], DQS phase steps ch0 0 (16.7 ps each, 112 per tCK), sys 133.33 MHz, CL 7 CWL 6, FPGA 53.6 C, board 47.0 C
+ch0 write clocks: groups [0, 0, 0, 0, 0, 0, 0, 0, 0], group 1 offset 0 x 1/8 VCO (CLKOUT3..6 static phases {3: 0, 4: 4, 5: 0, 6: 4}), MMCM locked 1
+write clock groups [0, 0, 0, 0, 0, 0, 0, 0, 0]: scan of the common CK phase, every 1 steps, a 64 MiB BIST per step:
+  group 0 (lanes [0, 1, 2, 3, 4, 5, 6, 7, 8]): 45 steps (753 ps) around +50
+  all lanes: 45 steps (753 ps) around +50
+  lanes (CK phase steps from -56 to +56):
+    m0 g0 ############################################################################........#############################
+    m1 g0 #########################################################################.......#################################
+    m2 g0 ########################################################........#################################################
+    m3 g0 ###################################################.......#######################################################
+    m4 g0 ##########################.....##################################################################################
+    m5 g0 #######################.......###################################################################################
+    m6 g0 #################......##########################################################################################
+    m7 g0 ###########################....##################################################################################
+    m8 g0 ###############################.......###########################################################################
+common: 45 steps (753 ps; groups alone: 0 45 steps (753 ps)); CK at +50 steps
+write latency: m0:6 m1:6 m2:6 m3:6 m4:6 m5:6 m6:6 m7:6 m8:6
+  wb0:  0  0  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb2:  0  0  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb4:  0  0  0  0  0  0  0  0  0  (widest read window per lane, taps)
+  wb6: 10 10 10 11 10 10 10  9 10  (widest read window per lane, taps)
+read leveling:
+  m0: b5 |00000000000111111111100000000000| window 10 taps (781 ps), tap 16
+  m1: b5 |00000000000111111111100000000000| window 10 taps (781 ps), tap 16
+  m2: b5 |00000000001111111111000000000000| window 10 taps (781 ps), tap 15
+  m3: b4 |11111111110000000000000000000000| window 10 taps (781 ps), tap 5
+  m4: b5 |00011111111110000000000000000000| window 10 taps (781 ps), tap 8
+  m5: b5 |00011111111110000000000000000000| window 10 taps (781 ps), tap 8
+  m6: b5 |00111111111110000000000000000000| window 11 taps (859 ps), tap 7
+  m7: b5 |00001111111110000000000000000000| window 9 taps (703 ps), tap 8
+  m8: b5 |00000111111111100000000000000000| window 10 taps (781 ps), tap 10
+  check at the chosen taps: pass
+calibration: PASS
+BIST over 2 GiB:
+  pass 0 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 0 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+BIST: PASS
