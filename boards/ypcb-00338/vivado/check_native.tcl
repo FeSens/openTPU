@@ -10,6 +10,8 @@
 # (LOG: Vivado's log, read back for the elaboration's messages; default ./vivado.log)
 # Prints "CHECK_NATIVE ok" or "CHECK_NATIVE FAILED: <reasons>" last.
 set root [file normalize [file dirname [info script]]/../../..]
+# small footprint: the check shares its host with builds
+set_param general.maxThreads 2
 set out [file normalize [lindex $argv 0]]
 set mem [expr {[llength $argv] > 1 ? [lindex $argv 1] : "mig_native"}]
 set logf [file normalize [expr {[llength $argv] > 2 ? [lindex $argv 2] : "vivado.log"}]]
@@ -38,6 +40,18 @@ foreach {name ref} {otpu_mem_ch.tcl otpu_mem_ch otpu_top_native.tcl {}} {
 }
 
 puts "---- block design sources, elaboration"
+# The elaboration needs every module's definition, and an out-of-context IP's (its stub) exists
+# only once its own synthesis run has made it ("[Synth 8-439] module 'otpu_bd_clk_wiz_0_0' not
+# found"). So for this check alone, not for the builds, the block design's IP and the two MIGs
+# are synthesized with the top (global): no IP synthesis runs, their sources elaborated in place.
+set_property synth_checkpoint_mode None [get_files otpu_bd.bd]
+if {$mem eq "mig_native"} {
+  foreach ch {0 1} {
+    set xci [get_files [get_property IP_FILE [get_ips mig_ddr3_ch$ch]]]
+    if {[catch {delete_ip_run $xci} msg]} { puts "mig_ddr3_ch$ch: no IP run deleted ($msg)" }
+    set_property generate_synth_checkpoint false $xci
+  }
+}
 generate_target synthesis [get_files otpu_bd.bd]
 
 # mig_native: the generated MIGs are the AXI build's controllers with the native interface: ECC
@@ -89,7 +103,7 @@ set bb [get_cells -quiet -hierarchical -filter {IS_BLACKBOX == 1}]
 puts "black boxes: [llength $bb]"
 foreach c [lsort [lrange $bb 0 29]] { puts "  $c ([get_property REF_NAME $c])" }
 foreach c $bb {
-  # the block design's and the MIGs' out-of-context IP
+  # inside the block design's IP and the MIGs (elaborated in place here; any encrypted parts)
   if {[string match u_bd/* $c] || [regexp {^u_mig/mig_[01]$} $c]} { continue }
   lappend bad "black box $c ([get_property REF_NAME $c])"
 }
