@@ -50,7 +50,7 @@ module otpu_top
   wire coll_gnt = &coll_gl;
 
   for (genvar s = 0; s < S; s++) begin : g_slice
-    logic          a_req, a_we, a_rvalid, b_req, b_tag, b_we, b_rvalid, b_rtag;
+    logic          a_req, a_we, a_rvalid, b_req, b_tag, b_we, b_par, b_rvalid, b_rtag;
     logic [D/4-1:0] b_wmask;
     logic [D*8-1:0] b_wdata;
     logic [31:0]   a_addr, a_wdata, a_rdata, a_rdata2, b_addr;
@@ -80,8 +80,8 @@ module otpu_top
         .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
         .a_be_x(a_be), .a_rvalid, .a_rdata, .a_rdata2,
         .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
-        .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
-        .wr_idle,
+        .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
+        .b_rdata, .wr_idle,
         .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
         .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
         .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone));
@@ -110,7 +110,7 @@ module otpu_top
       .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
       .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
       .sw_req, .sw_addr, .sw_wdata, .sw_be,
-      .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata,
+      .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag, .b_rdata,
       .coll_req(coll_req[s]), .coll_cmd(coll_cmd[s]), .coll_ack,
       .coll_ren(coll_ren[s]), .coll_raddr(coll_raddr[s]), .coll_rdata(coll_rdata[s]),
       .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl[s]), .coll_gnt,
