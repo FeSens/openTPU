@@ -204,14 +204,16 @@ def test_tiny_resident_decode_is_bit_exact(tiny, dstep):
     assert np.array_equal(ma, mb)
 
 
-@pytest.mark.parametrize("dstep,resident", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("dstep,resident", [(False, False), (True, False), (True, True),
+                                            ("stream", False)])
 def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep, resident):
     """The board model through the host driver, through a full turn of the convolution window:
     logits bit-identical to the ISA simulator (with and without DSTEP; resident: from position
-    3 on the resident decode program, its token and position as run arguments)."""
+    3 on the resident decode program, its token and position as run arguments; "stream": each
+    DeltaNet head step as a STREAM on the stream engine instead of DSTEP)."""
     from opentpu.host.board import BoardBackend, SimTransport
     _, W, spec = tiny
-    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep)
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep is True, STREAM=dstep == "stream")
     isa = Engine(spec, W, cap=256, cfg=cfg)
     tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
     brd = Engine(spec, W, cap=256, cfg=cfg, resident=resident,
