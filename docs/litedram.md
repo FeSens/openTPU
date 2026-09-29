@@ -1017,7 +1017,10 @@ up calibrated, and the host only reads the result.
   firmware from the host (below).
 - It runs in the core's sys domain (133.33 MHz) and has its own memory: 16 KB, true dual-port
   (instructions on one port, data on the other; 4 BRAM36). The memory's initial content is the
-  firmware. A read-ahead on the instruction port answers sequential fetches in one cycle.
+  firmware. A read-ahead on the instruction port answers sequential fetches in one cycle. Both
+  ports register their read data (the data port is READ_FIRST). LiteX writes a byte-writable
+  WRITE_FIRST port as an asynchronous read of a registered address, and Vivado turned that into
+  a block RAM whose collisions differ from the RTL (Synth 8-6430), which `build.tcl` stops on.
 - A 256-word result mailbox, which the host reads through two CSRs, and a 64-bit cycle counter.
 - Its window onto the core's CSR bus is a second master beside the host's, behind LiteX's
   round-robin arbiter. After each CPU access the window leaves the bus free for a cycle, so a
