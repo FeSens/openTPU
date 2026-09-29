@@ -68,8 +68,15 @@ set_false_path -from [get_ports pcie_perstn]
 set_false_path -to [get_cells -hier -filter {NAME =~ *u_board/tmp_s1_reg*}]
 set_false_path -to [get_cells -hier -filter {NAME =~ *u_board/i2c_s1_reg*}]
 
-# The 50 MHz clock reaches the block design's MMCM (core_clk) and the LiteDRAM core's two MMCMs
-# and PLL from one BUFG (otpu_fpga_top_ld.sv), which the AA28 pin's IBUF drives directly.
+# The 50 MHz clock reaches the block design's MMCM (core_clk) and the LiteDRAM core's sys MMCM
+# and IDELAY reference PLL from one BUFG (otpu_fpga_top_ld.sv), which the AA28 pin's IBUF drives
+# directly. Each channel's write clock MMCM (WL7DDRPHY's WriteClocks, cascaded from sys; the
+# core's XDC has their crossings' uncertainty and the serializer resets' max delay) sits in its
+# own banks' clock regions, as on the card images (tools/litedram/ld_test.py --mmcm-locs,
+# docs/litedram.md section 8): X0Y2 (bank 13) for channel 0, X0Y6 (bank 17, the command bank) for
+# channel 1. Unplaced, the placer put each among the other channel's banks.
+set_property LOC MMCME2_ADV_X0Y2 [get_cells u_ld/ldmmcm0]
+set_property LOC MMCME2_ADV_X0Y6 [get_cells u_ld/ldmmcm1]
 
 # ---------------------------------------------------------------- configuration
 # Configuration banks at 1.8 V (the board's flash and IO are LVCMOS18); BPI x16 flash.

@@ -41,11 +41,11 @@ make bit LANES=16  # 16 VPU lanes / TMEM banks (the MXU and quantizer stay on 8)
                    # cycles at 80% bw, -13% at 100% (simulated). Does not route on the xc7k480t
                    # (measured, MCOLS=4 VPU_CL=2 with the r3-route area cuts: 212K LUT placed,
                    # route_design stops at global congestion level 6); kept for larger parts
-make bit MEM=mig_native  # the MIGs' native ports instead of AXI: per channel otpu_mig_native
-                   # behind otpu_mem_ch, which also takes XDMA's traffic; no SmartConnect
-                   # (docs/litedram.md section 9). Not yet built or run on the card
-make bit MEM=litedram    # the LiteDRAM core instead of the MIGs (DDR3-1066, host calibration);
-                   # on hold until its PHY passes on both channels (docs/litedram.md section 9)
+make bit MEM=litedram    # the LiteDRAM core (WL7DDRPHY) instead of the MIGs (DDR3-1066, host
+                   # calibration; per channel behind otpu_mem_ch, which also takes XDMA's
+                   # traffic; no SmartConnect; docs/litedram.md section 9). Not yet built
+make bit MEM=mig_native  # the MIGs' native ports instead of AXI (per channel otpu_mig_native
+                   # behind otpu_mem_ch): LiteDRAM's fallback, parked. Not built
 make lint-mn / make lint-ld   # the offline checks and Verilator lint of those two builds' tops
 ```
 

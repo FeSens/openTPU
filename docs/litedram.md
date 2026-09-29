@@ -703,8 +703,8 @@ controllers (`create_project.tcl`'s 11th argument; `make bit MEM=...`):
 | `MEM` | Controllers | Top | Block design | Status |
 |---|---|---|---|---|
 | `mig` (default) | the MIGs' AXI ports behind the SmartConnect | `otpu_fpga_top` | `bd.tcl` | today's production build, unchanged |
-| `mig_native` | the MIGs' native interface (`gen_mig_prj.py --native`), per channel `otpu_mig_native` | `otpu_fpga_top_mn` | `bd_native.tcl` | first; also LiteDRAM's fallback |
-| `litedram` | the committed LiteDRAM core (`boards/ypcb-00338/litedram/`, `tools/litedram/check_core.sh`) | `otpu_fpga_top_ld` | `bd_native.tcl` | on hold: channel 1 fails with one write-DQS phase per channel (the PHY fix is separate work) |
+| `mig_native` | the MIGs' native interface (`gen_mig_prj.py --native`), per channel `otpu_mig_native` | `otpu_fpga_top_mn` | `bd_native.tcl` | parked: LiteDRAM's fallback if its checkpoint fails. Vivado check (project, block design, MIG parameters, `synth_design -rtl`) passes; not built |
+| `litedram` | the committed LiteDRAM core with WL7DDRPHY (section 8; `boards/ypcb-00338/litedram/`, `tools/litedram/check_core.sh`) | `otpu_fpga_top_ld` | `bd_native.tcl` | primary: built once the WL test image passes on both channels on the card |
 
 **Shared by both native builds:** `otpu_native_sys` holds:
 - `otpu_board` with `MEM_NATIVE` (`otpu_native_dram` on the native masters);
@@ -725,6 +725,15 @@ exported as `M_AXI_DMA`.
   DDR3-1333 / 1600: `build.tcl`'s MIG PHY patch covers the block design's MIGs only.
 - `litedram` adds the CSR window at BAR0 0x10000. The 50 MHz clock sits on one BUFG shared with
   the core's MMCMs.
+
+**The LiteDRAM core** is `gen_core.py --phy wl` (the arguments are in `core.json`, which
+`check_core.sh` regenerates with). It has the same ports as the A7DDRPHY core it replaced; its CSRs
+add each channel's write clock MMCM (`wclk` / `wclk1` at 0x7000 / 0x7800 of the window, for
+ddrcal's DRP and reset access). Its XDC carries two sets of constraints:
+- 1.0 ns of clock uncertainty on the sys <-> sysc crossings;
+- the serializer resets' 1.2 ns max delay.
+
+`otpu_top_ld.xdc` places the two write clock MMCMs at X0Y2 / X0Y6, as on the card images.
 
 **Constraints:**
 - `mig_native` uses `otpu_top.xdc` and `otpu_ddr3_pins.xdc` unchanged: the DDR3 port names are
