@@ -192,9 +192,13 @@ module otpu_native_dram #(
   logic [WW-1:0] qw_f [2], qw_r [2];
   logic [WQD-1:0] wpart [2], wgot [2];      // per slot: bytes missing; its fill data is in
   // read-after-write hazards: whb counts, per bucket (a hash of the beat), the live entries past
-  // the read point (from qw_f up to qw_r: fill read issued, or whole); wnz: whb != 0
+  // the read point (from qw_f up to qw_r: fill read issued, or whole); wnz: whb != 0. A count is
+  // read only while its bucket is live (wnz): the reset clears wnz alone (on core_rst's fan-out,
+  // the counts' 2 x NH x (WW+1) flip-flops missed 100 MHz on 9.1 ns of route) and an increment
+  // of a bucket that is not live starts it at 1
   logic [WW:0]  whb [2][NH];
   logic [NH-1:0] wnz [2];
+  logic [1:0]   h_inc, h_dec;               // slot qw_r passes the read point / qw_f's write goes
   // reads in flight per channel, in command order; the oldest one's tag registered (tgh)
   logic [TW:0]  tg_n [2];
   logic [TW-1:0] tg_h [2];
@@ -462,7 +466,6 @@ module otpu_native_dram #(
       for (int c = 0; c < 2; c++) begin
         qb_n[c] <= '0; qb_h[c] <= '0; qa_n[c] <= '0; qa_h[c] <= '0; a_iss[c] <= '0;
         qw_n[c] <= '0; qw_f[c] <= '0; qw_r[c] <= '0; qw_rn[c] <= '0; wnz[c] <= '0;
-        for (int k = 0; k < NH; k++) whb[c][k] <= '0;
         tg_n[c] <= '0; tg_h[c] <= '0;
         rb_n[c] <= '0; rb_res[c] <= '0; rb_h[c] <= '0; rb_t[c] <= '0;
         ra_n[c] <= '0; ra_res[c] <= '0; ra_h[c] <= '0; ra_t[c] <= '0;
@@ -530,8 +533,8 @@ module otpu_native_dram #(
           qw_r[c] <= qw_r[c] + 1;
           nrn = nrn - 1;
         end
-        hinc = fill || (qw_rn[c] != 0 && !wpart[c][qw_r[c]]);
-        hdec = popw;
+        hinc = h_inc[c];
+        hdec = h_dec[c];
         if (popb) begin qb_h[c] <= qb_h[c] + 1; nb = nb - 1; end
         if (popa) begin qa_h[c] <= qa_h[c] + 1; na = na - 1; end
         if (popw) begin qw_f[c] <= qw_f[c] + 1; nw = nw - 1; end
@@ -557,14 +560,9 @@ module otpu_native_dram #(
           rar = rar - (AW_ + 1)'(aoh.drop) - 1'b1;
         end
         // ---- hazard buckets: slot qw_r passes the read point, slot qw_f's write goes out
-        if (hinc && !(hdec && wh_f[c] == wh_r[c])) begin
-          whb[c][wh_r[c]] <= whb[c][wh_r[c]] + 1'b1;
-          wnz[c][wh_r[c]] <= 1'b1;
-        end
-        if (hdec && !(hinc && wh_f[c] == wh_r[c])) begin
-          whb[c][wh_f[c]] <= whb[c][wh_f[c]] - 1'b1;
+        if (hinc && !(hdec && wh_f[c] == wh_r[c])) wnz[c][wh_r[c]] <= 1'b1;
+        if (hdec && !(hinc && wh_f[c] == wh_r[c]))
           wnz[c][wh_f[c]] <= whb[c][wh_f[c]] != (WW + 1)'(1);
-        end
         qb_n[c] <= nb; qa_n[c] <= na; qw_n[c] <= nw; qw_rn[c] <= nrn; tg_n[c] <= ntg;
         rb_n[c] <= rbn; rb_res[c] <= rbr; ra_n[c] <= ran; ra_res[c] <= rar;
       end
@@ -625,7 +623,43 @@ module otpu_native_dram #(
     end
   end
 
+  // the hazard buckets' counts (no reset: see whb)
+  always_comb
+    for (int c = 0; c < 2; c++) begin
+      h_inc[c] = (src[c] == S_WR && ctk[c]) || (qw_rn[c] != 0 && !wpart[c][qw_r[c]]);
+      h_dec[c] = src[c] == S_WW && wiss[c];
+    end
+  always_ff @(posedge clk)
+    for (int c = 0; c < 2; c++) begin
+      if (h_inc[c] && !(h_dec[c] && wh_f[c] == wh_r[c]))
+        whb[c][wh_r[c]] <= wnz[c][wh_r[c]] ? whb[c][wh_r[c]] + 1'b1 : (WW + 1)'(1);
+      if (h_dec[c] && !(h_inc[c] && wh_f[c] == wh_r[c]))
+        whb[c][wh_f[c]] <= whb[c][wh_f[c]] - 1'b1;
+    end
+
 `ifndef SYNTHESIS
+  // The hazard counts are read only while live: a write goes out only from a live bucket, and
+  // every live count is what a count reset with the rest would hold (whb_ref). The counts start
+  // with anything, as after a reset in the middle of a run
+  logic [WW:0] whb_ref [2][NH];
+  initial for (int c = 0; c < 2; c++) for (int k = 0; k < NH; k++) whb[c][k] = (WW + 1)'($urandom);
+  always_ff @(posedge clk)
+    if (rst) begin
+      for (int c = 0; c < 2; c++) for (int k = 0; k < NH; k++) whb_ref[c][k] <= '0;
+    end else
+      for (int c = 0; c < 2; c++) begin
+        if (h_dec[c] && !wnz[c][wh_f[c]])
+          $fatal(1, "otpu_native_dram: channel %0d bucket %0d written out while not live", c, wh_f[c]);
+        for (int k = 0; k < NH; k++)
+          if (wnz[c][k] != (whb_ref[c][k] != 0) || (wnz[c][k] && whb[c][k] != whb_ref[c][k]))
+            $fatal(1, "otpu_native_dram: channel %0d bucket %0d count %0d (live %0d), expected %0d",
+                   c, k, whb[c][k], wnz[c][k], whb_ref[c][k]);
+        if (h_inc[c] && !(h_dec[c] && wh_f[c] == wh_r[c]))
+          whb_ref[c][wh_r[c]] <= whb_ref[c][wh_r[c]] + 1'b1;
+        if (h_dec[c] && !(h_inc[c] && wh_f[c] == wh_r[c]))
+          whb_ref[c][wh_f[c]] <= whb_ref[c][wh_f[c]] - 1'b1;
+      end
+
   // Read data never arrives without a read in flight or without room reserved for it (the
   // native port has no backpressure on read data)
   always_ff @(posedge clk)
