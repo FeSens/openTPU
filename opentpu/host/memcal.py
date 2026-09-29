@@ -1,13 +1,28 @@
-"""otpu-memcal: the host's DDR3 calibration for a bitstream whose memory controllers are
-LiteDRAM (CAPS bit27, docs/litedram.md section 7). The MIG bitstreams (before LiteDRAM)
-calibrate themselves in hardware; LiteDRAM's A7DDRPHY is calibrated from the host, through each controller's CSRs in the
-BAR0 window at R_MEMCAL (0x10000), by opentpu.host.ddrcal: per channel the write DQS phase is
-scanned over one tCK with the channel's BIST as the traffic check, the phase goes to the centre
-of the window common to all nine byte lanes, write latency and read leveling are set there, and
-the channel's ready bit (STATUS CALIB0 / CALIB1) rises.
+"""otpu-memcal: the DDR3 calibration of a bitstream whose memory controllers are LiteDRAM (CAPS
+bit27, docs/litedram.md sections 7 and 10). The MIG bitstreams (before LiteDRAM) calibrate
+themselves in hardware. LiteDRAM's PHY is calibrated through each controller's CSRs in the BAR0
+window at R_MEMCAL (0x10000) by opentpu.host.ddrcal's algorithm: per channel the CK phase is
+scanned over one tCK with the channel's BIST as the traffic check, the phase goes to the centre of
+the window common to all nine byte lanes, write latency and read leveling are set there, and the
+channel's ready bit (STATUS CALIB0 / CALIB1) rises.
 
-    otpu-memcal                 status: CAPS, the STATUS calibration bits, the last calibration
-    otpu-memcal cal [--force]   calibrate the channels not calibrated yet (--force: both)
+Two ways to run it:
+- by the core itself (gen_core.py --selfcal, opentpu.host.selfcal): a small CPU in the LiteDRAM
+  core runs that algorithm at reset, so the channels come up calibrated. ensure() finds the
+  STATUS bits set, or waits for the CPU when it is still running; a channel the CPU failed is
+  calibrated from the host (the CPU held first);
+- from the host (ddrcal: cores without the CPU, or `cal --force`). The host holds the core's
+  CPU first, if there is one, and leaves it held, so it does not calibrate again behind the
+  host's back; `selfcal` releases it, and it calibrates both channels again.
+
+    otpu-memcal                 status: CAPS, the STATUS calibration bits, the core's CPU and
+                                its result, the last calibration run by ensure()
+    otpu-memcal cal [--force]   calibrate the channels not calibrated yet (--force: both, from
+                                the host)
+    otpu-memcal selfcal         the core's CPU calibrates both channels again
+    otpu-memcal selfcal --firmware selfcal.bin
+                                the same with a new firmware (tools/litedram/selfcal_fw/fw.py
+                                target), in the CPU's memory until the FPGA is configured again
 
 Board() calls ensure(), so every tool that opens the card calibrates it once per configuration;
 the scan writes over each channel's first 64 MiB, which holds nothing before calibration. The
@@ -25,14 +40,17 @@ from pathlib import Path
 
 from . import ddrcal
 from . import regs as R
+from . import selfcal
 from .runstate import run_dir
 
 DATA = Path(__file__).with_name("litedram")
 CALIB = (R.ST_CALIB0, R.ST_CALIB1)
+SELFCAL_WAIT = 60.0             # s; the CPU needs a few seconds per channel
 
 
 def hostcal(t) -> bool:
-    """The bitstream's controllers want the host's calibration (register map 2 and CAPS bit27)."""
+    """The bitstream's controllers are calibrated through their CSRs (register map 2 and CAPS
+    bit27: LiteDRAM, by the host or by the core's own CPU)."""
     return R.regmap(t.reg_read(R.R_REGMAP)) >= 2 and bool(t.reg_read(R.R_CAPS) & R.CAP_HOSTCAL)
 
 
@@ -42,17 +60,47 @@ def csr(t, data: Path = DATA):
                           base=R.R_MEMCAL)
 
 
+def core_cpu(t, data: Path = DATA) -> bool:
+    """The bitstream's LiteDRAM core calibrates itself (its CPU, opentpu.host.selfcal)."""
+    return hostcal(t) and selfcal.present(csr(t, data))
+
+
+def uncalibrated(t, force: bool = False) -> list:
+    st = t.reg_read(R.R_STATUS)
+    return [ch for ch, bit in enumerate(CALIB) if force or not st & bit]
+
+
 def ensure(t, force: bool = False, stride: int = 1, data: Path = DATA, log=print) -> dict | None:
-    """Calibrate the channels whose STATUS bit is low (all with `force`) on a host-calibrated
-    bitstream; None when there is nothing to do. Raises ddrcal.CalError when a channel fails."""
+    """Calibrate the channels whose STATUS bit is low (all with `force`, from the host) on a
+    LiteDRAM bitstream; None when there is nothing to do. With the core's CPU: its run is waited
+    for and its result returned, and the channels it failed are calibrated from the host. Raises
+    ddrcal.CalError when a channel fails."""
     if not hostcal(t):
         return None
-    st = t.reg_read(R.R_STATUS)
-    todo = [ch for ch, bit in enumerate(CALIB) if force or not st & bit]
+    todo = uncalibrated(t, force)
     if not todo:
         return None
     c = csr(t, data)
-    out = {"time": time.time(), "channels": {}}
+    out = {"time": time.time(), "by": "host", "channels": {}}
+    if selfcal.present(c):
+        if not force:
+            log("DDR3: the LiteDRAM core's CPU is calibrating; waiting ...")
+            try:
+                selfcal.wait(c, SELFCAL_WAIT)
+            except TimeoutError as e:
+                log(f"DDR3: {e}")
+            res = selfcal.result(c, data / "sdram_init.py")
+            out["by"] = "selfcal"
+            out["channels"] = {ch: r for ch, r in res.items() if r["state"] == "ok"}
+            todo = uncalibrated(t)
+            if not todo:
+                _save(t, out)
+                return out
+            log("DDR3: the core's CPU left channel(s) uncalibrated: " + ", ".join(
+                f"{ch} ({res[ch]['error'] if ch in res else 'not run'})" for ch in todo)
+                + "; the host calibrates them")
+            out["by"] = "selfcal+host"
+        selfcal.hold(c)
     for ch in todo:
         t0 = time.time()
         log(f"DDR3 channel {ch}: calibrating (LiteDRAM, host-driven) ...")
@@ -60,12 +108,28 @@ def ensure(t, force: bool = False, stride: int = 1, data: Path = DATA, log=print
                                        log=lambda m, ch=ch: log(f"DDR3 channel {ch}: {m}"))
         res["seconds"] = round(time.time() - t0, 1)
         out["channels"][ch] = res
-    st = t.reg_read(R.R_STATUS)
-    for ch in todo:
-        if not st & CALIB[ch]:
-            raise ddrcal.CalError(f"channel {ch} calibrated but its STATUS bit stays low")
+    low = uncalibrated(t)
+    if low:
+        raise ddrcal.CalError(f"channel(s) {low} calibrated but their STATUS bit stays low")
     _save(t, out)
     return out
+
+
+def selfcal_again(t, data: Path = DATA, log=print, firmware: bytes | None = None) -> dict:
+    """The core's CPU calibrates every channel again (hold, release, wait): its result.
+    firmware: a new image for it first (selfcal.load)."""
+    c = csr(t, data)
+    if not selfcal.present(c):
+        raise ddrcal.CalError("the bitstream's LiteDRAM core has no calibration CPU")
+    selfcal.hold(c)
+    if firmware is not None:
+        n = selfcal.load(c, firmware)
+        log(f"firmware loaded: {len(firmware)} bytes into the CPU's {4 * n} (read back)")
+    selfcal.release(c)
+    t0 = time.time()
+    selfcal.wait(c, SELFCAL_WAIT)
+    log(f"the core's CPU finished in {time.time() - t0:.1f} s")
+    return selfcal.result(c, data / "sdram_init.py")
 
 
 def _path(t) -> Path:
@@ -88,11 +152,26 @@ def last(t) -> dict | None:
         return None
 
 
+def describe(ch, r: dict) -> str:
+    """A channel's result (ddrcal's or the core's CPU's) on one line."""
+    if r.get("state", "ok") != "ok":
+        return f"channel {ch}: {r['state']} ({r['error']})"
+    s = (f"channel {ch}: CK step {r['dqs_steps']}, common write window {r['window_ps']} ps "
+         f"({r['window_steps']} steps), write latency {r['write_latency']}, read taps "
+         f"{[x['tap'] for x in r['read']]}")
+    offs = [f"lane {m} bit {i} {o:+d}" for m, row in enumerate(r.get("bit_offsets", []))
+            for i, o in enumerate(row) if o]
+    if offs:
+        s += f", read bitslip offsets: {', '.join(offs)}"
+    return s + (f", {r['seconds']} s" if "seconds" in r else "")
+
+
 def main(argv: list[str] | None = None, open_transport=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-memcal", description=__doc__.split("\n")[0])
-    ap.add_argument("what", nargs="?", default="status", choices=["status", "cal"])
-    ap.add_argument("--force", action="store_true", help="cal: both channels, calibrated or not")
+    ap.add_argument("what", nargs="?", default="status", choices=["status", "cal", "selfcal"])
+    ap.add_argument("--force", action="store_true", help="cal: both channels, from the host")
     ap.add_argument("--stride", type=int, default=1, help="DQS scan stride, fine steps")
+    ap.add_argument("--firmware", type=Path, help="selfcal: this image (fw.py's selfcal.bin) first")
     ap.add_argument("--dev", default="/dev/xdma0")
     a = ap.parse_args(argv)
     from .board import Board, XdmaTransport
@@ -100,27 +179,44 @@ def main(argv: list[str] | None = None, open_transport=None) -> int:
     with Board(t, calibrate=False) as b:
         st = b.t.reg_read(R.R_STATUS)
         hc = hostcal(b.t)
-        print(f"controllers: {'LiteDRAM (host calibration)' if hc else 'self-calibrating (MIG)'}; "
-              "STATUS calibration: " + ", ".join(
-                  f"channel {ch} {'yes' if st & bit else 'no'}" for ch, bit in enumerate(CALIB)))
+        own = core_cpu(b.t, DATA)
+        kind = ("LiteDRAM, calibrated by the core's CPU" if own else
+                "LiteDRAM (host calibration)" if hc else "self-calibrating (MIG)")
+        print(f"controllers: {kind}; STATUS calibration: " + ", ".join(
+            f"channel {ch} {'yes' if st & bit else 'no'}" for ch, bit in enumerate(CALIB)))
+        if a.what == "selfcal":
+            if not own:
+                print("nothing to do: the bitstream's LiteDRAM core has no calibration CPU")
+                return 1
+            res = selfcal_again(b.t, DATA, firmware=a.firmware.read_bytes() if a.firmware else None)
+            for ch, r in sorted(res.items()):
+                print(describe(ch, r))
+            return 0 if res and all(r["state"] == "ok" for r in res.values()) else 1
         if a.what == "cal":
             if not hc:
                 print("nothing to do: the bitstream's controllers calibrate themselves")
                 return 0
             try:
-                res = ensure(b.t, force=a.force, stride=a.stride)
+                res = ensure(b.t, force=a.force, stride=a.stride, data=DATA)
             except ddrcal.CalError as e:
                 print(f"calibration FAILED: {e}")
                 return 1
             if res is None:
                 print("both channels are calibrated (--force to redo)")
             return 0
+        if own:
+            c = csr(b.t, DATA)
+            s = selfcal.state(c)
+            print("the core's CPU: " + ("held (the host calibrates)" if selfcal.held(c) else
+                                        "done" if s["done"] else "running") + "; " + ", ".join(
+                f"channel {ch} {x}{' (' + e + ')' if e else ''}"
+                for ch, (x, e) in s["channels"].items()))
+            for ch, r in sorted(selfcal.result(c, DATA / "sdram_init.py").items()):
+                print("  " + describe(ch, r))
         prev = last(b.t)
         if prev:
             for ch, r in sorted(prev["channels"].items()):
-                print(f"last calibration, channel {ch}: DQS step {r['dqs_steps']}, common write "
-                      f"window {r['window_ps']} ps, write latency {r['write_latency']}, "
-                      f"{r['seconds']} s")
+                print(f"last calibration ({prev.get('by', 'host')}), " + describe(ch, r))
     return 0
 
 

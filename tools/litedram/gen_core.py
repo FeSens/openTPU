@@ -24,14 +24,22 @@ The module (every port is a plain Verilog port; the DDR3 pads are the only I/O):
                         pins, and ECC words are whole): the user side reads, merges and writes
                         whole beats. Reads return in command order; rdata_ready is ignored
                         (there is no backpressure).
-    c0_ready, c1_ready  out  the channel is calibrated: set by the host (cal_ready, cal1_ready) at
-                        the end of opentpu.host.ddrcal.calibrate_channel, cleared by rst
+    c0_ready, c1_ready  out  the channel is calibrated: set (cal_ready, cal1_ready) at the end of
+                        opentpu.host.ddrcal.calibrate_channel, by the host or, with --selfcal, by
+                        the core's own CPU; cleared by rst
 
 Per channel, as the test image (tools/litedram/ld_test.py, whose CRG, BIST and DQS phase control
 this reuses): the DQS clock on an MMCM output with fine phase shift, driven by the host
 (phase*_dqs_*), and a BIST on a second crossbar port (bist*_*) for calibration's traffic check.
 Channel 0's CSR names are bare (ddrphy_, sdram_, bist_, phase_, ecc_, cal_), channel 1's carry
 a 1. The ECC counts corrected and uncorrectable words (ecc_sec_errors, ecc_ded_errors).
+
+--selfcal (tools/litedram/calcpu.py, docs/litedram.md section 10): a small CPU (VexRiscv minimal)
+in the core calibrates both channels at reset with ddrcal's algorithm (firmware
+tools/litedram/selfcal_fw, built here against this core's csr.csv and sdram_init.py) and raises
+cal_ready / cal1_ready itself; its CSRs (selfcal_*) give the host an override and the result.
+The CPU's Verilog is appended to otpu_litedram.v (its modules renamed otpu_selfcal_*) and the
+firmware is inlined as the memory's initial value, so the core stays one file.
 
 Clocks: clk50 -> MMCM (sys, sys4x, channel 0's DQS), a second MMCM (channel 1's DQS), a PLL (the
 200 MHz IDELAYCTRL reference). The XDC has the DDR3 pins and I/O standards (LiteX's platform,
@@ -49,9 +57,7 @@ from litex.build.generic_platform import Pins, Subsignal
 from litex.soc.interconnect import wishbone
 from litex.soc.interconnect.axi import (AXILiteInterface, AXILiteClockDomainCrossing,
                                         AXILite2Wishbone)
-from litex.soc.interconnect.csr import AutoCSR, CSRStorage
 from litex.soc.integration.soc_core import SoCCore
-from litex.soc.integration.builder import Builder
 
 from litedram.common import LiteDRAMNativePort
 from litedram.frontend.ecc import LiteDRAMNativePortECC
@@ -64,6 +70,8 @@ import ypcb_platform as ypcb                                    # noqa: E402
 from ld_test import (CRG, WLCRG, DQSPhase, BIST, MT41K256M8_tRFC160, WriteClocks,  # noqa: E402
                      reset_value)
 from wl7ddrphy import WL7DDRPHY                                 # noqa: E402
+import calcpu                                                   # noqa: E402
+from calcpu import Cal, FirmwareBuilder, build_firmware, one_file  # noqa: E402
 
 AW, DW = 25, 512            # beat address, user data (+ 64 ECC bits on the DRAM side)
 USER = [("clk50g", 0, Pins(1)), ("rst", 0, Pins(1)), ("sys_clk", 0, Pins(1)),
@@ -86,19 +94,14 @@ for _c in (0, 1):
 USER_NAMES = {u[0] for u in USER}
 
 
-class Cal(Module, AutoCSR):
-    """cal_ready / cal1_ready: the host sets it once the channel is calibrated (the accelerator
-    waits for it)."""
-    def __init__(self):
-        self.ready = CSRStorage(1, description="1: calibrated, the controller has the PHY.")
-
-
 class OTPULiteDRAM(SoCCore):
     mem_map = {"csr": 0x0000_0000}
 
-    def __init__(self, f=133.333e6, dqs_phase=90, bist=True, phy="a7", groups=None, rd_reg=False):
+    def __init__(self, f=133.333e6, dqs_phase=90, bist=True, phy="a7", groups=None, selfcal=False,
+                 rd_reg=False):
         """phy "wl": WL7DDRPHY with each channel's WriteClocks MMCM (docs/litedram.md section 8;
-        groups[ch]: its lanes' write clock groups)."""
+        groups[ch]: its lanes' write clock groups). selfcal: the calibration CPU (its firmware set
+        once the CSR map exists: build())."""
         platform = ypcb.Platform()
         platform.add_extension(USER)
         clk50 = platform.request("clk50g")
@@ -174,6 +177,26 @@ class OTPULiteDRAM(SoCCore):
         wb = wishbone.Interface(data_width=32, address_width=32, addressing="word")
         self.axil2wb = AXILite2Wishbone(axil_s, wb)
         self.bus.add_master(name="ctl", master=wb)
+        if selfcal:
+            calcpu.add(self, platform)
+
+
+def sdram_init(soc, sys_mhz, phy, groups):
+    """sdram_init.py: the init sequence and the PHY settings, for the host and the firmware."""
+    ps = soc.ddrphy.settings
+    hdr = get_sdram_phy_py_header(ps, soc.sdram.controller.settings.timing)
+    info = {"sys_hz": sys_mhz * 1e6, "nphases": ps.nphases, "rdphase": reset_value(ps.rdphase),
+            "wrphase": reset_value(ps.wrphase), "databits": ps.databits,
+            "dfi_databits": ps.dfi_databits, "modules": ps.databits // 8, "delays": 32,
+            "bitslips": 8, "cl": ps.cl, "cwl": ps.cwl, "read_latency": ps.read_latency,
+            "write_latency": ps.write_latency, "vco_hz": soc.crg.mmcm.compute_config()["vco"],
+            "dqs_phase": 90.0, "channels": [0, 1], "phy": phy}
+    if phy == "wl":
+        info.update(vco_hz=8 * sys_mhz * 1e6, groups=groups, group1_deg={0: 0.0, 1: 0.0},
+                    ps_moves="ck")
+    else:
+        assert soc.crg.mmcm1.compute_config()["vco"] == info["vco_hz"], "MMCM VCOs differ"
+    return info, hdr + "\nphy = " + json.dumps(info, indent=1) + "\n"
 
 
 def main():
@@ -187,13 +210,23 @@ def main():
     ap.add_argument("--groups1", default="0,0,0,0,0,0,0,0,0", help="wl: channel 1's lane groups")
     ap.add_argument("--rd-reg", action="store_true",
                     help="wl: a register after the read bitslip mux, read latency + 1 (WL7DDRPHY rd_reg)")
+    ap.add_argument("--selfcal", action="store_true",
+                    help="the calibration CPU: the core calibrates itself at reset (section 10)")
+    ap.add_argument("--fw-id", type=lambda x: int(x, 16), default=0,
+                    help="selfcal: the firmware id in the result mailbox (hex, e.g. a commit)")
     a = ap.parse_args()
     out = Path(a.out).resolve()
     groups = {0: [int(x) for x in a.groups0.split(",")], 1: [int(x) for x in a.groups1.split(",")]}
     soc = OTPULiteDRAM(a.sys_mhz * 1e6, bist=not a.no_bist, phy=a.phy, groups=groups,
-                       rd_reg=a.rd_reg)
-    b = Builder(soc, output_dir=str(out), compile_software=False, compile_gateware=False,
-                csr_csv=str(out / "csr.csv"))
+                       selfcal=a.selfcal, rd_reg=a.rd_reg)
+    info, init_py = sdram_init(soc, a.sys_mhz, a.phy, groups)
+
+    def firmware():
+        (out / "sdram_init.py").write_text(init_py)
+        n = build_firmware(soc, out, a.fw_id)
+        print(f"selfcal firmware: {n} bytes of {soc.selfcal.mem.depth * 4}")
+    b = FirmwareBuilder(soc, hook=firmware if a.selfcal else None, output_dir=str(out),
+                        compile_software=False, compile_gateware=False, csr_csv=str(out / "csr.csv"))
     b.build(build_name="otpu_litedram", run=False)
     gw = out / "gateware"
     # the XDC: the DDR3 pads' blocks and the platform commands, not the user ports (no pins)
@@ -214,21 +247,12 @@ def main():
         elif "get_nets sys_clk" not in line:     # the CRG's own, by a net name the top renames
             keep.append(line)
     (out / "otpu_litedram.xdc").write_text("\n".join(keep) + "\n")
-    (out / "otpu_litedram.v").write_text((gw / "otpu_litedram.v").read_text())
-    ps = soc.ddrphy.settings
-    hdr = get_sdram_phy_py_header(ps, soc.sdram.controller.settings.timing)
-    info = {"sys_hz": a.sys_mhz * 1e6, "nphases": ps.nphases, "rdphase": reset_value(ps.rdphase),
-            "wrphase": reset_value(ps.wrphase), "databits": ps.databits,
-            "dfi_databits": ps.dfi_databits, "modules": ps.databits // 8, "delays": 32,
-            "bitslips": 8, "cl": ps.cl, "cwl": ps.cwl, "read_latency": ps.read_latency,
-            "write_latency": ps.write_latency, "vco_hz": soc.crg.mmcm.compute_config()["vco"],
-            "dqs_phase": 90.0, "channels": [0, 1], "phy": a.phy}
-    if a.phy == "wl":
-        info.update(vco_hz=8 * a.sys_mhz * 1e6, groups=groups, group1_deg={0: 0.0, 1: 0.0},
-                    ps_moves="ck")
-    else:
-        assert soc.crg.mmcm1.compute_config()["vco"] == info["vco_hz"], "MMCM VCOs differ"
-    (out / "sdram_init.py").write_text(hdr + "\nphy = " + json.dumps(info, indent=1) + "\n")
+    verilog = (gw / "otpu_litedram.v").read_text()
+    if a.selfcal:
+        others = [src for src, *_ in soc.platform.sources if Path(src).name != "otpu_litedram.v"]
+        verilog = one_file(verilog, gw, others)
+    (out / "otpu_litedram.v").write_text(verilog)
+    (out / "sdram_init.py").write_text(init_py)
     print(json.dumps(info))
 
 

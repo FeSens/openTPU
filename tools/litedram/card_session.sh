@@ -13,8 +13,12 @@
 #                                                                            #   otpu-smi
 # DIR holds ld_test.bit, csr.csv, sdram_init.py and ld_host.py; every step's output goes to a
 # log there. Never reboot while a Vivado job runs on the host.
+#
+# An image with the calibration CPU (ld_test.py --selfcal, docs/litedram.md section 10): the step
+# `selfcal DIR` instead of `test` (LDHOST: the ld_host.py to run, e.g. a staged tree's, whose
+# opentpu package it then imports; SOAK: seconds per channel, default 300).
 set -u
-STEP=${1:?load BIT DIR | test DIR | after DIR}; shift
+STEP=${1:?load BIT DIR | test DIR | selfcal DIR | after DIR}; shift
 P=${PYTHON:-$HOME/otpu-venv/bin/python}
 V=$(dirname "$P")
 log() { echo "=== $* $(date +%T)"; }
@@ -49,6 +53,20 @@ test)
   log "temperature run"; $P ld_host.py . temp --ch both --stride 1 --minutes "${MINUTES:-35}" \
     --every "${EVERY:-300}" 2>&1 | tee temp.log
   log "BIST bandwidth, both channels"; $P ld_host.py . bist --ch both 2>&1 | tee bist.log
+  log "done"
+  ;;
+selfcal)
+  DIR=${1:?dir}
+  H=${LDHOST:-ld_host.py}
+  cd "$DIR" || exit 1
+  [ -e /dev/xdma0_user ] || { echo "no /dev/xdma0_user"; exit 2; }
+  production && { echo "the card runs production, not the test image"; exit 2; }
+  log "info"; $P "$H" . info 2>&1 | tee info.log
+  log "the CPU's calibration since configuration: result, BIST, soak"
+  $P "$H" . selfcal --soak --seconds "${SOAK:-300}" 2>&1 | tee selfcal.log
+  log "the host's calibration (the CPU held) against the CPU's"
+  $P "$H" . selfcal --compare 2>&1 | tee selfcal_compare.log
+  log "the CPU calibrates again (released)"; $P "$H" . selfcal --rerun 2>&1 | tee selfcal_rerun.log
   log "done"
   ;;
 after)

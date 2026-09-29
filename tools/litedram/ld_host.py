@@ -15,6 +15,12 @@ WL7DDRPHY images (ld_test.py --phy wl, docs/litedram.md section 8): the phase mo
 channel's CK and commands against its whole write side (DQ with its DQS); `all` and `temp` scan
 the CK phase common to every lane (ddrcal.calibrate_groups; group 1 stays at offset 0).
     python3 ld_host.py BUILD_DIR selftest     # the calibration logic against a simulated PHY
+    python3 ld_host.py BUILD_DIR selfcal [--rerun] [--soak] [--compare]   # an image with the
+        # calibration CPU (ld_test.py / gen_core.py --selfcal, docs/litedram.md section 10): the
+        # CPU's result, then a BIST on each channel as the CPU calibrated it; --rerun: the CPU
+        # calibrates again first (hold, release); --soak: then --seconds of BIST; --compare: then
+        # the CPU is held and the host calibrates each channel (ddrcal, stride 1): the CK phase and
+        # window against the CPU's, and a BIST
 
 --ch 0, 1 or both (default: every channel of the image, one after the other; `temp` runs them
 together). Channel 0's CSRs keep the one-channel image's names, channel 1's carry a 1 (Chan).
@@ -55,8 +61,14 @@ except ImportError:         # a card host whose installed opentpu predates ddrca
     sys.path.insert(0, str(HERE))
     import ddrcal
 sys.modules.setdefault("ddrcal", ddrcal)
+try:
+    from opentpu.host import selfcal
+except ImportError:         # the same: a copy of opentpu/host/selfcal.py here
+    sys.path.insert(0, str(HERE))
+    import selfcal
 from ddrcal import (MIN_WINDOW, CalError, Chan, Dram, DqsPhase, FakeBoard, FakeCsr,  # noqa: E402
-                    WriteClocks, bist_read_scan, bist, bist_start, bist_wait, calibrate_groups,
+                    WriteClocks, bist_read_scan, bist, bist_start, bist_wait, calibrate_channel,
+                    calibrate_groups,
                     dqs_phase,
                     csr_map, dqs_scan, group_windows, margins, offsets, pass_map, run_bist)
 # ------------------------------------------------------------------------------ CSR access
@@ -430,7 +442,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("build", type=Path)
     ap.add_argument("what", choices=["info", "cal", "bist", "all", "selftest", "dqs", "rscan", "soak",
-                                     "temp", "wscan", "g1"])
+                                     "temp", "wscan", "g1", "selfcal"])
+    ap.add_argument("--rerun", action="store_true", help="selfcal: the CPU calibrates again first")
+    ap.add_argument("--soak", action="store_true", help="selfcal: --seconds of BIST per channel")
+    ap.add_argument("--compare", action="store_true",
+                    help="selfcal: hold the CPU, calibrate from the host, compare")
     ap.add_argument("--ch", help="0, 1 or both (default: every channel of the image)")
     ap.add_argument("--seconds", type=float, default=300, help="soak: how long to repeat the BIST")
     ap.add_argument("--minutes", type=float, default=35, help="temp: how long to run the BIST")
@@ -476,12 +492,115 @@ def main():
                       f"{Chan(csr, ch).r('wclk_mmcm_locked')}")
     if a.what == "temp":
         return temp_run(a, csr, chans, period)
+    if a.what == "selfcal":
+        return selfcal_run(a, csr, chans, period, phy)
     rc = 0
     for ch in chans:
         if len(chans) > 1:
             print(f"==== channel {ch}")
         rc |= channel(a, Chan(csr, ch), period)
     return rc
+
+
+def selfcal_show(csr, phy, chans):
+    """The CPU's state and result, per channel; True if every channel in `chans` is ok."""
+    st = selfcal.state(csr)
+    held = selfcal.held(csr)
+    print(f"calibration CPU: {'held' if held else 'done' if st['done'] else 'running'}, "
+          + ", ".join(f"ch{ch} {s}{' (' + e + ')' if e else ''}" for ch, (s, e) in st["channels"].items()))
+    res = selfcal.decode(selfcal.mailbox(csr), phy, phy.get("groups"))
+    fw = selfcal.mailbox(csr, 1, 2)[0]
+    print(f"  firmware {fw:08x}, whole run {selfcal.mailbox(csr, 4, 5)[0] / phy['sys_hz']:.2f} s")
+    for ch in chans:
+        r = res.get(ch)
+        if not r:
+            print(f"  ch{ch}: not run")
+            continue
+        print(f"  ch{ch}: {r['state']}{' (' + r['error'] + ')' if r['error'] else ''}, "
+              f"{r['seconds']} s, stride {r['stride']}, CK at {r['dqs_steps']} (scan from "
+              f"{r['start']}, +{r['pick']}), common run {r['window_steps']} steps "
+              f"({r['window_ps']} ps: +{r['run'][0]}..+{r['run'][1]}), write latency "
+              f"{r['write_latency']}")
+        print(f"        read taps {[x['tap'] for x in r['read']]}, windows "
+              f"{[x['taps'] for x in r['read']]}, bitslips {[x['bitslip'] for x in r['read']]}"
+              + "".join(f", lane {m} bit {i} {o:+d}" for m, row in enumerate(r["bit_offsets"])
+                        for i, o in enumerate(row) if o))
+        if r["lanes"]:
+            print(f"        lanes (CK phase steps from -{len(r['lanes'][0]) // 2} to "
+                  f"+{len(r['lanes'][0]) // 2} around the scan's start):")
+            for m, line in enumerate(r["lanes"]):
+                print(f"          m{m} {line}")
+    return all(res.get(ch, {}).get("state") == "ok" for ch in chans), res
+
+
+def soak_bist(csr, sys_hz, gib, seconds):
+    """--seconds of 2 GiB BIST passes (both data modes, new seeds each) at the channel's present
+    calibration (not redone): the passes with errors."""
+    t0, n, bad = time.time(), 0, 0
+    beats = int(gib * (1 << 30)) // 64
+    while time.time() - t0 < seconds:
+        ok = True
+        for mode, seed in [(0, n * 7919 + 1), (2, n * 104729 + 3)]:
+            bist(csr, beats, mode, seed, sys_hz)
+            ok &= bist(csr, beats, mode | 1, seed, sys_hz)["errors"] == 0
+        n += 1
+        bad += not ok
+    print(f"  soak: {n} passes of {gib:g} GiB (x2 data modes) in {time.time() - t0:.0f} s, "
+          f"{bad} with errors: " + ("PASS" if not bad else "FAIL"))
+    return not bad
+
+
+def selfcal_run(a, csr, chans, period, phy):
+    """The calibration CPU's checks (docs/litedram.md section 10): see the module's docstring."""
+    if not selfcal.present(csr):
+        print("no calibration CPU in this image (selfcal_status)")
+        return 1
+    if a.rerun:
+        selfcal.hold(csr)
+        selfcal.release(csr)
+        t0 = time.time()
+        selfcal.wait(csr)
+        print(f"calibration CPU run again: {time.time() - t0:.1f} s (host clock)")
+    ok, res = selfcal_show(csr, phy, chans)
+    ready = [csr.r(Chan(csr, ch).name("cal_ready")) for ch in chans]
+    print(f"cal_ready {ready}")
+    ok &= all(ready)
+    for ch in chans:
+        c = Chan(csr, ch)
+        print(f"==== ch{ch} as the CPU calibrated it: BIST over {a.gib:g} GiB")
+        ok &= run_bist(c, phy["sys_hz"], a.gib)
+        if a.soak:
+            ok &= soak_bist(c, phy["sys_hz"], a.gib, a.seconds)
+    if a.compare:
+        selfcal.hold(csr)
+        for ch in chans:
+            c = Chan(csr, ch)
+            print(f"==== ch{ch}: the host calibrates (the CPU held)")
+            r = res.get(ch, {})
+            h = calibrate_channel(c, a.build, stride=r.get("stride") or 1,
+                                  log=lambda m: print("  " + m))
+            dk = (h["dqs_steps"] - r.get("dqs_steps", 0) + period // 2) % period - period // 2
+            dw = h["window_steps"] - r.get("window_steps", 0)
+            same = abs(dk) <= 2 and abs(dw) <= 2
+            def bits(x):
+                return ", ".join(f"m{m}.{i} {o:+d}" for m, row in enumerate(x.get("bit_offsets", []))
+                                 for i, o in enumerate(row) if o) or "none"
+            for who, x in (("host", h), ("CPU", r)):
+                print(f"  {who}: CK at {x.get('dqs_steps')}, window {x.get('window_steps')} steps, "
+                      f"write latency {x.get('write_latency')}, read taps "
+                      f"{[y['tap'] for y in x.get('read', [])]}, windows "
+                      f"{[y['taps'] for y in x.get('read', [])]}, bitslips "
+                      f"{[y['bitslip'] for y in x.get('read', [])]}, bits off their lane {bits(x)}")
+            print(f"  host - CPU: CK {dk:+d}, window {dw:+d} steps: "
+                  + ("within 2 steps" if same else "DIFFERENT")
+                  + f"; write latency {'same' if h['write_latency'] == r.get('write_latency') else 'differs'}"
+                  f", per-bit framing {'same' if bits(h) == bits(r) else 'differs'}")
+            ok &= same
+            print(f"  BIST over {a.gib:g} GiB at the host's calibration:")
+            ok &= run_bist(c, phy["sys_hz"], a.gib)
+        print("the CPU stays held (release: ld_host.py selfcal --rerun)")
+    print("selfcal: " + ("PASS" if ok else "FAIL"))
+    return 0 if ok else 1
 
 
 def channel(a, csr, period):

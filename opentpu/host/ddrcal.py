@@ -800,7 +800,7 @@ def calibrate_channel(csr, config, stride=1, mib=64, log=print):
            "window_ps": round(len(run) * stride * dqs.step_ps), "traffic_checked": has_bist,
            "write_latency": wl, "read": [{"taps": n, "bitslip": b, "tap": s + n // 2}
                                          for n, b, s in rl],
-           "lanes": pass_map(table, d.nm, period), **extra}
+           "bit_offsets": [list(o) for o in d.boff], "lanes": pass_map(table, d.nm, period), **extra}
     log(f"DQS step {res['dqs_steps']}, common write window {res['window_ps']} ps"
         f"{'' if has_bist else ' (DFII check only: no BIST)'}, write latency {wl}, read windows "
         f"{[n for n, _, _ in rl]} taps")

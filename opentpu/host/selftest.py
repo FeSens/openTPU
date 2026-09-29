@@ -56,10 +56,11 @@ HINTS = {
               "OTPU_LANES, or load the bitstream built for them (docs/board.md, which bitstream "
               "to load). D must be 128.",
     "calib": "A DDR3 controller did not calibrate. LiteDRAM bitstreams (CAPS bit27): the "
-             "host calibrates them (otpu-memcal cal --force redoes it, otpu-memcal shows the "
-             "last result; docs/litedram.md). MIG bitstreams (before LiteDRAM): check the MIG "
-             "pinout / clocking in the bitstream (docs/board.md). Either: the memory voltage. "
-             "STATUS bit5 = channel 0, bit6 = channel 1.",
+             "core's own CPU calibrates them at configuration, or the host does for a core "
+             "without one (otpu-memcal shows the result and the CPU's errors, otpu-memcal cal "
+             "--force redoes it from the host; docs/litedram.md). MIG bitstreams (before "
+             "LiteDRAM): check the MIG pinout / clocking in the bitstream (docs/board.md). "
+             "Either: the memory voltage. STATUS bit5 = channel 0, bit6 = channel 1.",
     "scrub": "Writing the DRAM failed or timed out: DMA host->card is broken (dmesg: XDMA "
              "errors); try the driver in poll mode (sudo otpu-setup --poll).",
     "regs": "Register writes do not stick: the AXI-Lite path (XDMA BAR0 -> otpu_ctrl) is "
@@ -165,8 +166,12 @@ def main(argv=None) -> int:
         if memcal.hostcal(t):
             t0 = time.time()
             res = memcal.ensure(t, log=lambda m: print(f"         {m}", flush=True))
-            how = (f" (host calibration: channel {', '.join(map(str, res['channels']))} in "
-                   f"{time.time() - t0:.1f}s)" if res else " (host calibration: done before)")
+            who = {"selfcal": "the core's CPU", "selfcal+host": "the core's CPU and the host"}.get(
+                (res or {}).get("by"), "host calibration")
+            how = (f" ({who}: channel {', '.join(map(str, res['channels']))} in "
+                   f"{time.time() - t0:.1f}s)" if res else
+                   " (calibrated by the core's CPU)" if memcal.core_cpu(t) else
+                   " (host calibration: done before)")
         deadline = time.time() + (0 if a.sim else 5)
         while True:
             st = t.reg_read(R_STATUS)
