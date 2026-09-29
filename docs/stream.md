@@ -381,10 +381,14 @@ module otpu_se_tail import otpu_pkg::*; import otpu_fp::*;
 - **STREAM:** the fill starts with one TMEM read of `desc`, 8 words. The DMA decodes the
   float-safe payloads into `ss_cfg` and the addresses (slots at vec + i*cols, x, K_j = k +
   j*ks, out), then fills the slots the modes need (4.3). `o` is counted only with `q_en`.
-- **pkg / seq:** `OP_STREAM` = 0x13 is a U_DMA instruction. Its footprint:
-  - DRAM `[src, src + 4 rows cols)` read and written;
-  - TMEM reads of desc (d0..d7), vec (4 cols), x (rows) and K (4 ks);
-  - a TMEM write of `[out, out + rows)`.
+- **pkg / seq:** `OP_STREAM` = 0x13 is a U_DMA instruction. The sequencer cannot read the
+  descriptor, so the footprint takes the subset's largest shape (rows, cols ≤ 256):
+  - DRAM `[src, src + 256 KiB)` written (in place);
+  - TMEM reads of desc `[desc, desc + 8)`, vec `[vec, vec + 1024)`, x `[x, x + 256)` and K
+    `[k, k + ks + 1)` (ks from w1, which is why it is in the instruction);
+  - a TMEM write of `[out, out + 256)`.
+  - The extra false conflicts only order a STREAM against its neighbours. SE runs streams and
+    VOPs in turn anyway. DSTEP keeps its exact footprint, and it is what Qwen3.5 uses.
 - **CAPS:** bit26 `STREAM` (the subset). bit7 is CHASH; bit6 DSTEP stays set.
 - **slice:** wire u_dma and u_vpu `ss_*`. `HAS_DSTEP` now gates the tail inside u_vpu.
 
@@ -477,32 +481,46 @@ parameters to it. Both 0 is v1, and the 05:00 checkpoint picks the values.
 
 ```systemverilog
 module otpu_se_comp import otpu_pkg::*; import otpu_fp::*;
-#(parameter int LANES = 8, parameter int MW = 64) (   // MW: the core's opaque chunk meta
-  input  logic clk, rst, en,                          // en: the VPU's enable (VOP mode)
-  input  logic             in_v,                      // a composite chunk enters (at S0's mux)
-  input  logic [7:0]       in_f,                      // V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2
-  input  f32_t             in_a [LANES], in_b [LANES],// in_b: EXP2SUB's B
+#(parameter int LANES = 8, parameter int MW = 64,    // MW: the core's opaque chunk meta
+  parameter int NS = 3, parameter int HA = 2,        // stages per lane; hold's lead
+  parameter bit EXT = 1'b1) (                        // 1: the stage units are the owner's
+  input  logic clk, rst, en,                         // en: the VPU's enable (VOP mode)
+  input  logic             in_v,                     // a composite chunk enters (at S0's mux)
+  input  logic [7:0]       in_f,                     // V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2
+  input  f32_t             in_a [LANES], in_b [LANES], // in_b: EXP2SUB's B
   input  logic [LANES-1:0] in_m,
   input  logic [MW-1:0]    in_meta,
-  output logic             hold,     // S0 is taken HOLD_AHEAD = 2 en-cycles from now: issue no chunk then
+  output logic             hold,     // S0 is taken HA en-cycles from now: issue no chunk then
   output logic [2:0]       st_sel,   // stage s (0 S0, 1 U, 2 Q) takes comp's operands this cycle
   output f32_t             st_a [3][LANES], st_b [3][LANES], st_c [3][LANES], st_e [3][LANES],
-  input  f32_t             st_y [3][LANES],           // stage s's result, SL en-cycles later
-  output logic             out_v,                     // the result chunk, a fixed latency L(f) after in_v
+  input  f32_t             st_y [3][LANES],          // stage s's result, SL en-cycles later
+  output logic             out_v,                    // P(f)*T en-cycles after in_v
   output f32_t             out_d [LANES],
   output logic [LANES-1:0] out_m,
   output logic [MW-1:0]    out_meta);
 ```
 
-- **Core side (R-A).**
-  - S0's operand mux takes `st_*[0]` when `st_sel[0]`.
-  - Issue respects `hold`.
-  - `out_*` joins the write path in start order. The core's latency rule stays: L(f) is a
-    fixed function of the function, so an elementwise VOP starts only when its latency ≥
-    those in flight.
-  - `st_y[0]` is S0's result.
-- **Standalone test (se-v2).** The module with generic stage models (parameter EXT = 0),
-  bit-exact against fp32.py on specials and random values.
+- **Stages.** S0 and U are otpu_fmma, with st_e = 1.0 (y = a*b + c). Q is fmul + fadd, which
+  ignores st_e.
+- **Timing.** T = 3*SL + RR (3) + 1 = 25 en-cycles from S0 to S0. The number of passes P
+  depends on the function:
+
+| functions | P |
+|---|---|
+| EXP2, EXP2SUB | 3 |
+| RECIP | 2 |
+| RSQRT, LOG2 | 4 |
+
+- **Core side.**
+  - S0's input registers take st_*[0] when st_sel[0].
+  - Issue holds when `hold` is set: read address → mi → m0 → S0 is HA = 2.
+  - out_* joins the write path in start order. The latency rule is unchanged: L(f) = P*T.
+  - st_*[1] and st_*[2] go to the tail's U and Q.
+- **Standalone test (se-v2).** tests/test_se_comp.py checks every function bit-exact against
+  fp32.py and otpu_fp: edge values, random words, en stalls, NS 1..4 and HA 1..3.
+- **Area, yosys.** 8.6K LUT + 2.2K SRL without the units, being cut toward ~8-9K LUT-eq.
+  COMP8 is then about -2 to -3K LUT and -36 DSP net, and ONE_TREE carries most of the area
+  target.
 
 ### 11.2 otpu_se_tail additions
 
