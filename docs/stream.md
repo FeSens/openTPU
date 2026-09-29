@@ -613,3 +613,33 @@ Otherwise v1 (both 0) builds ~07:00.
     to 6,347 LUT (EXT, MW 21).
   - otpu_se_comp's own path: 8,576 → 7,231 → 6,347 LUT, with 2.2K SRL16 (the k1/k2/ii/f
     delays: 76 bits × 3 stages × 8 lanes).
+- **Timing** (yosys `sta`, logic only; Vivado OOC below).
+  - Each stage's control is a ROM over (function, pass), built from `ucode` with constant
+    arguments. Before, `k = pass·NS + s`, `k mod 2` and `(k - 1) mod 3` sat in front of the
+    decode. `n_pass` is a constant per function.
+  - The output side's control (destination, negate, the constant into v) and RR's flags are
+    registered from a copy of (function, pass) delayed SL - 1. So the result's path (y, the
+    destination mux, RR's range compare) starts at flip-flops.
+  - Vivado OOC of otpu_vpu v2 at 8576057 (before both changes; the lead's run, 120.755 MHz):
+    WNS +0.080 ns. Second worst: `g_sel[0].u_md` (the meta after S0) → `g_rr.q0`, 23
+    levels.
+  - yosys on otpu_vpu (tail, HAS_SE, WBUF) at 202856d (the ROM, without the registered
+    output control): v2 5.67 ns against v1 5.43 ns (6.19 ns before the ROM). v2's worst path
+    is now a DSP cascade in the tail's Q multiplier; v2 is 36,184 LUT + 2,912 SRL, 84 DSP;
+    v1 45,892 + 2,700, 120 DSP.
+- **Cycles per token** (RTL, tools/se_v2_perf.sh at se-int 202856d: perf_qwen with
+  OTPU_DSTEP=1 OTPU_PAIR=1, DDR3-1066, 120 MHz; v2 with `--check`, bit-exact with the ISA
+  simulator on all three):
+
+| model | main | v1 | v2 | v2 - v1 |
+|---|---|---|---|---|
+| qwen35, 4 layers | 3,154,675 | 3,154,667 | 3,155,016 | +349 (+0.011%) |
+| lfm2, 2 layers | 830,139 | 830,139 | 830,139 | 0 |
+| qwen3, 2 layers | 1,716,608 | 1,716,624 | 1,716,721 | +97 (+0.006%) |
+
+  - The decode tokens are MXU/port bound (VPU busy 2-5%), so the composite throughput doesn't
+    reach the token time.
+  - v2's longer RSQRT/LOG2 (100 cycles against about 70) shows where it's on the dependency
+    chain: qwen35's DeltaNet +90 cycles a layer, attention +32; qwen3's attention +65 a layer.
+  - VPU busy per phase drops with v2. qwen35 MLP 35,572 → 30,253, other 50,146 → 32,761;
+    exp2's busy -22%, recip's -32%; rsqrt's +23%.
