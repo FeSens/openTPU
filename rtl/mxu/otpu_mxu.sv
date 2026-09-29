@@ -324,7 +324,8 @@ module otpu_mxu
   assign pf_starve = more && f_count == 0;
   assign pf_block  = more && f_count != 0 && !pop;
   assign b_req  = go_iss && need_b;
-  assign b_addr = b_req ? (chunk_addr >> 2) : '0;
+  // not gated with b_req: the address (and the slice's parity of it) does not wait for b_gnt
+  assign b_addr = chunk_addr >> 2;
   assign a_req  = go_iss && !i_unit;
   assign a_addr = a_req ? (scale_addr >> 2) : '0;
   assign act_blk = 16'(c_ab) + (c_pair ? {ck[14:0], 1'b0} : ck);

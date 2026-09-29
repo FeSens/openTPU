@@ -66,6 +66,7 @@ module otpu_slice
   output logic [D/4-1:0] b_wmask,
   output logic [D*8-1:0] b_wdata,
   output logic [31:0]   b_addr,
+  output logic          b_par,      // ^b_addr[31:5] (the memory's channel hash; see the port mux)
   input  logic          b_rvalid,
   input  logic          b_rtag,
   input  logic [D*8-1:0] b_rdata,
@@ -432,8 +433,13 @@ module otpu_slice
     b_wmask = dma_bwmask;
     b_wdata = dma_bwdata;
     b_addr  = dma_breq ? dma_baddr : mxu_baddr;
+    // the address's parity from each source's own address (their registers), muxed with it:
+    // the parity of the muxed address ran on from the DMA's request and the MXU's grant into
+    // every write of otpu_native_dram's queues (DMA occ -> qbm, 11 levels, the 959b425 build's
+    // worst DMA -> memory paths, -0.390 ns at 133.33 MHz)
+    b_par   = dma_breq ? ^dma_baddr[31:5] : ^mxu_baddr[31:5];
     if (ld_busy) begin                // the units are held in reset
-      b_req = ld_req; b_tag = 1'b1; b_we = 1'b0; b_addr = ld_a;
+      b_req = ld_req; b_tag = 1'b1; b_we = 1'b0; b_addr = ld_a; b_par = ^ld_a[31:5];
     end
   end
 

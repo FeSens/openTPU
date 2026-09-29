@@ -111,6 +111,7 @@ module otpu_native_dram #(
   input  logic [D/4-1:0]    b_wmask,
   input  logic [D*8-1:0]    b_wdata,
   input  logic [31:0]       b_addr,     // word address (chunk aligned)
+  input  logic              b_par,      // ^b_addr[31:5] (the channel hash; see b_sw)
   output logic              b_rvalid,
   output logic              b_rtag,
   output logic [D*8-1:0]    b_rdata,
@@ -151,6 +152,12 @@ module otpu_native_dram #(
     return a[5:0] ^ a[11:6] ^ a[17:12] ^ a[23:18] ^ {5'd0, a[24]};
   endfunction
 
+  // n + inc - dec as a choice among n - 1, n and n + 1: the counts the slice's requests move
+  // (the B and SW queues, the B tags) take their late strobes after the adders, not before
+  function automatic logic [15:0] updn(input logic [15:0] n, input logic inc, input logic dec);
+    return inc == dec ? n : inc ? n + 1'b1 : n - 1'b1;
+  endfunction
+
   // the channel of a word address's beat
   function automatic logic chan_of(input logic [31:0] word_addr);
     return word_addr[4] ^ (CHASH && ^word_addr[31:5]);
@@ -182,7 +189,7 @@ module otpu_native_dram #(
   } tg_t;
 
   logic [QW:0] qb_n [2];
-  logic [QW-1:0] qb_h [2];
+  logic [QW:0] qb_h [2];                    // (2 QD slots: see qbm)
   logic [QW:0] qa_n [2];
   logic [QW-1:0] qa_h [2];
   logic [2:0]  a_iss [2];                   // the head A read's run: beats already issued
@@ -249,7 +256,11 @@ module otpu_native_dram #(
   wire b_take = b_req && b_rdy;
   wire a_take = a_req && a_rdy;
   wire a_ch = chan_of(a_addr);
-  wire b_sw = CHASH && ^b_addr[31:5];              // the chunk's high half is on channel 0
+  // the chunk's high half is on channel 0. b_addr comes at the end of the slice's grant chain
+  // (DMA request -> the MXU's grant and request -> the port's address mux), and its 27-bit parity
+  // then ran into every queue write (b_par: the slice muxes its sources' parities instead)
+  wire b_sw = CHASH && b_par;
+  wire [1:0] b_hnz = {b_wmask[31:16] != 0, b_wmask[15:0] != 0};   // the halves a B write writes
   wire [25:0] a_beat = a_addr[29:4];
   wire a_reuse = !a_we && al_v && al_beat == a_beat;
   // A runs per channel: the next channel beat of the run, valid (no write since), beats not
@@ -275,14 +286,21 @@ module otpu_native_dram #(
   qb_t          hb [2];
   qa_t          ha [2];
   qw_t          hw [2];
-  logic [24:0]  wadr_r [2];                        // the beat of slot qw_r
-  logic [HW-1:0] wh_r [2], wh_f [2];               // the buckets of slots qw_r and qw_f
+  // slot qw_r (the read point): its beat, bucket and whether it is partial, registered (wadr_r,
+  // wh_r, wp_r; see their process); the next slot's beat and bucket; the bucket of slot qw_f
+  logic [24:0]  wadr_r [2], wadr_n [2];
+  logic [HW-1:0] wh_r [2], wh_n [2], wh_f [2];
+  logic [1:0]   wp_r;
+`ifndef SYNTHESIS
+  logic [24:0]  wadr_o [2];
+  logic [HW-1:0] wh_o [2];
+`endif
   logic [511:0] rb_head [2], ra_head [2], wr_head [2];
   logic [1:0]   rtk;                               // a read command taken (tag push)
   always_comb begin
     for (int c = 0; c < 2; c++) begin
       // channel c holds the chunk's half c ^ b_sw
-      qb_push[c] = b_take && (!b_we || b_wmask[16 * (c ^ b_sw) +: 16] != 0);
+      qb_push[c] = b_take && (!b_we || b_hnz[c ^ b_sw]);
       qb_e[c].we = b_we;
       qb_e[c].m = b_addr[29:5];
       qb_e[c].data = b_wdata[512 * (c ^ b_sw) +: 512];
@@ -302,7 +320,12 @@ module otpu_native_dram #(
   end
   for (genvar c = 0; c < 2; c++) begin : g_mem
     // flat vectors: Vivado builds a RAM of structs from registers
-    logic [$bits(qb_t)-1:0] qbm [QD];
+    // qbm: 2 QD slots for at most QD entries (b_rdy), so the slot at the tail is never live and
+    // is written every cycle; a push only moves the tail. Its write enable was the push, which
+    // comes at the end of the slice's grant chain and fanned out to all of the queue's LUT RAM
+    // (qb_t's 554 bits: 745 cells per channel; the 959b425 build's worst DMA -> memory paths,
+    // -0.390 ns at 133.33 MHz). At QD = 16 the RAM32Ms hold 32 slots already
+    logic [$bits(qb_t)-1:0] qbm [2 * QD];
     logic [$bits(qa_t)-1:0] qam [QD];
     logic [$bits(qw_t)-1:0] qwm [WQD];
     logic [24:0] wam [WQD];                 // per slot: the beat
@@ -311,15 +334,22 @@ module otpu_native_dram #(
     logic [511:0] rbm [RD];
     logic [511:0] ram [AD];
     logic [511:0] wrm [WQD];                // the SW queue's fill data, per slot
-    always_ff @(posedge clk) if (qb_push[c]) qbm[QW'(qb_h[c] + qb_n[c])] <= qb_e[c];
+    always_ff @(posedge clk) qbm[(QW + 1)'(qb_h[c] + qb_n[c])] <= qb_e[c];
     always_ff @(posedge clk) if (qa_push[c]) qam[QW'(qa_h[c] + qa_n[c])] <= qa_e[c];
-    always_ff @(posedge clk) if (qw_push[c]) qwm[WW'(qw_f[c] + qw_n[c])] <= qw_e[c];
-    always_ff @(posedge clk) if (qw_push[c]) wam[WW'(qw_f[c] + qw_n[c])] <= qw_e[c].m;
-    always_ff @(posedge clk) if (qw_push[c]) whm[WW'(qw_f[c] + qw_n[c])] <= whash(qw_e[c].m);
+    // the SW queue's tail slot (not live unless the queue is full) takes the gathered beat every
+    // cycle: its write enables are registers, not the push (an SW write's take comes at the end
+    // of QUANT's TMEM grant; the 5e5a build's worst DMA -> memory paths ran into qwm's WE)
+    always_ff @(posedge clk) if (!qw_n[c][WW]) qwm[WW'(qw_f[c] + qw_n[c])] <= qw_e[c];
+    always_ff @(posedge clk) if (!qw_n[c][WW]) wam[WW'(qw_f[c] + qw_n[c])] <= qw_e[c].m;
+    always_ff @(posedge clk) if (!qw_n[c][WW]) whm[WW'(qw_f[c] + qw_n[c])] <= whash(qw_e[c].m);
     always_ff @(posedge clk) if (rtk[c]) tgm[TW'(tg_h[c] + tg_n[c])] <= tg_in[c];
     assign tg_nx1[c] = tg_t'(tgm[TW'(tg_h[c] + 1'b1)]);
-    assign wadr_r[c] = wam[qw_r[c]];
-    assign wh_r[c] = whm[qw_r[c]];
+    assign wadr_n[c] = wam[WW'(qw_r[c] + 1'b1)];
+    assign wh_n[c] = whm[WW'(qw_r[c] + 1'b1)];
+`ifndef SYNTHESIS
+    assign wadr_o[c] = wam[qw_r[c]];                // (the registers' reference)
+    assign wh_o[c] = whm[qw_r[c]];
+`endif
     assign wh_f[c] = whm[qw_f[c]];
     always_ff @(posedge clk)
       if (n_rvalid[c] && tgh[c].k == K_B) rbm[rb_t[c]] <= n_rdata[c];
@@ -353,10 +383,10 @@ module otpu_native_dram #(
       // address (one in its bucket; a hash collision only delays the read)
       w_blk[c] = wnz[c][wh_r[c]];
       // the queue's writes wait while its fill reads still go out (not blocked), unless half full
-      w_hold[c] = (qw_rn[c] != 0) && wpart[c][qw_r[c]] && !w_blk[c] && qw_n[c] < (WW + 1)'(WQD / 2);
+      w_hold[c] = (qw_rn[c] != 0) && wp_r[c] && !w_blk[c] && qw_n[c] < (WW + 1)'(WQD / 2);
       // A: a read's run (response room for the whole run as it starts), or a write
       e_a = (qa_n[c] != 0) && (ha[c].we || a_iss[c] != 0 || ra_res[c] <= (AW_ + 1)'(AD - APF));
-      e_wr = (qw_rn[c] != 0) && wpart[c][qw_r[c]] && !w_blk[c];
+      e_wr = (qw_rn[c] != 0) && wp_r[c] && !w_blk[c];
       // an SW write once its slot is past the read point and, if partial, has its fill data
       e_ww = (qw_n[c] != qw_rn[c]) && (!wpart[c][qw_f[c]] || wgot[c][qw_f[c]]) && !w_hold[c];
       e_b = (qb_n[c] != 0) && (hb[c].we || rb_res[c] < (RW + 1)'(RD));
@@ -442,8 +472,10 @@ module otpu_native_dram #(
     a_rdata2 <= a_src[32 * (aoh.idx ^ 4'd1) +: 32];
   end
 
+  // the tag FIFO writes its tail every cycle too (the slot is not live unless the FIFO is full),
+  // so its write enable is a register, not b_take
   always_ff @(posedge clk) begin
-    if (b_take && !b_we) bt_q[OW'(bt_h + bt_n)] <= {b_sw, b_tag};
+    if (!bt_n[OW]) bt_q[OW'(bt_h + bt_n)] <= {b_sw, b_tag};
     if (a_take && !a_we)
       ao_q[OW'(ao_h + ao_n)] <= ao_in;
   end
@@ -487,25 +519,20 @@ module otpu_native_dram #(
                  b_take && b_we && b_wmask[31:16] != 0,
                  b_take && b_we && b_wmask[15:0]  != 0};
       for (int c = 0; c < 2; c++) begin
-        logic [QW:0] nb, na;
-        logic [WW:0] nw, nrn;
+        logic [QW:0] na;
         logic [RW:0] rbn, rbr;
         logic [AW_:0] ran, rar;
         logic [TW:0] ntg;
-        logic popb, popa, popw, fill;
-        logic hinc, hdec;
-        nb = qb_n[c]; na = qa_n[c]; nw = qw_n[c]; nrn = qw_rn[c]; ntg = tg_n[c];
+        logic popb, popa, popw;
+        na = qa_n[c]; ntg = tg_n[c];
         rbn = rb_n[c]; rbr = rb_res[c]; ran = ra_n[c]; rar = ra_res[c];
         // ---- accept
-        if (qb_push[c]) nb = nb + 1;
         if (qa_push[c]) na = na + 1;
-        if (qw_push[c]) begin
+        if (!qw_n[c][WW]) begin                // the tail slot, as qwm (see g_mem)
           logic [WW-1:0] t;
           t = WW'(qw_f[c] + qw_n[c]);
           wpart[c][t] <= !(&qw_e[c].strb);
           wgot[c][t] <= 1'b0;
-          nw = nw + 1;
-          nrn = nrn + 1;
         end
         // ---- the command stream: a shown command is shown again until taken, a write until
         // its command and its data are taken
@@ -516,28 +543,18 @@ module otpu_native_dram #(
         popa = src[c] == S_A && (swr[c] ? wiss[c] : ctk[c] && a_iss[c] == 3'(APF - 1));
         popb = src[c] == S_B && (swr[c] ? wiss[c] : ctk[c]);
         popw = src[c] == S_WW && wiss[c];
-        fill = src[c] == S_WR && ctk[c];
         if (rtk[c]) ntg = ntg + 1;
         if (src[c] == S_A && rtk[c]) begin      // an A run's beat; the run reserves its room
           a_iss[c] <= (a_iss[c] == 3'(APF - 1)) ? 3'd0 : a_iss[c] + 1'b1;
           if (a_iss[c] == 0) rar = rar + (AW_ + 1)'(APF);
         end
         if (src[c] == S_B && rtk[c]) rbr = rbr + 1;
-        if (fill) begin
-          qw_r[c] <= qw_r[c] + 1;
-          nrn = nrn - 1;
-        end
-        // a whole beat needs no fill read (e_wr is never set for one): it passes the read point
-        // at once, so before its write can go
-        if (qw_rn[c] != 0 && !wpart[c][qw_r[c]]) begin
-          qw_r[c] <= qw_r[c] + 1;
-          nrn = nrn - 1;
-        end
-        hinc = h_inc[c];
-        hdec = h_dec[c];
-        if (popb) begin qb_h[c] <= qb_h[c] + 1; nb = nb - 1; end
+        // a fill read passes the read point; a whole beat needs no fill read (e_wr is never set
+        // for one): it passes the read point at once, so before its write can go (h_inc: either)
+        if (h_inc[c]) qw_r[c] <= qw_r[c] + 1;
+        if (popb) qb_h[c] <= qb_h[c] + 1;
         if (popa) begin qa_h[c] <= qa_h[c] + 1; na = na - 1; end
-        if (popw) begin qw_f[c] <= qw_f[c] + 1; nw = nw - 1; end
+        if (popw) qw_f[c] <= qw_f[c] + 1;
         if (wiss[c]) iss_w[c] <= iss_w[c] + 1'b1;
         // ---- read data, routed by the oldest read's tag
         if (n_rvalid[c]) begin
@@ -560,24 +577,26 @@ module otpu_native_dram #(
           rar = rar - (AW_ + 1)'(aoh.drop) - 1'b1;
         end
         // ---- hazard buckets: slot qw_r passes the read point, slot qw_f's write goes out
-        if (hinc && !(hdec && wh_f[c] == wh_r[c])) wnz[c][wh_r[c]] <= 1'b1;
-        if (hdec && !(hinc && wh_f[c] == wh_r[c]))
-          wnz[c][wh_f[c]] <= whb[c][wh_f[c]] != (WW + 1)'(1);
-        qb_n[c] <= nb; qa_n[c] <= na; qw_n[c] <= nw; qw_rn[c] <= nrn; tg_n[c] <= ntg;
+        for (int k = 0; k < NH; k++)
+          if (h_ik[c][k] || h_dk[c][k]) wnz[c][k] <= h_iv[c][k] || whb[c][wh_f[c]] != (WW + 1)'(1);
+        qb_n[c] <= (QW + 1)'(updn(16'(qb_n[c]), qb_push[c], popb));
+        qw_n[c] <= (WW + 1)'(updn(16'(qw_n[c]), qw_push[c], popw));
+        qw_rn[c] <= (WW + 1)'(updn(16'(qw_rn[c]), qw_push[c], h_inc[c]));
+        qa_n[c] <= na; tg_n[c] <= ntg;
         rb_n[c] <= rbn; rb_res[c] <= rbr; ra_n[c] <= ran; ra_res[c] <= rar;
       end
       // ---- order FIFOs
       begin
-        logic [OW:0] btn, aon;
-        btn = bt_n; aon = ao_n;
-        if (b_take && !b_we) btn = btn + 1;
-        if (b_out) begin bt_h <= bt_h + 1; btn = btn - 1; end
+        logic [OW:0] aon;
+        aon = ao_n;
+        if (b_out) bt_h <= bt_h + 1;
         if (a_take && !a_we) aon = aon + 1;
         if (a_out) begin
           ao_h <= ao_h + 1; aon = aon - 1;
           if (!aoh.reuse) a_last <= ra_head[aoh.c];
         end
-        bt_n <= btn; ao_n <= aon;
+        bt_n <= (OW + 1)'(updn(16'(bt_n), b_take && !b_we, b_out));
+        ao_n <= aon;
       end
       // ---- SW gather: merge into the beat, or start a new one (the old one was pushed)
       for (int c = 0; c < 2; c++) begin
@@ -623,19 +642,43 @@ module otpu_native_dram #(
     end
   end
 
-  // the hazard buckets' counts (no reset: see whb)
+  // the hazard buckets' counts (no reset: see whb). Per bucket k: incremented (h_ik: slot qw_r,
+  // bucket wh_r, passes the read point) or decremented (h_dk: slot qw_f's write, bucket wh_f,
+  // goes out), neither when both hit it; each a function of the late h_inc / h_dec and of the
+  // bucket decodes, and an increment's value where the bucket is wh_r and h_inc is set (h_iv)
+  logic [NH-1:0] h_ik [2], h_dk [2], h_iv [2];
   always_comb
     for (int c = 0; c < 2; c++) begin
-      h_inc[c] = (src[c] == S_WR && ctk[c]) || (qw_rn[c] != 0 && !wpart[c][qw_r[c]]);
+      h_inc[c] = (src[c] == S_WR && ctk[c]) || (qw_rn[c] != 0 && !wp_r[c]);
       h_dec[c] = src[c] == S_WW && wiss[c];
+      for (int k = 0; k < NH; k++) begin
+        h_ik[c][k] = h_inc[c] && wh_r[c] == HW'(k) && !(h_dec[c] && wh_f[c] == wh_r[c]);
+        h_dk[c][k] = h_dec[c] && wh_f[c] == HW'(k) && !(h_inc[c] && wh_f[c] == wh_r[c]);
+        h_iv[c][k] = h_inc[c] && wh_r[c] == HW'(k);
+      end
     end
+  // slot qw_r's beat, bucket and partial flag, registered: read from the LUT RAMs and wpart by
+  // qw_r, they started the fill read's hazard check (w_blk) and so the command select and the
+  // hazard count updates (the 5e5a build's nmem > nmem paths: qw_r -> whm -> wnz -> ... -> whb).
+  // qw_r moves by one exactly on h_inc; the slot it then points to is the tail, whose write
+  // (see g_mem) lands in it this cycle, when no entry past the read point is left (qw_rn 1, or 0
+  // while it stays), otherwise the next slot as stored
   always_ff @(posedge clk)
     for (int c = 0; c < 2; c++) begin
-      if (h_inc[c] && !(h_dec[c] && wh_f[c] == wh_r[c]))
-        whb[c][wh_r[c]] <= wnz[c][wh_r[c]] ? whb[c][wh_r[c]] + 1'b1 : (WW + 1)'(1);
-      if (h_dec[c] && !(h_inc[c] && wh_f[c] == wh_r[c]))
-        whb[c][wh_f[c]] <= whb[c][wh_f[c]] - 1'b1;
+      logic tw;
+      tw = !qw_n[c][WW] && qw_rn[c] == (h_inc[c] ? (WW + 1)'(1) : (WW + 1)'(0));
+      if (tw) begin
+        wadr_r[c] <= qw_e[c].m; wh_r[c] <= whash(qw_e[c].m); wp_r[c] <= !(&qw_e[c].strb);
+      end else if (h_inc[c]) begin
+        wadr_r[c] <= wadr_n[c]; wh_r[c] <= wh_n[c]; wp_r[c] <= wpart[c][WW'(qw_r[c] + 1'b1)];
+      end
     end
+  always_ff @(posedge clk)
+    for (int c = 0; c < 2; c++)
+      for (int k = 0; k < NH; k++)
+        if (h_ik[c][k] || h_dk[c][k])
+          whb[c][k] <= !h_iv[c][k] ? whb[c][wh_f[c]] - 1'b1 :
+                       wnz[c][wh_r[c]] ? whb[c][wh_r[c]] + 1'b1 : (WW + 1)'(1);
 
 `ifndef SYNTHESIS
   // The hazard counts are read only while live: a write goes out only from a live bucket, and
@@ -658,6 +701,61 @@ module otpu_native_dram #(
           whb_ref[c][wh_r[c]] <= whb_ref[c][wh_r[c]] + 1'b1;
         if (h_dec[c] && !(h_inc[c] && wh_f[c] == wh_r[c]))
           whb_ref[c][wh_f[c]] <= whb_ref[c][wh_f[c]] - 1'b1;
+      end
+
+  // b_par is the parity of the address. The B queues and the tag FIFO write their tails every
+  // cycle: the head of each (the entry a command or a read's data takes) is what a queue written
+  // on a push only holds (qbr, btr: the old write enables)
+  always_ff @(posedge clk)
+    if (!rst && b_req && b_par != ^b_addr[31:5])
+      $fatal(1, "otpu_native_dram: b_par %0d, address %h", b_par, b_addr);
+  logic [$bits(qb_t)-1:0] qbr [2][QD];
+  logic [1:0] btr [OD];
+  always_ff @(posedge clk) begin
+    for (int c = 0; c < 2; c++) if (qb_push[c]) qbr[c][QW'(qb_h[c] + qb_n[c])] <= qb_e[c];
+    if (b_take && !b_we) btr[OW'(bt_h + bt_n)] <= {b_sw, b_tag};
+  end
+  always_ff @(posedge clk)
+    if (!rst) begin
+      if (qb_n[0] != 0 && hb[0] != qb_t'(qbr[0][QW'(qb_h[0])]))
+        $fatal(1, "otpu_native_dram: channel 0 B queue head (slot %0d) differs", qb_h[0]);
+      if (qb_n[1] != 0 && hb[1] != qb_t'(qbr[1][QW'(qb_h[1])]))
+        $fatal(1, "otpu_native_dram: channel 1 B queue head (slot %0d) differs", qb_h[1]);
+      if (bt_n != 0 && bth != btr[bt_h])
+        $fatal(1, "otpu_native_dram: B tag %0d at %0d, expected %0d", bth, bt_h, btr[bt_h]);
+    end
+
+  // The SW queue's slots are written at the tail every cycle as well: its slots at the read point
+  // (qw_r) and at the head (qw_f) are what a queue written on a push only holds; the read point's
+  // registers (wadr_r, wh_r, wp_r) are what its slot holds
+  logic [$bits(qw_t)-1:0] qwr [2][WQD];
+  logic [24:0] war [2][WQD];
+  logic [WQD-1:0] wpr [2], wgr [2];
+  always_ff @(posedge clk)
+    for (int c = 0; c < 2; c++) begin
+      if (qw_push[c]) begin
+        qwr[c][WW'(qw_f[c] + qw_n[c])] <= qw_e[c];
+        war[c][WW'(qw_f[c] + qw_n[c])] <= qw_e[c].m;
+        wpr[c][WW'(qw_f[c] + qw_n[c])] <= !(&qw_e[c].strb);
+        wgr[c][WW'(qw_f[c] + qw_n[c])] <= 1'b0;
+      end
+      if (n_rvalid[c] && tgh[c].k == K_W) wgr[c][tgh[c].slot] <= 1'b1;
+    end
+  always_ff @(posedge clk)
+    if (!rst)
+      for (int c = 0; c < 2; c++) begin
+        if ((src[c] == S_WR && ctk[c]) && (qw_rn[c] != 0 && !wp_r[c]))
+          $fatal(1, "otpu_native_dram: channel %0d fill read of a whole beat", c);
+        if (qw_rn[c] != 0 && (wadr_r[c] != wadr_o[c] || wh_r[c] != wh_o[c] ||
+                              wp_r[c] != wpart[c][qw_r[c]]))
+          $fatal(1, "otpu_native_dram: channel %0d read point slot %0d: registered %h %0d %0d, stored %h %0d %0d",
+                 c, qw_r[c], wadr_r[c], wh_r[c], wp_r[c], wadr_o[c], wh_o[c], wpart[c][qw_r[c]]);
+        if (qw_rn[c] != 0 && (wadr_r[c] != war[c][qw_r[c]] || wh_r[c] != whash(war[c][qw_r[c]]) ||
+                              wp_r[c] != wpr[c][qw_r[c]]))
+          $fatal(1, "otpu_native_dram: channel %0d SW slot %0d at the read point differs", c, qw_r[c]);
+        if (qw_n[c] != 0 && (hw[c] != qw_t'(qwr[c][qw_f[c]]) || wh_f[c] != whash(war[c][qw_f[c]]) ||
+                             wpart[c][qw_f[c]] != wpr[c][qw_f[c]] || wgot[c][qw_f[c]] != wgr[c][qw_f[c]]))
+          $fatal(1, "otpu_native_dram: channel %0d SW head slot %0d differs", c, qw_f[c]);
       end
 
   // Read data never arrives without a read in flight or without room reserved for it (the
