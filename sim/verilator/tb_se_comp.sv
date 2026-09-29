@@ -22,7 +22,7 @@ module tb_se_comp;
   always #5 clk = !clk;
 
   logic          in_v, hold, out_v;
-  logic [7:0]    in_f;
+  logic [2:0]    in_c;
   logic [MW-1:0] in_meta, out_meta;
   logic [L-1:0]  in_m, out_m;
   f32_t          in_a [L], in_b [L], out_d [L];
@@ -30,7 +30,7 @@ module tb_se_comp;
   f32_t          st_a [NS][L], st_b [NS][L], st_c [NS][L], st_e [NS][L], st_y [NS][L];
 
   otpu_se_comp #(.LANES(L), .NS(NS), .MW(MW), .HA(HA), .EXT(EXT)) dut (
-    .clk, .rst, .en, .in_v, .in_f, .in_a, .in_b, .in_m, .in_meta, .hold, .st_sel, .st_a, .st_b,
+    .clk, .rst, .en, .in_v, .in_c, .in_a, .in_b, .in_m, .in_meta, .hold, .st_sel, .st_a, .st_b,
     .st_c, .st_e, .st_y, .out_v, .out_d, .out_m, .out_meta);
 
   if (EXT) begin : g_units
@@ -86,7 +86,7 @@ module tb_se_comp;
   int          nxt, nout, inflight, plast, nref;
   longint      cyc;
   assign in_v = pv[HA - 1];
-  assign in_f = fn[pi[HA - 1]];
+  assign in_c = f_cc(fn[pi[HA - 1]]);
   assign in_meta = MW'(pi[HA - 1]);
   assign in_m = L'(pi[HA - 1] * 37);             // the lane mask is carried, not used
   for (genvar l = 0; l < L; l++) begin : g_in

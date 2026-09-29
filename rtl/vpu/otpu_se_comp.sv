@@ -50,9 +50,10 @@ module otpu_se_comp
   input  logic             clk,
   input  logic             rst,
   input  logic             en,
-  // entry at S0: a chunk of function in_f (V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2)
+  // entry at S0: a chunk of class in_c (f_cc of V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2;
+  // the S0 selects and the setup start at it, so it should come from a flip-flop)
   input  logic             in_v,
-  input  logic [7:0]       in_f,
+  input  logic [2:0]       in_c,
   input  f32_t             in_a [LANES],     // operand A
   input  f32_t             in_b [LANES],     // operand B (EXP2SUB)
   input  logic [LANES-1:0] in_m,             // lane mask (carried)
@@ -82,18 +83,7 @@ module otpu_se_comp
   localparam f32_t F_NZ = 32'h8000_0000;   // -0: (a*b) + -0 == a*b exactly
 
   // ---------------------------------------------------------------- functions and microcode
-  localparam logic [2:0] CC_NONE = 3'd0, CC_EXP = 3'd1, CC_EXS = 3'd2, CC_RCP = 3'd3,
-                         CC_RSQ = 3'd4, CC_LOG = 3'd5;
-  function automatic logic [2:0] f_cc(input logic [7:0] f);
-    case (f)
-      V_EXP2:    return CC_EXP;
-      V_EXP2SUB: return CC_EXS;
-      V_RECIP:   return CC_RCP;
-      V_RSQRT:   return CC_RSQ;
-      V_LOG2:    return CC_LOG;
-      default:   return CC_NONE;
-    endcase
-  endfunction
+  // the functions' classes: CC_* and f_cc (otpu_pkg)
   function automatic int n_ops(input logic [2:0] c);
     case (c)
       CC_EXP, CC_EXS: return 9;
@@ -340,7 +330,7 @@ module otpu_se_comp
   cm_t  mp [NS];                           // ... after it (RR for s = 0)
   wire  p0 = in_v || ret;
   assign mi[0] = ret ? '{cls: lp_m.cls, pass: lp_m.pass + 4'd1, mask: lp_m.mask, m: lp_m.m} :
-                       '{cls: f_cc(in_f), pass: 4'd0, mask: in_m, m: in_meta};
+                       '{cls: in_c, pass: 4'd0, mask: in_m, m: in_meta};
   always_ff @(posedge clk)
     if (rst) begin
       vpos <= '0; cpos <= '0;
@@ -393,7 +383,7 @@ module otpu_se_comp
   logic rr_e, rr_g;
   for (genvar s = 0; s < NS; s++) begin : g_uc
     if (s == 0) begin : g_u0
-      assign uci[s] = ret ? uc_rt : uc_rom(f_cc(in_f), 4'd0, 0);
+      assign uci[s] = ret ? uc_rt : uc_rom(in_c, 4'd0, 0);
     end else begin : g_un
       assign uci[s] = uc_rom(mi[s].cls, mi[s].pass, s);
     end
@@ -424,7 +414,7 @@ module otpu_se_comp
   // ---------------------------------------------------------------- lanes
   for (genvar l = 0; l < LANES; l++) begin : g_lane
     cst_t sti [NS], sto [NS], stp [NS];    // state at each stage's input, output, after it
-    assign sti[0] = ret ? lp_st[l] : setup(f_cc(in_f), in_a[l]);
+    assign sti[0] = ret ? lp_st[l] : setup(in_c, in_a[l]);
 
     for (genvar s = 0; s < NS; s++) begin : g_st
       localparam logic [3:0] AU = st_use(s, 0), BU = st_use(s, 1), CU = st_use(s, 2),

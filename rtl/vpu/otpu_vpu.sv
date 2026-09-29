@@ -346,13 +346,49 @@ module otpu_vpu
   f32_t xc [LANES], xd [LANES];               // OUTER: C(c), D(c) from the buffers, with xa/xb
   // stream mode: m0 is an RDOT with no chunk (slot 0 on the partial loop, fed by the tail)
   localparam meta_t M_SS = '{func: V_RDOT, default: '0};
+  // m0's function decoded as it loads (m0d = fdec(m0.func)): the lanes' slot-0 operand and result
+  // selects, tap 0's hit, the class and otpu_se_comp's entry come from flip-flops, not from
+  // compares of m0.func (133.33 MHz, the 100 MHz fused placement: m0.func (fo 119) -> short lane
+  // rc / rb, 13.6 / 13.8 levels, -1.2 ns; the tap-0 hit and the composite test fan out to every
+  // lane's result and operand muxes)
+  localparam int NVF = 20;                    // function codes V_ADD .. V_RDOT
+  typedef struct packed {
+    logic [NVF-1:0] fh;                       // one-hot func (none for codes >= NVF)
+    logic           s0;                       // ends at tap 0: no slots, not a reduction
+    logic           cf;                       // a composite (comp_f)
+    logic [2:0]     cc;                       // its class (f_cc: otpu_se_comp's entry)
+    logic [2:0]     cls;                      // f_cls(func)
+  } fdec_t;
+  function automatic logic [NVF-1:0] foh(input logic [7:0] f);
+    return NVF'(1) << f;
+  endfunction
+  function automatic fdec_t fdec(input logic [7:0] f);
+    fdec_t d;
+    d.fh = foh(f);
+    d.s0 = !red_f(f) && n_slots(f) == 4'd0;
+    d.cf = comp_f(f);
+    d.cc = f_cc(f);
+    d.cls = f_cls(f);
+    return d;
+  endfunction
+  fdec_t m0d;
   always_ff @(posedge clk)
-    if (rst) m0 <= '0;
-    else if (en) begin
+    if (rst) begin
+      m0 <= '0;
+      m0d <= fdec(8'd0);
+    end else if (en) begin
       m0 <= (SE && ss_act) ? M_SS : mi;
+      m0d <= fdec((SE && ss_act) ? M_SS.func : mi.func);
       xa <= ta_data;
       xb <= tb_data;
     end
+`ifndef SYNTHESIS
+  bit rst_seen;                               // (registers start arbitrary)
+  initial rst_seen = 1'b0;
+  always @(posedge clk)
+    if (rst) rst_seen <= 1'b1;
+    else if (rst_seen && m0d != fdec(m0.func)) $fatal(1, "otpu_vpu: m0d is not m0's func");
+`endif
   // OUTER's column buffers (LUT RAM): written from the fill chunks' data at m0, read with the
   // main chunks' data (mi.cb) -- the fill runs >= 2 chunks ahead, so a word is written first
   for (genvar l = 0; l < LANES; l++) begin : g_cbuf
@@ -418,6 +454,10 @@ module otpu_vpu
 
   mt_t   mtap [NSX + 1];
   f32_t  lres [LANES];
+  // MAX / MIN at tap 0 (short lanes): the lane's pick (lmv) enters the write data after every
+  // other select (cw_data), which all come from flip-flops; lres leaves it out
+  logic [LANES-1:0] lmm;                // the lane's result is lmv
+  f32_t  lmv [LANES];
 
   // RSUM/RSSQ on the lanes' slot-0 multiply-add when the partial loop (RL cycles) holds the
   // input register, the multiplier and the adder plus a feedback flip-flop (DF of them);
@@ -428,7 +468,7 @@ module otpu_vpu
   f32_t  rsa [LANES], rsb [LANES];      // RMA: the term's factors, at m0
   f32_t  rfb [LANES];                   // RMA: the partial RL chunks ago (+0 for the first)
 
-  assign mtap[0] = '{v: m0.v, cls: f_cls(m0.func), mask: m0.mask, waddr: m0.waddr,
+  assign mtap[0] = '{v: m0.v, cls: m0d.cls, mask: m0.mask, waddr: m0.waddr,
                      all_last: m0.all_last};
   // after slot 0 the lines carry the mask bits of lanes < NCL only (the others read 0): only
   // the composite functions get past tap 1, and they are issued on those lanes (iwid). Tap 1
@@ -479,7 +519,7 @@ module otpu_vpu
   always_comb begin
     mo = '0;
     for (int s = 0; s <= NSX; s++) begin
-      if (s == 0) hit[s] = mtap[s].v && !red_f(m0.func) && n_slots(m0.func) == 4'd0;
+      if (s == 0) hit[s] = mtap[s].v && m0d.s0;
       else        hit[s] = end_tap(s) && mtap[s].v && n_slots(cls_f(mtap[s].cls)) == 4'(s);
       if (hit[s]) mo = mtap[s];
     end
@@ -501,22 +541,21 @@ module otpu_vpu
       xz = ftz(x);
       ax = {1'b0, xz[30:0]};
       st[0] = '0;
-      case (m0.func)
-        V_MAX:   st[0].v = fp_max(x, y);
-        V_MIN:   st[0].v = fp_min(x, y);
-        V_COPY:  st[0].v = xz;
-        V_ABS:   st[0].v = fabs(x);
-        V_FILL:  st[0].v = ftz(y);
-        V_RECIP: begin
+      unique case (1'b1)
+        m0d.fh[V_MAX], m0d.fh[V_MIN]: st[0].v = fp_mm(x, y, m0d.fh[V_MIN]);
+        m0d.fh[V_COPY]:  st[0].v = xz;
+        m0d.fh[V_ABS]:   st[0].v = fabs(x);
+        m0d.fh[V_FILL]:  st[0].v = ftz(y);
+        m0d.fh[V_RECIP]: begin
           st[0].k1 = {1'b1, ax[30:0]};                       // -|x|
           st[0].k2 = ftz(RECIP_MAGIC - ax);                  // seed
           st[0].f  = {xz[31], (ax >= 32'h7E80_0000), (ax == 0)};
         end
-        V_RSQRT: begin
+        m0d.fh[V_RSQRT]: begin
           st[0].k2 = RSQRT_MAGIC - (xz >> 1);
           st[0].f  = {2'b00, (xz[31] || xz[30:0] == 0 || xz == F_INF)};
         end
-        V_LOG2: begin                                        // m in [sqrt(1/2), sqrt(2)), e
+        m0d.fh[V_LOG2]: begin                                // m in [sqrt(1/2), sqrt(2)), e
           logic ge, z;
           ge = (xz[22:0] >= LOG2_SQRT2);
           z  = (xz[30:0] == 0);
@@ -569,24 +608,24 @@ module otpu_vpu
       end else begin : g_nopre
         assign sti = st[s];
       end
-      // the slot's function: m0's at slot 0, the class's after it
-      logic [7:0] sf;
-      assign sf = (s == 0) ? m0.func : cls_f(msl[s].cls);
+      // the slot's function (one-hot): m0's at slot 0, the class's after it
+      logic [NVF-1:0] sf;
+      assign sf = (s == 0) ? m0d.fh : foh(cls_f(msl[s].cls));
       always_comb begin
         lst_t t;
         t = sti;
         ia = F_ZERO; ib = F_ONE; ic_ = F_NZ; ie = F_ONE; dest = 2'd0; negd = 1'b0;
-        case (sf)
-          V_MUL:  if (s == 0) begin ia = x; ib = y; dest = 2'd1; end
-          V_OUTER: if (s == 0) begin ia = x; ib = xd[l]; ic_ = y; ie = xc[l]; dest = 2'd1; end
-          V_ADD:  if (s == 0) begin ia = x; ic_ = y; dest = 2'd1; end
-          V_SUB:  if (s == 0) begin ia = x; ic_ = fneg(y); dest = 2'd1; end
-          V_RSUB: if (s == 0) begin ia = y; ic_ = fneg(x); dest = 2'd1; end
-          V_RSUM, V_RSSQ, V_RDOT:
+        unique case (1'b1)
+          sf[V_MUL]:  if (s == 0) begin ia = x; ib = y; dest = 2'd1; end
+          sf[V_OUTER]: if (s == 0) begin ia = x; ib = xd[l]; ic_ = y; ie = xc[l]; dest = 2'd1; end
+          sf[V_ADD]:  if (s == 0) begin ia = x; ic_ = y; dest = 2'd1; end
+          sf[V_SUB]:  if (s == 0) begin ia = x; ic_ = fneg(y); dest = 2'd1; end
+          sf[V_RSUB]: if (s == 0) begin ia = y; ic_ = fneg(x); dest = 2'd1; end
+          sf[V_RSUM], sf[V_RSSQ], sf[V_RDOT]:
             if (s == 0 && RMA) begin ia = rsa[l]; ib = rsb[l]; ic_ = rfb[l]; end
-          V_EXP2, V_EXP2SUB: begin
+          sf[V_EXP2], sf[V_EXP2SUB]: begin
             if (s == 0) begin
-              ia = x; ic_ = (sf == V_EXP2SUB) ? fneg(y) : F_NZ; dest = 2'd1;
+              ia = x; ic_ = sf[V_EXP2SUB] ? fneg(y) : F_NZ; dest = 2'd1;
             end else if (s == 1) begin
               ia = t.v; ic_ = t.k2; dest = 2'd2;                          // f = xf - i
             end else if (s == 2) begin
@@ -603,17 +642,17 @@ module otpu_vpu
               endcase
             end
           end
-          V_RECIP: if (s < 6) begin
+          sf[V_RECIP]: if (s < 6) begin
             if (s % 2 == 0) begin ia = t.k1; ib = t.k2; ic_ = F_TWO; dest = 2'd1; end   // 2 - |x|y
             else begin ia = t.k2; ib = t.v; dest = 2'd3; end                              // y = y*t
           end
-          V_RSQRT: begin
+          sf[V_RSQRT]: begin
             if (s == 0) begin ia = F_HALF; ib = ftz(x); dest = 2'd2; negd = 1'b1; end     // -h
             else if ((s - 1) % 3 == 0) begin ia = t.k2; ib = t.k2; dest = 2'd1; end       // y*y
             else if ((s - 1) % 3 == 1) begin ia = t.k1; ib = t.v; ic_ = F_1P5; dest = 2'd1; end
             else begin ia = t.k2; ib = t.v; dest = 2'd3; end                              // y*c
           end
-          V_LOG2: begin
+          sf[V_LOG2]: begin
             if (s == 0) begin ia = t.k1; ic_ = F_M1; dest = 2'd2; end                 // t = m - 1
             else if (s == 1) begin ia = LOG2_C9; ib = t.k1; ic_ = LOG2_C8; dest = 2'd1; end
             else if (s <= 8) begin
@@ -703,6 +742,8 @@ module otpu_vpu
     assign lres[l] = hit[T_EX] ? ex_r : hit[T_RC] ? rc_r :
                      hit[T_RS] ? ((mtap[T_RS].cls == C_LOG) ? lg_r : rs_r) :
                      hit[0] ? st[0].v : st[T_EW].v;
+    assign lmm[l] = 1'b0;
+    assign lmv[l] = '0;
   end
 
   // short lanes: slot 0 only. The composite functions are never issued here (imask), so their
@@ -716,25 +757,24 @@ module otpu_vpu
 
     always_comb begin
       st[0] = '0;
-      case (m0.func)
-        V_MAX:   st[0] = fp_max(x, y);
-        V_MIN:   st[0] = fp_min(x, y);
-        V_COPY:  st[0] = ftz(x);
-        V_ABS:   st[0] = fabs(x);
-        V_FILL:  st[0] = ftz(y);
-        default: ;
+      unique case (1'b1)
+        m0d.fh[V_COPY]:  st[0] = ftz(x);
+        m0d.fh[V_ABS]:   st[0] = fabs(x);
+        m0d.fh[V_FILL]:  st[0] = ftz(y);
+        default: ;                                 // MAX, MIN: lmv
       endcase
     end
     f32_t ia, ib, ic_, ie, ra, rb, rc, re;
     always_comb begin
       ia = F_ZERO; ib = F_ONE; ic_ = F_NZ; ie = F_ONE;
-      case (m0.func)
-        V_MUL:  begin ia = x; ib = y; end
-        V_OUTER: begin ia = x; ib = xd[l]; ic_ = y; ie = xc[l]; end
-        V_ADD:  begin ia = x; ic_ = y; end
-        V_SUB:  begin ia = x; ic_ = fneg(y); end
-        V_RSUB: begin ia = y; ic_ = fneg(x); end
-        V_RSUM, V_RSSQ, V_RDOT: if (RMA) begin ia = rsa[l]; ib = rsb[l]; ic_ = rfb[l]; end
+      unique case (1'b1)
+        m0d.fh[V_MUL]:  begin ia = x; ib = y; end
+        m0d.fh[V_OUTER]: begin ia = x; ib = xd[l]; ic_ = y; ie = xc[l]; end
+        m0d.fh[V_ADD]:  begin ia = x; ic_ = y; end
+        m0d.fh[V_SUB]:  begin ia = x; ic_ = fneg(y); end
+        m0d.fh[V_RSUB]: begin ia = y; ic_ = fneg(x); end
+        m0d.fh[V_RSUM], m0d.fh[V_RSSQ], m0d.fh[V_RDOT]:
+          if (RMA) begin ia = rsa[l]; ib = rsb[l]; ic_ = rfb[l]; end
         default: ;
       endcase
     end
@@ -754,6 +794,8 @@ module otpu_vpu
     // the result of the entry that ends at tap 0 or 1 this cycle (other taps: masked here), or
     // (C8) a composite's
     assign lres[l] = (C8 && c_ov) ? c_od[l] : hit[0] ? st[0] : st[1];
+    assign lmm[l] = !(C8 && c_ov) && hit[0] && (m0d.fh[V_MAX] || m0d.fh[V_MIN]);
+    assign lmv[l] = fp_mm(x, y, m0d.fh[V_MIN]);
     assign c_ia[l] = x;
     assign c_ib[l] = y;
   end
@@ -764,7 +806,7 @@ module otpu_vpu
     assign sy[1] = c_uy;
     assign sy[2] = c_qy;
     otpu_se_comp #(.LANES(LANES), .MW(AW + 1), .NS(CNS), .HA(2), .EXT(1'b1)) u_comp (
-      .clk, .rst, .en, .in_v(m0.v && comp_f(m0.func)), .in_f(m0.func), .in_a(c_ia),
+      .clk, .rst, .en, .in_v(m0.v && m0d.cf), .in_c(m0d.cc), .in_a(c_ia),
       .in_b(c_ib), .in_m(m0.mask), .in_meta({m0.waddr, m0.all_last}), .hold(c_hold),
       .st_sel(c_sel), .st_a(c_sa), .st_b(c_sb), .st_c(c_sc), .st_e(c_se), .st_y(sy),
       .out_v(c_ov), .out_d(c_od), .out_m(c_om), .out_meta(c_ometa));
@@ -977,28 +1019,55 @@ module otpu_vpu
     wire  pdn  = done_i || dpend;
     wire  push = en && ((|cw_en) || pdn);
     wire  pop  = (wn != 0) && gnt;
-    wire  [WQW:0] wn_nx = wn + (WQW+1)'(push) - (WQW+1)'(pop);
-    wb_t  hd;
+    // the count without a pop and with one, so the grant (pop) only picks: it enters the count
+    // and the enables at their last LUT
+    wire  [WQW:0] wn_p0 = wn + (WQW+1)'(push);
+    wire  [WQW:0] wn_p1 = wn_p0 - 1'b1;
+    wire  [WQW:0] wn_nx = pop ? wn_p1 : wn_p0;
+    wb_t  hd, nh;                                // the head, the entry after it
     assign hd = wq[wh];
+    assign nh = wq[wh + 1'b1];
+    // the head's lane enables (none when empty) and lane 0's bank in flip-flops, loaded as the
+    // head changes: the TMEM port's rotation and the arbiter's bank mask start at them instead
+    // of at the LUT RAM's read. A run's lanes are contiguous, so lane l's bank is hrot + l.
+    logic [LANES-1:0] hen;
+    logic [LW-1:0]    hrot;
     always_comb begin
-      tw_en = (wn != 0) ? hd.en : '0;
+      tw_en = hen;
       tw_a = hd.a;
+      for (int l = 0; l < LANES; l++) tw_a[l][LW-1:0] = hrot + LW'(l);
       tw_data = hd.d;
     end
+`ifndef SYNTHESIS
+    always @(posedge clk)
+      if (!rst && rst_seen) begin
+        if (hen != ((wn != 0) ? hd.en : '0)) $fatal(1, "otpu_vpu: hen is not the head's enables");
+        for (int l = 0; l < LANES; l++)
+          if (hen[l] && hd.a[l][LW-1:0] != hrot + LW'(l))
+            $fatal(1, "otpu_vpu: WBUF lane %0d's bank is not hrot + %0d", l, l);
+      end
+`endif
     always_ff @(posedge clk) if (push) wq[wt] <= '{en: cw_en, a: cw_addr, d: cw_data, dn: pdn};
     always_ff @(posedge clk) begin
       if (rst) begin
         wh <= '0; wt <= '0; wn <= '0; en_r <= 1'b0; en_q <= 1'b0;
-        done <= 1'b0; dpend <= 1'b0;
+        done <= 1'b0; dpend <= 1'b0; hen <= '0;
       end else begin
         if (push) wt <= wt + 1'b1;
         if (pop) wh <= wh + 1'b1;
+        if (push && (wn == 0 || (wn == 1 && pop))) begin      // the push is the new head
+          hen <= cw_en;
+          hrot <= cw_addr[0][LW-1:0];
+        end else if (pop) begin                                // the next entry, or none
+          hen <= (wn > 1) ? nh.en : '0;
+          hrot <= nh.a[0][LW-1:0];
+        end
         wn <= wn_nx;
         if (SE) begin
-          en_q <= ss_act_d ? ss_pe : (wn_nx < 2);         // a stream: its pe (as sen)
+          en_q <= ss_act_d ? ss_pe : pop ? (wn_p1 < 2) : (wn_p0 < 2);  // a stream: its pe (as sen)
           en_r <= en_q;
         end else begin
-          en_r <= (wn_nx < 2);
+          en_r <= pop ? (wn_p1 < 2) : (wn_p0 < 2);
         end
         done <= pop && hd.dn;
         dpend <= pdn && !en;
@@ -1006,13 +1075,15 @@ module otpu_vpu
     end
   end
   always_comb begin
-    cw_en = '0; cw_addr = '0; cw_data = '0;
+    logic [LANES-1:0] mm;                        // the lane writes lmv
+    cw_en = '0; cw_addr = '0; cw_data = '0; mm = '0;
     if (mo.v) begin
       for (int l = 0; l < LANES; l++) begin
         if (mo.mask[l]) begin
           cw_en[l] = 1'b1;
           cw_addr[l] = mo.waddr + AW'(l);
           cw_data[l] = lres[l];
+          mm[l] = lmm[l];
         end
       end
     end
@@ -1020,11 +1091,13 @@ module otpu_vpu
       cw_en[0] = 1'b1;
       cw_addr[0] = mxm_q.waddr;
       cw_data[0] = mx_new;
+      mm[0] = 1'b0;
     end
     if (red_act && is_sum && root_v && !rdb) begin
       cw_en[0] = 1'b1;
       cw_addr[0] = wr_row;
       cw_data[0] = root;
+      mm[0] = 1'b0;
     end
     if (flushing) begin
       for (int l = 0; l < LANES; l++) begin
@@ -1032,9 +1105,11 @@ module otpu_vpu
           cw_en[l] = 1'b1;
           cw_addr[l] = dst + AW'(fl) + AW'(l);
           cw_data[l] = rbuf_q[l];
+          mm[l] = 1'b0;
         end
       end
     end
+    for (int l = 0; l < LANES; l++) if (mm[l]) cw_data[l] = lmv[l];
   end
 
   // ------------------------------------------------------------------ stream engine

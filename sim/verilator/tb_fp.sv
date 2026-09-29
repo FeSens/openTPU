@@ -27,6 +27,8 @@ module tb_fp;
         10: got = {31'd0, fp_gt(a, b)};
         11: got = fabs(a);
         12: got = fp_log2(a);
+        13: got = fp_mm(a, b, 1'b0);
+        14: got = fp_mm(a, b, 1'b1);
         default: got = 32'hDEADBEEF;
       endcase
       cases++;
