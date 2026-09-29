@@ -416,15 +416,56 @@ calibration, then a 64 MiB BIST write and read-back per lane)
   production passed its selftest afterwards.
 - On opentpu, a reload therefore costs a reboot.
 
-### Decision
+### What the write scan measured (corrected reading)
 
-**Go for LiteDRAM, with two conditions.**
-1. **Two DQS clock groups.** The common write window (234 ps, about ±117 ps) is thin. The cause
-   is that this PHY drives one DQS clock for all lanes: the HR banks have no ODELAY, and the PHY
-   does not use the phasers that the MIG uses for write leveling. The fix: give lanes 0-3 and
-   lanes 4-8 each their own MMCM output with fine phase shift (the MMCM has spare outputs). Each
-   group should then get a window the size of a single lane's, 650 to 800 ps.
-2. **Channel 1.** It is not tested yet, and its fly-by split may differ. It needs its own run of
-   the test image.
+The first reading above was wrong in one respect. The scan moves only DQS: DQ stays on the
+unshifted sys4x. So each lane's result is the overlap of two separate limits (`card-all1.log`,
+steps from 90°):
 
-In production, calibration must choose the DQS phase(s) with a traffic check.
+1. **The DQ-to-DQS eye, common to all lanes.**
+   - Every lane fails from about +21..+27 to +93..+98, the ~70 steps quoted above. There DQS no
+     longer sits inside its own DQ bits, or the DQS serializer's hand-over from its slow clock
+     breaks; this scan cannot tell the two apart.
+   - The eye's edges line up across lanes to within about 6 steps. It is about 44 steps
+     (730 ps) wide.
+2. **The fly-by limit (tDQSS), per lane.**
+   - Each lane's write latency flips where its DQS is half a tCK off the CK at its chip, and the
+     lane fails for 5 to 7 steps around that point.
+   - The crossings are at: lane 0 +86..+92, lane 1 +93..+97, lane 2 +108..+1, lane 3 +1..+6,
+     lane 8 +21..+24. Lanes 4-7 cross outside the eye.
+   - So the chain order is 0, 1, 2, 3, 8, 4-7: the ECC byte sits mid-chain, as on a DIMM
+     (**inferred** from the order of the crossings).
+   - The crossings of lanes 2 and 3 fall inside the eye and cut it into window A (+7..+20) and
+     window B (+98..+107).
+
+So **two DQS-only clock groups would not help.** Lanes 0-3 would keep the crossings of lanes 2
+and 3 inside the same eye, and stay capped at 14 steps. What would help is moving DQ and DQS
+together per group, which is real write leveling. The eye would then move away from the group's
+crossings: those of lanes 0-3 span about 27 steps, so a phase about 40 steps from all of them
+would exist (**estimate**). That needs per-group 4x clocks for DQ and DQS, while the serializers'
+slow clock stays put. It is a PHY rewrite, not a small change.
+
+### Decision (revised 2026-09-29)
+
+**Go for LiteDRAM, pending one more card session.**
+
+**The test image:** both channels, one DQS phase per channel, each picked by a BIST scan. The
+session answers two questions:
+- **Channel 1:** its calibration and write window.
+- **Temperature:** 30-40 min of continuous BIST on both channels, which heats the card towards
+  its working temperature. The window is rescanned every 5 min on both channels, and the FPGA
+  temperature is logged from the XADC.
+
+**Rule for the result:**
+- **Both channels keep a common write window of at least ~150 ps across the temperature
+  sweep:** integrate with one BIST-picked DQS phase per channel, rechecked when the temperature
+  changes.
+- **Otherwise:** build the per-group DQ+DQS PHY. The MIG native path (stage 1) stays the fallback.
+
+**Either way, production calibration must pick the DQS phase with a traffic check.**
+
+**The parts every path needs are started (branch `litedram-int`):**
+- `otpu_native_dram`: the slice ports on native ports, replacing `otpu_axi_dram`.
+- `otpu_mem_ch`: one channel's accelerator and XDMA masters on a generic native port, with a
+  read-modify-write for LiteDRAM's ECC port or wr_bytes for the MIG. It replaces the SmartConnect.
+- The host calibration flow.
