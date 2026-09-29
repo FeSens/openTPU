@@ -97,7 +97,10 @@ module otpu_mxu
   localparam int PW = $clog2(DEPTH);
   localparam int LM = 2, LA = 4;
   localparam int NPART = 4;                 // MM partials (isum_4)
-  localparam int RF = 32;                   // result FIFO rows
+  // result FIFO rows: a row pops only while fewer than RF are between the pop and the drain, so
+  // RF covers the pipeline's rows in flight (one-block rows: one per cycle of its latency); IMPL 2's
+  // longer dot product needs 64
+  localparam int RF = (IMPL == 2) ? 64 : 32;
   localparam int RFW = $clog2(RF);
   localparam int MW = $clog2(MCOLS) + 1;
   localparam int NL = (LANES < MCOLS) ? LANES : MCOLS;   // lanes the drain can fill
