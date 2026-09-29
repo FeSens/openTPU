@@ -24,7 +24,8 @@ and is labeled as such.
 4. **The tail is programmable** through descriptor modes: the vector for dot A, the gate (a
    scalar, a column or 1), the per-row scalar d, and dot Q on or off. With these modes, one
    datapath serves the whole linear-recurrence family (section 5).
-5. **Attention decode keeps its dot products on the MXU.**
+5. **Attention decode stays on the MXU.** Its scores and P·V dot products run there, in v1
+   and v2.
    - At 8 fp32 lanes the engine would run int8 KV **16x slower** than the MXU path, which is
      already at 99-100% of its byte roofline (docs/qwen35.md, docs/benchmarks.md).
    - SE runs attention's softmax VOPs as today.
@@ -68,16 +69,16 @@ everything is FTZ. **Every stage configuration is bit-exact with a documented VO
 
 | field | meaning |
 |---|---|
-| `w1` | `desc`: TMEM word address of the descriptor (static) |
+| `w1` | `desc` [15:0]: TMEM word address of the descriptor; `ks` [31:16]: the constants' stride (static, so the scoreboard knows K's range) |
 | `w2 + R[ra]` | `src`: the stream, in DRAM bytes, or TMEM words with `SRC_T` |
 | `w3 + R[ra]` | `dst`: where Y goes (in place: dst = src) |
 | `w4 + R[rb]` | `vec`: column slots, slot i at `vec + i*cols` (i = 0..3) |
 | `w5 + R[rc]` | `x`: row scalars, `X[r] = T[x + r]` |
-| `w6 + R[rd]` | `k`: constants, `K_j = T[k + j*ks]` (j = 0..3) |
+| `w6 + R[rd]` | `k`: constants, `K_j = T[k + j*ks]` (j = 0..3, ks from w1) |
 | `w7` | `out`: row outputs, `O[r] = T[out + r]` |
 | flags | bit0 `SZERO` (S reads as +0, nothing is read: position 0); bit1 `SRC_T`; bit2 `DST_T`; bit3 `NODST` |
 
-DSTEP is exactly `STREAM` with `gdn_desc(rows, cols, ks=gs)` and `vec = qk` (q is slot 0, k is
+DSTEP is exactly `STREAM` with `gdn_desc(rows, cols)`, `ks = gs` and `vec = qk` (q is slot 0, k is
 slot 1), `x = v`, `k = g`, `out = o`. The hardware decodes DSTEP to that configuration.
 
 ### 3.2 Descriptor (`isa.StreamDesc`)
@@ -92,9 +93,9 @@ descriptors in a small reserved TMEM area and fills them once at the start of th
 | word | payload bits |
 |---|---|
 | d0 | rows[11:0], cols[23:12] |
-| d1 | a_en[0], a_op[2:1] (slot, self, const), a_idx[4:3], u_mode[6:5] (pass, fmma, mul, add), g_src[8:7] (reg, slot, const, one), g_idx[11:9], b_src[13:12] (slot, const, reg), b_idx[16:14], d_reg[19:17], q_en[20], q_idx[22:21], out_p2[23] |
+| d1 | a_en[0], a_op[2:1] (slot, self, const, max), a_idx[4:3], u_mode[6:5] (pass, fmma, mul, add), g_src[8:7] (reg, slot, const, one), g_idx[11:9], b_src[13:12] (slot, const, reg), b_idx[16:14], d_reg[19:17], q_en[20], q_idx[22:21], out_p2[23] |
 | d2 | nops[3:0], rinit[7:4] (r4..r7 = K0..K3 at the start), rsave[11:8] (r4..r7 written back to K0..K3 at the end), q_self[12], o_reg_en[13], o_reg[16:14] |
-| d3 | ks[15:0] |
+| d3 | reserved (payload 0; ks is in the instruction) |
 | d4 | srs[11:0], drs[23:12] (TMEM stream row strides; 0 = cols) |
 | d5.. | one scalar op per word: op[3:0], dst[6:4], a[10:7], b[14:11] |
 
@@ -384,7 +385,7 @@ module otpu_se_tail import otpu_pkg::*; import otpu_fp::*;
   - DRAM `[src, src + 4 rows cols)` read and written;
   - TMEM reads of desc (d0..d7), vec (4 cols), x (rows) and K (4 ks);
   - a TMEM write of `[out, out + rows)`.
-- **CAPS:** bit7 `STREAM` (v1 subset).
+- **CAPS:** bit26 `STREAM` (the subset). bit7 is CHASH; bit6 DSTEP stays set.
 - **slice:** wire u_dma and u_vpu `ss_*`. `HAS_DSTEP` now gates the tail inside u_vpu.
 
 ### Piece 0 (me): ISA sim, compiler, tests, integration and builds
@@ -432,3 +433,120 @@ module otpu_se_tail import otpu_pkg::*; import otpu_fp::*;
   attention on SE are ISA-level only.
 - **The sharing that saves the area costs the VOP/stream overlap** (6). It is measured before
   anything is merged.
+
+## 11. v2: composites on the eight lanes, one tree (tonight's target; v1 is the fallback)
+
+**v2 is parameters on v1's code, not a second engine.** The user's decision at 02:30: go to v2,
+fall back to v1 if it doesn't pay. v1 (pieces 1-3) is nearly done, so v2 adds two build
+parameters to it. Both 0 is v1, and the 05:00 checkpoint picks the values.
+
+| parameter | where | 0 (v1) | 1 (v2) |
+|---|---|---|---|
+| `COMP8` | otpu_vpu | EXP2/EXP2SUB/RECIP/RSQRT/LOG2 on the CL = 2 long lanes (slots 1..9, ~12K LUT, 36 DSP) | the long lanes go. `otpu_se_comp` loops each composite chunk through the three per-lane stages S0 → RR → U → Q → S0 on all 8 lanes |
+| `ONE_TREE` | otpu_vpu + otpu_se_tail | u_vt (A) and the tail's u_tq (Q) | only u_vt: A's windows and Q's windows alternate (below) |
+
+- **Stages.** Each lane l has three fp stages.
+  - S0 (core) and U (tail) are `otpu_fmma`, `y = a*b + c*e`.
+  - Q (tail) is `otpu_fmul` then `otpu_fadd`, `y = a*b + c`.
+  - Each stage's result comes SL = 7 cycles after its operands sit at its input mux: the input
+    register, LM = 2, LA = 4.
+  - In VOP mode every stage advances on the VPU's `en` (the tail's U/Q as well). In stream mode
+    they advance on the registered `ss_pe`.
+- **Bit-exactness.** Each composite runs its existing op list: fp32.py, the same order and
+  rounding as today's slots. Op k runs on stage k mod 3 of pass k / 3. An idle stage passes
+  `v*1 + -0`, which is exact. The range reductions (EXP2's clamp/floor/i2f, LOG2's split) are
+  RR, 3 cycles in otpu_se_comp between S0 and U.
+- **Throughput (se-v2's count, estimated).** In columns per cycle, against 2 today:
+
+| composite | cols/cycle | gain |
+|---|---|---|
+| EXP2 | 2.67 | 1.33x |
+| EXP2SUB | 2.67 | 1.33x |
+| RECIP | 4.0 | 2x |
+| RSQRT | 2.0 | 1x, with latency ~100 cycles against 70 |
+| LOG2 | 2.0 | 1x |
+
+  VPU issue cycles drop 15-18% on LFM2, Qwen3 and Qwen3.5 (inventory mix).
+- **Area (estimated).**
+  - COMP8: -1 to -3K LUT and -36 DSP. The chains go, and per-lane RR, state delays and
+    operand muxes come in.
+  - ONE_TREE: -5K LUT.
+  - v2 ≈ 40-42K LUT against v1's ~46-48K. The checkpoint threshold is ≤ ~40K for both.
+
+### 11.1 otpu_se_comp (owner se-v2), inside otpu_vpu
+
+```systemverilog
+module otpu_se_comp import otpu_pkg::*; import otpu_fp::*;
+#(parameter int LANES = 8, parameter int MW = 64) (   // MW: the core's opaque chunk meta
+  input  logic clk, rst, en,                          // en: the VPU's enable (VOP mode)
+  input  logic             in_v,                      // a composite chunk enters (at S0's mux)
+  input  logic [7:0]       in_f,                      // V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2
+  input  f32_t             in_a [LANES], in_b [LANES],// in_b: EXP2SUB's B
+  input  logic [LANES-1:0] in_m,
+  input  logic [MW-1:0]    in_meta,
+  output logic             hold,     // S0 is taken HOLD_AHEAD = 2 en-cycles from now: issue no chunk then
+  output logic [2:0]       st_sel,   // stage s (0 S0, 1 U, 2 Q) takes comp's operands this cycle
+  output f32_t             st_a [3][LANES], st_b [3][LANES], st_c [3][LANES], st_e [3][LANES],
+  input  f32_t             st_y [3][LANES],           // stage s's result, SL en-cycles later
+  output logic             out_v,                     // the result chunk, a fixed latency L(f) after in_v
+  output f32_t             out_d [LANES],
+  output logic [LANES-1:0] out_m,
+  output logic [MW-1:0]    out_meta);
+```
+
+- **Core side (R-A).**
+  - S0's operand mux takes `st_*[0]` when `st_sel[0]`.
+  - Issue respects `hold`.
+  - `out_*` joins the write path in start order. The core's latency rule stays: L(f) is a
+    fixed function of the function, so an elementwise VOP starts only when its latency ≥
+    those in flight.
+  - `st_y[0]` is S0's result.
+- **Standalone test (se-v2).** The module with generic stage models (parameter EXT = 0),
+  bit-exact against fp32.py on specials and random values.
+
+### 11.2 otpu_se_tail additions
+
+The owner is se-tail (R-B). se-v2 may make the COMP8 part on its branch, and stream merges.
+
+```systemverilog
+  // COMP8: the tail's U and Q as generic stages for otpu_se_comp in VOP mode
+  input  logic        cm,                        // VOP mode (!ss_gnt): U and Q advance on cen
+  input  logic        cen,                       // the VPU's en
+  input  logic        u_sel, input f32_t u_a [LANES], u_b [LANES], u_c [LANES], u_e [LANES],
+  output f32_t        u_y [LANES],               // SL cen-cycles after u_sel
+  input  logic        q_sel, input f32_t q_a [LANES], q_b [LANES], q_c [LANES],
+  output f32_t        q_y [LANES],               // a*b + c, SL cen-cycles after q_sel
+  // ONE_TREE: Q's final partials to the core's u_vt, its root back
+  output logic        qp_cap, qp_row_last, output logic [7:0] qp_sub, output f32_t qp_d [LANES],
+  input  logic        qo_v,   input  f32_t qo_d,
+```
+
+### 11.3 One tree, two phases (ONE_TREE; R-A in the core, R-B in the tail)
+
+- **The windows.** otpu_vtree takes one 8-cycle window per row (64 partials, sub 0..7), and
+  rows must start a multiple of RL = 8 cycles apart. At ns = cols/8 segments per row, A's
+  window is the last 8 pe-cycles of each ns-cycle row period. Q's window is A's shifted by Δ
+  pe-cycles.
+- **Choosing Δ.** The windows never collide, and stay aligned mod 8, iff Δ = 8·o with o odd
+  and not a multiple of 3. So Δ ∈ {8, 40, 56, 88, 104, 136, …}, for every ns ∈ {16, 24, 32}.
+  The tail pads its Q path to the smallest valid Δ at or above its natural offset (104 if
+  that offset is in (88, 104]). T_U grows by the pad, and the delay line (UBD = 128) holds it.
+- **ns = 8 (cols = 64).** Both dots need 16 tree cycles per 8-cycle row, so the stream runs
+  at half rate. The DMA presents each row as 16 segments, the 8 real ones then 8 of +0 (no
+  DRAM read), and drops the Y of the padded segments.
+  - The tail reads its column buffers as +0 for j ≥ 8, with `cfg.pad64`.
+  - This is exact: a partial is never -0, so +0 terms change nothing. Q's products with q = +0
+    are ±0, so they change nothing either.
+- **In the core.** u_vt's inputs are `mux(A's partials, qp_*)` by which one has `cap`. In
+  simulation it's an assertion that both never do. A tag delayed with the tree's latency
+  routes the root to `kv` (A) or `qo_*` (Q). VOP-mode reductions use phase A only.
+
+### 11.4 Checkpoint 05:00 (the coordinator's criteria)
+
+v2 goes to the full build if:
+- every VOP and STREAM RTL test is bit-exact with COMP8 = ONE_TREE = 1;
+- the OOC area is ≤ ~40K LUT for VPU + DSTEP;
+- the OOC timing is plausible at 120.755 MHz;
+- no model is slower in Verilator.
+
+Otherwise v1 (both 0) builds ~07:00.
