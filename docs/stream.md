@@ -613,3 +613,102 @@ Otherwise v1 (both 0) builds ~07:00.
     to 6,347 LUT (EXT, MW 21).
   - otpu_se_comp's own path: 8,576 → 7,231 → 6,347 LUT, with 2.2K SRL16 (the k1/k2/ii/f
     delays: 76 bits × 3 stages × 8 lanes).
+
+## 12. Results (2026-09-29; every number says measured or simulated)
+
+"Simulated" means Verilator or the ISA sim. "Measured" means Vivado 2026.1 on omarchy or the
+card. Rows still marked "pending" were not in when this was written.
+
+### 12.1 Bit-exactness (simulated)
+
+| tree | config | result |
+|---|---|---|
+| se-int 2deead3 | v1 | 30 RTL tests pass (stream, DSTEP, VOPs, fuzz), plus the board-model stream and VOP tests |
+| se-int 8576057 | v2 | R-A's full suite: 37 + 31 passed; R-B's stream/DSTEP 10/10 (v1 and v2), tiny models 10/10 |
+| se-v2 | v2 | VOPs 15, fuzz + stream 16, tiny models 9 |
+| 96d4a24 (= se-int 202856d) | unit | test_se_comp + test_se_vpu + test_se_tail: 29 passed |
+| 96d4a24 | v1, v2 | RTL suite (stream, DSTEP, VOPs, fp, fuzz 27): pending |
+
+- `test_stream_rtl_bit_exact` found one real RTL bug: with Q off (`q_en = 0`), rows still
+  entered Q and shifted the next stream's O. Fixed in ab1f03d.
+- **ew_n, in production too.** The 4-bit count of elementwise VOPs in flight (11.5) wraps on
+  main. `test_many_small_composites_rtl_bit_exact` hangs on main at the sim window (no halt
+  in 50M cycles) and passes at the board's WIN 16. The 7-bit fix is on main as its own merge
+  (7a3bca1 test, cda1402 fix).
+
+### 12.2 Cycles (simulated: `perf_qwen --ddr 1066 --mhz 120`, OTPU_DSTEP=1 OTPU_PAIR=1)
+
+| model | main | SE v1 (202856d) | SE v2 (202856d, --check bit-exact) | v2 - main |
+|---|---|---|---|---|
+| Qwen3.5, 4 layers | 3,154,675 | 3,154,667 | 3,155,016 | +341 (+0.011%) |
+| LFM2, 2 layers | 830,139 | 830,139 | 830,139 | 0 |
+| Qwen3, 2 layers | 1,716,608 | 1,716,624 | 1,716,721 | +113 (+0.007%) |
+
+- At 2deead3, v1 was 3,154,611 on Qwen3.5 (-64 against main). The lost VOP/stream overlap
+  from 6 does not show up.
+- **v2 is slower than main by 0.011% at most. Strictly, that fails the "no model slower"
+  criterion.** The cause is COMP8's RSQRT latency (100 against ~70) where it sits on the
+  dependency chain:
+  - VOP.rsqrt busy on Qwen3.5 goes 11,541 → 14,196;
+  - Qwen3.5 DeltaNet +90 cycles per layer (the gate is 2.7K), attention +32;
+  - Qwen3 attention +65 per layer.
+- **Composite throughput doubles, but the decode doesn't see it.** exp2 busy -22%, recip -32%,
+  exp2 wait_unit 6,835 → 3. These decodes are MXU/port bound, with the VPU 2-5% busy.
+
+### 12.3 Area (measured, Vivado)
+
+OOC at 120.755 MHz (LUT / FF / DSP):
+
+| block | main | SE v2 (8576057) |
+|---|---|---|
+| VPU | 24,209 / 19,395 / 68 | 31,195 / 26,285 / 86 (COMP8 + ONE_TREE + tail) |
+| DMA | 29,194 / 28,141 / 70 (with DSTEP) | 8,536 / 11,273 / 0 (no datapath) |
+| **VPU + DMA** | **53,403 / 47,536 / 138** | **39,731 / 37,558 / 86 (-25.6% LUT, -38% DSP)** |
+
+- ONE_TREE alone (u_vpu) was 34,291 LUT / 122 DSP.
+- The SE DMA still carries ~1.9K of plain DMA, so the engine itself is ~37.8K.
+
+Full build, post-synthesis hierarchy (se-int 600c087, SE=v2, against production pn32):
+
+| block | pn32 | SE v2 |
+|---|---|---|
+| u_vpu | 33,513 / 22,061 / 68 | 43,538 / 31,319 / 86 |
+| u_dma | 40,567 / 30,317 / 70 | 12,340 / 11,011 / 0 |
+| **VPU + DMA** | **74,080 / 52,378 / 138** | **55,878 / 42,330 / 86 (-24.6% LUT)** |
+| whole design | 234,977 LUT / 353 DSP / 554 BRAM | 218,701 / 301 / 554 |
+
+- pn32 is not built from the same main commit, so the small deltas elsewhere (u_seq +1.5K
+  for STREAM's footprint, u_quant -1.6K) are not all SE.
+- Placed and routed utilization: pending (build running).
+
+yosys (logic only, flattened) for VPU + DMA: main 63.7K, v1 55.1K, ONE_TREE 50.2K, v2 46.1K.
+
+### 12.4 Timing (120.755 MHz, 8.281 ns)
+
+- **Measured OOC:** main VPU WNS +0.357. v2 u_vpu at 8576057: WNS +0.080.
+  - The worst paths were the `ss_act` → `en_r` replicas and comp RR.
+  - 202856d cuts both: the enable goes through two stages, and RR is cut.
+  - The OOC of 202856d was stopped for memory. It was not rerun.
+- **yosys logic-only STA** (se-v2, 202856d): v2 5.67 ns, v1 5.43 ns. v2's worst path is now
+  a DSP cascade in the tail's Q multiplier.
+- **Full build:** se-int 600c087 (v2, without the two cuts) on omarchy: pending. The 202856d
+  build on opentpu was not started.
+
+### 12.5 Card (measured)
+
+Pending: qual.sh and selftest (with the new "stream" stage) on the first v2 bitstream that
+closes, then decode and prefill against production.
+
+### 12.6 Limits, as shipped
+
+- **Attention decode stays on the MXU.** SE runs the DeltaNet recurrence (DSTEP and STREAM)
+  and the VOPs. Attention on SE is ISA-level only (5.3).
+- **NaN.** The RTL gives a signed zero for recip(±NaN) and +0 for rsqrt(-NaN). fp32.py gives
+  NaN (11.5). No model feeds NaNs.
+- **Mamba1** is not covered by the descriptor subset the hardware accepts (4.4).
+- **cols = 64 streams run at half rate** under ONE_TREE (pad64: 16 segments, the padded ones
+  dropped).
+- **Latency.** COMP8's RSQRT and LOG2 take 100 cycles against the chains' 70. EXP2 takes 75,
+  RECIP 50.
+- **Footprint.** The sequencer compares a 5th read range (t4, K) for STREAM.
+- **The SE DMA** is +6.6K LUT over the plain DMA; the datapath moved into u_vpu.
