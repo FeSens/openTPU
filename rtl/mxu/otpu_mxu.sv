@@ -260,6 +260,11 @@ module otpu_mxu
   logic [15:0] ck;
   logic [7:0]  cg;                          // the group of the row being consumed (replay)
   logic [31:0] c_left;                      // chunks of the pop head not yet freed
+  // a command accepted last cycle became the head: c_left takes its total now, from h (a flop),
+  // not from cmd_total (the sequencer's command through the 16 x 16 multiply) in the start cycle.
+  // It cannot pop yet (released a cycle after its start at the earliest), and nothing may treat
+  // the stale c_left == 0 as drained meanwhile
+  logic        cl_ld;
   logic [RFW:0] rows_live;                  // the head's rows popped (first block), not drained
   logic [RFW:0] rows_p;                     // the pop head's, while it is not the head (OVL)
   wire last_k   = (ck + 1 == c_KBa);
@@ -936,7 +941,7 @@ module otpu_mxu
       end
 `endif
 
-  wire c_drained = c_act && (pn || c_left == 0) && (rows_live == 0) && (rmw_n == 0) &&
+  wire c_drained = c_act && !cl_ld && (pn || c_left == 0) && (rows_live == 0) && (rmw_n == 0) &&
                    !r0.v && !r1.v && !rx.v;
   // RMAX writes start a cycle after the head has drained: mx_q registers the test, so the
   // drained compares (c_left == 0, rows_live, rmw_n, ...) are off the TMEM write request and the
@@ -1014,7 +1019,7 @@ module otpu_mxu
       occ <= '0;
       f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
-      ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1; c_left <= '0; rows_live <= '0;
+      ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1; c_left <= '0; cl_ld <= 1'b0; rows_live <= '0;
       rf_h <= '0; rf_t <= '0; rf_n <= '0;
       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
@@ -1034,11 +1039,13 @@ module otpu_mxu
       hn = h;
       nn = n;
       pnx = pn;
+      cl_ld <= 1'b0;
+      if (cl_ld) c_left <= h.total;
       // ---- accept a command (the head if the queue is empty, else the next entry)
       if (start) begin
         if (q_n == 0) begin
-          hn = cmd_e;
-          c_left <= cmd_total;                    // becomes the head now
+          hn = cmd_e;                             // becomes the head now
+          cl_ld <= 1'b1;
         end else nn = cmd_e;
         qn = qn + 1;
         if (cmd.w4[15:0] != 0 && cmd.w4[31:16] != 0) begin
@@ -1175,7 +1182,7 @@ module otpu_mxu
       rows_p <= rp;
       // OVL: the pop head moves to the next command once the head's chunks have all popped, if
       // the pipeline treats both alike (PAIR, and M under PAIR: pr0, hi0 and M0 are read late)
-      if (OVL && !pn && c_left == 0 && q_n == 2'd2 && n.go && !c_done &&
+      if (OVL && !pn && !cl_ld && c_left == 0 && q_n == 2'd2 && n.go && !c_done &&
           n.pair == h.pair && (!h.pair || n.M == h.M)) begin
         pnx = 1'b1;
         c_left <= n.total;
@@ -1196,8 +1203,10 @@ module otpu_mxu
         dg <= '0; dg1 <= 8'd1;
         if (!pn) begin                            // the pop head moves along
           ck <= '0; cg <= '0;
-          // the next head's chunk count: the queued entry, or a command accepted this cycle
-          c_left <= (q_n == 2'd2) ? n.total : (start ? cmd_total : '0);
+          // the next head's chunk count: the queued entry's, or (cl_ld) the total of a command
+          // accepted this cycle, a cycle later
+          c_left <= (q_n == 2'd2) ? n.total : '0;
+          if (start && q_n == 2'd1) cl_ld <= 1'b1;
         end else begin                            // it already runs the next command: its rows
           rows_live <= rp;
           rows_p <= '0;
