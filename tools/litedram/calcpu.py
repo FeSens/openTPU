@@ -1,4 +1,4 @@
-"""The LiteDRAM core's own calibration CPU (docs/litedram.md section 9): a VexRiscv (LiteX's
+"""The LiteDRAM core's own calibration CPU (docs/litedram.md section 10): a VexRiscv (LiteX's
 "minimal" variant: RV32I, no caches) that calibrates the core's DDR3 channels at reset, so the card
 needs no host for it. Its firmware (tools/litedram/selfcal_fw) is opentpu/host/ddrcal.py's
 calibrate_channel in C, run on each channel; it ends by raising the channel's cal_ready as the
@@ -7,7 +7,10 @@ host would. The host keeps an override (selfcal_hold) and reads the result (open
 The CPU's address space (byte addresses):
 
     0x0000_0000   the firmware memory, MEM_BYTES (instructions on one port, data on the other: a
-                  true dual-port BRAM whose initial content is the image; the CPU restarts in place)
+                  true dual-port BRAM whose initial content is the image; the CPU restarts in place.
+                  While the CPU is held, the data port is the host's: selfcal_mem_adr /
+                  selfcal_mem_dat write a word, selfcal_mem_rdat reads it, so a new firmware goes
+                  in without a new bitstream, opentpu/host/selfcal.py load())
     0x2000_0000   the result mailbox, 256 words (the CPU writes, the host reads them through
                   selfcal_mbox_adr / selfcal_mbox_dat)
     0x2000_0800   the sys cycle counter, 64 bits (reading the low word latches the high word)
@@ -54,13 +57,19 @@ class SelfCal(LiteXModule):
         ], description="Read by the firmware when it starts.")
         self.status = CSRStatus(fields=[
             CSRField("held", size=1, description="The CPU is held (selfcal_hold)."),
-            CSRField("reserved", size=15),
+            CSRField("mem_log2", size=4, description="The firmware memory's size: 2**mem_log2 words."),
+            CSRField("reserved", size=11),
             CSRField("magic", size=16, reset=MAGIC, description=f"{MAGIC:#x}: the core has the CPU."),
         ])
         self.state = CSRStorage(32, description="Written by the firmware: 2 bits per channel (0 "
                                 "idle, 1 running, 2 ok, 3 failed), bit 7 done, errors in 15:8 / 23:16.")
         self.mbox_adr = CSRStorage(8)
         self.mbox_dat = CSRStatus(32, description="Mailbox word selfcal_mbox_adr.")
+        self.mem_adr = CSRStorage(16, description="Firmware memory word for selfcal_mem_dat / _rdat.")
+        self.mem_dat = CSRStorage(32, description="A write stores the word at selfcal_mem_adr while "
+                                  "the CPU is held (dropped otherwise).")
+        self.mem_rdat = CSRStatus(32, description="The firmware memory's word at selfcal_mem_adr "
+                                  "while the CPU is held.")
         self.bus = bus = wishbone.Interface(data_width=32, address_width=32, addressing="word")
 
         # # #
@@ -99,9 +108,18 @@ class SelfCal(LiteXModule):
         to_mbox, to_timer = to_loc & (loc[8:10] == 0), to_loc & (loc[9:10] == 1)
         local_ack, loc_dat = Signal(), Signal(32)
         self.sync += local_ack.eq(req & ~to_soc & ~local_ack)
+        held = Signal()
         self.comb += [
-            dp.adr.eq(dbus.adr[:aw]), dp.dat_w.eq(dbus.dat_w),
-            [dp.we[i].eq(req & dbus.we & dbus.sel[i] & to_mem) for i in range(4)],
+            # the data port: the CPU's, or the host's while the CPU is held (a firmware upload)
+            If(held,
+                dp.adr.eq(self.mem_adr.storage[:aw]), dp.dat_w.eq(self.mem_dat.storage),
+                [dp.we[i].eq(self.mem_dat.re) for i in range(4)],
+            ).Else(
+                dp.adr.eq(dbus.adr[:aw]), dp.dat_w.eq(dbus.dat_w),
+                [dp.we[i].eq(req & dbus.we & dbus.sel[i] & to_mem) for i in range(4)],
+            ),
+            self.mem_rdat.status.eq(dp.dat_r),
+            self.status.fields.mem_log2.eq(aw),
             mw.adr.eq(loc[:8]), mw.dat_w.eq(dbus.dat_w), mw.we.eq(req & dbus.we & to_mbox),
             mr.adr.eq(self.mbox_adr.storage), self.mbox_dat.status.eq(mr.dat_r),
         ]
@@ -114,7 +132,7 @@ class SelfCal(LiteXModule):
         ]
 
         # the SoC bus: one access at a time, a free cycle after each; hold between accesses
-        started, gap, held = Signal(), Signal(), Signal()
+        started, gap = Signal(), Signal()
         open_ = (~self.hold.storage | started) & ~gap
         self.comb += [
             bus.adr.eq(dbus.adr[:26]), bus.dat_w.eq(dbus.dat_w), bus.sel.eq(dbus.sel),
@@ -179,10 +197,13 @@ def build_firmware(soc, out, fw_id=0):
 
 
 def one_file(verilog, gateware, sources):
-    """The core as one Verilog file: memory initial values inlined (LiteX writes them as .init
-    files for $readmemh) and the platform's other Verilog sources (the calibration CPU) appended,
-    their modules renamed otpu_selfcal_*."""
+    """The core as one Verilog file: the calibration CPU's memory initial values inlined (LiteX
+    writes them as .init files for $readmemh; the core's other .init files stay as they are) and
+    the platform's other Verilog sources (the calibration CPU) appended, their modules renamed
+    otpu_selfcal_*."""
     def inline(m):
+        if "selfcal" not in m.group(1):
+            return m.group(0)
         vals = (gateware / m.group(1)).read_text().split()
         return "\n".join(f"\t{m.group(2)}[{i}] = 'h{v};" for i, v in enumerate(vals))
     verilog = re.sub(r'\$readmemh\("([^"]+)", ([A-Za-z0-9_]+)\);', inline, verilog)

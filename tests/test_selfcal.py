@@ -205,7 +205,8 @@ class SelfcalCsr:
         self.b = C.FakeBoard(build)
         self.regs = self.b.regs
         self.own = {"selfcal_hold": 0, "selfcal_config": 3 | stride << 8, "selfcal_state": 0,
-                    "selfcal_mbox_adr": 0}
+                    "selfcal_mbox_adr": 0, "selfcal_mem_adr": 0, "selfcal_mem_dat": 0}
+        self.mem, self.drop = [0] * 4096, None      # the firmware memory; drop: a write lost
         self.mbox, self.cpu_runs, self.host_writes, self.due = [0] * 256, 0, [], True
         self.started = True
         if not lazy:
@@ -224,7 +225,9 @@ class SelfcalCsr:
 
     def r(self, name):
         if name == "selfcal_status":
-            return S.MAGIC << 16 | self.own["selfcal_hold"]
+            return S.MAGIC << 16 | 12 << 1 | self.own["selfcal_hold"]
+        if name == "selfcal_mem_rdat":
+            return self.mem[self.own["selfcal_mem_adr"]] if self.own["selfcal_hold"] else 0
         if name == "selfcal_state" and self.due and not self.own["selfcal_hold"]:
             if not self.started:            # the firmware writes the state a millisecond on
                 self.started = True
@@ -241,6 +244,9 @@ class SelfcalCsr:
             self.own[name] = v
         elif name in self.own:
             self.own[name] = v
+            a = self.own["selfcal_mem_adr"]
+            if name == "selfcal_mem_dat" and self.own["selfcal_hold"] and a != self.drop:
+                self.mem[a] = v
         else:
             self.host_writes.append(name)
             self.b.w(name, v)
@@ -334,6 +340,27 @@ def test_memcal_selfcal_again(fws, run_dir):
     res = memcal.selfcal_again(card, data=SELF, log=lambda *_: None)
     assert card.cpu_runs == 2 and card.own["selfcal_hold"] == 0
     assert all(r["state"] == "ok" for r in res.values()) and sorted(res) == [0, 1]
+
+
+def test_memcal_selfcal_new_firmware(fws, run_dir, tmp_path, capsys):
+    # otpu-memcal selfcal --firmware: the image into the held CPU's memory, read back, then a run
+    card = SelfcalCard(fws(SELF))
+    img = bytes(range(256)) * 37 + b"\x01\x02"             # 9474 bytes: not whole words
+    f = tmp_path / "selfcal.bin"
+    f.write_bytes(img)
+    assert memcal.main(["selfcal", "--firmware", str(f)], open_transport=lambda: card) == 0
+    want = img + bytes(16384 - len(img))
+    assert card.mem == [int.from_bytes(want[i:i + 4], "little") for i in range(0, 16384, 4)]
+    assert card.cpu_runs == 2 and card.own["selfcal_hold"] == 0
+    assert "firmware loaded: 9474 bytes into the CPU's 16384 (read back)" in capsys.readouterr().out
+    card.drop = 5                                           # a word lost: the read back finds it
+    with pytest.raises(RuntimeError, match=r"1 of 4096 words read back wrong \(the first: word 5\)"):
+        S.load(card, img[::-1])
+    assert card.own["selfcal_hold"] == 1                    # held: the new firmware not run
+    with pytest.raises(ValueError, match="16385 bytes"):
+        S.load(card, bytes(16385))
+    with pytest.raises(RuntimeError, match="no selfcal_mem_dat"):
+        S.load(SelfcalCsr(fws(SELF), build=DATA / "litedram_core_wl"), img)
 
 
 def test_ld_host_selfcal(fws, capsys):

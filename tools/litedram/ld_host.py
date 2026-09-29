@@ -16,7 +16,7 @@ channel's CK and commands against its whole write side (DQ with its DQS); `all` 
 the CK phase common to every lane (ddrcal.calibrate_groups; group 1 stays at offset 0).
     python3 ld_host.py BUILD_DIR selftest     # the calibration logic against a simulated PHY
     python3 ld_host.py BUILD_DIR selfcal [--rerun] [--soak] [--compare]   # an image with the
-        # calibration CPU (ld_test.py / gen_core.py --selfcal, docs/litedram.md section 9): the
+        # calibration CPU (ld_test.py / gen_core.py --selfcal, docs/litedram.md section 10): the
         # CPU's result, then a BIST on each channel as the CPU calibrated it; --rerun: the CPU
         # calibrates again first (hold, release); --soak: then --seconds of BIST; --compare: then
         # the CPU is held and the host calibrates each channel (ddrcal, stride 1): the CK phase and
@@ -546,7 +546,7 @@ def soak_bist(csr, sys_hz, gib, seconds):
 
 
 def selfcal_run(a, csr, chans, period, phy):
-    """The calibration CPU's checks (docs/litedram.md section 9): see the module's docstring."""
+    """The calibration CPU's checks (docs/litedram.md section 10): see the module's docstring."""
     if not selfcal.present(csr):
         print("no calibration CPU in this image (selfcal_status)")
         return 1

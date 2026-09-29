@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""The calibration CPU's firmware (tools/litedram/calcpu.py, docs/litedram.md section 9): its
+"""The calibration CPU's firmware (tools/litedram/calcpu.py, docs/litedram.md section 10): its
 build configuration from a LiteDRAM build's csr.csv and sdram_init.py, the RV32I image for the
 core's memory, and the same C built for this machine (the equivalence tests).
 
     python3 fw.py header BUILD_DIR OUT.h      # selfcal_cfg.h: CSR addresses per channel, the
                                               # init sequence, the PHY settings, test patterns
-    python3 fw.py target BUILD_DIR OUT_DIR    # OUT_DIR/selfcal.bin (+ .elf, .map, .lst)
+    python3 fw.py target BUILD_DIR OUT_DIR    # OUT_DIR/selfcal.bin (+ .elf, .map, .lst); a
+                                              # new firmware for a card without a new bitstream:
+                                              # otpu-memcal selfcal --firmware OUT_DIR/selfcal.bin
     python3 fw.py host BUILD_DIR OUT_DIR      # OUT_DIR/libselfcal.{so,dylib} (SELFCAL_HOST)
 
 Stdlib only (no LiteX): the configuration comes from ddrcal (the same parsing of sdram_init.py
@@ -31,7 +33,8 @@ ddrcal = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ddrcal)
 
 SELFCAL_BASE = 0x8000                   # CSR location 16 x 0x800 (calcpu.py pins it)
-SELFCAL_CSRS = ("hold", "config", "status", "state", "mbox_adr", "mbox_dat")   # in block order
+SELFCAL_CSRS = ("hold", "config", "status", "state", "mbox_adr", "mbox_dat",   # in block order
+                "mem_adr", "mem_dat", "mem_rdat")
 MEM_BYTES = 16384                       # the firmware memory (calcpu.py's default)
 RV_CC = os.environ.get("RV_CC", "riscv64-elf-gcc")
 RV_FLAGS = ["-march=rv32i", "-mabi=ilp32", "-O2", "-ffreestanding", "-nostdlib",
@@ -202,11 +205,13 @@ def main():
     ap.add_argument("what", choices=["header", "target", "host"])
     ap.add_argument("build", help="LiteDRAM build directory (csr.csv, sdram_init.py)")
     ap.add_argument("out")
+    ap.add_argument("--fw-id", type=lambda v: int(v, 16), default=0,
+                    help="the firmware's ID (hex, mailbox word 1), e.g. its commit")
     a = ap.parse_args()
     if a.what == "header":
         write_header(a.build, a.out)
     elif a.what == "target":
-        data = target(a.build, a.out)
+        data = target(a.build, a.out, fw_id=a.fw_id)
         print(f"{len(data)} bytes")
     else:
         print(host(a.build, a.out))

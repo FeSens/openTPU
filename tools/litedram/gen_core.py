@@ -34,7 +34,7 @@ this reuses): the DQS clock on an MMCM output with fine phase shift, driven by t
 Channel 0's CSR names are bare (ddrphy_, sdram_, bist_, phase_, ecc_, cal_), channel 1's carry
 a 1. The ECC counts corrected and uncorrectable words (ecc_sec_errors, ecc_ded_errors).
 
---selfcal (tools/litedram/calcpu.py, docs/litedram.md section 9): a small CPU (VexRiscv minimal)
+--selfcal (tools/litedram/calcpu.py, docs/litedram.md section 10): a small CPU (VexRiscv minimal)
 in the core calibrates both channels at reset with ddrcal's algorithm (firmware
 tools/litedram/selfcal_fw, built here against this core's csr.csv and sdram_init.py) and raises
 cal_ready / cal1_ready itself; its CSRs (selfcal_*) give the host an override and the result.
@@ -97,7 +97,8 @@ USER_NAMES = {u[0] for u in USER}
 class OTPULiteDRAM(SoCCore):
     mem_map = {"csr": 0x0000_0000}
 
-    def __init__(self, f=133.333e6, dqs_phase=90, bist=True, phy="a7", groups=None, selfcal=False):
+    def __init__(self, f=133.333e6, dqs_phase=90, bist=True, phy="a7", groups=None, selfcal=False,
+                 rd_reg=False):
         """phy "wl": WL7DDRPHY with each channel's WriteClocks MMCM (docs/litedram.md section 8;
         groups[ch]: its lanes' write clock groups). selfcal: the calibration CPU (its firmware set
         once the CSR map exists: build())."""
@@ -121,7 +122,7 @@ class OTPULiteDRAM(SoCCore):
                 setattr(self, "wclk" + sfx, wc)
                 p = ClockDomainsRenamer(wc.domains)(WL7DDRPHY(
                     platform.request("ddram", ch), groups=groups[ch], sys_clk_freq=f,
-                    iodelay_clk_freq=200e6, cl=cl, cwl=cwl))
+                    iodelay_clk_freq=200e6, cl=cl, cwl=cwl, rd_reg=rd_reg))
                 for c in wc.constraints(hier=True) + (WL7DDRPHY.constraints() if ch == 0 else []):
                     platform.add_platform_command(c.replace("{", "{{").replace("}", "}}"))
             else:
@@ -207,15 +208,18 @@ def main():
                     help="a7: A7DDRPHY; wl: WL7DDRPHY, write leveling by clock groups (section 8)")
     ap.add_argument("--groups0", default="0,0,0,0,0,0,0,0,0", help="wl: channel 0's lane groups")
     ap.add_argument("--groups1", default="0,0,0,0,0,0,0,0,0", help="wl: channel 1's lane groups")
+    ap.add_argument("--rd-reg", action="store_true",
+                    help="wl: a register after each read bitslip mux, the read latency one cycle "
+                         "longer (wl7ddrphy.py; ld_test.py has it; the committed core does not)")
     ap.add_argument("--selfcal", action="store_true",
-                    help="the calibration CPU: the core calibrates itself at reset (section 9)")
+                    help="the calibration CPU: the core calibrates itself at reset (section 10)")
     ap.add_argument("--fw-id", type=lambda x: int(x, 16), default=0,
                     help="selfcal: the firmware id in the result mailbox (hex, e.g. a commit)")
     a = ap.parse_args()
     out = Path(a.out).resolve()
     groups = {0: [int(x) for x in a.groups0.split(",")], 1: [int(x) for x in a.groups1.split(",")]}
     soc = OTPULiteDRAM(a.sys_mhz * 1e6, bist=not a.no_bist, phy=a.phy, groups=groups,
-                       selfcal=a.selfcal)
+                       selfcal=a.selfcal, rd_reg=a.rd_reg)
     info, init_py = sdram_init(soc, a.sys_mhz, a.phy, groups)
 
     def firmware():

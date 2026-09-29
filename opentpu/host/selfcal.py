@@ -1,4 +1,4 @@
-"""The LiteDRAM core's own calibration CPU (tools/litedram/calcpu.py, docs/litedram.md section 9),
+"""The LiteDRAM core's own calibration CPU (tools/litedram/calcpu.py, docs/litedram.md section 10),
 seen from the host: is it there, what did it do, and the override.
 
 At reset the core's CPU (VexRiscv, firmware tools/litedram/selfcal_fw) calibrates its channels as
@@ -11,10 +11,14 @@ controllers' (all through `csr`, ddrcal's w / r on CSR names):
                       recalibrates, first dropping each channel's cal_ready.
     selfcal_config    bits 1:0 the channels to calibrate (reset 0b11), 15:8 the CK phase scan's
                       stride in fine steps (reset 1); read by the firmware when it starts.
-    selfcal_status    bits 31:16 MAGIC (the core has the CPU), bit 0 held.
+    selfcal_status    bits 31:16 MAGIC (the core has the CPU), 4:1 log2 of the firmware
+                      memory's words, bit 0 held.
     selfcal_state     written by the firmware: 2 bits per channel (STATES), bit 7 done, each
                       channel's error (ERRORS) in bits 15:8 / 23:16.
     selfcal_mbox_adr / selfcal_mbox_dat   word `adr` of the result mailbox (layout: cal.h).
+    selfcal_mem_adr / selfcal_mem_dat / selfcal_mem_rdat   while the CPU is held, word `adr` of
+                      its firmware memory, written / read (load(): a new firmware without a new
+                      bitstream).
 
 Stdlib only, as ddrcal (and like it, usable as a copy next to tools/litedram/ld_host.py).
 """
@@ -60,6 +64,41 @@ def release(csr):
     on), and until then wait() would find the last run done."""
     csr.w("selfcal_state", 0)
     csr.w("selfcal_hold", 0)
+
+
+def mem_words(csr):
+    """The firmware memory's size, 32-bit words."""
+    return 1 << (csr.r("selfcal_status") >> 1 & 0xF)
+
+
+def load(csr, image, verify=True):
+    """A new firmware for the CPU without a new bitstream: `image` is fw.py's selfcal.bin
+    (bytes, run from address 0), built against this core's csr.csv and sdram_init.py
+    (`fw.py target BUILD_DIR OUT_DIR`). The CPU is held and stays held (release() runs the new
+    firmware); every word of its memory is written, the image then zeros, and read back. The
+    bitstream's own firmware comes back only with the FPGA's next configuration. Returns the
+    memory's size in words."""
+    if not ddrcal.has_csr(csr, "selfcal_mem_dat"):
+        raise RuntimeError("this core's CPU takes no firmware from the host (no selfcal_mem_dat)")
+    n = mem_words(csr)
+    if len(image) > 4 * n:
+        raise ValueError(f"firmware {len(image)} bytes > the CPU's memory ({4 * n} bytes)")
+    data = bytes(image) + bytes(4 * n - len(image))
+    words = [int.from_bytes(data[i:i + 4], "little") for i in range(0, 4 * n, 4)]
+    hold(csr)
+    for i, v in enumerate(words):
+        csr.w("selfcal_mem_adr", i)
+        csr.w("selfcal_mem_dat", v)
+    if verify:
+        bad = []
+        for i, v in enumerate(words):
+            csr.w("selfcal_mem_adr", i)
+            if csr.r("selfcal_mem_rdat") != v:
+                bad.append(i)
+        if bad:
+            raise RuntimeError(f"firmware upload: {len(bad)} of {n} words read back wrong "
+                               f"(the first: word {bad[0]})")
+    return n
 
 
 def state(csr, value=None):

@@ -1,4 +1,4 @@
-/* The firmware's view of the hardware (tools/litedram/calcpu.py, docs/litedram.md section 9).
+/* The firmware's view of the hardware (tools/litedram/calcpu.py, docs/litedram.md section 10).
 
    hw_rd / hw_wr: one 32-bit word of the LiteDRAM core's CSR space, at its csr.csv address (the
    SoC bus behind the CPU's window at 0xF0000000; multi-word CSRs most significant word first, the

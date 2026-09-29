@@ -34,7 +34,7 @@ phy = {
  "bitslips": 8,
  "cl": 7,
  "cwl": 6,
- "read_latency": 9,
+ "read_latency": 8,
  "write_latency": 1,
  "vco_hz": 1066664000.0,
  "dqs_phase": 90.0,

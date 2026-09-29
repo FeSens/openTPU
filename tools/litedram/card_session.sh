@@ -14,7 +14,7 @@
 # DIR holds ld_test.bit, csr.csv, sdram_init.py and ld_host.py; every step's output goes to a
 # log there. Never reboot while a Vivado job runs on the host.
 #
-# An image with the calibration CPU (ld_test.py --selfcal, docs/litedram.md section 9): the step
+# An image with the calibration CPU (ld_test.py --selfcal, docs/litedram.md section 10): the step
 # `selfcal DIR` instead of `test` (LDHOST: the ld_host.py to run, e.g. a staged tree's, whose
 # opentpu package it then imports; SOAK: seconds per channel, default 300).
 set -u

@@ -1,5 +1,5 @@
 /* DDR3 calibration of the LiteDRAM core's channels on the core's own CPU (tools/litedram/calcpu.py,
-   docs/litedram.md section 9): opentpu/host/ddrcal.py's calibrate_channel and everything it calls,
+   docs/litedram.md section 10): opentpu/host/ddrcal.py's calibrate_channel and everything it calls,
    ported decision for decision and CSR write for CSR write (tests/test_selfcal.py compares the
    write sequences on ddrcal's simulated PHY). The Python names are kept; each function says which
    one it is.

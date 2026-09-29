@@ -175,6 +175,9 @@ csr_register,selfcal_status,0x00008008,1,ro
 csr_register,selfcal_state,0x0000800c,1,rw
 csr_register,selfcal_mbox_adr,0x00008010,1,rw
 csr_register,selfcal_mbox_dat,0x00008014,1,ro
+csr_register,selfcal_mem_adr,0x00008018,1,rw
+csr_register,selfcal_mem_dat,0x0000801c,1,rw
+csr_register,selfcal_mem_rdat,0x00008020,1,ro
 constant,config_platform_name,ypcb_platform,,
 constant,config_clock_frequency,133333000,,
 constant,config_cpu_type_none,None,,

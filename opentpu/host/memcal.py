@@ -1,5 +1,5 @@
 """otpu-memcal: the DDR3 calibration of a bitstream whose memory controllers are LiteDRAM (CAPS
-bit27, docs/litedram.md sections 7 and 9). The MIG bitstreams calibrate themselves in hardware.
+bit27, docs/litedram.md sections 7 and 10). The MIG bitstreams calibrate themselves in hardware.
 LiteDRAM's PHY is calibrated through each controller's CSRs in the BAR0 window at R_MEMCAL
 (0x10000) by opentpu.host.ddrcal's algorithm: per channel the CK phase is scanned over one tCK
 with the channel's BIST as the traffic check, the phase goes to the centre of the window common
@@ -20,6 +20,9 @@ Two ways to run it:
     otpu-memcal cal [--force]   calibrate the channels not calibrated yet (--force: both, from
                                 the host)
     otpu-memcal selfcal         the core's CPU calibrates both channels again
+    otpu-memcal selfcal --firmware selfcal.bin
+                                the same with a new firmware (tools/litedram/selfcal_fw/fw.py
+                                target), in the CPU's memory until the FPGA is configured again
 
 Board() calls ensure(), so every tool that opens the card calibrates it once per configuration;
 the scan writes over each channel's first 64 MiB, which holds nothing before calibration. The
@@ -107,12 +110,16 @@ def ensure(t, force: bool = False, stride: int = 1, data: Path = DATA, log=print
     return out
 
 
-def selfcal_again(t, data: Path = DATA, log=print) -> dict:
-    """The core's CPU calibrates every channel again (hold, release, wait): its result."""
+def selfcal_again(t, data: Path = DATA, log=print, firmware: bytes | None = None) -> dict:
+    """The core's CPU calibrates every channel again (hold, release, wait): its result.
+    firmware: a new image for it first (selfcal.load)."""
     c = csr(t, data)
     if not selfcal.present(c):
         raise ddrcal.CalError("the bitstream's LiteDRAM core has no calibration CPU")
     selfcal.hold(c)
+    if firmware is not None:
+        n = selfcal.load(c, firmware)
+        log(f"firmware loaded: {len(firmware)} bytes into the CPU's {4 * n} (read back)")
     selfcal.release(c)
     t0 = time.time()
     selfcal.wait(c, SELFCAL_WAIT)
@@ -159,6 +166,7 @@ def main(argv: list[str] | None = None, open_transport=None) -> int:
     ap.add_argument("what", nargs="?", default="status", choices=["status", "cal", "selfcal"])
     ap.add_argument("--force", action="store_true", help="cal: both channels, from the host")
     ap.add_argument("--stride", type=int, default=1, help="DQS scan stride, fine steps")
+    ap.add_argument("--firmware", type=Path, help="selfcal: this image (fw.py's selfcal.bin) first")
     ap.add_argument("--dev", default="/dev/xdma0")
     a = ap.parse_args(argv)
     from .board import Board, XdmaTransport
@@ -175,7 +183,7 @@ def main(argv: list[str] | None = None, open_transport=None) -> int:
             if not own:
                 print("nothing to do: the bitstream's LiteDRAM core has no calibration CPU")
                 return 1
-            res = selfcal_again(b.t, DATA)
+            res = selfcal_again(b.t, DATA, firmware=a.firmware.read_bytes() if a.firmware else None)
             for ch, r in sorted(res.items()):
                 print(describe(ch, r))
             return 0 if res and all(r["state"] == "ok" for r in res.values()) else 1

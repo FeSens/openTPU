@@ -575,7 +575,7 @@ def main():
                     help="wl: group 1's static offset per channel at configuration, degrees of sys4x "
                          "(multiples of 22.5; the host reprograms it over the DRP)")
     ap.add_argument("--selfcal", action="store_true",
-                    help="the calibration CPU (calcpu.py, docs section 9): the image calibrates "
+                    help="the calibration CPU (calcpu.py, docs section 10): the image calibrates "
                          "both channels at configuration, as the production core with --selfcal")
     ap.add_argument("--fw-id", type=lambda x: int(x, 16), default=0,
                     help="selfcal: the firmware id in the result mailbox (hex, e.g. a commit)")
