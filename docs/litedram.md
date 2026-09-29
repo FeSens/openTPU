@@ -481,6 +481,12 @@ fine-PS output of an MMCM together), while its DQ, CK and serializer CLKDIV stay
   first session).
 - **Channel 1** fails. Calibration passes, but the BIST has errors on all nine lanes, and no DQS
   phase works for every lane.
+- **Channel 0's temperature run** (`card2-temp-ch0.log`, 35 min): 3578 back-to-back BIST passes
+  of 2 GiB, 0 wrong beats. The window was rescanned 7 times and stayed at 12 steps (201 ps), with
+  the running phase at -6 / +5 steps from its edges every time. But the BIST barely heats the
+  card: FPGA 54.4 to 55.0 C, board 47.5 to 47.8 C. So this is a stability run at the card's idle
+  temperature, not a temperature sweep. The first session measured 234 ps at a cooler, unlogged
+  temperature.
 
 **The DQS scan with the write latency forced** (`ld_host.py wscan`, both channels in the same
 minute, FPGA 54.5 C, board 47.5 C). Each lane's latency is held at bitslip 0, then at 6, so a
