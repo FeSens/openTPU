@@ -4,23 +4,27 @@ leveling by clock groups (docs/litedram.md, section 8).
 The stock PHY serializes DQ and DM on sys4x and DQS on sys4x_dqs (sys4x + 90 deg), all with
 CLKDIV = sys, and shifts sys4x_dqs: DQS moves alone, against CK (tDQSS) but also against its own
 DQ, so a lane's write window is the DQ-DQS eye cut by its tDQSS crossing (section 7). Here the
-channel's MMCM shifts the other side: CK, the commands and the read capture move together
-(fine phase shift), while each byte lane's write side (DQ, DM, DQS) stays on its group's static
-clocks, DQS 90 deg after its DQ (the eye centre). So DQ and DQS move together against CK, and the
-phase that works is limited only by the lanes' tDQSS crossings. (An MMCM's fine-phase outputs
-must share their sub-VCO phase fraction, so DQ at 0 and DQS at 90 deg cannot both shift.)
+channel's MMCM shifts the other side: CK and the commands move (fine phase shift), while each
+byte lane's write side (DQ, DM, DQS) stays on its group's static clocks, DQS 90 deg after its DQ
+(the eye centre). So DQ and DQS move together against CK, and the phase that works is limited
+only by the lanes' tDQSS crossings. (An MMCM's fine-phase outputs must share their sub-VCO phase
+fraction, so DQ at 0 and DQS at 90 deg cannot both shift.) The read capture stays on the static
+clocks too, as in the stock PHY: the read data moves with CK and the IDELAY taps and the read
+bitslip follow it. (ldtest3 captured on the shifted pair: two or three DQ bits per channel, at the
+end of their bank farthest from its clock row, came out of their ISERDES a CLK later than the rest
+of their lane, at every phase and after every reset, and each channel lost a lane.)
 
-    sys4x_ck, sys_ck    CK, commands, read ISERDES (CLK, CLKDIV): shifted by the host
-    sys_w               CLKDIV of every write OSERDES (static, sys's phase)
-    sys4x_w<g>          group g's DQ / DM (static, plus the group's offset)
+    sys4x_ck, sys_ck    CK and commands (CLK, CLKDIV): shifted by the host
+    sys_w               CLKDIV of every write OSERDES and read ISERDES (static, sys's phase)
+    sys4x_w<g>          group g's DQ / DM (static, plus the group's offset); w0: the read capture
     sys4x_w<g>_dqs      group g's DQS (sys4x_w<g> + 90 deg)
 
-The PHY's logic runs in sys (the controller's clock). The data to and from the shifted clocks
-(command serializer inputs, read deserializer outputs, their resets) go through registers on
-sys's falling edge (FDREs with IS_C_INVERTED): sys_ck may sit up to half a tCK either side of sys and the
-serializers still see about 2.8 ns of setup and hold (the build constrains the crossing with that
-uncertainty). With the phase at 0 the timing is the stock PHY's, cycle for cycle. The tristate
-controls (T1, OSERDES TQ in BUF mode, not clocked) stay as the stock PHY's.
+The PHY's logic runs in sys (the controller's clock). The commands and their serializers' reset go
+to the shifted clocks through registers on sys's falling edge (FDREs with IS_C_INVERTED): sys_ck
+may sit up to half a tCK either side of sys and the serializers still see about 2.8 ns of setup
+and hold (the build constrains the crossing with that uncertainty). With the phase at 0 the timing
+is the stock PHY's, cycle for cycle. The tristate controls (T1, OSERDES TQ in BUF mode, not
+clocked) stay as the stock PHY's.
 
 Every domain name above except sys is the PHY's own; the SoC maps them per channel with
 ClockDomainsRenamer. The CSRs and settings are A7DDRPHY's (phytype A7DDRPHY).
@@ -125,12 +129,11 @@ class WL7DDRPHY(Module, AutoCSR):
         def serdes_rst(x, clk):
             """x registered again in the serializers' CLKDIV domain, one register per group of
             serializers (a lane, or eight command pads). A SERDES retimes its reset's
-            deassertion to the first CLK edge after it arrives, so the serializers of one word
-            must all see it within the same sys4x period (1.875 ns). One net from sys reached
-            them up to 5.3 ns after the edge, and one DQ bit per channel came out of reset a CLK
-            later than the rest of its lane: a tCK off, the lane dead at every phase (ldtest3:
-            ch0 dq61, ch1 dq65). The build constrains these registers to their SERDES
-            (constraints()); DONT_TOUCH keeps synthesis from merging the copies."""
+            deassertion to the first CLK edge after it arrives (UG471), so the serializers of
+            one word should all see it within the same sys4x period (1.875 ns); one net from sys
+            reached them 2.4-5.3 ns after the edge (ldtest3, routed). The build constrains these
+            registers to their SERDES (constraints()); DONT_TOUCH keeps synthesis from merging
+            the copies."""
             r = Signal()
             self.specials += Instance("FDRE", name="wlrst", p_INIT=1, i_C=ClockSignal(clk),
                                       i_CE=1, i_R=0, i_D=x, o_Q=r, attr={("DONT_TOUCH", "TRUE")})
@@ -146,7 +149,7 @@ class WL7DDRPHY(Module, AutoCSR):
             else:
                 ck_rsts.append(ck_rsts[-1])
             return ck_rsts[-1]
-        rd_rst = [serdes_rst(nreg(sys_rst), "sys_ck") for _ in range(strobes)]   # per lane
+        rd_rst = [serdes_rst(sys_rst, "sys_w") for _ in range(strobes)]          # per lane
         wr_rst = [serdes_rst(sys_rst, "sys_w") for _ in range(strobes)]          # per lane
 
         # Clock ---------------------------------------------------------------------------------
@@ -227,15 +230,15 @@ class WL7DDRPHY(Module, AutoCSR):
                                      ClockSignal("sys_w"), wr_rst[lane], dq_o,
                                      t1=~dq_oe_delay.output, tq=dq_t)
             dq_q = Signal(8)
-            dq_i_bitslip = BitSlip(8, i=nreg(dq_q),
+            dq_i_bitslip = BitSlip(8, i=dq_q,
                 rst=(self._dly_sel.storage[lane] & rdly_dq_bitslip_rst) | self._rst.storage,
                 slp=self._dly_sel.storage[lane] & rdly_dq_bitslip, cycles=1)
             self.submodules += dq_i_bitslip
             self.specials += Instance("ISERDESE2",
                 p_SERDES_MODE="MASTER", p_INTERFACE_TYPE="NETWORKING", p_DATA_WIDTH=2 * nphases,
                 p_DATA_RATE="DDR", p_NUM_CE=1, p_IOBDELAY="IFD",
-                i_RST=rd_rst[lane], i_CLK=ClockSignal("sys4x_ck"), i_CLKB=~ClockSignal("sys4x_ck"),
-                i_CLKDIV=ClockSignal("sys_ck"), i_BITSLIP=0, i_CE1=1, i_DDLY=dq_i_delayed,
+                i_RST=rd_rst[lane], i_CLK=ClockSignal("sys4x_w0"), i_CLKB=~ClockSignal("sys4x_w0"),
+                i_CLKDIV=ClockSignal("sys_w"), i_BITSLIP=0, i_CE1=1, i_DDLY=dq_i_delayed,
                 **{f"o_Q{n + 1}": dq_q[8 - 1 - n] for n in range(8)})
             for n in range(8):
                 self.comb += dfi.phases[n // 2].rddata[n % 2 * databits + i].eq(dq_i_bitslip.o[n])

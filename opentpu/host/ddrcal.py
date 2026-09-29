@@ -411,12 +411,13 @@ def group_windows(table, groups, period):
 
 
 def calibrate_groups(d, dqs, wclk, groups, period, stride=1, csr=None, mib=64, log=print):
-    """A WL7DDRPHY channel's write phases. 1: group 1 onto group 0 (offset 0) and a scan of the
-    common phase over a tCK (per step: calibration and, with `csr`, a BIST per lane), each group's
-    longest common run. 2: group 1's offset (DRP, 7-step units) that brings its run's centre onto
-    group 0's. 3: a second scan at that offset (the groups now move together: the run common to
-    all lanes) and the common phase at its centre; calibration there. Returns a dict with both
-    scans' tables, each group's run (steps) in the first, the offset, and the common run."""
+    """A WL7DDRPHY channel's write phase: group 1's offset at 0 (on group 0), a scan of the common
+    CK phase over a tCK (per step: calibration and, with `csr`, a BIST per lane), and the phase at
+    the centre of the longest run common to all lanes; calibration there. Each group's own run is
+    logged. Group 1 is not moved: its DRP offset moves only its serializers' CLK against their
+    CLKDIV, and ldtest3 lost every group 1 lane at every offset tried (1/8 to 7/8 VCO either way,
+    both channels). Returns a dict with the scan's table, each group's run (steps), the offset (0)
+    and the common run."""
     wclk.check()                            # the DRP encoding as assumed, before any write
     wclk.set_group1(0)
     d.ctl(0)                                # the DRAM's reset: its clocks stopped
@@ -427,30 +428,17 @@ def calibrate_groups(d, dqs, wclk, groups, period, stride=1, csr=None, mib=64, l
         log(f"  group {g} (lanes {[m for m, x in enumerate(groups) if x == g]}): "
             + (f"{len(run) * stride} steps ({len(run) * stride * dqs.step_ps:.0f} ps) around +{pick}"
                if pick is not None else "no common phase"))
-    if any(p is None for _, _, p, _ in gw.values()):
-        raise CalError("a write clock group has no common phase")
-    p0 = gw[0][2]
-    p1 = gw[max(gw)][2]
-    # the phase shift moves CK (ps_moves "ck"): group 1's DQ e eighths later passes where CK is
-    # 7e steps later too, so its run moves by +7e; moving DQ itself it would move by -7e
-    d1 = (p0 - p1) if d.phy.get("ps_moves") == "ck" else (p1 - p0)
-    e = round((d1 % period) / WriteClocks.FINE_PER_EIGHTH) % WriteClocks.EIGHTHS
-    wclk.set_group1(e)
-    d.ctl(0)
-    time.sleep(0.001)
-    t1 = dqs_scan(d, dqs, period, stride, csr=csr, show=False)
-    per, common, pick, run = margins(t1, d.nm, period=period)
-    g1 = group_windows(t1, groups, period)
-    log(f"  group 1 offset {e} x 1/8 VCO ({e * WriteClocks.FINE_PER_EIGHTH} steps); groups now "
-        + ", ".join(f"{g} {len(r) * stride} steps" for g, (_, _, _, r) in g1.items())
-        + f"; all lanes {len(run) * stride} steps ({len(run) * stride * dqs.step_ps:.0f} ps)"
+    per, common, pick, run = margins(t0, d.nm, period=period)
+    log(f"  all lanes: {len(run) * stride} steps ({len(run) * stride * dqs.step_ps:.0f} ps)"
         + (f" around +{pick}" if pick is not None else ""))
     if pick is None:
-        raise CalError("no common phase with group 1 at its offset")
+        err = CalError("no CK phase common to every lane")
+        err.scan = t0                       # for the caller's pass map
+        raise err
     dqs.move(dqs.steps() + pick)
-    return {"scan0": t0, "scan1": t1, "offset_eighths": e, "pick": pick, "run": run,
-            "group_runs": {g: len(r) * stride for g, (_, _, _, r) in gw.items()},
-            "group_runs_at_offset": {g: len(r) * stride for g, (_, _, _, r) in g1.items()}}
+    runs = {g: len(r) * stride for g, (_, _, _, r) in gw.items()}
+    return {"scan0": t0, "scan1": t0, "offset_eighths": 0, "pick": pick, "run": run,
+            "group_runs": runs, "group_runs_at_offset": runs}
 
 
 # ------------------------------------------------------------------------------ BIST

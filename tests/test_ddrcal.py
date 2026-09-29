@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from opentpu.host import ddrcal as C
 
 DATA = Path(__file__).parent / "data" / "litedram"
@@ -50,34 +52,39 @@ def test_margins_wrap_around_the_tck():
 
 
 def test_write_clock_groups_on_the_simulated_phy():
-    # a WL7DDRPHY channel whose two groups write in disjoint phase ranges: no common phase with
-    # group 1 on group 0, a 25-step one with group 1 six eighths (42 steps) ahead
+    # a WL7DDRPHY channel: group 1 stays on group 0 (its DRP offset breaks its serializers), so
+    # the phase is the centre of the run common to every lane; groups that write in disjoint
+    # phase ranges have none
     groups = [0, 0, 0, 0, 1, 1, 1, 1, 1]
     fake = C.FakeCsr(DATA, groups=groups)
     for m in range(fake.nm):
-        fake.WLO[m], fake.WHI[m] = (20 + m, 60 - m) if groups[m] == 0 else (62 + m, 102 - m)
+        fake.WLO[m], fake.WHI[m] = (20 + m, 60 - m) if groups[m] == 0 else (40 + m, 80 - m)
     d = C.Dram(fake, DATA)
     dqs = C.DqsPhase(fake, d.phy["vco_hz"])
     w = C.WriteClocks(fake)
     assert w.check() == {3: 0, 4: 4, 5: 0, 6: 4}
     res = C.calibrate_groups(d, dqs, w, groups, 112, stride=1, csr=fake, mib=1, log=lambda *_: None)
-    assert res["offset_eighths"] == 6 and w.group1() == 6 and w.check()[6] == 10
-    assert res["group_runs"] == {0: 35, 1: 25} and len(res["run"]) == 25
+    assert res["offset_eighths"] == 0 and w.group1() == 0
+    assert res["group_runs"] == {0: 35, 1: 25} and len(res["run"]) == 10      # 48..57
     wl, rl, err = d.calibrate(verbose=False)
     assert not any(err) and all(fake.good(m) for m in range(fake.nm))
+    for m in range(fake.nm):
+        fake.WLO[m], fake.WHI[m] = (20 + m, 60 - m) if groups[m] == 0 else (62 + m, 102 - m)
+    with pytest.raises(C.CalError) as e:
+        C.calibrate_groups(d, dqs, w, groups, 112, stride=1, csr=fake, mib=1, log=lambda *_: None)
+    assert e.value.scan                     # the table, for the pass map
 
 
 def test_calibrate_channel_write_clock_groups():
     # a WL7DDRPHY channel (the WL image's settings: phy "wl", groups per channel) through the
-    # production entry point
+    # production entry point: one common phase, group 1 left at offset 0
     wl = DATA.parent / "litedram_wl"
     board = C.FakeBoard(wl)
     f = board.ch[1]
     for m in range(f.nm):
-        f.WLO[m], f.WHI[m] = (20 + m, 60 - m) if f.groups[m] == 0 else (62 + m, 102 - m)
+        f.WLO[m], f.WHI[m] = (20 + m, 60 - m) if f.groups[m] == 0 else (40 + m, 80 - m)
     res = C.calibrate_channel(C.Chan(board, 1), wl, stride=2, log=lambda *_: None)
-    # the WL image's phase shift moves CK: group 1's DQ goes 70 steps later (= 42 earlier)
-    assert f.ck and res["group1_eighths"] == 10 and board.ch[0].steps == 0
+    assert f.ck and res["group1_eighths"] == 0 and board.ch[0].steps == 0
     assert all(f.good(m) for m in range(f.nm))
 
 
@@ -96,14 +103,14 @@ def test_ld_host_selftest():
 
 
 def test_ld_host_selftest_write_clock_groups(tmp_path):
-    # the WL7DDRPHY image's CSR map and settings (ld_test.py --phy wl): the temperature run picks
-    # each channel's group 1 offset first
+    # the WL7DDRPHY image's CSR map and settings (ld_test.py --phy wl): the temperature run scans
+    # each channel's common CK phase first
     for f in ("csr.csv", "sdram_init.py"):
         (tmp_path / f).write_text((DATA.parent / "litedram_wl" / f).read_text())
     r = subprocess.run([sys.executable, str(ROOT / "tools/litedram/ld_host.py"), str(tmp_path),
                         "selftest"], capture_output=True, text=True, timeout=300)
     assert r.returncode in (0, None) and "selftest: PASS" in r.stdout, r.stdout[-2000:] + r.stderr
-    assert "group 1 offset" in r.stdout
+    assert "all lanes:" in r.stdout
 
 
 # ------------------------------------------------------------------------------ otpu-memcal
