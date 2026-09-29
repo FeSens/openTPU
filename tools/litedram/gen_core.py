@@ -61,7 +61,9 @@ from litedram.init import get_sdram_phy_py_header
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import ypcb_platform as ypcb                                    # noqa: E402
-from ld_test import CRG, DQSPhase, BIST, MT41K256M8_tRFC160, reset_value   # noqa: E402
+from ld_test import (CRG, WLCRG, DQSPhase, BIST, MT41K256M8_tRFC160, WriteClocks,  # noqa: E402
+                     reset_value)
+from wl7ddrphy import WL7DDRPHY                                 # noqa: E402
 
 AW, DW = 25, 512            # beat address, user data (+ 64 ECC bits on the DRAM side)
 USER = [("clk50g", 0, Pins(1)), ("rst", 0, Pins(1)), ("sys_clk", 0, Pins(1)),
@@ -94,10 +96,14 @@ class Cal(Module, AutoCSR):
 class OTPULiteDRAM(SoCCore):
     mem_map = {"csr": 0x0000_0000}
 
-    def __init__(self, f=133.333e6, dqs_phase=90, bist=True):
+    def __init__(self, f=133.333e6, dqs_phase=90, bist=True, phy="a7", groups=None):
+        """phy "wl": WL7DDRPHY with each channel's WriteClocks MMCM (docs/litedram.md section 8;
+        groups[ch]: its lanes' write clock groups)."""
         platform = ypcb.Platform()
         platform.add_extension(USER)
-        self.crg = CRG(platform, f, dqs_phase, two=True, clk50=platform.request("clk50g"))
+        clk50 = platform.request("clk50g")
+        self.crg = CRG(platform, f, dqs_phase, two=True, clk50=clk50) if phy == "a7" else \
+            WLCRG(platform, f, clk50=clk50)
         self.comb += self.crg.rst.eq(platform.request("rst"))
         SoCCore.__init__(self, platform, f, ident="openTPU LiteDRAM", cpu_type=None,
                          integrated_rom_size=0, integrated_sram_size=0, with_uart=False,
@@ -108,14 +114,24 @@ class OTPULiteDRAM(SoCCore):
         cl, cwl = (7, 6) if f > 101e6 else (6, 5)
         for ch in (0, 1):
             sfx = "" if ch == 0 else str(ch)
-            phy = s7ddrphy.A7DDRPHY(platform.request("ddram", ch), memtype="DDR3", nphases=4,
-                                    sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
-                                    write_latency_calibration=True, ddr_clk="sys4x" + sfx)
-            setattr(self, "ddrphy" + sfx, phy)
-            self.add_sdram("sdram" + sfx, phy=phy, module=MT41K256M8_tRFC160(f, "1:4"),
+            if phy == "wl":
+                wc = WriteClocks(ch, f)
+                setattr(self, "wclk" + sfx, wc)
+                p = ClockDomainsRenamer(wc.domains)(WL7DDRPHY(
+                    platform.request("ddram", ch), groups=groups[ch], sys_clk_freq=f,
+                    iodelay_clk_freq=200e6, cl=cl, cwl=cwl))
+                for c in wc.constraints(hier=True) + (WL7DDRPHY.constraints() if ch == 0 else []):
+                    platform.add_platform_command(c.replace("{", "{{").replace("}", "}}"))
+            else:
+                p = s7ddrphy.A7DDRPHY(platform.request("ddram", ch), memtype="DDR3", nphases=4,
+                                      sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
+                                      write_latency_calibration=True, ddr_clk="sys4x" + sfx)
+            setattr(self, "ddrphy" + sfx, p)
+            self.add_sdram("sdram" + sfx, phy=p, module=MT41K256M8_tRFC160(f, "1:4"),
                            with_soc_interconnect=False)
             core = getattr(self, "sdram" + sfx)
-            setattr(self, "phase" + sfx, DQSPhase(self.crg.mmcm if ch == 0 else self.crg.mmcm1))
+            setattr(self, "phase" + sfx, DQSPhase(getattr(self, "wclk" + sfx) if phy == "wl" else
+                                                  self.crg.mmcm if ch == 0 else self.crg.mmcm1))
             # the user port: 512 bits through the ECC (576 on the crossbar)
             raw = core.crossbar.get_port()
             assert raw.address_width == AW and raw.data_width == DW + 64, (raw.address_width, raw.data_width)
@@ -165,9 +181,14 @@ def main():
     ap.add_argument("--sys-mhz", type=float, default=133.333)
     ap.add_argument("--no-bist", action="store_true", help="no BIST (DFII-only calibration)")
     ap.add_argument("--out", default="build_core")
+    ap.add_argument("--phy", default="a7", choices=["a7", "wl"],
+                    help="a7: A7DDRPHY; wl: WL7DDRPHY, write leveling by clock groups (section 8)")
+    ap.add_argument("--groups0", default="0,0,0,0,0,0,0,0,0", help="wl: channel 0's lane groups")
+    ap.add_argument("--groups1", default="0,0,0,0,0,0,0,0,0", help="wl: channel 1's lane groups")
     a = ap.parse_args()
     out = Path(a.out).resolve()
-    soc = OTPULiteDRAM(a.sys_mhz * 1e6, bist=not a.no_bist)
+    groups = {0: [int(x) for x in a.groups0.split(",")], 1: [int(x) for x in a.groups1.split(",")]}
+    soc = OTPULiteDRAM(a.sys_mhz * 1e6, bist=not a.no_bist, phy=a.phy, groups=groups)
     b = Builder(soc, output_dir=str(out), compile_software=False, compile_gateware=False,
                 csr_csv=str(out / "csr.csv"))
     b.build(build_name="otpu_litedram", run=False)
@@ -198,8 +219,12 @@ def main():
             "dfi_databits": ps.dfi_databits, "modules": ps.databits // 8, "delays": 32,
             "bitslips": 8, "cl": ps.cl, "cwl": ps.cwl, "read_latency": ps.read_latency,
             "write_latency": ps.write_latency, "vco_hz": soc.crg.mmcm.compute_config()["vco"],
-            "dqs_phase": 90.0, "channels": [0, 1]}
-    assert soc.crg.mmcm1.compute_config()["vco"] == info["vco_hz"], "MMCM VCOs differ"
+            "dqs_phase": 90.0, "channels": [0, 1], "phy": a.phy}
+    if a.phy == "wl":
+        info.update(vco_hz=8 * a.sys_mhz * 1e6, groups=groups, group1_deg={0: 0.0, 1: 0.0},
+                    ps_moves="ck")
+    else:
+        assert soc.crg.mmcm1.compute_config()["vco"] == info["vco_hz"], "MMCM VCOs differ"
     (out / "sdram_init.py").write_text(hdr + "\nphy = " + json.dumps(info, indent=1) + "\n")
     print(json.dumps(info))
 

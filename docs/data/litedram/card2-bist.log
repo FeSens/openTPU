@@ -1,0 +1,14 @@
+==== channel 0
+BIST over 2 GiB:
+  pass 0 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 0 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+  pass 1 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 0 (per lane [0, 0, 0, 0, 0, 0, 0, 0, 0], bits 0x0)
+BIST: PASS
+==== channel 1
+BIST over 2 GiB:
+  pass 0 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 5593386 (per lane [613826, 412858, 5115981, 457649, 810909, 408342, 180923, 14202, 881453], bits 0xffffffffffffffffff)
+  pass 0 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 185152 (per lane [117546, 1701, 40172, 27245, 354, 1439, 3083, 9, 2404], bits 0xff75fefbffffffffff)
+  pass 1 random data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 5688090 (per lane [580773, 406087, 5241001, 457265, 800308, 402573, 177827, 13924, 875876], bits 0xffffffffffffffffff)
+  pass 1 address data: write 7.69 GB/s (90.1%), read 7.76 GB/s (91.0%), errors 180273 (per lane [114941, 1504, 41767, 22899, 303, 1319, 1887, 6, 1344], bits 0xff5cfffeffffffffff)
+BIST: FAIL

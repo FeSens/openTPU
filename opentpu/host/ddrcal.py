@@ -33,7 +33,7 @@ TAP_PS = 1e12 / (32 * 2 * 200e6)   # IDELAYE2 tap at a 200 MHz reference: 78.125
 SEEDS = (42, 84, 36)
 
 
-PREFIXES = ("ddrphy", "sdram", "bist", "phase", "ecc", "cal")
+PREFIXES = ("ddrphy", "sdram", "bist", "phase", "ecc", "cal", "wclk")
 
 
 class Chan:
@@ -251,15 +251,22 @@ class Dram:
 
 # ------------------------------------------------------------------------------ DQS phase
 class DqsPhase:
-    def __init__(self, csr, vco_hz):
+    """The write DQS phase (phase_dqs_*), in fine steps since configuration. With `wrap` (fine
+    steps per tCK: a WL7DDRPHY image, whose write CLKDIV may sit at most about half a tCK from
+    sys), every target is moved to its equivalent in [-wrap/2, wrap/2): the same phase against
+    CK, a tCK apart, which the write latency calibration absorbs."""
+    def __init__(self, csr, vco_hz, wrap=None):
         self.c = csr
         self.step_ps = 1e12 / vco_hz / 56
+        self.wrap = wrap
 
     def steps(self):
         v = self.c.r("phase_dqs_steps")
         return v - (1 << 32) if v & (1 << 31) else v
 
     def move(self, target):
+        if self.wrap:
+            target = (target + self.wrap // 2) % self.wrap - self.wrap // 2
         while True:
             s = self.steps()
             if s == target:
@@ -267,6 +274,12 @@ class DqsPhase:
             while self.c.r("phase_dqs_busy"):
                 pass
             self.c.w("phase_dqs_shift", 1 if target > s else 0)
+
+
+def dqs_phase(csr, phy):
+    """The channel's DqsPhase for a build's PHY settings (its sdram_init.py `phy`)."""
+    period = round(56 * phy["vco_hz"] / (4 * phy["sys_hz"]))
+    return DqsPhase(csr, phy["vco_hz"], wrap=period if phy.get("phy") == "wl" else None)
 
 
 def dqs_scan(dram, dqs, period_steps, stride, seeds=(42,), csr=None, mib=64, show=True):
@@ -315,6 +328,129 @@ def margins(table, nm, min_window=MIN_WINDOW, period=None):
             cur = []
     pick = best[len(best) // 2] if best else None
     return per, common, pick, best
+
+
+# ------------------------------------------------------------------------------ write clock groups
+# WL7DDRPHY images (tools/litedram/wl7ddrphy.py, docs/litedram.md section 8): each channel's write
+# side (DQ, DQS) in two clock groups on one MMCM; the fine phase shift moves both, group 1 sits at
+# a static offset from group 0 that the host sets over the MMCM's DRP.
+DRP_CLKOUT = {0: (0x08, 0x09), 1: (0x0A, 0x0B), 2: (0x0C, 0x0D), 3: (0x0E, 0x0F),
+              4: (0x10, 0x11), 5: (0x06, 0x07), 6: (0x12, 0x13)}     # ClkReg1, ClkReg2 (XAPP888)
+
+
+class WriteClocks:
+    """A channel's write clock MMCM (ld_test.WriteClocks, CSRs wclk_*): CLKOUT3 / 4 are group 0's
+    DQ / DQS clocks, CLKOUT5 / 6 group 1's. Static phases in 1/8 VCO periods (7 fine steps, 22.5
+    deg of the DDR clock): PHASE_MUX (ClkReg1 bits 15:13) and DELAY_TIME (ClkReg2 bits 5:0). A
+    write holds the MMCM in reset: the PHY's clocks stop and the fine phase returns to 0, so the
+    DRAM needs its reset and init again."""
+    FINE_PER_EIGHTH = 7
+    EIGHTHS = 16                 # one tCK (the DDR clock is the VCO / 2)
+
+    def __init__(self, csr):
+        self.c = csr
+
+    def _wait(self, name, timeout=1.0):
+        t0 = time.time()
+        while not self.c.r(name):
+            if time.time() - t0 > timeout:
+                raise TimeoutError(f"{name} still 0 after {timeout} s")
+
+    def drp_read(self, adr):
+        self.c.w("wclk_drp_adr", adr)
+        self.c.w("wclk_drp_read", 1)
+        self._wait("wclk_drp_drdy")
+        return self.c.r("wclk_drp_dat_r")
+
+    def drp_write(self, adr, v):
+        self.c.w("wclk_drp_adr", adr)
+        self.c.w("wclk_drp_dat_w", v)
+        self.c.w("wclk_drp_write", 1)
+        self._wait("wclk_drp_drdy")
+
+    def phase(self, out):
+        """CLKOUT<out>'s static phase, 1/8 VCO periods."""
+        r1, r2 = (self.drp_read(a) for a in DRP_CLKOUT[out])
+        return (r2 & 0x3F) * 8 + (r1 >> 13)
+
+    def check(self):
+        """The register reading on the configured MMCM: group 0's DQS is 90 deg (4) after its
+        DQ, group 1's likewise; raises if the encoding is not as assumed."""
+        p = {o: self.phase(o) for o in (3, 4, 5, 6)}
+        if p[4] - p[3] != 4 or p[6] - p[5] != 4:
+            raise CalError(f"write clock MMCM phases {p} (1/8 VCO): DQS not 4 after DQ")
+        return p
+
+    def group1(self):
+        """Group 1's offset from group 0, 1/8 VCO periods."""
+        return (self.phase(5) - self.phase(3)) % self.EIGHTHS
+
+    def set_group1(self, eighths):
+        eighths %= self.EIGHTHS
+        base = self.phase(3)
+        self.c.w("wclk_mmcm_reset", 1)
+        try:
+            for out, e in ((5, base + eighths), (6, base + eighths + 4)):
+                a1, a2 = DRP_CLKOUT[out]
+                r1, r2 = self.drp_read(a1), self.drp_read(a2)
+                self.drp_write(a1, (r1 & 0x1FFF) | ((e % 8) << 13))
+                self.drp_write(a2, (r2 & 0xFFC0) | (e // 8))
+        finally:
+            self.c.w("wclk_mmcm_reset", 0)
+        self._wait("wclk_mmcm_locked")
+
+
+def group_windows(table, groups, period):
+    """margins() per write clock group, over its lanes: {group: (per, common, pick, run)}."""
+    out = {}
+    for g in sorted(set(groups)):
+        lanes = [m for m, x in enumerate(groups) if x == g]
+        sub = {k: [row[m] for m in lanes] for k, row in table.items()}
+        out[g] = margins(sub, len(lanes), period=period)
+    return out
+
+
+def calibrate_groups(d, dqs, wclk, groups, period, stride=1, csr=None, mib=64, log=print):
+    """A WL7DDRPHY channel's write phases. 1: group 1 onto group 0 (offset 0) and a scan of the
+    common phase over a tCK (per step: calibration and, with `csr`, a BIST per lane), each group's
+    longest common run. 2: group 1's offset (DRP, 7-step units) that brings its run's centre onto
+    group 0's. 3: a second scan at that offset (the groups now move together: the run common to
+    all lanes) and the common phase at its centre; calibration there. Returns a dict with both
+    scans' tables, each group's run (steps) in the first, the offset, and the common run."""
+    wclk.check()                            # the DRP encoding as assumed, before any write
+    wclk.set_group1(0)
+    d.ctl(0)                                # the DRAM's reset: its clocks stopped
+    time.sleep(0.001)
+    t0 = dqs_scan(d, dqs, period, stride, csr=csr, show=False)
+    gw = group_windows(t0, groups, period)
+    for g, (_, _, pick, run) in gw.items():
+        log(f"  group {g} (lanes {[m for m, x in enumerate(groups) if x == g]}): "
+            + (f"{len(run) * stride} steps ({len(run) * stride * dqs.step_ps:.0f} ps) around +{pick}"
+               if pick is not None else "no common phase"))
+    if any(p is None for _, _, p, _ in gw.values()):
+        raise CalError("a write clock group has no common phase")
+    p0 = gw[0][2]
+    p1 = gw[max(gw)][2]
+    # the phase shift moves CK (ps_moves "ck"): group 1's DQ e eighths later passes where CK is
+    # 7e steps later too, so its run moves by +7e; moving DQ itself it would move by -7e
+    d1 = (p0 - p1) if d.phy.get("ps_moves") == "ck" else (p1 - p0)
+    e = round((d1 % period) / WriteClocks.FINE_PER_EIGHTH) % WriteClocks.EIGHTHS
+    wclk.set_group1(e)
+    d.ctl(0)
+    time.sleep(0.001)
+    t1 = dqs_scan(d, dqs, period, stride, csr=csr, show=False)
+    per, common, pick, run = margins(t1, d.nm, period=period)
+    g1 = group_windows(t1, groups, period)
+    log(f"  group 1 offset {e} x 1/8 VCO ({e * WriteClocks.FINE_PER_EIGHTH} steps); groups now "
+        + ", ".join(f"{g} {len(r) * stride} steps" for g, (_, _, _, r) in g1.items())
+        + f"; all lanes {len(run) * stride} steps ({len(run) * stride * dqs.step_ps:.0f} ps)"
+        + (f" around +{pick}" if pick is not None else ""))
+    if pick is None:
+        raise CalError("no common phase with group 1 at its offset")
+    dqs.move(dqs.steps() + pick)
+    return {"scan0": t0, "scan1": t1, "offset_eighths": e, "pick": pick, "run": run,
+            "group_runs": {g: len(r) * stride for g, (_, _, _, r) in gw.items()},
+            "group_runs_at_offset": {g: len(r) * stride for g, (_, _, _, r) in g1.items()}}
 
 
 # ------------------------------------------------------------------------------ BIST
@@ -408,8 +544,9 @@ def offsets(run, period):
 class FakeCsr:
     """A PHY model for `selftest`: lane m reads back right only at its read bitslip RB[m], taps
     in [LO[m], HI[m]], and its write bitslip WB[m] (+-0 tCK), when the DQS phase step is within
-    its write range."""
-    def __init__(self, build, nm=9, seed=1):
+    its write range. With `groups` (a WL7DDRPHY channel), a group 1 lane's step is the DQS
+    step plus group 1's offset (7 steps per 1/8 VCO in the modelled DRP registers)."""
+    def __init__(self, build, nm=9, seed=1, groups=None, ps_moves_ck=False):
         self.regs = csr_map(Path(build) / "csr.csv")
         rnd = random.Random(seed)
         self.nm = nm
@@ -423,6 +560,18 @@ class FakeCsr:
         self.sel, self.rb, self.wb, self.rd = 0, [0] * nm, [0] * nm, [0] * nm
         self.wr = {}
         self.steps = 0
+        self.groups = groups or [0] * nm
+        self.ck = ps_moves_ck               # the phase shift moves CK, not DQ / DQS
+        # write clock MMCM registers as configured: CLKOUT3 / 5 at 0, CLKOUT4 / 6 at 90 deg
+        self.drp = {0x0E: 0x0041, 0x0F: 0, 0x10: 0x8041, 0x11: 0,
+                    0x06: 0x0041, 0x07: 0, 0x12: 0x8041, 0x13: 0}
+
+    def step_of(self, m):
+        if not self.groups[m]:
+            return self.steps
+        ph = lambda a1, a2: (self.drp[a2] & 0x3F) * 8 + (self.drp[a1] >> 13)
+        off = 7 * (ph(0x06, 0x07) - ph(0x0E, 0x0F))
+        return self.steps - off if self.ck else self.steps + off
 
     def w(self, name, v):
         self.v[name] = v
@@ -443,6 +592,13 @@ class FakeCsr:
             for m in lanes: self.wb[m] = (self.wb[m] + 1) % 8
         elif name == "phase_dqs_shift":
             self.steps += 1 if v else -1
+        elif name == "wclk_mmcm_reset":
+            if not v:
+                self.steps = 0              # the fine phase restarts from the static phases
+        elif name == "wclk_drp_write":
+            self.drp[self.v["wclk_drp_adr"]] = self.v["wclk_drp_dat_w"]
+        elif name == "wclk_drp_read":
+            self.v["wclk_drp_dat_r"] = self.drp.get(self.v["wclk_drp_adr"], 0)
         elif name.endswith("_command_issue") and self.v.get(name[:-6]) and name.startswith("sdram_dfii_pi"):
             c = self.v[name[:-6]]
             if c & Dram.WRDATA:
@@ -453,7 +609,7 @@ class FakeCsr:
                     for m in range(self.nm):
                         good = (self.rb[m] == self.RB[m] and self.LO[m] <= self.rd[m] <= self.HI[m]
                                 and self.wb[m] == self.WB[m]
-                                and self.WLO[m] <= self.steps % 112 <= self.WHI[m])
+                                and self.WLO[m] <= self.step_of(m) % 112 <= self.WHI[m])
                         if not good:
                             for sh in (8 * m, 72 + 8 * m):
                                 x ^= (random.getrandbits(8) | 1) << sh
@@ -461,13 +617,15 @@ class FakeCsr:
 
     def good(self, m):
         return (self.rb[m] == self.RB[m] and self.LO[m] <= self.rd[m] <= self.HI[m]
-                and self.wb[m] == self.WB[m] and self.WLO[m] <= self.steps % 112 <= self.WHI[m])
+                and self.wb[m] == self.WB[m] and self.WLO[m] <= self.step_of(m) % 112 <= self.WHI[m])
 
     def r(self, name):
         if name == "phase_dqs_steps":
             return self.steps & 0xFFFFFFFF
         if name in ("phase_dqs_busy", "ctrl_bus_errors"):
             return 0
+        if name in ("wclk_drp_drdy", "wclk_mmcm_locked"):
+            return 1
         n = self.v.get("bist_length", 0)
         bad = [0 if self.good(m) else n for m in range(self.nm)] if self.v.get("bist_mode", 0) & 1 \
             else [0] * self.nm
@@ -488,9 +646,13 @@ class FakeCsr:
 
 class FakeBoard:
     """Two FakeCsr channels behind one CSR space: channel 1's names (ddrphy1_*, ...) go to the
-    second, with its own lanes."""
+    second, with its own lanes (and, for a WL7DDRPHY image, its write clock groups)."""
     def __init__(self, build):
-        self.ch = [FakeCsr(build), FakeCsr(build, seed=2)]
+        ns = {}
+        exec(Path(load_config(build)).read_text(), ns)
+        groups, ck = ns["phy"].get("groups", {}), ns["phy"].get("ps_moves") == "ck"
+        self.ch = [FakeCsr(build, groups=groups.get("0"), ps_moves_ck=ck),
+                   FakeCsr(build, seed=2, groups=groups.get("1"), ps_moves_ck=ck)]
         self.regs = self.ch[0].regs
 
     def route(self, name):
@@ -557,17 +719,25 @@ def calibrate_channel(csr, config, stride=1, mib=64, log=print):
     is 0 from the start. The scan writes over the channel's first `mib` MiB. Returns the
     result; raises CalError when no phase or calibration works."""
     d = Dram(csr, config)
-    dqs = DqsPhase(csr, d.phy["vco_hz"])
+    dqs = dqs_phase(csr, d.phy)
     period = round(56 * d.phy["vco_hz"] / (4 * d.phy["sys_hz"]))     # fine steps per tCK
     has_bist = has_csr(csr, "bist_start")
     has_ready = has_csr(csr, "cal_ready")          # production's core: the accelerator waits for it
     if has_ready:
         csr.w("cal_ready", 0)
-    table = dqs_scan(d, dqs, period, stride, csr=csr if has_bist else None, mib=mib, show=False)
-    per, common, pick, run = margins(table, d.nm, period=period)
-    if pick is None:
-        raise CalError("no DQS phase works for every lane")
-    dqs.move(dqs.steps() + pick)
+    groups = d.phy.get("groups", {}).get(str(getattr(csr, "ch", 0)))
+    extra = {}
+    if d.phy.get("phy") == "wl" and groups:     # WL7DDRPHY: group 1's offset, then the phase
+        g = calibrate_groups(d, dqs, WriteClocks(csr), groups, period, stride=stride,
+                             csr=csr if has_bist else None, mib=mib, log=log)
+        table, run = g["scan1"], g["run"]
+        extra = {"group1_eighths": g["offset_eighths"], "group_runs_steps": g["group_runs"]}
+    else:
+        table = dqs_scan(d, dqs, period, stride, csr=csr if has_bist else None, mib=mib, show=False)
+        per, common, pick, run = margins(table, d.nm, period=period)
+        if pick is None:
+            raise CalError("no DQS phase works for every lane")
+        dqs.move(dqs.steps() + pick)
     wl, rl, err = d.calibrate(verbose=False)
     if any(err) or min(wl) < 0:
         raise CalError(f"calibration at DQS step {dqs.steps()} failed: write latency {wl}, "
@@ -579,7 +749,7 @@ def calibrate_channel(csr, config, stride=1, mib=64, log=print):
            "window_ps": round(len(run) * stride * dqs.step_ps), "traffic_checked": has_bist,
            "write_latency": wl, "read": [{"taps": n, "bitslip": b, "tap": s + n // 2}
                                          for n, b, s in rl],
-           "lanes": pass_map(table, d.nm, period)}
+           "lanes": pass_map(table, d.nm, period), **extra}
     log(f"DQS step {res['dqs_steps']}, common write window {res['window_ps']} ps"
         f"{'' if has_bist else ' (DFII check only: no BIST)'}, write latency {wl}, read windows "
         f"{[n for n, _, _ in rl]} taps")
