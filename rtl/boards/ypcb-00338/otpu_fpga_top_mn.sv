@@ -24,6 +24,7 @@ module otpu_fpga_top_mn #(
   parameter int MCOLS = 2,                  // MXU columns (activation rows per weight chunk)
   parameter int ACT_ROWS = MCOLS,           // ACT RAM rows (> MCOLS: MM replay, one weight pass)
   parameter int VPU_CL = 2,                 // VPU lanes with the composite functions (exp2, ...)
+  parameter int MXU_IMPL = 0,               // MXU dot product: 0 adder tree, 2 systolic (docs/mxu_systolic.md)
   parameter bit SE_COMP8 = 1'b1,           // the stream engine's v2 (docs/stream.md 11)
   parameter bit SE_ONE_TREE = 1'b1,
   parameter int LANES = 8,                  // VPU lanes / TMEM banks (8 or 16)
@@ -167,8 +168,8 @@ module otpu_fpga_top_mn #(
 
   // ---- the accelerator and XDMA on the channels
   logic [2:0] board_led;
-  otpu_native_sys #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .SE_COMP8(SE_COMP8),
-                    .SE_ONE_TREE(SE_ONE_TREE), .LANES(LANES),
+  otpu_native_sys #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .MXU_IMPL(MXU_IMPL),
+                    .SE_COMP8(SE_COMP8), .SE_ONE_TREE(SE_ONE_TREE), .LANES(LANES),
                     .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS),
                     .DSTEP(DSTEP), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .RMW(1'b0)) u_sys (
     .clk(core_clk), .rst(core_rst), .xclk(xdma_aclk), .xrst,
