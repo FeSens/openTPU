@@ -21,7 +21,7 @@
 // the drain; the drain steps its TMEM addresses by MCOLS * ors per group.
 //
 // Pipelined for the FPGA clock:
-//   pop | operands | products | +4 | +4 | tree | i2f (2) | *ws (2) | *ascale (2) | [pair (4)]
+//   pop | operands | products | pairs (2) | +4 | tree | i2f (2) | *ws (2) | *ascale (2) | [pair (4)]
 //   | partial loop (4) | combine
 // (pair: PAIR only, t + the partner column's t; other MMs skip its four stages: a command's
 // blocks never share the pipeline with another command's, so the latency may differ by mode)
@@ -388,11 +388,11 @@ module otpu_mxu
     for (int j = 0; j < MCOLS; j++)
       if (rst) ws6[j] <= '0; else if (en_c) ws6[j] <= hi0[j] ? ws5h : ws5;
 
-  // dot-product latency S0 -> s4 (the tree: 6 register levels: operands (the decoded weights),
-  // products, pairs, groups, sub-blocks times their multipliers, block sum)
+  // dot-product latency S0 -> s4 (the tree: 7 register levels: operands (the decoded weights),
+  // products, pairs (two: the DSP cascade), groups, sub-blocks times their multipliers, block sum)
   localparam int NG = D / CL;
   localparam int TL = (NG <= 1) ? 0 : (NG <= 4) ? 1 : (NG <= 16) ? 2 : 3;
-  localparam int LDOT = (IMPL == 0) ? 6 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
+  localparam int LDOT = (IMPL == 0) ? 7 : CL + 1 + TL - (TL >= 3 ? 1 : 0);
 
   // ---- S1 .. S4: the exact integer dot products of the chunk with every column's ACT block;
   // s4 (with m4, ws4) is the chunk's result LDOT cycles after S0.
@@ -400,7 +400,10 @@ module otpu_mxu
     // products, pair sums, then an 8 / D/16 adder tree (one register level each)
     // Columns 2p and 2p+1 share the weight byte, so one multiplier (a DSP48 with its pre-adder)
     // makes both: pm = (a0*2^16 + a1) * w = (a0*w)*2^16 + a1*w (a 25-bit A: shift 17 overflows).
-    // The DSP post-adders sum positions 2q and 2q+1 (DSP 2q: M + PK, DSP 2q+1: M + that, PREG):
+    // The DSP post-adders sum positions 2q and 2q+1 in a systolic pair: DSP 2q makes M + PK (PREG),
+    // DSP 2q+1 takes its operands a stage later (pre-adder register ADREG, BREG = 2) and adds that
+    // through its cascade input (M + PCIN, PREG), so the sum needs no fabric adder or register
+    // (a one-cycle M + M + PK was built in fabric: 44 flip-flops and 11 CARRY4s per pair sum):
     // pq = E*2^16 + (O + PK), E / O the pair sums of columns 2p / 2p+1, both in [-32512, 32768].
     // O + PK is in [1, 65281], so the fields need no borrow: E = pq[32:16] (signed) and
     // O + PK = pq[15:0] (unsigned); column 2p+1's group sums start at -(GS/2)*PK. PK is odd
@@ -417,18 +420,21 @@ module otpu_mxu
     // that are mapped to fabric flops after DSP packing; signed fields are read through $signed().
     localparam int NDP = MCOLS / 2;                     // DSP pairs
     localparam logic [43:0] PK = 44'd32513, PK2 = 44'h000_1000_1000;
-    logic [NP-1:0][D-1:0][43:0]   pm;
+    logic [NP-1:0][D/2-1:0][43:0] pme, pmo;             // positions 2q / 2q+1: M registers
+    logic [NP-1:0][D/2-1:0][43:0] pe;                   // DSP 2q's P: M + PK (to 2q+1's PCIN)
+    logic [NP-1:0][D/2-1:0][24:0] pao;                  // DSP 2q+1's pre-adder output (ADREG)
+    logic [NP-1:0][D/2-1:0][17:0] wro;                  // DSP 2q+1's B, a stage later (BREG 2)
     logic [NP-1:0][D/2-1:0][43:0] pq;
     logic [D-1:0][15:0]           pr;
-    logic [D/2-1:0][16:0]         prq;
+    logic [D/2-1:0][16:0]         prq, prq2;
     // group sums of GS positions (16; D/4 when smaller), GPB groups per 4-bit sub-block
     localparam int GS = (D / 4 < 16) ? D / 4 : 16;
     localparam int NG3 = D / GS, GPB = NG3 / 4;
     logic signed [19:0] s3 [MCOLS][NG3];
     logic [SW-1:0] v [MCOLS][4];
-    logic [15:0] mbz, mb1, mb2, mb3, mbzh, mb1h, mb2h, mb3h;
-    cm_t  mz, mt4;
-    f32_t wz, wt4, wzh, wt4h;
+    logic [15:0] mbz, mb1, mbc, mb2, mb3, mbzh, mb1h, mbch, mb2h, mb3h;
+    cm_t  mz, mc, mt4;
+    f32_t wz, wc, wt4, wzh, wch, wt4h;
     // the operands registered once more (the multipliers' input registers): the weight decode
     // sits between the chunk FIFO's read register and here, not in front of the multipliers
     logic [MCOLS*D*8-1:0]       ar;
@@ -454,20 +460,24 @@ module otpu_mxu
       end
       if (MCOLS % 2 == 1)
         for (int i = 0; i < D; i++) wrl[i] <= wsel(w0, i, pr0 ? hi0[MCOLS-1] : m0.h, wf0);
-      for (int p = 0; p < NDP; p++) begin
-        for (int i = 0; i < D; i++) begin
+      for (int p = 0; p < NDP; p++)
+        for (int q = 0; q < D / 2; q++) begin
           logic signed [24:0] pa;
-          pa = $signed({ar[(2*p*D + i)*8 +: 8], 16'b0}) + 25'($signed(ar[((2*p+1)*D + i)*8 +: 8]));
-          pm[p][i] <= 44'(pa) * 44'($signed(wr[p][i]));
+          pa = $signed({ar[(2*p*D + 2*q)*8 +: 8], 16'b0}) + 25'($signed(ar[((2*p+1)*D + 2*q)*8 +: 8]));
+          pme[p][q] <= 44'(pa) * 44'($signed(wr[p][2*q]));
+          pe[p][q] <= pme[p][q] + pkr[p];
+          pao[p][q] <= $signed({ar[(2*p*D + 2*q+1)*8 +: 8], 16'b0}) +
+                       25'($signed(ar[((2*p+1)*D + 2*q+1)*8 +: 8]));
+          wro[p][q] <= wr[p][2*q+1];
+          pmo[p][q] <= 44'($signed(pao[p][q])) * 44'($signed(wro[p][q]));
+          pq[p][q] <= pmo[p][q] + pe[p][q];
         end
-        for (int q = 0; q < D / 2; q++)
-          pq[p][q] <= pm[p][2*q+1] + (pm[p][2*q] + pkr[p]);
-      end
       if (MCOLS % 2 == 1) begin
         for (int i = 0; i < D; i++)
           pr[i] <= 16'(int'($signed(ar[((MCOLS-1)*D + i)*8 +: 8])) * int'($signed(wrl[i])));
         for (int q = 0; q < D / 2; q++)
           prq[q] <= 17'($signed(pr[2*q])) + 17'($signed(pr[2*q+1]));
+        prq2 <= prq;                                   // with the pairs' second stage
       end
       for (int j = 0; j < MCOLS; j++) begin
         for (int g = 0; g < NG3; g++) begin
@@ -481,7 +491,7 @@ module otpu_mxu
             else if (j + 1 < MCOLS)
               t = t + (sp[j/2] ? 20'($signed(pq[j/2][GS/2*g+k][43:29]))
                                : 20'($signed(pq[j/2][GS/2*g+k][32:16])));
-            else t = t + 20'($signed(prq[GS/2*g+k]));
+            else t = t + 20'($signed(prq2[GS/2*g+k]));
           s3[j][g] <= t;
         end
         // sub-block sums times their multipliers (a DSP pre-adder and multiplier), then the
@@ -501,7 +511,8 @@ module otpu_mxu
       end
       mz <= m0; wz <= ws0; mbz <= mb0; wzh <= ws0h; mbzh <= mb0h;
       m1 <= mz; ws1 <= wz; mb1 <= mbz; ws1h <= wzh; mb1h <= mbzh;
-      m2 <= m1; ws2 <= ws1; mb2 <= mb1; ws2h <= ws1h; mb2h <= mb1h;
+      mc <= m1; wc <= ws1; mbc <= mb1; wch <= ws1h; mbch <= mb1h;
+      m2 <= mc; ws2 <= wc; mb2 <= mbc; ws2h <= wch; mb2h <= mbch;
       m3 <= m2; ws3 <= ws2; mb3 <= mb2; ws3h <= ws2h; mb3h <= mb2h;
       mt4 <= m3; wt4 <= ws3; wt4h <= ws3h;
       m4 <= mt4; ws4 <= wt4; ws4h <= wt4h;
