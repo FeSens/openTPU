@@ -656,6 +656,9 @@ merged in, both comp cuts, main's 5cd6c39 MXU queue, and three small timing cuts
 - It decodes at production speed.
 - VPU + DMA take 20.7% fewer LUTs and 52 fewer DSPs than production (pn32), with 83.9% of
   slices against 94.8%.
+- It is merged into main as the default: `make bit` builds `SE=v2`, and the simulators and the
+  RTL defaults are v2 (`SE_COMP8 = SE_ONE_TREE = 1`). v1 stays selectable: `make bit SE=v1`,
+  or `OTPU_SE=v1` for the simulators.
 
 ### 12.1 Bit-exactness (simulated)
 

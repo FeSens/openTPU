@@ -130,7 +130,8 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_pnbl32_e2521032/otpu.bit`** (production, 2026-09-28 afternoon) | `make bit DDR=1066 CORE_MHZ=120.755` (AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8) | prod-next e252101 (be388a1 + Qwen3.5 resident decode + DSTEP / ST write runs + AXI write bursts + the port-A order register), 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.013 ns, WHS +0.021 ns |
+| **`build/deploy_secand3_02569bc/otpu.bit`** (production, 2026-09-29) | `make bit DDR=1066 CORE_MHZ=120.755` (SE=v2, AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8) | se-cand3 02569bc: the stream engine v2 in the VPU (docs/stream.md; CAPS bit26 STREAM) + main 5cd6c39 + the three timing cuts below, 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.031 ns, WHS +0.016 ns |
+| `build/deploy_pnbl32_e2521032/otpu.bit` (production 2026-09-28 afternoon until 2026-09-29) | `make bit DDR=1066 CORE_MHZ=120.755` (AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8) | prod-next e252101 (be388a1 + Qwen3.5 resident decode + DSTEP / ST write runs + AXI write bursts + the port-A order register), 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.013 ns, WHS +0.021 ns |
 | `build/deploy_bl32mx120_be388a32/otpu.bit` (production 2026-09-28 11:00 until the afternoon) | `make bit DDR=1066 CORE_MHZ=120.755 AXI_BL=32` (MCOLS=2, LANES=8) | be388a1 (tv-cand2: main + port B read bursts up to 64 beats + the MXU / adapter timing fixes), 32-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.066 ns, WHS +0.016 ns |
 | `build/deploy_bl16mx120_be388a1f/otpu.bit` (production 2026-09-28 morning) | as above, `AXI_BL=16` | be388a1, 16-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.048 ns, WHS +0.013 ns |
 | `build/deploy_prod120hp_aebb0bf0/otpu.bit` (production 2026-09-28 until the morning) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | aebb0bf (host-path: 4-bit MXU with PAIR, r7 DRAM path, replay, resident decode run arguments (CAPS bit25), DSTEP, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.004 ns, WHS +0.016 ns |
@@ -614,7 +615,48 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
-**Production image (2026-09-28 afternoon): `build/deploy_pnbl32_e2521032`** (omarchy
+**Production image (2026-09-29): `build/deploy_secand3_02569bc`** (omarchy and opentpu
+`~/otpu-build/`; branch se-cand3 02569bc, built with the defaults `SE=v2`, `AXI_BL=32`,
+`AXI_WBL=8`, BUILD_ID 002569bc). The stream engine (docs/stream.md) replaces the VPU's two
+composite chains and the DMA's DSTEP datapath. The composites run on the 8 lanes' three stages
+(COMP8), and a stream's dot A and dot Q share the VPU's tree (ONE_TREE). STREAM is CAPS bit26.
+On top of pn32's RTL, it also carries main since e252101, including 5cd6c39's MXU command queue
+as head / next registers, and three timing cuts:
+- `cleft`'s compares as registers (DMA → adapter B queue);
+- a second reset stage for Q and the VPU;
+- TMEM's read data registered before the DMA's chunk buffer.
+
+Core clock 120.755 MHz, DDR3-1066.
+- **Timing:** WNS +0.031 ns after the post-route phys_opt (-0.218 routed), TNS 0, WHS
+  +0.016 ns.
+- **Area:** 202,757 LUT, 162,837 FF, 301 DSP, 569 BRAM tiles, 62,639 slices (83.9%).
+  pn32 was 214,900 LUT, 353 DSP and 94.8% of slices. VPU + DMA: 52.9K LUT / 86 DSP against
+  66.7K / 138 (docs/stream.md 12.3).
+
+Qualified on the card 2026-09-29 on opentpu with `LOAD=0 tools/qual/qual.sh
+deploy_secand3_02569bc fast` (JTAG load, then a warm reboot; host tree se-cand3): 0 FAIL, 44 PASS.
+- The selftest passes, with its new `stream` stage: STREAM in every mode, and DSTEP.
+- The warm diag passes after the 180 s soak.
+- All 6 configurations are token for token equal to the ISA simulator, per-position and
+  resident.
+
+Decode (`tools/decode_profile.py`, greedy, 96 tokens; device cycles; the wall numbers are
+opentpu's):
+
+| Model | Weights | Mcycles/token | device tok/s | wall tok/s | pn32 device tok/s |
+|---|---|---|---|---|---|
+| LFM2.5-230M | 4-bit, int8 head | 1.334 | 90.52 | 87.17 | 90.21 |
+| Qwen3-0.6B | 4-bit, int8 head | 3.504 | 34.46 | 34.06 | 34.26 |
+| Qwen3.5-0.8B | 4-bit, int8 head | 4.899 | 24.65 | 24.18 | 24.65 |
+
+- **Prefill** (512 tokens, device), int8 / 4-bit:
+  - LFM2 161.5 / 169.7 and Qwen3 55.0 / 58.5, equal to pn32;
+  - Qwen3.5 46.3 / 48.8, against 44.1 / 46.3.
+- **DRAM read per token** equals pn32's in all six configurations.
+- The int8 decode profile (the full qual profile) has not been run on this image.
+
+**Previous production image (2026-09-28 afternoon until 2026-09-29):
+`build/deploy_pnbl32_e2521032`** (omarchy
 `~/otpu-build/`; branch prod-next e252101, built with `AXI_BL=32`, `AXI_WBL=8`, the
 ExtraTimingOpt implementation strategy, BUILD_ID e2521032). On top of be388a32's RTL:
 - the DMA writes an ST's chunks in runs of 32 on consecutive cycles (they gather in the LD chunk
