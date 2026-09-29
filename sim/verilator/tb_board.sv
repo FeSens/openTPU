@@ -1,8 +1,9 @@
 // Board-level simulation: otpu_board (control registers, slice, DRAM adapter) in front of the
 // two-channel AXI memory model holding the channels' physical images (ch0.bin, ch1.bin) -- with
-// MEM_NATIVE, the native adapter in front of the native memory model (otpu_native_mem) -- driven
-// by a host script (+dir=<d>, <d>/host.txt) -- the same register and memory protocol the PCIe
-// host driver uses (opentpu/host/board.py). Script lines:
+// MEM_NATIVE, the native adapter in front of the native memory model (otpu_native_mem; 2 / 3: the
+// LiteDRAM / native MIG build's channels, otpu_mem_ch in front of a controller model: otpu_chmem)
+// -- driven by a host script (+dir=<d>, <d>/host.txt) -- the same register and memory protocol
+// the PCIe host driver uses (opentpu/host/board.py). Script lines:
 //   W <addr> <value>          AXI-Lite write
 //   P <addr> <mask> <value>   poll until (read(addr) & mask) == value
 //   R <addr>                  read, printed as "REG <addr> <value>"
@@ -33,7 +34,9 @@ module tb_board;
   parameter int AXI_BL     = 8;
   parameter int AXI_WBL    = 8;
   parameter bit DSTEP      = 1'b1;
-  parameter bit MEM_NATIVE = 1'b0;         // otpu_board's native memory path (otpu_native_mem)
+  parameter int MEM_NATIVE = 0;            // otpu_board's native memory path: 1 otpu_native_mem,
+                                           // 2 / 3 otpu_chmem (otpu_mem_ch; LiteDRAM / MIG model)
+  parameter bit HOSTCAL    = 1'b0;         // CAPS bit27 (the host calibrates the controllers)
   parameter logic [11:0] TEMP = 12'hA1A;  // the XADC code of 45 C
 
   logic clk = 1'b0, rst = 1'b1, dump = 1'b0;
@@ -76,7 +79,7 @@ module tb_board;
                .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
                .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .DSTEP(DSTEP),
-               .MEM_NATIVE(MEM_NATIVE)) dut (
+               .MEM_NATIVE(MEM_NATIVE != 0), .HOSTCAL(HOSTCAL)) dut (
     .clk, .rst, .calib(2'b11), .temp(TEMP), .led,
     .i2c_lo, .i2c_pin(~({1'b0, i2c_lo} | i2c_hold)),
     .s_ctl_awaddr(awaddr), .s_ctl_awvalid(awvalid), .s_ctl_awready(awready),
@@ -111,7 +114,14 @@ module tb_board;
     .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv), .n_wready(nwr),
     .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd), .n_wdone(nwdone));
 
-  if (MEM_NATIVE) begin : g_native
+  if (MEM_NATIVE >= 2) begin : g_ch
+    otpu_chmem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1), .LITEDRAM(MEM_NATIVE == 2)) u_mem (
+      .clk, .rst,
+      .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv),
+      .n_wready(nwr), .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd),
+      .n_wdone(nwdone), .dump);
+    assign {awr, wr, bv, bi, bre, arr, rv, ri, rd, rre, rl} = '0;
+  end else if (MEM_NATIVE != 0) begin : g_native
     otpu_native_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (
       .clk, .rst,
       .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv),

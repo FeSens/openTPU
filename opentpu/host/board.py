@@ -326,11 +326,13 @@ class SimTransport:
 
     def __init__(self, ch_bytes: int = 1 << 24, stall: int = 20, seed: int = 1,
                  params: dict | None = None, plusargs: list | None = None,
-                 native: bool | None = None):
+                 native: bool | str | None = None):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.stall, self.seed = stall, seed
         self.params = params or {}
-        self.native = native                    # the native memory path (rtlsim.MEMORY)
+        self.native = native                    # the native memory path (rtlsim.MEMORY);
+                                                # "ld" / "mig": the LiteDRAM / native MIG
+                                                # build's channels (otpu_chmem)
         self.plusargs = list(plusargs or [])     # extra simulator arguments (e.g. "+trace")
         self.out = ""                            # the last flush's simulator output
         self.script: list[str] = []
@@ -386,7 +388,12 @@ class SimTransport:
             srcs.insert(-2, board / "otpu_trace.sv")
         native = rtlsim.MEMORY["NATIVE"] if self.native is None else self.native
         srcs += [rtlsim.TB / "otpu_axi_mem.sv"]
-        srcs += [rtlsim.TB / "otpu_native_mem.sv"] if native else []
+        if native in ("ld", "mig"):             # otpu_mem_ch + a LiteDRAM / MIG model
+            srcs += [board / "otpu_afifo.sv", board / "otpu_mem_ch.sv", rtlsim.TB / "otpu_chmem.sv"]
+            srcs += [rtlsim.TB / "otpu_ldn_model.sv"] if native == "ld" else \
+                [board / "otpu_mig_native.sv", rtlsim.TB / "otpu_mig_model.sv"]
+        elif native:
+            srcs += [rtlsim.TB / "otpu_native_mem.sv"]
         srcs += [rtlsim.TB / "tb_board.sv"]
         from opentpu.isasim import board_config
         cfg = board_config()                        # OTPU_MCOLS / OTPU_LANES: the "bitstream"
@@ -395,7 +402,7 @@ class SimTransport:
              "ACT_ROWS": cfg.act_rows,
              "VPU_CL": rtlsim.UARCH.get("VPU_CL", 2), "ULANES": rtlsim.UARCH.get("ULANES", 8)}
         if native:
-            p["MEM_NATIVE"] = 1
+            p["MEM_NATIVE"] = {"ld": 2, "mig": 3}.get(native, 1)
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
         with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:

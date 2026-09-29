@@ -116,6 +116,21 @@ def test_program_on_native_board_model(have_verilator, seed):
     assert st["a_writes"] > 500 and st["b_writes"] > 20
 
 
+@pytest.mark.parametrize("ctrl", ["mig", "ld"])
+def test_program_on_channel_board_model(have_verilator, ctrl):
+    """The same on the native-channel builds' channels (MEM_NATIVE=3 / 2: otpu_native_dram, then
+    per channel otpu_mem_ch in front of a model of the controller in its own clock: the MIG's
+    native interface through otpu_mig_native, partial beats as wr_bytes; or LiteDRAM's native
+    port, partial beats read-modified-written in otpu_mem_ch), whatever OTPU_NATIVE says."""
+    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=3, native=ctrl))
+    ok, msg, st = run_demo(b, CFG)
+    assert ok, msg
+    assert st["b_reads"] > 0 and st["a_writes"] > 0 and st["cycles"] > 0
+    ok, msg, st = run_demo(b, CFG, masked_program())
+    assert ok, msg
+    assert st["a_writes"] > 500 and st["b_writes"] > 20
+
+
 def test_partial_dram_writes_on_board_model(have_verilator):
     """QST byte writes and short word-masked stores (read-modify-writes in the board's memory
     controllers, which have no DDR3 data-mask pins)."""

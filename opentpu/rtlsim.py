@@ -134,8 +134,12 @@ if os.environ.get("OTPU_ULANES"):
 # the native one wherever it is used -- the AXI runs here (the adapter otpu_native_dram and the
 # native memory model sim/verilator/otpu_native_mem.sv, which takes the same +axi_* arguments
 # except the per-transaction costs) and the board model (tb_board with MEM_NATIVE=1).
+# OTPU_NATIVE=ld / mig: the board model on the LiteDRAM / native MIG build's channels instead
+# (otpu_mem_ch in front of a LiteDRAM native-port / MIG native-interface model:
+# sim/verilator/otpu_chmem.sv, MEM_NATIVE=2 / 3); the AXI runs here take the native path as with 1.
 MEMORY = {"AXI": os.environ.get("OTPU_AXI", "0") == "1",
-          "NATIVE": os.environ.get("OTPU_NATIVE", "0") == "1",
+          "NATIVE": {"1": True, "ld": "ld", "mig": "mig"}.get(os.environ.get("OTPU_NATIVE", "0"),
+                                                               False),
           "BOOT": os.environ.get("OTPU_BOOT", "0") == "1",
           "STALL": int(os.environ.get("OTPU_STALL", "20")),
           "SEED": int(os.environ.get("OTPU_SEED", "1")),

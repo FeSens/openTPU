@@ -9,6 +9,8 @@
 //   RMW: 0 for the MIG (partial beats go as wr_bytes, the ECC controller's read-modify-write),
 //        1 for LiteDRAM (whose ECC port takes whole beats only: otpu_mem_ch reads, merges and
 //        writes).
+//   HOSTCAL: the host calibrates the controllers (CAPS bit27: LiteDRAM, whose calibration the
+//        host runs through its CSRs; opentpu/host/memcal.py).
 //   calib: each channel's calibration flag in its controller's clock (STATUS CALIB0/1; synchronized
 //        in otpu_board).
 module otpu_native_sys #(
@@ -23,7 +25,8 @@ module otpu_native_sys #(
   parameter bit DSTEP = 1'b1,
   parameter int AXI_BL = 8,
   parameter int AXI_WBL = 8,
-  parameter bit RMW = 1'b0
+  parameter bit RMW = 1'b0,
+  parameter bit HOSTCAL = 1'b0
 ) (
   // core clock and reset (synchronous, high), XDMA's clock and reset
   input  logic                  clk,
@@ -161,7 +164,7 @@ module otpu_native_sys #(
   // the accelerator's AXI masters are unused here (MEM_NATIVE): outputs left open, inputs idle
   otpu_board #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .LANES(LANES), .ULANES(ULANES),
                .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .DSTEP(DSTEP),
-               .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .MEM_NATIVE(1'b1)) u_board (
+               .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .MEM_NATIVE(1'b1), .HOSTCAL(HOSTCAL)) u_board (
     .clk, .rst, .calib, .temp, .led, .i2c_lo, .i2c_pin,
     .s_ctl_awaddr, .s_ctl_awvalid, .s_ctl_awready, .s_ctl_wdata, .s_ctl_wstrb, .s_ctl_wvalid,
     .s_ctl_wready, .s_ctl_bresp, .s_ctl_bvalid, .s_ctl_bready, .s_ctl_araddr, .s_ctl_arvalid,

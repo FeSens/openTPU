@@ -105,6 +105,19 @@ def test_register_map_board_defaults(have_verilator):
     assert khz == 100000 and mts == 0                     # no DDR_MTS given: CAPS bit3 clear
 
 
+def test_caps_hostcal(have_verilator):
+    """HOSTCAL (the LiteDRAM top's) sets CAPS bit27 alone; memcal then sees a host-calibrated
+    bitstream, and with both STATUS CALIB bits up (the model's controllers) has nothing to do,
+    so it never touches the CSR window."""
+    from opentpu.host import memcal
+    t = SimTransport(ch_bytes=1 << 20, params={"HOSTCAL": 1})
+    caps, st = t.reg_read_many([R_CAPS, R.R_STATUS])
+    assert caps == (1 << 27) | (3 << 24) | (10 << 16) | (14 << 8) | 0x80 | 0b1110111
+    assert caps & R.CAP_HOSTCAL and memcal.hostcal(t)
+    assert st & R.ST_CALIB0 and st & R.ST_CALIB1
+    assert memcal.ensure(t) is None
+
+
 def test_i2c_pins(have_verilator):
     """I2C_CTRL drives lines low, I2C_IN reads them back through the synchronizers; lines held
     low from outside (+i2c_hold) read low while released. Reset leaves every line released."""
@@ -186,7 +199,7 @@ def test_counter_snapshots_bracket_a_run(have_verilator):
     assert d["TMEM_DENY"] >= 0
 
 
-@pytest.mark.skipif(rtlsim.MEMORY["NATIVE"], reason="AXI read bursts (native: no transactions)")
+@pytest.mark.skipif(bool(rtlsim.MEMORY["NATIVE"]), reason="AXI read bursts (native: no transactions)")
 def test_mxu_starve_counter(have_verilator):
     """MXU_STARVE: cycles the MXU streams a command and no chunk has arrived. Under a cost of 4
     cycles per AXI read transaction (as on the card), single-beat reads (AXI_BL=1) starve the

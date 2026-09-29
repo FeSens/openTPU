@@ -38,7 +38,8 @@ module otpu_board #(
   parameter bit HAS_I2C     = 1'b1,    // the I2C pins are wired (CAPS bit2)
   parameter bit CHASH       = 1'b1,    // hashed channel interleave (otpu_axi_dram; CAPS bit7)
   parameter bit DSTEP       = 1'b1,    // the DMA's DSTEP datapath (CAPS bit6; 0 leaves it out)
-  parameter bit MEM_NATIVE  = 1'b0     // the memory adapter drives the native ports n_*, not m0/m1
+  parameter bit MEM_NATIVE  = 1'b0,    // the memory adapter drives the native ports n_*, not m0/m1
+  parameter bit HOSTCAL     = 1'b0     // the host calibrates the DDR3 controllers (CAPS bit27: LiteDRAM)
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
@@ -211,7 +212,7 @@ module otpu_board #(
 
   otpu_ctrl #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
               .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
-              .HAS_I2C(HAS_I2C), .CHASH(CHASH), .DSTEP(DSTEP)) u_ctrl (
+              .HAS_I2C(HAS_I2C), .CHASH(CHASH), .DSTEP(DSTEP), .HOSTCAL(HOSTCAL)) u_ctrl (
     .clk, .rst,
     .s_awaddr(s_ctl_awaddr), .s_awvalid(s_ctl_awvalid), .s_awready(s_ctl_awready),
     .s_wdata(s_ctl_wdata), .s_wstrb(s_ctl_wstrb), .s_wvalid(s_ctl_wvalid),

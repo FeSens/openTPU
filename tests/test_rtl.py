@@ -500,7 +500,7 @@ def test_axi_read_bursts(have_verilator, stall, arc):
         assert (b0 + b1) / (ar0 + ar1) > 4, st["axi_reads"]
 
 
-@pytest.mark.skipif(rtlsim.MEMORY["NATIVE"], reason="AXI read bursts (native: no transactions)")
+@pytest.mark.skipif(bool(rtlsim.MEMORY["NATIVE"]), reason="AXI read bursts (native: no transactions)")
 def test_axi_burst_throughput(have_verilator):
     """A long load at a cost of 16 cycles per read transaction: single-beat reads (AXI_BL=1) take
     16 cycles per chunk; in bursts the load keeps the pace it has with no cost (4 cycles per

@@ -7,8 +7,7 @@
 // otpu_native_dram) and XDMA's DMA master (split by address bit 31), meeting in one otpu_mem_ch
 // per channel (RMW = 1: LiteDRAM's ECC port takes whole beats only). XDMA's AXI-Lite master
 // (BAR0) reaches the control registers at 0x0, the LiteDRAM CSRs at 0x10000 (the host calibrates
-// the channels: opentpu/host/memcal.py, CAPS bit27) and the XADC at 0x30000. (CAPS bit27 is not
-// set yet: otpu_board has no HOSTCAL parameter so far, so this top cannot pass it.)
+// the channels: opentpu/host/memcal.py, CAPS bit27, HOSTCAL) and the XADC at 0x30000.
 //
 // Clocks: the 50 MHz oscillator, on one global buffer, feeds the block design's MMCM (core_clk)
 // and the LiteDRAM core's (its sys_clk, 133.33 MHz, the channels' controller side, and the DDR3
@@ -201,7 +200,8 @@ module otpu_fpga_top_ld #(
   logic [2:0] board_led;
   otpu_native_sys #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .LANES(LANES),
                     .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS),
-                    .DSTEP(DSTEP), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .RMW(1'b1)) u_sys (
+                    .DSTEP(DSTEP), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .RMW(1'b1),
+                    .HOSTCAL(1'b1)) u_sys (
     .clk(core_clk), .rst(core_rst), .xclk(xdma_aclk), .xrst,
     .calib, .temp(device_temp), .led(board_led), .i2c_lo, .i2c_pin({lm73_alert_n, i2c_lvl}),
     .s_ctl_awaddr(ctl_awaddr[11:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),
