@@ -52,8 +52,8 @@
 // (en_q), with no logic in front of its replicas; ss_y_v and ss_o_v are qualified with SE's pe
 // (a Y / an O this cycle).
 //
-// v2 (docs/stream.md 11), two parameters on the above (both 0: v1):
-//   ONE_TREE  the tail's dot Q folds on u_vt too, in windows between dot A's (the tail pads its
+// With the stream engine (docs/stream.md 11):
+//   one tree  the tail's dot Q folds on u_vt too, in windows between dot A's (the tail pads its
 //             Q path so they never meet); a FIFO of the rows' kinds routes each root
 //   COMP8     no long lanes: the composites (EXP2, EXP2SUB, RECIP, RSQRT, LOG2) are issued
 //             LANES columns per cycle into otpu_se_comp, which loops each chunk through slot 0
@@ -61,6 +61,7 @@
 //             order; a composite chunk is not issued while comp's `hold` says slot 0 will be
 //             taken when it gets there. The latency rule is unchanged: a composite's latency
 //             (passes x 25 cycles) orders the functions as their slot counts do.
+// Without it (HAS_SE = 0 or LANES != 8) the composites run on the long lanes' slot chains.
 module otpu_vpu
   import otpu_pkg::*;
   import otpu_fp::*;
@@ -73,13 +74,7 @@ module otpu_vpu
   // the VPU's writes (the board's: every read port has its own TMEM copy). 0: everything
   // advances on the grant itself.
   parameter bit WBUF  = 0,
-  parameter bit HAS_SE = 1'b0,                        // the stream engine's tail (LANES = 8)
-  // one tree (docs/stream.md 11.3): the tail's Q dots fold on u_vt too, in windows between
-  // the A dots' (the tail pads its Q path so they never meet)
-  parameter bit ONE_TREE = 1'b1,
-  // COMP8 (docs/stream.md 11): the composite functions loop through slot 0 and the tail's U
-  // and Q on all the lanes (otpu_se_comp) instead of the long lanes' ten-slot chains (HAS_SE)
-  parameter bit COMP8 = 1'b1
+  parameter bit HAS_SE = 1'b0                         // the stream engine (LANES = 8)
 ) (
   input  logic                    clk,
   input  logic                    rst,
@@ -126,7 +121,7 @@ module otpu_vpu
   localparam int LW = $clog2(LANES);
   // the stream engine: its tail is built for 8 lanes (slot 0's partial loop, RL = 8)
   localparam bit SE = HAS_SE && (LANES == 8);
-  localparam bit C8 = COMP8 && SE;           // the composites on otpu_se_comp
+  localparam bit C8 = SE;                    // the composites on otpu_se_comp
   localparam int NCL = C8 ? LANES : (CL < LANES) ? CL : LANES;   // composite columns per cycle
   localparam int NLL = C8 ? 0 : NCL;         // long lanes (the composites' slot chains)
   localparam int NSX = C8 ? 1 : NSLOT;       // slots along the lane taps
@@ -258,7 +253,7 @@ module otpu_vpu
   logic [4:0] s_fi;
   ss_cfg_t    s_cfg;
   ss_meta_t   s_xm, s_mt;
-  // ONE_TREE: the tail's Q final partials, registered here (q_*); the root is a Q dot's (vt_q)
+  // the tail's Q final partials, registered here (q_*); the root is a Q dot's (vt_q)
   logic       q_cap, q_rl, vt_q;
   logic [7:0] q_sub;
   f32_t       q_pd [LANES];
@@ -887,8 +882,8 @@ module otpu_vpu
   end
 
   // the folding tree (otpu_vtree): a row's sum RD cycles after its last final partial
-  // a final partial of this reduction (or of the stream's dot A) is on `pacc`; ONE_TREE: or
-  // one of the tail's dot Q, in a window of its own (q_cap)
+  // a final partial of this reduction (or of the stream's dot A) is on `pacc`, or one of the
+  // tail's dot Q, in a window of its own (q_cap)
   wire  a_cap = (SE && ss_act) ? s_mt.v && s_mt.final_ :
                                  red_act && is_sum && live(mt, tag) && mt.final_;
   wire  cap = a_cap || q_cap;
@@ -1082,7 +1077,7 @@ module otpu_vpu
     logic t_yv, t_ov, t_qc, t_qrl;
     logic [7:0] t_qsub;
     f32_t t_qd [LANES];
-    otpu_se_tail #(.LANES(LANES), .TA(TA), .ONE_TREE(ONE_TREE), .QD(1), .COMP8(C8)) u_tail (
+    otpu_se_tail #(.LANES(LANES), .TA(TA), .QD(1)) u_tail (
       .clk, .rst, .init(s_init), .cfg(s_cfg), .fk(s_fk), .fi(s_fi), .fd(s_fd),
       .pe(sen), .in_v(s_in_v), .in_d(s_in_d), .xd(s_xd), .xa(s_xa), .xm(s_xm),
       .kv(root), .kv_v(root_v && !vt_q), .y_v(t_yv), .y_d(ss_y_d), .o_v(t_ov), .o_d(ss_o_d),
@@ -1091,38 +1086,28 @@ module otpu_vpu
       .cm(!ss_act), .cen(en), .u_sel(c_sel[1]), .u_a(c_sa[1]), .u_b(c_sb[1]), .u_c(c_sc[1]),
       .u_e(c_se[1]), .u_y(c_uy), .q_sel(c_sel[2]), .q_a(c_sa[2]), .q_b(c_sb[2]), .q_c(c_sc[2]),
       .q_y(c_qy));
-    if (ONE_TREE) begin : g_one
-      // Q's partials registered here (QD = 1: the tail pads its Q path for it), so no path
-      // runs from the tail's adders into the tree's; the roots come out in window order, so
-      // a FIFO of their kinds routes each to kv (A) or back to the tail (Q)
-      always_ff @(posedge clk) if (en) begin
-        q_cap <= ss_act && t_qc;
-        q_rl <= t_qrl;
-        q_sub <= t_qsub;
-        q_pd <= t_qd;
-      end
-      logic [7:0] kq;
-      logic [2:0] kh, kt;
-      always_ff @(posedge clk)
-        if (rst || s_init) begin
-          kh <= '0; kt <= '0;
-        end else if (en) begin
-          if (cap && vt_rl) begin
-            kq[kt] <= q_cap;
-            kt <= kt + 1'b1;
-          end
-          if (root_v) kh <= kh + 1'b1;
-        end
-      assign vt_q = kq[kh];
-    end else begin : g_two
-      assign q_cap = 1'b0;
-      assign q_rl = 1'b0;
-      assign q_sub = '0;
-      assign vt_q = 1'b0;
-      for (genvar l = 0; l < LANES; l++) begin : g_qz
-        assign q_pd[l] = '0;
-      end
+    // Q's partials registered here (QD = 1: the tail pads its Q path for it), so no path
+    // runs from the tail's adders into the tree's; the roots come out in window order, so
+    // a FIFO of their kinds routes each to kv (A) or back to the tail (Q)
+    always_ff @(posedge clk) if (en) begin
+      q_cap <= ss_act && t_qc;
+      q_rl <= t_qrl;
+      q_sub <= t_qsub;
+      q_pd <= t_qd;
     end
+    logic [7:0] kq;
+    logic [2:0] kh, kt;
+    always_ff @(posedge clk)
+      if (rst || s_init) begin
+        kh <= '0; kt <= '0;
+      end else if (en) begin
+        if (cap && vt_rl) begin
+          kq[kt] <= q_cap;
+          kt <= kt + 1'b1;
+        end
+        if (root_v) kh <= kh + 1'b1;
+      end
+    assign vt_q = kq[kh];
     assign ss_y_v = sen && t_yv;
     assign ss_o_v = sen && t_ov;
   end else begin : g_nse

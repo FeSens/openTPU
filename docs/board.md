@@ -137,7 +137,7 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_secand3_02569bc/otpu.bit`** (production, 2026-09-29) | `make bit DDR=1066 CORE_MHZ=120.755` (SE=v2, AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8) | se-cand3 02569bc: the stream engine v2 in the VPU (docs/stream.md; CAPS bit26 STREAM) + main 5cd6c39 + the three timing cuts below, 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.031 ns, WHS +0.016 ns |
+| **`build/deploy_secand3_02569bc/otpu.bit`** (production, 2026-09-29) | `make bit DDR=1066 CORE_MHZ=120.755` (AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8; built as SE=v2, now the only configuration) | se-cand3 02569bc: the stream engine v2 in the VPU (docs/stream.md; CAPS bit26 STREAM) + main 5cd6c39 + the three timing cuts below, 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.031 ns, WHS +0.016 ns |
 | `build/deploy_pnbl32_e2521032/otpu.bit` (production 2026-09-28 afternoon until 2026-09-29) | `make bit DDR=1066 CORE_MHZ=120.755` (AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8) | prod-next e252101 (be388a1 + Qwen3.5 resident decode + DSTEP / ST write runs + AXI write bursts + the port-A order register), 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.013 ns, WHS +0.021 ns |
 | `build/deploy_bl32mx120_be388a32/otpu.bit` (production 2026-09-28 11:00 until the afternoon) | `make bit DDR=1066 CORE_MHZ=120.755 AXI_BL=32` (MCOLS=2, LANES=8) | be388a1 (tv-cand2: main + port B read bursts up to 64 beats + the MXU / adapter timing fixes), 32-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.066 ns, WHS +0.016 ns |
 | `build/deploy_bl16mx120_be388a1f/otpu.bit` (production 2026-09-28 morning) | as above, `AXI_BL=16` | be388a1, 16-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.048 ns, WHS +0.013 ns |
@@ -623,7 +623,7 @@ otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critica
 the patch messages of that build.
 
 **Production image (2026-09-29): `build/deploy_secand3_02569bc`** (omarchy and opentpu
-`~/otpu-build/`; branch se-cand3 02569bc, built with the defaults `SE=v2`, `AXI_BL=32`,
+`~/otpu-build/`; branch se-cand3 02569bc, built with `SE=v2` (now the only configuration), `AXI_BL=32`,
 `AXI_WBL=8`, BUILD_ID 002569bc). The stream engine (docs/stream.md) replaces the VPU's two
 composite chains and the DMA's DSTEP datapath. The composites run on the 8 lanes' three stages
 (COMP8), and a stream's dot A and dot Q share the VPU's tree (ONE_TREE). STREAM is CAPS bit26.

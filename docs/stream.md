@@ -438,7 +438,18 @@ module otpu_se_tail import otpu_pkg::*; import otpu_fp::*;
 - **The sharing that saves the area costs the VOP/stream overlap** (6). It is measured before
   anything is merged.
 
-## 11. v2: composites on the eight lanes, one tree (tonight's target; v1 is the fallback)
+## 11. v2: composites on the eight lanes, one tree (the engine as built)
+
+**Since 2026-09-29, v2 is the only configuration.** After the card qualified it, v1 was removed
+rather than kept as a fallback, so that nothing is left to test and maintain.
+- The parameters are gone: `SE_COMP8` and `SE_ONE_TREE` on the slice and the tops, and `COMP8`
+  and `ONE_TREE` on otpu_vpu, otpu_se_tail and otpu_dma. So are `make bit SE=`, `OTPU_SE`, and
+  the tail's own Q tree.
+- With the stream engine (`HAS_SE`, LANES = 8), the composites run on otpu_se_comp and the
+  streams on the one tree.
+- The long lanes' composite chains remain for the VPUs without it (LANES != 8).
+- The rest of this section is the design as it was planned and built that night. Its "v1"
+  and "both 0" rows are history.
 
 **v2 is parameters on v1's code, not a second engine.** The user's decision at 02:30: go to v2,
 fall back to v1 if it doesn't pay. v1 (pieces 1-3) is nearly done, so v2 adds two build
@@ -627,7 +638,7 @@ Otherwise v1 (both 0) builds ~07:00.
     output control): v2 5.67 ns against v1 5.43 ns (6.19 ns before the ROM). v2's worst path
     is now a DSP cascade in the tail's Q multiplier; v2 is 36,184 LUT + 2,912 SRL, 84 DSP;
     v1 45,892 + 2,700, 120 DSP.
-- **Cycles per token** (RTL, tools/se_v2_perf.sh at se-int 202856d: perf_qwen with
+- **Cycles per token** (RTL, tools/se_v2_perf.sh at se-int 202856d, removed with v1: perf_qwen with
   OTPU_DSTEP=1 OTPU_PAIR=1, DDR3-1066, 120 MHz; v2 with `--check`, bit-exact with the ISA
   simulator on all three):
 
@@ -656,9 +667,8 @@ merged in, both comp cuts, main's 5cd6c39 MXU queue, and three small timing cuts
 - It decodes at production speed.
 - VPU + DMA take 20.7% fewer LUTs and 52 fewer DSPs than production (pn32), with 83.9% of
   slices against 94.8%.
-- It is merged into main as the default: `make bit` builds `SE=v2`, and the simulators and the
-  RTL defaults are v2 (`SE_COMP8 = SE_ONE_TREE = 1`). v1 stays selectable: `make bit SE=v1`,
-  or `OTPU_SE=v1` for the simulators.
+- It is merged into main (5fca9c9) and is the only configuration: v1 and its selectors are
+  removed (11).
 
 ### 12.1 Bit-exactness (simulated)
 

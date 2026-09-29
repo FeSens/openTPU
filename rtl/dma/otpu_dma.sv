@@ -37,9 +37,7 @@ module otpu_dma
   parameter int D     = 32,
   parameter int LANES = 8,
   parameter int DEPTH = 128,                          // LD chunk buffer (a power of two)
-  parameter bit HAS_DSTEP = 1'b1,                     // streams: DSTEP, STREAM (SE's tail in u_vpu)
-  parameter bit ONE_TREE  = 1'b1                      // SE folds A and Q on one tree: cols = 64
-                                                      // runs as 16 segments per row (pad64)
+  parameter bit HAS_DSTEP = 1'b1                      // streams: DSTEP, STREAM (SE's tail in u_vpu)
 ) (
   input  logic                    clk,
   input  logic                    rst,
@@ -166,7 +164,7 @@ module otpu_dma
   // latency); other widths have no streams (the compiler emits the VOP sequence)
   localparam bit HAS_SS = HAS_DSTEP && W == 8 && LANES == 8;
   logic [31:0]  ds_oa, ds_wb;                        // o (TMEM), the stream's write (DRAM words)
-  // pad64 (ONE_TREE, cols = 64): a row is its 8 segments and 8 of +0 (not read), and the Y of
+  // pad64 (SE's one tree, cols = 64): a row is its 8 segments and 8 of +0 (not read), and the Y of
   // those is dropped (docs/stream.md 11.3); ds_sj / ds_yj: the segment fed / out in its row
   logic         ds_pad;
   logic [3:0]   ds_sj, ds_yj;
@@ -333,7 +331,7 @@ module otpu_dma
       su_ok = 1'b1;
     end
     su_ns = su_cfg.ns;
-    su_cfg.pad64 = ONE_TREE && su_ns == 6'd8;
+    su_cfg.pad64 = su_ns == 6'd8;
     if (su_cfg.pad64) su_cfg.ns = 6'd16;
     su_nseg = 16'(32'(su_cfg.rows) * 32'(su_cfg.ns));
   end

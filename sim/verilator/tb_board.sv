@@ -20,8 +20,6 @@ module tb_board;
   parameter int IMEM_WORDS = 1 << 15;
   parameter int LANES      = 8;
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1;
-  parameter bit SE_COMP8  = 1'b1;   // the stream engine's v2 (docs/stream.md 11)
-  parameter bit SE_ONE_TREE = 1'b1;
   parameter int ULANES     = LANES;
   parameter int WIN        = 16;
   parameter int LAT        = 20;
@@ -67,7 +65,7 @@ module tb_board;
   initial void'($value$plusargs("i2c_hold=%h", i2c_hold));
 
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
-               .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .SE_COMP8(SE_COMP8), .SE_ONE_TREE(SE_ONE_TREE), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
+               .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
                .PQ_WIN(PQ_WIN), .AXI_BL(AXI_BL), .AXI_WBL(AXI_WBL), .DSTEP(DSTEP)) dut (
     .clk, .rst, .calib(2'b11), .temp(TEMP), .led,

@@ -11,9 +11,7 @@
 // "fk fi d0 .. d7" and nseg lines "d0 .. d7"; a 0 ends the file. +tmem= preloads the TMEM
 // (readmemh). Output (+out=): per stream "Y d0 .. d7" per updated segment and "O d" per row
 // output, then "E"; at the end "T" and the TMEM words (+dump= of them), one per line.
-module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter bit ONE_TREE = 1'b0,
-                   parameter bit COMP8 = 1'b0,
-                   parameter int GNT_PCT = 80);
+module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter int GNT_PCT = 80);
   import otpu_pkg::*;
   import otpu_fp::*;
   localparam int L = 8;
@@ -39,7 +37,7 @@ module tb_se_vpu #(parameter bit WBUF = 1'b1, parameter bit ONE_TREE = 1'b0,
   logic [2:0] ss_fk = SF_NONE;
   logic [4:0] ss_fi = '0;
 
-  otpu_vpu #(.LANES(L), .WBUF(WBUF), .HAS_SE(1'b1), .ONE_TREE(ONE_TREE), .COMP8(COMP8)) dut (
+  otpu_vpu #(.LANES(L), .WBUF(WBUF), .HAS_SE(1'b1)) dut (
     .clk, .rst, .start, .cmd, .rdy, .done, .gnt, .ren, .ta_en, .ta_addr, .ta_data, .tb_en,
     .tb_addr, .tb_data, .tw_en, .tw_addr, .tw_data, .pf_u, .pf_frz,
     .ss_req, .ss_gnt, .ss_cfg, .ss_pe, .ss_in_v, .ss_in_d, .ss_fk, .ss_fi, .ss_fd, .ss_y_v,
