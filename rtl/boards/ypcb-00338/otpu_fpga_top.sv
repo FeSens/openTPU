@@ -20,8 +20,8 @@ module otpu_fpga_top #(
   parameter int MCOLS = 2,                  // MXU columns (activation rows per weight chunk)
   parameter int ACT_ROWS = MCOLS,           // ACT RAM rows (> MCOLS: MM replay, one weight pass)
   parameter int VPU_CL = 2,                 // VPU lanes with the composite functions (exp2, ...)
-  parameter bit SE_COMP8  = 1'b0,   // the stream engine's v2 (docs/stream.md 11)
-  parameter bit SE_ONE_TREE = 1'b0,
+  parameter bit SE_COMP8  = 1'b1,   // the stream engine's v2 (docs/stream.md 11)
+  parameter bit SE_ONE_TREE = 1'b1,
   parameter int LANES = 8,                  // VPU lanes / TMEM banks (8 or 16)
   parameter int ULANES = 8,                 // TMEM lanes of the MXU and the quantizer
   parameter int CORE_KHZ = 100000,          // core_clk as the block design makes it (CORE_KHZ register)

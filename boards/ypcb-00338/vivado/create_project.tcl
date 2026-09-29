@@ -18,8 +18,9 @@ set ACT_ROWS [expr {[llength $argv] > 7 ? [lindex $argv 7] : $MCOLS}]
 set DSTEP [expr {[llength $argv] > 8 ? [lindex $argv 8] : 1}]
 # AXI_BL: the accelerator's port B read burst, beats (8 default, up to 64; bd.tcl's MAX_BURST_LENGTH follows)
 set AXI_BL [expr {[llength $argv] > 9 ? [lindex $argv 9] : 8}]
-# SE: the stream engine's version (docs/stream.md): v1, or v2 (SE_COMP8 = SE_ONE_TREE = 1)
-set SE [expr {[llength $argv] > 10 ? [lindex $argv 10] : "v1"}]
+# SE: the stream engine's version (docs/stream.md): v2 (SE_COMP8 = SE_ONE_TREE = 1, the production
+# image) or v1
+set SE [expr {[llength $argv] > 10 ? [lindex $argv 10] : "v2"}]
 set SE_V2 [expr {$SE eq "v2" ? 1 : 0}]
 if {$BUILD_ID eq ""} {
   if {[catch {exec git -C $root rev-parse HEAD} BUILD_ID]} { set BUILD_ID 0 }

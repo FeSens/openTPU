@@ -21,8 +21,8 @@ module otpu_board #(
   parameter int MXU_IMPL   = 0,
   parameter int MXU_CL     = 16,
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with exp2/recip/rsqrt
-  parameter bit SE_COMP8  = 1'b0,   // the stream engine's v2 (docs/stream.md 11)
-  parameter bit SE_ONE_TREE = 1'b0,
+  parameter bit SE_COMP8  = 1'b1,   // the stream engine's v2 (docs/stream.md 11)
+  parameter bit SE_ONE_TREE = 1'b1,
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer
   parameter logic [31:0] BASE0 = 32'h0000_0000,
   parameter logic [31:0] BASE1 = 32'h8000_0000,

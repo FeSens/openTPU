@@ -26,8 +26,8 @@ module otpu_top
   parameter int AXI        = 0,
   parameter int AXI_BL     = 8,       // AXI adapter: port B read burst, beats (timing only)
   parameter int AXI_WBL    = 8,       // AXI adapter: port B write burst, beats (timing only)
-  parameter bit SE_COMP8   = 1'b0,    // the stream engine's v2 (docs/stream.md 11)
-  parameter bit SE_ONE_TREE = 1'b0
+  parameter bit SE_COMP8   = 1'b1,    // the stream engine's v2 (docs/stream.md 11)
+  parameter bit SE_ONE_TREE = 1'b1
 ) (
   input  logic          clk,
   input  logic          sys_rst,

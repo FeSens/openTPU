@@ -20,8 +20,8 @@ module tb_board;
   parameter int IMEM_WORDS = 1 << 15;
   parameter int LANES      = 8;
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1;
-  parameter bit SE_COMP8  = 1'b0;   // the stream engine's v2 (docs/stream.md 11)
-  parameter bit SE_ONE_TREE = 1'b0;
+  parameter bit SE_COMP8  = 1'b1;   // the stream engine's v2 (docs/stream.md 11)
+  parameter bit SE_ONE_TREE = 1'b1;
   parameter int ULANES     = LANES;
   parameter int WIN        = 16;
   parameter int LAT        = 20;

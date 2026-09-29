@@ -33,8 +33,8 @@ module otpu_slice
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer (<= LANES)
   parameter int PQ_WIN     = 64,      // cycles per P/Q counter window (+bucket= in simulation)
   parameter bit HAS_DSTEP  = 1'b1,    // streams (DSTEP, STREAM): SE's tail in the VPU
-  parameter bit SE_COMP8   = 1'b0,    // the stream engine's v2 (otpu_vpu COMP8, ONE_TREE)
-  parameter bit SE_ONE_TREE = 1'b0
+  parameter bit SE_COMP8   = 1'b1,    // the stream engine's v2 (otpu_vpu COMP8, ONE_TREE)
+  parameter bit SE_ONE_TREE = 1'b1
 ) (
   input  logic          clk,
   input  logic          sys_rst,

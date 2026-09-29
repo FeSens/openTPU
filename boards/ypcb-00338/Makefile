@@ -16,7 +16,8 @@ DDR ?= 1066
 # ACT_ROWS: ACT RAM rows, the most rows of one MM (default MCOLS; 8: prefill's 8-row MMs stream
 #   each weight once, the MXU replaying it per MCOLS rows)
 # BUILD_ID: the BUILD_ID register (8 hex digits; default: the git commit)
-# SE: the stream engine, v1 (default) or v2 (docs/stream.md 11: composites on the 8 lanes, one tree)
+# SE: the stream engine, v2 (default, the production image; docs/stream.md 11: composites on the 8
+#   lanes, one tree) or v1
 CORE_MHZ ?= 100
 MCOLS ?= 2
 VPU_CL ?= 2

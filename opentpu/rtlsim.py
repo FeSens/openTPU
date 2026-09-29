@@ -128,12 +128,15 @@ if os.environ.get("OTPU_VPU_CL"):
 for _k in ("AXI_BL", "AXI_WBL"):
     if os.environ.get("OTPU_" + _k):
         UARCH[_k] = BOARD_UARCH[_k] = int(os.environ["OTPU_" + _k])
-# The stream engine's v2 (docs/stream.md 11): OTPU_SE=v2 builds otpu_vpu with COMP8 and ONE_TREE
-# (OTPU_SE=comp8 / onetree, or OTPU_SE_COMP8=1 / OTPU_SE_ONE_TREE=1: one of them)
-if os.environ.get("OTPU_SE") in ("v2", "comp8") or os.environ.get("OTPU_SE_COMP8") == "1":
-    UARCH["SE_COMP8"] = 1
-if os.environ.get("OTPU_SE") in ("v2", "onetree") or os.environ.get("OTPU_SE_ONE_TREE") == "1":
-    UARCH["SE_ONE_TREE"] = 1
+# The stream engine (docs/stream.md 11): v2, COMP8 and ONE_TREE (the production image), unless
+# OTPU_SE=v1; OTPU_SE=comp8 / onetree builds one of them, and OTPU_SE_COMP8 / OTPU_SE_ONE_TREE
+# (0 or 1) set each
+_se = os.environ.get("OTPU_SE", "v2")
+UARCH["SE_COMP8"] = int(_se in ("v2", "comp8"))
+UARCH["SE_ONE_TREE"] = int(_se in ("v2", "onetree"))
+for _k in ("SE_COMP8", "SE_ONE_TREE"):
+    if os.environ.get("OTPU_" + _k) in ("0", "1"):
+        UARCH[_k] = int(os.environ["OTPU_" + _k])
 # TMEM lanes of the MXU and the quantizer when fewer than LANES (timing only): OTPU_ULANES=8
 if os.environ.get("OTPU_ULANES"):
     UARCH["ULANES"] = int(os.environ["OTPU_ULANES"])

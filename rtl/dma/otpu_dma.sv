@@ -38,7 +38,7 @@ module otpu_dma
   parameter int LANES = 8,
   parameter int DEPTH = 128,                          // LD chunk buffer (a power of two)
   parameter bit HAS_DSTEP = 1'b1,                     // streams: DSTEP, STREAM (SE's tail in u_vpu)
-  parameter bit ONE_TREE  = 1'b0                      // SE folds A and Q on one tree: cols = 64
+  parameter bit ONE_TREE  = 1'b1                      // SE folds A and Q on one tree: cols = 64
                                                       // runs as 16 segments per row (pad64)
 ) (
   input  logic                    clk,

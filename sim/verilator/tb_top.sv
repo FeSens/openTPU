@@ -22,8 +22,8 @@ module tb_top;
   parameter int FIFO_DEPTH = 128;
   parameter int AXI_BL     = 8;
   parameter int AXI_WBL    = 8;
-  parameter bit SE_COMP8   = 1'b0;    // the stream engine's v2 (docs/stream.md 11)
-  parameter bit SE_ONE_TREE = 1'b0;
+  parameter bit SE_COMP8   = 1'b1;    // the stream engine's v2 (docs/stream.md 11)
+  parameter bit SE_ONE_TREE = 1'b1;
 
   logic clk = 1'b0, sys_rst = 1'b1, rst = 1'b1, dump = 1'b0;
   logic ld_start = 1'b0, ld_busy;

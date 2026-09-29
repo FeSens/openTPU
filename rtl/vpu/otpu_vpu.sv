@@ -76,10 +76,10 @@ module otpu_vpu
   parameter bit HAS_SE = 1'b0,                        // the stream engine's tail (LANES = 8)
   // one tree (docs/stream.md 11.3): the tail's Q dots fold on u_vt too, in windows between
   // the A dots' (the tail pads its Q path so they never meet)
-  parameter bit ONE_TREE = 1'b0,
+  parameter bit ONE_TREE = 1'b1,
   // COMP8 (docs/stream.md 11): the composite functions loop through slot 0 and the tail's U
   // and Q on all the lanes (otpu_se_comp) instead of the long lanes' ten-slot chains (HAS_SE)
-  parameter bit COMP8 = 1'b0
+  parameter bit COMP8 = 1'b1
 ) (
   input  logic                    clk,
   input  logic                    rst,
