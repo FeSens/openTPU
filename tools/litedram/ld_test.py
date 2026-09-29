@@ -59,6 +59,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import ypcb_platform as ypcb     # litex-boards' ypcb_00338_1p1 platform (pins checked against ours)
 from wl7ddrphy import WL7DDRPHY  # noqa: E402
+import calcpu                    # noqa: E402
 
 
 class MT41K256M8_tRFC160(MT41K256M8):
@@ -408,10 +409,12 @@ class LDTest(SoCCore):
     mem_map = {"csr": 0x0000_0000}          # CSRs at BAR0 offset 0
 
     def __init__(self, f, dqs_phase=90, xdma_tcl=None, channels=(0, 1), phy="a7", groups=None,
-                 group1_deg=None, mmcm_locs=None):
+                 group1_deg=None, mmcm_locs=None, selfcal=False):
         """phy: "a7" (A7DDRPHY, the DQS clock alone shifted) or "wl" (WL7DDRPHY: per channel a
         WriteClocks MMCM, the write side in two clock groups; groups[ch]: each lane's group,
-        group1_deg[ch]: group 1's static offset at configuration)."""
+        group1_deg[ch]: group 1's static offset at configuration). selfcal: the production
+        core's calibration CPU (calcpu.py) and ready bits (cal_ready, cal1_ready): the channels
+        calibrate themselves at configuration."""
         platform = ypcb.Platform()
         platform.add_extension(I2C_IO)
         self.phy_kind = phy
@@ -452,6 +455,10 @@ class LDTest(SoCCore):
             setattr(self, "bist" + sfx, BIST(getattr(self, "sdram" + sfx).crossbar.get_port(), modules=9))
             setattr(self, "phase" + sfx, DQSPhase(getattr(self, "wclk" + sfx) if phy == "wl" else
                                                   self.crg.mmcm if ch == 0 else self.crg.mmcm1))
+            if selfcal:
+                setattr(self, "cal" + sfx, calcpu.Cal())
+        if selfcal:
+            calcpu.add(self, platform)
 
         # ---- PCIe: XDMA as an RTL IP; BAR0 (AXI-Lite, axi_aclk) -> CSR bus (sys)
         self.cd_xdma = ClockDomain()
@@ -567,6 +574,11 @@ def main():
     ap.add_argument("--group1-deg", default="0,0",
                     help="wl: group 1's static offset per channel at configuration, degrees of sys4x "
                          "(multiples of 22.5; the host reprograms it over the DRP)")
+    ap.add_argument("--selfcal", action="store_true",
+                    help="the calibration CPU (calcpu.py, docs section 9): the image calibrates "
+                         "both channels at configuration, as the production core with --selfcal")
+    ap.add_argument("--fw-id", type=lambda x: int(x, 16), default=0,
+                    help="selfcal: the firmware id in the result mailbox (hex, e.g. a commit)")
     ap.add_argument("--mmcm-locs", default="X0Y2,X0Y6",
                     help="wl: each channel's MMCM site (channel 0's banks 11-13 are clock regions "
                          "X0Y0-2, channel 1's 16-18 X0Y5-7; X0Y1 is XDMA's)")
@@ -580,18 +592,9 @@ def main():
     xdma_tcl.write_text((HERE / "xdma_ip.tcl").read_text())
     soc = LDTest(a.sys_mhz * 1e6, a.dqs_phase, xdma_tcl="xdma_ip.tcl", channels=channels,
                  phy=a.phy, groups=groups, group1_deg=g1deg,
-                 mmcm_locs=dict(enumerate(a.mmcm_locs.split(","))) if a.mmcm_locs else None)
-    b = Builder(soc, output_dir=str(out), compile_software=False, compile_gateware=False,
-                csr_csv=str(out / "csr.csv"))
-    b.build(build_name="ld_test", vivado_place_directive="Explore",
-            vivado_post_place_phys_opt_directive="AggressiveExplore",
-            vivado_route_directive="Explore",
-            vivado_post_route_phys_opt_directive="AggressiveExplore")
-    # the Tcl runs on a build host: the Verilog from its own directory
-    tcl = out / "gateware" / "ld_test.tcl"
-    tcl.write_text(re.sub(r"read_verilog \{[^}]*/ld_test\.v\}", "read_verilog {./ld_test.v}",
-                          tcl.read_text()))
-    # the host's calibration inputs
+                 mmcm_locs=dict(enumerate(a.mmcm_locs.split(","))) if a.mmcm_locs else None,
+                 selfcal=a.selfcal)
+    # the host's calibration inputs (and the firmware's)
     ps = getattr(soc, "ddrphy" + ("" if channels[0] == 0 else str(channels[0]))).settings
     ctl = getattr(soc, "sdram" + ("" if channels[0] == 0 else str(channels[0])))
     hdr = get_sdram_phy_py_header(ps, ctl.controller.settings.timing)
@@ -606,7 +609,32 @@ def main():
                     group1_deg={ch: g1deg[ch] for ch in channels}, ps_moves="ck")
     elif 1 in channels:     # one fine step is 1/56 of the VCO period: both MMCMs must agree
         assert soc.crg.mmcm1.compute_config()["vco"] == info["vco_hz"], "MMCM VCOs differ"
-    (out / "sdram_init.py").write_text(hdr + "\nphy = " + json.dumps(info, indent=1) + "\n")
+    init_py = hdr + "\nphy = " + json.dumps(info, indent=1) + "\n"
+
+    def firmware():
+        (out / "sdram_init.py").write_text(init_py)
+        n = calcpu.build_firmware(soc, out, a.fw_id)
+        print(f"selfcal firmware: {n} bytes of {soc.selfcal.mem.depth * 4}")
+    b = calcpu.FirmwareBuilder(soc, hook=firmware if a.selfcal else None, output_dir=str(out),
+                               compile_software=False, compile_gateware=False,
+                               csr_csv=str(out / "csr.csv"))
+    b.build(build_name="ld_test", vivado_place_directive="Explore",
+            vivado_post_place_phys_opt_directive="AggressiveExplore",
+            vivado_route_directive="Explore",
+            vivado_post_route_phys_opt_directive="AggressiveExplore")
+    gw = out / "gateware"
+    tcl = gw / "ld_test.tcl"
+    text = tcl.read_text()
+    if a.selfcal:
+        # one Verilog file, as the production core: the firmware inlined, the CPU appended (its
+        # own read_verilog, an absolute path on this machine, dropped)
+        others = [src for src, *_ in soc.platform.sources if Path(src).name != "ld_test.v"]
+        (gw / "ld_test.v").write_text(calcpu.one_file((gw / "ld_test.v").read_text(), gw, others))
+        for src in others:
+            text = re.sub(r"read_verilog \{" + re.escape(str(src)) + r"\}\n", "", text)
+    # the Tcl runs on a build host: the Verilog from its own directory
+    tcl.write_text(re.sub(r"read_verilog \{[^}]*/ld_test\.v\}", "read_verilog {./ld_test.v}", text))
+    (out / "sdram_init.py").write_text(init_py)
     print(json.dumps(info))
 
 
