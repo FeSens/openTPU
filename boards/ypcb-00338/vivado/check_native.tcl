@@ -38,6 +38,31 @@ foreach {name ref} {otpu_mem_ch.tcl otpu_mem_ch otpu_top_native.tcl {}} {
 
 puts "---- block design sources, elaboration"
 generate_target synthesis [get_files otpu_bd.bd]
+
+# mig_native: the generated MIGs are the AXI build's controllers with the native interface: ECC
+# on (so app_cmd 011, wr_bytes, is the read-modify-write for partial beats: the native UI ignores
+# app_wdf_mask otherwise), DDR3-1066 at 4:1 (tCK 1875 ps, CL 7, CWL 6), 29-bit app_addr, and no
+# AXI slave
+if {$mem eq "mig_native"} {
+  set migs [glob -nocomplain $out/otpu.gen/sources_1/bd/otpu_bd/ip/otpu_bd_mig_?_0]
+  if {[llength $migs] != 2} { lappend bad "generated MIGs: [llength $migs] (expected 2)" }
+  foreach m $migs {
+    set name [file tail $m]
+    set f $m/$name/user_design/rtl/${name}_mig.v
+    if {![file exists $f]} { lappend bad "$name: no $f"; continue }
+    set fh [open $f]; set v [read $fh]; close $fh
+    set got {}
+    foreach {k want} {ECC {"ON"} tCK 1875 CL 7 CWL 6 nCK_PER_CLK 4 ADDR_WIDTH 29 DATA_WIDTH 64 DQ_WIDTH 72} {
+      if {![regexp "parameter\\s+$k\\s*=\\s*(\[^,;\\s\]+)" $v -> x]} { set x ? }
+      lappend got "$k=$x"
+      if {$x ne $want} { lappend bad "$name: $k = $x, expected $want" }
+    }
+    puts "$name: [join $got {, }]"
+    if {[regexp {s_axi_awaddr} $v]} { lappend bad "$name: has an AXI slave (s_axi_awaddr)" }
+    if {![regexp {app_wdf_mask} $v]} { lappend bad "$name: no native interface (app_wdf_mask)" }
+  }
+}
+
 synth_design -rtl -name rtl_1
 
 puts "---- instances"
