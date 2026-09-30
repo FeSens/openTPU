@@ -71,7 +71,8 @@ module otpu_board #(
   output logic [1:0][63:0]  n_wmask,   // 1 = write the byte
   input  logic [1:0]        n_rvalid,  // read data in read-command order, no backpressure
   input  logic [1:0][511:0] n_rdata,
-  input  logic [1:0][15:0]  n_wdone    // write beats the controller has taken (mod 2^16)
+  input  logic [1:0][15:0]  n_wdone,   // write beats the controller has taken (mod 2^16)
+  input  logic [1:0]        n_err      // a channel's controller broke its port contract (sticky)
 );
   import otpu_pkg::*;
 
@@ -136,7 +137,7 @@ module otpu_board #(
     .s_arready(s_ctl_arready), .s_rdata(s_ctl_rdata), .s_rresp(s_ctl_rresp),
     .s_rvalid(s_ctl_rvalid), .s_rready(s_ctl_rready),
     .run, .ld_start, .arg, .ld_addr, .ld_n, .ld_busy, .halted, .error, .wait_to, .icount, .wr_idle,
-    .axi_err(1'b0),                    // (no error responses on the native ports)
+    .axi_err(|n_err),                  // the channels' bridges (otpu_mem_ch)
     .calib(cal_s2),
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
     .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(b_req && !b_rdy),
