@@ -100,7 +100,12 @@ def load_weights(model_dir) -> dict:
     """All tensors of a HF safetensors checkpoint as fp32 numpy arrays. Of a multimodal
     checkpoint (Qwen3.5) only the language model is loaded, under the names of a text-only one
     (model.language_model.* -> model.*): not the vision tower or the multi-token prediction
-    layers."""
+    layers. Gemma 4: gemma4.load_weights (a lazy mapping)."""
+    cfg = Path(model_dir) / "config.json"
+    if cfg.exists() and json.loads(cfg.read_text()).get("model_type") in ("gemma4",
+                                                                          "gemma4_text"):
+        from .gemma4 import load_weights as gemma4_weights
+        return gemma4_weights(model_dir)            # lazy: 5B parameters, a 4.7 GB PLE table
     import torch
     from safetensors.torch import load_file
     out = {}
@@ -961,7 +966,9 @@ class Engine:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
-        self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
+        # an image with host_inputs (Gemma 4) makes a token row's inputs itself
+        self.embed = None if hasattr(self.image, "host_inputs") else \
+            np.asarray(W["model.embed_tokens.weight"], np.float32)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
@@ -1101,13 +1108,16 @@ class Engine:
             raise RuntimeError("KV cache full")
         io, S = self.image.io, self.cfg.S
         dec = self._decode(self.pos)
-        if dec is None:
+        if dec is None and self.embed is None:
+            parts = self.image.host_inputs([token], [self.pos])
+        if dec is None and self.embed is not None:
             x = F.ftz(self.embed[token].astype(np.float32))
             cos, sin = rope_tables(self.spec, self.pos)
             if io["cos"] == io["x"] + x.nbytes and io["sin"] == io["cos"] + cos.nbytes:
                 parts = [(io["x"], np.concatenate([x, cos, sin]))]      # one transfer
             else:
                 parts = [(io["x"], x), (io["cos"], cos), (io["sin"], sin)]
+        if dec is None:
             for s in range(S):
                 for a, v in parts:
                     self.backend.write(s, a, v)
@@ -1176,14 +1186,17 @@ class Engine:
         io, S, spec = self.image.io, self.cfg.S, self.spec
         if any(p >= self.cap for _, p in rows):
             raise RuntimeError("KV cache full")
-        x = F.ftz(self.embed[[int(t) for t in tokens]].astype(np.float32))
-        cs = [rope_tables(spec, p) for _, p in rows]
-        cos = np.stack([c for c, _ in cs]).astype(np.float32)
-        sin = np.stack([s_ for _, s_ in cs]).astype(np.float32)
+        if self.embed is None:
+            parts = self.image.host_inputs(tokens, [p for _, p in rows])
+        else:
+            x = F.ftz(self.embed[[int(t) for t in tokens]].astype(np.float32))
+            cs = [rope_tables(spec, p) for _, p in rows]
+            cos = np.stack([c for c, _ in cs]).astype(np.float32)
+            sin = np.stack([s_ for _, s_ in cs]).astype(np.float32)
+            parts = [(io["x"], x), (io["cos"], cos), (io["sin"], sin)]
         for s in range(S):
-            self.backend.write(s, io["x"], x)
-            self.backend.write(s, io["cos"], cos)
-            self.backend.write(s, io["sin"], sin)
+            for a, v in parts:
+                self.backend.write(s, a, v)
         st = self.backend.run(programs)
         st["rows"] = len(rows)
         self.stats.append(st)
