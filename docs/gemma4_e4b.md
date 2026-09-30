@@ -66,6 +66,26 @@ Image sizes at a 2048-token KV capacity, fp4 layers (`Image.nbytes`):
   every quantized weight (the build already quantizes on the host). Per token the host reads
   one record at token id x 11,264 and DMAs it. It does no arithmetic.
 
+## On the RTL
+
+One resident decode token on the Verilator RTL (production configuration, the board's memory
+path at 133.33 MHz, `tools/perf_qwen.py --model models/gemma-4-E4B --layers
+0,1,2,3,4,5,24,25,26,27,28,29 --pos 600 --wformat fp4 --head-format int8 --resident --ddr 1066
+[--ldc] --mhz 133.33 --check` with `OTPU_PLE_HOST=1`, the slot written as the Engine writes
+it). The full image does not fit the simulated memory, so the run takes 12 of the 42 layers:
+an own unit, a KV-shared unit, and the full LM head. DRAM after the token is bit-identical to
+the ISA simulator's.
+
+| Memory model | Cycles | Head | MLP | Attention | PLE | Gathers |
+|---|---:|---:|---:|---:|---:|---:|
+| DDR3-1066 bank model | 10,830,271 | 5.583 M | 4.081 M | 1.019 M | 0.136 M | 10,526 |
+| LiteDRAM's controller (`--ldc`) | 12,022,156 | 6.163 M | 4.598 M | 1.111 M | 0.140 M | 10,309 |
+
+The co-simulated controller is within 1% of the card on E2B (docs/board.md). Scaling its
+per-layer phases to 42 layers gives MLP 16.09 M, attention 3.89 M, PLE 0.49 M and head
+6.16 M: **about 26.6 M cycles, 5.0 tok/s at 133.33 MHz** (*estimate*). E2B runs 13.84 M on the
+card.
+
 ## The slot
 
 The card's DRAM holds a **PLE slot** in place of the table: R records (R = the image's prefill
