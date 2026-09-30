@@ -21,11 +21,11 @@ import numpy as np
 PROMPT = "What is the capital of France? Answer in one sentence."
 
 
-def hf_greedy(model: str, n: int, max_memory: str | None) -> dict:
+def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) -> dict:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
     tok = AutoTokenizer.from_pretrained(model)
-    ids = tok.apply_chat_template([{"role": "user", "content": PROMPT}],
+    ids = tok.apply_chat_template([{"role": "user", "content": prompt}],
                                   add_generation_prompt=True, tokenize=True)
     ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
     kw = {}
@@ -35,9 +35,10 @@ def hf_greedy(model: str, n: int, max_memory: str | None) -> dict:
     m = AutoModelForCausalLM.from_pretrained(model, dtype=torch.bfloat16, **kw).eval()
     t = time.time()
     with torch.no_grad():
-        out = m.generate(torch.tensor([ids]), max_new_tokens=n, do_sample=False)
+        out = m.generate(torch.tensor([ids]), max_new_tokens=n, min_new_tokens=n,
+                         do_sample=False)            # n tokens: past an end of turn too
     new = [int(x) for x in out[0, len(ids):]]
-    return dict(model=model, prompt=PROMPT, ids=ids, tokens=new, text=tok.decode(new),
+    return dict(model=model, prompt=prompt, ids=ids, tokens=new, text=tok.decode(new),
                 seconds=round(time.time() - t, 1))
 
 
@@ -121,6 +122,7 @@ def main():
     ap.add_argument("--hf", help="write HF's greedy tokens here")
     ap.add_argument("--check", help="HF's tokens (--hf's output) to compare the card's with")
     ap.add_argument("-n", type=int, default=16, help="tokens to generate")
+    ap.add_argument("--prompt", default=PROMPT, help="HF: the user turn")
     ap.add_argument("--experts", type=int, default=0,
                     help="expert slots per MoE layer (0: as many as fit)")
     ap.add_argument("--cap", type=int, default=4096, help="KV capacity")
@@ -136,7 +138,7 @@ def main():
                          "(a model whose generate program does not fit IMEM yet)")
     a = ap.parse_args()
     if a.hf:
-        r = hf_greedy(a.model, a.n, a.max_memory)
+        r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
         Path(a.hf).write_text(json.dumps(r, indent=1))
         print(json.dumps(r))
         return
