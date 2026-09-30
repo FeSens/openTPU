@@ -16,7 +16,8 @@ The cache ($REFCACHE, default ~/otpu-build/refcache) is keyed by what decides th
 simulator's tokens: the sources of the opentpu package minus the card's host code
 (opentpu/host, which only drives the card; the simulator configuration it derives,
 sim_config, is hashed as a value), the ISA configuration, the model checkpoint (config and
-file sizes), the formats, the prompt and the token count. A host-only change (a poll fix)
+file sizes), the formats, the prompt, its token ids (the chat template's output, with the date
+pinned) and the token count. A host-only change (a poll fix)
 reuses the references; any compiler, kernel or simulator change recomputes them. The key has
 no machine or path in it, so references computed on another box (the Mac, under its load
 rules) can be copied into the cache directory: `rsync -a ~/otpu-build/refcache/ omarchy:...`.
@@ -30,6 +31,7 @@ RSS, with a reserve) and runs one fewer per Vivado process on the box.
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -49,6 +51,7 @@ CAP = 256
 RUNS = ["qwen35:fp4:int8", "qwen3:fp4:int8", "qwen35:int8:-", "lfm2:fp4:int8", "qwen3:int8:-",
         "lfm2:int8:-"]                        # longest first (under load: 10, 6.5, 3, 2, 2, 0.5 min)
 PROMPT = "What is the capital of France? Answer in one sentence."
+DATE = datetime.date(2026, 9, 29)             # "today" for chat templates that state it
 EXCLUDE = ("host/", "lens.py", "lens_app.html", "rtlsim.py", "hwtrace.py")
 HEARTBEAT = 15                                # s between .pending updates
 STALE = 120                                   # s without a heartbeat: the job is dead
@@ -89,17 +92,22 @@ def key(cfg, model: str, wf: str, hf: str, n: int) -> tuple[Path, dict]:
     from opentpu.llm import load_spec, model_dir
     path = model_dir(model)
     spec = load_spec(path)
+    from transformers import AutoTokenizer
+    ids = prompt_ids(AutoTokenizer.from_pretrained(path))
     parts = {"src": source_hash(), "sim_cfg": repr(sim_config(spec, CAP, cfg)),
              "model": path.name, "ckpt": model_fingerprint(path), "wf": wf, "hf": hf,
-             "ntok": n, "cap": CAP, "prompt": PROMPT}
+             "ntok": n, "cap": CAP, "prompt": PROMPT,
+             "ids": hashlib.sha256(json.dumps(ids).encode()).hexdigest()[:16]}
     k = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:20]
     return cache_root() / f"{model}_{wf}_{hf}_{n}_{k}.pkl", parts
 
 
 def prompt_ids(tok):
+    """The prompt as a user turn of the model's chat template, with today's date pinned
+    (DATE: SmolLM3's system header states the date, and a reference must not expire)."""
     msgs = [{"role": "user", "content": PROMPT}]
     ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
-                                  tokenize=True)
+                                  tokenize=True, strftime_now=lambda fmt: DATE.strftime(fmt))
     return list(ids["input_ids"] if hasattr(ids, "keys") else ids)
 
 
