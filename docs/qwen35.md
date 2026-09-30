@@ -194,6 +194,19 @@ the device, KV capacity 4096; instructions per bucket of 256 positions, buckets 
 From bucket 6 on the gather's two token arguments leave too few registers for the attention's
 block loop unless the token's are given back after the gather (docs/isa.md "Arguments").
 
+## Qwen3.5-MoE
+
+`Spec.moe` covers Qwen3.5-35B-A3B: 256 experts of 512, top 8, and a shared expert of 512 in
+every layer. The layer block's MLP is the shared expert. The MoE block is `llm/moe.py`'s, as for
+LFM2-MoE, with the experts streamed into DRAM slots (docs/offload.md, path (a)):
+- The router is one int8 MM of E + 1 rows. Row E is the shared expert's gate.
+- The k largest logits are picked by ARGMAX with knock-out, and weighted by their softmax (Hugging
+  Face's softmax over all experts, renormalized over the k).
+- The routed experts' weighted sum is added to the shared expert times `sigmoid(gate)`.
+
+A MoE model runs its prompt through the decode step, one token per program: the MoE block routes
+one token.
+
 ## Accuracy
 
 The numpy reference (`qwen35.reference_logits`) matches Hugging Face's fp32 Qwen3.5-0.8B to
@@ -460,6 +473,11 @@ would need a state per sequence.
 - Qwen3.5-0.8B: 8 greedy tokens equal to HF's ("The capital of France is Paris."), and one real
   token on the RTL, bit-exact against the ISA simulator (DRAM: weights, KV cache, convolution
   ring, DeltaNet state; logits).
+
+`tests/test_qwen35_moe.py`: a tiny random Qwen3.5-MoE (8 experts, top 2, a shared expert)
+against Hugging Face and the emulation. The card's routes in the first layer match the
+emulation's. With k slots per layer the logits are bit-identical to having every expert
+resident, and the card's generate loop gives the host's tokens while the experts stream.
 
 `otpu-selftest --sim --model qwen35 --tokens 2` also passes: the chat prompt and two generated
 tokens (26 tokens) on the Verilator board model through the host driver, identical to the ISA

@@ -94,6 +94,17 @@ class RunVar:
         return self.name
 
 
+class DevVar(RunVar):
+    """A value the program computes itself, in register `reg` (a Builder.scratch set by RLD:
+    e.g. an expert's slot address, which WAITW copied from a directory, docs/offload.md). An
+    address may add 1 * var; it then uses R[reg] as its base, like a run-time argument's
+    register."""
+
+    def __init__(self, name: str, reg: int):
+        super().__init__(name)
+        self.reg = reg
+
+
 ARG0 = 8                        # the run's arguments ARG0..7 are R8..R15 at the start
 
 
@@ -675,12 +686,20 @@ class Builder:
             raise CompileError(f"address {a} adds more than one run-time value")
         words = self.run_words
         if run:
-            if run[0] not in self.run_seen:
-                self.run_seen.append(run[0])
-            if words is None or len(a.terms) == 1:
-                arg = self.arg_reg(*run[0])
-                if len(a.terms) == 1:               # the argument register itself
+            v, c = run[0]
+            if isinstance(v, DevVar):               # the program's own register
+                if c != 1:
+                    raise CompileError(f"address {a}: a device value adds only 1 * {v}")
+                arg = v.reg
+                if len(a.terms) == 1:
                     return arg, a.const
+            else:
+                if run[0] not in self.run_seen:
+                    self.run_seen.append(run[0])
+                if words is None or len(a.terms) == 1:
+                    arg = self.arg_reg(v, c)
+                    if len(a.terms) == 1:           # the argument register itself
+                        return arg, a.const
         key = frozenset(a.terms.items())
         if key not in self.regs:
             r = self._spare_for(key)
@@ -688,7 +707,7 @@ class Builder:
                 r = self._free_for(key)
                 if r is not None and run:          # it starts at the run-time value
                     (v, c), what = run[0], f"{run[0][1]}*{run[0][0]}"
-                    if words is None:
+                    if words is None or isinstance(v, DevVar):
                         init = I.addi(r, arg, 0, comment=f"{what} (argument)")
                     elif v.name not in words:
                         raise CompileError(f"run-time value {v}: no TMEM word (run_words)")
@@ -854,6 +873,17 @@ class Builder:
         if t.rows * t.cols != 1:
             raise CompileError(f"rld: {t} is not one word")
         self.emit(I.rld(r, t.base, raw=raw, comment=comment or "rld"))
+
+    def waitw(self, t: "Tile", dram: int, ref: int = 0, cmp: int = I.C_EQ, ra: int = 0,
+              rc: int = 0, interval: int = 0, timeout: int = 0, comment: str = "") -> None:
+        """Wait until the DRAM word at R[ra] + dram compares (cmp: I.C_EQ / C_NE / C_GE) with
+        R[rc] + ref, then the one-word tile t = the word's bits (WAITW: a word the host writes,
+        docs/isa.md; rld(raw=True) takes it into a register)."""
+        self.check_live(t)
+        if t.rows * t.cols != 1:
+            raise CompileError(f"waitw: {t} is not one word")
+        self.emit(I.waitw(dram, t.base, ref, cmp, ra=ra, rc=rc, interval=interval,
+                          timeout=timeout, comment=comment or "waitw"))
 
     def argmax(self, x: "Tile", base: int = 0, out: "Tile | None" = None,
                rbase: int = 0) -> "Tile":

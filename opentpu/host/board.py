@@ -75,6 +75,7 @@ STREAM_RETRY = 0.1e-3           # probe again after this when it is not complete
 STREAM_PROBE = 0.5e-3           # probe interval when no completion time is known yet
 TAIL_SETTLE = 5e-3              # after HALTED: how long the last stores may take to land
 WR_SETTLE = 2e-3                # after HALTED: the longest wait for WR_IDLE
+HOST_IDLE = 50e-6               # BoardBackend.host: the sleep between polls it had nothing for
 
 
 # ------------------------------------------------------------------------------ address map
@@ -911,6 +912,10 @@ class BoardBackend:
         self._key = 0
         self._ratio = 1.0                   # run wall time / (CYCLES / CORE_KHZ), smoothed
         self._seen = None                   # HALTED seen by the streamed wait (perf_counter)
+        # path (a)'s expert server (opentpu/host/offload.py, ExpertServer.poll), set by the
+        # Engine: called over and over while a run is in flight, it serves the card's requests
+        # (a MoE layer's WAITWs wait for it, docs/offload.md 5.2); nonzero when it served one
+        self.host = None
         # streamed logits (start(stream=...)): the region holding the sentinel, the pieces to
         # mark again once the next run has started, the pieces' completion times last token
         self.streams = bool(getattr(self.board.t, "streams", False))
@@ -1043,6 +1048,8 @@ class BoardBackend:
         try:
             if self._stream is not None:
                 self._stream_logits(feed)
+            elif self.host is not None:
+                self._serve()
             # halted already (seen by the streamed wait): read the counters, no sleep
             st = self.board.wait(expect=0.0 if self._seen else self._expect)
             if self._stream is not None:
@@ -1056,6 +1063,17 @@ class BoardBackend:
         if self.status is not None:
             self.status.token(st["cycles"], khz, dram=self._layout(True))
         return st
+
+    def _serve(self) -> None:
+        """Serve the host hook until the run halts (not on the board model, which runs a
+        script: no host during a run)."""
+        t = self.board.t
+        if getattr(t, "batched", False):
+            return
+        while not t.reg_read(R_STATUS) & ST_HALTED:
+            if not self.host():
+                time.sleep(HOST_IDLE)
+        self._seen = time.perf_counter()
 
     def _next_expect(self, dev: float) -> float:
         """The next run's expected wall time: this run's device time (CYCLES / CORE_KHZ) times
@@ -1209,7 +1227,9 @@ class BoardBackend:
 
         # the board model replays its register script in one simulation per flush: no reads
         # while the program runs, the tokens are read after it halts
+        host = self.host
         while k < n and not getattr(t, "batched", False):
+            served = host() if host is not None else 0
             if take():
                 continue
             if t.reg_read(R_STATUS) & ST_HALTED:
@@ -1217,9 +1237,12 @@ class BoardBackend:
             if stop is not None and not asked and state is not None and stop():
                 b.write(state + 4 * G.S_HALT, np.ones(1, np.float32))
                 asked = True
-            # wake up a little before the next token is due, then every 50 us
+            if served:
+                continue
+            # wake up a little before the next token is due, then every 50 us (with a host
+            # hook every HOST_IDLE: the card's MoE layers wait for it)
             due = t_tok + gap - time.perf_counter()
-            time.sleep(min(max(due * 0.5, 5e-5), 1e-3))
+            time.sleep(HOST_IDLE if host is not None else min(max(due * 0.5, 5e-5), 1e-3))
         st = b.wait(expect=0.0)
         self._running = None
         while k < n and take():                            # the last tokens, after HALTED

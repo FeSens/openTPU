@@ -197,6 +197,49 @@ def load_weights(model_dir) -> Weights:
     return Weights(model_dir)
 
 
+class LazyWeights(dict):
+    """load_weights' names over a checkpoint's safetensors files, each tensor read as fp32 when
+    it is asked for and not kept: for a model whose fp32 weights would not fit host RAM (a
+    MoE; its experts are packed one at a time, opentpu.llm.moe)."""
+
+    def __init__(self, model_dir):
+        super().__init__()
+        from safetensors import safe_open
+        self._at = {}
+        for f in sorted(Path(model_dir).glob("*.safetensors")):
+            h = safe_open(str(f), "pt")
+            for k in h.keys():
+                if not k.startswith(("model.visual.", "mtp.")):
+                    self._at[k.replace("model.language_model.", "model.", 1)] = (h, k)
+
+    def __getitem__(self, k):
+        import torch
+        h, name = self._at[k]
+        return h.get_tensor(name).to(torch.float32).numpy()
+
+    def part(self, k, i):
+        """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
+        read alone."""
+        import torch
+        h, name = self._at[k]
+        return h.get_slice(name)[i].to(torch.float32).numpy()
+
+    def __contains__(self, k):
+        return k in self._at
+
+    def __iter__(self):
+        return iter(self._at)
+
+    def __len__(self):
+        return len(self._at)
+
+    def keys(self):
+        return self._at.keys()
+
+    def items(self):
+        return ((k, self[k]) for k in self._at)
+
+
 def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
     """cos, sin [rope_dim/2] for one position (HF rotate-half convention); with LongRoPE's
     (spec.rope_div, spec.rope_scale) each frequency divided by its factor and both tables
@@ -1093,19 +1136,30 @@ def _lm_head_rows(x, m, spec, logit_rows):
 
 # =============================================================================== engine
 def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: str = "int8",
-                  head_format: str | None = None, lookup: bool = False, **kw) -> Config:
+                  head_format: str | None = None, lookup: bool = False,
+                  experts: int | None = None, **kw) -> Config:
     """The design configuration with DRAM sized for this model (power of two MiB)."""
     probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows, wformat,
-                       head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}))
+                       head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}),
+                       **({"experts": experts} if experts is not None else {}))
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
 
 
 class IsaBackend:
-    """The bit-exact ISA simulator, one persistent machine (DRAM keeps the KV cache)."""
+    """The bit-exact ISA simulator, one persistent machine (DRAM keeps the KV cache).
+    adopt: the images (arrays of their own) become the machine's DRAM, grown to DRAM_BYTES in
+    place instead of copied, so a 4 GiB image is held once; the caller gives them up."""
 
-    def __init__(self, cfg: Config, images: list):
-        self.machine = Machine(cfg, [[] for _ in range(cfg.S)], images)
+    def __init__(self, cfg: Config, images: list, adopt: bool = False):
+        own = adopt and all(isinstance(m, np.ndarray) and m.dtype == np.uint8 and m.ndim == 1
+                            and m.flags.owndata and len(m) <= cfg.DRAM_BYTES for m in images)
+        self.machine = Machine(cfg, [[] for _ in range(cfg.S)],
+                               [None] * cfg.S if own else images)
+        if own:
+            for s, m in zip(self.machine.slices, images):
+                m.resize(cfg.DRAM_BYTES, refcheck=False)
+                s.dram = m
 
     def write(self, s: int, addr: int, data: np.ndarray) -> None:
         v = np.ascontiguousarray(data).view(np.uint8).reshape(-1)
@@ -1253,10 +1307,12 @@ class Engine:
                  backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
-                 resident: bool = False):
+                 resident: bool = False, experts: int | None = None, pool_file=None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
+        if experts is not None:             # a MoE model's expert slots per layer
+            wkw["experts"] = experts
         # an int8 embedding is dequantized on the device (the image's tables), never the host
         int8_embed = getattr(spec, "embed", "f32") == "int8"
         lookup = (bool(resident) or int8_embed) and batch == 1 and has_lookup(spec)
@@ -1272,9 +1328,19 @@ class Engine:
         self._rope = None if self.device_inputs else \
             [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         images = self.image.build(W)
-        self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
+        self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)
         self.resident = bool(resident) and lookup and bool(getattr(self.backend, "args", False))
+        # path (a), docs/offload.md: the experts stream into the image's slots; the host's
+        # server moves them (the ISA simulator calls it when every slice waits on WAITW; the
+        # card's backend polls it while a run is in flight)
+        self.server = None
+        if getattr(self.image, "offload", None) is not None:
+            self.server = self.image.serve(W, self.backend, pool_file)
+            if isinstance(self.backend, IsaBackend):
+                self.backend.machine.host = lambda m: self.server.poll()
+            elif hasattr(self.backend, "host"):
+                self.backend.host = self.server.poll
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
@@ -1285,7 +1351,8 @@ class Engine:
         self.gen_debug = False              # generate_card: the logits too (gen_logits)
         self.gen_logits = None
         self.poss = [0] * batch
-        self.stream_logits = True           # step(): stream the logits when the backend can
+        # step(): stream the logits when the backend can (not while its wait serves the host)
+        self.stream_logits = getattr(self.backend, "host", None) is None
         # rows per run that fit TMEM (prefill_chunks), at most the image's fit_rows (Gemma 4:
         # the ACT rows, so that a run streams the weights once)
         self._fit_rows = min(self.rows, getattr(self.image, "fit_rows", self.rows))
