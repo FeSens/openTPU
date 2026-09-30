@@ -57,7 +57,7 @@ HEARTBEAT = 15                                # s between .pending updates
 STALE = 120                                   # s without a heartbeat: the job is dead
 RESERVE = 4 << 30                             # bytes of MemAvailable kept free
 MEM_GUESS = {"lfm2": 2.0, "qwen3": 3.0, "qwen35": 4.0, "lfm2-2.6b": 12.0, "smollm3": 13.0,
-             "phi4-mini": 16.0}                   # GiB, before a peak is recorded
+             "phi4-mini": 16.0, "qwen35-2b": 10.0, "qwen35-4b": 14.0}  # GiB, before a peak
 
 
 def cache_root() -> Path:
