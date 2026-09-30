@@ -55,7 +55,7 @@ host fp4 kernel.
     link and DRAM time of wrong guesses.
   - 4-bit experts are worth 2.3-2.9x over int8.
   - Request and flag latency (10-100 us) moves results by under 1%.
-- **Design (section 5).** One new instruction, `WAITW` (wait on a DRAM word), proposed to
+- **Design (section 5).** One new instruction, `WAITW` (wait on a DRAM word), agreed with
   autodecode. Everything else is built from autodecode's `ARGMAX`, `RLD`, the register-count
   `LOOP` and `CHAIN`. Per MoE layer, the card:
   1. posts its k expert ids to a mailbox in DRAM;
@@ -388,8 +388,8 @@ and feeds back each token. The MoE layers wait inside it. Per MoE layer, as buil
 4. **Look up.** A `LOOP` over the ids: `RLD` of the entry's offset (id x 8, one `VOP` for
    all), `LD` of its present flag.
 5. **Hits first.** A second `LOOP` over the ids with `LOOP R[present]` inside:
-   - `WAITW NE 0` on the entry's address word returns the slot address into a register at
-     once;
+   - `WAITW NE 0` on the entry's address word copies the slot address to a TMEM word at once,
+     and an `RLD` (RAW) puts it into a register;
    - the expert's MMs run at that register plus fixed offsets (`kernels.mlp.swiglu_down`);
    - its weighted output goes to its own row of a [k, H] tile.
 6. **Misses.** A third `LOOP` with count 1 - present: the same code. There, `WAITW` waits until
@@ -399,7 +399,8 @@ and feeds back each token. The MoE layers wait inside it. Per MoE layer, as buil
    therefore do not depend on what the cache held.
 
 A slot address never passes through the VPU, which would flush it as a denormal: `WAITW`
-reads it from the directory into the register. The MoE block holds one register in all. The
+copies it from the directory to TMEM and `RLD` (RAW) takes its bits into the register. The MoE
+block holds one register in all. The
 resident decode's run arguments and the layer loops hold the others: LFM2.5-8B-A1B's generate
 program had 2 of 15 left. It needs no index register: the per-expert values are the columns of
 a small tile that each loop rotates by one, so expert i is always at column 0.
@@ -426,30 +427,33 @@ layer's slots only between its fence and its next fence for that layer, a token 
 S slices, only slice 0 would post, and every slice would run the same fence and waits.
 Phase 2 runs one slice, as the board does.
 
-**The instruction, proposed to autodecode (one ISA extension, reserved with theirs):**
-
-`WAITW` (0x07): wait until `cmp(M32[R[ra] + w1] & w3, R[rb] + w2)`, then
-`R[rd] = M32[R[ra] + w1]` (the word's bits).
+**The instruction: `WAITW` (0x07), reserved by autodecode, run by the DMA.** It waits until
+`cmp(M32[R[ra] + w1] & w3, R[rb] + w2)` holds, then writes the word to TMEM at `R[rc] + w6`, and
+an `RLD` (RAW) takes it into a register.
 
 - Flags bits 1:0 choose the compare: 0 EQ, 1 NE, 2 GE. GE means the 32-bit difference is
   >= 0 as signed.
 - `w4`: cycles between polls. The first read is immediate.
-- `w5`: a timeout in cycles, 0 for none. On timeout the slice stops with an error the host
-  sees, so a dead daemon cannot hang the card silently.
-- It issues like `RLD`: no younger instruction issues until the condition holds. Every poll is
-  a fresh DRAM read.
+- `w5`: a timeout in cycles, 0 for none. On timeout the DMA stops the slice with an error the
+  host sees, so a dead daemon cannot hang the card silently.
+- It runs on the DMA unit (autodecode's form), polling through the DMA's DRAM read.
+  - Its footprint is all of DRAM (read) plus the one TMEM word. Every younger DRAM reader waits
+    for it, and older stores (the mailbox's) complete before it polls.
+  - The sequencer needs nothing beyond RLD's hold.
 - One requirement on the RTL: after `WAITW` sees a word the host wrote after a completed h2c
   DMA, every younger MM or LD reads that DMA's data. The host orders its data before its flag;
   the card orders its flag before its reads. The XDMA and the core meet in each channel's
-  `otpu_mem_ch` and LiteDRAM, whose ordering must give this.
-- In the ISA simulator, a host hook is called when a poll fails: the simulated daemon, which
-  copies experts and writes the directory. If nothing changes, the timeout fires.
+  `otpu_mem_ch` and LiteDRAM, whose ordering must give this. team-lead has made this a gate of
+  ld-memch's two-port work.
+- In the ISA simulator, the host hook is called when every slice that can run is waiting: the
+  simulated daemon, which copies experts and writes the directory. A `WAITW` that still does not
+  hold is the timeout.
 
 Everything else is built from instructions autodecode already added: `ARGMAX` (func 20), `RLD`,
 `LOOP R[ra]` (predication), and `HALT CHAIN` when a program outgrows the 4096-instruction IMEM.
 
 The hits-first split costs, per expert, an RLD of the entry's offset, an LD of its flag, an
-RLD of the flag and one `WAITW` read: a few DRAM round trips per layer, ~0.2% of a token
+RLD of the flag, one `WAITW` read and an RLD of the slot address: a few DRAM round trips per layer, ~0.2% of a token
 (*estimate*).
 
 **Not needed.**
@@ -558,10 +562,15 @@ back its tokens and waits for experts within one run. From autodecode's loop, pa
 2. A host-side daemon beside `BoardBackend.run_generate`'s token reader. It shares the DMA
    device files, with one lock around each call. The token reader and the daemon are the only
    host work during a reply.
-3. Room in the program. An MoE layer's expert part is three short loops. If a model's decode step
-   outgrows IMEM (4096 instructions), it `CHAIN`s between parts, as autodecode's buckets
-   already do.
-4. Nothing from sampling: the MoE is inside the decode step, which autodecode's loop runs
+3. Room in the program. An MoE layer's expert part is three short loops. LFM2.5-8B-A1B's
+   generate programs are 2577-3722 instructions of IMEM's 4096. If a model's decode step
+   outgrows IMEM, it `CHAIN`s between parts, as autodecode's buckets already do.
+4. Registers. The resident decode's run arguments (6 for LFM2.5: R10-R15) and the address
+   registers of its layer loops leave 2-3 of R1-R15 free inside autodecode's loop. That is why
+   the MoE block holds exactly one (section 5.2). A second MoE-sized feature in the same step
+   would need registers back from the run arguments or the layer loops (autodecode's and
+   models3's IMEM and loop work).
+5. Nothing from sampling: the MoE is inside the decode step, which autodecode's loop runs
    unchanged.
 
 ### 5.9 The token's embedding row
@@ -576,17 +585,17 @@ x 4 bytes, `Image(lookup=True)`); the survey's "on-card part" (section 2) did no
 - **gemma-4-26B-A4B:** 262,144 x 2816 x 4 = 2.95 GB, which cannot fit beside its 1.64 GB
   on-card part.
 
-**The fix is the same mechanism as E4B's PLE row (section 7):**
-1. The card posts the token id.
-2. The host writes that one row (8-11 KB, exact fp32 from the bf16 checkpoint) into a fixed
-   buffer.
-3. The card's `WAITW` sees the flag before the first layer.
+**The fix: the card gathers the row from the tied int8 LM head.** Both models tie their
+embedding to the head. An MM against a one-hot operand reads the token's row out of the head
+the card already holds.
+- It uses no extra DRAM and no host, and gets LFM2.5 back to ~27 slots per layer (~13 tok/s at
+  Gen1, by the model above).
+- models3's `kernels.lib.gather_row` and gemma4's `kernels/gather.py` do this. They are being
+  merged into one shared module, which phase 2 will build on once it is on main.
 
-The round trip (~0.1 ms, *estimate*) cannot overlap anything: the next token's first layer needs
-the row at once. It is still only 0.13% of LFM2.5's ~75 ms token. The table then leaves the
-card, and its bytes go to expert slots. An int8 table (the tied LM head's
-rows) would fit too, but changes the model's input, so it is not the default. Phase 2 runs with
-the fp32 table first (20 slots per layer); the host-written row comes next.
+A host-written row fetched by `WAITW` (section 7) stays for rows that are not in the card at
+all, such as E4B's per-layer embeddings. Phase 2's first 8B run keeps the fp32 table (20 slots
+per layer).
 
 ## 6. PCIe Gen2
 
@@ -694,6 +703,10 @@ The target is LFM2.5-8B-A1B end to end on the ISA simulator: the card's 4 GiB DR
 router on the card, per-layer LRU expert slots and host DMA. It is built on autodecode's ISA
 (ARGMAX, RLD, CHAIN), with no Vivado and no card time.
 
+Status (branch offload-p2, on autodecode's branch): items 1-3 are built. On a tiny LFM2 MoE
+with 2 slots per layer, the logits are bit-identical to an all-resident run, in prefill and in
+the card's generate loop. The LFM2.5-8B-A1B run against HF (item 4) is next.
+
 1. **The MoE block in `ol` kernels:**
    - the router MM;
    - the selection (autodecode's `_select`), with LFM2's sigmoid + bias rule and its
@@ -703,7 +716,7 @@ router on the card, per-layer LRU expert slots and host DMA. It is built on auto
 
    Also the slot layout, the directory, the mailbox and the fence, and the pool in the card's
    format (`quant` per expert).
-2. **`WAITW` in the ISA simulator** once autodecode agrees on the encoding, with its host hook.
+2. **`WAITW` in the ISA simulator**, in autodecode's DMA-side form, with its host hook.
 3. **The daemon** (`opentpu/host/offload.py`):
    - the pool in host RAM;
    - the directory copy and per-layer LRU;
