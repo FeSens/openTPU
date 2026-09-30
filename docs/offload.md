@@ -590,11 +590,12 @@ embedding to the head. An MM against a one-hot operand reads the token's row out
 the card already holds.
 - It uses no extra DRAM and no host, and gets LFM2.5 back to ~27 slots per layer (~13 tok/s at
   Gen1, by the model above).
-- models3's `kernels.lib.gather_row` and gemma4's `kernels/gather.py` do this. They are being
-  merged into one shared module, which phase 2 will build on once it is on main.
+- The shared `kernels/gather.py` (main 77405e5) does this, and phase 2 uses it: LFM2.5-8B-A1B
+  gets 28 slots per layer, and Qwen3.5-35B-A3B 32 instead of 9. The 35B's embedding is untied,
+  so its rows come from an int8 table of 0.5 GB.
 
 A host-written row fetched by `WAITW` (section 7) stays for rows that are not in the card at
-all, such as E4B's per-layer embeddings. Phase 2's first 8B run keeps the fp32 table (20 slots
+all, such as E4B's per-layer embeddings. Phase 2's first 8B run kept the fp32 table (20 slots
 per layer).
 
 ## 6. PCIe Gen2
@@ -703,9 +704,37 @@ The target is LFM2.5-8B-A1B end to end on the ISA simulator: the card's 4 GiB DR
 router on the card, per-layer LRU expert slots and host DMA. It is built on autodecode's ISA
 (ARGMAX, RLD, CHAIN), with no Vivado and no card time.
 
-Status (branch offload-p2, on autodecode's branch): items 1-3 are built. On a tiny LFM2 MoE
+Status (branch offload-p2, on autodecode's branch): items 1-4 are built. On a tiny LFM2 MoE
 with 2 slots per layer, the logits are bit-identical to an all-resident run, in prefill and in
-the card's generate loop. The LFM2.5-8B-A1B run against HF (item 4) is next.
+the card's generate loop. The MoE block also runs on the RTL (autodecode's WAITW, the Verilator
+board model through the host driver) with every expert resident, bit-identical to the ISA
+simulator. A live daemon is not tested there: the board model runs a fixed script, with no host
+during a run.
+
+LFM2.5-8B-A1B on the ISA simulator with the card's 4 GiB (fp4 experts, int8 head, the card's
+generate loop), against HF's bf16 greedy tokens (`tools/offload/moe_card.py`):
+
+| run | slots per layer | tokens | against HF | hit rate | misses per decode token |
+|---|---|---|---|---|---|
+| fp32 embedding table | 20 of 32 | 16 | token-exact | 86% | 9.9 |
+| gathered embedding (section 5.9) | 28 of 32 | 144 | the first 19 | 97.8% | 1.54 (2.11 in the second half) |
+
+- The first different pick (token 19) is still to be weighed against HF's logits. HF's runs
+  now keep their top 8 per step.
+- The misses are out of 88 expert uses per token.
+- On the card's own routes, cachesim's per-layer LRU at 28 slots gives 98.0% and 1.7 misses per
+  token (the card: 97.8%, 1.9 over all 163 tokens). The card warms its slots with experts 0..27,
+  cachesim from a profile.
+- By section 4's model, those routes run at 12.7 tok/s at Gen1 (13.4 at Gen2). The resident
+  bound is 13.7.
+
+Qwen3.5-35B-A3B (item 5) has:
+- the softmax rule and the shared expert (`MoESpec.rule`, `shared`);
+- 16 key heads for 32 value heads (main 4ab54a4);
+- 32 slots per layer with the gathered embedding.
+
+Its generate program fits IMEM with the DeltaNet pair loop (docs/qwen35.md, group-major
+DeltaNet blocks): 2,282 instructions in bucket 1. Its run against HF is next.
 
 1. **The MoE block in `ol` kernels:**
    - the router MM;
