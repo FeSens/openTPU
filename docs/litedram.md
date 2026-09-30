@@ -954,18 +954,19 @@ their simulation models and tests (`git log` on `ld-default` has them).
 `otpu_native_sys` holds:
 - `otpu_board` (`otpu_native_dram` on the native masters);
 - XDMA's DMA master, split by address bit 31 (`otpu_axi_split2`);
-- one `otpu_mem_ch` per channel, in front of that channel's controller port, in the
-  controller's clock. LiteDRAM's ECC port takes whole beats only, so `otpu_mem_ch`
-  read-modify-writes partial beats.
+- one `otpu_mem_ch` per channel, in front of that channel's two controller ports (the even
+  and the odd banks', section 11), in the controller's clock. LiteDRAM's ECC port takes whole
+  beats only, so `otpu_mem_ch` read-modify-writes partial beats.
 
 **`bd_native.tcl`**: XDMA, the XADC and the control SmartConnect (the MIG build's `bd.tcl` had
 the same). XDMA's `M_AXI` is exported as `M_AXI_DMA`; the CSR window is at BAR0 0x10000. The
 50 MHz clock sits on one BUFG shared with the core's MMCMs.
 
 **The LiteDRAM core** is `gen_core.py --phy wl` (the arguments are in `core.json`, which
-`check_core.sh` regenerates with). It has the same ports as the A7DDRPHY core it replaced; its CSRs
-add each channel's write clock MMCM (`wclk` / `wclk1` at 0x7000 / 0x7800 of the window, for
-ddrcal's DRP and reset access). Its XDC carries two sets of constraints:
+`check_core.sh` regenerates with). It has the same ports as the A7DDRPHY core it replaced, plus
+since ld-2port a second user port per channel (section 11). Its CSRs add each channel's write
+clock MMCM (`wclk` / `wclk1` at 0x7000 / 0x7800 of the window, for ddrcal's DRP and reset
+access). Its XDC carries two sets of constraints:
 - 1.0 ns of clock uncertainty on the sys <-> sysc crossings;
 - the serializer resets' max delay: 3.0 ns (1.2 at d2c1ede, 2.0 at 8cbfd3b; at 2.0 ldtest3e and
   the first fused image, 14875bf, missed it by placement alone, 1.88 ns of route at 0 LUT
@@ -1290,7 +1291,8 @@ card's channels behind the adapter (`otpu_top` AXI = 2):
   the idle BIST port, and `LiteDRAMNativePortECC`. It has the core's settings: MT41K256M8 with
   tRFC 160 ns, 1:4, the default `ControllerSettings`, and WL7DDRPHY's latencies (read 8,
   write 1). The PHY is a DFI stub. It is DDR3-1066 only: the board's DDR3 never runs faster,
-  the rate its HR banks are specified for.
+  the rate its HR banks are specified for. Since ld-2port it has the core's two user ports per
+  channel (below); the checks in this section's first table were made with one.
 - **The memory:** `sim/verilator/otpu_ldc_mem.sv` puts each channel behind the board's bridge
   (`otpu_mem_ch`, with its clock crossing and read-modify-write) in the controller clock. The
   data is kept in the model and moves in the controller's command order.
@@ -1404,12 +1406,167 @@ at 100 to 250 MHz. Decode at 133.33 MHz, the fp4 trio:
     back out of order hold the adapter's read window longer (**estimate**).
   - **32 is the best measured.**
 
+### Two user ports per channel: the build (ld-2port, 2026-09-30)
+
+The split is now in the board's RTL. It takes a core regeneration plus bridge RTL; nothing else
+in the accelerator changes.
+
+- **The core (a regeneration: `gen_core.py`, `check_core.sh --update`).** Each channel gets a
+  second native user port, `c0b_*` / `c1b_*`. It has no `ready` pin: `c0_ready` / `c1_ready` are
+  the channels'.
+  - **The crossbar:** each bank's arbiter now has three masters: the even banks' port, the odd
+    banks' port, and the BIST, which moves from master 1 to master 2.
+  - **The ECC (`tools/litedram/ecc_ports.py`):** each port keeps LiteDRAM's encoder and its
+    register, but one decoder serves both ports' reads. The crossbar gives every master the
+    controller's read bus, and only the valids are per master. A register per port follows the
+    decoder, as in `LiteDRAMNativePortECC`. So the encoding and the latencies are the stock
+    frontend's, and one CSR block per channel (`ecc`, `ecc1`) counts both ports' errors.
+    - `tools/litedram/ecc_ports_check.py` runs it against two stock frontends in migen's
+      simulator, cycle by cycle, on the same random traffic. The read words carry 0, 1 or 2
+      flipped bits: SEC must correct, DED must be counted, and the counters must match. It
+      passes 600 cycles (303 read beats, 479 words corrected, 477 uncorrectable), and it fails
+      when the ports get the undecoded bus.
+    - `gen_ldc.py` uses the same module, so the co-simulation has it too. Qwen3's decode there is
+      the same to the cycle as with two stock frontends (3,693,026).
+  - **The CSR map:** main's, byte for byte (`csr.csv` differs only in its date).
+  - **Unchanged:** the XDC, the calibration CPU's firmware ROM (`otpu_litedram_mem.init`) and
+    `sdram_init.py` are byte for byte the same.
+  - `check_core.sh` reproduces main's core before the change and this one after it.
+- **The bridge (RTL only: `otpu_mem_ch`, `otpu_afifo`; the wiring in `otpu_native_sys` and
+  `otpu_fpga_top_ld`).**
+  - **The split:** each command goes to the port of its beat's bit 7.
+  - **Per port:** an output command queue of 32 behind a register, a write-data FIFO of 32 and a
+    tag FIFO. A port whose bank waits holds back only its own commands.
+  - **In-order return:** each read takes the next slot of its master's read-data FIFO when it
+    issues; the read credits keep that slot free. Its data is written into the slot when its port
+    returns it, and the FIFO (`otpu_afifo` OOO) passes the slots in order. It passes a slot the
+    cycle after the slot is written, using the slots' flags alone, so the returning beat does not
+    reach the credit counts in its own cycle.
+  - **Unchanged:** the read-modify-write, the holds and `n_wdone`. They work per beat, and a beat
+    is always on the same port.
+  - **One read bus.** The core's two ports of a channel carry the same read data every cycle:
+    one decoder feeds both ports' registers, and each register loads every cycle because
+    `rdata_ready` is tied high. So the bridge reads port 0's data whichever port returns the beat,
+    and Vivado prunes port 1's registers. Simulation checks this contract: `otpu_mem_ch` errors if
+    port 1's data ever differs, and `otpu_ldc_mem` fails if the generated controller's two buses
+    differ. The read-modify-write merge selects on `rm_busy`, a flip-flop, not on the returning
+    beat's tag.
+  - **The XDMA side's command and write-data FIFOs have a registered `wready`** (`otpu_afifo`
+    RWR), so XDMA's write enables start from flip-flops rather than from the hold's synchronizer.
+    The flag is the room left after this cycle's write, which is at most a cycle more
+    conservative.
+  - **Constraints:** `otpu_mem_ch.tcl`'s CDC waivers name the per-port endpoints
+    (`g_port[*].u_oq`, `oc`, `oc_v`, the FIFOs' write pointers) and the new counters. The max
+    delays are unchanged.
+- **Simulation:**
+  - `otpu_ldn_model` is two ports. It checks that each beat is on its bit-7 port and that at most
+    one read beat per cycle comes back across the ports.
+  - `gen_ldc.py` defaults to `--ports 2`, so the co-simulation has the new core's controller.
+  - `tb_ldc_replay` drives the first port and leaves the second idle, as the one-port core did.
+- **Checks in the RTL, in simulation:**
+  - read data from both ports in one cycle;
+  - read data without a tag;
+  - a slot written twice or overrun;
+  - no room for the merged write;
+  - a full tag FIFO;
+  - a hold that ends with a command of its master still queued.
+- **The check on the board: `n_err`.** Read data from both ports in one cycle, or read data
+  without a tag, sets a sticky bit in the controller's clock. It crosses into the core's clock
+  and shows as STATUS bit 4 (AXI_ERR), which the host reports as a memory-path error. Only the
+  controller's reset clears it. `memch_test`'s `doublebeat` scenario checks it: the model
+  controller returns one beat on both ports.
+- **A write is visible to both masters once counted.** XDMA's B and the accelerator's `n_wdone`
+  count writes the controller has taken. A later read of the address goes to the write's port
+  (its bit 7), and each port passes its commands in order, so the read follows the write in its
+  bank's queue. `memch_test`'s `pubstall` scenario checks it: mostly shared operations, one
+  master reading a beat as soon as the other's write is counted, while the controller stalls and
+  the two ports' queues run apart.
+- **`memch_test` mutations:** fourteen new ones (32 in all), all caught.
+  - the second port's writes not counted;
+  - reads without credits;
+  - a slot freed on return;
+  - every command on port 0;
+  - the split on bit 8;
+  - every read in slot 0;
+  - every tag from port 0's FIFO;
+  - a command bypassing a queue that holds older ones;
+  - write data pushed into the other port's FIFO;
+  - each port given the other port's write-data head;
+  - the in-order release passing a slot before it is written (`otpu_afifo`);
+  - XDMA's B sent once its beats are in the bridge, before the controller takes them;
+  - the XDMA FIFOs' registered `wready` not counting this cycle's write;
+  - `n_err` not set by a double beat.
+
+**Decode, co-simulated** (the RTL above behind the two-port controller; fp4 layers, int8 head,
+pos 544, 133.33 MHz, DDR3-1066; GB/s: bytes read and written per token over its time):
+
+| | one port | two ports | change | tokens/s | DRAM GB/s (% of peak) |
+|---|---|---|---|---|---|
+| Qwen3 | 4.218 M | 3.693 M | -12.5% | 31.6 -> 36.1 | 14.06 -> 16.06 (82.4 -> 94.1%) |
+| LFM2 | 1.541 M | 1.415 M | -8.2% | 86.5 -> 94.2 | 14.20 -> 15.46 (83.2 -> 90.6%) |
+| Qwen3.5 | 5.360 M | 5.001 M | -6.7% | 24.9 -> 26.7 | 14.32 -> 15.35 (83.9 -> 89.9%) |
+
+The bytes per token are the same. The RTL does a little better than the behavioural split above
+and matches its queue-of-32 point.
+
+**Area and timing of the bridge** (per channel; Vivado 2026.1, `tools/memch_ooc.tcl`, routed out
+of context at 7.5 / 7.5 / 8.0 ns for the core, the controller and XDMA):
+
+| | LUTs (as RAM) | FFs | WNS uclk | WNS clk | clk -> uclk max delay slack |
+|---|---|---|---|---|---|
+| main (one port) | 4,256 (2,256) | 1,758 | +0.111 | +1.148 | +3.29 |
+| ld-2port | 5,607 (2,680) | 1,929 | +0.081 | +0.594 | +1.64 |
+
+- **The worst uclk path is the same in both:** the write-data FIFO's read pointer through its
+  LUT RAM to `c_wdata_data`. That port carries the OOC's 30% output delay. In the build it goes
+  into the ECC frontend's register.
+- **Both builds are CDC-clean:** only Info rows after the waivers, the bus skews met, and every
+  XDC query matched.
+- **The whole board:** the bridges add 2,702 LUTs and 342 FFs for both channels.
+
+**Area and timing of the core with the bridges** (Vivado 2026.1, `ldimpl`: the core and both
+bridges placed and routed together on the board's pins, with random masters, using the production
+build's strategy; 7.5 ns for the core and the controller, 8 ns for XDMA). WNS is within each
+clock: the wrapper's unreplicated LiteX reset and the bridges' async crossings are left out
+(`memch_ooc.tcl` times the crossings). The wrapper drives the core's CSR bus and stretches the
+placement, so the numbers compare the runs rather than predict the board's.
+
+| | main (one port) | ld-2port, first cut | ld-2port |
+|---|---|---|---|
+| core LUTs / FFs | 19,808 / 15,645 | 21,143 / 17,895 | 20,533 / 16,863 |
+| bridges' LUTs (as RAM) / FFs | 9,819 (4,488) / 3,567 | 12,228 (5,332) / 3,923 | 12,154 (5,332) / 3,922 |
+| slices | 9,898 | 11,194 | 11,018 |
+| sys WNS, into or out of the bridges | -0.785 | -2.079 | -1.389 |
+| sys WNS, all (the CSR bus in every run) | -2.500 | -2.479 | -3.274 |
+| XDMA WNS | -0.140 | -0.951 | +0.125 |
+| core clock WNS (the wrapper's output fold) | +1.322 | +1.036 | +1.675 |
+
+- **The core's block RAMs are unchanged:** 4 RAMB36 and 3 RAMB18, the calibration CPU's.
+- **Two stock frontends per channel cost more.** With them, the core grew by 2,467 LUTs, in a run
+  with the default strategy.
+- **The first cut's new paths, and their fixes:**
+  - The read return reached the credit counts in its own cycle: the core's read valid -> the
+    port's tag -> the FIFO's release -> `x_pend`, 6 levels. The release now waits a cycle.
+  - XDMA's write enables followed the hold's synchronizer: `x_hs2` -> `wready` -> `u_xd`'s write
+    enables, 4 levels. `wready` is now a flip-flop.
+  - A 512-bit port mux sat on the read valid: the valid -> the mux -> the RMW merge -> `u_of`.
+    The bridge now reads the one read bus, and Vivado prunes port 1's registers in the core
+    (-1,033 FFs).
+  - The arbiter's `go` needed the chosen head's port: `u_ad`'s rvalid -> the pick -> the heads'
+    mux (fanout 680) -> `go` -> `a_pend`, 11 levels. Each master's room is now found from its own
+    head, alongside the pick.
+- **The worst bridge path left** is the write data: `u_ad`'s head -> the heads' mux -> the RMW
+  merge -> port 1's write-data FIFO, 3 levels, mostly route (a FIFO per port). The one-port
+  core's worst, at -0.785, was the hold -> its one FIFO.
+- **Decode moves by under 0.3%:** Qwen3 3,693,026 -> 3,690,662 cycles/token, Qwen3.5
+  5,001,431 -> 4,990,251 (co-simulated, fp4, 133.33 MHz, DDR3-1066).
+
 ### What would gain, ranked
 
 Expected gains are for decode at DDR3-1066 and 133.33 MHz, the board's only rate.
 
 1. **Two native ports per channel, split on beat bit 7: +6 to +13% decode tokens/s, measured in
-   the co-simulation above.** Risk: medium.
+   the co-simulation above.** Risk: medium. Built as ld-2port (above): +7 to +14% on the RTL.
    - **How it works.** Alternate banks go to different crossbar ports, so one port's lock no
      longer holds the other's commands.
    - **Core:** `gen_core.py` adds a second user port per channel, with its own ECC frontend.
@@ -1459,7 +1616,67 @@ Mcycles/token, tokens/s (DRAM GB/s, % of the 17.07 GB/s peak):
   and decode runs at 70-73% of peak.
 - **Decode's lever is the controller's efficiency, not the clock.** At 133.33 MHz the port
   matches the two channels.
-- **With two ports the knee may move.** The grid is to be rerun on the two-port design.
+- **With two ports the knee stays at 133.33 MHz.** Qwen3.5 on the two-port design (ld-2port):
+  5.001 Mcycles/token at 133.33 MHz, 26.7 tokens/s (15.35 GB/s, 89.9%); 5.576 at 150 MHz, 26.9
+  (15.48, 90.7%). That is +0.9%, against +0.8% with one port.
 
 The old bank model's grid (`docs/board.md`, "Faster DDR3") predicted 35.4 / 36.3 tokens/s for
 Qwen3 at 150 / 200 MHz. It had no crossbar lock.
+
+## 12. The core's timing at 133.33 MHz (ld-fmax, 2026-09-30)
+
+The 812bb01 full build (main at 133.33 MHz: WNS +0.074) had three LiteDRAM sys-domain path
+families between +0.077 and +0.127 ns. All three are the die's scale, not logic: the two channels
+sit at its two ends (by their DDR3 banks), and one register drove loads at both.
+
+- **The CSR bus** (`interface1_dat_w` -> `phaseinjector*_storage`, 0 levels, 97% route): the CSR
+  bridge's registers drove about 140 loads each over 200 rows.
+  - Now a register stage per group of banks (`tools/litedram/csr_pipe.py`): channel 0's banks,
+    channel 1's, and the rest (`ctrl`, `identifier_mem`, `selfcal`). Each copy is placed by its
+    banks, and each group's read data comes back through a register.
+  - LiteX's registered Wishbone2CSR acks two cycles later: an access takes 5 sys cycles instead
+    of 3. The host (AXI-Lite) and the calibration CPU both handshake, so nothing depends on it.
+  - The CSR map, `csr.csv`, `sdram_init.py`, the XDC and the firmware ROM are unchanged.
+- **The sys reset** (`FDPE_1` -> `dfi_p*_address` R, `selfcal_mem_dat_storage` R; 3,794 loads,
+  6.8 ns of route): `FDPE_1` is the reset synchronizer's ASYNC_REG flip-flop, which Vivado does
+  not replicate. `WLCRG(rst_reg=True)` (`ld_test.py`; the test images keep the stock reset)
+  puts a plain register after it (initially 1, `max_fanout` 256). The whole sys reset releases
+  a cycle later: the controllers, the PHYs' serializer resets (`wlrst`, from `sys_rst`) and the
+  write-clock MMCMs' resets keep their order.
+- **The ECC counters** (the PHY's read bitslip -> the decoder -> `ded_errors_status` CE, 11
+  levels): `ecc_ports.py` counts from registered error flags, so the counters are
+  `LiteDRAMNativePortECC`'s a cycle late. A beat's errors are dropped if a clear comes with it,
+  as the stock counters drop them. The read data path, and so the two ports' identical read
+  buses, are unchanged. The four ECC CSRs per channel stay.
+- **Checks:**
+  - `csr_pipe_check.py` (migen): LiteX's bridge and bus against the pipelined ones, 3,000 random
+    accesses (reads and writes to every word and to unmapped offsets). The banks hold a 32-bit
+    storage, a 64-bit `atomic_write` storage, a 40-bit status, a CSR's write / read strobes (as
+    the PHYs' delay-line taps) and pulse fields. Every access returns the same data, and leaves
+    the same storages; every strobe comes once, in order, with the same data. It fails with one
+    wait cycle fewer, and without the read-data register.
+  - `ecc_ports_check.py` (600 cycles, now comparing a cycle later): PASS at seeds 1, 2 and 3.
+  - `selfcal_sim.py` on the regenerated core, its SoC on the same pipelined bridge and bus
+    (stride 16, `--hold-test`): 643,724 CSR writes, identical to `ddrcal`'s; `c0_ready` /
+    `c1_ready` rise; both channels' results equal `ddrcal`'s; the hold test passes.
+  - The co-simulation (`gen_ldc.py` regenerated: `sim/verilator/otpu_ldc_ch.v`):
+    `test_rtl.py -k ldc` 5 passed; `perf_qwen --wformat fp4 --ddr 1066 --mhz 133.33 --ldc`
+    1,478,549 cycles before and after on d3d5f0f, and 1,478,546 on ld-2port's final eb5beed (its
+    `otpu_ldc_mem` checks both ports' read buses equal) and with this on it: the whole profile
+    identical both times.
+  - `check_core.sh` reproduces the committed core.
+- **ld-memch's ldimpl harness** (the core and both bridges on the board's pins, the board
+  build's strategies; Vivado 2026.1; eb5beed -> this). The harness stretches these families far
+  past the full build (its sys WNS is its own XDMA queues', -5.68 / -5.91), so compare within the
+  clock: for each sys endpoint below +0.5 ns, the family of its worst path.
+  - The sys reset: 2,295 endpoints below 0, worst -4.284 (`FDPE_1`, 0 levels) -> 1,085, worst
+    -3.260 (1 level).
+  - The CSR bus: 716 below 0, worst -2.479 -> 420, worst -2.534. Into the phase injectors'
+    storages (the full build's family), worst -1.276 -> -0.148.
+  - The ECC counters: 152 endpoints below +0.5, worst -1.845 (10 levels) -> none.
+  - Unchanged: the write clocks, +0.43..+0.56 -> +0.38..+0.53. u_ld: 23,825 -> 23,917 LUTs,
+    17,895 -> 18,139 flip-flops.
+  - Left in the harness: `max_fanout` makes synthesis's copies of the reset register, and they
+    are not placed by their loads. `crg_rst1_reg_rep__13` sits at Y173 and drives 181 loads at
+    Y254-302 (6.8 ns of route to them), as does the CSR bus's write strobe for the PHY's bitslips
+    (`wdly_dq_bitslip_rst`, 213 loads). The next full build measures both.

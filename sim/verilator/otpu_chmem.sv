@@ -1,8 +1,8 @@
 // Simulation model of the board memory behind the two channels' native ports n_*: per channel the
-// board's bridge, otpu_mem_ch, in front of a LiteDRAM native-port model (otpu_ldn_model), both
-// channels in one controller clock (LiteDRAM's sys). otpu_native_mem's parameters and ports, so
-// the board model (tb_board) takes either; this one runs the RTL between the accelerator and the
-// controller as well.
+// board's bridge, otpu_mem_ch, in front of a model of LiteDRAM's two native ports (otpu_ldn_model),
+// both channels in one controller clock (LiteDRAM's sys). otpu_native_mem's parameters and ports,
+// so the board model (tb_board) takes either; this one runs the RTL between the accelerator and
+// the controller as well.
 //
 // Clocks: the core clock is the caller's (tb_board: a period of 10 time units). A controller
 // clock (133.33 MHz against a 100 MHz core: DDR3-1066) has half periods of 4, 4, 4, 3 units in
@@ -33,6 +33,7 @@ module otpu_chmem #(
   output logic [1:0]            n_rvalid,
   output logic [1:0][511:0]     n_rdata,
   output logic [1:0][15:0]      n_wdone,
+  output logic [1:0]            n_err,
   input  logic                  dump
 );
   localparam int BEATS = WORDS / 32;     // per channel: WORDS / 2 words, 16 a beat
@@ -53,16 +54,16 @@ module otpu_chmem #(
 
   for (genvar c = 0; c < 2; c++) begin : g_ch
     logic         urst = 1'b1, ur1 = 1'b1;
-    logic         cv, cr, cwe, wv, wr, rv;
-    logic [24:0]  ca;
-    logic [511:0] wd, rd;
-    logic [63:0]  we;
+    logic [1:0]   cv, cr, cwe, wv, wr, rv;          // the channel's two ports
+    logic [1:0][24:0]  ca;
+    logic [1:0][511:0] wd, rd;
+    logic [1:0][63:0]  we;
     always @(posedge uclk) {urst, ur1} <= {ur1, rst};
     otpu_mem_ch #(.XIDW(4)) u_ch (
       .clk, .rst,
       .n_cvalid(n_cvalid[c]), .n_cready(n_cready[c]), .n_cwe(n_cwe[c]), .n_caddr(n_caddr[c]),
       .n_wvalid(n_wvalid[c]), .n_wready(n_wready[c]), .n_wdata(n_wdata[c]), .n_wmask(n_wmask[c]),
-      .n_rvalid(n_rvalid[c]), .n_rdata(n_rdata[c]), .n_wdone(n_wdone[c]),
+      .n_rvalid(n_rvalid[c]), .n_rdata(n_rdata[c]), .n_wdone(n_wdone[c]), .n_err(n_err[c]),
       .xclk, .xrst,
       .x_awvalid(1'b0), .x_awready(), .x_awid(4'h0), .x_awaddr(32'h0), .x_awlen(8'h0),
       .x_wvalid(1'b0), .x_wready(), .x_wdata(128'h0), .x_wstrb(16'h0), .x_wlast(1'b0),

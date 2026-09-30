@@ -756,7 +756,8 @@ class Board:
         if st & ST_ERROR:
             raise RuntimeError("the program stopped on an illegal instruction")
         if st & ST_AXI_ERR:
-            raise RuntimeError("a DRAM access got an AXI error response")
+            raise RuntimeError("the memory path reported an error (STATUS AXI_ERR: a DDR3 controller "
+                               "broke its port contract; on MIG bitstreams, an AXI error response)")
         return stats
 
     def _trace_out(self, count: int, drop: int, depth: int, keep_first: bool,

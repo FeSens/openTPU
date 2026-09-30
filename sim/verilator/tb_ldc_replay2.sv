@@ -3,8 +3,8 @@
 // row per port in turn) and each queue drains into its port on its own (a command to one port
 // never waits behind the other's). Same address, same port: no hazard crosses ports. Prints the
 // cycles from the first command to the last beat moved, and the largest read skew between the
-// ports (the read data an adapter would have to hold to return it in command order). Needs the
-// controller with two user ports: tools/litedram/gen_ldc.py --ports 2 OUT.v.
+// ports (the read data an adapter would have to hold to return it in command order), through
+// otpu_ldc_ch.v's two user ports (otpu_mem_ch's split, in open loop).
 module tb_ldc_replay2;
   logic clk = 1'b0, rst = 1'b1;
   always #5 clk = ~clk;

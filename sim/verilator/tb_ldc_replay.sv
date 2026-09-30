@@ -1,20 +1,24 @@
 // Replays one channel's native command trace (otpu_native_mem's +nat_trace lines: cycle, channel,
 // we, beat; +trace=FILE, +ch=C) through one channel's LiteDRAM controller (otpu_ldc_ch.v, from
-// tools/litedram/gen_ldc.py) as fast as it takes them, or (+paced=1) each no earlier than its
-// traced cycle scaled by +scale=N/1000. Write data is always offered, read data always taken.
-// Prints the controller cycles from the first command to the last beat moved, and the bank / row
-// changes of the trace. Built with rtlsim.build("tb_ldc_replay", [otpu_ldc_ch.v, this file]).
+// tools/litedram/gen_ldc.py) on its first user port, the second idle (the one-port core's
+// behaviour), as fast as it takes them, or (+paced=1) each no earlier than its traced cycle
+// scaled by +scale=N/1000. Write data is always offered, read data always taken. Prints the
+// controller cycles from the first command to the last beat moved, and the bank / row changes of
+// the trace. Built with rtlsim.build("tb_ldc_replay", [otpu_ldc_ch.v, this file]).
 module tb_ldc_replay;
   logic clk = 1'b0, rst = 1'b1;
   always #5 clk = ~clk;
 
   logic cv, cr, cwe, wv, wr, rv;
   logic [24:0] ca;
-  otpu_ldc_ch u_dut (
+  otpu_ldc_ch u_dut (                  // the trace on the first user port, the second idle
     .sys_clk(clk), .sys_rst(rst),
-    .cmd_valid(cv), .cmd_ready(cr), .cmd_we(cwe), .cmd_addr(ca),
-    .wdata_valid(wv), .wdata_ready(wr), .wdata_data('0), .wdata_we('1),
-    .rdata_valid(rv), .rdata_ready(1'b1), .rdata_data());
+    .p0_cmd_valid(cv), .p0_cmd_ready(cr), .p0_cmd_we(cwe), .p0_cmd_addr(ca),
+    .p0_wdata_valid(wv), .p0_wdata_ready(wr), .p0_wdata_data('0), .p0_wdata_we('1),
+    .p0_rdata_valid(rv), .p0_rdata_ready(1'b1), .p0_rdata_data(),
+    .p1_cmd_valid(1'b0), .p1_cmd_ready(), .p1_cmd_we(1'b0), .p1_cmd_addr('0),
+    .p1_wdata_valid(1'b0), .p1_wdata_ready(), .p1_wdata_data('0), .p1_wdata_we('1),
+    .p1_rdata_valid(), .p1_rdata_ready(1'b1), .p1_rdata_data());
 
   longint tcyc [$];
   logic [24:0] taddr [$];

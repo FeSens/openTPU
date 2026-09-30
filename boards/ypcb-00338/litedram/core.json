@@ -16,7 +16,7 @@
   "phy": "wl",
   "groups0": "0,0,0,0,0,0,0,0,0",
   "groups1": "0,0,0,0,0,0,0,0,0",
-  "generator_commit": "litedram-int 8cbfd3b, wlrst max_delay 3.0 ns (ld-top); the calibration CPU, ld-cpu 4461c052",
+  "generator_commit": "litedram-int 8cbfd3b, wlrst max_delay 3.0 ns (ld-top); the calibration CPU, ld-cpu 4461c052; ld-fmax: the CSR bus a register stage per bank group (csr_pipe.py), sys's reset through a register after its synchronizer (WLCRG rst_reg), the ECC counters from registered flags",
   "selfcal": true,
   "fw_id": "4461c052",
   "rd_reg": false
@@ -36,9 +36,9 @@
    "commit": "7b28f53b1f4c1732b4b503a844a4d5a0cc56416b"
   }
  },
- "generated": "2026-09-29",
+ "generated": "2026-09-30",
  "sha256": {
-  "otpu_litedram.v": "0f85719e12c18ebb2120c8fe4bb0169d0f7feb584b423d404e1bcbe4b7bdeb72",
+  "otpu_litedram.v": "711ec40a35e8591a4ff6a6ac53cfe21b67963cb1dee670641ba8e82e174aca61",
   "otpu_litedram.xdc": "91991c2b6b41b9d98579d8b9515b634cdb9028a51dfa6f2e6ab608772a1b122e",
   "otpu_litedram_mem.init": "3539495b12fca557dbbe9fb3252bbb64acfe31c06f69ef5a810ac76b70da5cc5"
  },
