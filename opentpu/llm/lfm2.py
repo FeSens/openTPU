@@ -150,7 +150,7 @@ class Spec:
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
-              lookup: bool = False, experts: int | None = None) -> "Image":
+              lookup: bool | str = False, experts: int | None = None) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts)
 
 
@@ -337,7 +337,7 @@ class Image:
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
+                 wformat: str = "int8", head_format: str | None = None, lookup: bool | str = False,
                  experts: int | None = None):
         spec.check(cfg)
         if batch != 1:
@@ -403,7 +403,8 @@ class Image:
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
-        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
+        self.lookup = (_lookup_alloc(b, spec, cap, mode=lookup, cfg=cfg,
+                                     head_format=self.head_format) if lookup else {})
         self.offload = None
         if mo is not None:          # the dense MLPs, then path (a)'s words and expert slots
             self.dense0 = (b.next + 4095) // 4096 * 4096

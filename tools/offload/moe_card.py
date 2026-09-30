@@ -50,7 +50,7 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
 
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
-         host_loop: bool = False) -> dict:
+         host_loop: bool = False, embed: str = "gather", trace: str | None = None) -> dict:
     from opentpu.isasim import board_config
     from opentpu.llm import load_spec
     from opentpu.llm.qwen3 import Engine, LazyWeights
@@ -58,12 +58,21 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     W = LazyWeights(model)
     if not experts:
         experts = fit_experts(spec, board_config(), cap, wformat="fp4", head_format="int8",
-                              lookup=True)
+                              lookup="gather" if embed == "gather" else True)
     t = time.time()
     eng = Engine(spec, W, cap=cap, cfg=board_config(), rows=1, wformat="fp4",
-                 head_format="int8", resident=True, experts=experts, pool_file=pool)
+                 head_format="int8", resident=True, experts=experts, pool_file=pool,
+                 embed=embed)
     load_s = time.time() - t
     srv = eng.server
+    srv.history, per_req = [], []               # each request's ids and misses
+    serve = srv.serve
+
+    def counted(ids_):
+        m0 = srv.misses
+        serve(ids_)
+        per_req.append(srv.misses - m0)
+    srv.serve = counted
     ids = ref["ids"]
     t = time.time()
     lg = eng.prefill(ids)
@@ -79,6 +88,18 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         got = [t0] + eng.generate_card(t0, n - 1, stop_ids=[])
     gen_s = time.time() - t
     L = eng.image.offload
+    J, E = L.layers, L.E
+    T = len(per_req) // J                       # whole tokens (the last request may be unread)
+    mpt = np.array(per_req[:T * J]).reshape(T, J).sum(1)       # misses per token
+    dec = mpt[len(ids):]
+    if trace:                                   # the card's routes, as router_trace.py's
+        req = np.array(srv.history[:T * J]).reshape(T, J, -1)
+        first = spec.moe.first
+        z = {f"L{first + j}_idx": (req[:, j] - j * E).astype(np.int16) for j in range(J)}
+        z.update({f"L{first + j}_ok": np.float64(1.0) for j in range(J)})
+        meta = dict(model=model, moe_layers=[first + j for j in range(J)], experts=E,
+                    k=spec.moe.k, source="moe_card: the card's routes")
+        np.savez(trace, meta=json.dumps(meta), **z)
     return dict(tokens=got, match=got == ref["tokens"][:len(got)],
                 first_diff=next((i for i, (a, b) in enumerate(zip(got, ref["tokens"])) if a != b),
                                 None),
@@ -86,8 +107,12 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 image_mib=round(eng.image.nbytes / 2**20), slot_mb=round(L.slot_bytes / 1e6, 2),
                 requests=srv.seq, hits=srv.hits, misses=srv.misses,
                 misses_per_token_decode=round((srv.misses - miss0) / max(1, n - 1), 2),
+                expert_uses_per_token=J * spec.moe.k,
+                misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
+                if len(dec) else None,
+                misses_per_token=mpt.tolist(),
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
-                loop="host" if host_loop else "card")
+                loop="host" if host_loop else "card", embed=embed)
 
 
 def main():
@@ -102,6 +127,10 @@ def main():
     ap.add_argument("--pool", help="the expert pool file (each expert packed once, reused)")
     ap.add_argument("--max-memory", help="HF: host RAM for weights, the rest to disk (e.g. 10GiB)")
     ap.add_argument("--out", help="the card's result as JSON")
+    ap.add_argument("--embed", choices=["gather", "fp32"], default="gather",
+                    help="the resident decode's embedding row: gathered from the int8 head / "
+                         "table (default), or an fp32 table (1 GiB for LFM2.5-8B-A1B)")
+    ap.add_argument("--trace", help="save the card's routes as a router trace (cachesim.py)")
     ap.add_argument("--host-loop", action="store_true",
                     help="decode with the resident step programs and the argmax on the host "
                          "(a model whose generate program does not fit IMEM yet)")
@@ -112,7 +141,7 @@ def main():
         print(json.dumps(r))
         return
     ref = json.loads(Path(a.check).read_text())
-    r = card(a.model, ref, a.n, a.experts, a.cap, a.pool, a.host_loop)
+    r = card(a.model, ref, a.n, a.experts, a.cap, a.pool, a.host_loop, a.embed, a.trace)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

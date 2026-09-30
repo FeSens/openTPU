@@ -34,6 +34,7 @@ from .. import language as ol
 from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, arg_words
 from . import generate as G
 from ..isasim import Config, Machine, design_config
+from ..kernels import gather as GA
 from ..kernels.attention import Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid
@@ -94,7 +95,7 @@ class Spec:
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
-              lookup: bool = False) -> "Image":
+              lookup: bool | str = False) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup)
 
 
@@ -166,24 +167,54 @@ def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 # =============================================================================== lookup tables
-def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None) -> dict:
+def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None, mode=True,
+                  cfg: Config | None = None, head_format: str = "int8") -> dict:
     """DRAM for the device-side inputs of a run-time position (RunPos): every token's embedding
     row (fp32, flushed as the host writes it), the RoPE cos / sin rows of every position, and
-    the attention mask table (attention.Bucket: cap entries +inf, then a block of -inf)."""
+    the attention mask table (attention.Bucket: cap entries +inf, then a block of -inf).
+    mode "gather" (Image(lookup="gather")): no fp32 embedding table; the row is gathered on the
+    device (kernels/gather.py) from the tied LM head (one slice), else from an int8 table of the
+    embedding, with the one-hot operand here."""
     block = block or ATTN_BLOCK
     half = len(rope_tables(spec, 0)[0])
-    return {"embed": b.alloc(4 * spec.vocab * spec.hidden), "cos_t": b.alloc(4 * cap * half),
-            "sin_t": b.alloc(4 * cap * half), "zmask": b.alloc(4 * (cap + block)),
-            "half": half, "block": block, "gen": G.alloc(b, spec, cap, block)}
+    lk = {}
+    if mode == "gather":
+        D, M = cfg.D, cfg.MCOLS
+        own = not (spec.tied and cfg.S == 1)
+        fmt = "int8" if own else head_format
+        lk["egather"] = {"fmt": fmt, "D": D, "M": M,
+                         "onehot": b.alloc(4 * M * D * GA.onehot_blocks(D, M, fmt)),
+                         "table": (b.alloc(spec.vocab * Q.row_bytes(spec.hidden, fmt, D)),
+                                   b.alloc(4 * spec.vocab * (spec.hidden // D))) if own else None}
+    else:
+        lk["embed"] = b.alloc(4 * spec.vocab * spec.hidden)
+    lk.update({"cos_t": b.alloc(4 * cap * half), "sin_t": b.alloc(4 * cap * half),
+               "zmask": b.alloc(4 * (cap + block)), "half": half, "block": block,
+               "gen": G.alloc(b, spec, cap, block)})
+    return lk
 
 
 def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
-    e = F.ftz(np.asarray(W["model.embed_tokens.weight"], np.float32))
+    g = lk.get("egather")
+    if g is None:
+        e = F.ftz(np.asarray(W["model.embed_tokens.weight"], np.float32))
+    else:
+        oh = GA.onehot(g["D"], g["M"], g["fmt"])
+        if g["table"] is not None:              # the embedding in int8, as MXU rows
+            e = W["model.embed_tokens.weight"]
+            q, sc = Q.quantize_mxu(np.asarray(e, np.float32), g["fmt"], g["D"])
+            del e
     cs = [rope_tables(spec, p) for p in range(cap)]
     z = np.concatenate([np.full(cap, np.inf, np.float32), np.full(lk["block"], -np.inf,
                                                                   np.float32)])
     for s in range(S):
-        put(s, lk["embed"], e)
+        if g is None:
+            put(s, lk["embed"], e)
+        else:
+            put(s, g["onehot"], oh)
+            if g["table"] is not None:
+                put(s, g["table"][0], q)
+                put(s, g["table"][1], sc)
         put(s, lk["cos_t"], np.stack([c for c, _ in cs]))
         put(s, lk["sin_t"], np.stack([x for _, x in cs]))
         put(s, lk["zmask"], z)
@@ -193,10 +224,25 @@ def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
 def _lookup_desc(lk: dict, spec, cap: int) -> dict:
     if not lk:
         return {}
-    return {"embed": _tdesc(lk["embed"], (spec.vocab, spec.hidden)),
+    g = lk.get("egather")
+    if g is None:
+        emb = {"embed": _tdesc(lk["embed"], (spec.vocab, spec.hidden))}
+    else:
+        D, M, fmt = g["D"], g["M"], g["fmt"]
+        emb = {"egather": SimpleNamespace(
+            fmt=fmt, onehot=_tdesc(g["onehot"], (M, D * GA.onehot_blocks(D, M, fmt))),
+            table=None if g["table"] is None else _qdesc(*g["table"], spec.vocab, spec.hidden,
+                                                         D, fmt))}
+    return {**emb,
             "cos_t": _tdesc(lk["cos_t"], (cap, lk["half"])),
             "sin_t": _tdesc(lk["sin_t"], (cap, lk["half"])), "zmask": lk["zmask"],
             "gen": G.desc(lk["gen"], spec, cap)}
+
+
+def _lookup_mode(image):
+    """The image's lookup argument: False, True (the fp32 embedding table) or "gather"."""
+    lk = getattr(image, "lookup", None)
+    return ("gather" if "egather" in lk else True) if lk else False
 
 
 def has_lookup(spec) -> bool:
@@ -388,7 +434,7 @@ class Image:
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False):
+                 wformat: str = "int8", head_format: str | None = None, lookup: bool | str = False):
         spec.check(cfg)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
@@ -429,7 +475,8 @@ class Image:
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
-        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
+        self.lookup = (_lookup_alloc(b, spec, cap, mode=lookup, cfg=cfg,
+                                     head_format=self.head_format) if lookup else {})
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -721,12 +768,24 @@ def qwen3_step(m, pos: int, block: int = ATTN_BLOCK):
     _lm_head(x, m, spec)
 
 
+def _embed(m, tok):
+    """The embedding row [1, H] of token `tok` (an int or a run-time value) from the image's
+    lookup: its fp32 table, or (lookup="gather") gathered from the tied LM head or the int8
+    table (kernels/gather.py)."""
+    g = getattr(m, "egather", None)
+    if g is None:
+        return ol.load(m.embed[tok:tok + 1, :])
+    oh = ol.quantize(ol.load(g.onehot))
+    e = GA.gather_row(oh, m.head if g.table is None else g.table, tok, g.fmt)
+    del oh
+    return e.reshape(1, m.spec.hidden)
+
+
 def _inputs(m, pos):
     """The token's embedding row and its RoPE rows: from the I/O area (the host writes them),
     or, at a run-time position (RunPos), from the image's tables at the token id and position."""
     if isinstance(pos, RunPos):
-        return (ol.load(m.embed[pos.tok:pos.tok + 1, :]), ol.load(m.cos_t[pos.pos, :]),
-                ol.load(m.sin_t[pos.pos, :]))
+        return (_embed(m, pos.tok), ol.load(m.cos_t[pos.pos, :]), ol.load(m.sin_t[pos.pos, :]))
     return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
 
 
@@ -867,11 +926,11 @@ def _lm_head_rows(x, m, spec, logit_rows):
 
 # =============================================================================== engine
 def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: str = "int8",
-                  head_format: str | None = None, lookup: bool = False,
+                  head_format: str | None = None, lookup: bool | str = False,
                   experts: int | None = None, **kw) -> Config:
     """The design configuration with DRAM sized for this model (power of two MiB)."""
     probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows, wformat,
-                       head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}),
+                       head_format, **({"lookup": lookup} if lookup and has_lookup(spec) else {}),
                        **({"experts": experts} if experts is not None else {}))
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
@@ -903,12 +962,12 @@ _WORKER: tuple | None = None                # (image, block) in the compile work
 
 
 def _worker_init(spec, cfg, cap, batch, rows, block, wformat, head_format,
-                 lookup: bool = False) -> None:
+                 lookup: bool | str = False) -> None:
     """The worker's image: the engine's layout (weight formats, and the resident decode's
     lookup tables: its programs must address the same image)."""
     global _WORKER
     _WORKER = (spec.image(cfg, cap, batch, rows, wformat, head_format,
-                          **({"lookup": True} if lookup else {})), block)
+                          **({"lookup": lookup} if lookup else {})), block)
     _exit_with_parent()
 
 
@@ -1003,6 +1062,11 @@ class Engine:
     (LFM2, Qwen3.5: conv_k - 1) run per-position programs. Bit-identical to the per-position
     programs.
 
+    embed="gather": the embedding row the device's resident decode gathers from the tied
+    LM head (one slice) or an int8 table (kernels/gather.py, Image(lookup="gather")) instead of
+    an fp32 table (vocab x hidden x 4 bytes: 1 GiB for LFM2.5-8B-A1B); the host-written rows
+    are the gather's values.
+
     pipeline: step() compiles the next position's program (it depends on the position only,
     not on the token) while the backend runs the current one. Default: on for every backend
     but "isa" (whose run holds the GIL: nothing to overlap). A precompile is used only for the
@@ -1018,18 +1082,27 @@ class Engine:
                  backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
-                 resident: bool = False, experts: int | None = None, pool_file=None):
+                 resident: bool = False, experts: int | None = None, pool_file=None,
+                 embed: str = "fp32"):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
         if experts is not None:             # a MoE model's expert slots per layer
             wkw["experts"] = experts
         lookup = bool(resident) and batch == 1 and has_lookup(spec)
-        if lookup:
-            wkw["lookup"] = True
+        if embed not in ("fp32", "gather"):
+            raise ValueError(f"embed {embed!r}: fp32 or gather")
+        if lookup:                          # the resident decode's tables
+            wkw["lookup"] = "gather" if embed == "gather" else True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
         self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
+        # embed="gather": the embedding row as the device gathers it (kernels/gather.py): from
+        # the tied LM head on one slice, else from an int8 table; the host writes those values
+        self.embed_fmt = None
+        if embed == "gather":
+            self.embed_fmt = (self.image.head_format if spec.tied and self.cfg.S == 1
+                              else "int8")
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
@@ -1083,8 +1156,19 @@ class Engine:
             self._ahead, mp_context=mp.get_context("spawn"), initializer=_worker_init,
             initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block,
                       self.image.wformat, self.image.head_format,
-                      bool(getattr(self.image, "lookup", None))))
+                      _lookup_mode(self.image)))
         self._ready = self._pool.submit(_worker_ready)
+
+    def _x_rows(self, tokens) -> np.ndarray:
+        """The embedding rows [n, H] the host writes for these tokens: the table's (fp32,
+        flushed), or with embed="gather" the device's gather values (kernels/gather.py
+        dequant_row, bit for bit), so per-position and resident programs agree."""
+        if self.embed_fmt is None:
+            return F.ftz(self.embed[tokens].astype(np.float32))
+        fmt, D = self.embed_fmt, self.cfg.D
+        q, s = Q.quantize_mxu(np.asarray(self.embed[tokens], np.float32), fmt, D)
+        return np.array([GA.dequant_row(q[i], s[i], fmt, D) for i in range(len(tokens))],
+                        np.float32)
 
     def _take(self, key, fn, *args):
         """fn(*args), or the precompiled result (programs, or the worker process's assembled
@@ -1181,7 +1265,7 @@ class Engine:
         io, S = self.image.io, self.cfg.S
         dec = self._decode(self.pos)
         if dec is None:
-            x = F.ftz(self.embed[token].astype(np.float32))
+            x = self._x_rows([token])[0]
             cos, sin = rope_tables(self.spec, self.pos)
             if io["cos"] == io["x"] + x.nbytes and io["sin"] == io["cos"] + cos.nbytes:
                 parts = [(io["x"], np.concatenate([x, cos, sin]))]      # one transfer
@@ -1255,7 +1339,7 @@ class Engine:
         io, S, spec = self.image.io, self.cfg.S, self.spec
         if any(p >= self.cap for _, p in rows):
             raise RuntimeError("KV cache full")
-        x = F.ftz(self.embed[[int(t) for t in tokens]].astype(np.float32))
+        x = self._x_rows([int(t) for t in tokens])
         cs = [rope_tables(spec, p) for _, p in rows]
         cos = np.stack([c for c, _ in cs]).astype(np.float32)
         sin = np.stack([s_ for _, s_ in cs]).astype(np.float32)

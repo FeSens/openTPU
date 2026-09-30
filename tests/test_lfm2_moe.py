@@ -130,13 +130,15 @@ def test_pool_file_is_the_same_pool(tiny, tmp_path):
     assert f.stat().st_size == (len(KINDS) - 1) * E * eng.image.offload.slot_bytes
 
 
-def test_the_card_generates_with_streamed_experts(tiny):
+@pytest.mark.parametrize("embed", ["fp32", "gather"])
+def test_the_card_generates_with_streamed_experts(tiny, embed):
     """The decode loop on the card (autodecode's generate program, resident decode) with k
     slots per layer: the experts stream between the tokens it picks, and it gives the host's
-    resident loop token for token."""
+    resident loop token for token (gather: the embedding row gathered from the tied head)."""
     _, W, spec = tiny
-    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=K)
-    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K)
+    cfg = device_config(spec, 512, rows=1, lookup="gather" if embed == "gather" else True,
+                        S=1, experts=K)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K, embed=embed)
             for _ in range(2))
     assert a.can_generate
     toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 20)]
