@@ -299,9 +299,9 @@ def model_check(t, cfg, model: str, tokens: int, sim: bool, wformat: str = "int8
                                   tokenize=True)
     ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
     cap = 256
-    rcfg = sim_config(spec, cap, cfg)                     # same layout, DRAM sized to the model
-    tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if sim else t
     fmt = {"wformat": wformat, "head_format": head_format}
+    rcfg = sim_config(spec, cap, cfg, **fmt)              # same layout, DRAM sized to the model
+    tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if sim else t
     dev = Engine(spec, W, cap=cap, cfg=rcfg if sim else cfg,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tq, model=path.name),
                  **fmt)

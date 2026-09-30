@@ -95,7 +95,8 @@ def key(cfg, model: str, wf: str, hf: str, n: int) -> tuple[Path, dict]:
     spec = load_spec(path)
     from transformers import AutoTokenizer
     ids = prompt_ids(AutoTokenizer.from_pretrained(path))
-    parts = {"src": source_hash(), "sim_cfg": repr(sim_config(spec, CAP, cfg)),
+    fmt = {"wformat": wf, "head_format": None if hf == "-" else hf}
+    parts = {"src": source_hash(), "sim_cfg": repr(sim_config(spec, CAP, cfg, **fmt)),
              "model": path.name, "ckpt": model_fingerprint(path), "wf": wf, "hf": hf,
              "ntok": n, "cap": CAP, "prompt": PROMPT,
              "ids": hashlib.sha256(json.dumps(ids).encode()).hexdigest()[:16]}
@@ -152,8 +153,9 @@ def one(cfg, model, wf, hf, n) -> int:
         path, spec, W, tok = load(model)
         t0 = time.time()
         hf_ = None if hf == "-" else hf
-        ref = Engine(spec, W, cap=CAP, cfg=sim_config(spec, CAP, cfg), wformat=wf,
-                     head_format=hf_)
+        ref = Engine(spec, W, cap=CAP, cfg=sim_config(spec, CAP, cfg, wformat=wf,
+                                                     head_format=hf_),
+                     wformat=wf, head_format=hf_)
         want = ref.generate(prompt_ids(tok), max_new=n)
         tmp = side(kp, ".tmp")
         tmp.write_bytes(pickle.dumps(want))
