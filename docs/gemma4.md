@@ -139,6 +139,11 @@ in bf16): **all 72 tokens equal**, 3 prompts x 24 tokens (2026-09-30):
 
 The ISA simulator takes 11 to 16 s a token.
 
+On the card (production image `deploy_champ_e698dcd7`, 133.33 MHz, 2026-09-30), the prompt fed
+by resident decode steps (the device gathers every input): the same 72 tokens with the int8 head
+and with the fp4 head, and refs.py's prompt (13 tokens) + 32 greedy tokens equal the ISA
+simulator's with both heads.
+
 ## Performance
 
 One resident decode token on the Verilator RTL of the board configuration (PAIR, DSTEP, STREAM:
@@ -158,7 +163,19 @@ after the token is bit-identical to the ISA simulator's.
 The whole model moves 1.43 GB a token at position 600: the MLPs 827 MB, the attention
 projections 148 MB, the LM head 415 MB (int8 with its scales), the per-layer input projections
 22 MB, K / V 17 MB. At the phases' measured efficiencies that is about 12.2 M cycles, **about
-10.9 tokens/s at 133.33 MHz** (a projection; the card follows).
+10.9 tokens/s at 133.33 MHz** (a projection).
+
+On the card (production image, 2026-09-30; tools/qual/perf.py's method: 64 greedy tokens after
+the 512-token Austen prompt, the host's argmax in the loop; the prompt by resident decode steps):
+
+| Head | Image | Decode, device | Decode, wall | Mcycles / token | DRAM read / token | DRAM while running | Prompt (steps) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| int8 | 3.629 GiB | 9.63 tok/s | 9.60 tok/s | 13.842 | 1475 MB | 14.22 GB/s (83%) | 9.93 tok/s |
+| fp4 | 3.441 GiB | 11.01 tok/s | 10.98 tok/s | 12.106 | 1274 MB | 14.05 GB/s (82%) | 11.40 tok/s |
+
+The projection was 12% optimistic: the DDR3 bank model it rests on is about 10% optimistic at
+133.33 MHz, where LiteDRAM's controller is the limit ([board.md](board.md); `perf_qwen.py --ldc`
+co-simulates the controller). The MXU starved 1-2% of the running cycles.
 
 ## Tests
 
