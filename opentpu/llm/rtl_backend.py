@@ -22,6 +22,8 @@ class RtlBackend:
         return self.drams[s][addr:addr + nbytes].copy()
 
     args = True                 # run(programs, args): the run's arguments (R8..R15)
+    generates = True            # the generate loop (RLD, ARGMAX: Engine.generate_card)
+    chains = True               # and HALT CHAIN
 
     def run(self, programs: list, args=None) -> dict:
         drams, _, stats = rtlsim.run(self.cfg, programs, self.drams, self.dram_lat,

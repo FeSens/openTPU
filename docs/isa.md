@@ -93,11 +93,13 @@ Every instruction is 8 x 32-bit words `w0..w7`.
 | op | name | semantics |
 |---|---|---|
 | 0x00 | NOP | |
-| 0x01 | HALT | stop this slice |
+| 0x01 | HALT | stop this slice; flag bit0 CHAIN: then start the program at `R[ra]` (see "HALT CHAIN") |
 | 0x02 | LI | `R[rd] = w1` |
 | 0x03 | ADDI | `R[rd] = R[ra] + w1` |
 | 0x04 | LOOP | body = next `w1` instructions, executed `R[ra] + w2` times (0: skipped). Loops nest (depth 4); a body must not end on the same instruction as an enclosing body. |
 | 0x05 | BAR | wait until every slice has reached a `BAR` |
+| 0x06 | RLD | `R[rd] = f2i(T[R[ra]+w1])`, flag bit0 RAW: the word's bits, bit1 MUL: times `R[rb]+w2` (see "RLD") |
+| 0x07 | WAITW | DMA: wait until `M32[R[ra]+w1] & w4` compares (flags[1:0]: EQ, NE, GE) with `R[rc]+w3`, then `T[R[rb]+w2]` = the word's bits (see "WAITW") |
 | 0x10 | LD | DRAM -> TMEM, `n = w3` words: `T[R[rb]+w2+i] = M32[R[ra]+w1+4i]` |
 | 0x11 | ST | TMEM -> DRAM: `M32[R[ra]+w1+4i] = T[R[rb]+w2+i]` for `i < w3` |
 | 0x12 | DSTEP | one Gated DeltaNet head step on a DRAM state, run by the DMA (see below; `Config.DSTEP`, CAPS bit6) |
@@ -240,8 +242,15 @@ Elementwise functions write `T[dst + r*drs + c] = f(A, B)`; reductions write
 | 17 | RMAX | max over A(r, c) (total order: any evaluation order) |
 | 18 | RSSQ | isum_64(A(r,c) * A(r,c)) (sum of squares, for RMSNorm: RDOT with B = A) |
 | 19 | RDOT | isum_64(A(r,c) * B(r,c)), B in any bmode (row dot products: `S @ k` is B per column) |
+| 20 | ARGMAX | the RMAX of the row at `T[dst + r*drs]` and the index of its first column at `T[dst + r*drs + 1]` (see below) |
 
 In RSSQ and RDOT each product is rounded, then added into the isum_64 partials.
+
+**ARGMAX** writes a pair per row: `m = ` the row's RMAX, and `i2f(c + base)` for `c` the first
+column with `A(r, c) == m` (flushed bits; in the total order `-0 < +0`, so ties are between equal
+bits only, and the first wins as in `np.argmax`). `base = R[rd] + w7` is a signed integer here, not
+fp32 bits (an LM head chunk passes its first vocabulary row, so the index is the token id). The
+pair of row `r` is `T[dst + r*drs]`, `T[dst + r*drs + 1]`: rows > 1 need `drs >= 2`. B is not read.
 
 **OUTER** (the state update of linear recurrences: Gated DeltaNet, Mamba2/SSD, GLA, RWKV,
 linear attention) is elementwise and in place, `T[dst + r*drs + c] = add(mul(T[dst + r*drs + c],
@@ -314,6 +323,73 @@ STREAM** (`regs.CAP_STREAM`; bit26 is taken; the full CAPS list is the register 
 
 The compiler (`ol.state_step`) falls back to VOPs otherwise. DSTEP is STREAM with
 `isa.gdn_desc` and ks = gs.
+
+### RLD
+
+`R[rd] = f2i(T[R[ra] + w1])`: a TMEM word into a register, the only way a value the device
+computed reaches an address, a loop count (`LOOP R[ra] + w2`) or a condition (a `LOOP` of count
+0 or 1 around the instructions it guards). `f2i` truncates toward zero: `|x| < 1` (with +-0 and
+the flushed denormals) gives 0, `|x| >= 2^31`, infinities and NaN give `0x80000000`; integers of
+up to 24 significant bits come out exact. Flag bit0 RAW: the word's bits instead. Flag bit1
+MUL: the value (f2i's or RAW's) times `R[rb] + w2`, the low 32 bits of the product (signed and
+unsigned alike): an integer the device computed scaled into a byte offset past fp32's 24 bits,
+e.g. a token's row in a 2.4 GB table (`tok * 9344`). `rd = 0` writes nothing.
+
+RLD reads its word after every older instruction that writes it (the scoreboard, like any TMEM
+read), and no younger instruction is issued until `R[rd]` holds the value: they may use it. The
+cost is the wait for the writer plus a few cycles; the decode loop (`opentpu/llm/generate.py`)
+uses a handful per token.
+
+### WAITW
+
+Wait for a word the host writes. The DMA reads `v = M32[R[ra] + w1]` from DRAM until
+`cmp(v & w4, R[rc] + w3)` holds, then writes `v` to `T[R[rb] + w2]` (the word's bits, as LD).
+`RLD` with RAW takes it into a register; the value never passes the VPU, so an address comes
+through whole.
+- flags[1:0] `cmp`: 0 EQ, 1 NE, 2 GE. GE means the 32-bit difference `(v & w4) - ref` is >= 0
+  as a signed number: counters, and positive fp32 values, which order as their bits.
+- `w5`: cycles between reads, the first at once. `w6`: a timeout in cycles (0: none), at which
+  the slice stops with an error the host sees.
+- The scoreboard footprint: all of DRAM read, `T[R[rb] + w2]` written. Older stores land before
+  its first read; younger instructions that read or write DRAM, and those that use the word,
+  wait until it completes.
+- Every read is a fresh DRAM read. Once WAITW has seen a word the host wrote after an h2c DMA
+  completed, every younger MM or LD reads that DMA's data: the host orders its data before its
+  flag, the card its flag before its reads. The XDMA and the core meet in `otpu_mem_ch` and
+  LiteDRAM, which must keep this order.
+
+The MoE expert streaming of docs/offload.md uses it for a fence (`served >= seq`: the host has
+finished the card's earlier requests) and for each expert's directory entry (`!= 0`: the
+expert's slot address, once its DMA has landed). The ISA simulator runs it in order (the slice
+waits) and calls the host (`Machine.host`) when every slice that can run waits; a WAITW that
+still does not hold is the timeout (SimError).
+
+In the RTL (otpu_dma, CAPS bit31) it is an LD of one word whose TMEM write waits for the
+compare: the chunk is read, the word taken, compared a cycle later and written through lane 0,
+or, if it does not hold, read again after `w5` cycles. At the timeout the slice stops: STATUS
+shows HALTED, ERROR and WAIT_TO (bit8; the first WAITW bitstream, be824d5, shows HALTED and ERROR
+only), until RUN falls. The scoreboard sees all of DRAM as written (older DRAM readers and
+writers complete first, younger ones wait) and the TMEM word.
+
+On the card, `tools/qual/waitw.py` (qual.sh, and otpu-diag's `waitw-host` group) checks that
+order (opentpu/host/checks.py `waitw_host`). In each round the host:
+1. writes old data and a flag the compare fails on;
+2. starts the card and checks that it waits;
+3. writes new data, then the flag.
+
+The card's LD after the WAITW must read the new data (1 to 32768 words from any word offset; EQ,
+NE, GE and a masked EQ; poll intervals 0, 64 and 1000 cycles; flags in both channels). Then a
+WAITW that never holds must stop at its timeout with ERROR, and the next run halt normally.
+
+### HALT CHAIN
+
+`HALT` with flag bit0 (CHAIN) halts the slice as `HALT` does (the window drains, every store has
+landed), then the board loads `R[rb]` instructions from DRAM byte address `R[ra]` (chunk aligned,
+at most the IMEM) into IMEM and starts them: `R0..R7 = 0`, `R8..R15` the run's arguments as the
+host wrote them; TMEM, ACT RAM and DRAM keep their contents. On the card the run goes on (RUN
+stays set, CYCLES counts, ICOUNT adds the programs' instructions up); the host sees one run.
+The reload is the program loader's DRAM read of the new program, once per chained program. The decode loop's program of an attention
+bucket chains to the next bucket's.
 
 ### GATHER
 

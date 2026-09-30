@@ -43,7 +43,23 @@ module otpu_dram #(
   logic [31:0]       ad [LAT], ad2 [LAT];
   logic [D*8-1:0]    bd [LAT];
 
+`ifndef SYNTHESIS
+  // the host's writes during the run (WAITW's tests): <dir>/poke_<SID>.txt, lines "cycle word
+  // value" (hex, in cycle order), each word written as the cycle count reaches its cycle
+  localparam int NPOKE = 64;
+  longint      pk_c [NPOKE];
+  logic [31:0] pk_a [NPOKE], pk_v [NPOKE];
+  int          pk_n = 0, pk_i = 0;
+  longint      pk_cyc = 0;
+`endif
   always_ff @(posedge clk) begin
+`ifndef SYNTHESIS
+    pk_cyc <= pk_cyc + 1;
+    if (pk_i < pk_n && pk_cyc >= pk_c[pk_i]) begin
+      mem[pk_a[pk_i][AW-1:0]] <= pk_v[pk_i];
+      pk_i <= pk_i + 1;
+    end
+`endif
     if (a_req && a_we) begin
       for (int b = 0; b < 4; b++)
         if (a_be[b]) mem[a_addr[AW-1:0]][8*b +: 8] <= a_wdata[8*b +: 8];
@@ -90,6 +106,12 @@ module otpu_dram #(
       fd = $fopen($sformatf("%s/dram_%0d.bin", dir, SID), "rb");
       if (fd != 0) begin
         nread = $fread(mem, fd);
+        $fclose(fd);
+      end
+      fd = $fopen($sformatf("%s/poke_%0d.txt", dir, SID), "r");
+      if (fd != 0) begin
+        while (pk_n < NPOKE && $fscanf(fd, "%h %h %h", pk_c[pk_n], pk_a[pk_n], pk_v[pk_n]) == 3)
+          pk_n++;
         $fclose(fd);
       end
     end
