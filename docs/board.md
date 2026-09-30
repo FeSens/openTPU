@@ -349,6 +349,7 @@ otpu-lock --wait 3600 -- bash tools/qual/qual.sh deploy_bl32mx120_be388a32 full 
 | warm soak (continuous Qwen3 decode) | 3 min | 5 min |
 | `otpu-diag --soak 20`, warm | quick memory test | march C- |
 | after the soak: token-exact against the ISA simulator, 6 configurations, per-position and resident decode | yes | yes |
+| with CAPS bit30, the decode loop on the card (docs/autodecode.md): token-exact in 6 configurations, then `decode_profile --card-loop` | 6 + 4-bit profiles | 6 + all 6 profiles |
 | final `otpu-selftest` (after loading `REST` if set) | yes | yes |
 
 Every phase prints its duration; the table of phases is at the end and in `$OUT/phases.tsv`
@@ -367,7 +368,8 @@ A crash is a FAIL:
   still printed "0 FAIL lines".
 
 `tests/test_qual_sh.py` runs the script with stub tools, covering a clean run and each failure.
-`SOAK` (seconds) overrides the profile's warm soak.
+`SOAK` (seconds) overrides the profile's warm soak, and `GEN=0` / `GEN=1` the bitstream's CAPS
+bit30.
 
 The fast profile is
 meant for images that change timing or the DRAM path; use `full` for a new production

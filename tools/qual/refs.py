@@ -4,8 +4,10 @@
     python3 tools/qual/refs.py compute CFG.pkl [--runs R ...] [--jobs N] [--ntok 32]
                                          references for the runs (default all six), in parallel
                                          as memory allows; exit 1 if any job failed or died
-    python3 tools/qual/refs.py card CFG.pkl MODEL WF HF NTOK [--resident]
+    python3 tools/qual/refs.py card CFG.pkl MODEL WF HF NTOK [--resident [--card-loop]]
                                          the card's greedy tokens against the cached reference
+                                         (--card-loop: after the prompt's token, the decode
+                                         loop on the card, Engine.generate_card, CAPS bit30)
     python3 tools/qual/refs.py key CFG.pkl MODEL WF HF NTOK  the cache file of one reference
     python3 tools/qual/refs.py one CFG.pkl MODEL WF HF NTOK  (worker: one reference)
 
@@ -309,14 +311,15 @@ def wait_ref(kp: Path) -> str | None:
     return None
 
 
-def card(cfgf: Path, model, wf, hf, n, resident: bool) -> int:
+def card(cfgf: Path, model, wf, hf, n, resident: bool, loop: bool = False) -> int:
     import numpy as np
 
     from opentpu.host.board import BoardBackend, XdmaTransport
     from opentpu.llm.qwen3 import Engine
     cfg = pickle.loads(cfgf.read_bytes())
     kp, _ = key(cfg, model, wf, hf, n)
-    label = f"model {model} {wf}/{hf}" + (" resident" if resident else "")
+    label = f"model {model} {wf}/{hf}" + (" resident" if resident else "") + \
+        (" card loop" if loop else "")
     early = None if side(kp, ".pending").exists() else wait_ref(kp)
     if early:
         print(f"  [FAIL] {label}: {early}")
@@ -327,13 +330,24 @@ def card(cfgf: Path, model, wf, hf, n, resident: bool) -> int:
     hf_ = None if hf == "-" else hf
     dev = Engine(spec, W, cap=CAP, cfg=cfg, wformat=wf, head_format=hf_, resident=resident,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=path.name))
+    if loop and not dev.can_generate:
+        print(f"  [FAIL] {label}: the card does not run the decode loop (CAPS bit30, resident)")
+        dev.backend.close()
+        return 1
     t0 = time.time()
-    got = dev.generate(ids, max_new=n)
+    if loop:                            # Engine.generate's tokens, the ones after the first
+        got = [int(np.argmax(dev.prefill(ids)))]    # picked and fed back on the card
+        if got[0] not in spec.eos:
+            got += dev.generate_card(got[0], n - 1)
+    else:
+        got = dev.generate(ids, max_new=n)
     dt = time.time() - t0
     engaged = dev.resident
     pre = [s for s in dev.stats if "rows" in s]
     pre_cyc = sum(s["cycles"] for s in pre) / max(1, sum(s["rows"] for s in pre))
     one_ = [s["cycles"] for s in dev.stats if "rows" not in s]
+    if loop:                            # a run per bucket reached: cycles per token
+        one_ = [sum(one_) / max(1, len(got) - 1)] * (len(got) - 1)
     dev._drain()
     dev.backend.close()
     why = wait_ref(kp)
@@ -345,7 +359,8 @@ def card(cfgf: Path, model, wf, hf, n, resident: bool) -> int:
     note = "" if not resident else ("" if engaged else " (resident decode not engaged)")
     print(f"  [{'PASS' if ok else 'FAIL'}] {label}{note}: "
           f"{tok.decode(got, skip_special_tokens=True)!r}; prompt of {len(ids)} tokens in "
-          f"{len(pre)} runs, {pre_cyc / 1e6:.2f} Mcycles/token; {len(one_)} one-token runs, "
+          f"{len(pre)} runs, {pre_cyc / 1e6:.2f} Mcycles/token; {len(one_)} "
+          f"{'tokens on the card loop' if loop else 'one-token runs'}, "
           f"{np.mean(one_) / 1e6:.2f} Mcycles/token; {dt:.1f} s wall"
           + ("" if ok else f"; ISA simulator says {tok.decode(want)!r}"))
     return 0 if ok else 1
@@ -361,6 +376,7 @@ def main():
     ap.add_argument("--jobs", type=int)
     ap.add_argument("--ntok", type=int, default=32)
     ap.add_argument("--resident", action="store_true")
+    ap.add_argument("--card-loop", action="store_true")
     a = ap.parse_args()
     cfgf = Path(a.cfg)
     if a.mode == "cfg":
@@ -385,7 +401,7 @@ def main():
         return 0
     if a.mode == "one":
         return one(cfg, model, wf, hf, n)
-    return card(cfgf, model, wf, hf, n, a.resident)
+    return card(cfgf, model, wf, hf, n, a.resident or a.card_loop, a.card_loop)
 
 
 if __name__ == "__main__":

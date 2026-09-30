@@ -112,6 +112,16 @@ def test_a_failed_token_exact_run(qual):
     assert summary(text)[0] == "2", text[-2000:]
 
 
+def test_the_decode_loop_on_the_card(qual):
+    # a bitstream with CAPS bit30: the six token-exact runs again on the card's decode loop
+    text, checks = qual(GEN="1")
+    assert summary(text) == ("0", "20"), text[-2000:]
+    assert "decode loop on the card (6 token-exact + 3 decode_profile)" in text
+    text, checks = qual(GEN="1", QUAL_CRASH="lfm2 int8 - 32 --card-loop")
+    assert "card loop lfm2 int8 -: exit 1" in checks
+    assert "5 of 6 card-loop token-exact runs passed" in checks
+
+
 def test_a_failed_soak_run_ends_the_soak(qual):
     text, checks = qual(QUAL_CRASH="history of France", SOAK="30")
     assert checks.count("[FAIL]") == 1 and "soak run 1: exit 1" in checks

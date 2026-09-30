@@ -13,7 +13,10 @@
 #   references in the background, prefill + DRAM efficiency for the six configurations, the
 #   streamed decode (decode_profile) of the three 4-bit ones, a 3 min warm soak, diag with the
 #   quick memory test, then after the soak token-exact against the ISA simulator for all six,
-#   per-position and resident, and a final selftest.
+#   per-position and resident, and a final selftest. A bitstream with the decode loop (CAPS
+#   bit30) also runs it for all six, token-exact against the same references, and
+#   decode_profile --card-loop for the 4-bit ones (wall against device tok/s); GEN=0 / 1
+#   overrides the bitstream's bit.
 # full (~45 min): also a cold diag with the full march C- (2 x 2.6 min), decode_profile for all
 #   six, rw_bench, a 5 min soak and the full march in the warm diag.
 # Every phase prints its duration; the table is at the end and in $OUT/phases.tsv.
@@ -113,6 +116,9 @@ else load "$BIT" || exit 1; fi
 selftest
 run "refs cfg" $P tools/qual/refs.py cfg "$OUT/cfg.pkl" --name "$NAME" | cut -c1-200
 MODELS=1; models_ok || MODELS=0
+GEN=${GEN:-$($P -c "from opentpu.host.board import Board, XdmaTransport
+print(int(bool(Board(XdmaTransport('/dev/xdma0', dma=False), check=False, lock=False).info()['caps'].get('gen'))))" 2>/dev/null || echo 0)}
+echo "decode loop on the card (CAPS bit30): $([ "$GEN" = 1 ] && echo yes || echo no)"
 
 if [ $MODELS = 1 ]; then phase "references (background)"
   ( $P tools/qual/refs.py compute "$OUT/cfg.pkl" > "$OUT/refs.log" 2>&1; echo "refs exit $?" >> "$OUT/refs.log" ) &
@@ -164,6 +170,21 @@ for r in $RUNS; do IFS=: read -r m w h <<< "$r"
 done
 want=$(( $(echo $RUNS | wc -w) * 2 )); got=$(( $(grep -c '\[PASS\] model' "$OUT/checks.txt") - p0 ))
 [ "$got" -eq "$want" ] || fail "$got of $want token-exact runs passed"
+if [ "$GEN" = 1 ]; then
+phase "decode loop on the card ($(set -- $RUNS; echo $#) token-exact + $(set -- $DP_RUNS; echo $#) decode_profile)"
+p0=$(grep -c '\[PASS\] model' "$OUT/checks.txt")
+for r in $RUNS; do IFS=: read -r m w h <<< "$r"
+  run "card loop $m $w $h" timeout 1800 $P tools/qual/refs.py card "$OUT/cfg.pkl" "$m" "$w" "$h" 32 --card-loop \
+    | grep -E "\] model|Error|Traceback" | tee -a "$OUT/checks.txt"
+done
+want=$(set -- $RUNS; echo $#); got=$(( $(grep -c '\[PASS\] model' "$OUT/checks.txt") - p0 ))
+[ "$got" -eq "$want" ] || fail "$got of $want card-loop token-exact runs passed"
+for r in $DP_RUNS; do IFS=: read -r m w h <<< "$r"; args="--wformat $w"; [ "$h" != "-" ] && args="$args --head-format $h"
+  run "decode_profile card loop $m $w $h" timeout 1800 $P tools/decode_profile.py --model "$m" --greedy \
+    --tokens 96 $args --card-loop --json "$OUT/dpl-$m-$w-$h.json" > "$OUT/dpl-$m-$w-$h.txt"
+  grep -E "decode loop on the card|Error" "$OUT/dpl-$m-$w-$h.txt"
+done
+fi
 wait                            # the references' job (refs.py card waited for what it needed)
 rc=$(sed -n 's/^refs exit //p' "$OUT/refs.log" | tail -1)
 { [ "${rc:-?}" = 0 ] && ! grep -qE "$EXC" "$OUT/refs.log"; } || fail "refs compute: exit ${rc:-?} ($OUT/refs.log)"
