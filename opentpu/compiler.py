@@ -744,10 +744,9 @@ class Builder:
     def release_arg(self, var: RunVar) -> None:
         """The program no longer uses var: its argument registers become address registers,
         taken only when no other register is free (a program that fits without them keeps its
-        registers), and zeroed before their first loop. Outside every loop. The generate loop
-        (run_words) keeps its argument registers: its step runs inside that loop, and its
-        run-time values come from TMEM words."""
-        if self.run_words is not None:
+        registers), and zeroed before their first loop. Outside every loop; in the generate
+        loop's body (run_words: only c * var alone takes an argument register) it keeps them."""
+        if self.loops and self.run_words is not None:
             return
         assert not self.loops, "release_arg inside a loop"
         if self.release_at is None:
