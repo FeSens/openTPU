@@ -192,8 +192,17 @@ module otpu_board #(
     .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl), .coll_gnt(coll_gl),
     .halted, .error, .wait_to, .icount, .pf, .dump(1'b0));
 
+  // the collective's reset through a register of its own, next to it: it leaves reset a cycle
+  // after the slice, idle either way (133.33 MHz, 110ec6d: core_rst -> u_coll's state, 0 levels,
+  // 97% route, +0.162 ns); a request can only come many cycles after reset (checked)
+  logic coll_rst;
+  always_ff @(posedge clk) coll_rst <= core_rst;
+`ifndef SYNTHESIS
+  always @(posedge clk)
+    if (coll_rst && coll_req) $fatal(1, "otpu_board: a collective request in reset");
+`endif
   otpu_coll #(.S(1), .LANES(LANES)) u_coll (
-    .clk, .rst(core_rst), .req(coll_req), .cmds(coll_cmds), .gnt(coll_gl), .ack(coll_ack),
+    .clk, .rst(coll_rst), .req(coll_req), .cmds(coll_cmds), .gnt(coll_gl), .ack(coll_ack),
     .r_en(coll_ren), .r_addr(coll_raddr), .r_data(coll_rdata),
     .w_en(coll_wen), .w_addr(coll_waddr), .w_data(coll_wdata));
 

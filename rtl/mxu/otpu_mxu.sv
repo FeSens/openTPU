@@ -868,6 +868,16 @@ module otpu_mxu
   logic [NL-1:0] dln;
   wire  [MW-1:0] c_Mn = d_last ? h.Ml : MW'(MCOLS);   // its results
   logic [LANES-1:0][31:0] daddr_l, dval_l;
+  // The drain lanes' addresses, dad[dj + k], are registered (dal): set wherever dj or dad move,
+  // the step's from registers (dad[dj + ncnt + k]), so the grant only picks. The TMEM write
+  // request and the arbiter's bank masks then start at flip-flops, not at the dj multiplexer
+  // (133.33 MHz, 110ec6d: dj -> dad[dj + k] -> t_waddr -> the MXU's bank mask -> the grants ->
+  // the VPU's WBUF head enables, 12 levels, +0.168 ns; -> TMEM's pw_a, +0.274)
+  logic [NL-1:0][31:0] dal;
+  function automatic logic [NL-1:0][31:0] dlane_a(input logic [31:0] a [MCOLS],
+                                                  input logic [MW-1:0] j);
+    for (int k = 0; k < NL; k++) dlane_a[k] = (32'(j) + 32'(k) < MCOLS) ? a[MW'(j) + MW'(k)] : '0;
+  endfunction
   logic [LANES-1:0][7:0]  dcol_l;
   // (OVL: the result FIFO's head row is the head command's while it has rows not yet drained)
   wire  drain_go = rf_nz && (!OVL || rl_nz) && (!c_asc || al_st == 2'd2);
@@ -896,15 +906,17 @@ module otpu_mxu
       $fatal(1, "otpu_mxu: drain step d_last %0d ncnt %0d d_fin %0d (dg1 %0d G %0d dj %0d M %0d run %0d)",
              d_last, ncnt, d_fin, dg1, c_G, dj, mn, c_run);
   end
+  always @(posedge clk) if (!rst && q_n != 0 && dal != dlane_a(dad, dj))
+    $fatal(1, "otpu_mxu: the drain lanes' addresses are not dad[dj + k] (dj %0d)", dj);
   always @(posedge clk) if (!rst && (rf_nz != (rf_n != 0) || rl_nz != (rows_live != 0)))
     $fatal(1, "otpu_mxu: rf_nz %0d (rf_n %0d), rl_nz %0d (rows_live %0d)", rf_nz, rf_n, rl_nz, rows_live);
 `endif
   // (the lanes' addresses and values do not wait for the count: only the enables do)
   always_comb begin
     daddr_l = '0; dval_l = '0; dcol_l = '0;
+    daddr_l[NL-1:0] = dal;
     for (int k = 0; k < NL; k++)
       if (32'(dj) + 32'(k) < MCOLS) begin
-        daddr_l[k] = dad[MW'(dj) + MW'(k)];
         dval_l[k] = rfh[MW'(dj) + MW'(k)];
         dcol_l[k] = 8'(dj) + 8'(k);
       end
@@ -1255,14 +1267,17 @@ module otpu_mxu
                 dad[j] <= drow[j] + 32'd1;
                 drow[j] <= drow[j] + 32'd1;
               end
+              for (int k = 0; k < NL; k++) dal[k] <= drow[k] + 32'd1;
             end else begin                          // the next group of this row
               dg <= dg + 8'd1; dg1 <= dg1 + 8'd1;
               for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + h.gs;
+              for (int k = 0; k < NL; k++) dal[k] <= dad[k] + h.gs;
             end
             rn = rn - 1;
             rl = rl - 1;
           end else begin
             dj <= dj + ncnt;
+            dal <= dlane_a(dad, dj + ncnt);
           end
         end
         // RMAX (rx: registered so the lane selection and the max compare are in different cycles)
@@ -1341,6 +1356,9 @@ module otpu_mxu
           drow[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
                                             : n.out + n.jo[j];
         end
+        for (int k = 0; k < NL; k++)
+          dal[k] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(k) * 32'(cmd.w6[15:0])
+                                           : n.out + n.jo[k];
         mx_done <= 1'b0; mx_have <= '0;
         al_st <= 2'd0; al_i <= '0; mx_i <= '0;
         pf_u <= 1'b1;
@@ -1354,6 +1372,7 @@ module otpu_mxu
           dad[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
           drow[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
         end
+        for (int k = 0; k < NL; k++) dal[k] <= cmd.w3 + 32'(k) * 32'(cmd.w6[15:0]);
       end
       // the entries: completing the head swaps them (the next entry, or the command accepted
       // this cycle, becomes the head; the old head stays in n)
