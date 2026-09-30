@@ -164,7 +164,7 @@ full-effort flow (retiming, post-route phys_opt, `impl_directives.tcl`), never `
 ### One round (one component)
 
 1. **Champion.** If main has moved, it is merged into `tourney/fmax` (kept only if the fast tests
-   pass). The champion's full build at the target is read from `runs/_full/<sha>-<MHz>.json`,
+   pass). The champion's full build at the target is read from `runs/_full/<key>-<MHz>.json`,
    which every component shares. If that file is missing, the champion is built: once per
    commit, under a lock file, so two processes never build the same tree. The component's own
    out-of-context (OOC) result is cached in `runs/fmax/<comp>/champion.json`.
@@ -237,8 +237,9 @@ score, full result, area changes, perf cycles).
 sequencer, DMA; then cross-unit, VPU, quantizer, collective, ACT RAM), at `TARGET_MHZ` (default
 133.33), and after every `WHOLE_EVERY` (3) of them one whole-design round, the
 `FOREVER_WHOLE` components in turn (default `otpu_full`, then `otpu_impl`, below). Before each round it fetches `origin/main` (`BASE`), which the champion merges when it
-has moved; a full result is cached by the git trees of `rtl/` and `boards/`, so main's host or
-doc commits do not cost a rebuild. `K=2` slots per round, `K_<comp>=n` for one component.
+has moved; a full result is cached by what the board build reads: the blobs of the RTL files
+`create_project.tcl` lists and the `boards/` tree (`b<hash>-<MHz>.json`), so main's host, doc or
+simulation-only commits (e.g. the simulation top `rtl/top/otpu_top.sv`) do not cost a rebuild. `K=2` slots per round, `K_<comp>=n` for one component.
 Control files: `/tmp/otpu-tourney-stop` (stop before the next round), `/tmp/otpu-tourney-pause`
 (wait while it exists), `/tmp/otpu-tourney-hosts` (build hosts and caps, read per job),
 `/tmp/otpu-tourney-comps` (the components of the next pass, in order, in place of
@@ -298,7 +299,7 @@ omarchy (`OTPU_REMOTE`, below).
 Every full build (champion and candidates) passes `OTPU_BUILD_ARGS` to `make bit`, default
 none: `make bit`'s defaults (the LiteDRAM core, MCOLS=4, the systolic MXU, LANES=8, VPU_CL=2,
 DSTEP=1); the cached full result's name carries them (`OTPU_BUILD_ARGS=FAST=1`:
-`<trees>-133.33-FAST1.json`; the MIG builds' results carry `-AXI_BL32`). `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
+`<key>-133.33-FAST1.json`; the MIG builds' results carry `-AXI_BL32`). `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
 Vivado in the `vivado:2026.1` Docker image instead. After a full build its reports are kept on
 the host in `~/otpu-build/reports/tv-<name>`, with its routed checkpoint as `routed.dcp` and its
 bitstream as `otpu.bit` (the newest `OTPU_KEEP_DCPS` builds, default 4, keep them: for path and

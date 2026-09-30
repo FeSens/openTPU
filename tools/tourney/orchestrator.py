@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import shutil
@@ -198,16 +199,22 @@ class Run:
 
     # ---- the whole design (fmax objective)
     def full_key(self, sha: str) -> Path:
-        """The cache file of a commit's full build. Keyed by the git trees of what the build
-        reads (rtl/, boards/), not the commit: a champion that only took host or doc commits
-        from main is not rebuilt. A result cached under the commit (older runs) is moved over."""
+        """The cache file of a commit's full build. Keyed by what the build reads, not the commit:
+        the blobs of the RTL files create_project.tcl lists (all of rtl/ if it lists none) and the
+        boards/ tree (Tcl, constraints, the LiteDRAM core, the block design scripts). A champion
+        that only took host, doc or simulation-only commits from main (e.g. the simulation top,
+        rtl/top/otpu_top.sv) is not rebuilt. A result cached under an older key of the same commit
+        (the rtl/ and boards/ trees; the commit) is moved over."""
         from . import remote as R
         args = "".join(f"-{a.replace('=', '')}" for a in R.BUILD_ARGS)   # e.g. -FAST1
+        tail = f"-{self.a.target_mhz:g}{args}.json"
+        files = R.board_rtl(git("show", f"{sha}:{R.PROJECT_TCL}", cwd=self.repo, check=False))
+        inputs = git("ls-tree", "-r", sha, "--", *(files or ["rtl"]), "boards", cwd=self.repo)
+        key = self.fulldir / f"b{hashlib.sha1(inputs.encode()).hexdigest()[:12]}{tail}"
         trees = "".join(git("rev-parse", f"{sha}:{d}", cwd=self.repo)[:6] for d in ("rtl", "boards"))
-        key = self.fulldir / f"t{trees}-{self.a.target_mhz:g}{args}.json"
-        old = self.fulldir / f"{sha[:12]}-{self.a.target_mhz:g}{args}.json"
-        if not key.exists() and old.exists():
-            old.rename(key)
+        for old in (self.fulldir / f"t{trees}{tail}", self.fulldir / f"{sha[:12]}{tail}"):
+            if not key.exists() and old.exists():
+                old.rename(key)
         return key
 
     def full_result(self, sha: str, wt: Path | None) -> dict:

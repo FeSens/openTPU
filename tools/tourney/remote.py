@@ -90,6 +90,14 @@ LABEL = "otpu-tourney=1"
 # tournament optimizes for (none: make bit's defaults, the LiteDRAM build at MCOLS=4)
 BUILD_ARGS = os.environ.get("OTPU_BUILD_ARGS", "").split()
 PART = "xc7k480tffg1156-2"
+# the board build's project script: its `set rtl [list ...]` names the RTL files the build reads
+PROJECT_TCL = "boards/ypcb-00338/vivado/create_project.tcl"
+
+
+def board_rtl(tcl: str) -> list[str]:
+    """The RTL files create_project.tcl adds (its `set rtl [list ...]`); [] when not found."""
+    m = re.search(r"^set rtl \[list(.*?)\]", tcl, re.S | re.M)
+    return re.findall(r"rtl/[\w/.-]+\.s?v\b", m.group(1)) if m else []
 # serializes our own job starts (the check-then-start below is not atomic across processes)
 START_LOCK = Path(os.environ.get("OTPU_TOURNEY_LOCKDIR", "/tmp")) / "otpu-tourney-vivado.lock"
 

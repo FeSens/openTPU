@@ -910,18 +910,46 @@ def test_saved_patch_applies(tmp_path):
 
 
 def test_full_result_cached(tmp_path, monkeypatch):
-    O, run = _run(tmp_path)
-    run.repo = tmp_path
-    trees = {"rtl": "r" * 40, "boards": "b" * 40}
-    monkeypatch.setattr(O, "git", lambda *a, **k: trees[a[1].split(":")[1]])
+    """A full build is cached by what the board build reads: the RTL files create_project.tcl
+    lists and boards/. A commit that changes neither (docs, the simulation top) reuses it; older
+    keys (the commit; the rtl/ and boards/ trees) move over."""
+    O, run = _run(tmp_path / "full")
+    run.fulldir.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run.repo = repo
+
+    def commit(files: dict) -> str:
+        for f, text in files.items():
+            (repo / f).parent.mkdir(parents=True, exist_ok=True)
+            (repo / f).write_text(text)
+        O.git("add", "-A", cwd=repo)
+        O.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c", cwd=repo)
+        return O.git("rev-parse", "HEAD", cwd=repo)
+
+    O.git("init", "-q", cwd=repo)
+    tcl = "set rtl [list \\\n  rtl/a.sv \\\n  rtl/b/c.sv]\nadd_files x\n"
+    c1 = commit({RM.PROJECT_TCL: tcl, "rtl/a.sv": "a", "rtl/b/c.sv": "c", "rtl/top.sv": "sim",
+                 "docs/x.md": "x"})
+    assert RM.board_rtl(tcl) == ["rtl/a.sv", "rtl/b/c.sv"] and RM.board_rtl("") == []
     monkeypatch.setattr(RM, "BUILD_ARGS", ["FAST=1"])
-    # an older result cached under the commit moves to the tree key
-    (tmp_path / f"{'a' * 12}-133.33-FAST1.json").write_text(json.dumps(full(wns=0.1)))
+    # an older result cached under the commit moves to the new key
+    (run.fulldir / f"{c1[:12]}-133.33-FAST1.json").write_text(json.dumps(full(wns=0.1)))
     monkeypatch.setattr(O.G, "full_design", lambda *a: pytest.fail("rebuilt a cached commit"))
-    assert run.full_result("a" * 40, None)["wns"] == 0.1
-    assert (tmp_path / "trrrrrrbbbbbb-133.33-FAST1.json").exists()
-    # another commit with the same rtl/ and boards/ trees reuses it
-    assert run.full_result("c" * 40, None)["wns"] == 0.1
+    assert run.full_result(c1, None)["wns"] == 0.1
+    key = run.full_key(c1)
+    assert key.name.startswith("b") and key.name.endswith("-133.33-FAST1.json") and key.exists()
+    # the simulation top and the docs are not the board's: the same build
+    c2 = commit({"rtl/top.sv": "sim2", "docs/x.md": "y"})
+    assert run.full_key(c2) == key and run.full_result(c2, None)["wns"] == 0.1
+    # a listed RTL file, a board file: another build
+    assert run.full_key(commit({"rtl/b/c.sv": "c2"})) != key
+    c4 = commit({"boards/ypcb-00338/constraints/x.xdc": "x"})
+    assert run.full_key(c4) not in (key, run.full_key(c2))
+    # a result under the old tree key moves over
+    trees = "".join(O.git("rev-parse", f"{c4}:{d}", cwd=repo)[:6] for d in ("rtl", "boards"))
+    (run.fulldir / f"t{trees}-133.33-FAST1.json").write_text(json.dumps(full(wns=0.2)))
+    assert run.full_result(c4, None)["wns"] == 0.2
 
 
 def test_directives_sandbox(tmp_path):
