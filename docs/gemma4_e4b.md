@@ -102,13 +102,25 @@ agreed with offload.
 
 ## Programs
 
-- **Resident decode:** 1,202 instructions in bucket 1 and 1,647 in bucket 8, with 6 argument
-  words, under the 4K IMEM (production configuration).
-- **Prefill:** runs of 1 and 2 rows compile today (1,449 and 2,172 instructions). 3 and 4
-  rows run out of TMEM in the attention's output projection at hidden 2560 (E2B fits 4 rows,
-  the ACT RAM's rows, so a run streams its weights once). Until the attention frees its
-  buffers earlier or splits the output projection, prefill streams the weights once per
-  2 tokens.
+(Production configuration: PAIR, DSTEP, STREAM; fp4 layers, int8 head.)
+
+- **Resident decode:** 1,770 instructions in bucket 1 and 2,215 in bucket 8, with 5 argument
+  words. That is under the 4K IMEM. The MLP runs in 512-wide chunks: `_mlp_chunk` takes the
+  largest multiple of the 4-bit chunk up to MLP_CHUNK that divides 10240, where it used to take
+  1280. Four rows' gate and up tiles in flight then fit TMEM.
+- **Prefill:** runs of 4 rows fit TMEM. That needs three changes:
+  - the chunk above;
+  - the residual adds done in place, a row at a time, when a tile is over an eighth of TMEM
+    (`_add_norm`);
+  - the K / V temporaries freed before the output projection.
+
+  A 4-row run is 3,269 instructions at position 0. From about position 1000 it is over the
+  IMEM (4,373 at 1024), so the Engine falls back to 2-row runs (2,772 / 3,101 instructions at
+  1024 / 2044).
+- **E2B:** its programs keep their instruction counts (decode 1,334 / 1,779, 4-row runs 2,472
+  to 4,077 with the int8 head). Only their TMEM addresses move. The tiny model's logits are
+  bit-identical to main's, per-position and resident, int8 and fp4. With the fp4 head its 4-row
+  runs now fit TMEM too (main: TMEM exhausted, so 2-row runs).
 
 ## Plan
 
@@ -120,8 +132,8 @@ agreed with offload.
 2. **E4B on the ISA simulator against Hugging Face.** Greedy, 3 prompts x 24 tokens as for
    E2B, then the 900-token text. The HF reference needs about 11 GB if its PLE rows are read on
    demand (hf_lean.py with a lazy per-layer embedding), so it runs on omarchy.
-3. **4-row prefill** (TMEM), then RTL cycles for a subset of layers on the DDR3-1066 bank model
-   and the LiteDRAM co-simulation.
+3. **RTL cycles** for a subset of layers on the DDR3-1066 bank model and the LiteDRAM
+   co-simulation.
 4. **The generate loop's wait**, once autodecode's loop and `WAITW` are on main: the post, the
    `RowServer`, and the wait, first on the ISA simulator's host hook, then the RTL.
    `compile_generate` for Gemma comes with it.

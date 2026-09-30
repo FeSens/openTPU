@@ -474,9 +474,12 @@ MLP_CHUNK = 768         # the MLP's F chunk at most: 4 prefill rows' gate / up i
 
 
 def _mlp_chunk(f: int, D: int, q: int) -> int:
-    """mlp's F chunk (about 8 per MLP), at most MLP_CHUNK where that divides the MLP."""
+    """mlp's F chunk (about 8 per MLP), else the largest multiple of q up to MLP_CHUNK that
+    divides the MLP (E4B's 10240: 512 at fp4, where _chunk takes 1280)."""
     c = _chunk(f, D, q)
-    return MLP_CHUNK if c > MLP_CHUNK and f % MLP_CHUNK == 0 and MLP_CHUNK % q == 0 else c
+    if c <= MLP_CHUNK:
+        return c
+    return next((k for k in range(MLP_CHUNK - MLP_CHUNK % q, 0, -q) if f % k == 0), c)
 
 
 def _key(spec: Spec, i: int) -> tuple:
@@ -1093,7 +1096,7 @@ def _attention(x, lw, m, pos, ropes, block: int):
             slot = _slot(m, lw.kind, pos[r] if isinstance(pos, list) else pos)
             for j in range(spec.n_kv):
                 ol.kv_append(kv, j, slot, kr[j:j + 1, :], vr[j:j + 1, :])
-        del k, v
+        del k, v, kr, vr, kn
     del xs
     qn = ol.load(lw.qn)
     mc = min(G, ol.mxu_columns())
@@ -1121,20 +1124,35 @@ def _attention(x, lw, m, pos, ropes, block: int):
     del Qs
     y = ol.dot(o, lw.wo)                                    # [R, H]
     del o
-    return x + rmsnorm(y, ol.load(lw.g_attn), eps)
+    _add_norm(x, y, ol.load(lw.g_attn), eps)
+
+
+def _add_norm(x, y, g, eps, scale=None):
+    """x += norm(y) in place, then x *= scale (a [1] tile) if given. Rows of more than an
+    eighth of TMEM (4 prefill rows of E4B's hidden 2560) a row at a time, so the temporaries
+    are one row's; smaller ones as one tile (fewer instructions)."""
+    rows = [slice(0, x.rows)] if x.rows * x.cols <= ol.tmem_words() // 8 else \
+        [slice(r, r + 1) for r in range(x.rows)]
+    for sl in rows:
+        if scale is None:
+            x[sl, :].set(x[sl, :] + rmsnorm(y[sl, :], g, eps))
+        else:
+            x[sl, :].set((x[sl, :] + rmsnorm(y[sl, :], g, eps)) * scale)
 
 
 def _mlp(x, lw, spec):
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_pre), spec.eps))
     y = swiglu_down(xs, lw.wg, lw.wu, lw.wd, chunk=lw.wd.pw, act=gelu_tanh)
-    return x + rmsnorm(y, ol.load(lw.g_ffn), spec.eps)
+    del xs
+    _add_norm(x, y, ol.load(lw.g_ffn), spec.eps)
 
 
 def _ple(x, lw, spec):
     """The per-layer input: x + norm(W_p (gelu_tanh(W_g x) * pli)), then x layer_scalar."""
     g = gelu_tanh(ol.dot(x, lw.wpg)) * ol.load(lw.pli[0:x.rows, :])     # [R, P]
     y = ol.dot(g, lw.wpp)                                   # [R, H]
-    return (x + rmsnorm(y, ol.load(lw.g_ple), spec.eps)) * ol.load(lw.ls)
+    del g
+    _add_norm(x, y, ol.load(lw.g_ple), spec.eps, ol.load(lw.ls))
 
 
 def _ple_inputs(m, x, pe=None):
@@ -1232,9 +1250,9 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
 
     def layer(li, it=None, jt=None):
         lw = m.layer(li, it, jt)
-        x.set(_attention(x, lw, m, pos, ropes, block))
-        x.set(_mlp(x, lw, spec))
-        x.set(_ple(x, lw, spec))
+        _attention(x, lw, m, pos, ropes, block)             # each adds to x in place
+        _mlp(x, lw, spec)
+        _ple(x, lw, spec)
 
     def unit(first, it=None):
         for e0, su, r, nb in m.subs[first]:
