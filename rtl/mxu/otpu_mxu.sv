@@ -800,10 +800,35 @@ module otpu_mxu
   otpu_delay #(.W(1), .N(2 * LA + 1)) u_lv (.clk, .en(en_c), .d(launch), .q(lv2));
 
   // ================================================================== result FIFO
-  f32_t        rf_v [RF][MCOLS];
-  logic [RFW-1:0] rf_h, rf_t;
+  // Rows in LUT RAM (was flip-flops); the drain reads the head row from flip-flops. rf_q trails
+  // the head by the last cycle's pop (rf_hs: the head is rf_q + rf_hs), so the rows are read at
+  // rf_q, rf_q + 1 and rf_q + 2 (a row written this cycle bypassed) with no grant on the address;
+  // each cycle the head row and the row after it are registered (rh0, rh1) and the last pop picks
+  // the head (rfh). The grant only reaches rf_hs, and the drain's lanes start at a 2:1 mux instead
+  // of a 64:1 one on rf_h (133.33 MHz, 61e015ff4: rf_h -> 64:1 -> t_wdata -> TMEM pw_d, 10
+  // levels, 89% route, -0.486 ns; the pop -> rf_h replicas' enable, -0.492). One RAM copy per
+  // read address: a single read port each infers as LUT RAM (three ports on one array do not).
+  logic [RFW-1:0] rf_q, rf_t;
   logic [RFW:0]   rf_n;
+  logic           rf_hs;                     // the last cycle popped a row
   wire         rf_push = en_c && lv2;
+  logic [MCOLS-1:0][31:0] rowp, rh0, rh1, rfh;
+  logic [2:0][MCOLS-1:0][31:0] rq;           // rows rf_q + c, as they are after this cycle
+  logic [2:0][RFW-1:0]    rf_qc;
+  always_comb begin
+    for (int j = 0; j < MCOLS; j++) rowp[j] = rowr[j];
+    for (int c = 0; c < 3; c++) rf_qc[c] = rf_q + RFW'(c);
+  end
+  for (genvar c = 0; c < 3; c++) begin : g_rfm
+    (* ram_style = "distributed" *) logic [MCOLS*32-1:0] m [RF];   // (flat: a row of MCOLS words)
+    always_ff @(posedge clk) if (!rst && rf_push) m[rf_t] <= rowp;
+    assign rq[c] = (rf_push && rf_t == rf_qc[c]) ? rowp : m[rf_qc[c]];
+  end
+  always_ff @(posedge clk) begin
+    rh0 <= rf_hs ? rq[1] : rq[0];           // the head (rf_q + rf_hs) as it is after this cycle
+    rh1 <= rf_hs ? rq[2] : rq[1];           // the row after it
+  end
+  assign rfh = rf_hs ? rh1 : rh0;
 
   // ================================================================== drain
   // lanes this cycle: results dj .. dj+ncnt-1 of the head row, stopping at a bank conflict
@@ -869,7 +894,7 @@ module otpu_mxu
     for (int k = 0; k < NL; k++)
       if (32'(dj) + 32'(k) < MCOLS) begin
         daddr_l[k] = dad[MW'(dj) + MW'(k)];
-        dval_l[k] = rf_v[rf_h][MW'(dj) + MW'(k)];
+        dval_l[k] = rfh[MW'(dj) + MW'(k)];
         dcol_l[k] = 8'(dj) + 8'(k);
       end
   end
@@ -902,14 +927,27 @@ module otpu_mxu
   wire [MW:0]      st_grp = d_nl ? {h.dfl, h.dnl} : dstep(MW'(MCOLS), c_run);
   wire [NL-1:0]    ln_mid = dlanes(st_mid[MW-1:0]), ln_grp = dlanes(st_grp[MW-1:0]);
   wire             d_pop = t_gnt && drain_row_done;   // a row leaves the result FIFO
-  // RMAX lanes (mx_i + k < c_M), registered as the drain's; next: mx_i + LANES
+`ifndef SYNTHESIS
+  always @(posedge clk) if (!rst && rf_n != 0 && rfh != g_rfm[0].m[RFW'(rf_q + RFW'(rf_hs))])
+    $fatal(1, "otpu_mxu: registered head row is not row %0d", rf_q + RFW'(rf_hs));
+`endif
+  // RMAX lanes (mx_i + k < c_M), registered as the drain's; next: mx_i + LANES. Their TMEM
+  // addresses h.mxo + mx_i + k are registered too (mxl, loaded from h.mxo while no RMAX write
+  // runs: mx_go is never set in a head's first cycle), so no adder precedes the write request
+  // and the arbiter's bank masks (61e015ff4: h.mxo -> two carry chains -> amk -> MXU grant ->
+  // rf_h enables, 8 levels, -0.492 ns)
   logic [LANES-1:0] mxm, mxm_nx;
+  logic [LANES-1:0][31:0] mxl;
   always_comb for (int k = 0; k < LANES; k++) mxm_nx[k] = 32'(mx_i) + LANES + 32'(k) < 32'(c_M);
 `ifndef SYNTHESIS
   always @(posedge clk) if (!rst && q_n != 0)
     for (int k = 0; k < LANES; k++)
       if (mxm[k] != (32'(mx_i) + 32'(k) < 32'(c_M)))
         $fatal(1, "otpu_mxu: RMAX lane %0d: mxm %0d, mx_i %0d, M %0d", k, mxm[k], mx_i, c_M);
+  always @(posedge clk) if (!rst && mx_go)
+    for (int k = 0; k < LANES; k++)
+      if (mxl[k] != h.mxo + 32'(mx_i) + 32'(k))
+        $fatal(1, "otpu_mxu: RMAX lane %0d address %0h, mxo %0h, mx_i %0d", k, mxl[k], h.mxo, mx_i);
 `endif
 
   // read-modify-write pipeline for ACC: read now, data next cycle, (old*alpha)+new, write
@@ -1049,7 +1087,7 @@ module otpu_mxu
       for (int k = 0; k < LANES; k++) begin
         if (mxm[k]) begin
           t_wen[k] = 1'b1;
-          t_waddr[k] = h.mxo + 32'(mx_i) + 32'(k);
+          t_waddr[k] = mxl[k];
           t_wdata[k] = unkey(mk[MW'(32'(mx_i) + 32'(k))]);
         end
       end
@@ -1076,7 +1114,7 @@ module otpu_mxu
       f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
       ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1; c_left <= '0; cl_ld <= 1'b0; rows_live <= '0;
-      rf_h <= '0; rf_t <= '0; rf_n <= '0; rf_nz <= 1'b0; rl_nz <= 1'b0;
+      rf_q <= '0; rf_hs <= 1'b0; rf_t <= '0; rf_n <= '0; rf_nz <= 1'b0; rl_nz <= 1'b0;
       dj <= '0; mx_done <= 1'b0; mx_have <= '0;
       d_last <= 1'b0; d_fin <= 1'b0; ncnt <= '0; dln <= '0; mxm <= '0;
       al_st <= 2'd0; al_i <= '0; mx_i <= '0;
@@ -1177,7 +1215,6 @@ module otpu_mxu
       end
       // ---- a finished row enters the result FIFO
       if (rf_push) begin
-        for (int j = 0; j < MCOLS; j++) rf_v[rf_t][j] <= rowr[j];
         rf_t <= rf_t + 1;
         rn = rn + 1;
       end
@@ -1211,7 +1248,6 @@ module otpu_mxu
               dg <= dg + 8'd1; dg1 <= dg1 + 8'd1;
               for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + h.gs;
             end
-            rf_h <= rf_h + 1;
             rn = rn - 1;
             rl = rl - 1;
           end else begin
@@ -1243,6 +1279,12 @@ module otpu_mxu
         end
       end
       rf_n <= rn;
+      rf_q <= rf_q + RFW'(rf_hs);
+      rf_hs <= d_pop;
+      // RMAX lane addresses: they advance with mx_i while the writes run, else h.mxo + k
+      for (int k = 0; k < LANES; k++)
+        if (!mx_go) mxl[k] <= h.mxo + 32'(k);
+        else if (t_gnt && 32'(mx_i) + LANES < 32'(c_M)) mxl[k] <= mxl[k] + 32'(LANES);
       rows_live <= rl;
       rows_p <= rp;
       // rn != 0, rl != 0 from the counts' own zero / one tests: the grant enters last
