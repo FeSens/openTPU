@@ -56,13 +56,15 @@ set nwv [n_waivers]
 
 # every query of the XDC must find cells (the top is otpu_mem_ch, so the names are the same)
 set empty {}
-set pats {a_rs1_reg x_rs1_reg a_hs1_reg x_hs1_reg a_wacc_g_reg[*] a_wacc_s1_reg[*] x_wacc_g_reg[*] x_wacc_s1_reg[*]}
+set pats {a_rs1_reg x_rs1_reg a_hs1_reg x_hs1_reg e_s1_reg a_wacc_g_reg[*] a_wacc_s1_reg[*] x_wacc_g_reg[*] x_wacc_s1_reg[*]}
 foreach f {u_aq u_ad u_ar u_xq u_xd u_xr} {
   lappend pats $f/wgray_reg\[*\] $f/wbin_reg\[*\] $f/wgray_r1_reg\[*\] $f/rgray_reg\[*\] $f/rbin_reg\[*\]* $f/rgray_w1_reg\[*\]
 }
 # the waivers' endpoints
-lappend pats oc0_reg\[*\] oc1_reg\[*\] on_reg\[*\] run_reg\[*\] cur_x_reg a_out_reg\[*\] x_out_reg\[*\] \
-  u_of/wp_reg* u_tag/wp_reg* n_rdata_reg\[*\] rm_busy_reg rm_x_reg
+lappend pats g_port\[*\].oc_reg\[*\] g_port\[*\].oc_v_reg g_port\[*\].u_oq/wp_reg* \
+  g_port\[*\].u_of/wp_reg* g_port\[*\].u_tag/wp_reg* run_reg\[*\] cur_x_reg a_out_reg\[*\] \
+  x_out_reg\[*\] a_pend_reg\[*\] x_pend_reg\[*\] a_seq_reg\[*\] x_seq_reg\[*\] a_nq_reg\[*\] \
+  x_nq_reg\[*\] n_rdata_reg\[*\] rm_busy_reg rm_x_reg
 set qlog {}
 foreach p $pats {
   set n [llength [get_cells -quiet $p]]
@@ -76,7 +78,7 @@ foreach f {u_aq u_ad u_ar u_xq u_xd u_xr} {
   lappend qlog "  $f RAM outputs: $n pins, write clock pins: $k"
   if {$n == 0 || $k == 0} { lappend empty "$f RAM" }
 }
-foreach f {u_of u_tag} {
+foreach f {u_oq u_of u_tag} {
   set n [llength [get_pins -quiet -filter {IS_LEAF && (REF_PIN_NAME == I || REF_PIN_NAME == WE)} -of_objects [get_cells -quiet -hierarchical -filter "NAME =~ *$f/mem_reg*"]]]
   lappend qlog "  $f RAM data and write-enable inputs: $n pins"
   if {$n == 0} { lappend empty "$f RAM inputs" }
@@ -85,12 +87,12 @@ foreach f {u_of u_tag} {
 # report_cdc -details names one startpoint per endpoint. This lists every group of registers (a
 # register or RAM array, replicas included) and every input port with a path from one of the
 # three clocks into another, and marks those that are not one of the constrained crossings: the
-# FIFOs' RAMs and pointers (a pointer's top bit may sit in the binary register), the reset and
-# hold synchronizers' sources and the write-accept gray counts.
+# FIFOs' RAMs and pointers (a pointer's top bit may sit in the binary register), the reset,
+# hold and error-bit synchronizers' sources and the write-accept gray counts.
 set xs_expect {
   clk>uclk  {^(u_aq|u_ad)/(mem_reg|wgray_reg|wbin_reg)$|^u_ar/(rgray_reg|rbin_reg)$|^a_req_reg$}
   xclk>uclk {^(u_xq|u_xd)/(mem_reg|wgray_reg|wbin_reg)$|^u_xr/(rgray_reg|rbin_reg)$|^x_req_reg$}
-  uclk>clk  {^u_ar/(mem_reg|wgray_reg|wbin_reg)$|^(u_aq|u_ad)/(rgray_reg|rbin_reg)$|^(a_hold_reg|a_wacc_g_reg)$}
+  uclk>clk  {^u_ar/(mem_reg|wgray_reg|wbin_reg)$|^(u_aq|u_ad)/(rgray_reg|rbin_reg)$|^(a_hold_reg|a_wacc_g_reg|c_err_reg)$}
   uclk>xclk {^u_xr/(mem_reg|wgray_reg|wbin_reg)$|^(u_xq|u_xd)/(rgray_reg|rbin_reg)$|^(x_hold_reg|x_wacc_g_reg)$}
 }
 proc cross_sources {expect} {

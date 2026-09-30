@@ -241,12 +241,12 @@ def test_tiny_resident_decode_is_bit_exact(tiny, dstep):
     assert (ia.layer0, ia.LS) == (ib.layer0, ib.LS)
     ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.layer0 + len(spec.kinds) * ib.LS]
               .copy() for e in (a, b))
-    TP = 2 * spec.conv_k * ib.C
+    TP = spec.conv_k * ib.CP
     for li, k in enumerate(spec.kinds):     # row 0 of each pair's ring is scratch (_ring)
         if k == "linear":
             for q in range(ib.nl // 2):
                 o = li * ib.LS + ib.cv_offset(q) + 4 * TP
-                ma[o:o + 8 * ib.C] = mb[o:o + 8 * ib.C] = 0
+                ma[o:o + 4 * ib.CP] = mb[o:o + 4 * ib.CP] = 0
     assert np.array_equal(ma, mb)
 
 
@@ -293,6 +293,32 @@ def test_group_major_is_bit_exact(tiny_pairs, dstep):
             for q in range(spec.lin_heads // 2):
                 assert all(np.array_equal(x, y) for x, y in
                            zip(_pair_parts(a, li, q), _pair_parts(b, li, q))), (li, q)
+
+
+@pytest.mark.parametrize("step", ["vop", "dstep", "stream"])
+def test_shared_qk_is_bit_exact(tiny, step):
+    """A pair of value heads of one key head (kh4: 4 key heads for 8 value heads) projects,
+    convolves and normalizes its q and k once (Spec.qk_share): the logits and states of the
+    repeated q and k rows, bit for bit, in chunked prefill, per-position and resident decode,
+    with the state step on VOPs, on DSTEP or on STREAM; a pair's rows are 2 dk fewer."""
+    _, W, spec = tiny
+    if spec.lin_heads // spec.lin_nk % 2:
+        pytest.skip("one value head per key head: nothing to share")
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=step == "dstep", STREAM=step == "stream",
+                       PAIR=True)
+    a, b = (Engine(dataclasses.replace(spec, qk_share=g), W, cap=512, cfg=cfg, resident=True)
+            for g in (False, True))
+    assert not a.image.shared and b.image.shared
+    assert b.image.RP == a.image.RP - 2 * spec.lin_dk and b.image.CP == a.image.CP - 2 * spec.lin_dk
+    toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 12)]
+    assert np.array_equal(a.prefill(toks[:5], chunk=3).view(np.uint32),
+                          b.prefill(toks[:5], chunk=3).view(np.uint32))
+    for t in toks[5:]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), a.pos
+    for li, k in enumerate(spec.kinds):
+        if k == "linear":
+            for q in range(a.image.nl // 2):
+                assert np.array_equal(_pair_parts(a, li, q)[1], _pair_parts(b, li, q)[1])
 
 
 @pytest.mark.parametrize("dstep,resident", [(False, False), (True, False), (True, True),

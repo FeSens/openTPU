@@ -2,31 +2,34 @@
 """One channel of the production LiteDRAM controller as a simulation model: LiteDRAM's own
 controller (bank machines, multiplexer, refresher) and crossbar, from the commit the production
 core pins (boards/ypcb-00338/litedram/core.json), with gen_core.py's settings -- the MT41K256M8
-geometry with tRFC 160 ns, 1:4, the default ControllerSettings, the user port through
-LiteDRAMNativePortECC and a second, idle crossbar port (the BIST's) -- behind a DFI stub PHY
+geometry with tRFC 160 ns, 1:4, the default ControllerSettings, the two user ports (the even and
+the odd banks', otpu_mem_ch's split) through LiteDRAMNativePortECC's encoders and one decoder
+(ecc_ports.py, as the core) and a third, idle crossbar port (the BIST's) -- behind a DFI stub PHY
 with WL7DDRPHY's latencies and no memory. So the command scheduling is the card's; the data is
-not modelled (reads return the ECC decode of zeros). sim/verilator/otpu_ldc_mem.sv puts it
-behind the board's bridge (otpu_mem_ch) with the data held in the model.
+not modelled (reads return the ECC decode of zeros). sim/verilator/otpu_ldc_mem.sv puts it behind
+the board's bridge (otpu_mem_ch) with the data held in the model.
 
     python3 gen_ldc.py OUT.v [--name otpu_ldc_ch] [--cmd-buffer-depth 8] [--no-refresh]
-                      [--postponing 1] [--ports 1] [--no-lock]
+                      [--postponing 1] [--ports 2] [--no-lock]
 
 DDR3-1066 only (the controller at 133.33 MHz, CL 7 / CWL 6, the latencies WL7DDRPHY derives
 from them, the data-sheet timings in that clock): the board's DDR3 never runs faster, the rate
 its HR banks are specified for, so the generator has no other rate. The options are for
-experiments: the controller's command buffer depth, no refresh, refresh postponing, more user
-ports (their signals named p<i>_*), and the crossbar without its lock (a master's commands in
-one bank at a time; without it read data may come back out of order, so it is a timing bound
-only).
+experiments: the controller's command buffer depth, no refresh, refresh postponing, the number
+of user ports (the one-port core's: --ports 1, its signals unprefixed; more: p<i>_*), and the
+crossbar without its lock (a master's commands in one bank at a time; without it read data may
+come back out of order, so it is a timing bound only).
 
-Ports (sys clock): sys_clk, sys_rst, cmd_valid/ready/we/addr[24:0] (the 64-byte beat in the
-channel), wdata_valid/ready/data[511:0]/we[63:0], rdata_valid/ready/data[511:0] (ready tied
-high, as the board ties it).
+Ports (sys clock): sys_clk, sys_rst and per user port p<i>_cmd_valid/ready/we/addr[24:0] (the
+64-byte beat in the channel), p<i>_wdata_valid/ready/data[511:0]/we[63:0],
+p<i>_rdata_valid/ready/data[511:0] (ready tied high, as the board ties it).
 
 Setup: bench_native.py's venv, with migen, litex and litedram at core.json's commits. The
 committed model (rtlsim.MEMORY's LDC): python3 gen_ldc.py sim/verilator/otpu_ldc_ch.v
 """
 import argparse
+import sys
+from pathlib import Path
 
 from migen import Module, Signal
 from migen.fhdl.verilog import convert
@@ -36,8 +39,10 @@ from litedram.common import PhySettings, LiteDRAMNativePort, get_sys_latency, ge
 from litedram.phy.dfi import Interface as DFIInterface
 from litedram.core import LiteDRAMCore
 from litedram.core.controller import ControllerSettings
-from litedram.frontend.ecc import LiteDRAMNativePortECC
 import litedram.core.crossbar as xbar
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ecc_ports import NativePortsECC                            # noqa: E402
 
 
 class MT41K256M8_tRFC160(MT41K256M8):
@@ -89,17 +94,18 @@ class Channel(Module):
         self.submodules.core = core = LiteDRAMCore(self.phy, module.geom_settings,
                                                    module.timing_settings, clk_freq,
                                                    controller_settings=cs)
-        self.users, self.ios = [], set()
+        self.users, self.ios, raws = [], set(), []
         for _ in range(nports):
             raw = core.crossbar.get_port()
             assert raw.address_width == 25 and raw.data_width == 576
             user = LiteDRAMNativePort("both", 25, 512)
-            self.submodules += LiteDRAMNativePortECC(user, raw, with_error_injection=False)
+            raws.append(raw)
             self.comb += user.cmd.last.eq(1)
             self.users.append(user)
             self.ios |= {user.cmd.valid, user.cmd.ready, user.cmd.we, user.cmd.addr,
                          user.wdata.valid, user.wdata.ready, user.wdata.data, user.wdata.we,
                          user.rdata.valid, user.rdata.ready, user.rdata.data}
+        self.submodules += NativePortsECC(self.users, raws)
         bist = core.crossbar.get_port()
         self.comb += [bist.cmd.valid.eq(0), bist.wdata.valid.eq(0), bist.rdata.ready.eq(1)]
         self.module = module
@@ -112,7 +118,7 @@ def main():
     ap.add_argument("--cmd-buffer-depth", type=int, default=8)
     ap.add_argument("--no-refresh", action="store_true")
     ap.add_argument("--postponing", type=int, default=1)
-    ap.add_argument("--ports", type=int, default=1)
+    ap.add_argument("--ports", type=int, default=2)
     ap.add_argument("--no-lock", action="store_true")
     a = ap.parse_args()
     if a.no_lock:
