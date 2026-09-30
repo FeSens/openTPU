@@ -11,7 +11,7 @@
 // Device     : xc7k480t-ffg1156-2
 // Hierarchy  : disabled
 // LiteX sha1 : --------
-// Date       : 2026-09-30 09:08:10
+// Date       : 2026-09-30 17:51:19
 //------------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -341,26 +341,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:OBUFDS]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -371,58 +351,10 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -440,11 +372,7 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -484,8 +412,8 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -584,47 +512,107 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:IOBUF]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -632,14 +620,10 @@ OTPULiteDRAM
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -692,7 +676,6 @@ OTPULiteDRAM
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -721,6 +704,7 @@ OTPULiteDRAM
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -864,19 +848,35 @@ OTPULiteDRAM
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1546,46 +1546,6 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
@@ -1678,6 +1638,10 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
@@ -1706,16 +1670,52 @@ OTPULiteDRAM
 │    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -5173,7 +5173,7 @@ wire          litedramcore0_phaseinjector3_we;
 reg   [143:0] litedramcore0_phaseinjector3_wrdata_storage = 144'd0;
 reg           litedramcore0_phaseinjector3_wrdata_wr_stb = 1'd0;
 wire          litedramcore0_phaseinjector3_wren;
-reg           litedramcore0_postponer_count = 1'd0;
+reg     [3:0] litedramcore0_postponer_count = 4'd7;
 wire          litedramcore0_postponer_req_i;
 reg           litedramcore0_postponer_req_o = 1'd0;
 wire          litedramcore0_ras_allowed;
@@ -5208,7 +5208,7 @@ wire          litedramcore0_roundrobin7_ce;
 reg     [1:0] litedramcore0_roundrobin7_grant = 2'd0;
 wire    [2:0] litedramcore0_roundrobin7_request;
 wire          litedramcore0_sel;
-reg           litedramcore0_sequencer_count = 1'd0;
+reg     [3:0] litedramcore0_sequencer_count = 4'd7;
 wire          litedramcore0_sequencer_done0;
 reg           litedramcore0_sequencer_done1 = 1'd0;
 reg           litedramcore0_sequencer_start0 = 1'd0;
@@ -5300,8 +5300,8 @@ wire    [2:0] litedramcore0_tfawcon_count;
 reg           litedramcore0_tfawcon_ready = 1'd1;
 wire          litedramcore0_tfawcon_valid;
 reg     [6:0] litedramcore0_tfawcon_window = 7'd0;
-reg     [4:0] litedramcore0_time0 = 5'd0;
-reg     [3:0] litedramcore0_time1 = 4'd0;
+reg     [7:0] litedramcore0_time0 = 8'd0;
+reg     [6:0] litedramcore0_time1 = 7'd0;
 wire   [10:0] litedramcore0_timer_count0;
 reg    [10:0] litedramcore0_timer_count1 = 11'd1041;
 wire          litedramcore0_timer_done0;
@@ -6650,7 +6650,7 @@ wire          litedramcore1_phaseinjector7_we;
 reg   [143:0] litedramcore1_phaseinjector7_wrdata_storage = 144'd0;
 reg           litedramcore1_phaseinjector7_wrdata_wr_stb = 1'd0;
 wire          litedramcore1_phaseinjector7_wren;
-reg           litedramcore1_postponer_count = 1'd0;
+reg     [3:0] litedramcore1_postponer_count = 4'd7;
 wire          litedramcore1_postponer_req_i;
 reg           litedramcore1_postponer_req_o = 1'd0;
 wire          litedramcore1_ras_allowed;
@@ -6685,7 +6685,7 @@ wire          litedramcore1_roundrobin9_ce;
 reg     [1:0] litedramcore1_roundrobin9_grant = 2'd0;
 wire    [2:0] litedramcore1_roundrobin9_request;
 wire          litedramcore1_sel;
-reg           litedramcore1_sequencer_count = 1'd0;
+reg     [3:0] litedramcore1_sequencer_count = 4'd7;
 wire          litedramcore1_sequencer_done0;
 reg           litedramcore1_sequencer_done1 = 1'd0;
 reg           litedramcore1_sequencer_start0 = 1'd0;
@@ -6777,8 +6777,8 @@ wire    [2:0] litedramcore1_tfawcon_count;
 reg           litedramcore1_tfawcon_ready = 1'd1;
 wire          litedramcore1_tfawcon_valid;
 reg     [6:0] litedramcore1_tfawcon_window = 7'd0;
-reg     [4:0] litedramcore1_time0 = 5'd0;
-reg     [3:0] litedramcore1_time1 = 4'd0;
+reg     [7:0] litedramcore1_time0 = 8'd0;
+reg     [6:0] litedramcore1_time1 = 7'd0;
 wire   [10:0] litedramcore1_timer_count0;
 reg    [10:0] litedramcore1_timer_count1 = 11'd1041;
 wire          litedramcore1_timer_done0;
@@ -64654,12 +64654,12 @@ always @(posedge sys_clk_1) begin
     if (litedramcore0_postponer_req_i) begin
         litedramcore0_postponer_count <= (litedramcore0_postponer_count - 1'd1);
         if ((litedramcore0_postponer_count == 1'd0)) begin
-            litedramcore0_postponer_count <= 1'd0;
+            litedramcore0_postponer_count <= 4'd7;
             litedramcore0_postponer_req_o <= 1'd1;
         end
     end
     if (litedramcore0_sequencer_start0) begin
-        litedramcore0_sequencer_count <= 1'd0;
+        litedramcore0_sequencer_count <= 4'd7;
     end else begin
         if (litedramcore0_sequencer_done1) begin
             if ((litedramcore0_sequencer_count != 1'd0)) begin
@@ -65355,14 +65355,14 @@ always @(posedge sys_clk_1) begin
     end
     litedramcore0_bankmachine7_state <= litedramcore0_bankmachine7_next_state;
     if ((~litedramcore0_en0)) begin
-        litedramcore0_time0 <= 5'd31;
+        litedramcore0_time0 <= 8'hff;
     end else begin
         if ((~litedramcore0_max_time0)) begin
             litedramcore0_time0 <= (litedramcore0_time0 - 1'd1);
         end
     end
     if ((~litedramcore0_en1)) begin
-        litedramcore0_time1 <= 4'd15;
+        litedramcore0_time1 <= 7'd127;
     end else begin
         if ((~litedramcore0_max_time1)) begin
             litedramcore0_time1 <= (litedramcore0_time1 - 1'd1);
@@ -67452,12 +67452,12 @@ always @(posedge sys_clk_1) begin
     if (litedramcore1_postponer_req_i) begin
         litedramcore1_postponer_count <= (litedramcore1_postponer_count - 1'd1);
         if ((litedramcore1_postponer_count == 1'd0)) begin
-            litedramcore1_postponer_count <= 1'd0;
+            litedramcore1_postponer_count <= 4'd7;
             litedramcore1_postponer_req_o <= 1'd1;
         end
     end
     if (litedramcore1_sequencer_start0) begin
-        litedramcore1_sequencer_count <= 1'd0;
+        litedramcore1_sequencer_count <= 4'd7;
     end else begin
         if (litedramcore1_sequencer_done1) begin
             if ((litedramcore1_sequencer_count != 1'd0)) begin
@@ -68153,14 +68153,14 @@ always @(posedge sys_clk_1) begin
     end
     litedramcore1_bankmachine15_state <= litedramcore1_bankmachine15_next_state;
     if ((~litedramcore1_en0)) begin
-        litedramcore1_time0 <= 5'd31;
+        litedramcore1_time0 <= 8'hff;
     end else begin
         if ((~litedramcore1_max_time0)) begin
             litedramcore1_time0 <= (litedramcore1_time0 - 1'd1);
         end
     end
     if ((~litedramcore1_en1)) begin
-        litedramcore1_time1 <= 4'd15;
+        litedramcore1_time1 <= 7'd127;
     end else begin
         if ((~litedramcore1_max_time1)) begin
             litedramcore1_time1 <= (litedramcore1_time1 - 1'd1);
@@ -70707,10 +70707,10 @@ always @(posedge sys_clk_1) begin
         litedramcore0_dfi_p3_rddata_en <= 1'd0;
         litedramcore0_timer_count1 <= 11'd1041;
         litedramcore0_postponer_req_o <= 1'd0;
-        litedramcore0_postponer_count <= 1'd0;
+        litedramcore0_postponer_count <= 4'd7;
         litedramcore0_sequencer_done1 <= 1'd0;
         litedramcore0_sequencer_trigger <= 5'd0;
-        litedramcore0_sequencer_count <= 1'd0;
+        litedramcore0_sequencer_count <= 4'd7;
         litedramcore0_zqcs_timer_count1 <= 27'd133332999;
         litedramcore0_zqcs_executer_done <= 1'd0;
         litedramcore0_zqcs_executer_trigger <= 5'd0;
@@ -70820,8 +70820,8 @@ always @(posedge sys_clk_1) begin
         litedramcore0_tccdcon_count <= 1'd0;
         litedramcore0_twtrcon_ready <= 1'd0;
         litedramcore0_twtrcon_count <= 3'd0;
-        litedramcore0_time0 <= 5'd0;
-        litedramcore0_time1 <= 4'd0;
+        litedramcore0_time0 <= 8'd0;
+        litedramcore0_time1 <= 7'd0;
         dqsphase0_dqs_shift_storage <= 1'd0;
         dqsphase0_dqs_shift_wr_stb <= 1'd0;
         dqsphase0_dqs_busy_wr_stb <= 1'd0;
@@ -71144,10 +71144,10 @@ always @(posedge sys_clk_1) begin
         litedramcore1_dfi_p3_rddata_en <= 1'd0;
         litedramcore1_timer_count1 <= 11'd1041;
         litedramcore1_postponer_req_o <= 1'd0;
-        litedramcore1_postponer_count <= 1'd0;
+        litedramcore1_postponer_count <= 4'd7;
         litedramcore1_sequencer_done1 <= 1'd0;
         litedramcore1_sequencer_trigger <= 5'd0;
-        litedramcore1_sequencer_count <= 1'd0;
+        litedramcore1_sequencer_count <= 4'd7;
         litedramcore1_zqcs_timer_count1 <= 27'd133332999;
         litedramcore1_zqcs_executer_done <= 1'd0;
         litedramcore1_zqcs_executer_trigger <= 5'd0;
@@ -71257,8 +71257,8 @@ always @(posedge sys_clk_1) begin
         litedramcore1_tccdcon_count <= 1'd0;
         litedramcore1_twtrcon_ready <= 1'd0;
         litedramcore1_twtrcon_count <= 3'd0;
-        litedramcore1_time0 <= 5'd0;
-        litedramcore1_time1 <= 4'd0;
+        litedramcore1_time0 <= 8'd0;
+        litedramcore1_time1 <= 7'd0;
         dqsphase1_dqs_shift_storage <= 1'd0;
         dqsphase1_dqs_shift_wr_stb <= 1'd0;
         dqsphase1_dqs_busy_wr_stb <= 1'd0;
@@ -102214,7 +102214,7 @@ FDPE #(
 endmodule
 
 // -----------------------------------------------------------------------------
-//  Auto-Generated by LiteX on 2026-09-30 09:09:04.
+//  Auto-Generated by LiteX on 2026-09-30 17:52:21.
 //------------------------------------------------------------------------------
 
 // VexRiscv_Min.v (modules renamed otpu_selfcal_*)

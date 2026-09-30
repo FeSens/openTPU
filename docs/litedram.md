@@ -1289,10 +1289,12 @@ card's channels behind the adapter (`otpu_top` AXI = 2):
   controller as Verilog (`sim/verilator/otpu_ldc_ch.v`). This is LiteDRAM's own RTL at
   `core.json`'s commits: the bank machines, the multiplexer, the refresher, the crossbar with
   the idle BIST port, and `LiteDRAMNativePortECC`. It has the core's settings: MT41K256M8 with
-  tRFC 160 ns, 1:4, the default `ControllerSettings`, and WL7DDRPHY's latencies (read 8,
-  write 1). The PHY is a DFI stub. It is DDR3-1066 only: the board's DDR3 never runs faster,
-  the rate its HR banks are specified for. Since ld-2port it has the core's two user ports per
-  channel (below); the checks in this section's first table were made with one.
+  tRFC 160 ns, 1:4, the core's `ControllerSettings` (`tools/litedram/ctl_settings.py`:
+  LiteDRAM's defaults but, since memeff, refresh postponing 8 and read / write times 256 / 128),
+  and WL7DDRPHY's latencies (read 8, write 1). The PHY is a DFI stub. It is DDR3-1066 only:
+  the board's DDR3 never runs faster, the rate its HR banks are specified for. Since ld-2port
+  it has the core's two user ports per channel (below); the checks in this section's first
+  table were made with one.
 - **The memory:** `sim/verilator/otpu_ldc_mem.sv` puts each channel behind the board's bridge
   (`otpu_mem_ch`, with its clock crossing and read-modify-write) in the controller clock. The
   data is kept in the model and moves in the controller's command order.
@@ -1306,8 +1308,8 @@ card's channels behind the adapter (`otpu_top` AXI = 2):
 
 | | simulation | card |
 |---|---|---|
-| sequential reads, one channel, the controller alone (the BIST's pattern) | 90.9% of peak | 91.0% |
-| sequential writes | 90.1% | 90.1% |
+| sequential reads, one channel, the controller alone (the BIST's pattern; memeff: 90.1%) | 90.9% of peak | 91.0% |
+| sequential writes (memeff: 89.9%) | 90.1% | 90.1% |
 | Qwen3 4-bit decode, pos 544, int8 head: Mcycles/token at 100 / 133.33 MHz | 3.734 / 4.218 | 3.731 / 4.256 (+0.1 / -0.9%) |
 | LFM2 4-bit, the same | 1.348 / 1.541 | 1.357 / 1.554 (-0.7 / -0.8%) |
 | Qwen3.5 4-bit, the same | 4.636 / 5.360 | 4.673 / 5.435 (-0.8 / -1.4%) |
@@ -1509,6 +1511,13 @@ pos 544, 133.33 MHz, DDR3-1066; GB/s: bytes read and written per token over its 
 The bytes per token are the same. The RTL does a little better than the behavioural split above
 and matches its queue-of-32 point.
 
+**Correction (2026-09-30): the two-port column above is 5% short.** It was built from layer
+prefixes (`tools/perf_ddr.py`'s first layer plus the second's increment for each further layer),
+and on two ports the second layer costs less than the layers after it ("What is left in the
+controller", below). The whole model, simulated: Qwen3 3.903 M (-7.5% from one port), LFM2
+1.417 M (-8.1%), Qwen3.5 4.952 M (-7.6%). The card measured -7.4%, -7.9% and -7.9% (the fused
+build c2830d6's qual). The one-port column holds: its layers all cost the same.
+
 **Area and timing of the bridge** (per channel; Vivado 2026.1, `tools/memch_ooc.tcl`, routed out
 of context at 7.5 / 7.5 / 8.0 ns for the core, the controller and XDMA):
 
@@ -1584,13 +1593,14 @@ Expected gains are for decode at DDR3-1066 and 133.33 MHz, the board's only rate
      second write-data FIFO and command queue per channel. The bridge's and the controller's
      timing at 133.33 MHz also need checking: LiteDRAM's sys domain has +0.048 ns.
 2. **The adapter's A runs from 8 to 32 beats: +2.7% alone, about +1.2 points on top of item
-   1.** Risk: low.
+   1.** Risk: low. Done in memeff (below): 0.9 to 1.3% fewer cycles per token on two ports.
    - **Change:** `otpu_native_dram`'s APF, a wider run counter, and an A data FIFO of at least
      2 × APF - 1 = 63 beats (4 KiB per channel, block RAM).
    - **Caveat:** the trace rewrite assumed the merged runs were all used, because they were
      consecutive runs of one stream. A stream that ends early would fetch beats it does not use.
 3. **No gain:**
-   - refresh postponing: all of refresh is 1.9%;
+   - refresh postponing: all of refresh is 1.9% (in the replay; on the whole model with two
+     ports, postponing 8 is -0.6%, taken in memeff, below);
    - a deeper command buffer: 0.0%;
    - XOR bank hashing: 0.1%.
 4. **A higher-risk alternative to item 1:** patch LiteDRAM's crossbar so the next bank's
@@ -1598,6 +1608,126 @@ Expected gains are for decode at DDR3-1066 and 133.33 MHz, the board's only rate
    bounded by the no-lock row at -11%. Read data would then return in column-command order, not
    command order, so the adapter would need the in-order return anyway, and we would carry a
    LiteDRAM fork.
+
+### What is left in the controller, and three fixes (memeff, 2026-09-30)
+
+**Simulate the whole model, not prefixes.** On two ports, the second layer's increment is not a
+layer's cost. Qwen3 4-bit decode at 133.33 MHz (the fused build c2830d6's RTL), by the number of
+layers simulated:
+
+| layers | 1 | 2 | 3 | 4 | 8 | 16 | 28 |
+|---|---|---|---|---|---|---|---|
+| Mcycles/token | 1.424 | 1.508 | 1.601 | 1.699 | 2.067 | 2.801 | 3.903 |
+| cycles per layer since the previous point | - | 83.9k | 93.0k | 97.7k | 92.0k | 91.8k | 91.8k |
+
+- **One port:** every layer from the second on costs 99.4k to 99.6k, so the prefix build held
+  (4.218 M against the whole model's 4.219 M).
+- **Two ports:** the prefix build gave 3.691 M, 5.4% short of the whole model.
+- **`tools/perf_ddr.py` now simulates the whole model** (2-3 minutes a point on the Mac).
+  `--prefixes` keeps the old build.
+
+The whole model against the card (c2830d6's qual), Mcycles/token:
+
+| | co-simulated | card |
+|---|---|---|
+| Qwen3 4-bit | 3.903 | 3.939 (-0.9%) |
+| LFM2 4-bit | 1.417 | 1.431 (-1.0%) |
+| Qwen3.5 4-bit | 4.952 | 5.006 (-1.1%) |
+| Qwen3 8-bit | 5.698 | 5.735 (-0.6%) |
+| LFM2 8-bit | 2.083 | 2.096 (-0.6%) |
+
+**Where the cycles go.** The runs were c2830d6, the card's operating point, 4-bit layers. The
+figures are per channel, in % of the controller's cycles. They come from counters added to the
+co-simulation for this study (not in the tree). Each cycle counts under the first of these that
+holds:
+- a column command on the DFI (data);
+- refresh;
+- a bank with a column command that was not issued (the multiplexer);
+- a bank opening or closing a row;
+- commands at the ports that no bank holds (the crossbar);
+- nothing to do.
+
+| | Qwen3 | LFM2 | Qwen3.5 |
+|---|---|---|---|
+| column commands (data) | 89.0 | 90.4 | 90.8 |
+| refresh | 2.9 | 2.9 | 2.9 |
+| rows opening and closing | 2.5 | 2.2 | 2.7 |
+| the multiplexer: read / write turnarounds | 0.7 | 0.4 | 1.7 |
+| the multiplexer: its chooser's grant on a bank with no column command | 0.6 | 0.5 | 0.8 |
+| the crossbar (its lock and pipeline) | 0.4 | 0.4 | 0.5 |
+| nothing asked | 3.7 | 3.2 | 0.6 |
+
+- **The crossbar's lock** cost 11% on one port. The two ports took it under 0.5%.
+- **The bridge's read credits and queues** limit under 0.1% of the cycles.
+- **The idle time is the core's:** about 700 runs per token of 64 to over 256 cycles (norms,
+  attention's tails). It is a lever for the program, not for the memory.
+
+**The variants, measured** (the whole model, Qwen3 4-bit, cycles per token against c2830d6; the
+controller variants from `gen_ldc.py`'s settings or small LiteDRAM subclasses):
+
+| variant | change |
+|---|---|
+| A runs (APF) of 16 beats | -0.55% |
+| A runs of 32 | -1.25% |
+| A runs of 64 | -1.22% (0.26% more beats read) |
+| no refresh (a bound) | -2.79% |
+| refresh postponing 8 | -0.59% |
+| a refresher that refreshes when the controller is idle (8 postponed / 8 pulled in, or 4 / 4) | -0.17 to -0.38% |
+| the same, a forced refresh draining all owed | -0.59 to -0.61% |
+| read / write times 128 / 64 (Qwen3.5: 256 / 128 -0.59%, 512 / 256 -0.72%) | -0.03% |
+| command buffer 16 | +0.13% |
+| the multiplexer's chooser granting a valid request in the same cycle | -0.63% |
+
+- **Refresh is structural.** Decode's idle time comes in a few clusters per layer. DDR3 lets
+  only 8 refreshes be postponed or pulled in, so most of a layer's 88 refreshes land in its
+  weight streams. Refreshing when idle gains nothing over LiteDRAM's postponing, which saves one
+  wait for the banks and one row reopening per 8 refreshes.
+- **The chooser is the next step, not taken here.** On top of the three fixes below it saves
+  0.26% (Qwen3), 0.22% (LFM2) and 0.38% (Qwen3.5). But it adds a priority encoder to the
+  controller's command path in LiteDRAM's sys domain, so it waits for an out-of-context timing
+  check.
+- **Not tried:** a shorter read-to-write turnaround. LiteDRAM holds 7 cycles where DDR3 needs
+  about 2. That is worth 0.4-1.0% after the read / write times below, but the PHY's bus
+  turnaround would need a close look.
+
+**The three fixes (memeff):**
+1. **APF 8 -> 32** (`otpu_native_dram`). The run counters and the A order's drop field go from
+   3 bits to log2(APF). The A read FIFO goes from 32 to 64 beats (at least 2 APF - 1).
+2. **Refresh postponing 8.**
+3. **Read / write times 256 / 128.**
+
+Fixes 2 and 3 are `tools/litedram/ctl_settings.py`, which `gen_core.py` and `gen_ldc.py` both
+use.
+- **What changes in the core's Verilog:** per channel, only the refresher's two counters and the
+  multiplexer's two timers.
+- **What stays byte for byte** (`check_core.sh`): the XDC, the firmware ROM, `csr.csv` and
+  `sdram_init.py`.
+- **The co-simulated controller** is regenerated with the same settings. Its longest time
+  between two refreshes is 8 tREFI (DDR3 allows 9).
+
+**Decode, measured** (the whole model, `tools/perf_ddr.py`, 133.33 MHz, DDR3-1066, the card's
+operating point: pos 544, KV capacity 2048, int8 LM head; main a581bbe against memeff):
+
+| | main, cycles/token | memeff | change | tokens/s |
+|---|---|---|---|---|
+| Qwen3 4-bit | 3,902,776 | 3,844,321 | -1.50% | 34.2 -> 34.7 (+1.52%) |
+| LFM2 4-bit | 1,416,696 | 1,397,986 | -1.32% | 94.1 -> 95.4 (+1.34%) |
+| Qwen3.5 4-bit | 4,951,910 | 4,837,341 | -2.31% | 26.9 -> 27.6 (+2.37%) |
+| Qwen3 8-bit | 5,697,905 | 5,607,425 | -1.59% | 23.4 -> 23.8 (+1.61%) |
+| LFM2 8-bit | 2,082,922 | 2,050,568 | -1.55% | 64.0 -> 65.0 (+1.58%) |
+| Qwen3.5 8-bit | 6,981,473 | 6,808,623 | -2.48% | 19.1 -> 19.6 (+2.54%) |
+
+- **Row changes** fall by about 30% (Qwen3 4-bit: 128,322 -> 90,885).
+- **The longer A runs read a little more:** +3,584 beats per token on Qwen3 4-bit (0.05%).
+- **Sequential streams on the controller alone** (`tb_ldc_replay2`, 256K beats):
+  - **Split over the two ports, as the bridge splits them** (the path of decode and XDMA):
+    reads 96.7% -> 97.3% of peak, writes 95.6% -> 97.2%.
+  - **On one port** (the BIST's pattern, `tb_ldc_replay`): reads 90.9% -> 90.1%, writes
+    90.1% -> 89.9%. Behind one port's crossbar lock, a single refresh costs about 13 cycles of
+    throughput, since part of it overlaps the lock's bank-change gaps. A burst of 8 costs about
+    25 cycles per refresh.
+  - So the card's BIST figure drops by about a point. `test_ldc_sequential_is_the_card_bist`
+    now expects the simulation's figures until the memeff build's BIST measures them.
 
 ### The core clock at DDR3-1066: the co-simulated grid
 

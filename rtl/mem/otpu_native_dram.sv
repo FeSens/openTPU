@@ -84,8 +84,11 @@ module otpu_native_dram #(
   parameter bit CHASH = 1'b1,                        // address map: see the top
   parameter int WGATHER = 4,                         // idle cycles before a gathered SW beat goes out
   parameter int RD = 128,                            // B read beats in flight per channel
-  parameter int AD = 32,                             // A read beats in flight per channel
-  parameter int APF = 8                              // A read run (prefetch), beats
+  parameter int AD = 64,                             // A read beats in flight per channel
+  // A read run (prefetch), beats. 32: decode's knee (docs/litedram.md section 11; 8 -> 32 is
+  // 0.9-1.3% fewer cycles per token, 64 no better): fewer runs, so fewer row and bank changes
+  // between the scale stream and the others
+  parameter int APF = 32
 ) (
   input  logic              clk,
   input  logic              rst,
@@ -131,13 +134,14 @@ module otpu_native_dram #(
 );
   initial if (D != 128) $fatal(1, "otpu_native_dram: D must be 128 (one beat per channel)");
   // (AD >= 2 APF - 1: a run can start while the previous run's untaken beats are stored)
-  initial if (APF < 1 || APF > 8 || AD < 2 * APF - 1) $fatal(1, "otpu_native_dram: bad APF");
+  initial if (APF < 1 || APF > 64 || AD < 2 * APF - 1) $fatal(1, "otpu_native_dram: bad APF");
   localparam int QW = $clog2(QD);
   localparam int WW = $clog2(WQD);
   localparam int NH = 64;                            // SW hazard buckets (see w_blk)
   localparam int HW = $clog2(NH);
   localparam int RW = $clog2(RD);
   localparam int AW_ = $clog2(AD);
+  localparam int RNW = (APF > 1) ? $clog2(APF) : 1;  // a run's beat index
   localparam int OD = 2 * RD;                        // B tags / A order entries in flight (2^k)
   localparam int OW = $clog2(OD);
   localparam int TD = 2 ** $clog2(RD + AD + WQD);    // reads in flight per channel (tags)
@@ -192,7 +196,7 @@ module otpu_native_dram #(
   logic [QW:0] qb_h [2];                    // (2 QD slots: see qbm)
   logic [QW:0] qa_n [2];
   logic [QW-1:0] qa_h [2];
-  logic [2:0]  a_iss [2];                   // the head A read's run: beats already issued
+  logic [RNW-1:0] a_iss [2];                // the head A read's run: beats already issued
   // port SW (gathered beats): live entries (until their write goes out) from qw_f, the next to
   // write; qw_r the next whose fill read is due (qw_rn from qw_r on)
   logic [WW:0] qw_n [2], qw_rn [2];
@@ -237,7 +241,7 @@ module otpu_native_dram #(
   logic [OW:0]  bt_n;
   logic [OW-1:0] bt_h;
   // A reads in order: channel, word, reuse of the last beat, run beats to drop before this one
-  typedef struct packed { logic c; logic [3:0] idx; logic reuse; logic [2:0] drop; } ao_t;
+  typedef struct packed { logic c; logic [3:0] idx; logic reuse; logic [RNW-1:0] drop; } ao_t;
   ao_t          ao_q [OD];
   ao_t          aoh;                           // the oldest A read
   logic [OW:0]  ao_n;
@@ -284,7 +288,7 @@ module otpu_native_dram #(
   // yet taken (in flight or stored)
   logic [24:0]  pnx [2];
   logic [1:0]   pv;
-  logic [2:0]   pfl [2];
+  logic [RNW-1:0] pfl [2];
   wire  [24:0]  a_cb = a_addr[29:5];              // the channel beat
   wire  a_hit = !a_we && !a_reuse && pv[a_ch] && a_cb == pnx[a_ch] && pfl[a_ch] != 0;
 
@@ -497,7 +501,7 @@ module otpu_native_dram #(
   ao_t          ao_nx1, ao_in;
   assign ao_nx1 = ao_q[OW'(ao_h + 1'b1)];
   assign ao_in = '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse,
-                   drop: (a_reuse || a_hit) ? 3'd0 : pfl[a_ch]};
+                   drop: (a_reuse || a_hit) ? RNW'(0) : pfl[a_ch]};
   logic [511:0] a_last;                          // the beat of the last fetched A read
   wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] > (AW_ + 1)'(aoh.drop));
   wire [511:0] a_src = aoh.reuse ? a_last : ra_head[aoh.c];
@@ -590,12 +594,12 @@ module otpu_native_dram #(
         hsrc[c] <= src[c];
         c_done[c] <= swr[c] && !wiss[c] && (c_done[c] || ctk[c]);
         d_done[c] <= swr[c] && !wiss[c] && (d_done[c] || dtk[c]);
-        popa = src[c] == S_A && (swr[c] ? wiss[c] : ctk[c] && a_iss[c] == 3'(APF - 1));
+        popa = src[c] == S_A && (swr[c] ? wiss[c] : ctk[c] && a_iss[c] == RNW'(APF - 1));
         popb = src[c] == S_B && (swr[c] ? wiss[c] : ctk[c]);
         popw = src[c] == S_WW && wiss[c];
         if (rtk[c]) ntg = ntg + 1;
         if (src[c] == S_A && rtk[c]) begin      // an A run's beat; the run reserves its room
-          a_iss[c] <= (a_iss[c] == 3'(APF - 1)) ? 3'd0 : a_iss[c] + 1'b1;
+          a_iss[c] <= (a_iss[c] == RNW'(APF - 1)) ? RNW'(0) : a_iss[c] + 1'b1;
           if (a_iss[c] == 0) rar = rar + (AW_ + 1)'(APF);
         end
         if (src[c] == S_B && rtk[c]) rbr = rbr + 1;
@@ -675,7 +679,7 @@ module otpu_native_dram #(
           pfl[a_ch] <= pfl[a_ch] - 1;
         end else begin
           pnx[a_ch] <= a_cb + 1;
-          pfl[a_ch] <= 3'(APF - 1);
+          pfl[a_ch] <= RNW'(APF - 1);
           pv[a_ch] <= 1'b1;
         end
       end
