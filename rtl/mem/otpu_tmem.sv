@@ -242,34 +242,45 @@ module otpu_tmem #(
     wire  [BW-1:0]            rot = r_addr[p][0][BW-1:0];
     wire  [LANES-1:0][31:0]   qb = pq[p];
     // lane data: the bank it read (the crossbar: each lane's bank; a rotator: the run's
-    // rotation), fresh the cycle after the read, then held
+    // rotation), fresh the cycle after the read, then held. A rotator keeps the rotation once
+    // per lane (rot_q[l], all loaded with the run's): lane l takes bank (l + rot_q[l]) mod LANES,
+    // so each copy drives one lane's select and hold, not every lane's (133.33 MHz, 110ec6d /
+    // 812bb01: g_port[6].rot_q[2] -> 1 LUT -> held, fanout 513, 6.8 ns of route, +0.152 ns)
     logic [LANES-1:0][BW-1:0] sel;
-    logic [BW-1:0]            rot_q;
+    logic [LANES-1:0][BW-1:0] rq;         // a rotator's rotation, per lane
     logic [LANES-1:0]         fresh;
     logic [LANES-1:0][31:0]   held, lq;
-    always_ff @(posedge clk) begin
-      if (|r_en[p]) rot_q <= rot;
+    if (GEN_R[p]) begin : g_xb
+      assign rq = '0;
+    end else begin : g_rot
+      (* keep *) logic [LANES-1:0][BW-1:0] rot_q;
+      always_ff @(posedge clk)
+        for (int l = 0; l < LANES; l++) if (|r_en[p]) rot_q[l] <= rot;
+      assign rq = rot_q;
+`ifndef SYNTHESIS
+      // the lanes' copies are one rotation (the run's), from the first read on
+      bit ld;
+      initial ld = 1'b0;
+      always @(posedge clk) begin
+        if (|r_en[p]) ld <= 1'b1;
+        for (int l = 1; l < LANES; l++)
+          if (ld && rot_q[l] != rot_q[0])
+            $fatal(1, "otpu_tmem: port %0d lane %0d's rotation %0d is not lane 0's %0d", p, l,
+                   rot_q[l], rot_q[0]);
+      end
+`endif
+    end
+    always_ff @(posedge clk)
       for (int l = 0; l < LANES; l++) begin
         fresh[l] <= r_en[p][l];
         if (GEN_R[p] && r_en[p][l]) sel[l] <= r_addr[p][l][BW-1:0];
         if (fresh[l]) held[l] <= lq[l];
       end
-    end
-    always_comb begin
-      if (GEN_R[p]) begin
-        for (int l = 0; l < LANES; l++) lq[l] = qb[sel[l]];
-      end else begin
-        logic [LANES-1:0][31:0] t;
-        t = '0;
-        lq = qb;
-        for (int k = 0; k < BW; k++)
-          if (rot_q[k]) begin
-            t = lq;
-            for (int l = 0; l < LANES; l++) lq[l] = t[(l + (1 << k)) % LANES];
-          end
+    always_comb
+      for (int l = 0; l < LANES; l++) begin
+        lq[l] = GEN_R[p] ? qb[sel[l]] : qb[(l + int'(rq[l])) % LANES];
+        r_data[p][l] = fresh[l] ? lq[l] : held[l];
       end
-      for (int l = 0; l < LANES; l++) r_data[p][l] = fresh[l] ? lq[l] : held[l];
-    end
   end
 
 `ifndef SYNTHESIS
