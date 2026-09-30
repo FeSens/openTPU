@@ -81,6 +81,7 @@ from ld_test import (CRG, WLCRG, DQSPhase, BIST, MT41K256M8_tRFC160, WriteClocks
 from wl7ddrphy import WL7DDRPHY                                 # noqa: E402
 from ecc_ports import NativePortsECC                            # noqa: E402
 from csr_pipe import PipelinedCSR                               # noqa: E402
+from dfii_q import registered_injector                         # noqa: E402
 import calcpu                                                   # noqa: E402
 from calcpu import Cal, FirmwareBuilder, build_firmware, one_file  # noqa: E402
 
@@ -143,8 +144,10 @@ class OTPULiteDRAM(PipelinedCSR, SoCCore):
                                       sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
                                       write_latency_calibration=True, ddr_clk="sys4x" + sfx)
             setattr(self, "ddrphy" + sfx, p)
-            self.add_sdram("sdram" + sfx, phy=p, module=MT41K256M8_tRFC160(f, "1:4"),
-                           with_soc_interconnect=False)
+            # the software-injected commands (calibration) a cycle after their CSR write (dfii_q.py)
+            with registered_injector():
+                self.add_sdram("sdram" + sfx, phy=p, module=MT41K256M8_tRFC160(f, "1:4"),
+                               with_soc_interconnect=False)
             core = getattr(self, "sdram" + sfx)
             setattr(self, "phase" + sfx, DQSPhase(getattr(self, "wclk" + sfx) if phy == "wl" else
                                                   self.crg.mmcm if ch == 0 else self.crg.mmcm1))

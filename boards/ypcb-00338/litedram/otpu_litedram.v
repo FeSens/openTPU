@@ -11,7 +11,7 @@
 // Device     : xc7k480t-ffg1156-2
 // Hierarchy  : disabled
 // LiteX sha1 : --------
-// Date       : 2026-09-30 09:08:10
+// Date       : 2026-09-30 11:10:10
 //------------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -165,8 +165,8 @@ OTPULiteDRAM
 ├── cpu (CPUNone)
 ├── identifier (Identifier)
 ├── wclk (WriteClocks)
-│    ├── [BB:BUFG]
 │    ├── [BB:MMCME2_ADV]
+│    ├── [BB:BUFG]
 │    ├── [BB:BUFG]
 │    ├── [BB:BUFG]
 │    ├── [BB:BUFG]
@@ -333,8 +333,8 @@ OTPULiteDRAM
 │    ├── bitslip_152 (BitSlip) [Gen]
 │    ├── tappeddelayline_2 (TappedDelayLine) [Gen]
 │    ├── tappeddelayline_3 (TappedDelayLine) [Gen]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -344,85 +344,14 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OBUFDS]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -484,14 +413,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
@@ -502,9 +423,7 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -586,305 +505,450 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:FDRE]
+│    ├── [BB:IOBUF]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:FDRE]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1217,24 +1281,6 @@ OTPULiteDRAM
 │    ├── tappeddelayline_2 (TappedDelayLine) [Gen]
 │    ├── tappeddelayline_3 (TappedDelayLine) [Gen]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OBUFDS]
@@ -1246,69 +1292,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
@@ -1466,308 +1449,453 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:IOBUFDS]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:IOBUFDS]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -5095,6 +5223,7 @@ reg           litedramcore0_phaseinjector0_command_wr_stb = 1'd0;
 wire          litedramcore0_phaseinjector0_cs;
 wire          litedramcore0_phaseinjector0_cs_bottom;
 wire          litedramcore0_phaseinjector0_cs_top;
+reg           litedramcore0_phaseinjector0_q = 1'd0;
 wire          litedramcore0_phaseinjector0_ras;
 wire          litedramcore0_phaseinjector0_rddata_rd_stb;
 reg   [143:0] litedramcore0_phaseinjector0_rddata_status = 144'd0;
@@ -5118,6 +5247,7 @@ reg           litedramcore0_phaseinjector1_command_wr_stb = 1'd0;
 wire          litedramcore0_phaseinjector1_cs;
 wire          litedramcore0_phaseinjector1_cs_bottom;
 wire          litedramcore0_phaseinjector1_cs_top;
+reg           litedramcore0_phaseinjector1_q = 1'd0;
 wire          litedramcore0_phaseinjector1_ras;
 wire          litedramcore0_phaseinjector1_rddata_rd_stb;
 reg   [143:0] litedramcore0_phaseinjector1_rddata_status = 144'd0;
@@ -5141,6 +5271,7 @@ reg           litedramcore0_phaseinjector2_command_wr_stb = 1'd0;
 wire          litedramcore0_phaseinjector2_cs;
 wire          litedramcore0_phaseinjector2_cs_bottom;
 wire          litedramcore0_phaseinjector2_cs_top;
+reg           litedramcore0_phaseinjector2_q = 1'd0;
 wire          litedramcore0_phaseinjector2_ras;
 wire          litedramcore0_phaseinjector2_rddata_rd_stb;
 reg   [143:0] litedramcore0_phaseinjector2_rddata_status = 144'd0;
@@ -5164,6 +5295,7 @@ reg           litedramcore0_phaseinjector3_command_wr_stb = 1'd0;
 wire          litedramcore0_phaseinjector3_cs;
 wire          litedramcore0_phaseinjector3_cs_bottom;
 wire          litedramcore0_phaseinjector3_cs_top;
+reg           litedramcore0_phaseinjector3_q = 1'd0;
 wire          litedramcore0_phaseinjector3_ras;
 wire          litedramcore0_phaseinjector3_rddata_rd_stb;
 reg   [143:0] litedramcore0_phaseinjector3_rddata_status = 144'd0;
@@ -6572,6 +6704,7 @@ reg           litedramcore1_phaseinjector4_command_wr_stb = 1'd0;
 wire          litedramcore1_phaseinjector4_cs;
 wire          litedramcore1_phaseinjector4_cs_bottom;
 wire          litedramcore1_phaseinjector4_cs_top;
+reg           litedramcore1_phaseinjector4_q = 1'd0;
 wire          litedramcore1_phaseinjector4_ras;
 wire          litedramcore1_phaseinjector4_rddata_rd_stb;
 reg   [143:0] litedramcore1_phaseinjector4_rddata_status = 144'd0;
@@ -6595,6 +6728,7 @@ reg           litedramcore1_phaseinjector5_command_wr_stb = 1'd0;
 wire          litedramcore1_phaseinjector5_cs;
 wire          litedramcore1_phaseinjector5_cs_bottom;
 wire          litedramcore1_phaseinjector5_cs_top;
+reg           litedramcore1_phaseinjector5_q = 1'd0;
 wire          litedramcore1_phaseinjector5_ras;
 wire          litedramcore1_phaseinjector5_rddata_rd_stb;
 reg   [143:0] litedramcore1_phaseinjector5_rddata_status = 144'd0;
@@ -6618,6 +6752,7 @@ reg           litedramcore1_phaseinjector6_command_wr_stb = 1'd0;
 wire          litedramcore1_phaseinjector6_cs;
 wire          litedramcore1_phaseinjector6_cs_bottom;
 wire          litedramcore1_phaseinjector6_cs_top;
+reg           litedramcore1_phaseinjector6_q = 1'd0;
 wire          litedramcore1_phaseinjector6_ras;
 wire          litedramcore1_phaseinjector6_rddata_rd_stb;
 reg   [143:0] litedramcore1_phaseinjector6_rddata_status = 144'd0;
@@ -6641,6 +6776,7 @@ reg           litedramcore1_phaseinjector7_command_wr_stb = 1'd0;
 wire          litedramcore1_phaseinjector7_cs;
 wire          litedramcore1_phaseinjector7_cs_bottom;
 wire          litedramcore1_phaseinjector7_cs_top;
+reg           litedramcore1_phaseinjector7_q = 1'd0;
 wire          litedramcore1_phaseinjector7_ras;
 wire          litedramcore1_phaseinjector7_rddata_rd_stb;
 reg   [143:0] litedramcore1_phaseinjector7_rddata_status = 144'd0;
@@ -19352,6 +19488,78 @@ wire          wl7ddrphy0_dq_o71;
 wire          wl7ddrphy0_dq_o8;
 wire          wl7ddrphy0_dq_o9;
 wire          wl7ddrphy0_dq_oe;
+wire          wl7ddrphy0_dq_rst_r0;
+wire          wl7ddrphy0_dq_rst_r1;
+wire          wl7ddrphy0_dq_rst_r10;
+wire          wl7ddrphy0_dq_rst_r11;
+wire          wl7ddrphy0_dq_rst_r12;
+wire          wl7ddrphy0_dq_rst_r13;
+wire          wl7ddrphy0_dq_rst_r14;
+wire          wl7ddrphy0_dq_rst_r15;
+wire          wl7ddrphy0_dq_rst_r16;
+wire          wl7ddrphy0_dq_rst_r17;
+wire          wl7ddrphy0_dq_rst_r18;
+wire          wl7ddrphy0_dq_rst_r19;
+wire          wl7ddrphy0_dq_rst_r2;
+wire          wl7ddrphy0_dq_rst_r20;
+wire          wl7ddrphy0_dq_rst_r21;
+wire          wl7ddrphy0_dq_rst_r22;
+wire          wl7ddrphy0_dq_rst_r23;
+wire          wl7ddrphy0_dq_rst_r24;
+wire          wl7ddrphy0_dq_rst_r25;
+wire          wl7ddrphy0_dq_rst_r26;
+wire          wl7ddrphy0_dq_rst_r27;
+wire          wl7ddrphy0_dq_rst_r28;
+wire          wl7ddrphy0_dq_rst_r29;
+wire          wl7ddrphy0_dq_rst_r3;
+wire          wl7ddrphy0_dq_rst_r30;
+wire          wl7ddrphy0_dq_rst_r31;
+wire          wl7ddrphy0_dq_rst_r32;
+wire          wl7ddrphy0_dq_rst_r33;
+wire          wl7ddrphy0_dq_rst_r34;
+wire          wl7ddrphy0_dq_rst_r35;
+wire          wl7ddrphy0_dq_rst_r36;
+wire          wl7ddrphy0_dq_rst_r37;
+wire          wl7ddrphy0_dq_rst_r38;
+wire          wl7ddrphy0_dq_rst_r39;
+wire          wl7ddrphy0_dq_rst_r4;
+wire          wl7ddrphy0_dq_rst_r40;
+wire          wl7ddrphy0_dq_rst_r41;
+wire          wl7ddrphy0_dq_rst_r42;
+wire          wl7ddrphy0_dq_rst_r43;
+wire          wl7ddrphy0_dq_rst_r44;
+wire          wl7ddrphy0_dq_rst_r45;
+wire          wl7ddrphy0_dq_rst_r46;
+wire          wl7ddrphy0_dq_rst_r47;
+wire          wl7ddrphy0_dq_rst_r48;
+wire          wl7ddrphy0_dq_rst_r49;
+wire          wl7ddrphy0_dq_rst_r5;
+wire          wl7ddrphy0_dq_rst_r50;
+wire          wl7ddrphy0_dq_rst_r51;
+wire          wl7ddrphy0_dq_rst_r52;
+wire          wl7ddrphy0_dq_rst_r53;
+wire          wl7ddrphy0_dq_rst_r54;
+wire          wl7ddrphy0_dq_rst_r55;
+wire          wl7ddrphy0_dq_rst_r56;
+wire          wl7ddrphy0_dq_rst_r57;
+wire          wl7ddrphy0_dq_rst_r58;
+wire          wl7ddrphy0_dq_rst_r59;
+wire          wl7ddrphy0_dq_rst_r6;
+wire          wl7ddrphy0_dq_rst_r60;
+wire          wl7ddrphy0_dq_rst_r61;
+wire          wl7ddrphy0_dq_rst_r62;
+wire          wl7ddrphy0_dq_rst_r63;
+wire          wl7ddrphy0_dq_rst_r64;
+wire          wl7ddrphy0_dq_rst_r65;
+wire          wl7ddrphy0_dq_rst_r66;
+wire          wl7ddrphy0_dq_rst_r67;
+wire          wl7ddrphy0_dq_rst_r68;
+wire          wl7ddrphy0_dq_rst_r69;
+wire          wl7ddrphy0_dq_rst_r7;
+wire          wl7ddrphy0_dq_rst_r70;
+wire          wl7ddrphy0_dq_rst_r71;
+wire          wl7ddrphy0_dq_rst_r8;
+wire          wl7ddrphy0_dq_rst_r9;
 wire          wl7ddrphy0_dq_t0;
 wire          wl7ddrphy0_dq_t1;
 wire          wl7ddrphy0_dq_t10;
@@ -19453,15 +19661,6 @@ reg     [4:0] wl7ddrphy0_half_sys8x_taps_storage = 5'd6;
 reg           wl7ddrphy0_half_sys8x_taps_wr_stb = 1'd0;
 wire          wl7ddrphy0_lane_all;
 wire    [2:0] wl7ddrphy0_pads_ba;
-wire          wl7ddrphy0_rd_rst_r0;
-wire          wl7ddrphy0_rd_rst_r1;
-wire          wl7ddrphy0_rd_rst_r2;
-wire          wl7ddrphy0_rd_rst_r3;
-wire          wl7ddrphy0_rd_rst_r4;
-wire          wl7ddrphy0_rd_rst_r5;
-wire          wl7ddrphy0_rd_rst_r6;
-wire          wl7ddrphy0_rd_rst_r7;
-wire          wl7ddrphy0_rd_rst_r8;
 wire          wl7ddrphy0_rdly_dq_bitslip_r;
 reg           wl7ddrphy0_rdly_dq_bitslip_re = 1'd0;
 wire          wl7ddrphy0_rdly_dq_bitslip_rst_r;
@@ -19511,47 +19710,48 @@ reg           wl7ddrphy0_wdly_dq_bitslip_we = 1'd0;
 wire          wl7ddrphy0_wl7ddrphy0_r0;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r1;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r10;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r11;
+wire          wl7ddrphy0_wl7ddrphy0_r11;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r12;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r13;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r14;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r15;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r16;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r17;
-wire          wl7ddrphy0_wl7ddrphy0_r18;
+wire    [7:0] wl7ddrphy0_wl7ddrphy0_r18;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r19;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r2;
-wire    [7:0] wl7ddrphy0_wl7ddrphy0_r20;
+wire          wl7ddrphy0_wl7ddrphy0_r2;
+wire          wl7ddrphy0_wl7ddrphy0_r20;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r21;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r22;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r23;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r24;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r25;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r26;
-wire          wl7ddrphy0_wl7ddrphy0_r27;
+wire    [7:0] wl7ddrphy0_wl7ddrphy0_r27;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r28;
+wire          wl7ddrphy0_wl7ddrphy0_r29;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r3;
+wire          wl7ddrphy0_wl7ddrphy0_r30;
+wire          wl7ddrphy0_wl7ddrphy0_r31;
+wire          wl7ddrphy0_wl7ddrphy0_r32;
+wire          wl7ddrphy0_wl7ddrphy0_r33;
+wire          wl7ddrphy0_wl7ddrphy0_r34;
+wire          wl7ddrphy0_wl7ddrphy0_r35;
+wire          wl7ddrphy0_wl7ddrphy0_r36;
+wire          wl7ddrphy0_wl7ddrphy0_r37;
+wire          wl7ddrphy0_wl7ddrphy0_r38;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r4;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r5;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r6;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r7;
 wire    [7:0] wl7ddrphy0_wl7ddrphy0_r8;
-wire          wl7ddrphy0_wl7ddrphy0_r9;
+wire    [7:0] wl7ddrphy0_wl7ddrphy0_r9;
 reg           wl7ddrphy0_wlevel_en_storage = 1'd0;
 reg           wl7ddrphy0_wlevel_en_wr_stb = 1'd0;
 wire          wl7ddrphy0_wlevel_strobe_r;
 reg           wl7ddrphy0_wlevel_strobe_re = 1'd0;
 reg           wl7ddrphy0_wlevel_strobe_w = 1'd0;
 reg           wl7ddrphy0_wlevel_strobe_we = 1'd0;
-wire          wl7ddrphy0_wr_rst_r0;
-wire          wl7ddrphy0_wr_rst_r1;
-wire          wl7ddrphy0_wr_rst_r2;
-wire          wl7ddrphy0_wr_rst_r3;
-wire          wl7ddrphy0_wr_rst_r4;
-wire          wl7ddrphy0_wr_rst_r5;
-wire          wl7ddrphy0_wr_rst_r6;
-wire          wl7ddrphy0_wr_rst_r7;
-wire          wl7ddrphy0_wr_rst_r8;
 reg     [1:0] wl7ddrphy0_wrphase_storage = 2'd2;
 reg           wl7ddrphy0_wrphase_wr_stb = 1'd0;
 reg     [7:0] wl7ddrphy1_bitslip10 = 8'd0;
@@ -20371,6 +20571,78 @@ wire          wl7ddrphy1_dq_o71;
 wire          wl7ddrphy1_dq_o8;
 wire          wl7ddrphy1_dq_o9;
 wire          wl7ddrphy1_dq_oe;
+wire          wl7ddrphy1_dq_rst_r0;
+wire          wl7ddrphy1_dq_rst_r1;
+wire          wl7ddrphy1_dq_rst_r10;
+wire          wl7ddrphy1_dq_rst_r11;
+wire          wl7ddrphy1_dq_rst_r12;
+wire          wl7ddrphy1_dq_rst_r13;
+wire          wl7ddrphy1_dq_rst_r14;
+wire          wl7ddrphy1_dq_rst_r15;
+wire          wl7ddrphy1_dq_rst_r16;
+wire          wl7ddrphy1_dq_rst_r17;
+wire          wl7ddrphy1_dq_rst_r18;
+wire          wl7ddrphy1_dq_rst_r19;
+wire          wl7ddrphy1_dq_rst_r2;
+wire          wl7ddrphy1_dq_rst_r20;
+wire          wl7ddrphy1_dq_rst_r21;
+wire          wl7ddrphy1_dq_rst_r22;
+wire          wl7ddrphy1_dq_rst_r23;
+wire          wl7ddrphy1_dq_rst_r24;
+wire          wl7ddrphy1_dq_rst_r25;
+wire          wl7ddrphy1_dq_rst_r26;
+wire          wl7ddrphy1_dq_rst_r27;
+wire          wl7ddrphy1_dq_rst_r28;
+wire          wl7ddrphy1_dq_rst_r29;
+wire          wl7ddrphy1_dq_rst_r3;
+wire          wl7ddrphy1_dq_rst_r30;
+wire          wl7ddrphy1_dq_rst_r31;
+wire          wl7ddrphy1_dq_rst_r32;
+wire          wl7ddrphy1_dq_rst_r33;
+wire          wl7ddrphy1_dq_rst_r34;
+wire          wl7ddrphy1_dq_rst_r35;
+wire          wl7ddrphy1_dq_rst_r36;
+wire          wl7ddrphy1_dq_rst_r37;
+wire          wl7ddrphy1_dq_rst_r38;
+wire          wl7ddrphy1_dq_rst_r39;
+wire          wl7ddrphy1_dq_rst_r4;
+wire          wl7ddrphy1_dq_rst_r40;
+wire          wl7ddrphy1_dq_rst_r41;
+wire          wl7ddrphy1_dq_rst_r42;
+wire          wl7ddrphy1_dq_rst_r43;
+wire          wl7ddrphy1_dq_rst_r44;
+wire          wl7ddrphy1_dq_rst_r45;
+wire          wl7ddrphy1_dq_rst_r46;
+wire          wl7ddrphy1_dq_rst_r47;
+wire          wl7ddrphy1_dq_rst_r48;
+wire          wl7ddrphy1_dq_rst_r49;
+wire          wl7ddrphy1_dq_rst_r5;
+wire          wl7ddrphy1_dq_rst_r50;
+wire          wl7ddrphy1_dq_rst_r51;
+wire          wl7ddrphy1_dq_rst_r52;
+wire          wl7ddrphy1_dq_rst_r53;
+wire          wl7ddrphy1_dq_rst_r54;
+wire          wl7ddrphy1_dq_rst_r55;
+wire          wl7ddrphy1_dq_rst_r56;
+wire          wl7ddrphy1_dq_rst_r57;
+wire          wl7ddrphy1_dq_rst_r58;
+wire          wl7ddrphy1_dq_rst_r59;
+wire          wl7ddrphy1_dq_rst_r6;
+wire          wl7ddrphy1_dq_rst_r60;
+wire          wl7ddrphy1_dq_rst_r61;
+wire          wl7ddrphy1_dq_rst_r62;
+wire          wl7ddrphy1_dq_rst_r63;
+wire          wl7ddrphy1_dq_rst_r64;
+wire          wl7ddrphy1_dq_rst_r65;
+wire          wl7ddrphy1_dq_rst_r66;
+wire          wl7ddrphy1_dq_rst_r67;
+wire          wl7ddrphy1_dq_rst_r68;
+wire          wl7ddrphy1_dq_rst_r69;
+wire          wl7ddrphy1_dq_rst_r7;
+wire          wl7ddrphy1_dq_rst_r70;
+wire          wl7ddrphy1_dq_rst_r71;
+wire          wl7ddrphy1_dq_rst_r8;
+wire          wl7ddrphy1_dq_rst_r9;
 wire          wl7ddrphy1_dq_t0;
 wire          wl7ddrphy1_dq_t1;
 wire          wl7ddrphy1_dq_t10;
@@ -20472,15 +20744,6 @@ reg     [4:0] wl7ddrphy1_half_sys8x_taps_storage = 5'd6;
 reg           wl7ddrphy1_half_sys8x_taps_wr_stb = 1'd0;
 wire          wl7ddrphy1_lane_all;
 wire    [2:0] wl7ddrphy1_pads_ba;
-wire          wl7ddrphy1_rd_rst_r0;
-wire          wl7ddrphy1_rd_rst_r1;
-wire          wl7ddrphy1_rd_rst_r2;
-wire          wl7ddrphy1_rd_rst_r3;
-wire          wl7ddrphy1_rd_rst_r4;
-wire          wl7ddrphy1_rd_rst_r5;
-wire          wl7ddrphy1_rd_rst_r6;
-wire          wl7ddrphy1_rd_rst_r7;
-wire          wl7ddrphy1_rd_rst_r8;
 wire          wl7ddrphy1_rdly_dq_bitslip_r;
 reg           wl7ddrphy1_rdly_dq_bitslip_re = 1'd0;
 wire          wl7ddrphy1_rdly_dq_bitslip_rst_r;
@@ -20530,47 +20793,48 @@ reg           wl7ddrphy1_wdly_dq_bitslip_we = 1'd0;
 wire          wl7ddrphy1_wl7ddrphy1_r0;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r1;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r10;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r11;
+wire          wl7ddrphy1_wl7ddrphy1_r11;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r12;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r13;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r14;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r15;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r16;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r17;
-wire          wl7ddrphy1_wl7ddrphy1_r18;
+wire    [7:0] wl7ddrphy1_wl7ddrphy1_r18;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r19;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r2;
-wire    [7:0] wl7ddrphy1_wl7ddrphy1_r20;
+wire          wl7ddrphy1_wl7ddrphy1_r2;
+wire          wl7ddrphy1_wl7ddrphy1_r20;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r21;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r22;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r23;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r24;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r25;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r26;
-wire          wl7ddrphy1_wl7ddrphy1_r27;
+wire    [7:0] wl7ddrphy1_wl7ddrphy1_r27;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r28;
+wire          wl7ddrphy1_wl7ddrphy1_r29;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r3;
+wire          wl7ddrphy1_wl7ddrphy1_r30;
+wire          wl7ddrphy1_wl7ddrphy1_r31;
+wire          wl7ddrphy1_wl7ddrphy1_r32;
+wire          wl7ddrphy1_wl7ddrphy1_r33;
+wire          wl7ddrphy1_wl7ddrphy1_r34;
+wire          wl7ddrphy1_wl7ddrphy1_r35;
+wire          wl7ddrphy1_wl7ddrphy1_r36;
+wire          wl7ddrphy1_wl7ddrphy1_r37;
+wire          wl7ddrphy1_wl7ddrphy1_r38;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r4;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r5;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r6;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r7;
 wire    [7:0] wl7ddrphy1_wl7ddrphy1_r8;
-wire          wl7ddrphy1_wl7ddrphy1_r9;
+wire    [7:0] wl7ddrphy1_wl7ddrphy1_r9;
 reg           wl7ddrphy1_wlevel_en_storage = 1'd0;
 reg           wl7ddrphy1_wlevel_en_wr_stb = 1'd0;
 wire          wl7ddrphy1_wlevel_strobe_r;
 reg           wl7ddrphy1_wlevel_strobe_re = 1'd0;
 reg           wl7ddrphy1_wlevel_strobe_w = 1'd0;
 reg           wl7ddrphy1_wlevel_strobe_we = 1'd0;
-wire          wl7ddrphy1_wr_rst_r0;
-wire          wl7ddrphy1_wr_rst_r1;
-wire          wl7ddrphy1_wr_rst_r2;
-wire          wl7ddrphy1_wr_rst_r3;
-wire          wl7ddrphy1_wr_rst_r4;
-wire          wl7ddrphy1_wr_rst_r5;
-wire          wl7ddrphy1_wr_rst_r6;
-wire          wl7ddrphy1_wr_rst_r7;
-wire          wl7ddrphy1_wr_rst_r8;
 reg     [1:0] wl7ddrphy1_wrphase_storage = 2'd2;
 reg           wl7ddrphy1_wrphase_wr_stb = 1'd0;
 reg           writeclocks00 = 1'd0;
@@ -26327,7 +26591,7 @@ always @(*) begin
     litedramcore0_csr_dfi_p0_cs_n = 1'd1;
     litedramcore0_csr_dfi_p0_ras_n = 1'd1;
     litedramcore0_csr_dfi_p0_we_n = 1'd1;
-    if (litedramcore0_phaseinjector0_command_issue_re) begin
+    if (litedramcore0_phaseinjector0_q) begin
         if (litedramcore0_phaseinjector0_cs_top) begin
             litedramcore0_csr_dfi_p0_cs_n = 2'd2;
         end else begin
@@ -26349,8 +26613,8 @@ always @(*) begin
 end
 assign litedramcore0_csr_dfi_p0_address = litedramcore0_phaseinjector0_address_storage;
 assign litedramcore0_csr_dfi_p0_bank = litedramcore0_phaseinjector0_baddress_storage;
-assign litedramcore0_csr_dfi_p0_wrdata_en = (litedramcore0_phaseinjector0_command_issue_re & litedramcore0_phaseinjector0_wren);
-assign litedramcore0_csr_dfi_p0_rddata_en = (litedramcore0_phaseinjector0_command_issue_re & litedramcore0_phaseinjector0_rden);
+assign litedramcore0_csr_dfi_p0_wrdata_en = (litedramcore0_phaseinjector0_q & litedramcore0_phaseinjector0_wren);
+assign litedramcore0_csr_dfi_p0_rddata_en = (litedramcore0_phaseinjector0_q & litedramcore0_phaseinjector0_rden);
 assign litedramcore0_csr_dfi_p0_wrdata = litedramcore0_phaseinjector0_wrdata_storage;
 assign litedramcore0_csr_dfi_p0_wrdata_mask = 1'd0;
 always @(*) begin
@@ -26358,7 +26622,7 @@ always @(*) begin
     litedramcore0_csr_dfi_p1_cs_n = 1'd1;
     litedramcore0_csr_dfi_p1_ras_n = 1'd1;
     litedramcore0_csr_dfi_p1_we_n = 1'd1;
-    if (litedramcore0_phaseinjector1_command_issue_re) begin
+    if (litedramcore0_phaseinjector1_q) begin
         if (litedramcore0_phaseinjector1_cs_top) begin
             litedramcore0_csr_dfi_p1_cs_n = 2'd2;
         end else begin
@@ -26380,8 +26644,8 @@ always @(*) begin
 end
 assign litedramcore0_csr_dfi_p1_address = litedramcore0_phaseinjector1_address_storage;
 assign litedramcore0_csr_dfi_p1_bank = litedramcore0_phaseinjector1_baddress_storage;
-assign litedramcore0_csr_dfi_p1_wrdata_en = (litedramcore0_phaseinjector1_command_issue_re & litedramcore0_phaseinjector1_wren);
-assign litedramcore0_csr_dfi_p1_rddata_en = (litedramcore0_phaseinjector1_command_issue_re & litedramcore0_phaseinjector1_rden);
+assign litedramcore0_csr_dfi_p1_wrdata_en = (litedramcore0_phaseinjector1_q & litedramcore0_phaseinjector1_wren);
+assign litedramcore0_csr_dfi_p1_rddata_en = (litedramcore0_phaseinjector1_q & litedramcore0_phaseinjector1_rden);
 assign litedramcore0_csr_dfi_p1_wrdata = litedramcore0_phaseinjector1_wrdata_storage;
 assign litedramcore0_csr_dfi_p1_wrdata_mask = 1'd0;
 always @(*) begin
@@ -26389,7 +26653,7 @@ always @(*) begin
     litedramcore0_csr_dfi_p2_cs_n = 1'd1;
     litedramcore0_csr_dfi_p2_ras_n = 1'd1;
     litedramcore0_csr_dfi_p2_we_n = 1'd1;
-    if (litedramcore0_phaseinjector2_command_issue_re) begin
+    if (litedramcore0_phaseinjector2_q) begin
         if (litedramcore0_phaseinjector2_cs_top) begin
             litedramcore0_csr_dfi_p2_cs_n = 2'd2;
         end else begin
@@ -26411,8 +26675,8 @@ always @(*) begin
 end
 assign litedramcore0_csr_dfi_p2_address = litedramcore0_phaseinjector2_address_storage;
 assign litedramcore0_csr_dfi_p2_bank = litedramcore0_phaseinjector2_baddress_storage;
-assign litedramcore0_csr_dfi_p2_wrdata_en = (litedramcore0_phaseinjector2_command_issue_re & litedramcore0_phaseinjector2_wren);
-assign litedramcore0_csr_dfi_p2_rddata_en = (litedramcore0_phaseinjector2_command_issue_re & litedramcore0_phaseinjector2_rden);
+assign litedramcore0_csr_dfi_p2_wrdata_en = (litedramcore0_phaseinjector2_q & litedramcore0_phaseinjector2_wren);
+assign litedramcore0_csr_dfi_p2_rddata_en = (litedramcore0_phaseinjector2_q & litedramcore0_phaseinjector2_rden);
 assign litedramcore0_csr_dfi_p2_wrdata = litedramcore0_phaseinjector2_wrdata_storage;
 assign litedramcore0_csr_dfi_p2_wrdata_mask = 1'd0;
 always @(*) begin
@@ -26420,7 +26684,7 @@ always @(*) begin
     litedramcore0_csr_dfi_p3_cs_n = 1'd1;
     litedramcore0_csr_dfi_p3_ras_n = 1'd1;
     litedramcore0_csr_dfi_p3_we_n = 1'd1;
-    if (litedramcore0_phaseinjector3_command_issue_re) begin
+    if (litedramcore0_phaseinjector3_q) begin
         if (litedramcore0_phaseinjector3_cs_top) begin
             litedramcore0_csr_dfi_p3_cs_n = 2'd2;
         end else begin
@@ -26442,8 +26706,8 @@ always @(*) begin
 end
 assign litedramcore0_csr_dfi_p3_address = litedramcore0_phaseinjector3_address_storage;
 assign litedramcore0_csr_dfi_p3_bank = litedramcore0_phaseinjector3_baddress_storage;
-assign litedramcore0_csr_dfi_p3_wrdata_en = (litedramcore0_phaseinjector3_command_issue_re & litedramcore0_phaseinjector3_wren);
-assign litedramcore0_csr_dfi_p3_rddata_en = (litedramcore0_phaseinjector3_command_issue_re & litedramcore0_phaseinjector3_rden);
+assign litedramcore0_csr_dfi_p3_wrdata_en = (litedramcore0_phaseinjector3_q & litedramcore0_phaseinjector3_wren);
+assign litedramcore0_csr_dfi_p3_rddata_en = (litedramcore0_phaseinjector3_q & litedramcore0_phaseinjector3_rden);
 assign litedramcore0_csr_dfi_p3_wrdata = litedramcore0_phaseinjector3_wrdata_storage;
 assign litedramcore0_csr_dfi_p3_wrdata_mask = 1'd0;
 assign litedramcore0_bankmachine0_req_valid = litedramcore0_interface_bank0_valid;
@@ -44547,7 +44811,7 @@ always @(*) begin
     litedramcore1_csr_dfi_p0_cs_n = 1'd1;
     litedramcore1_csr_dfi_p0_ras_n = 1'd1;
     litedramcore1_csr_dfi_p0_we_n = 1'd1;
-    if (litedramcore1_phaseinjector4_command_issue_re) begin
+    if (litedramcore1_phaseinjector4_q) begin
         if (litedramcore1_phaseinjector4_cs_top) begin
             litedramcore1_csr_dfi_p0_cs_n = 2'd2;
         end else begin
@@ -44569,8 +44833,8 @@ always @(*) begin
 end
 assign litedramcore1_csr_dfi_p0_address = litedramcore1_phaseinjector4_address_storage;
 assign litedramcore1_csr_dfi_p0_bank = litedramcore1_phaseinjector4_baddress_storage;
-assign litedramcore1_csr_dfi_p0_wrdata_en = (litedramcore1_phaseinjector4_command_issue_re & litedramcore1_phaseinjector4_wren);
-assign litedramcore1_csr_dfi_p0_rddata_en = (litedramcore1_phaseinjector4_command_issue_re & litedramcore1_phaseinjector4_rden);
+assign litedramcore1_csr_dfi_p0_wrdata_en = (litedramcore1_phaseinjector4_q & litedramcore1_phaseinjector4_wren);
+assign litedramcore1_csr_dfi_p0_rddata_en = (litedramcore1_phaseinjector4_q & litedramcore1_phaseinjector4_rden);
 assign litedramcore1_csr_dfi_p0_wrdata = litedramcore1_phaseinjector4_wrdata_storage;
 assign litedramcore1_csr_dfi_p0_wrdata_mask = 1'd0;
 always @(*) begin
@@ -44578,7 +44842,7 @@ always @(*) begin
     litedramcore1_csr_dfi_p1_cs_n = 1'd1;
     litedramcore1_csr_dfi_p1_ras_n = 1'd1;
     litedramcore1_csr_dfi_p1_we_n = 1'd1;
-    if (litedramcore1_phaseinjector5_command_issue_re) begin
+    if (litedramcore1_phaseinjector5_q) begin
         if (litedramcore1_phaseinjector5_cs_top) begin
             litedramcore1_csr_dfi_p1_cs_n = 2'd2;
         end else begin
@@ -44600,8 +44864,8 @@ always @(*) begin
 end
 assign litedramcore1_csr_dfi_p1_address = litedramcore1_phaseinjector5_address_storage;
 assign litedramcore1_csr_dfi_p1_bank = litedramcore1_phaseinjector5_baddress_storage;
-assign litedramcore1_csr_dfi_p1_wrdata_en = (litedramcore1_phaseinjector5_command_issue_re & litedramcore1_phaseinjector5_wren);
-assign litedramcore1_csr_dfi_p1_rddata_en = (litedramcore1_phaseinjector5_command_issue_re & litedramcore1_phaseinjector5_rden);
+assign litedramcore1_csr_dfi_p1_wrdata_en = (litedramcore1_phaseinjector5_q & litedramcore1_phaseinjector5_wren);
+assign litedramcore1_csr_dfi_p1_rddata_en = (litedramcore1_phaseinjector5_q & litedramcore1_phaseinjector5_rden);
 assign litedramcore1_csr_dfi_p1_wrdata = litedramcore1_phaseinjector5_wrdata_storage;
 assign litedramcore1_csr_dfi_p1_wrdata_mask = 1'd0;
 always @(*) begin
@@ -44609,7 +44873,7 @@ always @(*) begin
     litedramcore1_csr_dfi_p2_cs_n = 1'd1;
     litedramcore1_csr_dfi_p2_ras_n = 1'd1;
     litedramcore1_csr_dfi_p2_we_n = 1'd1;
-    if (litedramcore1_phaseinjector6_command_issue_re) begin
+    if (litedramcore1_phaseinjector6_q) begin
         if (litedramcore1_phaseinjector6_cs_top) begin
             litedramcore1_csr_dfi_p2_cs_n = 2'd2;
         end else begin
@@ -44631,8 +44895,8 @@ always @(*) begin
 end
 assign litedramcore1_csr_dfi_p2_address = litedramcore1_phaseinjector6_address_storage;
 assign litedramcore1_csr_dfi_p2_bank = litedramcore1_phaseinjector6_baddress_storage;
-assign litedramcore1_csr_dfi_p2_wrdata_en = (litedramcore1_phaseinjector6_command_issue_re & litedramcore1_phaseinjector6_wren);
-assign litedramcore1_csr_dfi_p2_rddata_en = (litedramcore1_phaseinjector6_command_issue_re & litedramcore1_phaseinjector6_rden);
+assign litedramcore1_csr_dfi_p2_wrdata_en = (litedramcore1_phaseinjector6_q & litedramcore1_phaseinjector6_wren);
+assign litedramcore1_csr_dfi_p2_rddata_en = (litedramcore1_phaseinjector6_q & litedramcore1_phaseinjector6_rden);
 assign litedramcore1_csr_dfi_p2_wrdata = litedramcore1_phaseinjector6_wrdata_storage;
 assign litedramcore1_csr_dfi_p2_wrdata_mask = 1'd0;
 always @(*) begin
@@ -44640,7 +44904,7 @@ always @(*) begin
     litedramcore1_csr_dfi_p3_cs_n = 1'd1;
     litedramcore1_csr_dfi_p3_ras_n = 1'd1;
     litedramcore1_csr_dfi_p3_we_n = 1'd1;
-    if (litedramcore1_phaseinjector7_command_issue_re) begin
+    if (litedramcore1_phaseinjector7_q) begin
         if (litedramcore1_phaseinjector7_cs_top) begin
             litedramcore1_csr_dfi_p3_cs_n = 2'd2;
         end else begin
@@ -44662,8 +44926,8 @@ always @(*) begin
 end
 assign litedramcore1_csr_dfi_p3_address = litedramcore1_phaseinjector7_address_storage;
 assign litedramcore1_csr_dfi_p3_bank = litedramcore1_phaseinjector7_baddress_storage;
-assign litedramcore1_csr_dfi_p3_wrdata_en = (litedramcore1_phaseinjector7_command_issue_re & litedramcore1_phaseinjector7_wren);
-assign litedramcore1_csr_dfi_p3_rddata_en = (litedramcore1_phaseinjector7_command_issue_re & litedramcore1_phaseinjector7_rden);
+assign litedramcore1_csr_dfi_p3_wrdata_en = (litedramcore1_phaseinjector7_q & litedramcore1_phaseinjector7_wren);
+assign litedramcore1_csr_dfi_p3_rddata_en = (litedramcore1_phaseinjector7_q & litedramcore1_phaseinjector7_rden);
 assign litedramcore1_csr_dfi_p3_wrdata = litedramcore1_phaseinjector7_wrdata_storage;
 assign litedramcore1_csr_dfi_p3_wrdata_mask = 1'd0;
 assign litedramcore1_bankmachine8_req_valid = litedramcore1_interface_bank0_valid;
@@ -64633,15 +64897,19 @@ always @(posedge sys_clk_1) begin
     wl7ddrphy0_tappeddelayline010 <= (((wl7ddrphy0_dfi_p0_wrdata_en | wl7ddrphy0_dfi_p1_wrdata_en) | wl7ddrphy0_dfi_p2_wrdata_en) | wl7ddrphy0_dfi_p3_wrdata_en);
     wl7ddrphy0_tappeddelayline011 <= wl7ddrphy0_tappeddelayline010;
     wl7ddrphy0_tappeddelayline012 <= wl7ddrphy0_tappeddelayline011;
+    litedramcore0_phaseinjector0_q <= litedramcore0_phaseinjector0_command_issue_re;
     if (litedramcore0_csr_dfi_p0_rddata_valid) begin
         litedramcore0_phaseinjector0_rddata_status <= litedramcore0_csr_dfi_p0_rddata;
     end
+    litedramcore0_phaseinjector1_q <= litedramcore0_phaseinjector1_command_issue_re;
     if (litedramcore0_csr_dfi_p1_rddata_valid) begin
         litedramcore0_phaseinjector1_rddata_status <= litedramcore0_csr_dfi_p1_rddata;
     end
+    litedramcore0_phaseinjector2_q <= litedramcore0_phaseinjector2_command_issue_re;
     if (litedramcore0_csr_dfi_p2_rddata_valid) begin
         litedramcore0_phaseinjector2_rddata_status <= litedramcore0_csr_dfi_p2_rddata;
     end
+    litedramcore0_phaseinjector3_q <= litedramcore0_phaseinjector3_command_issue_re;
     if (litedramcore0_csr_dfi_p3_rddata_valid) begin
         litedramcore0_phaseinjector3_rddata_status <= litedramcore0_csr_dfi_p3_rddata;
     end
@@ -67431,15 +67699,19 @@ always @(posedge sys_clk_1) begin
     wl7ddrphy1_tappeddelayline110 <= (((wl7ddrphy1_dfi_p0_wrdata_en | wl7ddrphy1_dfi_p1_wrdata_en) | wl7ddrphy1_dfi_p2_wrdata_en) | wl7ddrphy1_dfi_p3_wrdata_en);
     wl7ddrphy1_tappeddelayline111 <= wl7ddrphy1_tappeddelayline110;
     wl7ddrphy1_tappeddelayline112 <= wl7ddrphy1_tappeddelayline111;
+    litedramcore1_phaseinjector4_q <= litedramcore1_phaseinjector4_command_issue_re;
     if (litedramcore1_csr_dfi_p0_rddata_valid) begin
         litedramcore1_phaseinjector4_rddata_status <= litedramcore1_csr_dfi_p0_rddata;
     end
+    litedramcore1_phaseinjector5_q <= litedramcore1_phaseinjector5_command_issue_re;
     if (litedramcore1_csr_dfi_p1_rddata_valid) begin
         litedramcore1_phaseinjector5_rddata_status <= litedramcore1_csr_dfi_p1_rddata;
     end
+    litedramcore1_phaseinjector6_q <= litedramcore1_phaseinjector6_command_issue_re;
     if (litedramcore1_csr_dfi_p2_rddata_valid) begin
         litedramcore1_phaseinjector6_rddata_status <= litedramcore1_csr_dfi_p2_rddata;
     end
+    litedramcore1_phaseinjector7_q <= litedramcore1_phaseinjector7_command_issue_re;
     if (litedramcore1_csr_dfi_p3_rddata_valid) begin
         litedramcore1_phaseinjector7_rddata_status <= litedramcore1_csr_dfi_p3_rddata;
     end
@@ -70652,6 +70924,7 @@ always @(posedge sys_clk_1) begin
         litedramcore0_phaseinjector0_wrdata_wr_stb <= 1'd0;
         litedramcore0_phaseinjector0_rddata_status <= 144'd0;
         litedramcore0_phaseinjector0_rddata_wr_stb <= 1'd0;
+        litedramcore0_phaseinjector0_q <= 1'd0;
         litedramcore0_phaseinjector1_command_storage <= 8'd0;
         litedramcore0_phaseinjector1_command_wr_stb <= 1'd0;
         litedramcore0_phaseinjector1_address_wr_stb <= 1'd0;
@@ -70659,6 +70932,7 @@ always @(posedge sys_clk_1) begin
         litedramcore0_phaseinjector1_wrdata_wr_stb <= 1'd0;
         litedramcore0_phaseinjector1_rddata_status <= 144'd0;
         litedramcore0_phaseinjector1_rddata_wr_stb <= 1'd0;
+        litedramcore0_phaseinjector1_q <= 1'd0;
         litedramcore0_phaseinjector2_command_storage <= 8'd0;
         litedramcore0_phaseinjector2_command_wr_stb <= 1'd0;
         litedramcore0_phaseinjector2_address_wr_stb <= 1'd0;
@@ -70666,6 +70940,7 @@ always @(posedge sys_clk_1) begin
         litedramcore0_phaseinjector2_wrdata_wr_stb <= 1'd0;
         litedramcore0_phaseinjector2_rddata_status <= 144'd0;
         litedramcore0_phaseinjector2_rddata_wr_stb <= 1'd0;
+        litedramcore0_phaseinjector2_q <= 1'd0;
         litedramcore0_phaseinjector3_command_storage <= 8'd0;
         litedramcore0_phaseinjector3_command_wr_stb <= 1'd0;
         litedramcore0_phaseinjector3_address_wr_stb <= 1'd0;
@@ -70673,6 +70948,7 @@ always @(posedge sys_clk_1) begin
         litedramcore0_phaseinjector3_wrdata_wr_stb <= 1'd0;
         litedramcore0_phaseinjector3_rddata_status <= 144'd0;
         litedramcore0_phaseinjector3_rddata_wr_stb <= 1'd0;
+        litedramcore0_phaseinjector3_q <= 1'd0;
         litedramcore0_dfi_p0_address <= 15'd0;
         litedramcore0_dfi_p0_bank <= 3'd0;
         litedramcore0_dfi_p0_cas_n <= 1'd1;
@@ -71089,6 +71365,7 @@ always @(posedge sys_clk_1) begin
         litedramcore1_phaseinjector4_wrdata_wr_stb <= 1'd0;
         litedramcore1_phaseinjector4_rddata_status <= 144'd0;
         litedramcore1_phaseinjector4_rddata_wr_stb <= 1'd0;
+        litedramcore1_phaseinjector4_q <= 1'd0;
         litedramcore1_phaseinjector5_command_storage <= 8'd0;
         litedramcore1_phaseinjector5_command_wr_stb <= 1'd0;
         litedramcore1_phaseinjector5_address_wr_stb <= 1'd0;
@@ -71096,6 +71373,7 @@ always @(posedge sys_clk_1) begin
         litedramcore1_phaseinjector5_wrdata_wr_stb <= 1'd0;
         litedramcore1_phaseinjector5_rddata_status <= 144'd0;
         litedramcore1_phaseinjector5_rddata_wr_stb <= 1'd0;
+        litedramcore1_phaseinjector5_q <= 1'd0;
         litedramcore1_phaseinjector6_command_storage <= 8'd0;
         litedramcore1_phaseinjector6_command_wr_stb <= 1'd0;
         litedramcore1_phaseinjector6_address_wr_stb <= 1'd0;
@@ -71103,6 +71381,7 @@ always @(posedge sys_clk_1) begin
         litedramcore1_phaseinjector6_wrdata_wr_stb <= 1'd0;
         litedramcore1_phaseinjector6_rddata_status <= 144'd0;
         litedramcore1_phaseinjector6_rddata_wr_stb <= 1'd0;
+        litedramcore1_phaseinjector6_q <= 1'd0;
         litedramcore1_phaseinjector7_command_storage <= 8'd0;
         litedramcore1_phaseinjector7_command_wr_stb <= 1'd0;
         litedramcore1_phaseinjector7_address_wr_stb <= 1'd0;
@@ -71110,6 +71389,7 @@ always @(posedge sys_clk_1) begin
         litedramcore1_phaseinjector7_wrdata_wr_stb <= 1'd0;
         litedramcore1_phaseinjector7_rddata_status <= 144'd0;
         litedramcore1_phaseinjector7_rddata_wr_stb <= 1'd0;
+        litedramcore1_phaseinjector7_q <= 1'd0;
         litedramcore1_dfi_p0_address <= 15'd0;
         litedramcore1_dfi_p0_bank <= 3'd0;
         litedramcore1_dfi_p0_cas_n <= 1'd1;
@@ -71735,330 +72015,6 @@ FDRE #(
 	.INIT (1'd1)
 ) wlrst (
 	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r0)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_1 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_1 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r1)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_2 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_2 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r2)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_3 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_3 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r3)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_4 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_4 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r4)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_5 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_5 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r5)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_6 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_6 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r6)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_7 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_7 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r7)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_8 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_8 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_rd_rst_r8)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_9 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_9 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wr_rst_r0)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_10 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_10 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wr_rst_r1)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_11 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_11 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wr_rst_r2)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_12 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_12 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wr_rst_r3)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_13 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_13 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wr_rst_r4)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_14 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_14 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wr_rst_r5)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_15 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_15 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wr_rst_r6)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_16 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_16 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wr_rst_r7)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_17 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_17 (
-	// Inputs.
-	.C  (sysw0_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wr_rst_r8)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_18 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_18 (
-	// Inputs.
 	.C  (sysc0_clk),
 	.CE (1'd1),
 	.D  (wl7ddrphy0_self_r),
@@ -72253,6 +72209,24 @@ FDRE #(
 	.Q  (wl7ddrphy0_wl7ddrphy0_r1[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_1 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_1 (
+	// Inputs.
+	.C  (sysc0_clk),
+	.CE (1'd1),
+	.D  (wl7ddrphy0_self_r),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r2)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_1 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -72276,7 +72250,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_wl7ddrphy0_r1[6]),
 	.D8     (wl7ddrphy0_wl7ddrphy0_r1[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r0),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r2),
 
 	// Outputs.
 	.OQ     (ddram0_reset_n)
@@ -72297,7 +72271,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r2[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r3[0])
 );
 
 //------------------------------------------------------------------------------
@@ -72315,7 +72289,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r2[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r3[1])
 );
 
 //------------------------------------------------------------------------------
@@ -72333,7 +72307,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r2[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r3[2])
 );
 
 //------------------------------------------------------------------------------
@@ -72351,7 +72325,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r2[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r3[3])
 );
 
 //------------------------------------------------------------------------------
@@ -72369,7 +72343,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r2[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r3[4])
 );
 
 //------------------------------------------------------------------------------
@@ -72387,7 +72361,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r2[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r3[5])
 );
 
 //------------------------------------------------------------------------------
@@ -72405,7 +72379,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r2[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r3[6])
 );
 
 //------------------------------------------------------------------------------
@@ -72423,7 +72397,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r2[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r3[7])
 );
 
 //------------------------------------------------------------------------------
@@ -72440,14 +72414,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r2[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r2[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r2[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r2[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r2[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r2[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r2[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r2[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r3[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r3[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r3[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r3[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r3[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r3[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r3[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r3[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy0_wl7ddrphy0_r0),
 
@@ -72470,7 +72444,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r3[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r4[0])
 );
 
 //------------------------------------------------------------------------------
@@ -72488,7 +72462,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r3[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r4[1])
 );
 
 //------------------------------------------------------------------------------
@@ -72506,7 +72480,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r3[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r4[2])
 );
 
 //------------------------------------------------------------------------------
@@ -72524,7 +72498,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r3[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r4[3])
 );
 
 //------------------------------------------------------------------------------
@@ -72542,7 +72516,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r3[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r4[4])
 );
 
 //------------------------------------------------------------------------------
@@ -72560,7 +72534,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r3[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r4[5])
 );
 
 //------------------------------------------------------------------------------
@@ -72578,7 +72552,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r3[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r4[6])
 );
 
 //------------------------------------------------------------------------------
@@ -72596,7 +72570,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r3[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r4[7])
 );
 
 //------------------------------------------------------------------------------
@@ -72613,14 +72587,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r3[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r3[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r3[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r3[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r3[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r3[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r3[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r3[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r4[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r4[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r4[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r4[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r4[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r4[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r4[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r4[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy0_wl7ddrphy0_r0),
 
@@ -72643,7 +72617,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r4[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r5[0])
 );
 
 //------------------------------------------------------------------------------
@@ -72661,7 +72635,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r4[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r5[1])
 );
 
 //------------------------------------------------------------------------------
@@ -72679,7 +72653,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r4[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r5[2])
 );
 
 //------------------------------------------------------------------------------
@@ -72697,7 +72671,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r4[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r5[3])
 );
 
 //------------------------------------------------------------------------------
@@ -72715,7 +72689,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r4[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r5[4])
 );
 
 //------------------------------------------------------------------------------
@@ -72733,7 +72707,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r4[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r5[5])
 );
 
 //------------------------------------------------------------------------------
@@ -72751,7 +72725,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r4[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r5[6])
 );
 
 //------------------------------------------------------------------------------
@@ -72769,7 +72743,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r4[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r5[7])
 );
 
 //------------------------------------------------------------------------------
@@ -72786,14 +72760,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r4[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r4[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r4[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r4[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r4[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r4[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r4[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r4[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r5[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r5[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r5[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r5[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r5[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r5[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r5[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r5[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy0_wl7ddrphy0_r0),
 
@@ -72816,7 +72790,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r5[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r6[0])
 );
 
 //------------------------------------------------------------------------------
@@ -72834,7 +72808,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r5[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r6[1])
 );
 
 //------------------------------------------------------------------------------
@@ -72852,7 +72826,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r5[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r6[2])
 );
 
 //------------------------------------------------------------------------------
@@ -72870,7 +72844,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r5[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r6[3])
 );
 
 //------------------------------------------------------------------------------
@@ -72888,7 +72862,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r5[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r6[4])
 );
 
 //------------------------------------------------------------------------------
@@ -72906,7 +72880,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r5[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r6[5])
 );
 
 //------------------------------------------------------------------------------
@@ -72924,7 +72898,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r5[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r6[6])
 );
 
 //------------------------------------------------------------------------------
@@ -72942,7 +72916,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r5[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r6[7])
 );
 
 //------------------------------------------------------------------------------
@@ -72959,14 +72933,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r5[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r5[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r5[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r5[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r5[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r5[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r5[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r5[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r6[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r6[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r6[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r6[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r6[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r6[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r6[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r6[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy0_wl7ddrphy0_r0),
 
@@ -72989,7 +72963,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r6[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r7[0])
 );
 
 //------------------------------------------------------------------------------
@@ -73007,7 +72981,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r6[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r7[1])
 );
 
 //------------------------------------------------------------------------------
@@ -73025,7 +72999,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r6[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r7[2])
 );
 
 //------------------------------------------------------------------------------
@@ -73043,7 +73017,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r6[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r7[3])
 );
 
 //------------------------------------------------------------------------------
@@ -73061,7 +73035,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r6[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r7[4])
 );
 
 //------------------------------------------------------------------------------
@@ -73079,7 +73053,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r6[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r7[5])
 );
 
 //------------------------------------------------------------------------------
@@ -73097,7 +73071,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r6[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r7[6])
 );
 
 //------------------------------------------------------------------------------
@@ -73115,7 +73089,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r6[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r7[7])
 );
 
 //------------------------------------------------------------------------------
@@ -73132,14 +73106,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r6[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r6[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r6[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r6[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r6[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r6[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r6[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r6[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r7[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r7[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r7[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r7[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r7[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r7[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r7[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r7[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy0_wl7ddrphy0_r0),
 
@@ -73162,7 +73136,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r7[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r8[0])
 );
 
 //------------------------------------------------------------------------------
@@ -73180,7 +73154,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r7[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r8[1])
 );
 
 //------------------------------------------------------------------------------
@@ -73198,7 +73172,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r7[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r8[2])
 );
 
 //------------------------------------------------------------------------------
@@ -73216,7 +73190,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r7[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r8[3])
 );
 
 //------------------------------------------------------------------------------
@@ -73234,7 +73208,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r7[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r8[4])
 );
 
 //------------------------------------------------------------------------------
@@ -73252,7 +73226,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r7[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r8[5])
 );
 
 //------------------------------------------------------------------------------
@@ -73270,7 +73244,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r7[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r8[6])
 );
 
 //------------------------------------------------------------------------------
@@ -73288,7 +73262,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r7[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r8[7])
 );
 
 //------------------------------------------------------------------------------
@@ -73305,14 +73279,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r7[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r7[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r7[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r7[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r7[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r7[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r7[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r7[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r8[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r8[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r8[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r8[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r8[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r8[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r8[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r8[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy0_wl7ddrphy0_r0),
 
@@ -73335,7 +73309,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r8[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r9[0])
 );
 
 //------------------------------------------------------------------------------
@@ -73353,7 +73327,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r8[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r9[1])
 );
 
 //------------------------------------------------------------------------------
@@ -73371,7 +73345,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r8[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r9[2])
 );
 
 //------------------------------------------------------------------------------
@@ -73389,7 +73363,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r8[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r9[3])
 );
 
 //------------------------------------------------------------------------------
@@ -73407,7 +73381,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r8[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r9[4])
 );
 
 //------------------------------------------------------------------------------
@@ -73425,7 +73399,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r8[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r9[5])
 );
 
 //------------------------------------------------------------------------------
@@ -73443,7 +73417,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r8[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r9[6])
 );
 
 //------------------------------------------------------------------------------
@@ -73461,25 +73435,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r8[7])
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_19 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_19 (
-	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_self_r),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r9)
+	.Q  (wl7ddrphy0_wl7ddrphy0_r9[7])
 );
 
 //------------------------------------------------------------------------------
@@ -73496,16 +73452,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r8[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r8[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r8[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r8[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r8[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r8[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r8[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r8[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r9[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r9[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r9[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r9[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r9[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r9[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r9[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r9[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r9),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r0),
 
 	// Outputs.
 	.OQ     (ddram0_a[5])
@@ -73655,6 +73611,24 @@ FDRE #(
 	.Q  (wl7ddrphy0_wl7ddrphy0_r10[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_2 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_2 (
+	// Inputs.
+	.C  (sysc0_clk),
+	.CE (1'd1),
+	.D  (wl7ddrphy0_self_r),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r11)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_9 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -73678,7 +73652,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_wl7ddrphy0_r10[6]),
 	.D8     (wl7ddrphy0_wl7ddrphy0_r10[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r9),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r11),
 
 	// Outputs.
 	.OQ     (ddram0_a[6])
@@ -73699,7 +73673,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r11[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r12[0])
 );
 
 //------------------------------------------------------------------------------
@@ -73717,7 +73691,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r11[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r12[1])
 );
 
 //------------------------------------------------------------------------------
@@ -73735,7 +73709,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r11[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r12[2])
 );
 
 //------------------------------------------------------------------------------
@@ -73753,7 +73727,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r11[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r12[3])
 );
 
 //------------------------------------------------------------------------------
@@ -73771,7 +73745,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r11[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r12[4])
 );
 
 //------------------------------------------------------------------------------
@@ -73789,7 +73763,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r11[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r12[5])
 );
 
 //------------------------------------------------------------------------------
@@ -73807,7 +73781,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r11[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r12[6])
 );
 
 //------------------------------------------------------------------------------
@@ -73825,7 +73799,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r11[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r12[7])
 );
 
 //------------------------------------------------------------------------------
@@ -73842,16 +73816,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r11[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r11[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r11[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r11[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r11[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r11[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r11[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r11[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r12[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r12[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r12[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r12[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r12[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r12[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r12[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r12[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r9),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r11),
 
 	// Outputs.
 	.OQ     (ddram0_a[7])
@@ -73872,7 +73846,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r12[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r13[0])
 );
 
 //------------------------------------------------------------------------------
@@ -73890,7 +73864,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r12[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r13[1])
 );
 
 //------------------------------------------------------------------------------
@@ -73908,7 +73882,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r12[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r13[2])
 );
 
 //------------------------------------------------------------------------------
@@ -73926,7 +73900,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r12[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r13[3])
 );
 
 //------------------------------------------------------------------------------
@@ -73944,7 +73918,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r12[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r13[4])
 );
 
 //------------------------------------------------------------------------------
@@ -73962,7 +73936,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r12[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r13[5])
 );
 
 //------------------------------------------------------------------------------
@@ -73980,7 +73954,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r12[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r13[6])
 );
 
 //------------------------------------------------------------------------------
@@ -73998,7 +73972,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r12[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r13[7])
 );
 
 //------------------------------------------------------------------------------
@@ -74015,16 +73989,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r12[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r12[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r12[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r12[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r12[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r12[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r12[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r12[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r13[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r13[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r13[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r13[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r13[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r13[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r13[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r13[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r9),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r11),
 
 	// Outputs.
 	.OQ     (ddram0_a[8])
@@ -74045,7 +74019,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r13[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r14[0])
 );
 
 //------------------------------------------------------------------------------
@@ -74063,7 +74037,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r13[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r14[1])
 );
 
 //------------------------------------------------------------------------------
@@ -74081,7 +74055,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r13[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r14[2])
 );
 
 //------------------------------------------------------------------------------
@@ -74099,7 +74073,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r13[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r14[3])
 );
 
 //------------------------------------------------------------------------------
@@ -74117,7 +74091,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r13[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r14[4])
 );
 
 //------------------------------------------------------------------------------
@@ -74135,7 +74109,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r13[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r14[5])
 );
 
 //------------------------------------------------------------------------------
@@ -74153,7 +74127,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r13[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r14[6])
 );
 
 //------------------------------------------------------------------------------
@@ -74171,7 +74145,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r13[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r14[7])
 );
 
 //------------------------------------------------------------------------------
@@ -74188,16 +74162,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r13[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r13[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r13[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r13[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r13[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r13[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r13[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r13[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r14[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r14[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r14[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r14[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r14[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r14[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r14[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r14[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r9),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r11),
 
 	// Outputs.
 	.OQ     (ddram0_a[9])
@@ -74218,7 +74192,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r14[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r15[0])
 );
 
 //------------------------------------------------------------------------------
@@ -74236,7 +74210,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r14[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r15[1])
 );
 
 //------------------------------------------------------------------------------
@@ -74254,7 +74228,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r14[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r15[2])
 );
 
 //------------------------------------------------------------------------------
@@ -74272,7 +74246,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r14[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r15[3])
 );
 
 //------------------------------------------------------------------------------
@@ -74290,7 +74264,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r14[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r15[4])
 );
 
 //------------------------------------------------------------------------------
@@ -74308,7 +74282,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r14[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r15[5])
 );
 
 //------------------------------------------------------------------------------
@@ -74326,7 +74300,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r14[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r15[6])
 );
 
 //------------------------------------------------------------------------------
@@ -74344,7 +74318,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r14[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r15[7])
 );
 
 //------------------------------------------------------------------------------
@@ -74361,16 +74335,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r14[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r14[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r14[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r14[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r14[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r14[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r14[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r14[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r15[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r15[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r15[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r15[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r15[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r15[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r15[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r15[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r9),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r11),
 
 	// Outputs.
 	.OQ     (ddram0_a[10])
@@ -74391,7 +74365,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r15[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r16[0])
 );
 
 //------------------------------------------------------------------------------
@@ -74409,7 +74383,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r15[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r16[1])
 );
 
 //------------------------------------------------------------------------------
@@ -74427,7 +74401,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r15[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r16[2])
 );
 
 //------------------------------------------------------------------------------
@@ -74445,7 +74419,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r15[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r16[3])
 );
 
 //------------------------------------------------------------------------------
@@ -74463,7 +74437,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r15[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r16[4])
 );
 
 //------------------------------------------------------------------------------
@@ -74481,7 +74455,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r15[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r16[5])
 );
 
 //------------------------------------------------------------------------------
@@ -74499,7 +74473,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r15[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r16[6])
 );
 
 //------------------------------------------------------------------------------
@@ -74517,7 +74491,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r15[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r16[7])
 );
 
 //------------------------------------------------------------------------------
@@ -74534,16 +74508,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r15[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r15[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r15[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r15[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r15[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r15[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r15[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r15[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r16[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r16[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r16[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r16[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r16[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r16[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r16[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r16[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r9),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r11),
 
 	// Outputs.
 	.OQ     (ddram0_a[11])
@@ -74564,7 +74538,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r16[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r17[0])
 );
 
 //------------------------------------------------------------------------------
@@ -74582,7 +74556,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r16[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r17[1])
 );
 
 //------------------------------------------------------------------------------
@@ -74600,7 +74574,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r16[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r17[2])
 );
 
 //------------------------------------------------------------------------------
@@ -74618,7 +74592,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r16[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r17[3])
 );
 
 //------------------------------------------------------------------------------
@@ -74636,7 +74610,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r16[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r17[4])
 );
 
 //------------------------------------------------------------------------------
@@ -74654,7 +74628,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r16[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r17[5])
 );
 
 //------------------------------------------------------------------------------
@@ -74672,7 +74646,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r16[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r17[6])
 );
 
 //------------------------------------------------------------------------------
@@ -74690,7 +74664,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r16[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r17[7])
 );
 
 //------------------------------------------------------------------------------
@@ -74707,16 +74681,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r16[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r16[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r16[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r16[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r16[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r16[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r16[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r16[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r17[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r17[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r17[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r17[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r17[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r17[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r17[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r17[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r9),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r11),
 
 	// Outputs.
 	.OQ     (ddram0_a[12])
@@ -74737,7 +74711,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r17[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r18[0])
 );
 
 //------------------------------------------------------------------------------
@@ -74755,7 +74729,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r17[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r18[1])
 );
 
 //------------------------------------------------------------------------------
@@ -74773,7 +74747,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r17[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r18[2])
 );
 
 //------------------------------------------------------------------------------
@@ -74791,7 +74765,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r17[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r18[3])
 );
 
 //------------------------------------------------------------------------------
@@ -74809,7 +74783,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r17[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r18[4])
 );
 
 //------------------------------------------------------------------------------
@@ -74827,7 +74801,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r17[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r18[5])
 );
 
 //------------------------------------------------------------------------------
@@ -74845,7 +74819,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r17[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r18[6])
 );
 
 //------------------------------------------------------------------------------
@@ -74863,25 +74837,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r17[7])
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_20 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_20 (
-	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_self_r),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r18)
+	.Q  (wl7ddrphy0_wl7ddrphy0_r18[7])
 );
 
 //------------------------------------------------------------------------------
@@ -74898,16 +74854,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r17[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r17[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r17[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r17[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r17[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r17[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r17[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r17[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r18[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r18[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r18[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r18[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r18[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r18[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r18[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r18[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r18),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r11),
 
 	// Outputs.
 	.OQ     (ddram0_a[13])
@@ -75057,6 +75013,24 @@ FDRE #(
 	.Q  (wl7ddrphy0_wl7ddrphy0_r19[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_3 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_3 (
+	// Inputs.
+	.C  (sysc0_clk),
+	.CE (1'd1),
+	.D  (wl7ddrphy0_self_r),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r20)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_17 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -75080,7 +75054,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_wl7ddrphy0_r19[6]),
 	.D8     (wl7ddrphy0_wl7ddrphy0_r19[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r18),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r20),
 
 	// Outputs.
 	.OQ     (ddram0_a[14])
@@ -75101,7 +75075,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r20[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r21[0])
 );
 
 //------------------------------------------------------------------------------
@@ -75119,7 +75093,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r20[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r21[1])
 );
 
 //------------------------------------------------------------------------------
@@ -75137,7 +75111,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r20[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r21[2])
 );
 
 //------------------------------------------------------------------------------
@@ -75155,7 +75129,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r20[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r21[3])
 );
 
 //------------------------------------------------------------------------------
@@ -75173,7 +75147,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r20[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r21[4])
 );
 
 //------------------------------------------------------------------------------
@@ -75191,7 +75165,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r20[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r21[5])
 );
 
 //------------------------------------------------------------------------------
@@ -75209,7 +75183,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r20[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r21[6])
 );
 
 //------------------------------------------------------------------------------
@@ -75227,7 +75201,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r20[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r21[7])
 );
 
 //------------------------------------------------------------------------------
@@ -75244,16 +75218,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r20[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r20[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r20[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r20[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r20[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r20[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r20[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r20[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r21[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r21[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r21[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r21[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r21[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r21[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r21[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r21[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r18),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r20),
 
 	// Outputs.
 	.OQ     (wl7ddrphy0_pads_ba[0])
@@ -75274,7 +75248,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r21[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r22[0])
 );
 
 //------------------------------------------------------------------------------
@@ -75292,7 +75266,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r21[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r22[1])
 );
 
 //------------------------------------------------------------------------------
@@ -75310,7 +75284,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r21[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r22[2])
 );
 
 //------------------------------------------------------------------------------
@@ -75328,7 +75302,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r21[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r22[3])
 );
 
 //------------------------------------------------------------------------------
@@ -75346,7 +75320,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r21[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r22[4])
 );
 
 //------------------------------------------------------------------------------
@@ -75364,7 +75338,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r21[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r22[5])
 );
 
 //------------------------------------------------------------------------------
@@ -75382,7 +75356,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r21[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r22[6])
 );
 
 //------------------------------------------------------------------------------
@@ -75400,7 +75374,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r21[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r22[7])
 );
 
 //------------------------------------------------------------------------------
@@ -75417,16 +75391,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r21[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r21[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r21[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r21[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r21[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r21[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r21[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r21[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r22[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r22[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r22[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r22[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r22[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r22[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r22[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r22[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r18),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r20),
 
 	// Outputs.
 	.OQ     (wl7ddrphy0_pads_ba[1])
@@ -75447,7 +75421,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r22[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r23[0])
 );
 
 //------------------------------------------------------------------------------
@@ -75465,7 +75439,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r22[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r23[1])
 );
 
 //------------------------------------------------------------------------------
@@ -75483,7 +75457,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r22[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r23[2])
 );
 
 //------------------------------------------------------------------------------
@@ -75501,7 +75475,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r22[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r23[3])
 );
 
 //------------------------------------------------------------------------------
@@ -75519,7 +75493,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r22[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r23[4])
 );
 
 //------------------------------------------------------------------------------
@@ -75537,7 +75511,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r22[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r23[5])
 );
 
 //------------------------------------------------------------------------------
@@ -75555,7 +75529,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r22[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r23[6])
 );
 
 //------------------------------------------------------------------------------
@@ -75573,7 +75547,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r22[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r23[7])
 );
 
 //------------------------------------------------------------------------------
@@ -75590,16 +75564,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r22[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r22[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r22[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r22[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r22[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r22[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r22[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r22[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r23[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r23[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r23[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r23[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r23[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r23[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r23[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r23[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r18),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r20),
 
 	// Outputs.
 	.OQ     (wl7ddrphy0_pads_ba[2])
@@ -75620,7 +75594,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r23[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r24[0])
 );
 
 //------------------------------------------------------------------------------
@@ -75638,7 +75612,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r23[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r24[1])
 );
 
 //------------------------------------------------------------------------------
@@ -75656,7 +75630,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r23[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r24[2])
 );
 
 //------------------------------------------------------------------------------
@@ -75674,7 +75648,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r23[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r24[3])
 );
 
 //------------------------------------------------------------------------------
@@ -75692,7 +75666,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r23[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r24[4])
 );
 
 //------------------------------------------------------------------------------
@@ -75710,7 +75684,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r23[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r24[5])
 );
 
 //------------------------------------------------------------------------------
@@ -75728,7 +75702,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r23[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r24[6])
 );
 
 //------------------------------------------------------------------------------
@@ -75746,7 +75720,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r23[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r24[7])
 );
 
 //------------------------------------------------------------------------------
@@ -75763,16 +75737,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r23[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r23[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r23[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r23[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r23[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r23[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r23[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r23[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r24[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r24[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r24[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r24[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r24[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r24[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r24[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r24[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r18),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r20),
 
 	// Outputs.
 	.OQ     (ddram0_ras_n)
@@ -75793,7 +75767,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r24[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r25[0])
 );
 
 //------------------------------------------------------------------------------
@@ -75811,7 +75785,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r24[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r25[1])
 );
 
 //------------------------------------------------------------------------------
@@ -75829,7 +75803,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r24[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r25[2])
 );
 
 //------------------------------------------------------------------------------
@@ -75847,7 +75821,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r24[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r25[3])
 );
 
 //------------------------------------------------------------------------------
@@ -75865,7 +75839,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r24[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r25[4])
 );
 
 //------------------------------------------------------------------------------
@@ -75883,7 +75857,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r24[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r25[5])
 );
 
 //------------------------------------------------------------------------------
@@ -75901,7 +75875,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r24[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r25[6])
 );
 
 //------------------------------------------------------------------------------
@@ -75919,7 +75893,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r24[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r25[7])
 );
 
 //------------------------------------------------------------------------------
@@ -75936,16 +75910,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r24[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r24[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r24[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r24[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r24[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r24[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r24[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r24[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r25[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r25[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r25[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r25[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r25[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r25[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r25[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r25[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r18),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r20),
 
 	// Outputs.
 	.OQ     (ddram0_cas_n)
@@ -75966,7 +75940,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r25[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r26[0])
 );
 
 //------------------------------------------------------------------------------
@@ -75984,7 +75958,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r25[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r26[1])
 );
 
 //------------------------------------------------------------------------------
@@ -76002,7 +75976,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r25[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r26[2])
 );
 
 //------------------------------------------------------------------------------
@@ -76020,7 +75994,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r25[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r26[3])
 );
 
 //------------------------------------------------------------------------------
@@ -76038,7 +76012,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r25[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r26[4])
 );
 
 //------------------------------------------------------------------------------
@@ -76056,7 +76030,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r25[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r26[5])
 );
 
 //------------------------------------------------------------------------------
@@ -76074,7 +76048,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r25[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r26[6])
 );
 
 //------------------------------------------------------------------------------
@@ -76092,7 +76066,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r25[7])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r26[7])
 );
 
 //------------------------------------------------------------------------------
@@ -76109,16 +76083,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r25[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r25[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r25[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r25[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r25[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r25[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r25[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r25[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r26[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r26[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r26[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r26[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r26[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r26[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r26[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r26[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r18),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r20),
 
 	// Outputs.
 	.OQ     (ddram0_we_n)
@@ -76139,7 +76113,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r26[0])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r27[0])
 );
 
 //------------------------------------------------------------------------------
@@ -76157,7 +76131,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r26[1])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r27[1])
 );
 
 //------------------------------------------------------------------------------
@@ -76175,7 +76149,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r26[2])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r27[2])
 );
 
 //------------------------------------------------------------------------------
@@ -76193,7 +76167,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r26[3])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r27[3])
 );
 
 //------------------------------------------------------------------------------
@@ -76211,7 +76185,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r26[4])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r27[4])
 );
 
 //------------------------------------------------------------------------------
@@ -76229,7 +76203,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r26[5])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r27[5])
 );
 
 //------------------------------------------------------------------------------
@@ -76247,7 +76221,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r26[6])
+	.Q  (wl7ddrphy0_wl7ddrphy0_r27[6])
 );
 
 //------------------------------------------------------------------------------
@@ -76265,25 +76239,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r26[7])
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_21 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_21 (
-	// Inputs.
-	.C  (sysc0_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy0_self_r),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy0_wl7ddrphy0_r27)
+	.Q  (wl7ddrphy0_wl7ddrphy0_r27[7])
 );
 
 //------------------------------------------------------------------------------
@@ -76300,16 +76256,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc0_clk),
 	.CLKDIV (sysc0_clk),
-	.D1     (wl7ddrphy0_wl7ddrphy0_r26[0]),
-	.D2     (wl7ddrphy0_wl7ddrphy0_r26[1]),
-	.D3     (wl7ddrphy0_wl7ddrphy0_r26[2]),
-	.D4     (wl7ddrphy0_wl7ddrphy0_r26[3]),
-	.D5     (wl7ddrphy0_wl7ddrphy0_r26[4]),
-	.D6     (wl7ddrphy0_wl7ddrphy0_r26[5]),
-	.D7     (wl7ddrphy0_wl7ddrphy0_r26[6]),
-	.D8     (wl7ddrphy0_wl7ddrphy0_r26[7]),
+	.D1     (wl7ddrphy0_wl7ddrphy0_r27[0]),
+	.D2     (wl7ddrphy0_wl7ddrphy0_r27[1]),
+	.D3     (wl7ddrphy0_wl7ddrphy0_r27[2]),
+	.D4     (wl7ddrphy0_wl7ddrphy0_r27[3]),
+	.D5     (wl7ddrphy0_wl7ddrphy0_r27[4]),
+	.D6     (wl7ddrphy0_wl7ddrphy0_r27[5]),
+	.D7     (wl7ddrphy0_wl7ddrphy0_r27[6]),
+	.D8     (wl7ddrphy0_wl7ddrphy0_r27[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r27),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r20),
 
 	// Outputs.
 	.OQ     (ddram0_cke)
@@ -76459,6 +76415,24 @@ FDRE #(
 	.Q  (wl7ddrphy0_wl7ddrphy0_r28[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_4 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_4 (
+	// Inputs.
+	.C  (sysc0_clk),
+	.CE (1'd1),
+	.D  (wl7ddrphy0_self_r),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r29)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_25 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -76482,10 +76456,28 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_wl7ddrphy0_r28[6]),
 	.D8     (wl7ddrphy0_wl7ddrphy0_r28[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wl7ddrphy0_r27),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r29),
 
 	// Outputs.
 	.OQ     (ddram0_odt)
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_5 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_5 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r30)
 );
 
 //------------------------------------------------------------------------------
@@ -76511,7 +76503,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip00[6]),
 	.D8     (wl7ddrphy0_bitslip00[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r0),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r30),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline01)),
 	.TCE    (1'd1),
 
@@ -76531,6 +76523,24 @@ IOBUFDS IOBUFDS(
 	// InOuts.
 	.IO  (ddram0_dqs_p[0]),
 	.IOB (ddram0_dqs_n[0])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_6 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_6 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r31)
 );
 
 //------------------------------------------------------------------------------
@@ -76556,7 +76566,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip10[6]),
 	.D8     (wl7ddrphy0_bitslip10[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r1),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r31),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline01)),
 	.TCE    (1'd1),
 
@@ -76576,6 +76586,24 @@ IOBUFDS IOBUFDS_1(
 	// InOuts.
 	.IO  (ddram0_dqs_p[1]),
 	.IOB (ddram0_dqs_n[1])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_7 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_7 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r32)
 );
 
 //------------------------------------------------------------------------------
@@ -76601,7 +76629,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip20[6]),
 	.D8     (wl7ddrphy0_bitslip20[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r2),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r32),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline01)),
 	.TCE    (1'd1),
 
@@ -76621,6 +76649,24 @@ IOBUFDS IOBUFDS_2(
 	// InOuts.
 	.IO  (ddram0_dqs_p[2]),
 	.IOB (ddram0_dqs_n[2])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_8 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_8 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r33)
 );
 
 //------------------------------------------------------------------------------
@@ -76646,7 +76692,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip30[6]),
 	.D8     (wl7ddrphy0_bitslip30[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r3),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r33),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline01)),
 	.TCE    (1'd1),
 
@@ -76666,6 +76712,24 @@ IOBUFDS IOBUFDS_3(
 	// InOuts.
 	.IO  (ddram0_dqs_p[3]),
 	.IOB (ddram0_dqs_n[3])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_9 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_9 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r34)
 );
 
 //------------------------------------------------------------------------------
@@ -76691,7 +76755,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip40[6]),
 	.D8     (wl7ddrphy0_bitslip40[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r4),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r34),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline01)),
 	.TCE    (1'd1),
 
@@ -76711,6 +76775,24 @@ IOBUFDS IOBUFDS_4(
 	// InOuts.
 	.IO  (ddram0_dqs_p[4]),
 	.IOB (ddram0_dqs_n[4])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_10 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_10 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r35)
 );
 
 //------------------------------------------------------------------------------
@@ -76736,7 +76818,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip50[6]),
 	.D8     (wl7ddrphy0_bitslip50[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r5),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r35),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline01)),
 	.TCE    (1'd1),
 
@@ -76756,6 +76838,24 @@ IOBUFDS IOBUFDS_5(
 	// InOuts.
 	.IO  (ddram0_dqs_p[5]),
 	.IOB (ddram0_dqs_n[5])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_11 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_11 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r36)
 );
 
 //------------------------------------------------------------------------------
@@ -76781,7 +76881,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip60[6]),
 	.D8     (wl7ddrphy0_bitslip60[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r6),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r36),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline01)),
 	.TCE    (1'd1),
 
@@ -76801,6 +76901,24 @@ IOBUFDS IOBUFDS_6(
 	// InOuts.
 	.IO  (ddram0_dqs_p[6]),
 	.IOB (ddram0_dqs_n[6])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_12 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_12 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r37)
 );
 
 //------------------------------------------------------------------------------
@@ -76826,7 +76944,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip70[6]),
 	.D8     (wl7ddrphy0_bitslip70[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r7),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r37),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline01)),
 	.TCE    (1'd1),
 
@@ -76846,6 +76964,24 @@ IOBUFDS IOBUFDS_7(
 	// InOuts.
 	.IO  (ddram0_dqs_p[7]),
 	.IOB (ddram0_dqs_n[7])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_13 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_13 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_wl7ddrphy0_r38)
 );
 
 //------------------------------------------------------------------------------
@@ -76871,7 +77007,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip80[6]),
 	.D8     (wl7ddrphy0_bitslip80[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r8),
+	.RST    (wl7ddrphy0_wl7ddrphy0_r38),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline01)),
 	.TCE    (1'd1),
 
@@ -76891,6 +77027,24 @@ IOBUFDS IOBUFDS_8(
 	// InOuts.
 	.IO  (ddram0_dqs_p[8]),
 	.IOB (ddram0_dqs_n[8])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_14 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_14 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r0)
 );
 
 //------------------------------------------------------------------------------
@@ -76916,7 +77070,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip01[6]),
 	.D8     (wl7ddrphy0_bitslip01[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r0),
+	.RST    (wl7ddrphy0_dq_rst_r0),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -76944,7 +77098,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed0),
-	.RST     (wl7ddrphy0_rd_rst_r0),
+	.RST     (wl7ddrphy0_dq_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name0[7]),
@@ -76998,6 +77152,24 @@ IOBUF IOBUF(
 	.IO (ddram0_dq[0])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_15 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_15 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r1)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_36 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77021,7 +77193,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip11[6]),
 	.D8     (wl7ddrphy0_bitslip11[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r0),
+	.RST    (wl7ddrphy0_dq_rst_r1),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77049,7 +77221,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed1),
-	.RST     (wl7ddrphy0_rd_rst_r0),
+	.RST     (wl7ddrphy0_dq_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name1[7]),
@@ -77103,6 +77275,24 @@ IOBUF IOBUF_1(
 	.IO (ddram0_dq[1])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_16 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_16 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r2)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_37 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77126,7 +77316,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip21[6]),
 	.D8     (wl7ddrphy0_bitslip21[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r0),
+	.RST    (wl7ddrphy0_dq_rst_r2),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77154,7 +77344,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed2),
-	.RST     (wl7ddrphy0_rd_rst_r0),
+	.RST     (wl7ddrphy0_dq_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name2[7]),
@@ -77208,6 +77398,24 @@ IOBUF IOBUF_2(
 	.IO (ddram0_dq[2])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_17 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_17 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r3)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_38 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77231,7 +77439,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip31[6]),
 	.D8     (wl7ddrphy0_bitslip31[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r0),
+	.RST    (wl7ddrphy0_dq_rst_r3),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77259,7 +77467,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed3),
-	.RST     (wl7ddrphy0_rd_rst_r0),
+	.RST     (wl7ddrphy0_dq_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name3[7]),
@@ -77313,6 +77521,24 @@ IOBUF IOBUF_3(
 	.IO (ddram0_dq[3])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_18 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_18 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r4)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_39 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77336,7 +77562,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip41[6]),
 	.D8     (wl7ddrphy0_bitslip41[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r0),
+	.RST    (wl7ddrphy0_dq_rst_r4),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77364,7 +77590,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed4),
-	.RST     (wl7ddrphy0_rd_rst_r0),
+	.RST     (wl7ddrphy0_dq_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name4[7]),
@@ -77418,6 +77644,24 @@ IOBUF IOBUF_4(
 	.IO (ddram0_dq[4])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_19 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_19 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r5)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_40 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77441,7 +77685,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip51[6]),
 	.D8     (wl7ddrphy0_bitslip51[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r0),
+	.RST    (wl7ddrphy0_dq_rst_r5),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77469,7 +77713,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed5),
-	.RST     (wl7ddrphy0_rd_rst_r0),
+	.RST     (wl7ddrphy0_dq_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name5[7]),
@@ -77523,6 +77767,24 @@ IOBUF IOBUF_5(
 	.IO (ddram0_dq[5])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_20 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_20 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r6)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_41 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77546,7 +77808,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip61[6]),
 	.D8     (wl7ddrphy0_bitslip61[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r0),
+	.RST    (wl7ddrphy0_dq_rst_r6),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77574,7 +77836,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed6),
-	.RST     (wl7ddrphy0_rd_rst_r0),
+	.RST     (wl7ddrphy0_dq_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name6[7]),
@@ -77628,6 +77890,24 @@ IOBUF IOBUF_6(
 	.IO (ddram0_dq[6])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_21 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_21 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r7)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_42 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77651,7 +77931,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip71[6]),
 	.D8     (wl7ddrphy0_bitslip71[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r0),
+	.RST    (wl7ddrphy0_dq_rst_r7),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77679,7 +77959,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed7),
-	.RST     (wl7ddrphy0_rd_rst_r0),
+	.RST     (wl7ddrphy0_dq_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name7[7]),
@@ -77733,6 +78013,24 @@ IOBUF IOBUF_7(
 	.IO (ddram0_dq[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_22 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_22 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r8)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_43 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77756,7 +78054,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip81[6]),
 	.D8     (wl7ddrphy0_bitslip81[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r1),
+	.RST    (wl7ddrphy0_dq_rst_r8),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77784,7 +78082,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed8),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_dq_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name8[7]),
@@ -77838,6 +78136,24 @@ IOBUF IOBUF_8(
 	.IO (ddram0_dq[8])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_23 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_23 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r9)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_44 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77861,7 +78177,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip90[6]),
 	.D8     (wl7ddrphy0_bitslip90[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r1),
+	.RST    (wl7ddrphy0_dq_rst_r9),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77889,7 +78205,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed9),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_dq_rst_r9),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name9[7]),
@@ -77943,6 +78259,24 @@ IOBUF IOBUF_9(
 	.IO (ddram0_dq[9])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_24 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_24 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r10)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_45 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -77966,7 +78300,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip100[6]),
 	.D8     (wl7ddrphy0_bitslip100[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r1),
+	.RST    (wl7ddrphy0_dq_rst_r10),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -77994,7 +78328,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed10),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_dq_rst_r10),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name10[7]),
@@ -78048,6 +78382,24 @@ IOBUF IOBUF_10(
 	.IO (ddram0_dq[10])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_25 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_25 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r11)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_46 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -78071,7 +78423,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip110[6]),
 	.D8     (wl7ddrphy0_bitslip110[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r1),
+	.RST    (wl7ddrphy0_dq_rst_r11),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -78099,7 +78451,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed11),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_dq_rst_r11),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name11[7]),
@@ -78153,6 +78505,24 @@ IOBUF IOBUF_11(
 	.IO (ddram0_dq[11])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_26 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_26 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r12)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_47 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -78176,7 +78546,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip120[6]),
 	.D8     (wl7ddrphy0_bitslip120[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r1),
+	.RST    (wl7ddrphy0_dq_rst_r12),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -78204,7 +78574,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed12),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_dq_rst_r12),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name12[7]),
@@ -78258,6 +78628,24 @@ IOBUF IOBUF_12(
 	.IO (ddram0_dq[12])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_27 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_27 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r13)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_48 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -78281,7 +78669,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip130[6]),
 	.D8     (wl7ddrphy0_bitslip130[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r1),
+	.RST    (wl7ddrphy0_dq_rst_r13),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -78309,7 +78697,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed13),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_dq_rst_r13),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name13[7]),
@@ -78363,6 +78751,24 @@ IOBUF IOBUF_13(
 	.IO (ddram0_dq[13])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_28 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_28 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r14)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_49 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -78386,7 +78792,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip140[6]),
 	.D8     (wl7ddrphy0_bitslip140[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r1),
+	.RST    (wl7ddrphy0_dq_rst_r14),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -78414,7 +78820,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed14),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_dq_rst_r14),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name14[7]),
@@ -78468,6 +78874,24 @@ IOBUF IOBUF_14(
 	.IO (ddram0_dq[14])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_29 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_29 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r15)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_50 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -78491,7 +78915,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip150[6]),
 	.D8     (wl7ddrphy0_bitslip150[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r1),
+	.RST    (wl7ddrphy0_dq_rst_r15),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -78519,7 +78943,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed15),
-	.RST     (wl7ddrphy0_rd_rst_r1),
+	.RST     (wl7ddrphy0_dq_rst_r15),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name15[7]),
@@ -78573,6 +78997,24 @@ IOBUF IOBUF_15(
 	.IO (ddram0_dq[15])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_30 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_30 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r16)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_51 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -78596,7 +79038,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip160[6]),
 	.D8     (wl7ddrphy0_bitslip160[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r2),
+	.RST    (wl7ddrphy0_dq_rst_r16),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -78624,7 +79066,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed16),
-	.RST     (wl7ddrphy0_rd_rst_r2),
+	.RST     (wl7ddrphy0_dq_rst_r16),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name16[7]),
@@ -78678,6 +79120,24 @@ IOBUF IOBUF_16(
 	.IO (ddram0_dq[16])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_31 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_31 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r17)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_52 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -78701,7 +79161,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip170[6]),
 	.D8     (wl7ddrphy0_bitslip170[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r2),
+	.RST    (wl7ddrphy0_dq_rst_r17),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -78729,7 +79189,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed17),
-	.RST     (wl7ddrphy0_rd_rst_r2),
+	.RST     (wl7ddrphy0_dq_rst_r17),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name17[7]),
@@ -78783,6 +79243,24 @@ IOBUF IOBUF_17(
 	.IO (ddram0_dq[17])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_32 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_32 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r18)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_53 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -78806,7 +79284,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip180[6]),
 	.D8     (wl7ddrphy0_bitslip180[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r2),
+	.RST    (wl7ddrphy0_dq_rst_r18),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -78834,7 +79312,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed18),
-	.RST     (wl7ddrphy0_rd_rst_r2),
+	.RST     (wl7ddrphy0_dq_rst_r18),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name18[7]),
@@ -78888,6 +79366,24 @@ IOBUF IOBUF_18(
 	.IO (ddram0_dq[18])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_33 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_33 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r19)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_54 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -78911,7 +79407,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip190[6]),
 	.D8     (wl7ddrphy0_bitslip190[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r2),
+	.RST    (wl7ddrphy0_dq_rst_r19),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -78939,7 +79435,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed19),
-	.RST     (wl7ddrphy0_rd_rst_r2),
+	.RST     (wl7ddrphy0_dq_rst_r19),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name19[7]),
@@ -78993,6 +79489,24 @@ IOBUF IOBUF_19(
 	.IO (ddram0_dq[19])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_34 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_34 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r20)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_55 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79016,7 +79530,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip200[6]),
 	.D8     (wl7ddrphy0_bitslip200[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r2),
+	.RST    (wl7ddrphy0_dq_rst_r20),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79044,7 +79558,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed20),
-	.RST     (wl7ddrphy0_rd_rst_r2),
+	.RST     (wl7ddrphy0_dq_rst_r20),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name20[7]),
@@ -79098,6 +79612,24 @@ IOBUF IOBUF_20(
 	.IO (ddram0_dq[20])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_35 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_35 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r21)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_56 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79121,7 +79653,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip210[6]),
 	.D8     (wl7ddrphy0_bitslip210[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r2),
+	.RST    (wl7ddrphy0_dq_rst_r21),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79149,7 +79681,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed21),
-	.RST     (wl7ddrphy0_rd_rst_r2),
+	.RST     (wl7ddrphy0_dq_rst_r21),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name21[7]),
@@ -79203,6 +79735,24 @@ IOBUF IOBUF_21(
 	.IO (ddram0_dq[21])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_36 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_36 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r22)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_57 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79226,7 +79776,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip220[6]),
 	.D8     (wl7ddrphy0_bitslip220[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r2),
+	.RST    (wl7ddrphy0_dq_rst_r22),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79254,7 +79804,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed22),
-	.RST     (wl7ddrphy0_rd_rst_r2),
+	.RST     (wl7ddrphy0_dq_rst_r22),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name22[7]),
@@ -79308,6 +79858,24 @@ IOBUF IOBUF_22(
 	.IO (ddram0_dq[22])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_37 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_37 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r23)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_58 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79331,7 +79899,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip230[6]),
 	.D8     (wl7ddrphy0_bitslip230[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r2),
+	.RST    (wl7ddrphy0_dq_rst_r23),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79359,7 +79927,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed23),
-	.RST     (wl7ddrphy0_rd_rst_r2),
+	.RST     (wl7ddrphy0_dq_rst_r23),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name23[7]),
@@ -79413,6 +79981,24 @@ IOBUF IOBUF_23(
 	.IO (ddram0_dq[23])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_38 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_38 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r24)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_59 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79436,7 +80022,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip240[6]),
 	.D8     (wl7ddrphy0_bitslip240[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r3),
+	.RST    (wl7ddrphy0_dq_rst_r24),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79464,7 +80050,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed24),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_dq_rst_r24),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name24[7]),
@@ -79518,6 +80104,24 @@ IOBUF IOBUF_24(
 	.IO (ddram0_dq[24])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_39 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_39 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r25)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_60 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79541,7 +80145,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip250[6]),
 	.D8     (wl7ddrphy0_bitslip250[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r3),
+	.RST    (wl7ddrphy0_dq_rst_r25),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79569,7 +80173,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed25),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_dq_rst_r25),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name25[7]),
@@ -79623,6 +80227,24 @@ IOBUF IOBUF_25(
 	.IO (ddram0_dq[25])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_40 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_40 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r26)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_61 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79646,7 +80268,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip260[6]),
 	.D8     (wl7ddrphy0_bitslip260[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r3),
+	.RST    (wl7ddrphy0_dq_rst_r26),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79674,7 +80296,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed26),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_dq_rst_r26),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name26[7]),
@@ -79728,6 +80350,24 @@ IOBUF IOBUF_26(
 	.IO (ddram0_dq[26])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_41 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_41 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r27)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_62 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79751,7 +80391,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip270[6]),
 	.D8     (wl7ddrphy0_bitslip270[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r3),
+	.RST    (wl7ddrphy0_dq_rst_r27),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79779,7 +80419,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed27),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_dq_rst_r27),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name27[7]),
@@ -79833,6 +80473,24 @@ IOBUF IOBUF_27(
 	.IO (ddram0_dq[27])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_42 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_42 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r28)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_63 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79856,7 +80514,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip280[6]),
 	.D8     (wl7ddrphy0_bitslip280[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r3),
+	.RST    (wl7ddrphy0_dq_rst_r28),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79884,7 +80542,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed28),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_dq_rst_r28),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name28[7]),
@@ -79938,6 +80596,24 @@ IOBUF IOBUF_28(
 	.IO (ddram0_dq[28])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_43 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_43 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r29)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_64 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -79961,7 +80637,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip290[6]),
 	.D8     (wl7ddrphy0_bitslip290[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r3),
+	.RST    (wl7ddrphy0_dq_rst_r29),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -79989,7 +80665,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed29),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_dq_rst_r29),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name29[7]),
@@ -80043,6 +80719,24 @@ IOBUF IOBUF_29(
 	.IO (ddram0_dq[29])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_44 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_44 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r30)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_65 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -80066,7 +80760,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip300[6]),
 	.D8     (wl7ddrphy0_bitslip300[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r3),
+	.RST    (wl7ddrphy0_dq_rst_r30),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -80094,7 +80788,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed30),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_dq_rst_r30),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name30[7]),
@@ -80148,6 +80842,24 @@ IOBUF IOBUF_30(
 	.IO (ddram0_dq[30])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_45 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_45 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r31)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_66 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -80171,7 +80883,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip310[6]),
 	.D8     (wl7ddrphy0_bitslip310[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r3),
+	.RST    (wl7ddrphy0_dq_rst_r31),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -80199,7 +80911,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed31),
-	.RST     (wl7ddrphy0_rd_rst_r3),
+	.RST     (wl7ddrphy0_dq_rst_r31),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name31[7]),
@@ -80253,6 +80965,24 @@ IOBUF IOBUF_31(
 	.IO (ddram0_dq[31])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_46 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_46 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r32)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_67 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -80276,7 +81006,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip320[6]),
 	.D8     (wl7ddrphy0_bitslip320[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r4),
+	.RST    (wl7ddrphy0_dq_rst_r32),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -80304,7 +81034,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed32),
-	.RST     (wl7ddrphy0_rd_rst_r4),
+	.RST     (wl7ddrphy0_dq_rst_r32),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name32[7]),
@@ -80358,6 +81088,24 @@ IOBUF IOBUF_32(
 	.IO (ddram0_dq[32])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_47 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_47 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r33)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_68 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -80381,7 +81129,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip330[6]),
 	.D8     (wl7ddrphy0_bitslip330[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r4),
+	.RST    (wl7ddrphy0_dq_rst_r33),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -80409,7 +81157,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed33),
-	.RST     (wl7ddrphy0_rd_rst_r4),
+	.RST     (wl7ddrphy0_dq_rst_r33),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name33[7]),
@@ -80463,6 +81211,24 @@ IOBUF IOBUF_33(
 	.IO (ddram0_dq[33])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_48 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_48 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r34)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_69 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -80486,7 +81252,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip340[6]),
 	.D8     (wl7ddrphy0_bitslip340[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r4),
+	.RST    (wl7ddrphy0_dq_rst_r34),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -80514,7 +81280,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed34),
-	.RST     (wl7ddrphy0_rd_rst_r4),
+	.RST     (wl7ddrphy0_dq_rst_r34),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name34[7]),
@@ -80568,6 +81334,24 @@ IOBUF IOBUF_34(
 	.IO (ddram0_dq[34])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_49 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_49 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r35)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_70 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -80591,7 +81375,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip350[6]),
 	.D8     (wl7ddrphy0_bitslip350[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r4),
+	.RST    (wl7ddrphy0_dq_rst_r35),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -80619,7 +81403,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed35),
-	.RST     (wl7ddrphy0_rd_rst_r4),
+	.RST     (wl7ddrphy0_dq_rst_r35),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name35[7]),
@@ -80673,6 +81457,24 @@ IOBUF IOBUF_35(
 	.IO (ddram0_dq[35])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_50 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_50 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r36)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_71 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -80696,7 +81498,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip360[6]),
 	.D8     (wl7ddrphy0_bitslip360[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r4),
+	.RST    (wl7ddrphy0_dq_rst_r36),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -80724,7 +81526,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed36),
-	.RST     (wl7ddrphy0_rd_rst_r4),
+	.RST     (wl7ddrphy0_dq_rst_r36),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name36[7]),
@@ -80778,6 +81580,24 @@ IOBUF IOBUF_36(
 	.IO (ddram0_dq[36])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_51 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_51 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r37)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_72 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -80801,7 +81621,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip370[6]),
 	.D8     (wl7ddrphy0_bitslip370[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r4),
+	.RST    (wl7ddrphy0_dq_rst_r37),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -80829,7 +81649,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed37),
-	.RST     (wl7ddrphy0_rd_rst_r4),
+	.RST     (wl7ddrphy0_dq_rst_r37),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name37[7]),
@@ -80883,6 +81703,24 @@ IOBUF IOBUF_37(
 	.IO (ddram0_dq[37])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_52 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_52 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r38)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_73 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -80906,7 +81744,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip380[6]),
 	.D8     (wl7ddrphy0_bitslip380[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r4),
+	.RST    (wl7ddrphy0_dq_rst_r38),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -80934,7 +81772,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed38),
-	.RST     (wl7ddrphy0_rd_rst_r4),
+	.RST     (wl7ddrphy0_dq_rst_r38),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name38[7]),
@@ -80988,6 +81826,24 @@ IOBUF IOBUF_38(
 	.IO (ddram0_dq[38])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_53 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_53 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r39)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_74 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81011,7 +81867,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip390[6]),
 	.D8     (wl7ddrphy0_bitslip390[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r4),
+	.RST    (wl7ddrphy0_dq_rst_r39),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81039,7 +81895,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed39),
-	.RST     (wl7ddrphy0_rd_rst_r4),
+	.RST     (wl7ddrphy0_dq_rst_r39),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name39[7]),
@@ -81093,6 +81949,24 @@ IOBUF IOBUF_39(
 	.IO (ddram0_dq[39])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_54 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_54 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r40)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_75 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81116,7 +81990,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip400[6]),
 	.D8     (wl7ddrphy0_bitslip400[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r5),
+	.RST    (wl7ddrphy0_dq_rst_r40),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81144,7 +82018,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed40),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_dq_rst_r40),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name40[7]),
@@ -81198,6 +82072,24 @@ IOBUF IOBUF_40(
 	.IO (ddram0_dq[40])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_55 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_55 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r41)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_76 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81221,7 +82113,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip410[6]),
 	.D8     (wl7ddrphy0_bitslip410[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r5),
+	.RST    (wl7ddrphy0_dq_rst_r41),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81249,7 +82141,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed41),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_dq_rst_r41),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name41[7]),
@@ -81303,6 +82195,24 @@ IOBUF IOBUF_41(
 	.IO (ddram0_dq[41])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_56 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_56 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r42)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_77 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81326,7 +82236,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip420[6]),
 	.D8     (wl7ddrphy0_bitslip420[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r5),
+	.RST    (wl7ddrphy0_dq_rst_r42),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81354,7 +82264,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed42),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_dq_rst_r42),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name42[7]),
@@ -81408,6 +82318,24 @@ IOBUF IOBUF_42(
 	.IO (ddram0_dq[42])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_57 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_57 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r43)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_78 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81431,7 +82359,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip430[6]),
 	.D8     (wl7ddrphy0_bitslip430[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r5),
+	.RST    (wl7ddrphy0_dq_rst_r43),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81459,7 +82387,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed43),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_dq_rst_r43),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name43[7]),
@@ -81513,6 +82441,24 @@ IOBUF IOBUF_43(
 	.IO (ddram0_dq[43])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_58 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_58 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r44)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_79 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81536,7 +82482,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip440[6]),
 	.D8     (wl7ddrphy0_bitslip440[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r5),
+	.RST    (wl7ddrphy0_dq_rst_r44),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81564,7 +82510,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed44),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_dq_rst_r44),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name44[7]),
@@ -81618,6 +82564,24 @@ IOBUF IOBUF_44(
 	.IO (ddram0_dq[44])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_59 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_59 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r45)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_80 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81641,7 +82605,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip450[6]),
 	.D8     (wl7ddrphy0_bitslip450[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r5),
+	.RST    (wl7ddrphy0_dq_rst_r45),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81669,7 +82633,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed45),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_dq_rst_r45),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name45[7]),
@@ -81723,6 +82687,24 @@ IOBUF IOBUF_45(
 	.IO (ddram0_dq[45])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_60 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_60 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r46)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_81 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81746,7 +82728,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip460[6]),
 	.D8     (wl7ddrphy0_bitslip460[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r5),
+	.RST    (wl7ddrphy0_dq_rst_r46),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81774,7 +82756,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed46),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_dq_rst_r46),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name46[7]),
@@ -81828,6 +82810,24 @@ IOBUF IOBUF_46(
 	.IO (ddram0_dq[46])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_61 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_61 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r47)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_82 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81851,7 +82851,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip470[6]),
 	.D8     (wl7ddrphy0_bitslip470[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r5),
+	.RST    (wl7ddrphy0_dq_rst_r47),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81879,7 +82879,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed47),
-	.RST     (wl7ddrphy0_rd_rst_r5),
+	.RST     (wl7ddrphy0_dq_rst_r47),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name47[7]),
@@ -81933,6 +82933,24 @@ IOBUF IOBUF_47(
 	.IO (ddram0_dq[47])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_62 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_62 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r48)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_83 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -81956,7 +82974,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip480[6]),
 	.D8     (wl7ddrphy0_bitslip480[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r6),
+	.RST    (wl7ddrphy0_dq_rst_r48),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -81984,7 +83002,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed48),
-	.RST     (wl7ddrphy0_rd_rst_r6),
+	.RST     (wl7ddrphy0_dq_rst_r48),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name48[7]),
@@ -82038,6 +83056,24 @@ IOBUF IOBUF_48(
 	.IO (ddram0_dq[48])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_63 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_63 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r49)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_84 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -82061,7 +83097,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip490[6]),
 	.D8     (wl7ddrphy0_bitslip490[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r6),
+	.RST    (wl7ddrphy0_dq_rst_r49),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -82089,7 +83125,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed49),
-	.RST     (wl7ddrphy0_rd_rst_r6),
+	.RST     (wl7ddrphy0_dq_rst_r49),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name49[7]),
@@ -82143,6 +83179,24 @@ IOBUF IOBUF_49(
 	.IO (ddram0_dq[49])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_64 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_64 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r50)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_85 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -82166,7 +83220,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip500[6]),
 	.D8     (wl7ddrphy0_bitslip500[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r6),
+	.RST    (wl7ddrphy0_dq_rst_r50),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -82194,7 +83248,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed50),
-	.RST     (wl7ddrphy0_rd_rst_r6),
+	.RST     (wl7ddrphy0_dq_rst_r50),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name50[7]),
@@ -82248,6 +83302,24 @@ IOBUF IOBUF_50(
 	.IO (ddram0_dq[50])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_65 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_65 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r51)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_86 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -82271,7 +83343,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip510[6]),
 	.D8     (wl7ddrphy0_bitslip510[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r6),
+	.RST    (wl7ddrphy0_dq_rst_r51),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -82299,7 +83371,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed51),
-	.RST     (wl7ddrphy0_rd_rst_r6),
+	.RST     (wl7ddrphy0_dq_rst_r51),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name51[7]),
@@ -82353,6 +83425,24 @@ IOBUF IOBUF_51(
 	.IO (ddram0_dq[51])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_66 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_66 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r52)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_87 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -82376,7 +83466,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip520[6]),
 	.D8     (wl7ddrphy0_bitslip520[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r6),
+	.RST    (wl7ddrphy0_dq_rst_r52),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -82404,7 +83494,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed52),
-	.RST     (wl7ddrphy0_rd_rst_r6),
+	.RST     (wl7ddrphy0_dq_rst_r52),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name52[7]),
@@ -82458,6 +83548,24 @@ IOBUF IOBUF_52(
 	.IO (ddram0_dq[52])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_67 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_67 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r53)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_88 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -82481,7 +83589,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip530[6]),
 	.D8     (wl7ddrphy0_bitslip530[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r6),
+	.RST    (wl7ddrphy0_dq_rst_r53),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -82509,7 +83617,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed53),
-	.RST     (wl7ddrphy0_rd_rst_r6),
+	.RST     (wl7ddrphy0_dq_rst_r53),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name53[7]),
@@ -82563,6 +83671,24 @@ IOBUF IOBUF_53(
 	.IO (ddram0_dq[53])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_68 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_68 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r54)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_89 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -82586,7 +83712,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip540[6]),
 	.D8     (wl7ddrphy0_bitslip540[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r6),
+	.RST    (wl7ddrphy0_dq_rst_r54),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -82614,7 +83740,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed54),
-	.RST     (wl7ddrphy0_rd_rst_r6),
+	.RST     (wl7ddrphy0_dq_rst_r54),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name54[7]),
@@ -82668,6 +83794,24 @@ IOBUF IOBUF_54(
 	.IO (ddram0_dq[54])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_69 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_69 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r55)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_90 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -82691,7 +83835,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip550[6]),
 	.D8     (wl7ddrphy0_bitslip550[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r6),
+	.RST    (wl7ddrphy0_dq_rst_r55),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -82719,7 +83863,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed55),
-	.RST     (wl7ddrphy0_rd_rst_r6),
+	.RST     (wl7ddrphy0_dq_rst_r55),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name55[7]),
@@ -82773,6 +83917,24 @@ IOBUF IOBUF_55(
 	.IO (ddram0_dq[55])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_70 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_70 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r56)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_91 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -82796,7 +83958,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip560[6]),
 	.D8     (wl7ddrphy0_bitslip560[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r7),
+	.RST    (wl7ddrphy0_dq_rst_r56),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -82824,7 +83986,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed56),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_dq_rst_r56),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name56[7]),
@@ -82878,6 +84040,24 @@ IOBUF IOBUF_56(
 	.IO (ddram0_dq[56])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_71 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_71 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r57)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_92 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -82901,7 +84081,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip570[6]),
 	.D8     (wl7ddrphy0_bitslip570[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r7),
+	.RST    (wl7ddrphy0_dq_rst_r57),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -82929,7 +84109,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed57),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_dq_rst_r57),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name57[7]),
@@ -82983,6 +84163,24 @@ IOBUF IOBUF_57(
 	.IO (ddram0_dq[57])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_72 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_72 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r58)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_93 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83006,7 +84204,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip580[6]),
 	.D8     (wl7ddrphy0_bitslip580[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r7),
+	.RST    (wl7ddrphy0_dq_rst_r58),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83034,7 +84232,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed58),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_dq_rst_r58),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name58[7]),
@@ -83088,6 +84286,24 @@ IOBUF IOBUF_58(
 	.IO (ddram0_dq[58])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_73 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_73 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r59)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_94 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83111,7 +84327,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip590[6]),
 	.D8     (wl7ddrphy0_bitslip590[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r7),
+	.RST    (wl7ddrphy0_dq_rst_r59),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83139,7 +84355,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed59),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_dq_rst_r59),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name59[7]),
@@ -83193,6 +84409,24 @@ IOBUF IOBUF_59(
 	.IO (ddram0_dq[59])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_74 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_74 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r60)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_95 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83216,7 +84450,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip600[6]),
 	.D8     (wl7ddrphy0_bitslip600[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r7),
+	.RST    (wl7ddrphy0_dq_rst_r60),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83244,7 +84478,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed60),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_dq_rst_r60),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name60[7]),
@@ -83298,6 +84532,24 @@ IOBUF IOBUF_60(
 	.IO (ddram0_dq[60])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_75 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_75 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r61)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_96 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83321,7 +84573,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip610[6]),
 	.D8     (wl7ddrphy0_bitslip610[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r7),
+	.RST    (wl7ddrphy0_dq_rst_r61),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83349,7 +84601,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed61),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_dq_rst_r61),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name61[7]),
@@ -83403,6 +84655,24 @@ IOBUF IOBUF_61(
 	.IO (ddram0_dq[61])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_76 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_76 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r62)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_97 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83426,7 +84696,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip620[6]),
 	.D8     (wl7ddrphy0_bitslip620[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r7),
+	.RST    (wl7ddrphy0_dq_rst_r62),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83454,7 +84724,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed62),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_dq_rst_r62),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name62[7]),
@@ -83508,6 +84778,24 @@ IOBUF IOBUF_62(
 	.IO (ddram0_dq[62])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_77 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_77 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r63)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_98 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83531,7 +84819,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip630[6]),
 	.D8     (wl7ddrphy0_bitslip630[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r7),
+	.RST    (wl7ddrphy0_dq_rst_r63),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83559,7 +84847,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed63),
-	.RST     (wl7ddrphy0_rd_rst_r7),
+	.RST     (wl7ddrphy0_dq_rst_r63),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name63[7]),
@@ -83613,6 +84901,24 @@ IOBUF IOBUF_63(
 	.IO (ddram0_dq[63])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_78 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_78 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r64)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_99 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83636,7 +84942,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip640[6]),
 	.D8     (wl7ddrphy0_bitslip640[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r8),
+	.RST    (wl7ddrphy0_dq_rst_r64),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83664,7 +84970,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed64),
-	.RST     (wl7ddrphy0_rd_rst_r8),
+	.RST     (wl7ddrphy0_dq_rst_r64),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name64[7]),
@@ -83718,6 +85024,24 @@ IOBUF IOBUF_64(
 	.IO (ddram0_dq[64])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_79 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_79 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r65)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_100 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83741,7 +85065,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip650[6]),
 	.D8     (wl7ddrphy0_bitslip650[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r8),
+	.RST    (wl7ddrphy0_dq_rst_r65),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83769,7 +85093,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed65),
-	.RST     (wl7ddrphy0_rd_rst_r8),
+	.RST     (wl7ddrphy0_dq_rst_r65),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name65[7]),
@@ -83823,6 +85147,24 @@ IOBUF IOBUF_65(
 	.IO (ddram0_dq[65])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_80 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_80 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r66)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_101 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83846,7 +85188,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip660[6]),
 	.D8     (wl7ddrphy0_bitslip660[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r8),
+	.RST    (wl7ddrphy0_dq_rst_r66),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83874,7 +85216,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed66),
-	.RST     (wl7ddrphy0_rd_rst_r8),
+	.RST     (wl7ddrphy0_dq_rst_r66),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name66[7]),
@@ -83928,6 +85270,24 @@ IOBUF IOBUF_66(
 	.IO (ddram0_dq[66])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_81 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_81 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r67)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_102 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -83951,7 +85311,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip670[6]),
 	.D8     (wl7ddrphy0_bitslip670[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r8),
+	.RST    (wl7ddrphy0_dq_rst_r67),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -83979,7 +85339,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed67),
-	.RST     (wl7ddrphy0_rd_rst_r8),
+	.RST     (wl7ddrphy0_dq_rst_r67),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name67[7]),
@@ -84033,6 +85393,24 @@ IOBUF IOBUF_67(
 	.IO (ddram0_dq[67])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_82 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_82 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r68)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_103 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -84056,7 +85434,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip680[6]),
 	.D8     (wl7ddrphy0_bitslip680[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r8),
+	.RST    (wl7ddrphy0_dq_rst_r68),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -84084,7 +85462,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed68),
-	.RST     (wl7ddrphy0_rd_rst_r8),
+	.RST     (wl7ddrphy0_dq_rst_r68),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name68[7]),
@@ -84138,6 +85516,24 @@ IOBUF IOBUF_68(
 	.IO (ddram0_dq[68])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_83 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_83 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r69)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_104 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -84161,7 +85557,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip690[6]),
 	.D8     (wl7ddrphy0_bitslip690[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r8),
+	.RST    (wl7ddrphy0_dq_rst_r69),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -84189,7 +85585,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed69),
-	.RST     (wl7ddrphy0_rd_rst_r8),
+	.RST     (wl7ddrphy0_dq_rst_r69),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name69[7]),
@@ -84243,6 +85639,24 @@ IOBUF IOBUF_69(
 	.IO (ddram0_dq[69])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_84 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_84 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r70)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_105 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -84266,7 +85680,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip700[6]),
 	.D8     (wl7ddrphy0_bitslip700[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r8),
+	.RST    (wl7ddrphy0_dq_rst_r70),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -84294,7 +85708,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed70),
-	.RST     (wl7ddrphy0_rd_rst_r8),
+	.RST     (wl7ddrphy0_dq_rst_r70),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name70[7]),
@@ -84348,6 +85762,24 @@ IOBUF IOBUF_70(
 	.IO (ddram0_dq[70])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_85 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_85 (
+	// Inputs.
+	.C  (sysw0_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy0_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy0_dq_rst_r71)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_106 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -84371,7 +85803,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy0_bitslip710[6]),
 	.D8     (wl7ddrphy0_bitslip710[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy0_wr_rst_r8),
+	.RST    (wl7ddrphy0_dq_rst_r71),
 	.T1     ((~wl7ddrphy0_tappeddelayline0_tappeddelayline03)),
 	.TCE    (1'd1),
 
@@ -84399,7 +85831,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw0a_clk)),
 	.CLKDIV  (sysw0_clk),
 	.DDLY    (wl7ddrphy0_dq_i_delayed71),
-	.RST     (wl7ddrphy0_rd_rst_r8),
+	.RST     (wl7ddrphy0_dq_rst_r71),
 
 	// Outputs.
 	.Q1      (wl7ddrphy0_dfi_name71[7]),
@@ -84755,336 +86187,12 @@ FDRE #(
 
 (* DONT_TOUCH = "TRUE" *)
 //------------------------------------------------------------------------------
-// Instance wlrst_22 of FDRE Module.
+// Instance wlrst_86 of FDRE Module.
 //------------------------------------------------------------------------------
 FDRE #(
 	// Parameters.
 	.INIT (1'd1)
-) wlrst_22 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r0)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_23 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_23 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r1)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_24 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_24 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r2)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_25 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_25 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r3)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_26 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_26 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r4)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_27 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_27 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r5)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_28 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_28 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r6)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_29 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_29 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r7)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_30 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_30 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_rd_rst_r8)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_31 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_31 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wr_rst_r0)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_32 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_32 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wr_rst_r1)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_33 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_33 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wr_rst_r2)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_34 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_34 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wr_rst_r3)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_35 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_35 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wr_rst_r4)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_36 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_36 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wr_rst_r5)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_37 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_37 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wr_rst_r6)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_38 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_38 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wr_rst_r7)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_39 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_39 (
-	// Inputs.
-	.C  (sysw1_clk),
-	.CE (1'd1),
-	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wr_rst_r8)
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_40 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_40 (
+) wlrst_86 (
 	// Inputs.
 	.C  (sysc1_clk),
 	.CE (1'd1),
@@ -85280,6 +86388,24 @@ FDRE #(
 	.Q  (wl7ddrphy1_wl7ddrphy1_r1[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_87 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_87 (
+	// Inputs.
+	.C  (sysc1_clk),
+	.CE (1'd1),
+	.D  (wl7ddrphy1_self_r),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r2)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_108 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -85303,7 +86429,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_wl7ddrphy1_r1[6]),
 	.D8     (wl7ddrphy1_wl7ddrphy1_r1[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r0),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r2),
 
 	// Outputs.
 	.OQ     (ddram1_reset_n)
@@ -85324,7 +86450,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r2[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r3[0])
 );
 
 //------------------------------------------------------------------------------
@@ -85342,7 +86468,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r2[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r3[1])
 );
 
 //------------------------------------------------------------------------------
@@ -85360,7 +86486,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r2[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r3[2])
 );
 
 //------------------------------------------------------------------------------
@@ -85378,7 +86504,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r2[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r3[3])
 );
 
 //------------------------------------------------------------------------------
@@ -85396,7 +86522,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r2[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r3[4])
 );
 
 //------------------------------------------------------------------------------
@@ -85414,7 +86540,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r2[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r3[5])
 );
 
 //------------------------------------------------------------------------------
@@ -85432,7 +86558,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r2[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r3[6])
 );
 
 //------------------------------------------------------------------------------
@@ -85450,7 +86576,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r2[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r3[7])
 );
 
 //------------------------------------------------------------------------------
@@ -85467,14 +86593,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r2[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r2[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r2[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r2[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r2[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r2[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r2[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r2[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r3[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r3[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r3[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r3[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r3[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r3[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r3[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r3[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy1_wl7ddrphy1_r0),
 
@@ -85497,7 +86623,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r3[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r4[0])
 );
 
 //------------------------------------------------------------------------------
@@ -85515,7 +86641,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r3[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r4[1])
 );
 
 //------------------------------------------------------------------------------
@@ -85533,7 +86659,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r3[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r4[2])
 );
 
 //------------------------------------------------------------------------------
@@ -85551,7 +86677,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r3[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r4[3])
 );
 
 //------------------------------------------------------------------------------
@@ -85569,7 +86695,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r3[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r4[4])
 );
 
 //------------------------------------------------------------------------------
@@ -85587,7 +86713,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r3[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r4[5])
 );
 
 //------------------------------------------------------------------------------
@@ -85605,7 +86731,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r3[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r4[6])
 );
 
 //------------------------------------------------------------------------------
@@ -85623,7 +86749,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r3[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r4[7])
 );
 
 //------------------------------------------------------------------------------
@@ -85640,14 +86766,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r3[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r3[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r3[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r3[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r3[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r3[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r3[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r3[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r4[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r4[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r4[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r4[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r4[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r4[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r4[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r4[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy1_wl7ddrphy1_r0),
 
@@ -85670,7 +86796,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r4[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r5[0])
 );
 
 //------------------------------------------------------------------------------
@@ -85688,7 +86814,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r4[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r5[1])
 );
 
 //------------------------------------------------------------------------------
@@ -85706,7 +86832,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r4[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r5[2])
 );
 
 //------------------------------------------------------------------------------
@@ -85724,7 +86850,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r4[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r5[3])
 );
 
 //------------------------------------------------------------------------------
@@ -85742,7 +86868,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r4[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r5[4])
 );
 
 //------------------------------------------------------------------------------
@@ -85760,7 +86886,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r4[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r5[5])
 );
 
 //------------------------------------------------------------------------------
@@ -85778,7 +86904,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r4[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r5[6])
 );
 
 //------------------------------------------------------------------------------
@@ -85796,7 +86922,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r4[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r5[7])
 );
 
 //------------------------------------------------------------------------------
@@ -85813,14 +86939,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r4[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r4[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r4[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r4[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r4[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r4[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r4[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r4[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r5[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r5[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r5[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r5[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r5[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r5[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r5[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r5[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy1_wl7ddrphy1_r0),
 
@@ -85843,7 +86969,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r5[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r6[0])
 );
 
 //------------------------------------------------------------------------------
@@ -85861,7 +86987,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r5[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r6[1])
 );
 
 //------------------------------------------------------------------------------
@@ -85879,7 +87005,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r5[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r6[2])
 );
 
 //------------------------------------------------------------------------------
@@ -85897,7 +87023,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r5[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r6[3])
 );
 
 //------------------------------------------------------------------------------
@@ -85915,7 +87041,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r5[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r6[4])
 );
 
 //------------------------------------------------------------------------------
@@ -85933,7 +87059,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r5[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r6[5])
 );
 
 //------------------------------------------------------------------------------
@@ -85951,7 +87077,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r5[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r6[6])
 );
 
 //------------------------------------------------------------------------------
@@ -85969,7 +87095,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r5[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r6[7])
 );
 
 //------------------------------------------------------------------------------
@@ -85986,14 +87112,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r5[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r5[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r5[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r5[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r5[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r5[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r5[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r5[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r6[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r6[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r6[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r6[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r6[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r6[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r6[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r6[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy1_wl7ddrphy1_r0),
 
@@ -86016,7 +87142,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r6[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r7[0])
 );
 
 //------------------------------------------------------------------------------
@@ -86034,7 +87160,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r6[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r7[1])
 );
 
 //------------------------------------------------------------------------------
@@ -86052,7 +87178,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r6[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r7[2])
 );
 
 //------------------------------------------------------------------------------
@@ -86070,7 +87196,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r6[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r7[3])
 );
 
 //------------------------------------------------------------------------------
@@ -86088,7 +87214,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r6[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r7[4])
 );
 
 //------------------------------------------------------------------------------
@@ -86106,7 +87232,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r6[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r7[5])
 );
 
 //------------------------------------------------------------------------------
@@ -86124,7 +87250,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r6[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r7[6])
 );
 
 //------------------------------------------------------------------------------
@@ -86142,7 +87268,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r6[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r7[7])
 );
 
 //------------------------------------------------------------------------------
@@ -86159,14 +87285,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r6[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r6[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r6[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r6[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r6[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r6[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r6[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r6[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r7[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r7[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r7[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r7[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r7[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r7[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r7[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r7[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy1_wl7ddrphy1_r0),
 
@@ -86189,7 +87315,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r7[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r8[0])
 );
 
 //------------------------------------------------------------------------------
@@ -86207,7 +87333,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r7[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r8[1])
 );
 
 //------------------------------------------------------------------------------
@@ -86225,7 +87351,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r7[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r8[2])
 );
 
 //------------------------------------------------------------------------------
@@ -86243,7 +87369,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r7[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r8[3])
 );
 
 //------------------------------------------------------------------------------
@@ -86261,7 +87387,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r7[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r8[4])
 );
 
 //------------------------------------------------------------------------------
@@ -86279,7 +87405,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r7[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r8[5])
 );
 
 //------------------------------------------------------------------------------
@@ -86297,7 +87423,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r7[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r8[6])
 );
 
 //------------------------------------------------------------------------------
@@ -86315,7 +87441,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r7[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r8[7])
 );
 
 //------------------------------------------------------------------------------
@@ -86332,14 +87458,14 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r7[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r7[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r7[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r7[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r7[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r7[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r7[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r7[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r8[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r8[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r8[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r8[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r8[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r8[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r8[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r8[7]),
 	.OCE    (1'd1),
 	.RST    (wl7ddrphy1_wl7ddrphy1_r0),
 
@@ -86362,7 +87488,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r8[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r9[0])
 );
 
 //------------------------------------------------------------------------------
@@ -86380,7 +87506,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r8[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r9[1])
 );
 
 //------------------------------------------------------------------------------
@@ -86398,7 +87524,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r8[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r9[2])
 );
 
 //------------------------------------------------------------------------------
@@ -86416,7 +87542,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r8[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r9[3])
 );
 
 //------------------------------------------------------------------------------
@@ -86434,7 +87560,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r8[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r9[4])
 );
 
 //------------------------------------------------------------------------------
@@ -86452,7 +87578,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r8[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r9[5])
 );
 
 //------------------------------------------------------------------------------
@@ -86470,7 +87596,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r8[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r9[6])
 );
 
 //------------------------------------------------------------------------------
@@ -86488,25 +87614,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r8[7])
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_41 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_41 (
-	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_self_r),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r9)
+	.Q  (wl7ddrphy1_wl7ddrphy1_r9[7])
 );
 
 //------------------------------------------------------------------------------
@@ -86523,16 +87631,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r8[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r8[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r8[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r8[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r8[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r8[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r8[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r8[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r9[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r9[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r9[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r9[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r9[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r9[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r9[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r9[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r9),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r0),
 
 	// Outputs.
 	.OQ     (ddram1_a[5])
@@ -86682,6 +87790,24 @@ FDRE #(
 	.Q  (wl7ddrphy1_wl7ddrphy1_r10[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_88 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_88 (
+	// Inputs.
+	.C  (sysc1_clk),
+	.CE (1'd1),
+	.D  (wl7ddrphy1_self_r),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r11)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_116 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -86705,7 +87831,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_wl7ddrphy1_r10[6]),
 	.D8     (wl7ddrphy1_wl7ddrphy1_r10[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r9),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r11),
 
 	// Outputs.
 	.OQ     (ddram1_a[6])
@@ -86726,7 +87852,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r11[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r12[0])
 );
 
 //------------------------------------------------------------------------------
@@ -86744,7 +87870,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r11[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r12[1])
 );
 
 //------------------------------------------------------------------------------
@@ -86762,7 +87888,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r11[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r12[2])
 );
 
 //------------------------------------------------------------------------------
@@ -86780,7 +87906,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r11[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r12[3])
 );
 
 //------------------------------------------------------------------------------
@@ -86798,7 +87924,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r11[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r12[4])
 );
 
 //------------------------------------------------------------------------------
@@ -86816,7 +87942,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r11[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r12[5])
 );
 
 //------------------------------------------------------------------------------
@@ -86834,7 +87960,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r11[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r12[6])
 );
 
 //------------------------------------------------------------------------------
@@ -86852,7 +87978,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r11[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r12[7])
 );
 
 //------------------------------------------------------------------------------
@@ -86869,16 +87995,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r11[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r11[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r11[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r11[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r11[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r11[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r11[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r11[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r12[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r12[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r12[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r12[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r12[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r12[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r12[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r12[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r9),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r11),
 
 	// Outputs.
 	.OQ     (ddram1_a[7])
@@ -86899,7 +88025,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r12[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r13[0])
 );
 
 //------------------------------------------------------------------------------
@@ -86917,7 +88043,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r12[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r13[1])
 );
 
 //------------------------------------------------------------------------------
@@ -86935,7 +88061,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r12[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r13[2])
 );
 
 //------------------------------------------------------------------------------
@@ -86953,7 +88079,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r12[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r13[3])
 );
 
 //------------------------------------------------------------------------------
@@ -86971,7 +88097,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r12[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r13[4])
 );
 
 //------------------------------------------------------------------------------
@@ -86989,7 +88115,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r12[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r13[5])
 );
 
 //------------------------------------------------------------------------------
@@ -87007,7 +88133,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r12[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r13[6])
 );
 
 //------------------------------------------------------------------------------
@@ -87025,7 +88151,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r12[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r13[7])
 );
 
 //------------------------------------------------------------------------------
@@ -87042,16 +88168,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r12[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r12[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r12[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r12[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r12[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r12[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r12[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r12[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r13[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r13[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r13[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r13[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r13[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r13[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r13[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r13[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r9),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r11),
 
 	// Outputs.
 	.OQ     (ddram1_a[8])
@@ -87072,7 +88198,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r13[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r14[0])
 );
 
 //------------------------------------------------------------------------------
@@ -87090,7 +88216,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r13[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r14[1])
 );
 
 //------------------------------------------------------------------------------
@@ -87108,7 +88234,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r13[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r14[2])
 );
 
 //------------------------------------------------------------------------------
@@ -87126,7 +88252,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r13[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r14[3])
 );
 
 //------------------------------------------------------------------------------
@@ -87144,7 +88270,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r13[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r14[4])
 );
 
 //------------------------------------------------------------------------------
@@ -87162,7 +88288,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r13[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r14[5])
 );
 
 //------------------------------------------------------------------------------
@@ -87180,7 +88306,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r13[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r14[6])
 );
 
 //------------------------------------------------------------------------------
@@ -87198,7 +88324,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r13[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r14[7])
 );
 
 //------------------------------------------------------------------------------
@@ -87215,16 +88341,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r13[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r13[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r13[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r13[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r13[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r13[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r13[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r13[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r14[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r14[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r14[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r14[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r14[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r14[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r14[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r14[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r9),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r11),
 
 	// Outputs.
 	.OQ     (ddram1_a[9])
@@ -87245,7 +88371,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r14[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r15[0])
 );
 
 //------------------------------------------------------------------------------
@@ -87263,7 +88389,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r14[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r15[1])
 );
 
 //------------------------------------------------------------------------------
@@ -87281,7 +88407,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r14[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r15[2])
 );
 
 //------------------------------------------------------------------------------
@@ -87299,7 +88425,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r14[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r15[3])
 );
 
 //------------------------------------------------------------------------------
@@ -87317,7 +88443,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r14[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r15[4])
 );
 
 //------------------------------------------------------------------------------
@@ -87335,7 +88461,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r14[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r15[5])
 );
 
 //------------------------------------------------------------------------------
@@ -87353,7 +88479,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r14[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r15[6])
 );
 
 //------------------------------------------------------------------------------
@@ -87371,7 +88497,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r14[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r15[7])
 );
 
 //------------------------------------------------------------------------------
@@ -87388,16 +88514,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r14[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r14[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r14[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r14[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r14[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r14[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r14[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r14[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r15[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r15[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r15[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r15[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r15[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r15[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r15[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r15[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r9),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r11),
 
 	// Outputs.
 	.OQ     (ddram1_a[10])
@@ -87418,7 +88544,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r15[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r16[0])
 );
 
 //------------------------------------------------------------------------------
@@ -87436,7 +88562,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r15[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r16[1])
 );
 
 //------------------------------------------------------------------------------
@@ -87454,7 +88580,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r15[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r16[2])
 );
 
 //------------------------------------------------------------------------------
@@ -87472,7 +88598,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r15[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r16[3])
 );
 
 //------------------------------------------------------------------------------
@@ -87490,7 +88616,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r15[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r16[4])
 );
 
 //------------------------------------------------------------------------------
@@ -87508,7 +88634,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r15[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r16[5])
 );
 
 //------------------------------------------------------------------------------
@@ -87526,7 +88652,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r15[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r16[6])
 );
 
 //------------------------------------------------------------------------------
@@ -87544,7 +88670,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r15[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r16[7])
 );
 
 //------------------------------------------------------------------------------
@@ -87561,16 +88687,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r15[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r15[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r15[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r15[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r15[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r15[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r15[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r15[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r16[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r16[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r16[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r16[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r16[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r16[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r16[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r16[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r9),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r11),
 
 	// Outputs.
 	.OQ     (ddram1_a[11])
@@ -87591,7 +88717,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r16[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r17[0])
 );
 
 //------------------------------------------------------------------------------
@@ -87609,7 +88735,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r16[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r17[1])
 );
 
 //------------------------------------------------------------------------------
@@ -87627,7 +88753,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r16[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r17[2])
 );
 
 //------------------------------------------------------------------------------
@@ -87645,7 +88771,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r16[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r17[3])
 );
 
 //------------------------------------------------------------------------------
@@ -87663,7 +88789,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r16[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r17[4])
 );
 
 //------------------------------------------------------------------------------
@@ -87681,7 +88807,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r16[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r17[5])
 );
 
 //------------------------------------------------------------------------------
@@ -87699,7 +88825,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r16[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r17[6])
 );
 
 //------------------------------------------------------------------------------
@@ -87717,7 +88843,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r16[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r17[7])
 );
 
 //------------------------------------------------------------------------------
@@ -87734,16 +88860,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r16[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r16[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r16[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r16[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r16[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r16[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r16[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r16[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r17[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r17[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r17[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r17[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r17[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r17[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r17[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r17[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r9),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r11),
 
 	// Outputs.
 	.OQ     (ddram1_a[12])
@@ -87764,7 +88890,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r17[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r18[0])
 );
 
 //------------------------------------------------------------------------------
@@ -87782,7 +88908,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r17[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r18[1])
 );
 
 //------------------------------------------------------------------------------
@@ -87800,7 +88926,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r17[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r18[2])
 );
 
 //------------------------------------------------------------------------------
@@ -87818,7 +88944,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r17[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r18[3])
 );
 
 //------------------------------------------------------------------------------
@@ -87836,7 +88962,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r17[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r18[4])
 );
 
 //------------------------------------------------------------------------------
@@ -87854,7 +88980,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r17[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r18[5])
 );
 
 //------------------------------------------------------------------------------
@@ -87872,7 +88998,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r17[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r18[6])
 );
 
 //------------------------------------------------------------------------------
@@ -87890,25 +89016,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r17[7])
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_42 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_42 (
-	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_self_r),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r18)
+	.Q  (wl7ddrphy1_wl7ddrphy1_r18[7])
 );
 
 //------------------------------------------------------------------------------
@@ -87925,16 +89033,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r17[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r17[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r17[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r17[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r17[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r17[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r17[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r17[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r18[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r18[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r18[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r18[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r18[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r18[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r18[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r18[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r18),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r11),
 
 	// Outputs.
 	.OQ     (ddram1_a[13])
@@ -88084,6 +89192,24 @@ FDRE #(
 	.Q  (wl7ddrphy1_wl7ddrphy1_r19[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_89 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_89 (
+	// Inputs.
+	.C  (sysc1_clk),
+	.CE (1'd1),
+	.D  (wl7ddrphy1_self_r),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r20)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_124 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -88107,7 +89233,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_wl7ddrphy1_r19[6]),
 	.D8     (wl7ddrphy1_wl7ddrphy1_r19[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r18),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r20),
 
 	// Outputs.
 	.OQ     (ddram1_a[14])
@@ -88128,7 +89254,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r20[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r21[0])
 );
 
 //------------------------------------------------------------------------------
@@ -88146,7 +89272,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r20[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r21[1])
 );
 
 //------------------------------------------------------------------------------
@@ -88164,7 +89290,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r20[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r21[2])
 );
 
 //------------------------------------------------------------------------------
@@ -88182,7 +89308,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r20[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r21[3])
 );
 
 //------------------------------------------------------------------------------
@@ -88200,7 +89326,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r20[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r21[4])
 );
 
 //------------------------------------------------------------------------------
@@ -88218,7 +89344,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r20[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r21[5])
 );
 
 //------------------------------------------------------------------------------
@@ -88236,7 +89362,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r20[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r21[6])
 );
 
 //------------------------------------------------------------------------------
@@ -88254,7 +89380,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r20[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r21[7])
 );
 
 //------------------------------------------------------------------------------
@@ -88271,16 +89397,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r20[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r20[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r20[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r20[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r20[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r20[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r20[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r20[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r21[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r21[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r21[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r21[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r21[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r21[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r21[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r21[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r18),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r20),
 
 	// Outputs.
 	.OQ     (wl7ddrphy1_pads_ba[0])
@@ -88301,7 +89427,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r21[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r22[0])
 );
 
 //------------------------------------------------------------------------------
@@ -88319,7 +89445,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r21[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r22[1])
 );
 
 //------------------------------------------------------------------------------
@@ -88337,7 +89463,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r21[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r22[2])
 );
 
 //------------------------------------------------------------------------------
@@ -88355,7 +89481,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r21[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r22[3])
 );
 
 //------------------------------------------------------------------------------
@@ -88373,7 +89499,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r21[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r22[4])
 );
 
 //------------------------------------------------------------------------------
@@ -88391,7 +89517,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r21[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r22[5])
 );
 
 //------------------------------------------------------------------------------
@@ -88409,7 +89535,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r21[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r22[6])
 );
 
 //------------------------------------------------------------------------------
@@ -88427,7 +89553,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r21[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r22[7])
 );
 
 //------------------------------------------------------------------------------
@@ -88444,16 +89570,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r21[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r21[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r21[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r21[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r21[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r21[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r21[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r21[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r22[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r22[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r22[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r22[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r22[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r22[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r22[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r22[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r18),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r20),
 
 	// Outputs.
 	.OQ     (wl7ddrphy1_pads_ba[1])
@@ -88474,7 +89600,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r22[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r23[0])
 );
 
 //------------------------------------------------------------------------------
@@ -88492,7 +89618,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r22[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r23[1])
 );
 
 //------------------------------------------------------------------------------
@@ -88510,7 +89636,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r22[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r23[2])
 );
 
 //------------------------------------------------------------------------------
@@ -88528,7 +89654,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r22[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r23[3])
 );
 
 //------------------------------------------------------------------------------
@@ -88546,7 +89672,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r22[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r23[4])
 );
 
 //------------------------------------------------------------------------------
@@ -88564,7 +89690,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r22[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r23[5])
 );
 
 //------------------------------------------------------------------------------
@@ -88582,7 +89708,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r22[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r23[6])
 );
 
 //------------------------------------------------------------------------------
@@ -88600,7 +89726,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r22[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r23[7])
 );
 
 //------------------------------------------------------------------------------
@@ -88617,16 +89743,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r22[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r22[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r22[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r22[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r22[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r22[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r22[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r22[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r23[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r23[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r23[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r23[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r23[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r23[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r23[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r23[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r18),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r20),
 
 	// Outputs.
 	.OQ     (wl7ddrphy1_pads_ba[2])
@@ -88647,7 +89773,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r23[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r24[0])
 );
 
 //------------------------------------------------------------------------------
@@ -88665,7 +89791,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r23[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r24[1])
 );
 
 //------------------------------------------------------------------------------
@@ -88683,7 +89809,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r23[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r24[2])
 );
 
 //------------------------------------------------------------------------------
@@ -88701,7 +89827,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r23[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r24[3])
 );
 
 //------------------------------------------------------------------------------
@@ -88719,7 +89845,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r23[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r24[4])
 );
 
 //------------------------------------------------------------------------------
@@ -88737,7 +89863,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r23[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r24[5])
 );
 
 //------------------------------------------------------------------------------
@@ -88755,7 +89881,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r23[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r24[6])
 );
 
 //------------------------------------------------------------------------------
@@ -88773,7 +89899,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r23[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r24[7])
 );
 
 //------------------------------------------------------------------------------
@@ -88790,16 +89916,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r23[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r23[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r23[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r23[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r23[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r23[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r23[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r23[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r24[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r24[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r24[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r24[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r24[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r24[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r24[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r24[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r18),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r20),
 
 	// Outputs.
 	.OQ     (ddram1_ras_n)
@@ -88820,7 +89946,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r24[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r25[0])
 );
 
 //------------------------------------------------------------------------------
@@ -88838,7 +89964,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r24[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r25[1])
 );
 
 //------------------------------------------------------------------------------
@@ -88856,7 +89982,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r24[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r25[2])
 );
 
 //------------------------------------------------------------------------------
@@ -88874,7 +90000,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r24[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r25[3])
 );
 
 //------------------------------------------------------------------------------
@@ -88892,7 +90018,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r24[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r25[4])
 );
 
 //------------------------------------------------------------------------------
@@ -88910,7 +90036,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r24[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r25[5])
 );
 
 //------------------------------------------------------------------------------
@@ -88928,7 +90054,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r24[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r25[6])
 );
 
 //------------------------------------------------------------------------------
@@ -88946,7 +90072,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r24[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r25[7])
 );
 
 //------------------------------------------------------------------------------
@@ -88963,16 +90089,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r24[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r24[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r24[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r24[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r24[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r24[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r24[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r24[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r25[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r25[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r25[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r25[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r25[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r25[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r25[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r25[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r18),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r20),
 
 	// Outputs.
 	.OQ     (ddram1_cas_n)
@@ -88993,7 +90119,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r25[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r26[0])
 );
 
 //------------------------------------------------------------------------------
@@ -89011,7 +90137,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r25[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r26[1])
 );
 
 //------------------------------------------------------------------------------
@@ -89029,7 +90155,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r25[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r26[2])
 );
 
 //------------------------------------------------------------------------------
@@ -89047,7 +90173,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r25[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r26[3])
 );
 
 //------------------------------------------------------------------------------
@@ -89065,7 +90191,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r25[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r26[4])
 );
 
 //------------------------------------------------------------------------------
@@ -89083,7 +90209,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r25[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r26[5])
 );
 
 //------------------------------------------------------------------------------
@@ -89101,7 +90227,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r25[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r26[6])
 );
 
 //------------------------------------------------------------------------------
@@ -89119,7 +90245,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r25[7])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r26[7])
 );
 
 //------------------------------------------------------------------------------
@@ -89136,16 +90262,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r25[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r25[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r25[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r25[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r25[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r25[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r25[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r25[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r26[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r26[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r26[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r26[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r26[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r26[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r26[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r26[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r18),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r20),
 
 	// Outputs.
 	.OQ     (ddram1_we_n)
@@ -89166,7 +90292,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r26[0])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r27[0])
 );
 
 //------------------------------------------------------------------------------
@@ -89184,7 +90310,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r26[1])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r27[1])
 );
 
 //------------------------------------------------------------------------------
@@ -89202,7 +90328,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r26[2])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r27[2])
 );
 
 //------------------------------------------------------------------------------
@@ -89220,7 +90346,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r26[3])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r27[3])
 );
 
 //------------------------------------------------------------------------------
@@ -89238,7 +90364,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r26[4])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r27[4])
 );
 
 //------------------------------------------------------------------------------
@@ -89256,7 +90382,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r26[5])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r27[5])
 );
 
 //------------------------------------------------------------------------------
@@ -89274,7 +90400,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r26[6])
+	.Q  (wl7ddrphy1_wl7ddrphy1_r27[6])
 );
 
 //------------------------------------------------------------------------------
@@ -89292,25 +90418,7 @@ FDRE #(
 	.R  (1'd0),
 
 	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r26[7])
-);
-
-(* DONT_TOUCH = "TRUE" *)
-//------------------------------------------------------------------------------
-// Instance wlrst_43 of FDRE Module.
-//------------------------------------------------------------------------------
-FDRE #(
-	// Parameters.
-	.INIT (1'd1)
-) wlrst_43 (
-	// Inputs.
-	.C  (sysc1_clk),
-	.CE (1'd1),
-	.D  (wl7ddrphy1_self_r),
-	.R  (1'd0),
-
-	// Outputs.
-	.Q  (wl7ddrphy1_wl7ddrphy1_r27)
+	.Q  (wl7ddrphy1_wl7ddrphy1_r27[7])
 );
 
 //------------------------------------------------------------------------------
@@ -89327,16 +90435,16 @@ OSERDESE2 #(
 	// Inputs.
 	.CLK    (sys4xc1_clk),
 	.CLKDIV (sysc1_clk),
-	.D1     (wl7ddrphy1_wl7ddrphy1_r26[0]),
-	.D2     (wl7ddrphy1_wl7ddrphy1_r26[1]),
-	.D3     (wl7ddrphy1_wl7ddrphy1_r26[2]),
-	.D4     (wl7ddrphy1_wl7ddrphy1_r26[3]),
-	.D5     (wl7ddrphy1_wl7ddrphy1_r26[4]),
-	.D6     (wl7ddrphy1_wl7ddrphy1_r26[5]),
-	.D7     (wl7ddrphy1_wl7ddrphy1_r26[6]),
-	.D8     (wl7ddrphy1_wl7ddrphy1_r26[7]),
+	.D1     (wl7ddrphy1_wl7ddrphy1_r27[0]),
+	.D2     (wl7ddrphy1_wl7ddrphy1_r27[1]),
+	.D3     (wl7ddrphy1_wl7ddrphy1_r27[2]),
+	.D4     (wl7ddrphy1_wl7ddrphy1_r27[3]),
+	.D5     (wl7ddrphy1_wl7ddrphy1_r27[4]),
+	.D6     (wl7ddrphy1_wl7ddrphy1_r27[5]),
+	.D7     (wl7ddrphy1_wl7ddrphy1_r27[6]),
+	.D8     (wl7ddrphy1_wl7ddrphy1_r27[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r27),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r20),
 
 	// Outputs.
 	.OQ     (ddram1_cke)
@@ -89486,6 +90594,24 @@ FDRE #(
 	.Q  (wl7ddrphy1_wl7ddrphy1_r28[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_90 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_90 (
+	// Inputs.
+	.C  (sysc1_clk),
+	.CE (1'd1),
+	.D  (wl7ddrphy1_self_r),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r29)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_132 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -89509,10 +90635,28 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_wl7ddrphy1_r28[6]),
 	.D8     (wl7ddrphy1_wl7ddrphy1_r28[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wl7ddrphy1_r27),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r29),
 
 	// Outputs.
 	.OQ     (ddram1_odt)
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_91 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_91 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r30)
 );
 
 //------------------------------------------------------------------------------
@@ -89538,7 +90682,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip9[6]),
 	.D8     (wl7ddrphy1_bitslip9[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r0),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r30),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline11)),
 	.TCE    (1'd1),
 
@@ -89558,6 +90702,24 @@ IOBUFDS IOBUFDS_9(
 	// InOuts.
 	.IO  (ddram1_dqs_p[0]),
 	.IOB (ddram1_dqs_n[0])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_92 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_92 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r31)
 );
 
 //------------------------------------------------------------------------------
@@ -89583,7 +90745,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip10[6]),
 	.D8     (wl7ddrphy1_bitslip10[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r1),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r31),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline11)),
 	.TCE    (1'd1),
 
@@ -89603,6 +90765,24 @@ IOBUFDS IOBUFDS_10(
 	// InOuts.
 	.IO  (ddram1_dqs_p[1]),
 	.IOB (ddram1_dqs_n[1])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_93 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_93 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r32)
 );
 
 //------------------------------------------------------------------------------
@@ -89628,7 +90808,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip11[6]),
 	.D8     (wl7ddrphy1_bitslip11[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r2),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r32),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline11)),
 	.TCE    (1'd1),
 
@@ -89648,6 +90828,24 @@ IOBUFDS IOBUFDS_11(
 	// InOuts.
 	.IO  (ddram1_dqs_p[2]),
 	.IOB (ddram1_dqs_n[2])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_94 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_94 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r33)
 );
 
 //------------------------------------------------------------------------------
@@ -89673,7 +90871,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip12[6]),
 	.D8     (wl7ddrphy1_bitslip12[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r3),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r33),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline11)),
 	.TCE    (1'd1),
 
@@ -89693,6 +90891,24 @@ IOBUFDS IOBUFDS_12(
 	// InOuts.
 	.IO  (ddram1_dqs_p[3]),
 	.IOB (ddram1_dqs_n[3])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_95 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_95 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r34)
 );
 
 //------------------------------------------------------------------------------
@@ -89718,7 +90934,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip13[6]),
 	.D8     (wl7ddrphy1_bitslip13[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r4),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r34),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline11)),
 	.TCE    (1'd1),
 
@@ -89738,6 +90954,24 @@ IOBUFDS IOBUFDS_13(
 	// InOuts.
 	.IO  (ddram1_dqs_p[4]),
 	.IOB (ddram1_dqs_n[4])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_96 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_96 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r35)
 );
 
 //------------------------------------------------------------------------------
@@ -89763,7 +90997,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip14[6]),
 	.D8     (wl7ddrphy1_bitslip14[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r5),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r35),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline11)),
 	.TCE    (1'd1),
 
@@ -89783,6 +91017,24 @@ IOBUFDS IOBUFDS_14(
 	// InOuts.
 	.IO  (ddram1_dqs_p[5]),
 	.IOB (ddram1_dqs_n[5])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_97 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_97 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r36)
 );
 
 //------------------------------------------------------------------------------
@@ -89808,7 +91060,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip15[6]),
 	.D8     (wl7ddrphy1_bitslip15[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r6),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r36),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline11)),
 	.TCE    (1'd1),
 
@@ -89828,6 +91080,24 @@ IOBUFDS IOBUFDS_15(
 	// InOuts.
 	.IO  (ddram1_dqs_p[6]),
 	.IOB (ddram1_dqs_n[6])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_98 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_98 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r37)
 );
 
 //------------------------------------------------------------------------------
@@ -89853,7 +91123,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip16[6]),
 	.D8     (wl7ddrphy1_bitslip16[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r7),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r37),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline11)),
 	.TCE    (1'd1),
 
@@ -89873,6 +91143,24 @@ IOBUFDS IOBUFDS_16(
 	// InOuts.
 	.IO  (ddram1_dqs_p[7]),
 	.IOB (ddram1_dqs_n[7])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_99 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_99 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_wl7ddrphy1_r38)
 );
 
 //------------------------------------------------------------------------------
@@ -89898,7 +91186,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip17[6]),
 	.D8     (wl7ddrphy1_bitslip17[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r8),
+	.RST    (wl7ddrphy1_wl7ddrphy1_r38),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline11)),
 	.TCE    (1'd1),
 
@@ -89918,6 +91206,24 @@ IOBUFDS IOBUFDS_17(
 	// InOuts.
 	.IO  (ddram1_dqs_p[8]),
 	.IOB (ddram1_dqs_n[8])
+);
+
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_100 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_100 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r0)
 );
 
 //------------------------------------------------------------------------------
@@ -89943,7 +91249,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip720[6]),
 	.D8     (wl7ddrphy1_bitslip720[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r0),
+	.RST    (wl7ddrphy1_dq_rst_r0),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -89971,7 +91277,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed0),
-	.RST     (wl7ddrphy1_rd_rst_r0),
+	.RST     (wl7ddrphy1_dq_rst_r0),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name0[7]),
@@ -90025,6 +91331,24 @@ IOBUF IOBUF_72(
 	.IO (ddram1_dq[0])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_101 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_101 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r1)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_143 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90048,7 +91372,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip730[6]),
 	.D8     (wl7ddrphy1_bitslip730[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r0),
+	.RST    (wl7ddrphy1_dq_rst_r1),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -90076,7 +91400,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed1),
-	.RST     (wl7ddrphy1_rd_rst_r0),
+	.RST     (wl7ddrphy1_dq_rst_r1),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name1[7]),
@@ -90130,6 +91454,24 @@ IOBUF IOBUF_73(
 	.IO (ddram1_dq[1])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_102 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_102 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r2)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_144 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90153,7 +91495,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip740[6]),
 	.D8     (wl7ddrphy1_bitslip740[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r0),
+	.RST    (wl7ddrphy1_dq_rst_r2),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -90181,7 +91523,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed2),
-	.RST     (wl7ddrphy1_rd_rst_r0),
+	.RST     (wl7ddrphy1_dq_rst_r2),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name2[7]),
@@ -90235,6 +91577,24 @@ IOBUF IOBUF_74(
 	.IO (ddram1_dq[2])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_103 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_103 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r3)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_145 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90258,7 +91618,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip750[6]),
 	.D8     (wl7ddrphy1_bitslip750[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r0),
+	.RST    (wl7ddrphy1_dq_rst_r3),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -90286,7 +91646,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed3),
-	.RST     (wl7ddrphy1_rd_rst_r0),
+	.RST     (wl7ddrphy1_dq_rst_r3),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name3[7]),
@@ -90340,6 +91700,24 @@ IOBUF IOBUF_75(
 	.IO (ddram1_dq[3])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_104 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_104 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r4)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_146 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90363,7 +91741,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip760[6]),
 	.D8     (wl7ddrphy1_bitslip760[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r0),
+	.RST    (wl7ddrphy1_dq_rst_r4),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -90391,7 +91769,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed4),
-	.RST     (wl7ddrphy1_rd_rst_r0),
+	.RST     (wl7ddrphy1_dq_rst_r4),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name4[7]),
@@ -90445,6 +91823,24 @@ IOBUF IOBUF_76(
 	.IO (ddram1_dq[4])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_105 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_105 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r5)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_147 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90468,7 +91864,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip770[6]),
 	.D8     (wl7ddrphy1_bitslip770[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r0),
+	.RST    (wl7ddrphy1_dq_rst_r5),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -90496,7 +91892,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed5),
-	.RST     (wl7ddrphy1_rd_rst_r0),
+	.RST     (wl7ddrphy1_dq_rst_r5),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name5[7]),
@@ -90550,6 +91946,24 @@ IOBUF IOBUF_77(
 	.IO (ddram1_dq[5])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_106 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_106 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r6)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_148 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90573,7 +91987,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip780[6]),
 	.D8     (wl7ddrphy1_bitslip780[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r0),
+	.RST    (wl7ddrphy1_dq_rst_r6),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -90601,7 +92015,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed6),
-	.RST     (wl7ddrphy1_rd_rst_r0),
+	.RST     (wl7ddrphy1_dq_rst_r6),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name6[7]),
@@ -90655,6 +92069,24 @@ IOBUF IOBUF_78(
 	.IO (ddram1_dq[6])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_107 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_107 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r7)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_149 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90678,7 +92110,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip790[6]),
 	.D8     (wl7ddrphy1_bitslip790[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r0),
+	.RST    (wl7ddrphy1_dq_rst_r7),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -90706,7 +92138,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed7),
-	.RST     (wl7ddrphy1_rd_rst_r0),
+	.RST     (wl7ddrphy1_dq_rst_r7),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name7[7]),
@@ -90760,6 +92192,24 @@ IOBUF IOBUF_79(
 	.IO (ddram1_dq[7])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_108 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_108 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r8)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_150 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90783,7 +92233,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip800[6]),
 	.D8     (wl7ddrphy1_bitslip800[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r1),
+	.RST    (wl7ddrphy1_dq_rst_r8),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -90811,7 +92261,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed8),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_dq_rst_r8),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name8[7]),
@@ -90865,6 +92315,24 @@ IOBUF IOBUF_80(
 	.IO (ddram1_dq[8])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_109 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_109 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r9)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_151 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90888,7 +92356,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip810[6]),
 	.D8     (wl7ddrphy1_bitslip810[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r1),
+	.RST    (wl7ddrphy1_dq_rst_r9),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -90916,7 +92384,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed9),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_dq_rst_r9),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name9[7]),
@@ -90970,6 +92438,24 @@ IOBUF IOBUF_81(
 	.IO (ddram1_dq[9])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_110 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_110 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r10)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_152 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -90993,7 +92479,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip820[6]),
 	.D8     (wl7ddrphy1_bitslip820[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r1),
+	.RST    (wl7ddrphy1_dq_rst_r10),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91021,7 +92507,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed10),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_dq_rst_r10),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name10[7]),
@@ -91075,6 +92561,24 @@ IOBUF IOBUF_82(
 	.IO (ddram1_dq[10])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_111 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_111 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r11)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_153 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -91098,7 +92602,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip830[6]),
 	.D8     (wl7ddrphy1_bitslip830[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r1),
+	.RST    (wl7ddrphy1_dq_rst_r11),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91126,7 +92630,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed11),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_dq_rst_r11),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name11[7]),
@@ -91180,6 +92684,24 @@ IOBUF IOBUF_83(
 	.IO (ddram1_dq[11])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_112 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_112 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r12)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_154 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -91203,7 +92725,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip840[6]),
 	.D8     (wl7ddrphy1_bitslip840[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r1),
+	.RST    (wl7ddrphy1_dq_rst_r12),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91231,7 +92753,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed12),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_dq_rst_r12),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name12[7]),
@@ -91285,6 +92807,24 @@ IOBUF IOBUF_84(
 	.IO (ddram1_dq[12])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_113 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_113 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r13)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_155 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -91308,7 +92848,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip850[6]),
 	.D8     (wl7ddrphy1_bitslip850[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r1),
+	.RST    (wl7ddrphy1_dq_rst_r13),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91336,7 +92876,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed13),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_dq_rst_r13),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name13[7]),
@@ -91390,6 +92930,24 @@ IOBUF IOBUF_85(
 	.IO (ddram1_dq[13])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_114 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_114 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r14)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_156 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -91413,7 +92971,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip860[6]),
 	.D8     (wl7ddrphy1_bitslip860[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r1),
+	.RST    (wl7ddrphy1_dq_rst_r14),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91441,7 +92999,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed14),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_dq_rst_r14),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name14[7]),
@@ -91495,6 +93053,24 @@ IOBUF IOBUF_86(
 	.IO (ddram1_dq[14])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_115 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_115 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r15)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_157 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -91518,7 +93094,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip870[6]),
 	.D8     (wl7ddrphy1_bitslip870[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r1),
+	.RST    (wl7ddrphy1_dq_rst_r15),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91546,7 +93122,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed15),
-	.RST     (wl7ddrphy1_rd_rst_r1),
+	.RST     (wl7ddrphy1_dq_rst_r15),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name15[7]),
@@ -91600,6 +93176,24 @@ IOBUF IOBUF_87(
 	.IO (ddram1_dq[15])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_116 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_116 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r16)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_158 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -91623,7 +93217,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip880[6]),
 	.D8     (wl7ddrphy1_bitslip880[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r2),
+	.RST    (wl7ddrphy1_dq_rst_r16),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91651,7 +93245,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed16),
-	.RST     (wl7ddrphy1_rd_rst_r2),
+	.RST     (wl7ddrphy1_dq_rst_r16),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name16[7]),
@@ -91705,6 +93299,24 @@ IOBUF IOBUF_88(
 	.IO (ddram1_dq[16])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_117 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_117 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r17)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_159 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -91728,7 +93340,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip890[6]),
 	.D8     (wl7ddrphy1_bitslip890[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r2),
+	.RST    (wl7ddrphy1_dq_rst_r17),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91756,7 +93368,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed17),
-	.RST     (wl7ddrphy1_rd_rst_r2),
+	.RST     (wl7ddrphy1_dq_rst_r17),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name17[7]),
@@ -91810,6 +93422,24 @@ IOBUF IOBUF_89(
 	.IO (ddram1_dq[17])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_118 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_118 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r18)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_160 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -91833,7 +93463,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip900[6]),
 	.D8     (wl7ddrphy1_bitslip900[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r2),
+	.RST    (wl7ddrphy1_dq_rst_r18),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91861,7 +93491,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed18),
-	.RST     (wl7ddrphy1_rd_rst_r2),
+	.RST     (wl7ddrphy1_dq_rst_r18),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name18[7]),
@@ -91915,6 +93545,24 @@ IOBUF IOBUF_90(
 	.IO (ddram1_dq[18])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_119 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_119 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r19)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_161 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -91938,7 +93586,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip910[6]),
 	.D8     (wl7ddrphy1_bitslip910[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r2),
+	.RST    (wl7ddrphy1_dq_rst_r19),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -91966,7 +93614,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed19),
-	.RST     (wl7ddrphy1_rd_rst_r2),
+	.RST     (wl7ddrphy1_dq_rst_r19),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name19[7]),
@@ -92020,6 +93668,24 @@ IOBUF IOBUF_91(
 	.IO (ddram1_dq[19])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_120 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_120 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r20)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_162 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92043,7 +93709,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip920[6]),
 	.D8     (wl7ddrphy1_bitslip920[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r2),
+	.RST    (wl7ddrphy1_dq_rst_r20),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -92071,7 +93737,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed20),
-	.RST     (wl7ddrphy1_rd_rst_r2),
+	.RST     (wl7ddrphy1_dq_rst_r20),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name20[7]),
@@ -92125,6 +93791,24 @@ IOBUF IOBUF_92(
 	.IO (ddram1_dq[20])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_121 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_121 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r21)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_163 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92148,7 +93832,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip930[6]),
 	.D8     (wl7ddrphy1_bitslip930[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r2),
+	.RST    (wl7ddrphy1_dq_rst_r21),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -92176,7 +93860,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed21),
-	.RST     (wl7ddrphy1_rd_rst_r2),
+	.RST     (wl7ddrphy1_dq_rst_r21),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name21[7]),
@@ -92230,6 +93914,24 @@ IOBUF IOBUF_93(
 	.IO (ddram1_dq[21])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_122 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_122 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r22)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_164 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92253,7 +93955,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip940[6]),
 	.D8     (wl7ddrphy1_bitslip940[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r2),
+	.RST    (wl7ddrphy1_dq_rst_r22),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -92281,7 +93983,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed22),
-	.RST     (wl7ddrphy1_rd_rst_r2),
+	.RST     (wl7ddrphy1_dq_rst_r22),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name22[7]),
@@ -92335,6 +94037,24 @@ IOBUF IOBUF_94(
 	.IO (ddram1_dq[22])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_123 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_123 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r23)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_165 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92358,7 +94078,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip950[6]),
 	.D8     (wl7ddrphy1_bitslip950[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r2),
+	.RST    (wl7ddrphy1_dq_rst_r23),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -92386,7 +94106,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed23),
-	.RST     (wl7ddrphy1_rd_rst_r2),
+	.RST     (wl7ddrphy1_dq_rst_r23),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name23[7]),
@@ -92440,6 +94160,24 @@ IOBUF IOBUF_95(
 	.IO (ddram1_dq[23])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_124 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_124 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r24)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_166 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92463,7 +94201,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip960[6]),
 	.D8     (wl7ddrphy1_bitslip960[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r3),
+	.RST    (wl7ddrphy1_dq_rst_r24),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -92491,7 +94229,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed24),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_dq_rst_r24),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name24[7]),
@@ -92545,6 +94283,24 @@ IOBUF IOBUF_96(
 	.IO (ddram1_dq[24])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_125 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_125 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r25)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_167 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92568,7 +94324,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip970[6]),
 	.D8     (wl7ddrphy1_bitslip970[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r3),
+	.RST    (wl7ddrphy1_dq_rst_r25),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -92596,7 +94352,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed25),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_dq_rst_r25),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name25[7]),
@@ -92650,6 +94406,24 @@ IOBUF IOBUF_97(
 	.IO (ddram1_dq[25])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_126 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_126 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r26)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_168 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92673,7 +94447,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip980[6]),
 	.D8     (wl7ddrphy1_bitslip980[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r3),
+	.RST    (wl7ddrphy1_dq_rst_r26),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -92701,7 +94475,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed26),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_dq_rst_r26),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name26[7]),
@@ -92755,6 +94529,24 @@ IOBUF IOBUF_98(
 	.IO (ddram1_dq[26])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_127 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_127 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r27)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_169 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92778,7 +94570,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip990[6]),
 	.D8     (wl7ddrphy1_bitslip990[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r3),
+	.RST    (wl7ddrphy1_dq_rst_r27),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -92806,7 +94598,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed27),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_dq_rst_r27),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name27[7]),
@@ -92860,6 +94652,24 @@ IOBUF IOBUF_99(
 	.IO (ddram1_dq[27])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_128 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_128 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r28)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_170 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92883,7 +94693,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1000[6]),
 	.D8     (wl7ddrphy1_bitslip1000[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r3),
+	.RST    (wl7ddrphy1_dq_rst_r28),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -92911,7 +94721,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed28),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_dq_rst_r28),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name28[7]),
@@ -92965,6 +94775,24 @@ IOBUF IOBUF_100(
 	.IO (ddram1_dq[28])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_129 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_129 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r29)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_171 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -92988,7 +94816,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1010[6]),
 	.D8     (wl7ddrphy1_bitslip1010[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r3),
+	.RST    (wl7ddrphy1_dq_rst_r29),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93016,7 +94844,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed29),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_dq_rst_r29),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name29[7]),
@@ -93070,6 +94898,24 @@ IOBUF IOBUF_101(
 	.IO (ddram1_dq[29])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_130 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_130 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r30)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_172 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -93093,7 +94939,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1020[6]),
 	.D8     (wl7ddrphy1_bitslip1020[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r3),
+	.RST    (wl7ddrphy1_dq_rst_r30),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93121,7 +94967,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed30),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_dq_rst_r30),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name30[7]),
@@ -93175,6 +95021,24 @@ IOBUF IOBUF_102(
 	.IO (ddram1_dq[30])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_131 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_131 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r31)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_173 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -93198,7 +95062,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1030[6]),
 	.D8     (wl7ddrphy1_bitslip1030[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r3),
+	.RST    (wl7ddrphy1_dq_rst_r31),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93226,7 +95090,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed31),
-	.RST     (wl7ddrphy1_rd_rst_r3),
+	.RST     (wl7ddrphy1_dq_rst_r31),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name31[7]),
@@ -93280,6 +95144,24 @@ IOBUF IOBUF_103(
 	.IO (ddram1_dq[31])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_132 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_132 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r32)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_174 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -93303,7 +95185,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1040[6]),
 	.D8     (wl7ddrphy1_bitslip1040[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r4),
+	.RST    (wl7ddrphy1_dq_rst_r32),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93331,7 +95213,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed32),
-	.RST     (wl7ddrphy1_rd_rst_r4),
+	.RST     (wl7ddrphy1_dq_rst_r32),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name32[7]),
@@ -93385,6 +95267,24 @@ IOBUF IOBUF_104(
 	.IO (ddram1_dq[32])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_133 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_133 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r33)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_175 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -93408,7 +95308,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1050[6]),
 	.D8     (wl7ddrphy1_bitslip1050[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r4),
+	.RST    (wl7ddrphy1_dq_rst_r33),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93436,7 +95336,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed33),
-	.RST     (wl7ddrphy1_rd_rst_r4),
+	.RST     (wl7ddrphy1_dq_rst_r33),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name33[7]),
@@ -93490,6 +95390,24 @@ IOBUF IOBUF_105(
 	.IO (ddram1_dq[33])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_134 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_134 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r34)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_176 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -93513,7 +95431,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1060[6]),
 	.D8     (wl7ddrphy1_bitslip1060[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r4),
+	.RST    (wl7ddrphy1_dq_rst_r34),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93541,7 +95459,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed34),
-	.RST     (wl7ddrphy1_rd_rst_r4),
+	.RST     (wl7ddrphy1_dq_rst_r34),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name34[7]),
@@ -93595,6 +95513,24 @@ IOBUF IOBUF_106(
 	.IO (ddram1_dq[34])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_135 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_135 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r35)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_177 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -93618,7 +95554,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1070[6]),
 	.D8     (wl7ddrphy1_bitslip1070[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r4),
+	.RST    (wl7ddrphy1_dq_rst_r35),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93646,7 +95582,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed35),
-	.RST     (wl7ddrphy1_rd_rst_r4),
+	.RST     (wl7ddrphy1_dq_rst_r35),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name35[7]),
@@ -93700,6 +95636,24 @@ IOBUF IOBUF_107(
 	.IO (ddram1_dq[35])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_136 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_136 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r36)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_178 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -93723,7 +95677,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1080[6]),
 	.D8     (wl7ddrphy1_bitslip1080[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r4),
+	.RST    (wl7ddrphy1_dq_rst_r36),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93751,7 +95705,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed36),
-	.RST     (wl7ddrphy1_rd_rst_r4),
+	.RST     (wl7ddrphy1_dq_rst_r36),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name36[7]),
@@ -93805,6 +95759,24 @@ IOBUF IOBUF_108(
 	.IO (ddram1_dq[36])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_137 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_137 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r37)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_179 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -93828,7 +95800,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1090[6]),
 	.D8     (wl7ddrphy1_bitslip1090[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r4),
+	.RST    (wl7ddrphy1_dq_rst_r37),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93856,7 +95828,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed37),
-	.RST     (wl7ddrphy1_rd_rst_r4),
+	.RST     (wl7ddrphy1_dq_rst_r37),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name37[7]),
@@ -93910,6 +95882,24 @@ IOBUF IOBUF_109(
 	.IO (ddram1_dq[37])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_138 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_138 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r38)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_180 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -93933,7 +95923,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1100[6]),
 	.D8     (wl7ddrphy1_bitslip1100[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r4),
+	.RST    (wl7ddrphy1_dq_rst_r38),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -93961,7 +95951,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed38),
-	.RST     (wl7ddrphy1_rd_rst_r4),
+	.RST     (wl7ddrphy1_dq_rst_r38),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name38[7]),
@@ -94015,6 +96005,24 @@ IOBUF IOBUF_110(
 	.IO (ddram1_dq[38])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_139 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_139 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r39)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_181 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94038,7 +96046,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1110[6]),
 	.D8     (wl7ddrphy1_bitslip1110[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r4),
+	.RST    (wl7ddrphy1_dq_rst_r39),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -94066,7 +96074,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed39),
-	.RST     (wl7ddrphy1_rd_rst_r4),
+	.RST     (wl7ddrphy1_dq_rst_r39),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name39[7]),
@@ -94120,6 +96128,24 @@ IOBUF IOBUF_111(
 	.IO (ddram1_dq[39])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_140 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_140 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r40)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_182 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94143,7 +96169,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1120[6]),
 	.D8     (wl7ddrphy1_bitslip1120[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r5),
+	.RST    (wl7ddrphy1_dq_rst_r40),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -94171,7 +96197,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed40),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_dq_rst_r40),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name40[7]),
@@ -94225,6 +96251,24 @@ IOBUF IOBUF_112(
 	.IO (ddram1_dq[40])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_141 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_141 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r41)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_183 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94248,7 +96292,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1130[6]),
 	.D8     (wl7ddrphy1_bitslip1130[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r5),
+	.RST    (wl7ddrphy1_dq_rst_r41),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -94276,7 +96320,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed41),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_dq_rst_r41),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name41[7]),
@@ -94330,6 +96374,24 @@ IOBUF IOBUF_113(
 	.IO (ddram1_dq[41])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_142 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_142 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r42)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_184 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94353,7 +96415,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1140[6]),
 	.D8     (wl7ddrphy1_bitslip1140[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r5),
+	.RST    (wl7ddrphy1_dq_rst_r42),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -94381,7 +96443,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed42),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_dq_rst_r42),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name42[7]),
@@ -94435,6 +96497,24 @@ IOBUF IOBUF_114(
 	.IO (ddram1_dq[42])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_143 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_143 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r43)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_185 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94458,7 +96538,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1150[6]),
 	.D8     (wl7ddrphy1_bitslip1150[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r5),
+	.RST    (wl7ddrphy1_dq_rst_r43),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -94486,7 +96566,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed43),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_dq_rst_r43),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name43[7]),
@@ -94540,6 +96620,24 @@ IOBUF IOBUF_115(
 	.IO (ddram1_dq[43])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_144 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_144 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r44)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_186 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94563,7 +96661,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1160[6]),
 	.D8     (wl7ddrphy1_bitslip1160[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r5),
+	.RST    (wl7ddrphy1_dq_rst_r44),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -94591,7 +96689,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed44),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_dq_rst_r44),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name44[7]),
@@ -94645,6 +96743,24 @@ IOBUF IOBUF_116(
 	.IO (ddram1_dq[44])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_145 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_145 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r45)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_187 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94668,7 +96784,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1170[6]),
 	.D8     (wl7ddrphy1_bitslip1170[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r5),
+	.RST    (wl7ddrphy1_dq_rst_r45),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -94696,7 +96812,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed45),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_dq_rst_r45),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name45[7]),
@@ -94750,6 +96866,24 @@ IOBUF IOBUF_117(
 	.IO (ddram1_dq[45])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_146 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_146 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r46)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_188 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94773,7 +96907,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1180[6]),
 	.D8     (wl7ddrphy1_bitslip1180[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r5),
+	.RST    (wl7ddrphy1_dq_rst_r46),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -94801,7 +96935,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed46),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_dq_rst_r46),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name46[7]),
@@ -94855,6 +96989,24 @@ IOBUF IOBUF_118(
 	.IO (ddram1_dq[46])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_147 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_147 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r47)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_189 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94878,7 +97030,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1190[6]),
 	.D8     (wl7ddrphy1_bitslip1190[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r5),
+	.RST    (wl7ddrphy1_dq_rst_r47),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -94906,7 +97058,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed47),
-	.RST     (wl7ddrphy1_rd_rst_r5),
+	.RST     (wl7ddrphy1_dq_rst_r47),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name47[7]),
@@ -94960,6 +97112,24 @@ IOBUF IOBUF_119(
 	.IO (ddram1_dq[47])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_148 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_148 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r48)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_190 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -94983,7 +97153,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1200[6]),
 	.D8     (wl7ddrphy1_bitslip1200[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r6),
+	.RST    (wl7ddrphy1_dq_rst_r48),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95011,7 +97181,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed48),
-	.RST     (wl7ddrphy1_rd_rst_r6),
+	.RST     (wl7ddrphy1_dq_rst_r48),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name48[7]),
@@ -95065,6 +97235,24 @@ IOBUF IOBUF_120(
 	.IO (ddram1_dq[48])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_149 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_149 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r49)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_191 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -95088,7 +97276,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1210[6]),
 	.D8     (wl7ddrphy1_bitslip1210[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r6),
+	.RST    (wl7ddrphy1_dq_rst_r49),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95116,7 +97304,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed49),
-	.RST     (wl7ddrphy1_rd_rst_r6),
+	.RST     (wl7ddrphy1_dq_rst_r49),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name49[7]),
@@ -95170,6 +97358,24 @@ IOBUF IOBUF_121(
 	.IO (ddram1_dq[49])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_150 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_150 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r50)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_192 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -95193,7 +97399,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1220[6]),
 	.D8     (wl7ddrphy1_bitslip1220[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r6),
+	.RST    (wl7ddrphy1_dq_rst_r50),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95221,7 +97427,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed50),
-	.RST     (wl7ddrphy1_rd_rst_r6),
+	.RST     (wl7ddrphy1_dq_rst_r50),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name50[7]),
@@ -95275,6 +97481,24 @@ IOBUF IOBUF_122(
 	.IO (ddram1_dq[50])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_151 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_151 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r51)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_193 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -95298,7 +97522,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1230[6]),
 	.D8     (wl7ddrphy1_bitslip1230[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r6),
+	.RST    (wl7ddrphy1_dq_rst_r51),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95326,7 +97550,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed51),
-	.RST     (wl7ddrphy1_rd_rst_r6),
+	.RST     (wl7ddrphy1_dq_rst_r51),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name51[7]),
@@ -95380,6 +97604,24 @@ IOBUF IOBUF_123(
 	.IO (ddram1_dq[51])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_152 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_152 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r52)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_194 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -95403,7 +97645,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1240[6]),
 	.D8     (wl7ddrphy1_bitslip1240[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r6),
+	.RST    (wl7ddrphy1_dq_rst_r52),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95431,7 +97673,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed52),
-	.RST     (wl7ddrphy1_rd_rst_r6),
+	.RST     (wl7ddrphy1_dq_rst_r52),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name52[7]),
@@ -95485,6 +97727,24 @@ IOBUF IOBUF_124(
 	.IO (ddram1_dq[52])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_153 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_153 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r53)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_195 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -95508,7 +97768,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1250[6]),
 	.D8     (wl7ddrphy1_bitslip1250[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r6),
+	.RST    (wl7ddrphy1_dq_rst_r53),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95536,7 +97796,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed53),
-	.RST     (wl7ddrphy1_rd_rst_r6),
+	.RST     (wl7ddrphy1_dq_rst_r53),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name53[7]),
@@ -95590,6 +97850,24 @@ IOBUF IOBUF_125(
 	.IO (ddram1_dq[53])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_154 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_154 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r54)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_196 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -95613,7 +97891,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1260[6]),
 	.D8     (wl7ddrphy1_bitslip1260[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r6),
+	.RST    (wl7ddrphy1_dq_rst_r54),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95641,7 +97919,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed54),
-	.RST     (wl7ddrphy1_rd_rst_r6),
+	.RST     (wl7ddrphy1_dq_rst_r54),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name54[7]),
@@ -95695,6 +97973,24 @@ IOBUF IOBUF_126(
 	.IO (ddram1_dq[54])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_155 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_155 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r55)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_197 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -95718,7 +98014,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1270[6]),
 	.D8     (wl7ddrphy1_bitslip1270[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r6),
+	.RST    (wl7ddrphy1_dq_rst_r55),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95746,7 +98042,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed55),
-	.RST     (wl7ddrphy1_rd_rst_r6),
+	.RST     (wl7ddrphy1_dq_rst_r55),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name55[7]),
@@ -95800,6 +98096,24 @@ IOBUF IOBUF_127(
 	.IO (ddram1_dq[55])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_156 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_156 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r56)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_198 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -95823,7 +98137,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1280[6]),
 	.D8     (wl7ddrphy1_bitslip1280[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r7),
+	.RST    (wl7ddrphy1_dq_rst_r56),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95851,7 +98165,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed56),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_dq_rst_r56),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name56[7]),
@@ -95905,6 +98219,24 @@ IOBUF IOBUF_128(
 	.IO (ddram1_dq[56])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_157 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_157 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r57)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_199 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -95928,7 +98260,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1290[6]),
 	.D8     (wl7ddrphy1_bitslip1290[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r7),
+	.RST    (wl7ddrphy1_dq_rst_r57),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -95956,7 +98288,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed57),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_dq_rst_r57),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name57[7]),
@@ -96010,6 +98342,24 @@ IOBUF IOBUF_129(
 	.IO (ddram1_dq[57])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_158 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_158 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r58)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_200 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96033,7 +98383,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1300[6]),
 	.D8     (wl7ddrphy1_bitslip1300[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r7),
+	.RST    (wl7ddrphy1_dq_rst_r58),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -96061,7 +98411,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed58),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_dq_rst_r58),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name58[7]),
@@ -96115,6 +98465,24 @@ IOBUF IOBUF_130(
 	.IO (ddram1_dq[58])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_159 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_159 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r59)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_201 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96138,7 +98506,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1310[6]),
 	.D8     (wl7ddrphy1_bitslip1310[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r7),
+	.RST    (wl7ddrphy1_dq_rst_r59),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -96166,7 +98534,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed59),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_dq_rst_r59),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name59[7]),
@@ -96220,6 +98588,24 @@ IOBUF IOBUF_131(
 	.IO (ddram1_dq[59])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_160 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_160 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r60)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_202 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96243,7 +98629,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1320[6]),
 	.D8     (wl7ddrphy1_bitslip1320[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r7),
+	.RST    (wl7ddrphy1_dq_rst_r60),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -96271,7 +98657,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed60),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_dq_rst_r60),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name60[7]),
@@ -96325,6 +98711,24 @@ IOBUF IOBUF_132(
 	.IO (ddram1_dq[60])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_161 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_161 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r61)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_203 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96348,7 +98752,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1330[6]),
 	.D8     (wl7ddrphy1_bitslip1330[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r7),
+	.RST    (wl7ddrphy1_dq_rst_r61),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -96376,7 +98780,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed61),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_dq_rst_r61),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name61[7]),
@@ -96430,6 +98834,24 @@ IOBUF IOBUF_133(
 	.IO (ddram1_dq[61])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_162 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_162 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r62)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_204 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96453,7 +98875,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1340[6]),
 	.D8     (wl7ddrphy1_bitslip1340[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r7),
+	.RST    (wl7ddrphy1_dq_rst_r62),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -96481,7 +98903,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed62),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_dq_rst_r62),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name62[7]),
@@ -96535,6 +98957,24 @@ IOBUF IOBUF_134(
 	.IO (ddram1_dq[62])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_163 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_163 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r63)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_205 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96558,7 +98998,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1350[6]),
 	.D8     (wl7ddrphy1_bitslip1350[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r7),
+	.RST    (wl7ddrphy1_dq_rst_r63),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -96586,7 +99026,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed63),
-	.RST     (wl7ddrphy1_rd_rst_r7),
+	.RST     (wl7ddrphy1_dq_rst_r63),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name63[7]),
@@ -96640,6 +99080,24 @@ IOBUF IOBUF_135(
 	.IO (ddram1_dq[63])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_164 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_164 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r64)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_206 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96663,7 +99121,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1360[6]),
 	.D8     (wl7ddrphy1_bitslip1360[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r8),
+	.RST    (wl7ddrphy1_dq_rst_r64),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -96691,7 +99149,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed64),
-	.RST     (wl7ddrphy1_rd_rst_r8),
+	.RST     (wl7ddrphy1_dq_rst_r64),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name64[7]),
@@ -96745,6 +99203,24 @@ IOBUF IOBUF_136(
 	.IO (ddram1_dq[64])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_165 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_165 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r65)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_207 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96768,7 +99244,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1370[6]),
 	.D8     (wl7ddrphy1_bitslip1370[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r8),
+	.RST    (wl7ddrphy1_dq_rst_r65),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -96796,7 +99272,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed65),
-	.RST     (wl7ddrphy1_rd_rst_r8),
+	.RST     (wl7ddrphy1_dq_rst_r65),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name65[7]),
@@ -96850,6 +99326,24 @@ IOBUF IOBUF_137(
 	.IO (ddram1_dq[65])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_166 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_166 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r66)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_208 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96873,7 +99367,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1380[6]),
 	.D8     (wl7ddrphy1_bitslip1380[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r8),
+	.RST    (wl7ddrphy1_dq_rst_r66),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -96901,7 +99395,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed66),
-	.RST     (wl7ddrphy1_rd_rst_r8),
+	.RST     (wl7ddrphy1_dq_rst_r66),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name66[7]),
@@ -96955,6 +99449,24 @@ IOBUF IOBUF_138(
 	.IO (ddram1_dq[66])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_167 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_167 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r67)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_209 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -96978,7 +99490,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1390[6]),
 	.D8     (wl7ddrphy1_bitslip1390[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r8),
+	.RST    (wl7ddrphy1_dq_rst_r67),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -97006,7 +99518,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed67),
-	.RST     (wl7ddrphy1_rd_rst_r8),
+	.RST     (wl7ddrphy1_dq_rst_r67),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name67[7]),
@@ -97060,6 +99572,24 @@ IOBUF IOBUF_139(
 	.IO (ddram1_dq[67])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_168 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_168 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r68)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_210 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -97083,7 +99613,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1400[6]),
 	.D8     (wl7ddrphy1_bitslip1400[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r8),
+	.RST    (wl7ddrphy1_dq_rst_r68),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -97111,7 +99641,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed68),
-	.RST     (wl7ddrphy1_rd_rst_r8),
+	.RST     (wl7ddrphy1_dq_rst_r68),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name68[7]),
@@ -97165,6 +99695,24 @@ IOBUF IOBUF_140(
 	.IO (ddram1_dq[68])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_169 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_169 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r69)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_211 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -97188,7 +99736,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1410[6]),
 	.D8     (wl7ddrphy1_bitslip1410[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r8),
+	.RST    (wl7ddrphy1_dq_rst_r69),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -97216,7 +99764,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed69),
-	.RST     (wl7ddrphy1_rd_rst_r8),
+	.RST     (wl7ddrphy1_dq_rst_r69),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name69[7]),
@@ -97270,6 +99818,24 @@ IOBUF IOBUF_141(
 	.IO (ddram1_dq[69])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_170 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_170 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r70)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_212 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -97293,7 +99859,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1420[6]),
 	.D8     (wl7ddrphy1_bitslip1420[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r8),
+	.RST    (wl7ddrphy1_dq_rst_r70),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -97321,7 +99887,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed70),
-	.RST     (wl7ddrphy1_rd_rst_r8),
+	.RST     (wl7ddrphy1_dq_rst_r70),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name70[7]),
@@ -97375,6 +99941,24 @@ IOBUF IOBUF_142(
 	.IO (ddram1_dq[70])
 );
 
+(* DONT_TOUCH = "TRUE" *)
+//------------------------------------------------------------------------------
+// Instance wlrst_171 of FDRE Module.
+//------------------------------------------------------------------------------
+FDRE #(
+	// Parameters.
+	.INIT (1'd1)
+) wlrst_171 (
+	// Inputs.
+	.C  (sysw1_clk),
+	.CE (1'd1),
+	.D  ((sys_rst_1 | wl7ddrphy1_rst_storage)),
+	.R  (1'd0),
+
+	// Outputs.
+	.Q  (wl7ddrphy1_dq_rst_r71)
+);
+
 //------------------------------------------------------------------------------
 // Instance OSERDESE2_213 of OSERDESE2 Module.
 //------------------------------------------------------------------------------
@@ -97398,7 +99982,7 @@ OSERDESE2 #(
 	.D7     (wl7ddrphy1_bitslip1430[6]),
 	.D8     (wl7ddrphy1_bitslip1430[7]),
 	.OCE    (1'd1),
-	.RST    (wl7ddrphy1_wr_rst_r8),
+	.RST    (wl7ddrphy1_dq_rst_r71),
 	.T1     ((~wl7ddrphy1_tappeddelayline1_tappeddelayline13)),
 	.TCE    (1'd1),
 
@@ -97426,7 +100010,7 @@ ISERDESE2 #(
 	.CLKB    ((~sys4xw1a_clk)),
 	.CLKDIV  (sysw1_clk),
 	.DDLY    (wl7ddrphy1_dq_i_delayed71),
-	.RST     (wl7ddrphy1_rd_rst_r8),
+	.RST     (wl7ddrphy1_dq_rst_r71),
 
 	// Outputs.
 	.Q1      (wl7ddrphy1_dfi_name71[7]),
@@ -102214,7 +104798,7 @@ FDPE #(
 endmodule
 
 // -----------------------------------------------------------------------------
-//  Auto-Generated by LiteX on 2026-09-30 09:09:04.
+//  Auto-Generated by LiteX on 2026-09-30 11:10:47.
 //------------------------------------------------------------------------------
 
 // VexRiscv_Min.v (modules renamed otpu_selfcal_*)
