@@ -291,6 +291,13 @@ module otpu_native_dram #(
   // ------------------------------------------------------------------ response FIFOs
   logic [RW:0]  rb_n [2], rb_res [2];          // stored; stored + in flight
   logic [RW-1:0] rb_h [2], rb_t [2];
+  // the B FIFO's memory (rbm) in RBP pieces of 512 / RBP bits, each written at its own copy of
+  // the tail (keep: not merged back). One tail drove the write addresses of all of a channel's
+  // RAMD64Es, spread over the columns its read data crosses (110ec6d at 133.33 MHz: rb_t_rep ->
+  // rbm WADR, fanout 577, 0 levels, 6.9 ns of route, +0.195 ns); each copy now its piece's.
+  // rb_t stays as the copies' reference (the simulation check)
+  localparam int RBP = 8;
+  (* keep = "true" *) logic [RW-1:0] rb_tq [2][RBP];
   logic [AW_:0] ra_n [2], ra_res [2];
   logic [AW_-1:0] ra_h [2], ra_t [2];
 
@@ -365,7 +372,6 @@ module otpu_native_dram #(
     logic [24:0] wam [WQD];                 // per slot: the beat
     logic [HW-1:0] whm [WQD];               // per slot: its hazard bucket
     logic [$bits(tg_t)-1:0] tgm [TD];       // the reads in flight
-    logic [511:0] rbm [RD];
     logic [511:0] ram [AD];
     logic [511:0] wrm [WQD];                // the SW queue's fill data, per slot
     always_ff @(posedge clk) qbm[(QW + 1)'(qb_h[c] + qb_n[c])] <= qb_e[c];
@@ -388,8 +394,13 @@ module otpu_native_dram #(
     assign wh_o[c] = whm[qw_r[c]];
 `endif
     assign wh_f[c] = whm[qw_f[c]];
-    always_ff @(posedge clk)
-      if (n_rvalid[c] && tgh[c].k == K_B) rbm[rb_t[c]] <= n_rdata[c];
+    for (genvar k = 0; k < RBP; k++) begin : g_rb
+      localparam int PB = 512 / RBP;
+      logic [PB-1:0] rbm [RD];
+      always_ff @(posedge clk)
+        if (n_rvalid[c] && tgh[c].k == K_B) rbm[rb_tq[c][k]] <= n_rdata[c][PB * k +: PB];
+      assign rb_head[c][PB * k +: PB] = rbm[rb_h[c]];
+    end
     always_ff @(posedge clk)
       if (n_rvalid[c] && tgh[c].k == K_A) ram[ra_t[c]] <= n_rdata[c];
     always_ff @(posedge clk)
@@ -400,7 +411,6 @@ module otpu_native_dram #(
     gs_t hs;
     assign hs = gs_t'(qwm[qw_f[c]]);
     assign hw[c] = qw_t'{m: hs.m, data: qwd[qw_f[c]], strb: hs.strb};
-    assign rb_head[c] = rbm[rb_h[c]];
     assign ra_head[c] = ram[AW_'(ra_h[c] + AW_'(aoh.drop))];
   end
 
@@ -539,6 +549,7 @@ module otpu_native_dram #(
         qw_n[c] <= '0; qw_f[c] <= '0; qw_r[c] <= '0; qw_rn[c] <= '0; wnz[c] <= '0;
         tg_n[c] <= '0; tg_h[c] <= '0;
         rb_n[c] <= '0; rb_res[c] <= '0; rb_h[c] <= '0; rb_t[c] <= '0;
+        for (int k = 0; k < RBP; k++) rb_tq[c][k] <= '0;
         ra_n[c] <= '0; ra_res[c] <= '0; ra_h[c] <= '0; ra_t[c] <= '0;
         iss_w[c] <= n_wdone[c];
       end
@@ -598,7 +609,10 @@ module otpu_native_dram #(
         // ---- read data, routed by the oldest read's tag
         if (n_rvalid[c]) begin
           case (tgh[c].k)
-            K_B: begin rb_t[c] <= rb_t[c] + 1; rbn = rbn + 1; end
+            K_B: begin
+              rb_t[c] <= rb_t[c] + 1; rbn = rbn + 1;
+              for (int k = 0; k < RBP; k++) rb_tq[c][k] <= rb_tq[c][k] + 1;
+            end
             K_A: begin ra_t[c] <= ra_t[c] + 1; ran = ran + 1; end
             default: wgot[c][tgh[c].slot] <= 1'b1;   // the SW fill read: its slot has the data
           endcase
@@ -759,6 +773,19 @@ module otpu_native_dram #(
       if (bt_n != 0 && bth != btr[bt_h])
         $fatal(1, "otpu_native_dram: B tag %0d at %0d, expected %0d", bth, bt_h, btr[bt_h]);
     end
+
+  // every copy of the B FIFO's tail is the tail
+  bit rst_seen;                                 // (registers start arbitrary)
+  initial rst_seen = 1'b0;
+  always_ff @(posedge clk) begin
+    if (rst) rst_seen <= 1'b1;
+    if (!rst && rst_seen)
+      for (int c = 0; c < 2; c++)
+        for (int k = 0; k < RBP; k++)
+          if (rb_tq[c][k] != rb_t[c])
+            $fatal(1, "otpu_native_dram: channel %0d B tail copy %0d is %0d, the tail %0d", c, k,
+                   rb_tq[c][k], rb_t[c]);
+  end
 
   // gb and, a cycle later, gd are, while valid, what a buffer merging each write as it is taken
   // holds (gb_ref)

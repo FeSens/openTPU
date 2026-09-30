@@ -185,7 +185,13 @@ def load_weights(model_dir) -> Weights:
     """All tensors of a HF safetensors checkpoint as fp32 numpy arrays, converted when first
     used (Weights). Of a multimodal checkpoint (Qwen3.5) only the language model is loaded,
     under the names of a text-only one (model.language_model.* -> model.*): not the vision
-    tower or the multi-token prediction layers."""
+    tower or the multi-token prediction layers. Gemma 4: gemma4.load_weights (its PLE table
+    read by rows)."""
+    cfg = Path(model_dir) / "config.json"
+    if cfg.exists() and json.loads(cfg.read_text()).get("model_type") in ("gemma4",
+                                                                          "gemma4_text"):
+        from .gemma4 import load_weights as gemma4_weights
+        return gemma4_weights(model_dir)
     return Weights(model_dir)
 
 
@@ -881,8 +887,10 @@ def _inputs(m, pos, tok=None):
     or from the image's tables (Image(lookup=True)) at the token id and position -- at a
     run-time position (RunPos), or at a compile-time token `tok` (a per-position program)."""
     if isinstance(pos, RunPos):
-        tok, pos = pos.tok, pos.pos
-    elif tok is None:
+        x = _embed(m, pos.tok)
+        ol.release(pos.tok)                 # its argument registers serve addresses from here on
+        return x, ol.load(m.cos_t[pos.pos, :]), ol.load(m.sin_t[pos.pos, :])
+    if tok is None:
         return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
     return _embed(m, tok), ol.load(m.cos_t[pos, :]), ol.load(m.sin_t[pos, :])
 
@@ -1238,7 +1246,9 @@ class Engine:
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self.poss = [0] * batch
         self.stream_logits = True           # step(): stream the logits when the backend can
-        self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
+        # rows per run that fit TMEM (prefill_chunks), at most the image's fit_rows (Gemma 4:
+        # the ACT rows, so that a run streams the weights once)
+        self._fit_rows = min(self.rows, getattr(self.image, "fit_rows", self.rows))
         self._run_rows_n = self.rows        # rows of the last prefill run (IMEM may cut it)
         self.stats = []
         self.pipeline = backend != "isa" if pipeline is None else bool(pipeline)

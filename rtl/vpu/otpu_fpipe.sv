@@ -74,6 +74,34 @@ module otpu_fadd
   otpu_delay #(.W(32), .N(LAT - 4)) u_pad (.clk, .en, .d(r), .q(y));
 endmodule
 
+// otpu_fadd (LAT 4) with a second copy of its result register (yo), kept apart from y's: for a
+// load far from the others
+module otpu_fadd2
+  import otpu_fp::*;
+(
+  input  logic  clk,
+  input  logic  en,
+  input  f32_t  a,
+  input  f32_t  b,
+  output f32_t  y,
+  output f32_t  yo
+);
+  fadd_p1_t s1;
+  fadd_p2_t s2;
+  fadd_nm_t s3;
+  f32_t r;
+  (* keep *) f32_t ro;
+  always_ff @(posedge clk) if (en) begin
+    s1 <= fp_add_s1(a, b);
+    s2 <= fp_add_s2(s1);
+    s3 <= fp_add_s3(s2);
+    r  <= fp_add_s4(s3);
+    ro <= fp_add_s4(s3);
+  end
+  assign y = r;
+  assign yo = ro;
+endmodule
+
 module otpu_fmadd
   import otpu_fp::*;
 #(parameter int LM = 2, parameter int LA = 4) (

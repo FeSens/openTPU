@@ -447,18 +447,27 @@ module otpu_seq
   // The command store is one distributed RAM per unit (1 write, 1 asynchronous read, no reset):
   // a single read port each, so it infers as LUT-RAM and trims the fields its unit never reads
   // (as do the registers).
+  // The collective's copy loads on every cycle the collective is ready and not starting (urdy:
+  // no request pending, a flip-flop in otpu_slice), which covers its starts, and the collective
+  // reads its command only while its request is pending: the enable is two flip-flops, not the
+  // start decode (133.33 MHz, 812bb01: sstarted -> the collective's can_start -> its copy's
+  // enable, fanout 120, 7 levels, +0.165 ns)
   logic [SW-1:0] ucs [NUNITS];
   for (genvar u = 0; u < NUNITS; u++) begin : g_cmd
     (* ram_style = "distributed" *) logic [$bits(cmd_t)-1:0] m [WIN];
     logic [$bits(cmd_t)-1:0] q;
+    wire q_en = (u == U_COLL) ? urdy[u] && !ustart[u] : can_start[u];
     always_ff @(posedge clk) if (!rst && c_go) m[free_slot] <= c_cmd;
-    always_ff @(posedge clk) if (!rst && can_start[u]) q <= m[start_slot[u]];
+    always_ff @(posedge clk) if (!rst && q_en) q <= m[start_slot[u]];
     assign ucmd[u] = cmd_t'(q);
 `ifndef SYNTHESIS
     // the copy is the started slot's command while the slot is in the window
-    always @(posedge clk)
+    always @(posedge clk) begin
       if (!rst && sv[ucs[u]] && sstarted[ucs[u]] && soh[ucs[u]][u] && q != m[ucs[u]])
         $fatal(1, "otpu_seq: unit %0d's command is not slot %0d's", u, ucs[u]);
+      if (!rst && can_start[u] && !q_en)
+        $fatal(1, "otpu_seq: unit %0d starts without loading its command", u);
+    end
 `endif
   end
 
