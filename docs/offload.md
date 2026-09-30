@@ -722,9 +722,14 @@ generate loop), against HF's bf16 greedy tokens (`tools/offload/moe_card.py`):
 |---|---|---|---|---|---|
 | fp32 embedding table | 20 of 32 | 16 | token-exact | 86% | 9.9 |
 | gathered embedding (section 5.9) | 28 of 32 | 144 | the first 19 | 97.8% | 1.54 (2.11 in the second half) |
+| the same, a longer answer ("Describe the water cycle ...") | 28 of 32 | 160 | the first 4 | 98.5% | 0.87 (0.67) |
 
-- The first different pick (token 19) is still to be weighed against HF's logits. HF's runs
-  now keep their top 8 per step.
+- Both first different picks are fp4's, not the device's. At token 19 HF's bf16 logits tie four
+  ways (within 0.25). At token 4 of the longer run HF ties 600 and 358 at 46.75, with 278 at
+  44.05. The card ranks 278, 358 and 600 at 46.65, 46.35 and 46.12. `lfm2.emulated_logits`'
+  float64 decode of the same fp4 weights, with none of the device's rounding, gives 46.74,
+  46.32 and 46.17 (`tools/offload/emul_step.py`, the experts fake-quantized per use):
+  quantizing the weights moves 278 up 2.7 logits, and the device's arithmetic adds nothing.
 - The misses are out of 88 expert uses per token.
 - On the card's own routes, cachesim's per-layer LRU at 28 slots gives 98.0% and 1.7 misses per
   token (the card: 97.8%, 1.9 over all 163 tokens). The card warms its slots with experts 0..27,
@@ -743,8 +748,10 @@ DeltaNet blocks): 2,282 instructions in bucket 1. On the ISA simulator with the 
 exactly, every one picked by the card's generate loop. Of 11,840 expert requests 62.4% hit;
 decode missed 95.7 experts per token (113.4 in its second half), against 111 predicted.
 cachesim's per-layer LRU on the card's routes gives 64.7% and 113.1 misses per token (37
-tokens), its optimum 80.5% and 62.3. (That run wrote the prompt's first three embedding rows
-from the host; with `Spec.embed` above no row is.)
+tokens), its optimum 80.5% and 62.3. That run wrote the prompt's first three embedding rows
+from the host. Run again with `Spec.embed` "int8" (above), every input comes from the image:
+the same 16 tokens, and the same requests, hits and misses, since the gathered rows are the
+host's bit for bit.
 
 1. **The MoE block in `ol` kernels:**
    - the router MM;
