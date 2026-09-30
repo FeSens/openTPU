@@ -13,7 +13,7 @@ set DDR_SPEED [expr {[llength $argv] > 0 ? [lindex $argv 0] : 1066}]
 if {$DDR_SPEED != 1066} { error "DDR3-$DDR_SPEED: the LiteDRAM core is generated for DDR3-1066" }
 set out [expr {[llength $argv] > 1 ? [file normalize [lindex $argv 1]] : "$root/build/vivado"}]
 set MCOLS [expr {[llength $argv] > 2 ? [lindex $argv 2] : 4}]
-set CORE_MHZ [expr {[llength $argv] > 3 ? [lindex $argv 3] : 100}]
+set CORE_MHZ [expr {[llength $argv] > 3 ? [lindex $argv 3] : 133.33}]
 set BUILD_ID [expr {[llength $argv] > 4 ? [lindex $argv 4] : ""}]
 set VPU_CL [expr {[llength $argv] > 5 ? [lindex $argv 5] : 2}]
 set LANES [expr {[llength $argv] > 6 ? [lindex $argv 6] : 8}]

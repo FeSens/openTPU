@@ -7,9 +7,9 @@
 #   MCOLS=2 ./run_vivado.sh               # 2 MXU columns (4, the default: faster prefill / batched decode)
 #   VPU_CL=4 ./run_vivado.sh              # 4 VPU lanes with exp2/recip/rsqrt (faster softmax)
 #   LANES=16 ./run_vivado.sh              # 16 VPU lanes / TMEM banks
-#   CORE_MHZ=80 ./run_vivado.sh           # slower core clock when 100 MHz does not close
+#   CORE_MHZ=100 ./run_vivado.sh          # another core clock (default 133.33, the production image's)
 #   FAST=1 ./run_vivado.sh                # development build: default strategies, no retiming or post-route
-#                                         # phys_opt (with the default CORE_MHZ=100); about half the time
+#                                         # phys_opt (its default CORE_MHZ is 100); about half the time
 #   VIVADO_DOCKER=image ./run_vivado.sh   # Docker (e.g. Apple Silicon with Rosetta), see docs/board.md
 #   VIVADO_AS_USER=1                      # Docker on Linux: run as the calling user (see run())
 #   STEP=impl ./run_vivado.sh             # rerun implementation only (keeps project and synthesis)
@@ -29,7 +29,7 @@ vpu_cl="${VPU_CL:-2}"          # VPU lanes with the composite functions (timing 
 lanes="${LANES:-8}"            # VPU lanes / TMEM banks (likewise in VERSION)
 act_rows="${ACT_ROWS:-$mcols}" # ACT RAM rows (> MCOLS: MM replay; the ACT_ROWS register)
 dstep="${DSTEP:-1}"            # 0: no DSTEP datapath in the DMA (CAPS bit6 = 0)
-core_mhz="${CORE_MHZ:-100}"   # accelerator clock; lower it (80, 75) if timing does not close
+core_mhz="${CORE_MHZ:-$([[ "${FAST:-0}" == 1 ]] && echo 100 || echo 133.33)}"  # accelerator clock (FAST=1: 100)
 # BUILD_ID register: the git commit's first 8 hex digits, taken here (Vivado may run in Docker)
 build_id="${BUILD_ID:-$(git -C "$root" rev-parse HEAD 2>/dev/null | cut -c1-8)}"
 build_id="${build_id:-0}"
