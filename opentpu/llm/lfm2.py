@@ -46,7 +46,7 @@ from ..isasim import Config
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
 from ..kernels.mlp import _chunk
-from ..host.offload import BackendDram, ExpertServer, Layout
+from ..host.offload import ExpertServer, Layout
 from ..runtime import quantize_rows
 from . import generate as G
 from . import moe as MO
@@ -503,38 +503,8 @@ class Image:
         return self.fmt.pack(W[p + "w1.weight"], W[p + "w3.weight"], W[p + "w2.weight"])
 
     def serve(self, W: dict, backend, pool_file=None) -> ExpertServer:
-        """The host's expert server on the backend's DRAM (slice 0), the slots filled with
-        each layer's first experts. The pool is packed from W when an expert is first asked
-        for and kept in host RAM, or, with `pool_file`, packed once into that file (reused
-        while its size matches) and read from it (the page cache, or the SSD tier)."""
-        L = self.offload
-        n = L.layers * L.E
-        if pool_file is None:
-            cache: dict = {}
-
-            def pool(g):
-                if g not in cache:
-                    cache[g] = self.expert(W, g).tobytes()
-                return cache[g]
-        else:
-            from pathlib import Path
-            path = Path(pool_file)
-            if not path.exists() or path.stat().st_size != n * L.slot_bytes:
-                tmp = path.with_suffix(".part")
-                out = np.memmap(tmp, np.uint8, "w+", shape=(n, L.slot_bytes))
-                for g in range(n):
-                    out[g] = self.expert(W, g)
-                out.flush()
-                del out
-                tmp.rename(path)
-            arr = np.memmap(path, np.uint8, "r", shape=(n, L.slot_bytes))
-
-            def pool(g):
-                return arr[g].tobytes()
-        srv = ExpertServer(BackendDram(backend), self.offload, pool)
-        E = self.spec.moe.E
-        srv.load([j * E + e for j in range(self.offload.layers) for e in range(E)])
-        return srv
+        """The host's expert server on the backend's DRAM (moe.serve)."""
+        return MO.serve(self.offload, lambda g: self.expert(W, g), backend, pool_file)
 
     # ---- programs
     def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):

@@ -19,10 +19,11 @@ def load_spec(path):
     t = json.loads((Path(path) / "config.json").read_text()).get("model_type")
     if t == "qwen3":
         from .qwen3 import Spec
-    elif t == "lfm2":
+    elif t in ("lfm2", "lfm2_moe"):
         from .lfm2 import Spec
-    elif t in ("qwen3_5", "qwen3_5_text"):
+    elif t in ("qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text"):
         from .qwen35 import Spec
     else:
-        raise ValueError(f"{path}: model type {t!r} is not supported (qwen3, lfm2, qwen3_5)")
+        raise ValueError(f"{path}: model type {t!r} is not supported (qwen3, lfm2, qwen3_5 and "
+                         "their MoE variants)")
     return Spec.from_hf(path)

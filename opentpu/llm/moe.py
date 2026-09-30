@@ -4,10 +4,11 @@ moves experts into per-layer LRU slots in the card's DRAM and keeps the director
 
 A MoE layer on the device (`moe_ffn`), one token:
 
-1. the router: an MM of the normalized residual -> E logits, and the model's rule (LFM2:
-   sigmoid scores, plus the expert bias to choose; the chosen scores renormalized, scaled);
+1. the router: an MM of the normalized residual -> E logits (and, with a shared expert, its
+   gate's logit as row E of the same matrix), and the model's rule (MoESpec.rule);
 2. the k best by ARGMAX with knock-out (in order, ties to the first), their global ids
-   (the layer's base j * E + index) and weights;
+   (the layer's base j * E + index) and weights: LFM2's sigmoid scores, chosen with the
+   expert bias, renormalized and scaled; Qwen's softmax of the k largest logits;
 3. the fence, WAITW served >= seq (the host has finished every earlier request: none of this
    layer's slots is being replaced, and the one request row is free), then the ids and
    seq + 1 to the mailbox;
@@ -17,8 +18,9 @@ A MoE layer on the device (`moe_ffn`), one token:
    (!= 0: at once for an expert present; for the others once the host has written the entry
    after the expert's DMA) to a TMEM word and RLD (raw) into a register, runs
    kernels.mlp.swiglu_down there and writes its weighted output to its row of a [k, H] tile;
-6. the rows summed in the router's order (the result does not depend on what the cache held)
-   and added to the residual.
+6. the rows summed in the router's order (the result does not depend on what the cache held),
+   then a shared expert (a dense SwiGLU of the layer block, times sigmoid of its gate's
+   logit), and added to the residual.
 
 It holds one register (the resident decode's run arguments and the layer loops hold the
 rest): the per-expert values are the columns of a small tile that each loop rotates, so
@@ -31,6 +33,7 @@ layer block's MLP (lfm2.Image), so the FFN is kernels.mlp.swiglu_down at the slo
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -39,7 +42,7 @@ from .. import isa as I
 from .. import language as ol
 from .. import quant as Q
 from ..compiler import Affine, CompileError, DevVar, QTensor, Tensor, current
-from ..host.offload import LINE
+from ..host.offload import LINE, BackendDram, ExpertServer, Layout
 from ..kernels.lib import rmsnorm, sigmoid
 from ..kernels.mlp import _chunk, swiglu_down
 
@@ -52,9 +55,18 @@ class MoESpec:
     k: int                 # experts per token
     ffn: int               # an expert's width
     first: int = 0         # the first MoE layer (the ones before it have a dense MLP)
-    rule: str = "sigmoid_bias"       # LFM2's router (the only one so far)
-    norm: bool = True                # renormalize the chosen weights
+    rule: str = "sigmoid_bias"       # LFM2: sigmoid scores, the choice on score + expert bias;
+                                     # "softmax": Qwen, the k largest logits' softmax
+    norm: bool = True                # renormalize the chosen weights (softmax: always)
     scale: float = 1.0               # then multiply them by this
+    shared: int = 0                  # a shared expert's width (Qwen: the layer's dense MLP,
+                                     # times sigmoid(x . w_gate)), 0: none
+
+    def __post_init__(self):
+        if self.rule not in ("sigmoid_bias", "softmax"):
+            raise ValueError(f"MoE router rule {self.rule!r}")
+        if self.rule == "softmax" and not self.norm:
+            raise ValueError("a softmax router over all experts is not supported (norm=False)")
 
 
 class ExpertFormat:
@@ -108,20 +120,66 @@ class ExpertFormat:
         return SimpleNamespace(wg=q(self.wg, F, H), wu=q(self.wu, F, H), wd=wd)
 
 
+def serve(layout: Layout, expert, backend, pool_file=None, warm=True) -> ExpertServer:
+    """The host's expert server on the backend's DRAM (slice 0); with `warm`, the slots filled
+    with each layer's first experts. expert(g): global expert g's slot bytes. An expert is
+    packed when it is first asked for and kept in host RAM, or, with `pool_file`, in that file
+    (the page cache, or the SSD tier), which keeps it for later runs: the file is the whole
+    pool's size (sparse until packed), and `<pool_file>.packed` marks the experts in it (a
+    file of the right size without one is a pool packed whole)."""
+    L = layout
+    n = L.layers * L.E
+    if pool_file is None:
+        cache: dict = {}
+
+        def pool(g):
+            if g not in cache:
+                cache[g] = expert(g).tobytes()
+            return cache[g]
+    else:
+        path = Path(pool_file)
+        done = Path(str(path) + ".packed")
+        fresh = not path.exists() or path.stat().st_size != n * L.slot_bytes
+        if fresh:
+            with open(path, "wb") as f:
+                f.truncate(n * L.slot_bytes)
+        if fresh or not done.exists() or done.stat().st_size != n:
+            done.write_bytes(bytes(n) if fresh else bytes([1]) * n)
+        arr = np.memmap(path, np.uint8, "r+", shape=(n, L.slot_bytes))
+        packed = np.memmap(done, np.uint8, "r+", shape=(n,))
+
+        def pool(g):
+            if not packed[g]:
+                arr[g] = expert(g)
+                packed[g] = 1
+            return arr[g].tobytes()
+    srv = ExpertServer(BackendDram(backend), L, pool)
+    srv.load([j * L.E + e for j in range(L.layers) for e in range(L.E)] if warm else ())
+    return srv
+
+
 # ---------------------------------------------------------------------------- reference
-def route(logits: np.ndarray, bias: np.ndarray, mo: MoESpec):
+def route(logits: np.ndarray, bias: np.ndarray | None, mo: MoESpec):
     """The model's choice for one token's router logits [E]: (ids in the device's order, their
-    weights). LFM2: sigmoid scores; the k largest of score + bias (ties: the first); the
-    chosen scores renormalized (+ 1e-6, as Hugging Face) and scaled."""
-    s = 1.0 / (1.0 + np.exp(-np.asarray(logits, np.float64)))
-    sel = s + bias
+    weights). The k largest (ties: the first) of: LFM2, sigmoid scores + bias, the chosen
+    scores renormalized (+ 1e-6, as Hugging Face) and scaled; softmax (Qwen), the logits, the
+    chosen ones' softmax (Hugging Face's softmax over all, renormalized over the k)."""
+    lg = np.asarray(logits, np.float64)
+    if mo.rule == "softmax":
+        s, sel = lg, lg.copy()
+    else:
+        s = 1.0 / (1.0 + np.exp(-lg))
+        sel = s + bias
     ids = []
     for _ in range(mo.k):
         i = int(np.argmax(sel))
         ids.append(i)
         sel[i] = -np.inf
     w = s[ids]
-    if mo.norm:
+    if mo.rule == "softmax":
+        w = np.exp(w - w[0])
+        w = w / w.sum()
+    elif mo.norm:
         w = w / (w.sum() + 1e-6)
     return ids, w * mo.scale
 
@@ -129,17 +187,24 @@ def route(logits: np.ndarray, bias: np.ndarray, mo: MoESpec):
 # ---------------------------------------------------------------------------- the device
 def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
     """x + the MoE FFN of one token (module docstring). lw: the layer's g_post [H], router
-    QTensor [E, H], ebias Tensor [E], gbase Tensor [1] (j * E as fp32). dev: the offload
-    words (mbox, served, dir: static DRAM addresses) and `fmt`, the ExpertFormat."""
+    QTensor [E, H] ([E + 1, H] with a shared expert: its gate is row E), ebias Tensor [E]
+    (sigmoid_bias), gbase Tensor [1] (j * E as fp32), and with a shared expert its SwiGLU
+    wg, wu, wd. dev: the offload words (mbox, served, dir: static DRAM addresses) and `fmt`,
+    the ExpertFormat."""
     b = current()
     if ol.num_programs() != 1:
         raise CompileError("moe_ffn runs on one slice")
     E, k, H = mo.E, mo.k, x.cols
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
-    sc = ol.empty((E,))
-    sc.set(sigmoid(ol.dot(xs, lw.router))[0, :])
-    sel = ol.empty((E,))
-    sel.set(sc + ol.load(lw.ebias))
+    lg = ol.dot(xs, lw.router)
+    sc, sel = ol.empty((E,)), ol.empty((E,))
+    if mo.rule == "softmax":
+        sc.set(lg[0, 0:E])
+        sel.set(sc)
+    else:
+        sc.set(sigmoid(lg[0, 0:E]))
+        sel.set(sc + ol.load(lw.ebias))
+    gate = sigmoid(lg[0, E:E + 1]) if mo.shared else None
     # One register in all (the resident decode's arguments and the layer loops hold the
     # rest): r holds one value at a time (an index, the seq bits, an offset, a count, a slot
     # address, a row). The k experts' values are the columns of pe, a [5, k] tile that every
@@ -174,7 +239,10 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
         ids[0:k - 1].set(tmp[0, 0:k - 1])
     b.emit(I.vop(I.V_COPY, ids.base + k - 1, pr.base + 1, 0, 1, 1, 0, 0, 0, comment="id"))
     b.end_loop(lp)
-    if mo.norm:
+    if mo.rule == "softmax":                            # column 0 holds the largest
+        e = ol.exp2((wt - wt[0:1]) * ol.LOG2E)
+        wt.set(e * ol.recip(ol.sum(e)))
+    elif mo.norm:
         wt.set(wt * ol.recip(ol.sum(wt) + 1e-6))
     if mo.scale != 1.0:
         wt.set(wt * float(mo.scale))
@@ -225,4 +293,6 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
     acc = y[0:1, :]
     for i in range(1, k):
         acc = acc + y[i:i + 1, :]
+    if mo.shared:
+        acc = acc + swiglu_down(xs, lw.wg, lw.wu, lw.wd) * gate[:, None]
     return x + acc

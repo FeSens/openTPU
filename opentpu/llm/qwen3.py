@@ -134,6 +134,13 @@ class LazyWeights(dict):
         h, name = self._at[k]
         return h.get_tensor(name).to(torch.float32).numpy()
 
+    def part(self, k, i):
+        """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
+        read alone."""
+        import torch
+        h, name = self._at[k]
+        return h.get_slice(name)[i].to(torch.float32).numpy()
+
     def __contains__(self, k):
         return k in self._at
 

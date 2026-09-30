@@ -1,7 +1,8 @@
-"""LFM2.5-8B-A1B end to end on the ISA simulator with the card's 4 GiB of DRAM (docs/offload.md,
-phase 2): the card routes and computes every expert, its experts stream into per-layer slots
-through the host's server (opentpu.host.offload), and the decode loop runs on the card
-(autodecode's generate program). Greedy tokens against Hugging Face's.
+"""A MoE model (LFM2.5-8B-A1B, Qwen3.5-35B-A3B) end to end on the ISA simulator with the card's
+4 GiB of DRAM (docs/offload.md, phase 2): the card routes and computes every expert, its
+experts stream into per-layer slots through the host's server (opentpu.host.offload), and the
+decode loop runs on the card (autodecode's generate program). Greedy tokens against Hugging
+Face's.
 
     python3 tools/offload/moe_card.py MODEL --hf out.json       # HF's greedy tokens (bf16, CPU)
     python3 tools/offload/moe_card.py MODEL --check out.json    # the simulator's, compared
@@ -40,12 +41,23 @@ def hf_greedy(model: str, n: int, max_memory: str | None) -> dict:
                 seconds=round(time.time() - t, 1))
 
 
+def fit_experts(spec, cfg, cap: int, **kw) -> int:
+    """The expert slots per MoE layer that fill the card's DRAM beside the rest of the image."""
+    from dataclasses import replace
+    probe = spec.image(replace(cfg, DRAM_BYTES=1 << 40), cap, rows=1, experts=spec.moe.k, **kw)
+    L = probe.offload
+    return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.slot_bytes))
+
+
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None) -> dict:
     from opentpu.isasim import board_config
-    from opentpu.llm.lfm2 import Spec
+    from opentpu.llm import load_spec
     from opentpu.llm.qwen3 import Engine, LazyWeights
-    spec = Spec.from_hf(model)
+    spec = load_spec(model)
     W = LazyWeights(model)
+    if not experts:
+        experts = fit_experts(spec, board_config(), cap, wformat="fp4", head_format="int8",
+                              lookup=True)
     t = time.time()
     eng = Engine(spec, W, cap=cap, cfg=board_config(), rows=1, wformat="fp4",
                  head_format="int8", resident=True, experts=experts, pool_file=pool)
@@ -77,9 +89,10 @@ def main():
     ap.add_argument("--hf", help="write HF's greedy tokens here")
     ap.add_argument("--check", help="HF's tokens (--hf's output) to compare the card's with")
     ap.add_argument("-n", type=int, default=16, help="tokens to generate")
-    ap.add_argument("--experts", type=int, default=20, help="expert slots per MoE layer")
+    ap.add_argument("--experts", type=int, default=0,
+                    help="expert slots per MoE layer (0: as many as fit)")
     ap.add_argument("--cap", type=int, default=4096, help="KV capacity")
-    ap.add_argument("--pool", help="the expert pool file (packed once, reused)")
+    ap.add_argument("--pool", help="the expert pool file (each expert packed once, reused)")
     ap.add_argument("--max-memory", help="HF: host RAM for weights, the rest to disk (e.g. 10GiB)")
     ap.add_argument("--out", help="the card's result as JSON")
     a = ap.parse_args()

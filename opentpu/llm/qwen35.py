@@ -62,6 +62,7 @@ from .. import fp32 as F
 from .. import quant as Q
 from .. import language as ol
 from ..compiler import Affine, KVDesc, QTensor, Tensor
+from ..host.offload import ExpertServer, Layout
 from ..isasim import Config
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.deltanet import gates, l2norm_rows
@@ -69,6 +70,7 @@ from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
 from .lfm2 import plan, run_layers
 from . import generate as G
+from . import moe as MO
 from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fake_q, _fake_w,
                     _inputs, _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc,
                     _mlp, _qdesc, _tdesc, compile_decode, rope_tables)
@@ -97,6 +99,8 @@ class Spec:
     eos: tuple = (248046, 248044)
     lin_kheads: int = 0     # DeltaNet key heads (0: lin_heads); value head h uses q and k of
                             # key head h // (lin_heads / lin_kheads), as HF's repeat_interleave
+    moe: MO.MoESpec | None = None   # Qwen3.5-MoE: every layer's MLP is routed experts plus a
+                                    # shared expert (ffn: its width, the layer block's MLP)
 
     @property
     def layers(self) -> int:
@@ -106,6 +110,11 @@ class Spec:
     def lin_nk(self) -> int:
         return self.lin_kheads or self.lin_heads
 
+    def mlp_prefix(self, p: str) -> str:
+        """The checkpoint prefix of layer prefix p's dense MLP (Qwen3.5-MoE: the shared
+        expert)."""
+        return p + ("mlp.shared_expert." if self.moe is not None else "mlp.")
+
     @staticmethod
     def from_hf(model_dir) -> "Spec":
         top = json.loads((Path(model_dir) / "config.json").read_text())
@@ -114,17 +123,24 @@ class Spec:
         d = c.get("head_dim") or c["hidden_size"] // c["num_attention_heads"]
         eos = c.get("eos_token_id", 248044)
         eos = tuple(eos) if isinstance(eos, list) else (eos,)
+        moe = None
+        if "num_experts" in c:                  # Qwen3.5-MoE: softmax top-k, a shared expert
+            moe = MO.MoESpec(E=c["num_experts"], k=c["num_experts_per_tok"],
+                             ffn=c["moe_intermediate_size"], rule="softmax",
+                             norm=c.get("norm_topk_prob", True),
+                             shared=c["shared_expert_intermediate_size"])
         return Spec(hidden=c["hidden_size"],
                     kinds=tuple(ATTN if t == "full_attention" else LIN for t in c["layer_types"]),
                     n_q=c["num_attention_heads"], n_kv=c["num_key_value_heads"], head_dim=d,
                     rope_dim=int(d * rope.get("partial_rotary_factor", 1.0)),
                     lin_heads=c["linear_num_value_heads"], lin_dk=c["linear_key_head_dim"],
-                    lin_dv=c["linear_value_head_dim"], ffn=c["intermediate_size"],
+                    lin_dv=c["linear_value_head_dim"],
+                    ffn=moe.shared if moe is not None else c["intermediate_size"],
                     vocab=c["vocab_size"], conv_k=c.get("linear_conv_kernel_dim", 4),
                     eps=c.get("rms_norm_eps", 1e-6), theta=rope.get("rope_theta", 1e7),
                     tied=top.get("tie_word_embeddings", c.get("tie_word_embeddings", True)),
                     eos=(248046,) + tuple(e for e in eos if e != 248046),   # <|im_end|> first
-                    lin_kheads=c["linear_num_key_heads"])
+                    lin_kheads=c["linear_num_key_heads"], moe=moe)
 
     def check(self, cfg: Config) -> None:
         S, D = cfg.S, cfg.D
@@ -140,14 +156,21 @@ class Spec:
                 (self.vocab % S == 0, f"vocab {self.vocab} % S"),
                 (max(self.ffn, self.n_q * self.head_dim, self.hidden) <= cfg.ACT_BLOCKS * D,
                  "an inner dimension exceeds ACT RAM")]
+        if self.moe is not None:
+            mo = self.moe
+            need += [(S == 1, "MoE layers run on one slice"),
+                     (mo.ffn % D == 0, f"expert width {mo.ffn} % D"),
+                     (mo.k <= mo.E, "top-k above the expert count"),
+                     (mo.first == 0 and mo.shared == self.ffn,
+                      "Qwen3.5-MoE: every layer routed, the dense MLP its shared expert")]
         bad = [m for ok, m in need if not ok]
         if bad:
             raise ValueError("model does not map onto this openTPU config: " + "; ".join(bad))
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
-              lookup: bool = False) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup)
+              lookup: bool = False, experts: int | None = None) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts)
 
 
 # =============================================================================== reference
@@ -232,19 +255,49 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
             o = o / (1 + np.exp(-gate))
             x = x + o.reshape(T, -1) @ W[a + "o_proj.weight"].T
         h = _norm(x, g1(p + "post_attention_layernorm.weight"), eps)
-        gg = h @ W[p + "mlp.gate_proj.weight"].T
-        u = h @ W[p + "mlp.up_proj.weight"].T
-        x = x + (_silu(gg) * u) @ W[p + "mlp.down_proj.weight"].T
+        mp = spec.mlp_prefix(p)
+        gg = h @ W[mp + "gate_proj.weight"].T
+        u = h @ W[mp + "up_proj.weight"].T
+        y = (_silu(gg) * u) @ W[mp + "down_proj.weight"].T
+        if spec.moe is not None:                    # the shared expert, gated; the experts
+            y = y / (1 + np.exp(-(h @ W[p + "mlp.shared_expert_gate.weight"].T)))
+            y = _moe_reference(h, W, p, spec.moe) + y
+        x = x + y
     x = _norm(x, g1("model.norm.weight"), eps)
     head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
     return x @ head.T
 
 
+def _expert(W, p: str, e: int):
+    """Routed expert e of layer prefix p: W_gate, W_up [F, H], W_down [H, F] (the checkpoint's
+    fused tensors; a LazyWeights reads the one expert)."""
+    m = p + "mlp.experts."
+    get = getattr(W, "part", None)
+    gu, dn = ((get(m + "gate_up_proj", e), get(m + "down_proj", e)) if get is not None else
+              (W[m + "gate_up_proj"][e], W[m + "down_proj"][e]))
+    F_ = gu.shape[0] // 2
+    return gu[:F_], gu[F_:], dn
+
+
+def _moe_reference(h, W, p: str, mo) -> np.ndarray:
+    """The routed experts' sum for the rows of h [T, H] (fp32, Hugging Face's math)."""
+    logits = h @ W[p + "mlp.gate.weight"].T
+    y = np.zeros_like(h)
+    for t in range(h.shape[0]):
+        ids, w = MO.route(logits[t], None, mo)
+        for e, we in zip(ids, w):
+            wg, wu, wd = _expert(W, p, e)
+            y[t] += np.float32(we) * ((_silu(h[t] @ wg.T) * (h[t] @ wu.T)) @ wd.T)
+    return y
+
+
 def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "int8",
-                    head_format: str | None = None) -> np.ndarray:
+                    head_format: str | None = None, routes: list | None = None) -> np.ndarray:
     """float64 decode with openTPU's quantization points and none of its rounding (as
     qwen3.emulated_logits): int8 weights and matmul inputs per D-block, int8 K and V, int8 P.
-    The DeltaNet state, convolution and gates are exact (they are fp32 on the device)."""
+    The DeltaNet state, convolution and gates are exact (they are fp32 on the device).
+    Qwen3.5-MoE: the router (with the shared expert's gate as its last row) in int8; `routes`
+    gets (token, layer, ids, the k-th and (k+1)-th logits' gap) per MoE layer."""
     d, G, eps, K = spec.head_dim, spec.n_q // spec.n_kv, spec.eps, spec.conv_k
     nh, nk, dk, dv = spec.lin_heads, spec.lin_nk, spec.lin_dk, spec.lin_dv
     Wq: dict = {}
@@ -315,9 +368,30 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
                 o = o / (1 + np.exp(-gate))
                 x = x + w(a + "o_proj.weight") @ _fake_q(o.reshape(-1), D)
             h = _fake_q(_norm(x, g1(p + "post_attention_layernorm.weight"), eps), D)
-            gg = w(p + "mlp.gate_proj.weight") @ h
-            u = w(p + "mlp.up_proj.weight") @ h
-            x = x + w(p + "mlp.down_proj.weight") @ _fake_q(_silu(gg) * u, D)
+            mp = spec.mlp_prefix(p)
+            gg = w(mp + "gate_proj.weight") @ h
+            u = w(mp + "up_proj.weight") @ h
+            y = w(mp + "down_proj.weight") @ _fake_q(_silu(gg) * u, D)
+            if spec.moe is not None:
+                mo, rn = spec.moe, p + "mlp.router"
+                if rn not in Wq:                    # int8 in every format, the gate row last
+                    Wq[rn] = _fake_w(np.concatenate([W[p + "mlp.gate.weight"],
+                                                     W[p + "mlp.shared_expert_gate.weight"]]),
+                                     D, "int8")
+                lg = Wq[rn] @ h
+                y = y / (1 + np.exp(-lg[mo.E]))
+                ids, wts = MO.route(lg[:mo.E], None, mo)
+                if routes is not None:
+                    srt = np.sort(lg[:mo.E])[::-1]
+                    routes.append((pos, i, ids, srt[mo.k - 1] - srt[mo.k] if mo.k < mo.E
+                                   else np.inf))
+                for e, we in zip(ids, wts):
+                    key = f"{p}mlp.experts.{e}"
+                    if key not in Wq:
+                        Wq[key] = [_fake_w(a, D, wformat) for a in _expert(W, p, e)]
+                    wg, wu, wd = Wq[key]
+                    x = x + we * (wd @ _fake_q(_silu(wg @ h) * (wu @ h), D))
+            x = x + y
         out.append(w(head) @ _fake_q(_norm(x, g1("model.norm.weight"), eps), D))
     return np.array(out)
 
@@ -340,7 +414,8 @@ class Image:
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False):
+                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
+                 experts: int | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Qwen3.5 runs one sequence: batch=1")
@@ -376,6 +451,10 @@ class Image:
         common["wd"] = [(lb.alloc(self.h_loc * rb(self.dchunk)),
                          lb.alloc(4 * self.h_loc * (self.dchunk // D)))
                         for _ in range(F_ // self.dchunk)]
+        mo = spec.moe
+        if mo is not None:          # the router (int8, the shared expert's gate its last row)
+            common.update(router=(lb.alloc((mo.E + 1) * H), lb.alloc(4 * (mo.E + 1) * (H // D))),
+                          gbase=lb.alloc(4))
         nl, C = self.nl, self.C
         self.og = 4 if nl % 4 == 0 else 2               # heads per out_proj MM
         self.mats = {LIN: {"wh": (nl * self.R, H), "wab": (2 * nl, H),
@@ -407,6 +486,15 @@ class Image:
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
         self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
+        self.offload = None
+        if mo is not None:          # path (a)'s words and expert slots (docs/offload.md)
+            self.fmt = MO.ExpertFormat(H, mo.ffn, D, wformat)
+            n = mo.E if experts is None else experts
+            if not mo.k <= n <= mo.E:
+                raise ValueError(f"{n} expert slots per layer: from top-k {mo.k} to {mo.E}")
+            self.offload = Layout.build((b.next + 4095) // 4096 * 4096, mo.E, mo.k,
+                                        [n] * spec.layers, self.fmt.nbytes)
+            b.next = self.offload.end
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -494,17 +582,33 @@ class Image:
                 put_q(Lo["wk"], rows(wk, self.nkv_loc * d))
                 put_q(Lo["wv"], rows(wv, self.nkv_loc * d))
                 put_q(Lo["wo"], rows(wo, n))
-            put_q(Lo["wg"], rows(W[p + "mlp.gate_proj.weight"], self.f_loc))
-            put_q(Lo["wu"], rows(W[p + "mlp.up_proj.weight"], self.f_loc))
+            mp = spec.mlp_prefix(p)
+            put_q(Lo["wg"], rows(W[mp + "gate_proj.weight"], self.f_loc))
+            put_q(Lo["wu"], rows(W[mp + "up_proj.weight"], self.f_loc))
             C_ = self.dchunk
             for j, pair in enumerate(self.lofs[kind]["wd"]):
                 put_q((base + pair[0], base + pair[1]),
-                      [r[:, j * C_:(j + 1) * C_] for r in rows(W[p + "mlp.down_proj.weight"], n)])
+                      [r[:, j * C_:(j + 1) * C_] for r in rows(W[mp + "down_proj.weight"], n)])
+            if spec.moe is not None:
+                put_q(Lo["router"], [np.concatenate([W[p + "mlp.gate.weight"],
+                                                     W[p + "mlp.shared_expert_gate.weight"]])],
+                      "int8")
+                put(0, Lo["gbase"], f32([i * spec.moe.E]))
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
         put_q(self.head, rows(head, self.v_loc), self.head_format)
         if self.lookup:
             _lookup_build(put, S, W, spec, self.cap, self.lookup)
         return imgs
+
+    # ---- path (a): the expert pool and its server (docs/offload.md)
+    def expert(self, W: dict, g: int) -> np.ndarray:
+        """Global expert g (layer g // E, expert g % E) in its slot's bytes."""
+        E = self.spec.moe.E
+        return self.fmt.pack(*_expert(W, f"model.layers.{g // E}.", g % E))
+
+    def serve(self, W: dict, backend, pool_file=None) -> ExpertServer:
+        """The host's expert server on the backend's DRAM (moe.serve)."""
+        return MO.serve(self.offload, lambda g: self.expert(W, g), backend, pool_file)
 
     # ---- programs
     def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):
@@ -526,6 +630,9 @@ class Image:
     def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
         """One program per slice: consecutive positions of the sequence at once
         (qwen35_rows)."""
+        if self.spec.moe is not None:
+            raise ValueError("a MoE model runs its prompt through the decode step (its MoE "
+                             "block routes one token): rows=1")
         if len(rows) > self.rows:
             raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
         if any(r != (0, rows[0][1] + i) for i, r in enumerate(rows)):
@@ -547,7 +654,13 @@ class Image:
             lofs = self.lofs[kind]
             fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             ns = SimpleNamespace(g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
-                                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)))
+                                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
+                                 moe=spec.moe is not None)
+            if ns.moe:
+                E = spec.moe.E
+                da, sa = lofs["router"]
+                ns.router = QTensor(off + da, off + sa, (E + 1, H), H, 4 * (H // D), D)
+                ns.gbase = Tensor(off + lofs["gbase"], (1,), (1,))
             for name, (r, k) in self.mats[kind].items():
                 da, sa = lofs[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (r, k), Q.row_bytes(k, fm, D),
@@ -572,8 +685,12 @@ class Image:
                 ns.kvs = [ns.kv]
             return ns
 
+        dev = None
+        if self.offload is not None:
+            L = self.offload
+            dev = SimpleNamespace(mbox=L.mbox, served=L.served, dir=L.dir, fmt=self.fmt)
         return SimpleNamespace(
-            spec=spec, layer=layer, plan=self.plan,
+            spec=spec, layer=layer, plan=self.plan, moe_dev=dev,
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (spec.rope_dim // 2,)),
             sin=_tdesc(self.io["sin"], (spec.rope_dim // 2,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
@@ -993,7 +1110,10 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
             x.set(dn(x, lw, pos, spec, m.hs))
         else:
             x.set(_attention(x, lw, c, s_, pos, spec, block, gated=True))
-        x.set(_mlp(x, lw, spec))
+        if lw.moe:
+            x.set(MO.moe_ffn(x, lw, spec.moe, m.moe_dev, spec.eps))
+        else:
+            x.set(_mlp(x, lw, spec))
 
     run_layers(m.plan, layer)
     _lm_head(x, m, spec)
