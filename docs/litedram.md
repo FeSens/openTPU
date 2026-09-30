@@ -1661,5 +1661,7 @@ sit at its two ends (by their DDR3 banks), and one register drove loads at both.
     `c1_ready` rise; both channels' results equal `ddrcal`'s; the hold test passes.
   - The co-simulation (`gen_ldc.py` regenerated: `sim/verilator/otpu_ldc_ch.v`):
     `test_rtl.py -k ldc` 5 passed; `perf_qwen --wformat fp4 --ddr 1066 --mhz 133.33 --ldc`
-    1,478,549 cycles before and after, the whole profile identical.
+    1,478,549 cycles before and after on d3d5f0f, and 1,478,546 on ld-2port's final eb5beed (its
+    `otpu_ldc_mem` checks both ports' read buses equal) and with this on it: the whole profile
+    identical both times.
   - `check_core.sh` reproduces the committed core.
