@@ -49,7 +49,8 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
     return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.slot_bytes))
 
 
-def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None) -> dict:
+def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
+         host_loop: bool = False) -> dict:
     from opentpu.isasim import board_config
     from opentpu.llm import load_spec
     from opentpu.llm.qwen3 import Engine, LazyWeights
@@ -70,7 +71,12 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     prefill_s = time.time() - t
     miss0 = srv.misses
     t = time.time()
-    got = [t0] + eng.generate_card(t0, n - 1, stop_ids=[])
+    if host_loop:               # the resident decode programs, the argmax on the host
+        got = [t0]
+        for _ in range(n - 1):
+            got.append(int(np.argmax(eng.step(got[-1]))))
+    else:
+        got = [t0] + eng.generate_card(t0, n - 1, stop_ids=[])
     gen_s = time.time() - t
     L = eng.image.offload
     return dict(tokens=got, match=got == ref["tokens"][:len(got)],
@@ -80,7 +86,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 image_mib=round(eng.image.nbytes / 2**20), slot_mb=round(L.slot_bytes / 1e6, 2),
                 requests=srv.seq, hits=srv.hits, misses=srv.misses,
                 misses_per_token_decode=round((srv.misses - miss0) / max(1, n - 1), 2),
-                load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s))
+                load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
+                loop="host" if host_loop else "card")
 
 
 def main():
@@ -95,6 +102,9 @@ def main():
     ap.add_argument("--pool", help="the expert pool file (each expert packed once, reused)")
     ap.add_argument("--max-memory", help="HF: host RAM for weights, the rest to disk (e.g. 10GiB)")
     ap.add_argument("--out", help="the card's result as JSON")
+    ap.add_argument("--host-loop", action="store_true",
+                    help="decode with the resident step programs and the argmax on the host "
+                         "(a model whose generate program does not fit IMEM yet)")
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory)
@@ -102,7 +112,7 @@ def main():
         print(json.dumps(r))
         return
     ref = json.loads(Path(a.check).read_text())
-    r = card(a.model, ref, a.n, a.experts, a.cap, a.pool)
+    r = card(a.model, ref, a.n, a.experts, a.cap, a.pool, a.host_loop)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
