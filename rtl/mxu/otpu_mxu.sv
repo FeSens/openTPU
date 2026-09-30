@@ -261,6 +261,22 @@ module otpu_mxu
   // pops: a register, so no adder sits in front of the block RAM address
   logic [PW-1:0]  f_rd;
   logic [SPW-1:0] s_rd;
+  // The chunk FIFO is FG block RAM column groups (whole 36-bit BRAM columns each, so no more
+  // block RAMs than one RAM of the chunk's width), each with its own copies of the write and
+  // read addresses (f_tl, f_rdl: f_tail's and f_rd's updates): one register no longer drives
+  // every block RAM of the chunk across its span (133.33 MHz, bb7f844: f_rd -> u_fd ADDRB, 0
+  // levels, fanout 31, 6.6 ns of route, +0.081 ns, the core's worst; 110ec6d: f_tail -> ADDRA
+  // +0.201). f_tail and f_rd remain for the checks.
+  localparam int FW = D * 8;
+  localparam int FC = (FW + 35) / 36;       // 36-bit block RAM columns
+  localparam int FG = (FC < 4) ? FC : 4;
+  function automatic int fg_lo(input int g);
+    int c;
+    c = 0;
+    for (int i = 0; i < g; i++) c = c + FC / FG + ((i < FC % FG) ? 1 : 0);
+    return (36 * c < FW) ? 36 * c : FW;
+  endfunction
+  (* keep *) logic [FG-1:0][PW-1:0] f_tl, f_rdl;
 
   // ================================================================== consumer control
   logic [15:0] ck;
@@ -424,9 +440,26 @@ module otpu_mxu
   always_ff @(posedge clk) begin
     if (a_rvalid) f_scale[s_tail] <= {a_rdata2, a_rdata};
   end
-  (* keep_hierarchy = "yes" *)
-  otpu_ram_sdp #(.W(D * 8), .N(DEPTH)) u_fd (
-    .clk, .we(b_rvalid), .wa(f_tail), .wd(b_rdata), .re(en_c), .ra(f_rd), .rd(w0));
+  for (genvar g = 0; g < FG; g++) begin : g_fd
+    localparam int LO = fg_lo(g);
+    localparam int W = ((g == FG - 1) ? FW : fg_lo(g + 1)) - LO;
+    (* keep_hierarchy = "yes" *)
+    otpu_ram_sdp #(.W(W), .N(DEPTH)) u_fd (
+      .clk, .we(b_rvalid), .wa(f_tl[g]), .wd(b_rdata[LO +: W]), .re(en_c), .ra(f_rdl[g]),
+      .rd(w0[LO +: W]));
+  end
+`ifndef SYNTHESIS
+  // the groups' address copies are f_tail and f_rd (all reset together)
+  bit fd_rst;                                         // (registers start arbitrary)
+  initial fd_rst = 1'b0;
+  always @(posedge clk) begin
+    if (rst) fd_rst <= 1'b1;
+    for (int g = 0; g < FG; g++)
+      if (!rst && fd_rst && (f_tl[g] != f_tail || f_rdl[g] != f_rd))
+        $fatal(1, "otpu_mxu: FIFO group %0d addresses %0d / %0d, not %0d / %0d", g, f_tl[g],
+               f_rdl[g], f_tail, f_rd);
+  end
+`endif
 
   always_ff @(posedge clk) if (en_c) begin
     // S0: the popped chunk, its ACT RAM block and scales
@@ -1122,7 +1155,7 @@ module otpu_mxu
       i_act <= 1'b0;
       q_n <= '0; pn <= 1'b0; rows_p <= '0;
       occ <= '0;
-      f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
+      f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0; f_tl <= '0; f_rdl <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
       ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1; c_left <= '0; cl_ld <= 1'b0; rows_live <= '0;
       rf_q <= '0; rf_hs <= 1'b0; rf_t <= '0; rf_n <= '0; rf_nz <= 1'b0; rl_nz <= 1'b0;
@@ -1199,7 +1232,10 @@ module otpu_mxu
         end
       end
       // ---- FIFO pushes
-      if (b_rvalid) f_tail <= f_tail + 1;
+      if (b_rvalid) begin
+        f_tail <= f_tail + 1;
+        for (int g = 0; g < FG; g++) f_tl[g] <= f_tl[g] + 1;
+      end
       if (a_rvalid) begin
         s_tail <= s_tail + 1;
       end
@@ -1214,8 +1250,13 @@ module otpu_mxu
           c_left <= c_left - 1;
         end
         // the next read: the next entry, or back to the head for the row's next group
-        if (last_k && !last_g) f_rd <= f_head;
-        else if (cdone) f_rd <= f_rd + 1;
+        if (last_k && !last_g) begin
+          f_rd <= f_head;
+          f_rdl <= {FG{f_head}};
+        end else if (cdone) begin
+          f_rd <= f_rd + 1;
+          for (int g = 0; g < FG; g++) f_rdl[g] <= f_rdl[g] + 1;
+        end
         if (!c_unit) s_rd <= (last_k && !last_g) ? s_head : s_rd + 1;
         if (ck == 0) begin
           if (!OVL || !pn) rl = rl + 1;
