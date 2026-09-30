@@ -141,7 +141,8 @@ and LFM2 only, and the self-test's `vops` stage says so.
 
 | Bitstream | Build | RTL | VERSION | RDOT / OUTER / LOG2 | Models | Timing |
 |---|---|---|---|---|---|---|
-| **`build/deploy_secand3_02569bc/otpu.bit`** (production, 2026-09-29) | `make bit DDR=1066 CORE_MHZ=120.755` (AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8; built as SE=v2, now the only configuration) | se-cand3 02569bc: the stream engine v2 in the VPU (docs/stream.md; CAPS bit26 STREAM) + main 5cd6c39 + the three timing cuts below, 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.031 ns, WHS +0.016 ns |
+| **`build/deploy_champ_e698dcd7/otpu.bit`** (production since 2026-09-29, evening) | `BUILD_ID=0f3a0000 CORE_MHZ=133.33 make bit DDR=1066`, full effort (the tournament's full build; LiteDRAM, MCOLS=4 and AXI_BL=32 are the defaults); the bitstream written from its routed checkpoint | main e698dcd: LiteDRAM with WL7DDRPHY and the calibration CPU, the four-column systolic MXU, the stream engine | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.032 ns, WHS +0.016 ns |
+| `build/deploy_secand3_02569bc/otpu.bit` (production 2026-09-29 until the evening) | `make bit DDR=1066 CORE_MHZ=120.755` (AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8; built as SE=v2, now the only configuration) | se-cand3 02569bc: the stream engine v2 in the VPU (docs/stream.md; CAPS bit26 STREAM) + main 5cd6c39 + the three timing cuts below, 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.031 ns, WHS +0.016 ns |
 | `build/deploy_pnbl32_e2521032/otpu.bit` (production 2026-09-28 afternoon until 2026-09-29) | `make bit DDR=1066 CORE_MHZ=120.755` (AXI_BL=32 and AXI_WBL=8 are the defaults; MCOLS=2, LANES=8) | prod-next e252101 (be388a1 + Qwen3.5 resident decode + DSTEP / ST write runs + AXI write bursts + the port-A order register), 32-beat reads, 8-beat writes | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.013 ns, WHS +0.021 ns |
 | `build/deploy_bl32mx120_be388a32/otpu.bit` (production 2026-09-28 11:00 until the afternoon) | `make bit DDR=1066 CORE_MHZ=120.755 AXI_BL=32` (MCOLS=2, LANES=8) | be388a1 (tv-cand2: main + port B read bursts up to 64 beats + the MXU / adapter timing fixes), 32-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.066 ns, WHS +0.016 ns |
 | `build/deploy_bl16mx120_be388a1f/otpu.bit` (production 2026-09-28 morning) | as above, `AXI_BL=16` | be388a1, 16-beat reads | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.048 ns, WHS +0.013 ns |
@@ -647,7 +648,66 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
-**Production image (2026-09-29): `build/deploy_secand3_02569bc`** (omarchy and opentpu
+**Production image (since 2026-09-29, evening): `build/deploy_champ_e698dcd7`** (opentpu
+`~/otpu-build/deploy_champ_e698dcd7`, with `~/otpu-build/production` pointing to it; the bitstream
+also on omarchy in `~/otpu-build/champ-e698dcd7`). It is main e698dcd, the Vivado tournament's
+full-effort champion at 133.33 MHz, built as `BUILD_ID=0f3a0000 CORE_MHZ=133.33 make bit DDR=1066`
+with `make bit`'s defaults: LiteDRAM, MCOLS=4 (the systolic MXU) and 32-beat reads.
+- **BUILD_ID** reads 0x0f3a0000, the constant the tournament gives every full build, not the
+  commit.
+- **Configuration:** CORE_KHZ 133333, DDR3-1066, CAPS 0x0f0a0eff.
+- **Bitstream:** written from the build's routed checkpoint with its own properties (BPI16, 1.8 V,
+  compressed); otpu.bit md5 51f37c8df3ac6211c5136283599cecf7. The directory holds the host tree it
+  was qualified with (main e698dcd, `host-main-e698dcd`), reports/, the qual results and a README
+  with the restore steps. No `.mcs`: the flash still holds the factory image.
+- **Memory:** the DDR3 channels run on LiteDRAM with WL7DDRPHY ([litedram.md](litedram.md),
+  section 8). A small CPU in the memory core calibrates them when the image starts: no host
+  calibration.
+- **Timing:** WNS +0.032 ns, TNS 0, WHS +0.016 ns. By clock: core 133.9 MHz, LiteDRAM sys
+  134.2 MHz, XDMA's 125 MHz clock 134.9 MHz.
+- **Area:** 176,357 LUT (59.1%), 146,863 FF, 713 DSP, 607.5 BRAM tiles, 60,694 slices (81.3%).
+
+Qualified on the card 2026-09-29, 20:48-21:30 (opentpu's clock). The run was `LOAD=0
+tools/qual/qual.sh champ-e698dcd7 fast` from a main e698dcd host tree, after a JTAG load and a
+warm reboot. It took 41 min: 0 FAIL, 34 PASS.
+- **Calibration at start-up:** by the core's CPU.
+  - Channel 0: CK step 49, a 720 ps common write window (43 steps), write latency 6 on every
+    lane, 6.25 s.
+  - Channel 1: CK step -48, 1222 ps (73 steps), write latency 0, 5.81 s. Two bits read at their
+    own bitslip: lane 5 bit 2 at -2, lane 8 bit 6 at +2.
+- **Selftest:** ALL PASS, before and after.
+- **Warm diag:** passes after the 180 s soak, in which the FPGA went from 65 to 68 C.
+- **Token-exact:** all 6 configurations are token for token equal to the ISA simulator,
+  per-position and resident.
+
+Decode and prefill (`tools/qual/perf.py`: 64 greedy tokens after a 512-token prompt, argmax on the
+host; wall on opentpu). DRAM is the card's counters while it runs; the peak is 17.1 GB/s.
+
+| Model | Weights | Mcycles/token | decode device / wall tok/s | DRAM while decoding | prefill device tok/s | se-cand3 decode / prefill device tok/s |
+|---|---|---|---|---|---|---|
+| LFM2.5-230M | int8 | 2.259 | 59.03 / 52.25 | 14.48 GB/s (85%) | 295.6 | 58.92 / 161.5 |
+| LFM2.5-230M | 4-bit, int8 head | 1.554 | 85.79 / 82.12 | 14.07 GB/s (82%) | 335.4 | 86.44 / 169.7 |
+| Qwen3-0.6B | int8 | 6.163 | 21.64 / 21.33 | 14.39 GB/s (84%) | 92.1 | 21.70 / 55.0 |
+| Qwen3-0.6B | 4-bit, int8 head | 4.256 | 31.33 / 30.67 | 13.93 GB/s (82%) | 103.4 | 31.84 / 58.5 |
+| Qwen3.5-0.8B | int8 | 7.597 | 17.55 / 16.31 | 14.47 GB/s (85%) | 61.4 | 17.48 / 46.3 |
+| Qwen3.5-0.8B | 4-bit, int8 head | 5.435 | 24.53 / 23.27 | 14.12 GB/s (83%) | 66.7 | 24.40 / 48.8 |
+
+Streamed 4-bit decode (`tools/decode_profile.py`, 96 tokens), in Mcycles/token, then device /
+wall tok/s:
+- LFM2: 1.490, 89.46 / 84.50;
+- Qwen3: 3.958, 33.68 / 33.32;
+- Qwen3.5: 5.414, 24.63 / 24.19.
+
+se-cand3 gave 90.52 / 87.17, 34.46 / 34.06 and 24.65 / 24.18.
+
+**Decode equals se-cand3's within 2.3%, and prefill is 1.3-2.0x faster.** Decode is bound by
+DRAM in both images: at 82-85% of the DDR3-1066 peak with LiteDRAM, as with the MIG.
+
+**Against the 100 MHz LiteDRAM image 5e5a58ab:** decode takes 13-16% more cycles per token here,
+for 13-15% less time per token. At 100 MHz the 128-byte port caps DRAM at 12.8 GB/s, and that
+image read at 70-74% of the peak ([litedram.md](litedram.md), section 8).
+
+**Previous production image (2026-09-29 until the evening): `build/deploy_secand3_02569bc`** (omarchy and opentpu
 `~/otpu-build/`; branch se-cand3 02569bc, built with `SE=v2` (now the only configuration), `AXI_BL=32`,
 `AXI_WBL=8`, BUILD_ID 002569bc). The stream engine (docs/stream.md) replaces the VPU's two
 composite chains and the DMA's DSTEP datapath. The composites run on the 8 lanes' three stages

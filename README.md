@@ -25,45 +25,47 @@ The design runs three modern models with their real weights on an Inspur YPCB-00
 (Xilinx Kintex-7 xc7k480t, two DDR3 channels), and the card produces the same tokens as the
 simulator, bit for bit.
 
-| Model | Weights | Decode, device | Decode, wall | Prefill, device | DRAM reads while decoding |
+| Model | Weights | Decode, device | Decode, wall | Prefill, device | DRAM while decoding |
 |:--|:--|--:|--:|--:|--:|
-| LFM2.5-230M | int8 | 60.6 tok/s | 59.8 tok/s | 161.5 tok/s | 14.5 GB/s (85% of peak) |
-| LFM2.5-230M | 4-bit, int8 head | 90.2 tok/s | 88.8 tok/s | 169.7 tok/s | 14.2 GB/s (83%) |
-| Qwen3-0.6B | int8 | 22.8 tok/s | 22.7 tok/s | 55.0 tok/s | 14.4 GB/s (84%) |
-| Qwen3-0.6B | 4-bit, int8 head | 34.2 tok/s | 34.0 tok/s | 58.5 tok/s | 14.1 GB/s (83%) |
-| Qwen3.5-0.8B | int8 | 17.6 tok/s | 17.5 tok/s | 44.1 tok/s | 14.5 GB/s (85%) |
-| Qwen3.5-0.8B | 4-bit, int8 head | 24.7 tok/s | 24.6 tok/s | 46.3 tok/s | 14.2 GB/s (83%) |
+| LFM2.5-230M | int8 | 59.0 tok/s | 52.3 tok/s | 295.6 tok/s | 14.5 GB/s (85% of peak) |
+| LFM2.5-230M | 4-bit, int8 head | 85.8 tok/s | 82.1 tok/s | 335.4 tok/s | 14.1 GB/s (82%) |
+| Qwen3-0.6B | int8 | 21.6 tok/s | 21.3 tok/s | 92.1 tok/s | 14.4 GB/s (84%) |
+| Qwen3-0.6B | 4-bit, int8 head | 31.3 tok/s | 30.7 tok/s | 103.4 tok/s | 13.9 GB/s (82%) |
+| Qwen3.5-0.8B | int8 | 17.6 tok/s | 16.3 tok/s | 61.4 tok/s | 14.5 GB/s (85%) |
+| Qwen3.5-0.8B | 4-bit, int8 head | 24.5 tok/s | 23.3 tok/s | 66.7 tok/s | 14.1 GB/s (83%) |
 
-*Measured on the card with the production image (`deploy_pnbl32_e2521032`: 120.755 MHz,
-32-beat DRAM read bursts, 8-beat write bursts, DDR3-1066 with a 17.1 GB/s peak) and the host on
-main, with the card in the omarchy PC (Intel Core i5-12600KF), before it moved to opentpu (see
-below). Decode is greedy, 96 tokens; "device" counts only the cycles the accelerator runs and
-"wall" adds the host. LFM2 4-bit wall is the median of 5 runs (88.1 to 88.9); the others are one
-run each. Prefill is a 512-token prompt. DRAM reads come from the card's own counters while it
-runs. Every configuration matches the simulator token for token. More detail in
-[docs/board.md](docs/board.md).*
+*Measured on the card on 2026-09-29 with the production image `deploy_champ_e698dcd7`.*
+- *The image: main e698dcd at 133.33 MHz, one bitstream for all models. It has LiteDRAM
+  controllers calibrated by a small CPU inside the memory core, a four-column systolic matrix
+  unit and the stream engine ([docs/stream.md](docs/stream.md)). DDR3-1066, with a 17.1 GB/s
+  peak.*
+- *The host: the card sits in opentpu (Intel Core i7-4790).*
+- *Method, `tools/qual/perf.py`: decode is 64 greedy tokens after a 512-token prompt, with the
+  host's argmax in the loop (not streamed). "Device" counts only the cycles the accelerator runs;
+  "wall" adds the host. Prefill is the 512-token prompt, on the device.*
+- *DRAM traffic comes from the card's own counters while it runs.*
+- *Every configuration matches the simulator token for token, per-position and with the
+  resident decode program. More detail in [docs/board.md](docs/board.md).*
 
-Since 2026-09-28 the card sits in another PC, opentpu, with an older CPU (Intel Core i7-4790).
-There, the same image and host code give the same device numbers (within 0.3%), but the host
-takes about 0.45 ms per token between the end of one run and the start of the next, against
-about 0.18 ms on omarchy. So wall is lower: LFM2 4-bit decodes at 86.8 tok/s (median of 5 runs,
-85.5 to 87.1). The single runs of the others: LFM2 int8 58.1, Qwen3 int8 22.6, Qwen3 4-bit
-33.7, Qwen3.5 int8 17.1, Qwen3.5 4-bit 24.0 tok/s.
+With the logits streamed back while the card runs (`tools/decode_profile.py`, 96 tokens), 4-bit
+decode is faster, in device / wall tok/s:
+- LFM2: 89.5 / 84.5;
+- Qwen3: 33.7 / 33.3;
+- Qwen3.5: 24.6 / 24.2.
 
-Since 2026-09-29 the production image is `deploy_secand3_02569bc`, measured on opentpu. It
-carries the stream engine ([docs/stream.md](docs/stream.md)), one programmable unit that
-replaces the VPU's composite chains and the DMA's DeltaNet step: 21% fewer LUTs and 52 fewer
-DSPs in the VPU and DMA, at the same device speed.
-- 4-bit decode: LFM2 90.5, Qwen3 34.5 and Qwen3.5 24.65 device tok/s, against the table's
-  90.2, 34.2 and 24.7.
-- Prefill: equal, and 5% faster for Qwen3.5.
-- Every configuration is still token for token equal to the simulator.
+The previous production image, se-cand3, was built with the Xilinx MIG, a two-column matrix
+unit and a 120.755 MHz clock. Measured the same way, the new image:
+- **decode:** within 2.3% of se-cand3's in every configuration. Decode is bound by DRAM, and
+  LiteDRAM reads at 82-85% of the DDR3 peak, as the MIG did.
+- **prefill:** 1.3x (Qwen3.5) to 2.0x (LFM2 4-bit) faster.
+- **calibration:** when the image starts, the core's CPU calibrates both DDR3 channels in 12 s,
+  with no host involvement.
 
-The table above was measured with the previous image.
+The earlier images and their numbers are in [docs/board.md](docs/board.md), section 5.
 
 4-bit weights ([docs/quant.md](docs/quant.md)) use FP4 values with two-level block scales, 4.25
 bits per weight, and keep the LM head in int8 for accuracy. They cut the bytes per token by about
-a third and raise decode speed by 40% (Qwen3.5) to 50% (Qwen3), at a measurable cost in
+a third and raise decode speed by 40% (Qwen3.5) to 45% (Qwen3, LFM2), at a measurable cost in
 perplexity that docs/quant.md reports per model.
 
 The host is nearly out of the way. For LFM2 and Qwen3 the card runs one decode program compiled
@@ -159,13 +161,13 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 
 ## What's next
 
-- **Faster prefill.** Prefill is limited by the matrix unit's multiply rate. A four-column matrix
-  unit halves that cost in simulation (Qwen3.5 prefill from 2.5 to 1.8 Mcycles per token); the
-  question is whether it closes timing at 120 MHz in the space left on the chip.
-- **A faster clock and a smaller design.** A tournament of Vivado runs keeps working on the paths
-  that stop the design at 125 MHz and on its area. Decode is bound by DRAM, so the clock mostly
-  helps prefill.
-- **The last few percent of DRAM.** Decode reads 83 to 85% of the DDR3 peak.
+- **The last few percent of DRAM.** Decode is bound by DRAM efficiency: it reads 82 to 85% of the
+  DDR3-1066 peak. Work on the LiteDRAM path's efficiency is under way.
+- **Timing margin and area.** The design closes 133.33 MHz, the clock at which the 128-byte port
+  matches the two DDR3 channels, but only just (WNS +0.032 ns). A tournament of Vivado runs keeps
+  working on its margin and area. Decode is bound by DRAM, so a faster clock mostly helps prefill.
+- **Faster prefill.** The four-column systolic matrix unit is in the production image; prefill is
+  still limited by the matrix unit's multiply rate.
 
 ## Contributing
 

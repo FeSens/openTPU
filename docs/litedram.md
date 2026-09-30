@@ -1191,6 +1191,36 @@ a JTAG load and a warm reboot, host tree = this branch at 08b898d5; logs in
   (FileNotFoundError) and still printed "0 FAIL lines": qual.sh counts `[FAIL]` lines only.
 - Afterwards the card went back to se-cand3 (build 002569bc), whose selftest passed.
 
+### At 133.33 MHz: the production image (main e698dcd, 2026-09-29, evening)
+
+The Vivado tournament's full-effort champion of main e698dcd (the design above, with the core
+clock at 133.33 MHz): WNS +0.032 ns, core 133.9 MHz and LiteDRAM sys 134.2 MHz. The bitstream is
+written from its routed checkpoint. On the card after a JTAG load and a warm reboot; qualified
+with `tools/qual/qual.sh fast` (LOAD=0) and promoted to production (`docs/board.md`, section 5).
+All **measured**.
+
+| | channel 0 | channel 1 |
+|---|---|---|
+| the CPU at configuration | 6.25 s | 5.81 s |
+| CK phase, common run | 49, 43 steps / 720 ps | -48, 73 steps / 1222 ps |
+| write latency | 6 on every lane | 0 on every lane |
+| bits read off their lane's bitslip | none | lane 5 bit 2 at -2, lane 8 bit 6 at +2 |
+
+- **qual.sh fast:** 41 min, 0 FAIL lines (34 PASS).
+  - Token-exact 12 / 12.
+  - `otpu-selftest` ALL PASS, before and after.
+  - The warm diag passes; the FPGA ran at 65-68 C.
+- **DRAM efficiency:** while decoding, the card read and wrote 13.9-14.5 GB/s, 82-85% of the
+  DDR3-1066 peak (17.1 GB/s). At 100 MHz (5e5a58ab) it was 11.9-12.5 GB/s (70-74%): the 128-byte
+  port's cap, 12.8 GB/s at that clock. At 133.33 MHz the port matches the two channels, and
+  LiteDRAM runs as close to the peak as the MIG did (se-cand3: 83-85%).
+- **Decode:** it takes 13-16% more cycles per token than at 100 MHz, and 13-15% less time. For
+  example, Qwen3 4-bit goes from 3.731 to 4.256 Mcycles/token and from 26.8 to 31.3 device
+  tok/s. It equals se-cand3's decode within 2.3%.
+- **Prefill:** 1.3-2.0x faster than se-cand3.
+- **Channel 1's per-bit read offsets** differ again from every earlier build. The CPU's per-bit
+  framing found them on its own.
+
 ### Follow-up: temperature rescans (not built)
 
 **Why.** The CPU calibrates once, at configuration.
