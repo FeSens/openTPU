@@ -18,7 +18,8 @@ module tb_top;
   parameter int MXU_CL     = 16;
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1;
   parameter int ULANES     = LANES;
-  parameter int AXI        = 0;       // otpu_top's memory path (1: the board's, native)
+  parameter int AXI        = 0;       // otpu_top's memory path (1: the board's, native; 2: the
+                                      // card's channels, LiteDRAM's controller)
   parameter int FIFO_DEPTH = 128;
 
   logic clk = 1'b0, sys_rst = 1'b1, rst = 1'b1, dump = 1'b0;
@@ -46,27 +47,32 @@ module tb_top;
         void'($value$plusargs(nm, rinit[k]));
       end
     end
-    repeat (3) @(posedge clk);
+    // the testbench changes its signals on the falling edge: race-free against the design's
+    // flip-flops and against a memory model's own clock (AXI = 2)
+    repeat (3) @(negedge clk);
     sys_rst = 1'b0;
     // +boot: the program sits in DRAM at +boot_addr (bytes), +boot_n instructions; the loader
     // copies it into IMEM before the slices leave reset (as on the board)
     if ($test$plusargs("boot")) begin
       void'($value$plusargs("boot_addr=%d", ld_addr));
       void'($value$plusargs("boot_n=%d", ld_n));
-      @(posedge clk);
+      @(negedge clk);
       ld_start = 1'b1;
-      @(posedge clk);
+      @(negedge clk);
       ld_start = 1'b0;
-      while (ld_busy) @(posedge clk);
+      while (ld_busy) @(negedge clk);
     end
-    @(posedge clk);
+    @(negedge clk);
     rst = 1'b0;
     while (!all_halted && cycles < max_cycles) begin
-      @(posedge clk);
+      @(negedge clk);
       cycles++;
     end
+    // the memory path finishes what it took before the dump: a halted slice's last writes are
+    // counted once the channel takes their commands, their data a few cycles later
+    repeat (256) @(negedge clk);
     dump = 1'b1;
-    @(posedge clk);
+    @(negedge clk);
     dump = 1'b0;
     repeat (2) @(posedge clk);     // the slices print their trace events a cycle late
     $display("RESULT cycles=%0d halted=%0d error=%0d", cycles, all_halted, any_error);

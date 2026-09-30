@@ -3,7 +3,7 @@ otpu_native_dram in front of the native memory model, sim/verilator/otpu_native_
 
     python3 tools/perf_qwen.py [--model qwen3|lfm2|qwen35|DIR] [--layers N] [--pos P]
                                [--bw 100] [--check] [--wformat int8|int4|fp4]
-                               [--head-format int8|int4|fp4] [--ddr 1066 [--mhz 100]]
+                               [--head-format int8|int4|fp4] [--ddr 1066 [--mhz 100] [--ldc]]
 
 Uses the real weights (models/Qwen3-0.6B, or --model lfm2: models/LFM2.5-230M, --model qwen35:
 models/Qwen3.5-0.8B), optionally only the first N layers (the LM head is always complete).
@@ -14,7 +14,9 @@ kernel source line, and the MXU idle gaps with their causes.
 
 --ddr MTS: the DDR3 bank model calibrated on the card (opentpu.profile.ddr3_plusargs; ROW_BANK_
 COLUMN, 300 ns latency) at DDR3-MTS with the core at --mhz (the controller clock, LiteDRAM's sys,
-is MTS / 8). DRAM efficiency = the token's DRAM bytes (weights, scales, KV,
+is MTS / 8). --ldc: the card's channels instead of the bank model -- the board's bridge and
+LiteDRAM's own controller with the production core's settings (DDR3-1066 only, the board's
+rate; rtlsim.MEMORY's LDC). DRAM efficiency = the token's DRAM bytes (weights, scales, KV,
 I/O, reads and writes) / (its time x the DDR3 peak, 16 bytes x MTS: 17.07 GB/s at 1066).
 """
 from __future__ import annotations
@@ -136,6 +138,8 @@ def main():
                     help="DDR3 MT/s of the calibrated bank model (800, 1066, 1300; sets "
                          "--dram rbc and the timings)")
     ap.add_argument("--mhz", type=float, default=100.0, help="core clock (tokens/s; --ddr)")
+    ap.add_argument("--ldc", action="store_true",
+                    help="--ddr: LiteDRAM's controller co-simulated instead of the bank model")
     ap.add_argument("--plus", action="append", default=[],
                     help="extra simulator argument, e.g. --plus +axi_trfc=26 (repeatable)")
     ap.add_argument("--rows", type=int, default=0,
@@ -163,6 +167,12 @@ def main():
                          "port B did (64-cycle windows)")
     a = ap.parse_args()
     plus = list(a.plus)
+    ldc = 0
+    if a.ldc:
+        if not a.ddr or int(a.ddr) not in rtlsim.LDC_MODELS:
+            ap.error(f"--ldc needs --ddr {' / '.join(map(str, rtlsim.LDC_MODELS))}")
+        ldc = int(a.ddr)
+        plus = plus + rtlsim.ldc_plusargs(ldc, a.mhz)
     if a.ddr:
         a.ddr = {1066: 3200 / 3, 1333: 4000 / 3}.get(int(a.ddr), a.ddr)
         plus = plus + ddr3_plusargs(a.ddr, a.mhz)[2:]   # the first of a plusarg wins
@@ -216,7 +226,7 @@ def main():
     drams, _, st = rtlsim.run(cfg, progs, [dram], trace=True,
                               uarch=rtlsim.BOARD_UARCH,
                               axi=True, boot=True, stall=a.stall, bw=a.bw, lat=a.lat,
-                              max_cycles=1 << 40, args=args,
+                              max_cycles=1 << 40, args=args, ldc=ldc,
                               plusargs=([] if a.dram == "off" else
                                         ["+axi_dram=1", f"+axi_map={int(a.dram == 'rbc')}"])
                               + plus)
