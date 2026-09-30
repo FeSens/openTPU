@@ -1,7 +1,8 @@
 """Greedy decoding on the ISA simulator vs Hugging Face (fp32), prompt by prompt.
 
     python3 tools/compare_hf.py [--model qwen3|lfm2|qwen35|DIR] [--tokens 16] [--chat] [--emulate]
-                                [--cfg board|CFG.pkl] [--wformat F] [--head-format F] [prompt ...]
+                                [--cfg board|CFG.pkl] [--wformat F] [--head-format F]
+                                [--backend isa|board] [--resident] [prompt ...]
 
 For each prompt: the two continuations, the first token where they differ with Hugging Face's
 logit gap there, and the device's logit error against Hugging Face's logits over the steps
@@ -11,8 +12,10 @@ wraps each prompt in the model's chat template (a user turn). --emulate also run
 at the first difference, to tell quantization effects (the emulation agrees with the device)
 from kernel bugs (it agrees with Hugging Face). --cfg runs the ISA simulator in a board
 configuration (the card's, as tools/qual/refs.py cfg pickles it) instead of the design one;
---wformat / --head-format pick the weight formats (Engine). Hugging Face runs first and is
-freed before the device's image is built (a 4B model is 16 GB in fp32).
+--wformat / --head-format pick the weight formats (Engine). --backend board runs the device
+on the card (the host driver, as otpu-chat --backend board; a card session), --resident with
+the resident decode program. Hugging Face runs first and is freed before the device's image is
+built (a 4B model is 16 GB in fp32).
 """
 from __future__ import annotations
 
@@ -53,6 +56,11 @@ def main() -> None:
                     "design configuration")
     ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"])
     ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"])
+    ap.add_argument("--backend", default="isa", choices=["isa", "board"],
+                    help="the ISA simulator, or the card (--cfg does not apply)")
+    ap.add_argument("--dev", default="/dev/xdma0", help="the card's XDMA device (--backend board)")
+    ap.add_argument("--resident", action="store_true",
+                    help="decode with the resident program (Engine resident=True)")
     a = ap.parse_args()
     path = model_dir(a.model)
     tok = transformers.AutoTokenizer.from_pretrained(path)
@@ -84,8 +92,11 @@ def main() -> None:
     emulated_logits = importlib.import_module(type(spec).__module__).emulated_logits
     need = max(len(ids) for _, ids in prompts) + a.tokens
     cap = max(256, -(-need // 128) * 128)
-    cfg = None
-    if a.cfg:
+    cfg, backend = None, "isa"
+    if a.backend == "board":
+        from opentpu.host.chat import make_backend
+        backend, cfg = make_backend("board", spec, cap, a.dev, path.name, lookup=a.resident)
+    elif a.cfg:
         import pickle
         from dataclasses import replace
 
@@ -93,8 +104,10 @@ def main() -> None:
         from opentpu.isasim import board_config
         base = board_config() if a.cfg == "board" else pickle.loads(Path(a.cfg).read_bytes())
         cfg = sim_config(spec, cap, replace(base, DRAM_BYTES=1 << 32))
-    eng = Engine(spec, W, cap=cap, cfg=cfg, wformat=a.wformat, head_format=a.head_format)
-    print(f"device: {eng.cfg}, weights {a.wformat}, head {a.head_format or a.wformat}")
+    eng = Engine(spec, W, cap=cap, cfg=cfg, backend=backend, wformat=a.wformat,
+                 head_format=a.head_format, resident=a.resident)
+    print(f"device: {a.backend} {eng.cfg}, weights {a.wformat}, head {a.head_format or a.wformat}"
+          f"{', resident decode' if eng.resident else ''}")
     top2 = lambda l: [tok.decode([int(i)]) for i in np.argsort(-l)[:2]]
     same, worst = 0, (0.0, 1.0)
     for (p, ids), want, ref in zip(prompts, wants, refs):
