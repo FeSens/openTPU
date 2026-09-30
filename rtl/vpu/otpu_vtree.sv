@@ -19,6 +19,7 @@ module otpu_vtree
   input  logic       row_last,
   input  logic [7:0] sub,
   output f32_t       root,
+  output f32_t       root_o,     // root, from a copy of its register (LN2): for a far load
   output logic       root_v
 );
   localparam int NP = 64;                    // isum_64 partials
@@ -158,8 +159,9 @@ module otpu_vtree
   //   L1b at E+1   (6): xl[0][m + 2] + xl[0][m + 6]   (from td[2])
   //   L2  at E+5   (2): xs[m] at E+4 + xs[m]          (L1a + L1b = xl[1][m] + xl[1][m + 2])
   //   L3  at E+10  (7): xs[0] + xs[1] at E+9, m = 0   (L2 results = xl[2][0] + xl[2][1])
-  // and the root is xs[0] at E+14. The residues are distinct and rows are a multiple of RL
-  // apart, so neither adder is ever double-booked; same operands in the same order as xl.
+  // and the root is xs[0] at E+14 (root_o: u_ln[0]'s second result register, otpu_fadd2). The
+  // residues are distinct and rows are a multiple of RL apart, so neither adder is ever
+  // double-booked; same operands in the same order as xl.
   // The operands are registered one granted cycle ahead (qa, qb): a has no mux, b one 2:1 mux
   // with a flip-flop select in front of the L1b result xs[m].
   if (LN2) begin : g_ln
@@ -175,9 +177,14 @@ module otpu_vtree
         qb <= l1a_n ? tr_y[m + 4] : l1b_n ? tr_y1[m + 6] : xs[1];
       end
       assign ob = ln_l2 ? xs[m] : qb;
-      otpu_fadd #(.LAT(LA)) u_ln (.clk, .en, .a(qa), .b(ob), .y(xs[m]));
+      if (m == 0) begin : g_o
+        otpu_fadd2 u_ln (.clk, .en, .a(qa), .b(ob), .y(xs[m]), .yo(root_o));
+      end else begin : g_n
+        otpu_fadd #(.LAT(LA)) u_ln (.clk, .en, .a(qa), .b(ob), .y(xs[m]));
+      end
     end
   end else begin : g_lg
+    assign root_o = xl[LW][0];
     assign ln_l1b = 1'b0;
     assign ln_l2  = 1'b0;
     assign ln_l3  = 1'b0;
