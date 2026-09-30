@@ -126,7 +126,7 @@ def test_tiny_resident_decode_is_bit_exact(tiny):
     """Resident decode (run-time position and token) gives the per-position programs' logits
     bit for bit, across the bucket boundary 256, after a chunked prefill; one hardware loop
     runs every layer, with and without RoPE, and the token's int8 embedding row is gathered
-    from the tied int8 LM head (the host feeds the per-position programs the same values)."""
+    from the tied int8 LM head (the per-position programs gather it too)."""
     _, _, spec, W = tiny
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 262)]
     cfg = board_config(DRAM_BYTES=1 << 26)

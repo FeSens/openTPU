@@ -69,8 +69,9 @@ from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
 from .lfm2 import plan, run_layers
 from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fake_q, _fake_w,
-                    _inputs, _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc,
-                    _mlp, _qdesc, _tdesc, compile_decode, rope_tables)
+                    _inputs, _inputs_rows, _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build,
+                    _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode,
+                    rope_tables)
 
 LIN, ATTN = "linear", "attn"
 
@@ -511,13 +512,13 @@ class Image:
         convolutions need lo >= conv_k - 1 (every tap of the ring is a past token)."""
         return compile_decode(self, qwen35_step, blocks, lo, block)
 
-    def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
+    def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program per slice: the decode token at position `pos` (qwen35_step)."""
         return [qwen35_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
-                                                "block": block}).finish()
+                                                "block": block, **_tok_arg(self, tok)}).finish()
                 for s in range(self.cfg.S)]
 
-    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
         """One program per slice: consecutive positions of the sequence at once
         (qwen35_rows)."""
         if len(rows) > self.rows:
@@ -526,7 +527,8 @@ class Image:
             raise ValueError("Qwen3.5 rows must be consecutive positions of sequence 0")
         return [qwen35_rows.trace(self.cfg, s, {"m": self.descriptors(s), "p0": rows[0][1],
                                                 "R": len(rows), "logit_rows": list(logit_rows),
-                                                "block": block}).finish()
+                                                "block": block,
+                                                **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
     # ---- kernel descriptors
@@ -969,7 +971,7 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
 
 
 @ol.jit
-def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
+def qwen35_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     """One decode token at position `pos`: x (the token's embedding) -> logits.
 
     Each run of m.plan with repeats is a hardware loop over its unit of layers; the others are
@@ -978,7 +980,7 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
     to m.logits.
     """
     spec = m.spec
-    x, c, s_ = _inputs(m, pos)
+    x, c, s_ = _inputs(m, pos, tok)
 
     def layer(li, kind):
         lw = m.layer(li, kind)
@@ -1197,14 +1199,14 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
 
 
 @ol.jit
-def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK):
+def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     """R prompt tokens at positions p0 .. p0+R-1 at once: their embeddings m.xr and RoPE
-    tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
-    empty). Bit-identical to R qwen35_step runs."""
+    tables m.cosr / m.sinr, or those of `tokens` from the image's tables (qwen3._inputs_rows) ->
+    logits of the rows in `logit_rows` (a contiguous range, or empty). Bit-identical to R
+    qwen35_step runs."""
     spec = m.spec
     rows = [(0, p0 + r) for r in range(R)]
-    x = ol.load(m.xr[0:R, :])
-    c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    x, c, s_ = _inputs_rows(m, rows, tokens)
 
     def layer(li, kind):
         lw = m.layer(li, kind)

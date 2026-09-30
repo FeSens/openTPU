@@ -13,8 +13,8 @@ What differs from Qwen3, all in qwen3.py and off for Qwen3:
             frequencies, the attention factor scales cos and sin; the KV capacity stays within
             original_max_position_embeddings (ctx), where Hugging Face uses the short factors
   embed     "int8": the embedding rows are int8 per 128 (their vocabularies, 128K and 200K,
-            make an fp32 table 1-2.4 GB): the resident decode gathers them from the tied int8
-            LM head (kernels.gather.gather_row), the host feeds the same values
+            make an fp32 table 1-2.4 GB): the device gathers them from the tied int8 LM head
+            (kernels.gather.gather_row)
 Phi-3's fused qkv_proj and gate_up_proj are read as separate q/k/v and gate/up projections
 (qwen3.Weights).
 """

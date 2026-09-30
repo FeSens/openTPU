@@ -137,7 +137,11 @@ def _spare(shape) -> int:
     return shape[0] if len(shape) == 2 else 0
 
 
-def empty(shape) -> Tile:
+def empty(shape, dense: bool = False) -> Tile:
+    """A new tile. dense: rows back to back (row stride = columns), as a load allocates them:
+    the destination of loads in pieces (ol.load(..., out=view))."""
+    if dense:
+        return current().alloc(tuple(shape))
     return current().alloc(tuple(shape), _acc_layout(shape), _spare(shape))
 
 

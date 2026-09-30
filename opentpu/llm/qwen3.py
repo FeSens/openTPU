@@ -65,8 +65,8 @@ class Spec:
     ctx: int = 0              # the most positions the RoPE tables hold (LongRoPE: its short
     #                           factors' range; 0: no limit)
     embed: str = "f32"        # the embedding rows: fp32, or "int8" (per D block, as the tied
-    #                           int8 LM head holds them: the resident decode gathers them from
-    #                           it, kernels.gather.gather_row; the host uses the same values)
+    #                           int8 LM head holds them: the device gathers them from it,
+    #                           kernels.gather.gather_row)
 
     @property
     def rope_dim(self) -> int:
@@ -262,15 +262,18 @@ def _lookup_desc(lk: dict, spec, cap: int) -> dict:
 
 
 class Embedding:
-    """The embedding rows the device computes with, on the host (Engine.embed: the per-position
-    programs' and prefill runs' inputs): the checkpoint's fp32 rows, or with spec.embed "int8"
-    their int8 quantization as the resident decode's gather dequantizes it, bit for bit."""
+    """The embedding rows the device computes with, on the host: the checkpoint's fp32 rows
+    (Engine.embed: the inputs the host writes for an image without lookup tables), or with
+    spec.embed "int8" their int8 quantization as the device's gather dequantizes it, bit for bit
+    (the reference; an Engine of such a model reads them from the image, batch 1)."""
 
     def __init__(self, spec, W, D: int):
-        self.table = W["model.embed_tokens.weight"]
+        self.W, self.table = W, None        # read at the first row (never with device inputs)
         self.int8, self.D = getattr(spec, "embed", "f32") == "int8", D
 
     def __getitem__(self, idx) -> np.ndarray:
+        if self.table is None:
+            self.table = self.W["model.embed_tokens.weight"]
         rows = np.asarray(self.table[idx], np.float32)
         if not self.int8:
             return rows
@@ -283,6 +286,26 @@ def gathered_rows(rows, D: int) -> np.ndarray:
     rows = np.atleast_2d(np.asarray(rows, np.float32))
     q, sc = Q.quantize_mxu(rows, "int8", D)
     return np.stack([dequant_row(q[i], sc[i], "int8", D) for i in range(len(rows))])
+
+
+def _tok_arg(image, tok) -> dict:
+    """The kernel argument of a compile-time token (none without one: the program is the
+    host-input one)."""
+    if tok is None:
+        return {}
+    if not image.lookup:
+        raise ValueError("a program with its token's inputs from the image needs lookup tables")
+    return {"tok": int(tok)}
+
+
+def _tokens_arg(image, tokens, rows) -> dict:
+    if tokens is None:
+        return {}
+    if not image.lookup:
+        raise ValueError("rows with their inputs from the image need lookup tables")
+    if len(tokens) != len(rows):
+        raise ValueError(f"{len(tokens)} tokens for {len(rows)} rows")
+    return {"tokens": [int(t) for t in tokens]}
 
 
 def has_lookup(spec) -> bool:
@@ -604,19 +627,21 @@ class Image:
         """(programs, run_args): qwen3_step at a run-time position (compile_decode)."""
         return compile_decode(self, qwen3_step, blocks, lo, block)
 
-    def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
-        """One program per slice: the decode token at position `pos` (qwen3_step)."""
+    def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
+        """One program per slice: the decode token at position `pos` (qwen3_step); with `tok`
+        (an image with lookup tables) its inputs come from the tables, not the host."""
         return [qwen3_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
-                                               "block": block}).finish()
+                                               "block": block, **_tok_arg(self, tok)}).finish()
                 for s in range(self.cfg.S)]
 
-    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
-        """One program per slice: token rows (sequence, position) at once (qwen3_rows)."""
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
+        """One program per slice: token rows (sequence, position) at once (qwen3_rows); with
+        `tokens` (an image with lookup tables) their inputs come from the tables."""
         if len(rows) > self.rows:
             raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
         return [qwen3_rows.trace(self.cfg, s, {"m": self.descriptors(s), "rows": list(rows),
-                                               "logit_rows": list(logit_rows),
-                                               "block": block}).finish()
+                                               "logit_rows": list(logit_rows), "block": block,
+                                               **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
     # ---- kernel descriptors
@@ -835,14 +860,15 @@ HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must f
 
 
 @ol.jit
-def qwen3_step(m, pos: int, block: int = ATTN_BLOCK):
+def qwen3_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     """One decode token at position `pos`: x (the token's embedding) -> logits.
 
     The layers run as a hardware loop; each layer appends its K/V at `pos` and attends over
-    positions 0..pos. Logits for this slice's vocabulary rows are stored to m.logits.
+    positions 0..pos. Logits for this slice's vocabulary rows are stored to m.logits. `tok`:
+    the token's id, its inputs read from the image's tables (_inputs).
     """
     spec = m.spec
-    x, c, s_ = _inputs(m, pos)
+    x, c, s_ = _inputs(m, pos, tok)
     for li in ol.range(m.n_layers):
         lw = m.layer(li)
         x.set(_attention(x, lw, c, s_, pos, spec, block))
@@ -850,15 +876,46 @@ def qwen3_step(m, pos: int, block: int = ATTN_BLOCK):
     _lm_head(x, m, spec)
 
 
-def _inputs(m, pos):
+def _inputs(m, pos, tok=None):
     """The token's embedding row and its RoPE rows: from the I/O area (the host writes them),
-    or, at a run-time position (RunPos), from the image's tables at the token id and position."""
+    or from the image's tables (Image(lookup=True)) at the token id and position -- at a
+    run-time position (RunPos), or at a compile-time token `tok` (a per-position program)."""
     if isinstance(pos, RunPos):
-        eq = getattr(m, "embed_q", None)
-        x = ol.load(m.embed[pos.tok:pos.tok + 1, :]) if eq is None else next(_gather(m, eq,
-                                                                                    [pos.tok]))
-        return x, ol.load(m.cos_t[pos.pos, :]), ol.load(m.sin_t[pos.pos, :])
-    return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
+        tok, pos = pos.tok, pos.pos
+    elif tok is None:
+        return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
+    return _embed(m, tok), ol.load(m.cos_t[pos, :]), ol.load(m.sin_t[pos, :])
+
+
+def _embed(m, tok):
+    """Token `tok`'s embedding row [1, H] (an int or a run-time value) from the image's tables:
+    the fp32 table's row, or the int8 row gathered on the device (Spec.embed "int8")."""
+    eq = getattr(m, "embed_q", None)
+    return ol.load(m.embed[tok:tok + 1, :]) if eq is None else next(_gather(m, eq, [tok]))
+
+
+def _inputs_rows(m, rows, tokens=None):
+    """_inputs for token rows (rows[r] = (sequence, position)): from the I/O area, or with
+    `tokens` (their ids, compile-time values) from the image's tables, the embedding row of
+    each token and the RoPE rows of each run of consecutive positions."""
+    R = len(rows)
+    if tokens is None:
+        return ol.load(m.xr[0:R, :]), ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    eq = getattr(m, "embed_q", None)
+    # x, c and s first, side by side as the host path loads them: the gathers' temporaries
+    # after them are freed whole (TMEM does not fragment)
+    x = ol.empty([R, m.xr.shape[1]], dense=True)
+    c, s_ = ol.empty([R, m.cosr.shape[1]], dense=True), ol.empty([R, m.sinr.shape[1]], dense=True)
+    if eq is None:
+        for r, t in enumerate(tokens):
+            ol.load(m.embed[t:t + 1, :], out=x[r:r + 1, :])
+    for _, p0, r0, n in _runs(rows):
+        ol.load(m.cos_t[p0:p0 + n, :], out=c[r0:r0 + n, :])
+        ol.load(m.sin_t[p0:p0 + n, :], out=s_[r0:r0 + n, :])
+    if eq is not None:
+        for r, g in enumerate(_gather(m, eq, tokens)):
+            x[r:r + 1, :].set(g)
+    return x, c, s_
 
 
 def _gather(m, eq, toks):
@@ -966,14 +1023,13 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
 
 
 @ol.jit
-def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK):
+def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     """R token rows at once (rows[r] = (sequence, position)): the rows' embeddings m.xr and
-    RoPE tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
-    empty: a prefill chunk that is not the last one skips the LM head)."""
+    RoPE tables m.cosr / m.sinr, or those of `tokens` from the image's tables (_inputs_rows)
+    -> logits of the rows in `logit_rows` (a contiguous range, or empty: a prefill chunk that
+    is not the last one skips the LM head)."""
     spec = m.spec
-    R = len(rows)
-    x = ol.load(m.xr[0:R, :])
-    c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    x, c, s_ = _inputs_rows(m, rows, tokens)
     for li in ol.range(m.n_layers):
         lw = m.layer(li)
         x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
@@ -1074,26 +1130,29 @@ def _worker_decode(blocks: int, lo: int):
     return np.asarray(assemble(progs[0]), np.uint32), ra
 
 
-def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int):
+def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int, toks=None):
     """The worker process: fit_chunk's run, its program assembled (one slice)."""
     from ..isa import assemble
     image, block = _WORKER
-    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit)
+    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit, toks)
     return n, None if progs is None else np.asarray(assemble(progs[0]), np.uint32), fit
 
 
-def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int):
+def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
+              tokens=None):
     """The next prefill run of sequence `seq` at position p0: up to n of the `left` remaining
     prompt tokens, as many as fit TMEM and ACT RAM (at most `fit` rows) and the instruction
     memory (attention is unrolled per row, head and block: the program grows with the context).
     Only the prompt's last run computes logits (its last row). Returns (R, compile_rows'
-    programs or None for R = 1, the rows that fit TMEM as far as known)."""
+    programs or None for R = 1, the rows that fit TMEM as far as known). `tokens` (at least n):
+    the run's inputs come from the image's tables (compile_rows tokens)."""
     imem = image.cfg.IMEM_WORDS
     n = min(n, fit, left)
     while n > 1:
         try:
             progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
-                                       [n - 1] if n == left else [], block)
+                                       [n - 1] if n == left else [], block,
+                                       **({} if tokens is None else {"tokens": tokens[:n]}))
         except CompileError as e:
             if "TMEM" not in str(e) and "ACT RAM full" not in str(e):
                 raise
@@ -1130,6 +1189,14 @@ class Engine:
     (LFM2, Qwen3.5: conv_k - 1) run per-position programs. Bit-identical to the per-position
     programs.
 
+    device_inputs: with the image's tables (resident, or a model with an int8 embedding,
+    spec.embed: its rows are dequantized on the device only) the prefill runs and per-position
+    programs read their inputs from the image too, the token ids compiled into them
+    (compile_rows tokens, compile_step tok): the host writes no inputs and computes nothing of
+    the model. Without the tables the host writes the embedding rows and RoPE rows (of a table
+    computed once, as the image's). A per-position program with its token is compiled in its
+    step (pipeline: not ahead); resident decode compiles none.
+
     pipeline: step() compiles the next position's program (it depends on the position only,
     not on the token) while the backend runs the current one. Default: on for every backend
     but "isa" (whose run holds the GIL: nothing to overlap). A precompile is used only for the
@@ -1149,16 +1216,24 @@ class Engine:
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
-        lookup = bool(resident) and batch == 1 and has_lookup(spec)
+        # an int8 embedding is dequantized on the device (the image's tables), never the host
+        int8_embed = getattr(spec, "embed", "f32") == "int8"
+        lookup = (bool(resident) or int8_embed) and batch == 1 and has_lookup(spec)
         if lookup:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
+        # with the tables every run reads its inputs from the image (the token ids are compiled
+        # into the per-position and prefill programs); else the host writes them: the
+        # embedding rows and the RoPE rows of a table computed once, here
+        self.device_inputs = bool(getattr(self.image, "lookup", None))
         self.embed = Embedding(spec, W, self.cfg.D)
+        self._rope = None if self.device_inputs else \
+            [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
-        self.resident = lookup and bool(getattr(self.backend, "args", False))
+        self.resident = bool(resident) and lookup and bool(getattr(self.backend, "args", False))
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self.poss = [0] * batch
@@ -1182,8 +1257,9 @@ class Engine:
             self.backend.attach(self)
 
     # ---- the compile pipeline
-    def _compile(self, pos: int) -> list:
-        progs = self.image.compile_step(pos, self.block)
+    def _compile(self, pos: int, tok: int | None = None) -> list:
+        progs = self.image.compile_step(pos, self.block,
+                                        **({} if tok is None else {"tok": int(tok)}))
         prep = getattr(self.backend, "prepare", None)
         if prep is not None:
             prep(progs)
@@ -1259,6 +1335,8 @@ class Engine:
                     self._submit(("decode", b), self._compile_decode, _worker_decode, b,
                                  max((b - 1) * self.block, self._conv_lo))
             return
+        if self.device_inputs:              # its program has the token: compiled in step()
+            return
         for p in range(pos, min(pos + self._ahead, self.cap)):
             if ("step", p) not in queued:
                 self._submit(("step", p), self._compile, _worker_compile, p)
@@ -1294,9 +1372,11 @@ class Engine:
             raise RuntimeError("KV cache full")
         io, S = self.image.io, self.cfg.S
         dec = self._decode(self.pos)
-        if dec is None:
+        if dec is None and self.device_inputs:  # the token's inputs from the image's tables
+            progs, kw = self._compile(self.pos, token), {}
+        elif dec is None:
             x = F.ftz(self.embed[token].astype(np.float32))
-            cos, sin = rope_tables(self.spec, self.pos)
+            cos, sin = self._rope[0][self.pos], self._rope[1][self.pos]
             if io["cos"] == io["x"] + x.nbytes and io["sin"] == io["cos"] + cos.nbytes:
                 parts = [(io["x"], np.concatenate([x, cos, sin]))]      # one transfer
             else:
@@ -1363,20 +1443,24 @@ class Engine:
         of `logit_rows` ([n, vocab])."""
         self._drain()
         return self._run_rows(rows, tokens, logit_rows,
-                              self.image.compile_rows(rows, logit_rows, self.block))
+                              self.image.compile_rows(rows, logit_rows, self.block,
+                                                      **self._tokens_kw(tokens)))
+
+    def _tokens_kw(self, tokens) -> dict:
+        """compile_rows' tokens, with device inputs (the host writes none)."""
+        return {"tokens": [int(t) for t in tokens]} if self.device_inputs else {}
 
     def _run_rows(self, rows, tokens, logit_rows, programs) -> np.ndarray:
         io, S, spec = self.image.io, self.cfg.S, self.spec
         if any(p >= self.cap for _, p in rows):
             raise RuntimeError("KV cache full")
-        x = F.ftz(self.embed[[int(t) for t in tokens]].astype(np.float32))
-        cs = [rope_tables(spec, p) for _, p in rows]
-        cos = np.stack([c for c, _ in cs]).astype(np.float32)
-        sin = np.stack([s_ for _, s_ in cs]).astype(np.float32)
-        for s in range(S):
-            self.backend.write(s, io["x"], x)
-            self.backend.write(s, io["cos"], cos)
-            self.backend.write(s, io["sin"], sin)
+        if not self.device_inputs:
+            x = F.ftz(self.embed[[int(t) for t in tokens]].astype(np.float32))
+            ps = [p for _, p in rows]
+            for s in range(S):
+                self.backend.write(s, io["x"], x)
+                self.backend.write(s, io["cos"], self._rope[0][ps])
+                self.backend.write(s, io["sin"], self._rope[1][ps])
         st = self.backend.run(programs)
         st["rows"] = len(rows)
         self.stats.append(st)
@@ -1386,9 +1470,9 @@ class Engine:
                for r in logit_rows]
         return np.array(out, np.float32).reshape(len(logit_rows), v)
 
-    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int):
+    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int, toks=None):
         """fit_chunk, its programs prepared for the backend."""
-        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit)
+        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit, toks)
         prep = getattr(self.backend, "prepare", None)
         if progs is not None and prep is not None:
             prep(progs)
@@ -1412,7 +1496,8 @@ class Engine:
         i = 0
         while i < len(tokens):
             p0, left = self.poss[seq], len(tokens) - i
-            key = ("rows", seq, p0, chunk, left, self._fit_rows)
+            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(tokens[i:],
+                                                                                  chunk))
             n, progs, self._fit_rows = self._take(key, self._chunk, *key[1:])
             part, last = tokens[i:i + n], n == left
             if not last:
@@ -1422,9 +1507,10 @@ class Engine:
             else:
                 rows, lr = [(seq, p0 + j) for j in range(n)], [n - 1] if last else []
                 if progs is None:
-                    progs = self.image.compile_rows(rows, lr, self.block)
+                    progs = self.image.compile_rows(rows, lr, self.block,
+                                                    **self._tokens_kw(part))
                 if not last:
-                    self._prefetch_chunks(seq, p0 + n, chunk, left - n)
+                    self._prefetch_chunks(seq, p0 + n, chunk, left - n, tokens[i + n:])
                 elif seq == 0:
                     self._prefetch(p0 + n)
                 lg = self._run_rows(rows, part, lr, progs)
@@ -1433,7 +1519,12 @@ class Engine:
             i += n
             yield part, (lg if last else None)
 
-    def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int) -> None:
+    def _chunk_toks(self, rest, chunk: int):
+        """The tokens a prefill run's program is compiled with (device inputs: its first
+        `chunk` of `rest`, the run takes as many as fit), or None."""
+        return tuple(rest[:chunk]) if self.device_inputs else None
+
+    def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int, rest=()) -> None:
         """Precompile the runs of a prompt from position p0 on, as many as the pipeline has
         workers (a chunk's trace can take longer than its run: Qwen3.5 on the card), each
         predicted to take as many rows as the last one (TMEM and IMEM limit a run: the program
@@ -1443,11 +1534,11 @@ class Engine:
         for _ in range(self._ahead):
             if left <= 0:
                 break
-            key = ("rows", seq, p0, chunk, left, self._fit_rows)
+            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(rest, chunk))
             if key not in queued:
                 self._submit(key, self._chunk, _worker_chunk, *key[1:])
             n = min(chunk, self._fit_rows, self._run_rows_n, left)
-            p0, left = p0 + n, left - n
+            p0, left, rest = p0 + n, left - n, rest[n:]
 
     def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
         """Feed a prompt to sequence `seq`; returns the logits after its last token

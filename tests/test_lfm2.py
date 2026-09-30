@@ -168,15 +168,15 @@ def test_tiny_mlp_loop_is_bit_exact(tiny_wide, monkeypatch, wformat):
 
 def test_tiny_mlp_loop_on_rtl(tiny_wide, have_verilator, monkeypatch):
     """The looped MLP (its two gate / up buffers reused across iterations) on the Verilator
-    RTL: a decode step and a 5-row prefill run bit-identical to the ISA simulator, DRAM
-    included."""
+    RTL: a resident decode step and a 5-row prefill run with its inputs from the image's
+    tables, bit-identical to the ISA simulator, DRAM included."""
     import opentpu.llm.lfm2 as L
     from opentpu.llm.rtl_backend import RtlBackend
     monkeypatch.setattr(L, "MLP_UNROLL_BODIES", 0)
     W, spec = tiny_wide
     toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
-    eng = Engine(spec, W, cap=256, cfg=board_config(DRAM_BYTES=1 << 24))
-    assert eng.image.mlp_loop
+    eng = Engine(spec, W, cap=256, cfg=board_config(DRAM_BYTES=1 << 24), resident=True)
+    assert eng.image.mlp_loop and eng.resident and eng.device_inputs
     eng.prefill(toks[:6])
     for run in (toks[6:7], toks[7:12]):
         n = eng.image.nbytes

@@ -48,8 +48,8 @@ from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
 from ..kernels.mlp import _chunk
 from ..runtime import quantize_rows
-from .qwen3 import (RunPos, _inputs, _lookup_alloc, _lookup_build, _lookup_desc,
-                    compile_decode)
+from .qwen3 import (RunPos, _inputs, _inputs_rows, _lookup_alloc, _lookup_build, _lookup_desc,
+                    _tok_arg, _tokens_arg, compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
                     _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables)
 
@@ -416,13 +416,13 @@ class Image:
         convolutions need lo >= conv_k - 1 (every tap of the state ring is a past token)."""
         return compile_decode(self, lfm2_step, blocks, lo, block)
 
-    def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
+    def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program per slice: the decode token at position `pos` (lfm2_step)."""
         return [lfm2_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
-                                              "block": block}).finish()
+                                              "block": block, **_tok_arg(self, tok)}).finish()
                 for s in range(self.cfg.S)]
 
-    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
         """One program per slice: consecutive positions of the sequence at once (lfm2_rows)."""
         if len(rows) > self.rows:
             raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
@@ -430,7 +430,8 @@ class Image:
             raise ValueError("LFM2 rows must be consecutive positions of sequence 0")
         return [lfm2_rows.trace(self.cfg, s, {"m": self.descriptors(s), "p0": rows[0][1],
                                               "R": len(rows), "logit_rows": list(logit_rows),
-                                              "block": block}).finish()
+                                              "block": block,
+                                              **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
     # ---- kernel descriptors
@@ -521,7 +522,7 @@ def _conv(x, lw, pos: int, spec: Spec):
 
 
 @ol.jit
-def lfm2_step(m, pos: int, block: int = ATTN_BLOCK):
+def lfm2_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     """One decode token at position `pos`: x (the token's embedding) -> logits.
 
     Each run of m.plan with repeats is a hardware loop over its unit of layers; the others are
@@ -529,7 +530,7 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK):
     attend over positions 0..pos. Logits for this slice's vocabulary rows go to m.logits.
     """
     spec = m.spec
-    x, c, s_ = _inputs(m, pos)
+    x, c, s_ = _inputs(m, pos, tok)
 
     def layer(li, kind):
         lw = m.layer(li, kind)
@@ -578,14 +579,14 @@ def _conv_rows(x, lw, p0: int, spec: Spec):
 
 
 @ol.jit
-def lfm2_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK):
+def lfm2_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     """R prompt tokens at positions p0 .. p0+R-1 at once: their embeddings m.xr and RoPE
-    tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
-    empty). Bit-identical to R lfm2_step runs."""
+    tables m.cosr / m.sinr, or those of `tokens` from the image's tables (qwen3._inputs_rows) ->
+    logits of the rows in `logit_rows` (a contiguous range, or empty). Bit-identical to R
+    lfm2_step runs."""
     spec = m.spec
     rows = [(0, p0 + r) for r in range(R)]
-    x = ol.load(m.xr[0:R, :])
-    c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    x, c, s_ = _inputs_rows(m, rows, tokens)
 
     def layer(li, kind):
         lw = m.layer(li, kind)

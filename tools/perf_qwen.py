@@ -155,7 +155,9 @@ def main():
     ap.add_argument("--dump", help="write the run's Lens profile data (lens.to_data) as JSON")
     ap.add_argument("--resident", action="store_true",
                     help="the resident decode program of pos's bucket (run arguments, inputs "
-                         "from the image's tables; qwen3.compile_decode)")
+                         "from the image's tables; qwen3.compile_decode); with --rows the "
+                         "resident engine's prefill run, its inputs from the tables too "
+                         "(compile_rows tokens)")
     ap.add_argument("--timeline", help="print the instructions of dynamic index range A:B")
     ap.add_argument("--idle", action="store_true", help="list DRAM-idle stretches (64-cycle windows)")
     ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"],
@@ -212,7 +214,9 @@ def main():
     if a.rows:
         lr = {"last": [R - 1], "all": list(range(R)), "none": []}[a.logits]
         progs = img.compile_rows([(0, a.pos + r) for r in range(R)], lr,
-                                 *([a.block] if a.block else []))
+                                 *([a.block] if a.block else []),
+                                 **({"tokens": [791 + r for r in range(R)]} if a.resident
+                                    else {}))
     elif a.resident:
         from opentpu.compiler import arg_words
         from opentpu.llm.qwen3 import ATTN_BLOCK, RunPos
