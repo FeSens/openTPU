@@ -42,7 +42,8 @@ import numpy as np
 def load(path):
     z = np.load(path, allow_pickle=False)
     meta = json.loads(str(z["meta"]))
-    moe = meta["moe_layers"]
+    meta.setdefault("text", str(path))          # a card's routes (moe_card.py --trace): no
+    moe = meta["moe_layers"]                    # text, no predictions
     E = meta["experts"] or int(max(z[f"L{l}_idx"].max() for l in moe)) + 1
     # requests[t, j, :]: the global expert ids (j-th MoE layer) token t asks for
     req = np.stack([z[f"L{l}_idx"].astype(np.int64) + j * E for j, l in enumerate(moe)], 1)
@@ -439,7 +440,8 @@ def main():
     for i, x in enumerate(tr):
         acc = accuracy(x["req"], x["preds"], k)
         print(f"  {Path(x['meta']['text']).name}: {x['req'].shape[0]} tokens, nll "
-              f"{x['meta']['nll_last128']:.2f}; prediction accuracy (top-{k} overlap): "
+              f"{x['meta'].get('nll_last128', float('nan')):.2f}; prediction accuracy (top-{k} "
+              "overlap): "
               + ", ".join(f"{p} {v:.3f}" for p, v in acc.items()))
         others = [y["req"] for j, y in enumerate(tr) if j != i] or [x["req"]]
         prof = sum(freq(r, n) for r in others)

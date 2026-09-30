@@ -36,10 +36,14 @@ def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) 
     t = time.time()
     with torch.no_grad():
         out = m.generate(torch.tensor([ids]), max_new_tokens=n, min_new_tokens=n,
-                         do_sample=False)            # n tokens: past an end of turn too
-    new = [int(x) for x in out[0, len(ids):]]
+                         do_sample=False, output_scores=True, return_dict_in_generate=True)
+    new = [int(x) for x in out.sequences[0, len(ids):]]  # n tokens: past an end of turn too
+    top = []                                    # per step HF's 8 best (id, logit): a card's
+    for sc in out.scores:                       # different pick, by how much it lost
+        v, i = torch.topk(sc[0].float(), 8)
+        top.append([[int(a), round(float(b), 4)] for a, b in zip(i, v)])
     return dict(model=model, prompt=prompt, ids=ids, tokens=new, text=tok.decode(new),
-                seconds=round(time.time() - t, 1))
+                top=top, seconds=round(time.time() - t, 1))
 
 
 def fit_experts(spec, cfg, cap: int, **kw) -> int:
@@ -76,17 +80,15 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     srv.serve = counted
     ids = ref["ids"]
     t = time.time()
-    lg = eng.prefill(ids)
-    t0 = int(np.argmax(lg))
+    lg = eng.prefill(ids if host_loop else ids[:-1])
     prefill_s = time.time() - t
-    miss0 = srv.misses
     t = time.time()
     if host_loop:               # the resident decode programs, the argmax on the host
-        got = [t0]
+        got = [int(np.argmax(lg))]
         for _ in range(n - 1):
             got.append(int(np.argmax(eng.step(got[-1]))))
-    else:
-        got = [t0] + eng.generate_card(t0, n - 1, stop_ids=[])
+    else:                       # the prompt's last token fed by the card's loop: every pick
+        got = eng.generate_card(ids[-1], n, stop_ids=[])        # on the card
     gen_s = time.time() - t
     L = eng.image.offload
     J, E = L.layers, L.E
@@ -101,13 +103,16 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         meta = dict(model=model, moe_layers=[first + j for j in range(J)], experts=E,
                     k=spec.moe.k, source="moe_card: the card's routes")
         np.savez(trace, meta=json.dumps(meta), **z)
-    return dict(tokens=got, match=got == ref["tokens"][:len(got)],
-                first_diff=next((i for i, (a, b) in enumerate(zip(got, ref["tokens"])) if a != b),
-                                None),
+    diff = next((i for i, (a, b) in enumerate(zip(got, ref["tokens"])) if a != b), None)
+    at = None
+    if diff is not None and "top" in ref:       # HF's 8 best at the first different pick
+        at = dict(hf=ref["tokens"][diff], card=got[diff], hf_top=ref["top"][diff])
+    return dict(tokens=got, match=got == ref["tokens"][:len(got)], first_diff=diff,
+                at_first_diff=at,
                 experts_per_layer=experts, slots=L.layers * experts, pool=L.layers * L.E,
                 image_mib=round(eng.image.nbytes / 2**20), slot_mb=round(L.slot_bytes / 1e6, 2),
                 requests=srv.seq, hits=srv.hits, misses=srv.misses,
-                misses_per_token_decode=round((srv.misses - miss0) / max(1, n - 1), 2),
+                misses_per_token_decode=round(float(dec.mean()), 2) if len(dec) else None,
                 expert_uses_per_token=J * spec.moe.k,
                 misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
                 if len(dec) else None,
