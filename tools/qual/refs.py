@@ -53,7 +53,8 @@ EXCLUDE = ("host/", "lens.py", "lens_app.html", "rtlsim.py", "hwtrace.py")
 HEARTBEAT = 15                                # s between .pending updates
 STALE = 120                                   # s without a heartbeat: the job is dead
 RESERVE = 4 << 30                             # bytes of MemAvailable kept free
-MEM_GUESS = {"lfm2": 2.0, "qwen3": 3.0, "qwen35": 4.0}    # GiB, before a peak is recorded
+# GiB, before a peak is recorded
+MEM_GUESS = {"lfm2": 2.0, "qwen3": 3.0, "qwen35": 4.0, "gemma4": 9.0}
 
 
 def cache_root() -> Path:
@@ -96,6 +97,8 @@ def key(cfg, model: str, wf: str, hf: str, n: int) -> tuple[Path, dict]:
 
 
 def prompt_ids(tok):
+    if not tok.chat_template:                   # a base model (Gemma 4 E2B): the plain prompt
+        return list(tok(PROMPT)["input_ids"])
     msgs = [{"role": "user", "content": PROMPT}]
     ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
                                   tokenize=True)

@@ -1,12 +1,14 @@
 """Profile one decode token on the RTL at the board configuration (the board's memory path:
 otpu_native_dram in front of the native memory model, sim/verilator/otpu_native_mem.sv).
 
-    python3 tools/perf_qwen.py [--model qwen3|lfm2|qwen35|DIR] [--layers N] [--pos P]
+    python3 tools/perf_qwen.py [--model qwen3|lfm2|qwen35|gemma4|DIR] [--layers N] [--pos P]
                                [--bw 100] [--check] [--wformat int8|int4|fp4]
                                [--head-format int8|int4|fp4] [--ddr 1066 [--mhz 100] [--ldc]]
 
 Uses the real weights (models/Qwen3-0.6B, or --model lfm2: models/LFM2.5-230M, --model qwen35:
-models/Qwen3.5-0.8B), optionally only the first N layers (the LM head is always complete).
+models/Qwen3.5-0.8B, --model gemma4: models/gemma-4-E2B), optionally only the first N layers
+(Gemma 4: or a list of checkpoint layers, e.g. 0,1,2,3,4,15,19, its KV-shared layers attending
+to the last own layer of their kind in the list; the LM head is always complete).
 Prints cycles, the core-port roofline (port-B chunk transfers: weights, KV, LD/ST chunks; port
 A; the MXU's own rate), the useful-bytes roofline, the DRAM efficiency, tokens/s at --mhz, the
 cycles per phase of the token (DeltaNet, attention, MLP, LM head) with their bytes, MM time per
@@ -47,7 +49,8 @@ PHASE_NAMES = {"head_step": "DeltaNet", "_deltanet": "DeltaNet", "_pair_segment"
                "_deltanet_dstep": "DeltaNet", "_deltanet_rows": "DeltaNet",
                "_attention": "attention", "_attend_heads": "attention", "_conv": "conv",
                "_mlp": "MLP", "swiglu_down": "MLP", "_lm_head": "LM head",
-               "_attention_rows": "attention", "qwen3_rows": "LM head"}
+               "_attention_rows": "attention", "qwen3_rows": "LM head",
+               "_ple": "PLE", "_ple_inputs": "PLE", "_gathered": "gather"}
 
 
 def _phase(ins):
@@ -123,7 +126,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="qwen3",
                     help=f"{' or '.join(MODELS)} (models/<name>), or a checkpoint directory")
-    ap.add_argument("--layers", type=int, default=2, help="0: all")
+    ap.add_argument("--layers", default="2", help="0: all; Gemma 4: or a comma list of "
+                    "checkpoint layers")
     ap.add_argument("--pos", type=int, default=9)
     ap.add_argument("--cap", type=int, default=None,
                     help="KV cache capacity (tokens); default: the multiple of 256 above pos")
@@ -181,9 +185,14 @@ def main():
     a.lat = 30 if a.lat is None else a.lat
     path = model_dir(a.model)
     spec = load_spec(path)
-    if a.layers:
-        spec = dataclasses.replace(spec, **({"kinds": spec.kinds[:a.layers]}
-                                            if hasattr(spec, "kinds") else {"layers": a.layers}))
+    layers = [int(x) for x in a.layers.split(",")]
+    if hasattr(spec, "truncated") and layers != [0]:
+        spec = spec.truncated(layers if len(layers) > 1 else range(layers[0]))
+    elif len(layers) > 1:
+        ap.error("--layers: a list of layers needs a Gemma 4 checkpoint")
+    elif layers[0]:
+        spec = dataclasses.replace(spec, **({"kinds": spec.kinds[:layers[0]]}
+                                            if hasattr(spec, "kinds") else {"layers": layers[0]}))
     R = max(1, a.rows)
     if a.cap is None:
         a.cap = 256 * ((a.pos + R - 1) // 256 + 1)
@@ -198,13 +207,17 @@ def main():
     img = spec.image(cfg, a.cap, **wkw)
     dram = img.build(W)[0]
     # the rows' inputs (the KV cache before pos stays zero: timing does not depend on it)
-    emb = np.stack([np.asarray(W["model.embed_tokens.weight"][791 + r], np.float32)
-                    for r in range(R)])
-    tabs = [rope_tables(spec, a.pos + r) for r in range(R)]
-    c, s = np.stack([t[0] for t in tabs]), np.stack([t[1] for t in tabs])
-    for key, v in (("x", emb), ("cos", c), ("sin", s)):
+    if hasattr(img, "host_inputs"):         # Gemma 4: the gathered rows, the RoPE rows
+        parts = img.host_inputs([791 + r for r in range(R)], [a.pos + r for r in range(R)])
+    else:
+        emb = np.stack([np.asarray(W["model.embed_tokens.weight"][791 + r], np.float32)
+                        for r in range(R)])
+        tabs = [rope_tables(spec, a.pos + r) for r in range(R)]
+        c, s = np.stack([t[0] for t in tabs]), np.stack([t[1] for t in tabs])
+        parts = [(img.io[k], v) for k, v in (("x", emb), ("cos", c), ("sin", s))]
+    for addr, v in parts:
         b = np.ascontiguousarray(v, np.float32).view(np.uint8).ravel()
-        dram[img.io[key]:img.io[key] + b.size] = b
+        dram[addr:addr + b.size] = b
     if a.depth:
         import opentpu.llm.qwen3 as Q
         Q.ATTN_DEPTH = a.depth
