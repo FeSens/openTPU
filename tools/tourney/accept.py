@@ -232,6 +232,50 @@ def rank_fmax(recs: list[dict], old: dict | None = None) -> list[dict]:
     return sorted(recs, key=sc)
 
 
+# ------------------------------------------------------------------------------ unit objective
+# The unit tournament (--objective unit) judges one unit alone: Vivado out of context, placed and
+# routed at the tournament's clock (fmax = 1000 / (period - WNS)), no full build. Two ways to win
+# (no Synth 8-6430 memory, hold met):
+#   A. area:  area_eq -1% or better at no fmax regression: fmax at least the reference's less
+#             UNIT_FMAX_TOL (0.5%), the reference being the higher of the champion's fmax and its
+#             anchor's (the champion last measured from the base, i.e. main), so a string of area
+#             wins cannot walk the unit's clock down 0.5% at a time
+#   B. speed: fmax +3% or better with area_eq at most +1% (the component rule B)
+# gain = area_eq change + fmax change (as the area objective's), to rank several winners.
+UNIT_FMAX_TOL = 0.005
+
+
+def unit_floor(old: dict) -> float:
+    """The lowest OOC fmax an area win may have against the champion `old`."""
+    return max(old["fmax"], old.get("anchor_fmax") or old["fmax"]) * (1 - UNIT_FMAX_TOL)
+
+
+def accept_unit(old: dict, new: dict) -> tuple[bool, str]:
+    """The unit rule (A: area at no fmax regression, B: speed; see above). `old` is the
+    champion's OOC result, with 'anchor_fmax' when it is a tournament winner's."""
+    if new.get("collisions"):
+        return False, f"{new['collisions']} block RAM read-address collisions (Synth 8-6430)"
+    if new.get("whs") is not None and new["whs"] < 0:
+        return False, f"hold violated (WHS {new['whs']:+.3f} ns)"
+    if new.get("fmax") is None:
+        return False, "no OOC timing"
+    ao, an = old["area_eq"], new["area_eq"]
+    fo, fn = old["fmax"], new["fmax"]
+    floor = unit_floor(old)
+    da = (an - ao) / ao if ao else 0.0
+    df = (fn - fo) / fo
+    res = [f"{k.upper()} {v:+.0f}" for k, v in area_delta(old, new).items()
+           if k in RESOURCES and v]
+    msg = (f"OOC area_eq {ao:.0f} -> {an:.0f} ({da:+.2%}{'; ' + ', '.join(res) if res else ''}), "
+           f"fmax {fo:.1f} -> {fn:.1f} MHz ({df:+.1%})")
+    if da <= -AREA_GAIN + 1e-12 and fn >= floor - 1e-9:
+        return True, "area: " + msg
+    if df >= FMAX_GAIN - 1e-12 and da <= AREA_SLACK + 1e-12:
+        return True, "speed: " + msg
+    return False, msg + (f" (need area_eq <= {-AREA_GAIN:+.0%} at fmax >= {floor:.1f} MHz, or "
+                         f"fmax >= {FMAX_GAIN:+.0%} at area_eq <= {AREA_SLACK:+.0%})")
+
+
 PERF_TOL, PERF_TOL_FMAX = 0.002, 0.005
 
 

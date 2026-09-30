@@ -12,6 +12,9 @@
 #                                    FOREVER_WHOLE), read before each whole-design round
 # Each round's champion first merges BASE (origin/main, fetched per round) when it has moved.
 # K=2 agent slots per round; K_<comp>=n overrides one component (e.g. K_otpu_mxu=3).
+# A second loop beside it runs with its own OBJECTIVE (e.g. unit: the per-unit OOC tournament,
+# `make tourney-units`), control files (FOREVER_STOP, FOREVER_PAUSE, FOREVER_COMPS_FILE; the
+# hosts file is remote.py's OTPU_HOSTS_FILE) and WHOLE_EVERY=0 (no whole-design rounds).
 set -u
 cd "$(git rev-parse --show-toplevel)"
 # the units on the measured worst path families first (the DRAM adapter's command picker, TMEM's
@@ -24,7 +27,10 @@ EVERY=${WHOLE_EVERY:-3}
 K=${K:-2}
 BASE=${BASE:-origin/main}
 TARGET=${TARGET_MHZ:-133.33}
-STOP=/tmp/otpu-tourney-stop PAUSE=/tmp/otpu-tourney-pause
+OBJECTIVE=${OBJECTIVE:-fmax}
+STOP=${FOREVER_STOP:-/tmp/otpu-tourney-stop} PAUSE=${FOREVER_PAUSE:-/tmp/otpu-tourney-pause}
+# the orchestrator checks the same files before it starts
+export OTPU_TOURNEY_STOP=$STOP OTPU_TOURNEY_PAUSE=$PAUSE
 
 round() {   # one round of component $1
   local c=$1 k var
@@ -34,7 +40,7 @@ round() {   # one round of component $1
   var="K_$c"; k=${!var:-$K}
   git fetch -q origin 2>/dev/null || echo "[forever] git fetch failed; using the last $BASE"
   echo "[forever] $(date '+%F %T') round: $c (K=$k)"
-  python3 -m tools.tourney.orchestrator --objective fmax --target-mhz "$TARGET" --comp "$c" \
+  python3 -m tools.tourney.orchestrator --objective "$OBJECTIVE" --target-mhz "$TARGET" --comp "$c" \
     --rounds 1 --slots "$k" --eval vivado-remote --base "$BASE" \
     || echo "[forever] $(date '+%F %T') $c: round failed (exit $?); going on"
 }
@@ -60,7 +66,7 @@ while :; do
   for c in $pass; do
     round "$c"
     n=$((n + 1))
-    if (( n % EVERY == 0 )); then
+    if (( EVERY > 0 && n % EVERY == 0 )); then
       read -r -a ws <<< "$(whole)"
       round "${ws[w % ${#ws[@]}]}"
       w=$((w + 1))

@@ -20,6 +20,8 @@ CATEGORIES = [
     "structure: restructure the control or datapath (e.g. a different queue/scoreboard/tree "
     "organisation) that removes whole blocks of logic",
 ]
+# the unit objective's focus, area first (its main rule), timing last
+UNIT_CATEGORIES = [CATEGORIES[1], CATEGORIES[2], CATEGORIES[3], CATEGORIES[0]]
 
 # Per-role model and reasoning effort. MODEL_<ROLE> / EFFORT_<ROLE> (ROLE = HYP, IMPL, SCRIBE)
 # may be comma lists: slot k of a round uses entry k mod len, so one round can compare settings.
@@ -440,6 +442,79 @@ WRITE a file HYPOTHESIS.md at the repository root (your current directory) with:
   Change: exactly what to change, where, and why results stay bit-identical, and its cycle
           cost (the perf proxy may not get more than 0.5% slower; cycles count in the score)
   Expected: estimated effect on the full design's WNS / fmax, and on area
+  Risks: what could break
+Do not modify any other file in this phase."""
+
+
+def hypothesis_prompt_unit(comp: dict, wt: Path, champ: dict, lessons: str, recent: str,
+                           category: str, target_mhz: float, fmax_floor: float) -> str:
+    """The hypothesis prompt of the unit objective: the unit alone, out of context in Vivado
+    (its post-route area, timing and worst paths); area first, at no fmax regression."""
+    files = expand(wt, comp["allowed"])
+    parts = comp["synth"]["parts"]
+    per_part = ""
+    if len(parts) > 1:
+        per_part = "Per part (the unit's number weights each by its instance count):\n" + "\n".join(
+            f"- {p['top']} x{p.get('weight', 1)}: " + ", ".join(
+                f"{k.upper()} {v}" for k, v in (champ.get("parts", {}).get(p["top"]) or {}).items()
+                if k in ("lut", "lutram", "ff", "dsp", "bram36", "wns", "fmax"))
+            for p in parts) + "\n"
+    return f"""You are a hardware architecture research agent working on openTPU, an FPGA
+accelerator on a Kintex-7 xc7k480t-2 (Vivado 2026.1) whose whole board closes {target_mhz:g} MHz
+with little slack and fills most of the device's slices. Your job: propose ONE concrete change to
+the unit `{comp['name']}` that makes it smaller (or faster) on its own, without changing what it
+computes. Area saved in a unit is placement room and room for more compute; its clock must not
+drop.
+
+## Unit
+{comp['description']}
+
+Files you may change (only these): {', '.join(files)}
+Synthesis parameters (board build): {json.dumps([p['params'] for p in parts])}
+
+## Current champion (Vivado out of context, placed and routed at {1000 / target_mhz:.3f} ns)
+LUT {champ.get('lut')}, LUT-RAM {champ.get('lutram')}, FF {champ.get('ff')}, DSP {champ.get('dsp')},
+BRAM36 {champ.get('bram36')}, BRAM18 {champ.get('bram18')}; WNS {champ.get('wns')} ns -> fmax {champ.get('fmax') or 0:.1f} MHz;
+area-equivalent {champ.get('area_eq') or 0:.0f} (LUT + LUTRAM + 0.5 FF + 40 DSP + 80 BRAM36 + 40 BRAM18).
+{per_part}
+Worst paths inside the unit (post-route):
+{champ.get('timing') or '(not available)'}
+
+## How a change is judged (the orchestrator does all of this, you do not)
+1. Only the files above changed. 2. Verilator lint of the whole design. 3. Bit-exact RTL tests
+against the instruction-set simulator (tests/test_rtl.py subsets, also on the board's memory
+path) -- results must stay IDENTICAL: same fp32 rounding, same order of operations (docs/isa.md),
+same port protocols (latency may change; grant/handshake contracts may not break). 4. A Qwen3
+decode-token proxy on the RTL may not get more than 0.2% slower (in cycles). 5. The unit out of
+context in Vivado as above, with no block RAM read-address collision (Synth 8-6430) and hold
+met, is accepted for
+   - area: area_eq -1% or better at fmax >= {fmax_floor:.1f} MHz (no regression), or
+   - speed: fmax +3% or better at area_eq +1% or less.
+Vivado maps what you write: an array read asynchronously goes to LUT RAM or registers, a
+registered read of a large array to block RAM; DSP48s absorb multiplies and wide adds with
+their registers. Count what a change removes in LUTs and FFs, not in lines of RTL.
+
+## Focus for this slot
+{category}
+
+## History
+Recent outcomes:
+{recent}
+
+Lessons from earlier rounds:
+{lessons}
+
+## Source
+{_src(wt, files)}
+
+## Instructions
+Read the code (and docs/isa.md, the unit's neighbours in rtl/ if you need the protocols). Then
+WRITE a file HYPOTHESIS.md at the repository root (your current directory) with:
+  # <short title>
+  Category: <timing|area|memories|structure>
+  Motivation: why this is where the area (or the worst path) is (cite the numbers above)
+  Change: exactly what to change, where, and why results stay bit-identical
+  Expected: estimated LUT / FF / DSP / BRAM and fmax effect
   Risks: what could break
 Do not modify any other file in this phase."""
 

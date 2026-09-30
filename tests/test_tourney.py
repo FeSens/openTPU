@@ -4,6 +4,7 @@ Vivado report parsers (fixtures: excerpts of the fp4fx120 production build's rep
 tests/data/tourney), the fmax accept rule, the build-host job counting and the local test lock.
 No agents, no synthesis, no ssh."""
 import json
+import os
 import subprocess
 import threading
 import time
@@ -915,3 +916,144 @@ set_property -dict {STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore} [get
     with pytest.raises(G.GateFailure, match="off limits"):
         G.sandbox(wt, [G.DIRECTIVES, "b.tcl"])
 
+
+
+# ------------------------------------------------------------------------------ unit objective
+def ooc(area, fmax, **kw):
+    return dict(dict(area_eq=area, fmax=fmax, wns=7.5 - 1000 / fmax, whs=0.03, collisions=0), **kw)
+
+
+def test_accept_unit():
+    old = ooc(10000, 145.0)
+    ok, why = A.accept_unit(old, ooc(9900, 145.0))                   # -1%, same clock
+    assert ok and why.startswith("area:")
+    assert A.accept_unit(old, ooc(9900, 144.3))[0]                   # -0.5% fmax: noise
+    ok, why = A.accept_unit(old, ooc(9000, 144.2))                   # -0.55%: a regression
+    assert not ok and "fmax >= 144.3" in why
+    assert not A.accept_unit(old, ooc(9910, 147.9))[0]               # -0.9% area, +2% fmax
+    ok, why = A.accept_unit(old, ooc(10100, 149.35))                 # +3% at +1% area
+    assert ok and why.startswith("speed:")
+    assert not A.accept_unit(old, ooc(10110, 160.0))[0]              # +1.1% area
+    # an area win walks the clock down 0.5% at most from the anchor, however many wins follow
+    walked = dict(ooc(9900, 144.3), anchor_fmax=145.0)
+    assert A.unit_floor(walked) == pytest.approx(145.0 * 0.995)
+    assert not A.accept_unit(walked, ooc(9700, 143.9))[0]
+    assert A.accept_unit(walked, ooc(9700, 144.3))[0]
+    assert not A.accept_unit(old, ooc(9000, 150.0, collisions=2))[0]
+    assert not A.accept_unit(old, ooc(9000, 150.0, whs=-0.01))[0]
+
+
+def _unit_run(tmp_path, monkeypatch, comp="otpu_quant", **kw):
+    from tools.tourney import orchestrator as O
+    (tmp_path / "repo").mkdir()
+    repo = _repo(tmp_path / "repo")
+    monkeypatch.chdir(repo)
+    args = ["--objective", "unit", "--comp", comp, "--base", "HEAD", "--no-scribe"] + [
+        a for k, v in kw.items() for a in (f"--{k.replace('_', '-')}", str(v))]
+    ns = []
+    monkeypatch.setattr(O.Run, "main", lambda self: ns.append(self))
+    O.main(args)
+    return O, ns[0], repo
+
+
+def test_unit_objective_names(tmp_path, monkeypatch):
+    O, run, repo = _unit_run(tmp_path, monkeypatch)
+    assert run.a.eval == "vivado-remote" and run.period == 7.5 and run.unit and not run.fmax
+    assert run.branch == "tourney/unit/otpu_quant"
+    assert run.dir == repo / "tools" / "tourney" / "runs" / "unit" / "otpu_quant"
+    # the test gates' tree, the slot branch and the OOC run names differ from the fmax loop's
+    assert G.remote_name(run.wtroot / "r1-s0") == "tourney-unit-otpu_quant-r1-s0"
+    assert run.slot_branch("r1-s0") == "tourney-slot/unit-otpu_quant/r1-s0"
+    assert run.tag == "unit-"
+    with pytest.raises(SystemExit, match="no unit objective"):
+        O.main(["--objective", "unit", "--comp", "otpu_xunit"])
+
+
+def test_unit_prompt():
+    c = yaml.safe_load((ROOT / "tools" / "tourney" / "components" / "otpu_fp.yaml").read_text())
+    champ = dict(ooc(2000, 150.0), lut=1000, ff=900, timing="PATH-LIST",
+                 parts={"otpu_fadd": {"lut": 400, "fmax": 150.0},
+                        "otpu_fmul": {"lut": 300, "dsp": 2, "fmax": 160.0}})
+    p = AG.hypothesis_prompt_unit(c, ROOT, champ, "(none)", "(none)", AG.UNIT_CATEGORIES[0],
+                                  133.33, A.unit_floor(champ))
+    assert "PATH-LIST" in p and "7.500 ns" in p and "fmax >= 149.2 MHz" in p
+    assert "otpu_fadd x64: LUT 400" in p and "otpu_fmul x78: LUT 300, DSP 2" in p
+    assert "=== rtl/vpu/otpu_fp.sv ===" in p
+    assert AG.UNIT_CATEGORIES[0].startswith("area")
+
+
+def test_unit_winner_becomes_champion(tmp_path, monkeypatch):
+    """A unit round's winner is committed onto tourney/unit/<comp>, its OOC result becomes the
+    champion's (no second OOC run of the same tree) with the anchor carried over, and it is
+    logged in runs/unit/WINNERS.jsonl."""
+    O, run, repo = _unit_run(tmp_path, monkeypatch)
+    for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"),
+                 ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(O.G, "remote_clean", lambda wt: None)
+    monkeypatch.setattr(O.G, "remote_prune", lambda: None)
+    base = run.ensure_branch()
+    champ = dict(ooc(1000, 145.0), sha=base, anchor_fmax=146.0, perf_cycles=100)
+    monkeypatch.setattr(run, "sync_base", lambda: None)
+    monkeypatch.setattr(run, "champion", lambda: champ)
+    new = ooc(900, 145.5, lut=800)
+
+    def slot(rid, k, ch):
+        sid = f"{rid}-s{k}"
+        wt = run.worktree(sid, run.branch)
+        (wt / "rtl" / "a.sv").write_text("module a; wire x; endmodule\n")
+        ok, why = A.accept_unit(ch, new)
+        return {"id": sid, "slot": k, "roles": {}, "wt": str(wt), "files": ["rtl/a.sv"],
+                "title": "smaller", "outcome": "improvement" if ok else "no_gain",
+                "reason": why, "gain": 0.1, "_m": new, "perf_cycles": 100,
+                "fast": "12 passed", "board": "4 passed"}
+
+    monkeypatch.setattr(run, "slot", slot)
+    run.round(0)
+    sha = O.git("rev-parse", run.branch, cwd=repo)
+    assert sha != base and O.git("log", "-1", "--format=%s", sha, cwd=repo) == \
+        "tourney unit otpu_quant: smaller"
+    c = json.loads((run.dir / "champion.json").read_text())
+    assert c["sha"] == sha and c["area_eq"] == 900 and c["anchor_fmax"] == 146.0
+    assert c["period"] == 7.5 and c["backend"] == "vivado-remote" and c["perf_cycles"] == 100
+    w = json.loads((run.dir.parent / "WINNERS.jsonl").read_text())
+    assert w["comp"] == "otpu_quant" and w["sha"] == sha and w["old"] == base
+    assert w["ooc_old"]["fmax"] == 145.0 and w["ooc"]["lut"] == 800
+    assert w["tests"] == {"fast": "12 passed", "board": "4 passed"}
+    log = json.loads(run.log.read_text())
+    assert log["outcome"] == "accepted" and "_m" not in log and "wt" not in log
+    assert not O.git("branch", "--list", "tourney-slot/*", cwd=repo)   # slot branch dropped
+
+
+def test_forever_objective_and_control_files(tmp_path):
+    """forever.sh with another objective and its own control files (a second loop beside the
+    fmax one); WHOLE_EVERY=0 runs no whole-design rounds."""
+    (tmp_path / "repo").mkdir()
+    repo = _repo(tmp_path / "repo")
+    comps = repo / "tools" / "tourney" / "components"
+    comps.mkdir(parents=True)
+    for c in ("otpu_quant", "otpu_coll", "otpu_full"):
+        (comps / f"{c}.yaml").write_text("name: x\n")
+    (repo / "tools" / "tourney" / "forever.sh").write_text(
+        (ROOT / "tools" / "tourney" / "forever.sh").read_text())
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    calls, stop = tmp_path / "calls", tmp_path / "units-stop"
+    # the orchestrator's stand-in: records its arguments and control files, stops after 3 rounds
+    (stub / "python3").write_text(
+        f'#!/bin/bash\necho "$* STOP=$OTPU_TOURNEY_STOP PAUSE=$OTPU_TOURNEY_PAUSE" >> {calls}\n'
+        f'[ $(wc -l < {calls}) -ge 3 ] && touch {stop}\nexit 0\n')
+    (stub / "python3").chmod(0o755)
+    env = dict(os.environ, PATH=f"{stub}:{os.environ['PATH']}", OBJECTIVE="unit",
+               WHOLE_EVERY="0", FOREVER_COMPS="otpu_quant otpu_coll", K="1",
+               FOREVER_COMPS_FILE=str(tmp_path / "none"), FOREVER_STOP=str(stop),
+               FOREVER_PAUSE=str(tmp_path / "units-pause"))
+    r = subprocess.run(["bash", "tools/tourney/forever.sh"], cwd=repo, env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    rows = calls.read_text().splitlines()
+    assert [x.split("--comp ")[1].split()[0] for x in rows] == ["otpu_quant", "otpu_coll",
+                                                                "otpu_quant"]
+    assert all("--objective unit" in x and f"STOP={stop}" in x and
+               f"PAUSE={tmp_path / 'units-pause'}" in x for x in rows)
+    assert f"{stop}: stopping" in r.stdout

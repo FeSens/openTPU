@@ -2,7 +2,7 @@
 
     python3 -m tools.tourney.orchestrator --comp otpu_coll --rounds 1 --slots 1 [--agent claude]
         [--eval yosys|vivado-remote] [--base main] [--reset] [--keep] [--no-scribe] [--baseline-only]
-        [--objective area|fmax] [--target-mhz 133.33]
+        [--objective area|fmax|unit] [--target-mhz 133.33]
 
 Each component evolves on its own champion branch `tourney/<comp>` (created from --base, i.e.
 main, the first time; --reset recreates it). A round runs K slots in parallel, each in its own
@@ -18,6 +18,11 @@ champion, `tourney/fmax`, scored by the whole board built in Vivado on the build
 Vivado (tools/tourney/remote.py); the most promising slot of the round (at most one) gets the full
 build, and the accept rule is accept.accept_fmax. Logs in tools/tourney/runs/fmax/<comp>/, full
 build results cached per commit in tools/tourney/runs/_full/.
+
+--objective unit (docs/tourney.md, the unit tournament): each component evolves its own champion,
+`tourney/unit/<comp>`, scored by the component alone out of context in Vivado on the build host
+at --target-mhz (no full builds); the accept rule is accept.accept_unit (area at no fmax
+regression, or speed). Logs in tools/tourney/runs/unit/<comp>/, winners in runs/unit/WINNERS.jsonl.
 """
 from __future__ import annotations
 
@@ -81,10 +86,24 @@ class Run:
         self.repo = Path(git("rev-parse", "--show-toplevel", cwd=Path.cwd()))
         self.comp = load_component(a.comp)
         self.fmax = a.objective == "fmax"
-        if a.objective not in self.comp.get("objectives", ["area", "fmax"]):
+        self.unit = a.objective == "unit"
+        if a.objective not in self.comp.get("objectives", ["area", "fmax", "unit"]):
             raise SystemExit(f"{a.comp} has no {a.objective} objective")
         runs = self.repo / "tools" / "tourney" / "runs"
-        if self.fmax:
+        # names of this objective's OOC runs on the build host (another loop may build the same
+        # commit of the same component at once)
+        self.tag = "unit-" if self.unit else ""
+        if self.unit:
+            if not self.comp["synth"]["parts"]:
+                raise SystemExit(f"{a.comp} has no out-of-context part for the unit objective")
+            if a.eval != "vivado-remote":
+                print(f"[tourney] --objective unit evaluates with vivado-remote (not {a.eval})")
+                a.eval = "vivado-remote"
+            self.period = round(1000.0 / a.target_mhz, 3)
+            self.branch = f"tourney/unit/{a.comp}"
+            self.dir = runs / "unit" / a.comp
+            self.wtroot = self.repo / ".tourney" / f"unit-{a.comp}"
+        elif self.fmax:
             if a.eval != "vivado-remote":
                 print(f"[tourney] --objective fmax evaluates with vivado-remote (not {a.eval})")
                 a.eval = "vivado-remote"
@@ -158,7 +177,7 @@ class Run:
         print(f"[tourney] measuring champion {sha[:9]} ({self.a.eval})", flush=True)
         wt = self.worktree("champion", sha, detach=True)
         try:
-            out = self.shared_build / "tourney" / self.a.comp / f"champ-{sha[:9]}"
+            out = self.shared_build / "tourney" / self.a.comp / f"{self.tag}champ-{sha[:9]}"
             if self.comp["synth"]["parts"]:
                 m = G.synthesize(wt, self.comp, self.a.eval, out, self.period)
             else:
@@ -169,7 +188,9 @@ class Run:
         finally:
             self.drop(wt, None)
         m["sha"], m["period"], m["backend"] = sha, self.period, self.a.eval
-        m["critical"] = self.critical(m) if not self.fmax else ""
+        m["critical"] = self.critical(m) if not (self.fmax or self.unit) else ""
+        if self.unit:          # measured here, not a winner's: the fmax reference starts anew
+            m["anchor_fmax"] = m.get("fmax")
         cache.write_text(json.dumps(m, indent=1))
         if self.fmax:
             m["full"] = full
@@ -230,8 +251,9 @@ class Run:
 
     # ---- worktrees
     def slot_branch(self, sid: str) -> str:
-        # not under tourney/<comp>/: a ref cannot be both a branch and a directory
-        return f"tourney-slot/{self.a.comp}/{sid}"
+        # not under tourney/<comp>/: a ref cannot be both a branch and a directory. Per objective
+        # (the worktree root's name, e.g. fmax-otpu_vpu), as two loops may run the same component
+        return f"tourney-slot/{self.wtroot.name}/{sid}"
 
     def worktree(self, name: str, ref: str, detach: bool = False) -> Path:
         wt = self.wtroot / name
@@ -271,6 +293,28 @@ class Run:
         return "\n".join(f"- {r['id']}: {r['outcome']} -- {r.get('title', '')[:70]} "
                          f"({r.get('reason', '')[:90]})" for r in rows) or "(none yet)"
 
+    def logged(self) -> int:
+        """Slots logged so far."""
+        return len([l for l in self.log.read_text().splitlines() if l.strip()]
+                   ) if self.log.exists() else 0
+
+    def lessons_text(self, n: int = 30) -> str:
+        """This run's lessons; the unit objective adds the last `n` of the component's other
+        tournaments (the Yosys component tournament's, the fmax tournament's)."""
+        own = self.lessons.read_text() if self.lessons.exists() else "(none yet)"
+        if not self.unit:
+            return own
+        runs = self.repo / "tools" / "tourney" / "runs"
+        out = [own]
+        for p, what in ((runs / self.a.comp / "LESSONS.md", "the component tournament (Yosys)"),
+                        (runs / "fmax" / self.a.comp / "LESSONS.md",
+                         "the whole-design fmax tournament")):
+            lines = [l for l in p.read_text().splitlines()
+                     if l.strip() and not l.startswith("#")][-n:] if p.exists() else []
+            if lines:
+                out.append(f"From {what} on this component:\n" + "\n".join(lines))
+        return "\n\n".join(out)
+
     def append(self, rec: dict) -> None:
         with _LOCK:
             with self.log.open("a") as f:
@@ -309,13 +353,20 @@ class Run:
             return info
 
         try:
-            lessons = self.lessons.read_text() if self.lessons.exists() else "(none yet)"
-            cats = AG.FMAX_CATEGORIES if self.fmax else AG.CATEGORIES
-            cat = cats[k % len(cats)]
+            lessons = self.lessons_text()
+            cats = (AG.FMAX_CATEGORIES if self.fmax else
+                    AG.UNIT_CATEGORIES if self.unit else AG.CATEGORIES)
+            # rotated over the slots and the logged slots before them, so a component run one
+            # slot per round still takes each focus in turn
+            cat = cats[(k + self.logged()) % len(cats)]
             rec["category"] = cat.split(":")[0]
             if self.fmax:
                 agent("hyp", AG.hypothesis_prompt_fmax(self.comp, wt, champ, lessons,
                                                        self.history(), cat, self.a.target_mhz))
+            elif self.unit:
+                agent("hyp", AG.hypothesis_prompt_unit(
+                    self.comp, wt, champ, lessons, self.history(), cat, self.a.target_mhz,
+                    A.unit_floor(champ)))
             else:
                 agent("hyp", AG.hypothesis_prompt(self.comp, wt, champ, lessons, self.history(),
                                                   cat, champ["critical"]))
@@ -362,10 +413,15 @@ class Run:
                 self.ooc_step(rec, wt, sid, champ, gate)
                 raise _Done
             m = gate("synth", G.synthesize, wt, self.comp, self.a.eval,
-                     self.shared_build / "tourney" / self.a.comp / sid)
+                     self.shared_build / "tourney" / self.a.comp / f"{self.tag}{sid}", self.period)
             rec["metrics"] = {q: m.get(q) for q in ("lut", "lutram", "ff", "dsp", "bram36",
                                                      "bram18", "logic_ns", "fmax", "area_eq")}
-            ok, why = A.accept(champ, m, self.comp["target_mhz"])
+            if self.unit:
+                rec["metrics"].update({q: m.get(q) for q in ("wns", "whs", "collisions")})
+                rec["_m"] = m                      # the new champion's result if it wins
+                ok, why = A.accept_unit(champ, m)
+            else:
+                ok, why = A.accept(champ, m, self.comp["target_mhz"])
             rec["outcome"], rec["reason"] = ("improvement" if ok else "no_gain"), why
             rec["gain"] = (champ["area_eq"] - m["area_eq"]) / champ["area_eq"] + \
                           (m["fmax"] - champ["fmax"]) / champ["fmax"]
@@ -491,6 +547,10 @@ class Run:
             print(f"[tourney] round {r}: champion {champ['sha'][:9]} full fmax {f['fmax']:.2f} "
                   f"MHz (WNS {f['wns']:+.3f} ns at {f['period']} ns), OOC fmax "
                   f"{champ.get('fmax') or 0:.1f} MHz, perf {champ.get('perf_cycles')}", flush=True)
+        elif self.unit:
+            print(f"[tourney] round {r}: champion {champ['sha'][:9]} OOC area_eq "
+                  f"{champ['area_eq']:.0f} fmax {champ['fmax']:.1f} MHz (area wins need >= "
+                  f"{A.unit_floor(champ):.1f}) perf {champ.get('perf_cycles')}", flush=True)
         else:
             print(f"[tourney] round {r}: champion {champ['sha'][:9]} area_eq "
                   f"{champ['area_eq']:.0f} fmax {champ['fmax']:.0f} MHz perf "
@@ -506,9 +566,9 @@ class Run:
             w = winners[0]
             wt = Path(w["wt"])
             git("add", "--", *w["files"], cwd=wt)
-            git("commit", "-q", "-m", f"tourney {self.a.comp}: {w.get('title', w['id'])}\n\n"
-                f"{w['reason']}\n\nSlot {w['id']}, agent {self.a.agent}, eval {self.a.eval}.",
-                cwd=wt)
+            git("commit", "-q", "-m", f"tourney {self.tag.replace('-', ' ')}{self.a.comp}: "
+                f"{w.get('title', w['id'])}\n\n{w['reason']}\n\nSlot {w['id']}, agent "
+                f"{self.a.agent}, eval {self.a.eval}.", cwd=wt)
             sha = git("rev-parse", "HEAD", cwd=wt)
             git("update-ref", f"refs/heads/{self.branch}", sha, champ["sha"], cwd=self.repo)
             w["outcome"], w["merged"] = "accepted", sha
@@ -523,6 +583,23 @@ class Run:
                         "area": w.get("full_area"), "cycles_delta": w.get("cycles_delta"),
                         "perf_cycles": w.get("perf_cycles"),
                         "perf_old": champ.get("perf_cycles")}) + "\n")
+            if self.unit:                  # the committed tree is the one just measured
+                new = dict(w["_m"], sha=sha, period=self.period, backend=self.a.eval,
+                           perf_cycles=w.get("perf_cycles"), critical="",
+                           anchor_fmax=champ.get("anchor_fmax") or champ["fmax"])
+                (self.dir / "champion.json").write_text(json.dumps(new, indent=1))
+                keys = ("lut", "lutram", "ff", "dsp", "bram36", "bram18", "wns", "fmax",
+                        "area_eq")
+                with (self.dir.parent / "WINNERS.jsonl").open("a") as f:
+                    f.write(json.dumps({
+                        "time": dt.datetime.now().isoformat(timespec="seconds"),
+                        "comp": self.a.comp, "slot": w["id"], "sha": sha,
+                        "old": champ["sha"], "title": w.get("title"), "reason": w["reason"],
+                        "gain": w["gain"], "ooc_old": {q: champ.get(q) for q in keys},
+                        "ooc": {q: w["_m"].get(q) for q in keys},
+                        "perf_cycles": w.get("perf_cycles"),
+                        "perf_old": champ.get("perf_cycles"),
+                        "tests": {g: w.get(g) for g in ("fast", "board")}}) + "\n")
             print(f"[tourney] accepted {w['id']} -> {self.branch} {sha[:9]}: {w['reason']}")
         for x in recs:
             if self.a.scribe and x.get("hypothesis"):
@@ -546,7 +623,7 @@ class Run:
             x["cost_usd"] = round(sum(c for c in costs if c), 4) if any(costs) else None
             x["end"] = dt.datetime.now().isoformat(timespec="seconds")
             self.lesson(f"[{x['id']}] {x['lesson']}")
-            self.append({k: v for k, v in x.items() if k not in ("wt", "_full")})
+            self.append({k: v for k, v in x.items() if k not in ("wt", "_full", "_m")})
             self.drop(Path(x["wt"]), self.slot_branch(x["id"]))
         try:
             G.remote_prune()
@@ -589,7 +666,7 @@ def main(argv=None):
     ap.add_argument("--no-scribe", dest="scribe", action="store_false")
     ap.add_argument("--baseline-only", action="store_true")
     ap.add_argument("--agent-timeout", type=int, default=3600)
-    ap.add_argument("--objective", choices=("area", "fmax"),
+    ap.add_argument("--objective", choices=("area", "fmax", "unit"),
                     default=os.environ.get("OBJECTIVE", "area"))
     ap.add_argument("--target-mhz", type=float, default=float(os.environ.get("TARGET_MHZ",
                                                                              "133.33")))

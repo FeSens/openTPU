@@ -38,7 +38,8 @@ may change, the synthesis top(s) with board parameters, the target clock, and th
    and `models/` are symlinked from the main checkout.
 3. **Hypothesis agent** — sees the component source, the champion's numbers and critical path,
    the recent log, `LESSONS.md`, and a focus category (timing / area / memories / structure,
-   rotated per slot). Writes only `HYPOTHESIS.md`; anything else fails the slot.
+   rotated per slot and over the logged slots, so one slot per round also takes each in turn).
+   Writes only `HYPOTHESIS.md`; anything else fails the slot.
 4. **Implementation agent** — edits only the allowed files, lints, runs one quick test, writes
    `IMPLEMENTATION.md`. No commits.
 5. **Gates**, in order; the first failure ends the slot as `broken: <gate>: <output tail>`:
@@ -396,6 +397,54 @@ and take about 30-50 min.
   generated for this; `otpu_impl` and `otpu_full` are written by hand. Edit the
   YAML; do not regenerate the others without porting those edits first.
 
+## The unit tournament (per unit, out of context)
+
+The fmax tournament scores every candidate by the whole board, so it spends its Vivado time on
+full builds. Beside it, the unit tournament improves one unit at a time, judged by the unit alone
+out of context: smaller units (placement room and room for more compute) and, second, faster
+ones. It runs no full builds; its winners reach the whole design through main.
+
+```
+make tourney-units K=1                      # without end, over UNIT_COMPS (Makefile)
+python3 -m tools.tourney.orchestrator --objective unit --comp otpu_quant --slots 1 --base origin/main
+```
+
+- **Champions.** One per component, `tourney/unit/<comp>`, created from the base (origin/main)
+  and merging it when it moves, as in the component tournament. Logs in
+  `runs/unit/<comp>/`, winners in `runs/unit/WINNERS.jsonl` (before and after: OOC area and
+  timing, perf cycles, the test gates' summaries). The orchestrator commits a winner to its
+  champion branch and never touches main: a winner reaches main by review and `git merge
+  tourney/unit/<comp>`.
+- **Gates.** The component's sandbox, lint, fast, board and perf gates (at most +0.2% cycles),
+  then its parts out of context in Vivado on the build host at the target clock (7.5 ns at
+  133.33 MHz), as the fmax tournament's OOC step. Only components with OOC parts take part
+  (`otpu_xunit`, `otpu_full` and `otpu_impl` have none).
+- **Accept** (`accept.accept_unit`), vs the champion's OOC run, with no Synth 8-6430 memory and
+  hold met:
+  - area: area_eq -1% or better with no fmax regression: OOC fmax at least 0.5% below the
+    higher of the champion's and its anchor's, the anchor being the champion last measured from
+    the base (a winner carries its predecessor's), so a series of area wins cannot walk the unit's
+    clock down 0.5% at a time;
+  - speed: OOC fmax +3% or better at area_eq +1% or less.
+
+  The winner's OOC result becomes the new champion's (the committed tree is the one measured),
+  so a win costs no second OOC run.
+- **Agents.** The prompt (`agents.hypothesis_prompt_unit`) carries the unit's post-route area,
+  WNS and worst paths (per part for `otpu_fp`), the rule above with the champion's fmax floor,
+  and the lessons of this tournament plus the last ones of the component and fmax tournaments on
+  the same unit. The focus rotates over area, memories, structure and timing, per logged slot (so
+  also with one slot per round).
+- **Running beside the fmax loop.** `make tourney-units` runs `forever.sh` with
+  `OBJECTIVE=unit`, `WHOLE_EVERY=0` and its own control files:
+  `/tmp/otpu-tourney-units-stop`, `-pause`, `-comps` (the next pass's components) and `-hosts`
+  (`OTPU_HOSTS_FILE`: its build hosts and caps; `UNIT_HOSTS`, default `opentpu`, when the file
+  is missing). Run it from its own checkout (a worktree on its own branch): its runs/ files and
+  `.tourney/unit-<comp>/` slot trees stay apart from the fmax loop's. Its OOC runs on the host
+  (`tv-<comp>-unit-...`), its test trees on omarchy (`tourney-unit-<comp>-...`) and its slot
+  branches (`tourney-slot/unit-<comp>/...`) are named apart from the fmax loop's. Both loops
+  share the local test-gate slots (at most 2 test gates at once on omarchy) and the Vivado start
+  lock; each host's job count counts every Vivado job there, whichever loop started it.
+
 ## Files
 
 ```
@@ -411,6 +460,7 @@ tools/tourney/components/       per-component configs (gen_components.py writes 
 tools/tourney/check_nodes.py    checks the configs' test ids exist
 tools/tourney/runs/<comp>/      champion.json, log.jsonl, LESSONS.md, REPORT.md, progress.png
 tools/tourney/runs/fmax/<comp>/ the same for the fmax tournament
+tools/tourney/runs/unit/<comp>/ the same for the unit tournament (WINNERS.jsonl one level up)
 tools/tourney/runs/_full/       full-design results per commit and target clock (shared)
 tests/data/tourney/             report excerpts of the fp4fx120 production build (parser tests)
 ```
