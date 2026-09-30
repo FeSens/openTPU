@@ -34,9 +34,10 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
     """gemma4.emulated_logits over the whole sequence at once: the logits [len(rows), vocab]
     before the soft cap (rows: default all), or with on_rows each group of up to 64 rows handed
     to on_rows(first row, logits). wformat / hf: the layers' and the head's formats, "none" for
-    float weights (the PLE table then float too); wmap: per-kind layer formats {"attn", "mlp",
-    "ple": format}. quant: the activation quantization points applied, a subset of {"act" (the
-    matmul inputs), "kv" (K / V), "p" (P)}; default all, none with wformat "none"."""
+    float weights (the PLE table then float too); wmap: per-kind layer formats {"attn", "mlp"
+    (or "down" / "gateup" of it), "ple": format}. quant: the activation quantization points
+    applied, a subset of {"act" (the matmul inputs), "kv" (K / V), "p" (P)}; default all, none
+    with wformat "none"."""
     hf = hf or wformat
     none = wformat == "none"
     quant = (set() if none else {"act", "kv", "p"}) if quant is None else set(quant)
@@ -47,12 +48,16 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
 
     wmap = wmap or {}                   # per-kind layer formats: attn, mlp, ple (else wformat)
 
-    def kind_of(n):
-        return "attn" if ".self_attn." in n else "mlp" if ".mlp." in n else "ple"
+    def fmt_of(n):              # attn; mlp, or down / gateup within it; ple
+        if ".self_attn." in n:
+            return wmap.get("attn", wformat)
+        if ".mlp." in n:
+            return wmap.get("down" if ".down_proj" in n else "gateup", wmap.get("mlp", wformat))
+        return wmap.get("ple", wformat)
 
     def wq(n, fmt=wformat, a=None):
         if n is not None and fmt == wformat and n.startswith("model.layers."):
-            fmt = wmap.get(kind_of(n), wformat)
+            fmt = fmt_of(n)
         a = W[n] if a is None else a
         return np.asarray(a, np.float64) if fmt == "none" else _fake_w(a, D, fmt)
 
@@ -146,7 +151,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("mode", choices=["step", "nll", "check"])
     ap.add_argument("args", nargs="+")
-    ap.add_argument("--formats", default="", help="per-kind layer formats, e.g. attn=int8")
+    ap.add_argument("--formats", default="", help="per-kind layer formats: attn, mlp (or down, "
+                    "gateup), ple, e.g. attn=int8,down=int8")
     ap.add_argument("--quant", default=None, help="the activation points (default all): act,kv,p")
     ap.add_argument("--out", help="step: save the logits (before the cap) to this npz")
     a = ap.parse_args()
