@@ -34,6 +34,12 @@ def gelu_tanh(x):
     return x * ol.recip(ol.exp2(x * (x * x * GELU_B + GELU_A)) + 1.0)
 
 
+def softcap(x, c: float):
+    """The logit soft cap c tanh(x / c) (Gemma's final_logit_softcapping), as 2c sigmoid(2x / c)
+    - c = 2c / (1 + 2^(-2 log2(e) x / c)) - c: 5 VOPs."""
+    return ol.recip(ol.exp2(x * (-2.0 * ol.LOG2E / c)) + 1.0) * (2.0 * c) - c
+
+
 def softplus(x):
     """log(1 + e^x) = max(x, 0) + ln2 * log2(1 + 2^(-|x| log2(e))), exact to ~1e-6 absolute
     (1 + e^x rounds to 1 for x < -17: the result is then 0 instead of e^x)."""
