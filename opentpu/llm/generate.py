@@ -5,7 +5,7 @@ kernel at a run-time position, qwen3.RunPos; the step itself is unchanged) in a 
 
     LD the state block (the token, the position's run-time values, the tokens left, stop ids)
     LOOP min(tokens left, block - tpos) times (RLD of the device-computed count):
-        each run-time argument c * var: VOP MUL of the variable's state word, RLD into its
+        each run-time argument c * var: RLD MUL of the variable's state word into its
             argument register (the registers the host wrote before each run)
         the step: the LM head hands each logits chunk to the sampler (m.lm_sink)
         the sampler's token -> out[p + 1]  (fp32 ids, one word per position)
@@ -17,8 +17,8 @@ The host writes the state block, marks out[], starts the run and reads the token
 as they appear (Engine.generate_card); it never reads the logits. The ISA pieces are RLD (a
 TMEM word to a register), VOP ARGMAX and LOOP with a register count (docs/isa.md).
 
-Every run-time argument must be exact in fp32: c * var has at most 24 significant bits
-(check_args), as the card computes it on the VPU.
+The run-time arguments are integers mod 2^32 as the host's (compiler.arg_words), whatever c:
+RLD MUL multiplies in the sequencer (a PLE row's bytes, tok * 9344, pass 2^31).
 """
 from __future__ import annotations
 
@@ -122,15 +122,15 @@ def rules(spec, block: int) -> dict:
 
 
 def check_args(run_args, spec, block: int) -> None:
-    """c * var must be exact in fp32 for every value var takes (the VPU computes it)."""
+    """Every run-time variable has an update rule and stays an exact fp32 integer in the state
+    block (below 2^24); RLD MUL forms c * var in the sequencer, mod 2^32 as the host's
+    arg_words."""
     bound = {"tok": spec.vocab, "tpos": block, "ring": getattr(spec, "conv_k", 1)}
     for v, c in run_args:
         if v.name not in bound:
             raise CompileError(f"run-time variable {v.name}: no update rule (generate.rules)")
-        c = abs(int(c))
-        odd = c >> ((c & -c).bit_length() - 1) if c else 0
-        if (bound[v.name] - 1) * odd >= 1 << 24:
-            raise CompileError(f"argument {c} * {v.name} is not exact in fp32")
+        if bound[v.name] > 1 << 24:
+            raise CompileError(f"{v.name} < {bound[v.name]} is not exact in fp32")
 
 
 def state_words(spec, tok: int, p: int, n: int, stop_ids, block: int,
@@ -271,6 +271,7 @@ class Sampler:
         self.o = ol.program_id() * v             # this slice's first vocabulary row
         self.nb = -(-v // BLK)
         self.bm = b.alloc((self.nb,))            # block maxima
+        self.pt = None                           # the penalty's tiles (at the first chunk)
 
     @staticmethod
     def constants(b, g, samp: Sampling):
@@ -293,21 +294,33 @@ class Sampler:
         y = y[0, :] if len(y.shape) == 2 else y
         n = y.cols
         c0 = col0 - self.o                       # this slice's row
-        if self.samp.pen:
-            pa, pb = ol.load(g.pa[col0:col0 + n]), ol.load(g.pb[col0:col0 + n])
-            pa.set(y * pa)
-            pb.set(y * pb)
-            pa.set(ol.minimum(pa, pb))
-            y = pa
-        ol.store(g.lg[c0:c0 + n], y)
+        a = y.base
+        if self.samp.pen:                        # in place in the penalty's tiles
+            if self.pt is None:
+                # two for the whole LM head: fresh ones per chunk would be freed under the
+                # next chunk's MM output, which then waits for this chunk's work (a TMEM write
+                # after read), and the MXU with it
+                self.pt = (b.alloc((n,)), b.alloc((n,)))
+            assert n <= self.pt[0].cols, "LM head chunks of different sizes"
+            pa, pb = (t.base for t in self.pt)
+            b.emit(I.ld(g.addr["pa"] + 4 * col0, pa, n, comment="pa"))
+            b.emit(I.ld(g.addr["pb"] + 4 * col0, pb, n, comment="pb"))
+            b.emit(I.vop(I.V_MUL, pa, y.base, pa, 1, n, n, n, n, comment="l * pa"))
+            b.emit(I.vop(I.V_MUL, pb, y.base, pb, 1, n, n, n, n, comment="l * pb"))
+            b.emit(I.vop(I.V_MIN, pa, pa, pb, 1, n, n, n, n, comment="the penalty"))
+            a = pa
+        b.emit(I.st(g.addr["lg"] + 4 * c0, a, n, comment="lg"))
         nf, k0 = n // BLK, c0 // BLK
         if nf:
-            self.bm[k0:k0 + nf].set(ol.max(y[0:nf * BLK].reshape(nf, BLK)))
+            b.emit(I.vop(I.V_RMAX, self.bm.base + k0, a, 0, nf, BLK, 1, BLK, 0,
+                         comment="block maxima"))
         if n % BLK:
-            self.bm[k0 + nf:k0 + nf + 1].set(ol.max(y[nf * BLK:n]))
+            b.emit(I.vop(I.V_RMAX, self.bm.base + k0 + nf, a + nf * BLK, 0, 1, n % BLK, 1,
+                         n % BLK, 0, comment="block maxima"))
 
     def token(self):
         b, g, st, samp = self.b, self.g, self.st, self.samp
+        self.pt = None
         km = samp.kmax
         # the blocks: k1 = min(k, blocks) of them, each block's logits and ids gathered
         cand, ids = b.alloc((km * BLK,)), b.alloc((km * BLK,))
@@ -460,7 +473,6 @@ def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
     g = m.gen
     st = ol.load(g.state)
     consts = Sampler.constants(b, g, samp) if samp is not None else None
-    args = b.alloc((8,))               # the run-time arguments' words (c * var)
     left = st[S_LEFT:S_LEFT + 1]
     n = ol.minimum(left, (st[S_TPOS:S_TPOS + 1] * -1.0) + float(block))  # to the bucket's end
     r = b.scratch()
@@ -505,12 +517,9 @@ def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
     left.set(left - 1.0)
     # the run-time arguments of this iteration, now that the step has named them all
     check_args(b.run_args, spec, block)
-    loads = []
-    for k, (v, c) in enumerate(b.run_args):
-        loads.append(I.vop(I.V_MUL, args.base + k, st.base + SLOT[v.name], 0, 1, 1, 0, 0, 0,
-                           I.B_SCALAR, float(c), comment=f"{c}*{v.name}"))
-        loads.append(I.rld(15 - k, args.base + k, comment=f"argument {c}*{v.name}"))
-    body[mark:mark] = loads
+    body[mark:mark] = [I.rld(15 - k, st.base + SLOT[v.name], mul=int(c),
+                             comment=f"argument {c}*{v.name}")
+                       for k, (v, c) in enumerate(b.run_args)]
     b.end_loop(loop)
     ol.store(g.state[:S_HALT], st[:S_HALT])      # not the host's stop word
     if chain:              # tokens left: on to the next bucket's program (chain table)

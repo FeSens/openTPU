@@ -26,6 +26,7 @@ F_ROW, F_CSCALE, F_RSCALE = 0x1, 0x2, 0x4   # QACT (QST: F_ROW)
 F_DUP = 0x8                     # QACT: also write the rows to ACT rows rows..2*rows-1 (PAIR)
 F_HALF = 0x2                    # QST, ROW mode: write only the first half of each row
 F_RAW = 0x1                     # RLD: the word's bits (no fp32 -> int conversion)
+F_MUL = 0x2                     # RLD: times R[rb] + w2 (mod 2^32)
 F_CHAIN = 0x1                   # HALT: then load and start the program at R[ra], R[rb] words
 
 # VOP functions
@@ -119,9 +120,12 @@ def bar():
     return Instr(BAR)
 
 
-def rld(rd, tmem, ra=0, raw=False, comment=""):
-    """R[rd] = f2i(T[R[ra] + tmem]) (raw: the word's bits); docs/isa.md "RLD"."""
-    return Instr(RLD, ra=ra, rd=rd, flags=F_RAW if raw else 0, w=_w(tmem), comment=comment)
+def rld(rd, tmem, ra=0, raw=False, mul=None, rb=0, comment=""):
+    """R[rd] = f2i(T[R[ra] + tmem]) (raw: the word's bits), times R[rb] + mul (mod 2^32) if mul
+    is given; docs/isa.md "RLD"."""
+    flags = (F_RAW if raw else 0) | (F_MUL if mul is not None else 0)
+    return Instr(RLD, ra=ra, rb=rb, rd=rd, flags=flags,
+                 w=_w(tmem, 0 if mul is None else mul), comment=comment)
 
 
 def f2i(bits: int) -> int:

@@ -11,6 +11,13 @@
 // Loader: while the slice is held in reset (rst), ld_start copies ld_n instructions from DRAM
 // byte address ld_addr (chunk aligned) into IMEM, one chunk (D/32 instructions) per cycle.
 // It runs on sys_rst only, so the board can load a program and then release rst.
+//
+// HALT CHAIN (docs/isa.md): when the sequencer halts with CHAIN and the DRAM has no write
+// pending (wr_idle), the slice holds the sequencer and the units in reset (c_rst), loads the
+// chained program with the loader and releases them: the run goes on with the run's arguments
+// in R8..R15 and TMEM and DRAM as they were. `halted` stays low meanwhile, and icount counts
+// every program of the run. RLD, a collective-unit instruction, is served here: one TMEM word
+// through the collective's read port, converted, to the sequencer (never sent to otpu_coll).
 module otpu_slice
   import otpu_pkg::*;
 #(
@@ -105,24 +112,48 @@ module otpu_slice
   logic im_we;
   logic [31:0] im_row;
   seq_ev_t sq_ev;
+  logic        srst;              // the sequencer's and the units' reset: rst, or a CHAIN reload
+  logic        sq_halted, sq_ch, rl_v;
+  logic [31:0] sq_icount, sq_cha, sq_chn, rl_val;
   otpu_seq #(.IMEM_WORDS(IMEM_WORDS), .SID(SID), .S(S), .D(D), .WIN(WIN)) u_seq (
-    .clk, .rst, .ucmd, .ustart, .urel, .urdy, .udone, .halted, .error, .icount, .ev(sq_ev),
-    .rinit, .im_we, .im_row, .im_data(b_rdata));
+    .clk, .rst(srst), .ucmd, .ustart, .urel, .urdy, .udone, .halted(sq_halted), .error,
+    .icount(sq_icount), .ev(sq_ev), .rinit, .rl_v, .rl_val, .ch_req(sq_ch), .ch_addr(sq_cha),
+    .ch_n(sq_chn), .im_we, .im_row, .im_data(b_rdata));
+
+  // ---- HALT CHAIN: reload IMEM from the chained program's address, the units held in reset
+  logic        c_rst, c_ld;
+  logic [31:0] c_addr, c_n, ic_base;
+  assign srst = rst || c_rst;
+  assign halted = sq_halted && !sq_ch;
+  assign icount = ic_base + sq_icount;
+  always_ff @(posedge clk) begin
+    c_ld <= 1'b0;
+    if (rst) begin
+      c_rst <= 1'b0; ic_base <= '0;
+    end else if (!c_rst) begin
+      if (sq_halted && sq_ch && wr_idle) begin
+        c_rst <= 1'b1; c_ld <= 1'b1;
+        c_addr <= sq_cha; c_n <= sq_chn;
+        ic_base <= ic_base + sq_icount;
+      end
+    end else if (!c_ld && !ld_busy) c_rst <= 1'b0;      // loaded (the loader starts after c_ld)
+  end
 
   // ---- program loader
   localparam int IPR = D / 32;
   logic [31:0] ld_rows, ld_iss, ld_cmp, ld_a;
   wire ld_req = ld_busy && ld_iss < ld_rows;
+  wire [31:0] ld_n_s = c_ld ? c_n : ld_n;
   assign im_we  = ld_busy && b_rvalid;
   assign im_row = ld_cmp;
   always_ff @(posedge clk) begin
     if (sys_rst) begin
       ld_busy <= 1'b0;
-    end else if (ld_start && !ld_busy) begin
-      ld_rows <= (ld_n + IPR - 1) / IPR;
+    end else if ((ld_start || c_ld) && !ld_busy) begin
+      ld_rows <= (ld_n_s + IPR - 1) / IPR;
       ld_iss <= '0; ld_cmp <= '0;
-      ld_a <= ld_addr >> 2;
-      ld_busy <= (ld_n != 0);
+      ld_a <= (c_ld ? c_addr : ld_addr) >> 2;
+      ld_busy <= (ld_n_s != 0);
     end else if (ld_busy) begin
       if (ld_req && b_rdy) begin
         ld_iss <= ld_iss + 1;
@@ -208,7 +239,7 @@ module otpu_slice
   (* max_fanout = 64 *) logic rst_dma, rst_mxu, rst_q, rst_vpu;
   logic rst_q0, rst_v0;
   always_ff @(posedge clk) begin
-    rst_dma <= rst; rst_mxu <= rst; rst_q0 <= rst; rst_v0 <= rst;
+    rst_dma <= srst; rst_mxu <= srst; rst_q0 <= srst; rst_v0 <= srst;
     rst_q <= rst_q0; rst_vpu <= rst_v0;
   end
 `ifndef SYNTHESIS
@@ -268,13 +299,47 @@ module otpu_slice
     .ss_req, .ss_gnt, .ss_cfg, .ss_pe, .ss_in_v, .ss_in_d, .ss_fk, .ss_fi, .ss_fd,
     .ss_y_v, .ss_y_d, .ss_o_v, .ss_o_d);
 
-  // collective: request from start until acknowledged
+  // collective: request from start until acknowledged (an RLD is not a collective)
+  wire rl_start = ustart[U_COLL] && ucmd[U_COLL].op == OP_RLD;
   always_ff @(posedge clk) begin
-    if (rst) coll_req <= 1'b0;
-    else if (ustart[U_COLL]) coll_req <= 1'b1;
+    if (srst) coll_req <= 1'b0;
+    else if (ustart[U_COLL] && !rl_start) coll_req <= 1'b1;
     else if (coll_ack) coll_req <= 1'b0;
   end
   assign coll_cmd = ucmd[U_COLL];
+  // RLD: the word through the collective's read port (lane 0) once granted; the lane has it
+  // the next cycle (rl_got), registered (rl_cv), converted (rl_c1), times the multiplier
+  // (1 without MUL) as two partial products (rl_c2: the low 32 bits of x * m[15:0] and the
+  // low 16 of x[15:0] * m[31:16]), summed and handed to the sequencer (rl_v)
+  logic        rl_pend, rl_got, rl_cv, rl_c1, rl_c2, rl_raw;
+  logic [31:0] rl_a, rl_w, rl_m, rl_x, rl_pl;
+  logic [15:0] rl_ph;
+  wire         rl_busy = rl_pend || rl_got || rl_cv || rl_c1 || rl_c2 || rl_v;
+  always_ff @(posedge clk) begin
+    if (srst) begin
+      rl_pend <= 1'b0; rl_got <= 1'b0; rl_cv <= 1'b0; rl_c1 <= 1'b0; rl_c2 <= 1'b0;
+      rl_v <= 1'b0;
+    end else begin
+      rl_got <= rl_pend && r_en[P_COLL][0];
+      if (rl_start) begin
+        rl_pend <= 1'b1;
+        rl_a <= ucmd[U_COLL].w1;
+        rl_raw <= ucmd[U_COLL].flags[RF_RAW];
+        rl_m <= ucmd[U_COLL].flags[RF_MUL] ? ucmd[U_COLL].w2 : 32'd1;
+      end else if (rl_pend && r_en[P_COLL][0]) rl_pend <= 1'b0;
+      rl_cv <= rl_got;
+      if (rl_got) rl_w <= r_data[P_COLL][0];
+      rl_c1 <= rl_cv;
+      if (rl_cv) rl_x <= rl_raw ? rl_w : rld_f2i(rl_w);
+      rl_c2 <= rl_c1;
+      if (rl_c1) begin
+        rl_pl <= rl_x * rl_m[15:0];
+        rl_ph <= rl_x[15:0] * rl_m[31:16];
+      end
+      rl_v <= rl_c2;
+      if (rl_c2) rl_val <= rl_pl + {rl_ph, 16'd0};
+    end
+  end
   // the TMEM request arrays, each assembled in one process from the units' ports
   always_comb begin
     rq_en = '0; r_addr = '0; wq_en = '0; w_addr = '0; w_data = '0;
@@ -286,6 +351,7 @@ module otpu_slice
     rq_en[P_VA] = va_ren;     r_addr[P_VA] = va_raddr;
     rq_en[P_VB] = vb_ren;     r_addr[P_VB] = vb_raddr;
     rq_en[P_COLL] = coll_ren; r_addr[P_COLL] = coll_raddr;
+    if (rl_pend) begin rq_en[P_COLL][0] = 1'b1; r_addr[P_COLL][0] = rl_a; end
     wq_en[W_DMA] = dma_wen;   w_addr[W_DMA] = dma_waddr;   w_data[W_DMA] = dma_wdata;
     wq_en[W_MXU][ULANES-1:0] = mxu_wen;
     w_addr[W_MXU][ULANES-1:0] = mxu_waddr;
@@ -294,8 +360,8 @@ module otpu_slice
     wq_en[W_COLL] = coll_wen; w_addr[W_COLL] = coll_waddr; w_data[W_COLL] = coll_wdata;
   end
 
-  assign urdy  = {!coll_req, r_vpu, r_q, r_mxu, r_dma};
-  assign udone = {coll_ack, d_vpu, d_q, d_mxu, d_dma};
+  assign urdy  = {!coll_req && !rl_busy, r_vpu, r_q, r_mxu, r_dma};
+  assign udone = {coll_ack || rl_v, d_vpu, d_q, d_mxu, d_dma};
 
   // ---- TMEM bank arbiter: all-or-nothing grants in priority order
   function automatic logic [NRP-1:0] grp_rports(input int g);

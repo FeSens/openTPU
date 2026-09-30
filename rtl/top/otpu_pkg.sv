@@ -2,7 +2,8 @@
 // memory footprints the sequencer's scoreboard uses to let units run concurrently.
 package otpu_pkg;
   localparam logic [7:0] OP_NOP = 8'h00, OP_HALT = 8'h01, OP_LI = 8'h02, OP_ADDI = 8'h03,
-                         OP_LOOP = 8'h04, OP_BAR = 8'h05, OP_LD = 8'h10, OP_ST = 8'h11,
+                         OP_LOOP = 8'h04, OP_BAR = 8'h05, OP_RLD = 8'h06, OP_LD = 8'h10,
+                         OP_ST = 8'h11,
                          OP_DSTEP = 8'h12, OP_STREAM = 8'h13, OP_MM = 8'h20, OP_QACT = 8'h21,
                          OP_QST = 8'h22,
                          OP_VOP = 8'h30, OP_GATHER = 8'h40;
@@ -10,7 +11,10 @@ package otpu_pkg;
   localparam logic [7:0] V_ADD = 0, V_SUB = 1, V_RSUB = 2, V_MUL = 3, V_MAX = 4, V_MIN = 5,
                          V_OUTER = 6, V_COPY = 8, V_EXP2 = 9, V_RECIP = 10, V_RSQRT = 11,
                          V_ABS = 12, V_FILL = 13, V_EXP2SUB = 14, V_LOG2 = 15, V_RSUM = 16,
-                         V_RMAX = 17, V_RSSQ = 18, V_RDOT = 19;
+                         V_RMAX = 17, V_RSSQ = 18, V_RDOT = 19, V_ARGMAX = 20;
+  // HALT flag bit0 CHAIN: load R[rb] instructions from DRAM R[ra] and start them; RLD flag
+  // bit0 RAW: the word's bits instead of f2i, bit1 MUL: times R[rb] + w2 (docs/isa.md)
+  localparam int HF_CHAIN = 0, RF_RAW = 0, RF_MUL = 1;
   // the composite functions' classes (otpu_se_comp's microcode; the VPU decodes a chunk's as it
   // loads it)
   localparam logic [2:0] CC_NONE = 3'd0, CC_EXP = 3'd1, CC_EXS = 3'd2, CC_RCP = 3'd3,
@@ -85,7 +89,7 @@ package otpu_pkg;
       OP_MM:             return U_MXU;
       OP_QACT, OP_QST:   return U_Q;
       OP_VOP:            return U_VPU;
-      OP_BAR, OP_GATHER: return U_COLL;
+      OP_BAR, OP_GATHER, OP_RLD: return U_COLL;   // RLD: read locally (otpu_slice)
       default:           return -1;
     endcase
   endfunction
@@ -142,7 +146,20 @@ package otpu_pkg;
   endfunction
 
   function automatic logic is_reduce(input logic [7:0] f);
-    return f == V_RSUM || f == V_RMAX || f == V_RSSQ || f == V_RDOT;
+    return f == V_RSUM || f == V_RMAX || f == V_RSSQ || f == V_RDOT || f == V_ARGMAX;
+  endfunction
+
+  // RLD's conversion of an fp32 word to a register (docs/isa.md "RLD"): truncation toward zero;
+  // |x| < 1 (denormals, +-0) gives 0; |x| >= 2^31, infinities and NaN give 0x80000000
+  function automatic logic [31:0] rld_f2i(input logic [31:0] x);
+    logic [7:0]  e;
+    logic [31:0] m, v;
+    e = x[30:23];
+    m = {8'd1, x[22:0]};
+    if (e < 8'd127) return '0;
+    if (e >= 8'd158) return 32'h8000_0000;
+    v = (e >= 8'd150) ? m << (e - 8'd150) : m >> (8'd150 - e);
+    return x[31] ? -v : v;
   endfunction
 
   // Everything an instruction may read or write (docs/isa.md), conservatively as intervals.
@@ -302,7 +319,9 @@ package otpu_pkg;
               default: ;
             endcase
           end
-          if (is_reduce(c.w6[23:16]))
+          if (c.w6[23:16] == V_ARGMAX)            // a (max, index) pair per row
+            f.wr[0] = mk(SP_TMEM, c.w1, p.p2 + 2);
+          else if (is_reduce(c.w6[23:16]))
             f.wr[0] = mk(SP_TMEM, c.w1, p.p2 + 1);
           else
             f.wr[0] = mk(SP_TMEM, c.w1, p.p2 + cols);
@@ -316,6 +335,7 @@ package otpu_pkg;
         end
       end
       OP_BAR: f.all = 1'b1;
+      OP_RLD: f.rd[0] = mk(SP_TMEM, c.w1, 32'd1);
       default: ;
     endcase
     return f;

@@ -172,8 +172,11 @@ class Slice:
             return
         if op == I.RLD:
             v = int(self.tmem[self._tidx(np.int64((self.reg(ins.ra) + w[0]) & 0xFFFFFFFF))])
+            v = v if ins.flags & I.F_RAW else I.f2i(v)
+            if ins.flags & I.F_MUL:
+                v = (v * ((self.reg(ins.rb) + w[1]) & 0xFFFFFFFF)) & 0xFFFFFFFF
             if ins.rd:
-                self.R[ins.rd] = v if ins.flags & I.F_RAW else I.f2i(v)
+                self.R[ins.rd] = v
             return
         if op == I.LD:
             d = (self.reg(ins.ra) + w[0]) & 0xFFFFFFFF

@@ -1204,7 +1204,9 @@ class BoardBackend:
                 t_tok = time.perf_counter()
             return len(new)
 
-        while k < n:
+        # the board model replays its register script in one simulation per flush: no reads
+        # while the program runs, the tokens are read after it halts
+        while k < n and not getattr(t, "batched", False):
             if take():
                 continue
             if t.reg_read(R_STATUS) & ST_HALTED:

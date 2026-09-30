@@ -56,7 +56,7 @@ decode: positions [(b-1)·256, b·256).
 ```
 LD the state block (tok, tpos, ring, tokens left, sampling words, stop ids)
 LOOP min(left, 256 - tpos) times            (RLD of the device-computed count)
-    each run-time argument c * var: VOP MUL of the state word, RLD into its register
+    each run-time argument c * var: RLD MUL of the state word into its register
     the step (the model's resident decode step, unchanged); the LM head hands each logits
         chunk to the sampler instead of storing it (m.lm_sink)
     the sampler's token -> out[p + 1]
@@ -68,10 +68,12 @@ tokens left: LD the next bucket's [address, instructions] from the chain table, 
 
 **Run-time arguments.** These are the values the host wrote as ARG registers before each run
 in resident decode (docs/host.md): for example `4096 * tok` for LFM2's embedding row, and
-`tpos` and `ring` multiples. Here the card computes each one as an fp32 product of the state
-word, then `RLD` truncates it into the argument register.
+`tpos` and `ring` multiples. Here one `RLD MUL` per argument forms it from the state word:
+the integer times c, mod 2^32, as the host's `arg_words`.
 
-- The product must be exact in fp32: `check_args` requires (bound − 1) × odd(c) < 2^24.
+- There is no bound on c. Gemma 4's per-layer embedding row, `9344 * tok`, passes 2^31 at
+  vocab 262144, which no fp32 product holds exactly.
+- The variables themselves stay below 2^24 (`check_args`).
 - Every model today uses 6 or 7 arguments, and the loop nests 2 deep.
 
 **Chaining.** IMEM holds one program (4096 instructions on the board). A bucket's program is
@@ -134,10 +136,24 @@ arithmetic. The device's picks match it bit for bit.
 This is tested for Qwen3's and LFM2's default settings, for k = 64, and for k = 3 with S = 1
 and S = 2.
 
-**Cost.** The per-chunk work hides under the LM head's weight stream. The token's serial part
-is the two ARGMAX loops of k iterations each. At LFM2's k = 50 that is about 18K cycles, about
-1% of its token. At Qwen3's k = 20 it is about 3K cycles. These are estimates until rtlsim
-gives the cycles. Greedy turns use the Greedy sink and pay neither loop.
+**Cost.** Measured on the RTL (`tools/perf_qwen.py --resident --generate N`, Qwen3.5-0.8B
+with 2 layers, fp4, board memory model; its LM head, 248K ids, is the largest of the three
+models'), per token against the resident step (2,477,675 cycles):
+
+| loop | cycles per token | against the step |
+|---|---|---|
+| greedy | 2,472,342 | −5.3K (−0.2%): the logits are not stored |
+| sampled, k 20, top-p 0.95 | 2,494,388 | +16.7K (+0.7%) |
+| sampled, k 20, top-p 0.95, penalty 1.1 | 2,528,122 | +50.4K (+2.0%) |
+
+- On the whole 24-layer model (40.6 ms a token) these are −0.04 ms, +0.13 ms and +0.38 ms at
+  133.33 MHz. The host path they replace is 0.34-0.69 ms.
+- The per-chunk work hides under the LM head's weight stream. It works in place in two tiles
+  held for the whole head: fresh tiles per chunk were freed under the next chunk's MM output,
+  which then waited for the chunk's work (7.2K cycles a chunk, +224K a token).
+- What remains is the token's serial part (the ARGMAX loops, about 17K cycles at k = 20) and,
+  with the penalty, 3 MB more DRAM traffic a token (`pa`, `pb`, `lg`) beside the weights.
+- Greedy turns use the Greedy sink and pay neither.
 
 ## The host
 
@@ -167,15 +183,34 @@ true, it writes the state's stop word, and the card halts after the token in fli
     penalty;
   - chat turns, greedy and sampled, with resume and EOS;
   - `run_generate` on a fake card that computes: tokens streamed during the run, and stop.
-- **Next: the RTL.**
+- **rtlsim.** The same file on the Verilator RTL:
+  - RLD (with MUL), ARGMAX and HALT CHAIN against the ISA simulator, and otpu-diag's gen
+    checks in the board's configuration;
+  - 12 tokens from a 248-token prefill across the bucket boundary in one run, greedy and
+    sampled (top-k, top-p, the penalty), on tiny Qwen3, LFM2 and Qwen3.5 at S = 1 and 2: the
+    tokens and the whole DRAM equal the ISA simulator's.
+- **Board model.** `tests/test_board.py`, tb_board through `SimTransport`: the same run through
+  `BoardBackend.run_generate` (CAPS bit30), and the gen checks.
+- **Existing programs** are unchanged: perf_qwen (Qwen3.5 fp4, 2 layers) 2,477,721 cycles and
+  2,477,675 resident, main 812bb01's.
+- **The RTL:**
 
   | file | change |
   |---|---|
   | otpu_pkg | `OP_RLD` on U_COLL (footprint: one TMEM word read); `V_ARGMAX` (writes 2 words per row) |
-  | otpu_seq | the R stage holds until RLD's value is in R[rd]; HALT CHAIN's address and count out |
-  | otpu_slice | RLD read locally on the collective unit's TMEM port (not sent to otpu_coll); the CHAIN reload: once the writes are idle, hold the slice's units in reset and run the program loader from the chain address, then release (TMEM, DRAM and the arguments stay; HALTED stays low) |
-  | otpu_vpu | ARGMAX through the RMAX tree with the lane index and the chunk's column; ties keep the older value; the pair written through lanes 0 and 1 with i2f |
+  | otpu_seq | the R stage holds until RLD's value is in R[rd] (a flip-flop, off the fetch path); HALT CHAIN's address and count out |
+  | otpu_slice | RLD read locally on the collective unit's TMEM port (not sent to otpu_coll), f2i and MUL (two partial products, 3 DSPs) in 3 stages; the CHAIN reload: once the writes are idle, hold the slice's units in reset and run the program loader from the chain address, then release (TMEM, DRAM and the arguments stay; HALTED stays low, ICOUNT adds up) |
+  | otpu_vpu | ARGMAX through the RMAX tree with the lane index and the chunk's column; ties keep the older value; the pair written through lanes 0 and 1 four cycles after the row (index add, leading zeros, i2f) |
   | otpu_ctrl | CAPS bit30 |
 
-  After that: rtlsim token-exact, a FAST=1 100 MHz build, the card, then 133.33 MHz.
-- **Area estimate** before RTL: about 0.7K LUT and 0.25K FF, about 0.3% of the slices.
+- **Area and timing**, Vivado out of context at 7.5 ns (xc7k480t-2, place and route; the
+  tournament's parts), against main (812bb01):
+
+  | unit | LUT | FF | LUTRAM | DSP | WNS |
+  |---|---|---|---|---|---|
+  | otpu_seq | 15,835 (+497) | 10,655 (+65) | 912 (+0) | 7 (+0) | +0.642 ns (main +0.541) |
+  | otpu_vpu | 24,026 (+431) | 19,414 (+276) | 1,200 (+39) | 68 (+0) | +0.961 ns (main +1.044) |
+
+  About 0.3% of the device's LUTs. otpu_slice's RLD reader and CHAIN FSM (about 100 FF,
+  3 DSPs) are not in a part.
+- **Next:** a FAST=1 build at 100 MHz (fused with ld-2port), the card, then 133.33 MHz.

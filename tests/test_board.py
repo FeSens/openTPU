@@ -155,8 +155,8 @@ def test_stream_on_board_model(have_verilator):
     assert ok, msg
 
 
-@pytest.mark.parametrize("group,name,prog", op_checks(CFG),
-                         ids=[name for _, name, _ in op_checks(CFG)])
+@pytest.mark.parametrize("group,name,prog", op_checks(CFG, gen=True),
+                         ids=[name for _, name, _ in op_checks(CFG, gen=True)])
 def test_op_check_on_board_model(have_verilator, group, name, prog):
     """otpu-diag's per-instruction programs (opentpu/host/opchecks.py), bit for bit."""
     ok, msg, _ = run_demo(Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2)), CFG, prog,
@@ -201,3 +201,38 @@ def test_tiny_qwen3_on_board_model(have_verilator):
         a, b = isa.step(tok), brd.step(tok)
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
     assert brd.stats[-1]["cycles"] > 0
+
+
+def test_tiny_qwen3_generate_on_board_model(have_verilator):
+    """The generate loop through the board (CAPS bit30, BoardBackend.run_generate): from the
+    DRAM state of a 248-token prefill on the ISA simulator, 12 tokens across the attention
+    bucket boundary at 256 in one start (HALT CHAIN on the board's loader), token for token
+    and the whole DRAM of the ISA simulator's run."""
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, Spec
+    torch.manual_seed(0)
+    hc = transformers.Qwen3Config(hidden_size=256, num_hidden_layers=2, num_attention_heads=4,
+                                  num_key_value_heads=2, head_dim=128, intermediate_size=512,
+                                  vocab_size=1000, rms_norm_eps=1e-6, rope_theta=1e6,
+                                  tie_word_embeddings=True, max_position_embeddings=4096,
+                                  initializer_range=0.2)
+    mdl = transformers.Qwen3ForCausalLM(hc).float().eval()
+    W = {k: v.float().numpy() for k, v in mdl.state_dict().items()}
+    spec = Spec(256, 2, 4, 2, 128, 512, 1000)
+    need = spec.image(board_config(DRAM_BYTES=1 << 40), 512, rows=PREFILL_ROWS,
+                      lookup=True).nbytes
+    size = 1 << (need - 1).bit_length()
+    cfg = board_config(DRAM_BYTES=size)
+    eng = Engine(spec, W, cap=512, cfg=cfg, resident=True)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    t0 = int(np.argmax(eng.prefill(toks)))
+    isa, pos, n = eng.backend, eng.pos, eng.image.nbytes
+    tr = SimTransport(ch_bytes=size // 2, stall=20, seed=5)
+    brd = BoardBackend(cfg, [isa.machine.slices[0].dram[:n]], transport=tr)   # the prefill's
+    assert brd.generates and brd.chains
+    want = eng.generate_card(t0, 12, stop_ids=[])
+    eng.backend, eng.pos, eng._chained = brd, pos, {}
+    seen = []
+    got = eng.generate_card(t0, 12, stop_ids=[], on_token=seen.append)
+    assert got == want == seen and len(set(got)) >= 3
+    assert eng.stats[-1]["cycles"] > 0
+    assert np.array_equal(brd.read(0, 0, n), isa.machine.slices[0].dram[:n])

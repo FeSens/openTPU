@@ -211,6 +211,16 @@ def _gen_checks() -> list:
              I.vop(I.V_COPY, RES + 16, A, 0, 1, 8, 8, 8, 0, ra=7),
              I.st(OUT + 0x3000, RES + 16, 16), I.st(OUT + 0x3800, 112, 16, ra=0)]
     out.append(("gen", "RLD (truncation, inf, RAW, register offsets)", _p(*prog)))
+    # RLD MUL: times w2 mod 2^32 (a PLE row's bytes, 262143 * 9344 > 2^31), a negative
+    # multiplier, RAW bits times 3, a product past 2^32; each register brought back to an offset
+    mv = [(262143.0, 9344, False), (-5.0, -7, False), (3.0, 3, True), (65536.0, 65537, False)]
+    prog = [_fill1(RES + k, v) for k, (v, _, _) in enumerate(mv)]
+    for k, (v, c, raw) in enumerate(mv):
+        x = I.f32bits(v) if raw else I.f2i(I.f32bits(v))
+        prog += [I.rld(1 + k, RES + k, raw=raw, mul=c),
+                 I.addi(1 + k, 1 + k, 0x400 * (k + 1) - x * c),
+                 I.st(OUT, A + 16 * k, 16, ra=1 + k)]
+    out.append(("gen", "RLD MUL (mod 2^32, negative, RAW)", _p(*prog)))
     # RLD drives a LOOP count and a conditional HALT (LOOP R {HALT} with R = 0: no halt)
     out.append(("gen", "RLD loop count, conditional HALT",
                 _p(_fill1(RES, 3.0), _fill1(RES + 1, 0.0), I.rld(4, RES), I.rld(5, RES + 1),

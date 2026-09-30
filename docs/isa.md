@@ -98,7 +98,7 @@ Every instruction is 8 x 32-bit words `w0..w7`.
 | 0x03 | ADDI | `R[rd] = R[ra] + w1` |
 | 0x04 | LOOP | body = next `w1` instructions, executed `R[ra] + w2` times (0: skipped). Loops nest (depth 4); a body must not end on the same instruction as an enclosing body. |
 | 0x05 | BAR | wait until every slice has reached a `BAR` |
-| 0x06 | RLD | `R[rd] = f2i(T[R[ra]+w1])`, flag bit0 RAW: the word's bits (see "RLD") |
+| 0x06 | RLD | `R[rd] = f2i(T[R[ra]+w1])`, flag bit0 RAW: the word's bits, bit1 MUL: times `R[rb]+w2` (see "RLD") |
 | 0x07 | WAITW | reserved: wait until a DRAM word meets a condition (MoE expert streaming, docs/offload.md on branch offload) |
 | 0x10 | LD | DRAM -> TMEM, `n = w3` words: `T[R[rb]+w2+i] = M32[R[ra]+w1+4i]` |
 | 0x11 | ST | TMEM -> DRAM: `M32[R[ra]+w1+4i] = T[R[rb]+w2+i]` for `i < w3` |
@@ -330,8 +330,10 @@ The compiler (`ol.state_step`) falls back to VOPs otherwise. DSTEP is STREAM wit
 computed reaches an address, a loop count (`LOOP R[ra] + w2`) or a condition (a `LOOP` of count
 0 or 1 around the instructions it guards). `f2i` truncates toward zero: `|x| < 1` (with +-0 and
 the flushed denormals) gives 0, `|x| >= 2^31`, infinities and NaN give `0x80000000`; integers of
-up to 24 significant bits come out exact. Flag bit0 RAW: the word's bits instead. `rd = 0`
-writes nothing.
+up to 24 significant bits come out exact. Flag bit0 RAW: the word's bits instead. Flag bit1
+MUL: the value (f2i's or RAW's) times `R[rb] + w2`, the low 32 bits of the product (signed and
+unsigned alike): an integer the device computed scaled into a byte offset past fp32's 24 bits,
+e.g. a token's row in a 2.4 GB table (`tok * 9344`). `rd = 0` writes nothing.
 
 RLD reads its word after every older instruction that writes it (the scoreboard, like any TMEM
 read), and no younger instruction is issued until `R[rd]` holds the value: they may use it. The
@@ -344,7 +346,8 @@ uses a handful per token.
 landed), then the board loads `R[rb]` instructions from DRAM byte address `R[ra]` (chunk aligned,
 at most the IMEM) into IMEM and starts them: `R0..R7 = 0`, `R8..R15` the run's arguments as the
 host wrote them; TMEM, ACT RAM and DRAM keep their contents. On the card the run goes on (RUN
-stays set, CYCLES counts); the host sees one run. The decode loop's program of an attention
+stays set, CYCLES counts, ICOUNT adds the programs' instructions up); the host sees one run.
+The reload is the program loader's DRAM read of the new program, once per chained program. The decode loop's program of an attention
 bucket chains to the next bucket's.
 
 ### GATHER

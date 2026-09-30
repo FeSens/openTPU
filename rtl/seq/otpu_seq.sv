@@ -16,6 +16,13 @@
 // clear (ustart), and it may consume the stream once all dependencies are clear (urel). Deep
 // prefetch therefore overlaps the stream with whatever produces the MM's stationary operand.
 //
+// RLD (docs/isa.md) is dispatched like a unit instruction (to the collective unit, whose slice
+// reads the TMEM word itself); R then holds the next instruction until the value comes back
+// (rl_v): younger instructions may use R[rd] in their addresses and LOOP counts. The hold
+// (rl_wait) is a flip-flop, so the fetch-enable path only gains one registered term. HALT with
+// flag CHAIN reports R[ra] (the program's DRAM address) and R[rb] (its instructions) with the
+// halt (ch_*): the slice reloads IMEM from there and restarts (otpu_slice).
+//
 // IMEM is a synchronous RAM (FPGA block RAM) of rows of IPR = D/32 instructions -- one DRAM
 // chunk, so the slice's loader writes one row per cycle. It is read one instruction ahead, at
 // fa: the exact pc that R moves to next (computed from flip-flops only). When R moves on, the
@@ -42,6 +49,11 @@ module otpu_seq
   output logic [31:0]         icount,
   output seq_ev_t             ev,          // trace and activity events, a cycle late (otpu_pkg)
   input  logic [31:0]         rinit  [8],  // R8..R15 while in reset: the run's arguments
+  input  logic                rl_v,        // RLD's value is back: R[rd] = rl_val
+  input  logic [31:0]         rl_val,
+  output logic                ch_req,      // the halt is a HALT CHAIN: to ch_addr, ch_n
+  output logic [31:0]         ch_addr,
+  output logic [31:0]         ch_n,
   // IMEM write port (the loader; used while the slice is held in reset)
   input  logic                im_we,
   input  logic [31:0]         im_row,
@@ -64,6 +76,8 @@ module otpu_seq
   logic [31:0] pc, cyc;
   logic [31:0] R [16];
   logic        stopping;         // HALT fetched: wait for the window to drain
+  logic        rl_wait;          // an RLD is out: R holds until its value is back
+  logic [3:0]  rl_rd;
 
   // loop stack
   logic [2:0]  sp;
@@ -161,6 +175,7 @@ module otpu_seq
       OP_GATHER: begin
         t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0];
       end
+      OP_RLD: t0 = f.rd[0];
       default: ;   // BAR: all
     endcase
     s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2) || tovf(t3) || tovf(t4);
@@ -321,7 +336,7 @@ module otpu_seq
   endtask
 
   always_comb
-    r_ret = ir_v && !stopping && !halted &&
+    r_ret = ir_v && !stopping && !halted && !rl_wait &&
             (op == OP_NOP || op == OP_HALT || op == OP_LI || op == OP_ADDI ||
              (op == OP_LOOP && lp));
 
@@ -347,7 +362,7 @@ module otpu_seq
       OP_LOOP: adv = lp;
       default: adv = dunit >= 0 && r_take;
     endcase
-    ld = !ir_v || (!stopping && !halted && adv);
+    ld = !ir_v || (!stopping && !halted && !rl_wait && adv);
     hit1 = (sp != 0) && (stk_end[sp-1] == fa);
     hit2 = (sp >= 2) && (stk_end[sp-2] == fa);
     hit = hit1 && stk_rem[sp-1] > 1;                                          // D
@@ -365,7 +380,7 @@ module otpu_seq
     if (rst) fa_n = '0;
     else if (ir_v && op == OP_LOOP && !lp) fa_n = lp_z ? pc + 1 + iw[1] : pc + 1;
     else fa_n = succ;
-    fe = rst || (ir_v && op == OP_LOOP && !lp && !stopping && !halted) || ld;
+    fe = rst || (ir_v && op == OP_LOOP && !lp && !stopping && !halted && !rl_wait) || ld;
     fa_d = fe ? fa_n : fa;
   end
 
@@ -461,6 +476,7 @@ module otpu_seq
       uq_r <= '0;
       pc <= '0; sp <= '0; cyc <= '0;
       halted <= 1'b0; error <= 1'b0; stopping <= 1'b0;
+      rl_wait <= 1'b0; ch_req <= 1'b0;
       p_v <= 1'b0; s_v <= 1'b0; q_v <= 1'b0; c_v <= 1'b0; lp <= 1'b0;
       icount <= '0;
       sv <= '0; sstarted <= '0; sready <= '0;
@@ -586,13 +602,23 @@ module otpu_seq
         end
       end
       if (r_take) p_v <= 1'b0;
+      // ---- RLD's value (R holds meanwhile, so nothing below writes R this cycle)
+      if (rl_v) begin
+        if (rl_rd != 0) R[rl_rd] <= rl_val;
+        rl_wait <= 1'b0;
+      end
       // ---- R: fetch / execute control / hand over
       if (stopping) begin
         if (sv == '0 && pipe_empty) halted <= 1'b1;
-      end else if (!halted && ir_v) begin
+      end else if (!halted && ir_v && !rl_wait) begin
         case (op)
           OP_NOP: advance();
-          OP_HALT: stopping <= 1'b1;
+          OP_HALT: begin
+            stopping <= 1'b1;
+            ch_req <= flags[HF_CHAIN];
+            ch_addr <= rv(ra);
+            ch_n <= rv(rb);
+          end
           OP_LI: begin
             if (rd != 0) R[rd] <= iw[1];
             advance();
@@ -624,6 +650,10 @@ module otpu_seq
               p_v <= 1'b1;
               p_cmd <= dcmd; p_unit <= 3'(dunit); p_pc <= pc;
               advance();
+              if (op == OP_RLD) begin
+                rl_wait <= 1'b1;
+                rl_rd <= rd;
+              end
             end
           end
         endcase

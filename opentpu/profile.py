@@ -155,7 +155,8 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
     if op == I.BAR:
         return "BAR", "", 0, 0, 0
     if op == I.RLD:
-        return "RLD", "raw" if ins.flags & I.F_RAW else "", 1, 0, 0
+        return "RLD", " ".join(f for b, f in ((I.F_RAW, "raw"), (I.F_MUL, "mul"))
+                               if ins.flags & b), 1, 0, 0
     return f"op{op:#x}", "", 0, 0, 0
 
 

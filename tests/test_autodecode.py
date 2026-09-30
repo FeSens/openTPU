@@ -71,6 +71,15 @@ def test_rld_raw_and_r0():
     assert s.R[4] == I.f32bits(1.5) and s.R[0] == 0
 
 
+@pytest.mark.parametrize("x,raw,rb,mul,want", [
+    (262143.0, False, 0, 9344, 262143 * 9344),                # past 2^31: a PLE row's bytes
+    (-5.0, False, 0, -7, 35), (65536.0, False, 0, 65537, 65536),   # mod 2^32
+    (3.0, True, 0, 3, 3 * 0x40400000), (100.0, False, 3, 5, 100 * 1005), (7.9, False, 0, 0, 0)])
+def test_rld_mul_times_a_register_plus_w2_mod_2_32(x, raw, rb, mul, want):
+    s = run1([I.li(3, 1000), I.rld(5, 0, raw=raw, mul=mul, rb=rb), I.halt()], {0: [x]})
+    assert s.R[5] == want & 0xFFFFFFFF
+
+
 def test_rld_drives_addresses_and_loop_counts():
     """A device-computed index picks a TMEM word (a gather), and a device-computed count runs a
     loop: the value of ARGMAX's index through RLD, as the decode loop uses them."""
@@ -132,7 +141,7 @@ def test_the_gen_op_checks_run_on_the_isa_simulator():
     cfg = board_config(DRAM_BYTES=1 << 23)
     img = diag_image()
     checks = [(n, p) for g, n, p in op_checks(cfg, gen=True) if g == "gen"]
-    assert len(checks) == 5 and not [g for g, _, _ in op_checks(cfg) if g == "gen"]
+    assert len(checks) == 6 and not [g for g, _, _ in op_checks(cfg) if g == "gen"]
     for name, prog in checks:
         ref = np.zeros(1 << 23, np.uint8)
         ref[:len(img)] = img
@@ -140,6 +149,119 @@ def test_the_gen_op_checks_run_on_the_isa_simulator():
                     [[I.ld(ZERO_AT, 0, cfg.TMEM_WORDS)] + prog], [ref]).run()
         assert (m.slices[0].dram[:PROG_AT] != ref[:PROG_AT]).sum() >= 27, name
         assert m.chains == (name == "HALT CHAIN")
+
+
+# ---------------------------------------------------------------------------------- the RTL
+def _on_rtl(prog, data=None, dram_bytes=1 << 20, cfg=None, args=None, extra=()):
+    """prog after an LD of `data` (fp32 words, from DRAM 0 to TMEM 0) on the ISA simulator and
+    the RTL: the same DRAM and TMEM. extra: (DRAM byte address, uint8 array) placed in DRAM."""
+    from opentpu import rtlsim
+    cfg = cfg or Config(S=1, DRAM_BYTES=dram_bytes)
+    dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
+    pre = []
+    if data is not None:
+        d = f(data).reshape(-1)
+        dram[:4 * len(d)] = d.view(np.uint8)
+        pre = [I.ld(0, 0, len(d))]
+    for a, b in extra:
+        dram[a:a + len(b)] = b
+    prog = pre + list(prog)
+    m = Machine(cfg, [prog], [dram.copy()], args=args).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [dram.copy()], args=args)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    return m, st
+
+
+def test_argmax_on_rtl(have_verilator):
+    """VOP ARGMAX on the RTL: ties to the first column across lanes and chunks, -0 / +0,
+    denormals, -inf rows, one-chunk and long rows, row strides, a negative base plus R[rd]."""
+    rng = np.random.default_rng(5)
+    a = rng.standard_normal((6, 300)).astype(np.float32)
+    a[1, [7, 40, 299]] = 9.0
+    a[2] = -np.inf
+    a[2, 250] = -1e30
+    a[3, :] = 0.0
+    a[3, 100] = -0.0
+    a[4, :] = -1.0
+    a[4, 5], a[4, 9] = 1e-41, 0.0
+    a[5, :] = 3.0                                   # all equal: column 0
+    long_ = rng.standard_normal(5000).astype(np.float32)
+    long_[[123, 4000]] = 50.0
+    data = np.concatenate([a.reshape(-1), long_])
+    L = 1800
+    _on_rtl([I.argmax(8000, 0, 6, 300, 2, 300),
+             I.li(3, 1000), I.argmax(8100, 0, 6, 5, drs=3, ars=300, base=-7, rd=3),
+             I.argmax(8200, L, 1, 5000, base=1 << 20),
+             I.argmax(8300, L + 3, 3, 1, drs=2, ars=1),
+             I.argmax(8400, 0, 1, 300, base=-(1 << 26) - 3),      # rounds (above 2^24)
+             I.st(0x40000, 8000, 512), I.halt()], data)
+
+
+def test_rld_on_rtl(have_verilator):
+    """RLD on the RTL: truncation, the bounds, inf / NaN, RAW, R0, register-relative reads, a
+    read right after the VOP that writes the word, the value driving a LOOP count, an address
+    and a conditional HALT, and MUL."""
+    vals = [0.0, -0.0, 0.99, 1.0, 151935.0, -1020.0, -1.5, 2.0 ** 30 + 128, 2.0 ** 31, -3e9,
+            np.inf, np.nan, 1e-40, 2.0 ** 23 + 1, -(2.0 ** 31)]
+    prog = []
+    for k, v in enumerate(vals):                  # R5 = want if RLD is right: the ST lands
+        want = I.f2i(I.f32bits(v))
+        prog += [I.rld(5, k), I.addi(5, 5, -want & 0xFFFFFFFF),
+                 I.st(0x40000 + 64 * k, 64, 8, ra=5)]
+    prog += [I.li(2, 3), I.rld(6, 1, ra=2),        # T[4] = 151935 via R2 = 3
+             I.addi(6, 6, -151935 & 0xFFFFFFFF), I.st(0x41000, 64, 4, ra=6),
+             I.rld(7, 3, raw=True), I.addi(7, 7, -0x3F800000 & 0xFFFFFFFF),
+             I.st(0x41100, 64, 4, ra=7), I.rld(0, 4), I.st(0x41200, 64, 4, ra=0),
+             I.vop(I.V_FILL, 40, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 3.0),   # read after write
+             I.rld(8, 40), I.loop(2, 0, rcount=8),
+             I.addi(9, 9, 256), I.st(0x42000, 64, 16, ra=9),
+             I.vop(I.V_FILL, 41, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 0.0),
+             I.rld(10, 41), I.loop(1, 0, rcount=10), I.halt(),
+             I.st(0x43000, 64, 16)]
+    # MUL: times R[rb] + w2 mod 2^32 (past 2^31, negative, RAW, a register multiplier)
+    for k, (v, raw, c, rb) in enumerate([(151935.0, False, 9344, 0), (-1020.0, False, -7, 0),
+                                         (1.0, True, 3, 0), (2.0 ** 23 + 1, False, 5, 2)]):
+        x = I.f32bits(v) if raw else I.f2i(I.f32bits(v))
+        m = c + (3 if rb else 0)
+        prog += [I.rld(11, [4, 5, 3, 13][k], raw=raw, mul=c, rb=rb),
+                 I.addi(11, 11, (64 * k - x * m) & 0xFFFFFFFF),
+                 I.st(0x44000, 64, 16, ra=11)]
+    prog += [I.halt()]
+    data = np.concatenate([f(vals), np.arange(100, dtype=np.float32)])
+    _on_rtl(prog, data)
+
+
+def test_halt_chain_on_rtl(have_verilator):
+    """HALT CHAIN on the RTL: the second program is loaded from DRAM and starts with the run's
+    arguments and the first one's TMEM; a third follows it; ICOUNT counts all three."""
+    cfg = Config(S=1, DRAM_BYTES=1 << 20)
+    third = [I.vop(I.V_ADD, 0, 0, 0, 1, 16, 16, 16, 0, I.B_SCALAR, 100.0),
+             I.st(0x800, 0, 16, ra=14), I.halt()]
+    second = [I.vop(I.V_ADD, 0, 0, 0, 1, 16, 16, 16, 0, I.B_SCALAR, 1.0),
+              I.st(0x400, 0, 16, ra=15), I.li(1, 0x2000), I.li(2, len(third)),
+              I.halt(chain=True, ra=1, rb=2)]
+    first = [I.vop(I.V_FILL, 0, 0, 0, 1, 16, 16, 16, 0, I.B_SCALAR, 41.0),
+             I.li(1, 0x1000), I.li(2, len(second)), I.li(3, 99),
+             I.halt(chain=True, ra=1, rb=2)]
+    m, st = _on_rtl(first, cfg=cfg, args=[0, 0, 0, 0, 0, 0, 0x40, 0x100],
+                    extra=[(0x1000, I.assemble(second).view(np.uint8)),
+                           (0x2000, I.assemble(third).view(np.uint8))])
+    assert m.chains == 2 and st["instructions"] == [m.slices[0].icount]
+
+
+def test_gen_op_checks_on_the_board_config_rtl(have_verilator):
+    """otpu-diag's gen programs (opchecks) on the board's configuration (D = 128, 16 lanes)."""
+    import dataclasses
+
+    from opentpu.host.checks import ZERO_AT
+    from opentpu.host.opchecks import diag_image, op_checks
+    from opentpu.isasim import board_config
+    cfg = board_config(DRAM_BYTES=1 << 23)
+    img = diag_image()
+    for name, prog in [(n, p) for g, n, p in op_checks(cfg, gen=True) if g == "gen"]:
+        _on_rtl([I.ld(ZERO_AT, 0, cfg.TMEM_WORDS)] + prog, cfg=cfg,
+                extra=[(0, img)])
 
 
 # ---------------------------------------------------------------------------------- the sampler
@@ -251,10 +373,41 @@ def test_generate_matches_the_host_loop(tiny, S):
     assert len(set(ref)) > 4                        # the tokens vary
     got = a.generate_card(t0, 12, stop_ids=[])
     assert got == ref[:12] and a.pos == 248 + 12
-    assert sorted(a._gens) == [(1, None), (2, None)]     # buckets 1 and 2, greedy
+    assert sorted(a._gens) == [(1, None, False), (2, None, False)]   # buckets 1, 2, greedy
     j = next(j for j in range(13, 20) if ref[j] not in ref[12:j])   # a token not seen since
     assert a.generate_card(ref[11], 30, stop_ids=[ref[j], 1001]) == ref[12:j + 1]
     assert a.pos == 248 + j + 1                      # the stop id is not fed
+
+
+@pytest.mark.parametrize("S", [1, 2])
+@pytest.mark.parametrize("sampled", [False, True])
+def test_generate_on_rtl(have_verilator, tiny, S, sampled):
+    """The generate loop on the Verilator RTL: from the same DRAM state (a 248-token prefill
+    on the ISA simulator) one run of 12 tokens across the bucket boundary (HALT CHAIN), greedy
+    or sampled (top-k, top-p, the penalty): the tokens and the whole DRAM of the ISA
+    simulator's run."""
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    from opentpu.llm.rtl_backend import RtlBackend
+    name, W, spec = tiny
+    cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S)
+    eng = Engine(spec, W, cap=512, cfg=cfg, resident=True)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    t0 = int(np.argmax(eng.prefill(toks)))
+    samp = G.Sampling(0.8, 5, 0.9, 1.1) if sampled else None
+    kw = dict(sampling=samp, context=toks + [t0], rng=np.random.default_rng(3)) if sampled \
+        else {}
+    isa = eng.backend
+    n = eng.image.nbytes
+    rtl = RtlBackend(eng.cfg, [s.dram[:n] for s in isa.machine.slices])
+    pos = eng.pos
+    want = eng.generate_card(t0, 12, stop_ids=[], **kw)
+    if sampled:
+        kw["rng"] = np.random.default_rng(3)
+    eng.backend, eng.pos, eng._chained = rtl, pos, {}
+    got = eng.generate_card(t0, 12, stop_ids=[], **kw)
+    assert got == want and len(set(got)) > 3
+    for s in range(eng.cfg.S):
+        assert np.array_equal(isa.machine.slices[s].dram[:n], rtl.drams[s][:n])
 
 
 def test_generate_debug_keeps_the_logits(tiny):
