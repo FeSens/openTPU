@@ -667,14 +667,14 @@ module otpu_mxu
     otpu_delay #(.W(32), .N(LDOT)) u_ws4h (.clk, .en(en_c), .d(ws0h), .q(ws4h));
   end else begin : g_sys
     // A 2D systolic array (docs/mxu_systolic.md). The chunk is decoded once (S1), position i is
-    // delayed by its chain stage k = i % CL, and the weights then move one register hop per
-    // column: column j sees them j cycles after column 0 (fan-out 2, no broadcast). Both streams
-    // flow: the low block (or the 4-bit half of a non-PAIR advance) and PAIR's high block; each
-    // column takes one in its DSPs' pre-adder (A = low, D = high, INMODE by its per-command
-    // hi0[j]: no fabric select). Column j's activation byte i is delayed k + j (shift registers)
-    // into the DSP's B register. Along D: chains of CL products, one per DSP48E1 (otpu_pe: M
-    // register, P = PCIN + M). The 4-bit sub-blocks are two chains each, so the sub-block
-    // multipliers apply at the chain ends, as in IMPL 0; column j's s4 is then delayed
+    // delayed by its chain stage k = i % CL, and the weights then move one register hop per column:
+    // column j sees them j cycles after column 0 (fan-out 2, no broadcast). Both streams flow: the
+    // low block (or the 4-bit half of a non-PAIR advance) and PAIR's high block; each column takes
+    // one in its DSPs' pre-adder (A = low, D = high, INMODE by its per-command hi0[j], a copy in
+    // each DSP's INMODE register: no fabric select). Column j's activation byte i is delayed k + j
+    // (shift registers) into the DSP's B register. Along D: chains of CL products, one per DSP48E1
+    // (otpu_pe: M register, P = PCIN + M). The 4-bit sub-blocks are two chains each, so the
+    // sub-block multipliers apply at the chain ends, as in IMPL 0; column j's s4 is then delayed
     // MCOLS - 1 - j cycles, and all columns reach the epilogue together (LDOT = CLS + MCOLS + 3).
     // Exact integers: bit-identical to IMPL 0. Chains of CLS = min(CL, D/4) positions, so a
     // sub-block (D/4 positions) is CPS whole chains.
@@ -693,14 +693,25 @@ module otpu_mxu
     logic signed [23:0] preg [MCOLS][D];                // running sums (the DSPs' P registers;
                                                         // a chain's last: its P, unregistered)
     logic [47:0] pc [MCOLS][D];                         // their cascade outputs
+`ifndef SYNTHESIS
+    bit hi_v;                                           // hi0 and the PEs' selects are loaded
+    initial hi_v = 1'b0;
+    always @(posedge clk) if (en_c) hi_v <= 1'b1;
+`endif
     for (genvar j = 0; j < MCOLS; j++) begin : g_ask
       for (genvar i = 0; i < D; i++) begin : g_p
         otpu_skew #(.W(8), .N(i % CLS + j)) u_a (.clk, .en(en_c), .d(a0[(j*D + i)*8 +: 8]),
                                                .q(as_k[j][i]));
         otpu_pe #(.FIRST(i % CLS == 0), .LAST(i % CLS == CLS - 1)) u_pe (.clk, .en(en_c),
-          .act(as_k[j][i]), .wlo(wc[j][i][7:0]), .whi(wc[j][i][15:8]), .sel(hi0[j]),
+          .act(as_k[j][i]), .wlo(wc[j][i][7:0]), .whi(wc[j][i][15:8]), .sel(c_hi[j]),
           .pcin((i % CLS == 0) ? 48'd0 : pc[j][(i % CLS == 0) ? i : i - 1]), .pcout(pc[j][i]),
           .p(preg[j][i]));
+`ifndef SYNTHESIS
+        // the DSP's select register is hi0[j] (both are c_hi[j], loaded with en_c)
+        always @(posedge clk)
+          if (hi_v && u_pe.selr != hi0[j])
+            $fatal(1, "otpu_mxu: PE %0d.%0d's select %0d is not hi0 %0d", j, i, u_pe.selr, hi0[j]);
+`endif
       end
     end
     // chain ends (S0 + CLS + 2 + j, in otpu_colend's A / D registers): the sub-block sums times
@@ -1440,14 +1451,18 @@ endmodule
 // gates (INMODE: sel 0 -> A, 1 -> D), the product in M and the chain's running sum in P:
 // P = PCIN + M (FIRST: P = M). A chain's LAST position leaves P unregistered: the column end's A
 // / D input registers take its place (otpu_colend), so the route to the column end is not in
-// front of its pre-adder and multiplier. Simulation uses the equivalent behavioural model.
+// front of its pre-adder and multiplier. The select is registered in the DSP (INMODEREG, loaded
+// with en): sel is its next value, so the fabric's route to the DSP column ends at the INMODE
+// register instead of before the pre-adder and multiplier (133.33 MHz, 812bb01: hi0 -> INMODE,
+// 0 levels, 4.4 ns of route and a 2.4 ns setup, +0.174 ns). Simulation uses the equivalent
+// behavioural model.
 module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
   input  logic               clk,
   input  logic               en,
   input  logic [7:0]         act,
   input  logic [7:0]         wlo,
   input  logic [7:0]         whi,
-  input  logic               sel,
+  input  logic               sel,               // the select from the next cycle on
   input  logic [47:0]        pcin,
   output logic [47:0]        pcout,
   output logic signed [23:0] p
@@ -1457,7 +1472,7 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
   DSP48E1 #(
     .A_INPUT("DIRECT"), .B_INPUT("DIRECT"), .USE_DPORT("TRUE"), .USE_MULT("MULTIPLY"),
     .USE_SIMD("ONE48"), .AREG(0), .ACASCREG(0), .BREG(1), .BCASCREG(1), .CREG(0), .DREG(0),
-    .ADREG(0), .MREG(1), .PREG(LAST ? 0 : 1), .INMODEREG(0), .OPMODEREG(0), .ALUMODEREG(0),
+    .ADREG(0), .MREG(1), .PREG(LAST ? 0 : 1), .INMODEREG(1), .OPMODEREG(0), .ALUMODEREG(0),
     .CARRYINREG(0), .CARRYINSELREG(0), .USE_PATTERN_DETECT("NO_PATDET"),
     .AUTORESET_PATDET("NO_RESET"), .MASK(48'h3fffffffffff), .PATTERN(48'h0),
     .SEL_MASK("MASK"), .SEL_PATTERN("PATTERN")
@@ -1468,7 +1483,7 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
     .ALUMODE(4'b0000), .CARRYIN(1'b0), .CARRYINSEL(3'b000),
     .CEA1(1'b0), .CEA2(1'b0), .CEB1(en), .CEB2(en), .CEC(1'b0), .CED(1'b0), .CEAD(1'b0),
     .CEM(en), .CEP(LAST ? 1'b0 : en), .CEALUMODE(1'b0), .CECTRL(1'b0), .CECARRYIN(1'b0),
-    .CEINMODE(1'b0),
+    .CEINMODE(en),
     .RSTA(1'b0), .RSTB(1'b0), .RSTC(1'b0), .RSTD(1'b0), .RSTM(1'b0), .RSTP(1'b0),
     .RSTALLCARRYIN(1'b0), .RSTALUMODE(1'b0), .RSTCTRL(1'b0), .RSTINMODE(1'b0),
     .ACIN(30'd0), .BCIN(18'd0), .PCIN(pcin), .CARRYCASCIN(1'b0), .MULTSIGNIN(1'b0),
@@ -1477,11 +1492,13 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
   assign p = pf[23:0];
 `else
   logic [7:0] br;
+  logic       selr;
   logic signed [15:0] m;
   wire  signed [23:0] pn = (FIRST ? 24'sd0 : $signed(pcin[23:0])) + 24'(m);
   always_ff @(posedge clk) if (en) begin
     br <= act;
-    m <= 16'(int'($signed(br)) * int'($signed(sel ? whi : wlo)));
+    selr <= sel;
+    m <= 16'(int'($signed(br)) * int'($signed(selr ? whi : wlo)));
   end
   if (LAST) begin : g_comb
     assign p = pn;

@@ -4,7 +4,8 @@ import pytest
 
 from opentpu import Config, isa as I
 from opentpu import language as ol
-from opentpu.compiler import CompileError
+from opentpu.compiler import Affine, CompileError, RunVar, Tensor, arg_words
+from opentpu.isasim import Machine
 from opentpu.runtime import Input, KVCache, Output, Weight, compile_kernel, launch
 
 
@@ -265,3 +266,52 @@ def test_act_and_tmem_are_reused_once_dead():
     r = launch(k, cfg, **args)                             # would not fit without reuse
     want = 80 * (args["x"].array @ args["w"].array.T)
     assert np.abs(r.outputs["out"] - want).max() < 0.05 * np.abs(want).max()
+
+
+def _released_kernel(n_keys: int, late_arg: bool):
+    """Two arguments of tok, then tok released; a loop holding n_keys address registers at
+    once; then (late_arg) an argument of tpos."""
+    X = Tensor(Affine(0), (4096,), (1,))
+    tok, tpos = RunVar("tok"), RunVar("tpos")
+
+    @ol.jit
+    def k(out):
+        acc = ol.load(X[tok * 4:tok * 4 + 4]) + ol.load(X[tok * 8:tok * 8 + 4])
+        ol.release(tok)
+        for i in ol.range(2):
+            for j in range(n_keys):             # a register per j: address (j + 1) 32 i + 4 j
+                acc.set(acc + ol.load(X[(j + 1) * 32 * i + 4 * j:(j + 1) * 32 * i + 4 * j + 4]))
+        if late_arg:
+            acc = acc + ol.load(X[tpos * 4:tpos * 4 + 4])
+        ol.store(out, acc)
+
+    def want(xs, t, p):
+        acc = xs[4 * t:4 * t + 4] + xs[8 * t:8 * t + 4]
+        for i in range(2):
+            for j in range(n_keys):
+                acc = acc + xs[(j + 1) * 32 * i + 4 * j:(j + 1) * 32 * i + 4 * j + 4]
+        return acc + (xs[4 * p:4 * p + 4] if late_arg else 0)
+    return k, want
+
+
+@pytest.mark.parametrize("n_keys,late_arg", [(13, True), (15, False)])
+def test_released_argument_registers(n_keys, late_arg):
+    """ol.release(tok): tok's argument registers serve the rest of the program. 13 loop
+    addresses take R1-R13, so tpos's argument (R13 at the start) moves into a released register
+    at the release; 15 take the two released registers too (zeroed before the loop)."""
+    cfg = Config(DRAM_BYTES=1 << 16)
+    k, want = _released_kernel(n_keys, late_arg)
+    out = Tensor(Affine(1 << 15), (4,), (1,))
+    b = k.trace(cfg, 0, {"out": out})
+    prog = b.finish()
+    xs = np.random.default_rng(1).standard_normal(4096).astype(np.float32)
+    for t, p in ((3, 5), (7, 1)):
+        dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
+        dram[:4 * 4096] = xs.view(np.uint8)
+        vals = {"tok": t, "tpos": p}
+        m = Machine(cfg, [prog], [dram], args=arg_words(b.run_args, vals)).run()
+        got = m.slices[0].dram[1 << 15:(1 << 15) + 16].view(np.float32)
+        assert np.array_equal(got, want(xs, t, p).astype(np.float32)), (t, p)
+    k2, _ = _released_kernel(15, True)
+    with pytest.raises(CompileError, match="R13 is taken"):
+        k2.trace(cfg, 0, {"out": out})

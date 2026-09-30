@@ -996,13 +996,20 @@ module otpu_vpu
   for (genvar l = 0; l < LANES; l++) begin : g_vtin
     assign vt_in[l] = q_cap ? q_pd[l] : pacc[l];
   end
-  f32_t root;
+  // root_o: the root from a copy of its register, for the DMA's O path alone (the tail's Q dot,
+  // qo_d -> o_d -> ss_o_d): with no load here it can sit between the VPU and the DMA, so the
+  // wire to the DMA's o_q spans two cycles (133.33 MHz, 110ec6d: u_vt root -> u_dma o_q, 0
+  // levels, 6.6 ns of route, +0.102 ns)
+  f32_t root, root_o;
   logic root_v;
   otpu_vtree #(.LANES(LANES), .LA(LA)) u_vt (.clk, .rst(rst || s_init), .en, .pacc(vt_in), .cap,
-                                              .row_last(vt_rl), .sub(vt_sub), .root, .root_v);
+                                              .row_last(vt_rl), .sub(vt_sub), .root, .root_o,
+                                              .root_v);
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
     if (!rst && en && a_cap && q_cap) $fatal(1, "otpu_vpu: A and Q windows meet on u_vt");
+  always_ff @(posedge clk)
+    if (root_o != root) $fatal(1, "otpu_vpu: root_o %h is not root %h", root_o, root);
 `endif
 
   // rows finish in order: the next root goes to wr_row
@@ -1226,7 +1233,7 @@ module otpu_vpu
       .pe(sen), .in_v(s_in_v), .in_d(s_in_d), .xd(s_xd), .xa(s_xa), .xm(s_xm),
       .kv(root), .kv_v(root_v && !vt_q), .y_v(t_yv), .y_d(ss_y_d), .o_v(t_ov), .o_d(ss_o_d),
       .qp_cap(t_qc), .qp_row_last(t_qrl), .qp_sub(t_qsub), .qp_d(t_qd),
-      .qo_v(root_v && vt_q), .qo_d(root),
+      .qo_v(root_v && vt_q), .qo_d(root_o),
       .cm(!ss_act), .cen(en), .u_sel(c_sel[1]), .u_a(c_sa[1]), .u_b(c_sb[1]), .u_c(c_sc[1]),
       .u_e(c_se[1]), .u_y(c_uy), .q_sel(c_sel[2]), .q_a(c_sa[2]), .q_b(c_sb[2]), .q_c(c_sc[2]),
       .q_y(c_qy));
