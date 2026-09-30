@@ -142,7 +142,10 @@ The ISA simulator takes 11 to 16 s a token.
 On the card (production image `deploy_champ_e698dcd7`, 133.33 MHz, 2026-09-30), the prompt fed
 by resident decode steps (the device gathers every input): the same 72 tokens with the int8 head
 and with the fp4 head, and refs.py's prompt (13 tokens) + 32 greedy tokens equal the ISA
-simulator's with both heads.
+simulator's with both heads. With prefill runs of 4 rows (ISA simulator, the tokens compiled in)
+the int8 head gives the same 72 tokens; the fp4 head takes HF's third choice at the first
+prompt's third token, a three-way near tie (`\n\n` 24.62, ` It` 24.52, ` The` 24.39 after the
+cap).
 
 **Long context.** After 900 tokens of prose (past the 512-token window and the 768-slot ring;
 ISA simulator, fp4 layers), the device follows HF's greedy tokens for 5 tokens with either head,
