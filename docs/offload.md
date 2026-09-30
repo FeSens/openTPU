@@ -751,8 +751,11 @@ DeltaNet blocks): 2,282 instructions in bucket 1. Its run against HF is next.
    - the directory copy and per-layer LRU;
    - DMA of misses into slots.
 
-   The same code serves the simulator (through the hook) and, later, the card (a thread beside
-   `run_generate`).
+   The same code serves the simulator (through the hook) and the card: `BoardBackend.host`
+   polls it while a run is in flight, in `wait` and in `run_generate`'s token loop, on the
+   one host thread. A fake card that computes in a thread over the host's DRAM
+   (`tests/test_lfm2_moe.py`) checks it: with 2 slots per layer, misses are served while the
+   card waits, and the logits and tokens are the ISA simulator's bit for bit.
 4. **Tests:**
    - bit-identical logits against an all-resident run, on a small MoE with a tiny cache;
    - the protocol's corner cases (section 5.7);

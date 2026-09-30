@@ -5,7 +5,7 @@ mailbox in its DRAM, computes the ones its directory says it has and waits (WAIT
 directory entries of the others. This module only moves bytes: it serves each request from the
 expert pool (host RAM, every expert already in the card's slot format) into per-layer LRU
 slots in the card's DRAM, and keeps the directory. The same code serves the ISA simulator (its
-WAITW host hook) and the card (a thread beside BoardBackend.run_generate).
+WAITW host hook) and the card (BoardBackend.host: polled while a run is in flight).
 
 DRAM words (`Layout`), all 4-byte words at 64-byte aligned bases:
 
