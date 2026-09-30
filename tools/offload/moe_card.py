@@ -55,19 +55,21 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
 
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
-         host_loop: bool = False, embed: str = "gather", trace: str | None = None) -> dict:
+         host_loop: bool = False, embed: str | None = None, trace: str | None = None) -> dict:
+    from dataclasses import replace
     from opentpu.isasim import board_config
     from opentpu.llm import load_spec
     from opentpu.llm.qwen3 import Engine, LazyWeights
-    spec = load_spec(model)
+    spec = load_spec(model)                     # a MoE's Spec.embed: "int8" (from_hf)
+    if embed is not None:
+        spec = replace(spec, embed=embed)
     W = LazyWeights(model)
     if not experts:
         experts = fit_experts(spec, board_config(), cap, wformat="fp4", head_format="int8",
-                              lookup="gather" if embed == "gather" else True)
+                              lookup=True)
     t = time.time()
     eng = Engine(spec, W, cap=cap, cfg=board_config(), rows=1, wformat="fp4",
-                 head_format="int8", resident=True, experts=experts, pool_file=pool,
-                 embed=embed)
+                 head_format="int8", resident=True, experts=experts, pool_file=pool)
     load_s = time.time() - t
     srv = eng.server
     srv.history, per_req = [], []               # each request's ids and misses
@@ -125,7 +127,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(),
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
-                loop="host" if host_loop else "card", embed=embed, top=top or None)
+                loop="host" if host_loop else "card", embed=spec.embed, top=top or None)
 
 
 def main():
@@ -141,9 +143,10 @@ def main():
     ap.add_argument("--pool", help="the expert pool file (each expert packed once, reused)")
     ap.add_argument("--max-memory", help="HF: host RAM for weights, the rest to disk (e.g. 10GiB)")
     ap.add_argument("--out", help="the card's result as JSON")
-    ap.add_argument("--embed", choices=["gather", "fp32"], default="gather",
-                    help="the resident decode's embedding row: gathered from the int8 head / "
-                         "table (default), or an fp32 table (1 GiB for LFM2.5-8B-A1B)")
+    ap.add_argument("--embed", choices=["int8", "f32"], default=None,
+                    help="Spec.embed (default the model's: int8 for a MoE, the rows gathered on "
+                         "the device from the int8 head or table), or an fp32 table (1 GiB for "
+                         "LFM2.5-8B-A1B)")
     ap.add_argument("--trace", help="save the card's routes as a router trace (cachesim.py)")
     ap.add_argument("--host-loop", action="store_true",
                     help="decode with the resident step programs and the argmax on the host, "

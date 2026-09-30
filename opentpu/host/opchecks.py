@@ -1,7 +1,7 @@
 """One small program per instruction variant, for otpu-diag's ISA coverage (and
 tests/test_board.py on the board model).
 
-op_checks(cfg, gen) -> [(group, name, program)]; every program starts from diag_image() in DRAM,
+op_checks(cfg, gen, waitw) -> [(group, name, program)]; every program starts from diag_image() in DRAM,
 stores what it computed below checks.PROG_AT, and is compared with the ISA simulator bit for bit
 by checks.run_demo. The programs are self-contained on the card too, where TMEM and the ACT RAM
 keep the previous run's contents: they only store TMEM words they wrote, and every MM reads ACT
@@ -10,7 +10,7 @@ RAM blocks its own QACT filled.
 Groups (otpu-diag's diagnosis keys on them): control, dma, mxu, quant, collective, vpu,
 vpu-reduce, vpu-composite, vpu-edge, vpu-new (RDOT / OUTER / LOG2, which bitstreams before
 ddec900 lack), gen (RLD, VOP ARGMAX, HALT CHAIN: the decode loop's instructions, CAPS bit30;
-only with gen=True).
+only with gen=True), waitw (WAITW whose condition holds, CAPS bit31; only with waitw=True).
 
 The edge values leave out NaN inputs: the RTL and the ISA simulator disagree there (board
 model, 3c270c9): RECIP of a NaN gives 0 in the RTL, NaN in the simulator; MAX / ABS / COPY pass
@@ -81,7 +81,7 @@ def _mm(cfg, m=None, qflags=None, pre=(), ab=0, ors=16, **kw) -> list:
               I.mm(W8, SC, RES, 16, 2, 256, ors, m, ab, 8, **kw), I.st(OUT, RES, n))
 
 
-def op_checks(cfg, gen: bool = False) -> list[tuple[str, str, list]]:
+def op_checks(cfg, gen: bool = False, waitw: bool = False) -> list[tuple[str, str, list]]:
     M = cfg.MCOLS
     out = []
 
@@ -188,6 +188,8 @@ def op_checks(cfg, gen: bool = False) -> list[tuple[str, str, list]]:
              I.st(OUT, RES, 2), I.halt()])
     if gen:
         out += _gen_checks()
+    if waitw:
+        out += _waitw_checks()
     return out
 
 
@@ -239,4 +241,27 @@ def _gen_checks() -> list:
                 [I.vop(I.V_FILL, RES, 0, 0, 1, 64, 64, 64, 0, I.B_SCALAR, 41.0),
                  I.li(1, CHAIN_AT), I.li(2, len(_chained())), I.li(3, 7),
                  I.halt(chain=True, ra=1, rb=2)]))
+    return out
+
+
+def _waitw_checks() -> list:
+    """WAITW whose condition holds (a word the host would write is in DRAM already): each word
+    it takes shows, through RLD RAW, as the address a store lands at."""
+    # EDGE_BITS[0] = 0, [1] = 0x80000000, [2] = 0x3F800000
+    conds = [(EDGE + 8, 0x3F800000, I.C_EQ, 0xFFFFFFFF), (EDGE, 1, I.C_NE, 0xFFFFFFFF),
+             (EDGE + 4, 0x7FFFFFFF, I.C_GE, 0xFFFFFFFF), (EDGE + 8, 0x3F800000, I.C_EQ, 0xFFFF0000)]
+    prog = []
+    for k, (a, ref, cmp, mask) in enumerate(conds):
+        v = EDGE_BITS[(a - EDGE) // 4]
+        prog += [I.waitw(a, RES + k, ref, cmp, mask=mask, interval=16, timeout=1 << 20),
+                 I.rld(1 + k, RES + k, raw=True), I.addi(1 + k, 1 + k, 0x400 * (k + 1) - v),
+                 I.st(OUT, A + 16 * k, 16, ra=1 + k)]
+    out = [("waitw", "WAITW EQ / NE / GE / mask", _p(*prog))]
+    # a store to the word lands before WAITW's first read; a younger store to it waits
+    out.append(("waitw", "WAITW after a store",
+                _p(_fill1(RES + 8, 5.0), I.st(OUT + 0x2000, RES + 8, 1),
+                   I.waitw(OUT + 0x2000, RES + 9, I.f32bits(5.0), I.C_EQ, timeout=1 << 20),
+                   _fill1(RES + 8, 6.0), I.st(OUT + 0x2000, RES + 8, 1),
+                   I.rld(1, RES + 9, raw=True), I.addi(1, 1, 0x100 - I.f32bits(5.0)),
+                   I.st(OUT + 0x3000, A, 16, ra=1))))
     return out

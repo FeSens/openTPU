@@ -176,6 +176,9 @@ module otpu_seq
         t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0];
       end
       OP_RLD: t0 = f.rd[0];
+      OP_WAITW: begin
+        s.dw = 1'b1; s.d[0] = r32(f.wr[0]); t0 = f.wr[1]; w0 = 1'b1;
+      end
       default: ;   // BAR: all
     endcase
     s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2) || tovf(t3) || tovf(t4);

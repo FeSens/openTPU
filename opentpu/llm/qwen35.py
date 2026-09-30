@@ -74,11 +74,14 @@ from .lfm2 import plan, run_layers
 from . import generate as G
 from . import moe as MO
 from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fake_q, _fake_w,
-                    _inputs, _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc,
-                    _mlp, _qdesc, _tdesc, compile_decode, rope_tables)
+                    _inputs, _inputs_rows, _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build,
+                    _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode,
+                    rope_tables)
 
 LIN, ATTN = "linear", "attn"
 PAIR_LOOP = 8       # pairs of DeltaNet heads per slice that decode unrolled at a run-time position
+EMBED_F32_MAX = 2 << 30     # bytes: a larger fp32 embedding table (over half the card's DRAM,
+#                             Qwen3.5-4B and up) is int8, gathered from the head (Spec.embed)
 
 
 # =============================================================================== model spec
@@ -107,6 +110,8 @@ class Spec:
     pair_loop: bool | None = None   # DeltaNet layers group-major, their pairs a hardware loop
                                     # at a run-time position too (Image; None: when a slice has
                                     # more than PAIR_LOOP pairs of heads)
+    embed: str = "f32"      # the embedding rows: fp32, or "int8" per D block (as qwen3.Spec:
+                            # gathered on the device from the tied int8 head or a table)
 
     @property
     def layers(self) -> int:
@@ -146,7 +151,10 @@ class Spec:
                     eps=c.get("rms_norm_eps", 1e-6), theta=rope.get("rope_theta", 1e7),
                     tied=top.get("tie_word_embeddings", c.get("tie_word_embeddings", True)),
                     eos=(248046,) + tuple(e for e in eos if e != 248046),   # <|im_end|> first
-                    lin_kheads=c["linear_num_key_heads"], moe=moe)
+                    lin_kheads=c["linear_num_key_heads"], moe=moe,
+                    # a MoE's DRAM beside its layers is expert slots: its table int8 at any size
+                    embed="int8" if moe is not None
+                    or 4 * c["vocab_size"] * c["hidden_size"] > EMBED_F32_MAX else "f32")
 
     def check(self, cfg: Config) -> None:
         S, D = cfg.S, cfg.D
@@ -326,6 +334,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     out = []
     for pos, tk in enumerate(tokens):
         x = np.asarray(W["model.embed_tokens.weight"][tk], np.float64)
+        if spec.embed == "int8":                    # the int8 embedding rows (Spec.embed)
+            x = _fake_q(x, D)
         c, s = rope_tables(spec, pos)
         for i, kind in enumerate(spec.kinds):
             p = f"model.layers.{i}."
@@ -581,8 +591,10 @@ class Image:
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
-        self.lookup = (_lookup_alloc(b, spec, cap, mode=lookup, cfg=cfg,
-                                     head_format=self.head_format) if lookup else {})
+        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
+        shared = spec.tied and self.head_format == "int8" and S == 1
+        self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
+                                    M=cfg.MCOLS) if lookup else {}
         self.offload = None
         if mo is not None:          # path (a)'s words and expert slots (docs/offload.md)
             self.fmt = MO.ExpertFormat(H, mo.ffn, D, wformat)
@@ -742,17 +754,18 @@ class Image:
         return compile_decode(self, qwen35_step, blocks, lo, block)
 
     def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
-                         chain: bool = True, samp=None, debug: bool = False) -> list:
+                         chain: bool = True, samp=None, debug: bool = False,
+                         part: int | None = None) -> list:
         """The decode loop on the device for bucket `blocks` (qwen35_step in it, generate.py)."""
-        return G.compile_generate(self, qwen35_step, blocks, lo, block, chain, samp, debug)
+        return G.compile_generate(self, qwen35_step, blocks, lo, block, chain, samp, debug, part)
 
-    def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
+    def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program per slice: the decode token at position `pos` (qwen35_step)."""
         return [qwen35_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
-                                                "block": block}).finish()
+                                                "block": block, **_tok_arg(self, tok)}).finish()
                 for s in range(self.cfg.S)]
 
-    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
         """One program per slice: consecutive positions of the sequence at once
         (qwen35_rows)."""
         if self.spec.moe is not None:
@@ -764,7 +777,8 @@ class Image:
             raise ValueError("Qwen3.5 rows must be consecutive positions of sequence 0")
         return [qwen35_rows.trace(self.cfg, s, {"m": self.descriptors(s), "p0": rows[0][1],
                                                 "R": len(rows), "logit_rows": list(logit_rows),
-                                                "block": block}).finish()
+                                                "block": block,
+                                                **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
     # ---- kernel descriptors
@@ -1234,7 +1248,7 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
 
 
 @ol.jit
-def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
+def qwen35_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     """One decode token at position `pos`: x (the token's embedding) -> logits.
 
     Each run of m.plan with repeats is a hardware loop over its unit of layers; the others are
@@ -1243,7 +1257,7 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK):
     to m.logits.
     """
     spec = m.spec
-    x, c, s_ = _inputs(m, pos)
+    x, c, s_ = _inputs(m, pos, tok)
 
     def layer(li, kind):
         lw = m.layer(li, kind)
@@ -1467,14 +1481,14 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
 
 
 @ol.jit
-def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK):
+def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     """R prompt tokens at positions p0 .. p0+R-1 at once: their embeddings m.xr and RoPE
-    tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
-    empty). Bit-identical to R qwen35_step runs."""
+    tables m.cosr / m.sinr, or those of `tokens` from the image's tables (qwen3._inputs_rows) ->
+    logits of the rows in `logit_rows` (a contiguous range, or empty). Bit-identical to R
+    qwen35_step runs."""
     spec = m.spec
     rows = [(0, p0 + r) for r in range(R)]
-    x = ol.load(m.xr[0:R, :])
-    c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    x, c, s_ = _inputs_rows(m, rows, tokens)
 
     def layer(li, kind):
         lw = m.layer(li, kind)

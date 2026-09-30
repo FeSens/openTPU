@@ -755,7 +755,8 @@ class Board:
             t.reg_write(R.R_TRACE_CTRL, 0)
         t.reg_write(R_CTRL, 0)
         if st & ST_ERROR:
-            raise RuntimeError("the program stopped on an illegal instruction")
+            raise RuntimeError("a WAITW timed out (STATUS WAIT_TO)" if st & R.ST_WAIT_TO else
+                               "the program stopped on an illegal instruction")
         if st & ST_AXI_ERR:
             raise RuntimeError("a DRAM access got an AXI error response")
         return stats
@@ -837,6 +838,7 @@ def sim_config(spec, cap: int, base=None, rows: int | None = None, lookup: bool 
     from opentpu.isasim import board_config
     from opentpu.llm.qwen3 import PREFILL_ROWS, has_lookup
     base = base or board_config()
+    lookup = lookup or getattr(spec, "embed", "f32") == "int8"     # as Engine: always tables
     probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS,
                        **({"lookup": True} if lookup and has_lookup(spec) else {}))
     need = -(-probe.nbytes // 4096) * 4096 + 4 * base.IMEM_WORDS

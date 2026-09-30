@@ -1,4 +1,5 @@
-"""Running real LLMs on openTPU: Qwen3 (qwen3.py), LFM2 (lfm2.py) and Qwen3.5 (qwen35.py)."""
+"""Running real LLMs on openTPU: Qwen3 (qwen3.py), LFM2 (lfm2.py), Qwen3.5 (qwen35.py) and the
+Llama-likes SmolLM3 and Phi-3 / Phi-4-mini (llama.py, on Qwen3's code)."""
 from __future__ import annotations
 
 import json
@@ -6,7 +7,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 # short names for the checkpoints the tools know, downloaded into models/<dir>
-MODELS = {"qwen3": "Qwen3-0.6B", "lfm2": "LFM2.5-230M", "qwen35": "Qwen3.5-0.8B"}
+MODELS = {"qwen3": "Qwen3-0.6B", "lfm2": "LFM2.5-230M", "qwen35": "Qwen3.5-0.8B",
+          "lfm2-2.6b": "LFM2-2.6B", "smollm3": "SmolLM3-3B", "phi4-mini": "Phi-4-mini-instruct",
+          "qwen35-2b": "Qwen3.5-2B", "qwen35-4b": "Qwen3.5-4B"}
 
 
 def model_dir(name) -> Path:
@@ -24,6 +27,9 @@ def load_spec(path):
     elif t in ("qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text"):
         from .qwen35 import Spec
     else:
+        from .llama import MODEL_TYPES, spec_from_hf
+        if t in MODEL_TYPES:
+            return spec_from_hf(path)
         raise ValueError(f"{path}: model type {t!r} is not supported (qwen3, lfm2, qwen3_5 and "
-                         "their MoE variants)")
+                         f"their MoE variants, {', '.join(MODEL_TYPES)})")
     return Spec.from_hf(path)

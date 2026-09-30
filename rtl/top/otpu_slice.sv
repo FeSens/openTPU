@@ -92,6 +92,7 @@ module otpu_slice
   // status
   output logic          halted,
   output logic          error,
+  output logic          wait_to,    // the error is a WAITW timeout (STATUS WAIT_TO)
   output logic [31:0]   icount,
   output perf_t         pf,         // activity and trace events, a cycle late (otpu_pkg)
   input  logic          dump
@@ -113,10 +114,11 @@ module otpu_slice
   logic [31:0] im_row;
   seq_ev_t sq_ev;
   logic        srst;              // the sequencer's and the units' reset: rst, or a CHAIN reload
-  logic        sq_halted, sq_ch, rl_v;
+  logic        sq_halted, sq_ch, sq_err, rl_v;
+  logic        dma_err;           // a WAITW timed out: the slice stops with an error
   logic [31:0] sq_icount, sq_cha, sq_chn, rl_val;
   otpu_seq #(.IMEM_WORDS(IMEM_WORDS), .SID(SID), .S(S), .D(D), .WIN(WIN)) u_seq (
-    .clk, .rst(srst), .ucmd, .ustart, .urel, .urdy, .udone, .halted(sq_halted), .error,
+    .clk, .rst(srst), .ucmd, .ustart, .urel, .urdy, .udone, .halted(sq_halted), .error(sq_err),
     .icount(sq_icount), .ev(sq_ev), .rinit, .rl_v, .rl_val, .ch_req(sq_ch), .ch_addr(sq_cha),
     .ch_n(sq_chn), .im_we, .im_row, .im_data(b_rdata));
 
@@ -124,7 +126,9 @@ module otpu_slice
   logic        c_rst, c_ld;
   logic [31:0] c_addr, c_n, ic_base;
   assign srst = rst || c_rst;
-  assign halted = sq_halted && !sq_ch;
+  assign halted = (sq_halted && !sq_ch) || dma_err;
+  assign error = sq_err || dma_err;
+  assign wait_to = dma_err;
   assign icount = ic_base + sq_icount;
   always_ff @(posedge clk) begin
     c_ld <= 1'b0;
@@ -232,15 +236,16 @@ module otpu_slice
   // flops across the die, and one replicated net from the board ran 8.4 ns routes into the
   // units (the worst core_clk paths at 114 MHz). The units leave reset a cycle after the
   // sequencer, which starts nothing that early. max_fanout 64: at 125.49 MHz rst_vpu (256 per
-  // copy) into the VPU lanes' c registers had 0.25 ns slack. Q and the VPU take a second stage
-  // (rst_q0, rst_v0), so their replicas are loaded next to them: in the SE v2 build the board's
-  // core_rst copies into rst_vpu / rst_q had -0.107 ns with no logic. They leave reset two
-  // cycles after the sequencer (checked below).
+  // copy) into the VPU lanes' c registers had 0.25 ns slack. Q, the VPU and the MXU take a
+  // second stage (rst_q0, rst_v0, rst_m0), so their replicas are loaded next to them: in the SE
+  // v2 build the board's core_rst copies into rst_vpu / rst_q had -0.107 ns with no logic, on
+  // 812bb01 rst_mxu into the MXU's weight FIFO pointers +0.123 ns with none. They leave reset
+  // two cycles after the sequencer (checked below).
   (* max_fanout = 64 *) logic rst_dma, rst_mxu, rst_q, rst_vpu;
-  logic rst_q0, rst_v0;
+  logic rst_q0, rst_v0, rst_m0;
   always_ff @(posedge clk) begin
-    rst_dma <= srst; rst_mxu <= srst; rst_q0 <= srst; rst_v0 <= srst;
-    rst_q <= rst_q0; rst_vpu <= rst_v0;
+    rst_dma <= srst; rst_m0 <= srst; rst_q0 <= srst; rst_v0 <= srst;
+    rst_mxu <= rst_m0; rst_q <= rst_q0; rst_vpu <= rst_v0;
   end
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
@@ -261,6 +266,7 @@ module otpu_slice
 
   otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_SS)) u_dma (
     .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
+    .err(dma_err),
     .b_req(dma_breq), .b_gnt(b_rdy), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
     .b_addr(dma_baddr), .b_rvalid(b_rvalid && b_rtag), .b_rdata, .wr_idle,
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rdata(r_data[P_DMA]),

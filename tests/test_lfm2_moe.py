@@ -2,6 +2,8 @@
 the card routes and computes every expert, the host's server moves the missing ones. A tiny
 random model against Hugging Face transformers and the quantized emulation; a small cache
 gives the same logits bit for bit as one holding every expert."""
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -59,6 +61,14 @@ def _tiny():
 @pytest.fixture(scope="module")
 def tiny():
     return _tiny()
+
+
+def test_from_hf_gives_a_moe_the_int8_embedding(tiny, tmp_path):
+    """A LFM2-MoE checkpoint's Spec gathers its embedding rows on the device in int8 at any
+    vocabulary size (its DRAM beside the layers is expert slots)."""
+    tiny[0].config.save_pretrained(tmp_path)
+    s = Spec.from_hf(tmp_path)
+    assert s.moe is not None and s.embed == "int8"
 
 
 def _engine(spec, W, experts=None, **kw):
@@ -130,15 +140,15 @@ def test_pool_file_is_the_same_pool(tiny, tmp_path):
     assert f.stat().st_size == (len(KINDS) - 1) * E * eng.image.offload.slot_bytes
 
 
-@pytest.mark.parametrize("embed", ["fp32", "gather"])
+@pytest.mark.parametrize("embed", ["f32", "int8"])
 def test_the_card_generates_with_streamed_experts(tiny, embed):
     """The decode loop on the card (autodecode's generate program, resident decode) with k
     slots per layer: the experts stream between the tokens it picks, and it gives the host's
-    resident loop token for token (gather: the embedding row gathered from the tied head)."""
+    resident loop token for token (int8: the embedding row gathered from the tied head)."""
     _, W, spec = tiny
-    cfg = device_config(spec, 512, rows=1, lookup="gather" if embed == "gather" else True,
-                        S=1, experts=K)
-    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K, embed=embed)
+    spec = dataclasses.replace(spec, embed=embed)
+    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=K)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K)
             for _ in range(2))
     assert a.can_generate
     toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 20)]
@@ -299,20 +309,19 @@ def test_the_host_serves_the_card_during_its_runs(tiny):
     assert brd.server.seq == isa.server.seq == (len(toks) + 8) * len(brd.image.offload.slots)
 
 
-@pytest.mark.parametrize("embed", ["fp32", "gather"])
+@pytest.mark.parametrize("embed", ["f32", "int8"])
 def test_lazy_weights_build_the_same_engine(tiny, tmp_path, embed):
     """Weights read tensor by tensor from safetensors files (qwen3.LazyWeights: a model whose
-    fp32 weights do not fit host RAM; the embedding's rows read one at a time, the image the
-    simulator's DRAM without a copy) give the in-RAM weights' logits bit for bit."""
+    fp32 weights do not fit host RAM; the image the simulator's DRAM without a copy) give the
+    in-RAM weights' logits bit for bit, the host reading no embedding row (device inputs)."""
     from safetensors.numpy import save_file
     from opentpu.llm.qwen3 import LazyWeights
     _, W, spec = tiny
     save_file({k: np.ascontiguousarray(v) for k, v in W.items()},
               str(tmp_path / "model.safetensors"))
-    cfg = device_config(spec, 256, rows=1, lookup="gather" if embed == "gather" else True,
-                        S=1, experts=K)
-    a, b = (Engine(spec, w, cap=256, cfg=cfg, rows=1, resident=True, experts=K, embed=embed)
+    spec = dataclasses.replace(spec, embed=embed)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=K)
+    a, b = (Engine(spec, w, cap=256, cfg=cfg, rows=1, resident=True, experts=K)
             for w in (W, LazyWeights(tmp_path)))
-    assert b.embed.full is None and a.embed.full is not None
     for t in (5, 77, 900, 13, 4):
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), a.pos

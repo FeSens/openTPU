@@ -362,7 +362,24 @@ The MoE expert streaming of docs/offload.md uses it for a fence (`served >= seq`
 finished the card's earlier requests) and for each expert's directory entry (`!= 0`: the
 expert's slot address, once its DMA has landed). The ISA simulator runs it in order (the slice
 waits) and calls the host (`Machine.host`) when every slice that can run waits; a WAITW that
-still does not hold is the timeout (SimError). No RTL yet.
+still does not hold is the timeout (SimError).
+
+In the RTL (otpu_dma, CAPS bit31) it is an LD of one word whose TMEM write waits for the
+compare: the chunk is read, the word taken, compared a cycle later and written through lane 0,
+or, if it does not hold, read again after `w5` cycles. At the timeout the slice stops: STATUS
+shows HALTED, ERROR and WAIT_TO (bit8; the first WAITW bitstream, be824d5, shows HALTED and ERROR
+only), until RUN falls. The scoreboard sees all of DRAM as written (older DRAM readers and
+writers complete first, younger ones wait) and the TMEM word.
+
+On the card, `tools/qual/waitw.py` (qual.sh, and otpu-diag's `waitw-host` group) checks that
+order (opentpu/host/checks.py `waitw_host`). In each round the host:
+1. writes old data and a flag the compare fails on;
+2. starts the card and checks that it waits;
+3. writes new data, then the flag.
+
+The card's LD after the WAITW must read the new data (1 to 32768 words from any word offset; EQ,
+NE, GE and a masked EQ; poll intervals 0, 64 and 1000 cycles; flags in both channels). Then a
+WAITW that never holds must stop at its timeout with ERROR, and the next run halt normally.
 
 ### HALT CHAIN
 

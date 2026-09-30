@@ -3,6 +3,7 @@ TMEM, gated attention with 256-wide heads and partial RoPE) against Hugging Face
 A tiny random model always runs; the real Qwen3.5-0.8B runs when its checkpoint is in
 models/Qwen3.5-0.8B."""
 import dataclasses
+import json
 from pathlib import Path
 
 import numpy as np
@@ -105,6 +106,44 @@ def test_tiny_reset_clears_state_and_conv_ring(tiny):
     eng.reset()
     b = [eng.step(t) for t in (5, 6, 7, 8, 9)]
     assert all(np.array_equal(x, y) for x, y in zip(a, b))
+
+
+def test_embedding_format_by_table_size(tiny, tmp_path):
+    """Spec.from_hf: an fp32 embedding table over EMBED_F32_MAX (2 GiB: Qwen3.5-4B's is 2.4)
+    is int8; the 0.8B's (0.9 GiB) and the 2B's (1.9) stay fp32."""
+    m = tiny[0]
+    for hidden, embed in ((1024, "f32"), (2048, "f32"), (2560, "int8")):
+        m.config.to_json_file(tmp_path / "config.json")
+        c = json.loads((tmp_path / "config.json").read_text())
+        c.update(hidden_size=hidden, vocab_size=248320)
+        (tmp_path / "config.json").write_text(json.dumps(c))
+        assert Spec.from_hf(tmp_path).embed == embed, hidden
+
+
+@pytest.mark.parametrize("head", ["int8", "fp4"])
+def test_tiny_int8_embedding(tiny, head):
+    """Spec.embed "int8": the token's int8 embedding row is gathered on the device from the
+    tied int8 LM head (under a 4-bit head, from an int8 table of the image's own), in the
+    resident decode, the per-position programs and the prefill runs alike: the same logits
+    bit for bit, following the float64 emulation, which quantizes the row too."""
+    _, W, spec = tiny
+    spec = dataclasses.replace(spec, embed="int8")
+    cfg = board_config(DRAM_BYTES=1 << 25, PAIR=True)
+    wf = "int8" if head == "int8" else "fp4"
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
+    a = Engine(spec, W, cap=256, cfg=cfg, resident=True, wformat=wf, head_format=head)
+    b = Engine(spec, W, cap=256, cfg=cfg, wformat=wf, head_format=head)
+    assert a.resident and b.device_inputs and a.image.lookup["own"] == (head != "int8")
+    for t in toks[:3]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    assert np.array_equal(a.prefill(toks[3:9]).view(np.uint32),
+                          b.prefill(toks[3:9]).view(np.uint32))
+    for t in toks[9:]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    c = Engine(spec, W, cap=256, cfg=cfg, wformat=wf, head_format=head)
+    dev = np.array([c.step(t) for t in toks])
+    emu = emulated_logits(spec, W, toks, wformat=wf, head_format=head)
+    assert _cos(dev, emu).min() > 0.999
 
 
 def test_one_sequence_only(tiny):

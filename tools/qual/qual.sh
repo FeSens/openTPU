@@ -7,7 +7,9 @@
 # script is in. Environment: REST (the bitstream to leave on the card; default the candidate),
 # OUT (results; default /tmp/qual-<deploy>), REFCACHE (tools/qual/refs.py), LOAD=0 (no JTAG load:
 # qualify the bitstream the card runs, e.g. on opentpu, whose root port once did not bring the
-# link back on a hot rescan after a reload; the selftest's config line names the build).
+# link back on a hot rescan after a reload; the selftest's config line names the build), RUNS
+# (the model runs MODEL:WF:HF, default the six of Qwen3, LFM2.5 and Qwen3.5 in int8 and 4-bit;
+# e.g. RUNS="lfm2-2.6b:int8:- lfm2-2.6b:fp4:int8" for the other models of opentpu.llm.MODELS).
 #
 # fast (~25 min with cached references): selftest (with the RDOT/OUTER/LOG2 op checks), the ISA
 #   references in the background, prefill + DRAM efficiency for the six configurations, the
@@ -15,8 +17,11 @@
 #   quick memory test, then after the soak token-exact against the ISA simulator for all six,
 #   per-position and resident, and a final selftest. A bitstream with the decode loop (CAPS
 #   bit30) also runs it for all six, token-exact against the same references, and
-#   decode_profile --card-loop for the 4-bit ones (wall against device tok/s); GEN=0 / 1
-#   overrides the bitstream's bit.
+#   decode_profile --card-loop, greedy and sampled, for the 4-bit ones (wall against device
+#   tok/s); GEN=0 / 1
+#   overrides the bitstream's bit. A bitstream with WAITW (CAPS bit31; WAITW=0 / 1 overrides it)
+#   runs tools/qual/waitw.py after the warm diag: 200 rounds of the host writing data, then a
+#   flag, while the card waits on the flag and then reads the data, and a WAITW timeout.
 # full (~45 min): also a cold diag with the full march C- (2 x 2.6 min), decode_profile for all
 #   six, rw_bench, a 5 min soak and the full march in the warm diag.
 # Every phase prints its duration; the table is at the end and in $OUT/phases.tsv.
@@ -33,11 +38,12 @@ NAME=$(basename "$DEP")
 H=$(cd "$(dirname "$0")/../.." && pwd); P=${PYTHON:-~/otpu-venv/bin/python}
 REST=${REST:-$BIT}; OUT=${OUT:-/tmp/qual-$NAME}; mkdir -p "$OUT"
 cd "$H" || exit 1; export PYTHONPATH=$H
-RUNS="qwen3:int8:- lfm2:int8:- qwen35:int8:- qwen3:fp4:int8 lfm2:fp4:int8 qwen35:fp4:int8"
+RUNS=${RUNS:-"qwen3:int8:- lfm2:int8:- qwen35:int8:- qwen3:fp4:int8 lfm2:fp4:int8 qwen35:fp4:int8"}
 if [ "$PROFILE" = full ]; then
   SOAK=${SOAK:-300}; COLD=1; WARM_MEM=full; DP_RUNS=$RUNS; RW=1
 else
-  SOAK=${SOAK:-180}; COLD=0; WARM_MEM=quick; DP_RUNS="qwen3:fp4:int8 lfm2:fp4:int8 qwen35:fp4:int8"; RW=0
+  SOAK=${SOAK:-180}; COLD=0; WARM_MEM=quick; RW=0
+  DP_RUNS=""; for r in $RUNS; do [[ $r == *:fp4:* ]] && DP_RUNS="$DP_RUNS $r"; done
 fi
 : > "$OUT/phases.tsv"; : > "$OUT/checks.txt"; mkdir -p "$OUT/logs"
 PH=""; PT=0; T00=$(date +%s)
@@ -116,12 +122,15 @@ else load "$BIT" || exit 1; fi
 selftest
 run "refs cfg" $P tools/qual/refs.py cfg "$OUT/cfg.pkl" --name "$NAME" | cut -c1-200
 MODELS=1; models_ok || MODELS=0
-GEN=${GEN:-$($P -c "from opentpu.host.board import Board, XdmaTransport
-print(int(bool(Board(XdmaTransport('/dev/xdma0', dma=False), check=False, lock=False).info()['caps'].get('gen'))))" 2>/dev/null || echo 0)}
-echo "decode loop on the card (CAPS bit30): $([ "$GEN" = 1 ] && echo yes || echo no)"
+CAPS=$($P -c "from opentpu.host.board import Board, XdmaTransport
+c = Board(XdmaTransport('/dev/xdma0', dma=False), check=False, lock=False).info()['caps']
+print(int(bool(c.get('gen'))), int(bool(c.get('waitw'))))" 2>/dev/null || echo 0 0)
+GEN=${GEN:-${CAPS% *}}; WAITW=${WAITW:-${CAPS#* }}
+echo "decode loop on the card (CAPS bit30): $([ "$GEN" = 1 ] && echo yes || echo no)," \
+     "WAITW (CAPS bit31): $([ "$WAITW" = 1 ] && echo yes || echo no)"
 
 if [ $MODELS = 1 ]; then phase "references (background)"
-  ( $P tools/qual/refs.py compute "$OUT/cfg.pkl" > "$OUT/refs.log" 2>&1; echo "refs exit $?" >> "$OUT/refs.log" ) &
+  ( $P tools/qual/refs.py compute "$OUT/cfg.pkl" --runs $RUNS > "$OUT/refs.log" 2>&1; echo "refs exit $?" >> "$OUT/refs.log" ) &
   sleep 3; head -8 "$OUT/refs.log"
 fi
 
@@ -158,6 +167,11 @@ fi
 
 phase "diag warm ($WARM_MEM memory test)"; diag warm $WARM_MEM
 
+if [ "$WAITW" = 1 ]; then phase "WAITW on the host's writes"
+  run waitw timeout 900 $P tools/qual/waitw.py --rounds 200 | grep -E "\[(PASS|FAIL)\]" \
+    | tee -a "$OUT/checks.txt"
+fi
+
 if [ $MODELS = 1 ]; then
 phase "token-exact after the soak (6 x per-position + resident)"
 grep -E "FAILED|refs exit" "$OUT/refs.log"
@@ -171,7 +185,7 @@ done
 want=$(( $(echo $RUNS | wc -w) * 2 )); got=$(( $(grep -c '\[PASS\] model' "$OUT/checks.txt") - p0 ))
 [ "$got" -eq "$want" ] || fail "$got of $want token-exact runs passed"
 if [ "$GEN" = 1 ]; then
-phase "decode loop on the card ($(set -- $RUNS; echo $#) token-exact + $(set -- $DP_RUNS; echo $#) decode_profile)"
+phase "decode loop on the card ($(set -- $RUNS; echo $#) token-exact + $(set -- $DP_RUNS; echo $#) x 2 decode_profile)"
 p0=$(grep -c '\[PASS\] model' "$OUT/checks.txt")
 for r in $RUNS; do IFS=: read -r m w h <<< "$r"
   run "card loop $m $w $h" timeout 1800 $P tools/qual/refs.py card "$OUT/cfg.pkl" "$m" "$w" "$h" 32 --card-loop \
@@ -180,9 +194,12 @@ done
 want=$(set -- $RUNS; echo $#); got=$(( $(grep -c '\[PASS\] model' "$OUT/checks.txt") - p0 ))
 [ "$got" -eq "$want" ] || fail "$got of $want card-loop token-exact runs passed"
 for r in $DP_RUNS; do IFS=: read -r m w h <<< "$r"; args="--wformat $w"; [ "$h" != "-" ] && args="$args --head-format $h"
-  run "decode_profile card loop $m $w $h" timeout 1800 $P tools/decode_profile.py --model "$m" --greedy \
-    --tokens 96 $args --card-loop --json "$OUT/dpl-$m-$w-$h.json" > "$OUT/dpl-$m-$w-$h.txt"
-  grep -E "decode loop on the card|Error" "$OUT/dpl-$m-$w-$h.txt"
+  for mode in greedy sampled; do         # sampled: the model's chat defaults (chat.SAMPLING)
+    run "decode_profile card loop $m $w $h $mode" timeout 1800 $P tools/decode_profile.py --model "$m" \
+      $([ $mode = greedy ] && echo --greedy) --tokens 96 $args --card-loop \
+      --json "$OUT/dpl-$m-$w-$h-$mode.json" > "$OUT/dpl-$m-$w-$h-$mode.txt"
+    grep -E "decode loop on the card|Error" "$OUT/dpl-$m-$w-$h-$mode.txt"
+  done
 done
 fi
 wait                            # the references' job (refs.py card waited for what it needed)

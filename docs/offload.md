@@ -593,6 +593,10 @@ the card already holds.
 - The shared `kernels/gather.py` (main 77405e5) does this, and phase 2 uses it: LFM2.5-8B-A1B
   gets 28 slots per layer, and Qwen3.5-35B-A3B 32 instead of 9. The 35B's embedding is untied,
   so its rows come from an int8 table of 0.5 GB.
+- It is `Spec.embed` "int8" (main 2a04beb, `qwen3._embed`), which a MoE checkpoint's `from_hf`
+  sets at any vocabulary size: beside a MoE's layers the DRAM is expert slots. The prompt's
+  per-position programs and the resident decode then read every input from the image, so the
+  host writes no embedding or RoPE row.
 
 A host-written row fetched by `WAITW` (section 7) stays for rows that are not in the card at
 all, such as E4B's per-layer embeddings. Phase 2's first 8B run kept the fp32 table (20 slots
@@ -734,7 +738,13 @@ Qwen3.5-35B-A3B (item 5) has:
 - 32 slots per layer with the gathered embedding.
 
 Its generate program fits IMEM with the DeltaNet pair loop (docs/qwen35.md, group-major
-DeltaNet blocks): 2,282 instructions in bucket 1. Its run against HF is next.
+DeltaNet blocks): 2,282 instructions in bucket 1. On the ISA simulator with the card's 4 GiB
+(4,084 MiB image, 1,280 slots of 1.67 MB, a pool of 10,240 experts) its 16 tokens are HF's
+exactly, every one picked by the card's generate loop. Of 11,840 expert requests 62.4% hit;
+decode missed 95.7 experts per token (113.4 in its second half), against 111 predicted.
+cachesim's per-layer LRU on the card's routes gives 64.7% and 113.1 misses per token (37
+tokens), its optimum 80.5% and 62.3. (That run wrote the prompt's first three embedding rows
+from the host; with `Spec.embed` above no row is.)
 
 1. **The MoE block in `ol` kernels:**
    - the router MM;

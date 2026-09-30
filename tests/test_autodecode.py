@@ -354,14 +354,17 @@ def tiny(request):
 
 
 @pytest.mark.parametrize("S", [1, 2])
-def test_generate_matches_the_host_loop(tiny, S):
+@pytest.mark.parametrize("split", [None, True])
+def test_generate_matches_the_host_loop(tiny, S, split):
     """The decode loop on the device gives the host's resident greedy loop token for token,
     across the attention bucket boundary at 256 (a second run of the next bucket's program),
-    and stops at a stop id (returned, not fed)."""
+    and stops at a stop id (returned, not fed). split: every bucket in the split form, two
+    programs per token chaining to each other (generate.compile_bucket)."""
     from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
     name, W, spec = tiny
     cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S)
     a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    a.gen_split = split
     assert a.can_generate
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
     t0 = int(np.argmax(a.prefill(toks)))
@@ -374,23 +377,47 @@ def test_generate_matches_the_host_loop(tiny, S):
     got = a.generate_card(t0, 12, stop_ids=[])
     assert got == ref[:12] and a.pos == 248 + 12
     assert sorted(a._gens) == [(1, None, False), (2, None, False)]   # buckets 1, 2, greedy
+    assert all(isinstance(p, tuple) == bool(split) for p in a._gens.values())
     j = next(j for j in range(13, 20) if ref[j] not in ref[12:j])   # a token not seen since
     assert a.generate_card(ref[11], 30, stop_ids=[ref[j], 1001]) == ref[12:j + 1]
     assert a.pos == 248 + j + 1                      # the stop id is not fed
 
 
-@pytest.mark.parametrize("S", [1, 2])
-@pytest.mark.parametrize("sampled", [False, True])
-def test_generate_on_rtl(have_verilator, tiny, S, sampled):
+@pytest.mark.parametrize("split", [None, True])
+def test_generate_with_the_int8_embedding(tiny, split):
+    """Spec.embed "int8": the token's row gathered on the device at the run-time token (qwen3._embed)
+    inside the loop, one program or split: the host resident loop's tokens."""
+    import dataclasses
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    name, W, spec = tiny
+    spec = dataclasses.replace(spec, embed="int8")
+    cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=1)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    a.gen_split = split
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    t0 = int(np.argmax(a.prefill(toks)))
+    assert int(np.argmax(b.prefill(toks))) == t0
+    ref, t = [], t0
+    for _ in range(12):
+        t = int(np.argmax(b.step(t)))
+        ref.append(t)
+    assert len(set(ref)) > 3
+    assert a.generate_card(t0, 12, stop_ids=[]) == ref
+
+
+@pytest.mark.parametrize("S,sampled,split", [(1, False, None), (1, True, None), (2, False, None),
+                                             (2, True, None), (1, False, True), (2, True, True)])
+def test_generate_on_rtl(have_verilator, tiny, S, sampled, split):
     """The generate loop on the Verilator RTL: from the same DRAM state (a 248-token prefill
     on the ISA simulator) one run of 12 tokens across the bucket boundary (HALT CHAIN), greedy
-    or sampled (top-k, top-p, the penalty): the tokens and the whole DRAM of the ISA
-    simulator's run."""
+    or sampled (top-k, top-p, the penalty), in one program per bucket or split (two per
+    token): the tokens and the whole DRAM of the ISA simulator's run."""
     from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
     from opentpu.llm.rtl_backend import RtlBackend
     name, W, spec = tiny
     cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S)
     eng = Engine(spec, W, cap=512, cfg=cfg, resident=True)
+    eng.gen_split = split
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
     t0 = int(np.argmax(eng.prefill(toks)))
     samp = G.Sampling(0.8, 5, 0.9, 1.1) if sampled else None
@@ -433,8 +460,9 @@ def test_generate_debug_keeps_the_logits(tiny):
 @pytest.mark.parametrize("S", [1, 2])
 @pytest.mark.parametrize("temperature,top_k,top_p,penalty", [(0.8, 5, 0.9, 1.1), (0.0, 0, 1.0, 1.3),
                                                            (1.5, 20, 1.0, 1.0)])
+@pytest.mark.parametrize("split", [None, True])
 def test_sampled_generate_matches_the_reference_pick(tiny, S, temperature, top_k, top_p,
-                                                     penalty):
+                                                     penalty, split):
     """The sampled loop on the device (generate.Sampler) picks the ids of its numpy model
     (generate.reference_pick) from the host loop's logits, with the same uniforms, across the
     bucket boundary: top-k, top-p, the temperature and the repetition penalty (greedy with the
@@ -444,8 +472,11 @@ def test_sampled_generate_matches_the_reference_pick(tiny, S, temperature, top_k
     name, W, spec = tiny
     if name != "qwen3" and (S, top_k) != (1, 5):
         pytest.skip("the other models: one case")
+    if split and top_k != 5:
+        pytest.skip("split programs: one case per model")
     cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S)
     a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    a.gen_split = split
     samp = G.Sampling(temperature, top_k, top_p, penalty)
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
     lg = a.prefill(toks)
@@ -460,6 +491,49 @@ def test_sampled_generate_matches_the_reference_pick(tiny, S, temperature, top_k
         c.append(t)
     assert got == want and a.pos == 260
     assert len(set(got)) > 3 or temperature == 0
+
+
+@pytest.mark.parametrize("split", [None, True])
+def test_a_softcap_caps_the_sampled_logits(tiny, split):
+    """A spec with a softcap (Gemma's final_logit_softcapping): the LM head caps the chunks the
+    sampler takes (kernels.lib.softcap), so the device picks reference_pick's ids from the
+    capped logits (generate.softcap_ref, bit for bit), in one program or split; greedy takes
+    the raw logits' argmax (the cap keeps the order)."""
+    import copy
+    from opentpu.llm import generate as G
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    name, W, spec = tiny
+    if name != "qwen3":
+        pytest.skip("one model")
+    spec = copy.copy(spec)
+    object.__setattr__(spec, "softcap", 2.0)    # (a frozen Spec); the logits reach past +-2
+    cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=1)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    a.gen_split = split
+    samp = G.Sampling(0.8, 5, 0.9, 1.1)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    lg = a.prefill(toks)
+    b.prefill(toks)
+    assert np.abs(lg).max() > 4.0
+    ctx = toks + [int(np.argmax(lg))]
+    got = a.generate_card(ctx[-1], 12, stop_ids=[], sampling=samp, context=ctx,
+                          rng=np.random.default_rng(7))
+    u, want, raw, c = np.random.default_rng(7).random(12), [], [], list(ctx)
+    for i in range(12):
+        lgi = b.step(c[-1])
+        t = G.reference_pick(lgi, samp, c, u[i], 1, softcap=2.0)
+        raw.append(G.reference_pick(lgi, samp, c, u[i], 1))     # the uncapped pick
+        want.append(t)
+        c.append(t)
+    assert got == want and raw != want
+    assert np.abs(G.softcap_ref(lg, 2.0)).max() <= 2.0
+    # greedy: the raw argmax, as the host loop's
+    t0 = want[-1]
+    ref, t = [], t0
+    for _ in range(6):
+        t = int(np.argmax(b.step(t)))
+        ref.append(t)
+    assert a.generate_card(t0, 6, stop_ids=[]) == ref
 
 
 class _Tok:

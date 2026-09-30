@@ -226,7 +226,11 @@ module otpu_native_dram #(
   logic [2:0]   gage [2];
   logic [1:0]   gw_v, gw_same;
   logic [3:0]   gw_word, gw_be;
-  logic [31:0]  gw_wdata;
+  // the write's data, a copy per channel's gd (each bit feeds 16 of a channel's flip-flops;
+  // one copy for both, 32 loads over both channels' buffers, was the 812bb01 build's worst
+  // native memory path: gw_wdata -> gd, 0 levels, 96% route, +0.175 at 133.33 MHz); keep: not
+  // merged back into one
+  (* keep = "true" *) logic [31:0] gw_wdata [2];
 
   // order of B reads (tags) and of A reads (channel, word, reuse)
   logic [1:0]   bt_q [OD];                     // LUT RAM: tag, halves swapped (CHASH)
@@ -339,10 +343,12 @@ module otpu_native_dram #(
       gw_same[c] <= gv[c] && gb[c].m == sw_m;
       if (gw_v[c])
         for (int k = 0; k < 64; k++)
-          gd[c][8 * k +: 8] <= gw_word == 4'(k / 4) && gw_be[k % 4] ? gw_wdata[8 * (k % 4) +: 8]
+          gd[c][8 * k +: 8] <= gw_word == 4'(k / 4) && gw_be[k % 4]
+                               ? gw_wdata[c][8 * (k % 4) +: 8]
                                : gw_same[c] ? gd[c][8 * k +: 8] : 8'h00;
+      gw_wdata[c] <= sw_wdata;
     end
-    gw_word <= sw_addr[3:0]; gw_wdata <= sw_wdata; gw_be <= sw_be;
+    gw_word <= sw_addr[3:0]; gw_be <= sw_be;
   end
 
   for (genvar c = 0; c < 2; c++) begin : g_mem

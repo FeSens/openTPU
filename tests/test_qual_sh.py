@@ -43,6 +43,11 @@ else:
     elif tool == "refs.py" and a[1] == "card":
         print(f"  [PASS] model {a[3]} {a[4]}/{a[5]}{' resident' if '--resident' in a else ''}: "
               "'The capital of France is Paris.'")
+    elif tool == "waitw.py":
+        print("  [PASS] WAITW on the host's writes: 200 rounds")
+        print("  [PASS] WAITW timeout: ERROR at the timeout")
+    elif tool == "refs.py" and a[1] == "compute":
+        print("compute", *a[3:])
     elif tool == "decode_profile.py":
         print("wall 10.00 tok/s, device 10.00 tok/s")
     else:
@@ -116,16 +121,44 @@ def test_the_decode_loop_on_the_card(qual):
     # a bitstream with CAPS bit30: the six token-exact runs again on the card's decode loop
     text, checks = qual(GEN="1")
     assert summary(text) == ("0", "20"), text[-2000:]
-    assert "decode loop on the card (6 token-exact + 3 decode_profile)" in text
+    assert "decode loop on the card (6 token-exact + 3 x 2 decode_profile)" in text
+    text, checks = qual(GEN="1", QUAL_CRASH="--model qwen35 --tokens 96")    # the sampled run
+    assert "decode_profile card loop qwen35 fp4 int8 sampled: exit 1" in checks
     text, checks = qual(GEN="1", QUAL_CRASH="lfm2 int8 - 32 --card-loop")
     assert "card loop lfm2 int8 -: exit 1" in checks
     assert "5 of 6 card-loop token-exact runs passed" in checks
+
+
+def test_waitw_on_the_host_writes(qual):
+    # a bitstream with CAPS bit31: tools/qual/waitw.py after the warm diag, its lines counted
+    text, checks = qual(WAITW="1")
+    assert summary(text) == ("0", "16"), text[-2000:]
+    assert "WAITW (CAPS bit31): yes" in text and "=== WAITW on the host's writes" in text
+    assert "[PASS] WAITW timeout" in checks
+    text, checks = qual(WAITW="1", QUAL_CRASH="waitw.py")
+    assert "[FAIL] WAITW on the host's writes: waitw: exit 1" in checks
+    text, _ = qual()
+    assert "WAITW (CAPS bit31): no" in text and "=== WAITW" not in text
 
 
 def test_a_failed_soak_run_ends_the_soak(qual):
     text, checks = qual(QUAL_CRASH="history of France", SOAK="30")
     assert checks.count("[FAIL]") == 1 and "soak run 1: exit 1" in checks
     assert "warm soak: 1 runs" in text
+
+
+def test_runs_picks_the_models(qual, tmp_path):
+    """RUNS: the references, prefill, decode_profile (4-bit only) and token-exact runs of the
+    models it names, and no others."""
+    text, checks = qual(RUNS="lfm2-2.6b:int8:- smollm3:fp4:int8")
+    assert summary(text) == ("0", "6"), text[-2000:]       # the 2 selftests' + 4 token-exact
+    assert "[PASS] model lfm2-2.6b int8/-" in checks and "[PASS] model smollm3 fp4/int8 " \
+        "resident" in checks and "qwen3" not in checks
+    assert "compute --runs lfm2-2.6b:int8:- smollm3:fp4:int8" in (tmp_path / "out/refs.log") \
+        .read_text()
+    logs = sorted(f.name[4:-4] for f in (tmp_path / "out/logs").iterdir())
+    assert [n for n in logs if n.startswith(("perf", "decode_profile"))] == [
+        "decode_profile_smollm3_fp4_int8", "perf_lfm2-2.6b_int8_-", "perf_smollm3_fp4_int8"]
 
 
 def test_without_models_the_model_phases_are_skipped(qual):

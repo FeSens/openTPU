@@ -51,6 +51,14 @@ def tiny():
     return _tiny()
 
 
+def test_from_hf_gives_a_moe_the_int8_embedding(tiny, tmp_path):
+    """A Qwen3.5-MoE checkpoint's Spec gathers its embedding rows on the device in int8 at any
+    vocabulary size (its DRAM beside the layers is expert slots)."""
+    tiny[0].config.save_pretrained(tmp_path)
+    s = Spec.from_hf(tmp_path)
+    assert s.moe is not None and s.embed == "int8"
+
+
 def _engine(spec, W, experts=None, **kw):
     cfg = device_config(spec, 256, S=1, experts=experts, **kw)
     return Engine(spec, W, cap=256, cfg=cfg, experts=experts, **kw)
