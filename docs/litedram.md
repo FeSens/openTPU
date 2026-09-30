@@ -1524,29 +1524,42 @@ of context at 7.5 / 7.5 / 8.0 ns for the core, the controller and XDMA):
   XDC query matched.
 - **The whole board:** the bridges add 2,702 LUTs and 342 FFs for both channels.
 
-**Area and timing of the core with the bridges** (Vivado 2026.1: the core and both bridges placed
-and routed together on the board's pins, with random masters, using the production build's
-strategy; 7.5 ns for the core and the controller, 8 ns for XDMA):
+**Area and timing of the core with the bridges** (Vivado 2026.1, `ldimpl`: the core and both
+bridges placed and routed together on the board's pins, with random masters, using the production
+build's strategy; 7.5 ns for the core and the controller, 8 ns for XDMA). WNS is within each
+clock: the wrapper's unreplicated LiteX reset and the bridges' async crossings are left out
+(`memch_ooc.tcl` times the crossings). The wrapper drives the core's CSR bus and stretches the
+placement, so the numbers compare the runs rather than predict the board's.
 
-| | core LUTs / FFs | bridges' LUTs (as RAM) / FFs | slices |
+| | main (one port) | ld-2port, first cut | ld-2port |
 |---|---|---|---|
-| main (one port) | 19,808 / 15,645 | 9,819 (4,488) / 3,567 | 9,898 |
-| ld-2port | 21,143 / 17,895 | 12,228 (5,332) / 3,923 | 11,194 |
-| change | +1,335 / +2,250 | +2,409 (+844) / +356 | +1,296 (1.7% of the device) |
+| core LUTs / FFs | 19,808 / 15,645 | 21,143 / 17,895 | 20,533 / 16,863 |
+| bridges' LUTs (as RAM) / FFs | 9,819 (4,488) / 3,567 | 12,228 (5,332) / 3,923 | 12,154 (5,332) / 3,922 |
+| slices | 9,898 | 11,194 | 11,018 |
+| sys WNS, into or out of the bridges | -0.785 | -2.079 | -1.389 |
+| sys WNS, all (the CSR bus in every run) | -2.500 | -2.479 | -3.274 |
+| XDMA WNS | -0.140 | -0.951 | +0.125 |
+| core clock WNS (the wrapper's output fold) | +1.322 | +1.036 | +1.675 |
 
 - **The core's block RAMs are unchanged:** 4 RAMB36 and 3 RAMB18, the calibration CPU's.
 - **Two stock frontends per channel cost more.** With them, the core grew by 2,467 LUTs, in a run
   with the default strategy.
-- **Timing, within each clock.** The wrapper's unreplicated LiteX reset and the bridges' async
-  crossings are left out; `memch_ooc.tcl` times the crossings. The wrapper drives the core's CSR
-  bus and stretches the placement, so its CSR paths are the worst in both runs, and the numbers
-  here compare the two runs rather than predict the board's.
-  - sys: -2.500 -> -2.479, the CSR bus in both.
-  - New among the ten worst sys paths, at -2.079: the shared decoder's port-1 output valid ->
-    `u_ch1`'s `x_pend`, 6 levels. This is the read return's same-cycle release into the credit
-    count.
-  - XDMA: -0.140 -> -0.951, `x_hs2` -> `u_xd`'s write enables, 4 levels.
-  - Core clock: +1.322 -> +1.036, the wrapper's output fold.
+- **The first cut's new paths, and their fixes:**
+  - The read return reached the credit counts in its own cycle: the core's read valid -> the
+    port's tag -> the FIFO's release -> `x_pend`, 6 levels. The release now waits a cycle.
+  - XDMA's write enables followed the hold's synchronizer: `x_hs2` -> `wready` -> `u_xd`'s write
+    enables, 4 levels. `wready` is now a flip-flop.
+  - A 512-bit port mux sat on the read valid: the valid -> the mux -> the RMW merge -> `u_of`.
+    The bridge now reads the one read bus, and Vivado prunes port 1's registers in the core
+    (-1,033 FFs).
+  - The arbiter's `go` needed the chosen head's port: `u_ad`'s rvalid -> the pick -> the heads'
+    mux (fanout 680) -> `go` -> `a_pend`, 11 levels. Each master's room is now found from its own
+    head, alongside the pick.
+- **The worst bridge path left** is the write data: `u_ad`'s head -> the heads' mux -> the RMW
+  merge -> port 1's write-data FIFO, 3 levels, mostly route (a FIFO per port). The one-port
+  core's worst, at -0.785, was the hold -> its one FIFO.
+- **Decode moves by under 0.3%:** Qwen3 3,693,026 -> 3,690,662 cycles/token, Qwen3.5
+  5,001,431 -> 4,990,251 (co-simulated, fp4, 133.33 MHz, DDR3-1066).
 
 ### What would gain, ranked
 

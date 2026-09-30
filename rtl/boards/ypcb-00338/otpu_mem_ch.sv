@@ -379,8 +379,11 @@ module otpu_mem_ch #(
   end
 
   // the arbiter: the chosen master's head command (a write with its data) goes when its port's
-  // output command queue has room and, for a write, the port's output data FIFO too
+  // output command queue has room and, for a write, the port's output data FIFO too. Each master's
+  // room (its head's port) is found alongside the pick, so go and the counts of the head that goes
+  // (a_rgo: an accelerator read issued) follow the pick by a mux, not by the heads' mux (sel_x).
   logic          a_ok, x_ok, pick_x, cur_x, sel_x, go, we, part, rmw, tp;
+  logic          a_room, x_room, a_rgo, x_rgo;
   logic [5:0]    run;
   logic [24:0]   addr;
   logic [DW-1:0] wd;
@@ -401,7 +404,11 @@ module otpu_mem_ch #(
   assign tp    = addr[7];                  // the port: the beat's bank parity
   assign part  = we && wd[DW-1];
   assign rmw   = part;
-  assign go    = !rm_busy && (pick_x ? x_ok : a_ok) && oq_wr[tp] && (!we || of_wr[tp]);
+  assign a_room = oq_wr[aq_rd[7]] && (!aq_rd[QW-1] || of_wr[aq_rd[7]]);
+  assign x_room = oq_wr[xq_rd[7]] && (!xq_rd[QW-1] || of_wr[xq_rd[7]]);
+  assign go    = !rm_busy && (pick_x ? x_ok && x_room : a_ok && a_room);
+  assign a_rgo = !rm_busy && !pick_x && a_ok && a_room && !aq_rd[QW-1];
+  assign x_rgo = !rm_busy && pick_x && x_ok && x_room && !xq_rd[QW-1];
 
   // read data: at most one port returns a beat in a cycle (they share the channel's data bus);
   // its tag, at the head of that port's tag FIFO, says where it goes. The core's ports carry one
@@ -501,21 +508,21 @@ module otpu_mem_ch #(
         cur_x <= pick_x;
       end
       // reads in flight (issued, data not yet back), for the holds
-      a_out <= a_out + AOW'(go && !we && !pick_x) - AOW'(rv && rtag[TW-1 -: 2] == 2'b00);
-      x_out <= x_out + XOW'(go && !we && pick_x) - XOW'(rv && rtag[TW-1 -: 2] == 2'b01);
+      a_out <= a_out + AOW'(a_rgo) - AOW'(rv && rtag[TW-1 -: 2] == 2'b00);
+      x_out <= x_out + XOW'(x_rgo) - XOW'(rv && rtag[TW-1 -: 2] == 2'b01);
       a_nq  <= a_nq + 6'((go || rm_ok) && !sel_x) - 6'(opc_a[0]) - 6'(opc_a[1]);
       x_nq  <= x_nq + 6'((go || rm_ok) && sel_x) - 6'(opc_x[0]) - 6'(opc_x[1]);
     end
     // reads not yet in their FIFO, and the next slot (the FIFO restarts at slot 0 on its hold)
     if (a_hold) begin a_pend <= '0; a_seq <= '0; end
     else begin
-      a_pend <= a_pend + AOW'(go && !we && !pick_x) - AOW'(ar_cmt);
-      if (go && !we && !pick_x) a_seq <= a_seq + 1'b1;
+      a_pend <= a_pend + AOW'(a_rgo) - AOW'(ar_cmt);
+      if (a_rgo) a_seq <= a_seq + 1'b1;
     end
     if (x_hold) begin x_pend <= '0; x_seq <= '0; end
     else begin
-      x_pend <= x_pend + XOW'(go && !we && pick_x) - XOW'(xr_cmt);
-      if (go && !we && pick_x) x_seq <= x_seq + 1'b1;
+      x_pend <= x_pend + XOW'(x_rgo) - XOW'(xr_cmt);
+      if (x_rgo) x_seq <= x_seq + 1'b1;
     end
     if (a_hold) a_wacc <= '0; else a_wacc <= a_wacc + CW'(opw_a[0]) + CW'(opw_a[1]);
     if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + CW'(opw_x[0]) + CW'(opw_x[1]);
@@ -542,6 +549,10 @@ module otpu_mem_ch #(
   // left the queue)
   always_ff @(posedge uclk) if (!urst) begin
     if (&c_rdata_valid) $error("otpu_mem_ch: read data from both ports in one cycle");
+    if (go != (!rm_busy && (pick_x ? x_ok : a_ok) && oq_wr[tp] && (!we || of_wr[tp])))
+      $error("otpu_mem_ch: go is not the chosen head's");
+    if (a_rgo != (go && !we && !pick_x) || x_rgo != (go && !we && pick_x))
+      $error("otpu_mem_ch: a read's issue is not go's");
     if (c_rdata_valid[1] && c_rdata_data[1] != c_rdata_data[0])
       $error("otpu_mem_ch: port 1's read data is not on port 0's bus");
     for (int p = 0; p < 2; p++)
