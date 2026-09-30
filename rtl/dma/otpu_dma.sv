@@ -255,13 +255,46 @@ module otpu_dma
   wire  ds_wr_nx = (og_nx >= GW'(SPC)) &&
                    (ds_wr || (!ds_rr_nx && (og_nx >= GW'(RUN * SPC) || ds_left == 0)));
   assign ds_wreq = ds_wr;
-  // the gather: one simple dual-port RAM per segment position (write: the segment from SE at
-  // chunk gt / SPC; read: chunk gh)
+  // the gather: one simple dual-port RAM per segment position and lane (write: word l of the
+  // segment from SE at chunk gt / SPC; read: chunk gh). The write is registered here (the
+  // segment, and per RAM a kept copy of its enable and chunk), so it lands an edge after SE
+  // hands it over: from SE's registers straight into the RAMs' data inputs and gt's fan-out to
+  // their write addresses, it was 0 levels at +0.228 ns on the fused 133.33 MHz build c2830d6.
+  // og counts the segment as before, so a write run may read the chunk in the cycle the
+  // segment is still in the register: that cycle takes it from there (gb_by, from registers:
+  // the in-flight segment's enable and whether its chunk is the one gh points at, gb_eq,
+  // registered from gh's next value, so b_wdata stays one LUT after the RAM). Only a chunk's
+  // last segment can be read in flight (a run reads complete chunks), so only position
+  // SPC - 1 has the bypass
+  localparam int GCW = $clog2(NGC);
+  logic [W*32-1:0] y_q;                               // the segment in flight
+  (* keep *) logic           gb_we [SPC][W];          // it lands in the (p, l) RAM ...
+  (* keep *) logic [GCW-1:0] gb_wa [SPC][W];          // ... at this chunk
+  (* keep *) logic           gb_eq [W];               // the bypass (position SPC - 1)
   for (genvar p = 0; p < SPC; p++) begin : g_gb
-    (* ram_style = "distributed" *) logic [W*32-1:0] gb [NGC];
-    always_ff @(posedge clk)
-      if (y_keep && 32'(gt) % SPC == p) gb[32'(gt) / SPC] <= y_p;
-    assign gq[p] = gb[gh];
+    for (genvar l = 0; l < W; l++) begin : g_l
+      (* ram_style = "distributed" *) logic [31:0] gb [NGC];
+      always_ff @(posedge clk)
+        if (gb_we[p][l]) gb[gb_wa[p][l]] <= y_q[32 * l +: 32];
+      wire gb_by = p == SPC - 1 && gb_we[p][l] && gb_eq[l];   // chunk gh's segment p is in y_q
+      assign gq[p][32 * l +: 32] = gb_by ? y_q[32 * l +: 32] : gb[gh];
+`ifndef SYNTHESIS
+      // the bypass is taken exactly when a write run reads the segment still in flight
+      always_ff @(posedge clk)
+        if (!rst && ds_wreq && gb_by != (gb_we[p][l] && gb_wa[p][l] == gh))
+          $fatal(1, "otpu_dma: gather bypass %0b for chunk %0d segment %0d", gb_by, gh, p);
+`endif
+    end
+  end
+  always_ff @(posedge clk) begin
+    y_q <= y_p;
+    for (int p = 0; p < SPC; p++)
+      for (int l = 0; l < W; l++) begin
+        gb_we[p][l] <= y_keep && 32'(gt) % SPC == p;
+        gb_wa[p][l] <= GCW'(32'(gt) / SPC);
+      end
+    for (int l = 0; l < W; l++)
+      gb_eq[l] <= GCW'(32'(gt) / SPC) == ((ds_wreq && b_gnt) ? GCW'(gh + 1'b1) : gh);
   end
   always_comb
     for (int l = 0; l < W; l++) begin
