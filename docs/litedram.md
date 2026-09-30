@@ -1665,3 +1665,18 @@ sit at its two ends (by their DDR3 banks), and one register drove loads at both.
     `otpu_ldc_mem` checks both ports' read buses equal) and with this on it: the whole profile
     identical both times.
   - `check_core.sh` reproduces the committed core.
+- **ld-memch's ldimpl harness** (the core and both bridges on the board's pins, the board
+  build's strategies; Vivado 2026.1; eb5beed -> this). The harness stretches these families far
+  past the full build (its sys WNS is its own XDMA queues', -5.68 / -5.91), so compare within the
+  clock: for each sys endpoint below +0.5 ns, the family of its worst path.
+  - The sys reset: 2,295 endpoints below 0, worst -4.284 (`FDPE_1`, 0 levels) -> 1,085, worst
+    -3.260 (1 level).
+  - The CSR bus: 716 below 0, worst -2.479 -> 420, worst -2.534. Into the phase injectors'
+    storages (the full build's family), worst -1.276 -> -0.148.
+  - The ECC counters: 152 endpoints below +0.5, worst -1.845 (10 levels) -> none.
+  - Unchanged: the write clocks, +0.43..+0.56 -> +0.38..+0.53. u_ld: 23,825 -> 23,917 LUTs,
+    17,895 -> 18,139 flip-flops.
+  - Left in the harness: `max_fanout` makes synthesis's copies of the reset register, and they
+    are not placed by their loads. `crg_rst1_reg_rep__13` sits at Y173 and drives 181 loads at
+    Y254-302 (6.8 ns of route to them), as does the CSR bus's write strobe for the PHY's bitslips
+    (`wdly_dq_bitslip_rst`, 213 loads). The next full build measures both.
