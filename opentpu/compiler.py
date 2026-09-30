@@ -470,8 +470,8 @@ class Tile:
         return Tile(self.b, self.base + r0 * self.rs, (n, self.cols), self.rs * step, self.buf)
 
     def reshape(self, rows: int, cols: int) -> "Tile":
-        """The same words as a [rows, cols] tile (contiguous tiles only)."""
-        if not self.contiguous or rows * cols != self.rows * self.cols:
+        """The same words as a [rows, cols] tile (contiguous tiles only; one row always is)."""
+        if not (self.contiguous or self.rows == 1) or rows * cols != self.rows * self.cols:
             raise CompileError(f"reshape: {self} is not {rows}x{cols} contiguous words")
         return Tile(self.b, self.base, (rows, cols), cols, self.buf)
 

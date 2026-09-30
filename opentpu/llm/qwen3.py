@@ -680,13 +680,15 @@ def _padded(x):
     return out
 
 
-def _rope_padded(x, c, s_):
+def _rope_padded(x, c, s_, out=None):
     """rope(x) on the first 2 * len(c) dimensions of each row (the others pass through:
-    Qwen3.5's partial RoPE), padded like _padded (RoPE writes straight into the padded tile)."""
+    Qwen3.5's partial RoPE), padded like _padded (RoPE writes straight into the padded tile),
+    or into `out` (a view whose columns beyond x.cols are already zero)."""
     d, D, rd = x.cols, ol.block_size(), 2 * c.cols
-    if d % D == 0 and rd == d:
+    if out is None and d % D == 0 and rd == d:
         return rope(x, c, s_)
-    out = ol.zeros([x.rows, -(-d // D) * D]) if d % D else ol.empty(x.shape)
+    if out is None:
+        out = ol.zeros([x.rows, -(-d // D) * D]) if d % D else ol.empty(x.shape)
     rope(x[:, :rd], c, s_, out=out[:, :rd])
     if rd < d:
         out[:, rd:d].set(x[:, rd:])
@@ -936,9 +938,9 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     # queries as [R * nq, dk]: (row r, KV head j) is the G contiguous rows r*nq + j*G ...
     dk = -(-d // ol.block_size()) * ol.block_size()
     Q = ol.zeros([R * nq, dk]) if dk > d else ol.empty([R * nq, d])
-    for h in range(nq):
-        _rope_rows_padded(_norm_heads(q[:, h * d:(h + 1) * d], qn, eps), c, s_,
-                          out=Q.row_stride_view(h, R, nq))
+    for r in range(R):                          # a row's heads at once, as _attention's
+        _rope_padded(_norm_heads(q[r:r + 1, :].reshape(nq, d), qn, eps), c[r], s_[r],
+                     out=Q[r * nq:(r + 1) * nq, :])
     del q
     mc = min(G, ol.mxu_columns())
     ent = [(r, j, g0, min(G, g0 + mc)) for r in range(R) for j in range(nh)
