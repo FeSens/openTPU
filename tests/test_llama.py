@@ -7,9 +7,12 @@ import dataclasses
 import numpy as np
 import pytest
 
+from opentpu import language as ol
 from opentpu.isasim import board_config
+from opentpu.kernels.gather import gather_row, onehot
 from opentpu.llm import load_spec
-from opentpu.llm.qwen3 import Engine, emulated_logits, load_weights, reference_logits
+from opentpu.llm.qwen3 import Engine, emulated_logits, gathered_rows, load_weights, reference_logits
+from opentpu.runtime import Input, Output, Weight, launch
 
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
@@ -58,9 +61,31 @@ def tiny(request, tmp_path_factory):
     return request.param, m, load_spec(path), load_weights(path)
 
 
+@ol.jit
+def _gather(table, oh, out, row):
+    ol.store(out, gather_row(ol.quantize(ol.load(oh)), table, row, "int8").reshape(1, out.shape[1]))
+
+
+@pytest.mark.parametrize("K", [256, 768])
+def test_embedding_rows_are_the_gathers(K):
+    """qwen3.gathered_rows (the host's reference of an int8 embedding) is what the device's
+    gather (kernels.gather.gather_row) reads from an int8 table, bit for bit (rows with a zero
+    block), within an ulp of q * s."""
+    rng = np.random.default_rng(K)
+    W = rng.normal(0, 0.05, (40, K)).astype(np.float32)
+    W[7, :128] = 0
+    oh = onehot(128, 4, "int8")
+    for r in (0, 7, 39):
+        got = launch(_gather, board_config(DRAM_BYTES=1 << 22), table=Weight(W, 0),
+                     oh=Input(oh), out=Output((1, K)), row=r).outputs["out"]
+        want = gathered_rows(W[r], 128)
+        assert np.array_equal(got.view(np.uint32), want.view(np.uint32)), r
+        assert np.abs(got - W[r]).max() <= np.abs(W[r]).reshape(-1, 128).max(1).max() / 254
+
+
 def test_specs(tiny):
     name, _, spec, W = tiny
-    assert not spec.qk_norm
+    assert not spec.qk_norm and spec.embed == "int8"
     if name == "smollm3":
         assert spec.nope == (3, 7) and spec.rope_dim == 128 and not spec.rope_div
     else:
@@ -100,7 +125,8 @@ def test_tiny_fp4_follows_emulation(tiny):
 def test_tiny_resident_decode_is_bit_exact(tiny):
     """Resident decode (run-time position and token) gives the per-position programs' logits
     bit for bit, across the bucket boundary 256, after a chunked prefill; one hardware loop
-    runs every layer, with and without RoPE."""
+    runs every layer, with and without RoPE, and the token's int8 embedding row is gathered
+    from the tied int8 LM head (the host feeds the per-position programs the same values)."""
     _, _, spec, W = tiny
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 262)]
     cfg = board_config(DRAM_BYTES=1 << 26)
@@ -113,6 +139,19 @@ def test_tiny_resident_decode_is_bit_exact(tiny):
     for t in toks[252:]:
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
     assert sorted(a._decodes) == [1, 2]
+
+
+def test_tiny_resident_own_int8_table(tiny):
+    """A 4-bit LM head cannot serve the gather: the image holds its own int8 embedding
+    table, with the same values."""
+    _, _, spec, W = tiny
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 6)]
+    cfg = board_config(DRAM_BYTES=1 << 26)
+    a = Engine(spec, W, cap=256, cfg=cfg, resident=True, wformat="fp4", head_format="fp4")
+    b = Engine(spec, W, cap=256, cfg=cfg, wformat="fp4", head_format="fp4")
+    assert a.resident and a.image.lookup["own"]
+    for t in toks:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
 
 
 @pytest.mark.parametrize("first,chunk", [(0, 5), (3, 8)])

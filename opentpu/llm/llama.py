@@ -12,6 +12,9 @@ What differs from Qwen3, all in qwen3.py and off for Qwen3:
             LongRoPE (Phi-3 rope_scaling type longrope): the short factors divide the
             frequencies, the attention factor scales cos and sin; the KV capacity stays within
             original_max_position_embeddings (ctx), where Hugging Face uses the short factors
+  embed     "int8": the embedding rows are int8 per 128 (their vocabularies, 128K and 200K,
+            make an fp32 table 1-2.4 GB): the resident decode gathers them from the tied int8
+            LM head (kernels.gather.gather_row), the host feeds the same values
 Phi-3's fused qkv_proj and gate_up_proj are read as separate q/k/v and gate/up projections
 (qwen3.Weights).
 """
@@ -74,4 +77,4 @@ def spec_from_hf(model_dir) -> Spec:
                 ffn=c["intermediate_size"], vocab=c["vocab_size"], eps=c["rms_norm_eps"],
                 theta=theta, tied=c.get("tie_word_embeddings", False),
                 bos=c.get("bos_token_id"), eos=tuple(eos) if isinstance(eos, list) else (eos,),
-                qk_norm=False, rotary=0 if rotary == d else rotary, **extra)
+                qk_norm=False, rotary=0 if rotary == d else rotary, embed="int8", **extra)

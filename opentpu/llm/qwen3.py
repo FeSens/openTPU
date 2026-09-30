@@ -35,6 +35,7 @@ from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, ar
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
+from ..kernels.gather import dequant_row, gather_row, onehot, onehot_blocks
 from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid
 from ..kernels.mlp import _chunk, swiglu_down
 from ..runtime import ALIGN
@@ -63,6 +64,9 @@ class Spec:
     rope_scale: float = 1.0   # factor on cos and sin (LongRoPE's attention factor)
     ctx: int = 0              # the most positions the RoPE tables hold (LongRoPE: its short
     #                           factors' range; 0: no limit)
+    embed: str = "f32"        # the embedding rows: fp32, or "int8" (per D block, as the tied
+    #                           int8 LM head holds them: the resident decode gathers them from
+    #                           it, kernels.gather.gather_row; the host uses the same values)
 
     @property
     def rope_dim(self) -> int:
@@ -200,35 +204,85 @@ def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 # =============================================================================== lookup tables
-def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None) -> dict:
+def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None, D: int = 128,
+                  head: tuple | None = None, M: int = 4) -> dict:
     """DRAM for the device-side inputs of a run-time position (RunPos): every token's embedding
-    row (fp32, flushed as the host writes it), the RoPE cos / sin rows of every position, and
-    the attention mask table (attention.Bucket: cap entries +inf, then a block of -inf)."""
+    row, the RoPE cos / sin rows of every position, and the attention mask table
+    (attention.Bucket: cap entries +inf, then a block of -inf). The embedding rows are fp32
+    (flushed, as the host writes them), or with spec.embed "int8" int8 with a scale per D block
+    (kernels.gather.gather_row, with its one-hot operand for M MXU columns): the LM head's
+    rows when `head` (its data and scale addresses) is given -- a tied int8 head whole on one
+    slice -- else a table of their own."""
     block = block or ATTN_BLOCK
     half = len(rope_tables(spec, 0)[0])
-    return {"embed": b.alloc(4 * spec.vocab * spec.hidden), "cos_t": b.alloc(4 * cap * half),
-            "sin_t": b.alloc(4 * cap * half), "zmask": b.alloc(4 * (cap + block)),
-            "half": half, "block": block}
+    V, H = spec.vocab, spec.hidden
+    if getattr(spec, "embed", "f32") == "int8":
+        emb = {"embed_q": head, "own": False} if head is not None else \
+            {"embed_q": (b.alloc(V * H), b.alloc(4 * V * (H // D))), "own": True}
+        emb.update(onehot=b.alloc(4 * M * onehot_blocks(D, M, "int8") * D), M=M)
+    else:
+        emb = {"embed": b.alloc(4 * V * H)}
+    return {**emb, "cos_t": b.alloc(4 * cap * half), "sin_t": b.alloc(4 * cap * half),
+            "zmask": b.alloc(4 * (cap + block)), "half": half, "block": block, "D": D}
 
 
 def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
-    e = F.ftz(np.asarray(W["model.embed_tokens.weight"], np.float32))
     cs = [rope_tables(spec, p) for p in range(cap)]
     z = np.concatenate([np.full(cap, np.inf, np.float32), np.full(lk["block"], -np.inf,
                                                                   np.float32)])
+    if "embed" in lk:
+        e = F.ftz(np.asarray(W["model.embed_tokens.weight"], np.float32))
+    elif lk["own"]:
+        eq, es = Q.quantize_mxu(W["model.embed_tokens.weight"], "int8", lk["D"])
     for s in range(S):
-        put(s, lk["embed"], e)
+        if "embed" in lk:
+            put(s, lk["embed"], e)
+        elif lk["own"]:
+            put(s, lk["embed_q"][0], eq)
+            put(s, lk["embed_q"][1], es)
         put(s, lk["cos_t"], np.stack([c for c, _ in cs]))
         put(s, lk["sin_t"], np.stack([x for _, x in cs]))
         put(s, lk["zmask"], z)
+        if "onehot" in lk:
+            put(s, lk["onehot"], onehot(lk["D"], lk["M"], "int8"))
 
 
 def _lookup_desc(lk: dict, spec, cap: int) -> dict:
     if not lk:
         return {}
-    return {"embed": _tdesc(lk["embed"], (spec.vocab, spec.hidden)),
-            "cos_t": _tdesc(lk["cos_t"], (cap, lk["half"])),
-            "sin_t": _tdesc(lk["sin_t"], (cap, lk["half"])), "zmask": lk["zmask"]}
+    d = {"cos_t": _tdesc(lk["cos_t"], (cap, lk["half"])),
+         "sin_t": _tdesc(lk["sin_t"], (cap, lk["half"])), "zmask": lk["zmask"]}
+    if "embed" in lk:
+        d["embed"] = _tdesc(lk["embed"], (spec.vocab, spec.hidden))
+    else:
+        d["embed_q"] = _qdesc(*lk["embed_q"], spec.vocab, spec.hidden, lk["D"])
+        M, D = lk["M"], lk["D"]
+        d["onehot"] = _tdesc(lk["onehot"], (M, onehot_blocks(D, M, "int8") * D))
+    return d
+
+
+class Embedding:
+    """The embedding rows the device computes with, on the host (Engine.embed: the per-position
+    programs' and prefill runs' inputs): the checkpoint's fp32 rows, or with spec.embed "int8"
+    their int8 quantization as the resident decode's gather dequantizes it, bit for bit."""
+
+    def __init__(self, spec, W, D: int):
+        self.table = W["model.embed_tokens.weight"]
+        self.int8, self.D = getattr(spec, "embed", "f32") == "int8", D
+
+    def __getitem__(self, idx) -> np.ndarray:
+        rows = np.asarray(self.table[idx], np.float32)
+        if not self.int8:
+            return rows
+        return gathered_rows(rows, self.D).reshape(rows.shape)
+
+
+def gathered_rows(rows, D: int) -> np.ndarray:
+    """The values kernels.gather.gather_row gives for these fp32 rows [n, K] held as int8 per D
+    block (quant.quantize_mxu, as the LM head is stored): [n, K], bit for bit."""
+    rows = np.atleast_2d(np.asarray(rows, np.float32))
+    q, sc = Q.quantize_mxu(rows, "int8", D)
+    return np.stack([dequant_row(q[i], sc[i], "int8", D) for i in range(len(rows))])
 
 
 def has_lookup(spec) -> bool:
@@ -343,6 +397,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     out = []
     for pos, tk in enumerate(tokens):
         x = np.asarray(W["model.embed_tokens.weight"][tk], np.float64)
+        if spec.embed == "int8":                    # the int8 embedding rows (Spec.embed)
+            x = _fake_q(x, D)
         c, s = rope_tables(spec, pos)
 
         def rot(v):
@@ -476,7 +532,10 @@ class Image:
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
-        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
+        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
+        shared = spec.tied and self.head_format == "int8" and S == 1
+        self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
+                                    M=cfg.MCOLS) if lookup else {}
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -793,9 +852,20 @@ def _inputs(m, pos):
     """The token's embedding row and its RoPE rows: from the I/O area (the host writes them),
     or, at a run-time position (RunPos), from the image's tables at the token id and position."""
     if isinstance(pos, RunPos):
-        return (ol.load(m.embed[pos.tok:pos.tok + 1, :]), ol.load(m.cos_t[pos.pos, :]),
-                ol.load(m.sin_t[pos.pos, :]))
+        eq = getattr(m, "embed_q", None)
+        x = ol.load(m.embed[pos.tok:pos.tok + 1, :]) if eq is None else next(_gather(m, eq,
+                                                                                    [pos.tok]))
+        return x, ol.load(m.cos_t[pos.pos, :]), ol.load(m.sin_t[pos.pos, :])
     return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
+
+
+def _gather(m, eq, toks):
+    """The int8 embedding rows of tokens `toks` (ints or run-time values), gathered on the
+    device (kernels.gather.gather_row, one one-hot operand for all), one [1, H] tile at a
+    time."""
+    oh = ol.quantize(ol.load(m.onehot))
+    for t in toks:
+        yield gather_row(oh, eq, t, "int8").reshape(1, eq.shape[1])
 
 
 def _lm_head(x, m, spec):
@@ -1082,7 +1152,7 @@ class Engine:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
-        self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
+        self.embed = Embedding(spec, W, self.cfg.D)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
