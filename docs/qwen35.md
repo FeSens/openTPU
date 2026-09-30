@@ -112,6 +112,26 @@ MCOLS=2; 1,979 and 2,287 with MCOLS=4), within the 4K-instruction IMEM. The DRAM
 788 MiB at any KV capacity up to 4096 tokens (the DeltaNet layer blocks set the block size), of
 which 21 MiB are KV cache, convolution ring and DeltaNet state at a 256-token capacity.
 
+## Fewer key heads than value heads
+
+Qwen3.5-0.8B and 2B have 16 DeltaNet key heads and 16 value heads. The 4B, 9B and 35B-A3B
+have 16 key heads for 32 value heads, and the 27B has 16 for 48. In each case, value head h
+takes the q and k of key head h / (value heads / key heads), as Hugging Face's
+`repeat_interleave`.
+
+The image repeats a key head's q and k rows of `in_proj_qkv`, and their convolution taps, for
+each of its value heads. The kernels therefore run value heads with q and k of their own, and
+do not change. Qwen3.5-0.8B's programs are the same words as before: 64,511 instructions over
+the design, board, DSTEP and STREAM configurations, including prefill rows and resident
+decode.
+
+The repeated rows cost 2 x 128 projection rows per extra value head:
+- 4096 rows per DeltaNet layer at 16/32;
+- about +5% of the bytes per token on the 4B, and +7% on the 35B-A3B.
+
+Computing a head pair's shared q and k once in the pair's projection would win that back,
+but it changes the kernels.
+
 ## Accuracy
 
 The numpy reference (`qwen35.reference_logits`) matches Hugging Face's fp32 Qwen3.5-0.8B to
@@ -361,7 +381,8 @@ would need a state per sequence.
 
 `tests/test_qwen35.py`:
 
-- A tiny random Qwen3.5 (`lin lin attn` x 2, 8 DeltaNet heads, a 4-head query group) against
+- A tiny random Qwen3.5 (`lin lin attn` x 2, 8 DeltaNet heads with 8 or 4 key heads, a 4-head
+  query group; every tiny-model test runs with both) against
   Hugging Face over 48 tokens and against the int8 emulation, on the design configuration (2
   slices, 8 MXU columns) and the board configuration (1 slice, 2 columns: query groups split).
 - `Engine.reset` gives bit-identical logits: position 0 does not read the previous sequence's

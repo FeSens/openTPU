@@ -24,6 +24,11 @@ How it maps onto openTPU (docs/qwen35.md):
     positions before, oldest first, stored per pair of heads after the pair's taps (one load);
     each step stores it back shifted by one row (_past), so a program's addresses do not
     depend on the position.
+  * Fewer DeltaNet key heads than value heads (Qwen3.5-4B, 9B, 35B-A3B: 16 and 32): value
+    head h takes the q and k of key head h // (value / key heads), as HF's repeat_interleave.
+    The image repeats a key head's q and k rows of in_proj_qkv (and their convolution taps)
+    for each of its value heads, so the kernels see value heads with q and k of their own and
+    do not change; the repeated rows cost 2 dk projection rows per extra value head.
   * Resident decode (qwen3.Engine(resident=True), Image(lookup=True)): one program per
     attention bucket takes the token and the position as run arguments (qwen3.RunPos).
   * 256-wide attention heads are two MXU blocks. With MCOLS < 4 a query group of 4 heads is
@@ -80,7 +85,7 @@ class Spec:
     n_kv: int
     head_dim: int
     rope_dim: int           # RoPE on the first rope_dim dimensions of each attention head
-    lin_heads: int          # DeltaNet heads
+    lin_heads: int          # DeltaNet heads (value heads)
     lin_dk: int
     lin_dv: int
     ffn: int
@@ -90,17 +95,21 @@ class Spec:
     theta: float = 1e7
     tied: bool = True
     eos: tuple = (248046, 248044)
+    lin_kheads: int = 0     # DeltaNet key heads (0: lin_heads); value head h uses q and k of
+                            # key head h // (lin_heads / lin_kheads), as HF's repeat_interleave
 
     @property
     def layers(self) -> int:
         return len(self.kinds)
 
+    @property
+    def lin_nk(self) -> int:
+        return self.lin_kheads or self.lin_heads
+
     @staticmethod
     def from_hf(model_dir) -> "Spec":
         top = json.loads((Path(model_dir) / "config.json").read_text())
         c = top.get("text_config", top)
-        if c["linear_num_key_heads"] != c["linear_num_value_heads"]:
-            raise ValueError("DeltaNet with fewer key than value heads is not supported")
         rope = c.get("rope_parameters") or {}
         d = c.get("head_dim") or c["hidden_size"] // c["num_attention_heads"]
         eos = c.get("eos_token_id", 248044)
@@ -114,7 +123,8 @@ class Spec:
                     vocab=c["vocab_size"], conv_k=c.get("linear_conv_kernel_dim", 4),
                     eps=c.get("rms_norm_eps", 1e-6), theta=rope.get("rope_theta", 1e7),
                     tied=top.get("tie_word_embeddings", c.get("tie_word_embeddings", True)),
-                    eos=(248046,) + tuple(e for e in eos if e != 248046))   # <|im_end|> first
+                    eos=(248046,) + tuple(e for e in eos if e != 248046),   # <|im_end|> first
+                    lin_kheads=c["linear_num_key_heads"])
 
     def check(self, cfg: Config) -> None:
         S, D = cfg.S, cfg.D
@@ -122,6 +132,7 @@ class Spec:
                 (self.rope_dim % 2 == 0 and self.rope_dim <= self.head_dim, "rope_dim"),
                 (self.lin_dk == D and self.lin_dv == D, "DeltaNet heads must be D wide"),
                 (self.lin_heads % (2 * S) == 0, f"DeltaNet heads % 2S (pairs per slice)"),
+                (self.lin_heads % self.lin_nk == 0, "DeltaNet value heads % key heads"),
                 (self.hidden % (S * D) == 0, f"hidden {self.hidden} % S*D"),
                 (self.ffn % (S * D) == 0, f"ffn {self.ffn} % S*D"),
                 (self.n_kv % S == 0, f"n_kv {self.n_kv} % S"),
@@ -167,7 +178,7 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
     """fp32 numpy forward of the whole sequence (causal); returns logits [T, vocab]."""
     tokens = list(tokens)
     T, d, G, eps, K = len(tokens), spec.head_dim, spec.n_q // spec.n_kv, spec.eps, spec.conv_k
-    nh, dk, dv = spec.lin_heads, spec.lin_dk, spec.lin_dv
+    nh, nk, dk, dv = spec.lin_heads, spec.lin_nk, spec.lin_dk, spec.lin_dv
     f32 = np.float32
     x = W["model.embed_tokens.weight"][tokens].astype(f32)
     cs = [rope_tables(spec, p) for p in range(T)]
@@ -187,9 +198,9 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
             w = W[a + "conv1d.weight"][:, 0, :]                          # [C, K]
             pad = np.concatenate([np.zeros((K - 1, qkv.shape[1]), f32), qkv])
             y = _silu(sum(pad[j:j + T] * w[:, j] for j in range(K)))
-            q, k, v = np.split(y, [nh * dk, 2 * nh * dk], axis=1)
-            q = _l2norm(q.reshape(T, nh, dk)) / f32(math.sqrt(dk))
-            k = _l2norm(k.reshape(T, nh, dk))
+            q, k, v = np.split(y, [nk * dk, 2 * nk * dk], axis=1)
+            q = np.repeat(_l2norm(q.reshape(T, nk, dk)) / f32(math.sqrt(dk)), nh // nk, axis=1)
+            k = np.repeat(_l2norm(k.reshape(T, nk, dk)), nh // nk, axis=1)
             v = v.reshape(T, nh, dv)
             z = (h @ W[a + "in_proj_z.weight"].T).reshape(T, nh, dv)
             beta = 1 / (1 + np.exp(-(h @ W[a + "in_proj_b.weight"].T)))
@@ -235,7 +246,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     qwen3.emulated_logits): int8 weights and matmul inputs per D-block, int8 K and V, int8 P.
     The DeltaNet state, convolution and gates are exact (they are fp32 on the device)."""
     d, G, eps, K = spec.head_dim, spec.n_q // spec.n_kv, spec.eps, spec.conv_k
-    nh, dk, dv = spec.lin_heads, spec.lin_dk, spec.lin_dv
+    nh, nk, dk, dv = spec.lin_heads, spec.lin_nk, spec.lin_dk, spec.lin_dv
     Wq: dict = {}
 
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
@@ -251,7 +262,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     lin = [i for i, k in enumerate(spec.kinds) if k == LIN]
     Kc = {i: [] for i, k in enumerate(spec.kinds) if k == ATTN}
     Vc = {i: [] for i in Kc}
-    ring = {i: [np.zeros(nh * (2 * dk + dv))] * (K - 1) for i in lin}
+    ring = {i: [np.zeros(2 * nk * dk + nh * dv)] * (K - 1) for i in lin}
     state = {i: np.zeros((nh, dk, dv)) for i in lin}
     out = []
     for pos, tk in enumerate(tokens):
@@ -267,9 +278,9 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
                 ring[i] = win[1:]
                 wc = W[a + "conv1d.weight"][:, 0, :]
                 y = _silu(sum(win[j] * wc[:, j] for j in range(K)))
-                q, k, v = np.split(y, [nh * dk, 2 * nh * dk])
-                q = _l2norm(q.reshape(nh, dk)) / math.sqrt(dk)
-                k = _l2norm(k.reshape(nh, dk))
+                q, k, v = np.split(y, [nk * dk, 2 * nk * dk])
+                q = np.repeat(_l2norm(q.reshape(nk, dk)) / math.sqrt(dk), nh // nk, axis=0)
+                k = np.repeat(_l2norm(k.reshape(nk, dk)), nh // nk, axis=0)
                 v = v.reshape(nh, dv)
                 z = (w(a + "in_proj_z.weight") @ h).reshape(nh, dv)
                 beta = 1 / (1 + np.exp(-(w(a + "in_proj_b.weight") @ h)))
@@ -431,7 +442,7 @@ class Image:
 
         for s in range(S):
             put(s, self.io["gf"], g1("model.norm.weight"))
-        NK = spec.lin_heads * dk
+        NK, rk = spec.lin_nk * dk, spec.lin_heads // spec.lin_nk
         for i, kind in enumerate(spec.kinds):
             p, base = f"model.layers.{i}.", self.layer0 + i * self.LS
             Lo = {k: (tuple(base + x for x in v) if isinstance(v, tuple) else
@@ -443,8 +454,10 @@ class Image:
                 a = p + "linear_attn."
                 qkv, wz = W[a + "in_proj_qkv.weight"], W[a + "in_proj_z.weight"]
                 wout = W[a + "out_proj.weight"]
-                # the convolved channels of head h: its q, k and v rows of in_proj_qkv
-                chans = [np.r_[h * dk:(h + 1) * dk, NK + h * dk:NK + (h + 1) * dk,
+                # the convolved channels of head h: the q and k rows of its key head h // rk
+                # (a key head's rows repeat for each of its value heads), its v rows
+                chans = [np.r_[h // rk * dk:(h // rk + 1) * dk,
+                               NK + h // rk * dk:NK + (h // rk + 1) * dk,
                                2 * NK + h * dv:2 * NK + (h + 1) * dv]
                          for h in range(spec.lin_heads)]
                 taps = W[a + "conv1d.weight"][:, 0, :]                   # [channels, K]
