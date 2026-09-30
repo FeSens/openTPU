@@ -129,8 +129,30 @@ The repeated rows cost 2 x 128 projection rows per extra value head:
 - 4096 rows per DeltaNet layer at 16/32;
 - about +5% of the bytes per token on the 4B, and +7% on the 35B-A3B.
 
-Computing a head pair's shared q and k once in the pair's projection would win that back,
-but it changes the kernels.
+**A pair shares its q and k** (`Spec.qk_share`; by default when the value heads per key head
+are even: the 4B, 9B, 35B-A3B). The two value heads of a pair then have one key head. The
+pair's projection rows are:
+- the key head's q and k, once;
+- v of head a, v of head b;
+- z of head a, z of head b.
+
+That is 768 rows instead of 1,024. The convolution runs on four blocks of 128 channels (q, k,
+v of a, v of b) instead of two of 384 (the heads): its taps are rows (block, tap), its window
+512 wide. q and k are convolved, SiLU'd and L2-normed once for both heads. The recurrence of
+each head reads the shared q and k and its own v. This covers the decode kernel, the DSTEP and
+STREAM steps, and the prefill rows.
+
+The per-element operations are the ones the repeated rows ran, so the logits and states are
+the same bit for bit (`test_shared_qk_is_bit_exact`). Qwen3.5-4B (fp4, int8 head, one slice):
+- 5.6 MB fewer projection bytes per DeltaNet layer, 134 MB less read per token;
+- the image goes from 2,702 to 2,632 MiB (int8 body: 4,585 to 4,272);
+- the resident decode is 27 instructions shorter.
+
+For the 35B-A3B (docs/offload.md) its layer block goes from 25.77 to 21.41 MiB, and the 4 GiB
+board holds 34 expert slots per layer instead of 32.
+
+The 27B (48/16: 3 value heads per key head) keeps the repeated rows: a pair of its heads can
+straddle two key heads.
 
 ## Group-major DeltaNet blocks: the pair loop at a run-time position
 
