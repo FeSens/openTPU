@@ -154,8 +154,8 @@ Every part of pair p, its gates included, is at one offset from p's group's bloc
 loop steps one address register. The decode then loops the pairs at a run-time position too,
 and the attention's run-time KV addresses still find their registers after it. The gates are
 stored once per head group instead of once per layer. The kernels address the parts through
-`DeltaNetParts` in both layouts, so the 0.8B's programs are the same words as before (64,511
-instructions, sha256 7ee567e0). Group-major is bit-exact against array-major
+`DeltaNetParts` in both layouts, so the 0.8B's programs are the same words as before (64,069
+instructions, sha256 661913fb). Group-major is bit-exact against array-major
 (`test_group_major_is_bit_exact`).
 
 Qwen3.5-4B's resident decode at one slice (fp4, int8 LM head, its int8 embedding gathered on
