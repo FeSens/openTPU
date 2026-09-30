@@ -272,6 +272,32 @@ class Run:
             (wt / "models").symlink_to(m.parent)
         return wt
 
+    def dedicated(self) -> bool:
+        """Whether this checkout is a linked worktree (a tournament's own, e.g. openTPU-tv), whose
+        build/ only the tournament uses; the main checkout's build/ is everyone's."""
+        return (Path(git("rev-parse", "--absolute-git-dir", cwd=self.repo)) !=
+                (self.repo / git("rev-parse", "--git-common-dir", cwd=self.repo)).resolve())
+
+    def clean_leftovers(self) -> None:
+        """Drops the worktrees an earlier run of this component and objective left behind (killed
+        or crashed mid-round), unless another run of it is live: every run holds a shared lock on
+        <wtroot>.lock while it lives, the cleanup needs it exclusively first."""
+        self.wtroot.parent.mkdir(parents=True, exist_ok=True)
+        self._live = (self.wtroot.parent / f"{self.wtroot.name}.lock").open("w")
+        try:
+            fcntl.flock(self._live, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fcntl.flock(self._live, fcntl.LOCK_SH)
+            return
+        try:
+            for wt in sorted(self.wtroot.iterdir()) if self.wtroot.is_dir() else []:
+                if wt.is_dir():
+                    print(f"[tourney] removing the leftover worktree {wt}", flush=True)
+                    self.drop(wt, None if wt.name == "champion" or wt.name == "sync" or
+                              wt.name.startswith("full-") else self.slot_branch(wt.name))
+        finally:
+            fcntl.flock(self._live, fcntl.LOCK_SH)
+
     def drop(self, wt: Path, branch: str | None) -> None:
         if self.a.keep and branch:
             return
@@ -629,6 +655,14 @@ class Run:
             G.remote_prune()
         except Exception as e:  # noqa: BLE001
             print(f"[tourney] could not prune the build host's Verilator cache: {e}")
+        if self.dedicated():                   # the agents' quick-test builds on this machine
+            gone = G.local_prune(self.shared_build)
+            if gone:
+                print(f"[tourney] pruned {len(gone)} local Verilator builds", flush=True)
+        try:
+            self.wtroot.rmdir()                # the slot trees are gone: so is their empty root
+        except OSError:
+            pass
 
     def main(self) -> None:
         # the same control files as tools/tourney/forever.sh: a planned downtime or a quiet
@@ -642,6 +676,7 @@ class Run:
                 print(f"[tourney] {PAUSE} exists: {self.a.comp} waits", flush=True)
                 waited = True
             time.sleep(60)
+        self.clean_leftovers()
         self.ensure_branch()
         champ = self.champion()
         print(f"[tourney] {self.a.comp} champion: " + json.dumps(

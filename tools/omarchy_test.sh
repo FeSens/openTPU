@@ -27,7 +27,7 @@ build=${OTPU_REMOTE_BUILD:-}
 
 # the tree as it is now: tracked files, including uncommitted edits
 ssh "$HOST" "mkdir -p ~/$dir"
-(cd "$top" && git ls-files -z | COPYFILE_DISABLE=1 tar --no-mac-metadata --null -T - -cf -) | ssh "$HOST" "tar -xf - -C ~/$dir"
+(cd "$top" && git ls-files -z | COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs --null -T - -cf -) | ssh "$HOST" "tar -xf - -C ~/$dir"
 
 args=$(printf '%q ' "$@")
 ssh "$HOST" "bash -s" <<EOF

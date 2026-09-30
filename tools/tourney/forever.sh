@@ -66,7 +66,7 @@ while :; do
   for c in $pass; do
     round "$c"
     n=$((n + 1))
-    if (( EVERY > 0 && n % EVERY == 0 )); then
+    if (( EVERY > 0 )) && (( n % EVERY == 0 )); then
       read -r -a ws <<< "$(whole)"
       round "${ws[w % ${#ws[@]}]}"
       w=$((w + 1))

@@ -713,6 +713,13 @@ def test_gates_go_through_execute(tmp_path, monkeypatch):
     monkeypatch.setattr(G.subprocess, "run", lambda *a, **k: R("FAILED x", 1))
     with pytest.raises(G.GateFailure, match="board"):
         G.pytest(wt, ["tests/a.py"], None, "board")
+    # the failure ends the tail, not the shipping's stderr (tar warnings, one per file)
+    noisy = R("E assert 1 == 2\nFAILED tests/a.py::t - assert\n", 1)
+    noisy.stderr = "tar: Ignoring unknown extended header keyword\n" * 200
+    monkeypatch.setattr(G.subprocess, "run", lambda *a, **k: noisy)
+    with pytest.raises(G.GateFailure) as e:
+        G.pytest(wt, ["tests/a.py"], None, "fast")
+    assert e.value.tail.rstrip().endswith("FAILED tests/a.py::t - assert")
 
     def slow(*a, **k):
         raise G.subprocess.TimeoutExpired("x", 1)
@@ -1023,6 +1030,40 @@ def test_unit_winner_becomes_champion(tmp_path, monkeypatch):
     log = json.loads(run.log.read_text())
     assert log["outcome"] == "accepted" and "_m" not in log and "wt" not in log
     assert not O.git("branch", "--list", "tourney-slot/*", cwd=repo)   # slot branch dropped
+    assert not run.wtroot.exists()                                     # and the slots' root
+
+
+def test_local_prune(tmp_path):
+    v = tmp_path / "build" / "verilator"
+    for n in ("tb_top_old", "tb_top_new", "tb_fp_old"):
+        (v / n).mkdir(parents=True)
+        (v / n / "Vtb").write_text("x")
+    now = time.time()
+    for n in ("tb_top_old", "tb_fp_old"):
+        os.utime(v / n, (now - 7 * 3600, now - 7 * 3600))
+    assert G.local_prune(tmp_path / "build", 360, now) == ["tb_fp_old", "tb_top_old"]
+    assert [p.name for p in v.iterdir()] == ["tb_top_new"]
+    assert G.local_prune(tmp_path / "nothing", 360) == []
+
+
+def test_leftover_worktrees(tmp_path, monkeypatch):
+    """A run removes the worktrees (and slot branches) an earlier run of the same component and
+    objective left behind, unless that run is still live (it holds the lock)."""
+    O, run, repo = _unit_run(tmp_path, monkeypatch)
+    monkeypatch.setattr(O.G, "remote_clean", lambda wt: None)
+    run.ensure_branch()
+    assert not run.dedicated()                               # the main checkout: not pruned
+    wt = run.worktree("r1-s0", run.branch)
+    assert run.dedicated.__func__(type("R", (), {"repo": wt})())    # a linked worktree is
+    live = (run.wtroot.parent / f"{run.wtroot.name}.lock").open("w")
+    O.fcntl.flock(live, O.fcntl.LOCK_SH)                     # another run of it, still live
+    run.clean_leftovers()
+    assert wt.exists()
+    run._live.close()
+    live.close()
+    run.clean_leftovers()                                    # that run is gone: leftovers
+    assert not wt.exists()
+    assert not O.git("branch", "--list", "tourney-slot/*", cwd=repo)
 
 
 def test_forever_objective_and_control_files(tmp_path):
@@ -1057,3 +1098,4 @@ def test_forever_objective_and_control_files(tmp_path):
     assert all("--objective unit" in x and f"STOP={stop}" in x and
                f"PAUSE={tmp_path / 'units-pause'}" in x for x in rows)
     assert f"{stop}: stopping" in r.stdout
+    assert "division" not in r.stderr, r.stderr                     # WHOLE_EVERY=0 is no error

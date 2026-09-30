@@ -18,6 +18,7 @@ import fcntl
 import fnmatch
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -144,6 +145,24 @@ def remote_prune() -> None:
         return
     from . import remote as R
     R.ssh(PRUNE_CMD, timeout=300, check=False, host=R.TEST_HOST)
+
+
+# the Mac's Verilator builds in a tournament checkout's build/ (the agents' quick tests, every slot
+# its own source hash): dropped after LOCAL_PRUNE_MIN minutes unused
+LOCAL_PRUNE_MIN = int(os.environ.get("OTPU_TOURNEY_LOCAL_PRUNE_MIN", "360"))
+
+
+def local_prune(build: Path, minutes: int = LOCAL_PRUNE_MIN, now: float | None = None) -> list[str]:
+    """Removes the Verilator builds in <build>/verilator unchanged for `minutes`; returns their
+    names."""
+    d = build / "verilator"
+    cut = (time.time() if now is None else now) - minutes * 60
+    gone = []
+    for p in sorted(d.iterdir()) if d.is_dir() else []:
+        if p.is_dir() and not p.is_symlink() and p.stat().st_mtime < cut:
+            shutil.rmtree(p, ignore_errors=True)
+            gone.append(p.name)
+    return gone
 
 
 def remote_clean(wt: Path) -> None:
@@ -312,7 +331,8 @@ def pytest(wt: Path, nodes: list[str], env_extra: dict | None, gate: str,
         return "no tests"
     cmd = ["python", "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *nodes]
     r = execute(wt, cmd, gate, timeout, env_extra)
-    out = r.stdout + r.stderr
+    # pytest's summary last: the tail is the failure, not the shipping's or ssh's stderr
+    out = r.stderr + r.stdout
     if r.returncode != 0:
         raise GateFailure(gate, _tail(out))
     last = [l for l in out.splitlines() if " passed" in l or " failed" in l]
