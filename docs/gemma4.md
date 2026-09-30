@@ -66,8 +66,9 @@ and the int8 one-hot operand once (64 KB), about 0.41 MB a token against 1.43 GB
 (0.03%). `dequant_row` / `dequant_records`
 are the gathers' host twins, bit for bit, for tests (`host_inputs`: the host-written rows of the
 same programs without tokens). The final soft cap is monotonic, so greedy decoding (argmax)
-needs none; a sampler on the card gets the capped logits, `softcap_tile` applied to each LM-head
-chunk before its sink (`m.lm_sink`).
+needs none and the stored logits are the raw ones; a sampler on the card (autodecode's
+`m.lm_sink`) gets the capped logits, `kernels.lib.softcap` applied to each LM-head chunk before
+the sink when the spec has a `softcap`.
 
 **The sliding window over a KV ring.** Sliding layers keep K / V in a ring of window + one
 attention block, 768 slots, position p in slot p mod 768. A token at position p attends over

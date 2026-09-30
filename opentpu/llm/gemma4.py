@@ -1156,13 +1156,6 @@ def _gathered(m, pos):
     return e.reshape(1, H), pe.reshape(1, m.S * D), ropes
 
 
-def softcap_tile(y, c: float):
-    """The final logit soft cap on the device, c tanh(y / c) = 2c sigmoid(2y / c) - c = 2c /
-    (1 + 2^(-2 log2(e) y / c)) - c: 5 VOPs (the logits a sampler sees; greedy decoding does not
-    need it)."""
-    return ol.recip(ol.exp2(y * (-2.0 * ol.LOG2E / c)) + 1.0) * (2.0 * c) - c
-
-
 def _gathered_rows(m, tokens):
     """The embedding rows [R, H] of compile-time tokens, gathered on the device from the LM
     head; their PLE rows gathered into m.pe (DRAM: _ple_inputs loads them a group of layers at
@@ -1229,10 +1222,6 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
         for it in ol.range(reps):
             unit(first, it)
     if isinstance(pos, RunPos):
-        sink = getattr(m, "lm_sink", None)
-        if sink is not None and spec.softcap:           # a sampler takes the capped logits
-            m = SimpleNamespace(**vars(m))
-            m.lm_sink = lambda y, col: sink(softcap_tile(y, spec.softcap), col)
-        _lm_head(x, m, spec)
+        _lm_head(x, m, spec)            # a sampler's sink gets the capped logits (spec.softcap)
     elif logit_rows:
         _lm_head_rows(x, m, spec, list(logit_rows))

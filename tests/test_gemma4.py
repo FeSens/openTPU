@@ -94,23 +94,6 @@ def test_tiny_matches_hf_and_emulation(tiny):
     assert _cos(dev[:12], emu).min() > 0.99
 
 
-def test_device_softcap():
-    """softcap_tile (for a sampler's sink: the logits it samples from are capped on the card)
-    against the host's c tanh(y / c)."""
-    from opentpu import Config
-    from opentpu import language as ol
-    from opentpu.runtime import Input, Output, launch
-
-    @ol.jit
-    def k(x, out):
-        ol.store(out, G.softcap_tile(ol.load(x), 30.0))
-
-    y = np.concatenate([np.linspace(-400, 400, 1001), [-1e30, 1e30, 0.0]]).astype(np.float32)
-    r = launch(k, Config(), x=Input(y), out=Output(y.shape))
-    want = (30 * np.tanh(y.astype(np.float64) / 30)).astype(np.float32)
-    assert np.abs(r.outputs["out"] - want).max() < 2e-5 * 30
-
-
 @pytest.mark.parametrize("ple", ["int8", "fp4"])
 def test_records_roundtrip(ple):
     """pack_records / dequant_records: the device's gather values of a packed table."""
