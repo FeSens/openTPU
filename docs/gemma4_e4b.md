@@ -130,7 +130,7 @@ agreed with offload.
    - Tests on the tiny model: logits with the table on the host bit-identical to the table
      on the card, for resident decode, per-position steps and prefill runs.
 2. **E4B on the ISA simulator against Hugging Face.** Greedy, 3 prompts x 24 tokens as for
-   E2B, then the 900-token text. The HF reference needs about 11 GB if its PLE rows are read on
+   E2B, then the 900-token text. The HF reference needs 12-13 GB if its PLE rows are read on
    demand (hf_lean.py with a lazy per-layer embedding), so it runs on omarchy.
 3. **RTL cycles** for a subset of layers on the DDR3-1066 bank model and the LiteDRAM
    co-simulation.

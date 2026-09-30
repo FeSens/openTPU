@@ -129,7 +129,8 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
     if on_rows is None:
         return np.concatenate([xl @ wq(None, hf, E[r0:r0 + 16384]).T
                                for r0 in range(0, len(E), 16384)], 1)
-    Eq = [wq(None, hf, E[r0:r0 + 16384]).T for r0 in range(0, len(E), 16384)]
+    # the quantized head held in float32 (E4B's in float64 would be 5.4 GB)
+    Eq = [wq(None, hf, E[r0:r0 + 16384]).T.astype(np.float32) for r0 in range(0, len(E), 16384)]
     del E
     for i0 in range(0, len(rows), 64):      # on_rows(first row, logits [<= 64, vocab])
         on_rows(i0, np.concatenate([xl[i0:i0 + 64] @ e for e in Eq], 1))
@@ -147,6 +148,7 @@ def main():
     ap.add_argument("args", nargs="+")
     ap.add_argument("--formats", default="", help="per-kind layer formats, e.g. attn=int8")
     ap.add_argument("--quant", default=None, help="the activation points (default all): act,kv,p")
+    ap.add_argument("--out", help="step: save the logits (before the cap) to this npz")
     a = ap.parse_args()
     if a.mode == "check":
         spec, W = G.Spec.from_hf(a.args[0]), G.load_weights(a.args[0])
@@ -167,7 +169,8 @@ def main():
     path, ref = a.args[0], np.load(a.args[1])
     spec, W = G.Spec.from_hf(path), G.load_weights(path)
     wf, hf = (a.args[3], a.args[4]) if a.mode == "step" else (a.args[2], a.args[3])
-    what = f"{wf} layers{' ' + str(wmap) if wmap else ''}, {hf} head, points {a.quant or 'all'}"
+    pts = a.quant if a.quant is not None else "none" if wf == "none" else "all"
+    what = f"{wf} layers{' ' + str(wmap) if wmap else ''}, {hf} head, points {pts or 'none'}"
     t0 = time.time()
     if a.mode == "step":
         step = int(a.args[2])
@@ -180,6 +183,8 @@ def main():
         print("  top 5 (token, logit, capped):", top(spec, tok, lg))
         print(f"  REF's token {want} {tok.decode([want])!r}: rank {int((lg > lg[want]).sum()) + 1}, "
               f"{float(lg.max() - lg[want]):.4f} below the top (before the cap)")
+        if a.out:
+            np.savez(a.out, logits=lg)
         return
     out = a.args[4]
     ids = [int(t) for t in ref["ids0"]]
