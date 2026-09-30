@@ -43,6 +43,7 @@ import litedram.core.crossbar as xbar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ecc_ports import NativePortsECC                            # noqa: E402
+from dfii_q import registered_injector                         # noqa: E402
 
 
 class MT41K256M8_tRFC160(MT41K256M8):
@@ -91,9 +92,10 @@ class Channel(Module):
         self.submodules.phy = StubPHY(module, ps)
         cs = ControllerSettings(cmd_buffer_depth=cmd_buffer_depth, with_refresh=refresh,
                                 refresh_postponing=postponing)
-        self.submodules.core = core = LiteDRAMCore(self.phy, module.geom_settings,
-                                                   module.timing_settings, clk_freq,
-                                                   controller_settings=cs)
+        with registered_injector():         # as the production core (dfii_q.py)
+            self.submodules.core = core = LiteDRAMCore(self.phy, module.geom_settings,
+                                                       module.timing_settings, clk_freq,
+                                                       controller_settings=cs)
         self.users, self.ios, raws = [], set(), []
         for _ in range(nports):
             raw = core.crossbar.get_port()

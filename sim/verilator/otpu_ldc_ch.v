@@ -397,6 +397,7 @@ reg [14:0] core_phaseinjector0_address_storage = 15'd0;
 reg [2:0] core_phaseinjector0_baddress_storage = 3'd0;
 reg [143:0] core_phaseinjector0_wrdata_storage = 144'd0;
 reg [143:0] core_phaseinjector0_status = 144'd0;
+reg core_phaseinjector0_q = 1'd0;
 reg core_phaseinjector1_cs = 1'd0;
 reg core_phaseinjector1_we = 1'd0;
 reg core_phaseinjector1_cas = 1'd0;
@@ -410,6 +411,7 @@ reg [14:0] core_phaseinjector1_address_storage = 15'd0;
 reg [2:0] core_phaseinjector1_baddress_storage = 3'd0;
 reg [143:0] core_phaseinjector1_wrdata_storage = 144'd0;
 reg [143:0] core_phaseinjector1_status = 144'd0;
+reg core_phaseinjector1_q = 1'd0;
 reg core_phaseinjector2_cs = 1'd0;
 reg core_phaseinjector2_we = 1'd0;
 reg core_phaseinjector2_cas = 1'd0;
@@ -423,6 +425,7 @@ reg [14:0] core_phaseinjector2_address_storage = 15'd0;
 reg [2:0] core_phaseinjector2_baddress_storage = 3'd0;
 reg [143:0] core_phaseinjector2_wrdata_storage = 144'd0;
 reg [143:0] core_phaseinjector2_status = 144'd0;
+reg core_phaseinjector2_q = 1'd0;
 reg core_phaseinjector3_cs = 1'd0;
 reg core_phaseinjector3_we = 1'd0;
 reg core_phaseinjector3_cas = 1'd0;
@@ -436,6 +439,7 @@ reg [14:0] core_phaseinjector3_address_storage = 15'd0;
 reg [2:0] core_phaseinjector3_baddress_storage = 3'd0;
 reg [143:0] core_phaseinjector3_wrdata_storage = 144'd0;
 reg [143:0] core_phaseinjector3_status = 144'd0;
+reg core_phaseinjector3_q = 1'd0;
 wire core_interface_bank0_valid;
 wire core_interface_bank0_ready;
 wire core_interface_bank0_we;
@@ -7669,7 +7673,7 @@ always @(*) begin
 	core_csr_dfi_p0_cs_n <= 1'd1;
 	core_csr_dfi_p0_ras_n <= 1'd1;
 	core_csr_dfi_p0_we_n <= 1'd1;
-	if (core_phaseinjector0_command_issue_re) begin
+	if (core_phaseinjector0_q) begin
 		if (core_phaseinjector0_cs_top) begin
 			core_csr_dfi_p0_cs_n <= 2'd2;
 		end else begin
@@ -7694,8 +7698,8 @@ always @(*) begin
 end
 assign core_csr_dfi_p0_address = core_phaseinjector0_address_storage;
 assign core_csr_dfi_p0_bank = core_phaseinjector0_baddress_storage;
-assign core_csr_dfi_p0_wrdata_en = (core_phaseinjector0_command_issue_re & core_phaseinjector0_wren);
-assign core_csr_dfi_p0_rddata_en = (core_phaseinjector0_command_issue_re & core_phaseinjector0_rden);
+assign core_csr_dfi_p0_wrdata_en = (core_phaseinjector0_q & core_phaseinjector0_wren);
+assign core_csr_dfi_p0_rddata_en = (core_phaseinjector0_q & core_phaseinjector0_rden);
 assign core_csr_dfi_p0_wrdata = core_phaseinjector0_wrdata_storage;
 assign core_csr_dfi_p0_wrdata_mask = 1'd0;
 
@@ -7707,7 +7711,7 @@ always @(*) begin
 	core_csr_dfi_p1_cs_n <= 1'd1;
 	core_csr_dfi_p1_ras_n <= 1'd1;
 	core_csr_dfi_p1_we_n <= 1'd1;
-	if (core_phaseinjector1_command_issue_re) begin
+	if (core_phaseinjector1_q) begin
 		if (core_phaseinjector1_cs_top) begin
 			core_csr_dfi_p1_cs_n <= 2'd2;
 		end else begin
@@ -7732,8 +7736,8 @@ always @(*) begin
 end
 assign core_csr_dfi_p1_address = core_phaseinjector1_address_storage;
 assign core_csr_dfi_p1_bank = core_phaseinjector1_baddress_storage;
-assign core_csr_dfi_p1_wrdata_en = (core_phaseinjector1_command_issue_re & core_phaseinjector1_wren);
-assign core_csr_dfi_p1_rddata_en = (core_phaseinjector1_command_issue_re & core_phaseinjector1_rden);
+assign core_csr_dfi_p1_wrdata_en = (core_phaseinjector1_q & core_phaseinjector1_wren);
+assign core_csr_dfi_p1_rddata_en = (core_phaseinjector1_q & core_phaseinjector1_rden);
 assign core_csr_dfi_p1_wrdata = core_phaseinjector1_wrdata_storage;
 assign core_csr_dfi_p1_wrdata_mask = 1'd0;
 
@@ -7745,7 +7749,7 @@ always @(*) begin
 	core_csr_dfi_p2_cs_n <= 1'd1;
 	core_csr_dfi_p2_ras_n <= 1'd1;
 	core_csr_dfi_p2_we_n <= 1'd1;
-	if (core_phaseinjector2_command_issue_re) begin
+	if (core_phaseinjector2_q) begin
 		if (core_phaseinjector2_cs_top) begin
 			core_csr_dfi_p2_cs_n <= 2'd2;
 		end else begin
@@ -7770,8 +7774,8 @@ always @(*) begin
 end
 assign core_csr_dfi_p2_address = core_phaseinjector2_address_storage;
 assign core_csr_dfi_p2_bank = core_phaseinjector2_baddress_storage;
-assign core_csr_dfi_p2_wrdata_en = (core_phaseinjector2_command_issue_re & core_phaseinjector2_wren);
-assign core_csr_dfi_p2_rddata_en = (core_phaseinjector2_command_issue_re & core_phaseinjector2_rden);
+assign core_csr_dfi_p2_wrdata_en = (core_phaseinjector2_q & core_phaseinjector2_wren);
+assign core_csr_dfi_p2_rddata_en = (core_phaseinjector2_q & core_phaseinjector2_rden);
 assign core_csr_dfi_p2_wrdata = core_phaseinjector2_wrdata_storage;
 assign core_csr_dfi_p2_wrdata_mask = 1'd0;
 
@@ -7783,7 +7787,7 @@ always @(*) begin
 	core_csr_dfi_p3_cs_n <= 1'd1;
 	core_csr_dfi_p3_ras_n <= 1'd1;
 	core_csr_dfi_p3_we_n <= 1'd1;
-	if (core_phaseinjector3_command_issue_re) begin
+	if (core_phaseinjector3_q) begin
 		if (core_phaseinjector3_cs_top) begin
 			core_csr_dfi_p3_cs_n <= 2'd2;
 		end else begin
@@ -7808,8 +7812,8 @@ always @(*) begin
 end
 assign core_csr_dfi_p3_address = core_phaseinjector3_address_storage;
 assign core_csr_dfi_p3_bank = core_phaseinjector3_baddress_storage;
-assign core_csr_dfi_p3_wrdata_en = (core_phaseinjector3_command_issue_re & core_phaseinjector3_wren);
-assign core_csr_dfi_p3_rddata_en = (core_phaseinjector3_command_issue_re & core_phaseinjector3_rden);
+assign core_csr_dfi_p3_wrdata_en = (core_phaseinjector3_q & core_phaseinjector3_wren);
+assign core_csr_dfi_p3_rddata_en = (core_phaseinjector3_q & core_phaseinjector3_rden);
 assign core_csr_dfi_p3_wrdata = core_phaseinjector3_wrdata_storage;
 assign core_csr_dfi_p3_wrdata_mask = 1'd0;
 assign core_bankmachine0_req_valid = core_interface_bank0_valid;
@@ -23154,15 +23158,19 @@ always @(posedge sys_clk) begin
 	phy_n29 <= phy_n28;
 	phy_n30 <= phy_n29;
 	phy_n31 <= phy_n30;
+	core_phaseinjector0_q <= core_phaseinjector0_command_issue_re;
 	if (core_csr_dfi_p0_rddata_valid) begin
 		core_phaseinjector0_status <= core_csr_dfi_p0_rddata;
 	end
+	core_phaseinjector1_q <= core_phaseinjector1_command_issue_re;
 	if (core_csr_dfi_p1_rddata_valid) begin
 		core_phaseinjector1_status <= core_csr_dfi_p1_rddata;
 	end
+	core_phaseinjector2_q <= core_phaseinjector2_command_issue_re;
 	if (core_csr_dfi_p2_rddata_valid) begin
 		core_phaseinjector2_status <= core_csr_dfi_p2_rddata;
 	end
+	core_phaseinjector3_q <= core_phaseinjector3_command_issue_re;
 	if (core_csr_dfi_p3_rddata_valid) begin
 		core_phaseinjector3_status <= core_csr_dfi_p3_rddata;
 	end
@@ -24801,9 +24809,13 @@ always @(posedge sys_clk) begin
 		phy_n30 <= 1'd0;
 		phy_n31 <= 1'd0;
 		core_phaseinjector0_status <= 144'd0;
+		core_phaseinjector0_q <= 1'd0;
 		core_phaseinjector1_status <= 144'd0;
+		core_phaseinjector1_q <= 1'd0;
 		core_phaseinjector2_status <= 144'd0;
+		core_phaseinjector2_q <= 1'd0;
 		core_phaseinjector3_status <= 144'd0;
+		core_phaseinjector3_q <= 1'd0;
 		core_dfi_p0_address <= 15'd0;
 		core_dfi_p0_bank <= 3'd0;
 		core_dfi_p0_cas_n <= 1'd1;
