@@ -702,15 +702,24 @@ module otpu_mxu
       for (genvar i = 0; i < D; i++) begin : g_p
         otpu_skew #(.W(8), .N(i % CLS + j)) u_a (.clk, .en(en_c), .d(a0[(j*D + i)*8 +: 8]),
                                                .q(as_k[j][i]));
-        otpu_pe #(.FIRST(i % CLS == 0), .LAST(i % CLS == CLS - 1)) u_pe (.clk, .en(en_c),
-          .act(as_k[j][i]), .wlo(wc[j][i][7:0]), .whi(wc[j][i][15:8]), .sel(c_hi[j]),
+        // columns past the first register their weights in the DSP (WREG), from the previous
+        // column's hop: a copy of wc[j] (133.33 MHz, 110ec6d: wc -> PE A / D, 0 levels, 95%
+        // route, +0.266 ns, 36 endpoints)
+        localparam int JW = (j == 0) ? 0 : j - 1;
+        otpu_pe #(.FIRST(i % CLS == 0), .LAST(i % CLS == CLS - 1), .WREG(j != 0)) u_pe (
+          .clk, .en(en_c), .act(as_k[j][i]), .wlo(wc[JW][i][7:0]), .whi(wc[JW][i][15:8]),
+          .sel(c_hi[j]),
           .pcin((i % CLS == 0) ? 48'd0 : pc[j][(i % CLS == 0) ? i : i - 1]), .pcout(pc[j][i]),
           .p(preg[j][i]));
 `ifndef SYNTHESIS
         // the DSP's select register is hi0[j] (both are c_hi[j], loaded with en_c)
-        always @(posedge clk)
+        always @(posedge clk) begin
           if (hi_v && u_pe.selr != hi0[j])
             $fatal(1, "otpu_mxu: PE %0d.%0d's select %0d is not hi0 %0d", j, i, u_pe.selr, hi0[j]);
+          // and its weight registers are wc[j] (both wc[j - 1], loaded with en_c)
+          if (hi_v && j != 0 && {u_pe.whr, u_pe.wlr} != wc[j][i])
+            $fatal(1, "otpu_mxu: PE %0d.%0d's weights are not wc", j, i);
+        end
 `endif
       end
     end
@@ -1454,13 +1463,14 @@ endmodule
 // front of its pre-adder and multiplier. The select is registered in the DSP (INMODEREG, loaded
 // with en): sel is its next value, so the fabric's route to the DSP column ends at the INMODE
 // register instead of before the pre-adder and multiplier (133.33 MHz, 812bb01: hi0 -> INMODE,
-// 0 levels, 4.4 ns of route and a 2.4 ns setup, +0.174 ns). Simulation uses the equivalent
-// behavioural model.
-module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
+// 0 levels, 4.4 ns of route and a 2.4 ns setup, +0.174 ns). WREG registers the weights too (A
+// and D registers, loaded with en: wlo and whi are their next values). Simulation uses the
+// equivalent behavioural model.
+module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0, parameter bit WREG = 1'b0) (
   input  logic               clk,
   input  logic               en,
   input  logic [7:0]         act,
-  input  logic [7:0]         wlo,
+  input  logic [7:0]         wlo,               // WREG: the weights from the next cycle on
   input  logic [7:0]         whi,
   input  logic               sel,               // the select from the next cycle on
   input  logic [47:0]        pcin,
@@ -1471,7 +1481,8 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
   logic [47:0] pf;
   DSP48E1 #(
     .A_INPUT("DIRECT"), .B_INPUT("DIRECT"), .USE_DPORT("TRUE"), .USE_MULT("MULTIPLY"),
-    .USE_SIMD("ONE48"), .AREG(0), .ACASCREG(0), .BREG(1), .BCASCREG(1), .CREG(0), .DREG(0),
+    .USE_SIMD("ONE48"), .AREG(WREG ? 1 : 0), .ACASCREG(WREG ? 1 : 0), .BREG(1), .BCASCREG(1),
+    .CREG(0), .DREG(WREG ? 1 : 0),
     .ADREG(0), .MREG(1), .PREG(LAST ? 0 : 1), .INMODEREG(1), .OPMODEREG(0), .ALUMODEREG(0),
     .CARRYINREG(0), .CARRYINSELREG(0), .USE_PATTERN_DETECT("NO_PATDET"),
     .AUTORESET_PATDET("NO_RESET"), .MASK(48'h3fffffffffff), .PATTERN(48'h0),
@@ -1481,7 +1492,8 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
     .A({{22{wlo[7]}}, wlo}), .B({{10{act[7]}}, act}), .C(48'd0), .D({{17{whi[7]}}, whi}),
     .INMODE({2'b00, sel, sel, 1'b0}), .OPMODE(FIRST ? 7'b000_01_01 : 7'b001_01_01),
     .ALUMODE(4'b0000), .CARRYIN(1'b0), .CARRYINSEL(3'b000),
-    .CEA1(1'b0), .CEA2(1'b0), .CEB1(en), .CEB2(en), .CEC(1'b0), .CED(1'b0), .CEAD(1'b0),
+    .CEA1(1'b0), .CEA2(WREG ? en : 1'b0), .CEB1(en), .CEB2(en), .CEC(1'b0),
+    .CED(WREG ? en : 1'b0), .CEAD(1'b0),
     .CEM(en), .CEP(LAST ? 1'b0 : en), .CEALUMODE(1'b0), .CECTRL(1'b0), .CECARRYIN(1'b0),
     .CEINMODE(en),
     .RSTA(1'b0), .RSTB(1'b0), .RSTC(1'b0), .RSTD(1'b0), .RSTM(1'b0), .RSTP(1'b0),
@@ -1491,14 +1503,17 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
     .OVERFLOW(), .UNDERFLOW(), .PATTERNDETECT(), .PATTERNBDETECT());
   assign p = pf[23:0];
 `else
-  logic [7:0] br;
+  logic [7:0] br, wlr, whr;
   logic       selr;
   logic signed [15:0] m;
   wire  signed [23:0] pn = (FIRST ? 24'sd0 : $signed(pcin[23:0])) + 24'(m);
+  wire  [7:0] wl = WREG ? wlr : wlo, wh = WREG ? whr : whi;
   always_ff @(posedge clk) if (en) begin
     br <= act;
     selr <= sel;
-    m <= 16'(int'($signed(br)) * int'($signed(selr ? whi : wlo)));
+    wlr <= wlo;
+    whr <= whi;
+    m <= 16'(int'($signed(br)) * int'($signed(selr ? wh : wl)));
   end
   if (LAST) begin : g_comb
     assign p = pn;
