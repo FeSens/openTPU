@@ -224,13 +224,18 @@ module otpu_dma
   logic         y_v, o_v;
   wire          y_keep = y_v && !(ds_pad && ds_yj[3]);   // a Y segment kept (not pad64's)
   logic [31:0]  y_d [W], in_d [W], o_d;
-  logic [31:0]  ob [W][CBD];
-  // an o value lands in ob a cycle after it leaves the datapath: its one-hot entry enable and
-  // the value, registered (o_d went to all 256 entries, their enables decoded from ds_ocnt:
-  // 8 ns of wire at MCOLS=4). ds_out, the first read of ob, starts on the edge that writes
-  // the last o at the earliest
-  logic [W-1:0][CBD-1:0] ow_e;
-  (* max_fanout = 32 *) logic [31:0] o_q;
+  // the row outputs: o value i in entry i / W of lane i % W's buffer, a LUT RAM (ob_q: the
+  // entries at oi, read for the TMEM write). An o value lands a cycle after it leaves the
+  // datapath: its lane's enable, the entry and the value, registered. As 256 x 32 flip-flops
+  // with one-hot entry enables (o_d went to all 256 entries, their enables decoded from
+  // ds_ocnt: 8 ns of wire at MCOLS=4) the value's and the enables' wires to the entries were
+  // the worst core paths of the fused 133.33 MHz build c2830d6 (+0.092 ns, no logic). ds_out,
+  // the first read of ob, starts on the edge that writes the last o at the earliest
+  localparam int OBW = $clog2(CBD);
+  logic [W-1:0]    ow_e;                             // lane l takes o_q ...
+  (* keep *) logic [OBW-1:0] ow_a [W];               // ... at entry ow_a[l] (a copy per lane)
+  logic [31:0]     o_q;
+  logic [31:0]     ob_q [W];
   logic [7:0]   oi;                                  // o segment written to TMEM next
   // SE runs up to SE_LAG cycles behind pe (otpu_vpu registers the ss_* inputs) and qualifies
   // y_v and o_v with its own pe: taking one more segment needs room for it, this cycle's y and
@@ -479,7 +484,7 @@ module otpu_dma
       if (ds_ow) begin
         lw_en[l] = (32'(oi) * W + l) < 32'(ds_rows);
         lw_addr[l] = ds_oa + 32'(oi) * W + 32'(l);
-        lw_data[l] = ob[l][oi[4:0]];
+        lw_data[l] = ob_q[l];
       end
     end
     if (ww_c2 && ww_ok) begin                       // WAITW (C3): the word that held
@@ -570,12 +575,12 @@ module otpu_dma
     pe_pos <= ds_pos;
   end
   assign ds_ow = ds_out;
-  always_ff @(posedge clk) begin
-    for (int l = 0; l < W; l++)
-      for (int e = 0; e < CBD; e++)
-        if (ow_e[l][e]) ob[l][e] <= o_q;
-    o_q <= o_d;
+  for (genvar l = 0; l < W; l++) begin : g_ob
+    (* ram_style = "distributed" *) logic [31:0] ob [CBD];
+    always_ff @(posedge clk) if (ow_e[l]) ob[ow_a[l]] <= o_q;
+    assign ob_q[l] = ob[oi[OBW-1:0]];
   end
+  always_ff @(posedge clk) o_q <= o_d;
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
     if (!rst && ds_out && ow_e != '0) $fatal(1, "otpu_dma: ob read before its last o landed");
@@ -720,7 +725,8 @@ module otpu_dma
         if (ld_iss) ds_rc <= (32'(ds_rc) == RUN - 1) ? '0 : ds_rc + 1'b1;
         ds_rr <= ds_rr_nx || (ld_iss && !ds_rr && RUN > 1 && !cl_one);
         if (o_v) begin
-          ow_e[ds_ocnt % W][ds_ocnt / W] <= 1'b1;
+          ow_e[ds_ocnt % W] <= 1'b1;
+          for (int l = 0; l < W; l++) ow_a[l] <= OBW'(ds_ocnt / W);
           ds_ocnt <= ds_ocnt + 1'b1;
         end
         // SE is done once every updated segment and o is out (pe's last cycle is this one at
