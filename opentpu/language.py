@@ -294,6 +294,12 @@ def state_step(state: Tensor, vec: Tile, x: Tile | None, k0: Tile | None, k1: Ti
 
 
 # ---- control
+def release(var) -> None:
+    """The kernel no longer uses the run-time value var (compiler.RunVar): its argument
+    registers may serve addresses from here on (Builder.release_arg)."""
+    current().release_arg(var)
+
+
 def range(n: int):  # noqa: A001
     """Hardware loop. The body is traced once; carry values across iterations with `.set()`."""
     b = current()

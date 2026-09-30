@@ -881,8 +881,10 @@ def _inputs(m, pos, tok=None):
     or from the image's tables (Image(lookup=True)) at the token id and position -- at a
     run-time position (RunPos), or at a compile-time token `tok` (a per-position program)."""
     if isinstance(pos, RunPos):
-        tok, pos = pos.tok, pos.pos
-    elif tok is None:
+        x = _embed(m, pos.tok)
+        ol.release(pos.tok)                 # its argument registers serve addresses from here on
+        return x, ol.load(m.cos_t[pos.pos, :]), ol.load(m.sin_t[pos.pos, :])
+    if tok is None:
         return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
     return _embed(m, tok), ol.load(m.cos_t[pos, :]), ol.load(m.sin_t[pos, :])
 

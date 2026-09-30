@@ -631,6 +631,15 @@ class Builder:
         self.free_regs = [(r, frozenset()) for r in range(15, 0, -1)]
         self.used_regs: set = set()
         self.run_args: list = []      # (RunVar, coefficient) of argument k (arg_reg(k))
+        # arguments whose registers were given back (release_arg), and those registers while
+        # they still hold the argument (zeroed when an address takes one); the release: the
+        # program's last instruction then and the registers taken by then
+        self.released: set = set()
+        self.dirty: set = set()
+        self.release_at = None
+        self.moved: dict = {}         # argument k -> the released register it was copied to
+        self.late_zero: set = set()   # address registers that hold an argument at the start:
+                                      # zeroed at the release or before their loop, not there
         self.versions = weakref.WeakKeyDictionary()
         self.tmem_regions: list = []     # (base, end, weakref to the allocation's _Buf)
         self.tmem_peak = 0
@@ -668,6 +677,11 @@ class Builder:
                 if r is not None and run:          # it starts at the argument's value
                     self._init_before_loops(key, I.addi(r, arg, 0, comment=f"{run[0][1]}*"
                                                         f"{run[0][0]} (argument)"))
+                elif r in self.dirty:              # a released argument's: it starts at 0
+                    self._init_before_loops(key, I.li(r, 0, comment="released argument"))
+                if r in self.dirty:
+                    self.dirty.discard(r)
+                    self.late_zero.add(r)
             if r is None:
                 raise CompileError("out of address registers")
             self.regs[key] = r
@@ -677,16 +691,50 @@ class Builder:
     def arg_reg(self, var: RunVar, c: int) -> int:
         """The argument register that holds c * var (allocated on first use; it leaves the
         address registers)."""
+        if (var, c) in self.released:
+            raise CompileError(f"{c}*{var} used after its register was released")
         if (var, c) not in self.run_args:
             if len(self.run_args) == 16 - ARG0:
                 raise CompileError(f"more than {16 - ARG0} run-time argument values")
             r = arg_reg(len(self.run_args))
             if r in self.used_regs:
-                raise CompileError(f"out of address registers: R{r} is taken, argument "
-                                   f"{len(self.run_args)} needs it")
+                r = self._move_arg(r)
             self.free_regs = [(f, lt) for f, lt in self.free_regs if f != r]
             self.run_args.append((var, c))
-        return arg_reg(self.run_args.index((var, c)))
+        k = self.run_args.index((var, c))
+        return self.moved.get(k, arg_reg(k))
+
+    def _move_arg(self, r: int) -> int:
+        """Argument register r was taken by an address after the release: at the release, copy
+        the argument into a released register, still free (address registers take released
+        ones last), and use that."""
+        k = len(self.run_args)
+        q = next((f for f, _ in self.free_regs if f in self.dirty), None)
+        if self.release_at is None or r in self.release_at[1] or q is None:
+            raise CompileError(f"out of address registers: R{r} is taken, argument {k} "
+                               f"needs it")
+        last = self.release_at[0]
+        i = 0 if last is None else next(j for j, x in enumerate(self.root) if x is last) + 1
+        self.root[i:i] = [I.addi(q, r, 0, comment=f"argument {k}"),
+                          I.li(r, 0, comment="address register")]
+        self.release_at = (self.root[i + 1], self.release_at[1])
+        self.dirty.discard(q)
+        self.late_zero.add(r)
+        self.moved[k] = q
+        return q
+
+    def release_arg(self, var: RunVar) -> None:
+        """The program no longer uses var: its argument registers become address registers,
+        taken only when no other register is free (a program that fits without them keeps its
+        registers), and zeroed before their first loop. Outside every loop."""
+        assert not self.loops, "release_arg inside a loop"
+        if self.release_at is None:
+            self.release_at = (self.root[-1] if self.root else None, frozenset(self.used_regs))
+        for k, (v, c) in enumerate(self.run_args):
+            if v is var and (v, c) not in self.released:
+                self.released.add((v, c))
+                self.dirty.add(arg_reg(k))
+                self.free_regs.insert(0, (arg_reg(k), frozenset()))
 
     def _init_before_loops(self, key, ins: I.Instr) -> None:
         """Put `ins` before the outermost live loop among key's terms (the register must hold
@@ -1375,7 +1423,8 @@ class Builder:
     def finish(self) -> list[I.Instr]:
         if self.loops:
             raise CompileError("unterminated loop")
-        prog = [I.li(r, 0, comment="address register") for r in sorted(self.used_regs)]
+        prog = [I.li(r, 0, comment="address register")
+                for r in sorted(self.used_regs - self.late_zero)]
         prog += self._flatten(self.root)
         prog.append(I.halt())
         return prog
