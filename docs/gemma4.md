@@ -56,9 +56,18 @@ constant in DRAM, quantized into ACT RAM once per token.
   projection, a norm per layer, plus the gathered row) into a DRAM area that each layer loads
   its row of.
 
-Per-position programs (the host writes the rows) and chunked prefill use the same values:
-`dequant_row` / `dequant_records` compute the device's gathers on the host bit for bit, so a
-prefill chunk and resident decode agree exactly.
+Prefill runs and per-position programs gather their rows on the device too: the host compiles
+the run's token ids into the program (`compile_rows(tokens=)`, `compile_step(tok=)`), which
+gathers each row's embedding and PLE row (the PLE rows through the I/O area, which the layers
+load a group at a time) and loads the RoPE rows of its positions from the table. The host does
+no model math. The gathers read only the token's rows, each once per one-hot block (32 MMs):
+the embedding row with its scales 32 x 1,584 B = 51 KB, the PLE record 32 x 9,344 B = 299 KB,
+and the int8 one-hot operand once (64 KB), about 0.41 MB a token against 1.43 GB of weights
+(0.03%). `dequant_row` / `dequant_records`
+are the gathers' host twins, bit for bit, for tests (`host_inputs`: the host-written rows of the
+same programs without tokens). The final soft cap is monotonic, so greedy decoding (argmax)
+needs none; a sampler on the card gets the capped logits, `softcap_tile` applied to each LM-head
+chunk before its sink (`m.lm_sink`).
 
 **The sliding window over a KV ring.** Sliding layers keep K / V in a ring of window + one
 attention block, 768 slots, position p in slot p mod 768. A token at position p attends over
@@ -90,10 +99,24 @@ inputs are made a row at a time, and the MLP's F chunk is at most 768 (`MLP_CHUN
 12288-wide MLPs run in 16 chunks). A 512-token prompt is 128 runs of 4 (2,087 to 2,493
 instructions), and a 2048-token prompt 512 runs (3,840 at the end).
 
-**The DRAM image** (fp4 layers, int8 LM head, int8 PLE, 4096 tokens): 3.644 GiB of the card's
-4 GiB. Layers 985 MiB (K / V caches 40 MiB), LM head 396 MiB, PLE records 2,336 MiB, PLE
-projection 7 MiB. With an fp4 PLE table (`OTPU_PLE_FORMAT=fp4`) the records are 4,864 bytes and
-int8 layers fit too (3.424 GiB); the default picks int8 whenever the image fits 4 GiB. The build
+**The DRAM image** (fp4 layers, int8 LM head, int8 PLE, 4096 tokens, 8 prefill rows, the
+resident decode's tables): 3.651 GiB of the card's 4 GiB.
+
+| Area | Address | Size |
+|---|---|---:|
+| I/O (8 rows: inputs, logits 1 MiB a row, per-layer inputs, mask rows) | 0x000000000 | 8.6 MiB |
+| PLE projection (8960 x 1536, fp4) | 0x00089dc00 | 7.0 MiB |
+| layers, run by run (K / V caches 39.8 MiB) | 0x000f97000 | 984.9 MiB |
+| LM head (int8, the embedding table too) | 0x03e874000 | 396.0 MiB |
+| PLE records (262,144 x 9,344 B) | 0x057474000 | 2,336.0 MiB |
+| lookup tables (RoPE rows, iota, one-hot operands) | 0x0e9474000 | 6.1 MiB |
+| program area (after the image) | 0x0e9a85000 | 0.125 MiB |
+| free | | 357 MiB |
+
+At 2048 tokens the image is 3.636 GiB (372 MiB free). The on-card decode loop's area (about
+5 to 7 MiB with its three 1 MiB logit vectors) fits in what is free. With an fp4 PLE table
+(`OTPU_PLE_FORMAT=fp4`) the records are 4,864 bytes and int8 layers fit too (3.424 GiB); the
+default picks int8 whenever the image fits 4 GiB. The build
 quantizes the matrices in worker processes (`OTPU_BUILD_JOBS`, default 4) into a cache keyed by
 the checkpoint and the quantizer's sources (`OTPU_QCACHE`, default `~/otpu-build/qcache`): 324 s
 cold on omarchy, 8 s cached.

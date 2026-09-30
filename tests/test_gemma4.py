@@ -94,6 +94,23 @@ def test_tiny_matches_hf_and_emulation(tiny):
     assert _cos(dev[:12], emu).min() > 0.99
 
 
+def test_device_softcap():
+    """softcap_tile (for a sampler's sink: the logits it samples from are capped on the card)
+    against the host's c tanh(y / c)."""
+    from opentpu import Config
+    from opentpu import language as ol
+    from opentpu.runtime import Input, Output, launch
+
+    @ol.jit
+    def k(x, out):
+        ol.store(out, G.softcap_tile(ol.load(x), 30.0))
+
+    y = np.concatenate([np.linspace(-400, 400, 1001), [-1e30, 1e30, 0.0]]).astype(np.float32)
+    r = launch(k, Config(), x=Input(y), out=Output(y.shape))
+    want = (30 * np.tanh(y.astype(np.float64) / 30)).astype(np.float32)
+    assert np.abs(r.outputs["out"] - want).max() < 2e-5 * 30
+
+
 @pytest.mark.parametrize("ple", ["int8", "fp4"])
 def test_records_roundtrip(ple):
     """pack_records / dequant_records: the device's gather values of a packed table."""
@@ -147,6 +164,33 @@ def test_chunked_prefill_is_bit_exact(tiny):
     da = a.backend.machine.slices[0].dram[img.layer0:img.head[0]]
     db = b.backend.machine.slices[0].dram[img.layer0:img.head[0]]
     assert np.array_equal(da, db)
+
+
+def test_device_inputs_are_bit_exact(tiny):
+    """A prefill run and a per-position program with their tokens compiled in gather the
+    embedding and PLE rows and load the RoPE rows on the device (the host writes nothing):
+    logits and caches equal those of the programs with host-written inputs (host_inputs)."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 14)]
+    engs = [Engine(spec, W, cap=1024, cfg=_cfg(), wformat="fp4", head_format="int8",
+                   resident=True) for _ in range(2)]
+    for e in engs:
+        e.prefill(toks[:9], chunk=4)
+    img, V = engs[0].image, spec.vocab
+
+    def run(e, rows, tokens, device):
+        if not device:
+            for addr, v in e.image.host_inputs(tokens, [p for _, p in rows]):
+                e.backend.write(0, addr, v)
+        e.backend.run(e.image.compile_rows(rows, [len(rows) - 1],
+                                           tokens=tokens if device else None))
+        return e.backend.read(0, img.io["logits"] + 4 * V * (len(rows) - 1), 4 * V)
+
+    for rows, tk in (([(0, 9 + r) for r in range(4)], toks[9:13]), ([(0, 13)], toks[13:])):
+        assert np.array_equal(run(engs[0], rows, tk, False), run(engs[1], rows, tk, True))
+    lo, hi = img.layer0, img.head[0]
+    assert np.array_equal(engs[0].backend.machine.slices[0].dram[lo:hi],
+                          engs[1].backend.machine.slices[0].dram[lo:hi])
 
 
 @pytest.mark.slow

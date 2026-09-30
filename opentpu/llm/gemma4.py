@@ -97,6 +97,8 @@ class Spec:
     bos: int = 2
     eos: tuple = (1, 106)   # <eos>, <turn|>
     ckpt_layers: tuple | None = None   # the checkpoint layer of each layer (None: the same)
+    embed: str = "int8"     # the embedding rows are dequantized on the device only (from the
+                            # quantized LM head): an Engine always gets the lookup tables
 
     @property
     def layers(self) -> int:
@@ -763,22 +765,32 @@ class Image:
                                             "block": block})
         return [b.finish()], list(b.run_args)
 
-    def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
-        """One program: the decode token at position `pos` (host inputs, host_inputs)."""
-        return self.compile_rows([(0, pos)], [0], block)
+    def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
+        """One program: the decode token at position `pos`; its inputs from the host
+        (host_inputs), or with `tok` (lookup tables) gathered on the device."""
+        return self.compile_rows([(0, pos)], [0], block, None if tok is None else [tok])
 
-    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
-        """One program: consecutive positions of the sequence at once (gemma4_rows)."""
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
+        """One program: consecutive positions of the sequence at once; their inputs from the
+        host (host_inputs), or with `tokens` (their ids, compiled in; lookup tables) gathered
+        and loaded on the device."""
         if len(rows) > self.rows:
             raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
         if any(r != (0, rows[0][1] + i) for i, r in enumerate(rows)):
             raise ValueError("Gemma 4 rows must be consecutive positions of sequence 0")
         if block != self.block:
             raise ValueError(f"the image is laid out for attention blocks of {self.block}")
+        kw = {}
+        if tokens is not None:
+            if not self.lookup:
+                raise ValueError("rows with their inputs from the image need lookup tables")
+            if len(tokens) != len(rows):
+                raise ValueError(f"{len(tokens)} tokens for {len(rows)} rows")
+            kw["tokens"] = [int(t) for t in tokens]
         return [gemma4_step.trace(self.cfg, 0, {"m": self.descriptors(0),
                                                 "pos": [p for _, p in rows],
                                                 "logit_rows": list(logit_rows),
-                                                "block": block}).finish()]
+                                                "block": block, **kw}).finish()]
 
     # ---- kernel descriptors
     def descriptors(self, sid: int = 0) -> SimpleNamespace:
@@ -1144,18 +1156,48 @@ def _gathered(m, pos):
     return e.reshape(1, H), pe.reshape(1, m.S * D), ropes
 
 
+def softcap_tile(y, c: float):
+    """The final logit soft cap on the device, c tanh(y / c) = 2c sigmoid(2y / c) - c = 2c /
+    (1 + 2^(-2 log2(e) y / c)) - c: 5 VOPs (the logits a sampler sees; greedy decoding does not
+    need it)."""
+    return ol.recip(ol.exp2(y * (-2.0 * ol.LOG2E / c)) + 1.0) * (2.0 * c) - c
+
+
+def _gathered_rows(m, tokens):
+    """The embedding rows [R, H] of compile-time tokens, gathered on the device from the LM
+    head; their PLE rows gathered into m.pe (DRAM: _ple_inputs loads them a group of layers at
+    a time, as the host-written ones)."""
+    H = m.spec.hidden
+    e = ol.empty([len(tokens), H])
+    for fmt, tab in ((m.head_format, "head"), (m.ple_format, "ple")):
+        f = "int8" if fmt == "int8" else "4bit"
+        oh = ol.quantize(ol.load(m.onehot[f]))
+        for r, t in enumerate(tokens):
+            if tab == "head":
+                e[r, :].set(GA.gather_row(oh, m.head, t, fmt))
+            else:
+                ol.store(m.pe[r, :], GA.gather_record(oh, m.ple, t, fmt, m.S))
+        del oh
+    return e
+
+
 @ol.jit
-def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK):
-    """Token rows at consecutive positions `pos` (a list: the host wrote their inputs, rows
-    of m.x, m.pe, m.rope), or one decode token at a RunPos (its rows gathered on the device):
-    the per-layer inputs, the layers (a hardware loop per repeated unit of the plan), the
-    final norm and the LM head of the rows in `logit_rows` (a contiguous range; empty: none,
-    a prefill chunk before the last)."""
+def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
+    """Token rows at consecutive positions `pos` (a list), or one decode token at a RunPos
+    (its rows gathered on the device): the per-layer inputs, the layers (a hardware loop per
+    repeated unit of the plan), the final norm and the LM head of the rows in `logit_rows`
+    (a contiguous range; empty: none, a prefill chunk before the last). The rows' inputs: with
+    `tokens` (compile-time ids) gathered on the device (_gathered_rows), else the host's (rows
+    of m.x, m.pe, m.rope)."""
     from .qwen3 import RunPos
     spec = m.spec
     if isinstance(pos, RunPos):
         e, pe, ropes = _gathered(m, pos)
         R = 1
+    elif tokens is not None:
+        R = len(pos)
+        e, pe = _gathered_rows(m, tokens), None
+        ropes = ol.load(m.rope_t[pos[0]:pos[0] + R, :])
     else:
         R = len(pos)
         e, pe, ropes = ol.load(m.x[0:R, :]), None, ol.load(m.rope[0:R, :])
@@ -1187,6 +1229,10 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK):
         for it in ol.range(reps):
             unit(first, it)
     if isinstance(pos, RunPos):
+        sink = getattr(m, "lm_sink", None)
+        if sink is not None and spec.softcap:           # a sampler takes the capped logits
+            m = SimpleNamespace(**vars(m))
+            m.lm_sink = lambda y, col: sink(softcap_tile(y, spec.softcap), col)
         _lm_head(x, m, spec)
     elif logit_rows:
         _lm_head_rows(x, m, spec, list(logit_rows))
