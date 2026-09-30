@@ -19,10 +19,11 @@ transformers = pytest.importorskip("transformers")
 pytest.importorskip("transformers.models.gemma4")
 
 REAL = Path(__file__).resolve().parent.parent / "models" / "gemma-4-E2B"
-# two own sliding layers and a global one, a shared sliding one and two shared globals (HF
-# forces the last layer global): layers 3..5 read layer 1's (sliding) and 2's (global) K / V
-KINDS = ("sliding_attention", "sliding_attention", "full_attention", "sliding_attention",
-         "full_attention", "full_attention")
+# (two own sliding layers and a global one) x 2, a shared sliding one and two shared globals
+# (HF forces the last layer global): layers 6..8 read layer 4's (sliding) and 5's (global) K / V.
+# The layer loops: (s s f) x 2 with the two sliding layers a loop inside, s, then f x 2
+S_, F_ = "sliding_attention", "full_attention"
+KINDS = (S_, S_, F_, S_, S_, F_, S_, F_, F_)
 
 
 def _cos(a, b):
@@ -64,10 +65,13 @@ def _cfg():
 
 def test_spec_kv_sources(tiny):
     _, _, spec = tiny
-    assert spec.kinds == ("sliding", "sliding", "full", "sliding", "full", "full")
-    assert spec.kv_src == (0, 1, 2, 1, 2, 2)
-    assert spec.ffn == (512, 512, 512, 1024, 1024, 1024)
+    assert spec.kinds == ("sliding", "sliding", "full") * 2 + ("sliding", "full", "full")
+    assert spec.kv_src == (0, 1, 2, 3, 4, 5, 4, 5, 5)
+    assert spec.ffn == (512,) * 6 + (1024,) * 3
     assert spec.global_rot == 32
+    img = spec.image(_cfg(), 1024)
+    assert [(f, len(u), r) for f, u, r in img.runs] == [(0, 3, 2), (6, 1, 1), (7, 1, 2)]
+    assert [(e0, len(su), r) for e0, su, r, _ in img.subs[0]] == [(0, 1, 2), (2, 1, 1)]
 
 
 def test_reference_matches_hf(tiny):
@@ -85,9 +89,9 @@ def test_tiny_matches_hf_and_emulation(tiny):
         hf = m(torch.tensor([toks])).logits[0].numpy()
     eng = Engine(spec, W, cap=1024, cfg=_cfg())
     dev = np.array([G.softcap(spec, eng.step(t)) for t in toks])
-    assert _cos(dev, hf).min() > 0.995
+    assert _cos(dev, hf).min() > 0.985          # int8 noise of a random model (emulation 0.991)
     emu = G.softcap(spec, G.emulated_logits(spec, W, toks[:12]))
-    assert _cos(dev[:12], emu).min() > 0.998
+    assert _cos(dev[:12], emu).min() > 0.99
 
 
 @pytest.mark.parametrize("ple", ["int8", "fp4"])

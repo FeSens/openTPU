@@ -977,7 +977,9 @@ class Engine:
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self.poss = [0] * batch
         self.stream_logits = True           # step(): stream the logits when the backend can
-        self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
+        # rows per run that fit TMEM (prefill_chunks), at most the image's fit_rows (Gemma 4:
+        # the ACT rows, so that a run streams the weights once)
+        self._fit_rows = min(self.rows, getattr(self.image, "fit_rows", self.rows))
         self._run_rows_n = self.rows        # rows of the last prefill run (IMEM may cut it)
         self.stats = []
         self.pipeline = backend != "isa" if pipeline is None else bool(pipeline)

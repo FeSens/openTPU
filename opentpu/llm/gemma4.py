@@ -456,6 +456,13 @@ def softcap(spec: Spec, logits: np.ndarray) -> np.ndarray:
 RING_BLOCKS = 1         # sliding K / V ring: the window plus this many attention blocks
 PLE_CHUNK = 8192        # PLE records quantized per pass (host memory)
 BIG = 2.0 ** 100        # (tpos + 0.5 - c) * BIG * BIG: +-inf, the run-time mask rows
+MLP_CHUNK = 768         # the MLP's F chunk at most: 4 prefill rows' gate / up in flight fit TMEM
+
+
+def _mlp_chunk(f: int, D: int, q: int) -> int:
+    """mlp's F chunk (about 8 per MLP), at most MLP_CHUNK where that divides the MLP."""
+    c = _chunk(f, D, q)
+    return MLP_CHUNK if c > MLP_CHUNK and f % MLP_CHUNK == 0 and MLP_CHUNK % q == 0 else c
 
 
 def _key(spec: Spec, i: int) -> tuple:
@@ -516,6 +523,8 @@ class Image:
                 ple_format = "fp4"
         D, H, P, L = cfg.D, spec.hidden, spec.ple_dim, spec.layers
         self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, rows
+        # prefill rows per run: an MM streams its weights once per ACT RAM row chunk
+        self.fit_rows = max(cfg.MCOLS, cfg.ACT_ROWS)
         self.block = block
         self.wformat, self.head_format, self.ple_format = wformat, head_format or wformat, \
             ple_format
@@ -537,7 +546,8 @@ class Image:
                    "g_pln": b.alloc(4 * P)}
         self.wproj = (b.alloc(L * P * rb(H)), b.alloc(4 * L * P * (H // D)))
         # layer blocks: one layout per key
-        self.dchunk = {f: _chunk(f, D, D if wformat == "int8" else 2 * D) for f in set(spec.ffn)}
+        self.dchunk = {f: _mlp_chunk(f, D, D if wformat == "int8" else 2 * D)
+                       for f in set(spec.ffn)}
         self.bofs, self.bsize = {}, {}
         for i in range(L):
             k = _key(spec, i)
@@ -565,12 +575,19 @@ class Image:
             o["mats"] = mats
             self.bofs[k], self.bsize[k] = o, (lb.next + 4095) // 4096 * 4096
         self.runs = plan([_key(spec, i) for i in range(L)])
+        # a unit's own repeated part (4 sliding layers of 4 sliding + 1 global) loops again,
+        # inside: {run's first layer: [(first element, part, repeats, the part's bytes)]}
+        self.subs = {first: [(e0, su, r, sum(self.bsize[k] for k in su))
+                             for e0, su, r in plan(unit)] for first, unit, reps in self.runs}
         for first, unit, reps in self.runs:         # a loop's shared layers: one source each
-            for e in range(len(unit)):
-                src = {spec.kv_src[first + it * len(unit) + e] for it in range(reps)}
-                if not unit[e][1] and len(src) > 1:
-                    raise ValueError(f"layers {first + e}, {first + e + len(unit)}, ... share "
-                                     f"K / V of different layers {sorted(src)} in one loop")
+            for e0, su, r, _ in self.subs[first]:
+                for e in range(len(su)):
+                    ls = [first + it * len(unit) + e0 + j * len(su) + e for it in range(reps)
+                          for j in range(r)]
+                    src = {spec.kv_src[i] for i in ls}
+                    if not su[e][1] and len(src) > 1:
+                        raise ValueError(f"layers {ls} share K / V of different layers "
+                                         f"{sorted(src)} in one loop")
         self.layer0 = b.next = (b.next + 4095) // 4096 * 4096
         self.loc = {}                   # layer -> (run base, unit stride, iteration, offset)
         for first, unit, reps in self.runs:
@@ -764,12 +781,15 @@ class Image:
             return _KV({j: {n: off + v for n, v in e.items()} for j, e in enumerate(o["kv"])},
                        ck, d, D, self.ps)
 
-        def layer(li, it=None):
+        def layer(li, it=None, jt=None):
             """Descriptors of layer li (static), or of the layer at li's place in its run's
-            unit at iteration `it` (a loop variable)."""
+            unit at iteration `it` (a loop variable) and, jt = (loop variable, layers, bytes),
+            at iteration jt of the unit's inner loop over a repeated part of it."""
             k = _key(spec, li)
             kind, own, ff = k
             o, off = self.bofs[k], self._off(li, it)
+            if jt is not None:
+                off = off + Affine.of(jt[0]) * jt[2]
             d = spec.hd(li)
             ns = SimpleNamespace(kind=kind, own=own, hd=d, ffn=ff,
                                  **{n: Tensor(off + o[n], (H,), (1,))
@@ -795,11 +815,13 @@ class Image:
             # this layer's per-layer inputs: row r at pli + (r L + l) P
             lidx = Affine(li) if it is None else \
                 Affine(li - self.loc[li][2] * self._unit(li)) + Affine.of(it) * self._unit(li)
+            if jt is not None:
+                lidx = lidx + Affine.of(jt[0]) * jt[1]
             ns.pli = Tensor(Affine(self.io["pli"]) + lidx * (4 * P), (R, P), (L * P, 1))
             return ns
 
         ns = SimpleNamespace(
-            spec=spec, layer=layer, runs=self.runs, rows=R, block=self.block,
+            spec=spec, layer=layer, runs=self.runs, subs=self.subs, rows=R, block=self.block,
             ring=self.ring, rw=self.rw, S=self.ple_S, ple_format=self.ple_format,
             head_format=self.head_format,
             x=_tdesc(self.io["x"], (R, H)), pe=_tdesc(self.io["pe"], (R, self.ple_S * D)),
@@ -932,14 +954,15 @@ def _run_tasks(W, jobs: list, n: int | None = None):
 
 
 # =============================================================================== kernel
-def _rope(x, c, s):
+def _rope(x, c, s, out=None):
     """RoPE of the rows of x [n, d] at one position (c, s: [nr] tiles) on the pairs (i, i +
-    d/2), i < nr, the others passing through (Gemma 4's proportional RoPE); a new tile."""
+    d/2), i < nr, the others passing through (Gemma 4's proportional RoPE); into `out`, else a
+    new tile."""
     d, nr = x.cols, c.cols
     h = d // 2
     if nr == h:
-        return rope(x, c, s)
-    out = ol.empty(x.shape)
+        return rope(x, c, s, out)
+    out = ol.empty(x.shape) if out is None else out
     a, b = x[:, 0:nr], x[:, h:h + nr]
     out[:, 0:nr].set(a * c[None, :] - b * s[None, :])
     out[:, h:h + nr].set(b * c[None, :] + a * s[None, :])
@@ -1019,18 +1042,22 @@ def _attention(x, lw, m, pos, ropes, block: int):
             for j in range(spec.n_kv):
                 ol.kv_append(kv, j, slot, kr[j:j + 1, :], vr[j:j + 1, :])
         del k, v
+    del xs
     qn = ol.load(lw.qn)
     mc = min(G, ol.mxu_columns())
+    # the queries normed and RoPE'd in place, then in place the attention output: an entry's
+    # output rows are its own queries' (quantized into ACT RAM when its attention starts)
+    o = q
     Qs, ent = [], []
     for r in range(R):
         c, s_ = cos_sin(r)
-        Qs.append(_rope(rmsnorm(q[r, :].reshape(spec.n_q, d), qn, eps), c, s_))
+        qr = o[r, :].reshape(spec.n_q, d)
+        Qs.append(_rope(rmsnorm(qr, qn, eps), c, s_, qr))
         pr = pos[r] if isinstance(pos, list) else pos
         seq = (_slide_seq if lw.kind == SLIDE else _full_seq)(m, pr, block)
         ent += [(r, j, g0, min(G, g0 + mc), seq) for j in range(spec.n_kv)
                 for g0 in range(0, G, mc)]
-    del q
-    o = ol.empty([R, spec.n_q * d])
+    del q, qr
 
     def emit(i, acc, l):
         r, j, g0, g1, _ = ent[i]
@@ -1041,12 +1068,13 @@ def _attention(x, lw, m, pos, ropes, block: int):
                   depth=ATTN_DEPTH, emit=emit)
     del Qs
     y = ol.dot(o, lw.wo)                                    # [R, H]
+    del o
     return x + rmsnorm(y, ol.load(lw.g_attn), eps)
 
 
 def _mlp(x, lw, spec):
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_pre), spec.eps))
-    y = swiglu_down(xs, lw.wg, lw.wu, lw.wd, act=gelu_tanh)
+    y = swiglu_down(xs, lw.wg, lw.wu, lw.wd, chunk=lw.wd.pw, act=gelu_tanh)
     return x + rmsnorm(y, ol.load(lw.g_ffn), spec.eps)
 
 
@@ -1066,19 +1094,15 @@ def _ple_inputs(m, x, pe=None):
     R, P, L = x.rows, spec.ple_dim, spec.layers
     xs = ol.quantize(x)
     g = ol.load(m.g_pln)
-    n = max(1, min(L, (ol.tmem_words() // 4) // (R * P)))  # layers per projection MM
+    n = max(1, min(L, (ol.tmem_words() // 8) // (R * P)))  # layers per projection MM
     for l0 in range(0, L, n):
         l1 = min(L, l0 + n)
         pp = ol.dot(xs, m.wproj[l0 * P:l1 * P, :])          # [R, (l1-l0) P]
-        if R == 1:                                          # all its layers at once
-            e = pe[0, l0 * P:l1 * P] if pe is not None else ol.load(m.pe[0, l0 * P:l1 * P])
-            v = rmsnorm(pp.reshape(l1 - l0, P), g, spec.eps) + e.reshape(l1 - l0, P)
-            ol.store(m.pli[0, l0:l1, :], v)
-            continue
-        for l in range(l0, l1):
-            v = rmsnorm(pp[:, (l - l0) * P:(l - l0 + 1) * P], g, spec.eps) + \
-                ol.load(m.pe[0:R, l * P:(l + 1) * P])
-            ol.store(Tensor(m.pli.base + 4 * l * P, (R, P), (L * P, 1)), v)
+        for r in range(R):                                  # a row's layers at once
+            e = pe[0, l0 * P:l1 * P] if pe is not None else ol.load(m.pe[r, l0 * P:l1 * P])
+            v = rmsnorm((pp[r, :] if R > 1 else pp).reshape(l1 - l0, P), g, spec.eps) + \
+                e.reshape(l1 - l0, P)
+            ol.store(m.pli[r, l0:l1, :], v)
 
 
 def _gathered(m, pos):
@@ -1129,20 +1153,28 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK):
     _ple_inputs(m, x, pe)
     del pe
 
-    def layer(li, it=None):
-        lw = m.layer(li, it)
+    def layer(li, it=None, jt=None):
+        lw = m.layer(li, it, jt)
         x.set(_attention(x, lw, m, pos, ropes, block))
         x.set(_mlp(x, lw, spec))
         x.set(_ple(x, lw, spec))
 
-    for first, unit, reps in m.runs:
+    def unit(first, it=None):
+        for e0, su, r, nb in m.subs[first]:
+            if r == 1:
+                for e_ in range(len(su)):
+                    layer(first + e0 + e_, it)
+                continue
+            for jt in ol.range(r):                          # the unit's repeated part
+                for e_ in range(len(su)):
+                    layer(first + e0 + e_, it, (jt, len(su), nb))
+
+    for first, _, reps in m.runs:
         if reps == 1:
-            for e_ in range(len(unit)):
-                layer(first + e_)
+            unit(first)
             continue
         for it in ol.range(reps):
-            for e_ in range(len(unit)):
-                layer(first + e_, it)
+            unit(first, it)
     if isinstance(pos, RunPos):
         _lm_head(x, m, spec)
     elif logit_rows:
