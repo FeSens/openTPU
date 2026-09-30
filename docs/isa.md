@@ -41,6 +41,17 @@ and the position this way: LFM2.5-230M uses 6 arguments (token x 4096; the posit
 its 256-token bucket x 128, x 4, x 1 and x -4; the convolution ring's row x 2048) and at most
 8 address registers (up to 16 attention blocks).
 
+A kernel done with a run-time value gives its argument registers back (`ol.release(var)`,
+`Builder.release_arg`; the resident decode releases the token after its embedding row). Any
+later use of the value is a compile error. The compiler takes a released register for an
+address only when no other register is free, and zeroes it before that address's first loop
+(it holds the argument until the release). A later argument whose own register `R15 - k` an
+address took after the release is copied, at the release, into a released register that is
+still free (`ADDI r, R15 - k, 0`), and used from there. Both only happen where the program
+would otherwise run out of registers, so programs that fit without them do not change:
+Qwen3.5-4B's resident decode with the int8 embedding gather (two arguments of the token,
+eight in all) needs them from bucket 6 on.
+
 ## Arithmetic (fp32)
 
 IEEE-754 binary32, round to nearest even, **flush to zero**: denormal inputs are treated as

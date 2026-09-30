@@ -9,7 +9,9 @@
 //                      only while RUN = 0)
 //                      bit2 CLEAR: zero the per-run counters (0x18 .. 0x34)
 //   0x0C STATUS    RO  bit0 HALTED, bit1 ERROR (illegal instruction; or WAIT_TO), bit2 LOADING,
-//                      bit3 WR_IDLE, bit4 AXI_ERR (sticky; the AXI memory path had it: 0), bit5 CALIB0, bit6 CALIB1, bit7 RUN,
+//                      bit3 WR_IDLE, bit4 AXI_ERR (sticky: a DDR3 controller broke its port contract,
+//                      otpu_mem_ch n_err; on the MIG builds an AXI error response), bit5 CALIB0,
+//                      bit6 CALIB1, bit7 RUN,
 //                      bit8 WAIT_TO (with ERROR: a WAITW timed out; as ERROR, until RUN falls)
 //   0x10 PROG_ADDR RW  program byte address in the slice's DRAM (chunk aligned)
 //   0x14 PROG_N    RW  program length in instructions

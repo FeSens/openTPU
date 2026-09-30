@@ -45,9 +45,13 @@ module otpu_coll
   logic [31:0]      pwa;
   logic [LANES-1:0] pm;
   // write stage q: stage p's address, mask and TMEM read data, registered (no path from the
-  // TMEM block RAMs to their write port in one cycle); qlast: it holds the command's last write
+  // TMEM block RAMs to their write port in one cycle); qlast: it holds the command's last write.
+  // The lanes' addresses are registered each (qwl[l] = pwa + l): the arbiter's bank masks start
+  // at flip-flops, not at a carry chain (133.33 MHz, e698dcd: qwa -> qwa + l -> the collective's
+  // bank mask -> every lower unit's grant -> the MXU's / VPU's enables and TMEM's pw_*, 8-10
+  // levels, +0.03 ns)
   logic                   qv, qlast;
-  logic [31:0]            qwa;
+  logic [LANES-1:0][31:0] qwl;
   logic [LANES-1:0]       qm;
   logic [LANES-1:0][31:0] qd;
 
@@ -65,7 +69,7 @@ module otpu_coll
       for (int l = 0; l < LANES; l++)
         if (qm[l]) begin
           w_en[l] = 1'b1;
-          w_addr[l] = qwa + 32'(l);
+          w_addr[l] = qwl[l];
           w_data[l] = qd[l];
         end
     end
@@ -103,7 +107,7 @@ module otpu_coll
         end
         C_RUN: if (gnt) begin
           qv <= pv;
-          qwa <= pwa;
+          for (int l = 0; l < LANES; l++) qwl[l] <= pwa + 32'(l);
           qm <= pm;
           for (int l = 0; l < LANES; l++)
             for (int k = 0; k < S; k++) if (k == int'(ps)) qd[l] <= r_data[k][l];
@@ -159,5 +163,17 @@ module otpu_coll
     if (!rst && (rd_on != (st == C_RUN && issuing) || (rd_on && ssel != S'(1) << s)))
       $fatal(1, "otpu_coll: rd_on %0d / ssel %b do not match st %0d issuing %0d s %0d",
              rd_on, ssel, st, issuing, s);
+  // qwl[l] is the registered pwa + l (qwa: the one address it replaced)
+  logic [31:0] qwa;
+  bit rst_seen;                                 // (registers start arbitrary)
+  initial rst_seen = 1'b0;
+  always @(posedge clk) begin
+    if (rst) rst_seen <= 1'b1;
+    else if (st == C_RUN && gnt) qwa <= pwa;
+    if (!rst && rst_seen && st == C_RUN && qv)
+      for (int l = 0; l < LANES; l++)
+        if (qwl[l] != qwa + 32'(l))
+          $fatal(1, "otpu_coll: lane %0d's write address %0d is not %0d", l, qwl[l], qwa + 32'(l));
+  end
 `endif
 endmodule

@@ -33,7 +33,10 @@ the transport operations per token (count, bytes, time) and wall vs device token
 
 --card-loop: the decode loop on the card (docs/autodecode.md, Chat.on_card; a bitstream with
 CAPS bit30): one run for the reply, so there is no per-token host path to split; prints the
-tokens, the runs and wall vs device tokens/s from the first token the card picked.
+tokens, the runs and wall vs device tokens/s after the host's pick of the first token (the
+run's start included: the bucket's compile, the program's upload, the sampler's inputs), and
+the rate from the first token the card picked to its last, with the time before that first
+token and the compile's part of it.
 """
 from __future__ import annotations
 
@@ -289,8 +292,25 @@ def main(argv=None):
             return r
     timed_pick.stream = TimedStream
     timed_pick.warm = pick.warm
+    lands, comp = [], [0.0]
     if a.card_loop:                 # Chat.on_card: the picks after the first on the card
         timed_pick.greedy, timed_pick.params, timed_pick.rng = pick.greedy, pick.params, pick.rng
+        run_gen, gen_prog = B.BoardBackend.run_generate, Q.Engine._generate_prog
+
+        def run_generate(self, progs, out, n, on_token=None, *x, **k):
+            def landed(t):                              # when each of the card's tokens landed
+                lands.append(time.perf_counter())
+                if on_token is not None:
+                    on_token(t)
+            return run_gen(self, progs, out, n, landed, *x, **k)
+
+        def generate_prog(self, *x, **k):               # the buckets' compiles (first use)
+            t0 = time.perf_counter()
+            try:
+                return gen_prog(self, *x, **k)
+            finally:
+                comp[0] += time.perf_counter() - t0
+        B.BoardBackend.run_generate, Q.Engine._generate_prog = run_generate, generate_prog
     chat = C.Chat(eng, tok, False, timed_pick, a.tokens, clock_mhz=khz / 1e3)
     if a.card_loop and not chat.on_card:
         sys.exit("--card-loop: this engine / bitstream does not run the decode loop (CAPS bit30)"
@@ -321,11 +341,20 @@ def main(argv=None):
               f"run(s) after the first; wall {steps / wall:.2f} tok/s, device "
               f"{steps * khz * 1e3 / cyc:.2f} tok/s ({cyc / steps / 1e6:.3f} Mcycles/token), "
               f"wall {100 * (steps / wall) / (steps * khz * 1e3 / cyc) - 100:+.1f}% of device")
+        run_s = lands[-1] - lands[0] if len(lands) > 1 else 0.0
+        steady = (len(lands) - 1) / run_s if run_s > 0 else 0.0
+        start_ms = 1e3 * (lands[0] - step0["t"]) if lands else 0.0
+        if steady:
+            print(f"{path.name} on {a.backend}: the decode loop on the card from its first token "
+                  f"to its last ({len(lands)} tokens): {steady:.2f} tok/s, "
+                  f"{100 * steady / (steps * khz * 1e3 / cyc) - 100:+.1f}% of device; before "
+                  f"the first: {start_ms:.1f} ms ({1e3 * comp[0]:.1f} ms compiling)")
         if a.json:
             Path(a.json).write_text(json.dumps({
                 "model": path.name, "wformat": a.wformat, "head_format": a.head_format,
                 "card_loop": True, "steps": steps, "runs": n, "wall_tok_s": steps / wall,
-                "dev_tok_s": steps * khz * 1e3 / cyc,
+                "dev_tok_s": steps * khz * 1e3 / cyc, "steady_tok_s": steady,
+                "start_ms": start_ms, "compile_ms": 1e3 * comp[0],
                 "reply_ids": [int(x) for x in chat._reply]}, indent=1))
         eng._drain()
         eng.backend.close()

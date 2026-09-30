@@ -21,7 +21,7 @@ DDR3 speed as unknown.
 | 0x000 | ID | RO | 0x4F545055 ("OTPU") |
 | 0x004 | VERSION | RO | {D[15:0], MCOLS[7:0], LANES[7:0]} |
 | 0x008 | CTRL | RW | bit0 RUN, bit1 LOAD, bit2 CLEAR (per-run counters only) |
-| 0x00C | STATUS | RO | bit0 HALTED, bit1 ERROR, bit2 LOADING, bit3 WR_IDLE, bit4 AXI_ERR, bit5 CALIB0, bit6 CALIB1, bit7 RUN, bit8 WAIT_TO (with ERROR: a WAITW timed out) |
+| 0x00C | STATUS | RO | bit0 HALTED, bit1 ERROR, bit2 LOADING, bit3 WR_IDLE, bit4 AXI_ERR (sticky: a DDR3 controller broke its port contract, `otpu_mem_ch` n_err), bit5 CALIB0, bit6 CALIB1, bit7 RUN, bit8 WAIT_TO (with ERROR: a WAITW timed out) |
 | 0x010 | PROG_ADDR | RW | program byte address |
 | 0x014 | PROG_N | RW | program length (instructions) |
 | 0x018, 0x01C | CYCLES lo, hi | RO | cycles of the current or last run (cleared by CLEAR) |

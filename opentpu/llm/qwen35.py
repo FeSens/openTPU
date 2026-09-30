@@ -27,8 +27,9 @@ How it maps onto openTPU (docs/qwen35.md):
   * Fewer DeltaNet key heads than value heads (Qwen3.5-4B, 9B, 35B-A3B: 16 and 32): value
     head h takes the q and k of key head h // (value / key heads), as HF's repeat_interleave.
     The image repeats a key head's q and k rows of in_proj_qkv (and their convolution taps)
-    for each of its value heads, so the kernels see value heads with q and k of their own and
-    do not change; the repeated rows cost 2 dk projection rows per extra value head.
+    for each of its value heads; the repeated rows cost 2 dk projection rows per extra value
+    head. With an even number of value heads per key head (Spec.qk_share) a pair of heads has
+    one key head, and its q and k rows are projected, convolved and normed once.
   * Resident decode (qwen3.Engine(resident=True), Image(lookup=True)): one program per
     attention bucket takes the token and the position as run arguments (qwen3.RunPos). With
     more than PAIR_LOOP pairs of heads per slice (the 4B, 9B, 35B-A3B: 16) the DeltaNet blocks
@@ -105,13 +106,16 @@ class Spec:
     eos: tuple = (248046, 248044)
     lin_kheads: int = 0     # DeltaNet key heads (0: lin_heads); value head h uses q and k of
                             # key head h // (lin_heads / lin_kheads), as HF's repeat_interleave
-    moe: MO.MoESpec | None = None   # Qwen3.5-MoE: every layer's MLP is routed experts plus a
-                                    # shared expert (ffn: its width, the layer block's MLP)
+    embed: str = "f32"      # the embedding rows: fp32, or "int8" per D block (as qwen3.Spec:
+                            # gathered on the device from the tied int8 head or a table)
     pair_loop: bool | None = None   # DeltaNet layers group-major, their pairs a hardware loop
                                     # at a run-time position too (Image; None: when a slice has
                                     # more than PAIR_LOOP pairs of heads)
-    embed: str = "f32"      # the embedding rows: fp32, or "int8" per D block (as qwen3.Spec:
-                            # gathered on the device from the tied int8 head or a table)
+    qk_share: bool | None = None    # a pair of value heads of one key head projects and convolves
+                                    # its q and k once (Image; None: when the value heads per key
+                                    # head are even)
+    moe: MO.MoESpec | None = None   # Qwen3.5-MoE: every layer's MLP is routed experts plus a
+                                    # shared expert (ffn: its width, the layer block's MLP)
 
     @property
     def layers(self) -> int:
@@ -415,22 +419,29 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
 # =============================================================================== DRAM image
 class DeltaNetParts:
     """Where the kernels find a DeltaNet layer's per-pair parts: pair p's projection rows
-    (wh, [2R, H]: q k v of a, of b, then z of a, of b), taps and window (cv, [CVW]) and the
-    states of its heads a, b ([dv, dk] each), and head group g's out_proj block (wout, [H,
-    og dv]). p is an int, a loop expression or (g, i): pair i of head group g.
+    (wh, [2R, H]: q k v of a, of b, then z of a, of b), taps and window (cv, [CVW]), the
+    states of its heads a, b ([dv, dk] each) and its gates of this token (gates, [4]), and
+    head group g's out_proj block (wout, [H, og dv]). p is an int, a loop expression or (g,
+    i): pair i of head group g.
 
     Array-major (grouped False): each part one array over the slice's pairs (wh, cv, state,
-    wout: the layer's full descriptors). Group-major: head group g's block (stride gs bytes)
-    holds its og / 2 pairs' blocks (stride ps: projection rows, their scales, taps and window,
-    the two states) and then its out_proj block, so every part of pair p is at one offset of
-    p's block and a loop over the pairs steps one address register (wh, cv, state, wout: the
-    parts of pair 0, group 0)."""
+    wout: the layer's full descriptors; the gates in the I/O area, hs). Group-major: head
+    group g's block (stride gs bytes) holds its og / 2 pairs' blocks (stride ps: projection
+    rows, their scales, taps and window, the two states), its out_proj block and its pairs'
+    gates, so every part of pair p is at one offset of p's group's block and a loop over the
+    pairs steps one address register (wh, cv, state, wout, eb: the parts of pair 0, group
+    0).
+
+    shared (Image.shared): the pair's two value heads have one key head; its rows are the key
+    head's q and k once, then v of a, of b, then z of a, of b, and its taps rows (block, tap) of
+    four blocks of dk (q, k, v a, v b) instead of two of 2 dk + dv (the heads)."""
 
     def __init__(self, nl: int, og: int, wh: QTensor, cv: Tensor, state: Tensor,
-                 wout: QTensor, H: int, gs: int = 0, ps: int = 0):
-        self.nl, self.og, self.gp, self.H = nl, og, og // 2, H
+                 wout: QTensor, H: int, gs: int = 0, ps: int = 0, eb: Tensor | None = None,
+                 shared: bool = False):
+        self.nl, self.og, self.gp, self.H, self.shared = nl, og, og // 2, H, shared
         self.grouped, self.gs, self.ps = gs > 0, gs, ps
-        self._wh, self._cv, self._state, self._wout = wh, cv, state, wout
+        self._wh, self._cv, self._state, self._wout, self._eb = wh, cv, state, wout, eb
         self.R2 = wh.shape[0] if self.grouped else wh.shape[0] // (nl // 2)
 
     def split(self, p) -> tuple:
@@ -480,6 +491,28 @@ class DeltaNetParts:
         w, o = self._wout, Affine.of(g) * self.gs
         return QTensor(w.data + o, w.scale + o, w.shape, w.rs, w.srs, w.D, wf=w.wf)
 
+    def _gates(self, g) -> Tensor:
+        e = self._eb
+        return Tensor(e.base + Affine.of(g) * self.gs, e.shape, e.strides)
+
+    def gates(self, p, hs: Tensor) -> Tensor:
+        """Pair p's gates [decay a, decay b, beta a, beta b] (hs: the I/O area's, array-major).
+        Group-major they sit in the group's block: a loop over the pairs addresses them with
+        the register of the pairs' other parts, not one of their own."""
+        if not self.grouped:
+            return hs[self.index(p), :]
+        g, i = self.split(p)
+        return self._gates(g)[i, :]
+
+    def store_gates(self, eb, hs: Tensor) -> None:
+        """Store every pair's gates, eb [pairs, 4] in TMEM (one store per head group,
+        group-major)."""
+        if not self.grouped:
+            ol.store(hs, eb)
+            return
+        for g in range(self.nl // self.og):
+            ol.store(self._gates(g), eb[g * self.gp:(g + 1) * self.gp, :])
+
 
 class Image:
     """Per-slice DRAM layout of a Qwen3.5 model. Every slice uses the same addresses.
@@ -488,7 +521,8 @@ class Image:
     [ layer L-1 block ] [ LM head rows of this slice ]. All layer blocks have one size: both
     kinds start with the norms and this slice's MLP rows. A DeltaNet block then holds, for
     this slice's heads (a contiguous range), the projections pair by pair (the q, k, v rows of
-    head 0, of head 1, then the z rows of heads 0 and 1; then heads 2 and 3, ...), the a and b
+    head 0, of head 1, then the z rows of heads 0 and 1; then heads 2 and 3, ...; with shared q
+    and k, the pair's key head's q, k, then v of each head, then z of each), the a and b
     rows, out_proj as one [H, og * dv] column block per og heads, per pair the convolution taps
     and then the convolution ring, the recurrent state (per head [dv, dk] fp32, transposed) and
     the per-head constants (the window: K - 1 rows, _past). An attention block holds the q/k
@@ -497,10 +531,10 @@ class Image:
     logits) for chunked prefill.
 
     Group-major DeltaNet blocks (Spec.pair_loop; by default when a slice has more than
-    PAIR_LOOP pairs of heads): the projections, the out_proj blocks, the taps and windows and
-    the states go per head group instead, each group's pairs (a pair's projection rows, their
-    scales, its taps and window, its two states) and then the group's out_proj block
-    (DeltaNetParts). A decode's loop over the pairs then steps one address register for all of
+    PAIR_LOOP pairs of heads): the projections, the out_proj blocks, the taps and windows, the
+    states and the per-pair gates go per head group instead, each group's pairs (a pair's
+    projection rows, their scales, its taps and window, its two states), then the group's
+    out_proj block and its pairs' gates (DeltaNetParts). A decode's loop over the pairs then steps one address register for all of
     them, so it fits the registers beside a run-time position's (resident decode), and the
     unrolled pairs of a bigger model need not fit IMEM.
     """
@@ -524,7 +558,17 @@ class Image:
         self.nl = spec.lin_heads // S                   # DeltaNet heads of one slice
         self.C = 2 * dk + dv                            # convolved channels per head (q, k, v)
         self.R = self.C + dv                            # projected rows per head (and z)
-        self.CVW = 2 * K * self.C + (K - 1) * 2 * self.C  # a pair's taps, then its window
+        rk = spec.lin_heads // spec.lin_nk
+        self.shared = rk % 2 == 0 if spec.qk_share is None else spec.qk_share
+        if self.shared and rk % 2:
+            raise ValueError(f"{rk} value heads per key head: a pair shares its q and k only "
+                             "when they are even")
+        # a pair's convolved channels, as blocks of equal width: q k v of a, of b; or shared, the
+        # key head's q, k, then v of a, of b (dk = dv)
+        self.nb, self.bw = (4, dk) if self.shared else (2, self.C)
+        self.CP = self.nb * self.bw
+        self.RP = self.CP + 2 * dv                      # a pair's projected rows (then z of a, b)
+        self.CVW = K * self.CP + (K - 1) * self.CP      # a pair's taps, then its window
         self.plan = plan(spec.kinds)
         b = _Bump()
         self.io = {"x": b.alloc(4 * H * rows), "cos": b.alloc(2 * spec.rope_dim * rows),
@@ -549,7 +593,7 @@ class Image:
                           gbase=lb.alloc(4))
         nl, C = self.nl, self.C
         self.og = 4 if nl % 4 == 0 else 2               # heads per out_proj MM
-        self.mats = {LIN: {"wh": (nl * self.R, H), "wab": (2 * nl, H),
+        self.mats = {LIN: {"wh": (nl // 2 * self.RP, H), "wab": (2 * nl, H),
                            "wout": (nl // self.og * H, self.og * dv),
                            **mlp},
                      ATTN: {"wq": (self.nq_loc * d, H), "wgate": (self.nq_loc * d, H),
@@ -562,12 +606,13 @@ class Image:
             og = self.og
             del self.mats[LIN]["wh"], self.mats[LIN]["wout"]
             pb, gb = _Bump(), _Bump()
-            self.pofs = {"wh": (pb.alloc(2 * self.R * rb(H)), pb.alloc(4 * 2 * self.R * (H // D))),
+            self.pofs = {"wh": (pb.alloc(self.RP * rb(H)), pb.alloc(4 * self.RP * (H // D))),
                          "cv": pb.alloc(4 * self.CVW), "state": pb.alloc(4 * 2 * dv * dk)}
             self.PS = pb.next                           # a pair's block, bytes
             for _ in range(og // 2):
                 gb.alloc(self.PS)
-            self.gofs = {"wout": (gb.alloc(H * rb(og * dv)), gb.alloc(4 * H * (og * dv // D)))}
+            self.gofs = {"wout": (gb.alloc(H * rb(og * dv)), gb.alloc(4 * H * (og * dv // D))),
+                         "eb": gb.alloc(4 * 4 * (og // 2))}     # its pairs' gates, per token
             self.GS = gb.next                           # a head group's block
             lin["groups"] = lnb.alloc(nl // og * self.GS)
         else:
@@ -587,7 +632,8 @@ class Image:
         n_attn = spec.kinds.count(ATTN)
         head = cap * d + 4 * cap * (d // D) + d * cap + 4 * cap
         self.kv_bytes = (n_attn * self.nkv_loc * head                   # KV cache, conv ring
-                         + (spec.layers - n_attn) * 4 * nl * ((K - 1) * C + dv * dk))  # state
+                         + (spec.layers - n_attn) * 4 * (nl // 2 * (K - 1) * self.CP
+                                                         + nl * dv * dk))  # and state
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
@@ -676,11 +722,14 @@ class Image:
                 # per pair of heads (a, b): the q, k, v rows of a, of b, then the z rows of a, of
                 # b; its taps; per head group, its out_proj column block (og heads)
                 og = self.og
-                prows = [[np.concatenate([qkv[chans[h]], qkv[chans[h + 1]],
-                                          wz[h * dv:(h + 2) * dv]]) for h in hh[::2]]
-                         for hh in hs]
-                ptaps = [[f32(np.stack([taps[chans[h]].T, taps[chans[h + 1]].T]))
+                # (shared: the key head's q and k rows, then v of a, of b; taps by block)
+                blocks = ((lambda h: [chans[h][:2 * dk], chans[h][2 * dk:], chans[h + 1][2 * dk:]])
+                          if self.shared else (lambda h: [chans[h], chans[h + 1]]))
+                prows = [[np.concatenate([qkv[c] for c in blocks(h)] + [wz[h * dv:(h + 2) * dv]])
                           for h in hh[::2]] for hh in hs]
+                ptaps = [[f32(np.concatenate([taps[c].reshape(-1, self.bw, K).transpose(0, 2, 1)
+                                              .reshape(-1, self.bw) for c in blocks(h)]))
+                          for h in hh[::2]] for hh in hs]      # rows (block, tap)
                 gouts = [[wout[:, h * dv:(h + og) * dv] for h in hh[::og]] for hh in hs]
                 if self.grouped:
                     for s in range(S):
@@ -814,7 +863,7 @@ class Image:
                 ns.alog = Tensor(off + lofs["alog"], (nl,), (1,))
                 ns.dtb = Tensor(off + lofs["dtb"], (nl,), (1,))
                 ns.gn = Tensor(off + lofs["gn"], (dv,), (1,))
-                og, R2 = self.og, 2 * self.R
+                og, R2 = self.og, self.RP
                 if self.grouped:            # the parts of pair 0 (group 0)
                     g0 = off + lofs["groups"]
                     (whd, whs), (wod, wos) = self.pofs["wh"], self.gofs["wout"]
@@ -824,11 +873,13 @@ class Image:
                         Tensor(g0 + self.pofs["cv"], (self.CVW,), (1,)),
                         Tensor(g0 + self.pofs["state"], (2, dv, dk), (dv * dk, dk, 1)),
                         QTensor(g0 + wod, g0 + wos, (H, og * dv), Q.row_bytes(og * dv, fm, D),
-                                4 * (og * dv // D), D, wf=wf), H, self.GS, self.PS)
+                                4 * (og * dv // D), D, wf=wf), H, self.GS, self.PS,
+                        Tensor(g0 + self.gofs["eb"], (og // 2, 4), (4, 1)), self.shared)
                 else:
                     ns.cv = Tensor(off + lofs["cv"], (nl // 2, self.CVW), (self.CVW, 1))
                     ns.state = Tensor(off + lofs["state"], (nl, dv, dk), (dv * dk, dk, 1))
-                    ns.dn = DeltaNetParts(nl, og, ns.wh, ns.cv, ns.state, ns.wout, H)
+                    ns.dn = DeltaNetParts(nl, og, ns.wh, ns.cv, ns.state, ns.wout, H,
+                                          shared=self.shared)
             else:
                 ns.qn = Tensor(off + lofs["qn"], (d,), (1,))
                 ns.kn = Tensor(off + lofs["kn"], (d,), (1,))
@@ -873,12 +924,13 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     """x + out_proj(Gated DeltaNet(x)) for one token, this slice's heads; returns the new
     residual (replicated on every slice).
 
-    First the decay exp(g) and beta of every head (kernels.deltanet.gates) go to `hs` in DRAM,
-    [decay a, decay b, beta a, beta b] per pair of heads. The heads then run in pairs (a, b).
-    The small vector work of a pair runs on [2, n] tiles: the convolution, SiLU, L2 norms and
-    silu(z) before the recurrence ("prep"), the gated RMSNorm after it ("post"). Per head the
-    recurrence is RDOT, OUTER, RDOT over its fp32 state (stored transposed; kernels.deltanet),
-    which streams through TMEM in two buffers, one per head of the pair.
+    First the decay exp(g) and beta of every head (kernels.deltanet.gates) go to DRAM (`hs`,
+    or the head groups' blocks: DeltaNetParts.gates), [decay a, decay b, beta a, beta b] per
+    pair of heads. The heads then run in pairs (a, b). The small vector work of a pair runs on
+    [2, n] tiles: the convolution, SiLU, L2 norms and silu(z) before the recurrence ("prep"),
+    the gated RMSNorm after it ("post"). Per head the recurrence is RDOT, OUTER, RDOT over its
+    fp32 state (stored transposed; kernels.deltanet), which streams through TMEM in two
+    buffers, one per head of the pair.
 
     The schedule is built around one fact: a TMEM bank takes one write per cycle, the DMA and
     the MXU go first, and a VPU op that writes TMEM stalls while they write its banks. An RDOT
@@ -903,15 +955,18 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     dk, dv = spec.lin_dk, spec.lin_dv
     dn = lw.dn
     nl, C = dn.nl, 2 * dk + dv
-    R, NP, og = C + dv, nl // 2, dn.og
-    TP = 2 * K * C                                      # taps words of a pair (then its ring)
+    NP, og = nl // 2, dn.og
+    sh = dn.shared                      # one key head's q and k for the pair (DeltaNetParts)
+    nb, bw = (4, dk) if sh else (2, C)                  # the pair's blocks of channels
+    CP, RP = nb * bw, nb * bw + 2 * dv                  # its convolved channels, its rows
+    TP = K * CP                                         # taps words of a pair (then its ring)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     ab = ol.dot(xs, lw.wab)                             # [1, 2nl]: a, then b, of each head
     decay, beta = gates(ab[0, 0:nl], ab[0, nl:2 * nl], ol.load(lw.alog), ol.load(lw.dtb))
     eb = ol.empty([4 * NP]).reshape(NP, 4)              # per pair: decays of a, b; betas
     eb[:, 0:2].set(decay.reshape(NP, 2))
     eb[:, 2:4].set(beta.reshape(NP, 2))
-    ol.store(hs, eb)
+    dn.store_gates(eb, hs)
     del decay, beta, eb
     past = _past(K, pos)
 
@@ -919,9 +974,13 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
         return [ol.empty([2 * w]).reshape(2, w) for _ in range(n)]
 
     St = [ol.empty([dv * dk]).reshape(dv, dk) for _ in range(2)]        # heads a, b of a pair
-    P = [ol.empty([1, 2 * R]) for _ in range(2)]        # q k v of a, of b, then z of a, of b
-    CV = ol.empty([TP + (K - 1) * 2 * C])  # taps (rows (head, tap)), the window (_past)
-    U, Qn, Kn, GZ = pairs(2, C), pairs(2, dk), pairs(2, dk), pairs(2, dv)
+    P = [ol.empty([1, RP]) for _ in range(2)]        # q k v of a, of b, then z of a, of b
+    CV = ol.empty([TP + (K - 1) * CP])     # taps (rows (block, tap)), the window (_past)
+    nq = 1 if sh else 2                                 # q and k rows: shared, or per head
+    U = [ol.empty([CP]).reshape(nb, bw) for _ in range(2)]
+    Qn = [ol.empty([nq * dk]).reshape(nq, dk) for _ in range(2)]
+    Kn = [ol.empty([nq * dk]).reshape(nq, dk) for _ in range(2)]
+    GZ = pairs(2, dv)
     EB = [ol.empty([4]) for _ in range(2)]
     O = ol.empty([2 * dv]).reshape(2, dv)
     ON = ol.empty([og * dv]).reshape(og, dv)            # normed, gated o of og heads
@@ -930,9 +989,17 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     gn = ol.load(lw.gn)
     halves = ((0, dv // 2), (dv // 2, dv))     # row halves of a state pass
 
+    def hb(j):
+        """Head j's blocks of the pair's channels (None: all): (first, count); shared, head a
+        takes q, k and its v, head b its v."""
+        if j is None:
+            return 0, nb
+        return ((0, 3), (3, 1))[j] if sh else (j, 1)
+
     def project(p, t, split=False):
         """The MXU: pair p's projection rows into P[t] (q, k, v first: prep starts on them)."""
-        cuts = ((0, C), (C, 2 * C), (2 * C, 2 * R)) if split else ((0, 2 * C), (2 * C, 2 * R))
+        ha = hb(0)[1] * bw                              # head a's channels first
+        cuts = ((0, ha), (ha, CP), (CP, RP)) if split else ((0, CP), (CP, RP))
         for c0, c1 in cuts:
             ol.dot(xs, dn.wh(p)[c0:c1, :], out=P[t][:, c0:c1])
 
@@ -941,7 +1008,7 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
         ol.load(dn.cv(p), out=CV)
 
     def fetch_eb(p, t):
-        ol.load(hs[p, :], out=EB[t])
+        ol.load(dn.gates(p, hs), out=EB[t])
 
     def state_in(p, j, S):
         """Head j of pair p's state into S."""
@@ -957,20 +1024,21 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
 
     def conv(p, t, j=None):
         """Pair p's convolution into U[t] (j: only head j of the pair)."""
-        a, n = (0, 2) if j is None else (j, 1)
-        pre = P[t][0, a * C:(a + n) * C]
-        s0 = TP + (K - 2) * 2 * C + a * C                # the window's last row: this position
-        ol.store(dn.cv(p)[s0:s0 + n * C], pre)
-        if a + n == 2:                                  # its other rows, one up (_past)
-            ol.store(dn.cv(p)[TP:TP + (K - 2) * 2 * C], CV[TP + 2 * C:TP + (K - 1) * 2 * C])
-        taps = CV[0:TP].reshape(2 * K, C)
+        a, n = hb(j)
+        pre = P[t][0, a * bw:(a + n) * bw]
+        s0 = TP + (K - 2) * CP + a * bw                 # the window's last row: this position
+        ol.store(dn.cv(p)[s0:s0 + n * bw], pre)
+        if a + n == nb:                                 # its other rows, one up (_past)
+            ol.store(dn.cv(p)[TP:TP + (K - 2) * CP], CV[TP + CP:TP + (K - 1) * CP])
+        taps = CV[0:TP].reshape(nb * K, bw)
 
         def tap(i):
-            return taps.row_stride_view(i, 2, K) if n == 2 else taps[a * K + i:a * K + i + 1, :]
+            return taps.row_stride_view(a * K + i, n, K) if n > 1 else \
+                taps[a * K + i:a * K + i + 1, :]
         # position p - j sits in window row K - 1 - j and is weighed by tap K - 1 - j
-        terms = [(pre.reshape(n, C), K - 1)] + [
-            (CV[TP + (K - 1 - j) * 2 * C + a * C:TP + (K - 1 - j) * 2 * C + (a + n) * C]
-             .reshape(n, C), K - 1 - j) for j in range(1, past + 1)]
+        terms = [(pre.reshape(n, bw), K - 1)] + [
+            (CV[TP + (K - 1 - j) * CP + a * bw:TP + (K - 1 - j) * CP + (a + n) * bw]
+             .reshape(n, bw), K - 1 - j) for j in range(1, past + 1)]
         out = U[t][a:a + n, :]
         if len(terms) == 1:
             out.set(terms[0][0] * tap(K - 1))
@@ -983,15 +1051,25 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
 
     def gatez(t):
         """silu(z) of the pair in P[t]."""
-        GZ[t].set(silu(P[t][0, 2 * C:2 * R].reshape(2, dv)))
+        GZ[t].set(silu(P[t][0, CP:RP].reshape(2, dv)))
 
     def qk(t, j=None):
-        """SiLU of the convolved q, k, v (in place), then the L2-normed q and k."""
-        a, n = (0, 2) if j is None else (j, 1)
+        """SiLU of the convolved channels (in place), then the L2-normed q and k (shared: once,
+        with head a's blocks)."""
+        a, n = hb(j)
         u = U[t][a:a + n, :]
         u.set(silu(u))
-        Qn[t][a:a + n, :].set(l2norm_rows(u[:, 0:dk], dk ** -0.5))
-        Kn[t][a:a + n, :].set(l2norm_rows(u[:, dk:2 * dk]))
+        if not sh:
+            Qn[t][a:a + n, :].set(l2norm_rows(u[:, 0:dk], dk ** -0.5))
+            Kn[t][a:a + n, :].set(l2norm_rows(u[:, dk:2 * dk]))
+        elif a == 0:
+            Qn[t].set(l2norm_rows(U[t][0:1, :], dk ** -0.5))
+            Kn[t].set(l2norm_rows(U[t][1:2, :]))
+
+    def kqv(t, j):
+        """Head j's normed k and q, and its v, of the pair in buffers t."""
+        r = 0 if sh else j
+        return Kn[t][r, :], Qn[t][r, :], U[t][2 + j, :] if sh else U[t][j, 2 * dk:C]
 
     def post(t):
         """The gated RMSNorm of the pair in O (gates GZ[t]) into its rows of ON."""
@@ -1006,18 +1084,19 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
 
     def rdot1(S, t, j):
         """kv = S k of head j of the pair in buffers t, into w."""
-        w.set(S @ Kn[t][j, :])
+        w.set(S @ kqv(t, j)[0])
 
     def update(S, t, j):
         """d = beta (v - e^g kv), then S = e^g S + d k^T (OUTER, in place)."""
-        w.set((U[t][j, 2 * dk:C] - w * EB[t][j:j + 1]) * EB[t][2 + j:3 + j])
+        k, _, v = kqv(t, j)
+        w.set((v - w * EB[t][j:j + 1]) * EB[t][2 + j:3 + j])
         for r, e in halves:
-            ol.outer(w[r:e], Kn[t][j, :], acc=S[r:e, :], decay=EB[t][j:j + 1])
+            ol.outer(w[r:e], k, acc=S[r:e, :], decay=EB[t][j:j + 1])
 
     def rdot2(S, t, j):
         """o = S q of head j, into O[j]."""
         for r, e in halves:
-            O[j, r:e].set(S[r:e, :] @ Qn[t][j, :])
+            O[j, r:e].set(S[r:e, :] @ kqv(t, j)[1])
 
     def _pair_segment(p, t, last1, last2, g=None):
         """Pair p (buffers t = p % 2); last1: no pair p+1, last2: no pair p+2; g: the head
@@ -1106,31 +1185,46 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
     dk, dv = spec.lin_dk, spec.lin_dv
     dn = lw.dn
     nl, C = dn.nl, 2 * dk + dv
-    R, NP, og = C + dv, nl // 2, dn.og
-    TP = 2 * K * C
+    NP, og = nl // 2, dn.og
+    sh = dn.shared                      # one key head's q and k for the pair (DeltaNetParts)
+    nb, bw = (4, dk) if sh else (2, C)                  # the pair's blocks of channels
+    CP, RP = nb * bw, nb * bw + 2 * dv                  # its convolved channels, its rows
+    TP = K * CP
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     ab = ol.dot(xs, lw.wab)
     decay, beta = gates(ab[0, 0:nl], ab[0, nl:2 * nl], ol.load(lw.alog), ol.load(lw.dtb))
     eb = ol.empty([4 * NP]).reshape(NP, 4)
     eb[:, 0:2].set(decay.reshape(NP, 2))
     eb[:, 2:4].set(beta.reshape(NP, 2))
-    ol.store(hs, eb)
+    dn.store_gates(eb, hs)
     del decay, beta, eb
     past = _past(K, pos)
 
     def pairs(n, w):
         return [ol.empty([2 * w]).reshape(2, w) for _ in range(n)]
 
-    P = [ol.empty([1, 2 * R]) for _ in range(2)]
-    CV = ol.empty([TP + (K - 1) * 2 * C])
-    U, GZ, QK, O = pairs(2, C), pairs(2, dv), pairs(2, 2 * dk), pairs(2, dv)
+    P = [ol.empty([1, RP]) for _ in range(2)]
+    CV = ol.empty([TP + (K - 1) * CP])
+    nq = 1 if sh else 2                                 # q | k rows: shared, or per head
+    U = [ol.empty([CP]).reshape(nb, bw) for _ in range(2)]
+    GZ = pairs(2, dv)
+    QK = [ol.empty([nq * 2 * dk]).reshape(nq, 2 * dk) for _ in range(2)]
+    O = pairs(2, dv)
     EB = [ol.empty([4]) for _ in range(2)]
     ON = ol.empty([og * dv]).reshape(og, dv)
     y = ol.zeros([1, spec.hidden])
     gn = ol.load(lw.gn)
 
+    def hb(j):
+        """Head j's blocks of the pair's channels (None: all): (first, count); shared, head a
+        takes q, k and its v, head b its v."""
+        if j is None:
+            return 0, nb
+        return ((0, 3), (3, 1))[j] if sh else (j, 1)
+
     def project(p, t, split=False):
-        cuts = ((0, C), (C, 2 * C), (2 * C, 2 * R)) if split else ((0, 2 * C), (2 * C, 2 * R))
+        ha = hb(0)[1] * bw                              # head a's channels first
+        cuts = ((0, ha), (ha, CP), (CP, RP)) if split else ((0, CP), (CP, RP))
         for c0, c1 in cuts:
             ol.dot(xs, dn.wh(p)[c0:c1, :], out=P[t][:, c0:c1])
 
@@ -1138,23 +1232,24 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
         ol.load(dn.cv(p), out=CV)
 
     def fetch_eb(p, t):
-        ol.load(hs[p, :], out=EB[t])
+        ol.load(dn.gates(p, hs), out=EB[t])
 
     def conv(p, t, j=None):
-        a, n = (0, 2) if j is None else (j, 1)
-        pre = P[t][0, a * C:(a + n) * C]
-        s0 = TP + (K - 2) * 2 * C + a * C                # the window's last row: this position
-        ol.store(dn.cv(p)[s0:s0 + n * C], pre)
-        if a + n == 2:                                  # its other rows, one up (_past)
-            ol.store(dn.cv(p)[TP:TP + (K - 2) * 2 * C], CV[TP + 2 * C:TP + (K - 1) * 2 * C])
-        taps = CV[0:TP].reshape(2 * K, C)
+        a, n = hb(j)
+        pre = P[t][0, a * bw:(a + n) * bw]
+        s0 = TP + (K - 2) * CP + a * bw                 # the window's last row: this position
+        ol.store(dn.cv(p)[s0:s0 + n * bw], pre)
+        if a + n == nb:                                 # its other rows, one up (_past)
+            ol.store(dn.cv(p)[TP:TP + (K - 2) * CP], CV[TP + CP:TP + (K - 1) * CP])
+        taps = CV[0:TP].reshape(nb * K, bw)
 
         def tap(i):
-            return taps.row_stride_view(i, 2, K) if n == 2 else taps[a * K + i:a * K + i + 1, :]
+            return taps.row_stride_view(a * K + i, n, K) if n > 1 else \
+                taps[a * K + i:a * K + i + 1, :]
         # position p - j sits in window row K - 1 - j and is weighed by tap K - 1 - j
-        terms = [(pre.reshape(n, C), K - 1)] + [
-            (CV[TP + (K - 1 - j) * 2 * C + a * C:TP + (K - 1 - j) * 2 * C + (a + n) * C]
-             .reshape(n, C), K - 1 - j) for j in range(1, past + 1)]
+        terms = [(pre.reshape(n, bw), K - 1)] + [
+            (CV[TP + (K - 1 - j) * CP + a * bw:TP + (K - 1 - j) * CP + (a + n) * bw]
+             .reshape(n, bw), K - 1 - j) for j in range(1, past + 1)]
         out = U[t][a:a + n, :]
         if len(terms) == 1:
             out.set(terms[0][0] * tap(K - 1))
@@ -1166,15 +1261,20 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
         out.set(u + xx * tap(i))
 
     def gatez(t):
-        GZ[t].set(silu(P[t][0, 2 * C:2 * R].reshape(2, dv)))
+        GZ[t].set(silu(P[t][0, CP:RP].reshape(2, dv)))
 
     def qk(t, j=None):
-        """SiLU of the convolved q, k, v (in place), then the L2-normed q and k into QK[t]."""
-        a, n = (0, 2) if j is None else (j, 1)
+        """SiLU of the convolved channels (in place), then the L2-normed q and k into QK[t]
+        (shared: once, with head a's blocks)."""
+        a, n = hb(j)
         u = U[t][a:a + n, :]
         u.set(silu(u))
-        QK[t][a:a + n, 0:dk].set(l2norm_rows(u[:, 0:dk], dk ** -0.5))
-        QK[t][a:a + n, dk:2 * dk].set(l2norm_rows(u[:, dk:2 * dk]))
+        if not sh:
+            QK[t][a:a + n, 0:dk].set(l2norm_rows(u[:, 0:dk], dk ** -0.5))
+            QK[t][a:a + n, dk:2 * dk].set(l2norm_rows(u[:, dk:2 * dk]))
+        elif a == 0:
+            QK[t][:, 0:dk].set(l2norm_rows(U[t][0:1, :], dk ** -0.5))
+            QK[t][:, dk:2 * dk].set(l2norm_rows(U[t][1:2, :]))
 
     def prep(p, t):
         conv(p, t)
@@ -1191,7 +1291,8 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
                dn.wout(g)[:, c0 * dv:c1 * dv], acc=y)
 
     def dstep(p, t, j):
-        ol.deltanet_step(dn.state(p, j), QK[t][j, :], U[t][j, 2 * dk:C], EB[t][j:j + 1],
+        ol.deltanet_step(dn.state(p, j), QK[t][0 if sh else j, :],
+                         U[t][2 + j, :] if sh else U[t][j, 2 * dk:C], EB[t][j:j + 1],
                          EB[t][2 + j:3 + j], O[t][j, :],
                          zero=not isinstance(pos, RunPos) and pos == 0)
 
@@ -1295,9 +1396,11 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     dk, dv = spec.lin_dk, spec.lin_dv
     dn = lw.dn
     nl, C = dn.nl, 2 * dk + dv
-    RH, og = C + dv, dn.og                              # RH: projected rows per head
+    og, sh = dn.og, dn.shared                           # sh: the pair's q and k shared
+    nb, bw = (4, dk) if sh else (2, C)                  # the pair's blocks of channels
+    CP, RP = nb * bw, nb * bw + 2 * dv                  # its convolved channels, its rows
     NP, ng, gp = nl // 2, nl // og, og // 2             # pairs, head groups, pairs per group
-    TP = 2 * K * C                                      # taps words of a pair (then its ring)
+    TP = K * CP                                         # taps words of a pair (then its ring)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     ab = ol.dot(xs, lw.wab)                             # [R, 2nl]: a, then b, of each head
     alog, dtb = ol.load(lw.alog), ol.load(lw.dtb)
@@ -1325,19 +1428,20 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         ol.dot(ON, dn.wout(g)[:, c0 * dv:c1 * dv], acc=y)
 
     def head_in(X, taps, a):
-        """Head a of the pair whose q k v rows are in X: the convolution and SiLU -> [R, C]."""
-        U = ol.empty([R, C])
+        """Block a of the channels of the pair whose rows are in X (head a's q k v; shared, q, k,
+        v of a, v of b): the convolution and SiLU -> [R, bw]."""
+        U = ol.empty([R, bw])
         for r0, r1 in rgroups:                          # the convolution, as _deltanet's conv
             t = min(K - 1, p0 + r0)
-            cur = X[K - 1 + r0:K - 1 + r1, a * C:(a + 1) * C]
+            cur = X[K - 1 + r0:K - 1 + r1, a * bw:(a + 1) * bw]
             if t == 0:
                 U[r0:r1, :].set(cur * taps[a * K + K - 1, :][None, :])
                 continue
             u = cur * taps[a * K + K - 1, :][None, :]
             for j in range(1, t):
-                u = u + X[K - 1 + r0 - j:K - 1 + r1 - j, a * C:(a + 1) * C] * \
+                u = u + X[K - 1 + r0 - j:K - 1 + r1 - j, a * bw:(a + 1) * bw] * \
                     taps[a * K + K - 1 - j, :][None, :]
-            U[r0:r1, :].set(u + X[K - 1 + r0 - t:K - 1 + r1 - t, a * C:(a + 1) * C] *
+            U[r0:r1, :].set(u + X[K - 1 + r0 - t:K - 1 + r1 - t, a * bw:(a + 1) * bw] *
                             taps[a * K + K - 1 - t, :][None, :])
             del u
         U.set(silu(U))
@@ -1374,10 +1478,55 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         ol.store(dn.state(p, a), St)
         ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
 
+    def shared_heads(p, X, Z, taps):
+        """Pair p's heads, the key head's q and k shared (blocks q, k, v of a, v of b in X) ->
+        ONp: q and k convolved and normed once. With DSTEP both heads' vector work before
+        their DSTEPs, as heads()."""
+        if dstep:
+            QK = ol.empty([R, 2 * dk])
+            for i in range(2):
+                U = head_in(X, taps, i)
+                QK[:, i * dk:(i + 1) * dk].set(l2norm_rows(U, dk ** -0.5 if i == 0 else 1.0))
+                del U
+            V = [head_in(X, taps, 2 + a) for a in range(2)]
+            GZ = [silu(Z[:, a * dv:(a + 1) * dv]) for a in range(2)]
+            O = [ol.empty([R, dv]) for _ in range(2)]
+            for a in range(2):
+                for r in range(R):
+                    ol.deltanet_step(dn.state(p, a), QK[r, :], V[a][r, :], GDB[r, a:a + 1],
+                                     GDB[r, 2 + a:3 + a], O[a][r, :], zero=(p0 == 0 and r == 0))
+            del QK, V
+            for a in range(2):
+                ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O[a], gn, eps) * GZ[a])
+            return
+        U = head_in(X, taps, 0)
+        Qn = l2norm_rows(U, dk ** -0.5)
+        del U
+        U = head_in(X, taps, 1)
+        Kn = l2norm_rows(U)
+        del U
+        for a in range(2):
+            V = head_in(X, taps, 2 + a)
+            GZ = silu(Z[:, a * dv:(a + 1) * dv])
+            if p0:
+                ol.load(dn.state(p, a), out=St)
+            else:
+                St.set(0.0)
+            O = ol.empty([R, dv])
+            for r in range(R):                          # the recurrence, token by token
+                dh, bh = GD[r, a:a + 1], GB[r, a:a + 1]
+                w.set(St @ Kn[r, :])
+                w.set((V[r, :] - w * dh) * bh)
+                ol.outer(w, Kn[r, :], acc=St, decay=dh)
+                O[r, :].set(St @ Qn[r, :])
+            ol.store(dn.state(p, a), St)
+            ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
+            del V, GZ, O
+
     # a pair's projections, taps and ring rows; two sets with DSTEP (pair p + 1's projections
     # stream while pair p's DSTEPs run)
     NB = 2 if dstep and split and gp == 2 else 1
-    PB = [(ol.empty([2 * K * C]), ol.empty([K - 1 + R, 2 * C]), ol.empty([R, 2 * dv]))
+    PB = [(ol.empty([K * CP]), ol.empty([K - 1 + R, CP]), ol.empty([R, 2 * dv]))
           for _ in range(NB)]
 
     def project(p, b, window=True):
@@ -1385,30 +1534,33 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         store the next window (else store_window after the pair's DSTEPs: a store waiting for
         the projections would hold the DMA's queue, and the DSTEPs behind it)."""
         taps, X, Z = PB[b]
-        ol.load(dn.cv(p)[0:TP], out=taps)              # rows (head, tap)
+        ol.load(dn.cv(p)[0:TP], out=taps)              # rows (block, tap)
         for j in range(1, min(K, p0 + 1)):              # positions p0-K+1 ..: the window
-            sl = TP + (K - 1 - j) * 2 * C               # (_past)
-            ol.load(dn.cv(p)[sl:sl + 2 * C], out=X[K - 1 - j, :])
-        ol.dot(xs, dn.wh(p)[0:2 * C, :], out=X[K - 1:K - 1 + R, :])
-        ol.dot(xs, dn.wh(p)[2 * C:2 * RH, :], out=Z)                     # z of a, of b
+            sl = TP + (K - 1 - j) * CP                  # (_past)
+            ol.load(dn.cv(p)[sl:sl + CP], out=X[K - 1 - j, :])
+        ol.dot(xs, dn.wh(p)[0:CP, :], out=X[K - 1:K - 1 + R, :])
+        ol.dot(xs, dn.wh(p)[CP:RP, :], out=Z)                            # z of a, of b
         if window:
             store_window(p, b)
 
     def store_window(p, b):
         X = PB[b][1]
         for i in range(K - 1):                          # the next window
-            ol.store(dn.cv(p)[TP + i * 2 * C:TP + (i + 1) * 2 * C], X[R + i, :])
+            ol.store(dn.cv(p)[TP + i * CP:TP + (i + 1) * CP], X[R + i, :])
 
     def heads(p, b):
         """Pair p's heads from buffers b -> ONp. With DSTEP both heads' VPU work (convolution,
         SiLU, norms) comes before their DSTEPs and both outputs after, so the DMA runs the pair's
         DSTEPs back to back (the same operations, in another order)."""
         taps, X, Z = PB[b]
-        taps = taps.reshape(2 * K, C)
+        taps = taps.reshape(nb * K, bw)
         q = dn.index(p)
         for r in range(R):
             ol.load(gr[r, 2 * q:2 * q + 2], out=GD[r, :])
             ol.load(gr[r, nl + 2 * q:nl + 2 * q + 2], out=GB[r, :])
+        if sh:
+            shared_heads(p, X, Z, taps)
+            return
         if not dstep:
             for a in range(2):
                 head(p, X, Z, taps, a)

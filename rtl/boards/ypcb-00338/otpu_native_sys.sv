@@ -77,19 +77,20 @@ module otpu_native_sys #(
   output logic [127:0]          x_rdata,
   output logic [1:0]            x_rresp,
   output logic                  x_rlast,
-  // the channels' controller ports, channel c in uclk[c] (otpu_mem_ch's c_*)
+  // the channels' controller ports, channel c in uclk[c], two ports each ([channel][port];
+  // otpu_mem_ch's c_*: port p takes the banks of parity p)
   input  logic [1:0]            uclk,
   input  logic [1:0]            urst,
-  output logic [1:0]            c_cmd_valid,
-  input  logic [1:0]            c_cmd_ready,
-  output logic [1:0]            c_cmd_we,
-  output logic [1:0][24:0]      c_cmd_addr,
-  output logic [1:0]            c_wdata_valid,
-  input  logic [1:0]            c_wdata_ready,
-  output logic [1:0][511:0]     c_wdata_data,
-  output logic [1:0][63:0]      c_wdata_we,
-  input  logic [1:0]            c_rdata_valid,
-  input  logic [1:0][511:0]     c_rdata_data
+  output logic [1:0][1:0]       c_cmd_valid,
+  input  logic [1:0][1:0]       c_cmd_ready,
+  output logic [1:0][1:0]       c_cmd_we,
+  output logic [1:0][1:0][24:0] c_cmd_addr,
+  output logic [1:0][1:0]       c_wdata_valid,
+  input  logic [1:0][1:0]       c_wdata_ready,
+  output logic [1:0][1:0][511:0] c_wdata_data,
+  output logic [1:0][1:0][63:0] c_wdata_we,
+  input  logic [1:0][1:0]       c_rdata_valid,
+  input  logic [1:0][1:0][511:0] c_rdata_data
 );
   // the accelerator's native masters, per channel
   logic [1:0]        n_cvalid, n_cready, n_cwe, n_wvalid, n_wready, n_rvalid;
@@ -97,6 +98,7 @@ module otpu_native_sys #(
   logic [1:0][511:0] n_wdata, n_rdata;
   logic [1:0][63:0]  n_wmask;
   logic [1:0][15:0]  n_wdone;
+  logic [1:0]        n_err;
   // XDMA's per channel (otpu_axi_split2's masters)
   logic [1:0]        m_awvalid, m_awready, m_wvalid, m_wready, m_bvalid, m_bready;
   logic [1:0]        m_arvalid, m_arready, m_rvalid, m_rready, m_rlast;
@@ -121,7 +123,7 @@ module otpu_native_sys #(
     .clk, .rst,
     .n_cvalid(n_cvalid[0]), .n_cready(n_cready[0]), .n_cwe(n_cwe[0]), .n_caddr(n_caddr[0]),
     .n_wvalid(n_wvalid[0]), .n_wready(n_wready[0]), .n_wdata(n_wdata[0]), .n_wmask(n_wmask[0]),
-    .n_rvalid(n_rvalid[0]), .n_rdata(n_rdata[0]), .n_wdone(n_wdone[0]),
+    .n_rvalid(n_rvalid[0]), .n_rdata(n_rdata[0]), .n_wdone(n_wdone[0]), .n_err(n_err[0]),
     .xclk, .xrst,
     .x_awvalid(m_awvalid[0]), .x_awready(m_awready[0]), .x_awid, .x_awaddr, .x_awlen,
     .x_wvalid(m_wvalid[0]), .x_wready(m_wready[0]), .x_wdata, .x_wstrb, .x_wlast,
@@ -139,7 +141,7 @@ module otpu_native_sys #(
     .clk, .rst,
     .n_cvalid(n_cvalid[1]), .n_cready(n_cready[1]), .n_cwe(n_cwe[1]), .n_caddr(n_caddr[1]),
     .n_wvalid(n_wvalid[1]), .n_wready(n_wready[1]), .n_wdata(n_wdata[1]), .n_wmask(n_wmask[1]),
-    .n_rvalid(n_rvalid[1]), .n_rdata(n_rdata[1]), .n_wdone(n_wdone[1]),
+    .n_rvalid(n_rvalid[1]), .n_rdata(n_rdata[1]), .n_wdone(n_wdone[1]), .n_err(n_err[1]),
     .xclk, .xrst,
     .x_awvalid(m_awvalid[1]), .x_awready(m_awready[1]), .x_awid, .x_awaddr, .x_awlen,
     .x_wvalid(m_wvalid[1]), .x_wready(m_wready[1]), .x_wdata, .x_wstrb, .x_wlast,
@@ -163,5 +165,5 @@ module otpu_native_sys #(
     .s_ctl_wready, .s_ctl_bresp, .s_ctl_bvalid, .s_ctl_bready, .s_ctl_araddr, .s_ctl_arvalid,
     .s_ctl_arready, .s_ctl_rdata, .s_ctl_rresp, .s_ctl_rvalid, .s_ctl_rready,
     .n_cvalid, .n_cready, .n_cwe, .n_caddr, .n_wvalid, .n_wready, .n_wdata, .n_wmask,
-    .n_rvalid, .n_rdata, .n_wdone);
+    .n_rvalid, .n_rdata, .n_wdone, .n_err);
 endmodule

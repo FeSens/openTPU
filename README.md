@@ -21,7 +21,7 @@ the wires, this is a good place to start.
 
 ## Results
 
-The design runs three modern models with their real weights on an Inspur YPCB-00338 card
+The design runs four modern models with their real weights on an Inspur YPCB-00338 card
 (Xilinx Kintex-7 xc7k480t, two DDR3 channels), and the card produces the same tokens as the
 simulator, bit for bit.
 
@@ -33,6 +33,8 @@ simulator, bit for bit.
 | Qwen3-0.6B | 4-bit, int8 head | 31.3 tok/s | 30.7 tok/s | 103.4 tok/s | 13.9 GB/s (82%) |
 | Qwen3.5-0.8B | int8 | 17.6 tok/s | 16.3 tok/s | 61.4 tok/s | 14.5 GB/s (85%) |
 | Qwen3.5-0.8B | 4-bit, int8 head | 24.5 tok/s | 23.3 tok/s | 66.7 tok/s | 14.1 GB/s (83%) |
+| Gemma 4 E2B | 4-bit, int8 head | 9.6 tok/s | 9.6 tok/s | 9.9 tok/s\* | 14.2 GB/s (83%) |
+| Gemma 4 E2B | 4-bit, 4-bit head | 11.0 tok/s | 11.0 tok/s | 11.4 tok/s\* | 14.1 GB/s (82%) |
 
 *Measured on the card on 2026-09-29 with the production image `deploy_champ_e698dcd7`.*
 - *The image: main e698dcd at 133.33 MHz, one bitstream for all models. It has LiteDRAM
@@ -44,6 +46,11 @@ simulator, bit for bit.
   host's argmax in the loop (not streamed). "Device" counts only the cycles the accelerator runs;
   "wall" adds the host. Prefill is the 512-token prompt, on the device.*
 - *DRAM traffic comes from the card's own counters while it runs.*
+- *Gemma 4 E2B was measured on 2026-09-30 with the same image, its per-layer embedding tables
+  on the card (3.4-3.6 GiB images; [docs/gemma4.md](docs/gemma4.md)); in int8 it does not fit.
+  It matches the simulator with the resident decode program, and Hugging Face's greedy tokens
+  on three prompts, with either head. \*Its prompt ran one token per run (resident decode
+  steps), not in prefill runs.*
 - *Every configuration matches the simulator token for token, per-position and with the
   resident decode program. More detail in [docs/board.md](docs/board.md).*
 

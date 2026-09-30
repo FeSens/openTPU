@@ -92,15 +92,19 @@ module otpu_seq
   // The footprint as the window keeps it: ranges stored by space, so ranges in different
   // spaces, and two reads, are never compared. No valid bits: an invalid range has hi = 0,
   // which overlaps nothing (b.lo < 0 is false) -- exactly ov()'s v terms. Routing (fp_seg):
-  //   LD:     d[0] = rd0          t[0] = wr0 W
-  //   ST:     d[0] = wr0 (dw)     t[0] = rd0
-  //   DSTEP:  d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2
-  //   STREAM: d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2, t4 = rd3
-  //   MM:     d = rd0, rd1        t[0] = wr0 W, t[1] = wr1 W (RMAX), t2 = rd3 (ASCALE), a = rd2
-  //   QACT:                       t[0] = rd0, t[1] = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
-  //   QST:    d = wr0, wr1 (dw)   t[0] = rd0
-  //   VOP:                        t[0] = wr0 W, t[1] = rd0, t2 = rd1, t3 = rd2 (OUTER)
-  //   GATHER:                     t[0] = wr0 W, t[1] = rd0
+  //   LD:     d[0] = rd0          t0 = wr0 W
+  //   ST:     d[0] = wr0 (dw)     t0 = rd0
+  //   DSTEP:  d[0] = wr0 (dw)     t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2
+  //   STREAM: d[0] = wr0 (dw)     t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2, t4 = rd3
+  //   MM:     d = rd0, rd1        t0 = hull(wr0, wr1) W (RMAX), t2 = rd3 (ASCALE), a = rd2
+  //   QACT:                       t0 = rd0, t1 = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
+  //   QST:    d = wr0, wr1 (dw)   t0 = rd0
+  //   VOP:                        t0 = wr0 W, t1 = rd0, t2 = rd1, t3 = rd2 (OUTER)
+  //   GATHER:                     t0 = wr0 W, t1 = rd0
+  // Only t0 may be written, so a footprint pair has 9 TMEM range pairs to compare. MM's RMAX
+  // (the row maxima, the spare row after the output tile) is folded into its output range: the
+  // hull [min lo, max hi) covers both, so every dependency on either is kept (ovr() is monotone
+  // in the range); it adds only the output tile's padding words between them (ors - N).
   // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. ACT ranges
   // start below 2^8 (an 8-bit field) and are at most 2^16 - 1 long, so [alo, ahi) is exact.
   // TMEM ranges keep TAW/TAW+1 bits: TMEM holds 2^16 words, so every access the ISA allows has
@@ -114,7 +118,8 @@ module otpu_seq
     logic            all;
     logic            dw;        // the DRAM ranges are writes
     r32_t  [1:0]     d;         // DRAM
-    rtw_t  [1:0]     t;         // TMEM
+    rtw_t            t0;        // TMEM, the only range that may be written
+    rt_t             t1;        // TMEM, always a read
     rt_t             t2;        // TMEM, always a read
     rt_t             t3;        // TMEM, always a read
     rt_t             t4;        // TMEM, always a read (STREAM's constants)
@@ -140,11 +145,23 @@ module otpu_seq
     return x.v && (x.lo[31:TAW] != '0 || x.hi[31:TAW+1] != '0);
   endfunction
 
+  // the smallest range covering a and b (an invalid one, hi = 0, covers nothing)
+  function automatic rt_t hull(input rt_t a, input rt_t b);
+    rt_t o;
+    if (b.hi == '0) o = a;
+    else if (a.hi == '0) o = b;
+    else begin
+      o.lo = (b.lo < a.lo) ? b.lo : a.lo;
+      o.hi = (b.hi > a.hi) ? b.hi : a.hi;
+    end
+    return o;
+  endfunction
+
   function automatic fps_t fp_seg(input logic [7:0] op, input fp_t f);
     fps_t s;
-    rng_t a, t0, t1, t2, t3, t4;  // ACT; TMEM t[0], t[1], t2, t3, t4
-    logic w0, w1;
-    s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; t3 = '0; t4 = '0; w0 = 1'b0; w1 = 1'b0;
+    rng_t a, t0, t1, t2, t3, t4, h;  // ACT; TMEM t0, t1, t2, t3, t4; MM's RMAX (into t0)
+    logic w0;
+    s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; t3 = '0; t4 = '0; h = '0; w0 = 1'b0;
     case (op)
       OP_LD: begin
         s.d[0] = r32(f.rd[0]); t0 = f.wr[0]; w0 = 1'b1;
@@ -158,7 +175,7 @@ module otpu_seq
       end
       OP_MM: begin
         s.d[0] = r32(f.rd[0]); s.d[1] = r32(f.rd[1]);
-        t0 = f.wr[0]; w0 = 1'b1; t1 = f.wr[1]; w1 = 1'b1; t2 = f.rd[3];
+        t0 = f.wr[0]; w0 = 1'b1; h = f.wr[1]; t2 = f.rd[3];
         a = f.rd[2];
       end
       OP_QACT: begin
@@ -181,9 +198,9 @@ module otpu_seq
       end
       default: ;   // BAR: all
     endcase
-    s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2) || tovf(t3) || tovf(t4);
-    s.t[0].w = w0; s.t[0].r = rt(t0);
-    s.t[1].w = w1; s.t[1].r = rt(t1);
+    s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2) || tovf(t3) || tovf(t4) || tovf(h);
+    s.t0.w = w0; s.t0.r = hull(rt(t0), rt(h));
+    s.t1 = rt(t1);
     s.t2 = rt(t2);
     s.t3 = rt(t3);
     s.t4 = rt(t4);
@@ -201,21 +218,18 @@ module otpu_seq
   endfunction
 
   // {conflict, conflict_dram} (otpu_pkg) on segregated footprints: the same-space pairs with at
-  // least one write -- 4 DRAM, 16 TMEM (t[i] x t[j]; t[i] x t2..t4 both ways) and 1 ACT range
-  // pair
+  // least one write -- 4 DRAM, 9 TMEM (t0 x t0; t0 x t1..t4 both ways) and 1 ACT range pair
   function automatic logic [1:0] conf_s(input fps_t n, input fps_t e);
     logic any, dram;
     any = n.all || e.all; dram = any;
-    for (int i = 0; i < 2; i++) begin
-      for (int j = 0; j < 2; j++) begin
+    for (int i = 0; i < 2; i++)
+      for (int j = 0; j < 2; j++)
         if ((n.dw || e.dw) && ovr(n.d[i], e.d[j])) begin any = 1'b1; dram = 1'b1; end
-        if ((n.t[i].w || e.t[j].w) && ovr_t(n.t[i].r, e.t[j].r)) any = 1'b1;
-      end
-      if (n.t[i].w && (ovr_t(n.t[i].r, e.t2) || ovr_t(n.t[i].r, e.t3) ||
-                       ovr_t(n.t[i].r, e.t4))) any = 1'b1;
-      if (e.t[i].w && (ovr_t(n.t2, e.t[i].r) || ovr_t(n.t3, e.t[i].r) ||
-                       ovr_t(n.t4, e.t[i].r))) any = 1'b1;
-    end
+    if ((n.t0.w || e.t0.w) && ovr_t(n.t0.r, e.t0.r)) any = 1'b1;
+    if (n.t0.w && (ovr_t(n.t0.r, e.t1) || ovr_t(n.t0.r, e.t2) || ovr_t(n.t0.r, e.t3) ||
+                   ovr_t(n.t0.r, e.t4))) any = 1'b1;
+    if (e.t0.w && (ovr_t(n.t1, e.t0.r) || ovr_t(n.t2, e.t0.r) || ovr_t(n.t3, e.t0.r) ||
+                   ovr_t(n.t4, e.t0.r))) any = 1'b1;
     if ((n.aw || e.aw) && {9'd0, n.alo} < e.ahi && {9'd0, e.alo} < n.ahi) any = 1'b1;
     return {any, dram};
   endfunction
@@ -451,25 +465,48 @@ module otpu_seq
   // The command store is one distributed RAM per unit (1 write, 1 asynchronous read, no reset):
   // a single read port each, so it infers as LUT-RAM and trims the fields its unit never reads
   // (as do the registers).
+  // The collective's copy loads on every cycle the collective is ready and not starting (urdy:
+  // no request pending, a flip-flop in otpu_slice), which covers its starts, and the collective
+  // reads its command only while its request is pending: the enable is two flip-flops, not the
+  // start decode (133.33 MHz, 812bb01: sstarted -> the collective's can_start -> its copy's
+  // enable, fanout 120, 7 levels, +0.165 ns)
   logic [SW-1:0] ucs [NUNITS];
   for (genvar u = 0; u < NUNITS; u++) begin : g_cmd
     (* ram_style = "distributed" *) logic [$bits(cmd_t)-1:0] m [WIN];
     logic [$bits(cmd_t)-1:0] q;
+    wire q_en = (u == U_COLL) ? urdy[u] && !ustart[u] : can_start[u];
     always_ff @(posedge clk) if (!rst && c_go) m[free_slot] <= c_cmd;
-    always_ff @(posedge clk) if (!rst && can_start[u]) q <= m[start_slot[u]];
+    always_ff @(posedge clk) if (!rst && q_en) q <= m[start_slot[u]];
     assign ucmd[u] = cmd_t'(q);
 `ifndef SYNTHESIS
     // the copy is the started slot's command while the slot is in the window
-    always @(posedge clk)
+    always @(posedge clk) begin
       if (!rst && sv[ucs[u]] && sstarted[ucs[u]] && soh[ucs[u]][u] && q != m[ucs[u]])
         $fatal(1, "otpu_seq: unit %0d's command is not slot %0d's", u, ucs[u]);
+      if (!rst && can_start[u] && !q_en)
+        $fatal(1, "otpu_seq: unit %0d starts without loading its command", u);
+    end
 `endif
   end
 
 `ifndef SYNTHESIS
-  // shadow of c_fp / sfp in otpu_pkg form: the scoreboard is checked against conflict()
-  fp_t c_ref;
-  fp_t sfp_ref [WIN];
+  // shadow of c_fp / sfp in otpu_pkg form: the scoreboard is checked against conflict(), on
+  // the footprints with MM's RMAX range folded into its output range as fp_seg does (ref), and
+  // for coverage on the footprints as they are (raw)
+  fp_t c_ref, c_raw;
+  fp_t sfp_ref [WIN], sfp_raw [WIN];
+
+  // fp_seg's hull in otpu_pkg form: two TMEM write ranges (only MM with RMAX) become one
+  function automatic fp_t fp_hull(input fp_t f);
+    fp_t o;
+    o = f;
+    if (f.wr[0].v && f.wr[0].sp == SP_TMEM && f.wr[1].v && f.wr[1].sp == SP_TMEM) begin
+      o.wr[0].lo = (f.wr[1].lo < f.wr[0].lo) ? f.wr[1].lo : f.wr[0].lo;
+      o.wr[0].hi = (f.wr[1].hi > f.wr[0].hi) ? f.wr[1].hi : f.wr[0].hi;
+      o.wr[1].v = 1'b0;
+    end
+    return o;
+  endfunction
 `endif
 
   always_ff @(posedge clk) begin
@@ -497,15 +534,21 @@ module otpu_seq
                  (at_end && stk_rem[sp-1] > 1) ? stk_start[sp-1] : pc + 1))
         $fatal(1, "otpu_seq: fetch address %0d does not follow pc %0d", fa, pc);
       // the segregated footprints give exactly otpu_pkg's conflict() and conflict_dram(); a
-      // footprint whose TMEM ranges overflowed rt_t (all raised by fp_seg) conflicts with all
+      // footprint whose TMEM ranges overflowed rt_t (all raised by fp_seg) conflicts with all.
+      // The hull only adds dependencies: every conflict() of the raw footprints is kept
       if (c_v)
-        for (int i = 0; i < WIN; i++)
+        for (int i = 0; i < WIN; i++) begin
+          logic [1:0] cs;
+          cs = conf_s(c_fp, sfp[i]);
           if (sv[i] && (c_fp.all == c_ref.all && sfp[i].all == sfp_ref[i].all ?
-                        conf_s(c_fp, sfp[i]) != {conflict(c_ref, sfp_ref[i]),
-                                                 conflict_dram(c_ref, sfp_ref[i])} :
-                        conf_s(c_fp, sfp[i]) != 2'b11))
+                        cs != {conflict(c_ref, sfp_ref[i]), conflict_dram(c_ref, sfp_ref[i])} :
+                        cs != 2'b11))
             $fatal(1, "otpu_seq: scoreboard differs from conflict() for pc %0d vs slot %0d",
                    c_pc, i);
+          if (sv[i] && conflict(c_raw, sfp_raw[i]) && !cs[1])
+            $fatal(1, "otpu_seq: scoreboard misses a conflict() of pc %0d vs slot %0d",
+                   c_pc, i);
+        end
       // fp_seg's assumptions: ACT ranges fit [alo, ahi), DRAM ranges share their write role
       if (q_v && q_adv) begin
         logic dr, dwr;
@@ -575,6 +618,7 @@ module otpu_seq
         sfp[free_slot] <= c_fp;
 `ifndef SYNTHESIS
         sfp_ref[free_slot] <= c_ref;
+        sfp_raw[free_slot] <= c_raw;
 `endif
       end
       // ---- Q: footprint ranges
@@ -584,7 +628,8 @@ module otpu_seq
           c_cmd <= q_cmd; c_unit <= q_unit; c_pc <= q_pc;
           c_fp <= fp_seg(q_cmd.op, q_fp);
 `ifndef SYNTHESIS
-          c_ref <= q_fp;
+          c_ref <= fp_hull(q_fp);
+          c_raw <= q_fp;
 `endif
         end
       end

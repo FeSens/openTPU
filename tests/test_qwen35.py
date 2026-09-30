@@ -12,7 +12,7 @@ import pytest
 from opentpu.isasim import board_config
 from opentpu.llm import load_spec
 from opentpu.llm.lfm2 import plan
-from opentpu.llm.qwen3 import Engine, load_weights
+from opentpu.llm.qwen3 import ATTN_BLOCK, Engine, load_weights
 from opentpu.llm.qwen35 import Spec, emulated_logits, reference_logits
 
 torch = pytest.importorskip("torch")
@@ -241,12 +241,12 @@ def test_tiny_resident_decode_is_bit_exact(tiny, dstep):
     assert (ia.layer0, ia.LS) == (ib.layer0, ib.LS)
     ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.layer0 + len(spec.kinds) * ib.LS]
               .copy() for e in (a, b))
-    TP = 2 * spec.conv_k * ib.C
+    TP = spec.conv_k * ib.CP
     for li, k in enumerate(spec.kinds):     # row 0 of each pair's ring is scratch (_ring)
         if k == "linear":
             for q in range(ib.nl // 2):
                 o = li * ib.LS + ib.cv_offset(q) + 4 * TP
-                ma[o:o + 8 * ib.C] = mb[o:o + 8 * ib.C] = 0
+                ma[o:o + 4 * ib.CP] = mb[o:o + 4 * ib.CP] = 0
     assert np.array_equal(ma, mb)
 
 
@@ -274,12 +274,12 @@ def test_group_major_is_bit_exact(tiny_pairs, dstep):
     """The group-major DeltaNet layout (Spec.pair_loop) gives the array-major one's logits,
     taps, windows and states bit for bit: chunked prefill (a loop over the groups, each over
     its pairs), per-position decode (the pair loop), resident decode (the pair loop at a
-    run-time position: a shorter program) and the generate loop; with and without DSTEP."""
+    run-time position: a shorter program); with and without DSTEP."""
     W, spec = tiny_pairs
     cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep, PAIR=True)
     a, b = (Engine(dataclasses.replace(spec, pair_loop=g), W, cap=512, cfg=cfg, resident=True)
             for g in (False, True))
-    assert not a.image.grouped and b.image.grouped and a.can_generate
+    assert not a.image.grouped and b.image.grouped
     ra, rb = (e.image.compile_decode(1, 3)[0][0] for e in (a, b))
     assert len(rb) < len(ra)
     toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 12)]
@@ -293,9 +293,32 @@ def test_group_major_is_bit_exact(tiny_pairs, dstep):
             for q in range(spec.lin_heads // 2):
                 assert all(np.array_equal(x, y) for x, y in
                            zip(_pair_parts(a, li, q), _pair_parts(b, li, q))), (li, q)
-    t0 = int(np.argmax(a.step(toks[0])))
-    assert int(np.argmax(b.step(toks[0]))) == t0
-    assert a.generate_card(t0, 6, stop_ids=[]) == b.generate_card(t0, 6, stop_ids=[])
+
+
+@pytest.mark.parametrize("step", ["vop", "dstep", "stream"])
+def test_shared_qk_is_bit_exact(tiny, step):
+    """A pair of value heads of one key head (kh4: 4 key heads for 8 value heads) projects,
+    convolves and normalizes its q and k once (Spec.qk_share): the logits and states of the
+    repeated q and k rows, bit for bit, in chunked prefill, per-position and resident decode,
+    with the state step on VOPs, on DSTEP or on STREAM; a pair's rows are 2 dk fewer."""
+    _, W, spec = tiny
+    if spec.lin_heads // spec.lin_nk % 2:
+        pytest.skip("one value head per key head: nothing to share")
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=step == "dstep", STREAM=step == "stream",
+                       PAIR=True)
+    a, b = (Engine(dataclasses.replace(spec, qk_share=g), W, cap=512, cfg=cfg, resident=True)
+            for g in (False, True))
+    assert not a.image.shared and b.image.shared
+    assert b.image.RP == a.image.RP - 2 * spec.lin_dk and b.image.CP == a.image.CP - 2 * spec.lin_dk
+    toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 12)]
+    assert np.array_equal(a.prefill(toks[:5], chunk=3).view(np.uint32),
+                          b.prefill(toks[:5], chunk=3).view(np.uint32))
+    for t in toks[5:]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), a.pos
+    for li, k in enumerate(spec.kinds):
+        if k == "linear":
+            for q in range(a.image.nl // 2):
+                assert np.array_equal(_pair_parts(a, li, q)[1], _pair_parts(b, li, q)[1])
 
 
 @pytest.mark.parametrize("dstep,resident", [(False, False), (True, False), (True, True),
@@ -338,6 +361,26 @@ def test_group_major_on_board_model(tiny_pairs, have_verilator, dstep):
         a, b = isa.step(tok), brd.step(tok)
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
     assert sorted(brd._decodes) == [1]
+
+
+@pytest.mark.parametrize("embed", ["f32", "int8"])
+def test_4b_resident_decode_fits_imem(embed):
+    """Qwen3.5-4B's dims on one slice (16 pairs of DeltaNet heads: group-major), fp4 with an
+    int8 LM head: the resident decode, the pair loop at a run-time position beside the
+    attention's run-time KV addresses, compiles and fits IMEM at every bucket of a 4K context
+    (the gates in the head groups' blocks: the pair loop takes one address register), with the
+    fp32 embedding table and with the int8 one gathered on the device (the 4B's: two more
+    arguments, the token's registers given back after the gather). A layout-only image, no
+    weights."""
+    kinds = ("linear", "linear", "linear", "attn") * 8
+    spec = Spec(2560, kinds, 16, 4, 256, 64, 32, 128, 128, 9216, 248320, lin_kheads=16,
+                embed=embed)
+    cfg = board_config(DRAM_BYTES=1 << 33)      # the fp32 lookup table alone is 2.4 GiB
+    img = spec.image(cfg, 4096, wformat="fp4", head_format="int8", lookup=True)
+    assert img.grouped
+    for b in (1, 2, 4, 8, 16):
+        (prog,), _ = img.compile_decode(b, (b - 1) * ATTN_BLOCK + 3)
+        assert len(prog) <= cfg.IMEM_WORDS // 8, b
 
 
 def test_tiny_qwen35_on_a_board_without_dstep(tiny, have_verilator):

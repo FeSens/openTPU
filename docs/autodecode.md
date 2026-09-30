@@ -248,5 +248,26 @@ true, it writes the state's stop word, and the card halts after the token in fli
   `~/otpu-build/deploy_adw100_be824d5`): timing met, WNS +0.091 ns, WHS +0.016 ns (core
   +0.096, LiteDRAM +0.091); LUT 162,441 (54.4%), FF 132,924, slices 71.9%, BRAM 607.5, DSP
   716.
-- **Next:** the card (tools/qual/qual.sh: the decode-loop and WAITW phases), then
-  133.33 MHz.
+- **Card** (the dev build on opentpu, 2026-09-30, `tools/qual/qual.sh fast`, identity
+  BUILD_ID be824d57, 100 MHz, CAPS bits 30 and 31): 42 PASS, 0 FAIL in 61 min. The decode
+  loop on the card gave the ISA simulator's tokens in 6/6 runs (Qwen3, LFM2 and Qwen3.5, int8
+  and fp4). WAITW on the host's writes: 200 rounds, 16..32768 words, 30,927..2,124,512 cycles;
+  its timeout: ERROR, and the next run halted normally (be824d5 predates STATUS bit8
+  WAIT_TO). `decode_profile --card-loop`, 96 tokens (95 on the card in one run), wall against
+  device tok/s, beside the same bitstream's host loop (per-position picks, streamed logits):
+
+  | model (fp4, int8 head) | host loop | card loop, greedy | card loop, sampled |
+  |---|---|---|---|
+  | Qwen3-0.6B | 28.96 / 29.21 (-0.9%) | 28.95 / 29.45 (-1.7%) | 28.85 / 29.30 (-1.5%) |
+  | LFM2.5-230M | 73.94 / 77.39 (-4.5%) | 74.32 / 77.18 (-3.7%) | 71.62 / 75.15 (-4.7%) |
+  | Qwen3.5-0.8B | 21.30 / 21.49 (-0.9%) | 21.03 / 21.70 (-3.1%) | 21.03 / 21.58 (-2.6%) |
+
+  The card loop's wall counts from the host's pick of the first token, so it includes the
+  run's start once per reply: the bucket's compile (on the Mac, bucket 1: 17-27 ms for Qwen3,
+  35-53 ms for LFM2, 54-101 ms for Qwen3.5), the program's upload and the sampler's inputs.
+  The differences above are 47-140 ms per reply, the same order. decode_profile now also
+  prints the rate from the card's first token to its last, and the start with its compile, to
+  tell the two apart.
+- **133.33 MHz:** production has been the fused build c2830d6 since 2026-09-30 (it carries
+  GEN and WAITW). Its qual passed: the card loop gave the ISA simulator's tokens in 6/6 runs,
+  WAITW passed 200 rounds, the timeout set ERROR and WAIT_TO, and decode ran 7-8% faster.

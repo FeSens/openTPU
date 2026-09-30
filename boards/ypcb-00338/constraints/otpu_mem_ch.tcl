@@ -18,7 +18,8 @@
 #   - a FIFO's distributed RAM, written in one clock and read (asynchronously) in the other: one
 #     destination period. An entry is read no sooner than two destination cycles after its write
 #     pointer crossed, and the pointer is written in the same source cycle as the entry;
-#   - the reset-request and hold synchronizers (levels held for many cycles): one source period.
+#   - the reset-request, hold and error-bit synchronizers (levels held for many cycles): one
+#     source period.
 # The top level must therefore not make these clock pairs asynchronous with set_clock_groups or
 # set_false_path (either takes priority over set_max_delay and leaves the crossings untimed).
 # rst and xrst cross only as the registered requests a_req and x_req. The report_cdc waivers
@@ -34,13 +35,14 @@ set t_xcl [get_property -quiet -min PERIOD $c_xcl]
 set k_cu  [expr {min($t_clk, $t_ucl)}]
 set k_xu  [expr {min($t_xcl, $t_ucl)}]
 
-# ---------------------------------------------------------------- resets and holds
+# ---------------------------------------------------------------- resets, holds, the error bit
 # the masters' reset requests a_req (clk) and x_req (xclk) into uclk; the per-master holds (uclk)
-# into clk and xclk
+# into clk and xclk; the port-contract error c_err (uclk, sticky) into clk
 set_max_delay -datapath_only -from $c_clk -to [get_cells a_rs1_reg] $t_clk
 set_max_delay -datapath_only -from $c_xcl -to [get_cells x_rs1_reg] $t_xcl
 set_max_delay -datapath_only -from $c_ucl -to [get_cells a_hs1_reg] $t_ucl
 set_max_delay -datapath_only -from $c_ucl -to [get_cells x_hs1_reg] $t_ucl
+set_max_delay -datapath_only -from $c_ucl -to [get_cells e_s1_reg] $t_ucl
 
 # ---------------------------------------------------------------- write-accept counters (gray)
 # a_wacc (n_wdone) uclk -> clk, x_wacc (XDMA's B) uclk -> xclk
@@ -102,17 +104,22 @@ set_max_delay -datapath_only -from $c_ucl -through [get_pins -quiet -filter {DIR
 # RAM inputs), 124 CDC-1 (unknown: flip-flops through logic) and 59 CDC-15 (clock-enable
 # structures). All of them start at an input FIFO's RAM (u_aq / u_ad from clk, u_xq / u_xd from
 # xclk: the arbiter reads the heads asynchronously in uclk) and end in the uclk logic that takes a
-# head: the RAM inputs of the output write-data FIFO u_of and the tag FIFO u_tag (data, write
-# enables), the output command register (oc0, oc1, on), the arbiter (run, cur_x, rm_busy, rm_x),
-# the reads in flight (a_out, x_out), the four input FIFOs' read pointers and u_of's and u_tag's
-# write pointers. Safe by the pointer protocol: an entry is read only after the write pointer
-# that covers it has crossed (two uclk flip-flops after the source cycle that wrote it; the RAM
-# paths are limited to one uclk period above), and it is not rewritten until the read pointer
-# that frees it has crossed back. Every load of a head is qualified by its FIFO's registered
-# not-empty (a_ok / x_ok in go; rm_ok's heads are the ones its read was issued for), except oc0,
-# which also loads while the output command register is empty or emptying and is used only once
-# a push has loaded it (c_cmd_valid). An empty FIFO's head may be changing; it then reaches only
-# RAM data inputs whose write enables are low, arbiter terms that the not-empty masks, and oc0.
+# head: per port (g_port[*]) the RAM inputs of the output command queue u_oq, the output
+# write-data FIFO u_of and the tag FIFO u_tag (data, write enables), the output command register
+# (oc, oc_v) and the three FIFOs' write pointers; the arbiter (run, cur_x, rm_busy, rm_x), the
+# reads in flight and not yet in their FIFO (a_out, x_out, a_pend, x_pend), the read slots
+# (a_seq, x_seq), each master's commands in the output queues (a_nq, x_nq) and the four input
+# FIFOs' read pointers. (Two ports, ld-2port routed: the same kinds, 268 CDC-13, 152 CDC-1 and
+# 108 CDC-15 at the new endpoints before they were listed here.) Safe by the pointer protocol: an
+# entry is read only after the write pointer that covers it has crossed (two uclk flip-flops
+# after the source cycle that wrote it; the RAM paths are limited to one uclk period above), and
+# it is not rewritten until the read pointer that frees it has crossed back. Every load of a head
+# is qualified by its FIFO's registered not-empty (a_ok / x_ok in go; rm_ok's heads are the ones
+# its read was issued for), except oc, which also loads while its port's output command register
+# is empty or emptying and is used only once a push has loaded it (c_cmd_valid). An empty FIFO's
+# head may be changing; it then reaches only RAM data inputs whose write enables are low, arbiter
+# terms that the not-empty masks (the port, the head's bank bit, selects a port's room only
+# inside go), and oc.
 # Also waived: CDC-26, u_ar's head into n_rdata (every clk cycle; used only with n_rvalid, which
 # is the FIFO's not-empty), and CDC-6, the gray-coded counts (bus skew above). Not waived:
 # CDC-3 (information only), and the paths that leave the module: u_ar's and u_xr's heads are
@@ -120,10 +127,10 @@ set_max_delay -datapath_only -from $c_ucl -through [get_pins -quiet -filter {DIR
 # endpoints are XDMA's and need their waiver at the top). Each waiver names both ends of its
 # paths, so a new path from these RAMs into other logic is still reported.
 set w_src [get_pins -quiet -filter {IS_LEAF && REF_PIN_NAME == CLK} -of_objects [get_cells -quiet -hierarchical -filter {NAME =~ *u_aq/mem_reg* || NAME =~ *u_ad/mem_reg* || NAME =~ *u_xq/mem_reg* || NAME =~ *u_xd/mem_reg*}]]
-set w_ram [get_pins -quiet -filter {IS_LEAF && (REF_PIN_NAME == I || REF_PIN_NAME == WE)} -of_objects [get_cells -quiet -hierarchical -filter {NAME =~ *u_of/mem_reg* || NAME =~ *u_tag/mem_reg*}]]
-set w_ff  [get_pins -quiet -filter {DIRECTION == IN && REF_PIN_NAME != C} -of_objects [get_cells -quiet {oc0_reg[*] oc1_reg[*] on_reg[*] run_reg[*] cur_x_reg rm_busy_reg rm_x_reg a_out_reg[*] x_out_reg[*] u_aq/rbin_reg* u_aq/rgray_reg* u_ad/rbin_reg* u_ad/rgray_reg* u_xq/rbin_reg* u_xq/rgray_reg* u_xd/rbin_reg* u_xd/rgray_reg* u_of/wp_reg* u_tag/wp_reg*}]]
+set w_ram [get_pins -quiet -filter {IS_LEAF && (REF_PIN_NAME == I || REF_PIN_NAME == WE)} -of_objects [get_cells -quiet -hierarchical -filter {NAME =~ *u_oq/mem_reg* || NAME =~ *u_of/mem_reg* || NAME =~ *u_tag/mem_reg*}]]
+set w_ff  [get_pins -quiet -filter {DIRECTION == IN && REF_PIN_NAME != C} -of_objects [get_cells -quiet {g_port[*].oc_reg[*] g_port[*].oc_v_reg g_port[*].u_oq/wp_reg* g_port[*].u_of/wp_reg* g_port[*].u_tag/wp_reg* run_reg[*] cur_x_reg rm_busy_reg rm_x_reg a_out_reg[*] x_out_reg[*] a_pend_reg[*] x_pend_reg[*] a_seq_reg[*] x_seq_reg[*] a_nq_reg[*] x_nq_reg[*] u_aq/rbin_reg* u_aq/rgray_reg* u_ad/rbin_reg* u_ad/rgray_reg* u_xq/rbin_reg* u_xq/rgray_reg* u_xd/rbin_reg* u_xd/rgray_reg*}]]
 set w_ar  [get_pins -quiet -filter {IS_LEAF && REF_PIN_NAME == CLK} -of_objects [get_cells -quiet -hierarchical -filter {NAME =~ *u_ar/mem_reg*}]]
-set w_why "otpu_mem_ch: an input FIFO's head (distributed RAM, read asynchronously in uclk) into the uclk arbiter and output logic; read only after its write pointer crossed, not rewritten before the read pointer crossed back; loads qualified by the FIFO's registered not-empty (oc0's value: by c_cmd_valid)"
+set w_why "otpu_mem_ch: an input FIFO's head (distributed RAM, read asynchronously in uclk) into the uclk arbiter and output logic; read only after its write pointer crossed, not rewritten before the read pointer crossed back; loads qualified by the FIFO's registered not-empty (oc's value: by c_cmd_valid)"
 if {[llength $w_src] && [llength $w_ram]} {
   create_waiver -scoped -type CDC -id {CDC-13} -user "otpu_mem_ch" -description $w_why -from $w_src -to $w_ram
 }

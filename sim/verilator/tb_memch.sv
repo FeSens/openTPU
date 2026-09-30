@@ -1,9 +1,9 @@
 // Unit test of the memory channel path (rtl/boards/ypcb-00338: otpu_mem_ch, otpu_axi_split2,
 // otpu_afifo) in front of the controllers: two random native masters (the accelerator's side,
 // core clock), one per channel, and an XDMA master (128-bit AXI, axi_aclk) through the split onto
-// both channels; each channel's controller is a LiteDRAM native-port model (sys), which takes whole
-// beats only (otpu_mem_ch's read-modify-write). Three unrelated clocks (+cp= / +up= / +xp=: half
-// periods).
+// both channels; each channel's controller is a model of LiteDRAM's two native ports (sys; a
+// port per bank parity, the ports unordered against each other), which takes whole beats only
+// (otpu_mem_ch's read-modify-write). Three unrelated clocks (+cp= / +up= / +xp=: half periods).
 //
 // The native master runs a program of random runs of 1 to 32 beats over its window (reads or
 // writes, +wpct=P percent writes; +ppct=P percent of the write beats partial, with one byte, all
@@ -34,6 +34,9 @@
 // Throughput: +seq=1 (back-to-back 32-beat runs / 64-beat bursts through the window, no shared
 // operations); each master prints its data beats per cycle of its clock, from its first command
 // to its last read beat or write counted. Controller models: +axi_stall, +axi_lat, +ldn_busy.
+// The bridges' error bits (n_err) must stay clear; with +ldn_dual=N (both channel models return
+// a beat on both ports once, a broken controller; run with +verilator+error+limit+N so the
+// bridge's own check does not stop it) both must set, and the run ends there.
 // Prints "PASS" or the first mismatches.
 package tb_memch_pkg;
   // a shared beat's data: a hash of (channel, direction, beat)
@@ -107,12 +110,13 @@ module tb_memch #(
   logic [1:0][511:0] nwd, nrd;
   logic [1:0][63:0] nwm;
   logic [1:0][15:0] nwdone;
+  logic [1:0] nerr;
   logic [1:0][31:0] a2x_pub, x2a_pub;
   logic [1:0] adone, abad;
-  logic [1:0] ccv, ccr, ccwe, cwv, cwr, crv;
-  logic [1:0][24:0] cca;
-  logic [1:0][511:0] cwd, crd;
-  logic [1:0][63:0] cwe;
+  logic [1:0][1:0] ccv, ccr, ccwe, cwv, cwr, crv;     // [channel][port]
+  logic [1:0][1:0][24:0] cca;
+  logic [1:0][1:0][511:0] cwd, crd;
+  logic [1:0][1:0][63:0] cwe;
   // XDMA master -> split -> bridges
   logic xawv, xawr, xwv, xwr, xwl, xbv, xbr, xarv, xarr, xrv, xrr, xrl, xdone, xbad;
   logic [3:0] xawi, xbi, xari, xri;
@@ -139,7 +143,7 @@ module tb_memch #(
       .clk, .rst,
       .n_cvalid(ncv[c]), .n_cready(ncr[c]), .n_cwe(ncwe[c]), .n_caddr(nca[c]),
       .n_wvalid(nwv[c]), .n_wready(nwr[c]), .n_wdata(nwd[c]), .n_wmask(nwm[c]),
-      .n_rvalid(nrv[c]), .n_rdata(nrd[c]), .n_wdone(nwdone[c]),
+      .n_rvalid(nrv[c]), .n_rdata(nrd[c]), .n_wdone(nwdone[c]), .n_err(nerr[c]),
       .xclk, .xrst,
       .x_awvalid(cawv[c]), .x_awready(cawr[c]), .x_awid(xawi), .x_awaddr(xawa), .x_awlen(xawl),
       .x_wvalid(cwvx[c]), .x_wready(cwrx[c]), .x_wdata(xwd), .x_wstrb(xws), .x_wlast(xwl),
@@ -181,14 +185,24 @@ module tb_memch #(
     .m_arvalid(carv), .m_arready(carr),
     .m_rvalid(crvx), .m_rready(crrx), .m_rid(cri), .m_rdata(crdx), .m_rresp(crre), .m_rlast(crl));
 
-  // the end: every master done
-  longint tmax = 2000000;
+  // the end: every master done; or the error bits
+  longint tmax = 2000000, dual = 0;
   initial void'($value$plusargs("tmax=%d", tmax));
+  initial void'($value$plusargs("ldn_dual=%d", dual));
   always @(posedge clk) begin
+    if (dual == 0 && |nerr) begin
+      $display("FAIL n_err %b: a bridge saw its controller break the port contract", nerr);
+      $finish;
+    end
+    if (dual != 0 && &nerr) begin
+      $display("PASS cycles=%0d: both bridges' n_err set by the double beat", ccyc);
+      $finish;
+    end
     if (&adone && xdone) begin
       dump <= 1'b1;
       repeat (4) @(posedge clk);
-      $display("%s cycles=%0d", (|abad || xbad) ? "FAIL" : "PASS", ccyc);
+      if (dual != 0) $display("ERROR n_err %b after the double beat", nerr);
+      $display("%s cycles=%0d", (|abad || xbad || dual != 0) ? "FAIL" : "PASS", ccyc);
       $finish;
     end
     if (ccyc > tmax) begin
