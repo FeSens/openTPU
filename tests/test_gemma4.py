@@ -19,6 +19,7 @@ transformers = pytest.importorskip("transformers")
 pytest.importorskip("transformers.models.gemma4")
 
 REAL = Path(__file__).resolve().parent.parent / "models" / "gemma-4-E2B"
+REAL_E4B = REAL.parent / "gemma-4-E4B"
 # (two own sliding layers and a global one) x 2, a shared sliding one and two shared globals
 # (HF forces the last layer global): layers 6..8 read layer 4's (sliding) and 5's (global) K / V.
 # The layer loops: (s s f) x 2 with the two sliding layers a loop inside, s, then f x 2
@@ -201,6 +202,32 @@ def test_token_on_board_rtl_is_bit_exact(have_verilator, tiny, resident):
     assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])
 
 
+@pytest.mark.parametrize("resident", [False, True], ids=["per-position", "resident"])
+def test_ple_on_host_is_bit_exact(tiny, resident, monkeypatch):
+    """The PLE table on the host (docs/gemma4_e4b.md): the image holds a slot that the Engine
+    writes the run's records into (Image.host_rows, from the host's store) before each prefill
+    run and step, and the gathers read it at the row. Logits and caches equal those of the
+    table on the card, bit for bit."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(7).integers(0, 1000, 36)]
+    engs = []
+    for host in ("0", "1"):
+        monkeypatch.setenv("OTPU_PLE_HOST", host)
+        engs.append(Engine(spec, W, cap=1024, cfg=_cfg(), wformat="fp4", head_format="int8",
+                           resident=resident))
+    a, b = engs
+    assert b.image.ple_host and not a.image.ple_host and b.resident == resident
+    assert b.image.ple_store.shape == (spec.vocab, b.image.ple_rec)
+    assert b.image.nbytes < a.image.nbytes - (spec.vocab - b.image.rows) * b.image.ple_rec + 4096
+    assert np.array_equal(a.prefill(toks[:30], chunk=4), b.prefill(toks[:30], chunk=4))
+    for t in toks[30:]:
+        assert np.array_equal(a.step(t), b.step(t))
+    lo, hi = a.image.layer0, a.image.head[0]
+    assert (lo, hi) == (b.image.layer0, b.image.head[0])
+    assert np.array_equal(a.backend.machine.slices[0].dram[lo:hi],
+                          b.backend.machine.slices[0].dram[lo:hi])
+
+
 def test_one_sequence_one_slice(tiny):
     _, W, spec = tiny
     with pytest.raises(ValueError, match="one sequence"):
@@ -223,3 +250,17 @@ def test_real_model_programs_fit():
         assert len(ra) == 6
     with pytest.raises(CompileError, match="TMEM"):
         img.compile_rows([(0, p) for p in range(8)], [7])
+
+
+@pytest.mark.skipif(not (REAL_E4B / "config.json").exists(), reason="no models/gemma-4-E4B")
+def test_e4b_programs_fit():
+    """Gemma 4 E4B on the board: with fp4 layers and the int8 head its PLE table does not fit
+    beside them in either format, so the image keeps it on the host (int8 records) and fits
+    4 GiB at 2048 tokens; the resident decode programs fit IMEM with 6 argument words."""
+    spec = G.Spec.from_hf(REAL_E4B)
+    img = spec.image(board_config(), 2048, 1, 8, "fp4", "int8", lookup=True)
+    assert img.ple_host and img.ple_format == "int8" and img.nbytes < 3 << 30
+    for blocks in (1, 8):
+        progs, ra = img.compile_decode(blocks, (blocks - 1) * img.block)
+        assert 8 * len(progs[0]) <= board_config().IMEM_WORDS
+        assert len(ra) == 6

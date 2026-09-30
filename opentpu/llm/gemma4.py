@@ -173,8 +173,9 @@ class Spec:
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
-              ple_format: str | None = None) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, ple_format)
+              ple_format: str | None = None, ple_host: bool | None = None) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, ple_format,
+                     ple_host=ple_host)
 
     def truncated(self, layers) -> "Spec":
         """A model of some of the checkpoint's layers (in order): each shared layer attends to
@@ -514,26 +515,36 @@ class Image:
 
     Formats: `wformat` for the layers' projections and the PLE projection, `head_format` for
     the LM head (the embedding table too), `ple_format` for the PLE table ("int8", "int4",
-    "fp4"; None: OTPU_PLE_FORMAT, else int8 if the image then fits 4 GiB, else fp4).
+    "fp4"). `ple_host`: the PLE table stays on the host (docs/gemma4_e4b.md): the image holds a
+    slot of `rows` records, which the host writes before each run (host_rows; the records of
+    the run's tokens, read from ple_store, which build fills) and the gathers read at the row.
+    None for either (and OTPU_PLE_FORMAT / OTPU_PLE_HOST unset): the table on the card in int8
+    if the image then fits 4 GiB, else in fp4, else on the host in int8.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
-                 ple_format: str | None = None, block: int = ATTN_BLOCK):
+                 ple_format: str | None = None, block: int = ATTN_BLOCK,
+                 ple_host: bool | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Gemma 4 runs one sequence: batch=1")
         if cap % block:
             raise ValueError(f"KV capacity must be a multiple of the attention block {block}")
+        import os
         if ple_format is None:
-            import os
             ple_format = os.environ.get("OTPU_PLE_FORMAT")
-        if ple_format is None:
-            ple_format = "int8"
-            probe = Image(spec, replace(cfg, DRAM_BYTES=1 << 40), cap, 1, rows, wformat,
-                          head_format, lookup, "int8", block)
-            if probe.nbytes > 1 << 32:
-                ple_format = "fp4"
+        if ple_host is None and os.environ.get("OTPU_PLE_HOST") is not None:
+            ple_host = os.environ["OTPU_PLE_HOST"] == "1"
+        if ple_format is None or ple_host is None:
+            opts = [(f, h) for h in ([False, True] if ple_host is None else [ple_host])
+                    for f in (["int8", "fp4"] if ple_format is None else [ple_format])
+                    if not (h and f != "int8" and ple_format is None)]
+            for ple_format, ple_host in opts:           # the first that fits (else the last)
+                if Image(spec, replace(cfg, DRAM_BYTES=1 << 40), cap, 1, rows, wformat,
+                         head_format, lookup, ple_format, block, ple_host).nbytes <= 1 << 32:
+                    break
+        self.ple_host = bool(ple_host)
         D, H, P, L = cfg.D, spec.hidden, spec.ple_dim, spec.layers
         self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, rows
         # prefill rows per run: an MM streams its weights once per ACT RAM row chunk
@@ -612,7 +623,8 @@ class Image:
             b.next = base + reps * us
         self.head = (b.alloc(spec.vocab * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * spec.vocab * (H // D)))
-        self.ple = b.alloc(spec.vocab * self.ple_rec)
+        self.ple = b.alloc((rows if self.ple_host else spec.vocab) * self.ple_rec)
+        self.ple_store = None           # ple_host: [vocab, ple_rec] uint8, filled by build
         self.lookup = {}
         if lookup:
             fmts = sorted({"int8" if self.head_format == "int8" else "4bit",
@@ -695,14 +707,20 @@ class Image:
             e = min(spec.vocab, r + HEAD_CHUNK)
             tasks.append(((self.head[0] + r * rb, self.head[1] + r * 4 * (H // D)),
                           ("mat", head, ("rowrange", r, e), 1.0, self.head_format, D)))
+        if self.ple_host:                               # the host's store: record t at t rec
+            self.ple_store = np.zeros((spec.vocab, self.ple_rec), np.uint8)
         for r in range(0, spec.vocab, PLE_CHUNK):
             e = min(spec.vocab, r + PLE_CHUNK)
-            tasks.append(((self.ple + r * self.ple_rec,),
+            tasks.append(((-1 - r if self.ple_host else self.ple + r * self.ple_rec,),
                           ("ple", Weights.PLE, ("rowrange", r, e), tuple(self._cols()),
                            self.ple_format, D, self.ple_S, (P / 2) ** 0.5)))
         for (addrs, _), arrays in zip(tasks, _run_tasks(W, [t for _, t in tasks], jobs)):
             for addr, arr in zip(addrs, arrays):
-                put(addr, arr)
+                if addr < 0:                            # PLE records from row -1 - addr
+                    v = np.ascontiguousarray(arr).view(np.uint8).reshape(-1, self.ple_rec)
+                    self.ple_store[-1 - addr:-1 - addr + len(v)] = v
+                else:
+                    put(addr, arr)
         if self.lookup:
             lk = self.lookup
             put(lk["rope_t"], np.concatenate(
@@ -748,6 +766,16 @@ class Image:
                                 self.ple_format, D, self.ple_S)
         return [(self.io["x"], np.array(es, np.float32)), (self.io["pe"], pe),
                 (self.io["rope"], self.rope_rows(positions))]
+
+    def host_rows(self, tokens) -> list:
+        """The writes of a run's rows from the tables the host keeps, before the run: with
+        ple_host, the tokens' PLE records into the slot (data movement: records ple_store holds
+        in the card's format). [] with every table on the card."""
+        if not self.ple_host:
+            return []
+        if len(tokens) > self.rows:
+            raise ValueError(f"{len(tokens)} tokens, the PLE slot holds {self.rows}")
+        return [(self.ple, self.ple_store[[int(t) for t in tokens]].reshape(-1))]
 
     # ---- programs
     def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):
@@ -846,7 +874,7 @@ class Image:
         ns = SimpleNamespace(
             spec=spec, layer=layer, runs=self.runs, subs=self.subs, rows=R, block=self.block,
             ring=self.ring, rw=self.rw, S=self.ple_S, ple_format=self.ple_format,
-            head_format=self.head_format,
+            head_format=self.head_format, ple_host=self.ple_host,
             x=_tdesc(self.io["x"], (R, H)), pe=_tdesc(self.io["pe"], (R, self.ple_S * D)),
             rope=_tdesc(self.io["rope"], (R, self.rw)), g_final=_tdesc(self.io["gf"], (H,)),
             g_pln=_tdesc(self.io["g_pln"], (P,)),
@@ -857,7 +885,8 @@ class Image:
             wproj=_qdesc(*self.wproj, L * P, H, D, fm),
             head=_qdesc(*self.head, spec.vocab, H, D, self.head_format), v_loc=spec.vocab,
             ple=QTensor(Affine(self.ple), Affine(self.ple + self.ple_S * (
-                D if self.ple_format == "int8" else D // 2)), (spec.vocab, self.ple_S * D),
+                D if self.ple_format == "int8" else D // 2)),
+                (R if self.ple_host else spec.vocab, self.ple_S * D),
                 self.ple_rec, self.ple_rec, D, wf=Q.mxu_wf(self.ple_format)))
         if self.lookup:
             lk = self.lookup
@@ -1145,7 +1174,8 @@ def _gathered(m, pos):
         return ops[f]
 
     e = GA.gather_row(op(m.head_format), m.head, pos.tok, m.head_format)
-    pe = GA.gather_record(op(m.ple_format), m.ple, pos.tok, m.ple_format, m.S)
+    pe = GA.gather_record(op(m.ple_format), m.ple, 0 if m.ple_host else pos.tok, m.ple_format,
+                          m.S)                          # ple_host: the slot's row
     ops.clear()
     ropes = ol.load(m.rope_t[pos.pos:pos.pos + 1, :])       # [1, rw]
     tp = ol.load(m.iota[pos.tpos:pos.tpos + 1])             # [1]: tpos as a float
@@ -1169,7 +1199,8 @@ def _gathered_rows(m, tokens):
             if tab == "head":
                 e[r, :].set(GA.gather_row(oh, m.head, t, fmt))
             else:
-                ol.store(m.pe[r, :], GA.gather_record(oh, m.ple, t, fmt, m.S))
+                ol.store(m.pe[r, :], GA.gather_record(oh, m.ple, r if m.ple_host else t, fmt,
+                                                      m.S))
         del oh
     return e
 

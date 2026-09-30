@@ -1236,6 +1236,9 @@ class Engine:
         # embedding rows and the RoPE rows of a table computed once, here
         self.device_inputs = bool(getattr(self.image, "lookup", None))
         self.embed = Embedding(spec, W, self.cfg.D)
+        # rows of tables the host keeps (Gemma 4 E4B's PLE records): read from the image's
+        # store and written before each run, data movement only
+        self._host_rows = getattr(self.image, "host_rows", None)
         self._rope = None if self.device_inputs else \
             [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         images = self.image.build(W)
@@ -1400,6 +1403,7 @@ class Engine:
             kw = {"args": arg_words(ra, RunPos.values(int(token), self.pos,
                                                       getattr(self.spec, "conv_k", 1),
                                                       self.block))}
+        self._write_host_rows([token])
         start = getattr(self.backend, "start", None)
         v_loc = self.image.v_loc
         vocab = S * v_loc
@@ -1456,6 +1460,12 @@ class Engine:
                               self.image.compile_rows(rows, logit_rows, self.block,
                                                       **self._tokens_kw(tokens)))
 
+    def _write_host_rows(self, tokens) -> None:
+        if self._host_rows is not None:
+            for a, v in self._host_rows(tokens):
+                for s in range(self.cfg.S):
+                    self.backend.write(s, a, v)
+
     def _tokens_kw(self, tokens) -> dict:
         """compile_rows' tokens, with device inputs (the host writes none)."""
         return {"tokens": [int(t) for t in tokens]} if self.device_inputs else {}
@@ -1471,6 +1481,7 @@ class Engine:
                 self.backend.write(s, io["x"], x)
                 self.backend.write(s, io["cos"], self._rope[0][ps])
                 self.backend.write(s, io["sin"], self._rope[1][ps])
+        self._write_host_rows(tokens)
         st = self.backend.run(programs)
         st["rows"] = len(rows)
         self.stats.append(st)
