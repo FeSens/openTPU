@@ -46,7 +46,18 @@ module otpu_native_mem #(
   output logic [1:0][15:0]      n_wdone,
   input  logic                  dump
 );
-  logic [31:0] mem [WORDS];
+  // the image's words: word i is mem_lo[i] below H, else mem_hi[i - H] (two arrays, as Verilator
+  // takes at most 2^28 entries in one: 1 GiB each); a beat (16 words) is in one of them
+  localparam int H = WORDS / 2;
+  logic [31:0] mem_lo [H];
+  logic [31:0] mem_hi [WORDS - H];
+  function automatic logic [31:0] rdw(input int i);
+    return i < H ? mem_lo[i] : mem_hi[i - H];
+  endfunction
+  task automatic wrw(input int i, input logic [31:0] v);
+    if (i < H) mem_lo[i] = v;
+    else mem_hi[i - H] = v;
+  endtask
   int stall = 0;
   int bw = 100;
   int lat = LAT;
@@ -169,7 +180,8 @@ module otpu_native_mem #(
             logic [63:0] s;
             s = wq_m[c][0];
             for (int k = 0; k < 64; k++)
-              if (s[k]) mem[b + k / 4][8 * (k % 4) +: 8] <= wq_d[c][0][8 * k +: 8];
+              if (s[k] && b < H) mem_lo[b + k / 4][8 * (k % 4) +: 8] <= wq_d[c][0][8 * k +: 8];
+              else if (s[k]) mem_hi[b - H + k / 4][8 * (k % 4) +: 8] <= wq_d[c][0][8 * k +: 8];
             t = cyc;
             if (dram != 0) begin
               if (s != '1) t = dram_slot(c, cq[c][0].m, 1'b0, cyc) + trmw;
@@ -184,7 +196,7 @@ module otpu_native_mem #(
             n_wr[c]++;
           end else begin
             logic [511:0] d;
-            for (int k = 0; k < 16; k++) d[32 * k +: 32] = mem[b + k];
+            for (int k = 0; k < 16; k++) d[32 * k +: 32] = rdw(b + k);
             t = (dram != 0 ? dram_slot(c, cq[c][0].m, 1'b0, cyc) : cyc) + lat + ($urandom % 8);
             if (t < rlast) t = rlast;
             rlast = t;
@@ -243,12 +255,14 @@ module otpu_native_mem #(
       int seed;
       if ($value$plusargs("axi_seed=%d", seed)) void'($urandom(seed));
     end
-    for (int i = 0; i < WORDS; i++) mem[i] = '0;
+    for (int i = 0; i < H; i++) mem_lo[i] = '0;
+    for (int i = 0; i < WORDS - H; i++) mem_hi[i] = '0;
     if ($value$plusargs("dir=%s", dir)) begin
       if (PHYS == 0) begin
         fd = $fopen($sformatf("%s/dram_%0d.bin", dir, SID), "rb");
         if (fd != 0) begin
-          nread = $fread(mem, fd);
+          nread = $fread(mem_lo, fd);  // the second continues where the first stopped
+          nread = $fread(mem_hi, fd);
           $fclose(fd);
         end
       end else begin
@@ -260,7 +274,7 @@ module otpu_native_mem #(
             nread = $fread(chm, fd);
             $fclose(fd);
           end
-          for (int j = 0; j < WORDS / 2; j++) mem[lbeat(j / 16, c) * 16 + j % 16] = chm[j];
+          for (int j = 0; j < WORDS / 2; j++) wrw(lbeat(j / 16, c) * 16 + j % 16, chm[j]);
         end
       end
     end
@@ -278,12 +292,12 @@ module otpu_native_mem #(
     end
     if (PHYS == 0) begin
       fd = $fopen($sformatf("%s/dram_out_%0d.bin", dir, SID), "wb");
-      for (int i = 0; i < WORDS; i++) $fwrite(fd, "%u", mem[i]);
+      for (int i = 0; i < WORDS; i++) $fwrite(fd, "%u", rdw(i));
       $fclose(fd);
     end else begin
       for (int c = 0; c < 2; c++) begin
         fd = $fopen($sformatf("%s/ch%0d_out.bin", dir, c), "wb");
-        for (int j = 0; j < WORDS / 2; j++) $fwrite(fd, "%u", mem[lbeat(j / 16, c) * 16 + j % 16]);
+        for (int j = 0; j < WORDS / 2; j++) $fwrite(fd, "%u", rdw(lbeat(j / 16, c) * 16 + j % 16));
         $fclose(fd);
       end
     end
