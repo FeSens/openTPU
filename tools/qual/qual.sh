@@ -118,7 +118,7 @@ run "refs cfg" $P tools/qual/refs.py cfg "$OUT/cfg.pkl" --name "$NAME" | cut -c1
 MODELS=1; models_ok || MODELS=0
 
 if [ $MODELS = 1 ]; then phase "references (background)"
-  ( $P tools/qual/refs.py compute "$OUT/cfg.pkl" > "$OUT/refs.log" 2>&1; echo "refs exit $?" >> "$OUT/refs.log" ) &
+  ( $P tools/qual/refs.py compute "$OUT/cfg.pkl" --runs $RUNS > "$OUT/refs.log" 2>&1; echo "refs exit $?" >> "$OUT/refs.log" ) &
   sleep 3; head -8 "$OUT/refs.log"
 fi
 
