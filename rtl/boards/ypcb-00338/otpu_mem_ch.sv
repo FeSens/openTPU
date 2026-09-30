@@ -165,6 +165,17 @@ module otpu_mem_ch #(
   endfunction
 
   // ================================================================ resets
+  // The controller's reset (urst: the core's sys reset register, which drives both channels'
+  // bridges and the core's own loads) registered once here (keep), by this channel's bridge; the
+  // bridge's controller side takes it (urq), a cycle after the controller. In the fused c2830d6
+  // build at 133.33 MHz, crg_rst1 -> u_ch0 g_port[*].u_oq wp / rp R (fanout 500, 0 levels,
+  // 6.6 ns of route, +0.059) was the worst path. The cycle in which the controller is out of
+  // reset and the bridge not: every master is held (the holds last 15 cycles past urq), so no
+  // command enters the queues, and the controller, reset with no reads, returns no data (checked
+  // below); on the way in, the bridge runs a cycle into the controller's reset, and what it
+  // queues then goes with its own reset a cycle later.
+  (* keep = "true" *) logic urq = 1'b1;
+  always_ff @(posedge uclk) urq <= urst;
   (* ASYNC_REG = "TRUE" *) logic a_rs1, a_rs2, x_rs1, x_rs2;    // master resets in uclk
   (* ASYNC_REG = "TRUE" *) logic a_hs1 = 1'b1, a_hs2 = 1'b1;     // holds in the masters' clocks
   (* ASYNC_REG = "TRUE" *) logic x_hs1 = 1'b1, x_hs2 = 1'b1;
@@ -179,11 +190,11 @@ module otpu_mem_ch #(
   always_ff @(posedge uclk) begin
     a_rs1 <= a_req; a_rs2 <= a_rs1;
     x_rs1 <= x_req; x_rs2 <= x_rs1;
-    a_hcnt <= (urst || a_rs2) ? 4'hF : (a_hcnt != 0) ? a_hcnt - 1'b1 : a_hcnt;
-    x_hcnt <= (urst || x_rs2) ? 4'hF : (x_hcnt != 0) ? x_hcnt - 1'b1 : x_hcnt;
-    a_hold <= urst || a_rs2 ||
+    a_hcnt <= (urq || a_rs2) ? 4'hF : (a_hcnt != 0) ? a_hcnt - 1'b1 : a_hcnt;
+    x_hcnt <= (urq || x_rs2) ? 4'hF : (x_hcnt != 0) ? x_hcnt - 1'b1 : x_hcnt;
+    a_hold <= urq || a_rs2 ||
               (a_hold && (a_hcnt != 0 || a_out != 0 || (rm_busy && !rm_x) || a_oc));
-    x_hold <= urst || x_rs2 ||
+    x_hold <= urq || x_rs2 ||
               (x_hold && (x_hcnt != 0 || x_out != 0 || (rm_busy && rm_x) || x_oc));
   end
   // A reset shorter than the round trip through the synchronizers would otherwise release the
@@ -429,7 +440,7 @@ module otpu_mem_ch #(
   assign rm_ret = rv && rtag[TW-1];
   assign rm_ok  = rm_ret && (rm_x ? !x_hold : !a_hold);
   always_ff @(posedge uclk) begin
-    if (urst) rm_busy <= 1'b0;
+    if (urq) rm_busy <= 1'b0;
     else if (go && rmw) rm_busy <= 1'b1;
     else if (rm_ret) rm_busy <= 1'b0;
     if (go && rmw) rm_x <= pick_x;
@@ -459,10 +470,10 @@ module otpu_mem_ch #(
     assign oq_wv[p] = (go || rm_ok) && tp == 1'(p);
     assign byp      = oq_wv[p] && !oq_rv && (!oc_v || c_cmd_ready[p]);
     assign oq_rr    = oq_rv && (!oc_v || c_cmd_ready[p]);
-    otpu_sfifo #(.W(27), .DEPTH(OQ)) u_oq (.clk(uclk), .rst(urst), .wvalid(oq_wv[p] && !byp),
+    otpu_sfifo #(.W(27), .DEPTH(OQ)) u_oq (.clk(uclk), .rst(urq), .wvalid(oq_wv[p] && !byp),
       .wready(oq_wr[p]), .wdata(ocn), .rvalid(oq_rv), .rready(oq_rr), .rdata(oq_rd));
     always_ff @(posedge uclk) begin
-      if (urst) oc_v <= 1'b0;
+      if (urq) oc_v <= 1'b0;
       else if (!oc_v || c_cmd_ready[p]) oc_v <= oq_rv || byp;
       if (!oc_v || c_cmd_ready[p]) oc <= oq_rv ? oq_rd : ocn;
     end
@@ -476,12 +487,12 @@ module otpu_mem_ch #(
     assign opc_x[p] = opop[p] && oc[25];
 
     assign of_wv[p] = ((go && we && !rmw) || rm_ok) && tp == 1'(p);
-    otpu_sfifo #(.W(512), .DEPTH(OD)) u_of (.clk(uclk), .rst(urst), .wvalid(of_wv[p]),
+    otpu_sfifo #(.W(512), .DEPTH(OD)) u_of (.clk(uclk), .rst(urq), .wvalid(of_wv[p]),
       .wready(of_wr[p]), .wdata(of_wd), .rvalid(c_wdata_valid[p]), .rready(c_wdata_ready[p]),
       .rdata(c_wdata_data[p]));
     assign c_wdata_we[p] = '1;
 
-    otpu_sfifo #(.W(TW), .DEPTH(128)) u_tag (.clk(uclk), .rst(urst),
+    otpu_sfifo #(.W(TW), .DEPTH(128)) u_tag (.clk(uclk), .rst(urq),
       .wvalid(go && (!we || rmw) && tp == 1'(p)), .wready(tg_wr[p]),
       .wdata({rmw, pick_x, pick_x ? ASW'(x_seq) : a_seq}), .rvalid(tg_rv[p]),
       .rready(c_rdata_valid[p]), .rdata(tg_rd[p]));
@@ -500,7 +511,7 @@ module otpu_mem_ch #(
   assign xr_wd   = rdat;
 
   always_ff @(posedge uclk) begin
-    if (urst) begin
+    if (urq) begin
       cur_x <= 1'b0; run <= '0; a_out <= '0; x_out <= '0; a_nq <= '0; x_nq <= '0;
     end else begin
       if (go) begin
@@ -536,7 +547,7 @@ module otpu_mem_ch #(
   logic c_err = 1'b0;
   (* ASYNC_REG = "TRUE" *) logic e_s1 = 1'b0, e_s2 = 1'b0;
   always_ff @(posedge uclk)
-    if (urst) c_err <= 1'b0;
+    if (urq) c_err <= 1'b0;
     else if (&c_rdata_valid || |(c_rdata_valid & ~tg_rv)) c_err <= 1'b1;
   always_ff @(posedge clk) begin
     e_s1 <= c_err; e_s2 <= e_s1;
@@ -547,7 +558,12 @@ module otpu_mem_ch #(
   // read data comes from one port at a time and always finds a tag and a free slot (the credits);
   // the merged write finds room (the arbiter has stopped since the read, whose own command has
   // left the queue)
-  always_ff @(posedge uclk) if (!urst) begin
+  // the cycle the bridge's controller side is still in reset and the controller is not (urq
+  // after urst): no command enters the queues, and the controller returns no read data
+  always_ff @(posedge uclk)
+    if (urq && !urst && (go || rm_ok || |oq_wv || |of_wv || |c_rdata_valid))
+      $fatal(1, "otpu_mem_ch: a queue write or read data in the bridge's last reset cycle");
+  always_ff @(posedge uclk) if (!urq) begin
     if (&c_rdata_valid) $error("otpu_mem_ch: read data from both ports in one cycle");
     if (go != (!rm_busy && (pick_x ? x_ok : a_ok) && oq_wr[tp] && (!we || of_wr[tp])))
       $error("otpu_mem_ch: go is not the chosen head's");
