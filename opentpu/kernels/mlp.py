@@ -15,8 +15,9 @@ def _chunk(f_loc: int, D: int, q: int | None = None) -> int:
     return c
 
 
-def swiglu_down(xs, w_gate, w_up, w_down, chunk=None):
-    """This slice's output columns of W_down( silu(W_gate x) * (W_up x) ), x quantized in `xs`.
+def swiglu_down(xs, w_gate, w_up, w_down, chunk=None, act=silu):
+    """This slice's output columns of W_down( act(W_gate x) * (W_up x) ), x quantized in `xs`
+    (act: SiLU, or e.g. lib.gelu_tanh for Gemma's GeGLU).
 
     Weights are sharded by rows: slice s owns F range s of gate/up and rows (output columns)
     s of the down projection. See `mlp` for the pipelining.
@@ -36,7 +37,7 @@ def swiglu_down(xs, w_gate, w_up, w_down, chunk=None):
         g, u = nxt
         if i + 1 < len(starts):
             nxt = gate_up(starts[i + 1])                # MXU streams ahead while the VPU works
-        a = ol.all_gather(silu(g) * u)                  # [M, S*C]: chunk c of every slice
+        a = ol.all_gather(act(g) * u)                   # [M, S*C]: chunk c of every slice
         for t in ol.static_range(S):
             cols = w_down[:, t * f_loc + c0:t * f_loc + c0 + C]
             at = a[:, t * C:(t + 1) * C]
