@@ -49,6 +49,11 @@ SCEN = {
     "fastcore": ["+cp=300", "+up=500", "+xp=450"],
     "slowcore": ["+cp=700", "+up=300", "+xp=600"],
     "shared": ["+psh=40", "+psp=40"],
+    # the same at other seeds: whether one seed's traffic catches a mutation can depend on the
+    # simulator's random numbers (mutation 8 is caught at the default seed by Verilator 5.047, not
+    # by 5.046; at these seeds by both)
+    "shared21": ["+psh=40", "+psp=40", "+seed=21"],
+    "shared22": ["+psh=40", "+psp=40", "+seed=22"],
     "long": ["+ntx=3000"],
     "seqrd": ["+seq=1", "+wpct=0"],
     "seqwr": ["+seq=1", "+wpct=100"],
@@ -139,7 +144,7 @@ MUT = [
        "if (a_crst) begin a_wacc_s1 <= '0; a_wacc_s2 <= '0; n_wdone <= '0; mu_c <= '0; mu_d <= '0; end"),
       ("n_wdone <= g2b(a_wacc_s2); end",
        "mu_c <= mu_c + 16'(aq_wv && n_cwe); mu_d <= mu_d + 16'(ad_wv); n_wdone <= (mu_c < mu_d) ? mu_c : mu_d; end")],
-     ["shared", "default"]),
+     ["shared", "shared21", "shared22", "default"]),
     # the core issues reads no faster than it drains them, so a 64-beat FIFO does not fill without
     # credits in any traffic here (ARD 16 does, above); the slot check still sees it: a read holds
     # its slot from its issue (a_pend), and more than 64 are then outstanding
