@@ -506,8 +506,8 @@ def _sink(b, m, g, samp, st, pos, consts, debug):
 
 def _token_end(b, g, st, pos, spec, block, samp, sink, tok, split: bool = False) -> None:
     """The token to out[p + 1], HALT at a stop, the next token's state in st: tok, the
-    run-time variables the step used (tpos always in a split program: its chain follows it),
-    the tokens left."""
+    run-time variables the step used (in a split program's second part every one: the step
+    ran in the first part, and the chain follows tpos), the tokens left."""
     ol.store(g.out[pos.pos + 1:pos.pos + 2], tok)
     if samp is not None:
         sink.after(tok)
@@ -524,7 +524,7 @@ def _token_end(b, g, st, pos, spec, block, samp, sink, tok, split: bool = False)
     # the next token's state
     rl = rules(spec, block)
     st[S_TOK:S_TOK + 1].set(tok)
-    used = {v.name for v, _ in b.run_seen} | ({"tpos"} if split else set())
+    used = set(SLOT) if split else {v.name for v, _ in b.run_seen}
     for name, slot in SLOT.items():
         rule = rl[name]
         if rule is None or name not in used:

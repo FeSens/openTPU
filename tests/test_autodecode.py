@@ -450,8 +450,8 @@ def test_sampled_generate_matches_the_reference_pick(tiny, S, temperature, top_k
     name, W, spec = tiny
     if name != "qwen3" and (S, top_k) != (1, 5):
         pytest.skip("the other models: one case")
-    if split and (S, top_k) != (2, 5):
-        pytest.skip("split programs: one case")
+    if split and top_k != 5:
+        pytest.skip("split programs: one case per model")
     cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S)
     a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
     a.gen_split = split
