@@ -151,3 +151,34 @@ def test_the_card_generates_with_streamed_experts(tiny, embed):
     misses = a.server.misses
     assert a.generate_card(t0, 12, stop_ids=[]) == ref
     assert a.server.misses > misses
+
+
+def test_moe_on_board_model(tiny, have_verilator):
+    """The MoE block on the RTL (WAITW: CAPS bit31) through the host driver: every expert
+    resident and `served` past any request, so each layer's fence and directory waits hold at
+    their first read and no host serves (the board model runs a script, with no host during a
+    run). Per-position programs (positions 0, 1), then the resident decode, then the card's
+    generate loop: the ISA simulator's logits and tokens bit for bit."""
+    from opentpu.host.board import Board, BoardBackend, SimTransport
+    from opentpu.isasim import board_config
+    _, W, spec = tiny
+    cfg = board_config(DRAM_BYTES=1 << 24)
+    tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
+    if not Board(tr).info()["caps"].get("waitw"):
+        pytest.skip("the RTL has no WAITW (CAPS bit31)")
+    isa = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True)
+    brd = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr))
+    assert brd.resident and brd.can_generate and brd.server.misses == 0
+    L = brd.image.offload
+    brd.backend.write(0, L.served, np.array([3e38], np.float32))
+    for tok in (11, 222, 333, 444):
+        a, b = isa.step(tok), brd.step(tok)
+        assert np.array_equal(a.view(np.uint32), b.view(np.uint32)), brd.pos
+    t0 = int(np.argmax(a))
+    seq = int(brd.backend.read(0, L.mbox, 4).view(np.float32)[0])
+    assert seq == 4 * len(L.slots)             # every MoE layer posted, every token
+    assert brd.generate_card(t0, 4, stop_ids=[]) == isa.generate_card(t0, 4, stop_ids=[])
+    assert isa.server.misses == 0 and brd.stats[-1]["cycles"] > 0
+    progs = brd.backend.last[0]     # the generate program: per MoE block its fence and the
+    assert sum(i.op == 0x07 for i in progs[0]) >= 3     # hits' and misses' directory waits
