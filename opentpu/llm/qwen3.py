@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -96,20 +97,58 @@ class Spec:
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup)
 
 
-def load_weights(model_dir) -> dict:
-    """All tensors of a HF safetensors checkpoint as fp32 numpy arrays. Of a multimodal
-    checkpoint (Qwen3.5) only the language model is loaded, under the names of a text-only one
-    (model.language_model.* -> model.*): not the vision tower or the multi-token prediction
-    layers."""
-    import torch
-    from safetensors.torch import load_file
-    out = {}
-    for f in sorted(Path(model_dir).glob("*.safetensors")):
-        for k, v in load_file(str(f)).items():
-            if k.startswith(("model.visual.", "mtp.")):
-                continue
-            out[k.replace("model.language_model.", "model.", 1)] = v.to(torch.float32).numpy()
-    return out
+class Weights(Mapping):
+    """The tensors of a HF safetensors checkpoint, read and converted to fp32 numpy arrays
+    when first used (load_weights): a multi-billion-parameter model is never all in memory in
+    fp32 (LFM2-2.6B: 10 GB), the image build converts one tensor at a time. Tensors of at most
+    CACHE bytes stay cached (norms, conv taps: read per token by the references), and the
+    last larger one (the embedding table a reference indexes per token)."""
+
+    CACHE = 16 << 20
+
+    def __init__(self, model_dir):
+        from safetensors import safe_open
+        self._files, self._where = [], {}
+        for f in sorted(Path(model_dir).glob("*.safetensors")):
+            h = safe_open(str(f), framework="pt")
+            self._files.append(h)
+            for k in h.keys():
+                if k.startswith(("model.visual.", "mtp.")):
+                    continue
+                self._where[k.replace("model.language_model.", "model.", 1)] = (h, k)
+        self._small: dict = {}
+        self._big: tuple | None = None
+
+    def __getitem__(self, name) -> np.ndarray:
+        if name in self._small:
+            return self._small[name]
+        if self._big is not None and self._big[0] == name:
+            return self._big[1]
+        import torch
+        h, k = self._where[name]
+        v = h.get_tensor(k).to(torch.float32).numpy()
+        if v.nbytes <= self.CACHE:
+            self._small[name] = v
+        else:
+            self._big = (name, v)
+        return v
+
+    def __iter__(self):
+        return iter(self._where)
+
+    def __len__(self) -> int:
+        return len(self._where)
+
+    def __contains__(self, name) -> bool:
+        return name in self._where
+
+
+def load_weights(model_dir) -> Weights:
+    """All tensors of a HF safetensors checkpoint as fp32 numpy arrays, converted when first
+    used (Weights). Of a multimodal checkpoint (Qwen3.5) only the language model is loaded,
+    under the names of a text-only one (model.language_model.* -> model.*): not the vision
+    tower or the multi-token prediction layers."""
+    return Weights(model_dir)
 
 
 def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:

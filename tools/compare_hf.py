@@ -1,7 +1,7 @@
 """Greedy decoding on the ISA simulator vs Hugging Face (fp32), prompt by prompt.
 
     python3 tools/compare_hf.py [--model qwen3|lfm2|qwen35|DIR] [--tokens 16] [--chat] [--emulate]
-                                [prompt ...]
+                                [--cfg board|CFG.pkl] [--wformat F] [--head-format F] [prompt ...]
 
 For each prompt: the two continuations, the first token where they differ with Hugging Face's
 logit gap there, and the device's logit error against Hugging Face's logits over the steps
@@ -9,7 +9,10 @@ with the same context (max |difference| and the lowest cosine of the logit vecto
 wraps each prompt in the model's chat template (a user turn). --emulate also runs the model's
 `emulated_logits` (float64 with openTPU's int8 quantization points and none of its rounding)
 at the first difference, to tell quantization effects (the emulation agrees with the device)
-from kernel bugs (it agrees with Hugging Face).
+from kernel bugs (it agrees with Hugging Face). --cfg runs the ISA simulator in a board
+configuration (the card's, as tools/qual/refs.py cfg pickles it) instead of the design one;
+--wformat / --head-format pick the weight formats (Engine). Hugging Face runs first and is
+freed before the device's image is built (a 4B model is 16 GB in fp32).
 """
 from __future__ import annotations
 
@@ -30,6 +33,8 @@ PROMPTS = ["A prime number larger than 100 is", "The capital of France is", "def
 
 
 def main() -> None:
+    import gc
+
     import torch
     import transformers
     from opentpu.llm import MODELS, load_spec, model_dir
@@ -43,12 +48,14 @@ def main() -> None:
     ap.add_argument("--chat", action="store_true",
                     help="prompts as user turns of the chat template")
     ap.add_argument("--emulate", action="store_true")
+    ap.add_argument("--cfg", help="the device configuration: a pickled Config (tools/qual/refs.py "
+                    "cfg, e.g. the card's), or 'board' (isasim.board_config); default the "
+                    "design configuration")
+    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"])
+    ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"])
     a = ap.parse_args()
     path = model_dir(a.model)
     tok = transformers.AutoTokenizer.from_pretrained(path)
-    hf = transformers.AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32).eval()
-    spec, W = load_spec(path), load_weights(path)
-    emulated_logits = importlib.import_module(type(spec).__module__).emulated_logits
 
     def encode(p):
         if not a.chat:
@@ -58,15 +65,39 @@ def main() -> None:
         return list(ids["input_ids"] if hasattr(ids, "keys") else ids)
 
     prompts = [(p, encode(p)) for p in a.prompts]
-    need = max(len(ids) for _, ids in prompts) + a.tokens
-    eng = Engine(spec, W, cap=max(256, -(-need // 128) * 128))
-    top2 = lambda l: [tok.decode([int(i)]) for i in np.argsort(-l)[:2]]
-    same, worst = 0, (0.0, 1.0)
+    # Hugging Face first, then freed: a 3-4B model in fp32 is 12-16 GB, and the device side
+    # needs its image and the simulator's DRAM next to it
+    hf = transformers.AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32).eval()
+    wants, refs = [], []
     for p, ids in prompts:
         with torch.no_grad():
             # pure greedy: LFM2's generation_config adds a repetition penalty
             want = hf.generate(torch.tensor([ids]), max_new_tokens=a.tokens, do_sample=False,
                                repetition_penalty=1.0)[0, len(ids):].tolist()
+            # the logits that chose each of HF's tokens (causal: the steps with the same context
+            # are a prefix of them)
+            refs.append(hf(torch.tensor([ids + want[:-1]])).logits[0, len(ids) - 1:].numpy())
+        wants.append(want)
+    del hf
+    gc.collect()
+    spec, W = load_spec(path), load_weights(path)
+    emulated_logits = importlib.import_module(type(spec).__module__).emulated_logits
+    need = max(len(ids) for _, ids in prompts) + a.tokens
+    cap = max(256, -(-need // 128) * 128)
+    cfg = None
+    if a.cfg:
+        import pickle
+        from dataclasses import replace
+
+        from opentpu.host.board import sim_config
+        from opentpu.isasim import board_config
+        base = board_config() if a.cfg == "board" else pickle.loads(Path(a.cfg).read_bytes())
+        cfg = sim_config(spec, cap, replace(base, DRAM_BYTES=1 << 32))
+    eng = Engine(spec, W, cap=cap, cfg=cfg, wformat=a.wformat, head_format=a.head_format)
+    print(f"device: {eng.cfg}, weights {a.wformat}, head {a.head_format or a.wformat}")
+    top2 = lambda l: [tok.decode([int(i)]) for i in np.argsort(-l)[:2]]
+    same, worst = 0, (0.0, 1.0)
+    for (p, ids), want, ref in zip(prompts, wants, refs):
         eng.reset()
         got, dev = [], [eng.prefill(ids)]            # dev[i]: the logits that chose got[i]
         while len(got) < a.tokens:
@@ -76,8 +107,7 @@ def main() -> None:
             dev.append(eng.step(got[-1]))
         k = next((i for i, (x, y) in enumerate(zip(got, want)) if x != y), None)
         n = min(len(got), len(want)) if k is None else k + 1   # steps with the same context
-        with torch.no_grad():
-            ref = hf(torch.tensor([ids + want[:n - 1]])).logits[0, len(ids) - 1:].numpy()
+        ref = ref[:n]
         d = np.array(dev[:n])
         err = float(np.abs(d - ref).max())
         cos = float(((d * ref).sum(-1) / np.linalg.norm(d, axis=-1)
@@ -97,8 +127,9 @@ def main() -> None:
         print(f"   first difference at token {k + 1}: HF {tok.decode([want[k]])!r}, device "
               f"{tok.decode([got[k]])!r} (HF's choice #{rank}, {gap:.3f} logits below the top)")
         if a.emulate:
-            emu = emulated_logits(spec, W, ids + want[:k])[-1]
-            print(f"   int8 emulation's top two there: {top2(emu)}")
+            emu = emulated_logits(spec, W, ids + want[:k], wformat=a.wformat,
+                                  head_format=a.head_format)[-1]
+            print(f"   the emulation's top two there: {top2(emu)}")
     print(f"{same}/{len(prompts)} prompts identical for {a.tokens} tokens; logits vs HF: "
           f"max |diff| {worst[0]:.3f}, min cosine {worst[1]:.5f}")
 

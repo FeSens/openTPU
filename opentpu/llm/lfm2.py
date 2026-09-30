@@ -102,7 +102,8 @@ class Spec:
                     ffn=ff, vocab=c["vocab_size"], conv_k=c.get("conv_L_cache", 3),
                     eps=c.get("norm_eps", 1e-5),
                     theta=rope.get("rope_theta", c.get("rope_theta", 1e6)),
-                    tied=c.get("tie_word_embeddings", True), bos=c.get("bos_token_id", 1),
+                    tied=c.get("tie_word_embeddings", c.get("tie_embedding", True)),
+                    bos=c.get("bos_token_id", 1),
                     eos=tuple(eos) if isinstance(eos, list) else (eos,))
 
     def check(self, cfg: Config) -> None:

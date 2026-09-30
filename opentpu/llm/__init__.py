@@ -6,7 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 # short names for the checkpoints the tools know, downloaded into models/<dir>
-MODELS = {"qwen3": "Qwen3-0.6B", "lfm2": "LFM2.5-230M", "qwen35": "Qwen3.5-0.8B"}
+MODELS = {"qwen3": "Qwen3-0.6B", "lfm2": "LFM2.5-230M", "qwen35": "Qwen3.5-0.8B",
+          "lfm2-2.6b": "LFM2-2.6B"}
 
 
 def model_dir(name) -> Path:
