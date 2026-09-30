@@ -71,6 +71,7 @@ from ..kernels.deltanet import gates, l2norm_rows
 from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
 from .lfm2 import plan, run_layers
+from . import generate as G
 from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fake_q, _fake_w,
                     _inputs, _inputs_rows, _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build,
                     _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode,
@@ -695,6 +696,12 @@ class Image:
         """(programs, run_args): qwen35_step at a run-time position (qwen3.compile_decode); the
         convolutions need lo >= conv_k - 1 (every tap of the ring is a past token)."""
         return compile_decode(self, qwen35_step, blocks, lo, block)
+
+    def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
+                         chain: bool = True, samp=None, debug: bool = False,
+                         part: int | None = None) -> list:
+        """The decode loop on the device for bucket `blocks` (qwen35_step in it, generate.py)."""
+        return G.compile_generate(self, qwen35_step, blocks, lo, block, chain, samp, debug, part)
 
     def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program per slice: the decode token at position `pos` (qwen35_step)."""

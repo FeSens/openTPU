@@ -43,6 +43,9 @@ else:
     elif tool == "refs.py" and a[1] == "card":
         print(f"  [PASS] model {a[3]} {a[4]}/{a[5]}{' resident' if '--resident' in a else ''}: "
               "'The capital of France is Paris.'")
+    elif tool == "waitw.py":
+        print("  [PASS] WAITW on the host's writes: 200 rounds")
+        print("  [PASS] WAITW timeout: ERROR at the timeout")
     elif tool == "refs.py" and a[1] == "compute":
         print("compute", *a[3:])
     elif tool == "decode_profile.py":
@@ -112,6 +115,30 @@ def test_a_failed_token_exact_run(qual):
     assert "token-exact qwen35 fp4 int8--resident: exit 1" in checks
     assert "11 of 12 token-exact runs passed" in checks
     assert summary(text)[0] == "2", text[-2000:]
+
+
+def test_the_decode_loop_on_the_card(qual):
+    # a bitstream with CAPS bit30: the six token-exact runs again on the card's decode loop
+    text, checks = qual(GEN="1")
+    assert summary(text) == ("0", "20"), text[-2000:]
+    assert "decode loop on the card (6 token-exact + 3 x 2 decode_profile)" in text
+    text, checks = qual(GEN="1", QUAL_CRASH="--model qwen35 --tokens 96")    # the sampled run
+    assert "decode_profile card loop qwen35 fp4 int8 sampled: exit 1" in checks
+    text, checks = qual(GEN="1", QUAL_CRASH="lfm2 int8 - 32 --card-loop")
+    assert "card loop lfm2 int8 -: exit 1" in checks
+    assert "5 of 6 card-loop token-exact runs passed" in checks
+
+
+def test_waitw_on_the_host_writes(qual):
+    # a bitstream with CAPS bit31: tools/qual/waitw.py after the warm diag, its lines counted
+    text, checks = qual(WAITW="1")
+    assert summary(text) == ("0", "16"), text[-2000:]
+    assert "WAITW (CAPS bit31): yes" in text and "=== WAITW on the host's writes" in text
+    assert "[PASS] WAITW timeout" in checks
+    text, checks = qual(WAITW="1", QUAL_CRASH="waitw.py")
+    assert "[FAIL] WAITW on the host's writes: waitw: exit 1" in checks
+    text, _ = qual()
+    assert "WAITW (CAPS bit31): no" in text and "=== WAITW" not in text
 
 
 def test_a_failed_soak_run_ends_the_soak(qual):

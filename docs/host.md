@@ -670,6 +670,12 @@ with an int8 head, DDR3-1066 bank model at 116 MHz, position 9 (the worst case),
 the two meet. Against the ~0.5 ms of host time per token it removes (4% of an 11 ms token)
 it is a gain at every position.
 
+**The decode loop on the card** (docs/autodecode.md) removes the host from each token
+entirely. `Engine.generate_card` starts one run per reply, and the card picks every token
+itself: greedy, or chat.sampler's top-k / top-p / temperature / repetition penalty. It feeds
+each token back and writes it to `out[]`. `otpu-chat` takes this path whenever the engine and
+the bitstream can (`Chat.on_card`, CAPS bit30).
+
 The chat interface draws each token while the card runs the next one: `Chat` hands a token to
 `on_update` from `Engine.step`'s `on_start` hook (called once the run is started), so the
 interface's work does not delay the host work that starts a run. Before, the full-screen

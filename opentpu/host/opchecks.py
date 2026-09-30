@@ -1,7 +1,7 @@
 """One small program per instruction variant, for otpu-diag's ISA coverage (and
 tests/test_board.py on the board model).
 
-op_checks(cfg) -> [(group, name, program)]; every program starts from diag_image() in DRAM,
+op_checks(cfg, gen, waitw) -> [(group, name, program)]; every program starts from diag_image() in DRAM,
 stores what it computed below checks.PROG_AT, and is compared with the ISA simulator bit for bit
 by checks.run_demo. The programs are self-contained on the card too, where TMEM and the ACT RAM
 keep the previous run's contents: they only store TMEM words they wrote, and every MM reads ACT
@@ -9,7 +9,8 @@ RAM blocks its own QACT filled.
 
 Groups (otpu-diag's diagnosis keys on them): control, dma, mxu, quant, collective, vpu,
 vpu-reduce, vpu-composite, vpu-edge, vpu-new (RDOT / OUTER / LOG2, which bitstreams before
-ddec900 lack).
+ddec900 lack), gen (RLD, VOP ARGMAX, HALT CHAIN: the decode loop's instructions, CAPS bit30;
+only with gen=True), waitw (WAITW whose condition holds, CAPS bit31; only with waitw=True).
 
 The edge values leave out NaN inputs: the RTL and the ISA simulator disagree there (board
 model, 3c270c9): RECIP of a NaN gives 0 in the RTL, NaN in the simulator; MAX / ABS / COPY pass
@@ -37,6 +38,7 @@ NE = len(EDGE_BITS)             # 32: 0, -0, +-1, 0.5, 2, 3, -0.5, +-min normal,
 
 # TMEM layout (words): the data at 0.., results from RES on
 A, B, RES, TE, TER = 0, 1024, 8192, 12288, 12352
+CHAIN_AT = 0x340000             # DRAM: the program the HALT CHAIN check starts
 
 
 def diag_image() -> np.ndarray:
@@ -44,7 +46,15 @@ def diag_image() -> np.ndarray:
     e = np.array(EDGE_BITS, np.uint32)
     img[EDGE:EDGE + 4 * NE] = e.view(np.uint8)
     img[EDGE + 4 * NE:EDGE + 8 * NE] = e[::-1].copy().view(np.uint8)
+    w = I.assemble(_chained())
+    img[CHAIN_AT:CHAIN_AT + 4 * len(w)] = w.view(np.uint8)
     return img
+
+
+def _chained() -> list:
+    """The program the HALT CHAIN check chains to: it sees the first one's TMEM."""
+    return [I.vop(I.V_ADD, RES, RES, 0, 1, 64, 64, 64, 0, I.B_SCALAR, 1.0),
+            I.st(OUT + 0x800, RES, 64), I.halt()]
 
 
 def _p(*body) -> list:
@@ -71,7 +81,7 @@ def _mm(cfg, m=None, qflags=None, pre=(), ab=0, ors=16, **kw) -> list:
               I.mm(W8, SC, RES, 16, 2, 256, ors, m, ab, 8, **kw), I.st(OUT, RES, n))
 
 
-def op_checks(cfg) -> list[tuple[str, str, list]]:
+def op_checks(cfg, gen: bool = False, waitw: bool = False) -> list[tuple[str, str, list]]:
     M = cfg.MCOLS
     out = []
 
@@ -144,7 +154,7 @@ def op_checks(cfg) -> list[tuple[str, str, list]]:
 
     # ---- VPU: every function under its legal broadcast modes
     for f, name in I.VFUNCS.items():
-        if f == I.V_OUTER:
+        if f in (I.V_OUTER, I.V_ARGMAX):
             continue
         if f in I.READS_B:
             modes = [("FULL", I.B_FULL), ("ROW", I.B_ROW), ("COL", I.B_COL),
@@ -176,4 +186,82 @@ def op_checks(cfg) -> list[tuple[str, str, list]]:
         add("vpu-edge", f"VOP {I.VFUNCS[f].upper()} edge values",
             [I.ld(EDGE, TE, 2 * NE), I.vop(f, RES, TE, 0, 2, NE // 2, 1, NE // 2, 0),
              I.st(OUT, RES, 2), I.halt()])
+    if gen:
+        out += _gen_checks()
+    if waitw:
+        out += _waitw_checks()
+    return out
+
+
+def _fill1(t, v):
+    return I.vop(I.V_FILL, t, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, v)
+
+
+def _gen_checks() -> list:
+    """The decode loop's instructions (docs/isa.md RLD, ARGMAX, HALT CHAIN). A register's value
+    shows as the address a store lands at."""
+    out = []
+    # RLD: truncation (4.0, 128.75, -8.5, 0.99, 1024), inf -> 0x80000000 (+ 0x80000000 = 0),
+    # RAW bits (EDGE[11] = 0x00000001, a TMEM offset), rd = 0 (no write)
+    vals = [4.0, 128.75, -8.5, 0.99, 1024.0]
+    prog = [I.ld(EDGE, TE, 2 * NE)] + [_fill1(RES + k, v) for k, v in enumerate(vals)]
+    prog += [I.rld(1 + k, RES + k) for k in range(len(vals))]
+    prog += [I.rld(6, TE + 24), I.addi(6, 6, 0x80000000), I.rld(7, TE + 11, raw=True),
+             I.rld(0, RES + 4)]
+    prog += [I.st(OUT + 0x400 * k, 16 * k, 16, ra=1 + k) for k in range(len(vals))]
+    prog += [I.st(OUT + 0x2000, 96, 16, ra=6),
+             I.vop(I.V_COPY, RES + 16, A, 0, 1, 8, 8, 8, 0, ra=7),
+             I.st(OUT + 0x3000, RES + 16, 16), I.st(OUT + 0x3800, 112, 16, ra=0)]
+    out.append(("gen", "RLD (truncation, inf, RAW, register offsets)", _p(*prog)))
+    # RLD MUL: times w2 mod 2^32 (a PLE row's bytes, 262143 * 9344 > 2^31), a negative
+    # multiplier, RAW bits times 3, a product past 2^32; each register brought back to an offset
+    mv = [(262143.0, 9344, False), (-5.0, -7, False), (3.0, 3, True), (65536.0, 65537, False)]
+    prog = [_fill1(RES + k, v) for k, (v, _, _) in enumerate(mv)]
+    for k, (v, c, raw) in enumerate(mv):
+        x = I.f32bits(v) if raw else I.f2i(I.f32bits(v))
+        prog += [I.rld(1 + k, RES + k, raw=raw, mul=c),
+                 I.addi(1 + k, 1 + k, 0x400 * (k + 1) - x * c),
+                 I.st(OUT, A + 16 * k, 16, ra=1 + k)]
+    out.append(("gen", "RLD MUL (mod 2^32, negative, RAW)", _p(*prog)))
+    # RLD drives a LOOP count and a conditional HALT (LOOP R {HALT} with R = 0: no halt)
+    out.append(("gen", "RLD loop count, conditional HALT",
+                _p(_fill1(RES, 3.0), _fill1(RES + 1, 0.0), I.rld(4, RES), I.rld(5, RES + 1),
+                   I.loop(2, 0, rcount=4), I.addi(1, 1, 256), I.st(OUT, A, 32, ra=1),
+                   I.loop(1, 0, rcount=5), I.halt(), I.st(OUT + 0x2000, A, 32))))
+    # ARGMAX: rows, a row stride of 3, a negative index base plus a register
+    out.append(("gen", "VOP ARGMAX rows, drs, index base",
+                _p(I.li(3, 1000), I.argmax(RES, A, 5, 200, drs=3, ars=256, base=-7, rd=3),
+                   I.argmax(RES + 32, A + 7, 1, 1500), I.st(OUT, RES, 40))))
+    out.append(("gen", "VOP ARGMAX edge values",
+                [I.ld(EDGE, TE, 2 * NE), I.argmax(RES, TE, 2, NE, drs=2, ars=NE),
+                 I.argmax(RES + 4, TE, 4, NE // 2, drs=2, ars=NE // 2),
+                 I.st(OUT, RES, 12), I.halt()]))
+    # HALT CHAIN: the chained program starts from DRAM with the first one's TMEM
+    out.append(("gen", "HALT CHAIN",
+                [I.vop(I.V_FILL, RES, 0, 0, 1, 64, 64, 64, 0, I.B_SCALAR, 41.0),
+                 I.li(1, CHAIN_AT), I.li(2, len(_chained())), I.li(3, 7),
+                 I.halt(chain=True, ra=1, rb=2)]))
+    return out
+
+
+def _waitw_checks() -> list:
+    """WAITW whose condition holds (a word the host would write is in DRAM already): each word
+    it takes shows, through RLD RAW, as the address a store lands at."""
+    # EDGE_BITS[0] = 0, [1] = 0x80000000, [2] = 0x3F800000
+    conds = [(EDGE + 8, 0x3F800000, I.C_EQ, 0xFFFFFFFF), (EDGE, 1, I.C_NE, 0xFFFFFFFF),
+             (EDGE + 4, 0x7FFFFFFF, I.C_GE, 0xFFFFFFFF), (EDGE + 8, 0x3F800000, I.C_EQ, 0xFFFF0000)]
+    prog = []
+    for k, (a, ref, cmp, mask) in enumerate(conds):
+        v = EDGE_BITS[(a - EDGE) // 4]
+        prog += [I.waitw(a, RES + k, ref, cmp, mask=mask, interval=16, timeout=1 << 20),
+                 I.rld(1 + k, RES + k, raw=True), I.addi(1 + k, 1 + k, 0x400 * (k + 1) - v),
+                 I.st(OUT, A + 16 * k, 16, ra=1 + k)]
+    out = [("waitw", "WAITW EQ / NE / GE / mask", _p(*prog))]
+    # a store to the word lands before WAITW's first read; a younger store to it waits
+    out.append(("waitw", "WAITW after a store",
+                _p(_fill1(RES + 8, 5.0), I.st(OUT + 0x2000, RES + 8, 1),
+                   I.waitw(OUT + 0x2000, RES + 9, I.f32bits(5.0), I.C_EQ, timeout=1 << 20),
+                   _fill1(RES + 8, 6.0), I.st(OUT + 0x2000, RES + 8, 1),
+                   I.rld(1, RES + 9, raw=True), I.addi(1, 1, 0x100 - I.f32bits(5.0)),
+                   I.st(OUT + 0x3000, A, 16, ra=1))))
     return out

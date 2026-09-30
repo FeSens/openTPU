@@ -3,6 +3,7 @@
     python3 tools/decode_profile.py --model lfm2 [--backend board | fake] [--tokens 64]
                                     [--prompt "..."] [--greedy] [--no-stream] [--json out.json]
                                     [--wformat int8|fp4|int4] [--head-format int8|fp4|int4]
+                                    [--card-loop]
 
 Runs one Chat turn (plain mode, the reply printed to /dev/null) on the card (--backend
 board) or on FakeTransport (--backend fake: a card that computes nothing and halts after
@@ -29,6 +30,13 @@ write, the HALTED poll with its sleeps) is timed and filed under the host step i
 
 Prints the mean per decode token (the first generated token and the prefill are excluded),
 the transport operations per token (count, bytes, time) and wall vs device tokens/s.
+
+--card-loop: the decode loop on the card (docs/autodecode.md, Chat.on_card; a bitstream with
+CAPS bit30): one run for the reply, so there is no per-token host path to split; prints the
+tokens, the runs and wall vs device tokens/s after the host's pick of the first token (the
+run's start included: the bucket's compile, the program's upload, the sampler's inputs), and
+the rate from the first token the card picked to its last, with the time before that first
+token and the compile's part of it.
 """
 from __future__ import annotations
 
@@ -185,6 +193,8 @@ def main(argv=None):
                     help="weight format of the layers (docs/quant.md)")
     ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
                     help="weight format of the LM head (default: --wformat)")
+    ap.add_argument("--card-loop", action="store_true",
+                    help="the decode loop on the card (Engine.generate_card)")
     a = ap.parse_args(argv)
     from transformers import AutoTokenizer
     path = model_dir(a.model)
@@ -282,7 +292,29 @@ def main(argv=None):
             return r
     timed_pick.stream = TimedStream
     timed_pick.warm = pick.warm
+    lands, comp = [], [0.0]
+    if a.card_loop:                 # Chat.on_card: the picks after the first on the card
+        timed_pick.greedy, timed_pick.params, timed_pick.rng = pick.greedy, pick.params, pick.rng
+        run_gen, gen_prog = B.BoardBackend.run_generate, Q.Engine._generate_prog
+
+        def run_generate(self, progs, out, n, on_token=None, *x, **k):
+            def landed(t):                              # when each of the card's tokens landed
+                lands.append(time.perf_counter())
+                if on_token is not None:
+                    on_token(t)
+            return run_gen(self, progs, out, n, landed, *x, **k)
+
+        def generate_prog(self, *x, **k):               # the buckets' compiles (first use)
+            t0 = time.perf_counter()
+            try:
+                return gen_prog(self, *x, **k)
+            finally:
+                comp[0] += time.perf_counter() - t0
+        B.BoardBackend.run_generate, Q.Engine._generate_prog = run_generate, generate_prog
     chat = C.Chat(eng, tok, False, timed_pick, a.tokens, clock_mhz=khz / 1e3)
+    if a.card_loop and not chat.on_card:
+        sys.exit("--card-loop: this engine / bitstream does not run the decode loop (CAPS bit30)"
+                 " or the sampler's settings are not the device's (generate.Sampling)")
     dec = tok.decode
 
     def decode(*x, **k):
@@ -298,11 +330,35 @@ def main(argv=None):
         t0 = time.perf_counter()
         sink.write(delta)
         P.add("ui", time.perf_counter() - t0)
-    chat.ask(a.prompt, upd)
+    _, turn = chat.ask(a.prompt, upd)
     P.on.clear()
     wall = time.perf_counter() - step0["t"]
     n = len(eng.stats) - step0["n"]
     cyc = sum(s["cycles"] for s in eng.stats[step0["n"]:])
+    if a.card_loop:
+        steps = turn.decode_steps
+        print(f"{path.name} on {a.backend}: the decode loop on the card, {steps} tokens in {n} "
+              f"run(s) after the first; wall {steps / wall:.2f} tok/s, device "
+              f"{steps * khz * 1e3 / cyc:.2f} tok/s ({cyc / steps / 1e6:.3f} Mcycles/token), "
+              f"wall {100 * (steps / wall) / (steps * khz * 1e3 / cyc) - 100:+.1f}% of device")
+        run_s = lands[-1] - lands[0] if len(lands) > 1 else 0.0
+        steady = (len(lands) - 1) / run_s if run_s > 0 else 0.0
+        start_ms = 1e3 * (lands[0] - step0["t"]) if lands else 0.0
+        if steady:
+            print(f"{path.name} on {a.backend}: the decode loop on the card from its first token "
+                  f"to its last ({len(lands)} tokens): {steady:.2f} tok/s, "
+                  f"{100 * steady / (steps * khz * 1e3 / cyc) - 100:+.1f}% of device; before "
+                  f"the first: {start_ms:.1f} ms ({1e3 * comp[0]:.1f} ms compiling)")
+        if a.json:
+            Path(a.json).write_text(json.dumps({
+                "model": path.name, "wformat": a.wformat, "head_format": a.head_format,
+                "card_loop": True, "steps": steps, "runs": n, "wall_tok_s": steps / wall,
+                "dev_tok_s": steps * khz * 1e3 / cyc, "steady_tok_s": steady,
+                "start_ms": start_ms, "compile_ms": 1e3 * comp[0],
+                "reply_ids": [int(x) for x in chat._reply]}, indent=1))
+        eng._drain()
+        eng.backend.close()
+        return
     dev_ms = 1e3 * cyc / n / (khz * 1e3)
     per = {k: (1e3 * v[0] / n, 1e3 * v[1] / n) for k, v in P.t.items()}
     crit = 1e3 * P.crit / max(P.windows, 1)
