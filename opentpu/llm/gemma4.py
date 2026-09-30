@@ -115,10 +115,21 @@ class Spec:
         c = top.get("text_config", top)
         if c.get("enable_moe_block") or c.get("attention_k_eq_v"):
             raise ValueError("Gemma 4 with MoE blocks or K = V attention is not supported")
-        if c.get("num_global_key_value_heads") not in (None, c["num_key_value_heads"]):
-            raise ValueError("global layers with their own KV head count are not supported")
         L = c["num_hidden_layers"]
         kinds = tuple(FULL if t == "full_attention" else SLIDE for t in c["layer_types"])
+        # the global layers' head size and KV heads: global_head_dim / num_global_key_value_
+        # heads (the checkpoint's config), or per-layer overrides (transformers >= 5.17's)
+        over = {int(i): v for i, v in (c.get("per_layer_config") or {}).items()}
+        if any(kinds[i] != FULL or set(v) - {"head_dim", "num_key_value_heads"}
+               for i, v in over.items()):
+            raise ValueError(f"per-layer config {over} is not supported")
+        gkv = {v.get("num_key_value_heads") for v in over.values()} | \
+            {c.get("num_global_key_value_heads")}
+        if gkv - {None, c["num_key_value_heads"]}:
+            raise ValueError("global layers with their own KV head count are not supported")
+        gds = {v["head_dim"] for v in over.values() if "head_dim" in v}
+        if len(gds) > 1:
+            raise ValueError(f"global layers with different head sizes {sorted(gds)}")
         first = L - c.get("num_kv_shared_layers", 0)
         src = tuple(i if i < first else max(j for j in range(first) if kinds[j] == kinds[i])
                     for i in range(L))
@@ -126,7 +137,7 @@ class Spec:
         ff = c["intermediate_size"]
         rp = c.get("rope_parameters") or {}
         g, s = rp.get("full_attention", {}), rp.get("sliding_attention", {})
-        gd = c.get("global_head_dim") or c["head_dim"]
+        gd = c.get("global_head_dim") or (gds.pop() if gds else c["head_dim"])
         if g.get("rope_type", "proportional") != "proportional" or \
                 s.get("rope_type", "default") != "default":
             raise ValueError("RoPE types other than default (sliding) / proportional (global)")
