@@ -1,0 +1,237 @@
+diff --git a/rtl/vpu/otpu_se_tail.sv b/rtl/vpu/otpu_se_tail.sv
+index c05f711..9eec26c 100644
+--- a/rtl/vpu/otpu_se_tail.sv
++++ b/rtl/vpu/otpu_se_tail.sv
+@@ -97,14 +97,14 @@ module otpu_se_tail
+   localparam int LW = $clog2(L);
+   localparam int SL = 1 + LM + LA;
+   // X -> U: the last segment of a row reaches the tree TA later, its root RD later
+-  // (otpu_vtree: at most 28 for LANES 8), d three multiply-adds (3 SL) and a FIFO write after
++  // (otpu_vtree: at most 30 for LANES 8), d three multiply-adds (3 SL) and a FIFO write after
+   // that; a row's first segment is ns - 1 ahead of its last (ns <= CBD)
+-  localparam int RD_MAX = 28;
++  localparam int RD_MAX = 30;
+   localparam int T_U0 = (CBD - 1) + TA + RD_MAX + 3 * SL + 3;
+   // A row's Q window reaches the shared tree DQ = T_U + SL + LM + LA + QD - TA pe
+   // cycles after its A window. At ns = 16, 24 and 32 the windows (the last RL segments of each
+   // row) never meet, and stay aligned mod RL, iff DQ = RL * o with o odd and not a multiple of
+-  // 3: T_U is padded to the smallest such DQ (DQ 97 -> 104 at TA 7, QD 1)
++  // 3: T_U is padded to the smallest such DQ (DQ 99 -> 104 at TA 7, QD 1)
+   function automatic int q_pad(input int t0);
+     int d, o;
+     d = t0 + SL + LM + LA + QD - TA;
+diff --git a/rtl/vpu/otpu_vpu.sv b/rtl/vpu/otpu_vpu.sv
+index e6abce2..d498bc8 100644
+--- a/rtl/vpu/otpu_vpu.sv
++++ b/rtl/vpu/otpu_vpu.sv
+@@ -454,7 +454,7 @@ module otpu_vpu
+ 
+   mt_t   mtap [NSX + 1];
+   f32_t  lres [LANES];
+-  // MAX / MIN at tap 0 (short lanes): the lane's pick (lmv) enters the write data after every
++  // MAX / MIN at tap 0 (every lane): the lane's pick (lmv) enters the write data after every
+   // other select (cw_data), which all come from flip-flops; lres leaves it out
+   logic [LANES-1:0] lmm;                // the lane's result is lmv
+   f32_t  lmv [LANES];
+@@ -527,6 +527,33 @@ module otpu_vpu
+                            all_last: c_ometa[0]};
+   end
+ 
++  // slot 1's range reduction on its 9-bit domain (as otpu_se_comp's): floor of the clamped v,
++  // in [-126, 128) or +-0, so |v| < 128 and the integer part is the top 7 bits of the
++  // significand at most (ffloor there, mod 2^9)
++  function automatic logic [8:0] rr_floor(input f32_t x);
++    logic [2:0] k;
++    logic [6:0] ip;
++    logic       fr;
++    if (x[30:23] < 8'd127) return (x[31] && x[30:23] != 0) ? 9'h1FF : 9'd0;
++    k  = 3'(x[30:23] - 8'd127);                   // 0..6
++    ip = 7'({1'b1, x[22:17]} >> (3'd6 - k));
++    fr = |(x[22:0] & (23'h7F_FFFF >> k));         // the fraction bits below the point
++    return x[31] ? -(9'(ip) + 9'(fr)) : 9'(ip);
++  endfunction
++
++  // i2f of a 9-bit integer of magnitude <= 255 (EXP2's i, LOG2's e): exact, so equal to i2f
++  function automatic f32_t i2f9(input logic [8:0] n);
++    logic [7:0]  m;
++    logic [2:0]  p;
++    logic [30:0] sh;
++    m = n[8] ? 8'(-n) : n[7:0];
++    if (m == 0) return F_ZERO;
++    p = 3'd0;
++    for (int j = 1; j < 8; j++) if (m[j]) p = 3'(j);
++    sh = {m, 23'd0} >> p;                         // the leading one at bit 23
++    return {n[8], 8'd127 + 8'(p), sh[22:0]};
++  endfunction
++
+   // long lanes: all functions
+   for (genvar l = 0; l < NLL; l++) begin : g_lane
+     localparam int NS = NSLOT;                     // slots of this lane
+@@ -542,7 +569,6 @@ module otpu_vpu
+       ax = {1'b0, xz[30:0]};
+       st[0] = '0;
+       unique case (1'b1)
+-        m0d.fh[V_MAX], m0d.fh[V_MIN]: st[0].v = fp_mm(x, y, m0d.fh[V_MIN]);
+         m0d.fh[V_COPY]:  st[0].v = xz;
+         m0d.fh[V_ABS]:   st[0].v = fabs(x);
+         m0d.fh[V_FILL]:  st[0].v = ftz(y);
+@@ -563,7 +589,7 @@ module otpu_vpu
+           st[0].ii = 9'(xz[30:23]) - 9'd127 + 9'(ge);
+           st[0].f  = {!z && (xz[31] || is_nan(xz)), xz == F_INF, z};   // NaN, +inf, -inf
+         end
+-        default: ;
++        default: ;                                           // MAX, MIN: lmv
+       endcase
+     end
+ 
+@@ -593,13 +619,13 @@ module otpu_vpu
+           e1 <= (mtap[s].cls == C_EXP);
+           g1 <= (mtap[s].cls == C_LOG);
+           t = p0;
+-          if (e1) t.ii = 9'(ffloor(p0.v));
++          if (e1) t.ii = rr_floor(p0.v);
+           p1 <= t;
+           e2 <= e1;
+           g2 <= g1;
+           t = p1;
+           if (e2 || g2) begin
+-            t.k2 = i2f(32'($signed(p1.ii)));
++            t.k2 = i2f9(p1.ii);
+             t.k2[31] = t.k2[31] ^ e2;              // EXP2: -i2f(i)
+           end
+           p2 <= t;
+@@ -742,8 +768,8 @@ module otpu_vpu
+     assign lres[l] = hit[T_EX] ? ex_r : hit[T_RC] ? rc_r :
+                      hit[T_RS] ? ((mtap[T_RS].cls == C_LOG) ? lg_r : rs_r) :
+                      hit[0] ? st[0].v : st[T_EW].v;
+-    assign lmm[l] = 1'b0;
+-    assign lmv[l] = '0;
++    assign lmm[l] = hit[0] && (m0d.fh[V_MAX] || m0d.fh[V_MIN]);
++    assign lmv[l] = fp_mm(x, y, m0d.fh[V_MIN]);
+   end
+ 
+   // short lanes: slot 0 only. The composite functions are never issued here (imask), so their
+diff --git a/rtl/vpu/otpu_vtree.sv b/rtl/vpu/otpu_vtree.sv
+index 92ccaa5..8e16ce2 100644
+--- a/rtl/vpu/otpu_vtree.sv
++++ b/rtl/vpu/otpu_vtree.sv
+@@ -59,7 +59,7 @@ module otpu_vtree
+     for (int j = 1; j < LR; j++) if (tree_da(j) > m) m = tree_da(j);
+     return m;
+   endfunction
+-  // LN2: the three lane levels of LANES = 8 fold onto two adders (see u_ln), root 2 cycles later
++  // LN2: the three lane levels of LANES = 8 fold onto one adder (see u_ln), root 4 cycles later
+   localparam bit LN2 = (LANES == 8) && (RL == 8) && (LA == 4);
+   // TP (LN2's tree): the last row level issues one cycle early, in the free residue 0, so every
+   // u_tree operand is one 2:1 mux with a flip-flop select (see g_tp); DL and RD stay the same
+@@ -67,7 +67,7 @@ module otpu_vtree
+   localparam int DMAX = TP ? 2 : tree_dmax();
+   localparam int DL = tree_i(LR - 1) - (RL - 1);                // row_last -> last row level
+   localparam int RD = tree_i(LR - 1) + LA * (1 + LW) - (RL - 1) // row_last -> root
+-                      + (LN2 ? 2 : 0);
++                      + (LN2 ? 4 : 0);
+ 
+   // level strobes: cap of the subs a level pairs up, delayed to the level's issue cycles
+   // (level 0 is the default); the last row level and the root share one shift register
+@@ -91,6 +91,7 @@ module otpu_vtree
+ 
+   f32_t tr_y [LANES];
+   f32_t tr_y1 [LANES];                        // tr_y delayed one cycle (td[1])
++  f32_t tr_y2 [LANES];                        // ... two cycles (td[2], LN2: DMAX = 2)
+   for (genvar k = 0; k < LANES; k++) begin : g_tree
+     f32_t pdd, oa, ob;
+     logic [DMAX:1][31:0] td;                 // tr_y[k] delayed 1..DMAX
+@@ -100,6 +101,7 @@ module otpu_vtree
+       for (int d = 2; d <= DMAX; d++) td[d] <= td[d-1];
+     end
+     assign tr_y1[k] = td[1];
++    assign tr_y2[k] = td[(DMAX >= 2) ? 2 : 1];
+     if (TP) begin : g_tp
+       // level 0 at 4..7 (residues after sub 0 is on `pacc`), level 1 at 10, 11, level 2 at 16:
+       //   a = la ? td[2] : pacc,  b = lv[1] ? tr_y : qb,  qb = (a cycle earlier) lv2n ? tr_y : pdd
+@@ -148,39 +150,43 @@ module otpu_vtree
+   wire  l2_v = rsr[DL + 2 * LA - 1];
+   f32_t xl [LW + 1][LANES];
+   f32_t xs [LANES];                           // SH2: the shared adders' results (level 1 or 2)
+-  logic ln_l1b, ln_l2, ln_l3;                 // LN2 issue strobes (L1a is rsr[DL + LA - 1])
++  logic [6:0] ln_is;                          // LN2 issue strobes
+   for (genvar k = 0; k < LANES; k++) begin : g_xl0
+     assign xl[0][k] = tr_y[k];
+   end
+-  // LN2 (E = the last row level's issue + LA + 1 -- TP issues it one cycle early -- the
+-  // residues mod RL = 8 in brackets): u_ln[m] issues
+-  //   L1a at E     (5): xl[0][m]     + xl[0][m + 4]   (from td[1])
+-  //   L1b at E+1   (6): xl[0][m + 2] + xl[0][m + 6]   (from td[2])
+-  //   L2  at E+5   (2): xs[m] at E+4 + xs[m]          (L1a + L1b = xl[1][m] + xl[1][m + 2])
+-  //   L3  at E+10  (7): xs[0] + xs[1] at E+9, m = 0   (L2 results = xl[2][0] + xl[2][1])
+-  // and the root is xs[0] at E+14. The residues are distinct and rows are a multiple of RL
+-  // apart, so neither adder is ever double-booked; same operands in the same order as xl.
+-  // The operands are registered one granted cycle ahead (qa, qb): a has no mux, b one 2:1 mux
+-  // with a flip-flop select in front of the L1b result xs[m].
++  // LN2 (W = the cycle tr_y holds the last row level's results -- TP issues it one cycle early
++  // -- the residues mod RL = 8 in brackets): u_ln issues
++  //   L1_0 at W+1  (5): xl[0][0] + xl[0][4]           (tr_y at W)
++  //   L1_2 at W+2  (6): xl[0][2] + xl[0][6]           (tr_y1 at W+1)
++  //   L1_1 at W+3  (7): xl[0][1] + xl[0][5]           (tr_y2 at W+2)
++  //   L1_3 at W+4  (0): xl[0][3] + xl[0][7]           (t3 at W+3)
++  //   L2a  at W+6  (2): xs at W+5 + xs                (L1_0 + L1_2 = xl[2][0])
++  //   L2b  at W+8  (4): xs at W+7 + xs                (L1_1 + L1_3 = xl[2][1])
++  //   L3   at W+13 (1): xs at W+12 + h = xs at W+10   (L2b + L2a)
++  // and the root is xs at W+17. The residues are distinct and rows are a multiple of RL apart,
++  // so the adder is never double-booked; the pairs are xl's (a and b swapped in L3: fp_add is
++  // commutative bit for bit). The operands are registered one cycle ahead (qa, qb: an AND-OR of
++  // the L1 operands, else xs / h, with flip-flop selects); ob one 2:1 mux in front of xs.
+   if (LN2) begin : g_ln
+-    wire l1a_n = rsr[DL + LA - 2];            // L1a / L1b one cycle early
+-    wire l1b_n = rsr[DL + LA - 1];
+-    assign ln_l1b = rsr[DL + LA];
+-    assign ln_l2  = rsr[DL + 2 * LA];
+-    assign ln_l3  = rsr[DL + 2 * LA + 5];
+-    for (genvar m = 0; m < 2; m++) begin : g_m
+-      f32_t qa, qb, ob;
+-      always_ff @(posedge clk) if (en) begin
+-        qa <= l1a_n ? tr_y[m]     : l1b_n ? tr_y1[m + 2] : xs[m];
+-        qb <= l1a_n ? tr_y[m + 4] : l1b_n ? tr_y1[m + 6] : xs[1];
+-      end
+-      assign ob = ln_l2 ? xs[m] : qb;
+-      otpu_fadd #(.LAT(LA)) u_ln (.clk, .en, .a(qa), .b(ob), .y(xs[m]));
++    localparam int W = DL + LA - 2;
++    f32_t qa, qb, ob, h;
++    f32_t t3 [2];                             // tr_y2 of lanes 3 and 7 one cycle later
++    wire  [3:0] ls = rsr[W+3:W];              // L1_0, L1_2, L1_1, L1_3 one cycle early
++    wire  ld = (ls == 0);
++    always_ff @(posedge clk) if (en) begin
++      t3[0] <= tr_y2[3];
++      t3[1] <= tr_y2[7];
++      qa <= ({32{ls[0]}} & tr_y[0]) | ({32{ls[1]}} & tr_y1[2]) | ({32{ls[2]}} & tr_y2[1]) |
++            ({32{ls[3]}} & t3[0]) | ({32{ld}} & xs[0]);
++      qb <= ({32{ls[0]}} & tr_y[4]) | ({32{ls[1]}} & tr_y1[6]) | ({32{ls[2]}} & tr_y2[5]) |
++            ({32{ls[3]}} & t3[1]) | ({32{ld}} & h);
++      if (rsr[W + 10]) h <= xs[0];            // L2a, read into qb at W+12
+     end
++    assign ob = (rsr[W + 6] || rsr[W + 8]) ? xs[0] : qb;
++    otpu_fadd #(.LAT(LA)) u_ln (.clk, .en, .a(qa), .b(ob), .y(xs[0]));
++    assign ln_is = {rsr[W + 13], rsr[W + 8], rsr[W + 6], rsr[W+4:W+1]};
+   end else begin : g_lg
+-    assign ln_l1b = 1'b0;
+-    assign ln_l2  = 1'b0;
+-    assign ln_l3  = 1'b0;
++    assign ln_is = '0;
+     for (genvar q = 1; q <= LW; q++) begin : g_xl
+       for (genvar k = 0; k < (LANES >> q); k++) begin : g_k
+         if (SH2 && q == 2) begin : g_sh
+@@ -207,11 +213,10 @@ module otpu_vtree
+   always_ff @(posedge clk)
+     if (!rst && en && cap && sub >= 8'(RL / 2) && lv != 0)
+       $fatal(1, "otpu_vtree: tree schedule collision");
+-  // lane level 2 shares level 1's adders: it must never issue with level 1 (LN2: the lane
+-  // levels L1a, L1b, L2 and L3 share u_ln and must never issue together)
++  // lane level 2 shares level 1's adders: it must never issue with level 1 (LN2: the seven
++  // lane-level adds share u_ln and must never issue together)
+   always_ff @(posedge clk)
+-    if (!rst && en && (LN2 ? !$onehot0({rsr[DL + LA - 1], ln_l1b, ln_l2, ln_l3})
+-                           : SH2 && l2_v && rsr[DL + LA - 1]))
++    if (!rst && en && (LN2 ? !$onehot0(ln_is) : SH2 && l2_v && rsr[DL + LA - 1]))
+       $fatal(1, "otpu_vtree: lane level schedule collision");
+ `endif
+ endmodule
