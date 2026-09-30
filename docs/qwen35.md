@@ -132,6 +132,46 @@ The repeated rows cost 2 x 128 projection rows per extra value head:
 Computing a head pair's shared q and k once in the pair's projection would win that back,
 but it changes the kernels.
 
+## Group-major DeltaNet blocks: the pair loop at a run-time position
+
+In the 0.8B's layer block each DeltaNet part is one array over the slice's pairs: the
+projection rows and their scales, the taps and windows, the states, and the out_proj blocks. A
+loop over the pairs then steps one address register per part (7 in all, with the per-pair
+gates in the I/O area). Resident decode's run-time position needs registers of its own, so
+there the pairs run unrolled. That fits for the 0.8B's 8 pairs, but not for 16: Qwen3.5-4B's
+resident decode is 3,909 to 4,254 instructions (fp4, one slice), past the 4,096 of IMEM from
+bucket 8 on (the 35B-A3B's, with its MoE blocks: 4,082 to 4,131 at bucket 1).
+
+With more than 8 pairs per slice (`PAIR_LOOP`; `Spec.pair_loop` forces either layout), a
+DeltaNet block is group-major (`Image.grouped`, `DeltaNetParts`):
+- The block holds one block per head group of og = 4 heads.
+- A group's block holds its two pairs' blocks, then its out_proj column block, then its pairs'
+  gates (decays and betas, written by each token).
+- A pair's block holds its projection rows, their scales, its taps and window, and its two
+  states.
+
+Every part of pair p, its gates included, is at one offset from p's group's block, so the pair
+loop steps one address register. The decode then loops the pairs at a run-time position too,
+and the attention's run-time KV addresses still find their registers after it. The gates are
+stored once per head group instead of once per layer. The kernels address the parts through
+`DeltaNetParts` in both layouts, so the 0.8B's programs are the same words as before (64,069
+instructions, sha256 661913fb). Group-major is bit-exact against array-major
+(`test_group_major_is_bit_exact`).
+
+Qwen3.5-4B's resident decode at one slice (fp4, int8 LM head, its int8 embedding gathered on
+the device, KV capacity 4096; instructions per bucket of 256 positions, buckets 9 to 16 repeat
+6 to 8; `test_4b_resident_decode_fits_imem`):
+
+| config, layout | 1 | 2 | 4 | 5 | 6 | 8 |
+|---|---|---|---|---|---|---|
+| default board, array-major | 3,962 | 4,006 | 4,094 | 4,138 | 4,220 | 4,308 |
+| default board, group-major | 2,075 | 2,119 | 2,207 | 2,251 | 2,330 | 2,418 |
+| MCOLS 4 + PAIR + DSTEP + STREAM, array-major | 2,906 | 2,950 | 3,038 | 3,082 | 3,164 | 3,252 |
+| MCOLS 4 + PAIR + DSTEP + STREAM, group-major | 1,679 | 1,723 | 1,811 | 1,855 | 1,934 | 2,022 |
+
+From bucket 6 on the gather's two token arguments leave too few registers for the attention's
+block loop unless the token's are given back after the gather (docs/isa.md "Arguments").
+
 ## Accuracy
 
 The numpy reference (`qwen35.reference_logits`) matches Hugging Face's fp32 Qwen3.5-0.8B to
@@ -388,6 +428,11 @@ would need a state per sequence.
 - `Engine.reset` gives bit-identical logits: position 0 does not read the previous sequence's
   DeltaNet state or convolution rows.
 - The layer plan, and the programs at position 4095 fitting the board IMEM (MCOLS 2 and 4).
+- Group-major DeltaNet blocks, with 16 heads for 8 key heads (8 pairs, out_proj groups of 4)
+  and 18 for 9 (9 pairs, groups of 2), with and without DSTEP: chunked prefill, per-position
+  and resident decode give array-major's logits, windows and states bit for bit, and the
+  resident decode is shorter; the same group-major decode on the Verilator board model through
+  the host driver; Qwen3.5-4B's resident decode (layout only) under IMEM at every bucket.
 - The tiny model on the Verilator board model through the host driver, over five tokens (a
   full turn of the convolution ring), bit-identical to the ISA simulator.
 - Qwen3.5-0.8B: 8 greedy tokens equal to HF's ("The capital of France is Paris."), and one real
