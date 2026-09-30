@@ -195,6 +195,14 @@ module otpu_quant
   wire [31:0] bstep = wide ? 32'd4 : es;      // QST pass 1: badr per read
   wire [31:0] Gr = pass ? GW : G;            // the elements of this pass
   wire rlast = (e + ew >= Gr);
+  // the elements left in the group, Gr - e, kept alongside e (set wherever e or the pass
+  // moves): lane l reads while l < ew and l < rem, a compare with a small constant instead of
+  // the adder and compare of e + l < Gr, so the read enables and TMEM's block RAM enables no
+  // longer follow two carry chains (133.33 MHz, 110ec6d: e -> e + l -> < Gr -> the Q2 port's
+  // lane and bank enables -> block RAM ENB, 12 levels, +0.258 ns)
+  logic [31:0] rem;
+  logic [LANES-1:0] rmask;
+  always_comb for (int l = 0; l < LANES; l++) rmask[l] = 32'(l) < ew && 32'(l) < rem;
   wire riss = busy && !rd_done && !rd_wait &&
               (!strm || (e != 0) || (bst[rbuf] == B_FREE));
 
@@ -212,25 +220,33 @@ module otpu_quant
   } rm_t;
   rm_t m0, mp;                               // data arriving now / after the prescale
 
+  // (the addresses follow the position alone: a lane's counts only while its enable is up)
   always_comb begin
-    t_ren = '0; t_raddr = '0; t_ren2 = '0; t_raddr2 = '0; t_ren3 = 1'b0; t_raddr3 = '0;
+    t_ren = '0; t_ren2 = '0; t_ren3 = 1'b0;
+    for (int l = 0; l < LANES; l++) begin
+      t_raddr[l] = grp_src + e + 32'(l);
+      t_raddr2[l] = csb + rel + 32'(l);
+    end
+    t_raddr3 = rsb + 32'(r);
     if (riss) begin
       for (int l = 0; l < LANES; l++) begin
-        if (32'(l) < ew && e + 32'(l) < Gr) begin
+        if (rmask[l]) begin
           t_ren[l] = 1'b1;
-          t_raddr[l] = grp_src + e + 32'(l);
-          if (csf) begin
-            t_ren2[l] = 1'b1;
-            t_raddr2[l] = csb + rel + 32'(l);
-          end
+          if (csf) t_ren2[l] = 1'b1;
         end
       end
-      if (rsf) begin
-        t_ren3 = 1'b1;
-        t_raddr3 = rsb + 32'(r);
-      end
+      if (rsf) t_ren3 = 1'b1;
     end
   end
+`ifndef SYNTHESIS
+  bit rem_rst;                                       // (registers start arbitrary)
+  initial rem_rst = 1'b0;
+  always @(posedge clk) begin
+    if (rst) rem_rst <= 1'b1;
+    if (!rst && rem_rst && busy && rem != Gr - e)
+      $fatal(1, "otpu_quant: rem %0d is not Gr %0d - e %0d", rem, Gr, e);
+  end
+`endif
 
   // ------------------------------------------------------------------ prescale
   // the TMEM read data is registered first (no path from the block RAMs into the multipliers'
@@ -519,6 +535,7 @@ module otpu_quant
         drs  <= cmd.w6;
         es   <= cmd.w7;
         G    <= cmd.flags[0] ? 32'(cmd.w4[31:16]) * D : D;
+        rem  <= cmd.flags[0] ? 32'(cmd.w4[31:16]) * D : D;
         // HALF (ROW mode): the scale is the whole row's, pass 1 writes its first half
         GW   <= cmd.flags[0] ? (32'(cmd.w4[31:16]) * D) >> (cmd.flags[1] ? 1 : 0) : D;
         groups <= 32'(cmd.w4[15:0]) * (cmd.flags[0] ? 32'd1 : 32'(cmd.w4[31:16]));
@@ -528,6 +545,7 @@ module otpu_quant
         KB   <= cmd.w2[31:16];
         srs  <= cmd.w3;
         G    <= cmd.flags[0] ? 32'(cmd.w2[31:16]) * D : D;
+        rem  <= cmd.flags[0] ? 32'(cmd.w2[31:16]) * D : D;
         GW   <= cmd.flags[0] ? 32'(cmd.w2[31:16]) * D : D;
         groups <= 32'(cmd.w2[7:0]) * (cmd.flags[0] ? 32'd1 : 32'(cmd.w2[31:16]));
       end
@@ -561,7 +579,7 @@ module otpu_quant
         m0.last <= rlast;
         m0.row <= r;
         m0.grp <= g;
-        for (int l = 0; l < LANES; l++) m0.mask[l] <= (32'(l) < ew && e + 32'(l) < Gr);
+        m0.mask <= rmask;
         m0.glast <= rlast && (gi + 1 == groups);
         if (strm && e == 0) begin
           bst[rbuf] <= B_FILL;
@@ -572,16 +590,19 @@ module otpu_quant
         // re-read below)
         if (!rlast) begin
           e <= e + ew;
+          rem <= rem - ew;
           rel <= rel + ew;
           badr <= badr + bstep;
         end else if (!strm && !pass) begin        // two-pass: wait for the scale, re-read
           rd_wait <= 1'b1;
           e <= '0;
+          rem <= G;
           rel <= rel - e;
           badr <= bgrp;
           wide <= is_st && es == 32'd1 && bgrp[1:0] == 2'd0;
         end else begin                             // next group
           e <= '0;
+          rem <= G;
           gi <= gi + 1;
           pass <= 1'b0;
           wide <= 1'b0;
@@ -617,6 +638,7 @@ module otpu_quant
           sc2 <= sq_sc;
           inv2 <= sq_inv;
           pass <= 1'b1;
+          rem <= GW;                               // pass 1 re-reads from e = 0
           rd_wait <= 1'b0;
           if (is_st) saddr <= saddr + 4;
         end
