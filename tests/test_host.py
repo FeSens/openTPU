@@ -1378,6 +1378,8 @@ def test_diag_hints_from_the_pattern_of_failures():
     assert len(h) == 1 and "on a bitstream that has them (register map 3)" in h[0]
     h = diagnose(rows(mxu=FAIL, vpu=FAIL, dma=FAIL, control=FAIL))
     assert h[0].startswith("every program fails")
+    h = diagnose(rows(dma=PASS, waitw=PASS, **{"waitw-host": FAIL}))
+    assert len(h) == 1 and "the order of XDMA's writes" in h[0]
 
 
 @pytest.mark.parametrize("regmap,need,ok,text", [

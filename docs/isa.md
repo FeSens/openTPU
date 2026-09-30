@@ -370,6 +370,16 @@ or, if it does not hold, read again after `w5` cycles. At the timeout the slice 
 shows HALTED and ERROR. The scoreboard sees all of DRAM as written (older DRAM readers and
 writers complete first, younger ones wait) and the TMEM word.
 
+On the card, `tools/qual/waitw.py` (qual.sh, and otpu-diag's `waitw-host` group) checks that
+order (opentpu/host/checks.py `waitw_host`). In each round the host:
+1. writes old data and a flag the compare fails on;
+2. starts the card and checks that it waits;
+3. writes new data, then the flag.
+
+The card's LD after the WAITW must read the new data (1 to 32768 words from any word offset; EQ,
+NE, GE and a masked EQ; poll intervals 0, 64 and 1000 cycles; flags in both channels). Then a
+WAITW that never holds must stop at its timeout with ERROR, and the next run halt normally.
+
 ### HALT CHAIN
 
 `HALT` with flag bit0 (CHAIN) halts the slice as `HALT` does (the window drains, every store has

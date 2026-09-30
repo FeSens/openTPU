@@ -32,7 +32,7 @@ def _both(prog, cfg, dram, pokes=(), axi=None):
                                   pokes={0: list(pokes)} if pokes else None)
     assert np.array_equal(drams[0], m.slices[0].dram)
     assert np.array_equal(tmems[0], m.slices[0].tmem)
-    return st
+    return {**st, "dram": drams[0]}
 
 
 def test_waitw_holds_at_once(have_verilator):
@@ -113,3 +113,23 @@ def test_the_waitw_op_checks_on_the_board_config_rtl(have_verilator):
         dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
         dram[:len(img)] = img
         _both([I.ld(ZERO_AT, 0, cfg.TMEM_WORDS)] + prog, cfg, dram)
+
+
+@pytest.mark.parametrize("r", range(4))
+def test_the_card_check_waits_for_the_host(have_verilator, r):
+    """checks.waitw_host's program (qual.sh's WAITW phase) on the board's configuration: EQ, NE,
+    GE and the masked EQ; the host writes the new data, then the flag, during the run (pokes)."""
+    from opentpu.host.checks import W_RES, W_TOK, waitw_host_program, waitw_round
+    from opentpu.isasim import board_config
+    cfg = board_config(DRAM_BYTES=1 << 22)
+    p = waitw_round(r, sizes=(16, 17))
+    old, new = np.arange(p["n"]) + 100, np.arange(p["n"]) + 7000
+    dram = _dram(cfg, [(p["data"] + 4 * k, int(v)) for k, v in enumerate(old)]
+                 + [(p["flag"], p["pre"])])
+    pokes = [(4000, p["data"] + 4 * k, int(v)) for k, v in enumerate(new)] \
+        + [(4100, p["flag"], p["word"])]
+    st = _both(waitw_host_program(p, timeout=1 << 20), cfg, dram, pokes)
+    assert st["cycles"] > 4100
+    got = st["dram"].view("<u4")
+    assert list(got[W_RES // 4:W_RES // 4 + p["n"]]) == list(new)
+    assert got[W_TOK // 4] == p["word"]

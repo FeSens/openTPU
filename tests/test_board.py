@@ -164,6 +164,19 @@ def test_op_check_on_board_model(have_verilator, group, name, prog):
     assert ok, msg
 
 
+def test_waitw_host_check_on_board_model(have_verilator):
+    """qual.sh's WAITW phase (checks.waitw_host, waitw_timeout) through the host driver: the board
+    model runs a script, so the host's data and flag are there before the start (the writes
+    during the run: tests/test_waitw_rtl.py); a WAITW timeout stops with ERROR, the next run
+    halts normally."""
+    from opentpu.host.checks import waitw_host, waitw_timeout
+    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=20, seed=4))
+    ok, msg = waitw_host(b, rounds=5, sizes=(16, 17, 1000))
+    assert ok and "5 rounds" in msg, msg
+    ok, msg = waitw_timeout(b)
+    assert ok, msg
+
+
 def test_pattern_and_address_lines_on_board_model(have_verilator):
     t = SimTransport(ch_bytes=1 << 21)
     b = Board(t, check=False)
