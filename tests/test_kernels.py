@@ -126,3 +126,24 @@ def test_attention_layer_vt_tiles_bit_exact(pos, monkeypatch):
     assert np.array_equal(tiled.outputs["out"], plain.outputs["out"])
     assert np.array_equal(V, plain.kv("kv")[1])
     assert rel(V[:, pos], vnew) < 0.02
+
+
+def test_softcap_and_gelu_tanh():
+    """lib.softcap (Gemma's logit cap, for a sampler on the card) and lib.gelu_tanh against their
+    float64 definitions."""
+    from opentpu import language as ol
+    from opentpu.kernels.lib import gelu_tanh, softcap
+
+    @ol.jit
+    def k(x, cap, gelu):
+        t = ol.load(x)
+        ol.store(cap, softcap(t, 30.0))
+        ol.store(gelu, gelu_tanh(t))
+
+    y = np.concatenate([np.linspace(-400, 400, 1001), [-1e30, 1e30, 0.0]]).astype(np.float32)
+    r = launch(k, Config(), x=Input(y), cap=Output(y.shape), gelu=Output(y.shape))
+    y64 = y.astype(np.float64)
+    assert np.abs(r.outputs["cap"] - 30 * np.tanh(y64 / 30)).max() < 6e-4
+    g = y64[np.abs(y64) < 20]
+    want = 0.5 * g * (1 + np.tanh(np.sqrt(2 / np.pi) * (g + 0.044715 * g ** 3)))
+    assert np.abs(r.outputs["gelu"][np.abs(y64) < 20] - want).max() < 1e-4
