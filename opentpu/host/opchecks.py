@@ -144,7 +144,7 @@ def op_checks(cfg) -> list[tuple[str, str, list]]:
 
     # ---- VPU: every function under its legal broadcast modes
     for f, name in I.VFUNCS.items():
-        if f == I.V_OUTER:
+        if f in (I.V_OUTER, I.V_ARGMAX):
             continue
         if f in I.READS_B:
             modes = [("FULL", I.B_FULL), ("ROW", I.B_ROW), ("COL", I.B_COL),

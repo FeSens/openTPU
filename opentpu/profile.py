@@ -38,11 +38,12 @@ from . import rtlsim
 
 UNITS = ["DMA", "MXU", "QUANT", "VPU", "COLL"]
 OPNAMES = {I.LD: "LD", I.ST: "ST", I.DSTEP: "DSTEP", I.STREAM: "STREAM", I.MM: "MM",
-           I.QACT: "QACT", I.QST: "QST", I.VOP: "VOP", I.GATHER: "GATHER", I.BAR: "BAR"}
+           I.QACT: "QACT", I.QST: "QST", I.VOP: "VOP", I.GATHER: "GATHER", I.BAR: "BAR",
+           I.RLD: "RLD"}
 VFUNCS = {I.V_ADD: "add", I.V_SUB: "sub", I.V_RSUB: "rsub", I.V_MUL: "mul", I.V_MAX: "max",
           I.V_MIN: "min", I.V_COPY: "copy", I.V_EXP2: "exp2", I.V_RECIP: "recip",
           I.V_RSQRT: "rsqrt", I.V_ABS: "abs", I.V_FILL: "fill", I.V_EXP2SUB: "exp2sub",
-          I.V_RSUM: "rsum", I.V_RMAX: "rmax", I.V_RSSQ: "rssq"}
+          I.V_RSUM: "rsum", I.V_RMAX: "rmax", I.V_RSSQ: "rssq", I.V_ARGMAX: "argmax"}
 
 
 # ------------------------------------------------------------------------------ DDR3 peak
@@ -153,6 +154,8 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
         return "GATHER", f"{rows}x{cols} x S", cfg.S * rows * -(-cols // L), 0, 0
     if op == I.BAR:
         return "BAR", "", 0, 0, 0
+    if op == I.RLD:
+        return "RLD", "raw" if ins.flags & I.F_RAW else "", 1, 0, 0
     return f"op{op:#x}", "", 0, 0, 0
 
 

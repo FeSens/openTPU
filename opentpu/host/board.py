@@ -1167,6 +1167,66 @@ class BoardBackend:
         self.start(programs)
         return self.wait()
 
+    # ---- the decode loop on the card (Engine.generate_card)
+    @property
+    def generates(self) -> bool:
+        """The bitstream runs the generate programs: RLD, VOP ARGMAX, HALT CHAIN (CAPS bit28)."""
+        return bool((self.info.get("caps") or {}).get("gen"))
+
+    chains = generates
+
+    def run_generate(self, programs, out: int, n: int, on_token=None, stop=None,
+                     state: int | None = None):
+        """Start a generate program and hand over its tokens as they land in out[] (up to n
+        fp32 ids from byte address `out`, OUT_MARK until written) while the card runs; stop()
+        true writes the state block's stop word (at `state`): the card halts after the token in
+        flight. Returns (the run's counters, the tokens). The host reads 64-byte beats of out[]
+        only, never the logits."""
+        from opentpu.llm import generate as G
+        b, t = self.board, self.board.t
+        self.start(programs)
+        got, k, asked = [], 0, False
+        gap = self._expects.get(("gen", self._key), 0.0) or 0.002   # seconds per token
+        t_tok = time.perf_counter()
+
+        def take() -> int:
+            nonlocal k, t_tok
+            a = out + 4 * k
+            m = min(n - k, (64 - a % 64) // 4 + 16)            # to the next beat's end
+            w = b.read(a, 4 * m).view(np.uint32)
+            new = w[:int(np.argmax(w == G.OUT_MARK))] if (w == G.OUT_MARK).any() else w
+            for x in new.view(np.float32):
+                got.append(int(x))
+                if on_token is not None:
+                    on_token(int(x))
+            k += len(new)
+            if len(new):
+                t_tok = time.perf_counter()
+            return len(new)
+
+        while k < n:
+            if take():
+                continue
+            if t.reg_read(R_STATUS) & ST_HALTED:
+                break
+            if stop is not None and not asked and state is not None and stop():
+                b.write(state + 4 * G.S_HALT, np.ones(1, np.float32))
+                asked = True
+            # wake up a little before the next token is due, then every 50 us
+            due = t_tok + gap - time.perf_counter()
+            time.sleep(min(max(due * 0.5, 5e-5), 1e-3))
+        st = b.wait(expect=0.0)
+        self._running = None
+        while k < n and take():                            # the last tokens, after HALTED
+            pass
+        khz = self.info["core_khz"]
+        if got and khz:
+            self._expects[("gen", self._key)] = st["cycles"] / (khz * 1e3) / len(got)
+        self.last = (programs, st)
+        if self.status is not None:
+            self.status.token(st["cycles"], khz, dram=self._layout(True))
+        return st, got
+
     def close(self) -> None:
         if self.status is not None:
             self.status.remove()

@@ -47,6 +47,7 @@ from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
 from ..kernels.mlp import _chunk
 from ..runtime import quantize_rows
+from . import generate as G
 from .qwen3 import (RunPos, _inputs, _lookup_alloc, _lookup_build, _lookup_desc,
                     compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
@@ -407,6 +408,11 @@ class Image:
         """(programs, run_args): lfm2_step at a run-time position (qwen3.compile_decode); the
         convolutions need lo >= conv_k - 1 (every tap of the state ring is a past token)."""
         return compile_decode(self, lfm2_step, blocks, lo, block)
+
+    def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
+                         chain: bool = True, samp=None) -> list:
+        """The decode loop on the device for bucket `blocks` (lfm2_step in it, generate.py)."""
+        return G.compile_generate(self, lfm2_step, blocks, lo, block, chain, samp)
 
     def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
         """One program per slice: the decode token at position `pos` (lfm2_step)."""

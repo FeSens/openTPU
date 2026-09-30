@@ -46,6 +46,9 @@ CAP_STREAM = 1 << 26
 # (opentpu/host/memcal.py) through their CSRs in the BAR0 window at R_MEMCAL; STATUS CALIB0/1
 # rise when it has. The MIG bitstreams (before LiteDRAM) calibrate themselves.
 CAP_HOSTCAL, R_MEMCAL = 1 << 27, 0x10000
+# CAPS bit28: the decode loop on the card (docs/isa.md RLD, VOP ARGMAX, HALT CHAIN; the
+# generate programs of opentpu/llm/generate.py)
+CAP_GEN = 1 << 28
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset
@@ -82,7 +85,7 @@ def caps(v: int) -> dict:
             "pair": bool(v & CAP_PAIR), "dstep": bool(v & CAP_DSTEP),
             "chash": bool(v & CAP_CHASH), "act_rows": bool(v & CAP_ACT),
             "args": bool(v & CAP_ARGS), "stream": bool(v & CAP_STREAM),
-            "hostcal": bool(v & CAP_HOSTCAL),
+            "hostcal": bool(v & CAP_HOSTCAL), "gen": bool(v & CAP_GEN),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
 

@@ -38,11 +38,14 @@ _loop_ids = itertools.count()
 
 
 class Loop:
-    """Hardware loop induction variable."""
+    """Hardware loop induction variable. `rcount`: a register whose value (read when the loop
+    starts) is the trip count instead of `count` (a device-computed count; nothing may step
+    with such a loop: its registers could not be reset)."""
 
-    def __init__(self, count: int):
+    def __init__(self, count: int, rcount: int = 0):
         self.id = next(_loop_ids)
         self.count = count
+        self.rcount = rcount
 
     def _aff(self) -> "Affine":
         return Affine(0, {self: 1})
@@ -694,10 +697,11 @@ class Builder:
                 return r
         return None
 
-    def begin_loop(self, n: int) -> Loop:
+    def begin_loop(self, n: int, rcount: int = 0) -> Loop:
+        """A hardware loop of n iterations, or of R[rcount] (n = 0) read when it starts."""
         if len(self.loops) >= 4:
             raise CompileError("loop nesting deeper than 4")
-        lb = LoopBlock(Loop(n))
+        lb = LoopBlock(Loop(n, rcount))
         self.stack[-1].append(lb)
         self.stack.append(lb.items)
         self.loops.append(lb)
@@ -739,6 +743,43 @@ class Builder:
                 raise CompileError("a stationary operand used inside a loop was overwritten "
                                    "inside that loop; quantize it inside the loop instead")
         self.loop_uses = [(d, s) for d, s in self.loop_uses if d <= depth]
+
+    # ---- device-computed values (RLD)
+    def scratch(self) -> int:
+        """A free register (value 0) for a device-computed value; give it back with unscratch
+        once its last use has been emitted."""
+        if not self.free_regs:
+            raise CompileError("out of registers for a device-computed value")
+        r, _ = self.free_regs.pop()      # zeroed again before any later use of it
+        self.used_regs.add(r)
+        return r
+
+    def unscratch(self, r: int) -> None:
+        """Zero a scratch register (free registers hold 0) and return it to the pool."""
+        self.emit(I.li(r, 0, comment="scratch free"))
+        self.free_regs.append((r, frozenset(id(lb.loop) for lb in self.loops)))
+
+    def rld(self, r: int, t: "Tile", raw: bool = False, comment: str = "") -> None:
+        """R[r] = the one-word tile t as an int (RLD: f2i, or its bits with raw)."""
+        self.check_live(t)
+        if t.rows * t.cols != 1:
+            raise CompileError(f"rld: {t} is not one word")
+        self.emit(I.rld(r, t.base, raw=raw, comment=comment or "rld"))
+
+    def argmax(self, x: "Tile", base: int = 0, out: "Tile | None" = None,
+               rbase: int = 0) -> "Tile":
+        """Per row of x its maximum and the index of its first column (+ base, + R[rbase]), as
+        fp32 pairs: a [rows, 2] tile (a [2] one for one row), or into `out`."""
+        x = self.materialize(x)
+        self.check_live(x)
+        if out is None:
+            out = self.alloc((2,) if x.rows == 1 else (x.rows, 2))
+        drs = out.rs if len(out.shape) == 2 else 2
+        if out.rows != x.rows or out.cols != 2:
+            raise CompileError(f"argmax of {x} into {out}")
+        ars = x.rs if len(x.shape) == 2 else 0
+        self.emit(I.argmax(out.base, x.base, x.rows, x.cols, drs, ars, base, rd=rbase))
+        return out
 
     # ---- TMEM / ACT RAM allocation
     def alloc(self, shape, rs: int | None = None, spare: int = 0) -> Tile:
@@ -1364,11 +1405,15 @@ class Builder:
                 out.append(it)
                 continue
             loop = it.loop
+            if loop.rcount and it.steps:
+                raise CompileError("a loop with a device-computed count cannot step registers")
             body = self._flatten(it.items)
             body += [I.addi(r, r, c, comment=f"{loop} step") for r, c in it.steps]
             if not body or self._ends_inner(it.items, it.steps):
                 body.append(I.nop("loop end"))
-            out.append(I.loop(len(body), loop.count, comment=f"{loop} x{loop.count}"))
+            out.append(I.loop(len(body), loop.count, rcount=loop.rcount,
+                              comment=f"{loop} x" + (f"R{loop.rcount}" if loop.rcount
+                                                      else f"{loop.count}")))
             out += body
             out += [I.addi(r, r, -c * loop.count, comment=f"{loop} reset") for r, c in it.steps]
         return out

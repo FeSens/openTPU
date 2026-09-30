@@ -32,6 +32,7 @@ import numpy as np
 
 from opentpu.host.runstate import busy_exits
 from opentpu.llm import MODELS, load_spec, model_dir
+from opentpu.llm import generate as G
 from opentpu.llm.qwen3 import Engine, load_weights
 
 
@@ -130,6 +131,10 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
 
     pick.stream = Stream
     pick.warm = warm
+    pick.greedy = temperature <= 0 and repetition_penalty == 1.0   # argmax of the raw logits
+    pick.params = dict(temperature=temperature, top_k=top_k, top_p=top_p,
+                       repetition_penalty=repetition_penalty)
+    pick.rng = rng
     return pick
 
 
@@ -403,8 +408,25 @@ class Chat:
         self.last = turn
         return reply, turn
 
+    @property
+    def on_card(self) -> bool:
+        """The decode loop runs on the device (Engine.generate_card) on an engine that runs it,
+        for greedy picks and for the sampler's settings the device takes (generate.Sampling:
+        top_k 1 .. 64, repetition_penalty >= 1). The host then only shows the tokens."""
+        if not getattr(self.eng, "can_generate", False):
+            return False
+        sp = getattr(self.pick, "params", None)
+        return bool(getattr(self.pick, "greedy", False)) or (sp is not None
+                                                             and G.Sampling.fits(**sp))
+
     def _decode(self, logits, out: list[int], turn: Turn, t0: float, on_update, stop) -> str:
-        """Generate after `out` (the reply so far) from `logits`; returns the whole reply."""
+        """Generate after `out` (the reply so far) from `logits` (or, after a reply cut on the
+        device, from its last token, an int: picked, not fed yet); returns the whole reply."""
+        if self.on_card:
+            return self._decode_card(logits, out, turn, t0, on_update, stop)
+        if isinstance(logits, int):          # the reply's last token, picked on the device
+            self.fed.append(logits)
+            logits = self.eng.step(logits)
         k1 = len(self.eng.stats)
         out, n0, t_first = list(out), len(out), None
         detok = Detok(self.tok, out)
@@ -453,11 +475,81 @@ class Chat:
             turn.decode_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
             turn.context = self.eng.pos
         self._next = logits if turn.end == "max_new" else None
+        return self._finish(out, shown, turn, on_update)
+
+    def _finish(self, out: list[int], shown: str, turn: Turn, on_update) -> str:
         self._reply = out
         reply = self.tok.decode(out, skip_special_tokens=True)
         if len(reply) > len(shown) and reply.startswith(shown):
             on_update(reply[len(shown):], turn)       # a held-back incomplete character
         return reply
+
+    def _decode_card(self, logits, out: list[int], turn: Turn, t0: float, on_update,
+                     stop) -> str:
+        """_decode with the decode loop on the device: the host picks the first token from the
+        prefill's logits (resume: the reply's last token, picked on the device), then each
+        Engine.generate_card run feeds it and generates the rest there (the sampler's settings
+        and generator), up to max_new or an EOS id; the tokens are shown as they land. The
+        last token of a run is not fed (a cut reply resumes from it)."""
+        eng = self.eng
+        samp = None if getattr(self.pick, "greedy", False) else G.Sampling(**self.pick.params)
+        out, n0 = list(out), len(out)
+        detok = Detok(self.tok, out)
+        shown = self.tok.decode(out, skip_special_tokens=True) if out else ""
+        t_first = None
+
+        def take(t: int) -> None:
+            nonlocal shown, t_first
+            if t in eng.spec.eos:
+                return
+            out.append(t)
+            now = time.perf_counter()
+            if t_first is None:
+                t_first, turn.ttft_s = now, now - t0
+            turn.gen_tokens, turn.decode_s = len(out) - n0, now - t_first
+            delta = detok.add(t)
+            shown += delta
+            on_update(delta, turn)
+
+        if isinstance(logits, int):
+            t = logits
+        elif logits is not None and not turn.end:
+            t = self.pick(logits, self.fed)
+            if t in eng.spec.eos:
+                turn.end = "eos"
+            take(t)
+        else:
+            t = None
+        while t is not None and not turn.end:
+            left = self.max_new - (len(out) - n0)
+            if left <= 0:
+                turn.end = "max_new"
+            elif eng.pos >= eng.cap:
+                turn.end = "cap"
+            elif stop():
+                turn.end = "stopped"
+            if turn.end:
+                break
+            k1 = len(eng.stats)
+            self.fed.append(t)
+            try:
+                got = eng.generate_card(t, left, stop_ids=eng.spec.eos, on_token=take,
+                                        stop=stop, sampling=samp, context=self.fed,
+                                        rng=getattr(self.pick, "rng", None))
+            except BaseException:
+                self.fed.pop()
+                raise
+            self.fed += got[:-1]                  # the last one is fed by the next run
+            turn.decode_steps += len(got)
+            turn.decode_cycles += sum((st or {}).get("cycles", 0) for st in eng.stats[k1:])
+            turn.context = eng.pos
+            if not got:
+                break
+            t = got[-1]
+            if t in eng.spec.eos:
+                turn.end = "eos"
+        self._next = t if turn.end == "max_new" else None
+        return self._finish(out, shown, turn, on_update)
 
     def ask_plain(self, text: str | None, stream=sys.stdout) -> str:
         """ask() (resume() for None) printing the reply as it streams, then the turn's

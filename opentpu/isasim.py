@@ -83,6 +83,7 @@ class Slice:
         self.pc = 0
         self.stack: list[list[int]] = []
         self.halted = False
+        self.chain: tuple | None = None       # HALT CHAIN: (DRAM byte address, instructions)
         self.waiting: I.Instr | None = None   # blocked on a collective
         self.icount = 0
 
@@ -121,6 +122,8 @@ class Slice:
         self.icount += 1
         if op == I.HALT:
             self.halted = True
+            if ins.flags & I.F_CHAIN:
+                self.chain = (self.reg(ins.ra), self.reg(ins.rb))
             return
         if op in (I.BAR, I.GATHER):
             self.waiting = ins
@@ -166,6 +169,11 @@ class Slice:
         if op == I.ADDI:
             if ins.rd:
                 self.R[ins.rd] = (self.reg(ins.ra) + w[0]) & 0xFFFFFFFF
+            return
+        if op == I.RLD:
+            v = int(self.tmem[self._tidx(np.int64((self.reg(ins.ra) + w[0]) & 0xFFFFFFFF))])
+            if ins.rd:
+                self.R[ins.rd] = v if ins.flags & I.F_RAW else I.f2i(v)
             return
         if op == I.LD:
             d = (self.reg(ins.ra) + w[0]) & 0xFFFFFFFF
@@ -531,6 +539,17 @@ class Slice:
             elif bmode == I.B_COL:
                 bidx = np.broadcast_to(b + c, (rows, cols))
             B = self.tget(bidx) if bidx is not None else np.full((rows, cols), imm, np.float32)
+        if func == I.V_ARGMAX:
+            # per row the maximum and the index of its first column (+ the integer base w7)
+            if rows > 1 and drs < 2:
+                raise SimError("VOP ARGMAX: rows > 1 needs drs >= 2 (a pair per row)")
+            didx = (dst + np.arange(rows)[:, None] * drs + np.arange(2)[None, :]).reshape(-1)
+            ends = np.repeat((np.arange(rows) + 1) * cols - 1, 2)   # after the row's reads
+            self._check_hazard(didx, [aidx.reshape(-1)], wpos=ends)
+            c = np.argmax(F._key(A), axis=1)
+            base = w7 - (1 << 32) if w7 >> 31 else w7
+            self.tput(didx, np.stack([F.chain_max(A), F.i2f(c + base)], axis=1).reshape(-1))
+            return
         if func in I.REDUCE:
             didx = dst + np.arange(rows) * drs
             reads = [aidx.reshape(-1)] + ([bidx.reshape(-1)] if bidx is not None else [])
@@ -577,10 +596,12 @@ class Slice:
         self._check_hazard(didx.reshape(-1), [didx.reshape(-1), bidx.reshape(-1)])
         self.tput(didx, F.outer(self.tget(didx), Dv, self.tget(bidx), C))
 
-    def _check_hazard(self, writes: np.ndarray, reads: list, reduce_cols: int = 0) -> None:
-        """The RTL processes elements in order; a later element must not read an earlier write."""
+    def _check_hazard(self, writes: np.ndarray, reads: list, reduce_cols: int = 0,
+                      wpos=None) -> None:
+        """The RTL processes elements in order; a later element must not read an earlier write.
+        wpos: each write's position in the read order (default: the element's own)."""
         n = len(writes)
-        pos = np.arange(n)
+        pos = np.arange(n) if wpos is None else np.asarray(wpos, np.int64)
         if reduce_cols:     # a reduction writes its row after reading the whole row
             pos = (pos // reduce_cols + 1) * reduce_cols - 1
         writes = np.asarray(writes, np.int64)
@@ -618,6 +639,8 @@ class Machine:
         assert len(programs) == cfg.S and len(drams) == cfg.S
         self.cfg = cfg
         self.slices = [Slice(cfg, s, programs[s], drams[s]) for s in range(cfg.S)]
+        self.args = args
+        self.chains = 0                  # HALT CHAIN restarts so far
         for s in self.slices:
             s.R = _regs(args)
 
@@ -625,10 +648,23 @@ class Machine:
         """Start new programs on the same machine: DRAM, TMEM and ACT RAM are kept (as on the
         board, where the host writes a new program image between launches)."""
         assert len(programs) == self.cfg.S
+        self.args = args
         for s, p in zip(self.slices, programs):
             s.prog, s.R, s.pc, s.stack = p, _regs(args), 0, []
-            s.halted, s.waiting, s.icount = False, None, 0
+            s.halted, s.waiting, s.icount, s.chain = False, None, 0, None
         return self
+
+    def _chain(self, s: Slice) -> None:
+        """HALT CHAIN (docs/isa.md): the board loads the next program from the slice's DRAM
+        into IMEM and starts it with the run's arguments; TMEM, ACT RAM and DRAM are kept."""
+        addr, n = s.chain
+        if addr % self.cfg.D or not 0 < n <= self.cfg.IMEM_WORDS // 8:
+            raise SimError(f"slice {s.sid}: HALT CHAIN to {addr:#x}, {n} instructions")
+        words = s.m32[s._widx(addr + 4 * np.arange(8 * n))]
+        s.prog = [I.Instr.decode(words[8 * k:8 * k + 8]) for k in range(n)]
+        s.R, s.pc, s.stack, s.halted, s.waiting = _regs(self.args), 0, [], False, None
+        s.chain = None
+        self.chains += 1
 
     def run(self, max_steps: int = 10_000_000) -> "Machine":
         steps = 0
@@ -641,6 +677,8 @@ class Machine:
                     progressed = True
                     if steps > max_steps:
                         raise SimError("step limit exceeded")
+                    if s.halted and s.chain is not None:
+                        self._chain(s)
             live = [s for s in self.slices if not s.halted]
             if live and all(s.waiting is not None for s in live):
                 if len(live) != len(self.slices):

@@ -5,13 +5,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-NOP, HALT, LI, ADDI, LOOP, BAR = 0x00, 0x01, 0x02, 0x03, 0x04, 0x05
+NOP, HALT, LI, ADDI, LOOP, BAR, RLD = 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
 LD, ST, DSTEP, STREAM = 0x10, 0x11, 0x12, 0x13
 MM, QACT, QST = 0x20, 0x21, 0x22
 VOP = 0x30
 GATHER = 0x40
 
-OPNAMES = {NOP: "NOP", HALT: "HALT", LI: "LI", ADDI: "ADDI", LOOP: "LOOP", BAR: "BAR",
+OPNAMES = {NOP: "NOP", HALT: "HALT", LI: "LI", ADDI: "ADDI", LOOP: "LOOP", BAR: "BAR", RLD: "RLD",
            LD: "LD", ST: "ST", DSTEP: "DSTEP", STREAM: "STREAM", MM: "MM", QACT: "QACT",
            QST: "QST", VOP: "VOP", GATHER: "GATHER"}
 
@@ -25,17 +25,20 @@ F_PAIR = 0x40                   # MM, 4-bit only: column reuse, two K-blocks per
 F_ROW, F_CSCALE, F_RSCALE = 0x1, 0x2, 0x4   # QACT (QST: F_ROW)
 F_DUP = 0x8                     # QACT: also write the rows to ACT rows rows..2*rows-1 (PAIR)
 F_HALF = 0x2                    # QST, ROW mode: write only the first half of each row
+F_RAW = 0x1                     # RLD: the word's bits (no fp32 -> int conversion)
+F_CHAIN = 0x1                   # HALT: then load and start the program at R[ra], R[rb] words
 
 # VOP functions
 V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_OUTER = 0, 1, 2, 3, 4, 5, 6
 V_COPY, V_EXP2, V_RECIP, V_RSQRT, V_ABS, V_FILL, V_EXP2SUB, V_LOG2 = 8, 9, 10, 11, 12, 13, 14, 15
-V_RSUM, V_RMAX, V_RSSQ, V_RDOT = 16, 17, 18, 19
+V_RSUM, V_RMAX, V_RSSQ, V_RDOT, V_ARGMAX = 16, 17, 18, 19, 20
 VFUNCS = {V_ADD: "add", V_SUB: "sub", V_RSUB: "rsub", V_MUL: "mul", V_MAX: "max",
           V_MIN: "min", V_OUTER: "outer", V_COPY: "copy", V_EXP2: "exp2", V_RECIP: "recip",
           V_RSQRT: "rsqrt", V_ABS: "abs", V_FILL: "fill", V_EXP2SUB: "exp2sub",
-          V_LOG2: "log2", V_RSUM: "rsum", V_RMAX: "rmax", V_RSSQ: "rssq", V_RDOT: "rdot"}
+          V_LOG2: "log2", V_RSUM: "rsum", V_RMAX: "rmax", V_RSSQ: "rssq", V_RDOT: "rdot",
+          V_ARGMAX: "argmax"}
 BINARY = {V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_FILL, V_EXP2SUB}
-REDUCE = {V_RSUM, V_RMAX, V_RSSQ, V_RDOT}
+REDUCE = {V_RSUM, V_RMAX, V_RSSQ, V_RDOT, V_ARGMAX}
 READS_B = BINARY | {V_RDOT}          # functions that read operand B in its bmode (OUTER: B_ROW)
 F_DSCALAR, F_DONE = 0x1, 0x2         # VOP OUTER: decay T[d] for every column / decay 1.0
 OUTER_MAX_COLS = 256                 # OUTER: its column vectors are held in 256-word buffers
@@ -94,8 +97,10 @@ def nop(comment=""):
     return Instr(NOP, comment=comment)
 
 
-def halt():
-    return Instr(HALT)
+def halt(chain=False, ra=0, rb=0, comment=""):
+    """HALT; with `chain`, the board then loads R[rb] instructions from DRAM byte address R[ra]
+    into IMEM and starts them (docs/isa.md "HALT CHAIN")."""
+    return Instr(HALT, ra=ra, rb=rb, flags=F_CHAIN if chain else 0, comment=comment)
 
 
 def li(rd, imm, comment=""):
@@ -112,6 +117,25 @@ def loop(body_len, count, rcount=0, comment=""):
 
 def bar():
     return Instr(BAR)
+
+
+def rld(rd, tmem, ra=0, raw=False, comment=""):
+    """R[rd] = f2i(T[R[ra] + tmem]) (raw: the word's bits); docs/isa.md "RLD"."""
+    return Instr(RLD, ra=ra, rd=rd, flags=F_RAW if raw else 0, w=_w(tmem), comment=comment)
+
+
+def f2i(bits: int) -> int:
+    """RLD's conversion of fp32 bits to a 32-bit word: truncation toward zero; values below 1 in
+    magnitude (denormals, +-0) give 0, and |x| >= 2^31, infinities and NaN give 0x80000000."""
+    bits = u32(bits)
+    e = (bits >> 23) & 0xFF
+    if e < 127:
+        return 0
+    if e >= 127 + 31:
+        return 0x80000000
+    m = (bits & 0x7FFFFF) | 0x800000
+    v = m << (e - 150) if e >= 150 else m >> (150 - e)
+    return u32(-v if bits >> 31 else v)
 
 
 def ld(dram, tmem, nwords, ra=0, rb=0, comment=""):
@@ -354,13 +378,23 @@ def qst(src, dst, sdst, rows, kb, srs, drs, es, row=False, half=False, ra=0, rb=
 
 
 def vop(func, dst, a, b, rows, cols, drs, ars, brs, bmode=B_FULL, imm=0.0,
-        ra=0, rb=0, rc=0, comment=""):
+        ra=0, rb=0, rc=0, rd=0, comment=""):
+    """imm: an fp32 immediate (ARGMAX: an int, the index base)."""
     assert 0 < rows < 65536 and 0 < cols < 65536
     assert drs < 65536 and ars < 65536 and brs < 65536
-    return Instr(VOP, ra=ra, rb=rb, rc=rc,
+    iw = u32(imm) if func == V_ARGMAX else f32bits(imm)
+    return Instr(VOP, ra=ra, rb=rb, rc=rc, rd=rd,
                  w=_w(dst, a, b, rows | (cols << 16), drs | (ars << 16),
-                      brs | (func << 16) | (bmode << 24), f32bits(imm)),
+                      brs | (func << 16) | (bmode << 24), iw),
                  comment=comment)
+
+
+def argmax(dst, a, rows, cols, drs=2, ars=0, base=0, ra=0, rb=0, rd=0, comment="argmax"):
+    """VOP ARGMAX: T[dst + r*drs] = the row maximum (RMAX), T[dst + r*drs + 1] =
+    i2f(c + R[rd] + base) for c the first column holding it (rows > 1: drs >= 2)."""
+    assert rows == 1 or drs >= 2, "ARGMAX: the rows' (max, index) pairs need drs >= 2"
+    return vop(V_ARGMAX, dst, a, 0, rows, cols, drs, ars, 0, B_FULL, base, ra=ra, rb=rb, rd=rd,
+               comment=comment)
 
 
 def outer(dst, d, b, c, rows, cols, drs, brs, dmode="scalar", ra=0, rb=0, rc=0, rd=0,

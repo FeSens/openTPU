@@ -93,11 +93,12 @@ Every instruction is 8 x 32-bit words `w0..w7`.
 | op | name | semantics |
 |---|---|---|
 | 0x00 | NOP | |
-| 0x01 | HALT | stop this slice |
+| 0x01 | HALT | stop this slice; flag bit0 CHAIN: then start the program at `R[ra]` (see "HALT CHAIN") |
 | 0x02 | LI | `R[rd] = w1` |
 | 0x03 | ADDI | `R[rd] = R[ra] + w1` |
 | 0x04 | LOOP | body = next `w1` instructions, executed `R[ra] + w2` times (0: skipped). Loops nest (depth 4); a body must not end on the same instruction as an enclosing body. |
 | 0x05 | BAR | wait until every slice has reached a `BAR` |
+| 0x06 | RLD | `R[rd] = f2i(T[R[ra]+w1])`, flag bit0 RAW: the word's bits (see "RLD") |
 | 0x10 | LD | DRAM -> TMEM, `n = w3` words: `T[R[rb]+w2+i] = M32[R[ra]+w1+4i]` |
 | 0x11 | ST | TMEM -> DRAM: `M32[R[ra]+w1+4i] = T[R[rb]+w2+i]` for `i < w3` |
 | 0x12 | DSTEP | one Gated DeltaNet head step on a DRAM state, run by the DMA (see below; `Config.DSTEP`, CAPS bit6) |
@@ -240,8 +241,15 @@ Elementwise functions write `T[dst + r*drs + c] = f(A, B)`; reductions write
 | 17 | RMAX | max over A(r, c) (total order: any evaluation order) |
 | 18 | RSSQ | isum_64(A(r,c) * A(r,c)) (sum of squares, for RMSNorm: RDOT with B = A) |
 | 19 | RDOT | isum_64(A(r,c) * B(r,c)), B in any bmode (row dot products: `S @ k` is B per column) |
+| 20 | ARGMAX | the RMAX of the row at `T[dst + r*drs]` and the index of its first column at `T[dst + r*drs + 1]` (see below) |
 
 In RSSQ and RDOT each product is rounded, then added into the isum_64 partials.
+
+**ARGMAX** writes a pair per row: `m = ` the row's RMAX, and `i2f(c + base)` for `c` the first
+column with `A(r, c) == m` (flushed bits; in the total order `-0 < +0`, so ties are between equal
+bits only, and the first wins as in `np.argmax`). `base = R[rd] + w7` is a signed integer here, not
+fp32 bits (an LM head chunk passes its first vocabulary row, so the index is the token id). The
+pair of row `r` is `T[dst + r*drs]`, `T[dst + r*drs + 1]`: rows > 1 need `drs >= 2`. B is not read.
 
 **OUTER** (the state update of linear recurrences: Gated DeltaNet, Mamba2/SSD, GLA, RWKV,
 linear attention) is elementwise and in place, `T[dst + r*drs + c] = add(mul(T[dst + r*drs + c],
@@ -314,6 +322,29 @@ STREAM** (`regs.CAP_STREAM`; bit26 is taken; the full CAPS list is the register 
 
 The compiler (`ol.state_step`) falls back to VOPs otherwise. DSTEP is STREAM with
 `isa.gdn_desc` and ks = gs.
+
+### RLD
+
+`R[rd] = f2i(T[R[ra] + w1])`: a TMEM word into a register, the only way a value the device
+computed reaches an address, a loop count (`LOOP R[ra] + w2`) or a condition (a `LOOP` of count
+0 or 1 around the instructions it guards). `f2i` truncates toward zero: `|x| < 1` (with +-0 and
+the flushed denormals) gives 0, `|x| >= 2^31`, infinities and NaN give `0x80000000`; integers of
+up to 24 significant bits come out exact. Flag bit0 RAW: the word's bits instead. `rd = 0`
+writes nothing.
+
+RLD reads its word after every older instruction that writes it (the scoreboard, like any TMEM
+read), and no younger instruction is issued until `R[rd]` holds the value: they may use it. The
+cost is the wait for the writer plus a few cycles; the decode loop (`opentpu/llm/generate.py`)
+uses a handful per token.
+
+### HALT CHAIN
+
+`HALT` with flag bit0 (CHAIN) halts the slice as `HALT` does (the window drains, every store has
+landed), then the board loads `R[rb]` instructions from DRAM byte address `R[ra]` (chunk aligned,
+at most the IMEM) into IMEM and starts them: `R0..R7 = 0`, `R8..R15` the run's arguments as the
+host wrote them; TMEM, ACT RAM and DRAM keep their contents. On the card the run goes on (RUN
+stays set, CYCLES counts); the host sees one run. The decode loop's program of an attention
+bucket chains to the next bucket's.
 
 ### GATHER
 

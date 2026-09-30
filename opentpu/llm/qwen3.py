@@ -28,9 +28,11 @@ from types import SimpleNamespace
 import numpy as np
 
 from .. import fp32 as F
+from .. import isa as I
 from .. import quant as Q
 from .. import language as ol
 from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, arg_words
+from . import generate as G
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
@@ -129,7 +131,7 @@ def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None) -> dict:
     half = len(rope_tables(spec, 0)[0])
     return {"embed": b.alloc(4 * spec.vocab * spec.hidden), "cos_t": b.alloc(4 * cap * half),
             "sin_t": b.alloc(4 * cap * half), "zmask": b.alloc(4 * (cap + block)),
-            "half": half, "block": block}
+            "half": half, "block": block, "gen": G.alloc(b, spec, cap, block)}
 
 
 def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
@@ -142,6 +144,7 @@ def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
         put(s, lk["cos_t"], np.stack([c for c, _ in cs]))
         put(s, lk["sin_t"], np.stack([x for _, x in cs]))
         put(s, lk["zmask"], z)
+        G.build(put, s, S, spec, cap, lk["gen"])
 
 
 def _lookup_desc(lk: dict, spec, cap: int) -> dict:
@@ -149,7 +152,8 @@ def _lookup_desc(lk: dict, spec, cap: int) -> dict:
         return {}
     return {"embed": _tdesc(lk["embed"], (spec.vocab, spec.hidden)),
             "cos_t": _tdesc(lk["cos_t"], (cap, lk["half"])),
-            "sin_t": _tdesc(lk["sin_t"], (cap, lk["half"])), "zmask": lk["zmask"]}
+            "sin_t": _tdesc(lk["sin_t"], (cap, lk["half"])), "zmask": lk["zmask"],
+            "gen": G.desc(lk["gen"], spec, cap)}
 
 
 def has_lookup(spec) -> bool:
@@ -448,6 +452,11 @@ class Image:
         """(programs, run_args): qwen3_step at a run-time position (compile_decode)."""
         return compile_decode(self, qwen3_step, blocks, lo, block)
 
+    def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
+                         chain: bool = True, samp=None) -> list:
+        """The decode loop on the device for bucket `blocks` (qwen3_step in it, generate.py)."""
+        return G.compile_generate(self, qwen3_step, blocks, lo, block, chain, samp)
+
     def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
         """One program per slice: the decode token at position `pos` (qwen3_step)."""
         return [qwen3_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
@@ -679,14 +688,20 @@ def _inputs(m, pos):
 
 
 def _lm_head(x, m, spec):
-    """Final norm and this slice's vocabulary rows of the LM head -> m.logits."""
+    """Final norm and this slice's vocabulary rows of the LM head -> m.logits, or, with
+    m.lm_sink set (the generate loop: opentpu/llm/generate.py), each chunk's logits tile to
+    m.lm_sink(tile, first vocabulary row) instead."""
     sid = ol.program_id()
     xs = ol.quantize(rmsnorm(x, ol.load(m.g_final), spec.eps))
     chunk = min(HEAD_CHUNK, ol.tmem_words() // 8)
+    sink = getattr(m, "lm_sink", None)
     for c0 in range(0, m.v_loc, chunk):
         n = min(chunk, m.v_loc - c0)
         col = sid * m.v_loc + c0
-        ol.store(m.logits[:, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
+        if sink is None:
+            ol.store(m.logits[:, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
+        else:
+            sink(ol.dot(xs, m.head[c0:c0 + n, :]), col)
 
 
 def _runs(rows):
@@ -827,6 +842,8 @@ class IsaBackend:
         return self.machine.slices[s].dram[addr:addr + nbytes].copy()
 
     args = True                 # run(programs, args): the run's arguments (R8..R15)
+    generates = True            # runs the generate loop (RLD, ARGMAX: Engine.generate_card)
+    chains = True               # and HALT CHAIN: one run crosses the attention buckets
 
     def run(self, programs: list, args=None) -> dict:
         self.machine.load(programs, args).run(max_steps=1 << 40)
@@ -968,6 +985,8 @@ class Engine:
         self.resident = lookup and bool(getattr(self.backend, "args", False))
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
+        self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
+        self._chained: dict = {}            # mode -> (key, its buckets in the chain area)
         self.poss = [0] * batch
         self.stream_logits = True           # step(): stream the logits when the backend can
         self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
@@ -1292,6 +1311,134 @@ class Engine:
             if all(done):
                 break
             nxt = [int(np.argmax(r)) for r in self.step_batch(nxt)]
+        return out
+
+    # ---- the decode loop on the device (opentpu/llm/generate.py)
+    @property
+    def can_generate(self) -> bool:
+        """generate_card works here: resident decode on a backend that runs the generate
+        programs (the ISA simulator; the card with the ISA's RLD and ARGMAX)."""
+        return (self.resident and self.image.lookup.get("gen") is not None
+                and bool(getattr(self.backend, "generates", False)))
+
+    def _generate_prog(self, blocks: int, samp=None):
+        """The generate program of a bucket, greedy or sampled as `samp` (G.Sampling) is
+        compiled for (once per bucket and samp.key), chaining to the next bucket's when the
+        backend runs HALT CHAIN."""
+        key = (blocks, None if samp is None else samp.key)
+        if key not in self._gens:
+            lo = max((blocks - 1) * self.block, self._conv_lo)
+            progs = self.image.compile_generate(blocks, lo, self.block,
+                                                chain=bool(getattr(self.backend, "chains",
+                                                                   False)), samp=samp)
+            prep = getattr(self.backend, "prepare", None)
+            if prep is not None:
+                prep(progs)
+            self._gens[key] = progs
+        return self._gens[key]
+
+    def _generate_chain(self, b0: int, b1: int, samp=None) -> None:
+        """Buckets b0 + 1 .. b1 in the chain area of samp's mode and its table (each written
+        once per samp.key)."""
+        g = self.image.lookup["gen"]
+        mode, key = int(samp is not None), None if samp is None else samp.key
+        if self._chained.get(mode, (key,))[0] != key:
+            self._chained.pop(mode)            # compiled for other sampling buffers
+        have = self._chained.setdefault(mode, (key, set()))[1]
+        new = [k for k in range(b0 + 1, b1 + 1) if k not in have]
+        if not new:
+            return
+        for k in new:
+            for s, prog in enumerate(self._generate_prog(k, samp)):
+                self.backend.write(s, G.prog_slot(g, k, mode), I.assemble(prog))
+        have |= set(new)
+        for s in range(self.cfg.S):
+            self.backend.write(s, G.ptab_addr(g, mode), G.ptab_words(g, {
+                k: I.assemble(self._generate_prog(k, samp)[s]) for k in have}, mode))
+
+    def _generate_inputs(self, samp, p: int, nb: int, context, rng) -> None:
+        """The sampled loop's per-run inputs: the uniforms of positions p + 1 .. p + nb (the
+        host's generator), and, with the repetition penalty, its factors for the context's ids
+        (the device adds the tokens it generates)."""
+        g = self.image.lookup["gen"]
+        u = np.minimum(rng.random(nb).astype(np.float32), np.float32(1 - 2.0 ** -24))
+        pa = pb = None
+        if samp.pen:
+            V = G._vpad(self.spec)
+            pa, pb = np.ones(V, np.float32), np.ones(V, np.float32)
+            ix = np.unique(np.asarray(list(context), np.int64))
+            pa[ix] = np.float32(1.0) / np.float32(samp.penalty)
+            pb[ix] = samp.penalty
+        for s in range(self.cfg.S):
+            self.backend.write(s, g["uni"] + 4 * (p + 1), u)
+            if pa is not None:
+                self.backend.write(s, g["pa"], pa)
+                self.backend.write(s, g["pb"], pb)
+
+    def generate_card(self, tok: int, n: int, stop_ids=None, on_token=None,
+                      stop=None, sampling=None, context=(), rng=None) -> list:
+        """Feed `tok` at the next position and generate up to n tokens after it on the device:
+        the generate loop picks each token there and feeds it back, and stops at a stop id
+        (default: the model's EOS ids; the stop id is returned, not fed). Greedy, or with
+        `sampling` (G.Sampling: temperature, top-k, top-p, repetition penalty over `context`,
+        the ids so far with tok; the uniforms from `rng`, a numpy Generator). One device run
+        per attention bucket reached (one in all with HALT CHAIN); the logits never leave the
+        device. on_token(t) for each token as the host reads it; stop() (polled while the card
+        runs, on backends that stream the tokens) halts the loop after the token in flight.
+        Returns the tokens; self.pos is then the position of the last one (fed next, unless it
+        is a stop id)."""
+        if not self.can_generate:
+            raise RuntimeError("generate_card needs resident decode on a backend that runs "
+                               "the generate loop")
+        samp = sampling
+        if samp is not None and rng is None:
+            raise ValueError("a sampled generate_card needs rng (the uniforms)")
+        ids = list(self.spec.eos if stop_ids is None else stop_ids)
+        n = min(n, self.cap - self.pos)
+        out, g, ctx = [], self.image.lookup["gen"], list(context)
+        while n > 0:
+            p = self.pos
+            if p < self._conv_lo:             # before the first run-time position
+                lg = self.step(tok)
+                got = [int(np.argmax(lg)) if samp is None else
+                       G.reference_pick(lg, samp, ctx, rng.random(), self.cfg.S)]
+                if on_token is not None:
+                    on_token(got[0])
+            else:
+                b0 = p // self.block + 1
+                b1 = b0
+                if getattr(self.backend, "chains", False):     # the whole run on the device
+                    b1 = (p + n - 1) // self.block + 1
+                    self._generate_chain(b0, b1, samp)
+                progs = self._generate_prog(b0, samp)
+                nb = min(n, b1 * self.block - p)
+                if samp is not None:
+                    self._generate_inputs(samp, p, nb, ctx, rng)
+                for s in range(self.cfg.S):
+                    self.backend.write(s, g["state"], G.state_words(self.spec, tok, p, n, ids,
+                                                                    self.block, samp))
+                    self.backend.write(s, g["out"] + 4 * (p + 1),
+                                       np.full(nb, G.OUT_MARK, np.uint32))
+                runner = getattr(self.backend, "run_generate", None)
+                if runner is not None:     # the card: tokens as they land, stop() halts
+                    st, got = runner(progs, g["out"] + 4 * (p + 1), nb, on_token, stop,
+                                     g["state"])
+                else:
+                    st = self.backend.run(progs)
+                    w = self.backend.read(0, g["out"] + 4 * (p + 1), 4 * nb).view(np.uint32)
+                    k = int(np.argmax(w == G.OUT_MARK)) if (w == G.OUT_MARK).any() else nb
+                    got = [int(x) for x in w[:k].view(np.float32)]
+                    if on_token is not None:
+                        for t in got:
+                            on_token(t)
+                self.stats.append(st)
+                self.pos += len(got)
+            out += got
+            ctx += got
+            n -= len(got)
+            if not got or got[-1] in ids or (stop is not None and stop()):
+                break
+            tok = got[-1]
         return out
 
     def generate(self, prompt, max_new: int = 32, sampler=None, on_token=None) -> list:
