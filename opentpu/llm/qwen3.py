@@ -55,11 +55,19 @@ class Spec:
     tied: bool = True
     bos: int = 151643
     eos: tuple = (151645, 151643)
+    # the Llama-like models of llama.py (SmolLM3, Phi-3 / Phi-4-mini) run on this code too:
+    qk_norm: bool = True      # RMSNorm on each q and k head (Qwen3); Llama-likes have none
+    nope: tuple = ()          # layers without RoPE (SmolLM3: every 4th)
+    rotary: int = 0           # RoPE dimensions of a head, the first ones (0: all; Phi-4-mini 96)
+    rope_div: tuple = ()      # per-frequency divisors of the angle (LongRoPE's short factors)
+    rope_scale: float = 1.0   # factor on cos and sin (LongRoPE's attention factor)
+    ctx: int = 0              # the most positions the RoPE tables hold (LongRoPE: its short
+    #                           factors' range; 0: no limit)
 
     @property
     def rope_dim(self) -> int:
-        """RoPE rotates all of each head's dimensions."""
-        return self.head_dim
+        """RoPE rotates the first `rotary` dimensions of each head (default all of them)."""
+        return self.rotary or self.head_dim
 
     @staticmethod
     def from_hf(model_dir) -> "Spec":
@@ -115,9 +123,34 @@ class Weights(Mapping):
             for k in h.keys():
                 if k.startswith(("model.visual.", "mtp.")):
                     continue
-                self._where[k.replace("model.language_model.", "model.", 1)] = (h, k)
+                self._where[k.replace("model.language_model.", "model.", 1)] = (h, k, None)
+        self._split_fused(Path(model_dir))
         self._small: dict = {}
         self._big: tuple | None = None
+
+    def _split_fused(self, model_dir: Path) -> None:
+        """Phi-3's fused projections also under the names of separate ones: qkv_proj's rows
+        are q, k and v (num_attention_heads, num_key_value_heads, num_key_value_heads heads),
+        gate_up_proj's the gate's, then the up projection's (Phi3MLP: chunk(2))."""
+        fused = [n for n in self._where if n.endswith(("self_attn.qkv_proj.weight",
+                                                        "mlp.gate_up_proj.weight"))]
+        if not fused:
+            return
+        c = json.loads((model_dir / "config.json").read_text())
+        d = c.get("head_dim") or c["hidden_size"] // c["num_attention_heads"]
+        nq, nkv = c["num_attention_heads"] * d, c["num_key_value_heads"] * d
+        ff = c["intermediate_size"]
+        for n in fused:
+            h, k, _ = self._where[n]
+            if n.endswith("qkv_proj.weight"):
+                p = n[:-len("qkv_proj.weight")]
+                parts = (("q_proj", 0, nq), ("k_proj", nq, nq + nkv),
+                         ("v_proj", nq + nkv, nq + 2 * nkv))
+            else:
+                p = n[:-len("gate_up_proj.weight")]
+                parts = (("gate_proj", 0, ff), ("up_proj", ff, 2 * ff))
+            for name, a, b in parts:
+                self._where[p + name + ".weight"] = (h, k, (a, b))
 
     def __getitem__(self, name) -> np.ndarray:
         if name in self._small:
@@ -125,8 +158,9 @@ class Weights(Mapping):
         if self._big is not None and self._big[0] == name:
             return self._big[1]
         import torch
-        h, k = self._where[name]
-        v = h.get_tensor(k).to(torch.float32).numpy()
+        h, k, rows = self._where[name]
+        t = h.get_tensor(k) if rows is None else h.get_slice(k)[rows[0]:rows[1]]
+        v = t.to(torch.float32).numpy()
         if v.nbytes <= self.CACHE:
             self._small[name] = v
         else:
@@ -152,11 +186,17 @@ def load_weights(model_dir) -> Weights:
 
 
 def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
-    """cos, sin [rope_dim/2] for one position (HF rotate-half convention)."""
+    """cos, sin [rope_dim/2] for one position (HF rotate-half convention); with LongRoPE's
+    (spec.rope_div, spec.rope_scale) each frequency divided by its factor and both tables
+    scaled by the attention factor."""
     half = spec.rope_dim // 2
     inv = 1.0 / (spec.theta ** (np.arange(half, dtype=np.float64) * 2 / spec.rope_dim))
+    div = getattr(spec, "rope_div", ())
+    if div:
+        inv = inv / np.asarray(div, np.float64)
     ang = pos * inv
-    return np.cos(ang).astype(np.float32), np.sin(ang).astype(np.float32)
+    sc = getattr(spec, "rope_scale", 1.0)
+    return (np.cos(ang) * sc).astype(np.float32), (np.sin(ang) * sc).astype(np.float32)
 
 
 # =============================================================================== lookup tables
@@ -232,9 +272,9 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
     sin = np.stack([s for _, s in cs])[:, None, :]
 
     def rot(v):
-        h = d // 2
-        v1, v2 = v[..., :h], v[..., h:]
-        return np.concatenate([v1 * cos - v2 * sin, v2 * cos + v1 * sin], axis=-1)
+        h, rd = spec.rope_dim // 2, spec.rope_dim
+        v1, v2 = v[..., :h], v[..., h:rd]
+        return np.concatenate([v1 * cos - v2 * sin, v2 * cos + v1 * sin, v[..., rd:]], axis=-1)
 
     mask = np.triu(np.full((T, T), -np.inf, np.float32), 1)
     for i in range(spec.layers):
@@ -243,8 +283,11 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
         q = (h @ W[p + "self_attn.q_proj.weight"].T).reshape(T, spec.n_q, d)
         k = (h @ W[p + "self_attn.k_proj.weight"].T).reshape(T, spec.n_kv, d)
         v = (h @ W[p + "self_attn.v_proj.weight"].T).reshape(T, spec.n_kv, d)
-        q = rot(norm(q, W[p + "self_attn.q_norm.weight"]))
-        k = rot(norm(k, W[p + "self_attn.k_norm.weight"]))
+        if spec.qk_norm:
+            q = norm(q, W[p + "self_attn.q_norm.weight"])
+            k = norm(k, W[p + "self_attn.k_norm.weight"])
+        if i not in spec.nope:
+            q, k = rot(q), rot(k)
         o = np.zeros((T, spec.n_q, d), np.float32)
         for hq in range(spec.n_q):
             s = q[:, hq] @ k[:, hq // G].T / math.sqrt(d) + mask
@@ -303,9 +346,9 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
         c, s = rope_tables(spec, pos)
 
         def rot(v):
-            h = d // 2
-            v1, v2 = v[..., :h], v[..., h:]
-            return np.concatenate([v1 * c - v2 * s, v2 * c + v1 * s], -1)
+            h, rd = spec.rope_dim // 2, spec.rope_dim
+            v1, v2 = v[..., :h], v[..., h:rd]
+            return np.concatenate([v1 * c - v2 * s, v2 * c + v1 * s, v[..., rd:]], -1)
 
         for i in range(spec.layers):
             p = f"model.layers.{i}."
@@ -313,8 +356,11 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
             q = (w(p + "self_attn.q_proj.weight") @ h).reshape(spec.n_q, d)
             k = (w(p + "self_attn.k_proj.weight") @ h).reshape(spec.n_kv, d)
             v = (w(p + "self_attn.v_proj.weight") @ h).reshape(spec.n_kv, d)
-            q = rot(norm(q, W[p + "self_attn.q_norm.weight"]))
-            k = rot(norm(k, W[p + "self_attn.k_norm.weight"]))
+            if spec.qk_norm:
+                q = norm(q, W[p + "self_attn.q_norm.weight"])
+                k = norm(k, W[p + "self_attn.k_norm.weight"])
+            if i not in spec.nope:
+                q, k = rot(q), rot(k)
             Kc[i].append(_fake_q(k, D))
             Vc[i].append(_fake_q(v, v.shape[-1]))
             K, V = np.stack(Kc[i], 1), np.stack(Vc[i], 1)
@@ -373,6 +419,8 @@ class Image:
     [ LM head rows of this slice ]. A layer block holds the norms, this slice's rows of every
     projection (quantized + scales) and this slice's KV heads with room for `cap` tokens, for
     each of `batch` sequences. The I/O area holds `rows` token rows (x, cos, sin, logits).
+    A model with layers without RoPE (spec.nope) has a rope gate per layer block: (1, 0) or
+    (0, 1), and each layer rotates with cos * g0 + g1 and sin * g0 (_rope_gate).
 
     Weight formats (opentpu/quant.py): `wformat` for the layers' projections, `head_format`
     (default: the same) for the LM head: "int8", or 4-bit "int4" / "fp4". The KV cache and the
@@ -384,6 +432,8 @@ class Image:
         spec.check(cfg)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
+        if spec.ctx and cap > spec.ctx:
+            raise ValueError(f"KV capacity {cap} above the model's RoPE range ({spec.ctx})")
         S, D = cfg.S, cfg.D
         H, d, F_ = spec.hidden, spec.head_dim, spec.ffn
         self.spec, self.cfg, self.cap = spec, cfg, cap
@@ -394,12 +444,17 @@ class Image:
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
         b = _Bump()
         R = rows
-        self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * d * R), "sin": b.alloc(2 * d * R),
-                   "gf": b.alloc(4 * H), "logits": b.alloc(4 * spec.vocab * R)}
+        rd = spec.rope_dim
+        self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * rd * R),
+                   "sin": b.alloc(2 * rd * R), "gf": b.alloc(4 * H),
+                   "logits": b.alloc(4 * spec.vocab * R)}
         self.layer0 = b.next
         lb = _Bump()                                    # offsets inside one layer block
-        L = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H),
-             "qn": lb.alloc(4 * d), "kn": lb.alloc(4 * d)}
+        L = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
+        if spec.qk_norm:
+            L.update(qn=lb.alloc(4 * d), kn=lb.alloc(4 * d))
+        if spec.nope:
+            L["rg"] = lb.alloc(8)
         self.mats = {"wq": (self.nq_loc * d, H), "wk": (self.nkv_loc * d, H),
                      "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d),
                      "wg": (self.f_loc, H), "wu": (self.f_loc, H)}
@@ -459,8 +514,11 @@ class Image:
             for s in range(S):
                 put(s, Lo["g_in"], f32(W[p + "input_layernorm.weight"]))
                 put(s, Lo["g_post"], f32(W[p + "post_attention_layernorm.weight"]))
-                put(s, Lo["qn"], f32(W[p + "self_attn.q_norm.weight"]))
-                put(s, Lo["kn"], f32(W[p + "self_attn.k_norm.weight"]))
+                if spec.qk_norm:
+                    put(s, Lo["qn"], f32(W[p + "self_attn.q_norm.weight"]))
+                    put(s, Lo["kn"], f32(W[p + "self_attn.k_norm.weight"]))
+                if spec.nope:
+                    put(s, Lo["rg"], np.array([0, 1] if i in spec.nope else [1, 0], np.float32))
             wq, wk, wv, wo = head_parallel_attention_weights(
                 W[p + "self_attn.q_proj.weight"], W[p + "self_attn.k_proj.weight"],
                 W[p + "self_attn.v_proj.weight"], W[p + "self_attn.o_proj.weight"],
@@ -506,6 +564,7 @@ class Image:
     def descriptors(self, sid: int) -> SimpleNamespace:
         spec, cfg = self.spec, self.cfg
         D, d, H = cfg.D, spec.head_dim, spec.hidden
+        rh = spec.rope_dim // 2
         L0 = self.layer0
         lofs = self.lofs
 
@@ -515,8 +574,9 @@ class Image:
             ns = SimpleNamespace(
                 g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
-                qn=Tensor(off + lofs["qn"], (d,), (1,)),
-                kn=Tensor(off + lofs["kn"], (d,), (1,)))
+                qn=Tensor(off + lofs["qn"], (d,), (1,)) if spec.qk_norm else None,
+                kn=Tensor(off + lofs["kn"], (d,), (1,)) if spec.qk_norm else None,
+                rg=Tensor(off + lofs["rg"], (2,), (1,)) if spec.nope else None)
             fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             for name, (n, k) in self.mats.items():
                 da, sa = lofs[name]
@@ -536,12 +596,12 @@ class Image:
 
         return SimpleNamespace(
             spec=spec, layer=layer, n_layers=spec.layers,
-            x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (d // 2,)),
-            sin=_tdesc(self.io["sin"], (d // 2,)), g_final=_tdesc(self.io["gf"], (H,)),
+            x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (rh,)),
+            sin=_tdesc(self.io["sin"], (rh,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
             xr=_tdesc(self.io["x"], (self.rows, H)),
-            cosr=_tdesc(self.io["cos"], (self.rows, d // 2)),
-            sinr=_tdesc(self.io["sin"], (self.rows, d // 2)),
+            cosr=_tdesc(self.io["cos"], (self.rows, rh)),
+            sinr=_tdesc(self.io["sin"], (self.rows, rh)),
             logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
             head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc,
             **_lookup_desc(self.lookup, spec, self.cap))
@@ -572,6 +632,26 @@ def _rope_padded(x, c, s_):
     if rd < d:
         out[:, rd:d].set(x[:, rd:])
     return out
+
+
+def _norm_heads(x, g, eps):
+    """RMSNorm on each row (one head) with gamma `g` (a loaded q_norm / k_norm), or x itself
+    for a model without them (g None: the Llama-likes)."""
+    return x if g is None else rmsnorm(x, g, eps)
+
+
+def _rope_gate(lw, c, s_):
+    """The layer's RoPE tables: (c, s_) themselves, or with a rope gate (spec.nope: a model
+    with layers without RoPE) c * g0 + g1 and s_ * g0 -- (c, s_) bit for bit where g = (1, 0),
+    the identity rotation (1, +-0) where g = (0, 1). One loop body then serves both kinds."""
+    if getattr(lw, "rg", None) is None:
+        return c, s_
+    g = ol.load(lw.rg)
+    return c * g[0:1] + g[1:2], s_ * g[0:1]
+
+
+def _load_opt(desc):
+    return None if desc is None else ol.load(desc)
 
 
 class RunPos:
@@ -624,12 +704,13 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
     k = ol.dot(xs, lw.wk)                       # [1, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
     sg = sigmoid(ol.dot(xs, lw.wgate)) if gated else None       # [1, nq_loc*d]
-    qn, kn = ol.load(lw.qn), ol.load(lw.kn)
+    qn, kn = _load_opt(lw.qn), _load_opt(lw.kn)
+    c, s_ = _rope_gate(lw, c, s_)
     scale = ol.LOG2E / math.sqrt(d)
     heads = list(kv.owned_heads(spec.n_kv))
     nh = len(heads)
     qps = [ol.dot(xs, lw.wq[j * G * d:(j + 1) * G * d, :]) for j in range(nh)]  # [1, G*d]
-    kh = _rope_padded(rmsnorm(k.reshape(nh, d), kn, eps), c, s_)  # [nkv_loc, d or D]
+    kh = _rope_padded(_norm_heads(k.reshape(nh, d), kn, eps), c, s_)  # [nkv_loc, d or D]
     vh = _padded(v.reshape(nh, d))
     for j, hh in enumerate(heads):
         ol.kv_append(kv, hh, kpos, kh[j:j + 1, :], None)
@@ -639,7 +720,7 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
             # the head's V^T append (byte-strided, the quantizer's slowest store) just ahead of
             # its queries: head j's scores start after K and V_0..V_j, not after all V appends
             ol.kv_append(kv, heads[j], kpos, None, vh[j:j + 1, :])
-            return _rope_padded(rmsnorm(qps[j].reshape(G, d), qn, eps), c, s_)
+            return _rope_padded(_norm_heads(qps[j].reshape(G, d), qn, eps), c, s_)
         return emit
 
     mc = min(G, ol.mxu_columns())
@@ -769,13 +850,14 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     k = ol.dot(xs, lw.wk)                       # [R, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
     q = ol.dot(xs, lw.wq)                       # [R, nq_loc*d]
-    qn, kn = ol.load(lw.qn), ol.load(lw.kn)
+    qn, kn = _load_opt(lw.qn), _load_opt(lw.kn)
+    c, s_ = _rope_gate(lw, c, s_)
     scale = ol.LOG2E / math.sqrt(d)
     heads = list(lw.kv.owned_heads(spec.n_kv))
     nh = len(heads)
     nq = nh * G
     for j, hh in enumerate(heads):
-        kj = _rope_rows_padded(rmsnorm(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
+        kj = _rope_rows_padded(_norm_heads(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
         vj = _padded(v[:, j * d:(j + 1) * d])
         for sq, p0, r0, n in _runs(rows):
             ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
@@ -785,7 +867,7 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     dk = -(-d // ol.block_size()) * ol.block_size()
     Q = ol.zeros([R * nq, dk]) if dk > d else ol.empty([R * nq, d])
     for h in range(nq):
-        _rope_rows_padded(rmsnorm(q[:, h * d:(h + 1) * d], qn, eps), c, s_,
+        _rope_rows_padded(_norm_heads(q[:, h * d:(h + 1) * d], qn, eps), c, s_,
                           out=Q.row_stride_view(h, R, nq))
     del q
     mc = min(G, ol.mxu_columns())
