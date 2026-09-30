@@ -427,18 +427,18 @@ layer's slots only between its fence and its next fence for that layer, a token 
 S slices, only slice 0 would post, and every slice would run the same fence and waits.
 Phase 2 runs one slice, as the board does.
 
-**The instruction: `WAITW` (0x07), reserved by autodecode, run by the DMA.** It waits until
-`cmp(M32[R[ra] + w1] & w3, R[rb] + w2)` holds, then writes the word to TMEM at `R[rc] + w6`, and
-an `RLD` (RAW) takes it into a register.
+**The instruction: `WAITW` (0x07), reserved by autodecode, run by the DMA.** Its fields follow
+`LD`'s. It waits until `cmp(M32[R[ra] + w1] & w4, R[rc] + w3)` holds, then writes the word to
+TMEM at `R[rb] + w2`, and an `RLD` (RAW) takes it into a register.
 
 - Flags bits 1:0 choose the compare: 0 EQ, 1 NE, 2 GE. GE means the 32-bit difference is
   >= 0 as signed.
-- `w4`: cycles between polls. The first read is immediate.
-- `w5`: a timeout in cycles, 0 for none. On timeout the DMA stops the slice with an error the
+- `w5`: cycles between polls. The first read is immediate.
+- `w6`: a timeout in cycles, 0 for none. On timeout the DMA stops the slice with an error the
   host sees, so a dead daemon cannot hang the card silently.
 - It runs on the DMA unit (autodecode's form), polling through the DMA's DRAM read.
-  - Its footprint is all of DRAM (read) plus the one TMEM word. Every younger DRAM reader waits
-    for it, and older stores (the mailbox's) complete before it polls.
+  - Its footprint is all of DRAM (read) plus the one TMEM word. Every younger instruction that
+    reads or writes DRAM waits for it, and older stores (the mailbox's) land before it polls.
   - The sequencer needs nothing beyond RLD's hold.
 - One requirement on the RTL: after `WAITW` sees a word the host wrote after a completed h2c
   DMA, every younger MM or LD reads that DMA's data. The host orders its data before its flag;
