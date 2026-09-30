@@ -77,6 +77,8 @@ class Spec:
     tied: bool = True
     bos: int = 1
     eos: tuple = (7,)
+    embed: str = "f32"      # the embedding rows: fp32, or "int8" per D block (as qwen3.Spec:
+                            # gathered on the device from the tied int8 head or a table)
 
     @property
     def layers(self) -> int:
@@ -228,6 +230,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     out = []
     for pos, tk in enumerate(tokens):
         x = np.asarray(W["model.embed_tokens.weight"][tk], np.float64)
+        if spec.embed == "int8":                    # the int8 embedding rows (Spec.embed)
+            x = _fake_q(x, D)
         c, s = rope_tables(spec, pos)
 
         def rot(v):
@@ -339,7 +343,10 @@ class Image:
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
-        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
+        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
+        shared = spec.tied and self.head_format == "int8" and S == 1
+        self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
+                                    M=cfg.MCOLS) if lookup else {}
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "

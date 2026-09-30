@@ -2,6 +2,7 @@
 padded to the MXU depth, conv state ring in DRAM) against Hugging Face transformers. A tiny
 random model always runs; the real LFM2.5-230M runs when its checkpoint is in
 models/LFM2.5-230M."""
+import dataclasses
 from pathlib import Path
 
 import numpy as np
@@ -242,6 +243,32 @@ def test_tiny_resident_decode_is_bit_exact(tiny):
             o = li * ib.LS + ib.lofs["conv"]["state"]
             ma[o:o + 4 * ib.h_loc] = mb[o:o + 4 * ib.h_loc] = 0
     assert np.array_equal(ma, mb)
+
+
+@pytest.mark.parametrize("head", ["int8", "fp4"])
+def test_tiny_int8_embedding(tiny, head):
+    """Spec.embed "int8" (e.g. LFM2.5-8B-A1B): the token's int8 embedding row is gathered on
+    the device from the tied int8 LM head (under a 4-bit head, from an int8 table of the
+    image's own), in the resident decode, the per-position programs and the prefill runs: the
+    same logits bit for bit, following the float64 emulation, which quantizes the row too."""
+    _, W, spec = tiny
+    spec = dataclasses.replace(spec, embed="int8")
+    cfg = board_config(DRAM_BYTES=1 << 25)
+    wf = "int8" if head == "int8" else "fp4"
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
+    a = Engine(spec, W, cap=256, cfg=cfg, resident=True, wformat=wf, head_format=head)
+    b = Engine(spec, W, cap=256, cfg=cfg, wformat=wf, head_format=head)
+    assert a.resident and b.device_inputs and a.image.lookup["own"] == (head != "int8")
+    for t in toks[:3]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    assert np.array_equal(a.prefill(toks[3:9]).view(np.uint32),
+                          b.prefill(toks[3:9]).view(np.uint32))
+    for t in toks[9:]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    c = Engine(spec, W, cap=256, cfg=cfg, wformat=wf, head_format=head)
+    dev = np.array([c.step(t) for t in toks])
+    emu = emulated_logits(spec, W, toks, wformat=wf, head_format=head)
+    assert _cos(dev, emu).min() > 0.999
 
 
 def test_tiny_resident_decode_on_rtl(tiny, have_verilator):

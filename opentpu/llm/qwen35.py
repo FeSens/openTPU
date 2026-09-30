@@ -74,6 +74,8 @@ from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fak
                     rope_tables)
 
 LIN, ATTN = "linear", "attn"
+EMBED_F32_MAX = 2 << 30     # bytes: a larger fp32 embedding table (over half the card's DRAM,
+#                             Qwen3.5-4B and up) is int8, gathered from the head (Spec.embed)
 
 
 # =============================================================================== model spec
@@ -97,6 +99,8 @@ class Spec:
     eos: tuple = (248046, 248044)
     lin_kheads: int = 0     # DeltaNet key heads (0: lin_heads); value head h uses q and k of
                             # key head h // (lin_heads / lin_kheads), as HF's repeat_interleave
+    embed: str = "f32"      # the embedding rows: fp32, or "int8" per D block (as qwen3.Spec:
+                            # gathered on the device from the tied int8 head or a table)
 
     @property
     def layers(self) -> int:
@@ -124,7 +128,9 @@ class Spec:
                     eps=c.get("rms_norm_eps", 1e-6), theta=rope.get("rope_theta", 1e7),
                     tied=top.get("tie_word_embeddings", c.get("tie_word_embeddings", True)),
                     eos=(248046,) + tuple(e for e in eos if e != 248046),   # <|im_end|> first
-                    lin_kheads=c["linear_num_key_heads"])
+                    lin_kheads=c["linear_num_key_heads"],
+                    embed="int8" if 4 * c["vocab_size"] * c["hidden_size"] > EMBED_F32_MAX
+                    else "f32")
 
     def check(self, cfg: Config) -> None:
         S, D = cfg.S, cfg.D
@@ -267,6 +273,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     out = []
     for pos, tk in enumerate(tokens):
         x = np.asarray(W["model.embed_tokens.weight"][tk], np.float64)
+        if spec.embed == "int8":                    # the int8 embedding rows (Spec.embed)
+            x = _fake_q(x, D)
         c, s = rope_tables(spec, pos)
         for i, kind in enumerate(spec.kinds):
             p = f"model.layers.{i}."
@@ -406,7 +414,10 @@ class Image:
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
-        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
+        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
+        shared = spec.tied and self.head_format == "int8" and S == 1
+        self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
+                                    M=cfg.MCOLS) if lookup else {}
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
