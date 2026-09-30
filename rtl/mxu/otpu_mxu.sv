@@ -1264,14 +1264,20 @@ module otpu_mxu
             if (d_last) begin                       // the next weight row, group 0
               dg <= '0; dg1 <= 8'd1;
               for (int j = 0; j < MCOLS; j++) begin
-                dad[j] <= drow[j] + 32'd1;
-                drow[j] <= drow[j] + 32'd1;
+                logic [31:0] a;
+                a = drow[j] + 32'd1;
+                dad[j] <= a;
+                drow[j] <= a;
+                if (j < NL) dal[j] <= a;
               end
-              for (int k = 0; k < NL; k++) dal[k] <= drow[k] + 32'd1;
             end else begin                          // the next group of this row
               dg <= dg + 8'd1; dg1 <= dg1 + 8'd1;
-              for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + h.gs;
-              for (int k = 0; k < NL; k++) dal[k] <= dad[k] + h.gs;
+              for (int j = 0; j < MCOLS; j++) begin
+                logic [31:0] a;
+                a = dad[j] + h.gs;
+                dad[j] <= a;
+                if (j < NL) dal[j] <= a;
+              end
             end
             rn = rn - 1;
             rl = rl - 1;
@@ -1351,14 +1357,12 @@ module otpu_mxu
         pnx = 1'b0;                               // the next command is both heads now
         dj <= '0;
         for (int j = 0; j < MCOLS; j++) begin
-          dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
-                                           : n.out + n.jo[j];
-          drow[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
-                                            : n.out + n.jo[j];
+          logic [31:0] a;
+          a = (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]) : n.out + n.jo[j];
+          dad[j] <= a;
+          drow[j] <= a;
+          if (j < NL) dal[j] <= a;
         end
-        for (int k = 0; k < NL; k++)
-          dal[k] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(k) * 32'(cmd.w6[15:0])
-                                           : n.out + n.jo[k];
         mx_done <= 1'b0; mx_have <= '0;
         al_st <= 2'd0; al_i <= '0; mx_i <= '0;
         pf_u <= 1'b1;
@@ -1369,10 +1373,12 @@ module otpu_mxu
       // the head's output base (set when a command becomes head)
       if (start && q_n == 0) begin
         for (int j = 0; j < MCOLS; j++) begin
-          dad[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
-          drow[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+          logic [31:0] a;
+          a = cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+          dad[j] <= a;
+          drow[j] <= a;
+          if (j < NL) dal[j] <= a;
         end
-        for (int k = 0; k < NL; k++) dal[k] <= cmd.w3 + 32'(k) * 32'(cmd.w6[15:0]);
       end
       // the entries: completing the head swaps them (the next entry, or the command accepted
       // this cycle, becomes the head; the old head stays in n)
