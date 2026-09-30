@@ -435,14 +435,17 @@ def full(wt: Path, name: str, core_mhz: float, build_id: str, timeout: int = 4 *
         return res
     finally:
         if not keep and idle(tree, "full", host):
-            # the reports stay (small), the tree goes. So does the routed checkpoint (impl_1's
+            # the reports stay (small), the tree goes. So do the routed checkpoint (impl_1's
             # last: post-route phys_opt's if it ran), as reports/tv-<name>/routed.dcp, for path
-            # and placement analysis afterwards; the newest KEEP_DCPS of them are kept
+            # and placement analysis afterwards, and the bitstream (otpu.bit: a build that closes
+            # can go to the card without rebuilding); the newest KEEP_DCPS builds keep them
             reps = f"{remote_home(host)}/{REMOTE_DIR}/reports"
             impl = f"{tree}/build/vivado/otpu.runs/impl_1"
             ssh(f"mkdir -p {reps} && cp -r {tree}/build/vivado/reports {reps}/tv-{name} "
                 f"2>/dev/null; dcp=$(ls -t {impl}/*_postroute_physopt.dcp {impl}/*_routed.dcp "
                 f"2>/dev/null | head -1); [ -n \"$dcp\" ] && cp \"$dcp\" {reps}/tv-{name}/routed.dcp; "
-                f"ls -t {reps}/*/routed.dcp 2>/dev/null | tail -n +{KEEP_DCPS + 1} | xargs -r rm -f; "
+                f"cp {tree}/build/vivado/otpu.bit {reps}/tv-{name}/ 2>/dev/null; "
+                f"ls -t {reps}/*/routed.dcp 2>/dev/null | tail -n +{KEEP_DCPS + 1} | "
+                f"while read f; do rm -f \"$f\" \"${{f%/*}}/otpu.bit\"; done; "
                 f"true", timeout=600, check=False, host=host)
             remove(name, host)
