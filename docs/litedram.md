@@ -1622,3 +1622,46 @@ Mcycles/token, tokens/s (DRAM GB/s, % of the 17.07 GB/s peak):
 
 The old bank model's grid (`docs/board.md`, "Faster DDR3") predicted 35.4 / 36.3 tokens/s for
 Qwen3 at 150 / 200 MHz. It had no crossbar lock.
+
+## 12. The core's timing at 133.33 MHz (ld-fmax, 2026-09-30)
+
+The 812bb01 full build (main at 133.33 MHz: WNS +0.074) had three LiteDRAM sys-domain path
+families between +0.077 and +0.127 ns. All three are the die's scale, not logic: the two channels
+sit at its two ends (by their DDR3 banks), and one register drove loads at both.
+
+- **The CSR bus** (`interface1_dat_w` -> `phaseinjector*_storage`, 0 levels, 97% route): the CSR
+  bridge's registers drove about 140 loads each over 200 rows.
+  - Now a register stage per group of banks (`tools/litedram/csr_pipe.py`): channel 0's banks,
+    channel 1's, and the rest (`ctrl`, `identifier_mem`, `selfcal`). Each copy is placed by its
+    banks, and each group's read data comes back through a register.
+  - LiteX's registered Wishbone2CSR acks two cycles later: an access takes 5 sys cycles instead
+    of 3. The host (AXI-Lite) and the calibration CPU both handshake, so nothing depends on it.
+  - The CSR map, `csr.csv`, `sdram_init.py`, the XDC and the firmware ROM are unchanged.
+- **The sys reset** (`FDPE_1` -> `dfi_p*_address` R, `selfcal_mem_dat_storage` R; 3,794 loads,
+  6.8 ns of route): `FDPE_1` is the reset synchronizer's ASYNC_REG flip-flop, which Vivado does
+  not replicate. `WLCRG(rst_reg=True)` (`ld_test.py`; the test images keep the stock reset)
+  puts a plain register after it (initially 1, `max_fanout` 256). The whole sys reset releases
+  a cycle later: the controllers, the PHYs' serializer resets (`wlrst`, from `sys_rst`) and the
+  write-clock MMCMs' resets keep their order.
+- **The ECC counters** (the PHY's read bitslip -> the decoder -> `ded_errors_status` CE, 11
+  levels): `ecc_ports.py` counts from registered error flags, so the counters are
+  `LiteDRAMNativePortECC`'s a cycle late. A beat's errors are dropped if a clear comes with it,
+  as the stock counters drop them. The read data path, and so the two ports' identical read
+  buses, are unchanged. The four ECC CSRs per channel stay.
+- **Checks:**
+  - `csr_pipe_check.py` (migen): LiteX's bridge and bus against the pipelined ones, 3,000 random
+    accesses (reads and writes to every word and to unmapped offsets). The banks hold a 32-bit
+    storage, a 64-bit `atomic_write` storage, a 40-bit status, a CSR's write / read strobes (as
+    the PHYs' delay-line taps) and pulse fields. Every access returns the same data, and leaves
+    the same storages; every strobe comes once, in order, with the same data. It fails with one
+    wait cycle fewer, and without the read-data register.
+  - `ecc_ports_check.py` (600 cycles, now comparing a cycle later): PASS at seeds 1, 2 and 3.
+  - `selfcal_sim.py` on the regenerated core, its SoC on the same pipelined bridge and bus
+    (stride 16, `--hold-test`): 643,724 CSR writes, identical to `ddrcal`'s; `c0_ready` /
+    `c1_ready` rise; both channels' results equal `ddrcal`'s; the hold test passes.
+  - The co-simulation (`gen_ldc.py` regenerated: `sim/verilator/otpu_ldc_ch.v`):
+    `test_rtl.py -k ldc` 5 passed; `perf_qwen --wformat fp4 --ddr 1066 --mhz 133.33 --ldc`
+    1,478,549 cycles before and after on d3d5f0f, and 1,478,546 on ld-2port's final eb5beed (its
+    `otpu_ldc_mem` checks both ports' read buses equal) and with this on it: the whole profile
+    identical both times.
+  - `check_core.sh` reproduces the committed core.

@@ -121,8 +121,11 @@ class CRG(LiteXModule):
 class WLCRG(LiteXModule):
     """The clocks of the write-leveled image (--phy wl): clk50 -> MMCM: sys (the SoC, the
     controllers, BISTs and PHYs' logic; each channel's WriteClocks MMCM is cascaded from it); a
-    PLL: the 200 MHz IDELAYCTRL reference. clk50 as CRG's."""
-    def __init__(self, platform, f, clk50=None):
+    PLL: the 200 MHz IDELAYCTRL reference. clk50 as CRG's. rst_reg: sys's reset through a plain
+    register after its synchronizer (whose ASYNC_REG flip-flop Vivado does not replicate), with
+    max_fanout, a cycle later: the production core's sys reset reaches both channels' ends of the
+    die (3,794 loads, 6.8 ns of route in the 812bb01 build)."""
+    def __init__(self, platform, f, clk50=None, rst_reg=False):
         self.rst = Signal()
         self.cd_sys = ClockDomain()
         self.cd_idelay = ClockDomain()
@@ -132,7 +135,14 @@ class WLCRG(LiteXModule):
             self.specials += Instance("BUFG", i_I=clk50_pad, o_O=clk50)
         self.mmcm = mmcm = S7MMCM(speedgrade=-2, fractional=False)
         mmcm.register_clkin(clk50, 50e6)
-        mmcm.create_clkout(self.cd_sys, f)
+        mmcm.create_clkout(self.cd_sys, f, with_reset=not rst_reg)
+        if rst_reg:
+            self.cd_sys_ars = ClockDomain()
+            rst = Signal(reset=1, reset_less=True)
+            rst.attr.add(("max_fanout", 256))
+            self.comb += [self.cd_sys_ars.clk.eq(self.cd_sys.clk), self.cd_sys.rst.eq(rst)]
+            self.specials += AsyncResetSynchronizer(self.cd_sys_ars, ~mmcm.locked)
+            self.sync.sys_ars += rst.eq(ResetSignal("sys_ars"))
         self.comb += mmcm.reset.eq(self.rst)
         platform.add_false_path_constraints(self.cd_sys.clk, mmcm.clkin)
         self.pll = pll = S7PLL(speedgrade=-2)

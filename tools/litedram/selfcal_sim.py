@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The calibration CPU in simulation (Verilator): tools/litedram/calcpu.py's RTL (VexRiscv minimal,
 its memory, mailbox, timer, SoC bus window and hold logic) running a core's RV32I firmware, in a
-CPU-less LiteX SoC with the core's cal / cal1 / selfcal CSR blocks at the core's addresses. Every
+CPU-less LiteX SoC with the core's cal / cal1 / selfcal CSR blocks at the core's addresses, behind
+the core's CSR bridge and bus (csr_pipe.py: a register stage per group of banks). Every
 other CSR access of the CPU (the PHYs, controllers, BISTs, write clocks) leaves the SoC on a
 Wishbone port that the testbench serves from ddrcal's simulated PHY (FakeBoard), word by word, as
 the core's CSR bus would. A second port is the host's (BAR0): it reads the mailbox and holds or
@@ -119,6 +120,7 @@ def soc_verilog(firmware, out):
     from litex.soc.interconnect import wishbone
     import calcpu
     from calcpu import Cal, one_file
+    from csr_pipe import PipelinedCSR
 
     wb = [Subsignal(k, Pins(w)) for k, w in (("adr", 30), ("dat_w", 32), ("dat_r", 32), ("sel", 4),
                                              ("cyc", 1), ("stb", 1), ("ack", 1), ("we", 1))]
@@ -128,7 +130,7 @@ def soc_verilog(firmware, out):
            Subsignal("soc_req", Pins(1)), Subsignal("soc_cyc", Pins(1)), Subsignal("dreq", Pins(1)))]
     platform = SimPlatform("SIM", io)
 
-    class SimSoC(SoCCore):
+    class SimSoC(PipelinedCSR, SoCCore):       # the core's CSR bridge and bus (csr_pipe.py)
         def __init__(self):
             self.crg = CRG(platform.request("sys_clk"), platform.request("sys_rst"))
             SoCCore.__init__(self, platform, 133.333e6, ident="", cpu_type=None,

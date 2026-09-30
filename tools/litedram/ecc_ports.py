@@ -6,12 +6,15 @@ one decoder (LiteDRAMNativePortECCR) serves them all, and each port keeps the re
 Each port keeps its own encoder (its write data is its own) with its register. The encoding, the
 latencies (one register on each path) and the CSRs (enable, clear, sec_errors, ded_errors: every
 port's reads counted) are one LiteDRAMNativePortECC's, so a core with two ports per channel has
-the one-port core's CSR map (gen_core.py, gen_ldc.py).
+the one-port core's CSR map (gen_core.py, gen_ldc.py). The counters take a beat's errors a cycle
+after the beat, from registers: the decoder's sec / ded ran into the counters' enables (11 levels
+from the PHY's read bitslip in the 812bb01 build, +0.103 ns at 133.33 MHz): they are
+LiteDRAMNativePortECC's counters a cycle late.
 """
 from functools import reduce
 from operator import or_
 
-from migen import Module, If
+from migen import Module, If, Signal
 from litex.soc.interconnect.csr import AutoCSR, CSR, CSRStatus, CSRStorage
 from litex.soc.interconnect.stream import Buffer, BufferizeEndpoints, DIR_SOURCE
 
@@ -54,16 +57,20 @@ class NativePortsECC(Module, AutoCSR):
                 buf.source.connect(user.rdata),
             ]
 
-        # error counts (LiteDRAMNativePortECC's), over every port's reads
+        # error counts (LiteDRAMNativePortECC's), over every port's reads, a cycle late: a beat's
+        # errors counted the cycle after it, unless a clear came with it (as a clear drops them)
         sec_errors, ded_errors = self.sec_errors.status, self.ded_errors.status
+        sec, ded = Signal(), Signal()
         self.sync += [
+            sec.eq((r.sec != 0) & ~self.clear.wr_stb),
+            ded.eq((r.ded != 0) & ~self.clear.wr_stb),
             If(self.clear.wr_stb,
                 sec_errors.eq(0),
                 ded_errors.eq(0),
             ).Else(
-                If((sec_errors != (2**len(sec_errors) - 1)) & (r.sec != 0),
+                If((sec_errors != (2**len(sec_errors) - 1)) & sec,
                     sec_errors.eq(sec_errors + 1)),
-                If((ded_errors != (2**len(ded_errors) - 1)) & (r.ded != 0),
+                If((ded_errors != (2**len(ded_errors) - 1)) & ded,
                     ded_errors.eq(ded_errors + 1)),
             )
         ]

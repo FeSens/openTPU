@@ -7,7 +7,8 @@ and read data on at most one port a cycle from one bus (the crossbar's), each be
 codewords (LiteX's SECDED, computed here) with 0, 1 or 2 bits flipped per word, ECC enable and
 counter clears at random. Every cycle both must show the same port signals, and each read beat
 must come out as its data (no flip, one flip: corrected) or be counted uncorrectable (two
-flips); the error counters must equal the stock frontends' sums.
+flips); the error counters must equal the stock frontends' sums a cycle earlier, or 0 in a clear's
+cycle (ecc_ports counts from registered error flags; a clear acts at once in both).
 
     python3 ecc_ports_check.py [--cycles 4000] [--seed 1]      (LiteX at core.json's commits)
 """
@@ -59,6 +60,8 @@ def check(cycles: int, seed: int) -> int:
 
     def gen():
         pend = [[], []]                      # per port: (data, flips per word) of beats in flight
+        prev = {"sec_errors": 0, "ded_errors": 0}     # the stock sums a cycle earlier
+        clr_q = False                                 # the clear the counters took this cycle
         for cyc in range(cycles):
             en = 0 if rnd.random() < 0.02 else 1
             clr = rnd.random() < 0.01
@@ -137,8 +140,12 @@ def check(cycles: int, seed: int) -> int:
                 for e in top.ea:
                     a += yield getattr(e, name).status
                 b = yield getattr(top.eb, name).status
-                if min(a, 2**32 - 1) != b and len(errs) < 10:
-                    errs.append(f"cycle {cyc} {name}: stock {a}, shared {b}")
+                exp = 0 if clr_q else min(prev[name], 2**32 - 1)
+                if exp != b and len(errs) < 10:
+                    errs.append(f"cycle {cyc} {name}: stock {prev[name]} a cycle earlier "
+                                f"(clear {int(clr_q)}), shared {b}")
+                prev[name] = a
+            clr_q = clr                  # (a value set now reaches the logic at the next edge)
 
     run_simulation(top, gen())
     print(f"{cycles} cycles, {stats['beats']} read beats, {stats['sec']} words corrected, "
