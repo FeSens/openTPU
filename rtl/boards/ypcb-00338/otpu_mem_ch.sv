@@ -140,7 +140,8 @@ module otpu_mem_ch #(
   output logic [1:0][511:0] c_wdata_data,
   output logic [1:0][63:0] c_wdata_we,    // 1 = write the byte (all ones: whole beats)
   input  logic [1:0]      c_rdata_valid,  // each port's in its command order, no backpressure;
-  input  logic [1:0][511:0] c_rdata_data  //   one port at a time
+                                          //   one port at a time
+  input  logic [1:0][511:0] c_rdata_data  // one bus: port 1's is port 0's (only port 0's is read)
 );
   localparam int QW = 26;                  // command: {write, beat[24:0]}
   localparam int DW = 577;                 // write data: {partial, byte enables[63:0], data[511:0]}
@@ -224,12 +225,13 @@ module otpu_mem_ch #(
   otpu_afifo #(.W(512), .DEPTH(ARD), .OOO(1'b1)) u_ar (.wclk(uclk), .wrst(a_hold), .wvalid(ar_wv),
     .wready(ar_wr), .wdata(ar_wd), .wslot(ar_slot), .wcommit(ar_cmt), .wused(ar_used), .rclk(clk),
     .rrst(a_hs2), .rvalid(ar_rv), .rready(ar_rr), .rdata(ar_rd));
-  otpu_afifo #(.W(QW), .DEPTH(16)) u_xq (.wclk(xclk), .wrst(x_hs2), .wvalid(xq_wv), .wready(xq_wr),
-    .wdata(xq_wd), .wslot('0), .wcommit(), .wused(unused_xq), .rclk(uclk), .rrst(x_hold),
-    .rvalid(xq_rv), .rready(xq_rr), .rdata(xq_rd));
-  otpu_afifo #(.W(DW), .DEPTH(16)) u_xd (.wclk(xclk), .wrst(x_hs2), .wvalid(xd_wv), .wready(xd_wr),
-    .wdata(xd_wd), .wslot('0), .wcommit(), .wused(unused_xd), .rclk(uclk), .rrst(x_hold),
-    .rvalid(xd_rv), .rready(xd_rr), .rdata(xd_rd));
+  // the XDMA side's write enables start from flip-flops (RWR: a registered wready)
+  otpu_afifo #(.W(QW), .DEPTH(16), .RWR(1'b1)) u_xq (.wclk(xclk), .wrst(x_hs2), .wvalid(xq_wv),
+    .wready(xq_wr), .wdata(xq_wd), .wslot('0), .wcommit(), .wused(unused_xq), .rclk(uclk),
+    .rrst(x_hold), .rvalid(xq_rv), .rready(xq_rr), .rdata(xq_rd));
+  otpu_afifo #(.W(DW), .DEPTH(16), .RWR(1'b1)) u_xd (.wclk(xclk), .wrst(x_hs2), .wvalid(xd_wv),
+    .wready(xd_wr), .wdata(xd_wd), .wslot('0), .wcommit(), .wused(unused_xd), .rclk(uclk),
+    .rrst(x_hold), .rvalid(xd_rv), .rready(xd_rr), .rdata(xd_rd));
   otpu_afifo #(.W(512), .DEPTH(XRD), .OOO(1'b1)) u_xr (.wclk(uclk), .wrst(x_hold), .wvalid(xr_wv),
     .wready(xr_wr), .wdata(xr_wd), .wslot(xr_slot), .wcommit(xr_cmt), .wused(xr_used), .rclk(xclk),
     .rrst(x_hs2), .rvalid(xr_rv), .rready(xr_rr), .rdata(xr_rd));
@@ -402,13 +404,16 @@ module otpu_mem_ch #(
   assign go    = !rm_busy && (pick_x ? x_ok : a_ok) && oq_wr[tp] && (!we || of_wr[tp]);
 
   // read data: at most one port returns a beat in a cycle (they share the channel's data bus);
-  // its tag, at the head of that port's tag FIFO, says where it goes
+  // its tag, at the head of that port's tag FIFO, says where it goes. The core's ports carry one
+  // read bus (tools/litedram/ecc_ports.py: one decoder, and each port's register behind it loads
+  // every cycle, their rdata ready being tied high), so the beat is on port 0's data whichever
+  // port returns it: no port mux on the valids.
   logic          rv, rp;
   logic [511:0]  rdat;
   logic [TW-1:0] rtag;
   assign rv   = |c_rdata_valid;
   assign rp   = c_rdata_valid[1];
-  assign rdat = c_rdata_data[rp];
+  assign rdat = c_rdata_data[0];
   assign rtag = tg_rd[rp];
 
   // read-modify-write: the read goes with an RMW tag, the write's command and data stay at the
@@ -428,17 +433,19 @@ module otpu_mem_ch #(
   assign ad_rr = (go && !pick_x && we && !rmw) || (rm_ret && !rm_x);
   assign xd_rr = (go && pick_x && we && !rmw) || (rm_ret && rm_x);
 
-  // output write data: whole beats, a merged one with the read's data in the lanes not written
+  // output write data: whole beats, a merged one with the read's data in the lanes not written.
+  // While an RMW is in progress only its merged write enters the queues (go waits), so the merge
+  // follows rm_busy, a flip-flop, rather than the returning beat's tag.
   always_comb
     for (int k = 0; k < 64; k++)
-      of_wd[8 * k +: 8] = (rm_ret && !wd[512 + k]) ? rdat[8 * k +: 8] : wd[8 * k +: 8];
+      of_wd[8 * k +: 8] = (rm_busy && !wd[512 + k]) ? rdat[8 * k +: 8] : wd[8 * k +: 8];
 
   // per port: the output command queue (a FIFO behind a register: the crossbar's inputs come from
   // flip-flops; a command bypasses the empty FIFO), the output write-data FIFO (pushed with the
   // write's command) and the read tags ({read-modify-write, xdma, slot}, in the port's order)
   logic [26:0]   ocn;
   logic [1:0]    opop, opw_a, opw_x, opc_a, opc_x;
-  assign ocn = {rm_ok || (we && !rmw), sel_x, addr};
+  assign ocn = {rm_busy || (we && !rmw), sel_x, addr};
   for (genvar p = 0; p < 2; p++) begin : g_port
     logic        oq_rv, oq_rr, byp, oc_v;
     logic [26:0] oq_rd, oc;
@@ -535,6 +542,8 @@ module otpu_mem_ch #(
   // left the queue)
   always_ff @(posedge uclk) if (!urst) begin
     if (&c_rdata_valid) $error("otpu_mem_ch: read data from both ports in one cycle");
+    if (c_rdata_valid[1] && c_rdata_data[1] != c_rdata_data[0])
+      $error("otpu_mem_ch: port 1's read data is not on port 0's bus");
     for (int p = 0; p < 2; p++)
       if (c_rdata_valid[p] && !tg_rv[p]) $error("otpu_mem_ch: port %0d read data without a tag", p);
     if (rm_ret && !rm_busy) $error("otpu_mem_ch: read-modify-write data without its read");

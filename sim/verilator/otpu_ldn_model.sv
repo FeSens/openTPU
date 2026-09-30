@@ -12,7 +12,8 @@
 // looking at valid: data not valid then is an error, and so is any byte not written
 // (LiteDRAMNativePortECC rejects partial writes). A read returns the memory as it is when it is
 // performed, LAT to LAT + 7 cycles later (+axi_lat=N), on its port, in the order performed, one
-// beat a cycle (the channel's data bus), never held back. +ldn_dual=N: the Nth read beat also
+// beat a cycle (the channel's data bus, on both ports' data as the core's one read decoder puts
+// it), never held back. +ldn_dual=N: the Nth read beat also
 // raises the other port's rdata valid (a controller that breaks the contract: otpu_mem_ch's
 // n_err).
 // With IMG = 1 the channel's memory loads from <dir>/ch<CH>.bin and dumps to <dir>/ch<CH>_out.bin
@@ -104,7 +105,7 @@ module otpu_ldn_model #(
       c_rdata_valid <= '0;
       if (rq.size() != 0 && rq[0].t <= cyc) begin
         c_rdata_valid[rq[0].p] <= 1'b1;
-        c_rdata_data[rq[0].p] <= rq[0].d;
+        c_rdata_data <= {2{rq[0].d}};
         n_ret++;
         if (n_ret == dual) c_rdata_valid[!rq[0].p] <= 1'b1;
         void'(rq.pop_front());

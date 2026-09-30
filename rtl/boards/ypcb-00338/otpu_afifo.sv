@@ -9,12 +9,22 @@
 // OOO = 1: entries are written out of order, each at its slot (wslot: the entry's place in the
 // FIFO's order, modulo DEPTH), and enter the FIFO in slot order: the write pointer passes an entry
 // once it and every entry before it are written (at most one a cycle; wcommit), so the read side
-// sees them in order. The writer reserves the slots (the channel bridge's read credits): a write
-// is not checked against wready, and a slot is written once per pass.
+// sees them in order. It passes an entry the cycle after its write, from the slots' flags alone,
+// so no write-side input reaches wcommit (the bridge's read credits follow it). The writer
+// reserves the slots (the channel bridge's read credits): a write is not checked against wready,
+// and a slot is written once per pass.
+//
+// RWR = 1: wready is a flip-flop, so the writer's enables start from flip-flops: the room after
+// this cycle's write, against the read pointer as synchronized now (at most a cycle more
+// conservative than wused), low from the cycle after wrst rises to the cycle after it falls. In
+// wrst's first cycle it keeps the last cycle's value; the channel bridge's XDMA side is in its own
+// reset then (x_crst), except in the first cycle of a hold the controller's reset raised, when a
+// beat it takes is lost with those already in the FIFO.
 module otpu_afifo #(
   parameter int W = 32,
   parameter int DEPTH = 16,
-  parameter bit OOO = 1'b0
+  parameter bit OOO = 1'b0,
+  parameter bit RWR = 1'b0
 ) (
   input  logic         wclk,
   input  logic         wrst,
@@ -52,10 +62,17 @@ module otpu_afifo #(
   logic [DEPTH-1:0] wvld;                  // OOO: slots written, not yet passed
   assign rbin_w = g2b(rgray_w2);
   assign wused  = wbin - rbin_w;
-  assign wready = !wrst && (wused != (AW + 1)'(DEPTH));
+  if (RWR) begin : g_rwr
+    logic wrdy = 1'b0;
+    always_ff @(posedge wclk)
+      wrdy <= !wrst && ((wbin + (AW + 1)'(wput)) - rbin_w) != (AW + 1)'(DEPTH);
+    assign wready = wrdy;
+  end else begin : g_cwr
+    assign wready = !wrst && (wused != (AW + 1)'(DEPTH));
+  end
   assign wput   = OOO ? (wvalid && !wrst) : (wvalid && wready);
   assign waddr  = OOO ? wslot : wbin[AW-1:0];
-  assign wadv   = OOO ? (!wrst && (wvld[wbin[AW-1:0]] || (wput && wslot == wbin[AW-1:0])))
+  assign wadv   = OOO ? (!wrst && wvld[wbin[AW-1:0]])
                       : (wvalid && wready);
   assign wcommit = OOO && wadv;
   always_ff @(posedge wclk) begin

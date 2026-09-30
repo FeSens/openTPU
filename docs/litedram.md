@@ -1439,9 +1439,22 @@ in the accelerator changes.
     tag FIFO. A port whose bank waits holds back only its own commands.
   - **In-order return:** each read takes the next slot of its master's read-data FIFO when it
     issues; the read credits keep that slot free. Its data is written into the slot when its port
-    returns it, and the FIFO (`otpu_afifo` OOO) passes the slots in order.
+    returns it, and the FIFO (`otpu_afifo` OOO) passes the slots in order. It passes a slot the
+    cycle after the slot is written, using the slots' flags alone, so the returning beat does not
+    reach the credit counts in its own cycle.
   - **Unchanged:** the read-modify-write, the holds and `n_wdone`. They work per beat, and a beat
     is always on the same port.
+  - **One read bus.** The core's two ports of a channel carry the same read data every cycle:
+    one decoder feeds both ports' registers, and each register loads every cycle because
+    `rdata_ready` is tied high. So the bridge reads port 0's data whichever port returns the beat,
+    and Vivado prunes port 1's registers. Simulation checks this contract: `otpu_mem_ch` errors if
+    port 1's data ever differs, and `otpu_ldc_mem` fails if the generated controller's two buses
+    differ. The read-modify-write merge selects on `rm_busy`, a flip-flop, not on the returning
+    beat's tag.
+  - **The XDMA side's command and write-data FIFOs have a registered `wready`** (`otpu_afifo`
+    RWR), so XDMA's write enables start from flip-flops rather than from the hold's synchronizer.
+    The flag is the room left after this cycle's write, which is at most a cycle more
+    conservative.
   - **Constraints:** `otpu_mem_ch.tcl`'s CDC waivers name the per-port endpoints
     (`g_port[*].u_oq`, `oc`, `oc_v`, the FIFOs' write pointers) and the new counters. The max
     delays are unchanged.
@@ -1468,7 +1481,7 @@ in the accelerator changes.
   bank's queue. `memch_test`'s `pubstall` scenario checks it: mostly shared operations, one
   master reading a beat as soon as the other's write is counted, while the controller stalls and
   the two ports' queues run apart.
-- **`memch_test` mutations:** thirteen new ones (31 in all), all caught.
+- **`memch_test` mutations:** fourteen new ones (32 in all), all caught.
   - the second port's writes not counted;
   - reads without credits;
   - a slot freed on return;
@@ -1481,6 +1494,7 @@ in the accelerator changes.
   - each port given the other port's write-data head;
   - the in-order release passing a slot before it is written (`otpu_afifo`);
   - XDMA's B sent once its beats are in the bridge, before the controller takes them;
+  - the XDMA FIFOs' registered `wready` not counting this cycle's write;
   - `n_err` not set by a double beat.
 
 **Decode, co-simulated** (the RTL above behind the two-port controller; fp4 layers, int8 head,
