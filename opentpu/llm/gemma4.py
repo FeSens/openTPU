@@ -62,7 +62,7 @@ import numpy as np
 from .. import fp32 as F
 from .. import quant as Q
 from .. import language as ol
-from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor
+from ..compiler import Affine, KVDesc, QTensor, Tensor
 from ..isasim import Config
 from ..kernels import gather as GA
 from ..kernels.attention import Blocks, Bucket, _attend_heads
@@ -1082,7 +1082,7 @@ def _attention(x, lw, m, pos, ropes, block: int):
                 for g0 in range(0, G, mc)]
     del q, qr
 
-    def emit(i, acc, l):
+    def emit(i, acc, l, o=o):                               # (o is freed below)
         r, j, g0, g1, _ = ent[i]
         o[r, (j * G + g0) * d:(j * G + g1) * d].reshape(g1 - g0, d).set(acc / l[:, None])
 

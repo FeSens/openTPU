@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,12 +48,17 @@ from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
 from ..kernels.mlp import _chunk
 from ..runtime import quantize_rows
-from .qwen3 import (RunPos, _inputs, _lookup_alloc, _lookup_build, _lookup_desc,
-                    compile_decode)
+from .qwen3 import (RunPos, _inputs, _inputs_rows, _lookup_alloc, _lookup_build, _lookup_desc,
+                    _tok_arg, _tokens_arg, compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
                     _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables)
 
 CONV, ATTN = "conv", "attn"
+# A plan with more layer bodies than this runs each MLP's F chunks as a hardware loop
+# (kernels.mlp.swiglu_down loop): LFM2-2.6B's 10 bodies with 12 unrolled chunks each would
+# fill the 4K-instruction IMEM; LFM2.5-230M's 4 keep them unrolled. OTPU_MLP_UNROLL_BODIES
+# overrides it (0: always a loop), e.g. to measure both on the same layers.
+MLP_UNROLL_BODIES = int(os.environ.get("OTPU_MLP_UNROLL_BODIES", 8))
 
 
 # =============================================================================== model spec
@@ -71,6 +77,8 @@ class Spec:
     tied: bool = True
     bos: int = 1
     eos: tuple = (7,)
+    embed: str = "f32"      # the embedding rows: fp32, or "int8" per D block (as qwen3.Spec:
+                            # gathered on the device from the tied int8 head or a table)
 
     @property
     def layers(self) -> int:
@@ -102,7 +110,8 @@ class Spec:
                     ffn=ff, vocab=c["vocab_size"], conv_k=c.get("conv_L_cache", 3),
                     eps=c.get("norm_eps", 1e-5),
                     theta=rope.get("rope_theta", c.get("rope_theta", 1e6)),
-                    tied=c.get("tie_word_embeddings", True), bos=c.get("bos_token_id", 1),
+                    tied=c.get("tie_word_embeddings", c.get("tie_embedding", True)),
+                    bos=c.get("bos_token_id", 1),
                     eos=tuple(eos) if isinstance(eos, list) else (eos,))
 
     def check(self, cfg: Config) -> None:
@@ -221,6 +230,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     out = []
     for pos, tk in enumerate(tokens):
         x = np.asarray(W["model.embed_tokens.weight"][tk], np.float64)
+        if spec.embed == "int8":                    # the int8 embedding rows (Spec.embed)
+            x = _fake_q(x, D)
         c, s = rope_tables(spec, pos)
 
         def rot(v):
@@ -292,6 +303,7 @@ class Image:
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
         self.plan = plan(spec.kinds)
+        self.mlp_loop = sum(len(u) for _, u, _ in self.plan) > MLP_UNROLL_BODIES
         b = _Bump()
         R = rows
         self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * d * R), "sin": b.alloc(2 * d * R),
@@ -331,7 +343,10 @@ class Image:
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
-        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
+        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
+        shared = spec.tied and self.head_format == "int8" and S == 1
+        self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
+                                    M=cfg.MCOLS) if lookup else {}
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -408,13 +423,13 @@ class Image:
         convolutions need lo >= conv_k - 1 (every tap of the state ring is a past token)."""
         return compile_decode(self, lfm2_step, blocks, lo, block)
 
-    def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
+    def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program per slice: the decode token at position `pos` (lfm2_step)."""
         return [lfm2_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
-                                              "block": block}).finish()
+                                              "block": block, **_tok_arg(self, tok)}).finish()
                 for s in range(self.cfg.S)]
 
-    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
         """One program per slice: consecutive positions of the sequence at once (lfm2_rows)."""
         if len(rows) > self.rows:
             raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
@@ -422,7 +437,8 @@ class Image:
             raise ValueError("LFM2 rows must be consecutive positions of sequence 0")
         return [lfm2_rows.trace(self.cfg, s, {"m": self.descriptors(s), "p0": rows[0][1],
                                               "R": len(rows), "logit_rows": list(logit_rows),
-                                              "block": block}).finish()
+                                              "block": block,
+                                              **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
     # ---- kernel descriptors
@@ -436,7 +452,8 @@ class Image:
             lofs = self.lofs[kind]
             fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             ns = SimpleNamespace(g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
-                                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)))
+                                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
+                                 mlp_loop=self.mlp_loop)
             for name, (r, k) in self.mats[kind].items():
                 da, sa = lofs[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (r, k), Q.row_bytes(k, fm, D),
@@ -512,7 +529,7 @@ def _conv(x, lw, pos: int, spec: Spec):
 
 
 @ol.jit
-def lfm2_step(m, pos: int, block: int = ATTN_BLOCK):
+def lfm2_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     """One decode token at position `pos`: x (the token's embedding) -> logits.
 
     Each run of m.plan with repeats is a hardware loop over its unit of layers; the others are
@@ -520,7 +537,7 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK):
     attend over positions 0..pos. Logits for this slice's vocabulary rows go to m.logits.
     """
     spec = m.spec
-    x, c, s_ = _inputs(m, pos)
+    x, c, s_ = _inputs(m, pos, tok)
 
     def layer(li, kind):
         lw = m.layer(li, kind)
@@ -569,14 +586,14 @@ def _conv_rows(x, lw, p0: int, spec: Spec):
 
 
 @ol.jit
-def lfm2_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK):
+def lfm2_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     """R prompt tokens at positions p0 .. p0+R-1 at once: their embeddings m.xr and RoPE
-    tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
-    empty). Bit-identical to R lfm2_step runs."""
+    tables m.cosr / m.sinr, or those of `tokens` from the image's tables (qwen3._inputs_rows) ->
+    logits of the rows in `logit_rows` (a contiguous range, or empty). Bit-identical to R
+    lfm2_step runs."""
     spec = m.spec
     rows = [(0, p0 + r) for r in range(R)]
-    x = ol.load(m.xr[0:R, :])
-    c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    x, c, s_ = _inputs_rows(m, rows, tokens)
 
     def layer(li, kind):
         lw = m.layer(li, kind)
