@@ -182,3 +182,137 @@ def test_moe_on_board_model(tiny, have_verilator):
     assert isa.server.misses == 0 and brd.stats[-1]["cycles"] > 0
     progs = brd.backend.last[0]     # the generate program: per MoE block its fence and the
     assert sum(i.op == 0x07 for i in progs[0]) >= 3     # hits' and misses' directory waits
+
+
+class _LiveCard:
+    """A fake card that computes while the host works (built on opentpu.host.fake): LOAD takes
+    the program from DRAM, RUN runs it with ARG0..7 on the ISA simulator in a thread, over one
+    DRAM the host's reads and writes reach at once (the two channels interleaved in 64-byte
+    beats, as the card's). A MoE layer's WAITW then waits for the host's writes during the
+    run, as on the card; HALTED rises when the program halts."""
+
+    @staticmethod
+    def make(cfg):
+        import threading
+        import time
+        from opentpu import isa as I
+        from opentpu.host import regs as R
+        from opentpu.host.fake import FakeTransport
+        from opentpu.isasim import Machine
+
+        class Live(FakeTransport):
+            def __init__(self):
+                super().__init__(ch_bytes=128, devname=None, args=True, gen=True)
+                self.mem = np.zeros((cfg.DRAM_BYTES // 128, 2, 64), np.uint8)
+                self.flat = self.mem.reshape(-1)
+                self.prog, self.thread, self.error, self.waits = None, None, None, 0
+
+            def mem_write(self, ch, off, data):
+                v, b0, b1 = self.mem[:, ch, :], off // 64, -(-(off + len(data)) // 64)
+                rows = v[b0:b1].reshape(-1)
+                rows[off - 64 * b0:off - 64 * b0 + len(data)] = data
+                v[b0:b1] = rows.reshape(-1, 64)
+
+            def mem_read(self, ch, off, n, out=None):
+                v, b0, b1 = self.mem[:, ch, :], off // 64, -(-(off + n) // 64)
+                r = v[b0:b1].reshape(-1)[off - 64 * b0:off - 64 * b0 + n]
+                if out is None:
+                    return r.copy()
+                out[:] = r
+                return out
+
+            def _host(self, m):
+                """WAITW: every slice polls; wait for the host's write (a 60 s timeout)."""
+                self.waits += 1
+                t0 = time.perf_counter()
+                while time.perf_counter() - t0 < 60:
+                    for s in m.slices:
+                        ins = s.polling
+                        a = (s.reg(ins.ra) + ins.w[0]) & 0xFFFFFFFF
+                        if I.waitw_holds(int(s.m32[a // 4]), s.reg(ins.rc) + ins.w[2],
+                                         ins.flags & 3, ins.w[3]):
+                            return
+                    time.sleep(1e-4)
+
+            def _run(self, m):
+                try:
+                    m.run(max_steps=1 << 40)
+                except Exception as e:          # noqa: BLE001 (reported by the test)
+                    self.error = e
+
+            def reg_write(self, off, val):
+                ctrl = self.regs[R.R_CTRL]
+                super().reg_write(off, val)
+                if off != R.R_CTRL:
+                    return
+                if val & R.CTRL_LOAD:
+                    a, n = self.regs[R.R_PROG_ADDR], self.regs[R.R_PROG_N]
+                    w = self.flat[a:a + 32 * n].view(np.uint32).reshape(n, 8)
+                    self.prog = [I.Instr.decode(x) for x in w]
+                if val & R.CTRL_RUN and not ctrl & R.CTRL_RUN:
+                    args = [self.regs.get(R.R_ARG0 + 4 * k, 0) for k in range(8)]
+                    m = Machine(cfg, [self.prog], [None], args)
+                    m.slices[0].dram = self.flat        # the host's DRAM, not a copy
+                    m.host = self._host
+                    self.thread = threading.Thread(target=self._run, args=(m,), daemon=True)
+                    self.thread.start()
+
+            def reg_read(self, off):
+                if off == R.R_STATUS:
+                    run = bool(self.regs[R.R_CTRL] & R.CTRL_RUN)
+                    done = run and self.thread is not None and not self.thread.is_alive()
+                    return (R.ST_HALTED if done else 0) | R.ST_CALIB0 | R.ST_CALIB1 | \
+                        R.ST_WR_IDLE | (R.ST_RUN if run else 0)
+                return super().reg_read(off)
+
+        return Live()
+
+
+def test_the_host_serves_the_card_during_its_runs(tiny):
+    """The card's side of path (a) with the host's server as it runs beside a card: the backend
+    polls it while a run is in flight (BoardBackend.host), and it moves the missing experts
+    into the slots while the card's MoE layers wait for them (a fake card that computes in a
+    thread over the host's DRAM). k slots per layer: prefill, per-position and resident
+    decode, and the card's generate loop give the ISA simulator's logits and tokens bit for
+    bit, with misses served during the runs."""
+    from opentpu.host.board import BoardBackend
+    from opentpu.isasim import board_config
+    _, W, spec = tiny
+    cfg = board_config(DRAM_BYTES=1 << 24)
+    card = _LiveCard.make(cfg)
+    isa = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K)
+    brd = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card))
+    assert brd.resident and brd.can_generate and brd.backend.host is not None
+    assert not brd.stream_logits
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 6)]
+    for tok in toks:
+        a, b = isa.step(tok), brd.step(tok)
+        assert card.error is None, card.error
+        assert np.array_equal(a.view(np.uint32), b.view(np.uint32)), brd.pos
+    assert brd.server.misses > len(toks) and card.waits > 0
+    t0, misses, waits = int(np.argmax(a)), brd.server.misses, card.waits
+    got = brd.generate_card(t0, 8, stop_ids=[])
+    assert card.error is None, card.error
+    assert got == isa.generate_card(t0, 8, stop_ids=[])
+    assert brd.server.misses > misses and card.waits > waits      # served during the loop
+    assert brd.server.seq == isa.server.seq == (len(toks) + 8) * len(brd.image.offload.slots)
+
+
+@pytest.mark.parametrize("embed", ["fp32", "gather"])
+def test_lazy_weights_build_the_same_engine(tiny, tmp_path, embed):
+    """Weights read tensor by tensor from safetensors files (qwen3.LazyWeights: a model whose
+    fp32 weights do not fit host RAM; the embedding's rows read one at a time, the image the
+    simulator's DRAM without a copy) give the in-RAM weights' logits bit for bit."""
+    from safetensors.numpy import save_file
+    from opentpu.llm.qwen3 import LazyWeights
+    _, W, spec = tiny
+    save_file({k: np.ascontiguousarray(v) for k, v in W.items()},
+              str(tmp_path / "model.safetensors"))
+    cfg = device_config(spec, 256, rows=1, lookup="gather" if embed == "gather" else True,
+                        S=1, experts=K)
+    a, b = (Engine(spec, w, cap=256, cfg=cfg, rows=1, resident=True, experts=K, embed=embed)
+            for w in (W, LazyWeights(tmp_path)))
+    assert b.embed.full is None and a.embed.full is not None
+    for t in (5, 77, 900, 13, 4):
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), a.pos

@@ -115,6 +115,23 @@ def load_weights(model_dir) -> dict:
     return out
 
 
+class _Rows:
+    """A weight matrix's rows: rows[i] (an int, or a list or array of them) as fp32. Over
+    LazyWeights each row is read when asked for (the fp32 embedding of a big vocabulary is
+    never loaded whole), else the matrix is converted once."""
+
+    def __init__(self, W, k: str):
+        self.W, self.k = W, k
+        self.full = None if isinstance(W, LazyWeights) else np.asarray(W[k], np.float32)
+
+    def __getitem__(self, i):
+        if self.full is not None:
+            return self.full[i]
+        if np.ndim(i) == 0:
+            return self.W.part(self.k, int(i))
+        return np.stack([self.W.part(self.k, int(j)) for j in np.asarray(i).reshape(-1)])
+
+
 class LazyWeights(dict):
     """load_weights' names over a checkpoint's safetensors files, each tensor read as fp32 when
     it is asked for and not kept: for a model whose fp32 weights would not fit host RAM (a
@@ -937,10 +954,19 @@ def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: 
 
 
 class IsaBackend:
-    """The bit-exact ISA simulator, one persistent machine (DRAM keeps the KV cache)."""
+    """The bit-exact ISA simulator, one persistent machine (DRAM keeps the KV cache).
+    adopt: the images (arrays of their own) become the machine's DRAM, grown to DRAM_BYTES in
+    place instead of copied, so a 4 GiB image is held once; the caller gives them up."""
 
-    def __init__(self, cfg: Config, images: list):
-        self.machine = Machine(cfg, [[] for _ in range(cfg.S)], images)
+    def __init__(self, cfg: Config, images: list, adopt: bool = False):
+        own = adopt and all(isinstance(m, np.ndarray) and m.dtype == np.uint8 and m.ndim == 1
+                            and m.flags.owndata and len(m) <= cfg.DRAM_BYTES for m in images)
+        self.machine = Machine(cfg, [[] for _ in range(cfg.S)],
+                               [None] * cfg.S if own else images)
+        if own:
+            for s, m in zip(self.machine.slices, images):
+                m.resize(cfg.DRAM_BYTES, refcheck=False)
+                s.dram = m
 
     def write(self, s: int, addr: int, data: np.ndarray) -> None:
         v = np.ascontiguousarray(data).view(np.uint8).reshape(-1)
@@ -1096,7 +1122,7 @@ class Engine:
             wkw["lookup"] = "gather" if embed == "gather" else True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
-        self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
+        self.embed = _Rows(W, "model.embed_tokens.weight")
         # embed="gather": the embedding row as the device gathers it (kernels/gather.py): from
         # the tied LM head on one slice, else from an int8 table; the host writes those values
         self.embed_fmt = None
@@ -1104,16 +1130,19 @@ class Engine:
             self.embed_fmt = (self.image.head_format if spec.tied and self.cfg.S == 1
                               else "int8")
         images = self.image.build(W)
-        self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
+        self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)
         self.resident = lookup and bool(getattr(self.backend, "args", False))
         # path (a), docs/offload.md: the experts stream into the image's slots; the host's
-        # server moves them (the ISA simulator calls it when every slice waits on WAITW)
+        # server moves them (the ISA simulator calls it when every slice waits on WAITW; the
+        # card's backend polls it while a run is in flight)
         self.server = None
         if getattr(self.image, "offload", None) is not None:
             self.server = self.image.serve(W, self.backend, pool_file)
             if isinstance(self.backend, IsaBackend):
                 self.backend.machine.host = lambda m: self.server.poll()
+            elif hasattr(self.backend, "host"):
+                self.backend.host = self.server.poll
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
@@ -1121,7 +1150,8 @@ class Engine:
         self.gen_debug = False              # generate_card: the logits too (gen_logits)
         self.gen_logits = None
         self.poss = [0] * batch
-        self.stream_logits = True           # step(): stream the logits when the backend can
+        # step(): stream the logits when the backend can (not while its wait serves the host)
+        self.stream_logits = getattr(self.backend, "host", None) is None
         self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
         self._run_rows_n = self.rows        # rows of the last prefill run (IMEM may cut it)
         self.stats = []
