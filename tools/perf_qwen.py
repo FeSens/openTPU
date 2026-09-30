@@ -155,7 +155,9 @@ def main():
     ap.add_argument("--dump", help="write the run's Lens profile data (lens.to_data) as JSON")
     ap.add_argument("--resident", action="store_true",
                     help="the resident decode program of pos's bucket (run arguments, inputs "
-                         "from the image's tables; qwen3.compile_decode)")
+                         "from the image's tables; qwen3.compile_decode); with --rows the "
+                         "resident engine's prefill run, its inputs from the tables too "
+                         "(compile_rows tokens)")
     ap.add_argument("--generate", type=int, default=0, metavar="N",
                     help="with --resident: the decode loop on the device (generate.py), N "
                          "tokens from pos in one run (greedy, or --sample); cycles per token")
@@ -217,7 +219,9 @@ def main():
     if a.rows:
         lr = {"last": [R - 1], "all": list(range(R)), "none": []}[a.logits]
         progs = img.compile_rows([(0, a.pos + r) for r in range(R)], lr,
-                                 *([a.block] if a.block else []))
+                                 *([a.block] if a.block else []),
+                                 **({"tokens": [791 + r for r in range(R)]} if a.resident
+                                    else {}))
     elif a.resident and a.generate:
         from opentpu.llm import generate as G
         from opentpu.llm.qwen3 import ATTN_BLOCK

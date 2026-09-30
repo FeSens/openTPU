@@ -101,6 +101,31 @@ def test_tiny_resident_decode_is_bit_exact(tiny):
     assert sorted(a._decodes) == [1, 2]
 
 
+def test_tiny_device_inputs(tiny, monkeypatch):
+    """With the image's tables (resident decode's lookup tables), prefill runs and
+    per-position steps read their embedding and RoPE rows from the image too (the token ids
+    compiled into their programs): the host writes no inputs, only the run's arguments, and the
+    logits are the host-input engine's bit for bit. Without the resident program (a backend
+    without run arguments) every step is such a per-position program."""
+    from opentpu.llm.qwen3 import IsaBackend
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 20)]
+    monkeypatch.setattr(IsaBackend, "args", False)      # no resident program: per-position
+    a = Engine(spec, W, cap=256, resident=True)
+    b = Engine(spec, W, cap=256)
+    assert a.device_inputs and not a.resident and not b.device_inputs
+    writes = []
+    wr = a.backend.write
+    a.backend.write = lambda s, addr, v: (writes.append(addr), wr(s, addr, v))
+    for t in toks[:2]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    assert np.array_equal(a.prefill(toks[2:17], chunk=6), b.prefill(toks[2:17], chunk=6))
+    for t in toks[17:]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    assert writes == []
+    assert [s.get("rows", 1) for s in a.stats] == [1, 1, 6, 6, 3, 1, 1, 1]
+
+
 def test_tiny_reset_reuses_cache(tiny):
     _, W, spec = tiny
     eng = Engine(spec, W, cap=128)

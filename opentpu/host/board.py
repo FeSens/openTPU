@@ -837,6 +837,7 @@ def sim_config(spec, cap: int, base=None, rows: int | None = None, lookup: bool 
     from opentpu.isasim import board_config
     from opentpu.llm.qwen3 import PREFILL_ROWS, has_lookup
     base = base or board_config()
+    lookup = lookup or getattr(spec, "embed", "f32") == "int8"     # as Engine: always tables
     probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS,
                        **({"lookup": True} if lookup and has_lookup(spec) else {}))
     need = -(-probe.nbytes // 4096) * 4096 + 4 * base.IMEM_WORDS

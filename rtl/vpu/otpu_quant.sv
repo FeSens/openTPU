@@ -477,10 +477,11 @@ module otpu_quant
 
   // ------------------------------------------------------------------ sequencing
   // done is reported two cycles after the instruction's last ACT RAM write (done_w, then done)
-  // and the ACT RAM lands the write at the edge after done rises (two registers: otpu_actram).
-  // The sequencer clears the dependency at the next edge and releases the dependent MM (urel) at
-  // the one after, so the MM's first read of the block is at least two edges after it landed;
-  // otpu_actram's simulation check stops on a consumed read of a block still in flight
+  // and the ACT RAM lands the write two edges after done rises (three registers: otpu_actram).
+  // The sequencer clears the dependency at the edge after done rises and releases the dependent
+  // MM (urel) at the next, the one that lands the write, so the MM's first read of the block is
+  // at least an edge after it landed; otpu_actram's simulation check stops on a consumed read of
+  // a block still in flight
   logic done_w;
   always_ff @(posedge clk) done <= !rst && done_w;
   always_ff @(posedge clk) begin

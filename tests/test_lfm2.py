@@ -2,6 +2,7 @@
 padded to the MXU depth, conv state ring in DRAM) against Hugging Face transformers. A tiny
 random model always runs; the real LFM2.5-230M runs when its checkpoint is in
 models/LFM2.5-230M."""
+import dataclasses
 from pathlib import Path
 
 import numpy as np
@@ -123,6 +124,73 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, first, chunk):
     assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[21:], want[21:]))
 
 
+@pytest.fixture(scope="module")
+def tiny_wide():
+    """The tiny model with a wider MLP: 1792, 14 int8 chunks of 128 or 7 4-bit ones of 256."""
+    torch.manual_seed(1)
+    hc = transformers.Lfm2Config(
+        hidden_size=256, num_hidden_layers=len(KINDS), num_attention_heads=4,
+        num_key_value_heads=2, intermediate_size=1792, vocab_size=1000, norm_eps=1e-5,
+        layer_types=["full_attention" if k == "attn" else "conv" for k in KINDS],
+        conv_L_cache=3, conv_bias=False, block_auto_adjust_ff_dim=False,
+        tie_word_embeddings=True, max_position_embeddings=4096,
+        rope_parameters={"rope_type": "default", "rope_theta": 1e6})
+    m = transformers.Lfm2ForCausalLM(hc).float().eval()
+    W = {k: v.float().numpy() for k, v in m.state_dict().items()}
+    return W, Spec(256, KINDS, 4, 2, 64, 1792, 1000)
+
+
+@pytest.mark.parametrize("wformat", ["int8", "fp4"])
+def test_tiny_mlp_loop_is_bit_exact(tiny_wide, monkeypatch, wformat):
+    """The MLP's F chunks as a hardware loop (lfm2.MLP_UNROLL_BODIES: LFM2-2.6B's plan), an
+    even and an odd number of chunks: the unrolled programs' logits, KV cache and conv state
+    bit for bit, per position, resident and in chunked prefill, in fewer instructions."""
+    import opentpu.llm.lfm2 as L
+    W, spec = tiny_wide
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 30)]
+    cfg = board_config(DRAM_BYTES=1 << 24)
+    b = Engine(spec, W, cap=256, cfg=cfg, wformat=wformat)
+    monkeypatch.setattr(L, "MLP_UNROLL_BODIES", 0)
+    a = Engine(spec, W, cap=256, cfg=cfg, wformat=wformat)
+    r = Engine(spec, W, cap=256, cfg=cfg, wformat=wformat, resident=True)
+    assert a.image.mlp_loop and r.resident and not b.image.mlp_loop
+    n = [len(e.image.compile_step(9)[0]) for e in (a, b)]
+    assert n[0] < n[1] - 20, n
+    want = b.prefill(toks[:21], chunk=8)
+    for e in (a, r):
+        assert np.array_equal(e.prefill(toks[:21], chunk=8).view(np.uint32),
+                              want.view(np.uint32))
+    for t in toks[21:]:
+        want = b.step(t)
+        for e in (a, r):
+            assert np.array_equal(e.step(t).view(np.uint32), want.view(np.uint32))
+    assert all(np.array_equal(x, y) for x, y in zip(_layers_dram(a), _layers_dram(b)))
+
+
+def test_tiny_mlp_loop_on_rtl(tiny_wide, have_verilator, monkeypatch):
+    """The looped MLP (its two gate / up buffers reused across iterations) on the Verilator
+    RTL: a resident decode step and a 5-row prefill run with its inputs from the image's
+    tables, bit-identical to the ISA simulator, DRAM included."""
+    import opentpu.llm.lfm2 as L
+    from opentpu.llm.rtl_backend import RtlBackend
+    monkeypatch.setattr(L, "MLP_UNROLL_BODIES", 0)
+    W, spec = tiny_wide
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
+    eng = Engine(spec, W, cap=256, cfg=board_config(DRAM_BYTES=1 << 24), resident=True)
+    assert eng.image.mlp_loop and eng.resident and eng.device_inputs
+    eng.prefill(toks[:6])
+    for run in (toks[6:7], toks[7:12]):
+        n = eng.image.nbytes
+        rtl = RtlBackend(eng.cfg, [s.dram[:n] for s in eng.backend.machine.slices])
+        isa, p = eng.backend, eng.pos
+        want = eng.prefill(run, chunk=len(run))
+        eng.backend, eng.pos = rtl, p
+        got = eng.prefill(run, chunk=len(run))
+        eng.backend = isa
+        assert np.array_equal(want.view(np.uint32), got.view(np.uint32)), p
+        assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])
+
+
 @pytest.mark.parametrize("resident", [False, True])
 def test_tiny_lfm2_on_board_model(tiny, have_verilator, resident):
     """The board model through the host driver, through a full turn of the conv state ring:
@@ -175,6 +243,32 @@ def test_tiny_resident_decode_is_bit_exact(tiny):
             o = li * ib.LS + ib.lofs["conv"]["state"]
             ma[o:o + 4 * ib.h_loc] = mb[o:o + 4 * ib.h_loc] = 0
     assert np.array_equal(ma, mb)
+
+
+@pytest.mark.parametrize("head", ["int8", "fp4"])
+def test_tiny_int8_embedding(tiny, head):
+    """Spec.embed "int8" (e.g. LFM2.5-8B-A1B): the token's int8 embedding row is gathered on
+    the device from the tied int8 LM head (under a 4-bit head, from an int8 table of the
+    image's own), in the resident decode, the per-position programs and the prefill runs: the
+    same logits bit for bit, following the float64 emulation, which quantizes the row too."""
+    _, W, spec = tiny
+    spec = dataclasses.replace(spec, embed="int8")
+    cfg = board_config(DRAM_BYTES=1 << 25)
+    wf = "int8" if head == "int8" else "fp4"
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
+    a = Engine(spec, W, cap=256, cfg=cfg, resident=True, wformat=wf, head_format=head)
+    b = Engine(spec, W, cap=256, cfg=cfg, wformat=wf, head_format=head)
+    assert a.resident and b.device_inputs and a.image.lookup["own"] == (head != "int8")
+    for t in toks[:3]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    assert np.array_equal(a.prefill(toks[3:9]).view(np.uint32),
+                          b.prefill(toks[3:9]).view(np.uint32))
+    for t in toks[9:]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    c = Engine(spec, W, cap=256, cfg=cfg, wformat=wf, head_format=head)
+    dev = np.array([c.step(t) for t in toks])
+    emu = emulated_logits(spec, W, toks, wformat=wf, head_format=head)
+    assert _cos(dev, emu).min() > 0.999
 
 
 def test_tiny_resident_decode_on_rtl(tiny, have_verilator):

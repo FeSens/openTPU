@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +37,7 @@ from . import generate as G
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
+from ..kernels.gather import dequant_row, gather_row, onehot, onehot_blocks
 from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid, softcap
 from ..kernels.mlp import _chunk, swiglu_down
 from ..runtime import ALIGN
@@ -56,11 +58,22 @@ class Spec:
     tied: bool = True
     bos: int = 151643
     eos: tuple = (151645, 151643)
+    # the Llama-like models of llama.py (SmolLM3, Phi-3 / Phi-4-mini) run on this code too:
+    qk_norm: bool = True      # RMSNorm on each q and k head (Qwen3); Llama-likes have none
+    nope: tuple = ()          # layers without RoPE (SmolLM3: every 4th)
+    rotary: int = 0           # RoPE dimensions of a head, the first ones (0: all; Phi-4-mini 96)
+    rope_div: tuple = ()      # per-frequency divisors of the angle (LongRoPE's short factors)
+    rope_scale: float = 1.0   # factor on cos and sin (LongRoPE's attention factor)
+    ctx: int = 0              # the most positions the RoPE tables hold (LongRoPE: its short
+    #                           factors' range; 0: no limit)
+    embed: str = "f32"        # the embedding rows: fp32, or "int8" (per D block, as the tied
+    #                           int8 LM head holds them: the device gathers them from it,
+    #                           kernels.gather.gather_row)
 
     @property
     def rope_dim(self) -> int:
-        """RoPE rotates all of each head's dimensions."""
-        return self.head_dim
+        """RoPE rotates the first `rotary` dimensions of each head (default all of them)."""
+        return self.rotary or self.head_dim
 
     @staticmethod
     def from_hf(model_dir) -> "Spec":
@@ -98,62 +111,206 @@ class Spec:
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup)
 
 
-def load_weights(model_dir) -> dict:
-    """All tensors of a HF safetensors checkpoint as fp32 numpy arrays. Of a multimodal
-    checkpoint (Qwen3.5) only the language model is loaded, under the names of a text-only one
-    (model.language_model.* -> model.*): not the vision tower or the multi-token prediction
-    layers."""
-    import torch
-    from safetensors.torch import load_file
-    out = {}
-    for f in sorted(Path(model_dir).glob("*.safetensors")):
-        for k, v in load_file(str(f)).items():
-            if k.startswith(("model.visual.", "mtp.")):
-                continue
-            out[k.replace("model.language_model.", "model.", 1)] = v.to(torch.float32).numpy()
-    return out
+class Weights(Mapping):
+    """The tensors of a HF safetensors checkpoint, read and converted to fp32 numpy arrays
+    when first used (load_weights): a multi-billion-parameter model is never all in memory in
+    fp32 (LFM2-2.6B: 10 GB), the image build converts one tensor at a time. Tensors of at most
+    CACHE bytes stay cached (norms, conv taps: read per token by the references), and the
+    last larger one (the embedding table a reference indexes per token)."""
+
+    CACHE = 16 << 20
+
+    def __init__(self, model_dir):
+        from safetensors import safe_open
+        self._files, self._where = [], {}
+        for f in sorted(Path(model_dir).glob("*.safetensors")):
+            h = safe_open(str(f), framework="pt")
+            self._files.append(h)
+            for k in h.keys():
+                if k.startswith(("model.visual.", "mtp.")):
+                    continue
+                self._where[k.replace("model.language_model.", "model.", 1)] = (h, k, None)
+        self._split_fused(Path(model_dir))
+        self._small: dict = {}
+        self._big: tuple | None = None
+
+    def _split_fused(self, model_dir: Path) -> None:
+        """Phi-3's fused projections also under the names of separate ones: qkv_proj's rows
+        are q, k and v (num_attention_heads, num_key_value_heads, num_key_value_heads heads),
+        gate_up_proj's the gate's, then the up projection's (Phi3MLP: chunk(2))."""
+        fused = [n for n in self._where if n.endswith(("self_attn.qkv_proj.weight",
+                                                        "mlp.gate_up_proj.weight"))]
+        if not fused:
+            return
+        c = json.loads((model_dir / "config.json").read_text())
+        d = c.get("head_dim") or c["hidden_size"] // c["num_attention_heads"]
+        nq, nkv = c["num_attention_heads"] * d, c["num_key_value_heads"] * d
+        ff = c["intermediate_size"]
+        for n in fused:
+            h, k, _ = self._where[n]
+            if n.endswith("qkv_proj.weight"):
+                p = n[:-len("qkv_proj.weight")]
+                parts = (("q_proj", 0, nq), ("k_proj", nq, nq + nkv),
+                         ("v_proj", nq + nkv, nq + 2 * nkv))
+            else:
+                p = n[:-len("gate_up_proj.weight")]
+                parts = (("gate_proj", 0, ff), ("up_proj", ff, 2 * ff))
+            for name, a, b in parts:
+                self._where[p + name + ".weight"] = (h, k, (a, b))
+
+    def __getitem__(self, name) -> np.ndarray:
+        if name in self._small:
+            return self._small[name]
+        if self._big is not None and self._big[0] == name:
+            return self._big[1]
+        import torch
+        h, k, rows = self._where[name]
+        t = h.get_tensor(k) if rows is None else h.get_slice(k)[rows[0]:rows[1]]
+        v = t.to(torch.float32).numpy()
+        if v.nbytes <= self.CACHE:
+            self._small[name] = v
+        else:
+            self._big = (name, v)
+        return v
+
+    def __iter__(self):
+        return iter(self._where)
+
+    def __len__(self) -> int:
+        return len(self._where)
+
+    def __contains__(self, name) -> bool:
+        return name in self._where
+
+
+def load_weights(model_dir) -> Weights:
+    """All tensors of a HF safetensors checkpoint as fp32 numpy arrays, converted when first
+    used (Weights). Of a multimodal checkpoint (Qwen3.5) only the language model is loaded,
+    under the names of a text-only one (model.language_model.* -> model.*): not the vision
+    tower or the multi-token prediction layers."""
+    return Weights(model_dir)
 
 
 def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
-    """cos, sin [rope_dim/2] for one position (HF rotate-half convention)."""
+    """cos, sin [rope_dim/2] for one position (HF rotate-half convention); with LongRoPE's
+    (spec.rope_div, spec.rope_scale) each frequency divided by its factor and both tables
+    scaled by the attention factor."""
     half = spec.rope_dim // 2
     inv = 1.0 / (spec.theta ** (np.arange(half, dtype=np.float64) * 2 / spec.rope_dim))
+    div = getattr(spec, "rope_div", ())
+    if div:
+        inv = inv / np.asarray(div, np.float64)
     ang = pos * inv
-    return np.cos(ang).astype(np.float32), np.sin(ang).astype(np.float32)
+    sc = getattr(spec, "rope_scale", 1.0)
+    return (np.cos(ang) * sc).astype(np.float32), (np.sin(ang) * sc).astype(np.float32)
 
 
 # =============================================================================== lookup tables
-def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None) -> dict:
+def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None, D: int = 128,
+                  head: tuple | None = None, M: int = 4) -> dict:
     """DRAM for the device-side inputs of a run-time position (RunPos): every token's embedding
-    row (fp32, flushed as the host writes it), the RoPE cos / sin rows of every position, and
-    the attention mask table (attention.Bucket: cap entries +inf, then a block of -inf)."""
+    row, the RoPE cos / sin rows of every position, and the attention mask table
+    (attention.Bucket: cap entries +inf, then a block of -inf). The embedding rows are fp32
+    (flushed, as the host writes them), or with spec.embed "int8" int8 with a scale per D block
+    (kernels.gather.gather_row, with its one-hot operand for M MXU columns): the LM head's
+    rows when `head` (its data and scale addresses) is given -- a tied int8 head whole on one
+    slice -- else a table of their own."""
     block = block or ATTN_BLOCK
     half = len(rope_tables(spec, 0)[0])
-    return {"embed": b.alloc(4 * spec.vocab * spec.hidden), "cos_t": b.alloc(4 * cap * half),
-            "sin_t": b.alloc(4 * cap * half), "zmask": b.alloc(4 * (cap + block)),
-            "half": half, "block": block, "gen": G.alloc(b, spec, cap, block)}
+    V, H = spec.vocab, spec.hidden
+    if getattr(spec, "embed", "f32") == "int8":
+        emb = {"embed_q": head, "own": False} if head is not None else \
+            {"embed_q": (b.alloc(V * H), b.alloc(4 * V * (H // D))), "own": True}
+        emb.update(onehot=b.alloc(4 * M * onehot_blocks(D, M, "int8") * D), M=M)
+    else:
+        emb = {"embed": b.alloc(4 * V * H)}
+    return {**emb, "cos_t": b.alloc(4 * cap * half), "sin_t": b.alloc(4 * cap * half),
+            "zmask": b.alloc(4 * (cap + block)), "half": half, "block": block, "D": D,
+            "gen": G.alloc(b, spec, cap, block)}
 
 
 def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
-    e = F.ftz(np.asarray(W["model.embed_tokens.weight"], np.float32))
     cs = [rope_tables(spec, p) for p in range(cap)]
     z = np.concatenate([np.full(cap, np.inf, np.float32), np.full(lk["block"], -np.inf,
                                                                   np.float32)])
+    if "embed" in lk:
+        e = F.ftz(np.asarray(W["model.embed_tokens.weight"], np.float32))
+    elif lk["own"]:
+        eq, es = Q.quantize_mxu(W["model.embed_tokens.weight"], "int8", lk["D"])
     for s in range(S):
-        put(s, lk["embed"], e)
+        if "embed" in lk:
+            put(s, lk["embed"], e)
+        elif lk["own"]:
+            put(s, lk["embed_q"][0], eq)
+            put(s, lk["embed_q"][1], es)
         put(s, lk["cos_t"], np.stack([c for c, _ in cs]))
         put(s, lk["sin_t"], np.stack([x for _, x in cs]))
         put(s, lk["zmask"], z)
+        if "onehot" in lk:
+            put(s, lk["onehot"], onehot(lk["D"], lk["M"], "int8"))
         G.build(put, s, S, spec, cap, lk["gen"])
 
 
 def _lookup_desc(lk: dict, spec, cap: int) -> dict:
     if not lk:
         return {}
-    return {"embed": _tdesc(lk["embed"], (spec.vocab, spec.hidden)),
-            "cos_t": _tdesc(lk["cos_t"], (cap, lk["half"])),
-            "sin_t": _tdesc(lk["sin_t"], (cap, lk["half"])), "zmask": lk["zmask"],
-            "gen": G.desc(lk["gen"], spec, cap)}
+    d = {"cos_t": _tdesc(lk["cos_t"], (cap, lk["half"])),
+         "sin_t": _tdesc(lk["sin_t"], (cap, lk["half"])), "zmask": lk["zmask"]}
+    if "embed" in lk:
+        d["embed"] = _tdesc(lk["embed"], (spec.vocab, spec.hidden))
+    else:
+        d["embed_q"] = _qdesc(*lk["embed_q"], spec.vocab, spec.hidden, lk["D"])
+        M, D = lk["M"], lk["D"]
+        d["onehot"] = _tdesc(lk["onehot"], (M, onehot_blocks(D, M, "int8") * D))
+    d["gen"] = G.desc(lk["gen"], spec, cap)
+    return d
+
+
+class Embedding:
+    """The embedding rows the device computes with, on the host: the checkpoint's fp32 rows
+    (Engine.embed: the inputs the host writes for an image without lookup tables), or with
+    spec.embed "int8" their int8 quantization as the device's gather dequantizes it, bit for bit
+    (the reference; an Engine of such a model reads them from the image, batch 1)."""
+
+    def __init__(self, spec, W, D: int):
+        self.W, self.table = W, None        # read at the first row (never with device inputs)
+        self.int8, self.D = getattr(spec, "embed", "f32") == "int8", D
+
+    def __getitem__(self, idx) -> np.ndarray:
+        if self.table is None:
+            self.table = self.W["model.embed_tokens.weight"]
+        rows = np.asarray(self.table[idx], np.float32)
+        if not self.int8:
+            return rows
+        return gathered_rows(rows, self.D).reshape(rows.shape)
+
+
+def gathered_rows(rows, D: int) -> np.ndarray:
+    """The values kernels.gather.gather_row gives for these fp32 rows [n, K] held as int8 per D
+    block (quant.quantize_mxu, as the LM head is stored): [n, K], bit for bit."""
+    rows = np.atleast_2d(np.asarray(rows, np.float32))
+    q, sc = Q.quantize_mxu(rows, "int8", D)
+    return np.stack([dequant_row(q[i], sc[i], "int8", D) for i in range(len(rows))])
+
+
+def _tok_arg(image, tok) -> dict:
+    """The kernel argument of a compile-time token (none without one: the program is the
+    host-input one)."""
+    if tok is None:
+        return {}
+    if not image.lookup:
+        raise ValueError("a program with its token's inputs from the image needs lookup tables")
+    return {"tok": int(tok)}
+
+
+def _tokens_arg(image, tokens, rows) -> dict:
+    if tokens is None:
+        return {}
+    if not image.lookup:
+        raise ValueError("rows with their inputs from the image need lookup tables")
+    if len(tokens) != len(rows):
+        raise ValueError(f"{len(tokens)} tokens for {len(rows)} rows")
+    return {"tokens": [int(t) for t in tokens]}
 
 
 def has_lookup(spec) -> bool:
@@ -197,9 +354,9 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
     sin = np.stack([s for _, s in cs])[:, None, :]
 
     def rot(v):
-        h = d // 2
-        v1, v2 = v[..., :h], v[..., h:]
-        return np.concatenate([v1 * cos - v2 * sin, v2 * cos + v1 * sin], axis=-1)
+        h, rd = spec.rope_dim // 2, spec.rope_dim
+        v1, v2 = v[..., :h], v[..., h:rd]
+        return np.concatenate([v1 * cos - v2 * sin, v2 * cos + v1 * sin, v[..., rd:]], axis=-1)
 
     mask = np.triu(np.full((T, T), -np.inf, np.float32), 1)
     for i in range(spec.layers):
@@ -208,8 +365,11 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
         q = (h @ W[p + "self_attn.q_proj.weight"].T).reshape(T, spec.n_q, d)
         k = (h @ W[p + "self_attn.k_proj.weight"].T).reshape(T, spec.n_kv, d)
         v = (h @ W[p + "self_attn.v_proj.weight"].T).reshape(T, spec.n_kv, d)
-        q = rot(norm(q, W[p + "self_attn.q_norm.weight"]))
-        k = rot(norm(k, W[p + "self_attn.k_norm.weight"]))
+        if spec.qk_norm:
+            q = norm(q, W[p + "self_attn.q_norm.weight"])
+            k = norm(k, W[p + "self_attn.k_norm.weight"])
+        if i not in spec.nope:
+            q, k = rot(q), rot(k)
         o = np.zeros((T, spec.n_q, d), np.float32)
         for hq in range(spec.n_q):
             s = q[:, hq] @ k[:, hq // G].T / math.sqrt(d) + mask
@@ -265,12 +425,14 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     out = []
     for pos, tk in enumerate(tokens):
         x = np.asarray(W["model.embed_tokens.weight"][tk], np.float64)
+        if spec.embed == "int8":                    # the int8 embedding rows (Spec.embed)
+            x = _fake_q(x, D)
         c, s = rope_tables(spec, pos)
 
         def rot(v):
-            h = d // 2
-            v1, v2 = v[..., :h], v[..., h:]
-            return np.concatenate([v1 * c - v2 * s, v2 * c + v1 * s], -1)
+            h, rd = spec.rope_dim // 2, spec.rope_dim
+            v1, v2 = v[..., :h], v[..., h:rd]
+            return np.concatenate([v1 * c - v2 * s, v2 * c + v1 * s, v[..., rd:]], -1)
 
         for i in range(spec.layers):
             p = f"model.layers.{i}."
@@ -278,8 +440,11 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
             q = (w(p + "self_attn.q_proj.weight") @ h).reshape(spec.n_q, d)
             k = (w(p + "self_attn.k_proj.weight") @ h).reshape(spec.n_kv, d)
             v = (w(p + "self_attn.v_proj.weight") @ h).reshape(spec.n_kv, d)
-            q = rot(norm(q, W[p + "self_attn.q_norm.weight"]))
-            k = rot(norm(k, W[p + "self_attn.k_norm.weight"]))
+            if spec.qk_norm:
+                q = norm(q, W[p + "self_attn.q_norm.weight"])
+                k = norm(k, W[p + "self_attn.k_norm.weight"])
+            if i not in spec.nope:
+                q, k = rot(q), rot(k)
             Kc[i].append(_fake_q(k, D))
             Vc[i].append(_fake_q(v, v.shape[-1]))
             K, V = np.stack(Kc[i], 1), np.stack(Vc[i], 1)
@@ -338,6 +503,8 @@ class Image:
     [ LM head rows of this slice ]. A layer block holds the norms, this slice's rows of every
     projection (quantized + scales) and this slice's KV heads with room for `cap` tokens, for
     each of `batch` sequences. The I/O area holds `rows` token rows (x, cos, sin, logits).
+    A model with layers without RoPE (spec.nope) has a rope gate per layer block: (1, 0) or
+    (0, 1), and each layer rotates with cos * g0 + g1 and sin * g0 (_rope_gate).
 
     Weight formats (opentpu/quant.py): `wformat` for the layers' projections, `head_format`
     (default: the same) for the LM head: "int8", or 4-bit "int4" / "fp4". The KV cache and the
@@ -349,6 +516,8 @@ class Image:
         spec.check(cfg)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
+        if spec.ctx and cap > spec.ctx:
+            raise ValueError(f"KV capacity {cap} above the model's RoPE range ({spec.ctx})")
         S, D = cfg.S, cfg.D
         H, d, F_ = spec.hidden, spec.head_dim, spec.ffn
         self.spec, self.cfg, self.cap = spec, cfg, cap
@@ -359,12 +528,17 @@ class Image:
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
         b = _Bump()
         R = rows
-        self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * d * R), "sin": b.alloc(2 * d * R),
-                   "gf": b.alloc(4 * H), "logits": b.alloc(4 * spec.vocab * R)}
+        rd = spec.rope_dim
+        self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * rd * R),
+                   "sin": b.alloc(2 * rd * R), "gf": b.alloc(4 * H),
+                   "logits": b.alloc(4 * spec.vocab * R)}
         self.layer0 = b.next
         lb = _Bump()                                    # offsets inside one layer block
-        L = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H),
-             "qn": lb.alloc(4 * d), "kn": lb.alloc(4 * d)}
+        L = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
+        if spec.qk_norm:
+            L.update(qn=lb.alloc(4 * d), kn=lb.alloc(4 * d))
+        if spec.nope:
+            L["rg"] = lb.alloc(8)
         self.mats = {"wq": (self.nq_loc * d, H), "wk": (self.nkv_loc * d, H),
                      "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d),
                      "wg": (self.f_loc, H), "wu": (self.f_loc, H)}
@@ -386,7 +560,10 @@ class Image:
         b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
-        self.lookup = _lookup_alloc(b, spec, cap) if lookup else {}
+        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
+        shared = spec.tied and self.head_format == "int8" and S == 1
+        self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
+                                    M=cfg.MCOLS) if lookup else {}
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -424,8 +601,11 @@ class Image:
             for s in range(S):
                 put(s, Lo["g_in"], f32(W[p + "input_layernorm.weight"]))
                 put(s, Lo["g_post"], f32(W[p + "post_attention_layernorm.weight"]))
-                put(s, Lo["qn"], f32(W[p + "self_attn.q_norm.weight"]))
-                put(s, Lo["kn"], f32(W[p + "self_attn.k_norm.weight"]))
+                if spec.qk_norm:
+                    put(s, Lo["qn"], f32(W[p + "self_attn.q_norm.weight"]))
+                    put(s, Lo["kn"], f32(W[p + "self_attn.k_norm.weight"]))
+                if spec.nope:
+                    put(s, Lo["rg"], np.array([0, 1] if i in spec.nope else [1, 0], np.float32))
             wq, wk, wv, wo = head_parallel_attention_weights(
                 W[p + "self_attn.q_proj.weight"], W[p + "self_attn.k_proj.weight"],
                 W[p + "self_attn.v_proj.weight"], W[p + "self_attn.o_proj.weight"],
@@ -458,25 +638,28 @@ class Image:
         """The decode loop on the device for bucket `blocks` (qwen3_step in it, generate.py)."""
         return G.compile_generate(self, qwen3_step, blocks, lo, block, chain, samp, debug, part)
 
-    def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
-        """One program per slice: the decode token at position `pos` (qwen3_step)."""
+    def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
+        """One program per slice: the decode token at position `pos` (qwen3_step); with `tok`
+        (an image with lookup tables) its inputs come from the tables, not the host."""
         return [qwen3_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
-                                               "block": block}).finish()
+                                               "block": block, **_tok_arg(self, tok)}).finish()
                 for s in range(self.cfg.S)]
 
-    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK) -> list:
-        """One program per slice: token rows (sequence, position) at once (qwen3_rows)."""
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
+        """One program per slice: token rows (sequence, position) at once (qwen3_rows); with
+        `tokens` (an image with lookup tables) their inputs come from the tables."""
         if len(rows) > self.rows:
             raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
         return [qwen3_rows.trace(self.cfg, s, {"m": self.descriptors(s), "rows": list(rows),
-                                               "logit_rows": list(logit_rows),
-                                               "block": block}).finish()
+                                               "logit_rows": list(logit_rows), "block": block,
+                                               **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
     # ---- kernel descriptors
     def descriptors(self, sid: int) -> SimpleNamespace:
         spec, cfg = self.spec, self.cfg
         D, d, H = cfg.D, spec.head_dim, spec.hidden
+        rh = spec.rope_dim // 2
         L0 = self.layer0
         lofs = self.lofs
 
@@ -486,8 +669,9 @@ class Image:
             ns = SimpleNamespace(
                 g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
-                qn=Tensor(off + lofs["qn"], (d,), (1,)),
-                kn=Tensor(off + lofs["kn"], (d,), (1,)))
+                qn=Tensor(off + lofs["qn"], (d,), (1,)) if spec.qk_norm else None,
+                kn=Tensor(off + lofs["kn"], (d,), (1,)) if spec.qk_norm else None,
+                rg=Tensor(off + lofs["rg"], (2,), (1,)) if spec.nope else None)
             fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             for name, (n, k) in self.mats.items():
                 da, sa = lofs[name]
@@ -507,12 +691,12 @@ class Image:
 
         return SimpleNamespace(
             spec=spec, layer=layer, n_layers=spec.layers,
-            x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (d // 2,)),
-            sin=_tdesc(self.io["sin"], (d // 2,)), g_final=_tdesc(self.io["gf"], (H,)),
+            x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (rh,)),
+            sin=_tdesc(self.io["sin"], (rh,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
             xr=_tdesc(self.io["x"], (self.rows, H)),
-            cosr=_tdesc(self.io["cos"], (self.rows, d // 2)),
-            sinr=_tdesc(self.io["sin"], (self.rows, d // 2)),
+            cosr=_tdesc(self.io["cos"], (self.rows, rh)),
+            sinr=_tdesc(self.io["sin"], (self.rows, rh)),
             logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
             head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc,
             **_lookup_desc(self.lookup, spec, self.cap))
@@ -532,17 +716,39 @@ def _padded(x):
     return out
 
 
-def _rope_padded(x, c, s_):
+def _rope_padded(x, c, s_, out=None):
     """rope(x) on the first 2 * len(c) dimensions of each row (the others pass through:
-    Qwen3.5's partial RoPE), padded like _padded (RoPE writes straight into the padded tile)."""
+    Qwen3.5's partial RoPE), padded like _padded (RoPE writes straight into the padded tile),
+    or into `out` (a view whose columns beyond x.cols are already zero)."""
     d, D, rd = x.cols, ol.block_size(), 2 * c.cols
-    if d % D == 0 and rd == d:
+    if out is None and d % D == 0 and rd == d:
         return rope(x, c, s_)
-    out = ol.zeros([x.rows, -(-d // D) * D]) if d % D else ol.empty(x.shape)
+    if out is None:
+        out = ol.zeros([x.rows, -(-d // D) * D]) if d % D else ol.empty(x.shape)
     rope(x[:, :rd], c, s_, out=out[:, :rd])
     if rd < d:
         out[:, rd:d].set(x[:, rd:])
     return out
+
+
+def _norm_heads(x, g, eps):
+    """RMSNorm on each row (one head) with gamma `g` (a loaded q_norm / k_norm), or x itself
+    for a model without them (g None: the Llama-likes)."""
+    return x if g is None else rmsnorm(x, g, eps)
+
+
+def _rope_gate(lw, c, s_):
+    """The layer's RoPE tables: (c, s_) themselves, or with a rope gate (spec.nope: a model
+    with layers without RoPE) c * g0 + g1 and s_ * g0 -- (c, s_) bit for bit where g = (1, 0),
+    the identity rotation (1, +-0) where g = (0, 1). One loop body then serves both kinds."""
+    if getattr(lw, "rg", None) is None:
+        return c, s_
+    g = ol.load(lw.rg)
+    return c * g[0:1] + g[1:2], s_ * g[0:1]
+
+
+def _load_opt(desc):
+    return None if desc is None else ol.load(desc)
 
 
 class RunPos:
@@ -595,12 +801,13 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
     k = ol.dot(xs, lw.wk)                       # [1, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
     sg = sigmoid(ol.dot(xs, lw.wgate)) if gated else None       # [1, nq_loc*d]
-    qn, kn = ol.load(lw.qn), ol.load(lw.kn)
+    qn, kn = _load_opt(lw.qn), _load_opt(lw.kn)
+    c, s_ = _rope_gate(lw, c, s_)
     scale = ol.LOG2E / math.sqrt(d)
     heads = list(kv.owned_heads(spec.n_kv))
     nh = len(heads)
     qps = [ol.dot(xs, lw.wq[j * G * d:(j + 1) * G * d, :]) for j in range(nh)]  # [1, G*d]
-    kh = _rope_padded(rmsnorm(k.reshape(nh, d), kn, eps), c, s_)  # [nkv_loc, d or D]
+    kh = _rope_padded(_norm_heads(k.reshape(nh, d), kn, eps), c, s_)  # [nkv_loc, d or D]
     vh = _padded(v.reshape(nh, d))
     for j, hh in enumerate(heads):
         ol.kv_append(kv, hh, kpos, kh[j:j + 1, :], None)
@@ -610,7 +817,7 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
             # the head's V^T append (byte-strided, the quantizer's slowest store) just ahead of
             # its queries: head j's scores start after K and V_0..V_j, not after all V appends
             ol.kv_append(kv, heads[j], kpos, None, vh[j:j + 1, :])
-            return _rope_padded(rmsnorm(qps[j].reshape(G, d), qn, eps), c, s_)
+            return _rope_padded(_norm_heads(qps[j].reshape(G, d), qn, eps), c, s_)
         return emit
 
     mc = min(G, ol.mxu_columns())
@@ -647,7 +854,7 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
 def _mlp(x, lw, spec: Spec):
     sid = ol.program_id()
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), spec.eps))
-    y = swiglu_down(xs, lw.wg, lw.wu, lw.wd)
+    y = swiglu_down(xs, lw.wg, lw.wu, lw.wd, loop=getattr(lw, "mlp_loop", False))
     h_loc = lw.wd.shape[0]
     mine = slice(sid * h_loc, (sid + 1) * h_loc)
     return ol.all_gather(x[:, mine] + y)
@@ -664,14 +871,15 @@ HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must f
 
 
 @ol.jit
-def qwen3_step(m, pos: int, block: int = ATTN_BLOCK):
+def qwen3_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     """One decode token at position `pos`: x (the token's embedding) -> logits.
 
     The layers run as a hardware loop; each layer appends its K/V at `pos` and attends over
-    positions 0..pos. Logits for this slice's vocabulary rows are stored to m.logits.
+    positions 0..pos. Logits for this slice's vocabulary rows are stored to m.logits. `tok`:
+    the token's id, its inputs read from the image's tables (_inputs).
     """
     spec = m.spec
-    x, c, s_ = _inputs(m, pos)
+    x, c, s_ = _inputs(m, pos, tok)
     for li in ol.range(m.n_layers):
         lw = m.layer(li)
         x.set(_attention(x, lw, c, s_, pos, spec, block))
@@ -679,13 +887,55 @@ def qwen3_step(m, pos: int, block: int = ATTN_BLOCK):
     _lm_head(x, m, spec)
 
 
-def _inputs(m, pos):
+def _inputs(m, pos, tok=None):
     """The token's embedding row and its RoPE rows: from the I/O area (the host writes them),
-    or, at a run-time position (RunPos), from the image's tables at the token id and position."""
+    or from the image's tables (Image(lookup=True)) at the token id and position -- at a
+    run-time position (RunPos), or at a compile-time token `tok` (a per-position program)."""
     if isinstance(pos, RunPos):
-        return (ol.load(m.embed[pos.tok:pos.tok + 1, :]), ol.load(m.cos_t[pos.pos, :]),
-                ol.load(m.sin_t[pos.pos, :]))
-    return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
+        tok, pos = pos.tok, pos.pos
+    elif tok is None:
+        return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
+    return _embed(m, tok), ol.load(m.cos_t[pos, :]), ol.load(m.sin_t[pos, :])
+
+
+def _embed(m, tok):
+    """Token `tok`'s embedding row [1, H] (an int or a run-time value) from the image's tables:
+    the fp32 table's row, or the int8 row gathered on the device (Spec.embed "int8")."""
+    eq = getattr(m, "embed_q", None)
+    return ol.load(m.embed[tok:tok + 1, :]) if eq is None else next(_gather(m, eq, [tok]))
+
+
+def _inputs_rows(m, rows, tokens=None):
+    """_inputs for token rows (rows[r] = (sequence, position)): from the I/O area, or with
+    `tokens` (their ids, compile-time values) from the image's tables, the embedding row of
+    each token and the RoPE rows of each run of consecutive positions."""
+    R = len(rows)
+    if tokens is None:
+        return ol.load(m.xr[0:R, :]), ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    eq = getattr(m, "embed_q", None)
+    # x, c and s first, side by side as the host path loads them: the gathers' temporaries
+    # after them are freed whole (TMEM does not fragment)
+    x = ol.empty([R, m.xr.shape[1]], dense=True)
+    c, s_ = ol.empty([R, m.cosr.shape[1]], dense=True), ol.empty([R, m.sinr.shape[1]], dense=True)
+    if eq is None:
+        for r, t in enumerate(tokens):
+            ol.load(m.embed[t:t + 1, :], out=x[r:r + 1, :])
+    for _, p0, r0, n in _runs(rows):
+        ol.load(m.cos_t[p0:p0 + n, :], out=c[r0:r0 + n, :])
+        ol.load(m.sin_t[p0:p0 + n, :], out=s_[r0:r0 + n, :])
+    if eq is not None:
+        for r, g in enumerate(_gather(m, eq, tokens)):
+            x[r:r + 1, :].set(g)
+    return x, c, s_
+
+
+def _gather(m, eq, toks):
+    """The int8 embedding rows of tokens `toks` (ints or run-time values), gathered on the
+    device (kernels.gather.gather_row, one one-hot operand for all), one [1, H] tile at a
+    time."""
+    oh = ol.quantize(ol.load(m.onehot))
+    for t in toks:
+        yield gather_row(oh, eq, t, "int8").reshape(1, eq.shape[1])
 
 
 def _lm_head(x, m, spec):
@@ -760,13 +1010,14 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     k = ol.dot(xs, lw.wk)                       # [R, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
     q = ol.dot(xs, lw.wq)                       # [R, nq_loc*d]
-    qn, kn = ol.load(lw.qn), ol.load(lw.kn)
+    qn, kn = _load_opt(lw.qn), _load_opt(lw.kn)
+    c, s_ = _rope_gate(lw, c, s_)
     scale = ol.LOG2E / math.sqrt(d)
     heads = list(lw.kv.owned_heads(spec.n_kv))
     nh = len(heads)
     nq = nh * G
     for j, hh in enumerate(heads):
-        kj = _rope_rows_padded(rmsnorm(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
+        kj = _rope_rows_padded(_norm_heads(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
         vj = _padded(v[:, j * d:(j + 1) * d])
         for sq, p0, r0, n in _runs(rows):
             ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
@@ -775,9 +1026,9 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     # queries as [R * nq, dk]: (row r, KV head j) is the G contiguous rows r*nq + j*G ...
     dk = -(-d // ol.block_size()) * ol.block_size()
     Q = ol.zeros([R * nq, dk]) if dk > d else ol.empty([R * nq, d])
-    for h in range(nq):
-        _rope_rows_padded(rmsnorm(q[:, h * d:(h + 1) * d], qn, eps), c, s_,
-                          out=Q.row_stride_view(h, R, nq))
+    for r in range(R):                          # a row's heads at once, as _attention's
+        _rope_padded(_norm_heads(q[r:r + 1, :].reshape(nq, d), qn, eps), c[r], s_[r],
+                     out=Q[r * nq:(r + 1) * nq, :])
     del q
     mc = min(G, ol.mxu_columns())
     ent = [(r, j, g0, min(G, g0 + mc)) for r in range(R) for j in range(nh)
@@ -803,14 +1054,13 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
 
 
 @ol.jit
-def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK):
+def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     """R token rows at once (rows[r] = (sequence, position)): the rows' embeddings m.xr and
-    RoPE tables m.cosr / m.sinr -> logits of the rows in `logit_rows` (a contiguous range, or
-    empty: a prefill chunk that is not the last one skips the LM head)."""
+    RoPE tables m.cosr / m.sinr, or those of `tokens` from the image's tables (_inputs_rows)
+    -> logits of the rows in `logit_rows` (a contiguous range, or empty: a prefill chunk that
+    is not the last one skips the LM head)."""
     spec = m.spec
-    R = len(rows)
-    x = ol.load(m.xr[0:R, :])
-    c, s_ = ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    x, c, s_ = _inputs_rows(m, rows, tokens)
     for li in ol.range(m.n_layers):
         lw = m.layer(li)
         x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
@@ -913,26 +1163,29 @@ def _worker_decode(blocks: int, lo: int):
     return np.asarray(assemble(progs[0]), np.uint32), ra
 
 
-def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int):
+def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int, toks=None):
     """The worker process: fit_chunk's run, its program assembled (one slice)."""
     from ..isa import assemble
     image, block = _WORKER
-    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit)
+    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit, toks)
     return n, None if progs is None else np.asarray(assemble(progs[0]), np.uint32), fit
 
 
-def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int):
+def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
+              tokens=None):
     """The next prefill run of sequence `seq` at position p0: up to n of the `left` remaining
     prompt tokens, as many as fit TMEM and ACT RAM (at most `fit` rows) and the instruction
     memory (attention is unrolled per row, head and block: the program grows with the context).
     Only the prompt's last run computes logits (its last row). Returns (R, compile_rows'
-    programs or None for R = 1, the rows that fit TMEM as far as known)."""
+    programs or None for R = 1, the rows that fit TMEM as far as known). `tokens` (at least n):
+    the run's inputs come from the image's tables (compile_rows tokens)."""
     imem = image.cfg.IMEM_WORDS
     n = min(n, fit, left)
     while n > 1:
         try:
             progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
-                                       [n - 1] if n == left else [], block)
+                                       [n - 1] if n == left else [], block,
+                                       **({} if tokens is None else {"tokens": tokens[:n]}))
         except CompileError as e:
             if "TMEM" not in str(e) and "ACT RAM full" not in str(e):
                 raise
@@ -969,6 +1222,14 @@ class Engine:
     (LFM2, Qwen3.5: conv_k - 1) run per-position programs. Bit-identical to the per-position
     programs.
 
+    device_inputs: with the image's tables (resident, or a model with an int8 embedding,
+    spec.embed: its rows are dequantized on the device only) the prefill runs and per-position
+    programs read their inputs from the image too, the token ids compiled into them
+    (compile_rows tokens, compile_step tok): the host writes no inputs and computes nothing of
+    the model. Without the tables the host writes the embedding rows and RoPE rows (of a table
+    computed once, as the image's). A per-position program with its token is compiled in its
+    step (pipeline: not ahead); resident decode compiles none.
+
     pipeline: step() compiles the next position's program (it depends on the position only,
     not on the token) while the backend runs the current one. Default: on for every backend
     but "isa" (whose run holds the GIL: nothing to overlap). A precompile is used only for the
@@ -988,16 +1249,24 @@ class Engine:
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
-        lookup = bool(resident) and batch == 1 and has_lookup(spec)
+        # an int8 embedding is dequantized on the device (the image's tables), never the host
+        int8_embed = getattr(spec, "embed", "f32") == "int8"
+        lookup = (bool(resident) or int8_embed) and batch == 1 and has_lookup(spec)
         if lookup:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
-        self.embed = np.asarray(W["model.embed_tokens.weight"], np.float32)
+        # with the tables every run reads its inputs from the image (the token ids are compiled
+        # into the per-position and prefill programs); else the host writes them: the
+        # embedding rows and the RoPE rows of a table computed once, here
+        self.device_inputs = bool(getattr(self.image, "lookup", None))
+        self.embed = Embedding(spec, W, self.cfg.D)
+        self._rope = None if self.device_inputs else \
+            [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
-        self.resident = lookup and bool(getattr(self.backend, "args", False))
+        self.resident = bool(resident) and lookup and bool(getattr(self.backend, "args", False))
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
@@ -1028,8 +1297,9 @@ class Engine:
             self.backend.attach(self)
 
     # ---- the compile pipeline
-    def _compile(self, pos: int) -> list:
-        progs = self.image.compile_step(pos, self.block)
+    def _compile(self, pos: int, tok: int | None = None) -> list:
+        progs = self.image.compile_step(pos, self.block,
+                                        **({} if tok is None else {"tok": int(tok)}))
         prep = getattr(self.backend, "prepare", None)
         if prep is not None:
             prep(progs)
@@ -1105,6 +1375,8 @@ class Engine:
                     self._submit(("decode", b), self._compile_decode, _worker_decode, b,
                                  max((b - 1) * self.block, self._conv_lo))
             return
+        if self.device_inputs:              # its program has the token: compiled in step()
+            return
         for p in range(pos, min(pos + self._ahead, self.cap)):
             if ("step", p) not in queued:
                 self._submit(("step", p), self._compile, _worker_compile, p)
@@ -1140,9 +1412,11 @@ class Engine:
             raise RuntimeError("KV cache full")
         io, S = self.image.io, self.cfg.S
         dec = self._decode(self.pos)
-        if dec is None:
+        if dec is None and self.device_inputs:  # the token's inputs from the image's tables
+            progs, kw = self._compile(self.pos, token), {}
+        elif dec is None:
             x = F.ftz(self.embed[token].astype(np.float32))
-            cos, sin = rope_tables(self.spec, self.pos)
+            cos, sin = self._rope[0][self.pos], self._rope[1][self.pos]
             if io["cos"] == io["x"] + x.nbytes and io["sin"] == io["cos"] + cos.nbytes:
                 parts = [(io["x"], np.concatenate([x, cos, sin]))]      # one transfer
             else:
@@ -1209,20 +1483,24 @@ class Engine:
         of `logit_rows` ([n, vocab])."""
         self._drain()
         return self._run_rows(rows, tokens, logit_rows,
-                              self.image.compile_rows(rows, logit_rows, self.block))
+                              self.image.compile_rows(rows, logit_rows, self.block,
+                                                      **self._tokens_kw(tokens)))
+
+    def _tokens_kw(self, tokens) -> dict:
+        """compile_rows' tokens, with device inputs (the host writes none)."""
+        return {"tokens": [int(t) for t in tokens]} if self.device_inputs else {}
 
     def _run_rows(self, rows, tokens, logit_rows, programs) -> np.ndarray:
         io, S, spec = self.image.io, self.cfg.S, self.spec
         if any(p >= self.cap for _, p in rows):
             raise RuntimeError("KV cache full")
-        x = F.ftz(self.embed[[int(t) for t in tokens]].astype(np.float32))
-        cs = [rope_tables(spec, p) for _, p in rows]
-        cos = np.stack([c for c, _ in cs]).astype(np.float32)
-        sin = np.stack([s_ for _, s_ in cs]).astype(np.float32)
-        for s in range(S):
-            self.backend.write(s, io["x"], x)
-            self.backend.write(s, io["cos"], cos)
-            self.backend.write(s, io["sin"], sin)
+        if not self.device_inputs:
+            x = F.ftz(self.embed[[int(t) for t in tokens]].astype(np.float32))
+            ps = [p for _, p in rows]
+            for s in range(S):
+                self.backend.write(s, io["x"], x)
+                self.backend.write(s, io["cos"], self._rope[0][ps])
+                self.backend.write(s, io["sin"], self._rope[1][ps])
         st = self.backend.run(programs)
         st["rows"] = len(rows)
         self.stats.append(st)
@@ -1232,9 +1510,9 @@ class Engine:
                for r in logit_rows]
         return np.array(out, np.float32).reshape(len(logit_rows), v)
 
-    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int):
+    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int, toks=None):
         """fit_chunk, its programs prepared for the backend."""
-        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit)
+        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit, toks)
         prep = getattr(self.backend, "prepare", None)
         if progs is not None and prep is not None:
             prep(progs)
@@ -1258,7 +1536,8 @@ class Engine:
         i = 0
         while i < len(tokens):
             p0, left = self.poss[seq], len(tokens) - i
-            key = ("rows", seq, p0, chunk, left, self._fit_rows)
+            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(tokens[i:],
+                                                                                  chunk))
             n, progs, self._fit_rows = self._take(key, self._chunk, *key[1:])
             part, last = tokens[i:i + n], n == left
             if not last:
@@ -1268,9 +1547,10 @@ class Engine:
             else:
                 rows, lr = [(seq, p0 + j) for j in range(n)], [n - 1] if last else []
                 if progs is None:
-                    progs = self.image.compile_rows(rows, lr, self.block)
+                    progs = self.image.compile_rows(rows, lr, self.block,
+                                                    **self._tokens_kw(part))
                 if not last:
-                    self._prefetch_chunks(seq, p0 + n, chunk, left - n)
+                    self._prefetch_chunks(seq, p0 + n, chunk, left - n, tokens[i + n:])
                 elif seq == 0:
                     self._prefetch(p0 + n)
                 lg = self._run_rows(rows, part, lr, progs)
@@ -1279,7 +1559,12 @@ class Engine:
             i += n
             yield part, (lg if last else None)
 
-    def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int) -> None:
+    def _chunk_toks(self, rest, chunk: int):
+        """The tokens a prefill run's program is compiled with (device inputs: its first
+        `chunk` of `rest`, the run takes as many as fit), or None."""
+        return tuple(rest[:chunk]) if self.device_inputs else None
+
+    def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int, rest=()) -> None:
         """Precompile the runs of a prompt from position p0 on, as many as the pipeline has
         workers (a chunk's trace can take longer than its run: Qwen3.5 on the card), each
         predicted to take as many rows as the last one (TMEM and IMEM limit a run: the program
@@ -1289,11 +1574,11 @@ class Engine:
         for _ in range(self._ahead):
             if left <= 0:
                 break
-            key = ("rows", seq, p0, chunk, left, self._fit_rows)
+            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(rest, chunk))
             if key not in queued:
                 self._submit(key, self._chunk, _worker_chunk, *key[1:])
             n = min(chunk, self._fit_rows, self._run_rows_n, left)
-            p0, left = p0 + n, left - n
+            p0, left, rest = p0 + n, left - n, rest[n:]
 
     def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
         """Feed a prompt to sequence `seq`; returns the logits after its last token

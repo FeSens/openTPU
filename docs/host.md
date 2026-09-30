@@ -638,6 +638,13 @@ every position of an attention bucket (`Engine(resident=True)`, the default of `
   convolution and DeltaNet programs use R1..R8) keep the per-position programs, and so does a
   bitstream without CAPS bit25 (`Engine.resident` falls back; the worker processes of
   `COMPILE_AHEAD` stay for it).
+- Prefill runs (`qwen3_rows`, `lfm2_rows`, `qwen35_rows`) and those per-position programs read
+  their inputs from the same tables: the host compiles the run's token ids into its program
+  (the embedding rows' addresses, or `gather_row`'s for an int8 embedding, and the RoPE rows
+  at the run's positions), so the host writes no inputs and computes nothing of the model
+  (`Engine.device_inputs`). A model with an int8 embedding (SmolLM3, Phi-4-mini) always has
+  the tables. Without them (`--per-position`) the host writes the embedding row and the RoPE
+  rows of a table computed once.
 
 The logits are bit-identical to the per-position programs' (tests: `test_qwen3.py`,
 `test_lfm2.py` from position 0 across the bucket boundaries 256 and 512 on the ISA
