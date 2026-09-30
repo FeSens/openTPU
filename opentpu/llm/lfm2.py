@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -53,6 +54,11 @@ from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fa
                     _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables)
 
 CONV, ATTN = "conv", "attn"
+# A plan with more layer bodies than this runs each MLP's F chunks as a hardware loop
+# (kernels.mlp.swiglu_down loop): LFM2-2.6B's 10 bodies with 12 unrolled chunks each would
+# fill the 4K-instruction IMEM; LFM2.5-230M's 4 keep them unrolled. OTPU_MLP_UNROLL_BODIES
+# overrides it (0: always a loop), e.g. to measure both on the same layers.
+MLP_UNROLL_BODIES = int(os.environ.get("OTPU_MLP_UNROLL_BODIES", 8))
 
 
 # =============================================================================== model spec
@@ -293,6 +299,7 @@ class Image:
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
         self.plan = plan(spec.kinds)
+        self.mlp_loop = sum(len(u) for _, u, _ in self.plan) > MLP_UNROLL_BODIES
         b = _Bump()
         R = rows
         self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * d * R), "sin": b.alloc(2 * d * R),
@@ -437,7 +444,8 @@ class Image:
             lofs = self.lofs[kind]
             fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             ns = SimpleNamespace(g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
-                                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)))
+                                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
+                                 mlp_loop=self.mlp_loop)
             for name, (r, k) in self.mats[kind].items():
                 da, sa = lofs[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (r, k), Q.row_bytes(k, fm, D),

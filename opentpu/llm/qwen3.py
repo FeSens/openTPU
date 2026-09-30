@@ -818,7 +818,7 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
 def _mlp(x, lw, spec: Spec):
     sid = ol.program_id()
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), spec.eps))
-    y = swiglu_down(xs, lw.wg, lw.wu, lw.wd)
+    y = swiglu_down(xs, lw.wg, lw.wu, lw.wd, loop=getattr(lw, "mlp_loop", False))
     h_loc = lw.wd.shape[0]
     mine = slice(sid * h_loc, (sid + 1) * h_loc)
     return ol.all_gather(x[:, mine] + y)
