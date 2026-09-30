@@ -71,16 +71,24 @@ def alloc(b, spec, cap: int, block: int) -> dict:
     return {"state": b.alloc(4 * STATE_WORDS), "out": b.alloc(4 * (cap + 1)),
             "ptab": b.alloc(8 * (nb + 2) * MODES), "progs": b.alloc(PROG_SLOT * nb * MODES),
             "lg": b.alloc(4 * V), "pa": b.alloc(4 * V), "pb": b.alloc(4 * V),
-            "uni": b.alloc(4 * (cap + 1)), "iota": b.alloc(4 * BLK), "nb": nb}
+            "uni": b.alloc(4 * (cap + 1)), "iota": b.alloc(4 * BLK), "nb": nb,
+            "ptab2": b.alloc(16 * (nb + 2) * MODES), "xs": b.alloc(4 * spec.hidden)}
 
 
-def prog_slot(g: dict, blocks: int, mode: int = 0) -> int:
-    """The chain area's slot of bucket `blocks` (1, 2, ...) in chain area `mode`."""
-    return g["progs"] + PROG_SLOT * (mode * g["nb"] + blocks - 1)
+def prog_slot(g: dict, blocks: int, mode: int = 0, part: int = 0) -> int:
+    """The chain area's slot of bucket `blocks` (1, 2, ...) in chain area `mode`; a split
+    program's second part in the slot's second half."""
+    return g["progs"] + PROG_SLOT * (mode * g["nb"] + blocks - 1) + part * PROG_SLOT // 2
 
 
 def ptab_addr(g: dict, mode: int = 0) -> int:
     return g["ptab"] + 8 * (g["nb"] + 2) * mode
+
+
+def ptab2_addr(g: dict, mode: int = 0) -> int:
+    """The chain table of split programs: [address, instructions] of bucket k's part j at
+    words 2 (2k + j), 2 (2k + j) + 1."""
+    return g["ptab2"] + 16 * (g["nb"] + 2) * mode
 
 
 def build(put, s: int, S: int, spec, cap: int, g: dict) -> None:
@@ -96,6 +104,7 @@ def build(put, s: int, S: int, spec, cap: int, g: dict) -> None:
 def desc(g: dict, spec, cap: int) -> SimpleNamespace:
     V = _vpad(spec)
     return SimpleNamespace(state=Tensor(g["state"], (STATE_WORDS,), (1,)),
+                           xs=Tensor(g["xs"], (1, spec.hidden), (spec.hidden, 1)),
                            out=Tensor(g["out"], (cap + 1,), (1,)),
                            uni=Tensor(g["uni"], (cap + 1,), (1,)),
                            lg=Tensor(g["lg"], (V,), (1,)), pa=Tensor(g["pa"], (V,), (1,)),
@@ -103,12 +112,16 @@ def desc(g: dict, spec, cap: int) -> SimpleNamespace:
                            addr=g)
 
 
-def ptab_words(g: dict, progs: dict, mode: int = 0) -> np.ndarray:
+def ptab_words(g: dict, progs: dict, mode: int = 0, split: bool = False) -> np.ndarray:
     """The chain table of `mode` for {blocks: assembled words}: [address, instructions] of
-    bucket k at words 2k, 2k + 1 (absent buckets 0)."""
-    t = np.zeros(2 * (max(progs) + 2), np.uint32)
+    bucket k at words 2k, 2k + 1 (absent buckets 0). split: the table at ptab2_addr for
+    {blocks: (first part's words[, second part's])}: part j of bucket k at words 2 (2k + j),
+    2 (2k + j) + 1 (a bucket in one program: its program as the first part)."""
+    t = np.zeros(2 * (2 if split else 1) * (max(progs) + 2), np.uint32)
     for k, w in progs.items():
-        t[2 * k], t[2 * k + 1] = prog_slot(g, k, mode), len(w) // 8
+        for j, wj in enumerate(w if split else (w,)):
+            e = 2 * k + j if split else k
+            t[2 * e], t[2 * e + 1] = prog_slot(g, k, mode, j), len(wj) // 8
     return t
 
 
@@ -468,25 +481,19 @@ def _pick(b, k, stride: int, base: int, what: str):
 
 
 # ---- the program
-def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
-    b = current()
-    g = m.gen
-    st = ol.load(g.state)
-    consts = Sampler.constants(b, g, samp) if samp is not None else None
-    left = st[S_LEFT:S_LEFT + 1]
-    n = ol.minimum(left, (st[S_TPOS:S_TPOS + 1] * -1.0) + float(block))  # to the bucket's end
-    r = b.scratch()
-    b.rld(r, n, comment="tokens in this bucket")
-    loop = b.begin_loop(0, rcount=r)
-    b.unscratch(r)                     # the count is read when the loop starts
-    body = b.stack[-1]
-    mark = len(body)                   # the argument loads go here (known after the step)
+def _sink(b, m, g, samp, st, pos, consts, debug):
+    """The LM head's sink (Greedy or Sampler), set on m."""
     chunk = min(8192, b.cfg.TMEM_WORDS // 8)       # qwen3.HEAD_CHUNK, _lm_head's chunks
     sink = (Greedy(b, m.v_loc, chunk) if samp is None
             else Sampler(b, m, g, samp, st, pos, consts))
     m.lm_sink, m.lm_keep = sink, debug
-    step.fn(m=m, pos=pos, block=block)
-    tok = sink.token()
+    return sink
+
+
+def _token_end(b, g, st, pos, spec, block, samp, sink, tok, split: bool = False) -> None:
+    """The token to out[p + 1], HALT at a stop, the next token's state in st: tok, the
+    run-time variables the step used (tpos always in a split program: its chain follows it),
+    the tokens left."""
     ol.store(g.out[pos.pos + 1:pos.pos + 2], tok)
     if samp is not None:
         sink.after(tok)
@@ -503,7 +510,7 @@ def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
     # the next token's state
     rl = rules(spec, block)
     st[S_TOK:S_TOK + 1].set(tok)
-    used = {v.name for v, _ in b.run_args}
+    used = {v.name for v, _ in b.run_seen} | ({"tpos"} if split else set())
     for name, slot in SLOT.items():
         rule = rl[name]
         if rule is None or name not in used:
@@ -514,49 +521,163 @@ def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
         if mod:            # v - mod * [v >= mod], exact for small integers
             w = ol.minimum(ol.maximum(v + float(1 - mod), 0.0), 1.0)
             v.set(v - w * float(mod))
+    left = st[S_LEFT:S_LEFT + 1]
     left.set(left - 1.0)
-    # the run-time arguments of this iteration, now that the step has named them all
-    check_args(b.run_args, spec, block)
+
+
+def _arguments(b, body: list, mark: int, st, spec, block) -> None:
+    """The run-time arguments (c * var alone in an address) loaded at body[mark], now that the
+    step has named them all."""
+    check_args(b.run_seen, spec, block)
     body[mark:mark] = [I.rld(15 - k, st.base + SLOT[v.name], mul=int(c),
                              comment=f"argument {c}*{v.name}")
                        for k, (v, c) in enumerate(b.run_args)]
-    b.end_loop(loop)
-    ol.store(g.state[:S_HALT], st[:S_HALT])      # not the host's stop word
-    if chain:              # tokens left: on to the next bucket's program (chain table)
-        more = ol.minimum(left, 1.0)
-        tab = b.alloc((2,))
-        r, ra, rb = b.scratch(), b.scratch(), b.scratch()
-        b.rld(r, more, comment="tokens left")
-        b.emit(I.loop(4, 0, rcount=r, comment="chain"))
-        b.emit(I.ld(ptab_addr(g.addr, int(samp is not None)) + 8 * (pos.blocks + 1), tab.base,
-                    2, comment="next bucket"))
-        b.emit(I.rld(ra, tab.base, raw=True))
-        b.emit(I.rld(rb, tab.base + 1, raw=True))
-        b.emit(I.halt(chain=True, ra=ra, rb=rb))
-        for x in (r, ra, rb):
+    b.run_words = None
+
+
+def _chain(b, tab_at: int, cond=None, off=None, what: str = "next bucket") -> None:
+    """HALT CHAIN to the program of the chain table's entry at DRAM tab_at (+ R[off] bytes,
+    off a tile holding them), when cond (a tile holding 0 or 1; None: always)."""
+    tab = b.alloc((2,))
+    r, ro, ra, rb = (b.scratch() if x is not None else 0 for x in (cond, off, 1, 1))
+    if cond is not None:
+        b.rld(r, cond, comment="tokens left")
+    if off is not None:
+        b.rld(ro, off, comment="table offset")
+    body = [I.ld(tab_at, tab.base, 2, ra=ro, comment=what),
+            I.rld(ra, tab.base, raw=True), I.rld(rb, tab.base + 1, raw=True),
+            I.halt(chain=True, ra=ra, rb=rb)]
+    if cond is not None:
+        b.emit(I.loop(len(body), 0, rcount=r, comment="chain"))
+    for ins in body:
+        b.emit(ins)
+    for x in (r, ro, ra, rb):
+        if x:
             b.unscratch(x)
 
 
+def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
+    b = current()
+    g = m.gen
+    st = ol.load(g.state)
+    consts = Sampler.constants(b, g, samp) if samp is not None else None
+    left = st[S_LEFT:S_LEFT + 1]
+    n = ol.minimum(left, (st[S_TPOS:S_TPOS + 1] * -1.0) + float(block))  # to the bucket's end
+    r = b.scratch()
+    b.rld(r, n, comment="tokens in this bucket")
+    loop = b.begin_loop(0, rcount=r)
+    b.unscratch(r)                     # the count is read when the loop starts
+    body = b.stack[-1]
+    mark = len(body)                   # the argument loads go here (known after the step)
+    sink = _sink(b, m, g, samp, st, pos, consts, debug)
+    # a register stepping with loops from c * var starts with an RLD MUL of var's state word
+    b.run_words = {name: st.base + slot for name, slot in SLOT.items()}
+    step.fn(m=m, pos=pos, block=block)
+    tok = sink.token()
+    _token_end(b, g, st, pos, spec, block, samp, sink, tok)
+    _arguments(b, body, mark, st, spec, block)
+    b.end_loop(loop)
+    ol.store(g.state[:S_HALT], st[:S_HALT])      # not the host's stop word
+    if chain:              # tokens left: on to the next bucket's program (chain table)
+        _chain(b, ptab_addr(g.addr, int(samp is not None)) + 8 * (pos.blocks + 1),
+               cond=ol.minimum(left, 1.0))
+
+
+def _generate_layers(m, pos, block, step, spec, samp=None):
+    """A split generate program's first part (a bucket's program over IMEM): the step's layers
+    for the state block's token, x to DRAM (qwen3._lm_head stores it there: m.lm_split), then
+    HALT CHAIN to the second part."""
+    b = current()
+    g = m.gen
+    st = ol.load(g.state)
+    body = b.stack[-1]
+    mark = len(body)
+    b.run_words = {name: st.base + slot for name, slot in SLOT.items()}
+    m.lm_split = g.xs
+    step.fn(m=m, pos=pos, block=block)
+    _arguments(b, body, mark, st, spec, block)
+    _chain(b, ptab2_addr(g.addr, int(samp is not None)) + 8 * (2 * pos.blocks + 1),
+           what="the token's second part")
+
+
+def _generate_head(m, pos, block, step, spec, samp=None, debug=False):
+    """A split generate program's second part: x from DRAM, the step's LM head into the
+    sampler, the token (as the loop's body), the state block back to DRAM, then with tokens
+    left HALT CHAIN to this bucket's first part, or at its end (tpos back to 0) the next
+    bucket's."""
+    from .qwen3 import _lm_head
+    b = current()
+    g = m.gen
+    st = ol.load(g.state)
+    body = b.stack[-1]
+    mark = len(body)
+    b.run_words = {name: st.base + slot for name, slot in SLOT.items()}
+    consts = Sampler.constants(b, g, samp) if samp is not None else None
+    sink = _sink(b, m, g, samp, st, pos, consts, debug)
+    (getattr(step, "head", None) or _lm_head)(ol.load(g.xs), m, spec)
+    tok = sink.token()
+    _token_end(b, g, st, pos, spec, block, samp, sink, tok, split=True)
+    _arguments(b, body, mark, st, spec, block)
+    ol.store(g.state[:S_HALT], st[:S_HALT])      # not the host's stop word
+    left = st[S_LEFT:S_LEFT + 1]
+    wrap = ol.minimum(st[S_TPOS:S_TPOS + 1], 1.0) * -16.0 + 16.0   # 16 bytes: the next bucket
+    _chain(b, ptab2_addr(g.addr, int(samp is not None)) + 8 * (2 * pos.blocks),
+           cond=ol.minimum(left, 1.0), off=wrap, what="the next token's first part")
+
+
 def compile_generate(image, kernel, blocks: int, lo: int, block: int, chain: bool = True,
-                     samp: Sampling | None = None, debug: bool = False):
+                     samp: Sampling | None = None, debug: bool = False,
+                     part: int | None = None):
     """The generate program of positions [lo, blocks * block) (compile_decode's bucket):
     the step kernel at a RunPos in the token loop (see the module), greedy or sampled (samp),
     then, with `chain` and tokens left, HALT CHAIN to the next bucket's program (the entry
     blocks + 1 of the mode's table). debug: the LM head stores each token's logits to
-    m.logits as well (the resident step's store), for checks against it. Returns the
-    programs."""
+    m.logits as well (the resident step's store), for checks against it. part 0 / 1: the two
+    programs of the split form instead (one token each, chaining to each other through the
+    split table: _generate_layers, _generate_head), for a bucket whose program does not fit
+    (compile_bucket). Returns the programs."""
     from .qwen3 import RunPos
     if not image.lookup:
         raise ValueError("compile_generate needs an image with lookup tables (lookup=True)")
     if not (blocks - 1) * block <= lo < min(blocks * block, image.cap):
         raise ValueError(f"lo {lo} is not in bucket {blocks}")
+    if part is not None and not chain:
+        raise ValueError("a split generate program chains (HALT CHAIN)")
     rp = RunPos(blocks, block, lo, image.lookup["zmask"], image.cap)
+    fn, kw = {None: (_generate, {"chain": chain, "debug": debug}), 0: (_generate_layers, {}),
+              1: (_generate_head, {"debug": debug})}[part]
     progs = []
     for s in range(image.cfg.S):
         m = image.descriptors(s)
-        progs.append(ol.jit(_generate).trace(image.cfg, s, {"m": m, "pos": rp, "block": block,
-                                                            "step": kernel, "chain": chain,
-                                                            "spec": image.spec,
-                                                            "samp": samp,
-                                                            "debug": debug}).finish())
+        progs.append(ol.jit(fn).trace(image.cfg, s, {"m": m, "pos": rp, "block": block,
+                                                     "step": kernel, "spec": image.spec,
+                                                     "samp": samp, **kw}).finish())
     return progs
+
+
+def fits(image, progs) -> bool:
+    return all(len(p) <= image.cfg.IMEM_WORDS // 8 for p in progs)
+
+
+def compile_bucket(image, blocks: int, lo: int, block: int, chain: bool = True,
+                   samp: Sampling | None = None, debug: bool = False, split: bool | None = None):
+    """A bucket's generate programs: the token loop in one program per slice (a list), or, when
+    that does not fit IMEM or TMEM (or split=True; split=False never) and the run chains, the
+    split form: (first parts, second parts), two programs per token."""
+    if split is not True or not chain:
+        try:
+            progs = image.compile_generate(blocks, lo, block, chain=chain, samp=samp,
+                                           debug=debug)
+            if fits(image, progs) or split is False or not chain:
+                return progs
+        except CompileError:
+            if split is False or not chain:
+                raise
+    parts = tuple(image.compile_generate(blocks, lo, block, chain=True, samp=samp, debug=debug,
+                                         part=j) for j in (0, 1))
+    for j, progs in enumerate(parts):
+        if not fits(image, progs):
+            raise CompileError(f"bucket {blocks}'s split generate program: part {j} has "
+                               f"{max(map(len, progs))} instructions, IMEM "
+                               f"{image.cfg.IMEM_WORDS // 8}")
+    return parts

@@ -354,14 +354,17 @@ def tiny(request):
 
 
 @pytest.mark.parametrize("S", [1, 2])
-def test_generate_matches_the_host_loop(tiny, S):
+@pytest.mark.parametrize("split", [None, True])
+def test_generate_matches_the_host_loop(tiny, S, split):
     """The decode loop on the device gives the host's resident greedy loop token for token,
     across the attention bucket boundary at 256 (a second run of the next bucket's program),
-    and stops at a stop id (returned, not fed)."""
+    and stops at a stop id (returned, not fed). split: every bucket in the split form, two
+    programs per token chaining to each other (generate.compile_bucket)."""
     from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
     name, W, spec = tiny
     cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S)
     a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    a.gen_split = split
     assert a.can_generate
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
     t0 = int(np.argmax(a.prefill(toks)))
@@ -374,23 +377,25 @@ def test_generate_matches_the_host_loop(tiny, S):
     got = a.generate_card(t0, 12, stop_ids=[])
     assert got == ref[:12] and a.pos == 248 + 12
     assert sorted(a._gens) == [(1, None, False), (2, None, False)]   # buckets 1, 2, greedy
+    assert all(isinstance(p, tuple) == bool(split) for p in a._gens.values())
     j = next(j for j in range(13, 20) if ref[j] not in ref[12:j])   # a token not seen since
     assert a.generate_card(ref[11], 30, stop_ids=[ref[j], 1001]) == ref[12:j + 1]
     assert a.pos == 248 + j + 1                      # the stop id is not fed
 
 
-@pytest.mark.parametrize("S", [1, 2])
-@pytest.mark.parametrize("sampled", [False, True])
-def test_generate_on_rtl(have_verilator, tiny, S, sampled):
+@pytest.mark.parametrize("S,sampled,split", [(1, False, None), (1, True, None), (2, False, None),
+                                             (2, True, None), (1, False, True), (2, True, True)])
+def test_generate_on_rtl(have_verilator, tiny, S, sampled, split):
     """The generate loop on the Verilator RTL: from the same DRAM state (a 248-token prefill
     on the ISA simulator) one run of 12 tokens across the bucket boundary (HALT CHAIN), greedy
-    or sampled (top-k, top-p, the penalty): the tokens and the whole DRAM of the ISA
-    simulator's run."""
+    or sampled (top-k, top-p, the penalty), in one program per bucket or split (two per
+    token): the tokens and the whole DRAM of the ISA simulator's run."""
     from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
     from opentpu.llm.rtl_backend import RtlBackend
     name, W, spec = tiny
     cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S)
     eng = Engine(spec, W, cap=512, cfg=cfg, resident=True)
+    eng.gen_split = split
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
     t0 = int(np.argmax(eng.prefill(toks)))
     samp = G.Sampling(0.8, 5, 0.9, 1.1) if sampled else None
@@ -433,8 +438,9 @@ def test_generate_debug_keeps_the_logits(tiny):
 @pytest.mark.parametrize("S", [1, 2])
 @pytest.mark.parametrize("temperature,top_k,top_p,penalty", [(0.8, 5, 0.9, 1.1), (0.0, 0, 1.0, 1.3),
                                                            (1.5, 20, 1.0, 1.0)])
+@pytest.mark.parametrize("split", [None, True])
 def test_sampled_generate_matches_the_reference_pick(tiny, S, temperature, top_k, top_p,
-                                                     penalty):
+                                                     penalty, split):
     """The sampled loop on the device (generate.Sampler) picks the ids of its numpy model
     (generate.reference_pick) from the host loop's logits, with the same uniforms, across the
     bucket boundary: top-k, top-p, the temperature and the repetition penalty (greedy with the
@@ -444,8 +450,11 @@ def test_sampled_generate_matches_the_reference_pick(tiny, S, temperature, top_k
     name, W, spec = tiny
     if name != "qwen3" and (S, top_k) != (1, 5):
         pytest.skip("the other models: one case")
+    if split and (S, top_k) != (2, 5):
+        pytest.skip("split programs: one case")
     cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S)
     a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    a.gen_split = split
     samp = G.Sampling(temperature, top_k, top_p, penalty)
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
     lg = a.prefill(toks)

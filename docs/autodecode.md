@@ -68,19 +68,45 @@ tokens left: LD the next bucket's [address, instructions] from the chain table, 
 
 **Run-time arguments.** These are the values the host wrote as ARG registers before each run
 in resident decode (docs/host.md): for example `4096 * tok` for LFM2's embedding row, and
-`tpos` and `ring` multiples. Here one `RLD MUL` per argument forms it from the state word:
-the integer times c, mod 2^32, as the host's `arg_words`.
+`tpos` and `ring` multiples. Here `RLD MUL` forms each from the state word: the integer
+times c, mod 2^32, as the host's `arg_words`.
 
 - There is no bound on c. Gemma 4's per-layer embedding row, `9344 * tok`, passes 2^31 at
   vocab 262144, which no fp32 product holds exactly.
 - The variables themselves stay below 2^24 (`check_args`).
-- Every model today uses 6 or 7 arguments, and the loop nests 2 deep.
+- A register that starts at `c * var` and steps with the step's loops (a K/V append at the
+  layer loop's layer) starts with its own `RLD MUL`, before the outermost of those loops
+  (compiler `Builder.run_words`). Only an address of `c * var` alone keeps an argument
+  register (R15 down), loaded at the top of the token loop. At Qwen3.5-35B-A3B's dimensions
+  that is 4 argument registers instead of 7 (`256`, `8`, `1` and `4 * tpos` only seeded the
+  K/V append registers), which leaves R9-R11 to the step; the resident decode's programs do
+  not change.
 
 **Chaining.** IMEM holds one program (4096 instructions on the board). A bucket's program is
 563-2524 instructions (fp4, cap 4096). At a bucket's end, `HALT CHAIN` loads the next
 bucket's program from the chain area in DRAM and restarts it. TMEM, DRAM and the arguments
 are kept. So a reply is one run whatever its length, and the host writes each bucket's
 program once.
+
+**Split programs.** A bucket whose loop does not fit IMEM or TMEM runs in the split form
+(`generate.compile_bucket`, `Engine.gen_split`: None when needed, True always):
+
+- two programs per token, which chain to each other through their own table (`ptab2`,
+  entries [address, instructions] per bucket and part);
+- the first part runs the step's layers and stores x to DRAM (`xs`; the model's LM head
+  stores it there when `m.lm_split` is set), then chains to the second;
+- the second part loads x and runs the final norm, the LM head into the sampler, the token,
+  the stop and the state update (the state block back to DRAM), then chains to this bucket's
+  first part, or at its end (tpos back to 0) the next bucket's;
+- a mixed chain works both ways: each table names a bucket's first program, whatever its form.
+
+Each token then pays two program loads (at most 4096 instructions each, one DRAM read of
+128 KB). The second part is 367 instructions at Qwen3.5's dimensions (greedy or sampled), so
+the split frees the head, the sampler and its TMEM, and no more. The layers of one plan unit
+(Qwen3.5's lin, lin, lin, attn; the plan loops it) must fit one program. At the 4B and 9B
+dimensions they do not from bucket 8 on (4197 and 4157 instructions), and neither does the
+resident decode there (4254, 4214). The fix for that is in the kernel: the DeltaNet head
+pairs in a loop at a run-time position.
 
 ## Greedy
 
@@ -210,7 +236,13 @@ true, it writes the state's stop word, and the card halts after the token in fli
   |---|---|---|---|---|---|
   | otpu_seq | 15,835 (+497) | 10,655 (+65) | 912 (+0) | 7 (+0) | +0.642 ns (main +0.541) |
   | otpu_vpu | 24,026 (+431) | 19,414 (+276) | 1,200 (+39) | 68 (+0) | +0.961 ns (main +1.044) |
+  | otpu_dma (WAITW) | 8,822 (+778) | 12,290 (+259) | 2,824 (+0) | 0 | +0.865 ns (main +0.593) |
 
-  About 0.3% of the device's LUTs. otpu_slice's RLD reader and CHAIN FSM (about 100 FF,
+  About 0.6% of the device's LUTs. otpu_slice's RLD reader and CHAIN FSM (about 100 FF,
   3 DSPs) are not in a part.
-- **Next:** a FAST=1 build at 100 MHz (fused with ld-2port), the card, then 133.33 MHz.
+- **Dev build** (waitw be824d5: this and WAITW, FAST=1 at 100 MHz, omarchy 2026-09-30,
+  `~/otpu-build/deploy_adw100_be824d5`): timing met, WNS +0.091 ns, WHS +0.016 ns (core
+  +0.096, LiteDRAM +0.091); LUT 162,441 (54.4%), FF 132,924, slices 71.9%, BRAM 607.5, DSP
+  716.
+- **Next:** the card (tools/qual/qual.sh: the decode-loop and WAITW phases), then
+  133.33 MHz.

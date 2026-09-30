@@ -611,6 +611,11 @@ class Builder:
         self.free_regs = [(r, frozenset()) for r in range(15, 0, -1)]
         self.used_regs: set = set()
         self.run_args: list = []      # (RunVar, coefficient) of argument k (arg_reg(k))
+        self.run_seen: list = []      # every (RunVar, coefficient) an address adds
+        # The generate loop (opentpu/llm/generate.py) keeps the run-time values in TMEM words,
+        # {name: word}: a register that starts at c * var and steps with loops then starts with
+        # an RLD MUL of its word, so only an address of c * var alone takes an argument register
+        self.run_words: dict | None = None
         self.versions = weakref.WeakKeyDictionary()
         self.tmem_regions: list = []     # (base, end, weakref to the allocation's _Buf)
         self.tmem_peak = 0
@@ -636,18 +641,28 @@ class Builder:
                 raise CompileError(f"address uses {l} outside its loop")
         if len(run) > 1:
             raise CompileError(f"address {a} adds more than one run-time value")
+        words = self.run_words
         if run:
-            arg = self.arg_reg(*run[0])
-            if len(a.terms) == 1:                   # the argument register itself
-                return arg, a.const
+            if run[0] not in self.run_seen:
+                self.run_seen.append(run[0])
+            if words is None or len(a.terms) == 1:
+                arg = self.arg_reg(*run[0])
+                if len(a.terms) == 1:               # the argument register itself
+                    return arg, a.const
         key = frozenset(a.terms.items())
         if key not in self.regs:
             r = self._spare_for(key)
             if r is None:
                 r = self._free_for(key)
-                if r is not None and run:          # it starts at the argument's value
-                    self._init_before_loops(key, I.addi(r, arg, 0, comment=f"{run[0][1]}*"
-                                                        f"{run[0][0]} (argument)"))
+                if r is not None and run:          # it starts at the run-time value
+                    (v, c), what = run[0], f"{run[0][1]}*{run[0][0]}"
+                    if words is None:
+                        init = I.addi(r, arg, 0, comment=f"{what} (argument)")
+                    elif v.name not in words:
+                        raise CompileError(f"run-time value {v}: no TMEM word (run_words)")
+                    else:
+                        init = I.rld(r, words[v.name], mul=int(c), comment=what)
+                    self._init_before_loops(key, init)
             if r is None:
                 raise CompileError("out of address registers")
             self.regs[key] = r

@@ -453,9 +453,10 @@ class Image:
         return compile_decode(self, qwen3_step, blocks, lo, block)
 
     def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
-                         chain: bool = True, samp=None, debug: bool = False) -> list:
+                         chain: bool = True, samp=None, debug: bool = False,
+                         part: int | None = None) -> list:
         """The decode loop on the device for bucket `blocks` (qwen3_step in it, generate.py)."""
-        return G.compile_generate(self, qwen3_step, blocks, lo, block, chain, samp, debug)
+        return G.compile_generate(self, qwen3_step, blocks, lo, block, chain, samp, debug, part)
 
     def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
         """One program per slice: the decode token at position `pos` (qwen3_step)."""
@@ -691,7 +692,12 @@ def _lm_head(x, m, spec):
     """Final norm and this slice's vocabulary rows of the LM head -> m.logits, or, with
     m.lm_sink set (the generate loop: opentpu/llm/generate.py), each chunk's logits tile to
     m.lm_sink(tile, first vocabulary row) instead (and to m.logits too with m.lm_keep: the
-    generate loop's debug mode)."""
+    generate loop's debug mode). With m.lm_split (the first part of a split generate program)
+    x itself to that DRAM tensor instead: the second part runs the head."""
+    split = getattr(m, "lm_split", None)
+    if split is not None:
+        ol.store(split, x)
+        return
     sid = ol.program_id()
     xs = ol.quantize(rmsnorm(x, ol.load(m.g_final), spec.eps))
     chunk = min(HEAD_CHUNK, ol.tmem_words() // 8)
@@ -990,6 +996,9 @@ class Engine:
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
+                                            # (a list, or split: (first parts, second parts))
+        self.gen_split = None               # split generate programs: None when a bucket's
+                                            # does not fit, True always, False never
         self._chained: dict = {}            # mode -> (key, its buckets in the chain area)
         self.gen_debug = False              # generate_card: the logits too (gen_logits)
         self.gen_logits = None
@@ -1335,13 +1344,13 @@ class Engine:
         key = (blocks, None if samp is None else samp.key, self.gen_debug)
         if key not in self._gens:
             lo = max((blocks - 1) * self.block, self._conv_lo)
-            progs = self.image.compile_generate(blocks, lo, self.block,
-                                                chain=bool(getattr(self.backend, "chains",
-                                                                   False)), samp=samp,
-                                                debug=self.gen_debug)
+            progs = G.compile_bucket(self.image, blocks, lo, self.block,
+                                     chain=bool(getattr(self.backend, "chains", False)),
+                                     samp=samp, debug=self.gen_debug, split=self.gen_split)
             prep = getattr(self.backend, "prepare", None)
             if prep is not None:
-                prep(progs)
+                for p in (progs if isinstance(progs, tuple) else (progs,)):
+                    prep(p)
             self._gens[key] = progs
         return self._gens[key]
 
@@ -1354,16 +1363,28 @@ class Engine:
         if self._chained.get(mode, (key,))[0] != key:
             self._chained.pop(mode)            # compiled for other sampling buffers
         have = self._chained.setdefault(mode, (key, set()))[1]
-        new = [k for k in range(b0 + 1, b1 + 1) if k not in have]
+        # a split bucket chains back to its own first part: b0's programs too
+        lo = b0 if isinstance(self._generate_prog(b0, samp), tuple) else b0 + 1
+        new = [k for k in range(lo, b1 + 1) if k not in have]
         if not new:
             return
         for k in new:
-            for s, prog in enumerate(self._generate_prog(k, samp)):
-                self.backend.write(s, G.prog_slot(g, k, mode), I.assemble(prog))
+            progs = self._generate_prog(k, samp)
+            for j, pj in enumerate(progs if isinstance(progs, tuple) else (progs,)):
+                for s, prog in enumerate(pj):
+                    self.backend.write(s, G.prog_slot(g, k, mode, j), I.assemble(prog))
         have |= set(new)
         for s in range(self.cfg.S):
+            words = {}
+            for k in have:
+                progs = self._generate_prog(k, samp)
+                words[k] = (tuple(I.assemble(p[s]) for p in progs) if isinstance(progs, tuple)
+                            else I.assemble(progs[s]))
             self.backend.write(s, G.ptab_addr(g, mode), G.ptab_words(g, {
-                k: I.assemble(self._generate_prog(k, samp)[s]) for k in have}, mode))
+                k: w[0] if isinstance(w, tuple) else w for k, w in words.items()}, mode))
+            self.backend.write(s, G.ptab2_addr(g, mode), G.ptab_words(g, {
+                k: w if isinstance(w, tuple) else (w,) for k, w in words.items()}, mode,
+                split=True))
 
     def _generate_inputs(self, samp, p: int, nb: int, context, rng) -> None:
         """The sampled loop's per-run inputs: the uniforms of positions p + 1 .. p + nb (the
@@ -1420,6 +1441,8 @@ class Engine:
                     b1 = (p + n - 1) // self.block + 1
                     self._generate_chain(b0, b1, samp)
                 progs = self._generate_prog(b0, samp)
+                if isinstance(progs, tuple):      # split: the run starts at the first part
+                    progs = progs[0]
                 nb = min(n, b1 * self.block - p)
                 if samp is not None:
                     self._generate_inputs(samp, p, nb, ctx, rng)
