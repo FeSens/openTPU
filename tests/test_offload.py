@@ -1,4 +1,5 @@
-"""tools/offload/cachesim.py: the expert-cache policies on small hand-made traces."""
+"""tools/offload/cachesim.py: the expert-cache policies and path (a)'s timing on small
+hand-made traces."""
 import importlib.util
 from pathlib import Path
 
@@ -48,15 +49,70 @@ def test_policies_order_on_random_traces():
         assert all(m <= T * L * k for m in miss.values())
 
 
-def test_tok_times_bounds():
-    """No misses: streaming costs only the halts; the hybrid cannot beat the card alone plus
-    the host alone (the two memory systems in parallel)."""
-    req = _req([0, 1, 0, 1], k=1)
-    hw = dict(dram=14e9, host=12e9, sync=60e-6, call=30e-6, pcie=[1.3e9])
-    by = dict(x=3e6, d=30e6, head=0.0)
-    r = cs.tok_times(req, {}, {}, hw, by)
-    t_res, t_str = 1 / r["resident"], 1 / r["stream@1.3"]
-    assert abs(t_str - t_res - 60e-6) < 1e-9
-    _, at = cs.simulate(req, 1, "static", [2])            # every request misses
-    r = cs.tok_times(req, at, {}, hw, by)
-    assert r["hybrid"] <= 1 / ((by["d"] + by["x"]) / (hw["dram"] + hw["host"]))
+def _hw(pcie=1.3e9):
+    return dict(dram=14e9, call=30e-6, req=30e-6, done=15e-6, ssd=0.5e9, pcie_one=pcie)
+
+
+def _warm(req, L):
+    """Each layer's experts in the order they first appear (a warm cache holds them all)."""
+    return [list(dict.fromkeys(int(e) for e in req[:, j].ravel())) for j in range(L)]
+
+
+def test_linksim_all_hits_is_the_resident_bound():
+    rng = np.random.default_rng(1)
+    T, L, E, k = 40, 3, 8, 2
+    req = np.stack([np.stack([rng.choice(E, k, replace=False) + j * E for j in range(L)])
+                    for _ in range(T)])
+    by = dict(x=3e6, head=50e6, d_pre=20e6, d_post=5e6)
+    for ov in ("each", "all"):
+        r = cs.linksim(req, {}, [E] * L, _warm(req, L), _hw(), by, overlap=ov)
+        assert r["demand"] == 0 and r["link"] == 0
+        assert abs(1 / r["tok_s"] - cs.resident_time(L, k, by, _hw())) < 1e-12
+
+
+def test_linksim_one_miss_costs_the_round_trip():
+    """Token 1 misses (cache of 1 holding expert 0): the router, the request, the DMA call and
+    its bytes, the flag, then the expert."""
+    req = _req([0, 1], k=1)
+    by = dict(x=3e6, head=0.0, d_pre=20e6, d_post=0.0)
+    hw = _hw()
+    for ov in ("each", "all"):
+        r = cs.linksim(req, {}, [1], [[0]], hw, by, overlap=ov)
+        t0 = (by["d_pre"] + by["x"]) / hw["dram"]
+        t1 = (by["d_pre"] / hw["dram"] + hw["req"] + by["x"] / hw["pcie_one"] + hw["call"]
+              + hw["done"] + by["x"] / hw["dram"])
+        assert r["demand"] == 0.5
+        assert abs(2 / r["tok_s"] - (t0 + t1)) < 1e-12
+
+
+def test_linksim_hits_first_hides_the_resident_experts():
+    """k = 4 with one miss per layer on a slow link: computing the three it has while the
+    fourth streams saves up to their time; waiting for the last one does not."""
+    T, L, E, k = 20, 2, 16, 4
+    req = np.stack([np.stack([np.r_[0, 1, 2, 3 + t % 13] + j * E for j in range(L)])
+                    for t in range(T)])
+    by = dict(x=3e6, head=0.0, d_pre=20e6, d_post=0.0)
+    warm = [[j * E + e for e in range(4)] for j in range(L)]
+    each = cs.linksim(req, {}, [4] * L, warm, _hw(), by, overlap="each")
+    alls = cs.linksim(req, {}, [4] * L, warm, _hw(), by, overlap="all")
+    assert each["demand"] == alls["demand"] == L * (T - 1) / T
+    assert each["tok_s"] > alls["tok_s"]
+    # each missing layer saves k - 1 expert times (the transfer's DRAM writes hide in the wait)
+    saved = L * (T - 1) * (k - 1) * by["x"] / _hw()["dram"]
+    assert abs(T / alls["tok_s"] - T / each["tok_s"] - saved) < 1e-9
+
+
+def test_linksim_perfect_prediction_prefetches_without_waste():
+    """The next layer's experts named exactly, on a link fast enough to land them during the
+    layer: no demand transfers after the first layer, nothing wasted."""
+    T, L, E, k = 30, 3, 8, 1
+    rng = np.random.default_rng(2)
+    req = np.stack([np.stack([rng.choice(E, k) + j * E for j in range(L)]) for _ in range(T)])
+    preds = {"prev_r": [None] + [req[:, j] for j in range(1, L)]}
+    by = dict(x=1e6, head=0.0, d_pre=200e6, d_post=0.0)
+    r = cs.linksim(req, preds, [1] * L, [[j * E] for j in range(L)], _hw(), by,
+                   pred="prev_r", width=k)
+    s = cs.linksim(req, preds, [1] * L, [[j * E] for j in range(L)], _hw(), by)
+    assert r["wasted"] == 0
+    assert r["demand"] < s["demand"]
+    assert r["tok_s"] > s["tok_s"]

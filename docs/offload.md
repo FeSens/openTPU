@@ -1,82 +1,123 @@
 # Bigger than DRAM: MoE expert offloading
 
-Status: phase 1, a design study. Nothing here has run on the card. Every number says whether
-it was measured (and where), simulated from real router traces, or is an *estimate*.
+Status: phase 1, a design study, revised for path (a). Nothing here has run on the card yet.
+Every number is marked as one of: measured (with where), simulated from real router traces, or
+an *estimate*.
 
-The goal (the user's): run models that do not fit in the card's 4 GiB, by streaming from the
-host and its SSD, with mixture-of-experts (MoE) models first. An MoE decode token reads only
-its top-k experts per layer, a few percent of the weights, so the card can keep the dense part
-and a cache of experts, and fetch the rest.
+The goal (the user's) is to run models that do not fit in the card's 4 GiB, streaming from the
+host and its SSD, starting with mixture-of-experts (MoE) models. An MoE decode token reads only
+its top-k experts per layer, a few percent of the weights. So the card can keep the dense part
+and a cache of experts on board, and fetch the rest.
+
+**The rule: openTPU does all the computing.** The host CPU is not a compute resource. It stores
+the model (SSD, page cache, RAM) and is the source of the DMA; nothing else. The card:
+
+- routes (the router MM, and the top-k by autodecode's ARGMAX knock-out);
+- asks for the experts it lacks;
+- waits for them inside its own run;
+- computes every expert.
+
+A host daemon only moves bytes. An earlier version of this study also modelled a hybrid, where
+the host computed the missing experts, and host-side routing. Both are gone, along with the
+host fp4 kernel.
 
 **Summary.**
 
-- **Models (section 2).** Gemma 4 E4B is dense: its 2.8 B-parameter per-layer-embedding table
-  is what exceeds 4 GiB, and the host can supply the token's row (22-43 KB per token). The
-  Gemma 4 MoE is gemma-4-26B-A4B (128 experts, top-8). Of the 21 checkpoints surveyed, the
-  best fits for the card: LFM2.5-8B-A1B (just over 4 GiB), gemma-4-26B-A4B and
-  Qwen3.5-35B-A3B (3-4x the card, inside host RAM; Qwen3.5's layers already run here), and
-  Qwen3-Next-80B-A3B (larger than host RAM: the SSD tier).
-- **The hierarchy (section 1, measured on opentpu):** card DRAM 14 GB/s, about equal to a host
-  fp4 kernel's 11-16 GB/s, well above PCIe Gen1's 1.3 GB/s and the SSD's 0.51 GB/s.
-- **Router traces (section 3; 4 texts x 2048 tokens, CPU):** at the card's cache size a
-  per-layer LRU hits 98.6% of LFM2.5-8B-A1B's picks (85% of its experts fit) and 76% of
-  Gemma 4 26B-A4B's (19% fit). Fixed profiles transfer badly across texts (Gemma 4: 22-41%).
-  A layer's router applied before its mixer names ~80% of its experts.
-- **Tokens per second (section 4, simulated):** LFM2.5-8B-A1B 12.6 streaming its misses over
-  Gen1 (13.7 all resident). Gemma 4 26B-A4B 3.2 streaming, 3.7 with prefetch, 4.1-4.8 with
-  Gen2, and **6.2 with the hybrid**: the host computes the card's misses from its own RAM, with
-  the card's arithmetic, while the card streams its hits. PCIe then carries activations, not
-  experts.
-- **Design (section 5):** Tier A needs no new hardware. The host routes at a halt after each
-  MoE router (~60 us per layer, 2-4% of a token), binds the experts' cache slots into the next
-  program segment, and streams or computes the misses. Tier B, shared with the card's own
-  sampling, adds `TOPK`, `LDR` (a register from memory) and `WAITW` (wait on a DRAM word), so
-  the card runs a whole token and the host only serves misses.
-- **PCIe Gen2 (section 6): not worth a Vivado slot now.** It adds 28% to streaming and nothing
-  to the hybrid.
-- **SSD tier (section 8):** models larger than host RAM run at the SSD's pace. Extrapolating
-  from Gemma 4's traces: ~6 tok/s for Qwen3-Next-80B-A3B (fine-grained experts, 98% of its
-  picks in host RAM), 1.4-1.8 for gpt-oss-120b and Qwen3.5-122B-A10B.
-- **Next (section 9):** LFM2.5-8B-A1B end to end on the ISA simulator with the card's 4 GiB,
-  then the card. The Qwen3.5-35B-A3B trace is still running (its 72 GB download is slow).
+- **Models (section 2).**
+  - Gemma 4 E4B is dense. Its per-layer-embedding (PLE) table is what exceeds 4 GiB, and the
+    host can write the token's row (section 7).
+  - The Gemma 4 MoE is gemma-4-26B-A4B.
+  - The best fits for the card are LFM2.5-8B-A1B (just over 4 GiB), gemma-4-26B-A4B and
+    Qwen3.5-35B-A3B (3-4x the card, inside host RAM), and Qwen3-Next-80B-A3B (larger than host
+    RAM: the SSD tier).
+- **The hierarchy (section 1, measured on opentpu).** Card DRAM runs at 14 GB/s, PCIe Gen1 at
+  1.3 GB/s and the SSD at 0.51 GB/s. A missing expert costs about 10x its compute time to bring
+  over Gen1.
+- **Router traces (section 3; 4 texts x 2048 tokens, CPU).** At the card's cache size, a
+  per-layer LRU hits:
+  - 98.6% of LFM2.5-8B-A1B's picks (85% of its experts fit);
+  - 76% of Gemma 4 26B-A4B's (19% fit);
+  - 66% of Qwen3.5-35B-A3B's (13% fit).
 
-The tools: `tools/offload/survey.py` (the model survey, from the checkpoints' safetensors
-headers), `router_trace.py` (the expert choices of a Hugging Face model on a text, on CPU),
-`cachesim.py` (expert-cache hit rates on those traces and the tokens-per-second model),
-`hostkern.c` (the host's fp4 kernel with the card's MM arithmetic).
+  Fixed profiles transfer badly across texts: Gemma 4 gets 22-41%, Qwen3.5 11-23%.
+- **Tokens per second, path (a) (section 4, simulated).**
+
+  | Model | Gen1 | Gen2 | All resident |
+  |:--|--:|--:|--:|
+  | LFM2.5-8B-A1B | 13.0 | 13.5 | 13.7 |
+  | gemma-4-26B-A4B | 3.9 | 5.0 | 5.9 |
+  | Qwen3.5-35B-A3B | 4.2 | 5.8 | 7.8 |
+
+  - The card computes the experts it has while the missing ones stream. That is worth +12-14%
+    over waiting for the last one on Gemma 4 and Qwen3.5.
+  - Prefetch from router predictions is at best neutral (Qwen3.5 at Gen2). Otherwise it loses
+    1-14% with the prediction's k best, and more with its 2k best: cache pollution, plus the
+    link and DRAM time of wrong guesses.
+  - 4-bit experts are worth 2.3-2.9x over int8.
+  - Request and flag latency (10-100 us) moves results by under 1%.
+- **Design (section 5).** One new instruction, `WAITW` (wait on a DRAM word), proposed to
+  autodecode. Everything else is built from autodecode's `ARGMAX`, `RLD`, the register-count
+  `LOOP` and `CHAIN`. Per MoE layer, the card:
+  1. posts its k expert ids to a mailbox in DRAM;
+  2. computes the experts a directory in DRAM says it has;
+  3. `WAITW`s on each missing expert's directory entry, which the host writes after that
+     expert's DMA.
+
+  One run per reply; no halts.
+- **PCIe Gen2 (section 6).** +30% for Gemma 4, +39% for Qwen3.5-35B and +3.5% for LFM2.5.
+  Parked until phase 2 runs. It is then the biggest single lever for models 3-4x the card.
+- **SSD tier (section 8).** Models larger than host RAM run at the link's and the SSD's pace:
+  - Qwen3-Next-80B-A3B: ~2.4 tok/s at Gen1, ~3.5 at Gen2 (*extrapolated* from Qwen3.5-35B's
+    traces);
+  - gpt-oss-120b and Qwen3.5-122B-A10B: under ~1 tok/s at Gen1. Their experts are large and the
+    card caches only 1-4% of them.
+- **Next (section 9).** LFM2.5-8B-A1B end to end on the ISA simulator, with the card's 4 GiB,
+  the router on the card, per-layer LRU slots and a host DMA daemon.
+
+The tools:
+
+- `tools/offload/survey.py`: the model survey, from the checkpoints' safetensors headers.
+- `router_trace.py`: the expert choices of a Hugging Face model on a text, on CPU.
+- `cachesim.py`: expert-cache hit rates on those traces, and path (a)'s event model.
 
 ## 1. The memory hierarchy
 
 | Level | Size | Bandwidth | Source |
 |:--|--:|--:|:--|
 | Card DRAM (2 x DDR3-1066) | 4 GiB | 13.9-14.5 GB/s while decoding | card counters, README |
-| PCIe Gen1 x8 (XDMA), host -> card | | 1.26-1.34 GB/s (opentpu); 1.42 (omarchy); 1.7 best placed 8 MiB calls (omarchy) | `otpu-selftest`, docs/host.md |
+| PCIe Gen1 x8 (XDMA), host -> card | | 1.26-1.34 GB/s (opentpu); 1.42 (omarchy); 1.7 in best-placed 8 MiB calls (omarchy) | `otpu-selftest`, docs/host.md |
 | card -> host | | 0.84-1.00 GB/s (opentpu) | `otpu-selftest` |
 | one small DMA call (64 B - 4 KiB) | | 11-15 us (omarchy, interrupt mode) | docs/host.md |
 | Host RAM (opentpu, DDR3, i7-4790) | 31 GB (23-28 free) | 22.6 GB/s (4-thread fp32 GEMV), 13.6 (1-thread sum) | measured 2026-09-29 |
-| Host fp4 kernel, card arithmetic | | 10.7-15.8 GB/s (4 threads, other load on the host) | `tools/offload/hostkern.c`, section 5.4 |
 | SSD (Crucial BX500 240 GB, SATA, LUKS + btrfs zstd) | 123-140 GB free | 512 MB/s (O_DIRECT, 4 MiB, 1 reader), 515-524 (2-4 readers), 227 MiB/s (128 KiB x 4) | measured 2026-09-29 |
 
-Measured on opentpu (the card's host) unless marked. The SSD figures read a 4 GiB file of random
-bytes written for the test (`dd iflag=direct`); reads of the models' own files through btrfs
-compression are not O_DIRECT and come from the page cache. opentpu's other disk is an HDD that
-is not ours. The card sits in the CPU's x16 slot (`max_link_speed` 8 GT/s x16 on the root port,
-00:01.0), so a Gen2 card would train at 5 GT/s.
+Everything is measured on opentpu, the card's host, unless marked otherwise.
 
-The ratios decide the design: card DRAM : PCIe : SSD is 14 : 1.3 : 0.5, and the host's RAM,
-read by a good 4-bit kernel, is as fast as the card's DRAM. An expert that misses the card's
-cache costs ~10x its compute time to bring over PCIe, but only ~1x to compute on the host,
-where it already is.
+- The SSD figures read a 4 GiB file of random bytes written for the test
+  (`dd iflag=direct`). Reads of the models' own files go through btrfs compression, are not
+  O_DIRECT, and come from the page cache.
+- opentpu's other disk is an HDD that is not ours.
+- The card sits in the CPU's x16 slot (`max_link_speed` 8 GT/s x16 on the root port, 00:01.0),
+  so a Gen2 card would train at 5 GT/s.
+
+The ratios decide the design. Card DRAM : PCIe : SSD is 14 : 1.3 : 0.5. An expert that misses
+the card's cache costs about 10x its compute time over Gen1, and 28x from the SSD. The design
+has to miss rarely: size the cache, choose the eviction policy, keep experts in 4 bits. It must
+also hide what it can of each miss behind the card's own work.
 
 ## 2. Models
 
-`python3 tools/offload/survey.py --json survey.json` (safetensors headers of each checkpoint;
-vision, audio and MTP weights left out). Bytes are for our formats: fp4 blocks (4.25 bits per
-weight, docs/quant.md), the LM head in int8. "Bytes / token" is what a decode token streams
-(dense + shared + top-k experts + head; the embedding row is looked up). "On-card part" is what
-must stay on the card (dense, shared, head, and the embedding in int8 when it is not tied).
-"Fits card" allows 0.3 GB for KV / state, I/O and programs; "fits host RAM" means the fp4 model
-in 26 GB.
+`python3 tools/offload/survey.py --json survey.json` reads the safetensors headers of each
+checkpoint, leaving out vision, audio and MTP weights. The columns:
+
+- **Bytes:** our formats: fp4 blocks (4.25 bits per weight, docs/quant.md), with the LM head in
+  int8.
+- **Bytes / token:** what a decode token streams: dense, shared, top-k experts and head. The
+  embedding row is looked up, not streamed.
+- **On-card part:** what must stay on the card: dense, shared, head, and the embedding in int8
+  when it is not tied.
+- **Fits card:** allows 0.3 GB for KV / state, I/O and programs.
+- **Fits host RAM:** the fp4 model in 26 GB.
 
 | Model | Layers (MoE) | Experts, top-k | One expert | Params, total / active | Bytes / token | On-card part | Expert pool | Fits card / host RAM |
 |:--|--:|--:|--:|--:|--:|--:|--:|:--|
@@ -103,47 +144,68 @@ in 26 GB.
 | Mixtral-8x7B-v0.1 | 32 (32) | 8, top-2 | 93.59 MB | 46.7 / 12.75 B | 6.84 GB | 0.98 GB | 24.0 GB | no / yes |
 
 Notes:
-- **Gemma 4 E4B is dense** (`enable_moe_block` false); its 2.82 B per-layer-embedding (PLE)
-  parameters (1.5 GB fp4) are what push it over 4 GiB (2.83 GB without them, 4.33 GB with).
-  The Gemma 4 MoE is **gemma-4-26B-A4B**: 30 layers, 128 experts of 704, top-8, and a dense
-  2112-wide MLP beside the MoE in every layer (the two outputs are added); the router reads the
-  post-attention residual through its own RMSNorm, softmax, top-8 renormalized, times a learned
-  per-expert scale.
+- **Gemma 4 E4B is dense** (`enable_moe_block` false). Its 2.82 B per-layer-embedding
+  parameters (1.5 GB in fp4) are what push it over 4 GiB: 2.83 GB without them, 4.33 GB with.
+- **The Gemma 4 MoE is gemma-4-26B-A4B.** It has 30 layers of 128 experts (width 704, top-8).
+  Every layer also has a dense 2112-wide MLP beside the MoE, and the two outputs are added. The
+  router reads the post-attention residual through its own RMSNorm, then applies softmax,
+  renormalizes the top-8, and multiplies by a learned per-expert scale.
 - The ones that already fit (OLMoE, Granite 3.1 3B, Granite 4.0 H Tiny, SmallThinker-4B) need
   no offloading, only the MoE block.
-- Our layer types cover LFM2-MoE (convolution + attention: `opentpu/llm/lfm2.py`), Qwen3-MoE
-  (`qwen3.py`), and Qwen3.5-MoE / Qwen3-Next (Gated DeltaNet + gated attention: `qwen35.py`).
-  Gemma 4 comes with the `gemma4` port (E2B). gpt-oss (attention sinks, clamped SwiGLU with
-  biases, MXFP4), DeepSeek-V2 (MLA) and Granite 4 (Mamba2) need new layers.
+- Layer types:
+  - Already covered: LFM2-MoE (convolution + attention: `opentpu/llm/lfm2.py`), Qwen3-MoE
+    (`qwen3.py`), and Qwen3.5-MoE / Qwen3-Next (Gated DeltaNet + gated attention: `qwen35.py`).
+  - Gemma 4 comes with the `gemma4` port (E2B).
+  - New layers needed: gpt-oss (attention sinks, clamped SwiGLU with biases, MXFP4), DeepSeek-V2
+    (MLA), Granite 4 (Mamba2).
 - gpt-oss ships its experts in MXFP4 (E2M1, a power-of-two scale per 32). Our two-level format
   holds a 128-block of it exactly when its four sub-block exponents span at most 3 (a bf16 base
-  times multipliers 1, 2, 4, 8); a conversion can check that per block (not measured).
+  times multipliers 1, 2, 4, 8). A conversion can check that per block (not measured).
 
 ## 3. Router traces and the expert cache
 
-`tools/offload/router_trace.py` runs the Hugging Face model (bf16, CPU, on omarchy; the
-weights memory-mapped from the checkpoint under a cgroup memory limit, or offloaded to disk)
-over four texts of 2048 tokens each, teacher-forced: the first chapters of *Pride and Prejudice*
-(prose), the Wikipedia article "Roman Empire", `opentpu/isasim.py` (code) and `docs/host.md`
-(technical markdown). Routing is causal, so a token's experts in this prefill are the ones a
-decode producing that text would pick. For every MoE layer and token it records the top-k and
-three predictions of it (the layer's router applied, through its norm, to the layer's input,
-before the mixer: `pre`; to the previous layer's router input: `prev_r`; to the previous layer's
-input: `prev_in`). A check re-runs each router on the recorded residual and gets the recorded
-experts for 98.9-99.1% (LFM2.5) and 92.8-98.4% (Gemma 4) of the tokens: the rest are ties
-between the k-th and (k+1)-th expert, which bf16 logits make common and a second top-k (of 2k)
-breaks the other way; the recorded choice is the model's own.
+`tools/offload/router_trace.py` runs the Hugging Face model in bf16 on CPU, on omarchy. The
+weights are memory-mapped from the checkpoint under a cgroup memory limit, or offloaded to disk.
+It runs over four texts of 2048 tokens each, teacher-forced:
 
-`tools/offload/cachesim.py` replays each trace in decode order (token by token, layer by layer,
-a layer's k experts at once) against a cache of C expert slots shared by all layers, for five
-policies: `static` (the C experts most picked in the other three texts, never replaced), `lru`,
-`lru_layer` (the slots split evenly over the layers), `lfu` (counts, with the profile as a
-prior) and `opt` (Belady, the upper bound). Every policy starts from the static set: the host
-fills the card from a profile at load. Hit rates are the mean over the four texts, each scored
-with the profile of the other three.
+- prose: the first chapters of *Pride and Prejudice*;
+- wiki: the Wikipedia article "Roman Empire";
+- code: `opentpu/isasim.py`;
+- technical markdown: `docs/host.md`.
 
-Hit rates (the mean over the four texts) and a token's misses under the per-layer LRU (of
-L x k requests):
+Routing is causal, so a token's experts in this prefill are the ones a decode producing that
+text would pick. For every MoE layer and token, the tool records the top-k and three predictions
+of it. Each prediction applies the layer's router, through its norm, to an earlier state:
+
+- `pre`: the layer's input, before the mixer;
+- `prev_r`: the previous layer's router input;
+- `prev_in`: the previous layer's input.
+
+A check re-runs each router on the recorded residual. It gets back the recorded experts for this
+share of the tokens:
+
+- LFM2.5: 98.9-99.1%;
+- Gemma 4: 92.8-98.4%;
+- Qwen3.5-35B-A3B: 83-89%, whose 8 of 256 experts leave more near-ties.
+
+The rest are ties between the k-th and (k+1)-th expert. bf16 logits make those common, and a
+second top-k (of 2k) breaks them the other way. The recorded choice is the model's own.
+
+`tools/offload/cachesim.py` replays each trace in decode order: token by token, layer by layer,
+a layer's k experts at once. It plays them against a cache of C expert slots, under five
+policies:
+
+- `static`: the C experts most picked in the other three texts, never replaced;
+- `lru`: shared by all layers;
+- `lru_layer`: the slots split evenly over the layers;
+- `lfu`: counts, with the profile as a prior;
+- `opt`: Belady, the upper bound.
+
+Every policy starts from the static set, because the host fills the card from a profile at
+load. Hit rates are the mean over the four texts, each scored with the profile of the other
+three.
+
+Hit rates, and a token's misses under the per-layer LRU (out of L x k requests):
 
 | Model | Cache | static | lru | lru_layer | lfu | opt | misses / token (lru_layer: mean, p90) |
 |:--|:--|--:|--:|--:|--:|--:|--:|
@@ -160,326 +222,468 @@ L x k requests):
 | gemma-4-26B-A4B | 1152 slots (30%) | 0.437 | 0.874 | 0.869 | 0.606 | 0.947 | 31.4, 55 of 240 |
 | gemma-4-26B-A4B | 1920 slots (50%) | 0.670 | 0.971 | 0.963 | 0.827 | 0.988 | 8.9, 17 of 240 |
 | gemma-4-26B-A4B | 2880 slots (75%) | 0.904 | 0.997 | 0.995 | 0.977 | 0.999 | 1.2, 3 of 240 |
+| Qwen3.5-35B-A3B | 512 slots (5%) | 0.072 | 0.433 | 0.471 | 0.164 | 0.659 | 169.4, 226 of 320 |
+| Qwen3.5-35B-A3B | 1024 slots (10%) | 0.138 | 0.598 | 0.608 | 0.278 | 0.776 | 125.4, 179 of 320 |
+| Qwen3.5-35B-A3B | 1307 slots (13%), the card | 0.177 | 0.650 | 0.656 | 0.331 | 0.815 | 110.2, 162 of 320 |
+| Qwen3.5-35B-A3B | 2048 slots (20%) | 0.264 | 0.748 | 0.748 | 0.451 | 0.882 | 80.8, 124 of 320 |
+| Qwen3.5-35B-A3B | 3072 slots (30%) | 0.386 | 0.845 | 0.835 | 0.587 | 0.933 | 52.8, 84 of 320 |
+| Qwen3.5-35B-A3B | 5120 slots (50%) | 0.610 | 0.943 | 0.929 | 0.801 | 0.977 | 22.6, 37 of 320 |
+| Qwen3.5-35B-A3B | 7680 slots (75%) | 0.862 | 0.989 | 0.982 | 0.956 | 0.996 | 5.9, 12 of 320 |
 
-Prediction accuracy, the share of a layer's top-k the prediction's top-k names:
+Prediction accuracy: the share of a layer's top-k that the prediction's top-k names.
 
 | Model | pre | prev_r | prev_in |
 |:--|--:|--:|--:|
 | LFM2.5-8B-A1B | 0.82 | 0.67 | 0.72 |
 | gemma-4-26B-A4B | 0.79 | 0.72 | 0.65 |
+| Qwen3.5-35B-A3B | 0.80 | 0.64 | 0.71 |
 
-- **Adapt, do not profile.** A fixed set of the experts most picked in the other texts catches
-  0.92-0.96 of LFM2.5's picks at the card's size (85% of the pool), but only 0.22-0.41 of
-  Gemma 4's (19%), whose own-text profile would catch 0.80: which experts are popular depends on
-  the text. LRU adapts within a few tokens (0.74-0.78 on every text); LFU seeded with the
-  profile adapts too slowly (0.40-0.51).
-- **Global LRU thrashes below one token's sweep** (a token asks every layer in turn, a loop of
-  L x k experts): at 5% of Gemma 4's pool (192 slots < 240 per token) it hits nothing. Split per
-  layer it degrades gracefully; at the card's sizes the two are within a point. The runtime
-  uses per-layer LRU.
-- **Room above LRU.** Belady's bound misses half as often as LRU on Gemma 4 (27.6 against 57.3
-  per token): a policy that knew reuse better (the predictions below, or reuse distances) has
-  up to 2x fewer misses to find.
-- **Predictions** name 79-82% of a layer's experts one mixer ahead (`pre`) and 67-72% one layer
-  ahead (`prev_r`); of the per-layer LRU's misses at the card's size, the prediction's 2k best
-  hold 90-92% (`pre`) and 73-81% (`prev_r`).
+- **Adapt, do not profile.** At the card's size, a fixed set of the experts most picked in the
+  other texts catches:
+  - 0.92-0.96 of LFM2.5's picks (85% of the pool);
+  - only 0.22-0.41 of Gemma 4's (19%), whose own-text profile would catch 0.80;
+  - 0.11-0.23 of Qwen3.5-35B-A3B's (13%).
 
-## 4. The model: tokens per second
+  Which experts are popular depends on the text. LRU adapts within a few tokens (0.74-0.78 on
+  every text). LFU seeded with the profile adapts too slowly (0.40-0.51).
+- **Global LRU thrashes below one token's sweep.** A token asks every layer in turn, a loop of
+  L x k experts. At 5% of Gemma 4's pool (192 slots, fewer than the 240 a token asks for) it
+  hits nothing. Split per layer, it degrades gracefully. At the card's sizes the two are within
+  a point. The runtime uses per-layer LRU, which also makes eviction race-free on the card
+  (section 5.2).
+- **Room above LRU.** Belady's bound misses half as often as LRU: 27.6 against 57.3 per token
+  on Gemma 4, and 59 against 110 on Qwen3.5. A policy that knew reuse better could find up to
+  2x fewer misses, but the predictions below do not (section 5.4).
+- **Predictions.**
+  - They name 79-82% of a layer's experts one mixer ahead (`pre`), and 64-72% one layer ahead
+    (`prev_r`).
+  - Of the per-layer LRU's misses at the card's size, the prediction's 2k best hold 90-92%
+    (`pre`) and 71-81% (`prev_r`).
 
-`cachesim.py --survey survey.json` turns each replay into a time per token, from the per-layer
-misses of every token (not their mean). With x an expert's bytes, d a MoE layer's dense bytes
-(everything but its experts: attention or mixer, norms, router, shared expert, Gemma's dense
-MLP), h the LM head's bytes, k the experts per layer, m(l) a token's misses in layer l, and:
+## 4. Path (a): tokens per second
+
+`cachesim.py --survey survey.json` replays each trace through an event model of path (a)
+(`linksim`): the card computes everything, and the host moves the experts it lacks over PCIe.
+Per token, and per MoE layer in order:
+
+1. **The card runs the layer's mixer and router** (`d_pre` bytes of weights). It then posts its
+   k expert ids: an ST to a mailbox in DRAM.
+2. **The host sees the request `t_req` later.** It DMAs the missing experts one after another
+   into LRU victim slots of that layer's cache. Each costs x / B_pcie + t_call. The link is one
+   queue across layers.
+3. **The card, meanwhile, computes what needs no missing expert:**
+   - the part of the layer that needs no expert (`d_post`: Gemma 4's dense MLP, Qwen3.5's shared
+     expert);
+   - then the experts it has.
+4. **It computes each missing expert as soon as that expert lands**, plus `t_done` for the
+   directory write the host makes after the DMA and the card's `WAITW` seeing it (section 5.2).
+   Each transfer's DRAM writes are charged to the card's time.
+5. **After the last layer, the LM head.**
 
 | Constant | Value | Source |
 |:--|--:|:--|
 | B_dram, card DRAM while decoding | 14.1 GB/s | measured (README) |
 | B_pcie, host -> card | 1.3 GB/s (Gen1), 2.6 GB/s (Gen2) | measured / *estimate* x2 |
 | t_call, per DMA call | 30 us | *estimate* (11-15 us measured per small call) |
-| t_sync, one halt, host step and restart (Tier A) | 60 us | *estimate* (5.2) |
-| B_host, host fp4 kernel | 12 GB/s | measured 10.7-15.8 (hostkern.c) |
+| t_req, the card's ST to the host's first DMA | 30 us | *estimate*: the host polls the mailbox, one small c2h read |
+| t_done, a DMA's end to the card's WAITW seeing its flag | 15 us | *estimate*: one small h2c write |
 | B_ssd | 0.51 GB/s | measured |
 
-the strategies are, per token:
+The cache is the per-layer LRU at the card's size from the survey: 4 GiB less the on-card part
+and 0.3 GB. It is warmed from the profile of the other texts, and all four texts are averaged.
 
-- `resident`, the bound if everything fit (and the card routed): sum over layers of
-  (d + k x) / B_dram, plus h / B_dram;
-- `stream` (Tier A): the same plus a halt per MoE layer and every miss over PCIe in series,
-  sum_l (t_sync + m(l) (x / B_pcie + t_call));
-- `prefetch` (Tier A, 5.3): a predicted miss moves during the window before it is needed (one
-  layer's dense time for `pre`, plus the previous layer's experts for `prev_r`); what does not
-  fit in the window, the unpredicted misses and the wrong predictions (at the miss rate) cost
-  link time;
-- `hybrid` (5.4): per layer, d / B_dram + t_sync + max(hits x / B_dram, t_sync + m(l) x / B_host)
-  (the card's hits against the host's misses); `hybrid/static` the same with a fixed cache, no
-  inserts;
-- `host_only`: the whole active model on the host, (L (d + k x) + h) / B_host, the baseline a
-  4-bit CPU runtime would reach on opentpu (attention and sampling ignored).
+| Model | card cache | all resident (bound) | Gen1, wait for the last | **Gen1** | **Gen2** | misses / token | link busy, Gen1 |
+|:--|:--|--:|--:|--:|--:|--:|--:|
+| LFM2.5-8B-A1B | 595 slots (85%) | 13.73 | 12.78 | **13.02** | **13.48** | 1.2 of 88 | 7% |
+| gemma-4-26B-A4B | 744 slots (19%) | 5.88 | 3.38 | **3.86** | **5.00** | 57 of 240 | 54% |
+| Qwen3.5-35B-A3B | 1307 slots (13%) | 7.75 | 3.69 | **4.15** | **5.77** | 110 of 320 | 60% |
 
-The host's per-token work outside the device run (sampling, ~0.5-1.3 ms on opentpu today) is
-left out of all of them.
+(tok/s, *simulated*. "wait for the last": the card computes a layer's k experts only after its
+last missing one lands.)
 
-| Model | card cache | resident (bound) | stream Gen1 | best prefetch Gen1 | stream Gen2 | best prefetch Gen2 | hybrid | hybrid/static | host only |
-|:--|:--|--:|--:|--:|--:|--:|--:|--:|--:|
-| LFM2.5-8B-A1B | 595 (85%) | 13.73 | 12.58 | 12.85 | 13.01 | 13.32 | 13.58 (link 0.07) | 13.86 | 11.69 |
-| gemma-4-26B-A4B | 744 (19%) | 5.88 | 3.20 | 3.70 | 4.11 | 4.84 | 6.16 (link 0.86) | 6.01 | 5.00 |
+- **Nearly fits (LFM2.5-8B-A1B).** 85% of the experts stay on the card, and a token misses 1.2
+  of its 88. Streaming them over Gen1 runs at 95% of the all-resident bound; offloading is close
+  to free.
+- **Three times the card (gemma-4-26B-A4B, 13.8 GB at fp4).**
+  - A token misses 57 of its 240 experts: 180 MB, 138 ms of Gen1, against 170 ms of card time.
+  - Waiting for each layer's last expert gives 3.38 tok/s. Computing the ones the card has while
+    the others stream gives 3.86 (+14%). Gen2 gives 5.00 (+30%).
+  - What is left is the link. It is 54% busy at Gen1 and in series with the card on every
+    layer that misses.
+- **Four times the card (Qwen3.5-35B-A3B, 18.9 GB at fp4).**
+  - A token misses 110 of its 320 experts: 184 MB, 141 ms of Gen1, against 129 ms of card time.
+  - Its experts are the smallest here (1.67 MB), so it misses more of them than Gemma 4 does,
+    but each costs less.
+  - It gets 4.15 tok/s at Gen1 (+12% from hits first) and 5.77 at Gen2 (+39%), against a
+    bound of 7.75.
+- **Latency does not matter.**
+  - With t_req / t_done / t_call at 10 / 5 / 15 us: LFM2.5 13.03, Gemma 4 3.89.
+  - At 100 / 50 / 30 us: 13.00 and 3.83.
+  - The bytes are what count, so a card-side DMA engine that saves the host's reaction time
+    (the XDMA descriptor bypass) is not worth building.
+- **What limits Gemma 4 beyond the link is its int8 LM head:** 761 MB of the 2.4 GB a token
+  reads (262,144 x 2816). An fp4 head would raise the bound from 5.9 to ~6.9 tok/s (*estimate*).
 
-*Simulated* from the traces with the constants above (the card's cache at its size from the
-survey: 4 GiB less the on-card part and 0.3 GB; per-layer LRU; `link`: the share of Gen1 the
-hybrid's cache inserts need beside it). Read with care: the time per halt and per DMA call are
-estimates, and the host kernel's rate was measured alone.
+Other levers (same model, Gen1 / Gen2):
 
-- **Nearly fits (LFM2.5-8B-A1B).** 85% of the experts stay on the card and a token misses 1.2
-  of its 88: streaming the misses over Gen1 runs at 92% of the all-resident bound. Offloading
-  is close to free.
-- **Three times the card (gemma-4-26B-A4B, 13.8 GB at fp4).** A token misses 57 of its 240 experts (180 MB):
-  over Gen1 that is 140 ms of transfer against 170 ms of card time, 3.2 tok/s. Prefetch from
-  the previous layer's prediction gives 3.7, Gen2 4.1, both 4.8. **The hybrid gives 6.2**,
-  above the all-resident bound (5.9): the host computes the misses (15 ms of its time) while
-  the card streams its hits, so the two DRAMs work in parallel, and PCIe carries activations
-  (KB per layer) instead of experts (MB). With a fixed cache (no inserts at all) it gives 6.0;
-  with the host kernel at a quarter of its measured rate (3 GB/s, a loaded host) 5.1, or 3.4
-  with the fixed cache, whose 71% misses then load the host.
-- **The host alone** would run these models at 5.0 and 11.7 tok/s at its kernel's rate: the
-  card is worth it for what it adds beside the host, not instead of it.
-- **What limits Gemma 4 now** is its int8 LM head: 761 MB of the 2.4 GB a token reads
-  (262,144 x 2816). An fp4 head, or half the vocabulary computed on the host in parallel, is
-  worth ~20% (*estimate*).
+| Lever | LFM2.5-8B-A1B | gemma-4-26B-A4B |
+|:--|--:|--:|
+| path (a) as above: fp4 experts, card cache | 13.02 / 13.48 | 3.86 / 5.00 |
+| int8 experts (8.25 bits: twice the bytes, half the slots) | 4.56 / 6.64 (306 slots; bound 9.33) | 1.68 / 2.75 (383 slots; bound 4.53) |
+| smaller cache (more KV reserve) | 10.60 / 12.40 (450 slots); 7.48 / 10.34 (300) | 3.19 / 4.52 (500 slots) |
+| best prefetch (section 5.4) | 12.90 / 13.45 (`pre`, k best) | 3.39 / 4.68 (`prev_r`, k best) |
+| prefetch of the prediction's 2k best | 12.34 / 13.09 | 2.61 / 3.76 |
+
+On Qwen3.5-35B-A3B the best prefetch (`pre`, k best) gives 3.89 / 5.78, against 4.15 / 5.77.
+
+- **4-bit experts** are the largest lever after the cache itself. They halve the bytes per
+  miss and double the slots in the same DRAM.
+- **The cache size** matters most for the models that nearly fit. LFM2.5 loses 19% going from
+  595 to 450 slots, so its KV reserve should stay small.
 
 ## 5. Design
 
 ### 5.1 Where things live
 
-- **Card DRAM** (4 GiB): the resident part (dense layers, shared experts, norms, the LM head,
-  KV cache / convolution / DeltaNet state, I/O, programs), then the **expert cache**: fixed-size
-  slots, one expert per slot, every part of the expert contiguous in its slot (gate, up, down
-  rows and their scale words at fixed offsets), so one base address names an expert. All
-  experts of a model have one size, so the slots need no allocator.
-- **Host RAM**: the **expert pool**, every expert already in the card's format (fp4 rows and
-  scale words, the slot layout), in 4 KiB-aligned buffers placed for fast DMA
-  (`board.DMA_PLACE`, docs/host.md), plus the cache directory (expert -> slot, the policy's
-  state). A miss is one DMA write, no conversion. Every model in the table but Qwen3-Next-80B,
+- **Card DRAM** (4 GiB):
+  - **the resident part:** dense layers, shared experts, norms, the LM head, the KV cache and
+    convolution / DeltaNet state, I/O, and programs;
+  - **the expert cache:** fixed-size slots, one expert per slot, split per MoE layer (section
+    5.5). Every part of an expert is contiguous in its slot, with the gate, up and down rows and
+    their scale words at fixed offsets, so one base address names an expert. All experts of a
+    model have one size, so the slots need no allocator;
+  - **the directory:** per layer, E entries {slot address, present}. The host writes it; the
+    card reads it;
+  - **a mailbox:** the card's requests, a ring of 4, and `served`, the last request the host has
+    finished.
+- **Host RAM:** the **expert pool**, every expert already in the card's slot format (fp4 rows
+  and scale words), in 4 KiB-aligned buffers placed for fast DMA (`board.DMA_PLACE`,
+  docs/host.md). The host also keeps its own copy of the directory and the LRU state. A miss is
+  one DMA write, with no conversion. Every model in the table except Qwen3-Next-80B,
   Qwen3.5-122B and gpt-oss-120b fits in 26 GB at fp4.
-- **SSD**: the pool as one file of slot-sized records, read with O_DIRECT in 4 MiB requests
-  (the rate measured above) into host-RAM slots, for models larger than host RAM (section 8).
+- **SSD:** the pool as one file of slot-sized records, for models larger than host RAM
+  (section 8).
 
-### 5.2 Control: three tiers
+### 5.2 Control: the card routes, the host serves
 
-**Tier A: the host routes (no new hardware).** The token's program is split at each MoE
-router into segments; the card halts after a router, the host routes and runs the next
-segment. Per MoE layer l:
+The card runs the whole reply as one run: autodecode's decode loop, in which the card samples
+and feeds back each token. The MoE layers wait inside it. Per MoE layer l, request number `seq`:
 
-1. the card runs segment l: the experts of layer l-1 and their combine, the mixer of layer l
-   (attention, convolution or DeltaNet), the router of layer l (an MM to DRAM), HALT;
-2. the host sees HALTED, reads the router's logits (E words, one small DMA read), applies the
-   model's rule (softmax / sigmoid + bias, top-k, renormalize, per-expert scale) in numpy,
-   looks the k experts up in the directory, and fetches the misses (DMA writes into victim
-   slots) or, in the hybrid, computes them (5.4);
-3. the host binds the k slot addresses into segment l + 1 and starts it.
+1. **Route.**
+   - The router MM gives E scores, with the model's rule on the VPU: LFM2 takes sigmoid plus
+     the expert bias for the choice; Gemma 4 takes softmax.
+   - autodecode's `_select` (ARGMAX, RLD of the position, knock-out to -inf; k times) gives the
+     k ids as floats, and their scores.
+   - The combine weights are the model's: renormalized and scaled.
+2. **Post.** Slice 0 STs the k ids to the mailbox's `ring[seq % 4]`, then STs `seq` in a second
+   ST, so the host never reads a torn request. `seq` is a float counter in TMEM, +1 per MoE
+   layer, from 0 at the start of a run. Positive floats compare by their bits, so the counter
+   works directly in `WAITW`'s GE compare.
+3. **Fence.** `WAITW served GE seq - 1`: the host has finished the previous request. From here
+   on, the host's only work on layer l's cache is this request, and it never evicts an expert
+   the request names. This is normally immediate, because the host served layer l-1 while the
+   card computed it.
+4. **Look up.** One `VOP` gives the k ids x 8 (the entries' offsets). Then a `LOOP` over the
+   ids, stepping a register with `ADDI`: `RLD` the offset into R[e], and `LD` the entry at
+   `dir_l + R[e]` into TMEM. The k LDs are in flight together.
+5. **Hits first.** A second `LOOP` over the ids: `RLD` the entry's present flag into R[p], then
+   `LOOP R[p] { RLD RAW the address -> R[a]; the expert's MMs at R[a] + fixed offsets; the
+   combine }`.
+6. **Misses.** A third `LOOP` over the ids, with count 1 - p for each (one `VOP` over the
+   flags). For each missing expert: `WAITW NE 0` on its entry's address word, which returns the
+   slot address into R[a]; then the same MMs. The host writes each entry right after that
+   expert's DMA, so each missing expert is computed as soon as it lands while the others still
+   stream.
 
-The binding uses the compiler's run-time values (`compiler.RunVar`): an expert's weights are
-a descriptor at `slot_base + slot * SLOT_BYTES` with `slot` a RunVar. There are only 8 ARG
-registers (a decode already uses 6 for the position), so instead of ARGs the host **bakes** the
-values into the immediates of the assembled segment (the instruction's base register becomes
-R0 and the value is added to its immediate; an `ADDI r, R_arg, 0` becomes `ADDI r, R0, v`), a
-generic pass with no limit on the number of values, then writes it (a few KB) and loads it into
-IMEM (4096 instructions on the board). Everything that is not an expert keeps its compile-time
-addresses; segments depend on the position only through the existing ARGs.
+The host daemon (`opentpu/host/offload.py`, phase 2) only moves data:
 
-The cost is one halt per MoE layer: HALTED seen (back-to-back register reads, ~1 us each), the
-logits read (~12 us), the routing in numpy, the segment write and LOAD (~15-25 us), RUN:
-*estimate* 40-100 us, 60 us in the model below (to be measured on the card in phase 2). For
-the models here that is 1.3-2.9 ms per token (22-48 MoE layers), 2-4% of their token time.
-The routing is on the host in every backend (ISA simulator, RTL, card), so all three agree bit
-for bit, and the logits it reads are the card's own.
+1. It polls `seq` with a small c2h read.
+2. It reads the k ids.
+3. For each id missing from its directory copy, it:
+   - picks the layer's LRU victim among the experts the request does not name;
+   - writes {0, 0.0} to the victim's entry;
+   - DMAs the expert into the slot;
+   - writes {slot address, 1.0} to the entry.
+4. It writes `served = seq`.
 
-**Tier B: the card routes (new, general instructions).** Three additions, each useful beyond
-MoE, which the `autodecode` work (the card sampling its own tokens) needs as well:
+Hits need nothing from the host but its bookkeeping. The mailbox, directory and `served` are
+ordinary DRAM words: the host reads and writes them the way `run_generate` already reads
+tokens and writes the stop word during a run.
 
-- `TOPK`: the indices and values of the k largest of a row (MoE routing over E <= 512; greedy
-  and top-k sampling over the vocabulary);
-- `LDR rd, [ra + imm]`: a register loaded from DRAM or TMEM. The token id becomes an
-  embedding-row address; an expert id becomes its slot address through a directory table in
-  DRAM that the host keeps; a loaded count in `LOOP R[ra] + w2` skips an expert (predication);
-- `WAITW [addr], v`: stall until a DRAM word equals v (with a timeout that raises an error), so
-  the card can wait for a host-served miss or a host input without halting.
+**Why it is race-free.** The only hazard would be the host evicting an expert the card is
+using. Each layer has its own slots. Once the fence has passed, the only host work on layer
+l's slots is the current request, which protects its own ids. The card uses layer l's slots
+only between that fence and its next request for layer l, a token later. With S slices, only
+slice 0 posts. Every slice runs the same fence and waits, and reads its own part
+of each slot.
 
-The card then runs a whole token. A layer's experts are `LDR` of their directory entries; a
-missing expert's entry points at a request: the card writes (layer, expert, sequence) to a
-mailbox and waits on the slot's flag, while a host thread polls the mailbox (a 64-byte read,
-as the streamed logits do: docs/host.md), writes the expert and sets the flag. Hits never
-involve the host. This removes the 1.3-2.9 ms of Tier A halts and keeps the resident decode's
-single program.
+**The instruction, proposed to autodecode (one ISA extension, reserved with theirs):**
 
-**Tier C: the card fetches (later, if ever).** The XDMA's descriptor bypass lets card logic
-start host-to-card transfers from host bus addresses: with the pool in pinned host memory and
-its bus addresses in a card table, a miss needs no host CPU at all. It needs a kernel driver
-that pins ~20 GB and exports the addresses (root, the user's install), the bypass wired in the
-block design and a request engine in RTL. It saves the miss latency (tens of us), not
-bandwidth, which the tables above show is what limits; not worth it before Tiers A and B.
+`WAITW` (0x07): wait until `cmp(M32[R[ra] + w1] & w3, R[rb] + w2)`, then
+`R[rd] = M32[R[ra] + w1]` (the word's bits).
 
-### 5.3 Prefetch and overlap
+- Flags bits 1:0 choose the compare: 0 EQ, 1 NE, 2 GE. GE means the 32-bit difference is
+  >= 0 as signed.
+- `w4`: cycles between polls. The first read is immediate.
+- `w5`: a timeout in cycles, 0 for none. On timeout the slice stops with an error the host
+  sees, so a dead daemon cannot hang the card silently.
+- It issues like `RLD`: no younger instruction issues until the condition holds. Every poll is
+  a fresh DRAM read.
+- One requirement on the RTL: after `WAITW` sees a word the host wrote after a completed h2c
+  DMA, every younger MM or LD reads that DMA's data. The host orders its data before its flag;
+  the card orders its flag before its reads. The XDMA and the core meet in each channel's
+  `otpu_mem_ch` and LiteDRAM, whose ordering must give this.
+- In the ISA simulator, a host hook is called when a poll fails: the simulated daemon, which
+  copies experts and writes the directory. If nothing changes, the timeout fires.
 
-DMA into the card's DRAM runs while the card computes (the XDMA shares LiteDRAM's ports with
-the core through `otpu_mem_ch`; the streamed logits already read during runs). A fetch of the
-next layer's experts can therefore overlap the current layer if the choice is known early.
-The traces measure three predictions: the layer's router applied to the layer's input (before
-the mixer) and to the previous layer's states. They name 65-82% of the experts (section 3),
-but the window they open is about one layer's compute: ~0.8 ms for LFM2.5-8B-A1B (11 MB of
-dense weights at 14.1 GB/s) against 4.5 ms for one of its experts over Gen1, ~2.1 ms for
-Gemma 4 (29 MB) against 2.4 ms. A prefetch hides at most about one transfer per layer, and a
-wrong one costs link time. In the model the best prefetch (the previous layer's prediction,
-its k best) gains 2% on LFM2.5 and 16% on Gemma 4; taking the prediction's 2k best loses. It
-is worth having when experts stream, but the hybrid (5.4) does far more; prefetch is a
-refinement for later.
+Everything else is built from instructions autodecode already added: `ARGMAX` (func 20), `RLD`,
+`LOOP R[ra]` (predication), and `HALT CHAIN` when a program outgrows the 4096-instruction IMEM.
 
-### 5.4 Hybrid: the host computes the misses
+The hits-first split costs, per expert, an RLD of the entry's offset, an LD of the entry, and
+an RLD of the present flag. The k LDs issue together, so a layer waits about one
+DRAM round trip: ~0.2% of a token (*estimate*).
 
-The host holds every expert in RAM and computes fp4 as fast as the card
-(`tools/offload/hostkern.c`: 10.7-15.8 GB/s on four cores of the i7-4790 with Gemma 4's and
-LFM2.5's expert shapes, 150-250 us per matrix; eight threads collapse to 0.55 GB/s on this
-4-core host with other load). An expert
-that misses costs its bytes at ~14 GB/s on the host instead of 1.3 GB/s over PCIe, and the host
-works while the card computes the hits: in Tier A the card runs the layer's hits while the host
-computes the misses from the MoE input the card stored beside the logits; the host writes each
-missed expert's output and the card combines all k in the fixed order, so the sum is the same
-as an all-card run. A layer with misses takes a second halt (the combine waits for the host);
-Tier B's `WAITW` removes it.
+**Not needed.**
+- Halts per MoE layer. The first version of this study had one per MoE layer, 1.3-2.9 ms per
+  token.
+- Baking run-time values into immediates.
+- A TOPK instruction: `ARGMAX` knock-out does it at k <= 8.
+- The XDMA descriptor bypass (the card fetching by itself): latency does not matter
+  (section 4), and the bypass would need a kernel driver pinning the pool.
 
-Bit-exactness: hostkern.c computes each 128-block's exact integer and then the card's fp32
-sequence, `isum_4` over blocks of `(i2f(isum) * ws) * ascale`, with every multiply and add
-rounded on its own (`-ffp-contract=off`) and denormals flushed (SSE FTZ + DAZ, the ISA's
-flush-to-zero), and matches its scalar transcription of docs/isa.md bit for bit on random data
-(all rows, three shapes). Phase 2 checks it against the ISA simulator's MM and adds the
-activation (SiLU / GELU composites) and QACT between the projections, also in the ISA's exact
-sequences.
+### 5.3 Overlap
 
-The hybrid still inserts misses into the card's cache in the background when the link has
-room (`link` in the tables: the share of PCIe a caching policy's inserts need); with a full
-link it degrades to a fixed cache (`hybrid/static`).
+DMA into the card's DRAM runs while the card computes. The XDMA shares LiteDRAM's ports with
+the core through `otpu_mem_ch`, and the streamed logits are already read during runs. On a
+layer with misses, the card computes in this order while the link works:
 
-### 5.5 Prefill
+1. the work that needs no expert (Gemma 4's dense MLP, Qwen3.5's shared expert);
+2. its resident experts;
+3. each missing expert as it lands.
+
+On Gemma 4 that is +14% over waiting for the last expert, and on LFM2.5 +2% (it misses
+rarely). The DMA's writes cost the card DRAM time, x / B_dram per expert, which the model
+charges. That is 9% of the expert's transfer time at Gen1 and 18% at Gen2.
+
+### 5.4 Prefetch: measured not to pay
+
+The traces measure three early predictions of a layer's experts (section 3). In the model, a
+prediction posts prefetches as a hint in the mailbox:
+
+- it takes a slot at once (an LRU victim);
+- it uses the link only when no demand transfer needs it (a demand preempts it at the next
+  512 KiB chunk, each chunk one DMA call);
+- its DRAM writes are charged to the card.
+
+Every variant loses:
+- with the k best: 1% on LFM2.5, and 12-14% on Gemma 4 at Gen1 (`pre` 3.34, `prev_r` 3.39,
+  against 3.86);
+- with the 2k best: 5-6% on LFM2.5 and 32-35% on Gemma 4.
+
+The reasons, on Gemma 4 with `prev_r`, per token:
+- 32 prefetches land, but 25 of them are evicted unused;
+- the slots they take raise the demand misses from 57 to 66;
+- the link goes from 54% to 84% busy.
+
+The correct predictions are mostly experts the LRU already holds. The misses are the experts
+that are hard to predict.
+
+A perfect predictor would at most start each transfer one mixer earlier: Gemma 4's `d_pre` is
+1.4 ms against 2.4 ms per expert over Gen1.
+
+Prefetch does help when the card waits for a layer's last expert: +7% on Qwen3.5 at Gen2 (5.35
+against 4.99). Computing the hits first already hides that time (5.77). The design therefore
+carries no hints, and the ISA needs nothing for them.
+
+### 5.5 Eviction
+
+Per-layer LRU, warmed at load from a profile, with every resident weight pinned outside the
+cache (dense, shared experts, norms, head).
+
+- LFU and static profiles lose to it, by 30-50 points on Gemma 4.
+- Belady's bound (0.885 against 0.761 on Gemma 4) is the headroom, but predictions do not
+  reach it (section 5.4).
+- The per-layer split is within a point of a global LRU at the card's sizes. It is what makes
+  eviction race-free without extra synchronization (section 5.2).
+
+### 5.6 Prefill
 
 A prefill chunk touches nearly every expert of every layer (the union of k picks over hundreds
-of tokens), so it streams the layer's missing experts once per chunk, not per token. The card
-computes prefill at its MXU rate (Qwen3-0.6B 4-bit: 103.4 tok/s measured, 2 x parameters x
-tok/s = ~124 G operations per second), which for gemma-4-26B-A4B's 3.8 B active parameters is
-~16 tok/s (*estimate*): a 512-token chunk takes ~1 s per layer against ~0.3 s to bring a whole layer's
-128 experts (405 MB) over Gen1. Fetching layer l + 1 while layer l computes hides it for chunks
-above ~150 tokens. Prefill stays compute-bound, as it is today; the offload does not change it.
-(The host's four AVX2 cores have more int8 multiply rate than the MXU, but a host prefill
-would have to reproduce every kernel of the model bit for bit, not only the experts.)
+of tokens). So it streams a layer's missing experts once per chunk, not per token.
 
-### 5.6 Correctness and tests
+- The card computes prefill at its MXU rate. Qwen3-0.6B 4-bit measures 103.4 tok/s: 2 x
+  parameters x tok/s, about 124 G operations per second.
+- For gemma-4-26B-A4B's 3.8 B active parameters that is ~16 tok/s (*estimate*). A 512-token
+  chunk takes ~1 s per layer, against ~0.3 s to bring a whole layer's 128 experts (405 MB)
+  over Gen1.
+- Fetching layer l + 1 while layer l computes hides the transfer for chunks above ~150 tokens.
 
-Every model stays token-exact against the Hugging Face reference (greedy) in the ISA
+The card-side protocol covers this too: a prefill layer posts the union of its chunk's picks
+and computes the resident ones first. Prefill stays compute-bound, as it is today.
+
+### 5.7 Correctness and tests
+
+Every model stays token-exact against the Hugging Face reference (greedy): first in the ISA
 simulator, then the RTL, then the card. Offloading changes where an expert's bytes come from,
-never which bytes, so the expert cache is invisible in the outputs: the ISA simulator runs
-with a DRAM the size of the card's (`DRAM_BYTES` = 4 GiB) and the host runtime of the card, and
-a test compares its logits with an all-resident run (a small DRAM limit on a small MoE model
-forces misses). Routing on the host from the card's logits keeps the three backends identical.
-A new risk is routing near-ties: the card's router logits differ from bf16's, so the k-th and
-(k+1)-th experts can swap where HF's would not; the check against HF will show whether greedy
-tokens move (as the argmax can today).
+never which bytes, so the expert cache is invisible in the outputs.
+
+The ISA simulator runs with a DRAM the size of the card's (4 GiB) and with the daemon as its
+host hook. Tests:
+- the logits are bit-identical to an all-resident run, on a model that fits, with a small cache
+  that forces misses;
+- the protocol's corner cases: all hits, all misses, a request naming an expert that another
+  request's DMA is evicting, a lagging host (the fence), and the timeout.
+
+The router runs on the card in every backend, so the three agree bit for bit. The one new risk
+is routing near-ties. The card's router logits differ from bf16's, so the k-th and (k+1)-th
+experts can swap where HF's would not. The check against HF will show whether greedy tokens
+move, as the argmax can today.
+
+### 5.8 What path (a) needs from autodecode
+
+With the router on the card there is no tension left with autodecode: the card samples, feeds
+back its tokens and waits for experts within one run. From autodecode's loop, path (a) needs:
+
+1. `WAITW` in the ISA, the simulator (with the host hook) and the RTL, plus the ordering
+   requirement above.
+2. A host-side daemon beside `BoardBackend.run_generate`'s token reader. It shares the DMA
+   device files, with one lock around each call. The token reader and the daemon are the only
+   host work during a reply.
+3. Room in the program. An MoE layer's expert part is three short loops. If a model's decode step
+   outgrows IMEM (4096 instructions), it `CHAIN`s between parts, as autodecode's buckets
+   already do.
+4. Nothing from sampling: the MoE is inside the decode step, which autodecode's loop runs
+   unchanged.
 
 ## 6. PCIe Gen2
 
-| Model | stream, Gen1 -> Gen2 | best prefetch, Gen1 -> Gen2 | hybrid | hybrid's inserts, share of the link |
-|:--|--:|--:|--:|--:|
-| LFM2.5-8B-A1B | 12.58 -> 13.01 (+3%) | 12.85 -> 13.32 (+4%) | 13.58 (no change) | 0.07 -> 0.04 |
-| gemma-4-26B-A4B | 3.20 -> 4.11 (+28%) | 3.70 -> 4.84 (+31%) | 6.16 (no change) | 0.86 -> 0.43 |
+| Model | tok/s, Gen1 -> Gen2 | link busy, Gen1 -> Gen2 |
+|:--|--:|--:|
+| LFM2.5-8B-A1B | 13.02 -> 13.48 (+3.5%) | 7% -> 4% |
+| gemma-4-26B-A4B | 3.86 -> 5.00 (+30%) | 54% -> 35% |
+| Qwen3.5-35B-A3B | 4.15 -> 5.77 (+39%) | 60% -> 43% |
 
-(tok/s, *simulated* as in section 4, Gen2 taken as twice the measured Gen1 rate.)
+(tok/s, *simulated* as in section 4, with Gen2 taken as twice the measured Gen1 rate.)
 
-Gen2 x8 doubles the link (5 GT/s; XDMA's AXI side 128 bits at 250 MHz instead of 125). On
-decode it pays only where experts cross PCIe: +28-31% for Gemma 4 without the host's help,
-nothing for the hybrid, which moves activations. It would also halve the hybrid's cache-insert
-load (86% of Gen1 at Gemma 4's card size, so its LRU inserts fit either way), a prefill
-chunk's per-layer expert stream (405 MB: 0.31 -> 0.16 s) and the image load (4 GiB: ~3.3 ->
-~1.7 s).
+Gen2 x8 doubles the link: 5 GT/s, with XDMA's AXI side at 128 bits and 250 MHz instead of 125.
+- It pays in proportion to the bytes that cross PCIe. For a model 3x the card it is the largest
+  single lever left after 4-bit experts and hits-first overlap.
+- It also halves a prefill chunk's per-layer expert stream (405 MB: 0.31 -> 0.16 s) and the
+  image load (4 GiB: ~3.3 -> ~1.7 s).
 
-The cost is a build that may not close: everything in xdma_aclk (otpu_axi_split2, the XDMA side
-of otpu_mem_ch, the LiteDRAM CSR crossing, the AXI-Lite SmartConnect) goes from 125 to 250 MHz,
-and the earlier Gen2 attempt missed by ~0.1 ns in the IP's own placed paths (80 MHz build,
-docs/board.md section 5).
+The cost is a build that may not close:
+- Everything in xdma_aclk goes from 125 to 250 MHz: otpu_axi_split2, the XDMA side of
+  otpu_mem_ch, the LiteDRAM CSR crossing and the AXI-Lite SmartConnect.
+- The earlier Gen2 attempt missed by ~0.1 ns in the IP's own placed paths (an 80 MHz build,
+  docs/board.md section 5).
 
-**Verdict: not worth a Vivado slot now.** The hybrid gets +93% on Gemma 4 over Gen1 streaming;
-Gen2 gets +28%, and nothing on top of the hybrid. Revisit if the card shows the inserts or
-prefill link-bound. When it comes: a timing-only FAST=1 CORE_MHZ=100 build with
-`pl_link_cap_max_link_speed {5.0_GT/s}` and `axisten_freq {250}` in `bd_native.tcl`.
+**Verdict: parked until phase 2 runs LFM2.5-8B-A1B end to end, then the first build for
+models 3-4x the card.** LFM2.5 gains 3.5%, which does not justify a Vivado slot. Gemma 4 26B
+gains 30% and Qwen3.5-35B 39%, which do once they are the target. The build to try then is a
+timing-only FAST=1 CORE_MHZ=100 build with `pl_link_cap_max_link_speed {5.0_GT/s}` and
+`axisten_freq {250}` in `bd_native.tcl`.
 
 ## 7. Gemma 4 E4B: the per-layer embeddings from the host
 
-E4B is dense and misses 4 GiB only by its PLE table (262,144 x 42 x 256 = 2.82 B parameters).
-A token uses one row of it: 42 x 256 values, 21.5 KB in bf16 (43 KB fp32). The host keeps the
-table (5.6 GB bf16 in RAM, or fp4 / int8 at 1.5 / 2.8 GB) and writes the token's row with its
-run arguments, one DMA write of ~22-43 KB, ~30-40 us at Gen1: under 0.2% of E4B's token
-(2.83 GB streamed at 14.1 GB/s: 5.0 tok/s *estimate*, all resident, fp4 with an int8 head).
-With the host in the loop (today's decode: the host samples) this costs nothing new; for the
-card's own sampling (autodecode) it is a host input per token, the case `WAITW` covers. The
-rest of E4B (2.83 GB) fits with ~1.1 GB to spare for its KV cache.
+E4B is dense, and misses 4 GiB only by its PLE table (262,144 x 42 x 256 = 2.82 B parameters).
+A token uses one row of it: 42 x 256 values, 21.5 KB in bf16 (43 KB in fp32).
+
+- **Where it lives.** The host keeps the table: 5.6 GB in bf16 in RAM, or 1.5 / 2.8 GB in
+  fp4 / int8, in the format the card reads. The rest of E4B (2.83 GB) fits on the card, with
+  ~1.1 GB to spare for its KV cache.
+- **How the card gets the row.** The card asks for it like an expert. After sampling a token it
+  posts the token id to the mailbox. The host DMAs that row into a fixed buffer (one write of
+  ~22-43 KB, ~30-40 us at Gen1) and bumps a flag.
+- **Why it costs nothing.** The card's first use of the row `WAITW`s on the flag. It is used
+  only when layer 0 combines its per-layer input, after that layer's attention and MLP, so the
+  ~0.1 ms round trip hides behind layer 0's ~4.8 ms of weights (*estimate*).
+- **The host's part is a table lookup, i.e. data movement.** The E4B decode stays at ~5.0 tok/s
+  (2.83 GB streamed at 14.1 GB/s, all resident, fp4 with an int8 head; *estimate*).
 
 ## 8. The SSD tier
 
-Three models in the survey are larger than the host's RAM at fp4: Qwen3-Next-80B-A3B (41 GB of
-experts), gpt-oss-120b (61 GB) and Qwen3.5-122B-A10B (62 GB). The host RAM then becomes the
-second cache level (a global LRU over the pool, about 24 GB of it; the card's cache inside it)
-and the SSD holds the pool as one file of slot-sized records. A host miss is on the token's
-path: an SSD read at 0.51 GB/s, 3.3 ms for a 1.67 MB expert, 26 ms for gpt-oss's 13.2 MB.
+Three models in the survey are larger than the host's RAM at fp4:
 
-Gemma 4's traces, with the host RAM limited to part of its pool, stand in for them (`cachesim.py
---host-frac`; the card's cache and the hybrid as in section 4, the SSD reads added on the
-token's path):
+- Qwen3-Next-80B-A3B (41 GB of experts);
+- gpt-oss-120b (61 GB);
+- Qwen3.5-122B-A10B (62 GB).
 
-| Host RAM holds | host hit rate | SSD reads / token | SSD ms / token | tok/s |
-|--:|--:|--:|--:|--:|
-| 30% of the pool | 0.874 | 30.4 | 188 | 2.87 |
-| 40% | 0.937 | 15.1 | 94 | 3.93 |
-| 50% | 0.971 | 7.1 | 44 | 4.87 |
-| 60% | 0.987 | 3.1 | 19 | 5.51 |
+The host RAM then becomes the second cache level: an LRU over the pool, about 24 GB of it, fed
+by the card's misses. The SSD holds the pool as one file of slot-sized records. A host miss is
+on the token's path: an SSD read at 0.51 GB/s (3.3 ms for a 1.67 MB expert, 26 ms for
+gpt-oss's 13.2 MB), then the DMA.
 
-Applied to the three models (*extrapolated*: Gemma 4's hit-rate curves at their fractions, the
-per-layer mean misses; a card cache under 5% of the pool counted as no hits; Qwen3.5-122B's
-on-card part leaves no room, so its LM head moves to the host):
+The model below is `cachesim.py --host-frac`: the host RAM limited to part of the pool, the
+SSD a queue of its own ahead of the link, and the card as in section 4. Two models that fit in
+host RAM stand in for the larger ones:
 
-| Model | pool (fp4) | host RAM holds | host hit | SSD per token | card cache | card + host | tok/s |
-|:--|--:|--:|--:|--:|--:|--:|--:|
-| Qwen3-Next-80B-A3B-Instruct | 41 GB | 58% | 0.98 | 10 x 1.7 MB = 32 ms | 1452 (5.9%) | 129 ms | 6.2 |
-| gpt-oss-120b | 61 GB | 39% | 0.92 | 12 x 13.2 MB = 302 ms | 172 (3.7%) | 242 ms | 1.8 |
-| Qwen3.5-122B-A10B | 62 GB | 39% | 0.92 | 32 x 5.0 MB = 313 ms | 150 (1.2%) | 406 ms | 1.4 |
+| Model | host RAM holds | SSD reads / token | Gen1 | Gen2 |
+|:--|--:|--:|--:|--:|
+| gemma-4-26B-A4B | the whole pool | 0 | 3.86 | 5.00 |
+| gemma-4-26B-A4B | 50% | 6.9 | 3.50 | 4.31 |
+| gemma-4-26B-A4B | 25% | 34.3 | 2.44 | 2.68 |
+| Qwen3.5-35B-A3B | the whole pool | 0 | 4.15 | 5.77 |
+| Qwen3.5-35B-A3B | 50% | 18.4 | 3.67 | 4.63 |
+| Qwen3.5-35B-A3B | 25% | 63.5 | 2.67 | 2.95 |
 
-The SSD tier works best for fine-grained experts with few active bytes: Qwen3-Next-80B (512
-experts of 1.67 MB, 3.6 B active, its layers those of Qwen3.5) stays within host RAM for 98%
-of its picks and runs at ~6 tok/s; the two others are SSD-bound at 1.4-1.8 tok/s. A faster
-disk moves the last two directly (an NVMe drive at 2.5 GB/s would give them ~2.1-3.3 tok/s,
-*estimate*); prediction cannot hide an SSD read (3-26 ms) behind a layer (3-9 ms).
+(tok/s, *simulated*.) At 25% the SSD is the limit, and Gen2 barely helps.
 
-Details for the pool file: fp4 does not compress, so it should be written with btrfs
-compression off (`chattr +m`) to keep O_DIRECT reads direct (compressed extents fall back to
-the page cache); requests of one expert (1.7-13 MB) are in the 4 MiB regime measured above.
+The three larger models:
+
+- **Qwen3-Next-80B-A3B** is the SSD tier's best case. It has Qwen3.5's layers and expert size
+  (1.67 MB), 512 experts and top-10.
+  - Its card caches 1452 slots (5.9% of the pool), and host RAM holds ~58%.
+  - Qwen3.5-35B-A3B's traces at those two fractions give 3.18 tok/s at Gen1 and 4.49 at Gen2,
+    with 158 card misses and 11.6 SSD reads per token.
+  - Qwen3-Next asks 1.5x as many experts per token (480 against 320). Scaling the time beyond
+    the resident bound by that, and taking Qwen3-Next's own bound (2.05 GB per token), gives
+    **~2.4 tok/s at Gen1 and ~3.5 at Gen2** (*extrapolated*).
+- **gpt-oss-120b and Qwen3.5-122B-A10B** are link-bound.
+  - Their experts are 13.2 and 5.0 MB. Their card caches are 172 slots (3.7%) and 150 slots
+    (1.2%). Qwen3.5-122B's on-card part leaves room for those 150 only if its embedding rows
+    come from the host, like E4B's PLE (section 7).
+  - At Gemma 4's and Qwen3.5's per-layer LRU hit rates for such small caches (0.2-0.45), a
+    token sends 1.1-1.5 GB over the link: **under ~1 tok/s at Gen1, ~1.5-2 at Gen2**
+    (*estimate*), before any SSD reads.
+  - They need a card with more DRAM, not a better policy.
+
+Prediction cannot hide an SSD read (3-26 ms) behind a layer (3-9 ms). A faster disk moves the
+host-RAM-limited rows directly; an NVMe drive at 2.5 GB/s would make the 25% rows link-bound.
+
+Details for the pool file:
+- fp4 does not compress, so write the file with btrfs compression off (`chattr +m`).
+  Compressed extents fall back to the page cache, so this keeps O_DIRECT reads direct.
+- Requests of one expert (1.7-13 MB) are in the 4 MiB regime measured above.
 
 ## 9. Phase 2
 
-Phase 2 builds Tier A on the host side first, then the card through team-lead:
+The target is LFM2.5-8B-A1B end to end on the ISA simulator: the card's 4 GiB DRAM, the
+router on the card, per-layer LRU expert slots and host DMA. It is built on autodecode's ISA
+(ARGMAX, RLD, CHAIN), with no Vivado and no card time.
 
-1. **The MoE block** in `ol` kernels: the router (an MM to logits in DRAM), the expert FFN over
-   slot descriptors (SwiGLU; GeGLU for Gemma), the combine (routing weights as fp32 words the
-   host writes, the k outputs summed in a fixed order), the shared expert (Qwen3.5) and the
-   parallel dense MLP (Gemma). The expert slot layout and the host-side pool in the card's
-   format (`quant.quantize_mxu` per expert).
-2. **Segments and baking**: the decode program split at MoE routers (the hidden state stored at
-   each halt and reloaded), and the compiler pass that bakes run-time values into immediates.
-3. **The runtime** (`opentpu/host/offload.py`): routing on the host, the directory and the
-   per-layer LRU, DMA of misses, the hybrid path through `hostkern` (C, loaded with ctypes,
-   bit-exact against the ISA simulator's MM, activation and QACT), the SSD tier.
-4. **The ISA simulator with the card's DRAM** (`DRAM_BYTES` = 4 GiB) driven by the runtime
-   between segments; tests: logits bit-identical to an all-resident run on a model that fits
-   (forced misses from a small cache), and token-exact against HF.
-5. **First model: LFM2.5-8B-A1B** (LFM2's layers plus the MoE block; the card's cache holds 85%
-   of its experts). Then Gemma 4 26B-A4B on the `gemma4` port's layers, and Qwen3.5-35B-A3B on
-   Qwen3.5's.
-6. **The card** (through team-lead): the per-layer halt cost, the misses' DMA while the core
-   runs, tok/s against the model above.
+1. **The MoE block in `ol` kernels:**
+   - the router MM;
+   - the selection (autodecode's `_select`), with LFM2's sigmoid + bias rule and its
+     renormalized, scaled weights;
+   - the expert FFN (SwiGLU) at a slot base register;
+   - the combine in a fixed order.
 
-Tier B's instructions (`TOPK`, `LDR`, `WAITW`) are shared with the card's own sampling
-(`autodecode`) and are designed with it.
+   Also the slot layout, the directory, the mailbox and the fence, and the pool in the card's
+   format (`quant` per expert).
+2. **`WAITW` in the ISA simulator** once autodecode agrees on the encoding, with its host hook.
+3. **The daemon** (`opentpu/host/offload.py`):
+   - the pool in host RAM;
+   - the directory copy and per-layer LRU;
+   - DMA of misses into slots.
+
+   The same code serves the simulator (through the hook) and, later, the card (a thread beside
+   `run_generate`).
+4. **Tests:**
+   - bit-identical logits against an all-resident run, on a small MoE with a tiny cache;
+   - the protocol's corner cases (section 5.7);
+   - LFM2.5-8B-A1B token-exact against HF (greedy), with the card's 4 GiB DRAM.
+5. **Then** Gemma 4 26B-A4B on the `gemma4` port's layers, and Qwen3.5-35B-A3B on Qwen3.5's.
+6. **The card** (through team-lead):
+   - `WAITW` in RTL (autodecode) and its ordering check;
+   - the misses' DMA while the core runs;
+   - tok/s against the model above.

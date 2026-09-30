@@ -23,16 +23,17 @@ input, one mixer ahead; `prev_r` / `prev_in`: one layer ahead), taking the predi
 best.
 
 With `--survey` (tools/offload/survey.py --json): the card's cache size (4 GiB less the model's
-on-card part and a reserve) joins the sizes, and each replay becomes tokens per second under the
-strategies of docs/offload.md section 4 (`tok_times`). `--host-frac`: the SSD tier, a host RAM
-holding that fraction of the pool (global LRU) over the SSD.
+on-card part and a reserve) joins the sizes, and each replay becomes tokens per second under
+path (a) of docs/offload.md section 4, the card computing everything and the host only moving
+experts (`linksim`), with and without prefetch from the predictions. `--host-frac`: the SSD
+tier, a host RAM holding that fraction of the pool (LRU) over the SSD.
 """
 from __future__ import annotations
 
 import argparse
 import heapq
 import json
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from pathlib import Path
 
 import numpy as np
@@ -213,49 +214,166 @@ def accuracy(req, preds, k):
     return out
 
 
-def tok_times(req, miss_at, preds, hw, by):
-    """Tokens per second under each strategy (docs/offload.md section 4), from the per-layer
-    misses of one replay. `by`: expert bytes `x`, dense bytes per MoE layer `d`, LM head bytes
-    `head`; `hw`: the rates and costs (main's options)."""
+def resident_time(L, k, by, hw):
+    """Seconds per token if every expert fit on the card: the bound."""
+    return (L * (by["d_pre"] + by["d_post"] + k * by["x"]) + by["head"]) / hw["dram"]
+
+
+def linksim(req, preds, caps, warm, hw, by, pred=None, width=None, host=None, overlap="each"):
+    """Path (a), docs/offload.md section 4: the card computes everything and the experts it
+    lacks stream over PCIe into per-layer LRU slots, one token and layer at a time.
+
+    Per MoE layer the card runs its mixer and router (`d_pre` bytes), posts the k expert ids
+    (the host sees them `req` seconds later and DMAs the missing ones one after another,
+    `x / pcie + call` each), runs what needs no expert (`d_post`: Gemma 4's dense MLP, a shared
+    expert), then the k experts: `overlap` "all" waits for the last missing expert (plus
+    `done`: the flag the host sets and WAITW sees) and computes the k after it; "each" computes
+    the experts it has first and each missing one as soon as it lands (plus `done`), while the
+    rest stream, each transfer's DRAM writes charged to the card's time. A prediction (`pred`: "pre", the layer's own router
+    before its mixer; "prev_r", the next layer's router right after this one's; its `width`
+    best) posts prefetches that take a slot at once (an LRU victim) and use the link only when
+    no demand transfer needs it: a demand preempts them at the next `chunk` bytes (each chunk a
+    DMA call), and each prefetched byte, landing while the card computes, costs DRAM time.
+    `host`: (slots, profile order) of a host-RAM LRU over the pool, whose misses are read from
+    the SSD (`ssd` bytes/s, its own queue) before they cross the link. Returns tok/s and
+    per-token counts: demand transfers, completed prefetches, prefetches wasted (evicted or
+    overwritten unused), SSD reads, and the link's busy share."""
     T, L, k = req.shape
-    x, d, head = by["x"], by["d"], by["head"]
-    Bd, Bh, sync, call = hw["dram"], hw["host"], hw["sync"], hw["call"]
-    miss = np.zeros((T, L), np.int64)
-    for (t, j), m in miss_at.items():
-        miss[t, j] = len(m)
-    hit_rate = 1 - miss.sum() / (T * L * k)
-    td = d / Bd                                       # a layer's dense part on the card
-    tk = k * x / Bd                                   # its k experts on the card
-    out = {"resident": np.full(T, L * (td + tk) + head / Bd),
-           "host_only": np.full(T, (L * (d + k * x) + head) / Bh)}
-    for pc in hw["pcie"]:
-        tx = x / pc + call                            # one expert over PCIe
-        out[f"stream@{pc / 1e9:.1f}"] = (L * (td + tk + sync) + head / Bd) + miss.sum(1) * tx
-        for name, win in (("pre", td), ("prev_r", td + tk)):
-            if name not in preds:
+    x, Bd, Bp = by["x"], hw["dram"], hw["pcie_one"]
+    tx = x / Bp + hw["call"]                           # a demand transfer: one DMA call
+    chunk = hw.get("chunk", 512 << 10)
+    tx_pre = x / Bp + -(-int(x) // chunk) * hw["call"]  # a prefetch, in chunks
+    t_chunk = chunk / Bp + hw["call"]
+    t_pre, t_post, t_exp = by["d_pre"] / Bd, by["d_post"] / Bd, x / Bd
+    caches = [OrderedDict() for _ in range(L)]        # expert -> arrival time, or None: queued
+    for j, ws in enumerate(warm):
+        for e in ws[:caps[j]]:
+            caches[j][e] = -1.0
+    hc = None
+    if host is not None:
+        hs, order = host
+        hc = OrderedDict((e, None) for e in order[:hs])
+    unused = set()                                     # prefetched, not used yet
+    pending = deque()                                  # [ready time, layer, e, time left]
+    st = dict(free=0.0, ssd=0.0, busy=0.0)
+    cnt = dict(demand=0, prefetched=0, wasted=0, ssd=0)
+
+    def ssd_ready(e, when):
+        """When expert e is in host RAM (after an SSD read if the host's cache misses)."""
+        if hc is None:
+            return when
+        if e in hc:
+            hc.move_to_end(e)
+            return when
+        cnt["ssd"] += 1
+        st["ssd"] = max(st["ssd"], when) + x / hw["ssd"]
+        if len(hc) >= hs:
+            hc.popitem(last=False)
+        hc[e] = None
+        return st["ssd"]
+
+    def evict_into(j, e, v, protect):
+        c = caches[j]
+        if len(c) >= max(caps[j], k):
+            victim = next(q for q in c if q not in protect)
+            if c[victim] is None:                      # a queued prefetch: drop it
+                for it in pending:
+                    if it[1] == j and it[2] == victim:
+                        it[3] = -1.0
+            if (j, victim) in unused:
+                unused.discard((j, victim))
+                cnt["wasted"] += 1
+            del c[victim]
+        c[e] = v
+
+    def advance(now):
+        """Prefetches use the link's idle time up to `now` (in order, preemptible)."""
+        t = st["free"]
+        while pending and t < now:
+            it = pending[0]
+            if it[3] < 0 or caches[it[1]].get(it[2], 0.0) is not None:
+                pending.popleft()                      # dropped, or taken as a demand
                 continue
-            for w in (k, 2 * k):
-                tt = np.full(T, L * (td + tk + sync) + head / Bd)
-                for (t, j), m in miss_at.items():
-                    p = preds[name][j]
-                    if p is None:
-                        tt[t] += len(m) * tx
-                        continue
-                    P = set(p[t, :w].tolist())
-                    cov = sum(e in P for e in m)
-                    wasted = (w - len(P & set(req[t, j].tolist()))) * (1 - hit_rate)
-                    tt[t] += max(0.0, (cov + wasted) * tx - win) + (len(m) - cov) * tx
-                out[f"prefetch-{name}-{w}@{pc / 1e9:.1f}"] = tt
-    # the card computes its hits while the host computes the misses from host RAM; a layer with
-    # misses takes a second halt (the host's outputs must land before the card combines them)
-    hyb = np.array([sum(td + sync + max((k - miss[t, j]) * x / Bd,
-                                        (sync + miss[t, j] * x / Bh) if miss[t, j] else 0.0)
-                        for j in range(L)) + head / Bd for t in range(T)])
-    out["hybrid"] = hyb
-    res = {n: float(T / v.sum()) for n, v in out.items()}
-    # PCIe share a cache that inserts every miss needs (the hybrid's inserts run beside it)
-    res["hybrid_link"] = float(miss.sum() * x / hyb.sum() / min(hw["pcie"]))
-    return res
+            s0 = max(t, it[0])
+            if s0 >= now:
+                break
+            run = min(it[3], now - s0)
+            it[3] -= run
+            st["busy"] += run
+            t = s0 + run
+            if it[3] <= 1e-12:
+                pending.popleft()
+                caches[it[1]][it[2]] = t
+                unused.add((it[1], it[2]))
+                cnt["prefetched"] += 1
+        st["free"] = max(st["free"], t)
+
+    def post(j, ids, when):
+        for e in ids:
+            e = int(e)
+            if e not in caches[j]:
+                evict_into(j, e, None, set())
+                pending.append([ssd_ready(e, when), j, e, tx_pre])
+
+    t = 0.0
+    debt = 0
+    for tok in range(T):
+        for j in range(L):
+            if pred == "pre" and preds[pred][j] is not None:
+                post(j, preds[pred][j][tok, :width], t + hw["req"])
+            tr = t + t_pre + debt * t_exp               # the router is done
+            want = [int(e) for e in req[tok, j]]
+            td = tr + hw["req"]                         # the host sees the request
+            pre0 = cnt["prefetched"]
+            advance(td)
+            need = tr
+            dem, late = [], []
+            for e in want:
+                c = caches[j]
+                if e in c and c[e] is not None:
+                    c.move_to_end(e)
+                    need = max(need, c[e])
+                    if c[e] > tr:
+                        late.append(c[e])
+                    unused.discard((j, e))
+                else:
+                    left = tx
+                    if e in c:                          # queued or part-sent: finish it now
+                        for it in pending:
+                            if it[1] == j and it[2] == e and it[3] >= 0:
+                                left, it[3] = min(tx, it[3] + hw["call"]), -1.0
+                        c.move_to_end(e)
+                    else:
+                        evict_into(j, e, None, set(want))
+                    dem.append((e, left))
+            if dem:
+                s0 = max(st["free"], td)
+                if pending and pending[0][3] >= 0 and pending[0][0] < td:
+                    s0 += min(t_chunk, pending[0][3])  # the prefetch chunk under way ends
+                for e, left in dem:
+                    s0 = max(s0, ssd_ready(e, td))
+                    s0 += left
+                    st["busy"] += left
+                    caches[j][e] = s0
+                    late.append(s0)
+                    cnt["demand"] += 1
+                need = max(need, s0)
+                st["free"] = s0
+            if pred == "prev_r" and j + 1 < L and preds[pred][j + 1] is not None:
+                post(j + 1, preds[pred][j + 1][tok, :width], td)
+            if overlap == "each":
+                t = tr + t_post + (k - len(late) + len(dem)) * t_exp
+                for a_ in sorted(late):
+                    t = max(t, a_ + hw["done"]) + t_exp
+            else:
+                ready = tr + t_post
+                if need > tr:
+                    ready = max(ready, need + hw["done"])
+                t = ready + k * t_exp
+            advance(t)
+            debt = cnt["prefetched"] - pre0             # their DRAM writes, on the next layer
+        t += by["head"] / Bd
+    return dict(tok_s=T / t, link=st["busy"] / t, **{q: v / T for q, v in cnt.items()})
 
 
 def main():
@@ -272,14 +390,22 @@ def main():
                     help="card DRAM kept for KV / state, I/O, programs")
     ap.add_argument("--dram-gbs", type=float, default=14.1, help="card DRAM while decoding")
     ap.add_argument("--pcie-gbs", default="1.3,2.6", help="host -> card (Gen1 measured, Gen2)")
-    ap.add_argument("--host-gbs", type=float, default=12.0,
-                    help="host fp4 expert kernel (tools/offload/hostkern.c: 12-16 on opentpu)")
-    ap.add_argument("--sync-us", type=float, default=60.0, help="one halt, host step, restart")
     ap.add_argument("--call-us", type=float, default=30.0, help="per DMA call")
-    ap.add_argument("--timing-policy", default="lru_layer")
+    ap.add_argument("--req-us", type=float, default=30.0,
+                    help="the card posts expert ids -> the host starts their DMA")
+    ap.add_argument("--done-us", type=float, default=15.0,
+                    help="a DMA ends -> the card's WAITW sees the host's flag")
+    ap.add_argument("--post-mb", type=float, default=0.0,
+                    help="a MoE layer's work after its router that needs no expert (MB)")
+    ap.add_argument("--stream-slots", default="",
+                    help="cache sizes to run the stream model at (default: the card's)")
     ap.add_argument("--host-frac", default="",
                     help="host RAM caches of these pool fractions over an SSD (section 8)")
     ap.add_argument("--ssd-gbs", type=float, default=0.51, help="SSD reads, O_DIRECT 4 MiB")
+    ap.add_argument("--overlap", default="each", choices=("each", "all"),
+                    help="compute each missing expert when it lands, or all after the last")
+    ap.add_argument("--expert-bits", type=float, default=4.25,
+                    help="bits per expert weight (4.25: fp4 blocks; 8.25: int8)")
     a = ap.parse_args()
     tr = [load(p) for p in a.traces]
     E, L = tr[0]["E"], tr[0]["req"].shape[1]
@@ -292,17 +418,20 @@ def main():
         name = a.repo or Path(tr[0]["meta"]["model"]).name
         d = next(r for r in rs if r["repo"] == name or r["repo"].split("/")[-1] == name)
         head = (d["head"] or d["embed"]) * 8.25 / 8
-        by = dict(x=d["expert_bytes"], head=head,
-                  d=(d["tok_bytes"] - d["tok_expert_bytes"] - head) / L)
-        card = int((a.card_gib * 2**30 - d["resident_bytes"] - a.reserve_gb * 1e9)
-                   // d["expert_bytes"])
+        dl = (d["tok_bytes"] - d["tok_expert_bytes"] - head) / L
+        xb = d["expert_bytes"] * a.expert_bits / 4.25
+        by = dict(x=xb, head=head, d_pre=dl - a.post_mb * 1e6,
+                  d_post=a.post_mb * 1e6)
+        card = int((a.card_gib * 2**30 - d["resident_bytes"] - a.reserve_gb * 1e9) // xb)
         card = max(k, min(card, n))
         extra.add(card)
-        print(f"  survey {d['repo']}: expert {d['expert_bytes'] / 1e6:.2f} MB, dense "
-              f"{by['d'] / 1e6:.1f} MB / layer, head {head / 1e6:.0f} MB; card cache {card} slots "
+        print(f"  survey {d['repo']}: expert {xb / 1e6:.2f} MB, dense "
+              f"{dl / 1e6:.1f} MB / layer ({a.post_mb} after the router), head "
+              f"{head / 1e6:.0f} MB; card cache {card} slots "
               f"({card / n:.2f} of the pool) in {a.card_gib} GiB")
-    hw = dict(dram=a.dram_gbs * 1e9, host=a.host_gbs * 1e9, sync=a.sync_us * 1e-6,
-              call=a.call_us * 1e-6, pcie=[float(v) * 1e9 for v in a.pcie_gbs.split(",")])
+    hw = dict(dram=a.dram_gbs * 1e9, call=a.call_us * 1e-6, req=a.req_us * 1e-6,
+              done=a.done_us * 1e-6, ssd=a.ssd_gbs * 1e9,
+              pcie=[float(v) * 1e9 for v in a.pcie_gbs.split(",")])
     sizes = sorted({max(k, int(round(float(f) * n))) for f in a.frac.split(",") if f} | extra)
     rows = []
     print(f"{tr[0]['meta']['model']}: {L} MoE layers x {E} experts, top-{k}; "
@@ -328,8 +457,6 @@ def main():
                 if pol in ("lru", "lru_layer"):
                     r["cover_k"] = coverage(ma, x["preds"], k)
                     r["cover_2k"] = coverage(ma, x["preds"], 2 * k)
-                if by:
-                    r["tok_s"] = tok_times(x["req"], ma, x["preds"], hw, by)
                 rows.append(r)
     print(f"{'slots':>6} {'frac':>5} " + " ".join(f"{p:>13}" for p in a.policies.split(","))
           + "   (hit rate, misses/token mean; mean over texts)")
@@ -346,48 +473,47 @@ def main():
                 f"{p} {np.mean([r['cover_k'][p] for r in lru]):.2f}/"
                 f"{np.mean([r['cover_2k'][p] for r in lru]):.2f}" for p in lru[0]["cover_k"])
         print(f"{C:>6} {C / n:5.2f} " + " ".join(f"{c:>13}" for c in cells) + cov)
+    stream, ssd = [], []
     if by:
-        names = [m for m in rows[0]["tok_s"] if m != "hybrid_link"]
-        print(f"tok/s ({a.timing_policy} cache; mean over texts; pcie GB/s after @; hybrid/static: "
-              f"the host computes every miss of a fixed cache; link: the PCIe share the "
-              f"{a.timing_policy} inserts need beside the hybrid):")
-        print(f"{'slots':>6}  " + "  ".join(names) + "  hybrid/static  link")
-        for C in sizes:
-            rs = [r for r in rows if r["slots"] == C and r["policy"] == a.timing_policy]
-            st = [r for r in rows if r["slots"] == C and r["policy"] == "static"]
-            print(f"{C:>6}  " + "  ".join(f"{np.mean([r['tok_s'][m] for r in rs]):{len(m)}.2f}"
-                                          for m in names)
-                  + f"  {np.mean([r['tok_s']['hybrid'] for r in st]):13.2f}"
-                  + f"  {np.mean([r['tok_s']['hybrid_link'] for r in rs]):4.2f}"
-                  + ("   <- card" if C == card else ""))
-    ssd = []
-    if by and a.host_frac:
-        print(f"SSD tier: the host RAM holds a fraction of the pool (global LRU, warm from the "
-              f"profile), misses read from the SSD at {a.ssd_gbs} GB/s on the token's path; the "
-              f"card cache ({card} slots, {a.timing_policy}) and the hybrid as above")
-        print(f"{'host frac':>9} {'host hit':>8} {'SSD reads/token':>15} {'SSD ms/token':>12} "
-              f"{'tok/s':>6}")
-        for hf in [float(v) for v in a.host_frac.split(",")]:
-            Ch = max(card, int(round(hf * n)))
-            hits, reads, tps = [], [], []
-            for i, x in enumerate(tr):
-                others = [y["req"] for j, y in enumerate(tr) if j != i] or [x["req"]]
-                prof = sum(freq(r, n) for r in others)
-                mt, _ = simulate(x["req"], Ch, "lru", top_set(prof, Ch), prof)
-                T = x["req"].shape[0]
-                hits.append(1 - mt.sum() / (T * L * k))
-                reads.append(mt.mean())
-                hy = next(r for r in rows if r["text"] == Path(x["meta"]["text"]).name
-                          and r["slots"] == card and r["policy"] == a.timing_policy)["tok_s"]
-                t = 1 / hy["hybrid"] + mt.mean() * by["x"] / (a.ssd_gbs * 1e9)
-                tps.append(1 / t)
-            ssd.append(dict(host_frac=hf, host_slots=Ch, host_hit=float(np.mean(hits)),
-                            ssd_reads=float(np.mean(reads)), tok_s=float(np.mean(tps))))
-            print(f"{hf:9.2f} {np.mean(hits):8.3f} {np.mean(reads):15.1f} "
-                  f"{np.mean(reads) * by['x'] / (a.ssd_gbs * 1e6):12.1f} {np.mean(tps):6.2f}")
+        cfgs = [("stream", None, None)] + [(f"{p}-{w}", p, w) for p in ("pre", "prev_r")
+                                           for w in (k, 2 * k) if p in tr[0]["preds"]]
+        ssizes = [int(v) for v in a.stream_slots.split(",") if v] or [card]
+        hosts = [None] + [float(v) for v in a.host_frac.split(",") if v]
+        print(f"path (a), the card computes everything, overlap {a.overlap} (tok/s, mean over "
+              f"texts; resident bound "
+              f"{1 / resident_time(L, k, by, hw):.2f}); per config: tok/s (demand transfers / "
+              f"prefetches / wasted prefetches per token, the link's busy share)")
+        for C in ssizes:
+            caps = [C // L + (j < C % L) for j in range(L)]
+            for hf in hosts:
+                for pc in hw["pcie"]:
+                    line = []
+                    for name, pr, w in cfgs:
+                        res = []
+                        for i, x in enumerate(tr):
+                            others = [y["req"] for j, y in enumerate(tr) if j != i] or [x["req"]]
+                            prof = sum(freq(r, n) for r in others)
+                            warm = [[int(j * E + e) for e in np.argsort(-prof[j * E:(j + 1) * E],
+                                                                        kind="stable")]
+                                    for j in range(L)]
+                            host = None
+                            if hf is not None:
+                                hs = max(C, int(round(hf * n)))
+                                host = (hs, top_set(prof, n))
+                            res.append(linksim(x["req"], x["preds"], caps, warm,
+                                               dict(hw, pcie_one=pc), by, pr, w, host,
+                                               a.overlap))
+                        m = {q: float(np.mean([r_[q] for r_ in res])) for q in res[0]}
+                        row = dict(slots=C, host_frac=hf, pcie=pc, config=name, **m)
+                        (ssd if hf is not None else stream).append(row)
+                        line.append(f"{name} {m['tok_s']:.2f} ({m['demand']:.1f}/"
+                                    f"{m['prefetched']:.1f}/{m['wasted']:.1f}, "
+                                    f"{m['link']:.2f})")
+                    tag = f"host RAM {hf:.0%} of the pool, " if hf is not None else ""
+                    print(f"  {C} slots, {tag}PCIe {pc / 1e9:.1f} GB/s: " + "; ".join(line))
     if a.json:
         Path(a.json).write_text(json.dumps(dict(model=tr[0]["meta"]["model"], E=E, layers=L, k=k,
-                                                ssd=ssd,
+                                                stream=stream, ssd=ssd, overlap=a.overlap,
                                                 card_slots=card, bytes=by, hw=hw,
                                                 accuracy={Path(x["meta"]["text"]).name:
                                                           accuracy(x["req"], x["preds"], k)
