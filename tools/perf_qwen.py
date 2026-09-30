@@ -220,6 +220,10 @@ def main():
     for addr, v in parts:
         b = np.ascontiguousarray(v, np.float32).view(np.uint8).ravel()
         dram[addr:addr + b.size] = b
+    # rows of tables the host keeps (Gemma 4 E4B's PLE records), as the Engine writes them
+    for addr, v in getattr(img, "host_rows", lambda t: [])([791 + r for r in range(R)]):
+        b = np.ascontiguousarray(v).view(np.uint8).ravel()
+        dram[addr:addr + b.size] = b
     if a.depth:
         import opentpu.llm.qwen3 as Q
         Q.ATTN_DEPTH = a.depth
