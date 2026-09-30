@@ -1680,3 +1680,57 @@ sit at its two ends (by their DDR3 banks), and one register drove loads at both.
     are not placed by their loads. `crg_rst1_reg_rep__13` sits at Y173 and drives 181 loads at
     Y254-302 (6.8 ns of route to them), as does the CSR bus's write strobe for the PHY's bitslips
     (`wdly_dq_bitslip_rst`, 213 loads). The next full build measures both.
+
+### The write clocks' paths (ld-phy)
+
+After the sys families, the write clocks' worst paths were the PHY's own two hops to the
+serializers, at +0.15 to +0.35 ns in 812bb01 and 110ec6d.
+
+- **The serializer resets** (`wlrst` -> OSERDES / ISERDES RST, 3.0 ns `set_max_delay`): one
+  register per lane drove its 9 serializers across the lane's 12 I/O rows (812bb01: +0.282, 1.99
+  ns of route). Now there is one per DQ pad (its OSERDES and ISERDES, in one I/O tile) and one per
+  DQS pad. The command pads keep one per eight; `reset_n`, in the next bank, gets its own, so no
+  group spans two banks (812bb01: +0.347, a group over rows 325-388). That makes 86 registers per
+  channel instead of 22, with the same reset and the same release.
+- **The command pads' crossing** (`nreg`: an FDRE on sys's falling edge, half a cycle in, then
+  half a cycle less the crossing's 1.0 ns of uncertainty out to the serializer). A query of
+  110ec6d's routed checkpoint over all 402 of these registers found:
+  - The worst are `cs_n` / `ras_n` / `cas_n` / `we_n`'s: +0.220..+0.29 on the way out.
+  - Their input is the phase injector's command issue, which LiteDRAM decodes from the CSR bus's
+    address register in the same cycle: 3-4 LUT levels from the die's centre, +0.33..+0.6 in.
+    The placer parks the registers between the two (channel 0: rows 158-186, for pads at
+    80-92).
+  - The two halves together have at least +0.634 / +0.708 (channel 0 / 1). A Pblock by the pads
+    would only move the failure to the input side, so there is none.
+  - `dfii_q.py` registers the command issue instead. A software-injected command (the
+    calibration's; the controller's commands do not pass there) leaves from a flip-flop a sys
+    cycle later. The whole 4-phase word moves with it: the command, its write and read data
+    enables, and commands on other phases. Its address, bank, data and command fields are CSR
+    storages written by earlier accesses.
+  - The command still goes out within its own CSR access (5 cycles). The selfcal firmware reads
+    `rddata` a whole precharge command later (4 CSR writes after the read), and the host's
+    `ddrcal` microseconds later.
+- **Checks:**
+  - `dfii_q_check.py` (migen): LiteDRAM's DFIInjector against one with this PhaseInjector, the
+    same CSR writes, controller traffic and read data. There are 20,000 writes per seed: issues
+    on any phase (activate, write with its data enable, read with its, precharge, a data enable
+    alone), the storages, and the control register. The gaps are 0-4 cycles; the production
+    bus's are 4 at least.
+    - Under software control each phase's command signals equal LiteDRAM's a cycle earlier.
+    - Every injected word comes out whole a cycle later, so the phases keep their alignment.
+    - The storage-driven signals are the same in the same cycle, and under hardware control
+      everything is; the read data registers are equal.
+    - At seeds 1-3: PASS, 5,561-5,683 injected-command cycles each. Of those, 855-903 are data
+      enables on another phase than a command at most 5 cycles before, and 1,096-1,122 come at
+      most 2 cycles after the last command.
+    - It fails with the issue not registered, or registered twice.
+  - `selfcal_sim.py` (stride 16, `--hold-test`): PASS.
+  - The co-simulation, with `otpu_ldc_ch.v` regenerated (its four injectors' registers):
+    `test_rtl.py -k ldc` 5 passed; `perf_qwen --ldc` 1,478,546 cycles, as before.
+  - The regenerated core differs from one without the register by exactly the eight injectors'
+    registers, and from ld-fmax's by those and the resets. Every SERDES RST is driven by a
+    `wlrst`: 144 of them at fanout 2 (a DQ's OSERDES and ISERDES), 22 at fanout 1, 6 at 8.
+- **The card, before production:**
+  - Calibration and BIST on both channels.
+  - Write and read leveling results equal to the production image's: the injected commands'
+    timing is the calibration's.
