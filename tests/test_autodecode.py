@@ -121,6 +121,27 @@ def test_halt_chain_checks_the_target():
         run1(first, dram=np.zeros(1 << 16, np.uint8), cfg=Config(S=1, D=32))
 
 
+def test_the_gen_op_checks_run_on_the_isa_simulator():
+    """otpu-diag's programs for the decode loop's instructions (opchecks group gen, only for a
+    bitstream with CAPS bit28): each stores what it computed, HALT CHAIN's second program too."""
+    import dataclasses
+
+    from opentpu.host.checks import PROG_AT, ZERO_AT
+    from opentpu.host.opchecks import diag_image, op_checks
+    from opentpu.isasim import board_config
+    cfg = board_config(DRAM_BYTES=1 << 23)
+    img = diag_image()
+    checks = [(n, p) for g, n, p in op_checks(cfg, gen=True) if g == "gen"]
+    assert len(checks) == 5 and not [g for g, _, _ in op_checks(cfg) if g == "gen"]
+    for name, prog in checks:
+        ref = np.zeros(1 << 23, np.uint8)
+        ref[:len(img)] = img
+        m = Machine(dataclasses.replace(cfg, DRAM_BYTES=len(ref)),
+                    [[I.ld(ZERO_AT, 0, cfg.TMEM_WORDS)] + prog], [ref]).run()
+        assert (m.slices[0].dram[:PROG_AT] != ref[:PROG_AT]).sum() >= 27, name
+        assert m.chains == (name == "HALT CHAIN")
+
+
 # ---------------------------------------------------------------------------------- the sampler
 @pytest.mark.parametrize("S", [1, 2])
 @pytest.mark.parametrize("temperature,top_k,top_p,penalty", [
