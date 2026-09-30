@@ -123,7 +123,7 @@ def test_halt_chain_checks_the_target():
 
 def test_the_gen_op_checks_run_on_the_isa_simulator():
     """otpu-diag's programs for the decode loop's instructions (opchecks group gen, only for a
-    bitstream with CAPS bit28): each stores what it computed, HALT CHAIN's second program too."""
+    bitstream with CAPS bit30): each stores what it computed, HALT CHAIN's second program too."""
     import dataclasses
 
     from opentpu.host.checks import PROG_AT, ZERO_AT
@@ -255,6 +255,26 @@ def test_generate_matches_the_host_loop(tiny, S):
     j = next(j for j in range(13, 20) if ref[j] not in ref[12:j])   # a token not seen since
     assert a.generate_card(ref[11], 30, stop_ids=[ref[j], 1001]) == ref[12:j + 1]
     assert a.pos == 248 + j + 1                      # the stop id is not fed
+
+
+def test_generate_debug_keeps_the_logits(tiny):
+    """Engine.gen_debug: the generate loop's LM head also stores the logits, and after a run
+    they are the last token's, bit for bit the resident step's at that position."""
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    name, W, spec = tiny
+    cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=2)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    a.gen_debug = True
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 20)]
+    t0 = int(np.argmax(a.prefill(toks)))
+    b.prefill(toks)
+    got = a.generate_card(t0, 6, stop_ids=[])
+    lg, t = None, t0
+    for want in got:
+        lg = b.step(t)
+        t = int(np.argmax(lg))
+        assert t == want
+    assert np.array_equal(a.gen_logits.view(np.uint32), lg.view(np.uint32))
 
 
 @pytest.mark.parametrize("S", [1, 2])

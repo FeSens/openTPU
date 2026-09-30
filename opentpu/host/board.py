@@ -1170,7 +1170,7 @@ class BoardBackend:
     # ---- the decode loop on the card (Engine.generate_card)
     @property
     def generates(self) -> bool:
-        """The bitstream runs the generate programs: RLD, VOP ARGMAX, HALT CHAIN (CAPS bit28)."""
+        """The bitstream runs the generate programs: RLD, VOP ARGMAX, HALT CHAIN (CAPS bit30)."""
         return bool((self.info.get("caps") or {}).get("gen"))
 
     chains = generates

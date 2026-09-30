@@ -99,6 +99,7 @@ Every instruction is 8 x 32-bit words `w0..w7`.
 | 0x04 | LOOP | body = next `w1` instructions, executed `R[ra] + w2` times (0: skipped). Loops nest (depth 4); a body must not end on the same instruction as an enclosing body. |
 | 0x05 | BAR | wait until every slice has reached a `BAR` |
 | 0x06 | RLD | `R[rd] = f2i(T[R[ra]+w1])`, flag bit0 RAW: the word's bits (see "RLD") |
+| 0x07 | WAITW | reserved: wait until a DRAM word meets a condition (MoE expert streaming, docs/offload.md on branch offload) |
 | 0x10 | LD | DRAM -> TMEM, `n = w3` words: `T[R[rb]+w2+i] = M32[R[ra]+w1+4i]` |
 | 0x11 | ST | TMEM -> DRAM: `M32[R[ra]+w1+4i] = T[R[rb]+w2+i]` for `i < w3` |
 | 0x12 | DSTEP | one Gated DeltaNet head step on a DRAM state, run by the DMA (see below; `Config.DSTEP`, CAPS bit6) |

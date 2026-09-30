@@ -455,7 +455,7 @@ def _pick(b, k, stride: int, base: int, what: str):
 
 
 # ---- the program
-def _generate(m, pos, block, step, spec, chain, samp=None):
+def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
     b = current()
     g = m.gen
     st = ol.load(g.state)
@@ -472,7 +472,7 @@ def _generate(m, pos, block, step, spec, chain, samp=None):
     chunk = min(8192, b.cfg.TMEM_WORDS // 8)       # qwen3.HEAD_CHUNK, _lm_head's chunks
     sink = (Greedy(b, m.v_loc, chunk) if samp is None
             else Sampler(b, m, g, samp, st, pos, consts))
-    m.lm_sink = sink
+    m.lm_sink, m.lm_keep = sink, debug
     step.fn(m=m, pos=pos, block=block)
     tok = sink.token()
     ol.store(g.out[pos.pos + 1:pos.pos + 2], tok)
@@ -529,11 +529,13 @@ def _generate(m, pos, block, step, spec, chain, samp=None):
 
 
 def compile_generate(image, kernel, blocks: int, lo: int, block: int, chain: bool = True,
-                     samp: Sampling | None = None):
+                     samp: Sampling | None = None, debug: bool = False):
     """The generate program of positions [lo, blocks * block) (compile_decode's bucket):
     the step kernel at a RunPos in the token loop (see the module), greedy or sampled (samp),
     then, with `chain` and tokens left, HALT CHAIN to the next bucket's program (the entry
-    blocks + 1 of the mode's table). Returns the programs."""
+    blocks + 1 of the mode's table). debug: the LM head stores each token's logits to
+    m.logits as well (the resident step's store), for checks against it. Returns the
+    programs."""
     from .qwen3 import RunPos
     if not image.lookup:
         raise ValueError("compile_generate needs an image with lookup tables (lookup=True)")
@@ -546,5 +548,6 @@ def compile_generate(image, kernel, blocks: int, lo: int, block: int, chain: boo
         progs.append(ol.jit(_generate).trace(image.cfg, s, {"m": m, "pos": rp, "block": block,
                                                             "step": kernel, "chain": chain,
                                                             "spec": image.spec,
-                                                            "samp": samp}).finish())
+                                                            "samp": samp,
+                                                            "debug": debug}).finish())
     return progs

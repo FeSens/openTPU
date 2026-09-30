@@ -453,9 +453,9 @@ class Image:
         return compile_decode(self, qwen3_step, blocks, lo, block)
 
     def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
-                         chain: bool = True, samp=None) -> list:
+                         chain: bool = True, samp=None, debug: bool = False) -> list:
         """The decode loop on the device for bucket `blocks` (qwen3_step in it, generate.py)."""
-        return G.compile_generate(self, qwen3_step, blocks, lo, block, chain, samp)
+        return G.compile_generate(self, qwen3_step, blocks, lo, block, chain, samp, debug)
 
     def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
         """One program per slice: the decode token at position `pos` (qwen3_step)."""
@@ -690,7 +690,8 @@ def _inputs(m, pos):
 def _lm_head(x, m, spec):
     """Final norm and this slice's vocabulary rows of the LM head -> m.logits, or, with
     m.lm_sink set (the generate loop: opentpu/llm/generate.py), each chunk's logits tile to
-    m.lm_sink(tile, first vocabulary row) instead."""
+    m.lm_sink(tile, first vocabulary row) instead (and to m.logits too with m.lm_keep: the
+    generate loop's debug mode)."""
     sid = ol.program_id()
     xs = ol.quantize(rmsnorm(x, ol.load(m.g_final), spec.eps))
     chunk = min(HEAD_CHUNK, ol.tmem_words() // 8)
@@ -701,7 +702,10 @@ def _lm_head(x, m, spec):
         if sink is None:
             ol.store(m.logits[:, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
         else:
-            sink(ol.dot(xs, m.head[c0:c0 + n, :]), col)
+            y = ol.dot(xs, m.head[c0:c0 + n, :])
+            if getattr(m, "lm_keep", False):
+                ol.store(m.logits[:, col:col + n], y)
+            sink(y, col)
 
 
 def _runs(rows):
@@ -987,6 +991,8 @@ class Engine:
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
         self._chained: dict = {}            # mode -> (key, its buckets in the chain area)
+        self.gen_debug = False              # generate_card: the logits too (gen_logits)
+        self.gen_logits = None
         self.poss = [0] * batch
         self.stream_logits = True           # step(): stream the logits when the backend can
         self._fit_rows = self.rows          # rows per run that fit TMEM (prefill_chunks)
@@ -1324,13 +1330,15 @@ class Engine:
     def _generate_prog(self, blocks: int, samp=None):
         """The generate program of a bucket, greedy or sampled as `samp` (G.Sampling) is
         compiled for (once per bucket and samp.key), chaining to the next bucket's when the
-        backend runs HALT CHAIN."""
-        key = (blocks, None if samp is None else samp.key)
+        backend runs HALT CHAIN; with self.gen_debug the LM head also stores the logits (each
+        token's over the last: generate_card reads the last token's)."""
+        key = (blocks, None if samp is None else samp.key, self.gen_debug)
         if key not in self._gens:
             lo = max((blocks - 1) * self.block, self._conv_lo)
             progs = self.image.compile_generate(blocks, lo, self.block,
                                                 chain=bool(getattr(self.backend, "chains",
-                                                                   False)), samp=samp)
+                                                                   False)), samp=samp,
+                                                debug=self.gen_debug)
             prep = getattr(self.backend, "prepare", None)
             if prep is not None:
                 prep(progs)
@@ -1341,7 +1349,8 @@ class Engine:
         """Buckets b0 + 1 .. b1 in the chain area of samp's mode and its table (each written
         once per samp.key)."""
         g = self.image.lookup["gen"]
-        mode, key = int(samp is not None), None if samp is None else samp.key
+        mode = int(samp is not None)
+        key = (None if samp is None else samp.key, self.gen_debug)
         if self._chained.get(mode, (key,))[0] != key:
             self._chained.pop(mode)            # compiled for other sampling buffers
         have = self._chained.setdefault(mode, (key, set()))[1]
@@ -1433,6 +1442,11 @@ class Engine:
                             on_token(t)
                 self.stats.append(st)
                 self.pos += len(got)
+                if self.gen_debug:          # the logits of the run's last token
+                    io, v = self.image.io, self.image.v_loc
+                    self.gen_logits = np.concatenate([
+                        self.backend.read(s, io["logits"] + 4 * s * v, 4 * v).view(np.float32)
+                        for s in range(self.cfg.S)])
             out += got
             ctx += got
             n -= len(got)

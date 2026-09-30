@@ -9,7 +9,7 @@ RAM blocks its own QACT filled.
 
 Groups (otpu-diag's diagnosis keys on them): control, dma, mxu, quant, collective, vpu,
 vpu-reduce, vpu-composite, vpu-edge, vpu-new (RDOT / OUTER / LOG2, which bitstreams before
-ddec900 lack), gen (RLD, VOP ARGMAX, HALT CHAIN: the decode loop's instructions, CAPS bit28;
+ddec900 lack), gen (RLD, VOP ARGMAX, HALT CHAIN: the decode loop's instructions, CAPS bit30;
 only with gen=True).
 
 The edge values leave out NaN inputs: the RTL and the ISA simulator disagree there (board

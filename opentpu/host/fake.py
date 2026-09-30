@@ -15,7 +15,7 @@ out of the buffer) and TRACE_DROP = `trace_drop`.
 With `i2c` (two fake_i2c.OpenDrainBus, e.g. fake_i2c.card_buses()) CAPS announces the I2C pins
 and I2C_CTRL / I2C_IN drive and read those bus models. With `ddr_mts` CAPS bit3 announces the
 DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams. With
-`args` CAPS bit25 announces the ARG0..7 registers (kept, read back), with `gen` CAPS bit28
+`args` CAPS bit25 announces the ARG0..7 registers (kept, read back), with `gen` CAPS bit30
 the decode loop's instructions (it runs nothing either way). Its identity (VERSION: D,
 MCOLS, LANES) is by default the configuration the environment asks for (board_config:
 OTPU_MCOLS, OTPU_LANES), as a card built for it would report.
@@ -64,7 +64,7 @@ class FakeTransport:
         self.dstep = dstep              # CAPS bit6: DSTEP
         self.args = args                # CAPS bit25: ARG0..7 (R_ARG0 + 4k, read back)
         self.stream = stream            # CAPS bit26: the stream engine
-        self.gen = gen                  # CAPS bit28: the decode loop (RLD, ARGMAX, HALT CHAIN)
+        self.gen = gen                  # CAPS bit30: the decode loop (RLD, ARGMAX, HALT CHAIN)
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
                      R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0, R.R_I2C_CTRL: 0}
         self.count = {k: 0 for k in R.counters(regmap)}

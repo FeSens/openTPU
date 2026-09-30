@@ -32,7 +32,7 @@ Prints the mean per decode token (the first generated token and the prefill are 
 the transport operations per token (count, bytes, time) and wall vs device tokens/s.
 
 --card-loop: the decode loop on the card (docs/autodecode.md, Chat.on_card; a bitstream with
-CAPS bit28): one run for the reply, so there is no per-token host path to split; prints the
+CAPS bit30): one run for the reply, so there is no per-token host path to split; prints the
 tokens, the runs and wall vs device tokens/s from the first token the card picked.
 """
 from __future__ import annotations
@@ -293,7 +293,7 @@ def main(argv=None):
         timed_pick.greedy, timed_pick.params, timed_pick.rng = pick.greedy, pick.params, pick.rng
     chat = C.Chat(eng, tok, False, timed_pick, a.tokens, clock_mhz=khz / 1e3)
     if a.card_loop and not chat.on_card:
-        sys.exit("--card-loop: this engine / bitstream does not run the decode loop (CAPS bit28)"
+        sys.exit("--card-loop: this engine / bitstream does not run the decode loop (CAPS bit30)"
                  " or the sampler's settings are not the device's (generate.Sampling)")
     dec = tok.decode
 

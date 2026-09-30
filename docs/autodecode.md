@@ -175,7 +175,7 @@ true, it writes the state's stop word, and the card halts after the token in fli
   | otpu_seq | the R stage holds until RLD's value is in R[rd]; HALT CHAIN's address and count out |
   | otpu_slice | RLD read locally on the collective unit's TMEM port (not sent to otpu_coll); the CHAIN reload: once the writes are idle, hold the slice's units in reset and run the program loader from the chain address, then release (TMEM, DRAM and the arguments stay; HALTED stays low) |
   | otpu_vpu | ARGMAX through the RMAX tree with the lane index and the chunk's column; ties keep the older value; the pair written through lanes 0 and 1 with i2f |
-  | otpu_ctrl | CAPS bit28 |
+  | otpu_ctrl | CAPS bit30 |
 
   After that: rtlsim token-exact, a FAST=1 100 MHz build, the card, then 133.33 MHz.
 - **Area estimate** before RTL: about 0.7K LUT and 0.25K FF, about 0.3% of the slices.

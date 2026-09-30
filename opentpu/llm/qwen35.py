@@ -500,9 +500,9 @@ class Image:
         return compile_decode(self, qwen35_step, blocks, lo, block)
 
     def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
-                         chain: bool = True, samp=None) -> list:
+                         chain: bool = True, samp=None, debug: bool = False) -> list:
         """The decode loop on the device for bucket `blocks` (qwen35_step in it, generate.py)."""
-        return G.compile_generate(self, qwen35_step, blocks, lo, block, chain, samp)
+        return G.compile_generate(self, qwen35_step, blocks, lo, block, chain, samp, debug)
 
     def compile_step(self, pos: int, block: int = ATTN_BLOCK) -> list:
         """One program per slice: the decode token at position `pos` (qwen35_step)."""
