@@ -25,6 +25,8 @@ top=$(git rev-parse --show-toplevel)
 name=${OTPU_REMOTE_NAME:-$(basename "$top")-$(printf '%s' "$top" | shasum | cut -c1-6)}
 dir="otpu-test/$name"
 build=${OTPU_REMOTE_BUILD:-}
+mark=${OTPU_REMOTE_SLOT_MARK:-}   # set: say on stderr when the run holds its slot (the tournament's
+                                 # gate timeouts count from there)
 
 # the tree as it is now: tracked files, including uncommitted edits
 ssh "$HOST" "mkdir -p ~/$dir"
@@ -45,6 +47,7 @@ for i in \$(seq 1 3600); do
   for s in \$(seq 1 \$n); do
     exec 9>~/otpu-test/.slots/\$s
     if flock -n 9; then
+      if [[ -n "$mark" ]]; then echo "omarchy_test: slot \$s" >&2; fi
       export PATH=\$HOME/.local/bin:\$PATH
       if [[ $mode == exec ]]; then
         export PATH=\$HOME/otpu-venv/bin:\$PATH PYTHONPATH=\$PWD

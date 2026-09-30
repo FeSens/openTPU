@@ -70,6 +70,10 @@ may change, the synthesis top(s) with board parameters, the target clock, and th
 
 Slot worktrees and branches are removed after the round (`ARGS=--keep` keeps them).
 
+`--replay SLOT` runs a logged slot's saved patch (`runs/<comp>/patches/<SLOT>.patch`) through the
+gates again on the current champion, without agents, its hypothesis and notes carried over: for a
+slot whose gate failed for reasons not its own (a congested or failing test host).
+
 ## Evaluators
 
 - `EVAL=yosys` (default, works today): Yosys + slang, `synth_xilinx -family xc7 -flatten -abc9`,
@@ -350,9 +354,13 @@ Measured through the remote path (this branch, a warm ssh connection):
 - `tests/test_fp.py` plus one parser test: 5.1 s;
 - `test_mlp_rtl[1]` with the board environment, including a fresh Verilator build: 16 s.
 
-A gate that times out ends the ssh session. The remote run then dies at its next output
-(SIGPIPE), which frees its test slot. Files new to the tree are not shipped, since only tracked
-files go; the sandbox rejects new files anyway.
+A gate's timeout counts from when the script holds one of omarchy's test slots (it says so on
+stderr, `OTPU_REMOTE_SLOT_MARK`), not from the queue before it: other streams' long suites can
+hold every slot for an hour. The script gives up after 2 h without a slot ("no free test slot");
+the gate then queues again, twice, before it fails. A gate that times out is killed with its ssh
+session. The remote run then dies at its next output (SIGPIPE), which frees its test slot. Files
+new to the tree are not shipped, since only tracked files go; the sandbox rejects new files
+anyway.
 
 Every role runs Opus: `MODEL_*` naming another model family is an error (`agents.model_for`).
 
