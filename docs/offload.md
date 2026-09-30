@@ -352,10 +352,10 @@ On Qwen3.5-35B-A3B the best prefetch (`pre`, k best) gives 3.89 / 5.78, against 
     5.5). Every part of an expert is contiguous in its slot, with the gate, up and down rows and
     their scale words at fixed offsets, so one base address names an expert. All experts of a
     model have one size, so the slots need no allocator;
-  - **the directory:** per layer, E entries {slot address, present}. The host writes it; the
-    card reads it;
-  - **a mailbox:** the card's requests, a ring of 4, and `served`, the last request the host has
-    finished.
+  - **the directory:** one entry {slot address, present} per global expert id (the j-th MoE
+    layer's expert e is j x E + e). The host writes it; the card reads it;
+  - **a mailbox:** `seq`, the card's last request, and one row of its k ids; `served`, the last
+    request the host has finished.
 - **Host RAM:** the **expert pool**, every expert already in the card's slot format (fp4 rows
   and scale words), in 4 KiB-aligned buffers placed for fast DMA (`board.DMA_PLACE`,
   docs/host.md). The host also keeps its own copy of the directory and the LRU state. A miss is
@@ -367,33 +367,42 @@ On Qwen3.5-35B-A3B the best prefetch (`pre`, k best) gives 3.89 / 5.78, against 
 ### 5.2 Control: the card routes, the host serves
 
 The card runs the whole reply as one run: autodecode's decode loop, in which the card samples
-and feeds back each token. The MoE layers wait inside it. Per MoE layer l, request number `seq`:
+and feeds back each token. The MoE layers wait inside it. Per MoE layer, as built in phase 2
+(`opentpu/llm/moe.py`, branch offload-p2):
 
 1. **Route.**
    - The router MM gives E scores, with the model's rule on the VPU: LFM2 takes sigmoid plus
      the expert bias for the choice; Gemma 4 takes softmax.
-   - autodecode's `_select` (ARGMAX, RLD of the position, knock-out to -inf; k times) gives the
-     k ids as floats, and their scores.
-   - The combine weights are the model's: renormalized and scaled.
-2. **Post.** Slice 0 STs the k ids to the mailbox's `ring[seq % 4]`, then STs `seq` in a second
-   ST, so the host never reads a torn request. `seq` is a float counter in TMEM, +1 per MoE
-   layer, from 0 at the start of a run. Positive floats compare by their bits, so the counter
-   works directly in `WAITW`'s GE compare.
-3. **Fence.** `WAITW served GE seq - 1`: the host has finished the previous request. From here
-   on, the host's only work on layer l's cache is this request, and it never evicts an expert
-   the request names. This is normally immediate, because the host served layer l-1 while the
-   card computed it.
-4. **Look up.** One `VOP` gives the k ids x 8 (the entries' offsets). Then a `LOOP` over the
-   ids, stepping a register with `ADDI`: `RLD` the offset into R[e], and `LD` the entry at
-   `dir_l + R[e]` into TMEM. The k LDs are in flight together.
-5. **Hits first.** A second `LOOP` over the ids: `RLD` the entry's present flag into R[p], then
-   `LOOP R[p] { RLD RAW the address -> R[a]; the expert's MMs at R[a] + fixed offsets; the
-   combine }`.
-6. **Misses.** A third `LOOP` over the ids, with count 1 - p for each (one `VOP` over the
-   flags). For each missing expert: `WAITW NE 0` on its entry's address word, which returns the
-   slot address into R[a]; then the same MMs. The host writes each entry right after that
-   expert's DMA, so each missing expert is computed as soon as it lands while the others still
-   stream.
+   - A `LOOP` of k `ARGMAX` with knock-out (`RLD` of the position, a `FILL` of -3e38 there)
+     gives the k ids in order and their scores; ties go to the first, as `np.argmax`.
+   - The combine weights are the model's: renormalized and scaled. The global ids are the
+     ids plus the layer's j x E (a word in the layer's block).
+2. **Fence.** `WAITW served GE seq`, with `seq` the card's last request, read from the
+   mailbox: the host has finished every earlier request. From here on, the host's only work on
+   this layer's slots is the request about to be posted, which never evicts an expert it
+   names. The fence is normally immediate: the host served the previous layer while the card
+   computed it.
+3. **Post.** The k ids to the mailbox's row, then `seq + 1` in a second `ST`, so the host never
+   reads a torn request. The fence comes first, so one row is enough. `seq` is a float, and
+   positive floats compare by their bits, so it works directly in `WAITW`'s GE compare.
+4. **Look up.** A `LOOP` over the ids: `RLD` of the entry's offset (id x 8, one `VOP` for
+   all), `LD` of its present flag.
+5. **Hits first.** A second `LOOP` over the ids with `LOOP R[present]` inside:
+   - `WAITW NE 0` on the entry's address word returns the slot address into a register at
+     once;
+   - the expert's MMs run at that register plus fixed offsets (`kernels.mlp.swiglu_down`);
+   - its weighted output goes to its own row of a [k, H] tile.
+6. **Misses.** A third `LOOP` with count 1 - present: the same code. There, `WAITW` waits until
+   the host has written the entry after the expert's DMA, so each missing expert is computed
+   as soon as it lands while the others still stream.
+7. **Combine.** The k rows summed in the router's order, then added to the residual. The logits
+   therefore do not depend on what the cache held.
+
+A slot address never passes through the VPU, which would flush it as a denormal: `WAITW`
+reads it from the directory into the register. The MoE block holds one register in all. The
+resident decode's run arguments and the layer loops hold the others: LFM2.5-8B-A1B's generate
+program had 2 of 15 left. It needs no index register: the per-expert values are the columns of
+a small tile that each loop rotates by one, so expert i is always at column 0.
 
 The host daemon (`opentpu/host/offload.py`, phase 2) only moves data:
 
@@ -411,11 +420,11 @@ ordinary DRAM words: the host reads and writes them the way `run_generate` alrea
 tokens and writes the stop word during a run.
 
 **Why it is race-free.** The only hazard would be the host evicting an expert the card is
-using. Each layer has its own slots. Once the fence has passed, the only host work on layer
-l's slots is the current request, which protects its own ids. The card uses layer l's slots
-only between that fence and its next request for layer l, a token later. With S slices, only
-slice 0 posts. Every slice runs the same fence and waits, and reads its own part
-of each slot.
+using. Each layer has its own slots. Once the fence has passed, the only host work on a
+layer's slots is the request the card then posts, which protects its own ids. The card uses a
+layer's slots only between its fence and its next fence for that layer, a token later. With
+S slices, only slice 0 would post, and every slice would run the same fence and waits.
+Phase 2 runs one slice, as the board does.
 
 **The instruction, proposed to autodecode (one ISA extension, reserved with theirs):**
 
@@ -439,9 +448,9 @@ of each slot.
 Everything else is built from instructions autodecode already added: `ARGMAX` (func 20), `RLD`,
 `LOOP R[ra]` (predication), and `HALT CHAIN` when a program outgrows the 4096-instruction IMEM.
 
-The hits-first split costs, per expert, an RLD of the entry's offset, an LD of the entry, and
-an RLD of the present flag. The k LDs issue together, so a layer waits about one
-DRAM round trip: ~0.2% of a token (*estimate*).
+The hits-first split costs, per expert, an RLD of the entry's offset, an LD of its flag, an
+RLD of the flag and one `WAITW` read: a few DRAM round trips per layer, ~0.2% of a token
+(*estimate*).
 
 **Not needed.**
 - Halts per MoE layer. The first version of this study had one per MoE layer, 1.3-2.9 ms per
@@ -554,6 +563,30 @@ back its tokens and waits for experts within one run. From autodecode's loop, pa
    already do.
 4. Nothing from sampling: the MoE is inside the decode step, which autodecode's loop runs
    unchanged.
+
+### 5.9 The token's embedding row
+
+In autodecode's loop the card feeds back its own token, so the next token's embedding row must
+come from the card's DRAM. The resident decode keeps the whole table there in fp32 (vocab x H
+x 4 bytes, `Image(lookup=True)`); the survey's "on-card part" (section 2) did not count it.
+
+- **LFM2.5-8B-A1B:** 1.05 GB. With it, the 4 GiB hold 20 expert slots per layer (440 of 704,
+  62%) instead of ~27. At 450 slots the model above gives 10.6 tok/s at Gen1, against 13.0 at
+  595.
+- **gemma-4-26B-A4B:** 262,144 x 2816 x 4 = 2.95 GB, which cannot fit beside its 1.64 GB
+  on-card part.
+
+**The fix is the same mechanism as E4B's PLE row (section 7):**
+1. The card posts the token id.
+2. The host writes that one row (8-11 KB, exact fp32 from the bf16 checkpoint) into a fixed
+   buffer.
+3. The card's `WAITW` sees the flag before the first layer.
+
+The round trip (~0.1 ms, *estimate*) cannot overlap anything: the next token's first layer needs
+the row at once. It is still only 0.13% of LFM2.5's ~75 ms token. The table then leaves the
+card, and its bytes go to expert slots. An int8 table (the tied LM head's
+rows) would fit too, but changes the model's input, so it is not the default. Phase 2 runs with
+the fp32 table first (20 slots per layer); the host-written row comes next.
 
 ## 6. PCIe Gen2
 
