@@ -132,6 +132,41 @@ The repeated rows cost 2 x 128 projection rows per extra value head:
 Computing a head pair's shared q and k once in the pair's projection would win that back,
 but it changes the kernels.
 
+## Group-major DeltaNet blocks: the pair loop at a run-time position
+
+In the 0.8B's layer block each DeltaNet part is one array over the slice's pairs: the
+projection rows and their scales, the taps and windows, the states, and the out_proj blocks. A
+loop over the pairs then steps one address register per part (7 in all, with the per-pair
+gates in the I/O area). Resident decode's run-time position needs registers of its own, so
+there the pairs run unrolled. That fits for the 0.8B's 8 pairs, but not for 16: the 35B-A3B's
+resident decode and generate loop were 4,082 to 4,317 instructions (fp4, one slice), past the
+4,096 of IMEM.
+
+With more than 8 pairs per slice (`PAIR_LOOP`; `Spec.pair_loop` forces either layout), a
+DeltaNet block is group-major (`Image.grouped`, `DeltaNetParts`):
+- The block holds one block per head group of og = 4 heads.
+- A group's block holds its two pairs' blocks, then its out_proj column block.
+- A pair's block holds its projection rows, their scales, its taps and window, and its two
+  states.
+
+Every part of pair p is at one offset from p's block, so the pair loop steps one register
+(plus the gates'). The decode then loops the pairs at a run-time position too. The kernels
+address the parts through `DeltaNetParts` in both layouts, so the 0.8B's programs are the same
+words as before: 71,182 instructions, sha256 93d4acbc. Group-major is bit-exact against
+array-major (`test_group_major_is_bit_exact`).
+
+Qwen3.5-35B-A3B at one slice (fp4, int8 LM head, KV capacity 4096; instructions):
+
+| program | array-major | group-major |
+|---|---|---|
+| resident decode, bucket 1 (gathered embedding) | 4,131 | 2,229 |
+| generate loop, bucket 1 | 4,185 | 2,282 |
+| generate loop, bucket 4 | 4,317 | 2,414 |
+
+Buckets 8 and up (2,048 positions and more) run out of address registers in both layouts. The
+attention's run-time KV addresses (layer loop plus position, one register each, besides the
+run arguments' own) and its block loop take the rest.
+
 ## Qwen3.5-MoE
 
 `Spec.moe` covers Qwen3.5-35B-A3B: 256 experts of 512, top 8, and a shared expert of 512 in
@@ -401,6 +436,10 @@ would need a state per sequence.
 - `Engine.reset` gives bit-identical logits: position 0 does not read the previous sequence's
   DeltaNet state or convolution rows.
 - The layer plan, and the programs at position 4095 fitting the board IMEM (MCOLS 2 and 4).
+- Group-major DeltaNet blocks, with 16 heads for 8 key heads (8 pairs, out_proj groups of 4)
+  and 18 for 9 (9 pairs, groups of 2), with and without DSTEP: chunked prefill, per-position
+  and resident decode, and the generate loop give array-major's logits, windows and states bit
+  for bit, and the resident decode is shorter.
 - The tiny model on the Verilator board model through the host driver, over five tokens (a
   full turn of the convolution ring), bit-identical to the ISA simulator.
 - Qwen3.5-0.8B: 8 greedy tokens equal to HF's ("The capital of France is Paris."), and one real

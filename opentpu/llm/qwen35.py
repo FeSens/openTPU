@@ -30,7 +30,9 @@ How it maps onto openTPU (docs/qwen35.md):
     for each of its value heads, so the kernels see value heads with q and k of their own and
     do not change; the repeated rows cost 2 dk projection rows per extra value head.
   * Resident decode (qwen3.Engine(resident=True), Image(lookup=True)): one program per
-    attention bucket takes the token and the position as run arguments (qwen3.RunPos).
+    attention bucket takes the token and the position as run arguments (qwen3.RunPos). With
+    more than PAIR_LOOP pairs of heads per slice (the 4B, 9B, 35B-A3B: 16) the DeltaNet blocks
+    are group-major (Image, DeltaNetParts), so it loops the pairs too and fits IMEM.
   * 256-wide attention heads are two MXU blocks. With MCOLS < 4 a query group of 4 heads is
     split in pairs, each streaming the KV head (qwen3._attention).
 
@@ -76,6 +78,7 @@ from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fak
                     _mlp, _qdesc, _tdesc, compile_decode, rope_tables)
 
 LIN, ATTN = "linear", "attn"
+PAIR_LOOP = 8       # pairs of DeltaNet heads per slice that decode unrolled at a run-time position
 
 
 # =============================================================================== model spec
@@ -101,6 +104,9 @@ class Spec:
                             # key head h // (lin_heads / lin_kheads), as HF's repeat_interleave
     moe: MO.MoESpec | None = None   # Qwen3.5-MoE: every layer's MLP is routed experts plus a
                                     # shared expert (ffn: its width, the layer block's MLP)
+    pair_loop: bool | None = None   # DeltaNet layers group-major, their pairs a hardware loop
+                                    # at a run-time position too (Image; None: when a slice has
+                                    # more than PAIR_LOOP pairs of heads)
 
     @property
     def layers(self) -> int:
@@ -397,6 +403,74 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
 
 
 # =============================================================================== DRAM image
+class DeltaNetParts:
+    """Where the kernels find a DeltaNet layer's per-pair parts: pair p's projection rows
+    (wh, [2R, H]: q k v of a, of b, then z of a, of b), taps and window (cv, [CVW]) and the
+    states of its heads a, b ([dv, dk] each), and head group g's out_proj block (wout, [H,
+    og dv]). p is an int, a loop expression or (g, i): pair i of head group g.
+
+    Array-major (grouped False): each part one array over the slice's pairs (wh, cv, state,
+    wout: the layer's full descriptors). Group-major: head group g's block (stride gs bytes)
+    holds its og / 2 pairs' blocks (stride ps: projection rows, their scales, taps and window,
+    the two states) and then its out_proj block, so every part of pair p is at one offset of
+    p's block and a loop over the pairs steps one address register (wh, cv, state, wout: the
+    parts of pair 0, group 0)."""
+
+    def __init__(self, nl: int, og: int, wh: QTensor, cv: Tensor, state: Tensor,
+                 wout: QTensor, H: int, gs: int = 0, ps: int = 0):
+        self.nl, self.og, self.gp, self.H = nl, og, og // 2, H
+        self.grouped, self.gs, self.ps = gs > 0, gs, ps
+        self._wh, self._cv, self._state, self._wout = wh, cv, state, wout
+        self.R2 = wh.shape[0] if self.grouped else wh.shape[0] // (nl // 2)
+
+    def split(self, p) -> tuple:
+        """(g, i) of pair p (a loop expression: its loop terms multiples of og / 2)."""
+        if isinstance(p, tuple):
+            return p
+        if isinstance(p, int):
+            return divmod(p, self.gp)
+        i = Affine.of(p).const % self.gp
+        return (Affine.of(p) - i).div_exact(self.gp), i
+
+    def index(self, p):
+        """The pair's number in the slice."""
+        if not isinstance(p, tuple):
+            return p
+        g, i = p
+        return g * self.gp + i if isinstance(g, int) and isinstance(i, int) else \
+            Affine.of(g) * self.gp + i
+
+    def _off(self, p) -> Affine:
+        g, i = self.split(p)
+        return Affine.of(g) * self.gs + Affine.of(i) * self.ps
+
+    def wh(self, p) -> QTensor:
+        if not self.grouped:
+            q = self.index(p)
+            return self._wh[q * self.R2:q * self.R2 + self.R2, :]
+        w, o = self._wh, self._off(p)
+        return QTensor(w.data + o, w.scale + o, w.shape, w.rs, w.srs, w.D, wf=w.wf)
+
+    def cv(self, p) -> Tensor:
+        if not self.grouped:
+            return self._cv[self.index(p)]
+        c = self._cv
+        return Tensor(c.base + self._off(p), c.shape, c.strides)
+
+    def state(self, p, a: int) -> Tensor:
+        """The state of head a (0, 1) of pair p."""
+        if not self.grouped:
+            return self._state[2 * self.index(p) + a]
+        s = self._state
+        return Tensor(s.base + self._off(p), s.shape, s.strides)[a]
+
+    def wout(self, g) -> QTensor:
+        if not self.grouped:
+            return self._wout[g * self.H:(g + 1) * self.H, :]
+        w, o = self._wout, Affine.of(g) * self.gs
+        return QTensor(w.data + o, w.scale + o, w.shape, w.rs, w.srs, w.D, wf=w.wf)
+
+
 class Image:
     """Per-slice DRAM layout of a Qwen3.5 model. Every slice uses the same addresses.
 
@@ -411,6 +485,14 @@ class Image:
     norms, the projections (the gate rows of q_proj as their own matrix) and this slice's KV
     heads with room for `cap` tokens. The I/O area holds `rows` token rows (x, cos, sin,
     logits) for chunked prefill.
+
+    Group-major DeltaNet blocks (Spec.pair_loop; by default when a slice has more than
+    PAIR_LOOP pairs of heads): the projections, the out_proj blocks, the taps and windows and
+    the states go per head group instead, each group's pairs (a pair's projection rows, their
+    scales, its taps and window, its two states) and then the group's out_proj block
+    (DeltaNetParts). A decode's loop over the pairs then steps one address register for all of
+    them, so it fits the registers beside a run-time position's (resident decode), and the
+    unrolled pairs of a bigger model need not fit IMEM.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
@@ -464,9 +546,23 @@ class Image:
                             "wk": (self.nkv_loc * d, H), "wv": (self.nkv_loc * d, H),
                             "wo": (self.h_loc, spec.n_q * d), **mlp}}
         lnb = _Bump(lb.next)
-        lin = dict(common, alog=lnb.alloc(4 * nl), dtb=lnb.alloc(4 * nl), gn=lnb.alloc(4 * dv),
-                   cv=lnb.alloc(4 * nl // 2 * self.CVW),  # per pair: taps, then the ring
-                   state=lnb.alloc(4 * nl * dv * dk))
+        lin = dict(common, alog=lnb.alloc(4 * nl), dtb=lnb.alloc(4 * nl), gn=lnb.alloc(4 * dv))
+        self.grouped = nl // 2 > PAIR_LOOP if spec.pair_loop is None else spec.pair_loop
+        if self.grouped:            # per head group: its pairs' blocks, then its out_proj block
+            og = self.og
+            del self.mats[LIN]["wh"], self.mats[LIN]["wout"]
+            pb, gb = _Bump(), _Bump()
+            self.pofs = {"wh": (pb.alloc(2 * self.R * rb(H)), pb.alloc(4 * 2 * self.R * (H // D))),
+                         "cv": pb.alloc(4 * self.CVW), "state": pb.alloc(4 * 2 * dv * dk)}
+            self.PS = pb.next                           # a pair's block, bytes
+            for _ in range(og // 2):
+                gb.alloc(self.PS)
+            self.gofs = {"wout": (gb.alloc(H * rb(og * dv)), gb.alloc(4 * H * (og * dv // D)))}
+            self.GS = gb.next                           # a head group's block
+            lin["groups"] = lnb.alloc(nl // og * self.GS)
+        else:
+            lin.update(cv=lnb.alloc(4 * nl // 2 * self.CVW),  # per pair: taps, then the ring
+                       state=lnb.alloc(4 * nl * dv * dk))
         ab = _Bump(lb.next)
         attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
         for kind, bump, L in ((LIN, lnb, lin), (ATTN, ab, attn)):
@@ -501,6 +597,17 @@ class Image:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
                               f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
 
+    def pair_offset(self, q: int) -> int:
+        """Pair q's block in a group-major DeltaNet layer block (bytes from its start)."""
+        g, i = divmod(q, self.og // 2)
+        return self.lofs[LIN]["groups"] + g * self.GS + i * self.PS
+
+    def cv_offset(self, q: int) -> int:
+        """Pair q's taps, then its window, in a DeltaNet layer block (bytes from its start)."""
+        if self.grouped:
+            return self.pair_offset(q) + self.pofs["cv"]
+        return self.lofs[LIN]["cv"] + 4 * q * self.CVW
+
     # ---- contents
     def build(self, W: dict) -> list[np.ndarray]:
         """DRAM images (one per slice) with every weight quantized in place; KV cache,
@@ -514,11 +621,14 @@ class Image:
             v = np.ascontiguousarray(a).view(np.uint8).reshape(-1)
             imgs[s][addr:addr + v.size] = v
 
+        def put_q1(s, addr_pair, a, fmt=self.wformat):
+            q, sc = Q.quantize_mxu(a, fmt, D)
+            put(s, addr_pair[0], q)
+            put(s, addr_pair[1], sc)
+
         def put_q(addr_pair, parts, fmt=self.wformat):
             for s, p in enumerate(parts):
-                q, sc = Q.quantize_mxu(p, fmt, D)
-                put(s, addr_pair[0], q)
-                put(s, addr_pair[1], sc)
+                put_q1(s, addr_pair, p, fmt)
 
         def rows(a, k):
             return [a[s * k:(s + 1) * k] for s in range(S)]
@@ -551,23 +661,37 @@ class Image:
                          for h in range(spec.lin_heads)]
                 taps = W[a + "conv1d.weight"][:, 0, :]                   # [channels, K]
                 hs = [range(s * nl, (s + 1) * nl) for s in range(S)]
-                # per pair of heads (a, b): the q, k, v rows of a, of b, then the z rows of a, of b
-                put_q(Lo["wh"], [np.concatenate([np.concatenate(
-                    [qkv[chans[h]], qkv[chans[h + 1]], wz[h * dv:(h + 2) * dv]])
-                    for h in hh[::2]]) for hh in hs])
+                # per pair of heads (a, b): the q, k, v rows of a, of b, then the z rows of a, of
+                # b; its taps; per head group, its out_proj column block (og heads)
+                og = self.og
+                prows = [[np.concatenate([qkv[chans[h]], qkv[chans[h + 1]],
+                                          wz[h * dv:(h + 2) * dv]]) for h in hh[::2]]
+                         for hh in hs]
+                ptaps = [[f32(np.stack([taps[chans[h]].T, taps[chans[h + 1]].T]))
+                          for h in hh[::2]] for hh in hs]
+                gouts = [[wout[:, h * dv:(h + og) * dv] for h in hh[::og]] for hh in hs]
+                if self.grouped:
+                    for s in range(S):
+                        for q, (pr, pt) in enumerate(zip(prows[s], ptaps[s])):
+                            o = base + self.pair_offset(q)
+                            put_q1(s, (o + self.pofs["wh"][0], o + self.pofs["wh"][1]), pr)
+                            put(s, o + self.pofs["cv"], pt)
+                        for g, go in enumerate(gouts[s]):
+                            o = Lo["groups"] + g * self.GS
+                            put_q1(s, (o + self.gofs["wout"][0], o + self.gofs["wout"][1]), go)
+                else:
+                    put_q(Lo["wh"], [np.concatenate(pr) for pr in prows])
+                    put_q(Lo["wout"], [np.concatenate(go) for go in gouts])
+                    for s in range(S):
+                        for q, pt in enumerate(ptaps[s]):
+                            put(s, Lo["cv"] + q * 4 * self.CVW, pt)
                 put_q(Lo["wab"], [np.concatenate([W[a + "in_proj_a.weight"][hh.start:hh.stop],
                                                   W[a + "in_proj_b.weight"][hh.start:hh.stop]])
                                   for hh in hs])
-                og = self.og                # out_proj column blocks of og heads
-                put_q(Lo["wout"], [np.concatenate([wout[:, h * dv:(h + og) * dv]
-                                                   for h in hh[::og]]) for hh in hs])
                 for s, hh in enumerate(hs):
                     put(s, Lo["alog"], f32(W[a + "A_log"][hh.start:hh.stop]))
                     put(s, Lo["dtb"], f32(W[a + "dt_bias"][hh.start:hh.stop]))
                     put(s, Lo["gn"], f32(W[a + "norm.weight"]))
-                    for q, h in enumerate(hh[::2]):
-                        put(s, Lo["cv"] + q * 4 * self.CVW,
-                            f32(np.stack([taps[chans[h]].T, taps[chans[h + 1]].T])))
             else:
                 a = p + "self_attn."
                 for s in range(S):
@@ -676,8 +800,21 @@ class Image:
                 ns.alog = Tensor(off + lofs["alog"], (nl,), (1,))
                 ns.dtb = Tensor(off + lofs["dtb"], (nl,), (1,))
                 ns.gn = Tensor(off + lofs["gn"], (dv,), (1,))
-                ns.cv = Tensor(off + lofs["cv"], (nl // 2, self.CVW), (self.CVW, 1))
-                ns.state = Tensor(off + lofs["state"], (nl, dv, dk), (dv * dk, dk, 1))
+                og, R2 = self.og, 2 * self.R
+                if self.grouped:            # the parts of pair 0 (group 0)
+                    g0 = off + lofs["groups"]
+                    (whd, whs), (wod, wos) = self.pofs["wh"], self.gofs["wout"]
+                    ns.dn = DeltaNetParts(
+                        nl, og, QTensor(g0 + whd, g0 + whs, (R2, H), Q.row_bytes(H, fm, D),
+                                        4 * (H // D), D, wf=wf),
+                        Tensor(g0 + self.pofs["cv"], (self.CVW,), (1,)),
+                        Tensor(g0 + self.pofs["state"], (2, dv, dk), (dv * dk, dk, 1)),
+                        QTensor(g0 + wod, g0 + wos, (H, og * dv), Q.row_bytes(og * dv, fm, D),
+                                4 * (og * dv // D), D, wf=wf), H, self.GS, self.PS)
+                else:
+                    ns.cv = Tensor(off + lofs["cv"], (nl // 2, self.CVW), (self.CVW, 1))
+                    ns.state = Tensor(off + lofs["state"], (nl, dv, dk), (dv * dk, dk, 1))
+                    ns.dn = DeltaNetParts(nl, og, ns.wh, ns.cv, ns.state, ns.wout, H)
             else:
                 ns.qn = Tensor(off + lofs["qn"], (d,), (1,))
                 ns.kn = Tensor(off + lofs["kn"], (d,), (1,))
@@ -750,8 +887,9 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     group's out_proj is split in pairs."""
     eps, K = spec.eps, spec.conv_k
     dk, dv = spec.lin_dk, spec.lin_dv
-    nl, C = lw.state.shape[0], 2 * dk + dv
-    R, NP, og = C + dv, nl // 2, lw.wout.shape[1] // dv
+    dn = lw.dn
+    nl, C = dn.nl, 2 * dk + dv
+    R, NP, og = C + dv, nl // 2, dn.og
     TP = 2 * K * C                                      # taps words of a pair (then its ring)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     ab = ol.dot(xs, lw.wab)                             # [1, 2nl]: a, then b, of each head
@@ -782,34 +920,35 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
         """The MXU: pair p's projection rows into P[t] (q, k, v first: prep starts on them)."""
         cuts = ((0, C), (C, 2 * C), (2 * C, 2 * R)) if split else ((0, 2 * C), (2 * C, 2 * R))
         for c0, c1 in cuts:
-            ol.dot(xs, lw.wh[p * 2 * R + c0:p * 2 * R + c1, :], out=P[t][:, c0:c1])
+            ol.dot(xs, dn.wh(p)[c0:c1, :], out=P[t][:, c0:c1])
 
     def fetch_cv(p):
         """Pair p's taps and convolution window (one load)."""
-        ol.load(lw.cv[p, :], out=CV)
+        ol.load(dn.cv(p), out=CV)
 
     def fetch_eb(p, t):
         ol.load(hs[p, :], out=EB[t])
 
-    def state_in(h, S):
+    def state_in(p, j, S):
+        """Head j of pair p's state into S."""
         if pos:
             for r, e in halves:
-                ol.load(lw.state[h][r:e, :], out=S[r:e, :])
+                ol.load(dn.state(p, j)[r:e, :], out=S[r:e, :])
         else:
             S.set(0.0)
 
-    def state_out(h, S):
+    def state_out(p, j, S):
         for r, e in halves:
-            ol.store(lw.state[h][r:e, :], S[r:e, :])
+            ol.store(dn.state(p, j)[r:e, :], S[r:e, :])
 
     def conv(p, t, j=None):
         """Pair p's convolution into U[t] (j: only head j of the pair)."""
         a, n = (0, 2) if j is None else (j, 1)
         pre = P[t][0, a * C:(a + n) * C]
         s0 = TP + (K - 2) * 2 * C + a * C                # the window's last row: this position
-        ol.store(lw.cv[p, s0:s0 + n * C], pre)
+        ol.store(dn.cv(p)[s0:s0 + n * C], pre)
         if a + n == 2:                                  # its other rows, one up (_past)
-            ol.store(lw.cv[p, TP:TP + (K - 2) * 2 * C], CV[TP + 2 * C:TP + (K - 1) * 2 * C])
+            ol.store(dn.cv(p)[TP:TP + (K - 2) * 2 * C], CV[TP + 2 * C:TP + (K - 1) * 2 * C])
         taps = CV[0:TP].reshape(2 * K, C)
 
         def tap(i):
@@ -849,7 +988,7 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
         """out_proj of head group g (k: only its k-th pair)."""
         c0, c1 = (0, og) if k is None else (2 * k, 2 * k + 2)
         ol.dot(ON[c0:c1, :].reshape(1, (c1 - c0) * dv),
-               lw.wout[g * spec.hidden:(g + 1) * spec.hidden, c0 * dv:c1 * dv], acc=y)
+               dn.wout(g)[:, c0 * dv:c1 * dv], acc=y)
 
     def rdot1(S, t, j):
         """kv = S k of head j of the pair in buffers t, into w."""
@@ -869,14 +1008,13 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     def _pair_segment(p, t, last1, last2, g=None):
         """Pair p (buffers t = p % 2); last1: no pair p+1, last2: no pair p+2; g: the head
         group pair p-1 completes (to multiply by out_proj)."""
-        a, b = 2 * p, 2 * p + 1
         first = isinstance(p, int) and p == 0
         if not last2 and not first:
             project(p + 2, t)
         rdot1(St[0], t, 0)
-        state_in(b, St[1])
+        state_in(p, 1, St[1])
         update(St[0], t, 0)
-        state_out(a, St[0])
+        state_out(p, 0, St[0])
         if first:                               # head b's prep, after head a's start
             conv(0, 0, 1)
             qk(0, 1)
@@ -895,9 +1033,9 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
         rdot2(St[0], t, 0)
         rdot1(St[1], t, 1)
         if not last1:
-            state_in(a + 2, St[0])
+            state_in(p + 1, 0, St[0])
         update(St[1], t, 1)
-        state_out(b, St[1])
+        state_out(p, 1, St[1])
         if not last1:
             conv(p + 1, 1 - t)
             qk(1 - t)
@@ -914,15 +1052,16 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
     project(0, 0, split=True)               # head a's rows first: its recurrence starts
     fetch_cv(0)
     fetch_eb(0, 0)
-    state_in(0, St[0])
+    state_in(0, 0, St[0])
     conv(0, 0, 0)
     qk(0, 0)
     if NP > 1:
         project(1, 1)
     _pair_segment(0, 0, NP == 1, NP <= 2)
-    # segments 1 .. NP-3 have every part: loop them, but unrolled at a run-time position (the
-    # loop's address registers would leave too few for the attention's run-time ones)
-    n_it = 0 if isinstance(pos, RunPos) else max(0, (NP - 3) // 2)
+    # segments 1 .. NP-3 have every part: loop them, but at a run-time position only in a
+    # group-major layer (array-major, the loop's address registers, one per part, would leave
+    # too few for the attention's run-time ones)
+    n_it = 0 if isinstance(pos, RunPos) and not dn.grouped else max(0, (NP - 3) // 2)
     if n_it:
         for i in ol.range(n_it):
             _pair_segment(2 * i + 1, 1, False, False, None if og == 4 else 2 * i)
@@ -951,8 +1090,9 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
     The per-pair buffers come in two sets by parity, o included."""
     eps, K = spec.eps, spec.conv_k
     dk, dv = spec.lin_dk, spec.lin_dv
-    nl, C = lw.state.shape[0], 2 * dk + dv
-    R, NP, og = C + dv, nl // 2, lw.wout.shape[1] // dv
+    dn = lw.dn
+    nl, C = dn.nl, 2 * dk + dv
+    R, NP, og = C + dv, nl // 2, dn.og
     TP = 2 * K * C
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     ab = ol.dot(xs, lw.wab)
@@ -978,10 +1118,10 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
     def project(p, t, split=False):
         cuts = ((0, C), (C, 2 * C), (2 * C, 2 * R)) if split else ((0, 2 * C), (2 * C, 2 * R))
         for c0, c1 in cuts:
-            ol.dot(xs, lw.wh[p * 2 * R + c0:p * 2 * R + c1, :], out=P[t][:, c0:c1])
+            ol.dot(xs, dn.wh(p)[c0:c1, :], out=P[t][:, c0:c1])
 
     def fetch_cv(p):
-        ol.load(lw.cv[p, :], out=CV)
+        ol.load(dn.cv(p), out=CV)
 
     def fetch_eb(p, t):
         ol.load(hs[p, :], out=EB[t])
@@ -990,9 +1130,9 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
         a, n = (0, 2) if j is None else (j, 1)
         pre = P[t][0, a * C:(a + n) * C]
         s0 = TP + (K - 2) * 2 * C + a * C                # the window's last row: this position
-        ol.store(lw.cv[p, s0:s0 + n * C], pre)
+        ol.store(dn.cv(p)[s0:s0 + n * C], pre)
         if a + n == 2:                                  # its other rows, one up (_past)
-            ol.store(lw.cv[p, TP:TP + (K - 2) * 2 * C], CV[TP + 2 * C:TP + (K - 1) * 2 * C])
+            ol.store(dn.cv(p)[TP:TP + (K - 2) * 2 * C], CV[TP + 2 * C:TP + (K - 1) * 2 * C])
         taps = CV[0:TP].reshape(2 * K, C)
 
         def tap(i):
@@ -1034,10 +1174,10 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
     def flush(g, k=None):
         c0, c1 = (0, og) if k is None else (2 * k, 2 * k + 2)
         ol.dot(ON[c0:c1, :].reshape(1, (c1 - c0) * dv),
-               lw.wout[g * spec.hidden:(g + 1) * spec.hidden, c0 * dv:c1 * dv], acc=y)
+               dn.wout(g)[:, c0 * dv:c1 * dv], acc=y)
 
-    def dstep(h, t, j):
-        ol.deltanet_step(lw.state[h], QK[t][j, :], U[t][j, 2 * dk:C], EB[t][j:j + 1],
+    def dstep(p, t, j):
+        ol.deltanet_step(dn.state(p, j), QK[t][j, :], U[t][j, 2 * dk:C], EB[t][j:j + 1],
                          EB[t][2 + j:3 + j], O[t][j, :],
                          zero=not isinstance(pos, RunPos) and pos == 0)
 
@@ -1050,7 +1190,7 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
         first = isinstance(p, int) and p == 0
         if not last2 and not first:
             project(p + 2, t)
-        dstep(2 * p, t, 0)
+        dstep(p, t, 0)
         if first:                               # head b's prep, after head a's start
             conv(0, 0, 1)
             qk(0, 1)
@@ -1060,7 +1200,7 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
             if not last1:
                 fetch_cv(1)
                 fetch_eb(1, 1)
-        dstep(2 * p + 1, t, 1)
+        dstep(p, t, 1)
         if not last1:
             prep(p + 1, 1 - t)
         post(t)
@@ -1080,9 +1220,10 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
     if NP > 1:
         project(1, 1)
     _pair_segment(0, 0, NP == 1, NP <= 2, group(0))
-    # segments 1 .. NP-3 have every part: loop them, but unrolled at a run-time position (the
-    # loop's address registers would leave too few for the attention's run-time ones)
-    n_it = 0 if isinstance(pos, RunPos) else max(0, (NP - 3) // 2)
+    # segments 1 .. NP-3 have every part: loop them, but at a run-time position only in a
+    # group-major layer (array-major, the loop's address registers, one per part, would leave
+    # too few for the attention's run-time ones)
+    n_it = 0 if isinstance(pos, RunPos) and not dn.grouped else max(0, (NP - 3) // 2)
     if n_it:
         for i in ol.range(n_it):
             _pair_segment(2 * i + 1, 1, False, False, i if og == 4 else 2 * i + 1)
@@ -1138,8 +1279,9 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     streams it through its datapath and back), row after row, instead of the VPU passes."""
     eps, K, R = spec.eps, spec.conv_k, x.rows
     dk, dv = spec.lin_dk, spec.lin_dv
-    nl, C = lw.state.shape[0], 2 * dk + dv
-    RH, og = C + dv, lw.wout.shape[1] // dv             # RH: projected rows per head
+    dn = lw.dn
+    nl, C = dn.nl, 2 * dk + dv
+    RH, og = C + dv, dn.og                              # RH: projected rows per head
     NP, ng, gp = nl // 2, nl // og, og // 2             # pairs, head groups, pairs per group
     TP = 2 * K * C                                      # taps words of a pair (then its ring)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
@@ -1166,7 +1308,7 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
 
     def flush(g, ON, c0, c1):
         """y += ON . out_proj columns [c0, c1) of head group g (heads of dv columns)."""
-        ol.dot(ON, lw.wout[g * spec.hidden:(g + 1) * spec.hidden, c0 * dv:c1 * dv], acc=y)
+        ol.dot(ON, dn.wout(g)[:, c0 * dv:c1 * dv], acc=y)
 
     def head_in(X, taps, a):
         """Head a of the pair whose q k v rows are in X: the convolution and SiLU -> [R, C]."""
@@ -1187,8 +1329,8 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         U.set(silu(U))
         return U
 
-    def head(h, X, Z, taps, a):
-        """Head h, head a of its pair (whose q k v rows are in X, z in Z) -> ONp[:, a]."""
+    def head(p, X, Z, taps, a):
+        """Head a of pair p (whose q k v rows are in X, z in Z) -> ONp[:, a]."""
         U = head_in(X, taps, a)
         GZ = silu(Z[:, a * dv:(a + 1) * dv])
         if dstep:                                       # q | k per row, a DSTEP per row
@@ -1197,7 +1339,7 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             QK[:, dk:2 * dk].set(l2norm_rows(U[:, dk:2 * dk]))
             O = ol.empty([R, dv])
             for r in range(R):
-                ol.deltanet_step(lw.state[h], QK[r, :], U[r, 2 * dk:C], GDB[r, a:a + 1],
+                ol.deltanet_step(dn.state(p, a), QK[r, :], U[r, 2 * dk:C], GDB[r, a:a + 1],
                                  GDB[r, 2 + a:3 + a], O[r, :], zero=(p0 == 0 and r == 0))
             del QK
             ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
@@ -1205,7 +1347,7 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         Qn = l2norm_rows(U[:, 0:dk], dk ** -0.5)
         Kn = l2norm_rows(U[:, dk:2 * dk])
         if p0:
-            ol.load(lw.state[h], out=St)
+            ol.load(dn.state(p, a), out=St)
         else:
             St.set(0.0)
         O = ol.empty([R, dv])
@@ -1215,7 +1357,7 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             w.set((U[r, 2 * dk:C] - w * dh) * bh)
             ol.outer(w, Kn[r, :], acc=St, decay=dh)
             O[r, :].set(St @ Qn[r, :])
-        ol.store(lw.state[h], St)
+        ol.store(dn.state(p, a), St)
         ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
 
     # a pair's projections, taps and ring rows; two sets with DSTEP (pair p + 1's projections
@@ -1229,19 +1371,19 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         store the next window (else store_window after the pair's DSTEPs: a store waiting for
         the projections would hold the DMA's queue, and the DSTEPs behind it)."""
         taps, X, Z = PB[b]
-        ol.load(lw.cv[p, 0:TP], out=taps)              # rows (head, tap)
+        ol.load(dn.cv(p)[0:TP], out=taps)              # rows (head, tap)
         for j in range(1, min(K, p0 + 1)):              # positions p0-K+1 ..: the window
             sl = TP + (K - 1 - j) * 2 * C               # (_past)
-            ol.load(lw.cv[p, sl:sl + 2 * C], out=X[K - 1 - j, :])
-        ol.dot(xs, lw.wh[p * 2 * RH:p * 2 * RH + 2 * C, :], out=X[K - 1:K - 1 + R, :])
-        ol.dot(xs, lw.wh[p * 2 * RH + 2 * C:(p + 1) * 2 * RH, :], out=Z)   # z of a, of b
+            ol.load(dn.cv(p)[sl:sl + 2 * C], out=X[K - 1 - j, :])
+        ol.dot(xs, dn.wh(p)[0:2 * C, :], out=X[K - 1:K - 1 + R, :])
+        ol.dot(xs, dn.wh(p)[2 * C:2 * RH, :], out=Z)                     # z of a, of b
         if window:
             store_window(p, b)
 
     def store_window(p, b):
         X = PB[b][1]
         for i in range(K - 1):                          # the next window
-            ol.store(lw.cv[p, TP + i * 2 * C:TP + (i + 1) * 2 * C], X[R + i, :])
+            ol.store(dn.cv(p)[TP + i * 2 * C:TP + (i + 1) * 2 * C], X[R + i, :])
 
     def heads(p, b):
         """Pair p's heads from buffers b -> ONp. With DSTEP both heads' VPU work (convolution,
@@ -1249,12 +1391,13 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         DSTEPs back to back (the same operations, in another order)."""
         taps, X, Z = PB[b]
         taps = taps.reshape(2 * K, C)
+        q = dn.index(p)
         for r in range(R):
-            ol.load(gr[r, 2 * p:2 * p + 2], out=GD[r, :])
-            ol.load(gr[r, nl + 2 * p:nl + 2 * p + 2], out=GB[r, :])
+            ol.load(gr[r, 2 * q:2 * q + 2], out=GD[r, :])
+            ol.load(gr[r, nl + 2 * q:nl + 2 * q + 2], out=GB[r, :])
         if not dstep:
             for a in range(2):
-                head(2 * p + a, X, Z, taps, a)
+                head(p, X, Z, taps, a)
             return
         QK = [ol.empty([R, 2 * dk]) for _ in range(2)]
         V = [ol.empty([R, dv]) for _ in range(2)]
@@ -1269,14 +1412,14 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         O = [ol.empty([R, dv]) for _ in range(2)]
         for a in range(2):
             for r in range(R):
-                ol.deltanet_step(lw.state[2 * p + a], QK[a][r, :], V[a][r, :], GDB[r, a:a + 1],
+                ol.deltanet_step(dn.state(p, a), QK[a][r, :], V[a][r, :], GDB[r, a:a + 1],
                                  GDB[r, 2 + a:3 + a], O[a][r, :], zero=(p0 == 0 and r == 0))
         del QK, V
         for a in range(2):
             ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O[a], gn, eps) * GZ[a])
 
     def pair(p):
-        """Pair p (an int or a loop expression) -> ONp."""
+        """Pair p (an int, a loop expression or (group, index): DeltaNetParts) -> ONp."""
         project(p, 0)
         heads(p, 0)
 
@@ -1313,12 +1456,12 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             flush(g, ONp, 0, 2)
             continue
         for q in loop(gp):
-            pair(g * gp + q)
+            pair((g, q))
             ol.store(on[:, q * 2 * dv:(q + 1) * 2 * dv], ONp)
         flush(g, ol.load(on), 0, og)
     if split:                                           # the last group, pair by pair
         for q in loop(gp):
-            pair((ng - 1) * gp + q)
+            pair((ng - 1, q))
             flush(ng - 1, ONp, 2 * q, 2 * q + 2)
     return x + ol.all_reduce(y)
 
