@@ -116,7 +116,9 @@ def test_the_decode_loop_on_the_card(qual):
     # a bitstream with CAPS bit30: the six token-exact runs again on the card's decode loop
     text, checks = qual(GEN="1")
     assert summary(text) == ("0", "20"), text[-2000:]
-    assert "decode loop on the card (6 token-exact + 3 decode_profile)" in text
+    assert "decode loop on the card (6 token-exact + 3 x 2 decode_profile)" in text
+    text, checks = qual(GEN="1", QUAL_CRASH="--model qwen35 --tokens 96")    # the sampled run
+    assert "decode_profile card loop qwen35 fp4 int8 sampled: exit 1" in checks
     text, checks = qual(GEN="1", QUAL_CRASH="lfm2 int8 - 32 --card-loop")
     assert "card loop lfm2 int8 -: exit 1" in checks
     assert "5 of 6 card-loop token-exact runs passed" in checks

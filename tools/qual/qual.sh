@@ -15,7 +15,8 @@
 #   quick memory test, then after the soak token-exact against the ISA simulator for all six,
 #   per-position and resident, and a final selftest. A bitstream with the decode loop (CAPS
 #   bit30) also runs it for all six, token-exact against the same references, and
-#   decode_profile --card-loop for the 4-bit ones (wall against device tok/s); GEN=0 / 1
+#   decode_profile --card-loop, greedy and sampled, for the 4-bit ones (wall against device
+#   tok/s); GEN=0 / 1
 #   overrides the bitstream's bit.
 # full (~45 min): also a cold diag with the full march C- (2 x 2.6 min), decode_profile for all
 #   six, rw_bench, a 5 min soak and the full march in the warm diag.
@@ -171,7 +172,7 @@ done
 want=$(( $(echo $RUNS | wc -w) * 2 )); got=$(( $(grep -c '\[PASS\] model' "$OUT/checks.txt") - p0 ))
 [ "$got" -eq "$want" ] || fail "$got of $want token-exact runs passed"
 if [ "$GEN" = 1 ]; then
-phase "decode loop on the card ($(set -- $RUNS; echo $#) token-exact + $(set -- $DP_RUNS; echo $#) decode_profile)"
+phase "decode loop on the card ($(set -- $RUNS; echo $#) token-exact + $(set -- $DP_RUNS; echo $#) x 2 decode_profile)"
 p0=$(grep -c '\[PASS\] model' "$OUT/checks.txt")
 for r in $RUNS; do IFS=: read -r m w h <<< "$r"
   run "card loop $m $w $h" timeout 1800 $P tools/qual/refs.py card "$OUT/cfg.pkl" "$m" "$w" "$h" 32 --card-loop \
@@ -180,9 +181,12 @@ done
 want=$(set -- $RUNS; echo $#); got=$(( $(grep -c '\[PASS\] model' "$OUT/checks.txt") - p0 ))
 [ "$got" -eq "$want" ] || fail "$got of $want card-loop token-exact runs passed"
 for r in $DP_RUNS; do IFS=: read -r m w h <<< "$r"; args="--wformat $w"; [ "$h" != "-" ] && args="$args --head-format $h"
-  run "decode_profile card loop $m $w $h" timeout 1800 $P tools/decode_profile.py --model "$m" --greedy \
-    --tokens 96 $args --card-loop --json "$OUT/dpl-$m-$w-$h.json" > "$OUT/dpl-$m-$w-$h.txt"
-  grep -E "decode loop on the card|Error" "$OUT/dpl-$m-$w-$h.txt"
+  for mode in greedy sampled; do         # sampled: the model's chat defaults (chat.SAMPLING)
+    run "decode_profile card loop $m $w $h $mode" timeout 1800 $P tools/decode_profile.py --model "$m" \
+      $([ $mode = greedy ] && echo --greedy) --tokens 96 $args --card-loop \
+      --json "$OUT/dpl-$m-$w-$h-$mode.json" > "$OUT/dpl-$m-$w-$h-$mode.txt"
+    grep -E "decode loop on the card|Error" "$OUT/dpl-$m-$w-$h-$mode.txt"
+  done
 done
 fi
 wait                            # the references' job (refs.py card waited for what it needed)
