@@ -308,10 +308,24 @@ def row_bytes(K: int, fmt: str, D: int = 128) -> int:
     return K if fmt == "int8" else -(-K // (2 * D)) * D
 
 
+QUANT_ROWS = 1 << 14    # quantize_mxu: rows per piece, so its temporaries stay small (a 248K x
+                        # 2048 LM head is 2 GB in fp32; its float temporaries were several more)
+
+
 def quantize_mxu(W: np.ndarray, fmt: str, D: int = 128) -> tuple[np.ndarray, np.ndarray]:
     """W [N, K] in an MXU weight format ("int8", "int4" or "fp4"): the DRAM rows [N, row_bytes]
     (uint8) and the block scales [N, K/D] (fp32 for int8, scale words for 4-bit), ready to
-    place (the scale rows are 4 * K/D bytes apart)."""
+    place (the scale rows are 4 * K/D bytes apart). Rows are quantized on their own, QUANT_ROWS
+    at a time."""
+    N = W.shape[0]
+    if N > QUANT_ROWS:
+        q0, s0 = quantize_mxu(W[:QUANT_ROWS], fmt, D)
+        q = np.empty((N,) + q0.shape[1:], q0.dtype)
+        sc = np.empty((N,) + s0.shape[1:], s0.dtype)
+        q[:QUANT_ROWS], sc[:QUANT_ROWS] = q0, s0
+        for i in range(QUANT_ROWS, N, QUANT_ROWS):
+            q[i:i + QUANT_ROWS], sc[i:i + QUANT_ROWS] = quantize_mxu(W[i:i + QUANT_ROWS], fmt, D)
+        return q, sc
     if fmt == "int8":
         from .runtime import quantize_rows
         q, s = quantize_rows(np.asarray(W, np.float32), D)
