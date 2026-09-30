@@ -83,10 +83,16 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     lg = eng.prefill(ids if host_loop else ids[:-1])
     prefill_s = time.time() - t
     t = time.time()
+    top = []                    # host loop: the device's 8 best (id, logit) per step
+
+    def best(v):
+        i = np.argsort(-v, kind="stable")[:8]
+        top.append([[int(j), round(float(v[j]), 4)] for j in i])
+        return int(i[0])
     if host_loop:               # the resident decode programs, the argmax on the host
-        got = [int(np.argmax(lg))]
+        got = [best(lg)]
         for _ in range(n - 1):
-            got.append(int(np.argmax(eng.step(got[-1]))))
+            got.append(best(eng.step(got[-1])))
     else:                       # the prompt's last token fed by the card's loop: every pick
         got = eng.generate_card(ids[-1], n, stop_ids=[])        # on the card
     gen_s = time.time() - t
@@ -106,7 +112,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     diff = next((i for i, (a, b) in enumerate(zip(got, ref["tokens"])) if a != b), None)
     at = None
     if diff is not None and "top" in ref:       # HF's 8 best at the first different pick
-        at = dict(hf=ref["tokens"][diff], card=got[diff], hf_top=ref["top"][diff])
+        at = dict(hf=ref["tokens"][diff], card=got[diff], hf_top=ref["top"][diff],
+                  card_top=top[diff] if top else None)
     return dict(tokens=got, match=got == ref["tokens"][:len(got)], first_diff=diff,
                 at_first_diff=at,
                 experts_per_layer=experts, slots=L.layers * experts, pool=L.layers * L.E,
@@ -118,7 +125,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(),
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
-                loop="host" if host_loop else "card", embed=embed)
+                loop="host" if host_loop else "card", embed=embed, top=top or None)
 
 
 def main():
@@ -139,8 +146,9 @@ def main():
                          "table (default), or an fp32 table (1 GiB for LFM2.5-8B-A1B)")
     ap.add_argument("--trace", help="save the card's routes as a router trace (cachesim.py)")
     ap.add_argument("--host-loop", action="store_true",
-                    help="decode with the resident step programs and the argmax on the host "
-                         "(a model whose generate program does not fit IMEM yet)")
+                    help="decode with the resident step programs and the argmax on the host, "
+                         "the device's 8 best logits per step in the result (a diagnostic: "
+                         "where a run parts from HF's)")
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
