@@ -274,23 +274,35 @@ module otpu_vpu
   assign ren = en;
 
   // ------------------------------------------------------------------ issue
+  // The read addresses follow the mode alone (OUTER fill or not, B's mode): a lane's address
+  // only counts while its enable is up, and a rotator port takes lane 0's whenever any lane
+  // is, so the lane tests (ic + l < cols, the issue checks) reach the enables but not the
+  // addresses, and TMEM's bank addresses no longer wait for them (133.33 MHz, fused-133
+  // c2830d6: cols -> the lane test -> tb_en -> the address multiplexer -> port 4's bank rows
+  // -> block RAM ADDRB, 9-10 levels, +0.130 ns)
   logic [LANES-1:0] imask;
   logic             irow_last, iall_last;
   always_comb begin
-    ta_en = '0; ta_addr = '0; tb_en = '0; tb_addr = '0;
+    ta_en = '0; tb_en = '0;
     imask = '0;
     irow_last = (ch + 1 == nch);
     iall_last = irow_last && (ir + 1 == rows);
+    for (int l = 0; l < LANES; l++) begin
+      if (filling) begin
+        ta_addr[l] = od_sc ? 32'(od_a) : tm_addr(od_a, ic, l);
+        tb_addr[l] = tm_addr(oc_a, ic, l);
+      end else begin
+        ta_addr[l] = tm_addr(a_row, ic, l);
+        tb_addr[l] = (bmode == B_COL) ? tm_addr(b, ic, l) :
+                     (bmode == B_ROW && l == 0) ? 32'(b_row) : tm_addr(b_row, ic, l);
+      end
+    end
     if (issuing && filling) begin
       // OUTER fill: C on port B; D on port A (one word on lane 0 for DSCALAR, none for DONE)
       for (int l = 0; l < LANES; l++) begin
         if (32'(ic) + 32'(l) < 32'(cols)) begin
           tb_en[l] = 1'b1;
-          tb_addr[l] = tm_addr(oc_a, ic, l);
-          if (!od_one && (!od_sc || l == 0)) begin
-            ta_en[l] = 1'b1;
-            ta_addr[l] = od_sc ? 32'(od_a) : tm_addr(od_a, ic, l);
-          end
+          if (!od_one && (!od_sc || l == 0)) ta_en[l] = 1'b1;
         end
       end
     end else if (issuing && iss_ok) begin
@@ -298,26 +310,26 @@ module otpu_vpu
         if (32'(ic) + 32'(l) < 32'(cols) && 16'(l) < iwid) begin
           imask[l] = 1'b1;
           ta_en[l] = (func != V_FILL);
-          ta_addr[l] = tm_addr(a_row, ic, l);
-          if (reads_b(func)) case (bmode)
-            B_FULL: begin
-              tb_en[l] = 1'b1;
-              tb_addr[l] = tm_addr(b_row, ic, l);
-            end
-            B_COL: begin
-              tb_en[l] = 1'b1;
-              tb_addr[l] = tm_addr(b, ic, l);
-            end
-            default: ;
-          endcase
+          if (reads_b(func) && (bmode == B_FULL || bmode == B_COL)) tb_en[l] = 1'b1;
         end
       end
-      if (bmode == B_ROW && reads_b(func) && imask[0]) begin
-        tb_en[0] = 1'b1;
-        tb_addr[0] = 32'(b_row);
-      end
+      if (bmode == B_ROW && reads_b(func) && imask[0]) tb_en[0] = 1'b1;
     end
   end
+`ifndef SYNTHESIS
+  // an enabled lane's address is the one the lane tests chose
+  always @(posedge clk)
+    if (!rst)
+      for (int l = 0; l < LANES; l++) begin
+        logic [31:0] ra, rb;
+        ra = filling ? (od_sc ? 32'(od_a) : tm_addr(od_a, ic, l)) : tm_addr(a_row, ic, l);
+        rb = filling ? tm_addr(oc_a, ic, l) :
+             (bmode == B_FULL) ? tm_addr(b_row, ic, l) :
+             (bmode == B_COL) ? tm_addr(b, ic, l) : 32'(b_row);
+        if ((ta_en[l] && ta_addr[l] != ra) || (tb_en[l] && tb_addr[l] != rb))
+          $fatal(1, "otpu_vpu: lane %0d's read address is not its mode's", l);
+      end
+`endif
 
   // meta of a chunk; m0 describes the data arriving this cycle (read last cycle)
   typedef struct packed {
