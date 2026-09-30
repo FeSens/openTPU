@@ -383,6 +383,28 @@ def test_generate_matches_the_host_loop(tiny, S, split):
     assert a.pos == 248 + j + 1                      # the stop id is not fed
 
 
+@pytest.mark.parametrize("split", [None, True])
+def test_generate_with_the_int8_embedding(tiny, split):
+    """Spec.embed "int8": the token's row gathered on the device at the run-time token (qwen3._embed)
+    inside the loop, one program or split: the host resident loop's tokens."""
+    import dataclasses
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    name, W, spec = tiny
+    spec = dataclasses.replace(spec, embed="int8")
+    cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=1)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    a.gen_split = split
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    t0 = int(np.argmax(a.prefill(toks)))
+    assert int(np.argmax(b.prefill(toks))) == t0
+    ref, t = [], t0
+    for _ in range(12):
+        t = int(np.argmax(b.step(t)))
+        ref.append(t)
+    assert len(set(ref)) > 3
+    assert a.generate_card(t0, 12, stop_ids=[]) == ref
+
+
 @pytest.mark.parametrize("S,sampled,split", [(1, False, None), (1, True, None), (2, False, None),
                                              (2, True, None), (1, False, True), (2, True, True)])
 def test_generate_on_rtl(have_verilator, tiny, S, sampled, split):
