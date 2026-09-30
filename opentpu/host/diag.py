@@ -493,8 +493,9 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     img = diag_image()
     if "isa" in want:
         print("isa", flush=True)
-        gen = bool(((ctx["info"] or {}).get("caps") or {}).get("gen"))
-        for group, name, prog in (op_checks(ctx["cfg"], gen) if ctx["cfg"] else []):
+        caps = (ctx["info"] or {}).get("caps") or {}
+        gen, waitw = bool(caps.get("gen")), bool(caps.get("waitw"))
+        for group, name, prog in (op_checks(ctx["cfg"], gen, waitw) if ctx["cfg"] else []):
             d.check("isa", name, lambda prog=prog: run_demo(b, ctx["cfg"], prog, img)[:2],
                     core, group)
         if not ctx["cfg"]:

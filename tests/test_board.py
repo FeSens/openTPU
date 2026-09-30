@@ -155,8 +155,8 @@ def test_stream_on_board_model(have_verilator):
     assert ok, msg
 
 
-@pytest.mark.parametrize("group,name,prog", op_checks(CFG, gen=True),
-                         ids=[name for _, name, _ in op_checks(CFG, gen=True)])
+@pytest.mark.parametrize("group,name,prog", op_checks(CFG, gen=True, waitw=True),
+                         ids=[name for _, name, _ in op_checks(CFG, gen=True, waitw=True)])
 def test_op_check_on_board_model(have_verilator, group, name, prog):
     """otpu-diag's per-instruction programs (opentpu/host/opchecks.py), bit for bit."""
     ok, msg, _ = run_demo(Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2)), CFG, prog,

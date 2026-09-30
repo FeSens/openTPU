@@ -82,7 +82,7 @@ def test_v3_info_snapshot_and_rates():
     assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False, "w4": True,
                          "pair": False, "dstep": False, "chash": False, "act_rows": False,
                          "args": False, "stream": False, "hostcal": False, "gen": False,
-                         "trace_depth": 4096, "pq_window": 64}
+                         "waitw": False, "trace_depth": 4096, "pq_window": 64}
     assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()

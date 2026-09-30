@@ -85,6 +85,8 @@ class Slice:
         self.halted = False
         self.chain: tuple | None = None       # HALT CHAIN: (DRAM byte address, instructions)
         self.waiting: I.Instr | None = None   # blocked on a collective
+        self.polling: I.Instr | None = None   # a WAITW whose condition does not hold yet
+        self.stalls = 0                       # WAITWs that had to wait (for the host)
         self.icount = 0
 
     # ---------------------------------------------------------------- memory helpers
@@ -128,6 +130,13 @@ class Slice:
         if op in (I.BAR, I.GATHER):
             self.waiting = ins
             return
+        if op == I.WAITW:
+            if self.poll(ins):
+                self.advance()
+            else:
+                self.polling = ins
+                self.stalls += 1
+            return
         if op == I.LOOP:
             count = (self.reg(ins.ra) + ins.w[1]) & 0xFFFFFFFF
             body = ins.w[0]
@@ -146,6 +155,15 @@ class Slice:
             return
         self.execute(ins)
         self.advance()
+
+    def poll(self, ins: I.Instr) -> bool:
+        """WAITW's DRAM read: if its condition holds, T[R[rb] + w2] = the word's bits and True."""
+        a = (self.reg(ins.ra) + ins.w[0]) & 0xFFFFFFFF
+        v = int(self.m32[self._widx(np.int64(a))])
+        if not I.waitw_holds(v, self.reg(ins.rc) + ins.w[2], ins.flags & 3, ins.w[3]):
+            return False
+        self.tmem[self._tidx(np.int64(self.reg(ins.rb) + ins.w[1]))] = v
+        return True
 
     def advance(self) -> None:
         pc = self.pc
@@ -644,6 +662,7 @@ class Machine:
         self.slices = [Slice(cfg, s, programs[s], drams[s]) for s in range(cfg.S)]
         self.args = args
         self.chains = 0                  # HALT CHAIN restarts so far
+        self.host = None                 # WAITW's host: host(machine) when every slice waits
         for s in self.slices:
             s.R = _regs(args)
 
@@ -655,6 +674,7 @@ class Machine:
         for s, p in zip(self.slices, programs):
             s.prog, s.R, s.pc, s.stack = p, _regs(args), 0, []
             s.halted, s.waiting, s.icount, s.chain = False, None, 0, None
+            s.polling, s.stalls = None, 0
         return self
 
     def _chain(self, s: Slice) -> None:
@@ -666,7 +686,7 @@ class Machine:
         words = s.m32[s._widx(addr + 4 * np.arange(8 * n))]
         s.prog = [I.Instr.decode(words[8 * k:8 * k + 8]) for k in range(n)]
         s.R, s.pc, s.stack, s.halted, s.waiting = _regs(self.args), 0, [], False, None
-        s.chain = None
+        s.chain, s.polling = None, None
         self.chains += 1
 
     def run(self, max_steps: int = 10_000_000) -> "Machine":
@@ -674,7 +694,7 @@ class Machine:
         while not all(s.halted for s in self.slices):
             progressed = False
             for s in self.slices:
-                while not s.halted and s.waiting is None:
+                while not s.halted and s.waiting is None and s.polling is None:
                     s.step()
                     steps += 1
                     progressed = True
@@ -695,6 +715,21 @@ class Machine:
                     s.waiting = None
                     s.advance()
                 progressed = True
+            polling = [s for s in self.slices if s.polling is not None]
+            if polling and not progressed:
+                # every slice that can run is waiting: the host (its WAITW hook) acts now, as
+                # it would while the card polls; nothing to act on is the WAITW timeout
+                if self.host is not None:
+                    self.host(self)
+                for s in polling:
+                    if s.poll(s.polling):
+                        s.polling = None
+                        s.advance()
+                        progressed = True
+                if not progressed:
+                    ins = polling[0].polling
+                    raise SimError(f"slice {polling[0].sid}: WAITW at pc {polling[0].pc} "
+                                   f"never holds ({ins}; host {self.host!r}): the timeout")
             if not progressed:
                 raise SimError("deadlock")
         return self

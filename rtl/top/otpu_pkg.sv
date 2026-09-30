@@ -2,7 +2,8 @@
 // memory footprints the sequencer's scoreboard uses to let units run concurrently.
 package otpu_pkg;
   localparam logic [7:0] OP_NOP = 8'h00, OP_HALT = 8'h01, OP_LI = 8'h02, OP_ADDI = 8'h03,
-                         OP_LOOP = 8'h04, OP_BAR = 8'h05, OP_RLD = 8'h06, OP_LD = 8'h10,
+                         OP_LOOP = 8'h04, OP_BAR = 8'h05, OP_RLD = 8'h06, OP_WAITW = 8'h07,
+                         OP_LD = 8'h10,
                          OP_ST = 8'h11,
                          OP_DSTEP = 8'h12, OP_STREAM = 8'h13, OP_MM = 8'h20, OP_QACT = 8'h21,
                          OP_QST = 8'h22,
@@ -85,7 +86,7 @@ package otpu_pkg;
 
   function automatic int unit_of(input logic [7:0] op);
     case (op)
-      OP_LD, OP_ST, OP_DSTEP, OP_STREAM: return U_DMA;
+      OP_LD, OP_ST, OP_DSTEP, OP_STREAM, OP_WAITW: return U_DMA;
       OP_MM:             return U_MXU;
       OP_QACT, OP_QST:   return U_Q;
       OP_VOP:            return U_VPU;
@@ -336,6 +337,12 @@ package otpu_pkg;
       end
       OP_BAR: f.all = 1'b1;
       OP_RLD: f.rd[0] = mk(SP_TMEM, c.w1, 32'd1);
+      // WAITW: all of DRAM as written, so older stores land before its first read and younger
+      // DRAM readers see what the host wrote before the word; the one TMEM word
+      OP_WAITW: begin
+        f.wr[0] = mk(SP_DRAM, 32'd0, 32'hFFFF_FFFF);
+        f.wr[1] = mk(SP_TMEM, c.w2, 32'd1);
+      end
       default: ;
     endcase
     return f;

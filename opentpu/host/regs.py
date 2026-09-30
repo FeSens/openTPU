@@ -49,6 +49,7 @@ CAP_HOSTCAL, R_MEMCAL = 1 << 27, 0x10000
 # CAPS bit30: the decode loop on the card (docs/isa.md RLD, VOP ARGMAX, HALT CHAIN; the
 # generate programs of opentpu/llm/generate.py)
 CAP_GEN = 1 << 30
+CAP_WAITW = 1 << 31              # WAITW: the DMA waits for a word the host writes (docs/isa.md)
 TEMP_VALID = 1 << 31
 
 # free-running 64-bit counters: shadows latched by a SNAP write; low word at the offset
@@ -86,6 +87,7 @@ def caps(v: int) -> dict:
             "chash": bool(v & CAP_CHASH), "act_rows": bool(v & CAP_ACT),
             "args": bool(v & CAP_ARGS), "stream": bool(v & CAP_STREAM),
             "hostcal": bool(v & CAP_HOSTCAL), "gen": bool(v & CAP_GEN),
+            "waitw": bool(v & CAP_WAITW),
             "trace_depth": 1 << ((v >> 8) & 0xFF) if v & CAP_TRACE else 0,
             "pq_window": 1 << ((v >> 16) & 0xFF)}
 

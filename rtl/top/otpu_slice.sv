@@ -113,10 +113,11 @@ module otpu_slice
   logic [31:0] im_row;
   seq_ev_t sq_ev;
   logic        srst;              // the sequencer's and the units' reset: rst, or a CHAIN reload
-  logic        sq_halted, sq_ch, rl_v;
+  logic        sq_halted, sq_ch, sq_err, rl_v;
+  logic        dma_err;           // a WAITW timed out: the slice stops with an error
   logic [31:0] sq_icount, sq_cha, sq_chn, rl_val;
   otpu_seq #(.IMEM_WORDS(IMEM_WORDS), .SID(SID), .S(S), .D(D), .WIN(WIN)) u_seq (
-    .clk, .rst(srst), .ucmd, .ustart, .urel, .urdy, .udone, .halted(sq_halted), .error,
+    .clk, .rst(srst), .ucmd, .ustart, .urel, .urdy, .udone, .halted(sq_halted), .error(sq_err),
     .icount(sq_icount), .ev(sq_ev), .rinit, .rl_v, .rl_val, .ch_req(sq_ch), .ch_addr(sq_cha),
     .ch_n(sq_chn), .im_we, .im_row, .im_data(b_rdata));
 
@@ -124,7 +125,8 @@ module otpu_slice
   logic        c_rst, c_ld;
   logic [31:0] c_addr, c_n, ic_base;
   assign srst = rst || c_rst;
-  assign halted = sq_halted && !sq_ch;
+  assign halted = (sq_halted && !sq_ch) || dma_err;
+  assign error = sq_err || dma_err;
   assign icount = ic_base + sq_icount;
   always_ff @(posedge clk) begin
     c_ld <= 1'b0;
@@ -261,6 +263,7 @@ module otpu_slice
 
   otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_SS)) u_dma (
     .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
+    .err(dma_err),
     .b_req(dma_breq), .b_gnt(b_rdy), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
     .b_addr(dma_baddr), .b_rvalid(b_rvalid && b_rtag), .b_rdata, .wr_idle,
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rdata(r_data[P_DMA]),
