@@ -2,7 +2,7 @@
 
     python3 -m tools.tourney.orchestrator --comp otpu_coll --rounds 1 --slots 1 [--agent claude]
         [--eval yosys|vivado-remote] [--base main] [--reset] [--keep] [--no-scribe] [--baseline-only]
-        [--objective area|fmax|unit] [--target-mhz 133.33]
+        [--objective area|fmax|unit] [--target-mhz 133.33] [--replay SLOT]
 
 Each component evolves on its own champion branch `tourney/<comp>` (created from --base, i.e.
 main, the first time; --reset recreates it). A round runs K slots in parallel, each in its own
@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import shutil
@@ -198,16 +199,22 @@ class Run:
 
     # ---- the whole design (fmax objective)
     def full_key(self, sha: str) -> Path:
-        """The cache file of a commit's full build. Keyed by the git trees of what the build
-        reads (rtl/, boards/), not the commit: a champion that only took host or doc commits
-        from main is not rebuilt. A result cached under the commit (older runs) is moved over."""
+        """The cache file of a commit's full build. Keyed by what the build reads, not the commit:
+        the blobs of the RTL files create_project.tcl lists (all of rtl/ if it lists none) and the
+        boards/ tree (Tcl, constraints, the LiteDRAM core, the block design scripts). A champion
+        that only took host, doc or simulation-only commits from main (e.g. the simulation top,
+        rtl/top/otpu_top.sv) is not rebuilt. A result cached under an older key of the same commit
+        (the rtl/ and boards/ trees; the commit) is moved over."""
         from . import remote as R
         args = "".join(f"-{a.replace('=', '')}" for a in R.BUILD_ARGS)   # e.g. -FAST1
+        tail = f"-{self.a.target_mhz:g}{args}.json"
+        files = R.board_rtl(git("show", f"{sha}:{R.PROJECT_TCL}", cwd=self.repo, check=False))
+        inputs = git("ls-tree", "-r", sha, "--", *(files or ["rtl"]), "boards", cwd=self.repo)
+        key = self.fulldir / f"b{hashlib.sha1(inputs.encode()).hexdigest()[:12]}{tail}"
         trees = "".join(git("rev-parse", f"{sha}:{d}", cwd=self.repo)[:6] for d in ("rtl", "boards"))
-        key = self.fulldir / f"t{trees}-{self.a.target_mhz:g}{args}.json"
-        old = self.fulldir / f"{sha[:12]}-{self.a.target_mhz:g}{args}.json"
-        if not key.exists() and old.exists():
-            old.rename(key)
+        for old in (self.fulldir / f"t{trees}{tail}", self.fulldir / f"{sha[:12]}{tail}"):
+            if not key.exists() and old.exists():
+                old.rename(key)
         return key
 
     def full_result(self, sha: str, wt: Path | None) -> dict:
@@ -379,33 +386,37 @@ class Run:
             return info
 
         try:
-            lessons = self.lessons_text()
-            cats = (AG.FMAX_CATEGORIES if self.fmax else
-                    AG.UNIT_CATEGORIES if self.unit else AG.CATEGORIES)
-            # rotated over the slots and the logged slots before them, so a component run one
-            # slot per round still takes each focus in turn
-            cat = cats[(k + self.logged()) % len(cats)]
-            rec["category"] = cat.split(":")[0]
-            if self.fmax:
-                agent("hyp", AG.hypothesis_prompt_fmax(self.comp, wt, champ, lessons,
-                                                       self.history(), cat, self.a.target_mhz))
-            elif self.unit:
-                agent("hyp", AG.hypothesis_prompt_unit(
-                    self.comp, wt, champ, lessons, self.history(), cat, self.a.target_mhz,
-                    A.unit_floor(champ)))
+            if self.a.replay:
+                self.replay_into(wt, rec)
             else:
-                agent("hyp", AG.hypothesis_prompt(self.comp, wt, champ, lessons, self.history(),
-                                                  cat, champ["critical"]))
-            hyp = (wt / "HYPOTHESIS.md").read_text() if (wt / "HYPOTHESIS.md").exists() else ""
-            if not hyp.strip():
-                raise G.GateFailure("hypothesis", "no HYPOTHESIS.md written")
-            rec["title"] = hyp.strip().splitlines()[0].lstrip("# ").strip()
-            rec["hypothesis"] = hyp
-            if G.changed_paths(wt) != ["HYPOTHESIS.md"]:
-                raise G.GateFailure("sandbox", f"hypothesis phase touched {G.changed_paths(wt)}")
-            agent("impl", AG.implement_prompt(self.comp, wt))
-            rec["implementation"] = ((wt / "IMPLEMENTATION.md").read_text()
-                                     if (wt / "IMPLEMENTATION.md").exists() else "")
+                lessons = self.lessons_text()
+                cats = (AG.FMAX_CATEGORIES if self.fmax else
+                        AG.UNIT_CATEGORIES if self.unit else AG.CATEGORIES)
+                # rotated over the slots and the logged slots before them, so a component run one
+                # slot per round still takes each focus in turn
+                cat = cats[(k + self.logged()) % len(cats)]
+                rec["category"] = cat.split(":")[0]
+                if self.fmax:
+                    agent("hyp", AG.hypothesis_prompt_fmax(self.comp, wt, champ, lessons,
+                                                           self.history(), cat, self.a.target_mhz))
+                elif self.unit:
+                    agent("hyp", AG.hypothesis_prompt_unit(
+                        self.comp, wt, champ, lessons, self.history(), cat, self.a.target_mhz,
+                        A.unit_floor(champ)))
+                else:
+                    agent("hyp", AG.hypothesis_prompt(self.comp, wt, champ, lessons, self.history(),
+                                                      cat, champ["critical"]))
+                hyp = (wt / "HYPOTHESIS.md").read_text() if (wt / "HYPOTHESIS.md").exists() else ""
+                if not hyp.strip():
+                    raise G.GateFailure("hypothesis", "no HYPOTHESIS.md written")
+                rec["title"] = hyp.strip().splitlines()[0].lstrip("# ").strip()
+                rec["hypothesis"] = hyp
+                if G.changed_paths(wt) != ["HYPOTHESIS.md"]:
+                    raise G.GateFailure("sandbox",
+                                        f"hypothesis phase touched {G.changed_paths(wt)}")
+                agent("impl", AG.implement_prompt(self.comp, wt))
+                rec["implementation"] = ((wt / "IMPLEMENTATION.md").read_text()
+                                         if (wt / "IMPLEMENTATION.md").exists() else "")
             # ---- gates
             gs = rec["gate_seconds"] = {}
 
@@ -461,6 +472,25 @@ class Run:
         rec["wt"] = str(wt)
         print(f"[tourney] {sid}: {rec['outcome']} -- {rec.get('reason', '')[:160]}", flush=True)
         return rec
+
+    def replay_into(self, wt: Path, rec: dict) -> None:
+        """--replay SLOT: that logged slot's saved patch, applied in place of the agents (for a
+        slot whose gates failed for reasons not its own, e.g. a congested test host); its
+        hypothesis and notes are carried over, the gates run as for any slot."""
+        sid = self.a.replay
+        patch = self.dir / "patches" / f"{sid}.patch"
+        rows = [json.loads(l) for l in self.log.read_text().splitlines() if l.strip()
+                ] if self.log.exists() else []
+        old = next((r for r in rows if r["id"] == sid), None)
+        if old is None or not patch.exists():
+            raise G.GateFailure("replay", f"no logged slot {sid} with a saved patch in {self.dir}")
+        r = subprocess.run(["git", "apply", str(patch)], cwd=wt, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise G.GateFailure("replay", f"{patch.name} does not apply to the champion: "
+                                          f"{r.stderr.strip()[-400:]}")
+        rec["replay_of"], rec["category"] = sid, old.get("category")
+        rec["title"], rec["hypothesis"] = old.get("title", sid), old.get("hypothesis", "")
+        rec["implementation"] = old.get("implementation", "")
 
     # ---- fmax objective: the out-of-context step and the round's full build
     def ooc_step(self, rec: dict, wt: Path, sid: str, champ: dict, gate) -> None:
@@ -701,11 +731,16 @@ def main(argv=None):
     ap.add_argument("--no-scribe", dest="scribe", action="store_false")
     ap.add_argument("--baseline-only", action="store_true")
     ap.add_argument("--agent-timeout", type=int, default=3600)
+    ap.add_argument("--replay", metavar="SLOT", help="run a logged slot's saved patch through the "
+                    "gates again, without agents (one slot)")
     ap.add_argument("--objective", choices=("area", "fmax", "unit"),
                     default=os.environ.get("OBJECTIVE", "area"))
     ap.add_argument("--target-mhz", type=float, default=float(os.environ.get("TARGET_MHZ",
                                                                              "133.33")))
-    Run(ap.parse_args(argv)).main()
+    a = ap.parse_args(argv)
+    if a.replay:
+        a.slots = 1
+    Run(a).main()
 
 
 if __name__ == "__main__":

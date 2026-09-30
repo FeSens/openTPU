@@ -424,6 +424,41 @@ def test_native_memory_path(have_verilator, prog, seed, stall, lat):
     assert sum(n["part_sw"] for n in st["native"]) == 0, st["native"]
 
 
+# The card's channels (rtlsim's LDC: the board's bridge otpu_mem_ch and LiteDRAM's own controller,
+# generated with the production core's settings, sim/verilator/otpu_ldc_mem.sv). The controller
+# alone, on one channel's sequential reads or writes (the BIST's pattern), moves what the card's
+# BIST measured (docs/litedram.md section 7: 91.0% of peak reading, 90.1% writing).
+@pytest.mark.parametrize("we,card", [(0, 0.910), (1, 0.901)], ids=["read", "write"])
+def test_ldc_sequential_is_the_card_bist(have_verilator, tmp_path, we, card):
+    import re
+    exe = rtlsim.build("tb_ldc_replay", [rtlsim.TB / "otpu_ldc_ch.v",
+                                         rtlsim.TB / "tb_ldc_replay.sv"])
+    trace = tmp_path / "seq.txt"
+    trace.write_text("".join(f"{m} 0 {we} {m}\n" for m in range(1 << 16)))
+    out = subprocess.run([str(exe), f"+trace={trace}"], capture_output=True, text=True,
+                         timeout=600).stdout
+    eff = float(re.search(r"REPLAY ch0 cycles=\d+ .* beats/cycle=([\d.]+)", out).group(1))
+    assert abs(eff - card) < 0.005, out
+
+
+# The whole memory path on the card's channels, the core as fast as, slower and faster than the
+# controller: the hazard, random and DMA programs, bit-exact.
+@pytest.mark.parametrize("prog,seed,ldc,mhz", [("hazard", 0, 1066, 133.33),
+                                               ("random", 1, 1066, 100),
+                                               ("dma", 2, 1066, 200)])
+def test_ldc_memory_path(have_verilator, prog, seed, ldc, mhz):
+    rng = np.random.default_rng(6200 + seed)
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    p = {"hazard": _hazard_program, "random": _random_program, "dma": _dma_program}[prog](rng, cfg)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8) if prog == "dma" else _images(rng, 1)[0]
+    m = Machine(cfg, [p], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [p], [img.copy()], axi=True, boot=True, ldc=ldc,
+                                  uarch=rtlsim.BOARD_UARCH, plusargs=rtlsim.ldc_plusargs(ldc, mhz))
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert all(r > 0 for r, _ in st["axi_reads"]), st["axi_reads"]
+
+
 def _dma_program(rng, cfg: Config, n_ops=70):
     """LD / ST only: every alignment within a chunk, lengths around the segment and chunk sizes
     and past the DMA's chunk buffer (32 chunks), stores that share chunks, and loads of what

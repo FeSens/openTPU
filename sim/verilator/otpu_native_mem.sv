@@ -24,6 +24,8 @@
 // the files are the channels' own memories instead, as the host sees them: ch<c>.bin (big-endian
 // words, as $fread reads) in, ch<c>_out.bin (little-endian) out, WORDS / 2 words each. The dump
 // prints each channel's reads, writes, DDR3 row opens and partial writes (MEM ch<c> rd=<n> ...).
+// +nat_trace=FILE writes every command taken, one line each: core cycle, channel, we, beat (the
+// trace sim/verilator/tb_ldc_replay.sv replays through LiteDRAM's controller).
 module otpu_native_mem #(
   parameter int WORDS = 1 << 18,
   parameter int PHYS  = 0,
@@ -71,6 +73,9 @@ module otpu_native_mem #(
   int trmw = 12;                         // core cycles
   int tpc = 4, tpu = 4;                  // ticks per core / controller cycle
   longint cyc = 0;
+  string tfn;
+  integer tfd = 0;
+  initial if ($value$plusargs("nat_trace=%s", tfn)) tfd = $fopen(tfn, "w");
 
   // the logical beat of channel c's beat m
   function automatic int lbeat(input logic [31:0] m, input int c);
@@ -162,6 +167,7 @@ module otpu_native_mem #(
           if (lbeat(32'(n_caddr[c]), c) * 16 + 16 > WORDS)
             $fatal(1, "native command beyond memory");
           cq[c].push_back('{n_cwe[c], n_caddr[c], cyc});
+          if (tfd != 0) $fdisplay(tfd, "%0d %0d %0d %0d", cyc, c, n_cwe[c], n_caddr[c]);
         end
         if (n_wvalid[c] && n_wready[c]) begin
           wq_d[c].push_back(n_wdata[c]);

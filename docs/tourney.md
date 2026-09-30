@@ -70,6 +70,10 @@ may change, the synthesis top(s) with board parameters, the target clock, and th
 
 Slot worktrees and branches are removed after the round (`ARGS=--keep` keeps them).
 
+`--replay SLOT` runs a logged slot's saved patch (`runs/<comp>/patches/<SLOT>.patch`) through the
+gates again on the current champion, without agents, its hypothesis and notes carried over: for a
+slot whose gate failed for reasons not its own (a congested or failing test host).
+
 ## Evaluators
 
 - `EVAL=yosys` (default, works today): Yosys + slang, `synth_xilinx -family xc7 -flatten -abc9`,
@@ -160,7 +164,7 @@ full-effort flow (retiming, post-route phys_opt, `impl_directives.tcl`), never `
 ### One round (one component)
 
 1. **Champion.** If main has moved, it is merged into `tourney/fmax` (kept only if the fast tests
-   pass). The champion's full build at the target is read from `runs/_full/<sha>-<MHz>.json`,
+   pass). The champion's full build at the target is read from `runs/_full/<key>-<MHz>.json`,
    which every component shares. If that file is missing, the champion is built: once per
    commit, under a lock file, so two processes never build the same tree. The component's own
    out-of-context (OOC) result is cached in `runs/fmax/<comp>/champion.json`.
@@ -233,8 +237,9 @@ score, full result, area changes, perf cycles).
 sequencer, DMA; then cross-unit, VPU, quantizer, collective, ACT RAM), at `TARGET_MHZ` (default
 133.33), and after every `WHOLE_EVERY` (3) of them one whole-design round, the
 `FOREVER_WHOLE` components in turn (default `otpu_full`, then `otpu_impl`, below). Before each round it fetches `origin/main` (`BASE`), which the champion merges when it
-has moved; a full result is cached by the git trees of `rtl/` and `boards/`, so main's host or
-doc commits do not cost a rebuild. `K=2` slots per round, `K_<comp>=n` for one component.
+has moved; a full result is cached by what the board build reads: the blobs of the RTL files
+`create_project.tcl` lists and the `boards/` tree (`b<hash>-<MHz>.json`), so main's host, doc or
+simulation-only commits (e.g. the simulation top `rtl/top/otpu_top.sv`) do not cost a rebuild. `K=2` slots per round, `K_<comp>=n` for one component.
 Control files: `/tmp/otpu-tourney-stop` (stop before the next round), `/tmp/otpu-tourney-pause`
 (wait while it exists), `/tmp/otpu-tourney-hosts` (build hosts and caps, read per job),
 `/tmp/otpu-tourney-comps` (the components of the next pass, in order, in place of
@@ -294,7 +299,7 @@ omarchy (`OTPU_REMOTE`, below).
 Every full build (champion and candidates) passes `OTPU_BUILD_ARGS` to `make bit`, default
 none: `make bit`'s defaults (the LiteDRAM core, MCOLS=4, the systolic MXU, LANES=8, VPU_CL=2,
 DSTEP=1); the cached full result's name carries them (`OTPU_BUILD_ARGS=FAST=1`:
-`<trees>-133.33-FAST1.json`; the MIG builds' results carry `-AXI_BL32`). `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
+`<key>-133.33-FAST1.json`; the MIG builds' results carry `-AXI_BL32`). `OTPU_BUILD_HOSTS=opentpu` keeps a run on one box. Hosts listed in `VIVADO_DOCKER_HOSTS` run
 Vivado in the `vivado:2026.1` Docker image instead. After a full build its reports are kept on
 the host in `~/otpu-build/reports/tv-<name>`, with its routed checkpoint as `routed.dcp` and its
 bitstream as `otpu.bit` (the newest `OTPU_KEEP_DCPS` builds, default 4, keep them: for path and
@@ -350,9 +355,13 @@ Measured through the remote path (this branch, a warm ssh connection):
 - `tests/test_fp.py` plus one parser test: 5.1 s;
 - `test_mlp_rtl[1]` with the board environment, including a fresh Verilator build: 16 s.
 
-A gate that times out ends the ssh session. The remote run then dies at its next output
-(SIGPIPE), which frees its test slot. Files new to the tree are not shipped, since only tracked
-files go; the sandbox rejects new files anyway.
+A gate's timeout counts from when the script holds one of omarchy's test slots (it says so on
+stderr, `OTPU_REMOTE_SLOT_MARK`), not from the queue before it: other streams' long suites can
+hold every slot for an hour. The script gives up after 2 h without a slot ("no free test slot");
+the gate then queues again, twice, before it fails. A gate that times out is killed with its ssh
+session. The remote run then dies at its next output (SIGPIPE), which frees its test slot. Files
+new to the tree are not shipped, since only tracked files go; the sandbox rejects new files
+anyway.
 
 Every role runs Opus: `MODEL_*` naming another model family is an error (`agents.model_for`).
 

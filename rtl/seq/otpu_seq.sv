@@ -424,17 +424,28 @@ module otpu_seq
   wire [SW-1:0] rel_slot = uq[U_MXU][uq_r[SW-1:0]];
   wire          can_rel  = (uq_r != uq_t[U_MXU]) && (sdep[rel_slot] & ~same_started[U_MXU]) == '0;
 
-  // Each unit's command is read from the window at the slot it last started: a slot's command is
-  // written only at dispatch and stays until the slot completes, so it holds the command for as
-  // long as the unit reads it (at ustart; the collective until its udone). After completion the
-  // slot may be reused and ucmd shows the new occupant -- no unit reads it then.
+  // Each unit's command is read from the window as the unit starts, at the slot it starts, into a
+  // register (ucmd): a slot's command is written only at dispatch and stays until the slot
+  // completes, so the copy is the slot's command for as long as the unit reads it (at ustart; the
+  // collective until its udone). The units' start decode then begins at flip-flops instead of at
+  // the LUT RAM's read (133.33 MHz, 61e015ff4: ucs -> LUT RAM -> the MXU's KBa -> DSP -> n.total,
+  // 5 levels, -0.504 ns; ucs -> the quantizer's busy, -0.417).
   // The command store is one distributed RAM per unit (1 write, 1 asynchronous read, no reset):
-  // a single read port each, so it infers as LUT-RAM and trims the fields its unit never reads.
+  // a single read port each, so it infers as LUT-RAM and trims the fields its unit never reads
+  // (as do the registers).
   logic [SW-1:0] ucs [NUNITS];
   for (genvar u = 0; u < NUNITS; u++) begin : g_cmd
     (* ram_style = "distributed" *) logic [$bits(cmd_t)-1:0] m [WIN];
+    logic [$bits(cmd_t)-1:0] q;
     always_ff @(posedge clk) if (!rst && c_go) m[free_slot] <= c_cmd;
-    assign ucmd[u] = cmd_t'(m[ucs[u]]);
+    always_ff @(posedge clk) if (!rst && can_start[u]) q <= m[start_slot[u]];
+    assign ucmd[u] = cmd_t'(q);
+`ifndef SYNTHESIS
+    // the copy is the started slot's command while the slot is in the window
+    always @(posedge clk)
+      if (!rst && sv[ucs[u]] && sstarted[ucs[u]] && soh[ucs[u]][u] && q != m[ucs[u]])
+        $fatal(1, "otpu_seq: unit %0d's command is not slot %0d's", u, ucs[u]);
+`endif
   end
 
 `ifndef SYNTHESIS

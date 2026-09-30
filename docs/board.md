@@ -565,7 +565,11 @@ The port caps DRAM efficiency at 128 B x f_core / peak: 75% at 100 MHz and DDR3-
 ([wide_dram.md](wide_dram.md)), the DDR3 is the limit. `perf_qwen.py --ddr 1066 --mhz F`
 runs the DDR3 bank model calibrated on the card (section 4; `opentpu.profile.ddr3_plusargs`)
 at that data rate and core clock and prints both efficiencies. Every figure it prints is
-simulated. [lfm2.md](lfm2.md) has the LFM2 numbers.
+simulated. [lfm2.md](lfm2.md) has the LFM2 numbers. The bank model fits the card at 100 MHz,
+where the port is the limit, but is about 10% optimistic at 133.33 MHz, where LiteDRAM's
+controller is: `--ldc` co-simulates the controller itself instead (within 1% of the card at
+both clocks), and `tools/perf_ddr.py` runs the whole clock x DDR3 grid on it
+([litedram.md](litedram.md), section 11).
 
 ### Faster DDR3
 

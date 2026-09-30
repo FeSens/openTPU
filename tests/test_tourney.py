@@ -698,25 +698,26 @@ def test_gates_go_through_execute(tmp_path, monkeypatch):
         def __init__(self, out, rc=0):
             self.stdout, self.stderr, self.returncode = out, "", rc
 
-    def fake_run(argv, cwd, capture_output, text, timeout, env):
+    def fake_run(argv, cwd, env, timeout):
         seen.append(argv)
+        assert env["OTPU_REMOTE_SLOT_MARK"] == "1"
         if "tools/perf_qwen.py" in argv:
             return R("layers=2 x: 123456 cycles\n")
         return R("5 passed in 3s\n")
 
-    monkeypatch.setattr(G.subprocess, "run", fake_run)
+    monkeypatch.setattr(G, "run_remote", fake_run)
     wt = tmp_path / "c" / "s0"
     assert G.pytest(wt, ["tests/a.py"], G.BOARD_ENV, "board") == "5 passed in 3s"
     assert G.perf(wt) == 123456
     assert all(a[:3] == ["bash", "tools/omarchy_test.sh", "--exec"] for a in seen)
     assert "models/Qwen3-0.6B" in seen[1]
-    monkeypatch.setattr(G.subprocess, "run", lambda *a, **k: R("FAILED x", 1))
+    monkeypatch.setattr(G, "run_remote", lambda *a, **k: R("FAILED x", 1))
     with pytest.raises(G.GateFailure, match="board"):
         G.pytest(wt, ["tests/a.py"], None, "board")
     # the failure ends the tail, not the shipping's stderr (tar warnings, one per file)
     noisy = R("E assert 1 == 2\nFAILED tests/a.py::t - assert\n", 1)
     noisy.stderr = "tar: Ignoring unknown extended header keyword\n" * 200
-    monkeypatch.setattr(G.subprocess, "run", lambda *a, **k: noisy)
+    monkeypatch.setattr(G, "run_remote", lambda *a, **k: noisy)
     with pytest.raises(G.GateFailure) as e:
         G.pytest(wt, ["tests/a.py"], None, "fast")
     assert e.value.tail.rstrip().endswith("FAILED tests/a.py::t - assert")
@@ -724,9 +725,36 @@ def test_gates_go_through_execute(tmp_path, monkeypatch):
     def slow(*a, **k):
         raise G.subprocess.TimeoutExpired("x", 1)
 
-    monkeypatch.setattr(G.subprocess, "run", slow)
+    monkeypatch.setattr(G, "run_remote", slow)
     with pytest.raises(G.GateFailure, match="timeout"):
         G.pytest(wt, ["tests/a.py"], None, "fast")
+
+
+def test_gate_timeout_counts_from_the_slot(tmp_path):
+    """The queue for an omarchy test slot is no part of a gate's timeout: the clock starts at the
+    script's slot mark; a run past it is killed."""
+    mark = f"echo '{G.SLOT_MARK}1' >&2"
+    r = G.run_remote(["bash", "-c", f"sleep 2; {mark}; echo 5 passed"], tmp_path, dict(os.environ),
+                     1, poll=0.1)
+    assert r.returncode == 0 and r.stdout == "5 passed\n" and G.SLOT_MARK in r.stderr
+    t = time.time()
+    with pytest.raises(subprocess.TimeoutExpired):
+        G.run_remote(["bash", "-c", f"{mark}; sleep 30"], tmp_path, dict(os.environ), 1, poll=0.1)
+    assert time.time() - t < 10                                    # killed, sleep and all
+
+
+def test_gate_queues_again_without_a_slot(tmp_path, monkeypatch):
+    """omarchy had no free test slot for 2 h (the script's exit 2): the gate queues again, and
+    only fails after QUEUE_RETRIES more waits."""
+    monkeypatch.setenv("EXEC", "remote")
+    monkeypatch.setattr(G, "TEST_LOCK", tmp_path / "t.lock")
+    full = subprocess.CompletedProcess([], 2, "", "no free test slot on omarchy after 2 h\n")
+    runs = iter([full, subprocess.CompletedProcess([], 0, "3 passed in 1s\n", "")])
+    monkeypatch.setattr(G, "run_remote", lambda *a, **k: next(runs))
+    assert G.pytest(tmp_path / "c" / "s0", ["tests/a.py"], None, "fast") == "3 passed in 1s"
+    monkeypatch.setattr(G, "run_remote", lambda *a, **k: full)
+    with pytest.raises(G.GateFailure, match="no free test slot on omarchy after 3 waits"):
+        G.pytest(tmp_path / "c" / "s0", ["tests/a.py"], None, "fast")
 
 
 def test_opus_only():
@@ -882,18 +910,46 @@ def test_saved_patch_applies(tmp_path):
 
 
 def test_full_result_cached(tmp_path, monkeypatch):
-    O, run = _run(tmp_path)
-    run.repo = tmp_path
-    trees = {"rtl": "r" * 40, "boards": "b" * 40}
-    monkeypatch.setattr(O, "git", lambda *a, **k: trees[a[1].split(":")[1]])
+    """A full build is cached by what the board build reads: the RTL files create_project.tcl
+    lists and boards/. A commit that changes neither (docs, the simulation top) reuses it; older
+    keys (the commit; the rtl/ and boards/ trees) move over."""
+    O, run = _run(tmp_path / "full")
+    run.fulldir.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run.repo = repo
+
+    def commit(files: dict) -> str:
+        for f, text in files.items():
+            (repo / f).parent.mkdir(parents=True, exist_ok=True)
+            (repo / f).write_text(text)
+        O.git("add", "-A", cwd=repo)
+        O.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c", cwd=repo)
+        return O.git("rev-parse", "HEAD", cwd=repo)
+
+    O.git("init", "-q", cwd=repo)
+    tcl = "set rtl [list \\\n  rtl/a.sv \\\n  rtl/b/c.sv]\nadd_files x\n"
+    c1 = commit({RM.PROJECT_TCL: tcl, "rtl/a.sv": "a", "rtl/b/c.sv": "c", "rtl/top.sv": "sim",
+                 "docs/x.md": "x"})
+    assert RM.board_rtl(tcl) == ["rtl/a.sv", "rtl/b/c.sv"] and RM.board_rtl("") == []
     monkeypatch.setattr(RM, "BUILD_ARGS", ["FAST=1"])
-    # an older result cached under the commit moves to the tree key
-    (tmp_path / f"{'a' * 12}-133.33-FAST1.json").write_text(json.dumps(full(wns=0.1)))
+    # an older result cached under the commit moves to the new key
+    (run.fulldir / f"{c1[:12]}-133.33-FAST1.json").write_text(json.dumps(full(wns=0.1)))
     monkeypatch.setattr(O.G, "full_design", lambda *a: pytest.fail("rebuilt a cached commit"))
-    assert run.full_result("a" * 40, None)["wns"] == 0.1
-    assert (tmp_path / "trrrrrrbbbbbb-133.33-FAST1.json").exists()
-    # another commit with the same rtl/ and boards/ trees reuses it
-    assert run.full_result("c" * 40, None)["wns"] == 0.1
+    assert run.full_result(c1, None)["wns"] == 0.1
+    key = run.full_key(c1)
+    assert key.name.startswith("b") and key.name.endswith("-133.33-FAST1.json") and key.exists()
+    # the simulation top and the docs are not the board's: the same build
+    c2 = commit({"rtl/top.sv": "sim2", "docs/x.md": "y"})
+    assert run.full_key(c2) == key and run.full_result(c2, None)["wns"] == 0.1
+    # a listed RTL file, a board file: another build
+    assert run.full_key(commit({"rtl/b/c.sv": "c2"})) != key
+    c4 = commit({"boards/ypcb-00338/constraints/x.xdc": "x"})
+    assert run.full_key(c4) not in (key, run.full_key(c2))
+    # a result under the old tree key moves over
+    trees = "".join(O.git("rev-parse", f"{c4}:{d}", cwd=repo)[:6] for d in ("rtl", "boards"))
+    (run.fulldir / f"t{trees}-133.33-FAST1.json").write_text(json.dumps(full(wns=0.2)))
+    assert run.full_result(c4, None)["wns"] == 0.2
 
 
 def test_directives_sandbox(tmp_path):
@@ -1099,3 +1155,26 @@ def test_forever_objective_and_control_files(tmp_path):
                f"PAUSE={tmp_path / 'units-pause'}" in x for x in rows)
     assert f"{stop}: stopping" in r.stdout
     assert "division" not in r.stderr, r.stderr                     # WHOLE_EVERY=0 is no error
+
+
+def test_replay_applies_a_logged_patch(tmp_path, monkeypatch):
+    """--replay: a logged slot's saved patch in place of the agents, its hypothesis carried
+    over (a slot whose gate failed for reasons not its own)."""
+    O, run, repo = _unit_run(tmp_path, monkeypatch, replay="r1-s0")
+    assert run.a.replay == "r1-s0" and run.a.slots == 1
+    run.ensure_branch()
+    (run.dir / "patches").mkdir(parents=True)
+    (repo / "rtl" / "a.sv").write_text("module a; wire y; endmodule\n")
+    (run.dir / "patches" / "r1-s0.patch").write_text(subprocess.run(
+        ["git", "diff"], cwd=repo, capture_output=True, text=True).stdout)
+    subprocess.run(["git", "checkout", "-q", "--", "rtl/a.sv"], cwd=repo, check=True)
+    run.log.write_text(json.dumps({"id": "r1-s0", "title": "narrower", "hypothesis": "# narrower",
+                                   "implementation": "done", "category": "area"}) + "\n")
+    wt = run.worktree("r2-s0", run.branch)
+    rec = {}
+    run.replay_into(wt, rec)
+    assert (wt / "rtl" / "a.sv").read_text() == "module a; wire y; endmodule\n"
+    assert rec["replay_of"] == "r1-s0" and rec["title"] == "narrower" and rec["category"] == "area"
+    run.a.replay = "r9-s0"
+    with pytest.raises(G.GateFailure, match="no logged slot r9-s0"):
+        run.replay_into(wt, {})

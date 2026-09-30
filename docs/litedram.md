@@ -4,7 +4,8 @@ Draft, 2026-09-29. This is an investigation; the design is unchanged. Labels: **
 a Vivado run, a simulation or a card run that was actually done (tool and version given).
 **estimate** means arithmetic. Sections 1-6 predate the card; sections 7 and 8 are the card runs
 (the test images, then the production image); section 9 is the board build; section 10 is
-the calibration CPU in the core.
+the calibration CPU in the core; section 11 is the controller co-simulated, where 133.33 MHz
+loses, and the clock x DDR3 rate grid.
 
 The question: could [LiteDRAM](https://github.com/enjoy-digital/litedram) replace the two Xilinx
 MIG controllers, the SmartConnect in front of them and the AXI side of `otpu_axi_dram`? Its
@@ -1270,3 +1271,195 @@ All **measured**.
 - **Step 1:** host code only (`memcal` rescan, the temperature trigger, the allocator's reserved
   region), plus a card session for the temperature sweep.
 - **Step 2:** a firmware mode, and no RTL or bitstream change.
+
+## 11. The card's controller in simulation (2026-09-29, night)
+
+**Why.** The DDR3 bank model behind the adapter in simulation (`otpu_native_mem`'s
+`+axi_dram`, `profile.ddr3_plusargs`) matches the card at 100 MHz within 1%. At 133.33 MHz it
+is about 10% optimistic. At 100 MHz the core's 128-byte port caps the path at 12.8 GB/s, below
+what the controller can do, so the controller's own losses do not show. At 133.33 MHz the port
+matches the two channels (17.07 GB/s), and they do.
+
+**The co-simulation.** The simulation now runs LiteDRAM's own controller instead of a model of
+it. Setting `OTPU_LDC=1066` (rtlsim's `ldc=`; `tools/perf_qwen.py --ddr 1066 --ldc`) puts the
+card's channels behind the adapter (`otpu_top` AXI = 2):
+
+- **The controller:** `tools/litedram/gen_ldc.py` generates one channel of the production
+  controller as Verilog (`sim/verilator/otpu_ldc_ch.v`). This is LiteDRAM's own RTL at
+  `core.json`'s commits: the bank machines, the multiplexer, the refresher, the crossbar with
+  the idle BIST port, and `LiteDRAMNativePortECC`. It has the core's settings: MT41K256M8 with
+  tRFC 160 ns, 1:4, the default `ControllerSettings`, and WL7DDRPHY's latencies (read 8,
+  write 1). The PHY is a DFI stub. It is DDR3-1066 only: the board's DDR3 never runs faster,
+  the rate its HR banks are specified for.
+- **The memory:** `sim/verilator/otpu_ldc_mem.sv` puts each channel behind the board's bridge
+  (`otpu_mem_ch`, with its clock crossing and read-modify-write) in the controller clock. The
+  data is kept in the model and moves in the controller's command order.
+- **The clocks:** the core runs at `OTPU_LDC_MHZ` (`rtlsim.ldc_plusargs`) against the
+  controller's 133.33 MHz.
+- **The testbench:** `tb_top` now changes its signals on the falling clock edge, so they cannot
+  race the memory model's own clock. Before the dump it waits 256 cycles for the last writes to
+  land.
+
+**Checks, measured** (Verilator 5.047 on omarchy; the card figures are sections 7 and 10):
+
+| | simulation | card |
+|---|---|---|
+| sequential reads, one channel, the controller alone (the BIST's pattern) | 90.9% of peak | 91.0% |
+| sequential writes | 90.1% | 90.1% |
+| Qwen3 4-bit decode, pos 544, int8 head: Mcycles/token at 100 / 133.33 MHz | 3.734 / 4.218 | 3.731 / 4.256 (+0.1 / -0.9%) |
+| LFM2 4-bit, the same | 1.348 / 1.541 | 1.357 / 1.554 (-0.7 / -0.8%) |
+| Qwen3.5 4-bit, the same | 4.636 / 5.360 | 4.673 / 5.435 (-0.8 / -1.4%) |
+
+The decode figures are the resident decode program at the card's qual operating point (KV
+capacity 2048, position 544, 4-bit layers, int8 LM head), the whole model's token built from
+layer prefixes (`tools/perf_ddr.py`). The card's are its qual runs (5e5a58ab at 100 MHz, the
+production e698dcd at 133.33 MHz). The old bank model gave 3.831 M for Qwen3 at 133.33 MHz,
+10% under the card.
+
+- **Bit-exact:** `tests/test_rtl.py::test_ldc_memory_path` runs the hazard, random and DMA
+  programs on the co-simulated channels, with the core as fast as, slower than, and faster than
+  the controller. All match the ISA simulator bit for bit.
+- **BIST check:** `test_ldc_sequential_is_the_card_bist` checks the sequential-stream figures
+  against the card's BIST numbers.
+- **The production RTL:** main's RTL and the grid's tree (ld-qual b719cd3) give the same Qwen3
+  4-bit decode at 133.33 MHz to within 3 cycles (4,218,386 against 4,218,389).
+
+### Where 133.33 MHz loses, measured
+
+**Method.** Qwen3 4-bit's whole decode step (28 layers, pos 544) was traced as the adapter
+issues it (`otpu_native_mem +nat_trace`). One channel's trace has 3.45M reads and 19.5K writes.
+It was then replayed open loop through the controller, which takes each command as soon as it
+can (`sim/verilator/tb_ldc_replay.sv`). The replay has no compute stalls, so it bounds what the
+memory alone can do. Its production figure, 4.15M controller cycles, is 2.5% under the card's
+token of 4.256M cycles.
+
+**Results** (controller cycles for the channel's trace; the reference row is the production
+controller):
+
+| variant | cycles | beats / cycle | change |
+|---|---|---|---|
+| **the production controller** | 4,150,608 | 0.837 | - |
+| the crossbar without its bank lock (a bound: read order is not kept) | 3,694,870 | 0.940 | -11.0% |
+| no refresh | 4,070,532 | 0.854 | -1.9% |
+| command buffer depth 16 (instead of 8) | the same to the cycle (1- and 2-layer traces) | | 0.0% |
+| bank index XORed with the row's low bits | 4,147,431 | 0.838 | -0.1% |
+| the adapter's A runs of 32 beats (instead of 8) | 4,039,449 | 0.860 | -2.7% |
+| A runs of 64 beats | 4,012,619 | 0.866 | -3.3% |
+| **two user ports**, split on beat bit 7 (the bank's low bit), queues of 16 | 3,740,986 | 0.929 | **-9.9%** |
+| two user ports, queues of 32 | 3,717,703 | 0.935 | -10.4% |
+| two user ports, queues of 16, A runs of 32 | 3,691,501 | 0.941 | -11.1% |
+
+LFM2 4-bit (16 layers) shows the same pattern:
+- without the lock: -9.8%;
+- two ports: -9.0% (queues of 32: -9.7%);
+- A runs of 64 beats: -3.4%;
+- no refresh: -1.9%;
+- the XOR hash: -0.1%.
+
+**The breakdown** (the production controller moves 0.837 beats per cycle; 1.0 is the peak):
+
+- **The crossbar's bank lock: about 11%.** A master may have commands in only one bank at a
+  time. A bank machine stays locked to the master while its command buffer or its lookahead
+  holds one of the master's commands, so the next command to another bank waits until the
+  previous bank's last column command has gone out. Each bank switch then leaves about 6 idle
+  column slots: the next bank's activate and tRCD, and the pipeline from the crossbar through
+  the bank machine to the multiplexer.
+
+  Decode switches bank about every 66 commands. Its streams are 8 KiB rows (128 beats) per bank
+  under ROW_BANK_COLUMN, and the A runs, B streams and writes interleave. The single-port
+  sequential stream switches only every 128 beats, which is why the BIST loses only about 4
+  points to the lock (section 4).
+- **Refresh: 1.9%.** tRFC is 23 cycles every tREFI of 1042 cycles.
+- **The rest: about 3.4%.** Row misses within a bank (tRP + tRCD), read/write turnarounds, and
+  the pipeline's fill.
+
+### Two user ports per channel in the co-simulation, measured
+
+LiteDRAM's controller was regenerated with two user ports per channel (`gen_ldc.py --ports 2`,
+each with its ECC frontend, and the idle BIST port). A behavioural split was put between the
+unchanged bridge and the ports: each command goes, in order, to the port of its bank's parity
+(beat bit 7), into that port's queue of 16, so neither port waits on the other. Reads go back
+to the bridge in command order. The split is bit-exact on the hazard, random and DMA programs
+at 100 to 250 MHz. Decode at 133.33 MHz, the fp4 trio:
+
+| | one port | two ports | change | tokens/s | DRAM GB/s (% of peak) |
+|---|---|---|---|---|---|
+| Qwen3 | 4.218 M | 3.734 M | -11.5% | 31.6 -> 35.7 | 14.1 -> 15.9 (82 -> 93%) |
+| LFM2 | 1.541 M | 1.417 M | -8.0% | 86.5 -> 94.1 | 14.2 -> 15.4 (83 -> 90%) |
+| Qwen3.5 | 5.360 M | 5.042 M | -5.9% | 24.9 -> 26.4 | 14.3 -> 15.2 (84 -> 89%) |
+
+- **Closed loop beats the replay.** The replay bounded Qwen3 at -10.4% (queues of 32). The
+  full model does better because the adapter keeps issuing while a port waits.
+- **Qwen3.5 gains least:** more of its token is the DeltaNet state's traffic and compute.
+- **The per-port queue matters.** Qwen3 at 133.33 MHz, by the queue's depth:
+
+  | depth | 2 | 4 | 8 | 16 | 32 | 64 |
+  |---|---|---|---|---|---|---|
+  | Mcycles/token | 4.058 | 4.075 | 3.875 | 3.734 | 3.686 | 3.759 |
+  | change | -3.8% | -3.4% | -8.1% | -11.5% | -12.6% | -10.9% |
+
+  - **Too short:** the queue fills with one bank's commands while that port waits on its lock,
+    and the arbiter behind it stops.
+  - **Too deep (64):** a queue runs further ahead of the other port, and the reads that come
+    back out of order hold the adapter's read window longer (**estimate**).
+  - **32 is the best measured.**
+
+### What would gain, ranked
+
+Expected gains are for decode at DDR3-1066 and 133.33 MHz, the board's only rate.
+
+1. **Two native ports per channel, split on beat bit 7: +6 to +13% decode tokens/s, measured in
+   the co-simulation above.** Risk: medium.
+   - **How it works.** Alternate banks go to different crossbar ports, so one port's lock no
+     longer holds the other's commands.
+   - **Core:** `gen_core.py` adds a second user port per channel, with its own ECC frontend.
+     This needs a core regeneration.
+   - **Bridge:** `otpu_mem_ch` gets two output ports, per-port command queues (32 deep) and
+     write-data FIFOs, and in-order read return. The return can use the read-data FIFOs the
+     bridge already has: each read reserves its slot at issue (the read credits), its port writes
+     it there, and the FIFO passes slots in order. The two ports share the channel's data bus, so
+     at most one beat comes back per cycle. In the replay, a separate reorder buffer would have
+     held up to 75-126 beats per channel.
+   - **Hazards stay within one port.** A beat always maps to the same port, and each port keeps
+     its commands in order. `n_wdone` counts both ports' write handshakes. The XDMA path and
+     the read-modify-write read keep the same rule.
+   - **Costs:** one ECC frontend and crossbar port per channel in the core. In the bridge, a
+     second write-data FIFO and command queue per channel. The bridge's and the controller's
+     timing at 133.33 MHz also need checking: LiteDRAM's sys domain has +0.048 ns.
+2. **The adapter's A runs from 8 to 32 beats: +2.7% alone, about +1.2 points on top of item
+   1.** Risk: low.
+   - **Change:** `otpu_native_dram`'s APF, a wider run counter, and an A data FIFO of at least
+     2 × APF - 1 = 63 beats (4 KiB per channel, block RAM).
+   - **Caveat:** the trace rewrite assumed the merged runs were all used, because they were
+     consecutive runs of one stream. A stream that ends early would fetch beats it does not use.
+3. **No gain:**
+   - refresh postponing: all of refresh is 1.9%;
+   - a deeper command buffer: 0.0%;
+   - XOR bank hashing: 0.1%.
+4. **A higher-risk alternative to item 1:** patch LiteDRAM's crossbar so the next bank's
+   activate can go out while the previous bank still has column commands pending. This is
+   bounded by the no-lock row at -11%. Read data would then return in column-command order, not
+   command order, so the adapter would need the in-order return anyway, and we would carry a
+   LiteDRAM fork.
+
+### The core clock at DDR3-1066: the co-simulated grid
+
+Decode, 4-bit layers, int8 head, pos 544, one port per channel (the production controller);
+Mcycles/token, tokens/s (DRAM GB/s, % of the 17.07 GB/s peak):
+
+| | 100 MHz | 133.33 MHz | 150 MHz | 200 MHz |
+|---|---|---|---|---|
+| Qwen3-0.6B | 3.734, 26.8 (11.9, 70%) | 4.218, 31.6 (14.1, 82%) | 4.660, 32.2 (14.3, 84%) | 6.230, 32.1 (14.3, 84%) |
+| LFM2.5-230M | 1.348, 74.2 (12.2, 71%) | 1.541, 86.5 (14.2, 83%) | 1.712, 87.6 (14.4, 84%) | 2.259, 88.5 (14.5, 85%) |
+| Qwen3.5-0.8B | 4.636, 21.6 (12.4, 73%) | 5.360, 24.9 (14.3, 84%) | 5.983, 25.1 (14.4, 85%) | - |
+
+- **Above 133.33 MHz decode gains 1-2% at 150 MHz and nothing more at 200.** The controller
+  saturates at 82-85% of peak.
+- **Below 133.33 MHz the port is the limit.** At 100 MHz the port caps the path at 12.8 GB/s,
+  and decode runs at 70-73% of peak.
+- **Decode's lever is the controller's efficiency, not the clock.** At 133.33 MHz the port
+  matches the two channels.
+- **With two ports the knee may move.** The grid is to be rerun on the two-port design.
+
+The old bank model's grid (`docs/board.md`, "Faster DDR3") predicted 35.4 / 36.3 tokens/s for
+Qwen3 at 150 / 200 MHz. It had no crossbar lock.

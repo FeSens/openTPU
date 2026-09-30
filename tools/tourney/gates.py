@@ -19,8 +19,10 @@ import fnmatch
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -117,19 +119,71 @@ def command(wt: Path, cmd: list[str], env_extra: dict | None = None,
         env["PYTHONPATH"] = str(wt)
         return [sys.executable if c == "python" else c for c in cmd], env
     env["OTPU_REMOTE_NAME"], env["OTPU_REMOTE_BUILD"] = remote_name(wt), REMOTE_BUILD
+    env["OTPU_REMOTE_SLOT_MARK"] = "1"
     kv = [f"{k}={v}" for k, v in (env_extra or {}).items()]
     return ["bash", REMOTE_SCRIPT, "--exec", "env", *kv, *cmd], env
 
 
+# tools/omarchy_test.sh prints this on stderr once it holds one of omarchy's test slots
+# (OTPU_REMOTE_SLOT_MARK set): a gate's timeout counts from there, not from the queue before it
+SLOT_MARK = "omarchy_test: slot "
+# the script gives up after 2 h without a slot ("no free test slot", exit 2): a gate queues again
+# this many times before it fails (a congested omarchy is no broken candidate)
+NO_SLOT, QUEUE_RETRIES = "no free test slot", 2
+
+
+def run_remote(argv: list[str], cwd: Path, env: dict, timeout: int, poll: float = 1.0):
+    """subprocess.run for tools/omarchy_test.sh, with the timeout counted from the moment the
+    script holds its omarchy test slot (SLOT_MARK on stderr), not from the start."""
+    # its own process group: a timeout kills the script's ssh too, so the remote run goes
+    p = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True, start_new_session=True)
+    out, err, slot = [], [], threading.Event()
+
+    def read(stream, acc, mark):
+        for line in stream:
+            acc.append(line)
+            if mark is not None and line.startswith(SLOT_MARK):
+                mark.set()
+
+    ts = [threading.Thread(target=read, args=(p.stdout, out, None), daemon=True),
+          threading.Thread(target=read, args=(p.stderr, err, slot), daemon=True)]
+    for t in ts:
+        t.start()
+    t0 = time.time()
+    while p.poll() is None:
+        if not slot.is_set():
+            t0 = time.time()                 # still queueing: the clock has not started
+        elif time.time() - t0 > timeout:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            p.wait()
+            raise subprocess.TimeoutExpired(argv, timeout)
+        time.sleep(poll)
+    for t in ts:
+        t.join()
+    return subprocess.CompletedProcess(argv, p.returncode, "".join(out), "".join(err))
+
+
 def execute(wt: Path, cmd: list[str], gate: str, timeout: int, env_extra: dict | None = None):
     """Runs one gate command in a test slot; returns the CompletedProcess (stdout + stderr text).
-    On the build host a timeout ends the ssh session; the remote run then dies at its next
-    output (SIGPIPE), which frees its omarchy test slot."""
+    On the build host the timeout counts from when omarchy's test slot is held (run_remote), and
+    a run that found no slot there queues again (QUEUE_RETRIES); a timeout kills the script and
+    its ssh session, and the remote run then dies at its next output (SIGPIPE), which frees its
+    test slot."""
     argv, env = command(wt, cmd, env_extra)
     with test_slot():
         try:
-            return subprocess.run(argv, cwd=wt, capture_output=True, text=True, timeout=timeout,
-                                  env=env)
+            if exec_mode() == "local":
+                return subprocess.run(argv, cwd=wt, capture_output=True, text=True,
+                                      timeout=timeout, env=env)
+            for _ in range(QUEUE_RETRIES + 1):
+                r = run_remote(argv, wt, env, timeout)
+                if not (r.returncode == 2 and NO_SLOT in r.stderr):
+                    return r
+            raise GateFailure(gate, f"{NO_SLOT} on omarchy after {QUEUE_RETRIES + 1} waits of 2 h")
         except subprocess.TimeoutExpired:
             raise GateFailure(gate, f"timeout after {timeout}s")
 

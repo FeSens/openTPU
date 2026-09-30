@@ -18,12 +18,15 @@
 set -euo pipefail
 HOST=${OTPU_REMOTE:-omarchy.tail5bd214.ts.net}
 JOBS=${OTPU_REMOTE_JOBS:-2}
+EXTRA_KB=${OTPU_REMOTE_EXTRA_KB:-16000000}   # the extra slot's MemAvailable floor (16 GB)
 mode=pytest
 if [[ ${1:-} == --exec ]]; then mode=exec; shift; fi
 top=$(git rev-parse --show-toplevel)
 name=${OTPU_REMOTE_NAME:-$(basename "$top")-$(printf '%s' "$top" | shasum | cut -c1-6)}
 dir="otpu-test/$name"
 build=${OTPU_REMOTE_BUILD:-}
+mark=${OTPU_REMOTE_SLOT_MARK:-}   # set: say on stderr when the run holds its slot (the tournament's
+                                 # gate timeouts count from there)
 
 # the tree as it is now: tracked files, including uncommitted edits
 ssh "$HOST" "mkdir -p ~/$dir"
@@ -35,12 +38,16 @@ set -e
 cd ~/$dir
 ln -sfn ~/openTPU/models models
 if [[ -n "$build" ]]; then mkdir -p ~/$build; rm -rf build; ln -sfn ~/$build build; fi
-# one of JOBS slots (flock on per-slot lock files)
+# one of JOBS slots (flock on per-slot lock files), plus one more while omarchy has memory to spare
+# (MemAvailable above EXTRA_KB, i.e. no second full build placing)
 mkdir -p ~/otpu-test/.slots
 for i in \$(seq 1 3600); do
-  for s in \$(seq 1 $JOBS); do
+  n=$JOBS
+  (( \$(awk '/MemAvailable/{print \$2}' /proc/meminfo) > $EXTRA_KB )) && n=\$((n + 1))
+  for s in \$(seq 1 \$n); do
     exec 9>~/otpu-test/.slots/\$s
     if flock -n 9; then
+      if [[ -n "$mark" ]]; then echo "omarchy_test: slot \$s" >&2; fi
       export PATH=\$HOME/.local/bin:\$PATH
       if [[ $mode == exec ]]; then
         export PATH=\$HOME/otpu-venv/bin:\$PATH PYTHONPATH=\$PWD

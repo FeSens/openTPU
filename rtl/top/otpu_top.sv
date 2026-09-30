@@ -2,7 +2,9 @@
 // AXI = 0: the behavioural fixed-latency DRAM. AXI = 1: the board's memory path -- the native
 // adapter (otpu_native_dram) in front of a two-channel native memory model with random stalls
 // and latency (sim/verilator/otpu_native_mem.sv; requires D = 128); the dump prints the
-// adapter's counters.
+// adapter's counters. AXI = 2: the same adapter in front of the card's channels as they are
+// (sim/verilator/otpu_ldc_mem.sv: per channel the bridge otpu_mem_ch and LiteDRAM's own
+// controller, generated with the production core's settings, in the controller clock).
 module otpu_top
   import otpu_pkg::*;
 #(
@@ -85,11 +87,19 @@ module otpu_top
         .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
         .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
         .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone));
-      otpu_native_mem #(.WORDS(DRAM_WORDS), .LAT(DRAM_LAT), .SID(s)) u_mem (
-        .clk, .rst(sys_rst),
-        .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
-        .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
-        .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone), .dump);
+      if (AXI == 2) begin : g_ldc
+        otpu_ldc_mem #(.WORDS(DRAM_WORDS), .SID(s)) u_mem (
+          .clk, .rst(sys_rst),
+          .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
+          .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
+          .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone), .dump);
+      end else begin : g_model
+        otpu_native_mem #(.WORDS(DRAM_WORDS), .LAT(DRAM_LAT), .SID(s)) u_mem (
+          .clk, .rst(sys_rst),
+          .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
+          .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
+          .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone), .dump);
+      end
       // the adapter's counters (rtlsim: A runs and fill reads, the partial writes by source)
       always @(posedge clk) if (dump)
         for (int c = 0; c < 2; c++) begin
