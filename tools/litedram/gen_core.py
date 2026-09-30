@@ -14,7 +14,9 @@ The module (every port is a plain Verilog port; the DDR3 pads are the only I/O):
                              native ports' clock (otpu_mem_ch's controller side)
     ctl_clk, ctl_rst    in   the CSR port's clock and reset (XDMA's axi_aclk / BAR0)
     ctl_*               AXI-Lite slave, 16-bit byte address, 32-bit data: the CSRs (calibration,
-                        ECC counters, the ready bits), csr.csv offsets; crosses into sys_clk
+                        ECC counters, the ready bits), csr.csv offsets; crosses into sys_clk.
+                        The CSR bus has a register stage per channel's banks (csr_pipe.py):
+                        an access takes 5 sys cycles
     c0_* / c1_*         each channel's first native port in sys_clk, 512-bit data through
                         LiteDRAM's ECC (SECDED per 64-bit word): cmd_valid/ready/we/addr[24:0]
                         (64-byte beat index in the channel), wdata_valid/ready/data[511:0]/we[63:0],
@@ -78,6 +80,7 @@ from ld_test import (CRG, WLCRG, DQSPhase, BIST, MT41K256M8_tRFC160, WriteClocks
                      reset_value)
 from wl7ddrphy import WL7DDRPHY                                 # noqa: E402
 from ecc_ports import NativePortsECC                            # noqa: E402
+from csr_pipe import PipelinedCSR                               # noqa: E402
 import calcpu                                                   # noqa: E402
 from calcpu import Cal, FirmwareBuilder, build_firmware, one_file  # noqa: E402
 
@@ -104,7 +107,7 @@ for _c in (0, 1):
 USER_NAMES = {u[0] for u in USER}
 
 
-class OTPULiteDRAM(SoCCore):
+class OTPULiteDRAM(PipelinedCSR, SoCCore):
     mem_map = {"csr": 0x0000_0000}
 
     def __init__(self, f=133.333e6, dqs_phase=90, bist=True, phy="a7", groups=None, selfcal=False,
@@ -116,7 +119,7 @@ class OTPULiteDRAM(SoCCore):
         platform.add_extension(USER)
         clk50 = platform.request("clk50g")
         self.crg = CRG(platform, f, dqs_phase, two=True, clk50=clk50) if phy == "a7" else \
-            WLCRG(platform, f, clk50=clk50)
+            WLCRG(platform, f, clk50=clk50, rst_reg=True)
         self.comb += self.crg.rst.eq(platform.request("rst"))
         SoCCore.__init__(self, platform, f, ident="openTPU LiteDRAM", cpu_type=None,
                          integrated_rom_size=0, integrated_sram_size=0, with_uart=False,
@@ -173,7 +176,8 @@ class OTPULiteDRAM(SoCCore):
             if bist:
                 setattr(self, "bist" + sfx, BIST(core.crossbar.get_port(), modules=9))
 
-        # CSRs: AXI-Lite (ctl_clk) -> sys -> the CSR bus, BAR0 offsets relative to the window
+        # CSRs: AXI-Lite (ctl_clk) -> sys -> the CSR bus (a register stage per group of banks:
+        # PipelinedCSR), BAR0 offsets relative to the window
         self.cd_ctl = ClockDomain()
         self.comb += [self.cd_ctl.clk.eq(platform.request("ctl_clk")),
                       self.cd_ctl.rst.eq(platform.request("ctl_rst"))]
