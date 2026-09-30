@@ -1,11 +1,15 @@
 """Building blocks written in the openTPU language (they trace inline into the caller)."""
+import math
+
 from .. import language as ol
 
 
 def rmsnorm(x, gamma, eps: float):
-    """x: [M, H] tile, gamma: [H] tile."""
+    """x: [M, H] tile, gamma: [H] tile (None: no weight, Gemma 4's v_norm)."""
     ss = ol.sum(x * x, axis=1)
     r = ol.rsqrt(ss * (1.0 / x.cols) + eps)
+    if gamma is None:
+        return x * r[:, None]
     return (x * r[:, None]) * gamma[None, :]
 
 
@@ -17,6 +21,23 @@ def sigmoid(x):
 def silu(x):
     """x * sigmoid(x)."""
     return x * sigmoid(x)
+
+
+# gelu_tanh's exponent x (A + B x^2): -2 sqrt(2 / pi) log2(e) (x + 0.044715 x^3)
+GELU_A = -2.0 * math.sqrt(2.0 / math.pi) / math.log(2.0)
+GELU_B = GELU_A * 0.044715
+
+
+def gelu_tanh(x):
+    """GELU, tanh approximation (gelu_pytorch_tanh): 0.5 x (1 + tanh(z)) = x sigmoid(2 z),
+    z = sqrt(2 / pi) (x + 0.044715 x^3), as x / (1 + 2^(x (A + B x^2))): 8 VOPs."""
+    return x * ol.recip(ol.exp2(x * (x * x * GELU_B + GELU_A)) + 1.0)
+
+
+def softcap(x, c: float):
+    """The logit soft cap c tanh(x / c) (Gemma's final_logit_softcapping), as 2c sigmoid(2x / c)
+    - c = 2c / (1 + 2^(-2 log2(e) x / c)) - c: 5 VOPs."""
+    return ol.recip(ol.exp2(x * (-2.0 * ol.LOG2E / c)) + 1.0) * (2.0 * c) - c
 
 
 def softplus(x):

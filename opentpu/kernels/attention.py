@@ -21,6 +21,17 @@ class Bucket:
         return Tensor(self.z + 4 * t0, (n,), (1,))
 
 
+class Blocks:
+    """Attention over an explicit list of cache blocks, in order: [(t0, n, mask)], tokens [t0,
+    t0 + n) of the cache, mask None (all of them count) or a DRAM row of n floats, +inf where
+    the token counts and -inf where not (the block's scores are min(s, row), as Bucket's last
+    block). A sliding window over a KV ring (Gemma 4: the window's first block masked at its
+    start, its last at its end)."""
+
+    def __init__(self, items):
+        self.items = [(t0, n, m) for t0, n, m in items]
+
+
 def _attend(qh, kv, h, seq_len: int, block: int, scale: float | None = None, raw: bool = False,
             depth: int = 3):
     """Flash attention of the G query rows `qh` [G, d] against KV head h (see _attend_heads);
@@ -49,10 +60,15 @@ class _Head:
         self.S = None                                # the hardware loop's score buffers
         self.rowmax = {}                             # masked block t0 -> its scores' row maxima
         self.masked = None                           # (t0, Bucket) of the masked block
+        self.masks = {}                              # Blocks: t0 -> the block's mask row
         if isinstance(seq_len, Bucket):              # full blocks and a masked last one
             nfull = seq_len.blocks - 1
             self.blocks = [(i * block, block) for i in range(seq_len.blocks)]
             self.masked = (nfull * block, seq_len)
+        elif isinstance(seq_len, Blocks):            # the list, unrolled
+            nfull = 0
+            self.blocks = [(t0, n) for t0, n, _ in seq_len.items]
+            self.masks = {t0: m for t0, _, m in seq_len.items if m is not None}
         else:
             nfull, tail = divmod(seq_len, block)
             self.blocks = [(i * block, block) for i in range(nfull)] + \
@@ -77,11 +93,13 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
     qhs: [G, d] query tiles, or functions that emit and return them (they are called
     `ahead` heads early, so the work producing a head's queries -- e.g. its slice of the Q
     projection -- is interleaved with the attention of the heads before it); hs: their KV
-    heads. `kv` and `seq_len` are one cache / length for all entries, or one per entry (several
-    tokens or sequences chained through the same pipeline: batched decode, prefill). The softmax scale log2(e)/sqrt(d) is either already in the queries or given as
-    `scale` (applied by the quantizer when q is loaded into ACT RAM, QACT CSCALE). Returns
-    [(acc, l)] per head, unnormalized -- or, with `emit`, calls emit(i, acc, l) as soon as entry
-    i is complete and releases its state (TMEM then holds only the entries in flight).
+    heads. `kv` and `seq_len` (a length, a Bucket or Blocks) are one cache / length for all
+    entries, or one per entry (several tokens or sequences chained through the same pipeline:
+    batched decode, prefill). The softmax scale log2(e)/sqrt(d) is either already in the
+    queries or given as `scale` (applied by the quantizer when q is loaded into ACT RAM, QACT
+    CSCALE). Returns [(acc, l)] per head, unnormalized -- or, with `emit`, calls emit(i, acc,
+    l) as soon as entry i is complete and releases its state (TMEM then holds only the entries
+    in flight).
     """
     D = ol.block_size()
     P = depth
@@ -99,9 +117,14 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
     def scores(st, t0, n, out):
         """s = q.K^T for tokens [t0, t0+n); the MXU epilogue also writes the row maxima (a
         masked block: min with its mask row, then the row maxima of that)."""
-        if st.masked is not None and isinstance(t0, int) and st.masked[0] == t0:
+        row = None
+        if isinstance(t0, int):
+            row = st.masks.get(t0)
+            if st.masked is not None and st.masked[0] == t0:
+                row = st.masked[1].row(t0, n)
+        if row is not None:
             ol.dot(st.qs, st.K[t0:t0 + n, :], out=out)
-            s = ol.minimum(out, ol.load(st.masked[1].row(t0, n))[None, :])
+            s = ol.minimum(out, ol.load(row)[None, :])
             st.rowmax[t0] = ol.max(s, axis=1)
             return s
         ol.dot(st.qs, st.K[t0:t0 + n, :], out=out, rowmax=True)

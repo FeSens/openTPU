@@ -459,6 +459,13 @@ class Tile:
                         self.buf)
         raise CompileError(f"unsupported 2-D index {key}")
 
+    def column(self) -> "Tile":
+        """A 1-D tile as an [n, 1] column (row stride 1): `v.column().set(t[:, c:c + 1])`
+        copies column c of a 2-D tile into v (one VOP; a transpose column by column)."""
+        if len(self.shape) != 1:
+            raise CompileError(f"column(): {self} is not 1-D")
+        return Tile(self.b, self.base, (self.cols, 1), 1, self.buf)
+
     def row_stride_view(self, r0: int, n: int, step: int) -> "Tile":
         """Rows r0, r0+step, ... (n of them) of a 2-D tile, as a [n, cols] view."""
         if len(self.shape) != 2 or r0 + (n - 1) * step >= self.rows:
@@ -560,6 +567,22 @@ class Stationary:
     def __init__(self, src: Tile, chunks: list, KB: int, owners: list, pair: bool = False):
         self.src, self.chunks, self.KB, self.owners = src, chunks, KB, owners
         self.pair = pair
+
+    def blocks(self, k: int, kb: int = 1) -> "Stationary":
+        """Its ACT RAM blocks [k, k + kb) as a stationary operand of their own (the same rows,
+        K = kb * D): a dot with part of an operand quantized once (kernels/gather.py's one-hot
+        blocks). One chunk of rows only; the view keeps this operand, and so its blocks,
+        alive."""
+        if len(self.chunks) != 1 or self.pair or not 0 <= k < k + kb <= self.KB:
+            raise CompileError(f"blocks({k}, {kb}) of a {self.KB}-block operand in "
+                               f"{len(self.chunks)} chunks")
+        (ab, mc), = self.chunks
+        D = self.src.b.cfg.D
+        src = self.src[:, k * D:(k + kb) * D] if len(self.src.shape) == 2 else \
+            self.src[k * D:(k + kb) * D]
+        v = Stationary(src, [(ab + k, mc)], kb, list(self.owners))
+        v.loop, v.parent = getattr(self, "loop", None), self
+        return v
 
 
 # =============================================================================== builder

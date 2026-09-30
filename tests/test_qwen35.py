@@ -31,16 +31,18 @@ def _chat_ids(tok, text):
     return list(ids["input_ids"] if hasattr(ids, "keys") else ids)
 
 
-@pytest.fixture(scope="module")
-def tiny():
+@pytest.fixture(scope="module", params=[8, 4], ids=["kh8", "kh4"])
+def tiny(request):
     """8 DeltaNet heads (two pairs per slice at S=2, four at S=1: the head loop runs), and a
-    query group of 4 heads (split in two on the board's 2-column MXU)."""
+    query group of 4 heads (split in two on the board's 2-column MXU). kh4: 4 key heads for
+    the 8 value heads (each key head's q and k serve two, as Qwen3.5-4B's 16 for 32)."""
+    nk = request.param
     torch.manual_seed(0)
     hc = transformers.Qwen3_5TextConfig(
         hidden_size=256, num_hidden_layers=len(KINDS), num_attention_heads=8,
         num_key_value_heads=2, head_dim=256, intermediate_size=512, vocab_size=1000,
         layer_types=["full_attention" if k == "attn" else "linear_attention" for k in KINDS],
-        linear_num_key_heads=8, linear_num_value_heads=8, linear_key_head_dim=128,
+        linear_num_key_heads=nk, linear_num_value_heads=8, linear_key_head_dim=128,
         linear_value_head_dim=128, linear_conv_kernel_dim=4, tie_word_embeddings=True,
         max_position_embeddings=4096, rms_norm_eps=1e-6,
         rope_parameters={"rope_type": "default", "rope_theta": 1e7, "partial_rotary_factor": 0.25})
@@ -51,7 +53,7 @@ def tiny():
                 p.copy_((1.0 if n.endswith("linear_attn.norm.weight") else 0.0)
                         + 0.1 * torch.randn_like(p))
     W = {k: v.float().numpy() for k, v in m.state_dict().items()}
-    return m, W, Spec(256, KINDS, 8, 2, 256, 64, 8, 128, 128, 512, 1000)
+    return m, W, Spec(256, KINDS, 8, 2, 256, 64, 8, 128, 128, 512, 1000, lin_kheads=nk)
 
 
 def test_plan_loops_the_repeated_unit():
