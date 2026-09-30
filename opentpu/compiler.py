@@ -95,9 +95,10 @@ class RunVar:
 
 
 class DevVar(RunVar):
-    """A value the program computes itself, in register `reg` (a Builder.scratch set by RLD or
-    WAITW: an expert's slot address from a directory, docs/offload.md). An address may add
-    1 * var; it then uses R[reg] as its base, like a run-time argument's register."""
+    """A value the program computes itself, in register `reg` (a Builder.scratch set by RLD:
+    e.g. an expert's slot address, which WAITW copied from a directory, docs/offload.md). An
+    address may add 1 * var; it then uses R[reg] as its base, like a run-time argument's
+    register."""
 
     def __init__(self, name: str, reg: int):
         super().__init__(name)
@@ -782,12 +783,16 @@ class Builder:
             raise CompileError(f"rld: {t} is not one word")
         self.emit(I.rld(r, t.base, raw=raw, comment=comment or "rld"))
 
-    def waitw(self, rd: int, dram: int, ref: int = 0, cmp: int = I.C_EQ, ra: int = 0,
-              rb: int = 0, interval: int = 0, timeout: int = 0, comment: str = "") -> None:
+    def waitw(self, t: "Tile", dram: int, ref: int = 0, cmp: int = I.C_EQ, ra: int = 0,
+              rc: int = 0, interval: int = 0, timeout: int = 0, comment: str = "") -> None:
         """Wait until the DRAM word at R[ra] + dram compares (cmp: I.C_EQ / C_NE / C_GE) with
-        R[rb] + ref, then R[rd] = the word (WAITW: a word the host writes, docs/isa.md)."""
-        self.emit(I.waitw(rd, dram, ref, cmp, ra=ra, rb=rb, interval=interval, timeout=timeout,
-                          comment=comment or "waitw"))
+        R[rc] + ref, then the one-word tile t = the word's bits (WAITW: a word the host writes,
+        docs/isa.md; rld(raw=True) takes it into a register)."""
+        self.check_live(t)
+        if t.rows * t.cols != 1:
+            raise CompileError(f"waitw: {t} is not one word")
+        self.emit(I.waitw(dram, t.base, ref, cmp, ra=ra, rc=rc, interval=interval,
+                          timeout=timeout, comment=comment or "waitw"))
 
     def argmax(self, x: "Tile", base: int = 0, out: "Tile | None" = None,
                rbase: int = 0) -> "Tile":

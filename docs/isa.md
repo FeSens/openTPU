@@ -99,7 +99,7 @@ Every instruction is 8 x 32-bit words `w0..w7`.
 | 0x04 | LOOP | body = next `w1` instructions, executed `R[ra] + w2` times (0: skipped). Loops nest (depth 4); a body must not end on the same instruction as an enclosing body. |
 | 0x05 | BAR | wait until every slice has reached a `BAR` |
 | 0x06 | RLD | `R[rd] = f2i(T[R[ra]+w1])`, flag bit0 RAW: the word's bits, bit1 MUL: times `R[rb]+w2` (see "RLD") |
-| 0x07 | WAITW | wait until `M32[R[ra]+w1] & w3` compares (flags[1:0]: EQ, NE, GE) with `R[rb]+w2`, then `R[rd]` = the word (see "WAITW") |
+| 0x07 | WAITW | DMA: wait until `M32[R[ra]+w1] & w4` compares (flags[1:0]: EQ, NE, GE) with `R[rc]+w3`, then `T[R[rb]+w2]` = the word's bits (see "WAITW") |
 | 0x10 | LD | DRAM -> TMEM, `n = w3` words: `T[R[rb]+w2+i] = M32[R[ra]+w1+4i]` |
 | 0x11 | ST | TMEM -> DRAM: `M32[R[ra]+w1+4i] = T[R[rb]+w2+i]` for `i < w3` |
 | 0x12 | DSTEP | one Gated DeltaNet head step on a DRAM state, run by the DMA (see below; `Config.DSTEP`, CAPS bit6) |
@@ -342,23 +342,27 @@ uses a handful per token.
 
 ### WAITW
 
-Wait for a word the host writes: `v = M32[R[ra] + w1]` is read from DRAM until
-`cmp(v & w3, R[rb] + w2)` holds, then `R[rd] = v` (the word's bits; `rd = 0` writes nothing).
-flags[1:0] `cmp`: 0 EQ, 1 NE, 2 GE (the 32-bit difference `(v & w3) - ref` is >= 0 as a signed
-number: counters, and positive fp32 values, which order as their bits). `w4`: cycles between
-reads (the first at once); `w5`: a timeout in cycles (0: none), at which the slice stops with an
-error the host sees. Like RLD, no younger instruction is issued until the condition holds.
-
-Every read is a fresh DRAM read. Once WAITW has seen a word the host wrote after an h2c DMA
-completed, every younger MM or LD reads that DMA's data: the host orders its data before its
-flag, the card its flag before its reads (the XDMA and the core meet in `otpu_mem_ch` and
-LiteDRAM, which must keep this order).
+Wait for a word the host writes. The DMA reads `v = M32[R[ra] + w1]` from DRAM until
+`cmp(v & w4, R[rc] + w3)` holds, then writes `v` to `T[R[rb] + w2]` (the word's bits, as LD).
+`RLD` with RAW takes it into a register; the value never passes the VPU, so an address comes
+through whole.
+- flags[1:0] `cmp`: 0 EQ, 1 NE, 2 GE. GE means the 32-bit difference `(v & w4) - ref` is >= 0
+  as a signed number: counters, and positive fp32 values, which order as their bits.
+- `w5`: cycles between reads, the first at once. `w6`: a timeout in cycles (0: none), at which
+  the slice stops with an error the host sees.
+- The scoreboard footprint: all of DRAM read, `T[R[rb] + w2]` written. Older stores land before
+  its first read; younger instructions that read or write DRAM, and those that use the word,
+  wait until it completes.
+- Every read is a fresh DRAM read. Once WAITW has seen a word the host wrote after an h2c DMA
+  completed, every younger MM or LD reads that DMA's data: the host orders its data before its
+  flag, the card its flag before its reads. The XDMA and the core meet in `otpu_mem_ch` and
+  LiteDRAM, which must keep this order.
 
 The MoE expert streaming of docs/offload.md uses it for a fence (`served >= seq`: the host has
 finished the card's earlier requests) and for each expert's directory entry (`!= 0`: the
-expert's slot address, once its DMA has landed). The ISA simulator calls the host
-(`Machine.host`) when every slice that can run waits; a WAITW that still does not hold is the
-timeout (SimError). No RTL yet.
+expert's slot address, once its DMA has landed). The ISA simulator runs it in order (the slice
+waits) and calls the host (`Machine.host`) when every slice that can run waits; a WAITW that
+still does not hold is the timeout (SimError). No RTL yet.
 
 ### HALT CHAIN
 

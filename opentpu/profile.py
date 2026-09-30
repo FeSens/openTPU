@@ -157,7 +157,7 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
     if op == I.RLD:
         return "RLD", " ".join(f for b, f in ((I.F_RAW, "raw"), (I.F_MUL, "mul"))
                                if ins.flags & b), 1, 0, 0
-    if op == I.WAITW:                   # one DRAM word per poll; the wait is the host's
+    if op == I.WAITW:                   # one DRAM word per poll, one TMEM word; the wait is the host's
         return "WAITW", ("EQ", "NE", "GE", "?")[ins.flags & 3], 1, 1, 0
     return f"op{op:#x}", "", 0, 0, 0
 
@@ -324,8 +324,8 @@ def parse(trace: str, cfg, programs, name: str = "") -> Profile:
             slot, pc, op = int(kv["s"]), int(kv["pc"]), int(kv["op"], 16)
             ins = programs[s][pc]
             nm, det, work, pb, pa = _describe(ins, cfg)
-            unit = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.STREAM: 0, I.MM: 1, I.QACT: 2, I.QST: 2,
-                    I.VOP: 3}.get(op, 4)
+            unit = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.STREAM: 0, I.WAITW: 0, I.MM: 1, I.QACT: 2,
+                    I.QST: 2, I.VOP: 3}.get(op, 4)
             r = Rec(s, counts[s], pc, op, unit, c, name=nm, detail=det, comment=ins.comment,
                     work=work, portb=pb, porta=pa)
             counts[s] += 1

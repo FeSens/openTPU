@@ -157,13 +157,12 @@ class Slice:
         self.advance()
 
     def poll(self, ins: I.Instr) -> bool:
-        """WAITW's DRAM read: if its condition holds, R[rd] = the word and True."""
+        """WAITW's DRAM read: if its condition holds, T[R[rb] + w2] = the word's bits and True."""
         a = (self.reg(ins.ra) + ins.w[0]) & 0xFFFFFFFF
         v = int(self.m32[self._widx(np.int64(a))])
-        if not I.waitw_holds(v, self.reg(ins.rb) + ins.w[1], ins.flags & 3, ins.w[2]):
+        if not I.waitw_holds(v, self.reg(ins.rc) + ins.w[2], ins.flags & 3, ins.w[3]):
             return False
-        if ins.rd:
-            self.R[ins.rd] = v
+        self.tmem[self._tidx(np.int64(self.reg(ins.rb) + ins.w[1]))] = v
         return True
 
     def advance(self) -> None:

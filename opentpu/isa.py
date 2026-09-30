@@ -130,14 +130,16 @@ def rld(rd, tmem, ra=0, raw=False, mul=None, rb=0, comment=""):
                  w=_w(tmem, 0 if mul is None else mul), comment=comment)
 
 
-def waitw(rd, dram, ref, cmp, ra=0, rb=0, mask=0xFFFFFFFF, interval=0, timeout=0, comment=""):
-    """Wait until cmp(M32[R[ra] + dram] & mask, R[rb] + ref) holds, polling DRAM every
-    `interval` cycles (the first read at once; timeout cycles, 0: none), then
-    R[rd] = M32[R[ra] + dram]; docs/isa.md "WAITW"."""
+def waitw(dram, tmem, ref, cmp, ra=0, rb=0, rc=0, mask=0xFFFFFFFF, interval=0, timeout=0,
+          comment=""):
+    """WAITW (DMA): wait until cmp(M32[R[ra] + dram] & mask, R[rc] + ref) holds, polling DRAM
+    every `interval` cycles (the first read at once; timeout cycles, 0: none), then
+    T[R[rb] + tmem] = the word's bits (an RLD raw takes it into a register); docs/isa.md
+    "WAITW"."""
     if cmp not in (C_EQ, C_NE, C_GE):
         raise ValueError(f"WAITW compare {cmp}")
-    return Instr(WAITW, ra=ra, rb=rb, rd=rd, flags=cmp,
-                 w=_w(dram, ref, mask, interval, timeout), comment=comment)
+    return Instr(WAITW, ra=ra, rb=rb, rc=rc, flags=cmp,
+                 w=_w(dram, tmem, ref, mask, interval, timeout), comment=comment)
 
 
 def waitw_holds(word: int, ref: int, cmp: int, mask: int = 0xFFFFFFFF) -> bool:

@@ -15,8 +15,8 @@ A MoE layer on the device (`moe_ffn`), one token:
 5. the experts present (a LOOP over the k ids, a LOOP R[present] inside), then the others
    (LOOP R[1 - present]); each takes its slot address from its directory entry by WAITW
    (!= 0: at once for an expert present; for the others once the host has written the entry
-   after the expert's DMA), runs kernels.mlp.swiglu_down there and writes its weighted
-   output to its row of a [k, H] tile;
+   after the expert's DMA) to a TMEM word and RLD (raw) into a register, runs
+   kernels.mlp.swiglu_down there and writes its weighted output to its row of a [k, H] tile;
 6. the rows summed in the router's order (the result does not depend on what the cache held)
    and added to the residual.
 
@@ -26,7 +26,7 @@ expert i is always at column 0 in iteration i.
 
 `ExpertFormat` is one expert's slot: gate and up [F, H] and W_down's column parts, laid out as a
 layer block's MLP (lfm2.Image), so the FFN is kernels.mlp.swiglu_down at the slot's address
-(a compiler.DevVar: the register WAITW or RLD set). One slice (S = 1, the board's).
+(a compiler.DevVar: the register RLD sets). One slice (S = 1, the board's).
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ from .. import isa as I
 from .. import language as ol
 from .. import quant as Q
 from ..compiler import Affine, CompileError, DevVar, QTensor, Tensor, current
-from ..host.offload import LINE, Layout
+from ..host.offload import LINE
 from ..kernels.lib import rmsnorm, sigmoid
 from ..kernels.mlp import _chunk, swiglu_down
 
@@ -145,10 +145,12 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
     # address, a row). The k experts' values are the columns of pe, a [5, k] tile that every
     # loop over the experts rotates left by one at the end of its body: expert i is at column
     # 0 in iteration i, and after k iterations every row is back in order. (A slot address
-    # never passes through TMEM: the VPU would flush it as a denormal. WAITW reads it from
-    # the directory into r, at once for an expert present.)
+    # never passes through the VPU, which would flush it as a denormal: WAITW copies it from
+    # the directory to the word `word`, at once for an expert present, and RLD raw takes its
+    # bits into r.)
     EP, MISS, OFF, WT, ROW = range(5)               # pe's rows
     pe, tmp, ids, pr = ol.empty((5, k)), ol.empty((5, k)), ol.empty((k,)), ol.empty((2,))
+    word = ol.empty((1,))
     wt = pe[WT, :]
 
     def rotate(rows=slice(0, 5)):
@@ -185,7 +187,7 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
     # the fence, then the request: seq + 1 and the ids
     seq = ol.load(Tensor(Affine(dev.mbox), (1,), (1,)))
     b.rld(r, seq, raw=True, comment="seq (bits)")
-    b.waitw(0, dev.served, 0, I.C_GE, rb=r, comment="fence: served >= seq")
+    b.waitw(word, dev.served, 0, I.C_GE, rc=r, comment="fence: served >= seq")
     ol.store(Tensor(Affine(dev.mbox + LINE), (k,), (1,)), gid)
     seq.set(seq + 1.0)
     ol.store(Tensor(Affine(dev.mbox), (1,), (1,)), seq)
@@ -212,8 +214,9 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
         b.emit(I.rld(r, col(flag), comment="missing" if wait else "present"))
         inner = b.begin_loop(0, rcount=r)               # (the count is read here: r is free)
         b.emit(I.rld(r, col(OFF), comment="entry offset"))
-        b.waitw(r, dev.dir, 0, I.C_NE, ra=r, comment="its slot" if not wait else
+        b.waitw(word, dev.dir, 0, I.C_NE, ra=r, comment="its slot" if not wait else
                 "wait: its slot")
+        b.rld(r, word, raw=True, comment="its slot")
         expert()
         b.end_loop(inner)
         rotate()
