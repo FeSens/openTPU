@@ -53,7 +53,8 @@ EXCLUDE = ("host/", "lens.py", "lens_app.html", "rtlsim.py", "hwtrace.py")
 HEARTBEAT = 15                                # s between .pending updates
 STALE = 120                                   # s without a heartbeat: the job is dead
 RESERVE = 4 << 30                             # bytes of MemAvailable kept free
-MEM_GUESS = {"lfm2": 2.0, "qwen3": 3.0, "qwen35": 4.0}    # GiB, before a peak is recorded
+MEM_GUESS = {"lfm2": 2.0, "qwen3": 3.0, "qwen35": 4.0, "lfm2-2.6b": 12.0, "smollm3": 13.0,
+             "phi4-mini": 16.0}                   # GiB, before a peak is recorded
 
 
 def cache_root() -> Path:
@@ -249,7 +250,7 @@ def compute(cfgf: Path, runs: list[str], jobs: int | None, n: int) -> int:
         cap = max(1, maxj - (vivado_count() if linux else 0))
         while todo and len(running) < cap:
             r, kp = todo[0]
-            need = db.get(r) or int(MEM_GUESS[r.split(":")[0]] * (1 << 30))
+            need = db.get(r) or int(MEM_GUESS.get(r.split(":")[0], 16.0) * (1 << 30))
             avail = mem_available()
             if running and avail is not None and avail - RESERVE < need:
                 break                               # wait for memory (always start one)
