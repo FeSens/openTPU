@@ -12,7 +12,7 @@ import pytest
 from opentpu.isasim import board_config
 from opentpu.llm import load_spec
 from opentpu.llm.lfm2 import plan
-from opentpu.llm.qwen3 import Engine, load_weights
+from opentpu.llm.qwen3 import ATTN_BLOCK, Engine, load_weights
 from opentpu.llm.qwen35 import Spec, emulated_logits, reference_logits
 
 torch = pytest.importorskip("torch")
@@ -32,18 +32,15 @@ def _chat_ids(tok, text):
     return list(ids["input_ids"] if hasattr(ids, "keys") else ids)
 
 
-@pytest.fixture(scope="module", params=[8, 4], ids=["kh8", "kh4"])
-def tiny(request):
-    """8 DeltaNet heads (two pairs per slice at S=2, four at S=1: the head loop runs), and a
-    query group of 4 heads (split in two on the board's 2-column MXU). kh4: 4 key heads for
-    the 8 value heads (each key head's q and k serve two, as Qwen3.5-4B's 16 for 32)."""
-    nk = request.param
+def _tiny_model(nk: int, nv: int = 8):
+    """A random tiny Qwen3.5 (HF model, weights, Spec) with nv DeltaNet value heads, nk key
+    heads."""
     torch.manual_seed(0)
     hc = transformers.Qwen3_5TextConfig(
         hidden_size=256, num_hidden_layers=len(KINDS), num_attention_heads=8,
         num_key_value_heads=2, head_dim=256, intermediate_size=512, vocab_size=1000,
         layer_types=["full_attention" if k == "attn" else "linear_attention" for k in KINDS],
-        linear_num_key_heads=nk, linear_num_value_heads=8, linear_key_head_dim=128,
+        linear_num_key_heads=nk, linear_num_value_heads=nv, linear_key_head_dim=128,
         linear_value_head_dim=128, linear_conv_kernel_dim=4, tie_word_embeddings=True,
         max_position_embeddings=4096, rms_norm_eps=1e-6,
         rope_parameters={"rope_type": "default", "rope_theta": 1e7, "partial_rotary_factor": 0.25})
@@ -54,7 +51,15 @@ def tiny(request):
                 p.copy_((1.0 if n.endswith("linear_attn.norm.weight") else 0.0)
                         + 0.1 * torch.randn_like(p))
     W = {k: v.float().numpy() for k, v in m.state_dict().items()}
-    return m, W, Spec(256, KINDS, 8, 2, 256, 64, 8, 128, 128, 512, 1000, lin_kheads=nk)
+    return m, W, Spec(256, KINDS, 8, 2, 256, 64, nv, 128, 128, 512, 1000, lin_kheads=nk)
+
+
+@pytest.fixture(scope="module", params=[8, 4], ids=["kh8", "kh4"])
+def tiny(request):
+    """8 DeltaNet heads (two pairs per slice at S=2, four at S=1: the head loop runs), and a
+    query group of 4 heads (split in two on the board's 2-column MXU). kh4: 4 key heads for
+    the 8 value heads (each key head's q and k serve two, as Qwen3.5-4B's 16 for 32)."""
+    return _tiny_model(request.param)
 
 
 def test_plan_loops_the_repeated_unit():
@@ -240,9 +245,54 @@ def test_tiny_resident_decode_is_bit_exact(tiny, dstep):
     for li, k in enumerate(spec.kinds):     # row 0 of each pair's ring is scratch (_ring)
         if k == "linear":
             for q in range(ib.nl // 2):
-                o = li * ib.LS + ib.lofs["linear"]["cv"] + 4 * (q * ib.CVW + TP)
+                o = li * ib.LS + ib.cv_offset(q) + 4 * TP
                 ma[o:o + 8 * ib.C] = mb[o:o + 8 * ib.C] = 0
     assert np.array_equal(ma, mb)
+
+
+@pytest.fixture(scope="module", params=[(16, 8), (18, 9)], ids=["h16", "h18"])
+def tiny_pairs(request):
+    """More DeltaNet heads on one slice, so the decode's pair loop runs: 16 value heads for 8
+    key heads (8 pairs, as Qwen3.5-35B-A3B's 32 for 16), and 18 for 9 (9 pairs, out_proj
+    groups of 2 heads)."""
+    nv, nk = request.param
+    return _tiny_model(nk, nv)[1:]
+
+
+def _pair_parts(eng, li, q):
+    """Pair q's taps and window, and its two states, in layer li (either layout)."""
+    im, d = eng.image, eng.backend.machine.slices[0].dram
+    o = im.layer0 + li * im.LS
+    n = 4 * 2 * eng.spec.lin_dv * eng.spec.lin_dk
+    st = o + (im.pair_offset(q) + im.pofs["state"] if im.grouped else
+              im.lofs["linear"]["state"] + q * n)
+    return d[o + im.cv_offset(q):o + im.cv_offset(q) + 4 * im.CVW].copy(), d[st:st + n].copy()
+
+
+@pytest.mark.parametrize("dstep", [False, True])
+def test_group_major_is_bit_exact(tiny_pairs, dstep):
+    """The group-major DeltaNet layout (Spec.pair_loop) gives the array-major one's logits,
+    taps, windows and states bit for bit: chunked prefill (a loop over the groups, each over
+    its pairs), per-position decode (the pair loop), resident decode (the pair loop at a
+    run-time position: a shorter program); with and without DSTEP."""
+    W, spec = tiny_pairs
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep, PAIR=True)
+    a, b = (Engine(dataclasses.replace(spec, pair_loop=g), W, cap=512, cfg=cfg, resident=True)
+            for g in (False, True))
+    assert not a.image.grouped and b.image.grouped
+    ra, rb = (e.image.compile_decode(1, 3)[0][0] for e in (a, b))
+    assert len(rb) < len(ra)
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 12)]
+    assert np.array_equal(a.prefill(toks[:5], chunk=3).view(np.uint32),
+                          b.prefill(toks[:5], chunk=3).view(np.uint32))
+    for t in toks[5:]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), a.pos
+    assert sorted(a._decodes) == sorted(b._decodes) == [1]
+    for li, k in enumerate(spec.kinds):
+        if k == "linear":
+            for q in range(spec.lin_heads // 2):
+                assert all(np.array_equal(x, y) for x, y in
+                           zip(_pair_parts(a, li, q), _pair_parts(b, li, q))), (li, q)
 
 
 @pytest.mark.parametrize("dstep,resident", [(False, False), (True, False), (True, True),
@@ -266,6 +316,41 @@ def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep, resident):
     assert brd.stats[-1]["cycles"] > 0
     if resident:
         assert sorted(brd._decodes) == [1] and brd.backend._resident[0] is brd._decodes[1][0]
+
+
+@pytest.mark.parametrize("dstep", [False, True])
+def test_group_major_on_board_model(tiny_pairs, have_verilator, dstep):
+    """Group-major DeltaNet blocks on the board model through the host driver, resident from
+    position 3 on (the pair loop at a run-time position): logits bit-identical to the ISA
+    simulator's array-major per-position programs."""
+    from opentpu.host.board import BoardBackend, SimTransport
+    W, spec = tiny_pairs
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep)
+    isa = Engine(dataclasses.replace(spec, pair_loop=False), W, cap=256, cfg=cfg)
+    tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
+    brd = Engine(dataclasses.replace(spec, pair_loop=True), W, cap=256, cfg=cfg, resident=True,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr))
+    assert brd.resident and brd.image.grouped and not isa.image.grouped
+    for tok in (11, 222, 333, 444, 555, 666):
+        a, b = isa.step(tok), brd.step(tok)
+        assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
+    assert sorted(brd._decodes) == [1]
+
+
+def test_4b_resident_decode_fits_imem():
+    """Qwen3.5-4B's dims on one slice (16 pairs of DeltaNet heads: group-major), fp4 with an
+    int8 LM head: the resident decode, the pair loop at a run-time position beside the
+    attention's run-time KV addresses, compiles and fits IMEM at every bucket of a 4K context
+    (the gates in the head groups' blocks: the pair loop takes one address register). A
+    layout-only image, no weights."""
+    kinds = ("linear", "linear", "linear", "attn") * 8
+    spec = Spec(2560, kinds, 16, 4, 256, 64, 32, 128, 128, 9216, 248320, lin_kheads=16)
+    cfg = board_config(DRAM_BYTES=1 << 33)      # the fp32 lookup table alone is 2.4 GiB
+    img = spec.image(cfg, 4096, wformat="fp4", head_format="int8", lookup=True)
+    assert img.grouped
+    for b in (1, 2, 4, 8, 16):
+        (prog,), _ = img.compile_decode(b, (b - 1) * ATTN_BLOCK + 3)
+        assert len(prog) <= cfg.IMEM_WORDS // 8, b
 
 
 def test_tiny_qwen35_on_a_board_without_dstep(tiny, have_verilator):
