@@ -367,7 +367,8 @@ still does not hold is the timeout (SimError).
 In the RTL (otpu_dma, CAPS bit31) it is an LD of one word whose TMEM write waits for the
 compare: the chunk is read, the word taken, compared a cycle later and written through lane 0,
 or, if it does not hold, read again after `w5` cycles. At the timeout the slice stops: STATUS
-shows HALTED and ERROR. The scoreboard sees all of DRAM as written (older DRAM readers and
+shows HALTED, ERROR and WAIT_TO (bit8; the first WAITW bitstream, be824d5, shows HALTED and ERROR
+only), until RUN falls. The scoreboard sees all of DRAM as written (older DRAM readers and
 writers complete first, younger ones wait) and the TMEM word.
 
 On the card, `tools/qual/waitw.py` (qual.sh, and otpu-diag's `waitw-host` group) checks that

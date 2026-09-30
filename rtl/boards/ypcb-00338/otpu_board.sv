@@ -109,7 +109,7 @@ module otpu_board #(
   end
 
   // ---- control
-  logic run, ld_start, ld_busy, halted, error, wr_idle;
+  logic run, ld_start, ld_busy, halted, error, wait_to, wr_idle;
   logic [31:0] ld_addr, ld_n, icount;
   logic [31:0] arg [8];               // the run's arguments (ARG0..7: R8..R15 at the start)
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_par, b_rvalid, b_rtag, b_rdy;
@@ -135,7 +135,7 @@ module otpu_board #(
     .s_bready(s_ctl_bready), .s_araddr(s_ctl_araddr), .s_arvalid(s_ctl_arvalid),
     .s_arready(s_ctl_arready), .s_rdata(s_ctl_rdata), .s_rresp(s_ctl_rresp),
     .s_rvalid(s_ctl_rvalid), .s_rready(s_ctl_rready),
-    .run, .ld_start, .arg, .ld_addr, .ld_n, .ld_busy, .halted, .error, .icount, .wr_idle,
+    .run, .ld_start, .arg, .ld_addr, .ld_n, .ld_busy, .halted, .error, .wait_to, .icount, .wr_idle,
     .axi_err(1'b0),                    // (no error responses on the native ports)
     .calib(cal_s2),
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
@@ -189,7 +189,7 @@ module otpu_board #(
     .coll_req, .coll_cmd, .coll_ack,
     .coll_ren, .coll_raddr, .coll_rdata,
     .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl), .coll_gnt(coll_gl),
-    .halted, .error, .icount, .pf, .dump(1'b0));
+    .halted, .error, .wait_to, .icount, .pf, .dump(1'b0));
 
   otpu_coll #(.S(1), .LANES(LANES)) u_coll (
     .clk, .rst(core_rst), .req(coll_req), .cmds(coll_cmds), .gnt(coll_gl), .ack(coll_ack),

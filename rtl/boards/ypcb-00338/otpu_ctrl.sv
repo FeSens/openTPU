@@ -8,8 +8,9 @@
 //                      bit1 LOAD (write 1: copy PROG_N instructions from PROG_ADDR into IMEM;
 //                      only while RUN = 0)
 //                      bit2 CLEAR: zero the per-run counters (0x18 .. 0x34)
-//   0x0C STATUS    RO  bit0 HALTED, bit1 ERROR (illegal instruction), bit2 LOADING,
-//                      bit3 WR_IDLE, bit4 AXI_ERR (sticky; the AXI memory path had it: 0), bit5 CALIB0, bit6 CALIB1, bit7 RUN
+//   0x0C STATUS    RO  bit0 HALTED, bit1 ERROR (illegal instruction; or WAIT_TO), bit2 LOADING,
+//                      bit3 WR_IDLE, bit4 AXI_ERR (sticky; the AXI memory path had it: 0), bit5 CALIB0, bit6 CALIB1, bit7 RUN,
+//                      bit8 WAIT_TO (with ERROR: a WAITW timed out; as ERROR, until RUN falls)
 //   0x10 PROG_ADDR RW  program byte address in the slice's DRAM (chunk aligned)
 //   0x14 PROG_N    RW  program length in instructions
 //   0x18 CYCLES    RO  core cycles since RUN rose, until HALTED (low 32 bits)
@@ -103,6 +104,7 @@ module otpu_ctrl #(
   input  logic        ld_busy,
   input  logic        halted,
   input  logic        error,
+  input  logic        wait_to,
   input  logic [31:0] icount,
   input  logic        wr_idle,
   input  logic        axi_err,
@@ -261,7 +263,8 @@ module otpu_ctrl #(
       10'h000: r_d <= 32'h4F54_5055;
       10'h001: r_d <= {16'(D), 8'(MCOLS), 8'(LANES)};
       10'h002: r_d <= {31'd0, run};
-      10'h003: r_d <= {24'd0, run, calib, axi_err, wr_idle, ld_busy || ld_pend, error, halted};
+      10'h003: r_d <= {23'd0, wait_to, run, calib, axi_err, wr_idle, ld_busy || ld_pend, error,
+                       halted};
       10'h004: r_d <= ld_addr;
       10'h005: r_d <= ld_n;
       10'h006: r_d <= cycles[31:0];

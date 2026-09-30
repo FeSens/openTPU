@@ -92,6 +92,7 @@ module otpu_slice
   // status
   output logic          halted,
   output logic          error,
+  output logic          wait_to,    // the error is a WAITW timeout (STATUS WAIT_TO)
   output logic [31:0]   icount,
   output perf_t         pf,         // activity and trace events, a cycle late (otpu_pkg)
   input  logic          dump
@@ -127,6 +128,7 @@ module otpu_slice
   assign srst = rst || c_rst;
   assign halted = (sq_halted && !sq_ch) || dma_err;
   assign error = sq_err || dma_err;
+  assign wait_to = dma_err;
   assign icount = ic_base + sq_icount;
   always_ff @(posedge clk) begin
     c_ld <= 1'b0;

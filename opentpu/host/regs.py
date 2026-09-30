@@ -17,6 +17,7 @@ R_SW_WR = R_A_WR                 # the v2 name: scalar (QST) write requests
 CTRL_RUN, CTRL_LOAD, CTRL_CLEAR = 1, 2, 4
 ST_HALTED, ST_ERROR, ST_LOADING, ST_WR_IDLE, ST_AXI_ERR = 1, 2, 4, 8, 16
 ST_CALIB0, ST_CALIB1, ST_RUN = 32, 64, 128
+ST_WAIT_TO = 256                 # with ERROR: a WAITW timed out (bitstreams before: ERROR alone)
 ID_OTPU = 0x4F545055
 DRAM_INIT = 0x5C2B_ED00          # SCRATCH after Board.scrub (configuration resets it to 0)
 UNMAPPED = 0xDEADBEEF            # what version 1 returns for a register it does not have

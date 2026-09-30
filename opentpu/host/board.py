@@ -754,7 +754,8 @@ class Board:
             t.reg_write(R.R_TRACE_CTRL, 0)
         t.reg_write(R_CTRL, 0)
         if st & ST_ERROR:
-            raise RuntimeError("the program stopped on an illegal instruction")
+            raise RuntimeError("a WAITW timed out (STATUS WAIT_TO)" if st & R.ST_WAIT_TO else
+                               "the program stopped on an illegal instruction")
         if st & ST_AXI_ERR:
             raise RuntimeError("a DRAM access got an AXI error response")
         return stats

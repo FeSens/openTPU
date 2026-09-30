@@ -298,8 +298,9 @@ def waitw_host(board, rounds: int = 20, seed: int = 5, sizes=W_SIZES,
 
 
 def waitw_timeout(board) -> tuple[bool, str]:
-    """A WAITW that never holds stops the card at its timeout with HALTED and ERROR (Board.wait's
-    'illegal instruction'); the next run, a WAITW that holds, runs normally."""
+    """A WAITW that never holds stops the card at its timeout with HALTED, ERROR and WAIT_TO
+    (Board.wait's 'WAITW timed out'; bitstreams before WAIT_TO: ERROR alone, 'illegal
+    instruction'); the next run, a WAITW that holds, runs normally."""
     board.write(WB, _u32(0x1234))
     board.load_program(PROG_AT, np.asarray(I.assemble(
         [I.waitw(WB, W_T, 0x1235, I.C_EQ, interval=100, timeout=100000), I.halt()]), np.uint32))
@@ -307,12 +308,13 @@ def waitw_timeout(board) -> tuple[bool, str]:
         board.run(timeout=10.0)
         return False, "a WAITW that never holds ran to its HALT (no timeout)"
     except RuntimeError as e:
-        if "illegal instruction" not in str(e):
+        if "illegal instruction" not in str(e) and "WAITW timed out" not in str(e):
             raise
+        how = "ERROR and WAIT_TO" if "WAIT_TO" in str(e) else "ERROR (no WAIT_TO)"
     board.load_program(PROG_AT, np.asarray(I.assemble(
         [I.waitw(WB, W_T, 0x1234, I.C_EQ, timeout=100000), I.halt()]), np.uint32))
     st = board.run(timeout=10.0)
-    return True, f"ERROR at the timeout; the next run halted normally ({st['cycles']} cycles)"
+    return True, f"{how} at the timeout; the next run halted normally ({st['cycles']} cycles)"
 
 
 def pattern_test(board, regions: list[tuple[int, int]], seed: int = 1) -> tuple[bool, str]:

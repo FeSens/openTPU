@@ -174,7 +174,7 @@ def test_waitw_host_check_on_board_model(have_verilator):
     ok, msg = waitw_host(b, rounds=5, sizes=(16, 17, 1000))
     assert ok and "5 rounds" in msg, msg
     ok, msg = waitw_timeout(b)
-    assert ok, msg
+    assert ok and msg.startswith("ERROR and WAIT_TO at the timeout"), msg
 
 
 def test_pattern_and_address_lines_on_board_model(have_verilator):
