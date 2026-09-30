@@ -144,6 +144,44 @@ by resident decode steps (the device gathers every input): the same 72 tokens wi
 and with the fp4 head, and refs.py's prompt (13 tokens) + 32 greedy tokens equal the ISA
 simulator's with both heads.
 
+**Long context.** After 900 tokens of prose (past the 512-token window and the 768-slot ring;
+ISA simulator, fp4 layers), the device follows HF's greedy tokens for 5 tokens with either head,
+then takes ` your` for HF's ` Lizzy`. HF's gap there is 3.46 before the soft cap (0.44 after). A
+float64 emulation of the whole sequence with the quantization points switched on one at a time
+(`tools/gemma4_quant_eval.py step`, the batched twin of `emulated_logits`) says which point moves
+it, in logits before the cap:
+
+| Weights | Activation points | ` Lizzy` | ` your` | Top |
+|---|---|---:|---:|---|
+| float | none | 52.34 | 48.89 | ` Lizzy` (HF's 28.2233 after the cap, exactly) |
+| float | all: matmul inputs, K / V, P | 51.88 | 48.80 | ` Lizzy` |
+| int8 layers, int8 head and PLE | all | 51.64 | 49.03 | ` Lizzy` |
+| fp4 layers, int8 head and PLE | none | 39.95 | 48.01 | ` your` (` Lizzy` 8th) |
+| fp4 layers, int8 head (the device) | all | 39.40 | 47.75 | ` your` (` Lizzy` 8th) |
+| fp4 layers, fp4 head | all | 39.87 | 47.65 | ` your` (` Lizzy` 8th) |
+
+The fp4 layers move it; the activation quantization, the int8 K / V and P and the head's format
+do not. The device's pick is the emulation's: a quantization error of the 4-bit layers, not a
+kernel's. (int8 layers do not fit the card: 4.65 GB.) Over the whole vocabulary at that step the
+emulated logits have cosine 0.974 (int8 head) and 0.971 (fp4 head) with the float64 model's. By
+kind: the attention projections in int8 with the MLPs and PLE projections in fp4 put ` Lizzy` back
+on top (46.80 against 46.50); the MLPs in int8 with the attention in fp4 do not (` Lizzy` 6th).
+
+Over the whole text, the next-token NLL of the soft-capped logits at its 899 positions
+(`tools/gemma4_quant_eval.py nll`; every activation point on):
+
+| Layers | Head | Weight bytes / token | ppl | Top-1 = float64's |
+|---|---|---:|---:|---:|
+| float64 | float64 | | 4.236 | 1 |
+| int8 (4.65 GB: does not fit) | int8 | 2.37 GB | 4.351 | 0.952 |
+| fp4 (the default) | int8 | 1.43 GB | 5.629 | 0.770 |
+| fp4 | fp4 | 1.23 GB | 5.852 | 0.746 |
+| fp4, attention int8 | int8 | 1.57 GB | 5.129 | 0.818 |
+
+As on the other models ([quant.md](quant.md)), the int8 head is the default: the fp4 head costs 4%
+in perplexity for 14% of decode speed. Attention in int8 would recover a third of the 4-bit
+loss for 9% more bytes; the image has one format for all layers today.
+
 ## Performance
 
 One resident decode token on the Verilator RTL of the board configuration (PAIR, DSTEP, STREAM:
@@ -194,9 +232,12 @@ per-layer input):
   int8 and fp4 / fp4), across the first bucket boundary, and across the ring's wrap
   (positions 760 to 775).
 - Chunked prefill bit-exact against token-by-token decoding (logits and caches).
+- Device inputs: a 4-row prefill run and a per-position program with their tokens compiled in
+  (the device gathers the rows and loads the RoPE rows) bit-exact against the same programs with
+  host-written inputs (`Image.host_inputs`, the gathers' host twins).
 - `--runslow`: a token at position 600 on the Verilator RTL through the board's memory path,
   per-position and resident, bit-exact against the ISA simulator (logits and DRAM).
 - With models/gemma-4-E2B: the real model's resident decode programs fit IMEM with 6 argument
   words.
 
-On omarchy (transformers 5.17, PAIR / DSTEP / STREAM) all 13 pass, in 15 minutes.
+On omarchy (transformers 5.17, PAIR / DSTEP / STREAM) all 14 pass, in 16 minutes.
