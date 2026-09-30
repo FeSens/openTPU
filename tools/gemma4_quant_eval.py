@@ -35,7 +35,8 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
     before the soft cap (rows: default all), or with on_rows each group of up to 64 rows handed
     to on_rows(first row, logits). wformat / hf: the layers' and the head's formats, "none" for
     float weights (the PLE table then float too); wmap: per-kind layer formats {"attn", "mlp"
-    (or "down" / "gateup" of it), "ple": format}. quant: the activation quantization points
+    (or "down" / "gateup" of it), "ple": format}, a key "kind@a-b" for layers a..b only
+    (checkpoint layers; it wins over "kind"). quant: the activation quantization points
     applied, a subset of {"act" (the matmul inputs), "kv" (K / V), "p" (P)}; default all, none
     with wformat "none"."""
     hf = hf or wformat
@@ -48,12 +49,22 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
 
     wmap = wmap or {}                   # per-kind layer formats: attn, mlp, ple (else wformat)
 
+    def get(k, li, default):    # wmap[k] ("kind" or "kind@a-b": layers a..b only)
+        for key, f in wmap.items():
+            kind, _, span = key.partition("@")
+            if kind == k and span:
+                lo, _, hi = span.partition("-")
+                if int(lo) <= li <= int(hi or lo):
+                    return f
+        return wmap.get(k, default)
+
     def fmt_of(n):              # attn; mlp, or down / gateup within it; ple
+        li = int(n.split(".")[2])
         if ".self_attn." in n:
-            return wmap.get("attn", wformat)
+            return get("attn", li, wformat)
         if ".mlp." in n:
-            return wmap.get("down" if ".down_proj" in n else "gateup", wmap.get("mlp", wformat))
-        return wmap.get("ple", wformat)
+            return get("down" if ".down_proj" in n else "gateup", li, get("mlp", li, wformat))
+        return get("ple", li, wformat)
 
     def wq(n, fmt=wformat, a=None):
         if n is not None and fmt == wformat and n.startswith("model.layers."):
@@ -152,7 +163,8 @@ def main():
     ap.add_argument("mode", choices=["step", "nll", "check"])
     ap.add_argument("args", nargs="+")
     ap.add_argument("--formats", default="", help="per-kind layer formats: attn, mlp (or down, "
-                    "gateup), ple, e.g. attn=int8,down=int8")
+                    "gateup), ple, e.g. attn=int8,down=int8; kind@a-b: layers a..b only "
+                    "(gateup@0-6=fp4)")
     ap.add_argument("--quant", default=None, help="the activation points (default all): act,kv,p")
     ap.add_argument("--out", help="step: save the logits (before the cap) to this npz")
     a = ap.parse_args()
