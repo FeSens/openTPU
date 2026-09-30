@@ -256,11 +256,13 @@ def test_real_model_programs_fit():
 def test_e4b_programs_fit():
     """Gemma 4 E4B on the board: with fp4 layers and the int8 head its PLE table does not fit
     beside them in either format, so the image keeps it on the host (int8 records) and fits
-    4 GiB at 2048 tokens; the resident decode programs fit IMEM with 6 argument words."""
+    4 GiB at 2048 tokens; the resident decode programs fit IMEM with 5 argument words (the PLE
+    gather reads the slot, not the token's row); 4-row prefill runs fit TMEM."""
     spec = G.Spec.from_hf(REAL_E4B)
     img = spec.image(board_config(), 2048, 1, 8, "fp4", "int8", lookup=True)
     assert img.ple_host and img.ple_format == "int8" and img.nbytes < 3 << 30
     for blocks in (1, 8):
         progs, ra = img.compile_decode(blocks, (blocks - 1) * img.block)
         assert 8 * len(progs[0]) <= board_config().IMEM_WORDS
-        assert len(ra) == 6
+        assert len(ra) == 5
+    img.compile_rows([(0, r) for r in range(4)], [3], img.block, tokens=[5, 6, 7, 8])
