@@ -36,7 +36,7 @@ from . import generate as G
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
-from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid
+from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid, softcap
 from ..kernels.mlp import _chunk, swiglu_down
 from ..runtime import ALIGN
 
@@ -693,7 +693,9 @@ def _lm_head(x, m, spec):
     m.lm_sink set (the generate loop: opentpu/llm/generate.py), each chunk's logits tile to
     m.lm_sink(tile, first vocabulary row) instead (and to m.logits too with m.lm_keep: the
     generate loop's debug mode). With m.lm_split (the first part of a split generate program)
-    x itself to that DRAM tensor instead: the second part runs the head."""
+    x itself to that DRAM tensor instead: the second part runs the head. A spec with a
+    softcap (Gemma's final_logit_softcapping) caps the chunks a sink samples from (lib.softcap;
+    not Greedy's, a raw sink: the cap keeps the order, and m.logits stays raw)."""
     split = getattr(m, "lm_split", None)
     if split is not None:
         ol.store(split, x)
@@ -711,6 +713,9 @@ def _lm_head(x, m, spec):
             y = ol.dot(xs, m.head[c0:c0 + n, :])
             if getattr(m, "lm_keep", False):
                 ol.store(m.logits[:, col:col + n], y)
+            cap = getattr(spec, "softcap", None)
+            if cap and not getattr(sink, "raw", False):
+                y = softcap(y, cap)
             sink(y, col)
 
 
@@ -1431,7 +1436,8 @@ class Engine:
             if p < self._conv_lo:             # before the first run-time position
                 lg = self.step(tok)
                 got = [int(np.argmax(lg)) if samp is None else
-                       G.reference_pick(lg, samp, ctx, rng.random(), self.cfg.S)]
+                       G.reference_pick(lg, samp, ctx, rng.random(), self.cfg.S,
+                                        getattr(self.spec, "softcap", None))]
                 if on_token is not None:
                     on_token(got[0])
             else:

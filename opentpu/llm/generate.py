@@ -196,7 +196,10 @@ class Sampling:
 # ---- the sampler
 class Greedy:
     """The LM head's sink: each chunk's ARGMAX while the next chunk streams, then the ARGMAX
-    of the chunk maxima picks the chunk and its index (ties: the first id, as np.argmax)."""
+    of the chunk maxima picks the chunk and its index (ties: the first id, as np.argmax).
+    raw: the LM head does not soft-cap its chunks (a softcap keeps their order)."""
+
+    raw = True
 
     def __init__(self, b, vocab: int, chunk: int):
         self.b, self.chunk = b, chunk
@@ -398,12 +401,23 @@ class Sampler:
         b.unscratch(r)
 
 
-def reference_pick(logits, samp: Sampling, context, u, S: int = 1):
+def softcap_ref(x, c: float) -> np.ndarray:
+    """kernels.lib.softcap in the ISA's fp32 arithmetic: 2c / (1 + 2^(x (-2 log2(e) / c))) - c,
+    as the LM head's VOPs compute it."""
+    f32 = np.float32
+    t = F.recip(F.add(F.exp2(F.mul(x, f32(-2.0 * ol.LOG2E / c))), f32(1.0)))
+    return F.sub(F.mul(t, f32(2.0 * c)), f32(c))
+
+
+def reference_pick(logits, samp: Sampling, context, u, S: int = 1, softcap: float | None = None):
     """The id the device's sampler picks from `logits` (the whole vocabulary) with uniform u,
     bit for bit: Sampler's steps in numpy with the ISA's fp32 arithmetic (opentpu.fp32). An
-    array of uniforms gives an array of ids."""
+    array of uniforms gives an array of ids. softcap: the spec's (the LM head caps the
+    sampler's logits first)."""
     f32 = np.float32
     lg = F.ftz(np.asarray(logits, f32)).copy()
+    if softcap:
+        lg = softcap_ref(lg, softcap)
     V = len(lg)
     if samp.pen:
         a, b = np.ones(V, f32), np.ones(V, f32)

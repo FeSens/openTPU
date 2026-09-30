@@ -471,6 +471,49 @@ def test_sampled_generate_matches_the_reference_pick(tiny, S, temperature, top_k
     assert len(set(got)) > 3 or temperature == 0
 
 
+@pytest.mark.parametrize("split", [None, True])
+def test_a_softcap_caps_the_sampled_logits(tiny, split):
+    """A spec with a softcap (Gemma's final_logit_softcapping): the LM head caps the chunks the
+    sampler takes (kernels.lib.softcap), so the device picks reference_pick's ids from the
+    capped logits (generate.softcap_ref, bit for bit), in one program or split; greedy takes
+    the raw logits' argmax (the cap keeps the order)."""
+    import copy
+    from opentpu.llm import generate as G
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    name, W, spec = tiny
+    if name != "qwen3":
+        pytest.skip("one model")
+    spec = copy.copy(spec)
+    object.__setattr__(spec, "softcap", 2.0)    # (a frozen Spec); the logits reach past +-2
+    cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=1)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    a.gen_split = split
+    samp = G.Sampling(0.8, 5, 0.9, 1.1)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    lg = a.prefill(toks)
+    b.prefill(toks)
+    assert np.abs(lg).max() > 4.0
+    ctx = toks + [int(np.argmax(lg))]
+    got = a.generate_card(ctx[-1], 12, stop_ids=[], sampling=samp, context=ctx,
+                          rng=np.random.default_rng(7))
+    u, want, raw, c = np.random.default_rng(7).random(12), [], [], list(ctx)
+    for i in range(12):
+        lgi = b.step(c[-1])
+        t = G.reference_pick(lgi, samp, c, u[i], 1, softcap=2.0)
+        raw.append(G.reference_pick(lgi, samp, c, u[i], 1))     # the uncapped pick
+        want.append(t)
+        c.append(t)
+    assert got == want and raw != want
+    assert np.abs(G.softcap_ref(lg, 2.0)).max() <= 2.0
+    # greedy: the raw argmax, as the host loop's
+    t0 = want[-1]
+    ref, t = [], t0
+    for _ in range(6):
+        t = int(np.argmax(b.step(t)))
+        ref.append(t)
+    assert a.generate_card(t0, 6, stop_ids=[]) == ref
+
+
 class _Tok:
     """One token per character (its code point): the ids fit the tiny vocabulary."""
 
