@@ -81,8 +81,8 @@ def test_v3_info_snapshot_and_rates():
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
     assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False, "w4": True,
                          "pair": False, "dstep": False, "chash": False, "act_rows": False,
-                         "args": False, "stream": False, "hostcal": False, "trace_depth": 4096,
-                         "pq_window": 64}
+                         "args": False, "stream": False, "hostcal": False, "gen": False,
+                         "waitw": False, "trace_depth": 4096, "pq_window": 64}
     assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
@@ -1380,6 +1380,8 @@ def test_diag_hints_from_the_pattern_of_failures():
     assert len(h) == 1 and "on a bitstream that has them (register map 3)" in h[0]
     h = diagnose(rows(mxu=FAIL, vpu=FAIL, dma=FAIL, control=FAIL))
     assert h[0].startswith("every program fails")
+    h = diagnose(rows(dma=PASS, waitw=PASS, **{"waitw-host": FAIL}))
+    assert len(h) == 1 and "the order of XDMA's writes" in h[0]
 
 
 @pytest.mark.parametrize("regmap,need,ok,text", [

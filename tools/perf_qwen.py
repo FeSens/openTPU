@@ -162,6 +162,11 @@ def main():
                          "from the image's tables; qwen3.compile_decode); with --rows the "
                          "resident engine's prefill run, its inputs from the tables too "
                          "(compile_rows tokens)")
+    ap.add_argument("--generate", type=int, default=0, metavar="N",
+                    help="with --resident: the decode loop on the device (generate.py), N "
+                         "tokens from pos in one run (greedy, or --sample); cycles per token")
+    ap.add_argument("--sample", default=None, metavar="T,K,P,PEN",
+                    help="--generate sampled: temperature, top-k, top-p, repetition penalty")
     ap.add_argument("--timeline", help="print the instructions of dynamic index range A:B")
     ap.add_argument("--idle", action="store_true", help="list DRAM-idle stretches (64-cycle windows)")
     ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"],
@@ -230,6 +235,32 @@ def main():
                                  *([a.block] if a.block else []),
                                  **({"tokens": [791 + r for r in range(R)]} if a.resident
                                     else {}))
+    elif a.resident and a.generate:
+        from opentpu.llm import generate as G
+        from opentpu.llm.qwen3 import ATTN_BLOCK
+        blk, K = a.block or ATTN_BLOCK, getattr(spec, "conv_k", 1)
+        b = a.pos // blk + 1
+        if a.pos + a.generate > b * blk:
+            ap.error(f"--generate {a.generate} from --pos {a.pos} leaves the bucket")
+        samp = None
+        if a.sample:
+            tt, kk, pp, pen = a.sample.split(",")
+            samp = G.Sampling(float(tt), int(kk), float(pp), float(pen))
+        progs = img.compile_generate(b, max((b - 1) * blk, K - 1), blk, chain=False, samp=samp)
+        g = img.lookup["gen"]
+        put = [(g["state"], G.state_words(spec, 791, a.pos, a.generate, [], blk, samp)),
+               (g["out"] + 4 * (a.pos + 1), np.full(a.generate, G.OUT_MARK, np.uint32))]
+        if samp is not None:
+            u = np.random.default_rng(0).random(a.generate).astype(np.float32)
+            put.append((g["uni"] + 4 * (a.pos + 1), np.minimum(u, np.float32(1 - 2.0 ** -24))))
+            if samp.pen:
+                pa, pb = np.ones(G._vpad(spec), np.float32), np.ones(G._vpad(spec), np.float32)
+                pa[[791, 1000, 2000]] = np.float32(1.0) / np.float32(samp.penalty)
+                pb[[791, 1000, 2000]] = samp.penalty            # a context of three ids
+                put += [(g["pa"], pa), (g["pb"], pb)]
+        for at, v in put:
+            v = np.ascontiguousarray(v).view(np.uint8).ravel()
+            dram[at:at + v.size] = v
     elif a.resident:
         from opentpu.compiler import arg_words
         from opentpu.llm.qwen3 import ATTN_BLOCK, RunPos
@@ -248,6 +279,12 @@ def main():
                                         ["+axi_dram=1", f"+axi_map={int(a.dram == 'rbc')}"])
                               + plus)
     wall = time.time() - t
+    if a.resident and a.generate:
+        w = drams[0][g["out"] + 4 * (a.pos + 1):g["out"] + 4 * (a.pos + 1 + a.generate)]
+        got = [int(x) for x in w.view(np.float32)]
+        print(f"generate {a.generate} tokens ({'sampled ' + a.sample if samp else 'greedy'}): "
+              f"{st['cycles']} cycles, {st['cycles'] / a.generate:.0f} per token, "
+              f"{len(progs[0])} instructions; tokens {got}")
     p = parse(st["trace"], cfg, progs, path.name)
     p.cycles = st["cycles"]
     rl = p.roofline()

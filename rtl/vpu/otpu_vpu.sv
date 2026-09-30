@@ -23,7 +23,10 @@
 // wait for the VOPs it depends on to complete.) Reductions run alone.
 //
 // Reductions: RMAX folds each chunk with a max tree (the order is total, so any order is
-// exact). RSUM/RSSQ/RDOT implement isum_64 (of A, A*A, A*B): lane l owns the partials l,
+// exact). ARGMAX is RMAX with the index: the tree carries each value's lane (ties: the lower),
+// the running maximum its column (ties: the older), and a row's (max, i2f(column + imm)) pair
+// is written through lanes 0 and 1 four cycles after the row (the index add and the int ->
+// fp32 conversion, pipelined; docs/isa.md). RSUM/RSSQ/RDOT implement isum_64 (of A, A*A, A*B): lane l owns the partials l,
 // l+LANES, ... and adds each chunk's term into the partial last updated RL = 64/LANES chunks
 // ago -- a loop of exactly RL cycles through a pipelined adder. Rows are padded with +0 terms
 // to a multiple of 64 columns; the final partials of a row come out LANES per cycle, in order,
@@ -224,7 +227,9 @@ module otpu_vpu
   wire              iss_ok = !(C8 && comp_f(func) && c_hold);
 
   wire is_sum = (func == V_RSUM) || (func == V_RSSQ) || (func == V_RDOT);
-  wire is_red = is_sum || (func == V_RMAX);
+  wire is_am = (func == V_ARGMAX);
+  wire is_mx = (func == V_RMAX) || is_am;
+  wire is_red = is_sum || is_mx;
 
   function automatic logic red_f(input logic [7:0] f);
     return is_reduce(f);
@@ -349,6 +354,7 @@ module otpu_vpu
     logic             dot;       // func == V_RDOT (the product's B operand, from a flip-flop)
     logic             fill;      // an OUTER fill chunk (not written): into the column buffers
     logic [CBW-1:0]   cb;        // OUTER: the column-buffer word of the chunk (chunk in row)
+    logic [15:0]      col;       // the chunk's first column (ARGMAX's index)
   } meta_t;
   // mi: the chunk read this cycle; m0: that chunk one granted cycle later, together with its
   // TMEM data registered (xa, xb), so no path runs from the TMEM block RAMs into the lanes'
@@ -846,39 +852,94 @@ module otpu_vpu
   // stage per level: stage 0 from the TMEM read data (LANES -> HL), stage j halves HL >> (j-1)
   localparam int HL = LANES / 2;
   localparam int ML = $clog2(HL);             // levels after the first
+  // (ARGMAX: each value's lane, mxh_i, ties to the lower lane; the chunk's column along, mxh_c)
   f32_t  mxh_v [ML + 1][HL];                  // stage j holds HL >> j values
   logic  mxh_h [ML + 1][HL];
+  logic [LW-1:0] mxh_i [ML + 1][HL];
   rm_t   mxh_m [ML + 1];
+  logic [15:0] mxh_c [ML + 1];
   f32_t  mxc_q;
   rm_t   mxm_q;
   f32_t  mx_run;
   logic  mx_have;
+  logic [16:0] mx_ri;                         // the running maximum's column
   always_ff @(posedge clk) if (en) begin
     f32_t v [LANES];
     logic h [LANES];
+    logic up;
     for (int l = 0; l < LANES; l++) begin
       v[l] = ftz(xa[l]);
       h[l] = m0.mask[l];
     end
     for (int l = 0; l < HL; l++) begin
-      mxh_v[0][l] <= (!h[l] || (h[l + HL] && fp_gt(v[l + HL], v[l]))) ? v[l + HL] : v[l];
+      up = !h[l] || (h[l + HL] && fp_gt(v[l + HL], v[l]));
+      mxh_v[0][l] <= up ? v[l + HL] : v[l];
       mxh_h[0][l] <= h[l] || h[l + HL];
+      mxh_i[0][l] <= up ? LW'(l + HL) : LW'(l);
     end
     mxh_m[0] <= m0r;
+    mxh_c[0] <= m0.col;
     for (int j = 1; j <= ML; j++) begin
       for (int l = 0; l < (HL >> j); l++) begin
-        mxh_v[j][l] <= (!mxh_h[j-1][l] || (mxh_h[j-1][l + (HL >> j)] &&
-                        fp_gt(mxh_v[j-1][l + (HL >> j)], mxh_v[j-1][l]))) ?
-                       mxh_v[j-1][l + (HL >> j)] : mxh_v[j-1][l];
+        up = !mxh_h[j-1][l] || (mxh_h[j-1][l + (HL >> j)] &&
+                                fp_gt(mxh_v[j-1][l + (HL >> j)], mxh_v[j-1][l]));
+        mxh_v[j][l] <= up ? mxh_v[j-1][l + (HL >> j)] : mxh_v[j-1][l];
         mxh_h[j][l] <= mxh_h[j-1][l] || mxh_h[j-1][l + (HL >> j)];
+        mxh_i[j][l] <= up ? mxh_i[j-1][l + (HL >> j)] : mxh_i[j-1][l];
       end
       mxh_m[j] <= mxh_m[j-1];
+      mxh_c[j] <= mxh_c[j-1];
     end
   end
   assign mxc_q = mxh_v[ML][0];
   assign mxm_q = mxh_m[ML];
+  // the running maximum keeps the older value on ties (the same bits for RMAX: in the total
+  // order only equal bits tie; ARGMAX: the first column)
+  wire  mx_keep = mx_have && !fp_gt(mxc_q, mx_run);
   f32_t mx_new;
-  assign mx_new = (mx_have && fp_gt(mx_run, mxc_q)) ? mx_run : mxc_q;
+  assign mx_new = mx_keep ? mx_run : mxc_q;
+  wire [16:0] mx_ni = mx_keep ? mx_ri : 17'(mxh_c[ML]) + 17'(mxh_i[ML][0]);
+  // ARGMAX's pair: A (the row's max and column), B (+ imm), C (sign, magnitude, leading
+  // zeros), D (the fp32 index), then written; every stage advances on en
+  logic        am1_v, am2_v, am3_v, am4_v, am1_l, am2_l, am3_l, am4_l;
+  logic [AW-1:0] am1_a, am2_a, am3_a, am4_a;
+  f32_t        am1_m, am2_m, am3_m, am4_m, am4_i;
+  logic [16:0] am1_i;
+  logic [31:0] am2_s, am3_x;
+  logic        am3_s;
+  logic [4:0]  am3_z;
+  always_ff @(posedge clk)
+    if (rst) begin
+      am1_v <= 1'b0; am2_v <= 1'b0; am3_v <= 1'b0; am4_v <= 1'b0;
+    end else if (en) begin
+      am1_v <= red_act && is_am && live(mxm_q, tag) && mxm_q.row_last;
+      am1_l <= mxm_q.all_last; am1_a <= mxm_q.waddr; am1_m <= mx_new; am1_i <= mx_ni;
+      am2_v <= am1_v; am2_l <= am1_l; am2_a <= am1_a; am2_m <= am1_m;
+      am2_s <= 32'(am1_i) + imm;
+      am3_v <= am2_v; am3_l <= am2_l; am3_a <= am2_a; am3_m <= am2_m;
+      begin
+        logic [31:0] x;
+        logic [4:0]  z;
+        x = am2_s[31] ? -am2_s : am2_s;
+        z = '0;
+        for (int k = 0; k < 32; k++) if (x[k]) z = 5'(31 - k);
+        am3_s <= am2_s[31]; am3_x <= x; am3_z <= z;
+      end
+      am4_v <= am3_v; am4_l <= am3_l; am4_a <= am3_a; am4_m <= am3_m;
+      begin
+        logic [31:0] n;
+        logic [23:0] m;
+        logic [7:0]  e;
+        n = am3_x << am3_z;                   // the leading one at bit 31
+        m = n[31:8];
+        e = 8'd158 - 8'(am3_z);
+        if (n[7] && ((|n[6:0]) || m[0])) begin
+          if (m == 24'hFF_FFFF) begin m = 24'h80_0000; e = e + 8'd1; end
+          else m = m + 24'd1;
+        end
+        am4_i <= (am3_x == 0) ? 32'd0 : {am3_s, e, m[22:0]};
+      end
+    end
 
   // ------------------------------------------------------------------ RSUM / RSSQ
   // RMA: the term enters the lane's slot 0 through its input register (ra/rb/rc), so it reaches
@@ -1112,6 +1173,14 @@ module otpu_vpu
       cw_data[0] = mx_new;
       mm[0] = 1'b0;
     end
+    if (am4_v) begin                             // ARGMAX: the row's (max, index) pair
+      cw_en[1:0] = 2'b11;
+      cw_addr[0] = am4_a;
+      cw_addr[1] = am4_a + AW'(1);
+      cw_data[0] = am4_m;
+      cw_data[1] = am4_i;
+      mm[1:0] = 2'b00;
+    end
     if (red_act && is_sum && root_v && !rdb) begin
       cw_en[0] = 1'b1;
       cw_addr[0] = wr_row;
@@ -1329,6 +1398,7 @@ module otpu_vpu
           mi.sq <= (func == V_RSSQ);
           mi.dot <= (func == V_RDOT);
           mi.cb <= CBW'(ch);
+          mi.col <= ic;
           if (irow_last) begin
             ic <= '0; ch <= '0;
             a_row <= a_row + AW'(ars);
@@ -1347,14 +1417,16 @@ module otpu_vpu
           ewn = ewn - 1;
         end
         // ---- RMAX
-        if (red_act && func == V_RMAX && live(mxm_q, tag)) begin
+        if (red_act && is_mx && live(mxm_q, tag)) begin
           if (mxm_q.row_last) mx_have <= 1'b0;
           else begin
             mx_run <= mx_new;
+            mx_ri <= mx_ni;
             mx_have <= 1'b1;
           end
-          if (mxm_q.all_last) fin = 1'b1;
+          if (mxm_q.all_last && !is_am) fin = 1'b1;
         end
+        if (red_act && is_am && am4_v && am4_l) fin = 1'b1;     // its last pair is written
         // ---- RSUM/RSSQ/RDOT: a row's sum is written (or buffered) this cycle (see TMEM writes)
         if (red_act && is_sum && root_v) begin
           wr_row <= wr_row + AW'(drs);
