@@ -158,13 +158,19 @@ stored once per head group instead of once per layer. The kernels address the pa
 instructions, sha256 7ee567e0). Group-major is bit-exact against array-major
 (`test_group_major_is_bit_exact`).
 
-Qwen3.5-4B's resident decode at one slice (fp4, int8 LM head, KV capacity 4096; instructions
-per bucket of 256 positions; `test_4b_resident_decode_fits_imem`):
+Qwen3.5-4B's resident decode at one slice (fp4, int8 LM head, its int8 embedding gathered on
+the device, KV capacity 4096; instructions per bucket of 256 positions, buckets 9 to 16 repeat
+6 to 8; `test_4b_resident_decode_fits_imem`):
 
-| bucket | 1 | 2 | 4 | 8 | 16 |
-|---|---|---|---|---|---|
-| array-major | 3,909 | 3,953 | 4,041 | 4,254 | 4,210 |
-| group-major | 2,022 | 2,066 | 2,154 | 2,364 | 2,320 |
+| config, layout | 1 | 2 | 4 | 5 | 6 | 8 |
+|---|---|---|---|---|---|---|
+| default board, array-major | 3,962 | 4,006 | 4,094 | 4,138 | 4,220 | 4,308 |
+| default board, group-major | 2,075 | 2,119 | 2,207 | 2,251 | 2,330 | 2,418 |
+| MCOLS 4 + PAIR + DSTEP + STREAM, array-major | 2,906 | 2,950 | 3,038 | 3,082 | 3,164 | 3,252 |
+| MCOLS 4 + PAIR + DSTEP + STREAM, group-major | 1,679 | 1,723 | 1,811 | 1,855 | 1,934 | 2,022 |
+
+From bucket 6 on the gather's two token arguments leave too few registers for the attention's
+block loop unless the token's are given back after the gather (docs/isa.md "Arguments").
 
 ## Accuracy
 

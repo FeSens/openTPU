@@ -337,14 +337,18 @@ def test_group_major_on_board_model(tiny_pairs, have_verilator, dstep):
     assert sorted(brd._decodes) == [1]
 
 
-def test_4b_resident_decode_fits_imem():
+@pytest.mark.parametrize("embed", ["f32", "int8"])
+def test_4b_resident_decode_fits_imem(embed):
     """Qwen3.5-4B's dims on one slice (16 pairs of DeltaNet heads: group-major), fp4 with an
     int8 LM head: the resident decode, the pair loop at a run-time position beside the
     attention's run-time KV addresses, compiles and fits IMEM at every bucket of a 4K context
-    (the gates in the head groups' blocks: the pair loop takes one address register). A
-    layout-only image, no weights."""
+    (the gates in the head groups' blocks: the pair loop takes one address register), with the
+    fp32 embedding table and with the int8 one gathered on the device (the 4B's: two more
+    arguments, the token's registers given back after the gather). A layout-only image, no
+    weights."""
     kinds = ("linear", "linear", "linear", "attn") * 8
-    spec = Spec(2560, kinds, 16, 4, 256, 64, 32, 128, 128, 9216, 248320, lin_kheads=16)
+    spec = Spec(2560, kinds, 16, 4, 256, 64, 32, 128, 128, 9216, 248320, lin_kheads=16,
+                embed=embed)
     cfg = board_config(DRAM_BYTES=1 << 33)      # the fp32 lookup table alone is 2.4 GiB
     img = spec.image(cfg, 4096, wformat="fp4", head_format="int8", lookup=True)
     assert img.grouped
