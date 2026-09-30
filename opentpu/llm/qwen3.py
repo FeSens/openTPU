@@ -1138,24 +1138,27 @@ def _worker_decode(blocks: int, lo: int):
     return np.asarray(assemble(progs[0]), np.uint32), ra
 
 
-def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int, toks=None):
+def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int, toks=None,
+                  whole: bool = True):
     """The worker process: fit_chunk's run, its program assembled (one slice)."""
     from ..isa import assemble
     image, block = _WORKER
-    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit, toks)
+    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit, toks, whole)
     return n, None if progs is None else np.asarray(assemble(progs[0]), np.uint32), fit
 
 
 def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
-              tokens=None):
+              tokens=None, whole: bool = True):
     """The next prefill run of sequence `seq` at position p0: up to n of the `left` remaining
     prompt tokens, as many as fit TMEM and ACT RAM (at most `fit` rows) and the instruction
     memory (attention is unrolled per row, head and block: the program grows with the context).
     Only the prompt's last run computes logits (its last row). Returns (R, compile_rows'
     programs or None for R = 1, the rows that fit TMEM as far as known). `tokens` (at least n):
-    the run's inputs come from the image's tables (compile_rows tokens)."""
-    imem = image.cfg.IMEM_WORDS
-    n = min(n, fit, left)
+    the run's inputs come from the image's tables (compile_rows tokens). whole: R is at most
+    MCOLS or a multiple of it (_whole_passes): each weight streams once per MCOLS rows, so 5
+    rows at MCOLS 4 cost what 8 do."""
+    imem, mc = image.cfg.IMEM_WORDS, image.cfg.MCOLS if whole else 1 << 30
+    n = _whole_passes(min(n, fit, left), mc)
     while n > 1:
         try:
             progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
@@ -1164,13 +1167,20 @@ def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
         except CompileError as e:
             if "TMEM" not in str(e) and "ACT RAM full" not in str(e):
                 raise
-            n = fit = n - 1
+            fit = n - 1
+            n = _whole_passes(fit, mc)
             continue
         size = max(map(len, progs))
         if size * 8 <= imem:
             return n, progs, fit
-        n = min(n - 1, n * imem // (8 * size))  # about proportional to the rows
+        n = _whole_passes(min(n - 1, n * imem // (8 * size)), mc)  # ~ proportional to the rows
     return 1, None, fit
+
+
+def _whole_passes(n: int, mc: int) -> int:
+    """The rows of a prefill run of at most n: n up to MCOLS (one pass of each weight), else
+    whole passes of MCOLS rows."""
+    return n if n <= mc else n - n % mc
 
 
 class Engine:
@@ -1480,9 +1490,10 @@ class Engine:
                for r in logit_rows]
         return np.array(out, np.float32).reshape(len(logit_rows), v)
 
-    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int, toks=None):
+    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int, toks=None,
+               whole: bool = True):
         """fit_chunk, its programs prepared for the backend."""
-        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit, toks)
+        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit, toks, whole)
         prep = getattr(self.backend, "prepare", None)
         if progs is not None and prep is not None:
             prep(progs)
@@ -1499,15 +1510,18 @@ class Engine:
         last row. Per row the arithmetic is the decode kernel's, so the KV cache and logits
         are bit-identical to feeding the tokens one by one. A run shrinks when its program
         does not fit TMEM or IMEM (long contexts); a single token runs the decode kernel.
+        Without `chunk` a run of more than MCOLS rows takes whole passes of MCOLS rows (each
+        pass streams every weight: fit_chunk).
         With the pipeline, the next run's program (after the last run: the first decode
         step's) is compiled while the device runs the current one."""
         tokens = [int(t) for t in tokens]
+        whole = chunk is None               # else runs of exactly `chunk` where they fit
         chunk = self.rows if chunk is None else max(1, min(chunk, self.rows))
         i = 0
         while i < len(tokens):
             p0, left = self.poss[seq], len(tokens) - i
-            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(tokens[i:],
-                                                                                  chunk))
+            key = ("rows", seq, p0, chunk, left, self._fit_rows,
+                   self._chunk_toks(tokens[i:], chunk), whole)
             n, progs, self._fit_rows = self._take(key, self._chunk, *key[1:])
             part, last = tokens[i:i + n], n == left
             if not last:
@@ -1520,7 +1534,8 @@ class Engine:
                     progs = self.image.compile_rows(rows, lr, self.block,
                                                     **self._tokens_kw(part))
                 if not last:
-                    self._prefetch_chunks(seq, p0 + n, chunk, left - n, tokens[i + n:])
+                    self._prefetch_chunks(seq, p0 + n, chunk, left - n, tokens[i + n:],
+                                          whole)
                 elif seq == 0:
                     self._prefetch(p0 + n)
                 lg = self._run_rows(rows, part, lr, progs)
@@ -1534,7 +1549,8 @@ class Engine:
         `chunk` of `rest`, the run takes as many as fit), or None."""
         return tuple(rest[:chunk]) if self.device_inputs else None
 
-    def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int, rest=()) -> None:
+    def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int, rest=(),
+                         whole: bool = True) -> None:
         """Precompile the runs of a prompt from position p0 on, as many as the pipeline has
         workers (a chunk's trace can take longer than its run: Qwen3.5 on the card), each
         predicted to take as many rows as the last one (TMEM and IMEM limit a run: the program
@@ -1544,10 +1560,12 @@ class Engine:
         for _ in range(self._ahead):
             if left <= 0:
                 break
-            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(rest, chunk))
+            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(rest, chunk),
+                   whole)
             if key not in queued:
                 self._submit(key, self._chunk, _worker_chunk, *key[1:])
             n = min(chunk, self._fit_rows, self._run_rows_n, left)
+            n = _whole_passes(n, self.cfg.MCOLS) if whole else n
             p0, left, rest = p0 + n, left - n, rest[n:]
 
     def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
