@@ -57,7 +57,8 @@ HEARTBEAT = 15                                # s between .pending updates
 STALE = 120                                   # s without a heartbeat: the job is dead
 RESERVE = 4 << 30                             # bytes of MemAvailable kept free
 MEM_GUESS = {"lfm2": 2.0, "qwen3": 3.0, "qwen35": 4.0, "lfm2-2.6b": 12.0, "smollm3": 13.0,
-             "phi4-mini": 16.0, "qwen35-2b": 10.0, "qwen35-4b": 14.0}  # GiB, before a peak
+             "phi4-mini": 16.0, "qwen35-2b": 10.0, "qwen35-4b": 14.0,
+             "gemma4": 9.0}  # GiB, before a peak
 
 
 def cache_root() -> Path:
@@ -104,7 +105,10 @@ def key(cfg, model: str, wf: str, hf: str, n: int) -> tuple[Path, dict]:
 
 def prompt_ids(tok):
     """The prompt as a user turn of the model's chat template, with today's date pinned
-    (DATE: SmolLM3's system header states the date, and a reference must not expire)."""
+    (DATE: SmolLM3's system header states the date, and a reference must not expire); a base
+    model without a template (Gemma 4 E2B) gets the plain prompt."""
+    if not tok.chat_template:
+        return list(tok(PROMPT)["input_ids"])
     msgs = [{"role": "user", "content": PROMPT}]
     ids = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False,
                                   tokenize=True, strftime_now=lambda fmt: DATE.strftime(fmt))
