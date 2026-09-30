@@ -94,6 +94,16 @@ class RunVar:
         return self.name
 
 
+class DevVar(RunVar):
+    """A value the program computes itself, in register `reg` (a Builder.scratch set by RLD or
+    WAITW: an expert's slot address from a directory, docs/offload.md). An address may add
+    1 * var; it then uses R[reg] as its base, like a run-time argument's register."""
+
+    def __init__(self, name: str, reg: int):
+        super().__init__(name)
+        self.reg = reg
+
+
 ARG0 = 8                        # the run's arguments ARG0..7 are R8..R15 at the start
 
 
@@ -637,7 +647,13 @@ class Builder:
         if len(run) > 1:
             raise CompileError(f"address {a} adds more than one run-time value")
         if run:
-            arg = self.arg_reg(*run[0])
+            v, c = run[0]
+            if isinstance(v, DevVar):
+                if c != 1:
+                    raise CompileError(f"address {a}: a device value adds only 1 * {v}")
+                arg = v.reg
+            else:
+                arg = self.arg_reg(v, c)
             if len(a.terms) == 1:                   # the argument register itself
                 return arg, a.const
         key = frozenset(a.terms.items())
@@ -765,6 +781,13 @@ class Builder:
         if t.rows * t.cols != 1:
             raise CompileError(f"rld: {t} is not one word")
         self.emit(I.rld(r, t.base, raw=raw, comment=comment or "rld"))
+
+    def waitw(self, rd: int, dram: int, ref: int = 0, cmp: int = I.C_EQ, ra: int = 0,
+              rb: int = 0, interval: int = 0, timeout: int = 0, comment: str = "") -> None:
+        """Wait until the DRAM word at R[ra] + dram compares (cmp: I.C_EQ / C_NE / C_GE) with
+        R[rb] + ref, then R[rd] = the word (WAITW: a word the host writes, docs/isa.md)."""
+        self.emit(I.waitw(rd, dram, ref, cmp, ra=ra, rb=rb, interval=interval, timeout=timeout,
+                          comment=comment or "waitw"))
 
     def argmax(self, x: "Tile", base: int = 0, out: "Tile | None" = None,
                rbase: int = 0) -> "Tile":

@@ -5,13 +5,14 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-NOP, HALT, LI, ADDI, LOOP, BAR, RLD = 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
+NOP, HALT, LI, ADDI, LOOP, BAR, RLD, WAITW = 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
 LD, ST, DSTEP, STREAM = 0x10, 0x11, 0x12, 0x13
 MM, QACT, QST = 0x20, 0x21, 0x22
 VOP = 0x30
 GATHER = 0x40
 
 OPNAMES = {NOP: "NOP", HALT: "HALT", LI: "LI", ADDI: "ADDI", LOOP: "LOOP", BAR: "BAR", RLD: "RLD",
+           WAITW: "WAITW",
            LD: "LD", ST: "ST", DSTEP: "DSTEP", STREAM: "STREAM", MM: "MM", QACT: "QACT",
            QST: "QST", VOP: "VOP", GATHER: "GATHER"}
 
@@ -28,6 +29,7 @@ F_HALF = 0x2                    # QST, ROW mode: write only the first half of ea
 F_RAW = 0x1                     # RLD: the word's bits (no fp32 -> int conversion)
 F_MUL = 0x2                     # RLD: times R[rb] + w2 (mod 2^32)
 F_CHAIN = 0x1                   # HALT: then load and start the program at R[ra], R[rb] words
+C_EQ, C_NE, C_GE = 0, 1, 2      # WAITW flags[1:0]: the word ==, != or >= (signed difference) ref
 
 # VOP functions
 V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_OUTER = 0, 1, 2, 3, 4, 5, 6
@@ -126,6 +128,26 @@ def rld(rd, tmem, ra=0, raw=False, mul=None, rb=0, comment=""):
     flags = (F_RAW if raw else 0) | (F_MUL if mul is not None else 0)
     return Instr(RLD, ra=ra, rb=rb, rd=rd, flags=flags,
                  w=_w(tmem, 0 if mul is None else mul), comment=comment)
+
+
+def waitw(rd, dram, ref, cmp, ra=0, rb=0, mask=0xFFFFFFFF, interval=0, timeout=0, comment=""):
+    """Wait until cmp(M32[R[ra] + dram] & mask, R[rb] + ref) holds, polling DRAM every
+    `interval` cycles (the first read at once; timeout cycles, 0: none), then
+    R[rd] = M32[R[ra] + dram]; docs/isa.md "WAITW"."""
+    if cmp not in (C_EQ, C_NE, C_GE):
+        raise ValueError(f"WAITW compare {cmp}")
+    return Instr(WAITW, ra=ra, rb=rb, rd=rd, flags=cmp,
+                 w=_w(dram, ref, mask, interval, timeout), comment=comment)
+
+
+def waitw_holds(word: int, ref: int, cmp: int, mask: int = 0xFFFFFFFF) -> bool:
+    """WAITW's condition on the word it read."""
+    v, ref = u32(word) & u32(mask), u32(ref)
+    if cmp == C_EQ:
+        return v == ref
+    if cmp == C_NE:
+        return v != ref
+    return u32(v - ref) < 1 << 31               # GE: the difference >= 0 as signed
 
 
 def f2i(bits: int) -> int:

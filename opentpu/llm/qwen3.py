@@ -114,6 +114,42 @@ def load_weights(model_dir) -> dict:
     return out
 
 
+class LazyWeights(dict):
+    """load_weights' names over a checkpoint's safetensors files, each tensor read as fp32 when
+    it is asked for and not kept: for a model whose fp32 weights would not fit host RAM (a
+    MoE; its experts are packed one at a time, opentpu.llm.moe)."""
+
+    def __init__(self, model_dir):
+        super().__init__()
+        from safetensors import safe_open
+        self._at = {}
+        for f in sorted(Path(model_dir).glob("*.safetensors")):
+            h = safe_open(str(f), "pt")
+            for k in h.keys():
+                if not k.startswith(("model.visual.", "mtp.")):
+                    self._at[k.replace("model.language_model.", "model.", 1)] = (h, k)
+
+    def __getitem__(self, k):
+        import torch
+        h, name = self._at[k]
+        return h.get_tensor(name).to(torch.float32).numpy()
+
+    def __contains__(self, k):
+        return k in self._at
+
+    def __iter__(self):
+        return iter(self._at)
+
+    def __len__(self):
+        return len(self._at)
+
+    def keys(self):
+        return self._at.keys()
+
+    def items(self):
+        return ((k, self[k]) for k in self._at)
+
+
 def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
     """cos, sin [rope_dim/2] for one position (HF rotate-half convention)."""
     half = spec.rope_dim // 2
@@ -824,10 +860,12 @@ def _lm_head_rows(x, m, spec, logit_rows):
 
 # =============================================================================== engine
 def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: str = "int8",
-                  head_format: str | None = None, lookup: bool = False, **kw) -> Config:
+                  head_format: str | None = None, lookup: bool = False,
+                  experts: int | None = None, **kw) -> Config:
     """The design configuration with DRAM sized for this model (power of two MiB)."""
     probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows, wformat,
-                       head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}))
+                       head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}),
+                       **({"experts": experts} if experts is not None else {}))
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
 
@@ -973,10 +1011,12 @@ class Engine:
                  backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
-                 resident: bool = False):
+                 resident: bool = False, experts: int | None = None, pool_file=None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
+        if experts is not None:             # a MoE model's expert slots per layer
+            wkw["experts"] = experts
         lookup = bool(resident) and batch == 1 and has_lookup(spec)
         if lookup:
             wkw["lookup"] = True
@@ -987,6 +1027,13 @@ class Engine:
         self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
             self.cfg, images)
         self.resident = lookup and bool(getattr(self.backend, "args", False))
+        # path (a), docs/offload.md: the experts stream into the image's slots; the host's
+        # server moves them (the ISA simulator calls it when every slice waits on WAITW)
+        self.server = None
+        if getattr(self.image, "offload", None) is not None:
+            self.server = self.image.serve(W, self.backend, pool_file)
+            if isinstance(self.backend, IsaBackend):
+                self.backend.machine.host = lambda m: self.server.poll()
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
