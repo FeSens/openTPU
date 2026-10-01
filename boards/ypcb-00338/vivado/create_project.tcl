@@ -58,7 +58,8 @@ set rtl [list \
   rtl/boards/ypcb-00338/otpu_ctrl.sv rtl/boards/ypcb-00338/otpu_trace.sv \
   rtl/boards/ypcb-00338/otpu_board.sv rtl/mem/otpu_native_dram.sv \
   rtl/boards/ypcb-00338/otpu_afifo.sv rtl/boards/ypcb-00338/otpu_mem_ch.sv \
-  rtl/boards/ypcb-00338/otpu_axi_split2.sv rtl/boards/ypcb-00338/otpu_native_sys.sv \
+  rtl/boards/ypcb-00338/otpu_axi_split2.sv rtl/boards/ypcb-00338/otpu_xmon.sv \
+  rtl/boards/ypcb-00338/otpu_native_sys.sv \
   rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv]
 add_files -norecurse $root/boards/ypcb-00338/litedram/otpu_litedram.v
 # the core's identifier ROM ("openTPU LiteDRAM"), which the Verilog $readmemh's by file name:
@@ -72,12 +73,32 @@ foreach f $rtl {
 # SYNTHESIS removes the simulation-only checks and dumps
 set_property verilog_define {SYNTHESIS} [get_filesets sources_1]
 
+# ---- OTPU_XMON=1 (run_vivado.sh XMON=1): a debug build with XDMA's DMA monitors (otpu_xmon, in
+# otpu_native_sys: registers 0xF00) and their two ILAs, otpu_ila_x (XDMA's master, xclk) and
+# otpu_ila_n (channel 0's controller ports, uclk); probe widths as otpu_xmon connects them, 4096
+# samples, capture qualification (record only the cycles a condition picks)
+set XMON [expr {[info exists ::env(OTPU_XMON)] && $::env(OTPU_XMON) eq "1"}]
+if {$XMON} {
+  set_property verilog_define {SYNTHESIS OTPU_ILA} [get_filesets sources_1]
+  foreach {name widths} {otpu_ila_x {12 32 8 64 32 8 64 16 16} otpu_ila_n {12 50 64 64 16}} {
+    create_ip -name ila -vendor xilinx.com -library ip -module_name $name
+    set cfg [list CONFIG.C_NUM_OF_PROBES [llength $widths] CONFIG.C_DATA_DEPTH 4096 \
+               CONFIG.C_EN_STRG_QUAL 1 CONFIG.C_INPUT_PIPE_STAGES 1]
+    set i 0
+    foreach w $widths {
+      lappend cfg CONFIG.C_PROBE${i}_WIDTH $w CONFIG.C_PROBE${i}_MU_CNT 2
+      incr i
+    }
+    set_property -dict $cfg [get_ips $name]
+  }
+}
+
 # ---- block design
 source $here/bd_native.tcl
 make_wrapper -files [get_files otpu_bd.bd] -top
 add_files -norecurse [glob $out/otpu.gen/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v]
 set_property top otpu_fpga_top_ld [current_fileset]
-set_property generic "MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DDR_MTS=$DDR_SPEED DSTEP=1'b$DSTEP MXU_IMPL=$MXU_IMPL" [current_fileset]
+set_property generic "MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DDR_MTS=$DDR_SPEED DSTEP=1'b$DSTEP MXU_IMPL=$MXU_IMPL XMON=1'b$XMON" [current_fileset]
 
 # ---- constraints: the board (otpu_top_ld.xdc) and the core's pads, VREF and synchronizers
 # (otpu_litedram.xdc); then, after the IP's constraints, as unmanaged Tcl on the implemented
@@ -86,8 +107,10 @@ set cons $root/boards/ypcb-00338/constraints
 add_files -fileset constrs_1 -norecurse [list $cons/otpu_top_ld.xdc \
   $root/boards/ypcb-00338/litedram/otpu_litedram.xdc]
 set late [list $cons/otpu_mem_ch.tcl $cons/otpu_top_native.tcl]
+if {$XMON} { lappend late $cons/otpu_xmon.tcl }
 add_files -fileset constrs_1 -norecurse $late
 set_property SCOPED_TO_REF otpu_mem_ch [get_files $cons/otpu_mem_ch.tcl]
+if {$XMON} { set_property SCOPED_TO_REF otpu_xmon [get_files $cons/otpu_xmon.tcl] }
 set_property PROCESSING_ORDER LATE [get_files $late]
 set_property USED_IN_SYNTHESIS false [get_files $late]
 foreach f $late {

@@ -56,6 +56,10 @@ module tb_board;
   logic [1:0][63:0] nwm;
   logic [1:0][15:0] nwdone;
   logic [1:0] nerr;
+  logic [31:0] xmon [32];                  // no DMA monitors here (otpu_native_sys's XMON)
+  for (genvar k = 0; k < 32; k++) begin : g_xmon
+    assign xmon[k] = '0;
+  end
 
   // I2C: wired AND of the board's drive-low bits and the outside's holds, pulled up
   logic [3:0] i2c_lo;
@@ -74,7 +78,8 @@ module tb_board;
     .s_ctl_araddr(araddr), .s_ctl_arvalid(arvalid), .s_ctl_arready(arready),
     .s_ctl_rdata(rdata), .s_ctl_rresp(rresp), .s_ctl_rvalid(rvalid), .s_ctl_rready(rready),
     .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv), .n_wready(nwr),
-    .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd), .n_wdone(nwdone), .n_err(nerr));
+    .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd), .n_wdone(nwdone), .n_err(nerr),
+    .xmon_snap(), .xmon_clr(), .xmon);
 
   if (MEM_NATIVE == 2) begin : g_ch
     otpu_chmem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (

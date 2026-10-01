@@ -12,6 +12,8 @@
 #                                         # phys_opt (its default CORE_MHZ is 100); about half the time
 #   VIVADO_DOCKER=image ./run_vivado.sh   # Docker (e.g. Apple Silicon with Rosetta), see docs/board.md
 #   VIVADO_AS_USER=1                      # Docker on Linux: run as the calling user (see run())
+#   XMON=1 ./run_vivado.sh                # debug build: XDMA's DMA monitors (otpu_xmon, registers 0xF00)
+#                                         # and two ILAs (otpu.ltx next to the bitstream)
 #   STEP=impl ./run_vivado.sh             # rerun implementation only (keeps project and synthesis)
 #   IMPL_STRATEGY=Performance_Explore     # a stronger implementation strategy (with bit or impl)
 #   The xc7k480t needs a paid or 30-day evaluation license, node-locked to a MAC address. In Docker
@@ -69,6 +71,8 @@ mkdir -p "$out"
 # the IP synthesis cache shared by this host's builds (create_project.tcl); OTPU_IP_CACHE= turns it off
 export OTPU_IP_CACHE="${OTPU_IP_CACHE-$HOME/.cache/otpu-vivado-ip}"
 export OTPU_FAST="${FAST:-0}"
+# XMON=1: a debug build with the DMA monitors and their ILAs (otpu_xmon; create_project.tcl)
+export OTPU_XMON="${XMON:-0}"
 if [[ "${STEP:-}" == impl ]]; then
   run "$here/vivado/build.tcl" "$out" "$jobs" impl "${IMPL_STRATEGY:-}"
 else

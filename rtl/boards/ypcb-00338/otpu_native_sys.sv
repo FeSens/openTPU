@@ -20,7 +20,8 @@ module otpu_native_sys #(
   parameter logic [31:0] BUILD_ID = 32'h0,
   parameter int DDR_MTS = 0,
   parameter bit DSTEP = 1'b1,
-  parameter bit HOSTCAL = 1'b0
+  parameter bit HOSTCAL = 1'b0,
+  parameter bit XMON = 1'b0              // the DMA monitors (otpu_xmon: a debug build; otpu_ctrl 0xF00)
 ) (
   // core clock and reset (synchronous, high), XDMA's clock and reset
   input  logic                  clk,
@@ -156,14 +157,35 @@ module otpu_native_sys #(
     .c_wdata_data(c_wdata_data[1]), .c_wdata_we(c_wdata_we[1]),
     .c_rdata_valid(c_rdata_valid[1]), .c_rdata_data(c_rdata_data[1]));
 
+  // the DMA monitors (XMON): XDMA's master before the split, channel 0's controller ports
+  logic        xmon_snap, xmon_clr;
+  logic [31:0] xmon [32];
+  if (XMON) begin : g_xmon
+    otpu_xmon u_xmon (
+      .clk, .snap(xmon_snap), .clr(xmon_clr), .word(xmon),
+      .xclk, .xrst,
+      .x_awvalid, .x_awready, .x_awid, .x_awaddr, .x_awlen, .x_wvalid, .x_wready, .x_wdata,
+      .x_wlast, .x_bvalid, .x_bready, .x_bid, .x_arvalid, .x_arready, .x_arid, .x_araddr,
+      .x_arlen, .x_rvalid, .x_rready, .x_rid, .x_rdata, .x_rlast,
+      .uclk(uclk[0]), .urst(urst[0]),
+      .c_cmd_valid(c_cmd_valid[0]), .c_cmd_ready(c_cmd_ready[0]), .c_cmd_we(c_cmd_we[0]),
+      .c_cmd_addr(c_cmd_addr[0]), .c_wdata_valid(c_wdata_valid[0]),
+      .c_wdata_ready(c_wdata_ready[0]), .c_wdata_data(c_wdata_data[0]),
+      .c_rdata_valid(c_rdata_valid[0]), .c_rdata_data(c_rdata_data[0]));
+  end else begin : g_no_xmon
+    for (genvar k = 0; k < 32; k++) begin : g_w
+      assign xmon[k] = '0;
+    end
+  end
+
   otpu_board #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .MXU_IMPL(MXU_IMPL),
                .LANES(LANES), .ULANES(ULANES),
                .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .DSTEP(DSTEP),
-               .HOSTCAL(HOSTCAL)) u_board (
+               .HOSTCAL(HOSTCAL), .XMON(XMON)) u_board (
     .clk, .rst, .calib, .temp, .led, .i2c_lo, .i2c_pin,
     .s_ctl_awaddr, .s_ctl_awvalid, .s_ctl_awready, .s_ctl_wdata, .s_ctl_wstrb, .s_ctl_wvalid,
     .s_ctl_wready, .s_ctl_bresp, .s_ctl_bvalid, .s_ctl_bready, .s_ctl_araddr, .s_ctl_arvalid,
     .s_ctl_arready, .s_ctl_rdata, .s_ctl_rresp, .s_ctl_rvalid, .s_ctl_rready,
     .n_cvalid, .n_cready, .n_cwe, .n_caddr, .n_wvalid, .n_wready, .n_wdata, .n_wmask,
-    .n_rvalid, .n_rdata, .n_wdone, .n_err);
+    .n_rvalid, .n_rdata, .n_wdone, .n_err, .xmon_snap, .xmon_clr, .xmon);
 endmodule

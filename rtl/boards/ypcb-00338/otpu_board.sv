@@ -32,7 +32,8 @@ module otpu_board #(
   parameter bit HAS_I2C     = 1'b1,    // the I2C pins are wired (CAPS bit2)
   parameter bit CHASH       = 1'b1,    // hashed channel interleave (otpu_native_dram; CAPS bit7)
   parameter bit DSTEP       = 1'b1,    // the DMA's DSTEP datapath (CAPS bit6; 0 leaves it out)
-  parameter bit HOSTCAL     = 1'b0     // the host calibrates the DDR3 controllers (CAPS bit27: LiteDRAM)
+  parameter bit HOSTCAL     = 1'b0,    // the host calibrates the DDR3 controllers (CAPS bit27: LiteDRAM)
+  parameter bit XMON        = 1'b0     // the DMA monitors' registers (otpu_ctrl 0xF00; otpu_xmon)
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
@@ -72,7 +73,11 @@ module otpu_board #(
   input  logic [1:0]        n_rvalid,  // read data in read-command order, no backpressure
   input  logic [1:0][511:0] n_rdata,
   input  logic [1:0][15:0]  n_wdone,   // write beats the controller has taken (mod 2^16)
-  input  logic [1:0]        n_err      // a channel's controller broke its port contract (sticky)
+  input  logic [1:0]        n_err,     // a channel's controller broke its port contract (sticky)
+  // ---- the DMA monitors (otpu_xmon, in otpu_native_sys; XMON): SNAP / CLEAR, their words
+  output logic              xmon_snap,
+  output logic              xmon_clr,
+  input  logic [31:0]       xmon [32]
 );
   import otpu_pkg::*;
 
@@ -128,7 +133,7 @@ module otpu_board #(
 
   otpu_ctrl #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
               .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
-              .HAS_I2C(HAS_I2C), .CHASH(CHASH), .DSTEP(DSTEP), .HOSTCAL(HOSTCAL)) u_ctrl (
+              .HAS_I2C(HAS_I2C), .CHASH(CHASH), .DSTEP(DSTEP), .HOSTCAL(HOSTCAL), .XMON(XMON)) u_ctrl (
     .clk, .rst,
     .s_awaddr(s_ctl_awaddr), .s_awvalid(s_ctl_awvalid), .s_awready(s_ctl_awready),
     .s_wdata(s_ctl_wdata), .s_wstrb(s_ctl_wstrb), .s_wvalid(s_ctl_wvalid),
@@ -150,7 +155,7 @@ module otpu_board #(
     .dram_wait((b_req && !b_rdy) || (a_req && !a_rdy) || (sw_req && !sw_rdy)),
     .instr(pf.sq.ret),
     .tr_en, .tr_stop, .tr_clear, .tr_addr, .tr_count, .tr_drop, .tr_busy, .tr_rdata,
-    .i2c_lo, .i2c_in(i2c_s2));
+    .i2c_lo, .i2c_in(i2c_s2), .xmon_snap, .xmon_clr, .xmon);
 
   // ---- hardware trace
   if (TRACE_DEPTH != 0) begin : g_trace

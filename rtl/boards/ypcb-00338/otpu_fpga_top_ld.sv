@@ -31,7 +31,8 @@ module otpu_fpga_top_ld #(
   parameter int CORE_KHZ = 100000,          // core_clk as the block design makes it (CORE_KHZ register)
   parameter logic [31:0] BUILD_ID = 32'h0,  // the git commit (BUILD_ID register)
   parameter int DDR_MTS = 1066,             // the DDR3 data rate the LiteDRAM core runs (DDR_MTS register)
-  parameter bit DSTEP = 1'b1                // the DMA's DSTEP datapath (CAPS bit6; 0: left out)
+  parameter bit DSTEP = 1'b1,               // the DMA's DSTEP datapath (CAPS bit6; 0: left out)
+  parameter bit XMON = 1'b0                 // the DMA monitors (otpu_xmon; a debug build: XMON=1)
 ) (
   // board
   input  logic        SYS_CLK,              // 50 MHz, AA28
@@ -213,7 +214,7 @@ module otpu_fpga_top_ld #(
   otpu_native_sys #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .MXU_IMPL(MXU_IMPL),
                     .LANES(LANES),
                     .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS),
-                    .DSTEP(DSTEP), .HOSTCAL(1'b1)) u_sys (
+                    .DSTEP(DSTEP), .HOSTCAL(1'b1), .XMON(XMON)) u_sys (
     .clk(core_clk), .rst(core_rst), .xclk(xdma_aclk), .xrst,
     .calib, .temp(device_temp), .led(board_led), .i2c_lo, .i2c_pin({lm73_alert_n, i2c_lvl}),
     .s_ctl_awaddr(ctl_awaddr[11:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),

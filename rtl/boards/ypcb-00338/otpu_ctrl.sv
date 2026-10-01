@@ -59,6 +59,8 @@
 //                        (LM73 sensor bus), bit2 SCL1, bit3 SDA1 (PCIe edge SMBus); reset 0
 //   0x224 I2C_IN     RO  the pin levels (synchronized by otpu_board): bit0 SCL0, bit1 SDA0,
 //                        bit2 SCL1, bit3 SDA1, bit4 ALERT0 (LM73 ALERT, active low)
+//   0xF00 + 4k  XMON     RO  the DMA monitors' words (XMON builds only: otpu_xmon, its map; 0xDEADBEEF
+//                        otherwise); writing 0xF00: bit0 SNAP, bit1 CLEAR (pulses to otpu_xmon)
 // Reads answer three cycles after the address is taken (a registered address, a registered
 // multiplexer, the data register), which also gives the trace RAM time after TRACE_ADDR moves.
 module otpu_ctrl #(
@@ -75,7 +77,8 @@ module otpu_ctrl #(
   parameter bit HAS_I2C = 1'b1,          // CAPS bit2: the I2C pins are wired (otpu_fpga_top_ld)
   parameter bit CHASH = 1'b0,            // CAPS bit7: the hashed channel interleave (otpu_native_dram)
   parameter bit DSTEP = 1'b1,            // CAPS bit6 and bit26: the stream engine (DSTEP, STREAM)
-  parameter bit HOSTCAL = 1'b0           // CAPS bit27: the host calibrates the DDR3 controllers
+  parameter bit HOSTCAL = 1'b0,          // CAPS bit27: the host calibrates the DDR3 controllers
+  parameter bit XMON = 1'b0              // 0xF00..0xF7C read the DMA monitors' words (otpu_xmon)
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -131,7 +134,11 @@ module otpu_ctrl #(
   input  logic [63:0] tr_rdata,
   // I2C pins (the host bit-bangs them: opentpu/host/i2c.py)
   output logic [3:0]  i2c_lo,
-  input  logic [4:0]  i2c_in
+  input  logic [4:0]  i2c_in,
+  // the DMA monitors (otpu_xmon; XMON)
+  output logic        xmon_snap,
+  output logic        xmon_clr,
+  input  logic [31:0] xmon [32]
 );
   localparam int NFR = 13;
   localparam logic [31:0] CAPS = {1'b1, 1'b1, 2'd0, HOSTCAL, DSTEP, 2'd3,  // bit31 WAITW, bit30 GEN, bit27 HOSTCAL, bit26 STREAM, bit25 ARG, bit24 ACT_ROWS
@@ -159,6 +166,8 @@ module otpu_ctrl #(
     clear <= 1'b0;
     snap <= 1'b0;
     tr_clear <= 1'b0;
+    xmon_snap <= 1'b0;
+    xmon_clr <= 1'b0;
     if (rst) begin
       run <= 1'b0;
       s_bvalid <= 1'b0;
@@ -188,6 +197,10 @@ module otpu_ctrl #(
           end
           10'h083: tr_addr <= s_wdata;
           10'h088: i2c_lo <= s_wdata[3:0];
+          10'h3C0: begin
+            xmon_snap <= s_wdata[0];
+            xmon_clr <= s_wdata[1];
+          end
           10'h018, 10'h019, 10'h01A, 10'h01B, 10'h01C, 10'h01D, 10'h01E, 10'h01F:
             arg[s_awaddr[4:2]] <= s_wdata;
           default: ;
@@ -299,6 +312,8 @@ module otpu_ctrl #(
       default:
         if (r_a[9:6] == 4'h1 && r_a[5:1] < 5'(NFR))
           r_d <= r_a[0] ? fr_s[r_a[5:1]][63:32] : fr_s[r_a[5:1]][31:0];
+        else if (XMON && r_a[9:5] == 5'h1E)
+          r_d <= xmon[r_a[4:0]];
         else
           r_d <= 32'hDEAD_BEEF;
     endcase
