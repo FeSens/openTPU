@@ -271,3 +271,5 @@ true, it writes the state's stop word, and the card halts after the token in fli
 - **133.33 MHz:** production has been the fused build c2830d6 since 2026-09-30 (it carries
   GEN and WAITW). Its qual passed: the card loop gave the ISA simulator's tokens in 6/6 runs,
   WAITW passed 200 rounds, the timeout set ERROR and WAIT_TO, and decode ran 7-8% faster.
+- **Next:** more than one token per weight pass (multi-token prediction): the design is
+  [mtp.md](mtp.md).
