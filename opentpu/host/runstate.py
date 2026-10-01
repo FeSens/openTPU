@@ -247,23 +247,39 @@ def read_status(name: str) -> dict | None:
 
 
 def hold_main(argv=None) -> int:
-    """otpu-lock [--dev /dev/xdma0] [--wait SEC] -- CMD...: run CMD while holding the device lock
-    (for steps that are not openTPU tools but must not overlap a run: a JTAG reload, a driver
-    reload, a rescan), or a sequence of runs that must not be interleaved with others (a reload,
-    then tests on the new image). openTPU tools inside CMD run under this lock
-    (OTPU_LOCK_HELD)."""
+    """otpu-lock [--dev /dev/xdma0] [--wait SEC] [--prebuild MODEL:WF:HF ...] -- CMD...: run CMD
+    while holding the device lock (for steps that are not openTPU tools but must not overlap a
+    run: a JTAG reload, a driver reload, a rescan), or a sequence of runs that must not be
+    interleaved with others (a reload, then tests on the new image). openTPU tools inside CMD
+    run under this lock (OTPU_LOCK_HELD). --prebuild first quantizes those runs' 4-bit weights
+    into the image cache at nice 19, before waiting for the lock (opentpu.host.prebuild, from
+    the tree on PYTHONPATH), so that CMD's tools do not quantize under it."""
     import argparse
     import subprocess
     ap = argparse.ArgumentParser(prog="otpu-lock", description=hold_main.__doc__.split("\n")[0])
     ap.add_argument("--dev", default="/dev/xdma0")
     ap.add_argument("--wait", type=float, default=3600.0, help="seconds to wait for the lock")
+    ap.add_argument("--prebuild", action="append", default=[], metavar="MODEL:WF:HF",
+                    help="quantize into the image cache first, outside the lock")
+    ap.add_argument("--prebuild-cfg", help="the card configuration for --prebuild")
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     a = ap.parse_args(argv)
     cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
     if not cmd:
         ap.error("no command")
+    if a.prebuild:
+        rc = subprocess.call(["nice", "-n", "19", sys.executable, "-m", "opentpu.host.prebuild"]
+                             + (["--cfg", a.prebuild_cfg] if a.prebuild_cfg else [])
+                             + a.prebuild)
+        if rc:
+            print(f"otpu-lock: prebuild exit {rc}; the tools quantize under the lock",
+                  file=sys.stderr, flush=True)
     lock = DeviceLock(devname(a.dev), wait=a.wait)
     try:           # openTPU tools inside CMD run under this lock instead of waiting for it
         return subprocess.call(cmd, env={**os.environ, "OTPU_LOCK_HELD": devname(a.dev)})
     finally:
         lock.release()
+
+
+if __name__ == "__main__":         # python -m opentpu.host.runstate: otpu-lock
+    raise SystemExit(hold_main())

@@ -35,6 +35,12 @@ elif a[:2] == ["-m", "opentpu.host.diag"]:
     print("ALL PASS")
 elif a[:2] == ["-m", "opentpu.host.smi"]:
     print("Temp 60 C")
+elif a[:2] == ["-m", "opentpu.host.runstate"]:      # otpu-lock: prebuild, then CMD under the lock
+    k = a.index("--")
+    pre = [a[i + 1] for i, x in enumerate(a[:k]) if x == "--prebuild"]
+    if pre:
+        print("prebuilt", *pre, flush=True)
+    os.execvpe(a[k + 1], a[k + 1:], dict(os.environ, OTPU_LOCK_HELD="xdma0"))
 else:
     tool = os.path.basename(a[0])
     if tool == "refs.py" and a[1] == "cfg":
@@ -167,3 +173,17 @@ def test_without_models_the_model_phases_are_skipped(qual):
     assert "[FAIL] load + selftest: no checkpoint for lfm2" in checks and "models link" in checks
     assert "prefill + decode counters" not in text and "token-exact" not in text
     assert "diag warm" in text and summary(text) == ("1", "2"), text[-2000:]
+
+
+def test_prebuild_outside_the_lock_then_the_lock(qual):
+    # started without the lock: the 4-bit runs into the image cache, then qual.sh again under
+    # otpu-lock; PREBUILD=0 skips the prebuild; started under the lock, neither
+    text, checks = qual()
+    assert "prebuilt qwen3:fp4:int8 lfm2:fp4:int8 qwen35:fp4:int8" in text
+    assert text.index("=== prebuild outside the card lock") < text.index("################")
+    assert summary(text) == ("0", "14"), text[-2000:]
+    text, _ = qual(PREBUILD="0")
+    assert "=== prebuild outside the card lock;" in text and "prebuilt" not in text
+    assert summary(text) == ("0", "14"), text[-2000:]
+    text, _ = qual(OTPU_LOCK_HELD="xdma0")
+    assert "=== prebuild" not in text and summary(text) == ("0", "14"), text[-2000:]
