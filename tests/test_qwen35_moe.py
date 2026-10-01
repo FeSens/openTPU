@@ -55,11 +55,27 @@ def tiny():
 
 def test_from_hf_gives_a_moe_the_int8_embedding(tiny, tmp_path):
     """A Qwen3.5-MoE checkpoint's Spec gathers its embedding rows on the device in int8 at any
-    vocabulary size (its DRAM beside the layers is expert slots), and posts a prefetch hint
-    before each mixer (docs/offload.md 12)."""
+    vocabulary size (its DRAM beside the layers is expert slots)."""
     tiny[0].config.save_pretrained(tmp_path)
     s = Spec.from_hf(tmp_path)
-    assert s.moe is not None and s.embed == "int8" and s.moe.hint
+    assert s.moe is not None and s.embed == "int8"
+
+
+def test_hints_are_off_by_default(tiny, tmp_path):
+    """The router's prefetch hints stay off unless asked for (card session 5: 4.02 against 4.23
+    tok/s without them, docs/offload.md 12.5): from_hf's programs are those of hint=False, not
+    hint=True's."""
+    from opentpu import isa as I
+    tiny[0].config.save_pretrained(tmp_path)
+    s = Spec.from_hf(tmp_path)
+    assert not s.moe.hint
+    cfg = device_config(s, 256, rows=1, lookup=True, S=1, experts=K)
+
+    def program(spec):
+        img = spec.image(cfg, 256, 1, 1, lookup=True, experts=K)
+        return np.asarray(I.assemble(img.compile_step(5)[0])).tobytes()
+    off, on = (program(replace(s, moe=replace(s.moe, hint=h))) for h in (False, True))
+    assert program(s) == off != on
 
 
 def _engine(spec, W, experts=None, **kw):

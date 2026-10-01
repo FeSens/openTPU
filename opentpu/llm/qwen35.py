@@ -144,8 +144,9 @@ class Spec:
             moe = MO.MoESpec(E=c["num_experts"], k=c["num_experts_per_tok"],
                              ffn=c["moe_intermediate_size"], rule="softmax",
                              norm=c.get("norm_topk_prob", True),
-                             shared=c["shared_expert_intermediate_size"],
-                             hint=True)     # a prefetch hint before each mixer (offload.md 12)
+                             shared=c["shared_expert_intermediate_size"])
+            # (MoESpec.hint, the router's prefetch hint before each mixer, stays off: on the
+            # card it lost 5% against none, docs/offload.md 12.5)
         return Spec(hidden=c["hidden_size"],
                     kinds=tuple(ATTN if t == "full_attention" else LIN for t in c["layer_types"]),
                     n_q=c["num_attention_heads"], n_kv=c["num_key_value_heads"], head_dim=d,
