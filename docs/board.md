@@ -406,6 +406,34 @@ builds left the card check polling for an hour.) References computed during the 
 the host while the prefill and decode phases measure wall time: for wall numbers that go into
 a table, compute the references first.
 
+The models' DRAM images are the other host cost of a card session. Each card tool (`perf.py`,
+`refs.py card`, its resident run, `decode_profile.py`) builds its model's image before it runs,
+and in 4-bit that build quantizes every weight with numpy. On 2026-10-01 most of slot 3's 95
+minutes under the card lock went to six 4-bit builds (Qwen3.5-2B 9 minutes each, 4B 21 minutes
+each, on opentpu's i7-4790). `opentpu/qcache.py` caches the 4-bit quantizer's results by
+content. The key is a hash of each matrix's fp32 bytes, the format, D, the scale search,
+`opentpu/quant.py`'s source and the numpy version, so a new layout (lookup tables, prefill
+rows, KV capacity) or configuration reuses them and any change to the weights or the quantizer
+misses. `tools/qual/prebuild.py` fills the cache before the
+session, outside the card lock, by building the image the tools build. On omarchy the 4B's
+prebuild takes 1196 s and then any of its images builds in 41 s; the 2B's take 717 s and 82 s
+(its fp32 embedding table is copied in). The 2B's image from the cache is the uncached one,
+byte for byte (sha256), and the cache holds 0.68 GiB for it, 1.76 GiB for the 4B:
+
+```sh
+nice -n 19 python3 tools/qual/prebuild.py ~/otpu-build/refcache/configs/<deploy>.pkl \
+    qwen35-4b:fp4:int8 smollm3:fp4:int8
+otpu-lock --wait 3600 -- bash tools/qual/qual.sh <deploy>
+```
+
+The cache is `~/otpu-build/qcache/mxu` on a host with `~/otpu-build` (`OTPU_IMAGE_CACHE=<dir>`;
+`0` turns it off). It keeps 30 GB (`OTPU_IMAGE_CACHE_GB`), drops the least recently used entries
+first, and writes nothing that would leave under 20 GB of free disk. int8 is not cached: it
+quantizes about as fast as the matrix hashes. Its keys hold no host, so a cache filled on omarchy
+can be copied (`rsync -a ~/otpu-build/qcache/mxu/ opentpu:otpu-build/qcache/mxu/`). The tests
+run without it (`tests/conftest.py`). Gemma 4's build keeps its own cache of quantization jobs
+(`OTPU_QCACHE`, [gemma4.md](gemma4.md)).
+
 ### First light (measured on the card, 2026-09-26)
 
 Build 74d48591 (the primary image), Arch Linux 7.1 host, Xilinx dma_ip_drivers XDMA (poll mode),
