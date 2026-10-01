@@ -94,6 +94,11 @@ connect_bd_net [get_bd_pins rst_core/peripheral_aresetn] [get_bd_ports core_rstn
 # ------------------------------------------------------------------ PCIe: XDMA, Gen1 x8
 # The production settings and identity, those of every bitstream since the first (the host tells
 # the memory build from CAPS, not from the PCI identity).
+# xdma_rnum_rids: the H2C engine's outstanding read requests, 8 x the driver's 512-byte MRRS =
+# 4 KiB. At the default 32 (16 KiB) the engine laps its read buffer when the card holds up its
+# writes (a run's or a card->host read's traffic on the channel): the data jumps 8 KiB, or goes
+# stale, and the engine keeps the slip until the bitstream is loaded again (docs/host.md, "XDMA's
+# H2C overrun"); host calls of 4 KiB, which keep 4 KiB in flight at most, were clean.
 set ibuf [create_bd_cell -type ip -vlnv [ip_vlnv util_ds_buf] refclk_buf]
 set_property CONFIG.C_BUF_TYPE {IBUFDSGTE} $ibuf
 connect_bd_intf_net $pcie_refclk [get_bd_intf_pins refclk_buf/CLK_IN_D]
@@ -111,7 +116,7 @@ set_property -dict [list \
   CONFIG.pf0_class_code_interface {00} \
   CONFIG.pf0_subsystem_vendor_id {10EE} CONFIG.pf0_subsystem_id {4F54} \
   CONFIG.pf0_revision_id {01} \
-  CONFIG.xdma_rnum_chnl {1} CONFIG.xdma_wnum_chnl {1} \
+  CONFIG.xdma_rnum_chnl {1} CONFIG.xdma_wnum_chnl {1} CONFIG.xdma_rnum_rids {8} \
   CONFIG.axilite_master_en {true} CONFIG.axilite_master_size {1} \
   CONFIG.axilite_master_scale {Megabytes} \
   CONFIG.pciebar2axibar_axil_master {0x00000000} \
