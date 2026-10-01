@@ -607,10 +607,25 @@ p + 1):
   `slot`).
 
 **Prefill.**
-- The prompt's chunks store `hid` for every row.
-- mtp then runs over the prompt's rows, (h_i, x_(i+1)) at positions i, which fills the MTP
-  layer's KV cache.
+- The prompt runs in plain prefill's runs (`fit_chunk`), each storing `hid` for every row
+  (row by row: one row of TMEM, so the runs fit as plain prefill's do).
+- mtp then runs over the prompt's rows, (h_i, x_(i+1)) at positions i, in runs of up to 4
+  rows. This fills the MTP layer's KV cache.
 - The last row, (h_(P-1), a_0), gives the first draft.
+
+**PAIR and exactness.** With PAIR and 4-bit weights, a decode step's MMs pair (column
+reuse). A run's MMs pair only when 2R <= MCOLS. A paired MM adds each even K-block to the
+odd one before the partial sums: the same products, summed in another order. So a prefill
+run of more than MCOLS / 2 rows differs from the steps in the last bit of a sum. An int8
+activation rounding downstream can turn that into a quantization step: about 1e-2 of the
+largest logit on a tiny fp4 model (`test_prefill_pair_sum_order`).
+
+Greedy MTP therefore gives plain greedy's tokens bit for bit only when two conditions hold:
+- **The 2-row verify pairs as the steps do.** That needs MCOLS >= 4, the card's. MTPDecoder
+  refuses PAIR with 4-bit weights below that.
+- **The prompt runs in plain prefill's runs.** Plain prefill takes 4 rows per run on the
+  0.8B and 2B and 3 on the 4B, at every position up to 4K, with or without the `hid`
+  store.
 
 **Tests.** Greedy tokens must equal plain greedy decode's, bit for bit:
 - On tiny models (Mac) with three drafters:
@@ -618,6 +633,8 @@ p + 1):
   - forced-right drafts (every draft accepted, so the parity flips every iteration);
   - forced-wrong drafts.
 - After the loop, the committed slot equals plain decode's state, word for word.
+- With int8 weights, and fp4 with PAIR at MCOLS 4. The prompt runs as plain prefill's
+  runs.
 - On the real 0.8B and 2B on omarchy, a few prompts.
 
 **Measurements.**

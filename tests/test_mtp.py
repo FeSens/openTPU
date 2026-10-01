@@ -1,7 +1,9 @@
 """Speculative decoding with Qwen3.5's MTP drafter (opentpu/llm/mtp.py, docs/mtp.md 9) on the ISA
 simulator: greedy tokens equal plain greedy decode's bit for bit whatever the drafts (the MTP's,
 all right, all wrong, mixed), the committed DeltaNet states and windows equal plain decode's, and
-the MTP program follows its numpy reference. A tiny random Qwen3.5 with random mtp.* weights."""
+the MTP program follows its numpy reference. A tiny random Qwen3.5 with random mtp.* weights;
+int8 weights, and fp4 with PAIR at the board's MCOLS 4 (the 2-row verify's MMs pair as the
+decode steps' do, qwen35_rows)."""
 import dataclasses
 
 import numpy as np
@@ -45,12 +47,17 @@ def _mtp_weights(W, spec, seed=1):
     return {**W, **m}
 
 
-@pytest.fixture(scope="module", params=[(8, False), (4, False), (8, True)],
-                ids=["kh8", "kh4-shared", "kh8-grouped"])
+FP4 = dict(wformat="fp4", head_format="int8")
+
+
+@pytest.fixture(scope="module", params=[(8, False, False), (4, False, False), (8, True, False),
+                                        (8, False, True)],
+                ids=["kh8", "kh4-shared", "kh8-grouped", "kh8-fp4"])
 def tiny_mtp(request):
-    nk, grouped = request.param
+    """(weights, spec, formats)."""
+    nk, grouped, fp4 = request.param
     _, W, spec = _tiny_model(nk)
-    return _mtp_weights(W, spec), dataclasses.replace(spec, pair_loop=grouped)
+    return _mtp_weights(W, spec), dataclasses.replace(spec, pair_loop=grouped), FP4 if fp4 else {}
 
 
 def _layers(eng):
@@ -78,11 +85,12 @@ def test_mtp_greedy_is_plain_greedy(tiny_mtp, drafter):
     """Tokens equal plain greedy decode's for any drafts: the MTP's (random weights: mostly
     rejected), all right (every iteration accepts and flips the state slot), all wrong, and
     right but every third; then the committed states and windows equal plain decode's word
-    for word, and a decode step from the committed slot gives plain decode's next logits."""
-    W, spec = tiny_mtp
-    prompt = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 11)]
+    for word, and a decode step from the committed slot gives plain decode's next logits.
+    The prompt's 13 tokens prefill in runs of 8, 4 and 1 rows (the MTP layer over 4 + 4)."""
+    W, spec, kw = tiny_mtp
+    prompt = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 13)]
     N = 20
-    ref = Engine(spec, W, cap=256, cfg=CFG, resident=True)
+    ref = Engine(spec, W, cap=256, cfg=CFG, resident=True, **kw)
     want = ref.generate(prompt, max_new=N)
     P = len(prompt)
 
@@ -91,7 +99,7 @@ def test_mtp_greedy_is_plain_greedy(tiny_mtp, drafter):
     drafts = {"mtp": None, "right": right,
               "wrong": lambda q, out: (right(q, out) + 1) % 1000,
               "mixed": lambda q, out: right(q, out) if q % 3 else (right(q, out) + 7) % 1000}
-    eng = mtp_engine(spec, W, cap=256, cfg=CFG)
+    eng = mtp_engine(spec, W, cap=256, cfg=CFG, **kw)
     dec = MTPDecoder(eng)
     st = dec.generate(prompt, max_new=N, drafts=drafts[drafter])
     assert st.tokens == want
@@ -99,9 +107,14 @@ def test_mtp_greedy_is_plain_greedy(tiny_mtp, drafter):
         assert all(st.accepted[:-1]) and st.iterations <= N // 2 + 1
     if drafter == "wrong":
         assert not any(st.accepted)
-    # the same context fed plainly: the prompt and the tokens but the last
-    ref = Engine(spec, W, cap=256, cfg=CFG, resident=True)
-    ref.prefill(prompt + want[:-1])
+    # the same context as plain greedy decode feeds it: the prompt, then the tokens but the
+    # last one by one (decode steps)
+    ref = Engine(spec, W, cap=256, cfg=CFG, resident=True, **kw)
+    ref.prefill(prompt)
+    # the prompt in plain prefill's runs (their MMs pair as plain prefill's do)
+    assert [r for k, r, _ in st.runs if k == "prefill"] == [x.get("rows", 1) for x in ref.stats]
+    for t in want[:-1]:
+        ref.step(t)
     assert eng.pos == ref.pos == P + N - 1
     assert all(np.array_equal(a, b) for a, b in
                zip(_states(eng, spec, dec.slot), _states(ref, spec, 0)))
@@ -165,3 +178,13 @@ def test_mtp_verify_and_draft_on_rtl(have_verilator):
                                  boot=True)
         assert np.array_equal(drams[0][:n], m.slices[0].dram[:n])
         eng.backend.machine.slices[0].dram[:n] = m.slices[0].dram[:n]
+
+
+def test_mtp_needs_paired_verify():
+    """With PAIR and 4-bit weights at MCOLS 2 a 2-row run's MMs do not pair as the decode
+    steps' do (qwen35_rows): the decoder refuses rather than give other tokens."""
+    _, W, spec = _tiny_model(8)
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=True, STREAM=True, PAIR=True, MCOLS=2)
+    eng = mtp_engine(spec, _mtp_weights(W, spec), cap=256, cfg=cfg, **FP4)
+    with pytest.raises(ValueError, match="MCOLS >= 4"):
+        MTPDecoder(eng)

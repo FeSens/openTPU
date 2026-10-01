@@ -189,7 +189,7 @@ def card_summary(r) -> None:
     """A --card run's tok/s: device (the runs' cycles at the core clock) and wall, decode
     after the prefill's token, plain (the card's loop) against MTP (host-driven)."""
     tot = {"n": 0, "pc": 0, "pw": 0.0, "mc": 0, "mw": 0.0, "comp": 0.0, "acc": [],
-           "slots": [0, 0]}
+           "slots": [0, 0], "v": [0, 0], "d": [0, 0]}
     for p in r["prompts"]:
         pl, mt = p["plain_card"], p["mtp_card"]
         hz = 1e3 * mt["core_khz"]
@@ -205,6 +205,8 @@ def card_summary(r) -> None:
         tot["comp"] += comp
         tot["acc"] += p["accepted"]
         tot["slots"] = [a + b for a, b in zip(tot["slots"], mt["slots"])]
+        for k, key in (("v", "verify"), ("d", "mtp")):
+            tot[k] = [tot[k][0] + mt["cycles"].get(key, 0), tot[k][1] + p["runs"].get(key, 0)]
         print(f"{r['model']:14s} prompt {p['index']} {p['kind']:8s} equal {p['equal']}"
               + (f" sim {p['equal_sim']}" if "equal_sim" in p else "")
               + f" tokens {n + 1:3d} acceptance "
@@ -221,6 +223,10 @@ def card_summary(r) -> None:
           f"wall tok/s plain {n / tot['pw']:.2f} MTP {n / tot['mw']:.2f} (host compile "
           f"{tot['comp']:.1f} of {tot['mw']:.1f} s; without it "
           f"{n / (tot['mw'] - tot['comp']):.2f}); verify parities {tot['slots']}")
+    step = tot["pc"] / n                # the card loop's cycles per token
+    print(f"{r['model']:14s} per run: decode step {step:,.0f} cycles (the card's loop), verify "
+          f"{tot['v'][0] / tot['v'][1]:,.0f} (c_2 {tot['v'][0] / tot['v'][1] / step:.3f}), draft "
+          f"{tot['d'][0] / tot['d'][1]:,.0f} (c_draft {tot['d'][0] / tot['d'][1] / step:.3f})")
 
 
 def summary(files, cycles) -> None:

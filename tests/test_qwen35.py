@@ -257,6 +257,30 @@ def test_dstep_rows_pipeline_is_bit_exact(nk, grouped):
     assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[11:], want[11:]))
 
 
+@pytest.mark.parametrize("wf", ["fp4", "int4"])
+def test_prefill_pair_sum_order(wf):
+    """PAIR with 4-bit weights: a decode step's MMs pair (column reuse), and so do a prefill
+    run's of at most MCOLS / 2 rows -- those runs are bit-identical to the steps. A wider
+    run's MMs do not pair, and a paired MM adds each even K-block to the odd one before the
+    partial sums: the same products, summed in another order (qwen35_rows). An activation's
+    int8 rounding downstream can turn that last-bit difference into a quantization step: the
+    logits stay within the pinned tolerance (this prompt: ~1e-2 of the largest with fp4,
+    ~1e-7 with int4; 1 - cos ~1e-4 at most over the prompts tried)."""
+    _, W, spec = _tiny_model(8)
+    cfg = board_config(DRAM_BYTES=1 << 25, PAIR=True, MCOLS=4)
+    kw = dict(wformat=wf, head_format="int8")
+    toks = [int(t) for t in np.random.default_rng(17).integers(0, 1000, 17)]
+    ref = Engine(spec, W, cap=256, cfg=cfg, **kw)
+    for t in toks:
+        want = ref.step(t)
+    paired = Engine(spec, W, cap=256, cfg=cfg, **kw).prefill(toks, chunk=2)
+    assert np.array_equal(paired.view(np.uint32), want.view(np.uint32))
+    wide = Engine(spec, W, cap=256, cfg=cfg, **kw).prefill(toks)        # runs of 8 rows
+    cos = float(wide @ want / np.linalg.norm(wide) / np.linalg.norm(want))
+    assert 1 - cos < 1e-3 and np.abs(wide - want).max() < 5e-2 * np.abs(want).max()
+    assert np.argmax(wide) == np.argmax(want)
+
+
 @pytest.mark.parametrize("config", ["design", "board"])
 @pytest.mark.parametrize("unit", ["dstep", "stream"])
 def test_tiny_dstep_is_bit_exact(tiny, config, unit):
