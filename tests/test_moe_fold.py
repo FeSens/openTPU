@@ -1,7 +1,7 @@
-"""opentpu/llm/moe.py's Gemma 4 folds (docs/offload.md section 11.2): the router's scales and
-pre_feedforward_layernorm_2's gain into the weights, the per-expert scale into W_down, so that
-the router and the experts read one input, the residual's unit RMSNorm (moe_ffn's), as against
-transformers' Gemma4TextRouter and Gemma4TextExperts."""
+"""opentpu/llm/moe.py's Gemma 4 folds (docs/offload.md section 11.2): the router's scales into
+its weights, so that it reads the residual's unit RMSNorm (moe_ffn's), and the per-expert scale
+into W_down; the experts read that norm times pre_feedforward_layernorm_2's gain (moe_ffn's
+g_exp), as against transformers' Gemma4TextRouter and Gemma4TextExperts."""
 import numpy as np
 import pytest
 
@@ -18,8 +18,8 @@ def _gelu_tanh(x):
 
 def test_gemma_folds_match_hf():
     """Gemma 4's MoE block from the folded weights (moe.gemma_router, moe.gemma_expert; a
-    width of 176, not a whole number of chunks) and the softmax rule picks the same experts and
-    gives transformers' output in fp32."""
+    width of 176, not a whole number of chunks), the experts on the norm times g2, and the
+    softmax rule picks the same experts and gives transformers' output in fp32."""
     torch.manual_seed(0)
     H, E, k, F = 256, 8, 2, 176
     cfg = transformers.Gemma4TextConfig(hidden_size=H, num_experts=E, top_k_experts=k,
@@ -47,6 +47,7 @@ def test_gemma_folds_match_hf():
     mo = MO.MoESpec(E=E, k=k, ffn=F, rule="softmax", act="gelu_tanh")
     x = r.numpy()
     xu = x / np.sqrt(np.mean(x * x, axis=-1, keepdims=True) + 1e-6)
+    xe = xu * W[p + "pre_feedforward_layernorm_2.weight"]
     lg = xu @ MO.gemma_router(W, p).T
     out = np.zeros_like(x)
     for t in range(len(x)):
@@ -54,7 +55,7 @@ def test_gemma_folds_match_hf():
         assert list(ids) == idx[t].tolist()
         for e, we in zip(ids, wt):
             wg, wu, wd = MO.gemma_expert(W, p, e)
-            out[t] += np.float32(we) * ((_gelu_tanh(xu[t] @ wg.T) * (xu[t] @ wu.T)) @ wd.T)
+            out[t] += np.float32(we) * ((_gelu_tanh(xe[t] @ wg.T) * (xe[t] @ wu.T)) @ wd.T)
     assert np.allclose(out, hf, rtol=1e-4, atol=1e-5), np.abs(out - hf).max()
     fmt = MO.ExpertFormat(H, F, 128, "fp4")
     assert (fmt.F0, fmt.F) == (176, 256) and fmt.pack(*MO.gemma_expert(W, p, 0)).size == \

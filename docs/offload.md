@@ -1095,14 +1095,19 @@ On `moe.py`'s side (offload) no new card mechanism is needed:
 - **The expert slot.** `ExpertFormat` with F padded from 704 to 768. fp4 blocks run 128
   along K, and gemma4's `ffn % 2D` check applies. The padding is zero rows of gate and up and
   zero columns of down, which is exact: gelu(0) * 0 = 0. The expert is 3.45 MB instead of 3.16.
-- **Folds at packing, no card ops:**
+- **Folds at packing:**
   - `per_expert_scale[e]` into expert e's W_down (it scales the expert's output linearly);
-  - `router.scale` * H^-0.5 into `router.proj`'s columns;
-  - `pre_ffn_norm_2`'s gain into the experts' gate and up columns.
-  The router and the experts then share one input: the unit RMSNorm of r, quantized once, as
-  `moe_ffn` does now. The emulation must first show that folding the gain before the 4-bit
-  quantization costs no accuracy against a second quantized input. If it does cost, the
-  experts get their own normed input (one more VPU pass per layer).
+  - `router.scale` * H^-0.5 into `router.proj`'s columns.
+  The router reads the unit RMSNorm of r, quantized, as `moe_ffn` does for every model.
+- **The experts' own input.** `pre_ffn_norm_2`'s gain is not folded: the experts read the
+  unit norm times the gain, quantized (`moe_ffn`'s `g_exp`; one `QACT` with column scale,
+  8 more instructions a program). Folded into the gate and up columns, the gain's outliers
+  (its max about 8x its rms in the 26B) set every column block's scale, and the other columns
+  lose their precision: on the real model, int8 dense layers with fp4 experts gave perplexity
+  127 against float's 1.235 (gemma4's emulation), the MoE block's relative error 0.27-0.51
+  from layer 10 on with int8 experts. In tests/test_gemma4_moe.py's tiny model with 4
+  channels of the gain at 8x, the int8 device against HF goes from a median cosine of 0.977
+  (folded) to 0.994.
 - **The rule.** The softmax rule as written (`MoESpec.rule` "softmax"): the softmax of the 8
   largest logits is the renormalized top 8 of the full softmax. The order is the same, ties to
   the first.

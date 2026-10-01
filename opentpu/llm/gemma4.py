@@ -25,9 +25,10 @@ per-layer inputs; a 2112-wide MLP (the image pads it to its down projection's co
 x += norm(norm_1(MLP(norm(x))) + norm_2(MoE(norm'(x)))), the router on x itself (RMSNorm,
 x scale / sqrt(H), softmax, the top 8 renormalized, x per_expert_scale). On the device the
 experts stream into DRAM slots (moe.moe_ffn, path (a) of docs/offload.md, section 11): one
-token per program (rows = 1); the router and the experts read one quantized unit-norm input,
-the norm gains and per_expert_scale folded into their weights (moe.gemma_router /
-gemma_expert); the dense MLP is emitted beside the expert request, while the host streams.
+token per program (rows = 1); the router reads the quantized unit norm (its scales folded
+into its weights: moe.gemma_router), the experts the norm times pre_feedforward_layernorm_2's
+gain, quantized (moe_ffn's g_exp; per_expert_scale folded into W_down: gemma_expert); the
+dense MLP is emitted beside the expert request, while the host streams.
 
 How it maps onto openTPU:
   * The embedding and PLE rows are gathered on the device (kernels/gather.py): the tied int8 LM
@@ -488,12 +489,12 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
     qwen3.emulated_logits): weights in their formats (per layer: layer_formats, as Image),
     int8 matmul inputs per D-block, int8 K (per token and D-block) and V (per token), int8 P
     (per D tokens), the embedding and PLE rows as the device gathers them (int8 / 4-bit), the
-    exact sliding window; the MoE block as moe_ffn runs it (the int8 router and the experts in
-    expert_format on one quantized unit-norm input, the gains folded: moe.gemma_router /
-    gemma_expert), each token's (position, layer, experts, the k-th logit's margin over the
-    next) appended to `routes`; `routing` {(position, layer): experts} replaces the top k
-    where it has an entry (the card's choices: a near-tie routes either way). Before the soft
-    cap."""
+    exact sliding window; the MoE block as moe_ffn runs it (the int8 router on the quantized
+    unit norm, its scales folded: moe.gemma_router; the experts in expert_format on the norm
+    times pre_feedforward_layernorm_2's gain, quantized: g_exp, gemma_expert), each token's
+    (position, layer, experts, the k-th logit's margin over the next) appended to `routes`;
+    `routing` {(position, layer): experts} replaces the top k where it has an entry (the
+    card's choices: a near-tie routes either way). Before the soft cap."""
     from .qwen3 import _fake_q, _fake_w
     lf, pf, fh = layer_formats(spec, wformat, formats)
     ef = expert_format(spec, wformat, formats) if spec.experts else None
@@ -562,7 +563,9 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
                 (w(p + "mlp.up_proj.weight", fg) @ h)
             m = wd @ _fake_q(np.pad(u, (0, wd.shape[1] - len(u))), D)
             if spec.experts:
-                xs = _fake_q(_norm(x, None, spec.eps), D)
+                xn = _norm(x, None, spec.eps)
+                g2 = np.asarray(W[p + "pre_feedforward_layernorm_2.weight"], f64)
+                xs, xe = _fake_q(xn, D), _fake_q(xn * g2, D)
                 if (p, "router") not in Wq:
                     Wq[p, "router"] = _fake_w(MO.gemma_router(W, p), D, "int8")
                 lg = Wq[p, "router"] @ xs
@@ -580,7 +583,7 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
                         Wq[p, int(e)] = [_fake_w(np.pad(a, ((0, 0), (0, -a.shape[1] % D))), D, ef)
                                          for a in MO.gemma_expert(W, p, int(e))]
                     eg, eu, ed = Wq[p, int(e)]
-                    u = _gelu(eg @ xs) * (eu @ xs)
+                    u = _gelu(eg @ xe) * (eu @ xe)
                     y += we * (ed @ _fake_q(np.pad(u, (0, ed.shape[1] - len(u))), D))
                 m = _norm(m, W[p + "post_feedforward_layernorm_1.weight"], spec.eps) + \
                     _norm(y, W[p + "post_feedforward_layernorm_2.weight"], spec.eps)
@@ -629,13 +632,15 @@ def _ffn_pad(f: int, fd: str, D: int) -> int:
 
 def _norms(P: int, moe: bool = False) -> dict:
     """A layer block's norm weights and their checkpoint names (g_ple: with per-layer inputs;
-    g_f1, g_f2: the dense MLP's and the MoE's output norms beside each other)."""
+    g_f1, g_f2: the dense MLP's and the MoE's output norms beside each other; g_exp: the
+    experts' input gain, moe_ffn's)."""
     n = {"g_in": "input_layernorm", "g_attn": "post_attention_layernorm",
          "g_pre": "pre_feedforward_layernorm", "g_ffn": "post_feedforward_layernorm"}
     if P:
         n["g_ple"] = "post_per_layer_input_norm"
     if moe:
-        n.update(g_f1="post_feedforward_layernorm_1", g_f2="post_feedforward_layernorm_2")
+        n.update(g_f1="post_feedforward_layernorm_1", g_f2="post_feedforward_layernorm_2",
+                 g_exp="pre_feedforward_layernorm_2")
     return n
 
 
@@ -833,8 +838,8 @@ class Image:
             lb = _Bump()
             o = {n: lb.alloc(4 * H) for n in _norms(P, bool(mo))}
             o["ls"], o["qn"] = lb.alloc(4), lb.alloc(4 * d)
-            if mo:                  # moe_ffn's input norm (ones: the gains are folded), the
-                o["g_post"], o["gbase"] = lb.alloc(4 * H), lb.alloc(4)      # layer's j * E,
+            if mo:                  # moe_ffn's input norm (ones: the router's gains are
+                o["g_post"], o["gbase"] = lb.alloc(4 * H), lb.alloc(4)      # folded), j * E,
                 o["router"] = (lb.alloc(mo.E * H), lb.alloc(4 * mo.E * (H // D)))  # int8
             fp_ = _ffn_pad(ff, fd, D)
             mats = {"wq": (nq, H, fa), "wo": (H, nq, fa), "wg": (fp_, H, fg), "wu": (fp_, H, fg)}
