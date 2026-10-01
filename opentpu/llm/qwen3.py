@@ -1508,7 +1508,7 @@ class Engine:
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
                  resident: bool = False, experts: int | None = None, pool_file=None,
-                 embed_host: bool | None = None):
+                 embed_host: bool | None = None, layer_major: int = 0):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
@@ -1574,6 +1574,16 @@ class Engine:
                 self.backend.host = poll
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
+        # a MoE model's prompt layer by layer, `layer_major` rows a run (prefill_layers; 0:
+        # token by token): its programs, (layer, blocks, rows, embedded) and "head" ->
+        # (programs, run_args)
+        self.layer_major = int(layer_major)
+        self._layer_runs: dict = {}
+        if self.layer_major and not (getattr(self.image, "prefill_rows", 0) and self.device_inputs
+                                     and getattr(self.backend, "args", False) and batch == 1):
+            raise ValueError("layer-major prefill needs an image with prefill rows and lookup "
+                             "tables (compile_layer_run), batch 1 and a backend with run "
+                             "arguments")
         self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
                                             # (a list, or split: (first parts, second parts))
         self.gen_split = None               # split generate programs: None when a bucket's
@@ -1910,11 +1920,72 @@ class Engine:
 
     def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
         """Feed a prompt to sequence `seq`; returns the logits after its last token
-        (prefill_chunks; chunk=1 runs token by token with the decode kernel)."""
+        (prefill_chunks; chunk=1 runs token by token with the decode kernel; layer_major:
+        prefill_layers)."""
+        if self.layer_major and seq == 0 and chunk is None:
+            return self.prefill_layers(tokens)
         logits = None
         for _, logits in self.prefill_chunks(tokens, seq, chunk):
             pass
         return logits
+
+    def prefill_layers(self, tokens) -> np.ndarray:
+        """A MoE model's prompt layer by layer (docs/offload.md, layer-major prefill): each
+        chunk of the image's prefill rows passes a layer before the next, in runs of
+        `layer_major` rows (the image's compile_layer_run: the first row's position and chunk
+        row as run arguments; a run stays in one attention block), so that the expert slots
+        serve one layer at a time; then the LM head of the last row. Runs of more than one row
+        start from the chunk's embedding rows (one embed run a token). Bit-identical to step()
+        token by token (the KV cache, the logits). Returns the logits after the last token."""
+        img, K, B, R = self.image, getattr(self.spec, "conv_k", 1), self.block, self.layer_major
+        self._drain()
+        tokens = [int(t) for t in tokens]
+        if self.pos + len(tokens) > self.cap:
+            raise RuntimeError("KV cache full")
+        part = []
+
+        def run(key, vals):
+            progs, ra, words = self._layer_run(key)
+            start = getattr(self.backend, "start", None)
+            if start is None:
+                self.stats.append(self.backend.run(progs, args=arg_words(ra, vals)))
+            else:                           # the board: the same words object again loads
+                start(progs if words is None else words,    # nothing (a layer's runs)
+                      args=arg_words(ra, vals))
+                self.stats.append(self.backend.wait())
+
+        for c0 in range(0, len(tokens), img.prefill_rows):
+            part, p0 = tokens[c0:c0 + img.prefill_rows], self.pos
+            if R > 1:
+                for i, t in enumerate(part):
+                    run((-1, (p0 + i) // B + 1, 1, True),
+                        dict(RunPos.values(t, p0 + i, K, B), row=i))
+            for li in range(self.spec.layers):
+                i = 0
+                while i < len(part):
+                    p = p0 + i
+                    n = min(R, len(part) - i, B - p % B)
+                    run((li, p // B + 1, n, R > 1),
+                        dict(RunPos.values(part[i], p, K, B), row=i))
+                    i += n
+            self.pos = p0 + len(part)
+        run("head", {"row": len(part) - 1})
+        io, S, v_loc = img.io, self.cfg.S, img.v_loc
+        return np.concatenate([self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc)
+                               .view(np.float32) for s in range(S)])
+
+    def _layer_run(self, key):
+        """prefill_layers' programs, compiled once: (layer (-1: the embed run), blocks, rows,
+        embedded) or "head" -> (programs, run_args, the program assembled for a backend that
+        runs words, else None)."""
+        if key not in self._layer_runs:
+            img = self.image
+            progs, ra = img.compile_prefill_head() if key == "head" else \
+                img.compile_layer_run(key[0], key[1], self.block, R=key[2], embedded=key[3])
+            words = np.asarray(I.assemble(progs[0]), np.uint32) \
+                if getattr(self.backend, "runs_words", False) else None
+            self._layer_runs[key] = (progs, ra, words)
+        return self._layer_runs[key]
 
     def step_batch(self, tokens) -> np.ndarray:
         """One token for each of the first len(tokens) sequences, each at its own next

@@ -10,7 +10,10 @@ WAITW host hook) and the card (BoardBackend.host: polled while a run is in fligh
 DRAM words (`Layout`), all 4-byte words at 64-byte aligned bases:
 
     mbox                   seq: the card's last request, as a float (0.0 before the first)
-    mbox + 64              the k global expert ids of request seq (floats)
+    mbox + 4               its count of ids, as a float (the card writes it with each request:
+                           k; a prefill run of R rows R k, repeats included, moe.moe_ffn_rows;
+                           0.0 is read as k)
+    mbox + 64              the global expert ids of request seq (floats)
     served                 the last request the host has finished, as a float
     dir + 8 * g            expert g's entry: {slot address (u32), present (f32: 1.0 or 0.0)}
 
@@ -325,7 +328,8 @@ class ExpertServer:
         """Serve the card's request if it posted one since the last served, else send a part of
         a hinted expert; returns 1 if it did either. The card's seq is read first, then the
         row."""
-        seq = int(np.frombuffer(bytes(self.mem.read(self.L.mbox, 4)), np.float32)[0])
+        seq, n = (int(v) for v in np.frombuffer(bytes(self.mem.read(self.L.mbox, 8)),
+                                                np.float32))
         t0 = time.perf_counter()
         if seq == self.seq:
             if not self.pending:
@@ -340,8 +344,9 @@ class ExpertServer:
         if seq != self.seq + 1:
             raise RuntimeError(f"the card posted request {seq} with {self.seq} served: its "
                                f"fence (WAITW served >= seq) is missing")
-        ids = [int(g) for g in np.frombuffer(bytes(self.mem.read(self.L.row, 4 * self.L.k)),
-                                             np.float32)]
+        n = n or self.L.k                   # (a multi-row request's count: its ids, repeats
+        ids = list(dict.fromkeys(int(g) for g in np.frombuffer(     # included, each served once)
+            bytes(self.mem.read(self.L.row, 4 * n)), np.float32)))
         G = self.L.E * self.L.layers
         m0 = self.misses
         if ids[0] >= G:

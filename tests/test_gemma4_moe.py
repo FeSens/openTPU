@@ -281,6 +281,65 @@ def test_moe_resident_and_the_card_loop(moe):
     assert c.server.misses > misses
 
 
+@pytest.mark.parametrize("wf,R", [("int8", 1), ("fp4", 1), ("fp4", 2), ("int8", 4)])
+def test_moe_layer_major_prefill_is_bit_exact(moe, wf, R, monkeypatch):
+    """The prompt layer by layer (Engine.prefill_layers: every row of a chunk through a layer
+    before the next, in runs of R rows at their run-time position and chunk row; R > 1: the
+    MoE block moe.moe_ffn_rows, one request for the run's rows) gives the logits and the KV
+    cache of token-by-token runs bit for bit, with as few slots per layer as a run's union
+    can need: chunks of 100 rows, the last crossing an attention bucket (runs split at the
+    block's end); then the next decode steps."""
+    monkeypatch.setattr(G, "PREFILL_CHUNK", 100)
+    toks = [int(t) for t in np.random.default_rng(7).integers(0, 1000, 262)]
+    slots = min(8, R * K)
+    a = _moe_engine(moe, wformat=wf, experts=slots, layer_major=R)
+    b = _moe_engine(moe, wformat=wf, experts=slots)
+    assert a.image.prefill_rows == 100
+    la, lb = a.prefill(toks), b.prefill(toks)
+    assert a.pos == b.pos == len(toks)
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    img = a.image
+    assert np.array_equal(a.backend.machine.slices[0].dram[img.layer0:img.head[0]],
+                          b.backend.machine.slices[0].dram[img.layer0:img.head[0]])
+    assert a.server.misses > 0 or slots == 8          # (R = 4: every expert in a slot)
+    t = int(np.argmax(la))
+    for _ in range(3):
+        ga, gb = a.step(t), b.step(t)
+        assert np.array_equal(ga.view(np.uint32), gb.view(np.uint32))
+        t = int(np.argmax(ga))
+
+
+def test_moe_layer_major_prefill_on_a_live_card(moe):
+    """Layer-major prefill through the card's driver (BoardBackend: each run started with its
+    arguments; a layer's program assembled once and loaded once a chunk, its runs starting the
+    program already in IMEM) beside a card that computes while the host serves
+    (tests/test_lfm2_moe.py's _LiveCard): R = 2 with 2k slots per layer, 21 rows (each layer's
+    last run one row), the misses served during the runs, gives the ISA simulator's
+    token-by-token logits bit for bit."""
+    from test_lfm2_moe import _LiveCard
+    from opentpu.host.board import BoardBackend
+    _, W, spec = moe
+    cfg = _cfg()
+    card = _LiveCard.make(cfg)
+    kw = dict(cap=1024, cfg=cfg, rows=1, resident=True, experts=2 * K)
+    isa = Engine(spec, W, **kw)
+    brd = Engine(spec, W, **kw, layer_major=2,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card))
+    loads, load = [], brd.backend.board.load_program
+    brd.backend.board.load_program = lambda a, w: (loads.append(len(w)), load(a, w))
+    toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 21)]
+    la, lb = isa.prefill(toks), brd.prefill(toks)
+    assert card.error is None, card.error
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    assert brd.server.misses > 0 and card.waits > 0
+    assert len(loads) == 2 * spec.layers + 2        # the embed run's, each layer's two
+                                                    # (2 rows, then 1), the head's
+    t = int(np.argmax(la))
+    a, b = isa.step(t), brd.step(t)
+    assert card.error is None, card.error
+    assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
+
+
 def test_moe_lfu_policy_is_bit_exact(moe):
     """The slots replaced by least decayed use (moe.serve's default, ExpertServer policy "lfu")
     or by LRU, 4 slots of 8 per layer: other misses, the full cache's logits bit for bit."""

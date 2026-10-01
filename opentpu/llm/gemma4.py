@@ -87,8 +87,9 @@ from . import formats as FM
 from . import generate as G
 from . import moe as MO
 from .lfm2 import plan
-from ..host.offload import BackendDram, ExpertServer, Layout, RowLayout, RowServer
-from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, _Bump, _lm_head, _lm_head_rows, _qdesc, _tdesc)
+from ..host.offload import LINE, BackendDram, ExpertServer, Layout, RowLayout, RowServer
+from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, RunPos, _Bump, _lm_head, _lm_head_rows, _qdesc,
+                    _tdesc)
 
 SLIDE, FULL = "sliding", "full"
 
@@ -235,9 +236,11 @@ class Spec:
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
               ple_format: str | None = None, ple_host: bool | None = None,
-              formats: str | None = None, experts: int | None = None) -> "Image":
+              formats: str | None = None, experts: int | None = None,
+              prefill_rows: int | None = None) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, ple_format,
-                     ple_host=ple_host, formats=formats, experts=experts)
+                     ple_host=ple_host, formats=formats, experts=experts,
+                     prefill_rows=prefill_rows)
 
     def truncated(self, layers) -> "Spec":
         """A model of some of the checkpoint's layers (in order): each shared layer attends to
@@ -612,6 +615,8 @@ CARD_BYTES = 1 << 32    # the card's DRAM: the PLE table's place and the formats
 PLE_CHUNK = 8192        # PLE records quantized per pass (host memory)
 BIG = 2.0 ** 100        # (tpos + 0.5 - c) * BIG * BIG: +-inf, the run-time mask rows
 MLP_CHUNK = 768         # the MLP's F chunk at most: 4 prefill rows' gate / up in flight fit TMEM
+PREFILL_CHUNK = 512     # a MoE model's layer-major prefill: prompt rows a chunk (Image's xbuf)
+RUN_ROWS = 4            # and at most rows a run (its mask rows; moe_ffn_rows' request: R k ids)
 
 
 def _mlp_chunk(f: int, D: int, q: int) -> int:
@@ -734,7 +739,7 @@ class Image:
                  wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
                  ple_format: str | None = None, block: int = ATTN_BLOCK,
                  ple_host: bool | None = None, formats: str | None = None,
-                 experts: int | None = None):
+                 experts: int | None = None, prefill_rows: int | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Gemma 4 runs one sequence: batch=1")
@@ -797,13 +802,21 @@ class Image:
         self.ple_rec = GA.record_bytes(self.ple_S, ple_format, D) if P else 0
         b = _Bump()
         R = rows
+        # the layer-major prefill's rows a chunk (a MoE model's: compile_layer_run)
+        self.prefill_rows = (PREFILL_CHUNK if spec.experts else 0) if prefill_rows is None \
+            else prefill_rows
+        mr = RUN_ROWS if self.prefill_rows else 1       # mask rows: a pair for each run row
         self.io = {"x": b.alloc(4 * H * R), "pe": b.alloc(4 * self.ple_S * D * R),
                    "rope": b.alloc(4 * self.rw * R), "gf": b.alloc(4 * H),
                    "logits": b.alloc(4 * spec.vocab * R), "pli": b.alloc(4 * R * L * P),
-                   "mask": b.alloc(4 * 2 * block), "z2": b.alloc(4 * 2 * block),
+                   "mask": b.alloc(4 * 2 * block * mr), "z2": b.alloc(4 * 2 * block),
                    "g_pln": b.alloc(4 * P)}
         if self.ple_host:           # the generate loop's requests for the next token's record
             self.io["ple_mbox"] = b.alloc(RowLayout.WORDS)
+        if self.prefill_rows:       # its residual stream, and moe_ffn_rows' outputs (a
+            self.io["xbuf"] = b.alloc(4 * H * self.prefill_rows)     # request's ids and a sink)
+            if spec.experts:
+                self.io["moe_scratch"] = b.alloc(4 * H * (LINE // 4 + 1))
         self.wproj = (b.alloc(L * P * rb(H, self.pformat)), b.alloc(4 * L * P * (H // D))) \
             if P else None
         # layer blocks: one layout per key
@@ -1085,6 +1098,39 @@ class Image:
                                             "block": block})
         return [b.finish()], list(b.run_args)
 
+    def compile_layer_run(self, li: int, blocks: int, block: int = ATTN_BLOCK, R: int = 1,
+                          embedded: bool = False):
+        """(programs, run_args): gemma4_layer_run of layer li, R rows at a run-time position of
+        bucket `blocks` and a run-time row of the prefill chunk (run arguments: RunPos.values
+        and "row"); li < 0: gemma4_embed_run. The image needs lookup tables and its prefill
+        rows."""
+        from ..compiler import RunVar
+        from .qwen3 import RunPos
+        if not self.lookup or not self.prefill_rows:
+            raise ValueError("a layer run needs lookup tables and the image's prefill rows")
+        if block != self.block:
+            raise ValueError(f"the image is laid out for attention blocks of {self.block}")
+        if not 1 <= R <= RUN_ROWS or R * (self.spec.top_k or 1) > LINE // 4:
+            raise ValueError(f"{R} rows a layer run")
+        rp = RunPos(blocks, block, (blocks - 1) * block, 0, self.cap)
+        rp.tpos.bound -= R - 1          # the run's last row in the block too: tpos <= block - R
+        row = RunVar("row", self.prefill_rows)
+        if li < 0:
+            b = gemma4_embed_run.trace(self.cfg, 0, {"m": self.descriptors(0), "pos": rp,
+                                                     "row": row})
+        else:
+            b = gemma4_layer_run.trace(self.cfg, 0, {"m": self.descriptors(0), "li": li,
+                                                     "pos": rp, "row": row, "block": block,
+                                                     "R": R, "embedded": embedded})
+        return [b.finish()], list(b.run_args)
+
+    def compile_prefill_head(self):
+        """(programs, run_args): gemma4_prefill_head at a run-time row ("row")."""
+        from ..compiler import RunVar
+        b = gemma4_prefill_head.trace(self.cfg, 0, {"m": self.descriptors(0),
+                                                    "row": RunVar("row", self.prefill_rows)})
+        return [b.finish()], list(b.run_args)
+
     def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
                          chain: bool = True, samp=None, debug: bool = False,
                          part: int | None = None) -> list:
@@ -1194,6 +1240,7 @@ class Image:
             logitsr=_tdesc(self.io["logits"], (R, spec.vocab)),
             pli=_tdesc(self.io["pli"], (R, L, P)),
             mask=_tdesc(self.io["mask"], (2, self.block)), z2=self.io["z2"],
+            xbuf=_tdesc(self.io["xbuf"], (self.prefill_rows, H)) if self.prefill_rows else None,
             wproj=_qdesc(*self.wproj, L * P, H, D, self.pformat) if P else None,
             head=_qdesc(*self.head, spec.vocab, H, D, self.head_format), v_loc=spec.vocab,
             ple=QTensor(Affine(self.ple), Affine(self.ple + self.ple_S * (
@@ -1214,7 +1261,8 @@ class Image:
         ns.moe_dev = None
         if self.offload is not None:
             Lo = self.offload
-            ns.moe_dev = SimpleNamespace(mbox=Lo.mbox, served=Lo.served, dir=Lo.dir, fmt=self.fmt)
+            ns.moe_dev = SimpleNamespace(mbox=Lo.mbox, served=Lo.served, dir=Lo.dir, fmt=self.fmt,
+                                         scratch=self.io.get("moe_scratch"))
         return ns
 
     def _unit(self, li) -> int:
@@ -1326,19 +1374,20 @@ def _slide_seq(m, p, block: int):
     from .qwen3 import RunPos
     nw, nr = m.spec.window // block, m.ring // block
     run = isinstance(p, RunPos)
+    mb = m.mask.base + 4 * 2 * block * getattr(p, "row", 0)  # its mask pair (a run's row)
     B = p.blocks if run else p // block + 1         # the position's block + 1
     if B <= nw:                                     # the window reaches position 0
         if not run:
             return p + 1
         return Blocks([(i * block, block, None) for i in range(B - 1)] +
-                      [((B - 1) * block, block, Tensor(m.mask.base, (block,), (1,)))])
+                      [((B - 1) * block, block, Tensor(mb, (block,), (1,)))])
     t = None if run else p % block
-    start = Tensor(m.mask.base + 4 * block, (block,), (1,)) if run else \
+    start = Tensor(mb + 4 * block, (block,), (1,)) if run else \
         Tensor(Affine(m.z2 + 4 * (block - 1 - t)), (block,), (1,))
     items = [(((B - 1 - nw) % nr) * block, block, start)]
     items += [(((B - 1 - nw + j) % nr) * block, block, None) for j in range(1, nw)]
     e = ((B - 1) % nr) * block
-    items.append((e, block, Tensor(m.mask.base, (block,), (1,))) if run else (e, t + 1, None))
+    items.append((e, block, Tensor(mb, (block,), (1,))) if run else (e, t + 1, None))
     return Blocks(items)
 
 
@@ -1347,7 +1396,8 @@ def _full_seq(m, p, block: int):
     qwen3's bucket, its last block masked by the step's end-mask row."""
     from .qwen3 import RunPos
     if isinstance(p, RunPos):
-        return Bucket(p.blocks, m.mask.base - 4 * (p.blocks - 1) * block)
+        return Bucket(p.blocks, m.mask.base + 4 * 2 * block * getattr(p, "row", 0)
+                      - 4 * (p.blocks - 1) * block)
     return p + 1
 
 
@@ -1448,8 +1498,12 @@ def _mlp(x, lw, spec, m=None):
         def beside():
             out["y"] = dense()
 
-        acc = MO.moe_ffn(x, lw, spec.moe, m.moe_dev, spec.eps, beside=beside, residual=False,
-                         y_first=True)          # (26B: [8, 2816] in a fragmented TMEM)
+        if x.rows == 1:
+            acc = MO.moe_ffn(x, lw, spec.moe, m.moe_dev, spec.eps, beside=beside,
+                             residual=False, y_first=True)   # (26B: [8, 2816] in a fragmented
+        else:                                                # TMEM)
+            acc = MO.moe_ffn_rows(x, lw, spec.moe, m.moe_dev, spec.eps, beside=beside,
+                                  residual=False)
         y = rmsnorm(out.pop("y"), ol.load(lw.g_f1), spec.eps) + \
             rmsnorm(acc, ol.load(lw.g_f2), spec.eps)
         del acc
@@ -1509,13 +1563,31 @@ def _gathered(m, pos):
         GA.gather_record(op(m.ple_format), m.ple, 0 if m.ple_host else pos.tok, m.ple_format,
                          m.S).reshape(1, m.S * D)       # ple_host: the slot's row
     ops.clear()
-    ropes = ol.load(m.rope_t[pos.pos:pos.pos + 1, :])       # [1, rw]
-    tp = ol.load(m.iota[pos.tpos:pos.tpos + 1])             # [1]: tpos as a float
-    end = ((tp - ol.load(m.iota)) + 0.5) * BIG * BIG        # +inf where c <= tpos
-    ol.store(m.mask[0, :], end)
-    ol.store(m.mask[1, :], end * -1.0)
-    del end
-    return e.reshape(1, H), pe, ropes
+    return e.reshape(1, H), pe, _pos_rows(m, pos)
+
+
+def _pos_rows(m, pos, R: int = 1):
+    """At a run-time position: the RoPE rows [R, rw] of it and the R - 1 after it (in its
+    attention block), and each one's mask rows -> its pair of m.mask's rows (end: +inf where
+    the block's token <= tpos; start: the opposite)."""
+    ropes = ol.load(m.rope_t[pos.pos:pos.pos + R, :])       # [R, rw]
+    for r in range(R):
+        tp = ol.load(m.iota[pos.tpos + r:pos.tpos + r + 1])     # [1]: tpos + r as a float
+        end = ((tp - ol.load(m.iota)) + 0.5) * BIG * BIG    # +inf where c <= tpos + r
+        mb = m.mask.base + 4 * 2 * m.block * r
+        ol.store(Tensor(mb, (m.block,), (1,)), end)
+        ol.store(Tensor(mb + 4 * m.block, (m.block,), (1,)), end * -1.0)
+        del end
+    return ropes
+
+
+class _RowPos(RunPos):
+    """Row r of a layer run of R rows at a run-time position (qwen3.RunPos): position pos + r,
+    in the same attention block; its mask rows are m.mask's pair r (_pos_rows)."""
+
+    def __init__(self, rp: RunPos, r: int):     # (not RunPos's: the same run-time values)
+        self.blocks, self.block, self.lo, self.t0 = rp.blocks, rp.block, rp.lo, rp.t0
+        self.tpos, self.pos, self.bucket, self.row = rp.tpos + r, rp.pos + r, None, r
 
 
 def _gathered_rows(m, tokens):
@@ -1590,3 +1662,46 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
         _lm_head(x, m, spec)            # a sampler's sink gets the capped logits (spec.softcap)
     elif logit_rows:
         _lm_head_rows(x, m, spec, list(logit_rows))
+
+
+@ol.jit
+def gemma4_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
+                     embedded: bool = False):
+    """Layer-major prefill (a MoE model's: the whole prompt chunk through a layer before the
+    next, so that the expert cache serves one layer at a time): the R prompt rows from `row`
+    (a run-time value) at the run-time positions pos .. pos + R - 1 (qwen3.RunPos; in one
+    attention block) through layer li alone. Their input is the chunk's residual stream rows
+    m.xbuf[row:row + R] (layer 0 of a one-row run unless `embedded`: the token's embedding row,
+    gathered at pos.tok; else gemma4_embed_run's), their output goes back there; the MoE block
+    of more than one row is moe.moe_ffn_rows. A row's arithmetic is gemma4_step's at its
+    RunPos, so the chunk layer by layer leaves the KV cache and residual rows the per-position
+    programs make, bit for bit."""
+    spec = m.spec
+    if spec.ple_dim:
+        raise ValueError("layer-major prefill: a model without per-layer inputs")
+    if R == 1 and li == 0 and not embedded:
+        e, _, ropes = _gathered(m, pos)
+        x = e * math.sqrt(spec.hidden)
+        del e
+    else:
+        ropes = _pos_rows(m, pos, R)
+        x = ol.load(m.xbuf[row:row + R, :])
+    lw = m.layer(li)
+    _attention(x, lw, m, pos if R == 1 else [_RowPos(pos, r) for r in range(R)], ropes, block)
+    _mlp(x, lw, spec, m)
+    ol.store(m.xbuf[row:row + R, :], x)
+
+
+@ol.jit
+def gemma4_embed_run(m, pos, row):
+    """A layer-major prefill's input row (runs of more than one row): the token's embedding row
+    (gathered at pos.tok) times sqrt(H) -> m.xbuf[row], as gemma4_step's."""
+    e, _, _ = _gathered(m, pos)
+    ol.store(m.xbuf[row:row + 1, :], e * math.sqrt(m.spec.hidden))
+
+
+@ol.jit
+def gemma4_prefill_head(m, row):
+    """After a layer-major prefill's last layer: the final norm and the LM head of the residual
+    stream row m.xbuf[row] (a run-time value) -> m.logits, as gemma4_step's."""
+    _lm_head(ol.load(m.xbuf[row:row + 1, :]), m, m.spec)
