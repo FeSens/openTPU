@@ -53,7 +53,8 @@ host fp4 kernel.
   - Prefetch from router predictions is at best neutral (Qwen3.5 at Gen2) under LRU slots.
     Otherwise it loses 1-14% with the prediction's k best, and more with its 2k best: cache
     pollution, plus the link and DRAM time of wrong guesses. With the slots by decayed use
-    the k best pay on Qwen3.5-35B-A3B, +3-6.5% (section 12, built).
+    the model gives the k best +3-6.5% on Qwen3.5-35B-A3B, but as built they lost 5% on the
+    card (section 12.5); they are off by default.
   - 4-bit experts are worth 2.3-2.9x over int8.
   - Request and flag latency (10-100 us) moves results by under 1%.
 - **Design (section 5).** One new instruction, `WAITW` (wait on a DRAM word), agreed with
@@ -654,9 +655,10 @@ PLE records:
 - Qwen3.5-35B-A3B at the board's 4 GiB: 34-35 slots a layer fit with the table on the card,
   42 (1680) with it on the host (cap 512-4096). The model of section 10.3 (decayed use, Gen1)
   gives 4.41 tok/s at 1560 slots and 4.45 at 1600, against 4.15 at the card runs' 1280
-  (*projection*). Its programs change (the gather's wait and the
-  post); every other model's are the same (sha256: E2B, E4B, LFM2.5-8B-A1B, the tiny MoEs;
-  the 35B with `embed_host=False`).
+  (*projection*). On the card (session 5, section 12.5): 4.23 / 4.33 tok/s wall / device and
+  79.2 misses a decode token, against 3.95 / 4.04 and 93.5 at session 4's 32 slots. Its
+  programs change (the gather's wait and the post); every other model's are the same (sha256:
+  E2B, E4B, LFM2.5-8B-A1B, the tiny MoEs; the 35B with `embed_host=False`).
 - Tests: tests/test_qwen35_moe.py (prefill, the generate loop and the resident steps bit for
   bit against the table on the card; the live fake card with both servers through one
   `BoardDram`), test_lfm2_moe.py (the generate loop), test_qwen3.py (a dense model moved to
@@ -1211,8 +1213,8 @@ Section 5.4 measured prefetch not to pay under LRU slots. With the slots replace
 use (section 5.5), one variant does: before its mixer, each MoE layer runs its router on the
 layer's input (`pre`, section 3) and posts the k best as a hint. The host moves the missing
 ones on the link's idle time. The card then routes as before, and the experts it names are on
-their way, or in, by the time it asks. `MoESpec.hint`: on for Qwen3.5-MoE (`Spec.from_hf`),
-off for the others.
+their way, or in, by the time it asks. `MoESpec.hint` turns them on (`moe_card.py --hints
+on`). They are off by default: on the card they lost 5% (section 12.5).
 
 ### 12.1 What it buys
 
@@ -1309,5 +1311,32 @@ byte (BoardDram's one queue).
   host: one BoardDram for the experts and the rows, 64 KiB parts) the hinted experts land on
   idle polls (84 hints, 102 landed, 4 misses against 101 without hints), and the logits and
   tokens are the ISA simulator's with the table on the card and no hints.
-- On the card: not yet. The plan is a session with the 35B, 16 tokens, by decayed use, with and
-  without hints (`moe_card.py --hints on|off`; expect +5-6% at Gen1).
+- `test_hints_are_off_by_default`: `Spec.from_hf`'s programs are those of `hint=False`. The
+  35B's default program is the one with the table on the host and no hints (sha256
+  862438adb0e68f58).
+
+### 12.5 On the card: session 5
+
+Card session 5 (2026-10-01, production build B, Gen1): the 35B, 16 tokens, slots by decayed use
+filling the DRAM, the full pool (all 10240 experts) in the split format. Each run gave the ISA
+simulator's tokens and prefill logits bit for bit (`q35ref16`).
+
+| run | slots a layer | tok/s wall / device | misses a decode token (2nd half) | MB a decode token |
+|:--|--:|--:|--:|--:|
+| session 4: table on the card, 32 slots | 32 | 3.95 / 4.04 | 93.5 (106.6) | 147 |
+| table on the card | 34 | 3.24 / 3.29 (cold page cache) | 89.5 (101.9) | 147 |
+| table on the host (5.9) | 42 | **4.23 / 4.33** | 79.2 (89.9) | 130 |
+| table on the host, hints | 42 | 4.02 / 4.11 | 79.8 (90.8) | 152 |
+
+- The table-on-the-card run had a cold pool: 12.3 of the pool's 17.1 GB were in the page cache at
+  open, right after the pool's fill. Its staging took 1.72 s against session 4's 0.68 s. The
+  card scripts now read the pool before each timed run and log its residency.
+- The hints named the right experts, but too late. Of the hinted experts not in a slot, 474
+  landed on idle polls before their request, 3112 were sent only when the request named them,
+  and 629 were replaced before they landed; 77% of the misses had been hinted. The wrong hints
+  added 22 MB a token on the link. The model's gain needs the link idle between a hint and its
+  request; on the card there is little, and the oldest pending expert (often another layer's
+  unrequested hint) goes first.
+- So hints are off by default. Two host-side variants are next: a request withdrawing its
+  layer's hinted experts it does not name, and 128 KiB parts. They come back on only when one
+  beats the table on the host without hints on the card.

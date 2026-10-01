@@ -83,6 +83,7 @@ from ..kernels import mailbox as MB
 from ..kernels.attention import Blocks, Bucket, _attend_heads
 from ..kernels.lib import gelu_tanh, rmsnorm, rope
 from ..kernels.mlp import _chunk, swiglu_down
+from . import formats as FM
 from . import generate as G
 from . import moe as MO
 from .lfm2 import plan
@@ -659,41 +660,22 @@ def layer_formats(spec: Spec, wformat: str, formats: str | None = None) -> tuple
     gateup, down, ple (a layer's PLE gate and projection; without a range, the PLE projection
     too), head (no range) and experts (expert_format). docs/gemma4_e4b.md."""
     rules = _format_rules(spec, formats)
-
-    def get(kind, c, default):
-        hit = sorted((not r, i) for i, (k, lo, hi, r, _) in enumerate(rules)
-                     if k == kind and lo <= c <= hi)
-        return rules[hit[0][1]][4] if hit else default
-
     lf = []
     for i in range(spec.layers):
         c = spec.src(i)
-        mlp = get("mlp", c, wformat)
-        lf.append((get("attn", c, wformat), get("gateup", c, mlp), get("down", c, mlp),
-                   get("ple", c, wformat)))
-    plain = {r[0]: r[4] for r in reversed(rules) if not r[3]}
+        mlp = FM.pick(rules, "mlp", c, wformat)
+        lf.append((FM.pick(rules, "attn", c, wformat), FM.pick(rules, "gateup", c, mlp),
+                   FM.pick(rules, "down", c, mlp), FM.pick(rules, "ple", c, wformat)))
+    plain = FM.plain(rules)
     return tuple(lf), plain.get("ple", wformat), plain.get("head")
 
 
+KINDS = ("attn", "mlp", "gateup", "down", "ple", "head", "experts")     # formats.rules' kinds
+
+
 def _format_rules(spec: Spec, formats: str | None) -> list:
-    """layer_formats' rules: (kind, first, last, ranged, format)."""
-    import os
-    if formats is None:
-        formats = os.environ.get("OTPU_FORMATS", spec.formats)
-    rules = []
-    for item in formats.replace(" ", "").split(","):
-        if not item:
-            continue
-        key, _, fmt = item.partition("=")
-        kind, _, span = key.partition("@")
-        lo, _, hi = span.partition("-")
-        if kind not in ("attn", "mlp", "gateup", "down", "ple", "head", "experts") or \
-                fmt not in ("int8", "int4", "fp4") or (span and not (lo + hi).isdigit()) or \
-                (span and kind == "head"):
-            raise ValueError(f"weight format {item!r}: kind[@a-b]=int8|int4|fp4")
-        rules.append((kind, int(lo) if span else 0, int(hi or lo) if span else 1 << 30,
-                      bool(span), fmt))
-    return rules
+    """layer_formats' rules: (kind, first, last, ranged, format); opentpu/llm/formats.py."""
+    return FM.rules(formats, KINDS, spec.formats)
 
 
 def expert_format(spec: Spec, wformat: str, formats: str | None = None) -> str:

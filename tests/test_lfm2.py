@@ -80,6 +80,31 @@ def test_tiny_fp4_follows_emulation(tiny):
     assert _cos(dev, emulated_logits(spec, W, toks, wformat="fp4")).min() > 0.9995
 
 
+def test_tiny_formats_per_kind(tiny, monkeypatch):
+    """Weight formats per kind (as test_llama's), the convolutions' in / out projections a
+    kind of their own: the device follows the emulation of the same formats; resident decode
+    (its own int8 embedding table beside the fp4 head) and a chunked prefill give
+    token-by-token decoding's logits bit for bit."""
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    _, W, spec = tiny
+    mix = dataclasses.replace(spec, formats="conv=fp4,attn=int4,down=fp4,head=fp4")
+    a = Engine(mix, W, cap=256)
+    assert a.image.mf == dict(win="fp4", wout="fp4", wq="int4", wk="int4", wv="int4",
+                              wo="int4", wg="int8", wu="int8", wd="fp4")
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 12)]
+    dev = np.array([a.step(t) for t in toks])
+    emu, e8 = emulated_logits(mix, W, toks), emulated_logits(spec, W, toks)
+    assert _cos(dev, emu).min() > 0.9995
+    assert np.abs(dev - emu).mean() < 0.7 * np.abs(dev - e8).mean()
+    r, b = Engine(mix, W, cap=256, resident=True), Engine(mix, W, cap=256)
+    assert r.resident
+    for t, want in zip(toks[:4], dev):
+        assert np.array_equal(r.step(t).view(np.uint32), want.view(np.uint32))
+    assert np.array_equal(b.prefill(toks, chunk=4).view(np.uint32), dev[-1].view(np.uint32))
+    with pytest.raises(ValueError, match="weight formats"):
+        spec.image(board_config(DRAM_BYTES=1 << 26), 256, formats="conv@0=fp4")
+
+
 def test_tiny_reset_reuses_cache_and_conv_state(tiny):
     """After reset, positions 0 and 1 must not read the previous sequence's conv state."""
     _, W, spec = tiny
@@ -191,13 +216,16 @@ def test_tiny_mlp_loop_on_rtl(tiny_wide, have_verilator, monkeypatch):
         assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])
 
 
-@pytest.mark.parametrize("resident", [False, True])
-def test_tiny_lfm2_on_board_model(tiny, have_verilator, resident):
+@pytest.mark.parametrize("resident,formats", [(False, ""), (True, ""),
+                                             (True, "conv=fp4,attn=int4,down=fp4")])
+def test_tiny_lfm2_on_board_model(tiny, have_verilator, resident, formats):
     """The board model through the host driver, through a full turn of the conv state ring:
     logits bit-identical to the ISA simulator. Resident: from position 2 on one program takes
-    the token and position in the ARG registers (CAPS bit25)."""
+    the token and position in the ARG registers (CAPS bit25). formats: per-kind weight formats
+    (int8, fp4 and int4 MMs in one model)."""
     from opentpu.host.board import Board, BoardBackend, SimTransport
     _, W, spec = tiny
+    spec = dataclasses.replace(spec, formats=formats)
     cfg = board_config(DRAM_BYTES=1 << 23)
     isa = Engine(spec, W, cap=256, cfg=cfg)
     tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)

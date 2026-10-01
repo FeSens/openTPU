@@ -34,6 +34,25 @@ operating point. Measured on omarchy, main 16e578c:
 
 Cycles per run; the factor is against the decode step.
 
+Measured later, for phase 0 (section 7.1), on main c2d2975 (the pipelined rows kernel with
+its fused VOPs). The 4B's full image overflows the LiteDRAM model, so its numbers are from 4-
+and 8-layer runs, extrapolated to 32 layers (each 4 layers is three DeltaNet and one
+attention). Those runs take 7,429,621 and 9,524,096 cycles at R = 1, and 7,593,481 and
+9,845,932 at R = 2. The extrapolated 6.0 tok/s is within 3% of the card's 5.88.
+
+| model | decode step (R = 1) | R = 2 |
+|---|---|---|
+| Qwen3.5-0.8B | 4,943,542 | 5,962,906 (1.21x) |
+| Qwen3.5-2B | 10,740,340 (12.4 tok/s) | 11,327,655 (1.055x) |
+| Qwen3.5-4B | 22,090,946 (6.0 tok/s) | 23,360,638 (1.057x) |
+| SmolLM3-3B | 14,840,079 (9.0 tok/s) | 15,400,586 (1.038x) |
+| LFM2-2.6B | 11,893,504 (11.2 tok/s) | 12,141,498 (1.021x) |
+
+The 2B has the same 16 DeltaNet heads as the 0.8B, so the same per-row DSTEP and VPU work, but
+about 2.2x the weights. The MXU still bounds its 2-row run. The 4B has 32 DeltaNet value heads
+and 32 layers. Its second row costs 2.2x the 2B's (1.27 M against 0.59 M cycles), but its
+decode step grows 2.1x as well, so its c_2 is the 2B's.
+
 What sets these costs:
 
 - **Two rows ride free on the weights; three do not.** fp4 MMs run at full rate through column
@@ -391,9 +410,9 @@ By prompt kind, 32K head, greedy (0.8B / 2B / 4B):
 - code: 0.87, 1.49x / 0.88, 1.49x / 0.89, 1.50x;
 - summaries: 0.68, 1.32x / 0.70, 1.37x / 0.70, 1.34x.
 
-The 2B and 4B columns use the 0.8B's c_2 and c_draft. A bigger model's MTP layer and draft
-head are a smaller share of its token, so their c_draft is lower; their c_2 is not
-measured.
+The 2B and 4B columns use the 0.8B's c_2 (1.21) and c_draft. Their own c_2 is lower (section
+1: 1.055 for the 2B, 1.057 for the 4B), so their real gain is larger; the ranking at the end
+of this section uses it.
 
 **n-gram, 3>2** (all nine prompts; greedy / sampled):
 
@@ -437,14 +456,59 @@ What follows:
 - **Caveats:**
   - The float model stands in for the card's fp4 one.
   - Nine prompts give a few hundred drafts per kind.
-  - c_2 is measured only for Qwen3.5-0.8B, Qwen3 and LFM2.5.
+  - The tables above use c_2 = 1.21 for every model. The ranking below uses each model's own,
+    where section 1 measures it.
+
+**What to build, ranked, with the card's tok/s.** Each model at its own c_2 (section 1; 1.21
+where it is not measured). The MTP's c_draft is its layer plus the 32K fp4 head, as a share of
+that model's token: 0.05 for the 0.8B and 2B, 0.04 for the 4B. "Today" is the card's device
+tok/s with 4-bit weights and the int8 head (README, production build B).
+
+| model | drafter | c_2 | today | greedy | sampled |
+|---|---|---|---|---|---|
+| Qwen3.5-2B | MTP, 32K fp4 head | 1.055 | 12.09 tok/s | 1.57x, 19.0 tok/s | 1.55x, 18.7 tok/s |
+| Qwen3.5-4B | MTP, 32K fp4 head | 1.057 | 5.88 tok/s | 1.59x, 9.4 tok/s | not run |
+| Qwen3.5-0.8B | MTP, 32K fp4 head | 1.21 | 24.5 tok/s | 1.36x, 33.3 tok/s | 1.32x, 32.3 tok/s |
+| SmolLM3-3B | n-gram 3>2 | 1.038 | 8.74 tok/s | 1.08x, 9.4 tok/s | 1.08x, 9.4 tok/s |
+| LFM2-2.6B | n-gram 3>2 | 1.021 | 10.96 tok/s | 1.07x, 11.7 tok/s | 1.06x, 11.6 tok/s |
+| Qwen3-0.6B | n-gram 3>2 | 1.16 | 31.3 tok/s | 1.10x, 34.4 tok/s | 1.10x, 34.4 tok/s |
+| LFM2.5-230M | n-gram 3>2 | 1.09 | 85.8 tok/s | 1.07x, 91.8 tok/s | 1.06x, 90.9 tok/s |
+| Gemma 4 E2B (pre-trained) | n-gram 3>2 | 1.21 (not measured) | 9.6 tok/s | 1.23x, 11.8 tok/s | 1.09x, 10.5 tok/s |
+
+**n-gram with a g = 1 fallback ("3>2>1").** Where neither g = 3 nor g = 2 matches, the token
+after the latest earlier copy of the last token still makes a draft. It is accepted only 0.16-
+0.26 of the time. But a 2-row run costs just c_2 - 1 more than a plain step, so the draft pays
+where that is well below its acceptance. These numbers are greedy only. The study's ids give
+greedy acceptance for any drafter (the next id), but sampled acceptance would need a rerun.
+
+| model | c_2 | 3>2, greedy | 3>2>1, greedy | tok/s |
+|---|---|---|---|---|
+| LFM2-2.6B | 1.021 | 1.07x | 1.13x | 12.4 |
+| SmolLM3-3B | 1.038 | 1.08x | 1.13x | 9.9 |
+| Qwen3-0.6B | 1.16 | 1.10x | 1.12x | 35.1 |
+| LFM2.5-230M | 1.09 | 1.07x | 1.10x | 94.5 |
+| Gemma 4 E2B (pre-trained) | 1.21 | 1.23x | 1.23x | 11.8 |
+| Qwen3.5-0.8B (MTP's model) | 1.21 | 1.07x | 1.06x | - |
+
+1. **The verify, accept and roll-back machinery** (plan items 2 and 5) comes first. Both
+   drafters need it.
+2. **MTP for Qwen3.5** (plan item 3) is the payoff: 1.3-1.6x. It needs the one RTL item,
+   DSTEP / STREAM with dst != src, for the DeltaNet state's per-row slots (section 4).
+3. **n-gram for the other models** is the generic fallback: 1.06-1.10x on chat checkpoints
+   with g = 3 and 2. Falling back to g = 1 gives 1.10-1.13x greedy where c_2 is at most about
+   1.16. The g = 1 fallback is chosen per model by its c_2. It needs no hardware change: those
+   models have no DeltaNet state, and their KV caches and LFM2's conv ring need no copies
+   (section 4). That makes it a software feature on today's bitstream, and a natural first
+   drafter for testing the machinery.
 
 ## 8. Plan
 
 0. **Acceptance study, no card:** done (section 7.1, `tools/mtp_accept.py`).
    - Qwen3.5's MTP head with a 32K fp4 draft head: accepted 0.73 / 0.67 (0.8B, greedy /
-     sampled), 1.36x / 1.32x at c_2 = 1.21. The 2B is about the same.
-   - n-gram for the other models: 1.03-1.09x.
+     sampled), 1.36x / 1.32x at c_2 = 1.21. At their own c_2 the 2B gets 1.57x greedy and the
+     4B 1.59x.
+   - n-gram for the other models: 1.03-1.09x at c_2 = 1.21. At their own c_2 it gives
+     1.06-1.10x, and 1.10-1.13x greedy with the g = 1 fallback.
 1. **The rows kernel's DSTEP overlap for Qwen3.5** (section 1): done. `_rows_pipelined` runs
    two pairs ahead, as `_deltanet_dstep` does: the 2-row run -1.9% (1.21x), prefill -2.2% at
    6 rows. The rest is the stream engine's work (section 1).
@@ -481,9 +545,13 @@ What follows:
   - the MTP layer has its own KV cache and its own `mtp.norm`.
   **Still to check against vLLM's `qwen3_next_mtp.py`.** Phase 0 also checks it against the
   checkpoint's acceptance: a wrong detail shows up as near-zero acceptance.
-- Whether the 4B / 35B-A3B MTP layers are dense or MoE (the 0.8B's MLP is dense). Their
-  checkpoints are on omarchy and opentpu, not on the Mac.
-- The draft-head frequency table: from a tokenizer-level corpus count, or from the token ids'
-  merge order (byte-level BPE ids roughly follow merge frequency). Phase 0 decides.
+- Whether the 35B-A3B's MTP layer is dense or MoE. The 0.8B's, 2B's and 4B's are dense: phase
+  0 loads them as plain decoder layers.
+- The draft-head frequency table: phase 0 takes the token ids' merge order (the 32K lowest
+  ids) and that is enough. On the 4B, greedy, the 32K head is accepted 0.76 against the full
+  fp4 head's 0.80. A corpus count might close part of that gap.
 - Whether the plain-step fallback per iteration (no n-gram match) should instead keep a 2-row
-  run with a guessed draft. The per-row cost (section 1) says no for every model measured.
+  run with a guessed draft. Answered in section 7.1: yes, where c_2 is low. The g = 1 guess is
+  accepted 0.16-0.26, against c_2 - 1 = 0.02-0.16 on LFM2-2.6B, SmolLM3, LFM2.5 and Qwen3. At
+  the 0.8B's 1.21 it does not pay. The steps no n-gram covers (33-41% of the tokens) remain
+  plain.

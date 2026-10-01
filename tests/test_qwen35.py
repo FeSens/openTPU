@@ -97,6 +97,35 @@ def test_tiny_fp4_follows_emulation(tiny, config):
     assert _cos(dev, emulated_logits(spec, W, toks, wformat="fp4")).min() > 0.999
 
 
+@pytest.mark.parametrize("grouped", [False, True], ids=["pairs", "groups"])
+def test_tiny_formats_per_kind(tiny, monkeypatch, grouped):
+    """Weight formats per kind (as test_llama's), the DeltaNet projections (in_proj_qkv / z,
+    a / b, out_proj) a kind of their own, in either DeltaNet layout: the device follows the
+    emulation of the same formats; resident decode and a chunked prefill give token-by-token
+    decoding's logits bit for bit."""
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    _, W, spec = tiny
+    spec = dataclasses.replace(spec, pair_loop=grouped)
+    mix = dataclasses.replace(spec, formats="delta=fp4,attn=int4,gateup=fp4,head=int8")
+    cfg = board_config(DRAM_BYTES=1 << 25)
+    a = Engine(mix, W, cap=256, cfg=cfg)
+    assert a.image.grouped == grouped
+    assert a.image.mf == dict(wh="fp4", wab="fp4", wout="fp4", wq="int4", wgate="int4",
+                              wk="int4", wv="int4", wo="int4", wg="fp4", wu="fp4", wd="int8")
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 12)]
+    dev = np.array([a.step(t) for t in toks])
+    emu, e8 = emulated_logits(mix, W, toks), emulated_logits(spec, W, toks)
+    assert _cos(dev, emu).min() > 0.999
+    assert np.abs(dev - emu).mean() < 0.7 * np.abs(dev - e8).mean()
+    r, b = Engine(mix, W, cap=256, cfg=cfg, resident=True), Engine(mix, W, cap=256, cfg=cfg)
+    assert r.resident
+    for t, want in zip(toks[:4], dev):
+        assert np.array_equal(r.step(t).view(np.uint32), want.view(np.uint32))
+    assert np.array_equal(b.prefill(toks, chunk=4).view(np.uint32), dev[-1].view(np.uint32))
+    with pytest.raises(ValueError, match="weight formats"):
+        spec.image(cfg, 256, formats="delta@0=fp4")
+
+
 def test_tiny_reset_clears_state_and_conv_ring(tiny):
     """After reset, position 0 must not read the previous sequence's DeltaNet state or
     convolution rows."""
@@ -360,15 +389,18 @@ def test_shared_qk_is_bit_exact(tiny, step):
                 assert np.array_equal(_pair_parts(a, li, q)[1], _pair_parts(b, li, q)[1])
 
 
-@pytest.mark.parametrize("dstep,resident", [(False, False), (True, False), (True, True),
-                                            ("stream", False)])
-def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep, resident):
+@pytest.mark.parametrize("dstep,resident,formats", [
+    (False, False, ""), (True, False, ""), (True, True, ""), ("stream", False, ""),
+    (True, True, "delta=fp4,attn=int4,gateup=fp4")])
+def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep, resident, formats):
     """The board model through the host driver, through a full turn of the convolution window:
     logits bit-identical to the ISA simulator (with and without DSTEP; resident: from position
     3 on the resident decode program, its token and position as run arguments; "stream": each
-    DeltaNet head step as a STREAM on the stream engine instead of DSTEP)."""
+    DeltaNet head step as a STREAM on the stream engine instead of DSTEP; formats: per-kind
+    weight formats, int8, fp4 and int4 MMs in one model)."""
     from opentpu.host.board import BoardBackend, SimTransport
     _, W, spec = tiny
+    spec = dataclasses.replace(spec, formats=formats)
     cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=dstep is True, STREAM=dstep == "stream")
     isa = Engine(spec, W, cap=256, cfg=cfg)
     tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
