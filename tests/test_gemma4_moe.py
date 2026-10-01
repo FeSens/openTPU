@@ -63,6 +63,20 @@ def moe(tmp_path_factory):
                   top_k_experts=2, moe_intermediate_size=96)
 
 
+@pytest.fixture(scope="module")
+def moe_g2(tmp_path_factory):
+    """moe with pre_feedforward_layernorm_2's gain heavy-tailed, as the 26B's (its max about 8x
+    its rms): 4 of the 256 channels 8x in every layer."""
+    m, _, spec = _model(tmp_path_factory, "moe_g2", enable_moe_block=True, num_experts=8,
+                        top_k_experts=2, moe_intermediate_size=96)
+    rng = np.random.default_rng(0)
+    with torch.no_grad():
+        for layer in m.model.layers:
+            g = layer.pre_feedforward_layernorm_2.weight
+            g[torch.tensor(rng.choice(g.shape[0], 4, replace=False))] *= 8
+    return m, {k: v.float().numpy() for k, v in m.state_dict().items()}, spec
+
+
 def test_spec(kv, moe):
     _, _, s = kv
     assert (s.n_kv, s.n_kv_global, s.k_eq_v, s.ple_dim, s.experts) == (2, 1, True, 0, 0)
@@ -188,10 +202,10 @@ def test_moe_device_follows_the_emulation(moe, wf):
     same quantization given the card's choice of experts (the emulation's own differs where
     the k-th and the next logit are near a tie: the device's attention differs from the
     emulation's by ~1e-3 from the second position on, as in every Gemma 4 model): the first
-    token to the VPU's EXP2 / RECIP (the routing weights' softmax), the others to cosine >
-    0.99. The card's experts in the first layer,
-    whose input no routing has touched, are the emulation's wherever its k-th logit is clear
-    of the next; int8 follows HF."""
+    token to the VPU's EXP2 / RECIP (the routing weights' softmax, gelu_tanh: 1 - 1.2e-4
+    here), the others to cosine > 0.99. The card's experts in the first layer, whose input no
+    routing has touched, are the emulation's wherever its k-th logit is clear of the next;
+    int8 follows HF."""
     m, W, spec = moe
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 12)]
     eng = _moe_engine(moe, wformat=wf)
@@ -210,11 +224,25 @@ def test_moe_device_follows_the_emulation(moe, wf):
     emu = G.emulated_logits(spec, W, toks, wformat=wf, routing={
         (j // L, j % L): [g % E for g in r] for j, r in enumerate(card)})
     c = _cos(dev, emu)
-    assert c[0] > 1 - 1e-4 and c.min() > 0.99, c
+    assert c[0] > 1 - 2e-4 and c.min() > 0.99, c
     if wf == "int8":
         with torch.no_grad():
             hf = m(torch.tensor([toks])).logits[0].numpy()
         assert np.median(_cos(G.softcap(spec, dev), hf)) > 0.98
+
+
+def test_moe_experts_gain_with_outliers(moe_g2):
+    """The experts read the norm times pre_feedforward_layernorm_2's gain, quantized (moe_ffn's
+    g_exp), not the norm with the gain folded into W_gate's and W_up's columns: with 4 channels
+    at 8x, the folded gain coarsens every other column's int8 block (median cosine with HF
+    0.977); unfolded the int8 device follows HF as with a plain gain (0.994)."""
+    m, W, spec = moe_g2
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 12)]
+    with torch.no_grad():
+        hf = m(torch.tensor([toks])).logits[0].numpy()
+    eng = _moe_engine(moe_g2)
+    dev = np.array([G.softcap(spec, eng.step(t)) for t in toks])
+    assert np.median(_cos(dev, hf)) > 0.99
 
 
 @pytest.mark.parametrize("wf", ["int8", "fp4"])

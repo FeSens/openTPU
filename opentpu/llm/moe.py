@@ -135,19 +135,19 @@ class ExpertFormat:
 def gemma_expert(W, p: str, e: int):
     """Gemma 4's routed expert e of the layer at prefix p (`p + "experts.gate_up_proj"` [E, 2F,
     H], gate rows first; `p + "experts.down_proj"` [E, H, F]) as W_gate, W_up [F, H] and W_down
-    [H, F] for ExpertFormat.pack, with what moe_ffn's one input leaves to the weights folded in:
-    pre_feedforward_layernorm_2's gain into W_gate's and W_up's columns (the router and the
-    experts both read the residual's unit RMSNorm), and router.per_expert_scale[e] into W_down
-    (it multiplies the expert's output). A lazy W with `part` reads the one expert."""
+    [H, F] for ExpertFormat.pack, router.per_expert_scale[e] folded into W_down (it multiplies
+    the expert's output). pre_feedforward_layernorm_2's gain stays out: moe_ffn applies it to
+    the experts' input (lw.g_exp; folded into the columns its outliers, up to 8x the gain's
+    rms in the 26B, would coarsen every other column's block). A lazy W with `part` reads the
+    one expert."""
     k = p + "experts."
     get = getattr(W, "part", None)
     gu, dn = ((get(k + "gate_up_proj", e), get(k + "down_proj", e)) if get is not None else
               (W[k + "gate_up_proj"][e], W[k + "down_proj"][e]))
     gu, dn = np.asarray(gu, np.float32), np.asarray(dn, np.float32)
     F = gu.shape[0] // 2
-    g2 = np.asarray(W[p + "pre_feedforward_layernorm_2.weight"], np.float32)
     s = np.asarray(W[p + "router.per_expert_scale"], np.float32)[e]
-    return gu[:F] * g2, gu[F:] * g2, dn * s
+    return gu[:F], gu[F:], dn * s
 
 
 def gemma_router(W, p: str) -> np.ndarray:
@@ -251,7 +251,10 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     """x + the MoE FFN of one token (module docstring). lw: the layer's g_post [H], router
     QTensor [E, H] ([E + 1, H] with a shared expert: its gate is row E), ebias Tensor [E]
     (sigmoid_bias), gbase Tensor [1] (j * E as fp32), and with a shared expert its SwiGLU
-    wg, wu, wd. dev: the offload words (mbox, served, dir: static DRAM addresses) and `fmt`,
+    wg, wu, wd; with g_exp [H] (Gemma 4: pre_feedforward_layernorm_2's gain) the routed
+    experts read their own quantized input, the norm times g_exp, and the router the norm
+    (a gain with outliers folded into the experts' columns would coarsen every other column's
+    block). dev: the offload words (mbox, served, dir: static DRAM addresses) and `fmt`,
     the ExpertFormat.
 
     beside(): emits work that needs no expert (Gemma 4's dense MLP) right after the request is
@@ -265,7 +268,12 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
         raise CompileError("moe_ffn runs on one slice")
     E, k, H = mo.E, mo.k, x.cols
     y = ol.empty((k, H)) if y_first else None
-    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
+    if getattr(lw, "g_exp", None) is None:
+        xs = xe = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
+    else:
+        xn = rmsnorm(x, ol.load(lw.g_post), eps)
+        xs, xe = ol.quantize(xn), ol.quantize(xn * ol.load(lw.g_exp)[None, :])   # (QACT
+        del xn                                                                   # CSCALE)
     lg = ol.dot(xs, lw.router)
     sc, sel = ol.empty((E,)), ol.empty((E,))
     if mo.rule == "softmax":
@@ -346,7 +354,7 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
 
     def expert():
         """The expert whose slot is R[r], weighted, into its row of y."""
-        o = swiglu_down(xs, ex.wg, ex.wu, ex.wd, act=ACTS[mo.act])
+        o = swiglu_down(xe, ex.wg, ex.wu, ex.wd, act=ACTS[mo.act])
         b.check_live(o)
         b.emit(I.rld(r, col(ROW), comment="its row"))
         b.emit(I.vop(I.V_MUL, y.base, o.base, col(WT), 1, H, 0, 0, 0, I.B_ROW, ra=r,
