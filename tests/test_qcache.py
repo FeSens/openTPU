@@ -1,19 +1,18 @@
-"""opentpu/qcache.py, the disk cache of the 4-bit quantizer's results, and tools/qual/prebuild.py:
+"""opentpu/qcache.py, the disk cache of the 4-bit quantizer's results, and opentpu/host/prebuild.py:
 the cached result is the quantizer's, bit for bit; the key follows the content, the format and
 D; the size cap, the free-disk floor, a damaged entry, the off switch; and an image prebuilt
 for the card's tools comes out of the cache, whole, for every layout a tool builds."""
-import importlib.util
+import os
+import pickle
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from opentpu import qcache
+from opentpu.host import prebuild as PB
 from opentpu import quant as Q
 from opentpu.llm.qwen3 import Engine, Spec, device_config
-
-ROOT = Path(__file__).resolve().parent.parent
-
 
 @pytest.fixture
 def cache(tmp_path, monkeypatch):
@@ -127,21 +126,14 @@ def tiny():
     return W, Spec(256, 2, 4, 2, 128, 512, 1000)
 
 
-def _prebuild_module():
-    sp = importlib.util.spec_from_file_location("prebuild", ROOT / "tools/qual/prebuild.py")
-    mod = importlib.util.module_from_spec(sp)
-    sp.loader.exec_module(mod)
-    return mod
-
-
 @pytest.mark.parametrize("head", ["int8", "fp4"])
 def test_card_tools_find_the_prebuilt_image(cache, tiny, head, monkeypatch):
-    """prebuild.py's image fills the cache with every 4-bit matrix; then the tools' Engines,
+    """prebuild's image fills the cache with every 4-bit matrix; then the tools' Engines,
     per-position or resident, at another KV capacity and prefill rows, quantize nothing, and
     their images are the uncached build's, byte for byte."""
     W, spec = tiny
     cfg = device_config(spec, 512, lookup=True)         # the card's: room for every layout
-    n = _prebuild_module().prebuild(cfg, spec, W, "fp4", head)
+    n = PB.prebuild(cfg, spec, W, "fp4", head)
     assert n["miss"] > 0 and n["write"] == n["miss"] and n["hit"] == 0
     for kw in ({"cap": 256, "resident": True}, {"cap": 512, "resident": False, "rows": 2}):
         s0 = dict(qcache.stats)
@@ -154,3 +146,53 @@ def test_card_tools_find_the_prebuilt_image(cache, tiny, head, monkeypatch):
         monkeypatch.setenv("OTPU_IMAGE_CACHE", str(cache))
         assert len(got) == len(want)
         assert all(np.array_equal(a, b) for a, b in zip(got, want))
+
+
+def test_prebuild_main_picks_runs_configuration_and_memory(tmp_path, monkeypatch, capsys):
+    """prebuild's command line: only the 4-bit runs; --cfg, else OTPU_PREBUILD_CFG, else the
+    production deploy's, else the newest kept card configuration; no build under MIN_GB."""
+    assert [PB.is_4bit(r) for r in ("a:int8:-", "a:fp4:int8", "a:int8:fp4", "a:int4:-")] == \
+        [False, True, True, True]
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OTPU_PREBUILD_CFG", raising=False)
+    assert PB.default_cfg() is None
+    kept = tmp_path / "otpu-build/refcache/configs"
+    kept.mkdir(parents=True)
+    for i, n in enumerate(("old", "new")):
+        (kept / f"{n}.pkl").write_bytes(pickle.dumps(i))
+        os.utime(kept / f"{n}.pkl", (1000 + i, 1000 + i))
+    assert PB.default_cfg() == kept / "new.pkl"
+    prod = tmp_path / "otpu-build/production/qual"
+    prod.mkdir(parents=True)
+    (prod / "cfg.pkl").write_bytes(pickle.dumps(2))
+    assert PB.default_cfg() == prod / "cfg.pkl"
+    monkeypatch.setenv("OTPU_PREBUILD_CFG", str(kept / "old.pkl"))
+    assert PB.default_cfg() == kept / "old.pkl"
+    monkeypatch.setenv("OTPU_IMAGE_CACHE", str(tmp_path / "c"))
+    monkeypatch.setattr(PB, "mem_gb", lambda: 3.0)
+    built = []
+    monkeypatch.setattr(PB, "prebuild", lambda *a, **k: built.append(a))
+    assert PB.main(["qwen3:int8:-", "qwen3:fp4:int8"]) == 0
+    out = capsys.readouterr().out
+    assert "configuration " + str(kept / "old.pkl") in out and "; qwen3:fp4:int8" in out
+    assert "qwen3:fp4:int8: not built, MemAvailable 3.0 GiB" in out and built == []
+    monkeypatch.setenv("OTPU_IMAGE_CACHE", "0")
+    assert PB.main(["qwen3:fp4:int8"]) == 0 and "cache is off" in capsys.readouterr().out
+
+
+def test_otpu_lock_prebuilds_before_the_lock(tmp_path, monkeypatch):
+    """otpu-lock --prebuild: opentpu.host.prebuild at nice 19 first, then CMD under the lock."""
+    import subprocess
+    from opentpu.host import runstate
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    calls = []
+    monkeypatch.setattr(subprocess, "call", lambda cmd, env=None: calls.append((cmd, env)) or 0)
+    assert runstate.hold_main(["--dev", "/dev/fake9", "--wait", "0", "--prebuild", "m:fp4:int8",
+                               "--prebuild-cfg", "c.pkl", "--", "true", "x"]) == 0
+    (pre, _), (cmd, env) = calls
+    assert pre[:3] == ["nice", "-n", "19"] and pre[4:] == ["-m", "opentpu.host.prebuild", "--cfg",
+                                                           "c.pkl", "m:fp4:int8"]
+    assert cmd == ["true", "x"] and env["OTPU_LOCK_HELD"] == "fake9"
+    calls.clear()
+    assert runstate.hold_main(["--dev", "/dev/fake9", "--", "true"]) == 0
+    assert [c for c, _ in calls] == [["true"]]

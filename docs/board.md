@@ -331,11 +331,14 @@ A candidate bitstream becomes the resting image only after `tools/qual/qual.sh` 
 card. It runs from the host tree it lives in, under the card lock, and leaves the candidate on
 the card (`REST=path/otpu.bit` leaves another; `LOAD=0` loads nothing and qualifies the
 bitstream the card already runs: on opentpu a hot rescan after a JTAG reload once did not bring
-the link back, and a warm reboot did):
+the link back, and a warm reboot did). Started without the lock, it first quantizes its 4-bit
+runs into the image cache (below), then takes the lock (`otpu-lock`, up to `LOCK_WAIT` seconds,
+default 3600) and runs under it; `PREBUILD=0` skips the prebuild, and under `otpu-lock -- ...`
+it runs at once:
 
 ```sh
-otpu-lock --wait 3600 -- bash tools/qual/qual.sh deploy_bl32mx120_be388a32         # fast
-otpu-lock --wait 3600 -- bash tools/qual/qual.sh deploy_bl32mx120_be388a32 full    # full
+bash tools/qual/qual.sh deploy_bl32mx120_be388a32         # fast
+bash tools/qual/qual.sh deploy_bl32mx120_be388a32 full    # full
 ```
 
 | Phase | fast | full |
@@ -414,17 +417,26 @@ each, on opentpu's i7-4790). `opentpu/qcache.py` caches the 4-bit quantizer's re
 content. The key is a hash of each matrix's fp32 bytes, the format, D, the scale search,
 `opentpu/quant.py`'s source and the numpy version, so a new layout (lookup tables, prefill
 rows, KV capacity) or configuration reuses them and any change to the weights or the quantizer
-misses. `tools/qual/prebuild.py` fills the cache before the
-session, outside the card lock, by building the image the tools build. On omarchy the 4B's
+misses. `opentpu.host.prebuild` fills the cache before the session, outside the card lock, by
+building the image the tools build (through `Engine`, with a backend that drops it). qual.sh
+runs it when started without the lock, and `otpu-lock --prebuild MODEL:WF:HF` runs it before
+waiting for the lock for any other session. On omarchy the 4B's
 prebuild takes 1196 s and then any of its images builds in 41 s; the 2B's take 717 s and 82 s
 (its fp32 embedding table is copied in). The 2B's image from the cache is the uncached one,
 byte for byte (sha256), and the cache holds 0.68 GiB for it, 1.76 GiB for the 4B:
 
 ```sh
-nice -n 19 python3 tools/qual/prebuild.py ~/otpu-build/refcache/configs/<deploy>.pkl \
-    qwen35-4b:fp4:int8 smollm3:fp4:int8
-otpu-lock --wait 3600 -- bash tools/qual/qual.sh <deploy>
+otpu-lock --prebuild qwen35-4b:fp4:int8 --prebuild smollm3:fp4:int8 -- bash my_card_session.sh
+python3 -m opentpu.host.prebuild qwen35-4b:fp4:int8          # only the prebuild (nice -n 19)
 ```
+
+The prebuild uses the card's configuration from `--cfg` (`--prebuild-cfg`), else
+`OTPU_PREBUILD_CFG`, else the production deploy's `qual/cfg.pkl`, else the newest one refs.py
+kept (a configuration whose matrices differ only misses). It skips runs with no 4-bit format,
+and it builds nothing while MemAvailable is under 20 GB (`OTPU_PREBUILD_MIN_GB`; a 4-bit 4B
+builds in up to 17 GB): the tools then quantize under the lock as before. It loads the models
+from the tree on `PYTHONPATH`, as the session's tools do. A prebuild runs beside whatever
+session holds the card, at nice 19.
 
 The cache is `~/otpu-build/qcache/mxu` on a host with `~/otpu-build` (`OTPU_IMAGE_CACHE=<dir>`;
 `0` turns it off). It keeps 30 GB (`OTPU_IMAGE_CACHE_GB`), drops the least recently used entries

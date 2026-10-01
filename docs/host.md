@@ -720,6 +720,10 @@ OTPU_LOCK_WAIT=3600 otpu-selftest --model lfm2
 otpu-lock -- sh -c 'openFPGALoader -c digilent_hs2 build/deploy_burst_a691ea98/otpu.bit && sudo otpu-setup --rescan'
 ```
 
+`otpu-lock --prebuild MODEL:WF:HF -- <command>` first quantizes those runs' 4-bit weights into
+the image cache, before waiting for the lock, so the command's tools build their images from
+it ([board.md](board.md), "Qualifying a bitstream").
+
 Do not wait for the card with `pgrep -f` loops: the pattern appears in the waiting shell's own
 command line, and in other waiters', so they match each other and wait forever (seen at bring-up).
 
