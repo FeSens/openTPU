@@ -12,10 +12,13 @@ layer's weights are held.
         quarter of them, the head. pass 2: the uniform mixes (each kind one format in every
         layer: what a model with one layer layout runs) and the quarter groups and the head
         added in order of NLL lost per byte saved (cumulative). OUT.json: every variant's
-        formats string, mean NLL, perplexity, weight bytes per token and top-1 agreement
+        formats string, mean NLL, perplexity, weight bytes per token, top-1 agreement and its
+        KL divergence from float's next-token distribution beyond int8's (dKL: the log
+        perplexity ratio to int8 where the float model is calibrated, without the noise of the
+        sampled tokens), each with its standard error paired over the tokens
     python tools/formats_scan.py ppl MODEL FORMATS... [--wformat int8] [--tokens 900] [--out J]
-        the perplexity of formats strings (as OTPU_FORMATS; "" for none), each with the standard
-        error of its ratio to int8's (paired over the tokens)
+        the perplexity and dKL of formats strings (as OTPU_FORMATS; "" for none), each with the
+        standard error of its difference from int8's (paired over the tokens)
     python tools/formats_scan.py check
         tiny random models of each family (SmolLM3, Phi-3, Qwen3.5 with 4 key heads, LFM2):
         emulate() against emulated_logits (formats including ranged ones) and the NLL of the
@@ -212,10 +215,14 @@ def _final(spec, W, x):
 
 
 def emulate(spec, W, tokens, variants: dict, D: int = 128, logits: bool = False,
-            head_rows: int = HEAD_ROWS, shapes: dict | None = None, log=None) -> dict:
+            head_rows: int = HEAD_ROWS, shapes: dict | None = None, log=None,
+            kl_to: tuple = ()) -> dict:
     """{label: (nll [T-1], top1 [T])} (logits: the logits [T, vocab]) of the variants {label:
     fmt(kind, layer) -> weight format (formats.resolver over the family's KINDS), or None:
-    float weights and no quantization point}. shapes gets {(kind, layer): [(rows, cols)]}."""
+    float weights and no quantization point}. shapes gets {(kind, layer): [(rows, cols)]}.
+    kl_to: labels of variants to measure every variant against: (nll, top1, {label: KL [T]}),
+    each position's KL divergence of the variant's next-token distribution from the label's
+    (a second pass over the head)."""
     M = family(spec)
     T = len(tokens)
     shapes = {} if shapes is None else shapes
@@ -275,7 +282,30 @@ def emulate(spec, W, tokens, variants: dict, D: int = 128, logits: bool = False,
         del deq
     if logits:
         return {lab: np.concatenate(v[5], 1) for lab, v in acc.items()}
-    return {lab: ((m + np.log(se))[:-1] - tl, arg) for lab, (m, se, tl, _, arg, _) in acc.items()}
+    lse = {lab: m + np.log(se) for lab, (m, se, *_) in acc.items()}
+    out = {lab: (lse[lab][:-1] - tl, arg) for lab, (_, _, tl, _, arg, _) in acc.items()}
+    if not kl_to:
+        return out
+    kl = {lab: {r: np.zeros(T) for r in kl_to} for lab in variants}
+    hq: dict = {}                   # the head chunk's rows per format
+
+    def logp(lab, a):
+        f = variants[lab]
+        fmt = None if f is None else f("head")
+        if fmt not in hq:
+            hq[fmt] = dequant(a, fmt, D)
+        return hs[lab] @ hq[fmt].T - lse[lab][:, None]
+
+    for r0 in range(0, Wh.shape[0], head_rows):
+        a = Wh[r0:r0 + head_rows]
+        ref = {r: logp(r, a) for r in kl_to}
+        pr = {r: np.exp(v) for r, v in ref.items()}
+        for lab in variants:
+            lq = ref[lab] if lab in ref else logp(lab, a)
+            for r in kl_to:
+                kl[lab][r] += (pr[r] * (ref[r] - lq)).sum(1)
+        hq.clear()
+    return {lab: (*out[lab], kl[lab]) for lab in variants}
 
 
 def weight_bytes(shapes: dict, fmt, D: int = 128) -> int:
@@ -308,29 +338,36 @@ def _run(spec, W, ids, specs: dict, shapes, D, log) -> dict:
     """{label: row} for specs {label: (formats, wformat, head) or None (float)}."""
     M = family(spec)
     variants = {lab: None if v is None else _resolver(M, *v) for lab, v in specs.items()}
-    res = emulate(spec, W, ids, variants, D, shapes=shapes, log=log)
+    res = emulate(spec, W, ids, variants, D, shapes=shapes, log=log, kl_to=("float", "int8"))
     out = {}
-    for lab, (nll, top1) in res.items():
+    for lab, (nll, top1, kl) in res.items():
         v = specs[lab]
         out[lab] = {"formats": None if v is None else v[0], "wformat": None if v is None else v[1],
                     "head": None if v is None else v[2], "nll": float(nll.mean()),
                     "ppl": float(np.exp(nll.mean())), "top1": top1.tolist(),
-                    "nll_tok": np.round(nll, 5).tolist()}
+                    "nll_tok": np.round(nll, 5).tolist(), "kl_float": float(kl["float"].mean()),
+                    "kl_int8": float(kl["int8"].mean()),
+                    "kl_tok": np.round(kl["float"], 7).tolist()}
     return out
 
 
 def _finish(rows: dict, shapes, M, D) -> None:
     """Weight bytes, the bytes saved against int8, top-1 agreement with int8 and float (the
     rows' "top1" lists dropped), and the standard error of the mean NLL's difference from
-    int8's (paired over the tokens: the perplexity ratio's relative error)."""
+    int8's (paired over the tokens: the perplexity ratio's relative error). dkl: the mean KL
+    divergence from float's distribution beyond int8's (the NLL a variant loses against int8
+    where the float model's predictions are calibrated: an estimate of the log perplexity
+    ratio without the sampled token's noise), se_dkl its standard error (paired)."""
     ref8, refF = rows["int8"]["top1"], rows["float"]["top1"]
-    n8 = np.asarray(rows["int8"]["nll_tok"])
+    n8, k8 = np.asarray(rows["int8"]["nll_tok"]), np.asarray(rows["int8"]["kl_tok"])
     for r in rows.values():
         t = r.pop("top1")
         r["agree_int8"] = float(np.mean(np.equal(t, ref8)))
         r["agree_float"] = float(np.mean(np.equal(t, refF)))
         dn = np.asarray(r["nll_tok"]) - n8
         r["se_int8"] = float(dn.std(ddof=1) / math.sqrt(len(dn)))
+        dk = np.asarray(r["kl_tok"]) - k8
+        r["dkl"], r["se_dkl"] = float(dk.mean()), float(dk.std(ddof=1) / math.sqrt(len(dk)))
         if r["wformat"] is not None:
             r["bytes"] = weight_bytes(shapes, _resolver(M, r["formats"], r["wformat"], r["head"]),
                                       D)
@@ -367,7 +404,7 @@ def scan(name, out, n_tok: int, f4: str, D: int = 128) -> None:
     saved = {g: b8 - weight_bytes(shapes, _resolver(M, groups[g]), D) for g in groups}
     gain = sorted(groups, key=lambda g: (rows[g]["nll"] - nll8) / max(saved[g], 1))
     log("order (NLL per byte saved): " + ", ".join(gain))
-    p2 = {}
+    p2 = {"float": None, "int8": ("", "int8", None)}      # (the KL references again)
     for m in range(2, 1 << (len(kinds) + 1)):           # every subset of the kinds and the head
         sel = [k for j, k in enumerate(kinds + ["head"]) if m >> j & 1]
         if len(sel) > 1:
@@ -381,7 +418,8 @@ def scan(name, out, n_tok: int, f4: str, D: int = 128) -> None:
                                      "order": gain, "variants": rows}, indent=1))
     log(f"wrote {out}")
     for lab, r in sorted(rows.items(), key=lambda kv: kv[1].get("bytes", 1 << 62)):
-        print(f"{lab:40s} ppl {r['ppl']:8.4f} (+-{100 * r['se_int8']:.2f}%)  "
+        print(f"{lab:40s} ppl {r['ppl']:8.4f} (+-{100 * r['se_int8']:.2f}%)  dKL "
+              f"{100 * r['dkl']:+.3f}% (+-{100 * r['se_dkl']:.3f})  "
               f"{r.get('bytes', 0) / 2**20:8.1f} MiB  top1/int8 {r['agree_int8']:.3f}")
 
 
@@ -399,7 +437,8 @@ def ppl(name, formats: list, wformat: str, n_tok: int, D: int = 128, out=None) -
         Path(out).write_text(json.dumps({"model": str(name), "tokens": len(ids), "variants": rows},
                                         indent=1))
     for lab, r in rows.items():
-        print(f"{lab:40s} ppl {r['ppl']:8.4f} (+-{100 * r['se_int8']:.2f}%)  "
+        print(f"{lab:40s} ppl {r['ppl']:8.4f} (+-{100 * r['se_int8']:.2f}%)  dKL "
+              f"{100 * r['dkl']:+.3f}% (+-{100 * r['se_dkl']:.3f})  "
               f"{r.get('bytes', 0) / 2**20:8.1f} MiB  top1/int8 {r['agree_int8']:.3f}")
 
 
@@ -466,14 +505,20 @@ def check() -> None:
                 ref = M.emulated_logits(spec, W, toks, formats=fs)
                 e = emulate(spec, W, toks, {"v": _resolver(M, fs)}, logits=True)["v"]
                 err = np.abs(e - ref).max() / np.abs(ref).max()
-                nll, top1 = emulate(spec, W, toks, {"v": _resolver(M, fs)}, head_rows=256)["v"]
+                nll, top1, kl = emulate(spec, W, toks, {"v": _resolver(M, fs), "f": None},
+                                        head_rows=256, kl_to=("f",))["v"]
                 lse = np.log(np.exp(ref - ref.max(1, keepdims=True)).sum(1)) + ref.max(1)
                 errn = np.abs(nll - (lse[:-1] - ref[np.arange(len(toks) - 1), toks[1:]])).max()
                 agree = np.mean(top1 == ref.argmax(1))
+                lf = emulate(spec, W, toks, {"f": None}, logits=True)["f"]   # KL from float's
+                lpf = lf - (np.log(np.exp(lf - lf.max(1, keepdims=True)).sum(1))
+                            + lf.max(1))[:, None]
+                kl_ref = (np.exp(lpf) * (lpf - (ref - lse[:, None]))).sum(1)
+                errk = np.abs(kl["f"] - kl_ref).max() / max(kl_ref.max(), 1e-12)
                 worst = max(worst, err)
                 print(f"{name:8s} {fs or '(int8)':34s} logits rel {err:.2e}  nll {errn:.2e}  "
-                      f"argmax {agree:.3f}")
-                assert err < 1e-6 and errn < 1e-6 and agree > 0.99, (name, fs)
+                      f"KL rel {errk:.2e}  argmax {agree:.3f}")
+                assert err < 1e-6 and errn < 1e-6 and errk < 1e-5 and agree > 0.99, (name, fs)
             fl = emulate(spec, W, toks[:40], {"f": None}, logits=True)["f"]
             r = M.reference_logits(spec, W, toks[:40])
             print(f"{name:8s} float vs reference_logits rel "
