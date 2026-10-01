@@ -57,8 +57,10 @@ What sets these costs:
       and its 2 R DSTEPs (2,248 cycles per head step) run one after the other.
     - With one row (a 4-layer co-sim of the rows kernel) the DeltaNet layers are MXU-bound:
       the MXU is busy 97% of their cycles, the engine 93%. With two rows the engine is the
-      bound: busy 95.5% (the DSTEPs 72% of the cycles), the MXU 77%. The VPU's share hardly
-      grows with the rows; its VOPs are short, so their latency sets their time.
+      bound: busy 95.5% (the DSTEPs 72% of the cycles), the MXU 77%.
+    - The VPU's part grows with the rows: its throughput bounds it, not the VOPs' latency. The
+      SiLUs' EXP2 and RECIP run on the long lanes at 2 columns per cycle, the other VOPs at 8
+      (docs/stream.md). That is about 0.33 M cycles per row in the DeltaNet layers.
     - The rows kernel now pipelines the pairs two ahead, as the decode kernel `_deltanet_dstep`
       does (`_rows_pipelined`: the MXU projects pair p + 2 while the engine runs pair p's
       DSTEPs). The 2-row run went from 6,101,487 to 5,984,177 cycles: 1.21x a decode step,
@@ -66,11 +68,14 @@ What sets these costs:
     - This note projected 1.05x before. That projection set the two rows' DSTEPs (2 x 0.65 M)
       against the MXU's 1.1 M for DeltaNet's weights and left out the VPU work sharing the
       engine.
-    - Two things would cut the rest, and the MXU bounds both at about 1.12x (estimated: the
-      DeltaNet layers at the MXU's busy time):
-      - VOPs running beside a DSTEP. That is hardware: the engine's slot-0 loop is the DSTEP's
-        datapath.
-      - Fewer VOPs per pair, for example both heads' element-wise steps in one VOP.
+    - Each of the kernel's VOPs now takes both heads of a pair, as `_deltanet_dstep`'s do. That
+      saves only 0.4% (5,962,906 cycles for 2 rows), because the elements stay the same. A
+      timing experiment that dropped head 1's VPU work altogether gave 5,643,600 (-5.7%): that
+      is the VPU's whole share.
+    - What would cut the rest is hardware, and the MXU bounds it at about 1.12x (estimated: the
+      DeltaNet layers at the MXU's busy time). Either the VOPs run beside a DSTEP (the
+      engine's slot-0 loop is the DSTEP's datapath), or the long lanes get wider
+      (docs/stream.md section 9).
   - LFM2's convolutions and short attention are cheap: +0.12 M per row.
 - **The LM head is 35-44% of a decode token.** The verify run pays it once: 2 rows share the
   head's weights. But a drafter that runs the full head for every draft token pays that share
@@ -322,7 +327,7 @@ for n-gram and about 0.05 for MTP with a 32K fp4 draft head (10 MB layer + 17 MB
 | Qwen3-0.6B, n-gram | 1.16 | 0.16 | 1.29x | 1.46x | 1.59x |
 | LFM2.5-230M, n-gram | 1.09 | 0.09 | 1.38x | 1.56x | 1.70x |
 | Qwen3.5-0.8B, MTP + 32K head | 1.26 | 0.26 | 1.19x | 1.35x | 1.47x |
-| Qwen3.5-0.8B, MTP + 32K head, the engine's VOPs cut (c_2 = 1.12, estimated) | 1.17 | 0.17 | 1.28x | 1.45x | 1.58x |
+| Qwen3.5-0.8B, MTP + 32K head, VOPs beside the DSTEPs (hardware; c_2 = 1.12, estimated) | 1.17 | 0.17 | 1.28x | 1.45x | 1.58x |
 | Qwen3.5-0.8B, n-gram | 1.21 | 0.21 | 1.24x | 1.40x | 1.53x |
 
 All projected; a is unknown for our models until phase 0 measures it.
