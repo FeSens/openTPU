@@ -6,8 +6,13 @@ Face's.
 
     python3 tools/offload/moe_card.py MODEL --hf out.json       # HF's greedy tokens (bf16, CPU)
     python3 tools/offload/moe_card.py MODEL --check out.json    # the simulator's, compared
+    python3 tools/offload/moe_card.py MODEL --check out.json --cfg dev.pkl --card   # the card's
 
 The HF run and the simulator run are separate processes: each needs most of a 32 GB host.
+--cfg takes the bitstream's configuration (tools/qual/refs.py cfg): the simulator's run with it
+is the card's reference bit for bit (its prefill logits' sha256 and its tokens); --card runs on
+the card (/dev/xdma0) with the host's server polled while each run is in flight, and adds the
+device's cycles, the tok/s and where the host's time went (pool reads, DRAM writes over PCIe).
 """
 from __future__ import annotations
 
@@ -55,7 +60,10 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
 
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
-         host_loop: bool = False, embed: str | None = None, trace: str | None = None) -> dict:
+         host_loop: bool = False, embed: str | None = None, trace: str | None = None,
+         cfg_file: str | None = None, on_card: bool = False) -> dict:
+    import hashlib
+    import pickle
     from dataclasses import replace
     from opentpu.isasim import board_config
     from opentpu.llm import load_spec
@@ -64,26 +72,46 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if embed is not None:
         spec = replace(spec, embed=embed)
     W = LazyWeights(model)
+    cfg = pickle.loads(Path(cfg_file).read_bytes()) if cfg_file else board_config()
     if not experts:
-        experts = fit_experts(spec, board_config(), cap, wformat="fp4", head_format="int8",
-                              lookup=True)
+        experts = fit_experts(spec, cfg, cap, wformat="fp4", head_format="int8", lookup=True)
+    backend = "isa"
+    if on_card:
+        from opentpu.host.board import BoardBackend, XdmaTransport
+        tr = XdmaTransport("/dev/xdma0")
+        backend = lambda c, imgs: BoardBackend(c, imgs, transport=tr,      # noqa: E731
+                                               model=Path(model).name)
     t = time.time()
-    eng = Engine(spec, W, cap=cap, cfg=board_config(), rows=1, wformat="fp4",
-                 head_format="int8", resident=True, experts=experts, pool_file=pool)
+    eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat="fp4", head_format="int8",
+                 resident=True, experts=experts, pool_file=pool, backend=backend)
     load_s = time.time() - t
     srv = eng.server
     srv.history, per_req = [], []               # each request's ids and misses
-    serve = srv.serve
+    serve, pool_of, mem = srv.serve, srv.pool, srv.mem
+    tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0)     # the host's seconds, by part
+
+    def timed(part, f):
+        def g(*a):
+            t0 = time.perf_counter()
+            try:
+                return f(*a)
+            finally:
+                tm[part] += time.perf_counter() - t0
+        return g
 
     def counted(ids_):
         m0 = srv.misses
-        serve(ids_)
+        timed("serve", serve)(ids_)
         per_req.append(srv.misses - m0)
     srv.serve = counted
+    srv.pool = timed("pool", pool_of)
+    mem.write, mem.read = timed("write", mem.write), timed("read", mem.read)
     ids = ref["ids"]
     t = time.time()
     lg = eng.prefill(ids if host_loop else ids[:-1])
     prefill_s = time.time() - t
+    lg_sha = hashlib.sha256(np.asarray(lg, np.float32).tobytes()).hexdigest()[:16]
+    tm0, b0, st0 = dict(tm), srv.bytes, len(eng.stats)
     t = time.time()
     top = []                    # host loop: the device's 8 best (id, logit) per step
 
@@ -98,6 +126,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     else:                       # the prompt's last token fed by the card's loop: every pick
         got = eng.generate_card(ids[-1], n, stop_ids=[])        # on the card
     gen_s = time.time() - t
+    host = {k: round(tm[k] - tm0[k], 3) for k in tm}          # the decode's
+    host.update(bytes=srv.bytes - b0, polls_read_s=host.pop("read"))
+    khz = (getattr(eng.backend, "info", None) or {}).get("core_khz")
+    cyc = sum(s.get("cycles", 0) for s in eng.stats[st0:])       # (the simulator: none)
+    dev_s = cyc / (khz * 1e3) if khz else None
     L = eng.image.offload
     J, E = L.layers, L.E
     T = len(per_req) // J                       # whole tokens (the last request may be unread)
@@ -127,7 +160,14 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(),
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
-                loop="host" if host_loop else "card", embed=spec.embed, top=top or None)
+                loop="host" if host_loop else "card", embed=spec.embed,
+                backend="card" if on_card else "isa", cfg=cfg_file, prefill_logits_sha=lg_sha,
+                decode_cycles=cyc, core_khz=khz,
+                tok_s_wall=round(len(got) / gen_s, 2) if gen_s else None,
+                tok_s_device=round(len(got) / dev_s, 2) if dev_s else None,
+                host_decode_s=host,
+                bytes_per_token_decode=round(host["bytes"] / max(1, len(got))),
+                top=top or None)
 
 
 def main():
@@ -152,6 +192,10 @@ def main():
                     help="decode with the resident step programs and the argmax on the host, "
                          "the device's 8 best logits per step in the result (a diagnostic: "
                          "where a run parts from HF's)")
+    ap.add_argument("--cfg", help="the configuration, pickled (tools/qual/refs.py cfg: the "
+                                  "bitstream's); default isasim.board_config()")
+    ap.add_argument("--card", action="store_true",
+                    help="run on the card (/dev/xdma0) instead of the ISA simulator")
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
@@ -159,7 +203,8 @@ def main():
         print(json.dumps(r))
         return
     ref = json.loads(Path(a.check).read_text())
-    r = card(a.model, ref, a.n, a.experts, a.cap, a.pool, a.host_loop, a.embed, a.trace)
+    r = card(a.model, ref, a.n, a.experts, a.cap, a.pool, a.host_loop, a.embed, a.trace,
+             a.cfg, a.card)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
