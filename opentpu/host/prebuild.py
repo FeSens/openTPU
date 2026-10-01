@@ -78,7 +78,10 @@ def default_cfg() -> Path | None:
 
 
 def is_4bit(run: str) -> bool:
-    return any(f in FORMATS4 for f in run.split(":")[1:])
+    """A run with 4-bit weights to cache: a 4-bit WF or HF, "mix" (the model's mix of int8 and
+    4-bit), or OTPU_FORMATS naming a 4-bit format."""
+    return any(f in FORMATS4 + ("mix",) for f in run.split(":")[1:]) or \
+        any(f in os.environ.get("OTPU_FORMATS", "") for f in FORMATS4)
 
 
 def mem_gb() -> float | None:

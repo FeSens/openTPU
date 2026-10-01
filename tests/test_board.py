@@ -195,10 +195,11 @@ torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
 
 
-@pytest.mark.parametrize("formats", ["", "attn=fp4,down=int4,head=fp4"])
+@pytest.mark.parametrize("formats", ["", "attn=fp4,down=int4,head=fp4",
+                                     "attn@0=fp4,mlp@1=fp4"])
 def test_tiny_qwen3_on_board_model(have_verilator, formats):
     """Logits bit-identical to the ISA simulator; with per-kind weight formats too (int8,
-    fp4 and int4 MMs in one layer)."""
+    fp4 and int4 MMs in one layer), and per layer (a run, a layer block layout, each)."""
     import dataclasses
     from opentpu.llm.qwen3 import Engine, Spec
     torch.manual_seed(0)

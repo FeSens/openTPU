@@ -169,7 +169,7 @@ def main():
                     help="--generate sampled: temperature, top-k, top-p, repetition penalty")
     ap.add_argument("--timeline", help="print the instructions of dynamic index range A:B")
     ap.add_argument("--idle", action="store_true", help="list DRAM-idle stretches (64-cycle windows)")
-    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"],
+    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4", "mix"],
                     help="weight format of the layers (opentpu/quant.py)")
     ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"],
                     help="weight format of the LM head (default: --wformat)")

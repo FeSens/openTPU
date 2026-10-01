@@ -86,6 +86,7 @@ class Spec:
     embed: str = "f32"      # the embedding rows: fp32, or "int8" per D block (as qwen3.Spec:
                             # gathered on the device from the tied int8 head or a table)
     formats: str = ""       # weight formats per kind over the image's wformat (KINDS)
+    mix: str = ""           # the recommended mix (wformat "mix": formats.named, MIXES)
 
     @property
     def layers(self) -> int:
@@ -140,7 +141,7 @@ class Spec:
                     bos=c.get("bos_token_id", 1),
                     eos=tuple(eos) if isinstance(eos, list) else (eos,), moe=moe,
                     # a MoE's DRAM beside its layers is expert slots: its table int8
-                    embed="int8" if moe is not None else "f32")
+                    embed="int8" if moe is not None else "f32", mix=FM.mix_for(c))
 
     def check(self, cfg: Config) -> None:
         S, D = cfg.S, cfg.D
@@ -283,6 +284,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     Wq: dict = {}
 
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+    wformat, formats = FM.named(spec, wformat, formats)
     fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
 
     def w(n):
@@ -385,6 +387,7 @@ class Image(EmbedHost):
             raise ValueError("KV capacity must be a multiple of D")
         S, D = cfg.S, cfg.D
         H, d, F_, K = spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
+        wformat, formats = FM.named(spec, wformat, formats)
         fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
         dense = [i for i in range(spec.layers) if not spec.is_moe(i)]
         kf = FM.uniform(fmt, {k: [i for i, t in enumerate(spec.kinds) if t == k]

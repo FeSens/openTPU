@@ -74,6 +74,7 @@ class Spec:
     #                           int8 LM head holds them: the device gathers them from it,
     #                           kernels.gather.gather_row)
     formats: str = ""         # weight formats per kind over the image's wformat (KINDS)
+    mix: str = ""             # the recommended mix (wformat "mix": formats.named, MIXES)
 
     @property
     def rope_dim(self) -> int:
@@ -93,7 +94,7 @@ class Spec:
                     ffn=c["intermediate_size"], vocab=c["vocab_size"], eps=c["rms_norm_eps"],
                     theta=c.get("rope_theta", 1e6), tied=c.get("tie_word_embeddings", True),
                     bos=c.get("bos_token_id", 151643),
-                    eos=tuple(eos) if isinstance(eos, list) else (eos,))
+                    eos=tuple(eos) if isinstance(eos, list) else (eos,), mix=FM.mix_for(c))
 
     def check(self, cfg: Config) -> None:
         S, D = cfg.S, cfg.D
@@ -564,6 +565,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     d, G = spec.head_dim, spec.n_q // spec.n_kv
     Wq: dict = {}
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+    wformat, formats = FM.named(spec, wformat, formats)
     fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
 
     def w(n):
@@ -656,15 +658,18 @@ class Image(EmbedHost):
     [ I/O: x_in, cos, sin | final norm | logits ] [ layer 0 block ] ... [ layer L-1 block ]
     [ LM head rows of this slice ]. A layer block holds the norms, this slice's rows of every
     projection (quantized + scales) and this slice's KV heads with room for `cap` tokens, for
-    each of `batch` sequences. The I/O area holds `rows` token rows (x, cos, sin, logits).
+    each of `batch` sequences; its layout follows the layer's weight formats. The layers run
+    as `runs` (first layer, (layout,), layers): each range of one layout a hardware loop over
+    its blocks, contiguous with their stride. The I/O area holds `rows` token rows (x, cos,
+    sin, logits).
     A model with layers without RoPE (spec.nope) has a rope gate per layer block: (1, 0) or
     (0, 1), and each layer rotates with cos * g0 + g1 and sin * g0 (_rope_gate).
 
     Weight formats (opentpu/quant.py): `wformat` for the layers' projections, `head_format`
     (default: the same) for the LM head: "int8", or 4-bit "int4" / "fp4". `formats` sets a
-    kind's format over wformat (opentpu/llm/formats.py, KINDS; None: OTPU_FORMATS, else
-    spec.formats), one per kind in every layer (the layer blocks share one layout). The KV
-    cache and the activations stay int8.
+    kind's format over wformat per layer range (opentpu/llm/formats.py, KINDS; None:
+    OTPU_FORMATS, else spec.formats): a layer block layout per combination, a run (a loop)
+    per range of one layout. The KV cache and the activations stay int8.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
@@ -678,12 +683,14 @@ class Image(EmbedHost):
         S, D = cfg.S, cfg.D
         H, d, F_ = spec.hidden, spec.head_dim, spec.ffn
         self.spec, self.cfg, self.cap = spec, cfg, cap
+        wformat, formats = FM.named(spec, wformat, formats)
         fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
-        kf = FM.uniform(fmt, dict.fromkeys(("attn", "gateup", "down"), range(spec.layers)))
+        # each layer's formats (attention, gate / up, down: its block's layout), the head's,
+        # and the formats string (for the compile worker)
+        self.lf = tuple((fmt("attn", i), fmt("gateup", i), fmt("down", i))
+                        for i in range(spec.layers))
         self.wformat, self.head_format = wformat, fmt("head")
-        # each projection's format (KINDS), and the formats string (for the compile worker)
-        self.mf = {"wq": kf["attn"], "wk": kf["attn"], "wv": kf["attn"], "wo": kf["attn"],
-                   "wg": kf["gateup"], "wu": kf["gateup"], "wd": kf["down"]}
+        self.mf = self.mats_formats(self.lf[0])     # layer 0's projections' formats
         self.formats = _formats(spec, formats)
         rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
         self.batch, self.rows = batch, rows
@@ -696,31 +703,54 @@ class Image(EmbedHost):
                    "sin": b.alloc(2 * rd * R), "gf": b.alloc(4 * H),
                    "logits": b.alloc(4 * spec.vocab * R)}
         self.layer0 = b.next
-        lb = _Bump()                                    # offsets inside one layer block
-        L = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
-        if spec.qk_norm:
-            L.update(qn=lb.alloc(4 * d), kn=lb.alloc(4 * d))
-        if spec.nope:
-            L["rg"] = lb.alloc(8)
         self.mats = {"wq": (self.nq_loc * d, H), "wk": (self.nkv_loc * d, H),
                      "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d),
                      "wg": (self.f_loc, H), "wu": (self.f_loc, H)}
-        for name, (n, k) in self.mats.items():
-            L[name] = (lb.alloc(n * rb(k, self.mf[name])), lb.alloc(4 * n * (k // D)))
         # W_down in column parts of the MLP's F chunk: each down MM streams one part, whose
-        # scales are then contiguous (with row-major scales every row would cost a DRAM beat)
-        self.dchunk = _chunk(self.f_loc, D, D if self.mf["wd"] == "int8" else 2 * D)
-        L["wd"] = [(lb.alloc(self.h_loc * rb(self.dchunk, self.mf["wd"])),
-                    lb.alloc(4 * self.h_loc * (self.dchunk // D)))
-                   for _ in range(F_ // self.dchunk)]
-        L["kvs"] = [[{"k": lb.alloc(cap * d), "ks": lb.alloc(4 * cap * (d // D)),
-                      "vt": lb.alloc(d * cap), "vs": lb.alloc(4 * cap)}
-                     for _ in range(self.nkv_loc)] for _ in range(batch)]
-        L["kv"] = L["kvs"][0]
-        self.lofs, self.LS = L, (lb.next + 4095) // 4096 * 4096
+        # scales are then contiguous (with row-major scales every row would cost a DRAM beat);
+        # the chunk by W_down's format
+        self.dchunks = {fd: _chunk(self.f_loc, D, D if fd == "int8" else 2 * D)
+                        for fd in sorted({f[2] for f in self.lf})}
+        self.dchunk = self.dchunks[self.lf[0][2]]
+        self.bofs, self.bsize = {}, {}                  # per layout: offsets inside its block
+        for key in dict.fromkeys(self.lf):
+            mf, C = self.mats_formats(key), self.dchunks[key[2]]
+            lb = _Bump()
+            L = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
+            if spec.qk_norm:
+                L.update(qn=lb.alloc(4 * d), kn=lb.alloc(4 * d))
+            if spec.nope:
+                L["rg"] = lb.alloc(8)
+            for name, (n, k) in self.mats.items():
+                L[name] = (lb.alloc(n * rb(k, mf[name])), lb.alloc(4 * n * (k // D)))
+            L["wd"] = [(lb.alloc(self.h_loc * rb(C, mf["wd"])), lb.alloc(4 * self.h_loc * (C // D)))
+                       for _ in range(F_ // C)]
+            L["kvs"] = [[{"k": lb.alloc(cap * d), "ks": lb.alloc(4 * cap * (d // D)),
+                          "vt": lb.alloc(d * cap), "vs": lb.alloc(4 * cap)}
+                         for _ in range(self.nkv_loc)] for _ in range(batch)]
+            L["kv"] = L["kvs"][0]
+            self.bofs[key], self.bsize[key] = L, (lb.next + 4095) // 4096 * 4096
+        self.lofs, self.LS = self.bofs[self.lf[0]], self.bsize[self.lf[0]]   # layer 0's
+        # the runs: each range of layers of one layout a hardware loop (one layer body in the
+        # program per run: a pattern repeated in units, lfm2.plan's, would unroll each unit)
+        self.runs = []
+        for i, key in enumerate(self.lf):
+            if self.runs and self.runs[-1][1] == (key,):
+                first, unit, reps = self.runs[-1]
+                self.runs[-1] = (first, unit, reps + 1)
+            else:
+                self.runs.append((i, (key,), 1))
+        self.loc = {}                   # layer -> (run base, unit stride, iteration, offset)
+        b.next = self.layer0
+        for first, unit, reps in self.runs:
+            offs = np.cumsum([0] + [self.bsize[k] for k in unit]).tolist()
+            us, base = offs[-1], b.next
+            for it in range(reps):
+                for e in range(len(unit)):
+                    self.loc[first + it * len(unit) + e] = (base, us, it, offs[e])
+            b.next = base + reps * us
         head = cap * d + 4 * cap * (d // D) + d * cap + 4 * cap   # k, k scales, v^T, v scales
         self.kv_bytes = spec.layers * self.nkv_loc * head         # per sequence
-        b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
         # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
@@ -762,13 +792,13 @@ class Image(EmbedHost):
         def f32(a):
             return F.ftz(np.asarray(a, np.float32))
 
-        mf = self.mf
         for s in range(S):
             put(s, self.io["gf"], f32(W["model.norm.weight"]))
         for i in range(spec.layers):
-            p, base = f"model.layers.{i}.", self.layer0 + i * self.LS
+            p, base, lofs = f"model.layers.{i}.", self._off(i).const, self.bofs[self.lf[i]]
+            mf = self.mats_formats(self.lf[i])
             Lo = {k: (tuple(base + x for x in v) if isinstance(v, tuple) else
-                      (base + v if isinstance(v, int) else v)) for k, v in self.lofs.items()}
+                      (base + v if isinstance(v, int) else v)) for k, v in lofs.items()}
             for s in range(S):
                 put(s, Lo["g_in"], f32(W[p + "input_layernorm.weight"]))
                 put(s, Lo["g_post"], f32(W[p + "post_attention_layernorm.weight"]))
@@ -787,8 +817,8 @@ class Image(EmbedHost):
             put_q(Lo["wo"], rows(wo, self.h_loc), mf["wo"])
             put_q(Lo["wg"], rows(W[p + "mlp.gate_proj.weight"], self.f_loc), mf["wg"])
             put_q(Lo["wu"], rows(W[p + "mlp.up_proj.weight"], self.f_loc), mf["wu"])
-            C = self.dchunk
-            for j, pair in enumerate(self.lofs["wd"]):
+            C = self.dchunks[mf["wd"]]
+            for j, pair in enumerate(lofs["wd"]):
                 put_q((base + pair[0], base + pair[1]),
                       [r[:, j * C:(j + 1) * C] for r in rows(W[p + "mlp.down_proj.weight"],
                                                               self.h_loc)], mf["wd"])
@@ -797,6 +827,19 @@ class Image(EmbedHost):
         if self.lookup:
             _lookup_build(put, S, W, spec, self.cap, self.lookup)
         return imgs
+
+    @staticmethod
+    def mats_formats(key) -> dict:
+        """The projections' formats of a layer block of formats `key` (attention, gate / up,
+        down)."""
+        fa, fg, fd = key
+        return {"wq": fa, "wk": fa, "wv": fa, "wo": fa, "wg": fg, "wu": fg, "wd": fd}
+
+    def _off(self, li, it=None) -> Affine:
+        """The block address of layer li (static), or of element li of its run's unit at
+        iteration `it` (a loop variable)."""
+        base, us, i, o = self.loc[li]
+        return Affine(base + o) + Affine.of(i if it is None else it) * us
 
     # ---- programs
     def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):
@@ -831,12 +874,12 @@ class Image(EmbedHost):
         spec, cfg = self.spec, self.cfg
         D, d, H = cfg.D, spec.head_dim, spec.hidden
         rh = spec.rope_dim // 2
-        L0 = self.layer0
-        lofs = self.lofs
 
-        def layer(li):
-            """Descriptors of layer `li` (an int or a hardware-loop variable)."""
-            off = Affine.of(L0) + Affine.of(li) * self.LS
+        def layer(li, it=None):
+            """Descriptors of layer `li` (static), or of element li of its run's unit at
+            iteration `it` (a hardware-loop variable)."""
+            off = self._off(li, it)
+            lofs, mf = self.bofs[self.lf[li]], self.mats_formats(self.lf[li])
             ns = SimpleNamespace(
                 g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
@@ -845,11 +888,11 @@ class Image(EmbedHost):
                 rg=Tensor(off + lofs["rg"], (2,), (1,)) if spec.nope else None)
             for name, (n, k) in self.mats.items():
                 da, sa = lofs[name]
-                fm = self.mf[name]
+                fm = mf[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (n, k), Q.row_bytes(k, fm, D),
                                           4 * (k // D), D, wf=Q.mxu_wf(fm)))
-            C, n = self.dchunk, self.h_loc
-            fm = self.mf["wd"]
+            fm = mf["wd"]
+            C, n = self.dchunks[fm], self.h_loc
             wf = Q.mxu_wf(fm)
             rc = Q.row_bytes(C, fm, D)
             parts = tuple(QTensor(off + da, off + sa, (n, C), rc, 4 * (C // D), D, wf=wf)
@@ -863,7 +906,7 @@ class Image(EmbedHost):
             return ns
 
         return SimpleNamespace(
-            spec=spec, layer=layer, n_layers=spec.layers,
+            spec=spec, layer=layer, runs=self.runs,
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (rh,)),
             sin=_tdesc(self.io["sin"], (rh,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
@@ -1053,11 +1096,23 @@ def qwen3_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     """
     spec = m.spec
     x, c, s_ = _inputs(m, pos, tok)
-    for li in ol.range(m.n_layers):
-        lw = m.layer(li)
+    for lw in _layers(m):
         x.set(_attention(x, lw, c, s_, pos, spec, block))
         x.set(_mlp(x, lw, spec))
     _lm_head(x, m, spec)
+
+
+def _layers(m):
+    """Each layer's descriptors in the order the layers run (m.runs, Image): a run of repeats
+    is one hardware loop over its unit (inside the loop the descriptors are the iteration's)."""
+    for first, unit, reps in m.runs:
+        if reps == 1:
+            for e in range(len(unit)):
+                yield m.layer(first + e)
+            continue
+        for it in ol.range(reps):
+            for e in range(len(unit)):
+                yield m.layer(first + e, it)
 
 
 def _inputs(m, pos, tok=None):
@@ -1245,8 +1300,7 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     is not the last one skips the LM head)."""
     spec = m.spec
     x, c, s_ = _inputs_rows(m, rows, tokens)
-    for li in ol.range(m.n_layers):
-        lw = m.layer(li)
+    for lw in _layers(m):
         x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
         x.set(_mlp(x, lw, spec))
     _lm_head_rows(x, m, spec, logit_rows)

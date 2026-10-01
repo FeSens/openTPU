@@ -119,6 +119,7 @@ class Spec:
     moe: MO.MoESpec | None = None   # Qwen3.5-MoE: every layer's MLP is routed experts plus a
                                     # shared expert (ffn: its width, the layer block's MLP)
     formats: str = ""       # weight formats per kind over the image's wformat (KINDS)
+    mix: str = ""           # the recommended mix (wformat "mix": formats.named, MIXES)
 
     @property
     def layers(self) -> int:
@@ -163,7 +164,8 @@ class Spec:
                     lin_kheads=c["linear_num_key_heads"], moe=moe,
                     # a MoE's DRAM beside its layers is expert slots: its table int8 at any size
                     embed="int8" if moe is not None
-                    or 4 * c["vocab_size"] * c["hidden_size"] > EMBED_F32_MAX else "f32")
+                    or 4 * c["vocab_size"] * c["hidden_size"] > EMBED_F32_MAX else "f32",
+                    mix=FM.mix_for(c))
 
     def check(self, cfg: Config) -> None:
         S, D = cfg.S, cfg.D
@@ -342,6 +344,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     Wq: dict = {}
 
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+    wformat, formats = FM.named(spec, wformat, formats)
     fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
 
     def w(n):
@@ -575,6 +578,7 @@ class Image(EmbedHost):
             raise ValueError("KV capacity must be a multiple of D")
         S, D = cfg.S, cfg.D
         H, d, F_, K = spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
+        wformat, formats = FM.named(spec, wformat, formats)
         fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
         kf = FM.uniform(fmt, {"delta": [i for i, t in enumerate(spec.kinds) if t == LIN],
                               "attn": [i for i, t in enumerate(spec.kinds) if t == ATTN],

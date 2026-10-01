@@ -13,8 +13,9 @@ layer's weights are held.
         layer: what a model with one layer layout runs) and the quarter groups and the head
         added in order of NLL lost per byte saved (cumulative). OUT.json: every variant's
         formats string, mean NLL, perplexity, weight bytes per token and top-1 agreement
-    python tools/formats_scan.py ppl MODEL FORMATS... [--wformat int8] [--tokens 900]
-        the perplexity of formats strings (as OTPU_FORMATS; "" for none)
+    python tools/formats_scan.py ppl MODEL FORMATS... [--wformat int8] [--tokens 900] [--out J]
+        the perplexity of formats strings (as OTPU_FORMATS; "" for none), each with the standard
+        error of its ratio to int8's (paired over the tokens)
     python tools/formats_scan.py check
         tiny random models of each family (SmolLM3, Phi-3, Qwen3.5 with 4 key heads, LFM2):
         emulate() against emulated_logits (formats including ranged ones) and the NLL of the
@@ -313,18 +314,23 @@ def _run(spec, W, ids, specs: dict, shapes, D, log) -> dict:
         v = specs[lab]
         out[lab] = {"formats": None if v is None else v[0], "wformat": None if v is None else v[1],
                     "head": None if v is None else v[2], "nll": float(nll.mean()),
-                    "ppl": float(np.exp(nll.mean())), "top1": top1.tolist()}
+                    "ppl": float(np.exp(nll.mean())), "top1": top1.tolist(),
+                    "nll_tok": np.round(nll, 5).tolist()}
     return out
 
 
 def _finish(rows: dict, shapes, M, D) -> None:
     """Weight bytes, the bytes saved against int8, top-1 agreement with int8 and float (the
-    rows' "top1" lists dropped)."""
+    rows' "top1" lists dropped), and the standard error of the mean NLL's difference from
+    int8's (paired over the tokens: the perplexity ratio's relative error)."""
     ref8, refF = rows["int8"]["top1"], rows["float"]["top1"]
+    n8 = np.asarray(rows["int8"]["nll_tok"])
     for r in rows.values():
         t = r.pop("top1")
         r["agree_int8"] = float(np.mean(np.equal(t, ref8)))
         r["agree_float"] = float(np.mean(np.equal(t, refF)))
+        dn = np.asarray(r["nll_tok"]) - n8
+        r["se_int8"] = float(dn.std(ddof=1) / math.sqrt(len(dn)))
         if r["wformat"] is not None:
             r["bytes"] = weight_bytes(shapes, _resolver(M, r["formats"], r["wformat"], r["head"]),
                                       D)
@@ -375,11 +381,11 @@ def scan(name, out, n_tok: int, f4: str, D: int = 128) -> None:
                                      "order": gain, "variants": rows}, indent=1))
     log(f"wrote {out}")
     for lab, r in sorted(rows.items(), key=lambda kv: kv[1].get("bytes", 1 << 62)):
-        print(f"{lab:40s} ppl {r['ppl']:8.4f}  {r.get('bytes', 0) / 2**20:8.1f} MiB  "
-              f"top1/int8 {r['agree_int8']:.3f}")
+        print(f"{lab:40s} ppl {r['ppl']:8.4f} (+-{100 * r['se_int8']:.2f}%)  "
+              f"{r.get('bytes', 0) / 2**20:8.1f} MiB  top1/int8 {r['agree_int8']:.3f}")
 
 
-def ppl(name, formats: list, wformat: str, n_tok: int, D: int = 128) -> None:
+def ppl(name, formats: list, wformat: str, n_tok: int, D: int = 128, out=None) -> None:
     path = model_dir(name)
     spec, W = load_spec(path), Q3.load_weights(path)
     M = family(spec)
@@ -389,9 +395,12 @@ def ppl(name, formats: list, wformat: str, n_tok: int, D: int = 128) -> None:
     shapes: dict = {}
     rows = _run(spec, W, ids, specs, shapes, D, None)
     _finish(rows, shapes, M, D)
+    if out:
+        Path(out).write_text(json.dumps({"model": str(name), "tokens": len(ids), "variants": rows},
+                                        indent=1))
     for lab, r in rows.items():
-        print(f"{lab:40s} ppl {r['ppl']:8.4f}  {r.get('bytes', 0) / 2**20:8.1f} MiB  "
-              f"top1/int8 {r['agree_int8']:.3f}")
+        print(f"{lab:40s} ppl {r['ppl']:8.4f} (+-{100 * r['se_int8']:.2f}%)  "
+              f"{r.get('bytes', 0) / 2**20:8.1f} MiB  top1/int8 {r['agree_int8']:.3f}")
 
 
 def check() -> None:
@@ -486,12 +495,13 @@ def main():
     a.add_argument("formats", nargs="+")
     a.add_argument("--wformat", default="int8")
     a.add_argument("--tokens", type=int, default=900)
+    a.add_argument("--out", help="the rows as JSON (scan's format)")
     sub.add_parser("check")
     a = ap.parse_args()
     if a.cmd == "scan":
         scan(a.model, a.out, a.tokens, a.fmt)
     elif a.cmd == "ppl":
-        ppl(a.model, a.formats, a.wformat, a.tokens)
+        ppl(a.model, a.formats, a.wformat, a.tokens, out=a.out)
     else:
         check()
 
