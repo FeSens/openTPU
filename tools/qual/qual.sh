@@ -1,8 +1,12 @@
 #!/bin/bash
 # Card qualification of a candidate bitstream (docs/board.md, "Qualifying a bitstream").
 #
-#   otpu-lock --wait 3600 -- bash tools/qual/qual.sh DEPLOY_DIR [fast|full]
+#   bash tools/qual/qual.sh DEPLOY_DIR [fast|full]
 #
+# Started without the card lock, it quantizes the 4-bit runs' weights into the image cache
+# first (opentpu.host.prebuild, at nice 19), then takes the lock (otpu-lock, waiting up to
+# LOCK_WAIT seconds, default 3600) and runs under it; started under `otpu-lock -- ...` it runs
+# at once, and the tools quantize what the cache does not hold under the lock.
 # DEPLOY_DIR holds otpu.bit (a path, or a name under ~/otpu-build). Runs from the host tree the
 # script is in. Environment: REST (the bitstream to leave on the card; default the candidate),
 # OUT (results; default /tmp/qual-<deploy>), REFCACHE (tools/qual/refs.py), LOAD=0 (no JTAG load:
@@ -30,7 +34,8 @@
 # non-zero (a timeout too) or prints a Python exception is a FAIL line in $OUT/checks.txt, as is
 # a token-exact run that did not pass. The model phases need the tree's checkpoints (models/, as
 # opentpu.llm.model_dir finds them: a staged tree needs its models link); without them they are
-# skipped and that is a FAIL line. SOAK (seconds) overrides the profile's warm soak.
+# skipped and that is a FAIL line. SOAK (seconds) overrides the profile's warm soak; PREBUILD=0
+# skips the prebuild.
 set -u
 DEP=${1:?deploy dir}; PROFILE=${2:-fast}
 case $DEP in /*) BIT=$DEP/otpu.bit ;; *) BIT=~/otpu-build/$DEP/otpu.bit ;; esac
@@ -39,6 +44,19 @@ H=$(cd "$(dirname "$0")/../.." && pwd); P=${PYTHON:-~/otpu-venv/bin/python}
 REST=${REST:-$BIT}; OUT=${OUT:-/tmp/qual-$NAME}; mkdir -p "$OUT"
 cd "$H" || exit 1; export PYTHONPATH=$H
 RUNS=${RUNS:-"qwen3:int8:- lfm2:int8:- qwen35:int8:- qwen3:fp4:int8 lfm2:fp4:int8 qwen35:fp4:int8"}
+# Started without the card lock: first the 4-bit runs' weights into the image cache
+# (opentpu.host.prebuild at nice 19, outside the lock; opentpu/qcache.py), so the session
+# quantizes nothing under the lock; then this script again, under it. PREBUILD=0: no prebuild.
+if [ -z "${OTPU_LOCK_HELD:-}" ]; then
+  PB=""
+  if [ "${PREBUILD:-1}" != 0 ]; then
+    for r in $RUNS; do case ":${r#*:}:" in *:fp4:*|*:int4:*) PB="$PB --prebuild $r" ;; esac; done
+    kept=${REFCACHE:-$HOME/otpu-build/refcache}/configs/$NAME.pkl
+    [ -n "$PB" ] && [ -f "$kept" ] && PB="$PB --prebuild-cfg $kept"
+  fi
+  echo "=== prebuild outside the card lock${PB:+:$PB}; then the lock (up to ${LOCK_WAIT:-3600} s) $(date +%T)"
+  exec $P -m opentpu.host.runstate --wait "${LOCK_WAIT:-3600}" $PB -- bash "$H/tools/qual/qual.sh" "$@"
+fi
 if [ "$PROFILE" = full ]; then
   SOAK=${SOAK:-300}; COLD=1; WARM_MEM=full; DP_RUNS=$RUNS; RW=1
 else
