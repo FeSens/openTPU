@@ -16,7 +16,9 @@ switched one at a time and per-kind weight formats (docs/gemma4.md, "Long contex
 WF / HEAD: int8, fp4, int4 or none (float weights). The whole sequence runs at once: 900 tokens of
 E2B take about 1 min in float, 10 min with fp4 layers (the 4-bit quantization's search).
 26B-A4B (its MoE block, K = V global layers, no PLE): --formats experts=fp4 for 4-bit experts
-(about 1.2 s of quantization an expert, 3840 of them: THREADS at a time).
+(about 1.2 s of quantization an expert, 3840 of them: THREADS at a time; the 4-bit matrices go
+through opentpu.qcache, so a study's later runs read them: OTPU_IMAGE_CACHE=<dir> for a cache of
+its own, 13 GB for the 26B's fp4 experts).
 """
 import argparse
 import math
@@ -28,6 +30,8 @@ from dataclasses import replace
 
 import numpy as np
 
+from opentpu import qcache as QC
+from opentpu import quant as Q
 from opentpu.kernels import gather as GA
 from opentpu.llm import gemma4 as G
 from opentpu.llm.qwen3 import _fake_q, _fake_w
@@ -88,6 +92,9 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
             fmt = fmt_of(n)
         a = np.asarray(W[n] if a is None else a, np.float32)
         a = np.pad(a, ((0, 0), (0, -a.shape[1] % D)))       # whole D-blocks (MLP widths)
+        if fmt in QC.FORMATS:   # 4-bit through opentpu.qcache: the runs of a study share it
+            q, sc = QC.quantize_mxu(a, fmt, D)      # (rows padded to whole D-byte chunks)
+            return Q.dequantize_w4(q[:, :a.shape[1] // 2], sc, fmt, D)        # (= _fake_w's)
         return a.astype(np.float64) if fmt == "none" else _fake_w(a, D, fmt)
 
     def padq(v, n):             # an activation [T, f] padded with zeros to n columns, quantized
