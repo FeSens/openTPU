@@ -26,6 +26,12 @@ It holds one register (the resident decode's run arguments and the layer loops h
 rest): the per-expert values are the columns of a small tile that each loop rotates, so
 expert i is always at column 0 in iteration i.
 
+With MoESpec.hint the layer also posts a prefetch hint before its mixer (`moe_hint`,
+docs/offload.md section 12): its router on the layer's input, the k best as a request whose
+ids are offset by layers x E; the host replaces their slots' victims at once and moves the
+missing experts in the link's idle time, and the route's own request finds them landed or on
+their way.
+
 `ExpertFormat` is one expert's slot: gate and up [F, H] and W_down's column parts, laid out as a
 layer block's MLP (lfm2.Image), so the FFN is kernels.mlp.swiglu_down at the slot's address
 (a compiler.DevVar: the register RLD sets). One slice (S = 1, the board's).
@@ -43,10 +49,12 @@ from .. import language as ol
 from .. import quant as Q
 from ..compiler import Affine, CompileError, DevVar, QTensor, Tensor, current
 from ..host.offload import LINE, SPLIT, ExpertServer, Layout, PoolFile, dram_of, to_split
-from ..kernels.lib import rmsnorm, sigmoid
+from ..kernels import mailbox as MB
+from ..kernels.lib import gelu_tanh, rmsnorm, sigmoid, silu
 from ..kernels.mlp import _chunk, swiglu_down
 
 NEG = -3.0e38                       # knocked out (below every score)
+ACTS = {"silu": silu, "gelu_tanh": gelu_tanh}
 
 
 @dataclass(frozen=True)
@@ -61,22 +69,31 @@ class MoESpec:
     scale: float = 1.0               # then multiply them by this
     shared: int = 0                  # a shared expert's width (Qwen: the layer's dense MLP,
                                      # times sigmoid(x . w_gate)), 0: none
+    act: str = "silu"                # the experts' gate: SiLU, or "gelu_tanh" (Gemma 4)
+    hint: bool = False               # each layer posts its router's k best on its input as a
+                                     # prefetch hint before its mixer (moe_hint; Qwen3.5)
 
     def __post_init__(self):
         if self.rule not in ("sigmoid_bias", "softmax"):
             raise ValueError(f"MoE router rule {self.rule!r}")
+        if self.act not in ACTS:
+            raise ValueError(f"MoE expert activation {self.act!r}")
         if self.rule == "softmax" and not self.norm:
             raise ValueError("a softmax router over all experts is not supported (norm=False)")
 
 
 class ExpertFormat:
     """One expert in its slot: W_gate, W_up [F, H] (rows, then their scale words) and W_down
-    [H, F] in column parts of `C` (swiglu_down's chunks), each D-byte aligned."""
+    [H, F] in column parts of `C` (swiglu_down's chunks), each D-byte aligned. A width that is
+    not a whole number of the format's chunks (Gemma 4's 704) is padded with zero rows of
+    W_gate and W_up and zero columns of W_down to `F` (768): exact, act(0) * 0 = 0."""
 
     def __init__(self, H: int, F: int, D: int, wformat: str):
         rb = lambda k: Q.row_bytes(k, wformat, D)                       # noqa: E731
+        q = D if wformat == "int8" else 2 * D
+        self.F0, F = F, -(-F // q) * q       # the expert's own width, the slot's
         self.H, self.F, self.D, self.wformat = H, F, D, wformat
-        self.C = _chunk(F, D, D if wformat == "int8" else 2 * D)
+        self.C = _chunk(F, D, q)
         a, align = 0, max(LINE, D)          # the MXU streams whole D-byte chunks
 
         def take(n):
@@ -90,8 +107,12 @@ class ExpertFormat:
         self.nbytes = a
 
     def pack(self, wg: np.ndarray, wu: np.ndarray, wd: np.ndarray) -> np.ndarray:
-        """The slot's bytes for W_gate, W_up [F, H] and W_down [H, F] (float)."""
+        """The slot's bytes for W_gate, W_up [F0, H] and W_down [H, F0] (float)."""
         out = np.zeros(self.nbytes, np.uint8)
+        if self.F != self.F0:                   # the zero padding
+            pad = self.F - self.F0
+            wg, wu = (np.pad(np.asarray(w, np.float32), ((0, pad), (0, 0))) for w in (wg, wu))
+            wd = np.pad(np.asarray(wd, np.float32), ((0, 0), (0, pad)))
 
         def put(pair, W):
             q, s = Q.quantize_mxu(W, self.wformat, self.D)
@@ -118,6 +139,30 @@ class ExpertFormat:
         wd = QTensor(parts[0].data, parts[0].scale, (H, F), Q.row_bytes(C, fm, D),
                      4 * (C // D), D, parts=parts, pw=C, wf=wf)
         return SimpleNamespace(wg=q(self.wg, F, H), wu=q(self.wu, F, H), wd=wd)
+
+
+def gemma_expert(W, p: str, e: int):
+    """Gemma 4's routed expert e of the layer at prefix p (`p + "experts.gate_up_proj"` [E, 2F,
+    H], gate rows first; `p + "experts.down_proj"` [E, H, F]) as W_gate, W_up [F, H] and W_down
+    [H, F] for ExpertFormat.pack, router.per_expert_scale[e] folded into W_down (it multiplies
+    the expert's output). pre_feedforward_layernorm_2's gain stays out: moe_ffn applies it to
+    the experts' input before quantizing it (lw.g_exp; docs/offload.md 11.2). A lazy W with
+    `part` reads the one expert."""
+    k = p + "experts."
+    get = getattr(W, "part", None)
+    gu, dn = ((get(k + "gate_up_proj", e), get(k + "down_proj", e)) if get is not None else
+              (W[k + "gate_up_proj"][e], W[k + "down_proj"][e]))
+    gu, dn = np.asarray(gu, np.float32), np.asarray(dn, np.float32)
+    F = gu.shape[0] // 2
+    s = np.asarray(W[p + "router.per_expert_scale"], np.float32)[e]
+    return gu[:F], gu[F:], dn * s
+
+
+def gemma_router(W, p: str) -> np.ndarray:
+    """Gemma 4's router [E, H] on the residual's unit RMSNorm (moe_ffn's input): router.proj
+    with router.scale and H^-0.5 folded into its columns."""
+    w = np.asarray(W[p + "router.proj.weight"], np.float32)
+    return w * (np.asarray(W[p + "router.scale"], np.float32) * np.float32(w.shape[1] ** -0.5))
 
 
 def open_pool(layout: Layout, pool_file) -> PoolFile:
@@ -209,17 +254,69 @@ def route(logits: np.ndarray, bias: np.ndarray | None, mo: MoESpec):
 
 
 # ---------------------------------------------------------------------------- the device
-def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
+def moe_hint(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float) -> None:
+    """Path (a)'s prefetch hint (docs/offload.md section 12), before the layer's mixer: its
+    router on the layer's input x through moe_ffn's norm, the k best by the model's rule (no
+    weights), posted as a request whose global ids are offset by dev.hint_off (layers x E: the
+    host's mark of a hint). The host writes served once it has replaced the hinted experts'
+    victims, before their transfers, so the route's fence (moe_ffn) waits for no expert; an
+    expert still on its way reads as missing there and is waited for by its entry. lw and dev
+    as moe_ffn's. One register."""
+    b = current()
+    E, k = mo.E, mo.k
+    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
+    lg = ol.dot(xs, lw.router)
+    del xs
+    sel, pr, ids, tmp = ol.empty((E,)), ol.empty((2,)), ol.empty((k,)), ol.empty((k,))
+    if mo.rule == "softmax":
+        sel.set(lg[0, 0:E])
+    else:
+        sel.set(sigmoid(lg[0, 0:E]) + ol.load(lw.ebias))
+    del lg
+    r = b.scratch()
+    lp = b.begin_loop(k)                # the k best, as the route picks them
+    b.emit(I.argmax(pr.base, sel.base, 1, E, comment="hint: best"))
+    b.emit(I.rld(r, pr.base + 1, comment="its index"))
+    b.emit(I.vop(I.V_FILL, sel.base, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, NEG, ra=r,
+                 comment="knock out"))
+    if k > 1:
+        tmp[0:k - 1].set(ids[1:k])
+        ids[0:k - 1].set(tmp[0:k - 1])
+    b.emit(I.vop(I.V_COPY, ids.base + k - 1, pr.base + 1, 0, 1, 1, 0, 0, 0, comment="id"))
+    b.end_loop(lp)
+    b.unscratch(r)
+    ids.set(ids + ol.load(lw.gbase) + float(dev.hint_off))
+    MB.post(dev.mbox, ids)
+
+
+def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
+            residual: bool = True, y_first: bool = False):
     """x + the MoE FFN of one token (module docstring). lw: the layer's g_post [H], router
     QTensor [E, H] ([E + 1, H] with a shared expert: its gate is row E), ebias Tensor [E]
     (sigmoid_bias), gbase Tensor [1] (j * E as fp32), and with a shared expert its SwiGLU
-    wg, wu, wd. dev: the offload words (mbox, served, dir: static DRAM addresses) and `fmt`,
-    the ExpertFormat."""
+    wg, wu, wd; with g_exp [H] (Gemma 4: pre_feedforward_layernorm_2's gain) the routed
+    experts read their own quantized input, the norm times g_exp, and the router the norm (the
+    norm alone, quantized, has its blocks scaled by the residual's outlier channels, which the
+    gain zeroes: docs/offload.md 11.2). dev: the offload words (mbox, served, dir: static DRAM addresses) and `fmt`,
+    the ExpertFormat.
+
+    beside(): emits work that needs no expert (Gemma 4's dense MLP) right after the request is
+    posted, so that it runs while the host streams the missing experts (docs/offload.md 5.3);
+    moe_ffn's register is free during it. residual=False: the FFN's output without x (Gemma 4
+    norms the experts' sum before its residual). y_first: the experts' [k, H] outputs take
+    their TMEM before the router's input does (Gemma 4 26B-A4B: 22,544 words, which only the
+    free space before the step's later tiles holds)."""
     b = current()
     if ol.num_programs() != 1:
         raise CompileError("moe_ffn runs on one slice")
     E, k, H = mo.E, mo.k, x.cols
-    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
+    y = ol.empty((k, H)) if y_first else None
+    if getattr(lw, "g_exp", None) is None:
+        xs = xe = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
+    else:
+        xn = rmsnorm(x, ol.load(lw.g_post), eps)
+        xs, xe = ol.quantize(xn), ol.quantize(xn * ol.load(lw.g_exp)[None, :])   # (QACT
+        del xn                                                                   # CSCALE)
     lg = ol.dot(xs, lw.router)
     sc, sel = ol.empty((E,)), ol.empty((E,))
     if mo.rule == "softmax":
@@ -273,7 +370,8 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
     gid = ol.empty((k,))
     gid.set(ids + ol.load(lw.gbase))                    # global ids: j * E + index
     pe[OFF, :].set(gid * 8.0)                           # their directory entries' offsets
-    y = ol.empty((k, H))
+    if y is None:
+        y = ol.empty((k, H))
     for i in range(k):                                  # y's rows (ol.empty may pad them)
         pe[ROW, i:i + 1].set(float(i * y.rs))
     # the fence, then the request: seq + 1 and the ids
@@ -283,6 +381,10 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
     ol.store(Tensor(Affine(dev.mbox + LINE), (k,), (1,)), gid)
     seq.set(seq + 1.0)
     ol.store(Tensor(Affine(dev.mbox), (1,), (1,)), seq)
+    if beside is not None:                              # while the host streams
+        b.unscratch(r)
+        beside()
+        r = b.scratch()
     # the directory: each entry's present flag
     col = lambda row: pe.base + row * pe.rs                       # noqa: E731 (column 0)
     lp = b.begin_loop(k)
@@ -291,11 +393,11 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
     rotate()
     b.end_loop(lp)
     pe[MISS, :].set(pe[EP, :] * -1.0 + 1.0)
-    ex = dev.fmt.descs(DevVar("expert slot", r))
+    ex = dev.fmt.descs(DevVar("expert slot", r, align=LINE))   # (slots: LINE-aligned)
 
     def expert():
         """The expert whose slot is R[r], weighted, into its row of y."""
-        o = swiglu_down(xs, ex.wg, ex.wu, ex.wd)
+        o = swiglu_down(xe, ex.wg, ex.wu, ex.wd, act=ACTS[mo.act])
         b.check_live(o)
         b.emit(I.rld(r, col(ROW), comment="its row"))
         b.emit(I.vop(I.V_MUL, y.base, o.base, col(WT), 1, H, 0, 0, 0, I.B_ROW, ra=r,
@@ -319,4 +421,4 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float):
         acc = acc + y[i:i + 1, :]
     if mo.shared:
         acc = acc + swiglu_down(xs, lw.wg, lw.wu, lw.wd) * gate[:, None]
-    return x + acc
+    return x + acc if residual else acc

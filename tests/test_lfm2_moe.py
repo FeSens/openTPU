@@ -21,7 +21,7 @@ def _cos(a, b):
     return (a * b).sum(-1) / np.linalg.norm(a, axis=-1) / np.linalg.norm(b, axis=-1)
 
 
-def _tiny():
+def _tiny(F=F):
     torch.manual_seed(0)
     hc = transformers.Lfm2MoeConfig(
         hidden_size=256, num_hidden_layers=len(KINDS), num_attention_heads=4,
@@ -76,6 +76,13 @@ def _engine(spec, W, experts=None, **kw):
     return Engine(spec, W, cap=256, cfg=cfg, experts=experts, **kw)
 
 
+def _untied(spec, W):
+    """The tiny model with an LM head of its own: its int8 embedding table is the image's own
+    (a tied int8 head's rows are gathered from the head)."""
+    W = dict(W, **{"lm_head.weight": W["model.embed_tokens.weight"] * np.float32(1.25)})
+    return dataclasses.replace(spec, tied=False, embed="int8"), W
+
+
 def test_reference_matches_hf(tiny):
     m, W, spec = tiny
     toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 24)]
@@ -112,6 +119,59 @@ def test_device_follows_hf_and_routes_on_the_card(tiny):
     assert eng.server.misses == 0
 
 
+def test_padded_expert_width(tiny):
+    """An expert width that is not a whole number of its format's chunks (2D for 4-bit: 384
+    here, Gemma 4's 704) is padded in the slot with zero rows of W_gate / W_up and zero columns
+    of W_down (moe.ExpertFormat; exact, act(0) * 0 = 0): the logits follow the 4-bit
+    emulation of the unpadded model (as the 256-wide model's do: median cosine 0.989; a token
+    whose routing turns on a near-tie differs), and a small cache gives the full cache's bit for
+    bit."""
+    _, W, spec = _tiny(F=384)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 10)]
+    full = _engine(spec, W, wformat="fp4")
+    assert (full.image.fmt.F0, full.image.fmt.F) == (384, 512)
+    ref = np.array([full.step(t) for t in toks])
+    assert np.median(_cos(ref, emulated_logits(spec, W, toks, wformat="fp4"))) > 0.99
+    small = _engine(spec, W, experts=K, wformat="fp4")
+    got = np.array([small.step(t) for t in toks])
+    assert small.server.misses > len(toks)
+    assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+
+
+def test_moe_ffn_beside_and_no_residual(tiny, monkeypatch):
+    """moe_ffn's `beside` (work emitted right after the request is posted: Gemma 4's dense MLP,
+    while the host streams), residual=False (the caller adds x) and y_first (the experts'
+    outputs placed first in TMEM): with work beside every MoE layer, decode on the ISA simulator and on the live fake card (misses served during the
+    runs) gives the plain programs' logits bit for bit."""
+    from opentpu import language as ol
+    from opentpu.host.board import BoardBackend
+    from opentpu.isasim import board_config
+    from opentpu.llm import moe as MO
+    _, W, spec = tiny
+    cfg = board_config(DRAM_BYTES=1 << 24)
+    toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 6)]
+    plain = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K)
+    ref = np.array([plain.step(t) for t in toks])
+    real, n = MO.moe_ffn, [0]
+
+    def moe_ffn(x, lw, mo, dev, eps):
+        def beside():                       # VPU work the result does not use
+            n[0] += 1
+            t = ol.empty((1, x.cols))
+            t.set(x * 2.0 + 1.0)
+        return x + real(x, lw, mo, dev, eps, beside=beside, residual=False, y_first=True)
+    monkeypatch.setattr(MO, "moe_ffn", moe_ffn)
+    card = _LiveCard.make(cfg)
+    for backend in ("isa", lambda c, imgs: BoardBackend(c, imgs, transport=card)):
+        eng = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K,
+                     backend=backend, pipeline=False)
+        got = np.array([eng.step(t) for t in toks])
+        assert card.error is None, card.error
+        assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+        assert eng.server.misses > len(toks)
+    assert n[0] > 0 and card.waits > 0
+
+
 @pytest.mark.parametrize("wformat", ["int8", "fp4"])
 def test_small_cache_is_bit_exact(tiny, wformat):
     """k slots per layer: nearly every request misses and streams; the logits do not move."""
@@ -120,6 +180,30 @@ def test_small_cache_is_bit_exact(tiny, wformat):
     full = _engine(spec, W, wformat=wformat)
     ref = np.array([full.step(t) for t in toks])
     small = _engine(spec, W, experts=K, wformat=wformat)
+    got = np.array([small.step(t) for t in toks])
+    assert small.server.misses > len(toks)
+    assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+
+
+def test_experts_run_paired(tiny):
+    """With column reuse (PAIR), a 4-bit expert's MMs run paired as the layers' own do: its slot
+    address is a register (DevVar), but every slot is LINE-aligned, so its scale words pair
+    8-byte aligned. On the board configuration that halves an expert's cycles (26B-A4B: 0.38
+    -> 0.21 ms, co-simulated). A small cache still gives the logits of one holding every
+    expert, bit for bit."""
+    from opentpu import isa as I
+    _, W, spec = tiny
+
+    def paired(experts=None):
+        cfg = device_config(spec, 256, S=1, experts=experts, wformat="fp4", PAIR=True)
+        return Engine(spec, W, cap=256, cfg=cfg, experts=experts, wformat="fp4")
+    full = paired()
+    prog = full.image.compile_step(3)[0]
+    ex = [i for i in prog if i.op == I.MM and any(fn == "expert" for _, _, fn in i.src)]
+    assert ex and all(i.flags & I.F_PAIR for i in ex)
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 8)]
+    ref = np.array([full.step(t) for t in toks])
+    small = paired(K)
     got = np.array([small.step(t) for t in toks])
     assert small.server.misses > len(toks)
     assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
@@ -182,17 +266,23 @@ def test_compile_worker_builds_the_moe_image(tiny):
         Q._WORKER = None
 
 
-@pytest.mark.parametrize("embed", ["f32", "int8"])
+@pytest.mark.parametrize("embed", ["f32", "int8", "host"])
 def test_the_card_generates_with_streamed_experts(tiny, embed):
     """The decode loop on the card (autodecode's generate program, resident decode) with k
     slots per layer: the experts stream between the tokens it picks, and it gives the host's
-    resident loop token for token (int8: the embedding row gathered from the tied head)."""
+    resident loop token for token (int8: the embedding row gathered from the tied head; host:
+    an int8 table of its own kept on the host, embed_host, a MoE's default: each sampled
+    token's row asked of the host's row server, against the table on the card)."""
     _, W, spec = tiny
-    spec = dataclasses.replace(spec, embed=embed)
-    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=K)
-    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K)
-            for _ in range(2))
-    assert a.can_generate
+    if embed == "host":
+        spec, W = _untied(spec, W)
+    else:
+        spec = dataclasses.replace(spec, embed=embed)
+    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=K, embed_host=False)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K, **kw)
+            for kw in ({}, {"embed_host": False}))
+    assert a.can_generate and a.image.embed_host == (embed == "host") and not b.image.embed_host
+    assert (a.row_server is None) == (embed != "host")
     toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 20)]
     t0 = int(np.argmax(a.prefill(toks)))
     assert int(np.argmax(b.prefill(toks))) == t0
@@ -203,6 +293,8 @@ def test_the_card_generates_with_streamed_experts(tiny, embed):
     misses = a.server.misses
     assert a.generate_card(t0, 12, stop_ids=[]) == ref
     assert a.server.misses > misses
+    if embed == "host":                     # each sampled token's row, from the host
+        assert a.row_server.seq >= 11 and b.image.nbytes - a.image.nbytes >= 1000 * 256
 
 
 def test_moe_on_board_model(tiny, have_verilator):

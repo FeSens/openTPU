@@ -191,6 +191,102 @@ As on the other models ([quant.md](quant.md)), the int8 head is the default: the
 in perplexity for 14% of decode speed. Attention in int8 would recover a third of the 4-bit
 loss for 9% more bytes; the image has one format for all layers today.
 
+## 26B-A4B: accuracy
+
+gemma-4-26B-A4B is the family's mixture of experts: 30 layers ((5 sliding + 1 global) x 5),
+hidden 2816, a dense GeGLU MLP (2112 wide) beside 128 routed experts (704 wide, top 8) in every
+layer, global layers with K = V and 2 KV heads of 512, no per-layer embeddings. Its experts
+stream from the host into slots on the card ([offload.md](offload.md), section 11). Numbers here
+are from omarchy, 2026-10-01.
+
+**The reference.** `reference_logits` against Hugging Face in fp32 on a truncation of the
+checkpoint (`tools/gemma4_hf_check.py --layers 0,5`, both before the soft cap): max |diff|
+0.0017 at logits of ~583, cosine >= 0.9999999, the same argmax at 11 of 11 tokens. In float the
+900 tokens of *Pride and Prejudice* give NLL 0.2109 (ppl 1.235): the model knows the text.
+
+**The experts' input.** The MoE block's norm gain, pre_feedforward_layernorm_2's g2, is ~0 on
+the residual's outlier channels and large elsewhere (layer 10: the three largest channels of
+the unit-norm input average 17.3, 10.2 and 9.5, where g2 is -0.002, 0.0 and 0.24; g2's max is
+92.5, 7.6x its rms). The first device design quantized the unit norm once, for the router and
+the experts, with g2 folded into the experts' gate and up columns: every int8 / fp4 block that
+holds an outlier channel's column then quantizes the other columns coarsely, and the
+outlier's activation meets that error. moe.moe_ffn now quantizes the norm times g2 for the
+experts (`g_exp`, QACT with a scale), the unit norm for the router (router.scale is flat:
+30.5-33.75, so its fold costs nothing; top 8 = float's 0.929 folded, 0.930 unfolded, over 30
+layers x 64 tokens).
+
+The block's relative error against float, on the float model's MoE inputs (64 tokens), the
+float routes; the emulation (`tools/gemma4_quant_eval.py`), g2 folded / on the activation, and
+the device (`tools/gemma4_moe_check.py`: moe_ffn alone on the ISA simulator, against float
+experts on its own routes):
+
+| Experts, activations | Layer 10 | Layer 20 | Layer 29 |
+|---|---:|---:|---:|
+| int8, float: folded / on the activation | 0.176 / 0.007 | 0.448 / 0.009 | 0.317 / 0.007 |
+| int8, int8: folded / on the activation | 0.263 / 0.015 | 0.506 / 0.018 | 0.354 / 0.014 |
+| fp4, int8: folded / on the activation | 0.684 / 0.094 | 0.911 / 0.121 | 0.873 / 0.104 |
+| int8, int8: the device | 0.0163 | 0.0189 | 0.0145 |
+| fp4, int8: the device | 0.0942 | 0.1216 | 0.1038 |
+
+The dense MLP's error is 0.013-0.042 in int8 and 0.068-0.135 in fp4. The device matches the
+emulation on its routes to 0.003-0.004 (int8) and 1e-4 (fp4). The whole model on the ISA
+simulator (all 30 layers, int8 everywhere, 8 expert slots a layer, the experts streamed by the
+host's server, the first 16 tokens of the text fed in): mean NLL over those 16 positions 1.593
+against float's 1.601, the argmax float's at 15 of them; with g2 folded 2.508, 9 of 16.
+
+**Weight formats.** The next-token NLL over the 899 positions of the text
+(`gemma4_quant_eval.py nll`, every activation point on; the experts' format with
+`--formats experts=...`), ΔNLL against float:
+
+| Dense layers | Experts | Head | NLL | ΔNLL | ppl | Top-1 = float's |
+|---|---|---|---:|---:|---:|---:|
+| float | float | float | 0.2109 | | 1.235 | 1 |
+| int8 | int8 | int8 | 0.2107 | -0.0001 | 1.235 | 0.996 |
+| int8 | int8 | fp4 | 0.2227 | +0.0119 | 1.249 | 0.993 |
+| int8 | fp4 | int8 | 0.2352 | +0.0243 | 1.265 | 0.982 |
+| int8 | fp4 | fp4 | 0.2439 | +0.0331 | 1.276 | 0.984 |
+| fp4 | int8 | int8 | 0.2611 | +0.0503 | 1.298 | 0.971 |
+| fp4 | fp4 | int8 | 0.3101 | +0.0992 | 1.364 | 0.958 |
+
+The model knows this text (ppl 1.235), which can hide a format's cost. The first 900 tokens of
+docs/offload.md, written for this repository in September 2026 (a text no model has seen;
+float ppl 10.02):
+
+| Dense layers | Experts | Head | NLL | ΔNLL | ppl | Top-1 = float's |
+|---|---|---|---:|---:|---:|---:|
+| float | float | float | 2.3045 | | 10.02 | 1 |
+| int8 | int8 | int8 | 2.3179 | +0.0134 | 10.15 | 0.951 |
+| int8 | fp4 | int8 | 2.3380 | +0.0334 | 10.36 | 0.939 |
+| int8 | fp4 | fp4 | 2.3404 | +0.0359 | 10.39 | 0.920 |
+
+- int8 costs nothing on Austen and +0.013 on the new text.
+- fp4 experts cost +0.024 over int8 on Austen and +0.020 on the new text; the fp4 head on top
+  of them +0.009 and +0.002; fp4 dense layers (attention and the dense MLP) +0.050 (Austen),
+  and with fp4 experts +0.099, more than the sum.
+
+**The choice: int8 dense layers, fp4 experts, the fp4 head.** The dense layers and the head
+set the card's room for expert slots: with fp4 experts (3.45 MB a slot; cap 4096, the lookup
+tables) int8 dense layers leave 420 slots (14 a layer) with the int8 head and 540 with the fp4
+head, fp4 dense layers 660 and 780; a decode token reads 1725 MB of int8 dense layers or 911 MB
+of fp4, and 761 MB of int8 head or 392 MB of fp4. offload's event model (`cachesim.py`, four
+2048-token texts, decayed-use slots, the host of [offload.md](offload.md) section 11.3), tok/s
+(relative: the 35B ran about 15% under the same model on the card):
+
+| Dense layers / head | Slots | Misses / token (of 240) | Gen1 | Gen2 (2.8 GB/s) | All resident |
+|---|---:|---:|---:|---:|---:|
+| int8 / int8 | 420 | 83.8 | 2.66 | 3.54 | 4.26 |
+| int8 / fp4 | 540 | 67.5 | 3.19 | 4.11 | 4.79 |
+| fp4 / int8 | 660 | 55.5 | 3.70 | 4.77 | 5.64 |
+| fp4 / fp4 | 780 | 45.9 | 4.45 | 5.67 | 6.62 |
+
+Against the bar of about +0.01 NLL per +10% decode rate: the fp4 head buys +20% for +0.009
+(Austen) / +0.002 (new text); fp4 dense layers +39% for +0.075, twice the bar. fp4 experts
+about double the rate of int8 experts (offload.md section 11.3) for +0.020-0.024; int8 experts
+stay an opt-in for accuracy.
+
+Two earlier runs with g2 folded are void: int8 layers, fp4 experts and the int8 head gave ppl
+127.3, fp4 layers 138.4.
+
 ## Performance
 
 One resident decode token on the Verilator RTL of the board configuration (PAIR, DSTEP, STREAM:

@@ -50,9 +50,11 @@ host fp4 kernel.
 
   - The card computes the experts it has while the missing ones stream. That is worth +12-14%
     over waiting for the last one on Gemma 4 and Qwen3.5.
-  - Prefetch from router predictions is at best neutral (Qwen3.5 at Gen2). Otherwise it loses
-    1-14% with the prediction's k best, and more with its 2k best: cache pollution, plus the
-    link and DRAM time of wrong guesses.
+  - Prefetch from router predictions is at best neutral (Qwen3.5 at Gen2) under LRU slots.
+    Otherwise it loses 1-14% with the prediction's k best, and more with its 2k best: cache
+    pollution, plus the link and DRAM time of wrong guesses. With the slots by decayed use
+    the model gives the k best +3-6.5% on Qwen3.5-35B-A3B, but as built they lost 5% on the
+    card (section 12.5); they are off by default.
   - 4-bit experts are worth 2.3-2.9x over int8.
   - Request and flag latency (10-100 us) moves results by under 1%.
 - **Design (section 5).** One new instruction, `WAITW` (wait on a DRAM word), agreed with
@@ -527,8 +529,8 @@ With the slots replaced by decayed use (section 5.5), wrong guesses cost less: a
 expert holds no use until a request names it, so the next miss replaces it first, not a used
 expert. At 1.4 GB/s the k best of `pre` then pay on Qwen3.5-35B-A3B: 4.42 against 4.15 tok/s
 at 1280 slots (10 of 23 prefetches a token wasted, against 33 of 49 under LRU). On Gemma 4
-they break even (3.79 against 3.78; `prev_r` 3.86). It would need the card to run each layer's
-router before its mixer and post the hint; not built.
+they break even (3.79 against 3.78; `prev_r` 3.86). Section 12 builds them for Qwen3.5-MoE:
+the card runs each layer's router before its mixer and posts the hint.
 
 ### 5.5 Eviction
 
@@ -633,6 +635,34 @@ the card already holds.
 A host-written row fetched by `WAITW` (section 7) stays for rows that are not in the card at
 all, such as E4B's per-layer embeddings. Phase 2's first 8B run kept the fp32 table (20 slots
 per layer).
+
+**An untied table on the host (`embed_host`).** A model whose int8 embedding table is its own
+(untied, as Qwen3.5-35B-A3B's 0.5 GB) can keep it on the host instead, the way E4B keeps its
+PLE records:
+- The card holds a slot of the image's rows (one for a MoE engine), each row a record: its
+  H int8 values, then its H / D scale words (the head's format), in whole MXU chunks
+  (`qwen3.embed_record`), and a row mailbox (`RowLayout`).
+- Before a run the host writes the run's rows into the slot (`Image.host_rows`, as for E4B).
+  In the card's generate loop each sampled token is posted to the mailbox (`MB.post`), the
+  host's `RowServer` writes its row into slot row 0 (one DMA call through the expert server's
+  `BoardDram`, in order with its writes), and the next token's gather waits for `served`
+  first (`MB.wait_served`, then `gather_row` of row 0). Data movement only: the host keeps
+  the table as the card would hold it (`qwen3.embed_store`).
+- The default: on for a MoE model with an int8 table of its own (its DRAM is expert slots),
+  off for a dense one unless its image does not fit with the table (the Engine then retries
+  with it on the host). A tied int8 head's rows stay the gather's. `Engine(embed_host=...)`
+  and `moe_card --embed-table host|card` choose.
+- Qwen3.5-35B-A3B at the board's 4 GiB: 34-35 slots a layer fit with the table on the card,
+  42 (1680) with it on the host (cap 512-4096). The model of section 10.3 (decayed use, Gen1)
+  gives 4.41 tok/s at 1560 slots and 4.45 at 1600, against 4.15 at the card runs' 1280
+  (*projection*). On the card (sessions 5-7, section 10.4), 128 tokens: 3.86 against 3.60
+  tok/s with the table on the card (+7.2%), 103 misses a decode token against 119. Its
+  programs change (the gather's wait and the post); every other model's are the same (sha256:
+  E2B, E4B, LFM2.5-8B-A1B, the tiny MoEs; the 35B with `embed_host=False`).
+- Tests: tests/test_qwen35_moe.py (prefill, the generate loop and the resident steps bit for
+  bit against the table on the card; the live fake card with both servers through one
+  `BoardDram`), test_lfm2_moe.py (the generate loop), test_qwen3.py (a dense model moved to
+  the host when its image does not fit, the same logits).
 
 ## 6. PCIe Gen2
 
@@ -880,6 +910,13 @@ tokens, the same prefill logits (sha256) and the same misses per token:
 - The checkpoints on the card's host are the routed experts' complement (1.4 GB for the 8B, 4.6
   GB for the 35B). The image build reads no expert; the pool file holds them.
 
+The sessions' scripts are in tools/offload/sessions: `card_moe.sh` (the runs, each checked against
+its references), `session5.sh` to `session8.sh` and `gen2.sh` (each session's runs, its tree in
+its header), `reference.sh` and `hf_reference.sh` (the ISA simulator's and HF's references), with
+the paths in `env.sh`. The host's files come from `tools/offload/strip_experts.py` (the
+checkpoint without its experts) and `pack_pool.py` (the pool, packed in workers or streamed to
+another host).
+
 The first run found a bug. The Engine's compile worker process, which the card's backend
 compiles ahead in, built its image without the MoE's `experts`: every expert resident, over
 DRAM (4568 MiB for 4096). It failed at the first prefill step, before the card ran anything.
@@ -1065,10 +1102,50 @@ at 1.4 GB/s:
 | fp4 head, 1280 slots | 4.24 | 4.48 |
 | fp4 head, 1440 slots (the head's freed bytes) | 4.40 | 4.66 |
 
-The fp4 head pays twice, as on Gemma 4: 254 MB fewer a token and some 150 more slots. Its
-accuracy on the 35B is to be measured. With decayed use, Gemma 4 26B-A4B's rows in section 11.3
+The fp4 head pays twice, as on Gemma 4: 254 MB fewer a token and some 150 more slots, but it
+costs the 35B 2.4% perplexity. Hugging Face's final hidden states (bf16) over 900 tokens of
+docs/isa.md's prose, through the head in float and in openTPU's formats (its input int8 per
+block, as QACT):
+
+| Qwen3.5-35B-A3B LM head | perplexity | KL(float, head) | top-1 as float's |
+|:--|--:|--:|--:|
+| float | 22.62 | 0 | 1 |
+| int8 | 22.63 | 0.0003 | 0.990 |
+| fp4 | 23.16 (+2.4%) | 0.018 | 0.889 |
+
+The model has memorized the opening of Pride and Prejudice (perplexity 1.05 in every format),
+so that text says nothing here. The head stays int8 by default; fp4 is an opt-in
+(`head_format`), as on Gemma 4 E2B. With decayed use, Gemma 4 26B-A4B's rows in section 11.3
 become 3.78 (fp4 experts, int8 head), 4.52 (fp4 head), 1.68 (int8 experts, int8 head) and
 1.92 (int8 experts, fp4 head) tok/s.
+
+### 10.4 Sessions 5-7: the embedding table on the host
+
+Card sessions 5-7 (2026-10-01, production build B, Gen1): Qwen3.5-35B-A3B with its slots by
+decayed use filling the DRAM, the whole pool (all 10240 experts) in the split format. Every
+run gave the ISA simulator's tokens and prefill logits bit for bit (`q35ref16`).
+
+- **The pool must be whole.** The card host's checkpoint has no experts, so a run that warms
+  more slots, or hints, needs every expert in the pool. Session 4's pool held the 4333 its runs
+  had used; it was filled from the full checkpoint (52 min, four workers on omarchy).
+- **The page cache.** The 17.1 GB pool does not stay whole in the host's page cache beside an
+  11 GB `moe_card` process. A run right after the fill (12.3 GB resident) ran at 3.24 against
+  4.11 tok/s warm. The card scripts now read the pool before each timed run and log its
+  residency.
+- **Noise.** At 16 tokens the same run gave 4.23 and 3.78 tok/s (the host's serving 0.64 s
+  against 1.10 s). Session 7 ran 128 tokens, each run twice:
+
+| 35B, 128 tokens | slots a layer | tok/s wall / device | misses a decode token (2nd half) | MB a decode token |
+|:--|--:|--:|--:|--:|
+| the table on the card | 34 | 3.59, 3.60 / 3.59, 3.60 | 119.3 (126.9) | 199 |
+| the table on the host (5.9) | 42 | **3.84, 3.87 / 3.85, 3.88** | 102.7 (109.0) | 171 |
+
+- The table on the host: **+7.2%** (3.86 against 3.60 tok/s), 14% fewer misses. The repeats
+  agree within 1%. The four runs' 128 tokens are the same.
+- 128 tokens run slower than 16 (103 misses a token against 79: the text moves on). The event
+  model (section 10.3's, 1680 slots) gives 4.52: about 15% above the card at 128 tokens.
+- The polls' reads: 25-27 us each with `BoardDram.read`'s beat read, against 90 us (12.6). The
+  link ran at 1.41 GB/s while busy.
 
 ## 11. Gemma 4 26B-A4B: design note
 
@@ -1099,9 +1176,8 @@ From `config.json` and transformers' `modeling_gemma4.py`:
   - Experts: 128 per layer, top 8, width 704, GELU-tanh. The checkpoint stores them fused per
     layer: `experts.gate_up_proj` [128, 1408, 2816] (gate rows first) and `experts.down_proj`
     [128, 2816, 704].
-- The checkpoint is 51.6 GB in bf16. omarchy has it whole. opentpu's copy in
-  ~/openTPU/models is an interrupted download: the first shard (49.9 GB) is missing, with a
-  17.9 GB `.incomplete` file in `.cache` dated 2026-09-30 00:07.
+- The checkpoint is 51.6 GB in bf16. omarchy has it whole; opentpu has the stripped one (11.4).
+  The download is the base model: no chat template, so the references use plain-text prompts.
 
 ### 11.2 How the layer maps
 
@@ -1109,14 +1185,22 @@ On `moe.py`'s side (offload) no new card mechanism is needed:
 - **The expert slot.** `ExpertFormat` with F padded from 704 to 768. fp4 blocks run 128
   along K, and gemma4's `ffn % 2D` check applies. The padding is zero rows of gate and up and
   zero columns of down, which is exact: gelu(0) * 0 = 0. The expert is 3.45 MB instead of 3.16.
-- **Folds at packing, no card ops:**
+- **Folds at packing:**
   - `per_expert_scale[e]` into expert e's W_down (it scales the expert's output linearly);
-  - `router.scale` * H^-0.5 into `router.proj`'s columns;
-  - `pre_ffn_norm_2`'s gain into the experts' gate and up columns.
-  The router and the experts then share one input: the unit RMSNorm of r, quantized once, as
-  `moe_ffn` does now. The emulation must first show that folding the gain before the 4-bit
-  quantization costs no accuracy against a second quantized input. If it does cost, the
-  experts get their own normed input (one more VPU pass per layer).
+  - `router.scale` * H^-0.5 into `router.proj`'s columns.
+  The router reads the unit RMSNorm of r, quantized, as `moe_ffn` does for every model.
+- **The experts' own input.** `pre_ffn_norm_2`'s gain is not folded: the experts read the
+  unit norm times the gain, quantized (`moe_ffn`'s `g_exp`; one `QACT` with column scale,
+  8 more instructions a program). With the gain folded into the gate and up columns, the
+  experts would read the unit norm quantized, whose blocks are scaled by the residual's
+  outlier channels, which the gain all but zeroes (the 26B's layer 10: |x| 17 where the gain
+  is 0, the gain up to 92 elsewhere), and the gain's own outliers would set the weights'
+  column blocks. On the real model that gave perplexity 127 against float's 1.235 (int8 dense
+  layers, fp4 experts; gemma4's emulation), the MoE block's relative error 0.27-0.51 from
+  layer 10 on with int8 experts (the dense MLP, which quantizes norm times gain: 0.01-0.04).
+  The router keeps the fold: a flipped route costs little. In tests/test_gemma4_moe.py's tiny
+  model with 4 channels of the gain at 8x, the int8 device against HF goes from a median
+  cosine of 0.977 (folded) to 0.994.
 - **The rule.** The softmax rule as written (`MoESpec.rule` "softmax"): the softmax of the 8
   largest logits is the renormalized top 8 of the full softmax. The order is the same, ties to
   the first.
@@ -1159,10 +1243,36 @@ as in 10.1 it gives 3.94.
 |:--|--:|--:|--:|--:|--:|
 | int8 head | 682 (22.7) | 62.5 | 216 | 3.51 | 5.71 |
 | fp4 head (`--head-bits 4.25`) | 789 (26.3) | 53.2 | 184 | 4.19 | 6.72 |
+| int8 experts (6.69 MB: `--expert-bits 9.0`), int8 head | 351 (11.7) | 107.5 | 719 | 1.55 | |
+| int8 experts, fp4 head | 406 (13.5) | 97.0 | 649 | 1.75 | |
+
+int8 experts give half the slots and twice the bytes a miss: under half the rate. The choice
+waits for the perplexity of fp4 experts (gemma4's 900-token runs, both heads); a split by layer
+range is the middle way (per-layer slot sizes in `Layout`).
 
 - The fp4 head pays twice: 369 MB fewer bytes a token, and 107 more slots. On E2B it is an
   opt-in (cosine 0.974 -> 0.971, +14% decode), and its accuracy on the 26B is to be measured.
 - Prefetch still loses here (3.0-3.7 against 3.5-4.2 without).
+
+**The formats, decided (2026-10-01).** gemma4's perplexity matrix on the fixed design (899
+positions of Austen, float NLL 0.2109): the dense layers stay int8 (fp4 dense costs +0.075 NLL
+on top of fp4 experts), the experts are fp4 (+0.024), and the fp4 head adds +0.009. With int8
+dense layers the slots shrink (gemma4.Image at the board's 4 GiB, cap 4096, lookup tables;
+dense 1725 MB a token in int8, 911 in fp4). `cachesim.py --dense-mb`, decayed use, no
+prefetch, tok/s (*simulated*; the model ran about 15% above the 35B's card at 128 tokens):
+
+| dense / head | slots (a layer) | Gen1 (misses a token) | Gen2 | all resident | ΔNLL |
+|:--|--:|--:|--:|--:|--:|
+| int8 / int8 | 420 (14) | 2.66 (83.8) | 3.54 | 4.26 | +0.024 |
+| **int8 / fp4** | 540 (18) | **3.19 (67.5)** | 4.11 | 4.79 | +0.033 |
+| fp4 / int8 | 660 (22) | 3.70 (55.5) | 4.77 | 5.64 | +0.099 |
+| fp4 / fp4 | 780 (26) | 4.45 (45.9) | 5.67 | 6.62 | ~+0.108 |
+
+Against the bar of +0.01 NLL for +10%, the fp4 head pays (+0.009 for +20%) and fp4 dense
+layers do not (+0.075 for +39%): int8 dense, fp4 experts, fp4 head, 540 slots. On unseen text
+(this file's first 900 tokens, float perplexity 10.02; docs/gemma4.md) the choice holds: +0.036
+NLL against float, the fp4 head +0.002 of it. `moe_card --wformat int8 --formats experts=fp4
+--head-format fp4`; on the card: 11.5.
 
 ### 11.4 Host side and plan
 
@@ -1175,4 +1285,207 @@ as in 10.1 it gives 3.94.
   2. `moe.py`'s parts (offload) and gemma4's attention and from_hf (gemma4), meeting at a
      tiny random Gemma4-MoE model in tests. The layer composition is checked against HF and
      the ISA simulator bit for bit, the card's side with the live fake card and a split pool.
-  3. The full model's ISA-simulator reference on omarchy, then a card session.
+  3. The full model's ISA-simulator reference on omarchy, then a card session: done (11.5).
+
+### 11.5 On the card: session 8
+
+Card session 8 (2026-10-01, production build B, Gen1, main 2a0b962): the decided formats (int8
+dense layers, fp4 experts and head), 540 slots (18 a layer) by decayed use, the split pool
+warm, 128 tokens after wiki.txt's first paragraph (125 tokens, plain text), twice.
+
+- **Correct.** Both runs gave the ISA simulator's 16 tokens and prefill logits bit for bit
+  (`q26ref16`, sha 28a40421a62a0cd2; 77 min on omarchy), and the same 128 tokens. HF's bf16
+  greedy differs from token 5, where its top two tie at 26.125.
+
+| 26B, 128 tokens | tok/s wall / device | misses a decode token (2nd half) | MB a decode token | link busy |
+|:--|--:|--:|--:|--:|
+| int8 / fp4 experts / fp4 head | **2.77, 2.77** / 2.77, 2.77 | 68.6 (66.4) | 238 | 21.4 of 46 s, 1.42 GB/s |
+
+- The simulated 3.19 (11.3) is 15% above the card, as on the 35B at 128 tokens (10.4). Gen2's
+  4.11 so scales to about 3.5.
+- A run: the image 312 s the first time (the int8 layers quantized on the host), 44 s from the
+  cache; prefill 47 s (a token a step, 125 of them); 128 tokens 46 s.
+- **The DMA guard** (`XdmaTransport`'s lock, main 2a0b962: no host->card call overlaps a
+  card->host one). The server's polls never wait on it: every poll reads with `BoardDram`'s
+  queue drained (`poll` flushes before it returns). The lock costs 1.8 us a DMA call on opentpu
+  (flock on tmpfs 1.4, the thread lock 0.4). The polls' reads took 33 us against session 7's
+  25; the lock is 2 us of that, the rest is unexplained (the host had rebooted; the XDMA
+  options are the same). Two reads a request, at 12.6's 1.5% for each 100 us: about 0.25%.
+- **The page cache between models.** A 35B run after the two 26B runs gave session 7's tokens
+  at 1.70 tok/s against 3.84: 8.7 of its 17.1 GB pool in the page cache at decode (16.5 in
+  session 7). The 26B pool's pages, read twice, outlived the 35B's, read once by the warm-up,
+  so staging read the disk (49.9 s against 6.6). The card scripts now drop the other pools
+  (`posix_fadvise` DONTNEED) before the warm-up.
+
+## 12. Router hints: prefetch from the layer's input
+
+Section 5.4 measured prefetch not to pay under LRU slots. With the slots replaced by decayed
+use (section 5.5), one variant does: before its mixer, each MoE layer runs its router on the
+layer's input (`pre`, section 3) and posts the k best as a hint. The host moves the missing
+ones on the link's idle time. The card then routes as before, and the experts it names are on
+their way, or in, by the time it asks. `MoESpec.hint` turns them on (`moe_card.py --hints
+on`). They are off by default: on the card they lost 5% (section 12.5).
+
+### 12.1 What it buys
+
+`cachesim.py`'s event model (section 11.3's calibration: 2.84 against 2.80 tok/s in session 2,
+3.94 against 3.87 in session 3), Qwen3.5-35B-A3B, slots by decayed use, tok/s (simulated):
+
+| 35B | link | without | with hints (`pre`, k best) |
+|:--|:--|--:|--:|
+| 1280 slots (the table on the card) | Gen1, 1.4 GB/s | 4.15 | 4.42 (+6.5%) |
+| 1560 slots (the table on the host, 5.9) | Gen1 | 4.41 | 4.69 (+6.3%) |
+| 1280 slots | Gen2, 2.8 GB/s | 5.52 | 5.74 (+4.0%) |
+| 1560 slots | Gen2 | 5.75 | 5.93 (+3.1%) |
+
+Per token at 1280 slots, Gen1:
+- demand transfers go from 100.7 to 93.9;
+- 23.0 hinted experts land, 10.5 of them unused before they are replaced;
+- the link goes from 52% to 70% busy.
+
+Why it pays now and did not under LRU: a hinted expert holds no use until a request names it,
+so the next miss in its layer replaces it first. A wrong hint costs one slot for a while, not
+the least recently used expert, which LRU replaced with it (raising the misses: 33 of 49 hints
+wasted, 110 demands a token). The k best are enough; 2k waste more than they catch.
+
+The model gives Gemma 4 26B-A4B nothing from `pre` (3.79 against 3.78 at Gen1, 682 slots) and
+2% from `prev_r` (the next layer's router at the end of this one). The hint stays off there.
+
+The card's own cost, not in the model: one more router per MoE layer (the 35B's: an RMSNorm, a
+257 x 2048 int8 MM of 0.5 MB, k `ARGMAX`, a post), about 50 us, 2 ms a token (0.8%;
+*estimate*).
+
+### 12.2 The card
+
+`moe.moe_hint`, per MoE layer before its mixer:
+
+1. **The k best.** The RMSNorm of the layer's input with the router's norm gain, `QACT`, the
+   router MM, and the k best by the model's rule: the route's `ARGMAX` knock-out loop, without
+   the weights.
+2. **The post.** The global ids plus G = layers x E (an id at G or above marks a hint), as a
+   request: `WAITW served GE seq`, the ids, `seq + 1`.
+
+Then the mixer, then the route as before (section 5.2). The route's fence waits for the hint's
+`served`, which the host writes once it has given the hinted experts their slots, before any
+of their bytes move. A hinted expert still on its way reads as missing (present 0), and the
+card's `WAITW NE 0` on its entry waits for it as for any miss.
+
+No ISA change and no new word: the same mailbox, row and `served`, and one register, as the
+route. The generate program's layer loops hold the hint's code once per layer kind. The
+programs of every model without hints are unchanged (sha256: E2B, E4B, LFM2.5-8B-A1B, the
+26B, the 35B with hints off, the tiny MoEs).
+
+### 12.3 The host
+
+`ExpertServer.hint`, for a request at G and above:
+- each named expert not in a slot gets one at once: a free slot, or the victim (least decayed
+  use, never one the hint names), its entry cleared;
+- the expert joins `pending`, its bytes not moved yet; no use is counted, so a hinted expert
+  no request names is its layer's next victim;
+- then `served = seq`.
+
+`ExpertServer.step`, from a poll that finds no request: the next part (512 KiB) of the oldest
+pending expert, one DMA call per channel, and its entry when the last part is in. The poll
+waits for that part (BoardDram's flush) before it returns, as for a request, so no DMA of the
+server's is in flight while anything else uses the card. A request waits for at most the part
+on the link, 0.37 ms at Gen1 (the model's preemption at the next chunk).
+
+A request (`serve`):
+- naming a pending expert: the rest of it at once, then its entry (a miss, `promoted`);
+- missing an expert: a victim as before, which may be a pending expert (`dropped`: what was
+  sent of it is lost, and its entry still reads 0).
+
+BoardDram's staging pairs take a part in their first bytes (a part and an expert alternate
+without new buffers); a split-format pool's part is its own blocks (`SplitRecord.part`).
+
+The "lru" policy answers a hint with `served` alone: an LRU victim of a wrong hint is a recent
+expert (section 5.4).
+
+**Race-freedom.** The card uses layer j's slots between its route's fence and its next fence
+for layer j, a token later. The hint for layer j comes before the route's fence, so the host's
+hint work (victims, cleared entries) is done when the fence passes (`served` covers it), and
+the card reads present flags only after. A hinted expert's slot is written only while its
+entry reads 0, by idle steps or by the request that names it; its entry is set after its last
+byte (BoardDram's one queue).
+
+### 12.4 Tests and status
+
+- `tests/test_offload_server.py`: a hint's slots and cleared entries at once, its parts on idle
+  polls and its entry after the last; a request sending the rest of a pending expert, or
+  replacing one; "lru" ignoring hints; BoardDram's writes of hinted parts equal to Board.write's
+  (the bytes and split formats, with and without CHASH).
+- `tests/test_qwen35_moe.py`: the tiny Qwen3.5-MoE with hints, k + 1 slots, gives the logits and
+  the card's generated tokens of the same engine without hints bit for bit (ISA simulator,
+  which calls the host only when the card waits: 96 hints, 107 hinted experts sent when the
+  route named them). On the live fake card (CHASH, a split pool, the embedding table on the
+  host: one BoardDram for the experts and the rows, 64 KiB parts) the hinted experts land on
+  idle polls (84 hints, 102 landed, 4 misses against 101 without hints), and the logits and
+  tokens are the ISA simulator's with the table on the card and no hints.
+- `test_hints_are_off_by_default`: `Spec.from_hf`'s programs are those of `hint=False`. The
+  35B's default program is the one with the table on the host and no hints (sha256
+  862438adb0e68f58).
+
+### 12.5 On the card: session 5
+
+Card session 5 (2026-10-01, production build B, Gen1): the 35B, 16 tokens, slots by decayed use
+filling the DRAM, the full pool (all 10240 experts) in the split format. Each run gave the ISA
+simulator's tokens and prefill logits bit for bit (`q35ref16`).
+
+| run | slots a layer | tok/s wall / device | misses a decode token (2nd half) | MB a decode token |
+|:--|--:|--:|--:|--:|
+| session 4: table on the card, 32 slots | 32 | 3.95 / 4.04 | 93.5 (106.6) | 147 |
+| table on the card | 34 | 3.24 / 3.29 (cold page cache) | 89.5 (101.9) | 147 |
+| table on the host (5.9) | 42 | **4.23 / 4.33** | 79.2 (89.9) | 130 |
+| table on the host, hints | 42 | 4.02 / 4.11 | 79.8 (90.8) | 152 |
+
+- The table-on-the-card run had a cold pool: 12.3 of the pool's 17.1 GB were in the page cache at
+  open, right after the pool's fill. Its staging took 1.72 s against session 4's 0.68 s. The
+  card scripts now read the pool before each timed run and log its residency.
+- The hints named the right experts, but too late. Of the hinted experts not in a slot, 474
+  landed on idle polls before their request, 3112 were sent only when the request named them,
+  and 629 were replaced before they landed; 77% of the misses had been hinted. The wrong hints
+  added 22 MB a token on the link. The model's gain needs the link idle between a hint and its
+  request; on the card there is little, and the oldest pending expert (often another layer's
+  unrequested hint) goes first.
+- So hints are off by default. Two host-side variants are next: a request withdrawing its
+  layer's hinted experts it does not name, and 128 KiB parts. They come back on only when one
+  beats the table on the host without hints on the card.
+
+### 12.6 Session 6: the variants, and the host's timeline
+
+Card session 6 (2026-10-01, build B, Gen1): the 35B, 16 tokens, the pool read into the page
+cache before each run (17.11 of 17.11 GB resident). Each run bit for bit as the ISA simulator's.
+`ExpertServer(drop=True)` (`moe_card --hint-drop`): a request withdraws its layer's hinted
+experts it does not name that have not landed; `--hint-part` sets the part; `--hint-trace`
+writes the decode's timeline (when each hint, request and part was seen and done).
+
+| run | tok/s wall / device | misses a decode token | MB a decode token |
+|:--|--:|--:|--:|
+| table on the host, no hints (session 5's run again) | 3.78 / 3.86 | 79.2 | 130 |
+| + hints, 512 KiB parts | 3.97 / 4.06 | 79.8 | 152 |
+| + hints, drop | 4.11 / 4.21 | 80.9 | 136 |
+| + hints, 128 KiB parts | 4.04 / 4.13 | 80.0 | 147 |
+| + hints, drop, 128 KiB parts | 4.21 / 4.30 | 80.9 | 134 |
+| table on the card, no hints (warm) | 4.11 / 4.20 | 89.5 | 147 |
+
+- **Noise.** The same run as session 5's 4.23 / 4.33 gave 3.78 / 3.86: the same misses and
+  bytes, the host's serving 1.10 s against 0.64 s. At 16 tokens the host's variance is about
+  6%, as large as every difference here.
+- **The timeline.** The host sees a request 1.2-1.4 ms after it served the layer's hint (the
+  mixer's time). A 512 KiB part takes 0.61 ms from poll to flush (0.86 GB/s: the poll's read,
+  the staging and the wait), a 128 KiB one 0.28 ms. So less than one 1.67 MB expert moves
+  before its request: with drop no hinted expert landed early (all 3160 sent on request), and
+  drop only saves the link's time on wrong hints. The event model assumed the link's full rate
+  for parts and found +6.5%; the card cannot get there with synchronous parts in the mixer's
+  1.3 ms. Hints would need asynchronous parts and an earlier post (the next layer's router at
+  the end of this one, `prev_r`); parked.
+- **The polls' reads.** 9663 reads took 0.87 s, 90 us each: Board.read fetches a whole 128-byte
+  chunk, one c2h call per channel. `BoardDram.read` now reads bytes within one 64-byte beat (a
+  seq, a request's row) as that beat alone, one call. The event model gives about 1.5% tok/s
+  for each 100 us the host sees a request sooner (35B, 1680 slots, Gen1: 4.66 / 4.52 / 4.39
+  tok/s at 250 / 450 / 650 us). Next steps for the latency, in order:
+  1. one read for both mailboxes (the row server's beside the expert server's: an image layout
+     change);
+  2. spinning without the 50 us sleep while a request is due;
+  3. a future bitstream: the card writing its request's seq where the host sees it without a
+     DMA read (a doorbell register or an MSI), so that the host waits on no read at all.

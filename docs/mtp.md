@@ -1,9 +1,14 @@
 # Multi-token prediction on the card (design note)
 
-Status: **design only, 2026-09-30.** There is no RTL or compiler work yet. **Measured** means a
-full-model simulation of today's production configuration with LiteDRAM's controller
-co-simulated (within 1.1% of the card, docs/board.md). **Projected** means arithmetic on those
-measurements; nothing projected has run.
+Status, 2026-10-01:
+- Phase 0, the offline acceptance study, is done (section 7.1).
+- Phase 2, the k = 1 MTP loop for Qwen3.5 on the ISA simulator, is done (sections 9 and 9.1):
+  greedy tokens equal plain decode's on the real 0.8B and 2B.
+- The loop on the card (phase 3) is next. No RTL change is needed.
+
+**Measured** means a full-model simulation of today's production configuration with LiteDRAM's
+controller co-simulated (within 1.1% of the card, docs/board.md). **Projected** means
+arithmetic on those measurements.
 
 The goal: more than one token per weight pass in the decode loop on the card
 ([autodecode.md](autodecode.md)), for every model on one bitstream, with no host work per token
@@ -33,6 +38,25 @@ operating point. Measured on omarchy, main 16e578c:
 | Qwen3.5-0.8B | 4,943,542 (27.0 tok/s) | 6,101,487 (1.23x) | 8,290,097 (1.68x) | 9,392,558 (1.90x) | 44% (263 MB) |
 
 Cycles per run; the factor is against the decode step.
+
+Measured later, for phase 0 (section 7.1), on main c2d2975 (the pipelined rows kernel with
+its fused VOPs). The 4B's full image overflows the LiteDRAM model, so its numbers are from 4-
+and 8-layer runs, extrapolated to 32 layers (each 4 layers is three DeltaNet and one
+attention). Those runs take 7,429,621 and 9,524,096 cycles at R = 1, and 7,593,481 and
+9,845,932 at R = 2. The extrapolated 6.0 tok/s is within 3% of the card's 5.88.
+
+| model | decode step (R = 1) | R = 2 |
+|---|---|---|
+| Qwen3.5-0.8B | 4,943,542 | 5,962,906 (1.21x) |
+| Qwen3.5-2B | 10,740,340 (12.4 tok/s) | 11,327,655 (1.055x) |
+| Qwen3.5-4B | 22,090,946 (6.0 tok/s) | 23,360,638 (1.057x) |
+| SmolLM3-3B | 14,840,079 (9.0 tok/s) | 15,400,586 (1.038x) |
+| LFM2-2.6B | 11,893,504 (11.2 tok/s) | 12,141,498 (1.021x) |
+
+The 2B has the same 16 DeltaNet heads as the 0.8B, so the same per-row DSTEP and VPU work, but
+about 2.2x the weights. The MXU still bounds its 2-row run. The 4B has 32 DeltaNet value heads
+and 32 layers. Its second row costs 2.2x the 2B's (1.27 M against 0.59 M cycles), but its
+decode step grows 2.1x as well, so its c_2 is the 2B's.
 
 What sets these costs:
 
@@ -164,7 +188,7 @@ restoring or keeps one copy per row:
 | KV cache (all attention layers, the MTP layer's) | nothing to undo | positional: the next run appends at p + n + 1 and overwrites; rows attend only to positions <= their own. K has per-token scales, V^T one scale per token, so overwriting one position is exact. |
 | LFM2's conv ring (rows of position p in slot p mod K, mirrored) | nothing to undo | ring modulus K -> K + k. A rejected row lands in a slot no kept row needs. With K = 3 and k = 1 the ring has 4 slots: `ring` = (p + 1) mod 4 in `generate.rules`. |
 | Qwen3.5's conv window (K - 1 = 3 rows per pair, stored after the taps) | keep one per row | the verify run stores the window after each row into slot r: 3 rows of the pair's convolved channels (768 words for 0.8B), 1.3 MB in all for 0.8B per row. The next run loads slot n. |
-| DeltaNet state S (per head, [dv, dk] fp32; 18 MiB for 0.8B) | keep one per row | k + 2 slots per head. Base b. Row r reads slot (b + r) mod (k + 2) and writes (b + r + 1) mod (k + 2). The new base is b + n + 1. The slot is one more run-time variable (RLD MUL into the state's address register). |
+| DeltaNet state S (per head, [dv, dk] fp32; 18 MiB for 0.8B) | keep one per row | at k = 1, two slots per head, the parity c naming the committed one: row 0 steps slot c in place, row 1 steps from slot c into slot 1 - c; commit c ^= n (section 9). |
 | The sampler's penalty factors (`pa`, `pb`) | tentative per row | row i applies the drafts d_1 .. d_i as if generated (section 5.2). Commit applies a_0 .. a_n. |
 
 **The DeltaNet slots cost no bandwidth with DSTEP.** DSTEP already reads and writes the whole
@@ -173,10 +197,11 @@ instead of in place moves the same bytes. The only cost is k + 1 more copies of 
 DRAM: 36 MiB more for 0.8B at k = 1, and more for the 4B / 9B / 35B states. DRAM has room
 (4 GiB card); offload's slot planning has to count it.
 
-**One RTL item.** DSTEP writes in place. STREAM's ISA has `src` and `dst`, but the board's
-hardware subset (`isa.stream_hw_cfg`) takes only "DRAM state in place". A DSTEP / STREAM with
-`dst != src` is a DMA change: the write address stream gets its own base. It is the only
-hardware change k = 1 needs.
+**No RTL change.** DSTEP writes in place, but STREAM has `src` and `dst`, and the DMA already
+writes a stream to its `dst` (`w3`; the RTL's subset check forbids only an overlap with `src`).
+`tests/test_mtp.py::test_mtp_verify_and_draft_on_rtl` runs a verify run whose row 1 steps are
+STREAMs into the other slot on the RTL, its DRAM equal to the ISA simulator's. The catch: src
+and dst share one address register, so dst - src is a compile-time constant (section 9).
 
 - Without DSTEP (the VOP path) the rows kernel loads a head's state into TMEM once. It then
   stores it once per row instead of once at the end: k more state writes per run.
@@ -391,9 +416,9 @@ By prompt kind, 32K head, greedy (0.8B / 2B / 4B):
 - code: 0.87, 1.49x / 0.88, 1.49x / 0.89, 1.50x;
 - summaries: 0.68, 1.32x / 0.70, 1.37x / 0.70, 1.34x.
 
-The 2B and 4B columns use the 0.8B's c_2 and c_draft. A bigger model's MTP layer and draft
-head are a smaller share of its token, so their c_draft is lower; their c_2 is not
-measured.
+The 2B and 4B columns use the 0.8B's c_2 (1.21) and c_draft. Their own c_2 is lower (section
+1: 1.055 for the 2B, 1.057 for the 4B), so their real gain is larger; the ranking at the end
+of this section uses it.
 
 **n-gram, 3>2** (all nine prompts; greedy / sampled):
 
@@ -437,14 +462,59 @@ What follows:
 - **Caveats:**
   - The float model stands in for the card's fp4 one.
   - Nine prompts give a few hundred drafts per kind.
-  - c_2 is measured only for Qwen3.5-0.8B, Qwen3 and LFM2.5.
+  - The tables above use c_2 = 1.21 for every model. The ranking below uses each model's own,
+    where section 1 measures it.
+
+**What to build, ranked, with the card's tok/s.** Each model at its own c_2 (section 1; 1.21
+where it is not measured). The MTP's c_draft is its layer plus the 32K fp4 head, as a share of
+that model's token: 0.05 for the 0.8B and 2B, 0.04 for the 4B. "Today" is the card's device
+tok/s with 4-bit weights and the int8 head (README, production build B).
+
+| model | drafter | c_2 | today | greedy | sampled |
+|---|---|---|---|---|---|
+| Qwen3.5-2B | MTP, 32K fp4 head | 1.055 | 12.09 tok/s | 1.57x, 19.0 tok/s | 1.55x, 18.7 tok/s |
+| Qwen3.5-4B | MTP, 32K fp4 head | 1.057 | 5.88 tok/s | 1.59x, 9.4 tok/s | not run |
+| Qwen3.5-0.8B | MTP, 32K fp4 head | 1.21 | 24.5 tok/s | 1.36x, 33.3 tok/s | 1.32x, 32.3 tok/s |
+| SmolLM3-3B | n-gram 3>2 | 1.038 | 8.74 tok/s | 1.08x, 9.4 tok/s | 1.08x, 9.4 tok/s |
+| LFM2-2.6B | n-gram 3>2 | 1.021 | 10.96 tok/s | 1.07x, 11.7 tok/s | 1.06x, 11.6 tok/s |
+| Qwen3-0.6B | n-gram 3>2 | 1.16 | 31.3 tok/s | 1.10x, 34.4 tok/s | 1.10x, 34.4 tok/s |
+| LFM2.5-230M | n-gram 3>2 | 1.09 | 85.8 tok/s | 1.07x, 91.8 tok/s | 1.06x, 90.9 tok/s |
+| Gemma 4 E2B (pre-trained) | n-gram 3>2 | 1.21 (not measured) | 9.6 tok/s | 1.23x, 11.8 tok/s | 1.09x, 10.5 tok/s |
+
+**n-gram with a g = 1 fallback ("3>2>1").** Where neither g = 3 nor g = 2 matches, the token
+after the latest earlier copy of the last token still makes a draft. It is accepted only 0.16-
+0.26 of the time. But a 2-row run costs just c_2 - 1 more than a plain step, so the draft pays
+where that is well below its acceptance. These numbers are greedy only. The study's ids give
+greedy acceptance for any drafter (the next id), but sampled acceptance would need a rerun.
+
+| model | c_2 | 3>2, greedy | 3>2>1, greedy | tok/s |
+|---|---|---|---|---|
+| LFM2-2.6B | 1.021 | 1.07x | 1.13x | 12.4 |
+| SmolLM3-3B | 1.038 | 1.08x | 1.13x | 9.9 |
+| Qwen3-0.6B | 1.16 | 1.10x | 1.12x | 35.1 |
+| LFM2.5-230M | 1.09 | 1.07x | 1.10x | 94.5 |
+| Gemma 4 E2B (pre-trained) | 1.21 | 1.23x | 1.23x | 11.8 |
+| Qwen3.5-0.8B (MTP's model) | 1.21 | 1.07x | 1.06x | - |
+
+1. **The verify, accept and roll-back machinery** (plan items 2 and 5) comes first. Both
+   drafters need it.
+2. **MTP for Qwen3.5** (plan item 3) is the payoff: 1.3-1.6x. Its DeltaNet state slots need a
+   STREAM with dst != src, which the RTL already runs (section 4).
+3. **n-gram for the other models** is the generic fallback: 1.06-1.10x on chat checkpoints
+   with g = 3 and 2. Falling back to g = 1 gives 1.10-1.13x greedy where c_2 is at most about
+   1.16. The g = 1 fallback is chosen per model by its c_2. It needs no hardware change: those
+   models have no DeltaNet state, and their KV caches and LFM2's conv ring need no copies
+   (section 4). That makes it a software feature on today's bitstream, and a natural first
+   drafter for testing the machinery.
 
 ## 8. Plan
 
 0. **Acceptance study, no card:** done (section 7.1, `tools/mtp_accept.py`).
    - Qwen3.5's MTP head with a 32K fp4 draft head: accepted 0.73 / 0.67 (0.8B, greedy /
-     sampled), 1.36x / 1.32x at c_2 = 1.21. The 2B is about the same.
-   - n-gram for the other models: 1.03-1.09x.
+     sampled), 1.36x / 1.32x at c_2 = 1.21. At their own c_2 the 2B gets 1.57x greedy and the
+     4B 1.59x.
+   - n-gram for the other models: 1.03-1.09x at c_2 = 1.21. At their own c_2 it gives
+     1.06-1.10x, and 1.10-1.13x greedy with the g = 1 fallback.
 1. **The rows kernel's DSTEP overlap for Qwen3.5** (section 1): done. `_rows_pipelined` runs
    two pairs ahead, as `_deltanet_dstep` does: the 2-row run -1.9% (1.21x), prefill -2.2% at
    6 rows. The rest is the stream engine's work (section 1).
@@ -456,11 +526,16 @@ What follows:
    - Test: tokens equal to the plain generate loop's on tiny Qwen3, LFM2, Qwen3.5 and Gemma 4,
      across a bucket boundary and stops. That includes iterations with every draft rejected,
      forced by a deliberately wrong drafter.
-3. **The MTP drafter for Qwen3.5.**
-   - The loader keeps `mtp.*`, and an image region holds the MTP layer and the draft head.
-   - The kernel, checked against the reference of phase 0 bit for bit in the ISA simulator.
+3. **The MTP drafter for Qwen3.5:** done in phase 2 (sections 9 and 9.1), host-driven.
+   - The loader keeps `mtp.*` (`load_weights(path, mtp=True)`), and the image (`Spec.mtp`)
+     holds the MTP layer and the draft head.
+   - The kernel (`qwen35_mtp`) is checked against a numpy reference (`mtp_reference`).
+   - The verify run with its state slots, and the loop itself, are `opentpu/llm/mtp.py`.
+     Greedy tokens equal plain decode's on the 0.8B and 2B.
+   - Still to do (phase 3): the programs at a `RunPos` per bucket, and the loop on the card
+     (items 2 and 4).
 4. **RTL:**
-   - DSTEP / STREAM with dst != src (the one hardware change);
+   - STREAM with dst != src: already in the RTL (section 4), no change;
    - the RTL tests against the ISA simulator;
    - a dev build (FAST=1, 100 MHz), then the card qual's new phase: tokens equal to the plain
      loop's, plus tokens per iteration.
@@ -473,7 +548,162 @@ What follows:
      streaming costs grow with k. The slot cache's hit rate decides whether MTP pays on the
      35B-A3B, and that needs offload's measurements.
 
-## 9. Open questions
+## 9. Phase 2 design: the MTP loop on the ISA simulator
+
+The decision after phase 0: Qwen3.5 gets the MTP drafter with the 32K fp4 draft head (v1).
+n-gram waits. Phase 2 runs the k = 1 loop on the ISA simulator, driven by the host: each run is
+a program compiled at its position, as `Engine.step`'s are. The same kernels become per-bucket
+programs at a `RunPos` in phase 3 (section 3), with the loop on the card (section 2).
+
+**Two programs per iteration**, at position p with the token t (at p) and the draft d (for
+p + 1):
+
+1. **verify(p, c)** is `qwen35_rows` over the rows (t, d) at p and p + 1, with logits for both
+   rows. It also stores the final norm's output of both rows, the LM head's input, to `hid`
+   for the MTP layer. c is the state parity (below).
+2. **mtp(p)** runs over the rows (hid[0], a0) and (hid[1], a1) at positions p and p + 1:
+   - e = `pre_fc_norm_embedding`(embed(a_r)) and h = `pre_fc_norm_hidden`(hid[r]);
+   - x = fc([e, h]), one MM with K = 2H;
+   - the MTP decoder layer, which is one more attention layer block in the image: gated
+     attention with its own KV cache, then the dense MLP;
+   - `mtp.norm`, then the draft head: fp4 rows of the 32K lowest ids, chunked as the LM head;
+   - ARGMAX per row gives draft[r].
+
+**The loop.**
+- n = (d == a0). The iteration emits a0, then a1 if n is 1.
+- A stop id among the emitted tokens ends the loop there.
+- The next iteration's draft is draft[n], its position p + 1 + n and its token a_n.
+- The MTP rows always run in pairs. When n = 0, row 1 sits on a rejected hidden. Its KV entry
+  at p + 1 is overwritten by the next run's row 0 before anything attends to it.
+
+**Rolling back: checkpoint, not recompute.**
+- **The KV caches** (the model's and the MTP layer's) are positional and need nothing undone.
+- **The DeltaNet state** gets two slots per head; c names the one holding the committed state.
+  - The verify run's row 0 steps it in place in slot c. Row 1 is always the one that can be
+    rejected. Its step is a STREAM from slot c into slot 1 - c, so slot c keeps S after row 0.
+  - The commit is c ^= n.
+  - This moves exactly the bytes of today's 2-row run: no extra cycles. It costs DRAM: 18 MiB
+    more on the 0.8B and 2B, 48 MiB on the 4B.
+- **The conv window** also gets two slots. The run stores the window after row 0 into W_c and
+  the one after row 1 into W_(1-c). That is 3 more rows per pair: 1.3 MB per run on the 0.8B,
+  about 10K cycles (0.2% of a token).
+- **Recompute costs more.** A delta-rule step has no bit-exact inverse, so getting S after
+  row 0 back needs the state from before the run kept anyway. On every rejection it also
+  needs row 0's step run again:
+  - 0.8B and 2B: 288 head steps of about 2,250 cycles each on the stream engine, 0.65 M
+    cycles. At the 0.27 rejection rate that is 0.17 M per iteration: 3.5% of a 0.8B token,
+    1.6% of a 2B token.
+  - 4B: 768 steps, about 0.4 M per iteration.
+- **Copying on rejection** costs about 0.08 M per iteration. That design keeps one fixed slot
+  pair (row 0 B -> A, row 1 A -> B) and copies A -> B through the port after each rejection.
+- **No RTL change.** Row 1's step needs dst != src. STREAM has both fields. The DMA already
+  writes a stream to `w3`; the RTL's subset check only forbids src and dst overlapping. DSTEP
+  stays in place.
+- **One catch: two variants per program.** src and dst share one address register, so
+  dst - src is a compile-time constant. The parity is therefore a compile-time choice: two
+  verify programs, one per c. In phase 3 the loop CHAINs to the one c names (`HALT CHAIN`
+  takes its target from a register).
+- The decode step and prefill run at either parity through the same descriptors (the image's
+  `slot`).
+
+**Prefill.**
+- The prompt's chunks store `hid` for every row.
+- mtp then runs over the prompt's rows, (h_i, x_(i+1)) at positions i, which fills the MTP
+  layer's KV cache.
+- The last row, (h_(P-1), a_0), gives the first draft.
+
+**Tests.** Greedy tokens must equal plain greedy decode's, bit for bit:
+- On tiny models (Mac) with three drafters:
+  - the MTP head;
+  - forced-right drafts (every draft accepted, so the parity flips every iteration);
+  - forced-wrong drafts.
+- After the loop, the committed slot equals plain decode's state, word for word.
+- On the real 0.8B and 2B on omarchy, a few prompts.
+
+**Measurements.**
+- perf_qwen gets `--mtp verify` and `--mtp draft` at position 544. The verify run's c_2 is
+  checked with `--check`, which also exercises the RTL's dst != src STREAM.
+- The end-to-end speedup combines those cycles with the loop's own acceptance on the
+  simulator.
+- The 4B's verify run is extrapolated from 4 and 8 layers, as in section 1.
+
+### 9.1 Phase 2 results
+
+**Bit-exact on the real models.** `tools/mtp_decode.py` runs the loop on the ISA simulator.
+- Setup: fp4 weights with the int8 head and the production flags (MCOLS 4, PAIR, DSTEP,
+  STREAM), against plain greedy decode on the same simulator.
+- Prompts: phase 0's prompts 0 (chat), 3 (code) and 7 (a summary of 237 tokens), 48 tokens
+  each.
+- The tokens are equal on every prompt.
+
+| model | tokens equal | verify runs for 3 x 48 tokens | acceptance (chat / code / summary) | tokens per verify |
+|---|---|---|---|---|
+| Qwen3.5-0.8B | 3 of 3 | 84 | 0.66 / 0.74 / 0.71 | 1.68 |
+| Qwen3.5-2B | 3 of 3 | 80 | 0.62 / 0.88 / 0.81 | 1.76 |
+
+- **Against phase 0 on the same prompts.** Phase 0's float model accepted these shares of
+  its first 46 drafts:
+  - 0.8B: 0.76 / 0.87 / 0.65;
+  - 2B: 0.80 / 0.89 / 0.74.
+
+  The card's fp4 model writes its own text and drafts about as well: 0.70 on the 0.8B
+  against 0.76, and 0.76 on the 2B against 0.81.
+- **The 4B's loop was not run on the simulator.** The 2B's three prompts took 1.4 h of plain
+  decode and 0.9 h of MTP decode there, and the 4B is twice the work. Its speedup below takes
+  phase 0's greedy acceptance.
+
+**The runs, co-simulated** (`perf_qwen --mtp verify / draft`, position 544, the LiteDRAM
+controller at DDR3-1066, 133.33 MHz). The decode steps are section 1's: those programs are
+byte-identical on this branch.
+
+| model | decode step | verify run (2 rows, forked) | c_2 | draft run (MTP, 2 rows) | c_draft |
+|---|---|---|---|---|---|
+| Qwen3.5-0.8B | 4,943,542 | 5,914,147 | 1.196 | 255,753 | 0.052 |
+| Qwen3.5-2B | 10,740,340 | 11,325,903 | 1.055 | 581,117 | 0.054 |
+| Qwen3.5-4B | 22,090,946 | 23,494,861 | 1.064 | 932,708 | 0.042 |
+
+- **The 4B's verify run is extrapolated** from 4 and 8 layers: 7,610,300 and 9,879,523
+  cycles.
+- **The fork costs almost nothing.** The verify run against section 1's plain 2-row run:
+  - 0.8B: 5,914,147 against 5,962,906;
+  - 2B: 11,325,903 against 11,327,655;
+  - 4B: +0.2% at 4 layers and +0.3% at 8, so c_2 1.064 against 1.057.
+
+  Row 1's steps into the other slot, the second window store and the hidden rows' store cost
+  at most a fraction of a percent.
+- **RTL check.** The 0.8B verify run passes `--check`: its DRAM after the RTL run equals the
+  ISA simulator's, bit for bit, with the dst != src STREAMs.
+- **c_draft is as section 6.1 estimated**: 0.05 of a token.
+
+**End to end, in cycles.**
+- The formula: (tokens - 1) x decode step / (verify runs x verify + MTP runs x draft). The
+  first token comes from the prefill either way.
+- Each iteration runs one verify and one draft, except the last, which needs no draft.
+
+| model | speedup in cycles | phase 0 projected (greedy) | card today | projected on the card |
+|---|---|---|---|---|
+| Qwen3.5-0.8B | 1.347x (chat 1.30, code 1.40, summary 1.35) | 1.36x | 24.5 tok/s | 33.0 tok/s |
+| Qwen3.5-2B | 1.593x (chat 1.46, code 1.70, summary 1.63) | 1.57x | 12.09 tok/s | 19.3 tok/s |
+| Qwen3.5-4B (phase 0's acceptance) | 1.58x | 1.59x | 5.88 tok/s | 9.3 tok/s |
+
+- **The phase 0 column**: section 7.1's loop over all nine prompts (256 tokens each), at that
+  section's c_2 and c_draft.
+- **With the measured costs instead**, the same loop gives 1.37x on the 0.8B, 1.57x on the 2B
+  and 1.58x on the 4B (`mtp_accept.py --summary --c2 --cdraft`).
+- **The card column** is today's device tok/s times the speedup in cycles.
+
+**Fit for phase 3** (compiled at positions 544 and 4094, board configuration, rows = 8):
+
+| model | verify (instructions, TMEM words) | draft | decode step |
+|---|---|---|---|
+| Qwen3.5-0.8B | 2,362-2,562; 25.9K-29.7K | 464-666; 24.7K-29.7K | 1,798-1,900 |
+| Qwen3.5-2B | 2,131-2,331; 32.1K-33.8K | 404-606; 28.8K-33.8K | 1,567-1,669 |
+| Qwen3.5-4B | 2,694-3,100; 39.1K-44.1K | 730-1,132; 39.1K-44.1K | 1,720-1,930 |
+
+IMEM holds 4,096 instructions and TMEM 64K words. The phase 3 programs are these kernels at a
+`RunPos`, with the loop's few hundred instructions on top.
+
+## 10. Open questions
 
 - The MTP dataflow (section 6.1) is **confirmed against mlx_vlm 0.6.8**'s Qwen3.5 drafter:
   - the concat order is the embedding first, then the hidden;
@@ -481,9 +711,13 @@ What follows:
   - the MTP layer has its own KV cache and its own `mtp.norm`.
   **Still to check against vLLM's `qwen3_next_mtp.py`.** Phase 0 also checks it against the
   checkpoint's acceptance: a wrong detail shows up as near-zero acceptance.
-- Whether the 4B / 35B-A3B MTP layers are dense or MoE (the 0.8B's MLP is dense). Their
-  checkpoints are on omarchy and opentpu, not on the Mac.
-- The draft-head frequency table: from a tokenizer-level corpus count, or from the token ids'
-  merge order (byte-level BPE ids roughly follow merge frequency). Phase 0 decides.
+- Whether the 35B-A3B's MTP layer is dense or MoE. The 0.8B's, 2B's and 4B's are dense: phase
+  0 loads them as plain decoder layers.
+- The draft-head frequency table: phase 0 takes the token ids' merge order (the 32K lowest
+  ids) and that is enough. On the 4B, greedy, the 32K head is accepted 0.76 against the full
+  fp4 head's 0.80. A corpus count might close part of that gap.
 - Whether the plain-step fallback per iteration (no n-gram match) should instead keep a 2-row
-  run with a guessed draft. The per-row cost (section 1) says no for every model measured.
+  run with a guessed draft. Answered in section 7.1: yes, where c_2 is low. The g = 1 guess is
+  accepted 0.16-0.26, against c_2 - 1 = 0.02-0.16 on LFM2-2.6B, SmolLM3, LFM2.5 and Qwen3. At
+  the 0.8B's 1.21 it does not pay. The steps no n-gram covers (33-41% of the tokens) remain
+  plain.

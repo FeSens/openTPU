@@ -31,6 +31,10 @@ path (a) of docs/offload.md section 4, the card computing everything and the hos
 experts (`linksim`), with and without prefetch from the predictions, the slots replaced as
 `--stream-policies` says (lru, lfu: as lru_layer, lfu_layer). `--host-frac`: the SSD tier, a host
 RAM holding that fraction of the pool (LRU) over the SSD.
+
+Calibration (docs/offload.md 10.4, 11.5): at 128 tokens on the card (Gen1, decayed use) the
+rates came out about 15% below the model's on both MoEs: the 35B 3.86 tok/s against 4.52, the
+26B 2.77 against 3.19.
 """
 from __future__ import annotations
 
@@ -445,6 +449,9 @@ def main():
                     help="compute each missing expert when it lands, or all after the last")
     ap.add_argument("--expert-bits", type=float, default=4.25,
                     help="bits per expert weight (4.25: fp4 blocks; 8.25: int8)")
+    ap.add_argument("--dense-mb", type=float, default=0.0,
+                    help="the non-expert layers' MB a token (default: the survey's, fp4; e.g. "
+                         "gemma4.Image's int8 layers)")
     ap.add_argument("--head-bits", type=float, default=8.25,
                     help="bits per LM head weight (8.25: int8; 4.25: fp4)")
     a = ap.parse_args()
@@ -460,7 +467,9 @@ def main():
         d = next(r for r in rs if r["repo"] == name or r["repo"].split("/")[-1] == name)
         head8 = (d["head"] or d["embed"]) * 8.25 / 8         # the survey's: int8
         head = head8 * a.head_bits / 8.25
-        dl = (d["tok_bytes"] - d["tok_expert_bytes"] - head8) / L
+        dl = (d["tok_bytes"] - d["tok_expert_bytes"] - head8) / L     # (the survey's fp4)
+        if a.dense_mb:                                  # the image's own, another format
+            dl = a.dense_mb * 1e6 / L
         xb = d["expert_bytes"] * a.expert_bits / 4.25
         by = dict(x=xb, head=head, d_pre=dl - a.post_mb * 1e6,
                   d_post=a.post_mb * 1e6)

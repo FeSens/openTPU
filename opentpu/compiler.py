@@ -100,9 +100,9 @@ class DevVar(RunVar):
     address may add 1 * var; it then uses R[reg] as its base, like a run-time argument's
     register."""
 
-    def __init__(self, name: str, reg: int):
+    def __init__(self, name: str, reg: int, align: int = 1):
         super().__init__(name)
-        self.reg = reg
+        self.reg, self.align = reg, align       # align: the value is a multiple of it
 
 
 ARG0 = 8                        # the run's arguments ARG0..7 are R8..R15 at the start
@@ -1342,10 +1342,12 @@ class Builder:
 
     def stream(self, d: I.StreamDesc, state: Tensor, vec: Tile | None, x: Tile | None,
                k: Tile | None, o: Tile | None, zero: bool = False, ks: int = 1,
-               k_off: int = 0) -> None:
+               k_off: int = 0, dst: Tensor | None = None) -> None:
         """STREAM with descriptor d over the fp32 row-major tensor `state` [rows, cols] in
-        DRAM, updated in place: column slots at vec, row scalars at x, constants at k + k_off
-        (K_j at + j * ks), row outputs to o (docs/stream.md). `zero`: the state reads as +0."""
+        DRAM, updated in place or written to `dst` (a tensor of its shape at a compile-time
+        distance from `state`: both addresses take one register): column slots at vec, row
+        scalars at x, constants at k + k_off (K_j at + j * ks), row outputs to o
+        (docs/stream.md). `zero`: the state reads as +0."""
         if not self.cfg.STREAM:
             raise CompileError("STREAM needs Config.STREAM (the stream engine)")
         if len(state.shape) != 2 or state.strides != (state.shape[1], 1):
@@ -1357,6 +1359,15 @@ class Builder:
             raise CompileError("stream: the state must be DRAM-chunk aligned")
         tiles = [t for t in (vec, x, k, o) if t is not None]
         self.check_live(*tiles)
+        gap = 0
+        if dst is not None:
+            g = Affine.of(dst.base) - Affine.of(state.base)
+            if dst.shape != state.shape or dst.strides != state.strides or not g.is_static:
+                raise CompileError("stream: dst must be the state's shape at a compile-time "
+                                   "distance from it")
+            gap = g.const
+            if gap and (gap % self.cfg.D or abs(gap) < 4 * d.rows * d.cols):
+                raise CompileError("stream: dst must be chunk aligned and not overlap the state")
         at = self.stream_desc(d)
         ra, imm = self.addr(state.base)
         (rb, vb), (rc, xb), (rd, kb) = (self.addr(t.base) if t is not None else (0, 0)
@@ -1367,7 +1378,7 @@ class Builder:
             raise CompileError("stream: the constants start below TMEM 0")
         if not 0 < ks < 1 << 16:
             raise CompileError("stream: the constants' stride must be 1..65535")
-        self.emit(I.stream(at, imm, imm, vb, xb, kb + k_off,
+        self.emit(I.stream(at, imm, imm + gap, vb, xb, kb + k_off,
                            0 if o is None else Affine.of(o.base).const, ks=ks,
                            zero=zero, ra=ra, rb=rb, rc=rc, rd=rd,
                            comment=f"stream {d.rows}x{d.cols}"))
@@ -1375,12 +1386,13 @@ class Builder:
             self.bump_version(o.buf)
 
     def deltanet_step(self, state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile,
-                      o: Tile, zero: bool = False) -> None:
+                      o: Tile, zero: bool = False, dst: Tensor | None = None) -> None:
         """DSTEP: one Gated DeltaNet head step on the fp32 state `state` [rows, cols] in DRAM,
         updated in place; qk = [q | k] (2 * cols words), v [rows], decay and beta [1] tiles
         (beta after decay), o [rows] written (docs/isa.md). `zero`: the state starts at +0.
         Without Config.DSTEP, a Config.STREAM machine runs it as STREAM with isa.gdn_desc
-        (bit-identical)."""
+        (bit-identical). `dst`: the new state goes there instead and `state` keeps the old one
+        (a STREAM, which has a destination; Config.STREAM)."""
         if not (self.cfg.DSTEP or self.cfg.STREAM):
             raise CompileError("deltanet_step needs Config.DSTEP (the DMA's DSTEP) or "
                                "Config.STREAM (the stream engine)")
@@ -1399,8 +1411,11 @@ class Builder:
         self.check_live(qk, v, decay, beta, o)
         if Affine.of(state.base).is_static and Affine.of(state.base).const % self.cfg.D:
             raise CompileError("deltanet_step: the state must be DRAM-chunk aligned")
-        if not self.cfg.DSTEP:
-            return self.stream(I.gdn_desc(rows, cols), state, qk, v, decay, o, zero, ks=gs)
+        if dst is not None and not self.cfg.STREAM:
+            raise CompileError("deltanet_step into another state needs Config.STREAM")
+        if not self.cfg.DSTEP or dst is not None:
+            return self.stream(I.gdn_desc(rows, cols), state, qk, v, decay, o, zero, ks=gs,
+                               dst=dst)
         ra, imm = self.addr(state.base)
         self.emit(I.dstep(imm, qk.base, v.base, rows, cols, decay.base, gs, o.base, zero=zero,
                           ra=ra, comment="dstep"))
@@ -1467,7 +1482,8 @@ class Builder:
         # PAIR reads a chunk's two scale words as one 8-byte-aligned pair
         pair = st.pair and w.wf != I.W8 and (w.scale is None or (
             w.srs % 8 == 0 and Affine.of(w.scale).const % 8 == 0
-            and all(c % 8 == 0 for c in Affine.of(w.scale).terms.values())))
+            and all(c * getattr(v, "align", 1) % 8 == 0
+                    for v, c in Affine.of(w.scale).terms.items())))
         m0 = 0
         for ab, mc in st.chunks:
             ins = I.mm(sa, ssa, out.base + m0 * ors, N, st.KB, w.rs, ors, mc, ab, w.srs,

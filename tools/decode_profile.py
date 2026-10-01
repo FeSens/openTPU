@@ -21,8 +21,9 @@ write, the HALTED poll with its sleeps) is timed and filed under the host step i
   start           CLEAR, RUN (and the trace registers)
   counters        the HALTED poll and the counter registers after it (Board.wait); its critical
                   part starts when the run ends: the poll's wake-up and the register reads
-  logits-stream   the logits pieces read while the card runs (streamed logits) and their
-                  sentinel re-marking; logits-tail: what is read after HALTED
+  logits-stream   the logits pieces read while the card runs (streamed logits); logits-tail:
+                  what is read after HALTED; logits-mark: waiting for their sentinel marking
+                  (after the run, on the DMA worker, whose calls count as "(worker)" operations)
   logits-read     the logits read after HALTED without streaming (--no-stream)
   sample, detok, ui, status   host computation (no transport)
   compile-wait    the step waiting for the precompiled program (Engine._program)
@@ -59,10 +60,10 @@ from opentpu.host import runstate  # noqa: E402
 from opentpu.llm import load_spec, model_dir  # noqa: E402
 from opentpu.llm import qwen3 as Q  # noqa: E402
 
-COMPUTE = ("sample", "detok", "ui", "status", "compile-wait")    # items timed directly
+COMPUTE = ("sample", "detok", "ui", "status", "compile-wait", "logits-mark")   # timed directly
 KNOWN = ["io-write", "args-write", "compile-wait", "prog-upload", "imem-load", "start",
-         "counters", "logits-stream", "logits-tail", "logits-read", "status", "sample", "detok",
-         "ui"]
+         "counters", "logits-stream", "logits-tail", "logits-mark", "logits-read", "status",
+         "sample", "detok", "ui"]
 
 
 class Profiler:
@@ -107,6 +108,15 @@ class Profiler:
         f, prof = getattr(t, name), self
 
         def w(*a, **k):
+            if threading.current_thread() is not threading.main_thread():
+                t0 = time.perf_counter()                # the DMA worker: counted, not filed
+                r = f(*a, **k)
+                if prof.on.is_set():
+                    o = prof.ops[op + " (worker)"]
+                    o[0] += 1
+                    o[1] += nbytes(a) if nbytes else 0
+                    o[2] += time.perf_counter() - t0
+                return r
             prof.depth += 1
             t0, run0 = time.perf_counter(), prof.running
             try:
@@ -189,7 +199,7 @@ def main(argv=None):
     ap.add_argument("--fake-no-args", action="store_true",
                     help="--backend fake: a bitstream without run arguments (CAPS bit25)")
     ap.add_argument("--json")
-    ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4"],
+    ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4", "mix"],
                     help="weight format of the layers (docs/quant.md)")
     ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
                     help="weight format of the LM head (default: --wformat)")
@@ -224,6 +234,7 @@ def main(argv=None):
     P.step(B.Board, "wait", "counters")
     P.step(B.BoardBackend, "_stream_logits", "logits-stream")
     P.step(B.BoardBackend, "_stream_tail", "logits-tail")
+    P.step(B.BoardBackend, "_settle", "logits-mark")
     P.step(B.BoardBackend, "read", "logits-read")
     P.step(runstate.RunnerStatus, "token", "status")
     P.step(Q.Engine, "_program", "compile-wait")

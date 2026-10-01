@@ -22,6 +22,13 @@ the last id, `served = seq`. The card fences each layer before it posts, `WAITW 
 (its last request), so one request row is enough, and no eviction for a layer is in flight
 while it uses that layer's slots (docs/offload.md 5.2).
 
+A request whose ids are at G = layers x E and above is a hint (docs/offload.md 12: the layer's
+router on its input, before its mixer). With the "lfu" policy the host gives each hinted expert
+not in a slot one now (a free one, or the victim, its entry cleared), writes served, and moves
+the experts on the link's idle time: one part per poll that finds no request, the entry when
+the last part has landed. A request naming one still on its way sends the rest at once. "lru"
+ignores hints.
+
 On the card the server's memory is `BoardDram` (`dram_of`): the experts' DMA at the link's
 rate, in a worker thread, the host's own words without a read of the card first.
 
@@ -113,6 +120,13 @@ class SplitRecord:
 
     def __len__(self) -> int:
         return self.n
+
+    def part(self, a: int, b: int) -> "SplitRecord":
+        """Its bytes a..b (whole RUN blocks, or to its end), in the split format: the blocks
+        are its own."""
+        if a % RUN or (b % RUN and b != self.n) or not 0 <= a < b <= self.n:
+            raise ValueError(f"a split record's part {a}..{b} of {self.n} bytes")
+        return SplitRecord(b - a, lambda bufs, at=0: self.readv(bufs, a + at))
 
     def __array__(self, dtype=None, copy=None) -> np.ndarray:
         f = np.empty(self.n, np.uint8)
@@ -243,28 +257,42 @@ def _f32(x: float) -> bytes:
 
 
 class ExpertServer:
-    """Serves the card's expert requests (module docstring).
+    """Serves the card's expert requests and hints (module docstring).
 
     mem: write(addr, bytes-like) and read(addr, n) -> bytes-like on the card's DRAM (the ISA
     simulator's slice DRAM through SimDram, or the board through BoardBackend's read / write).
     pool(g): expert g in the card's slot format, `layout.slot_bytes` long (host RAM or a file;
-    the host never computes with it)."""
+    the host never computes with it). part: the bytes of a hinted expert one idle poll sends
+    (a request waits for at most one part on the link). drop: a request withdraws its layer's
+    hinted experts it does not name that have not landed (their slots free again, the link
+    kept for the next layer's hints)."""
 
-    def __init__(self, mem, layout: Layout, pool, policy: str = "lru", half: float = 32.0):
+    def __init__(self, mem, layout: Layout, pool, policy: str = "lru", half: float = 32.0,
+                 part: int = 512 << 10, drop: bool = False):
         self.mem, self.L, self.pool = mem, layout, pool
         if policy not in ("lru", "lfu"):
             raise ValueError(f"replacement policy {policy!r}")
+        if part <= 0 or part % RUN:
+            raise ValueError(f"a hint's part of {part} bytes (RUN blocks)")
         # the victim: the layer's least recently used expert the request does not name, or with
         # "lfu" the one of least use, each use decaying by half every `half` requests of its
         # layer (docs/offload.md 10.3: 9-15% fewer misses than LRU on the traces)
-        self.policy, self.half = policy, half
+        self.policy, self.half, self.part, self.drop = policy, half, part, drop
         self.lru = [OrderedDict() for _ in range(layout.layers)]    # g -> slot address
         self.t = [0] * layout.layers                                # requests per layer
         self.use: list = [{} for _ in range(layout.layers)]          # g -> log2 use + t / half
         self.free = [[a + i * layout.slot_bytes for i in range(n)] for a, n in layout.slots]
+        self.pending: OrderedDict = OrderedDict()   # hinted, in a slot, not landed: g -> bytes sent
         self.seq = 0                        # the last request served
         self.hits = self.misses = self.bytes = 0
+        # hints served; hinted experts landed on idle time, sent by the request that named
+        # them, replaced before they landed, withdrawn by their layer's request (drop)
+        self.hints = self.prefetched = self.promoted = self.dropped = self.withdrawn = 0
         self.history: list | None = None    # a list: each request's ids are appended
+        # a list: (perf_counter when seen, when done, "h" hint / "d" request / "p" a hint's
+        # part, its layer or expert, misses or the expert's bytes sent): the host's timeline of
+        # the hints (moe_card --hint-trace)
+        self.events: list | None = None
 
     def load(self, warm=()) -> None:
         """At image load: an empty directory and mailbox, then the experts `warm` names (global
@@ -277,6 +305,7 @@ class ExpertServer:
         for lru, fr in zip(self.lru, self.free):
             fr.extend(lru.values())
             lru.clear()
+        self.pending.clear()
         self.seq = 0
         self.t = [0] * L.layers
         self.use = [{} for _ in range(L.layers)]
@@ -290,24 +319,43 @@ class ExpertServer:
                 lru.move_to_end(g)
         self._flush()
         self.hits = self.misses = self.bytes = 0     # counted from here: the requests'
+        self.hints = self.prefetched = self.promoted = self.dropped = self.withdrawn = 0
 
     def poll(self) -> int:
-        """Serve the card's request if it posted one since the last served; returns 1 if so.
-        The card's seq is read first, then the row."""
+        """Serve the card's request if it posted one since the last served, else send a part of
+        a hinted expert; returns 1 if it did either. The card's seq is read first, then the
+        row."""
         seq = int(np.frombuffer(bytes(self.mem.read(self.L.mbox, 4)), np.float32)[0])
+        t0 = time.perf_counter()
         if seq == self.seq:
-            return 0
+            if not self.pending:
+                return 0
+            g = next(iter(self.pending))
+            self.step()
+            self._flush()
+            if self.events is not None:
+                self.events.append((t0, time.perf_counter(), "p", g,
+                                    self.pending.get(g, self.L.slot_bytes)))
+            return 1
         if seq != self.seq + 1:
             raise RuntimeError(f"the card posted request {seq} with {self.seq} served: its "
                                f"fence (WAITW served >= seq) is missing")
         ids = [int(g) for g in np.frombuffer(bytes(self.mem.read(self.L.row, 4 * self.L.k)),
                                              np.float32)]
-        if self.history is not None:
-            self.history.append(ids)
-        self.serve(ids)
+        G = self.L.E * self.L.layers
+        m0 = self.misses
+        if ids[0] >= G:
+            self.hint([g - G for g in ids])
+        else:
+            if self.history is not None:
+                self.history.append(ids)
+            self.serve(ids)
         self.seq = seq
         self.mem.write(self.L.served, _f32(seq))
         self._flush()                       # (no DMA of the server's in flight after poll)
+        if self.events is not None:
+            self.events.append((t0, time.perf_counter(), "h" if ids[0] >= G else "d",
+                                ids[0] % G // self.L.E, self.misses - m0))
         return 1
 
     def _flush(self) -> None:
@@ -315,12 +363,16 @@ class ExpertServer:
         if f is not None:
             f()
 
-    def serve(self, ids) -> None:
-        """One request: its k global ids, all of one MoE layer."""
+    def _layer(self, ids) -> int:
         E = self.L.E
         j = ids[0] // E
         if any(g // E != j or not 0 <= g < E * self.L.layers for g in ids):
             raise ValueError(f"request {ids} is not one layer's experts")
+        return j
+
+    def serve(self, ids) -> None:
+        """One request: its k global ids, all of one MoE layer."""
+        j = self._layer(ids)
         self.t[j] += 1
         lru, use, t = self.lru[j], self.use[j], self.t[j] / self.half
         for g in ids:                       # the decayed use count, kept as log2 + t / half
@@ -328,23 +380,87 @@ class ExpertServer:
         for g in ids:
             if g in lru:
                 lru.move_to_end(g)
-                self.hits += 1
+                if g in self.pending:       # hinted, on its way: the rest now
+                    self.misses += 1
+                    self.promoted += 1
+                    self._send(g, self.L.slot_bytes)
+                else:
+                    self.hits += 1
                 continue
             self.misses += 1
-            if self.free[j]:
-                slot = self.free[j].pop(0)
-            else:
-                if self.policy == "lfu":
-                    victim = min((v for v in lru if v not in ids),
-                                 key=lambda v: use.get(v, -math.inf), default=None)
-                else:
-                    victim = next((v for v in lru if v not in ids), None)
-                if victim is None:
-                    raise RuntimeError(f"layer {j}: {len(lru)} slots for a request of "
-                                       f"{len(ids)}")
-                slot = lru.pop(victim)
-                self.mem.write(self.L.entry(victim), np.zeros(2, np.uint32))
-            self._insert(j, g, slot)
+            self._insert(j, g, self._slot(j, ids))
+        if self.drop:                       # its layer's hints it does not name, withdrawn
+            for g in [g for g in self.pending if g // self.L.E == j and g not in ids]:
+                del self.pending[g]
+                self.free[j].append(lru.pop(g))
+                self.withdrawn += 1
+
+    def hint(self, ids) -> None:
+        """A hint: the k global ids the layer's router picks on its input (docs/offload.md 12).
+        With "lfu" each one not in a slot gets one now (a free slot, or the victim's: its entry
+        cleared) and waits in `pending` for the link's idle time (step); no use counted, so
+        a hinted expert no request names is the next victim. "lru" ignores hints (section
+        5.4: an LRU victim of a wrong hint is a recent expert)."""
+        j = self._layer(ids)
+        self.hints += 1
+        if self.policy != "lfu":
+            return
+        lru = self.lru[j]
+        for g in ids:
+            if g not in lru:
+                lru[g] = self._slot(j, ids)
+                self.pending[g] = 0
+
+    def step(self) -> None:
+        """The next part of the oldest hinted expert on its way (the link is idle: no request
+        since the last served); its entry once its last part is sent."""
+        g, a = next(iter(self.pending.items()))
+        n = self.L.slot_bytes
+        if self._send(g, min(a + self.part, n)) == n:
+            self.prefetched += 1
+
+    def _send(self, g: int, b: int) -> int:
+        """Hinted expert g's bytes from where it stands to b; its entry when that is the end.
+        Returns b."""
+        slot, a = self.lru[g // self.L.E][g], self.pending[g]
+        data = self.pool(g)
+        n = len(data)
+        if n != self.L.slot_bytes:
+            raise ValueError(f"expert {g}: {n} bytes, slots hold {self.L.slot_bytes}")
+        if a == 0 and b == n:
+            part = data
+        elif isinstance(data, SplitRecord):
+            part = data.part(a, b)
+        else:
+            part = (np.ascontiguousarray(data).view(np.uint8).reshape(-1) if isinstance(
+                data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))[a:b]
+        getattr(self.mem, "write_slot", self.mem.write)(slot + a, part)
+        self.bytes += b - a
+        if b < n:
+            self.pending[g] = b
+            return b
+        del self.pending[g]
+        self.mem.write(self.L.entry(g), np.array([slot], np.uint32).tobytes() + _f32(1.0))
+        return b
+
+    def _slot(self, j: int, ids) -> int:
+        """A slot of layer j for one of the request's experts: a free one, or the victim's (its
+        entry cleared; a hinted expert still on its way is dropped)."""
+        if self.free[j]:
+            return self.free[j].pop(0)
+        lru, use = self.lru[j], self.use[j]
+        if self.policy == "lfu":
+            victim = min((v for v in lru if v not in ids),
+                         key=lambda v: use.get(v, -math.inf), default=None)
+        else:
+            victim = next((v for v in lru if v not in ids), None)
+        if victim is None:
+            raise RuntimeError(f"layer {j}: {len(lru)} slots for a request of {len(ids)}")
+        if self.pending.pop(victim, None) is not None:
+            self.dropped += 1               # (its entry reads 0 already)
+        else:
+            self.mem.write(self.L.entry(victim), np.zeros(2, np.uint32))
+        return lru.pop(victim)
 
     def _insert(self, j: int, g: int, slot: int) -> None:
         data = self.pool(g)
@@ -452,11 +568,12 @@ class BoardDram:
     out of the pool, CHASH's swaps, the two channel runs, a bounce for the DMA's alignment) and
     widens every smaller write with a read of the card; the 35B-A3B's card run wrote 544 MB/s
     against the link's 1.37. Here:
-    - write_slot: an expert's bytes go to the two channels' runs in one pass (the beat
-      interleave and CHASH's swaps, `np.take` of 64-byte beats) into page-aligned staging
-      buffers, then one DMA call per channel; an expert of a split-format pool file
-      (SplitRecord) is read straight into the runs, and when nothing is in flight (a
-      request's first miss) in `pieces` parts, each DMAed as soon as it is read;
+    - write_slot: an expert's bytes (or a part's: a hint's, ExpertServer.step) go to the two
+      channels' runs in one pass (the beat interleave and CHASH's swaps, `np.take` of 64-byte
+      beats) into page-aligned staging buffers, then one DMA call per channel; an expert of a
+      split-format pool file (SplitRecord) is read straight into the runs, and when nothing
+      is in flight (a request's first miss) in `pieces` parts, each DMAed as soon as it is
+      read;
     - the host's own words (served and the directory: the card only reads them) are kept in a
       shadow and written with no read first: a write within one 64-byte beat (an entry,
       served) as that beat alone, one DMA call on its channel; a longer one as whole 128-byte
@@ -477,8 +594,8 @@ class BoardDram:
         self.blk, self.lo = blk, layout.served
         self.shadow = np.zeros(-(-(end - self.lo) // blk) * blk, np.uint8)
         self.depth, self._bufs, self._base, self._i1 = depth, None, None, None
-        self._idx: dict = {}                  # slot address -> channel 0's beat indices
-        self._pieces: list = []               # per staging pair: its split-format pieces
+        self._idx: dict = {}                  # (address, chunks) -> channel 0's beat indices
+        self._pieces: dict = {}               # bytes -> per staging pair: its split pieces
         self._free: queue.Queue = queue.Queue()
         self._q: queue.Queue = queue.Queue()
         self._err: BaseException | None = None
@@ -535,28 +652,34 @@ class BoardDram:
             self.board.write(addr, b)
 
     def _staging(self, nbytes: int) -> None:
-        """depth pairs of page-aligned buffers for an expert's two channel runs, and for the
-        split format each pair's RUN / 2-byte pieces, in file order for either parity."""
-        if self._bufs is not None and len(self._bufs[0][0]) == nbytes // 2:
+        """depth pairs of page-aligned buffers for an expert's two channel runs (a shorter
+        write, a hint's part, uses their first bytes)."""
+        if self._bufs is not None and len(self._bufs[0][0]) >= nbytes // 2:
             return
         self.flush()
         n = nbytes // self.blk
         self._bufs = [[_page_buf(nbytes // 2) for _ in (0, 1)] for _ in range(self.depth)]
         self._base = 2 * np.arange(n, dtype=np.intp)
-        self._i1, self._idx = np.empty(n, np.intp), {}
-        h = RUN // 2
-        nb = -(-nbytes // RUN)
-        self._pieces = []
-        for b0, b1 in self._bufs:
-            v = np.empty((nb, 2, 2), object)
-            for j in range(nb):
-                p0, p1 = memoryview(b0)[j * h:(j + 1) * h], memoryview(b1)[j * h:(j + 1) * h]
-                v[j, 0, 0], v[j, 0, 1], v[j, 1, 0], v[j, 1, 1] = p0, p1, p1, p0
-            self._pieces.append(v)
+        self._i1, self._idx, self._pieces = np.empty(n, np.intp), {}, {}
         while not self._free.empty():
             self._free.get()
         for i in range(self.depth):
             self._free.put(i)
+
+    def _split_pieces(self, nbytes: int) -> list:
+        """Per staging pair, an nbytes record's RUN / 2-byte pieces of the two runs, in file
+        order for either parity ([block, parity, run])."""
+        if nbytes not in self._pieces:
+            h, nb, ps = RUN // 2, -(-nbytes // RUN), []
+            for b0, b1 in self._bufs:
+                b0, b1 = memoryview(b0)[:nbytes // 2], memoryview(b1)[:nbytes // 2]
+                v = np.empty((nb, 2, 2), object)
+                for j in range(nb):
+                    p0, p1 = b0[j * h:(j + 1) * h], b1[j * h:(j + 1) * h]
+                    v[j, 0, 0], v[j, 0, 1], v[j, 1, 0], v[j, 1, 1] = p0, p1, p1, p0
+                ps.append(v)
+            self._pieces[nbytes] = ps
+        return self._pieces[nbytes]
 
     def write_slot(self, addr: int, data) -> None:
         from .board import swapped
@@ -564,8 +687,9 @@ class BoardDram:
                 and len(data) % self.blk == 0):
             self._staging(len(data))            # the file's runs, read in place
             i = self._free.get()
-            nb = self._pieces[i].shape[0]
-            iov = self._pieces[i][np.arange(nb), _parity(addr // RUN + np.arange(nb))]
+            pieces = self._split_pieces(len(data))[i]
+            nb = pieces.shape[0]
+            iov = pieces[np.arange(nb), _parity(addr // RUN + np.arange(nb))]
             bufs, h = self._bufs[i], RUN // 2
             # nothing in flight: the link waits for this read, so it goes in parts (each one
             # DMA call per channel more)
@@ -574,8 +698,8 @@ class BoardDram:
             cut = sorted({nb * p // parts for p in range(parts + 1)})
             for j0, j1 in zip(cut[:-1], cut[1:]):
                 data.readv(iov[j0:j1].reshape(-1).tolist(), j0 * RUN)
-                self._put(lambda a=j0 * h, b=j1 * h: self._dma(addr // 2, bufs, a, b),
-                          i if j1 == nb else None)
+                self._put(lambda a=j0 * h, b=min(j1 * h, len(data) // 2):
+                          self._dma(addr // 2, bufs, a, b), i if j1 == nb else None)
             self.direct += 1
             return
         src = (np.ascontiguousarray(data).view(np.uint8).reshape(-1)
@@ -584,16 +708,17 @@ class BoardDram:
         if addr % self.blk or len(src) % self.blk:
             return self.write(addr, src)
         self._staging(len(src))
-        i0 = self._idx.get(addr)
+        i0 = self._idx.get((addr, n))
         if i0 is None:                          # once per slot: CHASH's swaps at its address
-            i0 = self._idx[addr] = (self._base + swapped(addr, n) if self.board.chash
-                                    else self._base)
-        np.bitwise_xor(i0, 1, out=self._i1)     # channel 1 takes each chunk's other beat
+            i0 = self._idx[addr, n] = (self._base[:n] + swapped(addr, n) if self.board.chash
+                                       else self._base[:n])
+        i1 = self._i1[:n]
+        np.bitwise_xor(i0, 1, out=i1)           # channel 1 takes each chunk's other beat
         i = self._free.get()                    # a staging pair the worker is done with
-        bufs, beats = self._bufs[i], src.view("V64")
-        np.take(beats, i0, out=bufs[0].view("V64"))           # channel 0's run
-        np.take(beats, self._i1, out=bufs[1].view("V64"))     # channel 1's
-        self._put(lambda: self._dma(addr // 2, bufs), i)
+        bufs, beats, h = self._bufs[i], src.view("V64"), n * self.blk // 2
+        np.take(beats, i0, out=bufs[0][:h].view("V64"))       # channel 0's run
+        np.take(beats, i1, out=bufs[1][:h].view("V64"))       # channel 1's
+        self._put(lambda: self._dma(addr // 2, bufs, 0, h), i)
 
     def _beat(self, at: int, data: np.ndarray) -> None:
         """One 64-byte beat of the host's words (at: 64-byte aligned) to the channel that holds
@@ -622,6 +747,22 @@ class BoardDram:
         self.dma_bytes += 2 * len(bufs[0][a:b])
 
     def read(self, addr: int, n: int) -> bytes:
+        """n bytes from the card. Within one 64-byte beat (a poll's seq, a request's row) that
+        beat alone, one DMA call on its channel (Board.read reads the whole 128-byte chunk, one
+        call per channel: a poll's read took 90 us on the card). Raises with the worker's DMA
+        queued or in flight: the server's reads never meet its writes (ExpertServer flushes
+        before poll returns), as the card needs (a card->host call beside a host->card one slips
+        the card's writes, board._DmaLock)."""
+        if self._q.unfinished_tasks:
+            raise RuntimeError(f"BoardDram.read with {self._q.unfinished_tasks} of the worker's "
+                               f"DMA calls unfinished: flush first")
+        h = self.blk // 2
+        if addr % h + n <= h:
+            m, c = addr // self.blk, addr // h % 2
+            if self.board.chash:
+                c ^= m.bit_count() & 1
+            beat = np.asarray(self.board.t.mem_read(c, m * h, h)).view(np.uint8)
+            return beat[addr % h:addr % h + n].tobytes()
         return np.asarray(self.board.read(addr, n)).view(np.uint8).tobytes()
 
 
