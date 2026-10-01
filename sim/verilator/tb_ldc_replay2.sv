@@ -4,7 +4,9 @@
 // never waits behind the other's). Same address, same port: no hazard crosses ports. Prints the
 // cycles from the first command to the last beat moved, and the largest read skew between the
 // ports (the read data an adapter would have to hold to return it in command order), through
-// otpu_ldc_ch.v's two user ports (otpu_mem_ch's split, in open loop).
+// otpu_ldc_ch.v's two user ports (otpu_mem_ch's split, in open loop). At the end, the DFI's column
+// command spacing: the fewest cycles from a read to the next write and from a write to the next
+// read, and how often each read-to-write gap under 16 cycles came (fastmux.py's rtw / direct_wtr).
 module tb_ldc_replay2;
   logic clk = 1'b0, rst = 1'b1;
   always #5 clk = ~clk;
@@ -112,5 +114,38 @@ module tb_ldc_replay2;
       end
       if (cyc > 64'd1 << 34) $fatal(1, "replay did not finish");
     end
+  end
+  // the DFI's column commands (the multiplexer's steerer registers)
+  longint lastr = -1000, lastw = -1000, minrw = 1000, minwr = 1000, nrw = 0, nwr_ = 0;
+  longint hrw [16];
+  initial for (int i = 0; i < 16; i++) hrw[i] = 0;
+  wire [3:0] dcas = {!u_dut.core_dfi_p3_cas_n && u_dut.core_dfi_p3_ras_n,
+                     !u_dut.core_dfi_p2_cas_n && u_dut.core_dfi_p2_ras_n,
+                     !u_dut.core_dfi_p1_cas_n && u_dut.core_dfi_p1_ras_n,
+                     !u_dut.core_dfi_p0_cas_n && u_dut.core_dfi_p0_ras_n};
+  wire [3:0] dwe = {!u_dut.core_dfi_p3_we_n, !u_dut.core_dfi_p2_we_n, !u_dut.core_dfi_p1_we_n,
+                    !u_dut.core_dfi_p0_we_n};
+  always @(posedge clk) if (!rst)
+    for (int p = 0; p < 4; p++) if (dcas[p]) begin
+      if (dwe[p]) begin
+        if (lastr > lastw) begin
+          nrw++;
+          if (cyc - lastr < minrw) minrw = cyc - lastr;
+          if (cyc - lastr < 16) hrw[cyc - lastr]++;
+        end
+        lastw = cyc;
+      end else begin
+        if (lastw > lastr) begin
+          nwr_++;
+          if (cyc - lastw < minwr) minwr = cyc - lastw;
+        end
+        lastr = cyc;
+      end
+    end
+  final begin
+    $write("REPLAY2 spacing: read to write %0d, at least %0d; write to read %0d, at least %0d; gaps",
+           nrw, minrw, nwr_, minwr);
+    for (int i = 0; i < 16; i++) if (hrw[i] != 0) $write(" %0d:%0d", i, hrw[i]);
+    $display("");
   end
 endmodule

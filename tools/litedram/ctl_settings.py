@@ -14,3 +14,6 @@ as the card does (docs/litedram.md section 11, "What is left in the controller")
   write-back (Qwen3.5): -0.6% cycles per token.
 """
 CONTROLLER = dict(refresh_postponing=2, read_time=256, write_time=128)
+
+# fastmux.py's options for LiteDRAM's multiplexer (None / False: LiteDRAM's own)
+MULTIPLEXER = dict(rtw=None, same_cycle=False, direct_wtr=False)

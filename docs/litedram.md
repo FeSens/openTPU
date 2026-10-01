@@ -1688,13 +1688,8 @@ controller variants from `gen_ldc.py`'s settings or small LiteDRAM subclasses):
   fixes: 4.858 / 4.838 / 4.844 / 4.837 M cycles at 1 / 2 / 4 / 8). But the core's buffers do not
   hide it when the MXU is the limit: perf_qwen's 2-layer Qwen3 4-bit run (pos 9, 99% of its
   roofline) takes 1,479,646 / 1,479,908 / 1,480,313 / 1,495,742 cycles at 1 / 2 / 4 / 8.
-- **The chooser is the next step, not taken here.** On top of the three fixes below it saves
-  0.26% (Qwen3), 0.22% (LFM2) and 0.38% (Qwen3.5). But it adds a priority encoder to the
-  controller's command path in LiteDRAM's sys domain, so it waits for an out-of-context timing
-  check.
-- **Not tried:** a shorter read-to-write turnaround. LiteDRAM holds 7 cycles where DDR3 needs
-  about 2. That is worth 0.4-1.0% after the read / write times below, but the PHY's bus
-  turnaround would need a close look.
+- **The chooser, and a shorter read-to-write turnaround,** were left for later: measured on
+  top of these fixes in "The chooser and the turnarounds" below, and parked.
 
 **The three fixes (memeff):**
 1. **APF 8 -> 32** (`otpu_native_dram`). The run counters and the A order's drop field go from
@@ -1765,6 +1760,85 @@ bytes per token are B's):
 - **The streamed-logits decode** (`decode_profile`, 96 steps) gives the same picture: Qwen3 4-bit
   36.92 -> 37.47 tokens/s, LFM2 97.53 -> 98.84, Qwen3.5 26.76 -> 27.35. The on-card decode loop
   gives Qwen3 37.37 -> 37.89 and LFM2 97.65 -> 98.89.
+
+### The chooser and the turnarounds (2026-10-01): parked
+
+The two multiplexer items left after memeff, with a third of the same kind, as options of
+`tools/litedram/fastmux.py`: a copy of LiteDRAM's multiplexer that `gen_core.py` and `gen_ldc.py`
+build through. `ctl_settings.py`'s `MULTIPLEXER` leaves all three off, and then the core and the
+co-simulated controller are LiteDRAM's, byte for byte (`check_core.sh` matches;
+`gen_ldc.py` writes the committed `otpu_ldc_ch.v`).
+- **`same_cycle`: the choosers grant in the cycle a request is valid.** LiteDRAM's
+  `_CommandChooser` keeps its round-robin grant in a register and moves it only when the granted
+  request is taken or is not valid. So a grant on a bank with nothing to issue in the current state
+  (a read while writing, a bank waiting on its own timers) costs a cycle. Here the grant is the
+  first valid request from a round-robin pointer on: a priority encoder in front of the command
+  mux, in LiteDRAM's sys domain.
+- **`rtw`: the read-to-write turnaround as a command spacing.** LiteDRAM's RTW state lasts
+  read_latency - 1 = 7 cycles and issues nothing, so its first write goes 9 cycles after the last
+  read (8 when read_time runs out). With `rtw` the multiplexer goes from READ straight to WRITE,
+  and a counter from the last read (a `tXXDController`, like tCCD's) holds the writes; activates
+  and precharges go on meanwhile. `rtw 3` makes it 3 cycles.
+- **`direct_wtr`: the write-to-read turnaround the same way.** The same tWTR counter (LiteDRAM's:
+  tWTR + CWL's cycles + tCCD = 2 + 2 + 1) holds the reads in READ, so the WTR state's extra
+  transition goes: 6 cycles to 5.
+
+**The command spacing, checked** (`tb_ldc_replay2`'s spacing line: the DFI's column commands, both
+ports, a trace of 60,000 commands in short read and write bursts over 4 rows of every bank,
+`gen_ldc.py`'s options): from a read to the next write at least 9 cycles in LiteDRAM's and 3 with
+`rtw 3`; from a write to the next read 6, and 5 with `direct_wtr`. That trace runs in 252,595
+cycles in LiteDRAM's, 213,550 with `rtw 3`, 210,956 with `same_cycle`, and 171,609 with all
+three. Bit for bit: `test_rtl.py -k ldc`'s three memory paths pass with all three.
+
+**The PHY's side of the read-to-write turnaround** (DDR3-1066, CL 7, CWL 6, BL8; the reads and
+writes go on phase 2 of their sys cycle):
+- **DDR3** needs RL + tCCD + 2 tCK - WL = 7 + 4 + 2 - 6 = 7 tCK from a read to a write: 2 sys
+  cycles.
+- **The PHY needs more.** WL7DDRPHY (A7DDRPHY's write control) switches its DQ and DQS output
+  enables a whole sys cycle at a time (`OSERDESE2` TRISTATE_WIDTH 1, TQ in BUF mode): a preamble
+  cycle, the data's cycle and a postamble cycle. So it drives the bus 4 tCK before the write data
+  where DDR3 asks for 1, and the data lands b tCK into its cycle, b being the write latency
+  calibration's bitslip. On the card b is 0 or 1 tCK (memcal's write latency 0 / 6). The PHY keeps
+  CK within half a tCK of sys, so b stays in {0, 1} on this board.
+- **Counted in tCK from the last read command R,** with the write command at W = R + 4k (k sys
+  cycles):
+  - The read burst holds the bus from R + CL - 1 (the preamble) to R + CL + 4 + 0.5 (the
+    postamble) = R + 11.5, plus tDQSCK (0.3 ns).
+  - The PHY starts to drive at W + CWL - 4 - b = W + 2 - b.
+  - So no overlap needs 4k >= 9.7 + b, and about 0.5 tCK more at the FPGA's pins (the round
+    trip).
+- **k = 2 is not safe:** the PHY would start to drive while the read's last beats are still on the
+  bus.
+- **k = 3 is safe for b <= 1,** with at least 0.8 tCK (1.5 ns) to spare at the FPGA's pins, plus
+  the output enable's own path delay. A b of 2 or 3 tCK would need k = 4.
+- **ODT is static** (DFII's control bit held high, Rtt_Nom and Rtt_WR at RZQ/4, one rank): no ODT
+  pin switches between a read and a write. The DRAM's own switch to Rtt_WR comes CWL - 2 = 4 tCK
+  after the write, at R + 16, after the read's postamble.
+- **The write-to-read count is LiteDRAM's** (5 cycles = 20 tCK; DDR3 needs CWL + 4 + tWTR = 14),
+  and the write's postamble cycle is long gone when the read's preamble comes.
+
+**Decode, measured** (the whole model, `tools/perf_ddr.py`, the card's operating point; cycles per
+token against main ff186b1, memeff):
+
+| | main | `same_cycle` | `rtw 3` | `rtw 3`, `direct_wtr` | all three |
+|---|---|---|---|---|---|
+| Qwen3 4-bit | 3,844,073 | -0.33% | -0.35% | -0.42% | -0.74% |
+| LFM2 4-bit | 1,398,641 | -0.26% | -0.14% | -0.17% | -0.35% |
+| Qwen3.5 4-bit | 4,837,936 | -0.35% | -0.47% | -0.52% | -0.86% |
+| Qwen3 8-bit | 5,617,507 | -0.27% | -0.27% | -0.34% | -0.50% |
+| LFM2 8-bit | 2,054,882 | -0.20% | -0.14% | -0.15% | -0.31% |
+| Qwen3.5 8-bit | 6,836,578 | -0.45% | -0.57% | -0.69% | -0.99% |
+
+- **Why it is small:** decode reads in long runs. The turnarounds and the chooser's empty grants
+  were 0.9 to 2.5% of the controller's cycles (the breakdown above), and the options take back
+  a third to a half of that. The rest is DDR3's and the PHY's own spacing and banks still waiting on their timers.
+- **One port, sequential** (the BIST's pattern): `same_cycle` takes reads from 90.4% to 91.7% of
+  peak, writes from 89.9% to 91.2% (91.5% with all three). That is the BIST's figure, not decode.
+- **Parked:** under the ~1% a build and a card session would have to pay for. To take it: set
+  `MULTIPLEXER` (`rtw=3, same_cycle=True, direct_wtr=True`), regenerate the core and the model
+  (`check_core.sh --update`, `gen_ldc.py`), and replace the BIST test's figures. Before a build it
+  needs the out-of-context timing check of the chooser's priority encoder (sys at 133.33 MHz).
+  On the card it needs a read-to-write check: the ECC counters after mixed traffic at `rtw 3`.
 
 ### The core clock at DDR3-1066: the co-simulated grid
 
