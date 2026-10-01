@@ -1512,7 +1512,8 @@ def _mlp(x, lw, spec, m=None):
         def beside():
             out["y"] = dense()
 
-        acc = MO.moe_ffn(x, lw, spec.moe, m.moe_dev, spec.eps, beside=beside, residual=False)
+        acc = MO.moe_ffn(x, lw, spec.moe, m.moe_dev, spec.eps, beside=beside, residual=False,
+                         y_first=True)          # (26B: [8, 2816] in a fragmented TMEM)
         y = rmsnorm(out.pop("y"), ol.load(lw.g_f1), spec.eps) + \
             rmsnorm(acc, ol.load(lw.g_f2), spec.eps)
         del acc
