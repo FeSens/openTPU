@@ -651,11 +651,11 @@ class Builder:
         # an RLD MUL of its word, so only an address of c * var alone takes an argument register
         self.run_words: dict | None = None
         # arguments whose registers were given back (release_arg), and those registers while
-        # they still hold the argument (zeroed when an address takes one); the release: the
-        # program's last instruction then and the registers taken by then
+        # they still hold the argument (zeroed when an address takes one); each one's release:
+        # the program's last instruction then and the registers taken by then
         self.released: set = set()
         self.dirty: set = set()
-        self.release_at = None
+        self.release_at: dict = {}
         self.moved: dict = {}         # argument k -> the released register it was copied to
         self.late_zero: set = set()   # address registers that hold an argument at the start:
                                       # zeroed at the release or before their loop, not there
@@ -745,19 +745,23 @@ class Builder:
         return self.moved.get(k, arg_reg(k))
 
     def _move_arg(self, r: int) -> int:
-        """Argument register r was taken by an address after the release: at the release, copy
-        the argument into a released register, still free (address registers take released
-        ones last), and use that."""
+        """Argument register r was taken by an address after a release: at the release of a
+        register still free (address registers take released ones last) that came before r was
+        taken, copy the argument into it, and use that. Not at an earlier release: the register
+        held its own argument until its release."""
         k = len(self.run_args)
-        q = next((f for f, _ in self.free_regs if f in self.dirty), None)
-        if self.release_at is None or r in self.release_at[1] or q is None:
+        q = next((f for f, _ in self.free_regs
+                  if f in self.dirty and r not in self.release_at[f][1]), None)
+        if q is None:
             raise CompileError(f"out of address registers: R{r} is taken, argument {k} "
                                f"needs it")
-        last = self.release_at[0]
+        last = self.release_at[q][0]
         i = 0 if last is None else next(j for j, x in enumerate(self.root) if x is last) + 1
         self.root[i:i] = [I.addi(q, r, 0, comment=f"argument {k}"),
                           I.li(r, 0, comment="address register")]
-        self.release_at = (self.root[i + 1], self.release_at[1])
+        for f, (x, taken) in self.release_at.items():      # releases there: after the copy
+            if x is last:
+                self.release_at[f] = (self.root[i + 1], taken)
         self.dirty.discard(q)
         self.late_zero.add(r)
         self.moved[k] = q
@@ -771,13 +775,14 @@ class Builder:
         if self.loops and self.run_words is not None:
             return
         assert not self.loops, "release_arg inside a loop"
-        if self.release_at is None:
-            self.release_at = (self.root[-1] if self.root else None, frozenset(self.used_regs))
+        at = (self.root[-1] if self.root else None, frozenset(self.used_regs))
         for k, (v, c) in enumerate(self.run_args):
             if v is var and (v, c) not in self.released:
+                r = self.moved.get(k, arg_reg(k))
                 self.released.add((v, c))
-                self.dirty.add(arg_reg(k))
-                self.free_regs.insert(0, (arg_reg(k), frozenset()))
+                self.dirty.add(r)
+                self.release_at[r] = at
+                self.free_regs.insert(0, (r, frozenset()))
 
     def _init_before_loops(self, key, ins: I.Instr) -> None:
         """Put `ins` before the outermost live loop among key's terms (the register must hold
@@ -866,6 +871,9 @@ class Builder:
         if not self.free_regs:
             raise CompileError("out of registers for a device-computed value")
         r, _ = self.free_regs.pop()      # zeroed again before any later use of it
+        if r in self.dirty:              # a released argument's: it still holds the argument
+            self.dirty.discard(r)
+            self.emit(I.li(r, 0, comment="released argument"))
         self.used_regs.add(r)
         return r
 

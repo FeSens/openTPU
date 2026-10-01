@@ -190,9 +190,9 @@ def test_mtp_needs_paired_verify():
         MTPDecoder(eng)
 
 
-def _plain(spec, W, prompt, N, kw):
+def _plain(spec, W, prompt, N, kw, cfg=CFG):
     """Plain greedy decode's tokens (resident decode, the host loop)."""
-    return Engine(spec, W, cap=512, cfg=CFG, resident=True, **kw).generate(prompt, max_new=N)
+    return Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw).generate(prompt, max_new=N)
 
 
 @pytest.mark.parametrize("P, drafter, fmt, N, stop", [
@@ -202,21 +202,26 @@ def _plain(spec, W, prompt, N, kw):
     (250, "wrong", "int8", 12, False),
     (249, "right", "fp4", 15, False),
     (250, "mtp", "emb8", 15, False),       # int8 embedding: 10 run-time values in D
-    (252, "right", "int8", 15, True)])     # a stop id: the second of an accepted pair
+    (252, "right", "int8", 15, True),      # a stop id: the second of an accepted pair
+    (30, "right", "kh16", 6, False)])      # 16 DeltaNet heads: V's arguments move
 def test_mtp_loop_on_the_device_is_plain_greedy(P, drafter, fmt, N, stop):
     """The MTP loop on the device (docs/mtp.md 10: V, E, D, D1 chained through the buckets'
     programs, ISA simulator) gives plain greedy decode's tokens across the end of the first
     attention bucket, whatever the drafts (the device's MTP, or the host's table: all right,
     every third wrong, all wrong), and leaves the context as plain decode does: the committed
     DeltaNet states and windows equal, word for word, those of the prompt and the tokens but
-    the last fed one by one."""
-    _, W, spec = _tiny_model(8)
+    the last fed one by one. kh16: the 0.8B's and 2B's 16 DeltaNet heads, whose addresses
+    take an argument register of the verify's, so its last arguments move into the released
+    registers of the row tokens', each at its own release (Builder._move_arg)."""
+    _, W, spec = _tiny_model(16, 16) if fmt == "kh16" else _tiny_model(8)
+    cfg = board_config(DRAM_BYTES=1 << 26, DSTEP=True, STREAM=True, PAIR=True) \
+        if fmt == "kh16" else CFG
     if fmt == "emb8":
         spec = dataclasses.replace(spec, embed="int8")
     W = _mtp_weights(W, spec)
     kw = FP4 if fmt == "fp4" else {}
     prompt = [int(t) for t in np.random.default_rng(P).integers(0, 1000, P)]
-    want = _plain(spec, W, prompt, N, kw)
+    want = _plain(spec, W, prompt, N, kw, cfg)
     ids = None
     if stop:                                # the first token of a second kind stops it
         k = next((i for i, t in enumerate(want) if t != want[0]), len(want) - 1)
@@ -226,7 +231,7 @@ def test_mtp_loop_on_the_device_is_plain_greedy(P, drafter, fmt, N, stop):
     right[P:P + len(want)] = want
     drafts = {"right": right, "wrong": (right + 1) % 1000, "mtp": None,
               "mixed": np.where(np.arange(514) % 3, right, (right + 7) % 1000)}[drafter]
-    eng = mtp_engine(spec, W, cap=512, cfg=CFG, **kw)
+    eng = mtp_engine(spec, W, cap=512, cfg=cfg, **kw)
     dec = MTPDecoder(eng)
     st = dec.generate_card(prompt, max_new=N, stop=ids, drafts=drafts)
     assert st.tokens == want
@@ -234,7 +239,7 @@ def test_mtp_loop_on_the_device_is_plain_greedy(P, drafter, fmt, N, stop):
         assert sum(st.accepted) >= len(want) // 2 - 2
     if drafter == "wrong":
         assert not any(st.accepted)
-    ref = Engine(spec, W, cap=512, cfg=CFG, resident=True, **kw)
+    ref = Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw)
     ref.prefill(prompt)
     for t in want[:-1]:
         ref.step(t)
