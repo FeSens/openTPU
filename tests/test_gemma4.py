@@ -161,6 +161,7 @@ def test_quantization_cache_policy(tiny, tmp_path, monkeypatch):
     monkeypatch.setenv("OTPU_QCACHE", str(tmp_path))
     monkeypatch.delenv("OTPU_IMAGE_CACHE", raising=False)
     monkeypatch.setattr(G, "_LOCAL_W", W)
+    monkeypatch.setattr(G, "QCACHE_FLOOR", 0)      # (the test's tmp: omarchy's is a 16 GB tmpfs)
     name = "model.layers.0.mlp.gate_proj.weight"
     job = lambda fmt: ("mat", name, None, 1.0, fmt, 128)            # noqa: E731
     files = lambda: sorted(tmp_path.rglob("*.npz"))                 # noqa: E731
