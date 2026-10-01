@@ -25,6 +25,7 @@ the temperature: info() reports regmap 1 and snapshot() returns None.
 from __future__ import annotations
 
 import concurrent.futures
+import fcntl
 import mmap
 import os
 import struct
@@ -43,7 +44,7 @@ from .regs import *  # noqa: F401,F403  (the v1 names stay importable from here)
 from .regs import (CTRL_CLEAR, CTRL_LOAD, CTRL_RUN, ID_OTPU, R_CTRL, R_CYCLES, R_CYCLES_HI,
                    R_ICOUNT, R_ID, R_PROG_ADDR, R_PROG_N, R_STATUS, ST_AXI_ERR, ST_CALIB0,
                    ST_CALIB1, ST_ERROR, ST_HALTED, ST_LOADING, ST_RUN)
-from .runstate import DeviceLock, RunnerStatus
+from .runstate import DeviceLock, RunnerStatus, run_dir
 
 BEAT = 64                       # bytes per interleave beat
 BASE = (0x0000_0000, 0x8000_0000)
@@ -133,20 +134,49 @@ def _readinto(fd: int, mv: memoryview, off: int) -> int:
     return len(b)
 
 
-# One lock per card for the process: a host->card and a card->host DMA call never overlap. On the
-# card (2026-10-01, builds B 79c5707a at Gen1 and ccae1763 at Gen2), XDMA writes from one thread
-# while another thread read from the card slipped the host->card data by 64 bytes for good (every
-# later write landed 64 B behind its address on both channels, until the FPGA was reloaded): two
-# slips within 15 s of overlapped traffic, none in 225 GB of writes or 11 GB of reads alone. Calls
-# in one direction keep their pipelining with host work (Board.write / read's worker); a call
-# waits at most one DMA_CHUNK of the other direction. The device lock keeps other processes off
-# the DMA channels (not inside one otpu-lock: its processes share the card, each with this lock
-# for its own threads only).
-_DMA_LOCKS: dict[str, threading.Lock] = {}
+class _DmaLock:
+    """One DMA call on a card at a time: a host->card and a card->host call never overlap. On the
+    card (2026-10-01, builds B 79c5707a at Gen1 and ccae1763 at Gen2), XDMA writes from one thread
+    while another thread read from the card slipped the host->card data by 64 bytes for good (every
+    later write landed 64 B behind its address on both channels, until the FPGA was reloaded), or
+    left the host->card engine BUSY (every later write timed out): none in 225 GB of writes or 11 GB
+    of reads alone. A thread lock for the process's threads, and flock on <run dir>/<card>.dma
+    for other processes (the device lock does not keep them apart inside one otpu-lock). Calls in
+    one direction keep their pipelining with host work (Board.write / read's worker); a call waits
+    at most one DMA_CHUNK of the other direction."""
+
+    def __init__(self, name: str, flock: bool = True):
+        self.name, self.flock = name, flock
+        self._t = threading.Lock()
+        self._fd, self._pid = -1, 0
+
+    def __enter__(self) -> _DmaLock:
+        self._t.acquire()
+        if self.flock:
+            try:
+                if self._pid != os.getpid():           # a forked child opens its own description
+                    d = run_dir()
+                    d.mkdir(parents=True, exist_ok=True)
+                    self._fd = os.open(d / f"{self.name}.dma", os.O_RDWR | os.O_CREAT, 0o666)
+                    self._pid = os.getpid()
+                fcntl.flock(self._fd, fcntl.LOCK_EX)
+            except BaseException:
+                self._t.release()
+                raise
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self.flock:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+        self._t.release()
 
 
-def _dma_lock(dev: str) -> threading.Lock:
-    return _DMA_LOCKS.setdefault(dev, threading.Lock())
+_DMA_LOCKS: dict[str, _DmaLock] = {}
+
+
+def _dma_lock(name: str) -> _DmaLock:
+    """The process's DMA lock of card `name` (the device node's name, as the device lock's)."""
+    return _DMA_LOCKS.setdefault(name, _DmaLock(name))
 
 
 def _addr(a: np.ndarray) -> int:
@@ -175,7 +205,7 @@ class XdmaTransport:
     ecc = True                  # the card's DRAM needs Board.scrub after configuration
     threaded = True             # Board may run the DMA calls in a worker thread (Board.write/read)
     streams = True              # DMA while the accelerator runs (BoardBackend streamed logits)
-    _dma = _dma_lock("")        # its card's DMA lock (__init__); this one for a transport built bare
+    _dma = _DmaLock("", flock=False)    # a transport built bare (tests): its threads only
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
         self.dev, self.devname = dev, Path(dev).name
@@ -183,7 +213,7 @@ class XdmaTransport:
         # (OTPU_LOCK_WAIT) must hold no file on the card, or `otpu-setup --rescan` of the
         # holder, which refuses while the device is open, is blocked by the queue.
         self._otpu_lock = DeviceLock(self.devname) if dma else None
-        self._dma = _dma_lock(os.path.realpath(dev))  # the card's DMA calls, one at a time
+        self._dma = _dma_lock(self.devname)     # the card's DMA calls, one at a time
         self.h2c = self.c2h = -1
         try:
             if dma:
