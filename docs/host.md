@@ -271,9 +271,15 @@ The host's rules:
   `Board.write` splits writes made between `Board.start` and the `wait` that sees HALTED
   (`XdmaTransport.run_h2c`). The requests that `RowServer` serves while the card waits are
   covered by this (E4B's PLE record, 11 KiB).
-- Large writes go before or after a run. The streamed logits' SENTINEL marks (4 x vocab bytes)
-  go back after the run, on the DMA worker while the host takes the token. `start` waits for
-  them before RUN.
+- The streamed logits' SENTINEL marks (4 x vocab bytes) go back right after RUN, on the DMA
+  worker, in those 4 KiB calls: 150 calls for Qwen3, 243 for Qwen3.5, 2-4 ms of host time
+  early in a 27-37 ms run. The streamed wait waits for them before its first probe.
+  - Written after the run instead (main ba3137b), they cost 1.0-1.6 ms of every token's
+    critical path (B, fp4 with an int8 head): Qwen3 36.3 -> 35.1 tok/s and Qwen3.5
+    26.0 -> 25.2 tok/s, 3.3%.
+  - During the run they take back 0.17-0.26 ms of device time per token (the run's DRAM
+    meets them).
+- Other large writes go before or after a run.
 - H2C and C2H calls never overlap (the DMA lock).
 - Not covered: the offload's expert writes (`offload.BoardDram`, MBs while the card waits in
   WAITW) still go whole. The fix there is an XDMA configuration that cannot lap its buffer
@@ -601,9 +607,9 @@ goes on (`BoardBackend.start(stream=...)` / `wait(feed)`, `Engine.step(sink=...)
   probe moves its time 0.3 ms earlier, so the schedule follows the run both ways. The waits are
   sleeps of at most 1 ms (a long sleep overshoots: 38% on macOS). HALTED ends the loop; the last
   chunk (written just before the halt) and any other still pending are read in one read after
-  it. Then the whole region is marked again on the DMA worker while the host takes the token,
-  and the next RUN waits for that: a host->card write of that size must not meet a run ("XDMA's
-  H2C overrun" in section 2).
+  it, and marked again right after the next token's RUN (its LM head is milliseconds away), on
+  the DMA worker in 4 KiB calls ("XDMA's H2C overrun" in section 2); the wait's first probe
+  waits for that.
 - The sampler takes each chunk as it comes (`pick.stream(context)`, chat.sampler): the
   repetition penalty and the 64-logit block maxima of the top-k prefilter are applied per chunk,
   so after the halt only the selection is left (21-31 us against 44-108 us for the whole
