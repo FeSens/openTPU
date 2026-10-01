@@ -112,8 +112,10 @@ class Spec:
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
-              lookup: bool = False, embed_host: bool | None = None) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, embed_host)
+              lookup: bool = False, embed_host: bool | None = None,
+              formats: str | None = None) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, embed_host,
+                     formats)
 
 
 class Weights(Mapping):
@@ -538,6 +540,12 @@ def _fake_w(a, D: int, fmt: str = "int8"):
 KINDS = ("attn", "mlp", "gateup", "down", "head")     # the weight kinds of a formats string
 
 
+def _formats(spec, formats: str | None) -> str:
+    """An image's formats string: `formats`, else OTPU_FORMATS, else spec.formats."""
+    import os
+    return formats if formats is not None else os.environ.get("OTPU_FORMATS", spec.formats)
+
+
 def weight_kind(n: str) -> tuple:
     """(kind, layer) of checkpoint weight `n` (KINDS: the head, or a layer's attention, MLP
     gate / up or down projection)."""
@@ -653,13 +661,15 @@ class Image(EmbedHost):
     (0, 1), and each layer rotates with cos * g0 + g1 and sin * g0 (_rope_gate).
 
     Weight formats (opentpu/quant.py): `wformat` for the layers' projections, `head_format`
-    (default: the same) for the LM head: "int8", or 4-bit "int4" / "fp4". The KV cache and the
-    activations stay int8.
+    (default: the same) for the LM head: "int8", or 4-bit "int4" / "fp4". `formats` sets a
+    kind's format over wformat (opentpu/llm/formats.py, KINDS; None: OTPU_FORMATS, else
+    spec.formats), one per kind in every layer (the layer blocks share one layout). The KV
+    cache and the activations stay int8.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
-                 embed_host: bool | None = None):
+                 embed_host: bool | None = None, formats: str | None = None):
         spec.check(cfg)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
@@ -668,8 +678,14 @@ class Image(EmbedHost):
         S, D = cfg.S, cfg.D
         H, d, F_ = spec.hidden, spec.head_dim, spec.ffn
         self.spec, self.cfg, self.cap = spec, cfg, cap
-        self.wformat, self.head_format = wformat, head_format or wformat
-        rb = lambda k: Q.row_bytes(k, wformat, D)                       # noqa: E731
+        fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
+        kf = FM.uniform(fmt, dict.fromkeys(("attn", "gateup", "down"), range(spec.layers)))
+        self.wformat, self.head_format = wformat, fmt("head")
+        # each projection's format (KINDS), and the formats string (for the compile worker)
+        self.mf = {"wq": kf["attn"], "wk": kf["attn"], "wv": kf["attn"], "wo": kf["attn"],
+                   "wg": kf["gateup"], "wu": kf["gateup"], "wd": kf["down"]}
+        self.formats = _formats(spec, formats)
+        rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
         self.batch, self.rows = batch, rows
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
@@ -690,11 +706,11 @@ class Image(EmbedHost):
                      "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d),
                      "wg": (self.f_loc, H), "wu": (self.f_loc, H)}
         for name, (n, k) in self.mats.items():
-            L[name] = (lb.alloc(n * rb(k)), lb.alloc(4 * n * (k // D)))
+            L[name] = (lb.alloc(n * rb(k, self.mf[name])), lb.alloc(4 * n * (k // D)))
         # W_down in column parts of the MLP's F chunk: each down MM streams one part, whose
         # scales are then contiguous (with row-major scales every row would cost a DRAM beat)
-        self.dchunk = _chunk(self.f_loc, D, D if wformat == "int8" else 2 * D)
-        L["wd"] = [(lb.alloc(self.h_loc * rb(self.dchunk)),
+        self.dchunk = _chunk(self.f_loc, D, D if self.mf["wd"] == "int8" else 2 * D)
+        L["wd"] = [(lb.alloc(self.h_loc * rb(self.dchunk, self.mf["wd"])),
                     lb.alloc(4 * self.h_loc * (self.dchunk // D)))
                    for _ in range(F_ // self.dchunk)]
         L["kvs"] = [[{"k": lb.alloc(cap * d), "ks": lb.alloc(4 * cap * (d // D)),
@@ -716,7 +732,8 @@ class Image(EmbedHost):
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
                                     M=cfg.MCOLS, embed_host=bool(embed_host),
                                     rows=rows) if lookup else {}
-        self.choices = {"embed_host": self.embed_host}     # (the compile worker's image)
+        self.choices = {"embed_host": self.embed_host,          # (the compile worker's
+                        "formats": self.formats}                # image)
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -733,7 +750,7 @@ class Image(EmbedHost):
             v = np.ascontiguousarray(a).view(np.uint8).reshape(-1)
             imgs[s][addr:addr + v.size] = v
 
-        def put_q(addr_pair, parts, fmt=self.wformat):
+        def put_q(addr_pair, parts, fmt):
             for s, p in enumerate(parts):
                 q, sc = QC.quantize_mxu(p, fmt, D)
                 put(s, addr_pair[0], q)
@@ -745,6 +762,7 @@ class Image(EmbedHost):
         def f32(a):
             return F.ftz(np.asarray(a, np.float32))
 
+        mf = self.mf
         for s in range(S):
             put(s, self.io["gf"], f32(W["model.norm.weight"]))
         for i in range(spec.layers):
@@ -763,17 +781,17 @@ class Image(EmbedHost):
                 W[p + "self_attn.q_proj.weight"], W[p + "self_attn.k_proj.weight"],
                 W[p + "self_attn.v_proj.weight"], W[p + "self_attn.o_proj.weight"],
                 spec.n_q, spec.n_kv, d, S)
-            put_q(Lo["wq"], rows(wq, self.nq_loc * d))
-            put_q(Lo["wk"], rows(wk, self.nkv_loc * d))
-            put_q(Lo["wv"], rows(wv, self.nkv_loc * d))
-            put_q(Lo["wo"], rows(wo, self.h_loc))
-            put_q(Lo["wg"], rows(W[p + "mlp.gate_proj.weight"], self.f_loc))
-            put_q(Lo["wu"], rows(W[p + "mlp.up_proj.weight"], self.f_loc))
+            put_q(Lo["wq"], rows(wq, self.nq_loc * d), mf["wq"])
+            put_q(Lo["wk"], rows(wk, self.nkv_loc * d), mf["wk"])
+            put_q(Lo["wv"], rows(wv, self.nkv_loc * d), mf["wv"])
+            put_q(Lo["wo"], rows(wo, self.h_loc), mf["wo"])
+            put_q(Lo["wg"], rows(W[p + "mlp.gate_proj.weight"], self.f_loc), mf["wg"])
+            put_q(Lo["wu"], rows(W[p + "mlp.up_proj.weight"], self.f_loc), mf["wu"])
             C = self.dchunk
             for j, pair in enumerate(self.lofs["wd"]):
                 put_q((base + pair[0], base + pair[1]),
                       [r[:, j * C:(j + 1) * C] for r in rows(W[p + "mlp.down_proj.weight"],
-                                                              self.h_loc)])
+                                                              self.h_loc)], mf["wd"])
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
         put_q(self.head, rows(head, self.v_loc), self.head_format)
         if self.lookup:
@@ -825,12 +843,14 @@ class Image(EmbedHost):
                 qn=Tensor(off + lofs["qn"], (d,), (1,)) if spec.qk_norm else None,
                 kn=Tensor(off + lofs["kn"], (d,), (1,)) if spec.qk_norm else None,
                 rg=Tensor(off + lofs["rg"], (2,), (1,)) if spec.nope else None)
-            fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             for name, (n, k) in self.mats.items():
                 da, sa = lofs[name]
+                fm = self.mf[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (n, k), Q.row_bytes(k, fm, D),
-                                          4 * (k // D), D, wf=wf))
+                                          4 * (k // D), D, wf=Q.mxu_wf(fm)))
             C, n = self.dchunk, self.h_loc
+            fm = self.mf["wd"]
+            wf = Q.mxu_wf(fm)
             rc = Q.row_bytes(C, fm, D)
             parts = tuple(QTensor(off + da, off + sa, (n, C), rc, 4 * (C // D), D, wf=wf)
                           for da, sa in lofs["wd"])

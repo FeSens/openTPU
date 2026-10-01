@@ -70,12 +70,13 @@ def resolver(formats: str | None, kinds, default: str, wformat: str,
     return fmt
 
 
-def uniform(fmt, kinds, layers) -> dict:
-    """{kind: format} of a model whose layers share one layout (each kind one format in every
-    layer: Qwen3, LFM2, Qwen3.5); ValueError when a rule's range splits a kind."""
+def uniform(fmt, layers: dict) -> dict:
+    """{kind: format} of a model whose layers share one layout (Qwen3, LFM2, Qwen3.5: each kind
+    one format in all the layers that have it, `layers` {kind: those layers}); ValueError when a
+    rule's range splits a kind."""
     out = {}
-    for k in kinds:
-        fs = {fmt(k, i) for i in layers}
+    for k, ls in layers.items():
+        fs = {fmt(k, i) for i in ls}
         if len(fs) > 1:
             raise ValueError(f"weight formats: {k} in {sorted(fs)} by layer, this model's "
                              f"layers hold one format per kind")

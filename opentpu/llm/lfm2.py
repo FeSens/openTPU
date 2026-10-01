@@ -53,8 +53,8 @@ from ..runtime import quantize_rows
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
-from .qwen3 import (RunPos, _inputs, _inputs_rows, _lookup_alloc, _lookup_build, _lookup_desc,
-                    _tok_arg, _tokens_arg, compile_decode)
+from .qwen3 import (RunPos, _formats, _inputs, _inputs_rows, _lookup_alloc, _lookup_build,
+                    _lookup_desc, _tok_arg, _tokens_arg, compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
                     _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables, EmbedHost)
 
@@ -165,9 +165,9 @@ class Spec:
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
               lookup: bool | str = False, experts: int | None = None,
-              embed_host: bool | None = None) -> "Image":
+              embed_host: bool | None = None, formats: str | None = None) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts,
-                     embed_host)
+                     embed_host, formats)
 
 
 def plan(kinds) -> list:
@@ -369,12 +369,15 @@ class Image(EmbedHost):
     norms and this slice's MLP rows; a conv block then holds the taps, the state ring and this
     slice's rows of in_proj (its channels of B, C and x) and out_proj; an attention block holds
     the q/k norms, the projections and this slice's KV heads with room for `cap` tokens. The
-    I/O area holds `rows` token rows (x, cos, sin, logits) for chunked prefill.
+    I/O area holds `rows` token rows (x, cos, sin, logits) for chunked prefill. Weight formats
+    as qwen3.Image (`formats` over the KINDS of this file; a MoE's experts in `wformat`, its
+    router int8).
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool | str = False,
-                 experts: int | None = None, embed_host: bool | None = None):
+                 experts: int | None = None, embed_host: bool | None = None,
+                 formats: str | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("LFM2 runs one sequence: batch=1")
@@ -382,8 +385,16 @@ class Image(EmbedHost):
             raise ValueError("KV capacity must be a multiple of D")
         S, D = cfg.S, cfg.D
         H, d, F_, K = spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
-        self.wformat, self.head_format = wformat, head_format or wformat
-        rb = lambda k: Q.row_bytes(k, wformat, D)                       # noqa: E731
+        fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
+        dense = [i for i in range(spec.layers) if not spec.is_moe(i)]
+        kf = FM.uniform(fmt, {k: [i for i, t in enumerate(spec.kinds) if t == k]
+                              for k in (CONV, ATTN)} | {"gateup": dense, "down": dense})
+        self.wformat, self.head_format = wformat, fmt("head")
+        self.mf = {"win": kf[CONV], "wout": kf[CONV], "wq": kf[ATTN], "wk": kf[ATTN],
+                   "wv": kf[ATTN], "wo": kf[ATTN], "wg": kf["gateup"], "wu": kf["gateup"],
+                   "wd": kf["down"]}            # each projection's format (KINDS)
+        self.formats = _formats(spec, formats)
+        rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
         self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, rows
         self.dk = -(-d // D) * D                        # cached K row / query width
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
@@ -399,13 +410,13 @@ class Image(EmbedHost):
         lb = _Bump()                                    # offsets inside one layer block
         common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
         mlp = {"wg": (self.f_loc, H), "wu": (self.f_loc, H)}
-        self.dchunk = _chunk(self.f_loc, D, D if wformat == "int8" else 2 * D)
+        self.dchunk = _chunk(self.f_loc, D, D if self.mf["wd"] == "int8" else 2 * D)
         # the dense MLP: in every layer block, or for a MoE model (whose MoE layers have none)
         # in a region of its own, one MLP per dense layer (layers 0 .. moe.first - 1)
         mb = lb if mo is None else _Bump()
-        dense = {name: (mb.alloc(n * rb(k)), mb.alloc(4 * n * (k // D)))
+        dense = {name: (mb.alloc(n * rb(k, self.mf[name])), mb.alloc(4 * n * (k // D)))
                  for name, (n, k) in mlp.items()}
-        dense["wd"] = [(mb.alloc(self.h_loc * rb(self.dchunk)),
+        dense["wd"] = [(mb.alloc(self.h_loc * rb(self.dchunk, self.mf["wd"])),
                         mb.alloc(4 * self.h_loc * (self.dchunk // D)))
                        for _ in range(F_ // self.dchunk)]
         if mo is None:
@@ -426,7 +437,7 @@ class Image(EmbedHost):
         for kind, bump, L in ((CONV, cb, conv), (ATTN, ab, attn)):
             for name, (n, k) in self.mats[kind].items():
                 if name not in L:
-                    L[name] = (bump.alloc(n * rb(k)), bump.alloc(4 * n * (k // D)))
+                    L[name] = (bump.alloc(n * rb(k, self.mf[name])), bump.alloc(4 * n * (k // D)))
         dk = self.dk
         attn["kv"] = [{"k": ab.alloc(cap * dk), "ks": ab.alloc(4 * cap * (dk // D)),
                        "vt": ab.alloc(dk * cap), "vs": ab.alloc(4 * cap)}
@@ -450,7 +461,8 @@ class Image(EmbedHost):
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
                                     M=cfg.MCOLS, embed_host=bool(embed_host),
                                     rows=rows) if lookup else {}
-        self.choices = {"embed_host": self.embed_host}     # (the compile worker's image)
+        self.choices = {"embed_host": self.embed_host,          # (the compile worker's
+                        "formats": self.formats}                # image)
         self.offload = None
         if mo is not None:          # the dense MLPs, then path (a)'s words and expert slots
             self.dense0 = (b.next + 4095) // 4096 * 4096
@@ -479,7 +491,9 @@ class Image(EmbedHost):
             v = np.ascontiguousarray(a).view(np.uint8).reshape(-1)
             imgs[s][addr:addr + v.size] = v
 
-        def put_q(addr_pair, parts, fmt=self.wformat):
+        mf = self.mf
+
+        def put_q(addr_pair, parts, fmt):
             for s, p in enumerate(parts):
                 q, sc = QC.quantize_mxu(p, fmt, D)
                 put(s, addr_pair[0], q)
@@ -503,8 +517,9 @@ class Image(EmbedHost):
             if kind == CONV:
                 B, C, X = np.split(W[p + "conv.in_proj.weight"], 3)
                 put_q(Lo["win"], [np.concatenate([B[s * n:(s + 1) * n], C[s * n:(s + 1) * n],
-                                                  X[s * n:(s + 1) * n]]) for s in range(S)])
-                put_q(Lo["wout"], rows(W[p + "conv.out_proj.weight"], n))
+                                                  X[s * n:(s + 1) * n]]) for s in range(S)],
+                      mf["win"])
+                put_q(Lo["wout"], rows(W[p + "conv.out_proj.weight"], n), mf["wout"])
                 taps = W[p + "conv.conv.weight"][:, 0, :].T            # [K, H]
                 for s in range(S):
                     put(s, Lo["taps"], f32(taps[:, s * n:(s + 1) * n]))
@@ -516,10 +531,10 @@ class Image(EmbedHost):
                 wq, wk, wv, wo = head_parallel_attention_weights(
                     W[a + "q_proj.weight"], W[a + "k_proj.weight"], W[a + "v_proj.weight"],
                     W[a + "out_proj.weight"], spec.n_q, spec.n_kv, d, S)
-                put_q(Lo["wq"], rows(wq, self.nq_loc * d))
-                put_q(Lo["wk"], rows(wk, self.nkv_loc * d))
-                put_q(Lo["wv"], rows(wv, self.nkv_loc * d))
-                put_q(Lo["wo"], rows(wo, n))
+                put_q(Lo["wq"], rows(wq, self.nq_loc * d), mf["wq"])
+                put_q(Lo["wk"], rows(wk, self.nkv_loc * d), mf["wk"])
+                put_q(Lo["wv"], rows(wv, self.nkv_loc * d), mf["wv"])
+                put_q(Lo["wo"], rows(wo, n), mf["wo"])
             if spec.is_moe(i):
                 f, mo = p + "feed_forward.", spec.moe
                 put_q(Lo["router"], [W[f + "gate.weight"]], "int8")
@@ -531,11 +546,12 @@ class Image(EmbedHost):
                 mb, mofs = self.dense0 + i * self.DS, self.mlp_ofs
             for name, hf in (("wg", "w1"), ("wu", "w3")):
                 put_q(tuple(mb + x for x in mofs[name]),
-                      rows(W[p + f"feed_forward.{hf}.weight"], self.f_loc))
+                      rows(W[p + f"feed_forward.{hf}.weight"], self.f_loc), mf[name])
             C_ = self.dchunk
             for j, pair in enumerate(mofs["wd"]):
                 put_q((mb + pair[0], mb + pair[1]),
-                      [r[:, j * C_:(j + 1) * C_] for r in rows(W[p + "feed_forward.w2.weight"], n)])
+                      [r[:, j * C_:(j + 1) * C_] for r in rows(W[p + "feed_forward.w2.weight"], n)],
+                      mf["wd"])
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
         put_q(self.head, rows(head, self.v_loc), self.head_format)
         if self.lookup:
@@ -599,14 +615,14 @@ class Image(EmbedHost):
                 kind, moe = kind
             off = Affine.of(self.layer0) + Affine.of(li) * self.LS
             lofs = self.lofs[kind]
-            fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             ns = SimpleNamespace(g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
                                  g_post=Tensor(off + lofs["g_post"], (H,), (1,)), moe=moe,
                                  mlp_loop=self.mlp_loop)
             for name, (r, k) in self.mats[kind].items():
                 da, sa = lofs[name]
+                fm = self.mf[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (r, k), Q.row_bytes(k, fm, D),
-                                          4 * (k // D), D, wf=wf))
+                                          4 * (k // D), D, wf=Q.mxu_wf(fm)))
             if moe:
                 E = spec.moe.E
                 da, sa = lofs["router"]
@@ -620,10 +636,13 @@ class Image(EmbedHost):
                     moff = Affine.of(self.dense0) + Affine.of(li) * self.DS
                     for name in ("wg", "wu"):
                         da, sa = mofs[name]
+                        fm = self.mf[name]
                         setattr(ns, name, QTensor(moff + da, moff + sa, (self.f_loc, H),
                                                   Q.row_bytes(H, fm, D), 4 * (H // D), D,
-                                                  wf=wf))
+                                                  wf=Q.mxu_wf(fm)))
                 C = self.dchunk
+                fm = self.mf["wd"]
+                wf = Q.mxu_wf(fm)
                 rc = Q.row_bytes(C, fm, D)
                 parts = tuple(QTensor(moff + da, moff + sa, (n, C), rc, 4 * (C // D), D, wf=wf)
                               for da, sa in mofs["wd"])

@@ -467,12 +467,14 @@ def check() -> None:
                 assert err < 1e-6 and errn < 1e-6 and agree > 0.99, (name, fs)
             fl = emulate(spec, W, toks[:40], {"f": None}, logits=True)["f"]
             r = M.reference_logits(spec, W, toks[:40])
-            print(f"{name:8s} float vs reference_logits rel {np.abs(fl - r).max() / np.abs(r).max():.2e}")
+            print(f"{name:8s} float vs reference_logits rel "
+                  f"{np.abs(fl - r).max() / np.abs(r).max():.2e}")
     print(f"OK (worst logits rel {worst:.2e})")
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("scan")
     a.add_argument("model")
