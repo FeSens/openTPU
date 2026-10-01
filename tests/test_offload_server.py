@@ -524,3 +524,145 @@ def test_board_dram_reads_a_beat_as_board_read_does(chash):
         calls.clear()
         assert m.read(addr, n) == x[addr:addr + n].tobytes(), (addr, n)
         assert len(calls) == (1 if addr % 64 + n <= 64 else 2), (addr, n)
+
+
+def _post_n(mem, lay, seq, ids):
+    """A post of len(ids) ids (repeats kept): the row, then row2, then the count and seq."""
+    h = LINE // 4
+    mem.write(lay.row, np.array(ids[:h] + [0] * (h - len(ids[:h])), np.float32))
+    if len(ids) > h:
+        mem.write(lay.row2, np.array(ids[h:] + [0] * (2 * h - len(ids)), np.float32))
+    mem.write(lay.mbox, np.array([seq, len(ids)], np.float32))
+
+
+def _consistent(mem, lay, srv):
+    """The directory is the server's map: each expert in a slot reads {slot, 1.0}, every other
+    {0, 0.0}; no slot twice; each layer's slots and free slots are its own number outside
+    pooled mode."""
+    held = {g: a for lru in srv.lru for g, a in lru.items()}
+    assert len(set(held.values())) == len(held)
+    for g in range(lay.E * lay.layers):
+        assert _entry(mem, lay, g) == ((held[g], 1.0) if g in held else (0, 0.0)), g
+    for g, a in held.items():
+        assert mem.read(a, lay.slot_bytes) == srv.pool(g), g
+    if not srv.pooled:
+        for j, (_, n) in enumerate(lay.slots):
+            assert len(srv.lru[j]) + len(srv.free[j]) == n, j
+
+
+def test_two_line_layout_moves_nothing_else():
+    """lines=2: a second line of ids on its own 128-byte block after the directory, the slots
+    after it; lines=1 is the old layout, address for address."""
+    one, two = (Layout.build(4096, E, K, (3, 5), SLOT, lines=n) for n in (1, 2))
+    assert one == Layout.build(4096, E, K, (3, 5), SLOT) and one.row2 == 0
+    assert (one.mbox, one.served, one.dir) == (two.mbox, two.served, two.dir)
+    assert two.row2 % (2 * LINE) == 0 and two.row2 >= two.dir + 8 * E * 2
+    assert two.slots[0][0] >= two.row2 + LINE and two.slots[0][0] % 4096 == 0
+    assert (one.max_ids, two.max_ids) == (16, 32)
+    with pytest.raises(ValueError):
+        Layout.build(4096, E, K, (3,), SLOT, lines=3)
+
+
+def test_a_request_of_more_than_16_ids_reads_its_second_line():
+    """A 4-row run's request (moe.moe_ffn_rows: R k ids, repeats included) of 20 ids: 16 on the
+    row, 4 on row2; each served once. A one-line layout refuses more than 16."""
+    for lines in (2, 1):
+        lay = Layout.build(4096, 40, K, (24,), SLOT, lines=lines)
+        mem = SimDram(np.zeros(lay.end + 4096, np.uint8))
+        srv = ExpertServer(mem, lay, _pool)
+        srv.load()
+        ids = list(range(18)) + [3, 17]
+        _post_n(mem, lay, 1, ids)
+        if lines == 1:
+            with pytest.raises(RuntimeError, match="lines hold 16"):
+                srv.poll()
+            continue
+        assert srv.poll() == 1 and _served(mem, lay) == 1.0
+        assert srv.misses == 18 and srv.history is None
+        _consistent(mem, lay, srv)
+
+
+def _pooled_run(srv, mem, lay, restore):
+    """A layer-major prefill of three layers (each its union over two runs of 2 rows), the
+    restore, then decode requests."""
+    seq = 0
+    srv.begin_prefill()
+    for run in ([0, 1, 1, 2], [1, 2, 2, 0], [8, 9, 9, 10], [9, 9, 8, 10],
+                [16, 17, 17, 18], [17, 17, 16, 18]):
+        seq += 1
+        _post_n(mem, lay, seq, run)
+        assert srv.poll() == 1
+        _consistent(mem, lay, srv)
+    srv.end_prefill(restore)
+    _consistent(mem, lay, srv)
+    for ids in ([4, 5], [12, 13], [20, 21], [1, 2]):
+        seq += 1
+        _post_n(mem, lay, seq, ids)
+        assert srv.poll() == 1
+        _consistent(mem, lay, srv)
+    return seq
+
+
+def test_pooled_prefill_takes_any_layers_slots_then_restores_each_layers():
+    """begin_prefill: a layer's experts take any layer's slots (2 a layer, 6 in all: each
+    layer's union of 3 fits), the least recent of another layer the victim. end_prefill: each
+    layer back to its 2, keeping its experts of most use (a request's repeats count once);
+    lazy loads nothing, eager each layer's most used; decode's requests then evict within
+    their layer."""
+    for restore in ("lazy", "eager"):
+        lay, mem, srv = _setup(slots=(2, 2, 2))
+        srv.begin_prefill()
+        assert srv.pooled
+        runs = ([0, 1, 1, 2], [1, 1, 2, 2], [8, 9, 9, 10], [10, 10, 9, 9])
+        for seq, run in enumerate(runs, 1):
+            _post_n(mem, lay, seq, run)
+            assert srv.poll() == 1
+        assert set(srv.lru[0]) == {0, 1, 2} and set(srv.lru[1]) == {8, 9, 10}  # 3 > 2 each
+        _post_n(mem, lay, 5, [16, 17, 17, 18])          # layer 0's three, the oldest, leave
+        srv.poll()
+        _post_n(mem, lay, 6, [18, 17, 18, 17])
+        srv.poll()
+        assert not srv.lru[0] and set(srv.lru[2]) == {16, 17, 18}
+        _consistent(mem, lay, srv)
+        b = srv.bytes
+        srv.end_prefill(restore)
+        assert not srv.pooled
+        assert set(srv.lru[1]) == {9, 10} and set(srv.lru[2]) == {17, 18}     # two uses each
+        assert set(srv.lru[0]) == ({1, 2} if restore == "eager" else set())
+        assert srv.bytes - b == (2 * SLOT if restore == "eager" else 0)
+        _consistent(mem, lay, srv)
+        _post_n(mem, lay, 7, [11, 12])                  # layer 1's two slots, its own victims
+        srv.poll()
+        assert set(srv.lru[1]) == {11, 12} and set(srv.lru[2]) == {17, 18}
+        _consistent(mem, lay, srv)
+
+
+def test_pooled_prefill_on_board_dram_writes_what_board_write_writes():
+    """The pooled prefill and both restores through BoardDram (the card's: the worker, the
+    shadow of the host's words, CHASH) leave the board's DRAM as Board.write's server does."""
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import BackendDram, BoardDram
+
+    slot = 2 * 4096 + 128
+    lay = Layout.build(4096, E, K, (2, 2, 2), slot, lines=2)
+
+    def pool(g):
+        return np.random.default_rng(g).integers(0, 256, slot, dtype=np.uint8).tobytes()
+    for restore in ("lazy", "eager"):
+        ba, bb = (Board(FakeTransport(ch_bytes=1 << 20, devname=None)) for _ in range(2))
+        for b in (ba, bb):
+            b.info()["caps"]["chash"] = True
+        fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay), lay, pool, policy="lfu")
+        plain = ExpertServer(BackendDram(SimpleNamespace(write=lambda s, a, d: bb.write(a, d),
+                                                         read=lambda s, a, n: bb.read(a, n))),
+                             lay, pool, policy="lfu")
+        seqs = []
+        for srv in (fast, plain):
+            srv.load()
+            seqs.append(_pooled_run(srv, srv.mem, lay, restore))
+        assert seqs[0] == seqs[1] and fast.misses == plain.misses and fast.bytes == plain.bytes
+        for c in (0, 1):
+            assert np.array_equal(ba.t.ch[c], bb.t.ch[c]), (restore, c)
