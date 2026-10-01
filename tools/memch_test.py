@@ -7,8 +7,8 @@ heavy: run it on omarchy, one at a time:
 suites: quick, func (default), perf, mut (or mut=I,J: those mutations), all. One line per run: the
 build (tb_memch's ARD), the scenario, PASS / FAIL / TIMEOUT / ABORT (a model's $fatal or an RTL
 $error), and each master's beats per cycle of its own clock. A mutation is a text substitution in
-a scratch copy of otpu_mem_ch.sv; it is caught when one of its runs does not PASS. Exit status 1 if
-a plain run does not pass or a mutation is not caught.
+a scratch copy of otpu_mem_ch.sv (or of another source it names); it is caught when one of its
+runs does not PASS. Exit status 1 if a plain run does not pass or a mutation is not caught.
 """
 from __future__ import annotations
 
@@ -49,12 +49,23 @@ SCEN = {
     "fastcore": ["+cp=300", "+up=500", "+xp=450"],
     "slowcore": ["+cp=700", "+up=300", "+xp=600"],
     "shared": ["+psh=40", "+psp=40"],
+    # the same at other seeds: whether one seed's traffic catches a mutation can depend on the
+    # simulator's random numbers (mutation 8 is caught at the default seed by Verilator 5.047, not
+    # by 5.046; at these seeds by both)
+    "shared21": ["+psh=40", "+psp=40", "+seed=21"],
+    "shared22": ["+psh=40", "+psp=40", "+seed=22"],
     "long": ["+ntx=3000"],
     "seqrd": ["+seq=1", "+wpct=0"],
     "seqwr": ["+seq=1", "+wpct=100"],
     "seqmix": ["+seq=1", "+wpct=50"],
     # the accelerator's read-data FIFO filled faster than the core drains it (build cred: ARD 16)
     "credstress": ["+cp=900", "+wpct=10", "+mstall=0", "+rbuf=256", "+gapc=0", "+ppct=0", "+ntx=800"],
+    # a write visible once counted, over both ports: mostly shared operations (XDMA publishes a beat
+    # on its B, the accelerator on n_wdone, and the other reads it at once) while the controller
+    # stalls, so the ports' queues fill and run apart
+    "pubstall": ["+psh=80", "+axi_stall=60", "+ldn_busy=20", "+wpct=70", "+seed=16"],
+    # a controller that returns a beat on both ports once: the bridges' n_err must set
+    "doublebeat": ["+ldn_dual=3000", "+verilator+error+limit+1000000"],
 }
 
 SCEN["long"] = ["+ntx=30000"]
@@ -84,7 +95,8 @@ for i in range(10, 30):
 FBASE = ["+ntx=3000", "+tmax=100000000"]
 FUNC = [("ldn", s) for s in ["default", "seed2", "seed3", "seed4", "xreset", "areset", "resets",
                              "lateresets", "xresetlat", "aresetlat", "xresetrep", "aresetrep", "resetsrep", "aresetshort", "xresetshort", "xresetshortsh", "mstall70", "nogaps", "partial", "rawpart", "ctlstall", "fastcore",
-                             "slowcore", "shared", "long", "seqrd", "seqwr", "seqmix"]]
+                             "slowcore", "shared", "long", "seqrd", "seqwr", "seqmix", "pubstall",
+                             "doublebeat"]]
 FUNC += [("ldn", f"s{i}") for i in range(10, 30)]
 FUNC += [("cred", s) for s in ["default", "credstress"]]
 
@@ -108,38 +120,81 @@ PERF += [("ldn", "acc seq rd busy2", ["+wpct=0", "+xdma_ntx=0", "+ldn_busy=2"] +
 # mutations: (name, build, substitutions, scenarios[, "missed": a known blind spot])
 MUT = [
     ("rmw merge: old bytes in the written lanes", "ldn",
-     [("(rm_ret && !wd[512 + k])", "(rm_ret && wd[512 + k])")], ["partial", "rawpart", "default"]),
+     [("(rm_busy && !wd[512 + k])", "(rm_busy && wd[512 + k])")], ["partial", "rawpart", "default"]),
     ("rmw merge: no merge (lanes not written left as sent)", "ldn",
-     [("(rm_ret && !wd[512 + k])", "1'b0")], ["partial", "default"]),
+     [("(rm_busy && !wd[512 + k])", "1'b0")], ["partial", "default"]),
     ("credits: accelerator reads without credits", "cred",
-     [("a_rok <= (a_out + ar_used) <= AOW'(ARD - 2);", "a_rok <= 1'b1;")], ["credstress", "default"]),
+     [("a_rok <= (a_pend + ar_used) <= AOW'(ARD - 2);", "a_rok <= 1'b1;")], ["credstress", "default"]),
     ("credits: XDMA reads without credits", "ldn",
-     [("x_rok <= (x_out + xr_used) <= XOW'(XRD - 2);", "x_rok <= 1'b1;")], ["mstall70", "default"]),
+     [("x_rok <= (x_pend + xr_used) <= XOW'(XRD - 2);", "x_rok <= 1'b1;")], ["mstall70", "default"]),
     ("credits: one beat less margin", "ldn",
-     [("x_rok <= (x_out + xr_used) <= XOW'(XRD - 2);", "x_rok <= (x_out + xr_used) <= XOW'(XRD - 1);")],
+     [("x_rok <= (x_pend + xr_used) <= XOW'(XRD - 2);", "x_rok <= (x_pend + xr_used) <= XOW'(XRD - 1);")],
      ["mstall70", "default"]),
     ("n_wdone: gray code not decoded", "ldn",
      [("n_wdone <= g2b(a_wacc_s2);", "n_wdone <= a_wacc_s2;")], ["default"]),
     ("n_wdone: reads counted too", "ldn",
-     [("else if (opop && oc0[26] && !oc0[25]) a_wacc", "else if (opop && !oc0[25]) a_wacc")], ["default"]),
+     [("assign opw_a[p] = opop[p] && oc[26] && !oc[25];", "assign opw_a[p] = opop[p] && !oc[25];")],
+     ["default"]),
+    ("n_wdone: the second port's writes not counted", "ldn",
+     [("a_wacc <= a_wacc + CW'(opw_a[0]) + CW'(opw_a[1]);", "a_wacc <= a_wacc + CW'(opw_a[0]);")],
+     ["default"]),
     ("n_wdone: counted on the core side once command and data are in (before the controller)", "ldn",
      [("  assign ar_rr    = 1'b1;\n", "  assign ar_rr    = 1'b1;\n  logic [15:0] mu_c, mu_d;\n"),
       ("if (a_crst) begin a_wacc_s1 <= '0; a_wacc_s2 <= '0; n_wdone <= '0; end",
        "if (a_crst) begin a_wacc_s1 <= '0; a_wacc_s2 <= '0; n_wdone <= '0; mu_c <= '0; mu_d <= '0; end"),
       ("n_wdone <= g2b(a_wacc_s2); end",
        "mu_c <= mu_c + 16'(aq_wv && n_cwe); mu_d <= mu_d + 16'(ad_wv); n_wdone <= (mu_c < mu_d) ? mu_c : mu_d; end")],
-     ["shared", "default"]),
-    # expected to be missed: the core issues reads no faster than it drains them, so a 64-beat FIFO
-    # does not fill without credits in any traffic here (ARD 16 does, above)
+     ["shared", "shared21", "shared22", "default"]),
+    # the core issues reads no faster than it drains them, so a 64-beat FIFO does not fill without
+    # credits in any traffic here (ARD 16 does, above); the slot check still sees it: a read holds
+    # its slot from its issue (a_pend), and more than 64 are then outstanding
     ("credits: accelerator reads without credits, ARD 64", "ldn",
-     [("a_rok <= (a_out + ar_used) <= AOW'(ARD - 2);", "a_rok <= 1'b1;")], ["slowcore", "credstress", "default"],
-     "missed"),
-    ("credits: accelerator reads without credits, the FIFO-full assertion removed", "cred",
-     [("a_rok <= (a_out + ar_used) <= AOW'(ARD - 2);", "a_rok <= 1'b1;"),
-      ('if (ar_wv && !ar_wr) $error("otpu_mem_ch: accelerator read-data FIFO full");', "")], ["credstress"]),
-    ("credits: XDMA reads without credits, the FIFO-full assertion removed", "ldn",
-     [("x_rok <= (x_out + xr_used) <= XOW'(XRD - 2);", "x_rok <= 1'b1;"),
-      ('if (xr_wv && !xr_wr) $error("otpu_mem_ch: XDMA read-data FIFO full");', "")], ["mstall70"]),
+     [("a_rok <= (a_pend + ar_used) <= AOW'(ARD - 2);", "a_rok <= 1'b1;")], ["slowcore", "credstress", "default"]),
+    ("credits: accelerator reads without credits, the slot-overrun assertion removed", "cred",
+     [("a_rok <= (a_pend + ar_used) <= AOW'(ARD - 2);", "a_rok <= 1'b1;"),
+      ('if (a_pend + ar_used > AOW\'(ARD)) $error("otpu_mem_ch: accelerator read slots overrun");', "")],
+     ["credstress"]),
+    ("credits: XDMA reads without credits, the slot-overrun assertion removed", "ldn",
+     [("x_rok <= (x_pend + xr_used) <= XOW'(XRD - 2);", "x_rok <= 1'b1;"),
+      ('if (x_pend + xr_used > XOW\'(XRD)) $error("otpu_mem_ch: XDMA read slots overrun");', "")],
+     ["mstall70"]),
+    ("credits: a read's slot freed when it returns, not when the FIFO passes it", "cred",
+     [("a_pend <= a_pend + AOW'(a_rgo) - AOW'(ar_cmt);",
+       "a_pend <= a_pend + AOW'(a_rgo) - AOW'(rv && rtag[TW-1 -: 2] == 2'b00);")],
+     ["credstress", "default"]),
+    # the two ports
+    ("split: every command on the first port", "ldn",
+     [("assign tp    = addr[7];", "assign tp    = 1'b0;")], ["default"]),
+    ("split: on beat bit 8 (not the bank parity)", "ldn",
+     [("assign tp    = addr[7];", "assign tp    = addr[8];")], ["default"]),
+    ("in-order return: every accelerator read in slot 0", "ldn",
+     [("pick_x ? ASW'(x_seq) : a_seq", "pick_x ? ASW'(x_seq) : '0")], ["default", "seqrd"]),
+    ("in-order return: every tag from the first port's FIFO", "ldn",
+     [("assign rtag = tg_rd[rp];", "assign rtag = tg_rd[0];")], ["default", "seqrd"]),
+    ("write data: pushed into the other port's FIFO", "ldn",
+     [("assign of_wv[p] = ((go && we && !rmw) || rm_ok) && tp == 1'(p);",
+       "assign of_wv[p] = ((go && we && !rmw) || rm_ok) && tp != 1'(p);")], ["default"]),
+    ("write data: each port given the other's FIFO head", "ldn",
+     [(".rdata(c_wdata_data[p]));", ".rdata(c_wdata_data[1 - p]));")], ["default"]),
+    ("in-order release: the read-data FIFO passes its next slot before it is written", "ldn",
+     [("otpu_afifo.sv", "(!wrst && wvld[wbin[AW-1:0]])", "(!wrst && (wvld[wbin[AW-1:0]] || wput))")],
+     ["default", "seqrd"]),
+    ("XDMA's B: once its beats are in the bridge (before the controller)", "ldn",
+     [("x_wacc_c <= g2b(x_wacc_s2); end", "x_wacc_c <= x_wacc_c + CW'(xq_wv && x_selw); end")],
+     ["pubstall", "shared", "default"]),
+    ("XDMA FIFOs: the registered wready not counting this cycle's write", "ldn",
+     [("otpu_afifo.sv", "((wbin + (AW + 1)'(wput)) - rbin_w)", "(wbin - rbin_w)")],
+     ["ctlstall", "slowcore", "default"]),
+    ("arbiter: the accelerator's room from its head's other port", "ldn",
+     [("assign a_room = oq_wr[aq_rd[7]] && (!aq_rd[QW-1] || of_wr[aq_rd[7]]);",
+       "assign a_room = oq_wr[!aq_rd[7]] && (!aq_rd[QW-1] || of_wr[!aq_rd[7]]);")],
+     ["ctlstall", "default"]),
+    ("n_err: the double beat not flagged", "ldn",
+     [("else if (&c_rdata_valid || |(c_rdata_valid & ~tg_rv)) c_err <= 1'b1;",
+       "else if (1'b0) c_err <= 1'b1;")], ["doublebeat"]),
+    ("output queue: a command bypasses a FIFO that holds older ones", "ldn",
+     [("assign byp      = oq_wv[p] && !oq_rv && (!oc_v || c_cmd_ready[p]);",
+       "assign byp      = oq_wv[p] && (!oc_v || c_cmd_ready[p]);")], ["rawpart", "default", "ctlstall"]),
     ("reset hold: XDMA's does not wait for its reads in flight", "ldn",
      [("(x_hcnt != 0 || x_out != 0 ||", "(x_hcnt != 0 ||")],
      ["xresetrep", "resetsrep", "xresetlat", "xreset"]),
@@ -170,13 +225,16 @@ def build(name: str, params: dict, mut: list | None = None) -> Path:
     d = OUT / name
     d.mkdir(parents=True, exist_ok=True)
     src = list(SRC)
-    if mut:
-        text = (RTL / "otpu_mem_ch.sv").read_text()
-        for old, new in mut:
-            assert text.count(old) == 1, f"mutation {name}: {old!r} found {text.count(old)} times"
-            text = text.replace(old, new)
-        (d / "otpu_mem_ch.sv").write_text(text)
-        src[2] = d / "otpu_mem_ch.sv"
+    for f in {(m[0] if len(m) == 3 else "otpu_mem_ch.sv") for m in mut or []}:
+        i = [p.name for p in SRC].index(f)
+        text = SRC[i].read_text()
+        for m in mut:
+            old, new = m[-2:]
+            if (m[0] if len(m) == 3 else "otpu_mem_ch.sv") == f:
+                assert text.count(old) == 1, f"mutation {name}: {old!r} found {text.count(old)} times"
+                text = text.replace(old, new)
+        (d / f).write_text(text)
+        src[i] = d / f
     key = hashlib.sha256(repr(params).encode() + b"".join(p.read_bytes() for p in src)).hexdigest()
     exe = d / "obj" / "Vtb_memch"
     if exe.exists() and (d / "key").exists() and (d / "key").read_text() == key:

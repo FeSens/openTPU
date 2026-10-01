@@ -44,7 +44,7 @@ from . import power as P
 from . import regs as R
 from .board import CH_BYTES, Board, ConfigMismatch, SimTransport, XdmaTransport, device_config
 from .checks import (PROG_AT, masked_program, model_check, partial_writes, pattern_test,
-                     run_demo, vops_program)
+                     run_demo, vops_program, waitw_host, waitw_timeout)
 from .opchecks import diag_image, op_checks
 
 PASS, FAIL, SKIP, INFO = "PASS", "FAIL", "SKIP", "INFO"
@@ -245,6 +245,11 @@ def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
                          "composite lanes (VPU_CL)")
         if "vpu" in fails:
             hints.append("simple VPU functions fail -> the VPU lanes or the TMEM ports")
+        if "waitw-host" in fails and "waitw" not in fails:
+            hints.append("WAITW holds on words already in DRAM, but not on the host's writes: "
+                         "old data after the flag -> the order of XDMA's writes through "
+                         "otpu_mem_ch into LiteDRAM against the accelerator's reads; no flag "
+                         "seen (timeout) -> WAITW's re-reads (otpu_dma)")
         if "vpu-edge" in fails and not fails & {"vpu", "vpu-composite"}:
             hints.append("only edge values differ: flush-to-zero / inf / NaN handling in the "
                          "RTL against opentpu/fp32.py")
@@ -493,9 +498,15 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     img = diag_image()
     if "isa" in want:
         print("isa", flush=True)
-        for group, name, prog in (op_checks(ctx["cfg"]) if ctx["cfg"] else []):
+        caps = (ctx["info"] or {}).get("caps") or {}
+        gen, waitw = bool(caps.get("gen")), bool(caps.get("waitw"))
+        for group, name, prog in (op_checks(ctx["cfg"], gen, waitw) if ctx["cfg"] else []):
             d.check("isa", name, lambda prog=prog: run_demo(b, ctx["cfg"], prog, img)[:2],
                     core, group)
+        if waitw and ctx["cfg"]:        # the host's writes during the run (tools/qual/waitw.py)
+            d.check("isa", "WAITW on the host's writes", lambda: waitw_host(b), core,
+                    "waitw-host")
+            d.check("isa", "WAITW timeout", lambda: waitw_timeout(b), core, "waitw-host")
         if not ctx["cfg"]:
             d.check("isa", "instruction set", lambda: (SKIP, "no configuration"), core)
 

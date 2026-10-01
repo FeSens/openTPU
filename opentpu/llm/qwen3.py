@@ -29,14 +29,16 @@ from types import SimpleNamespace
 import numpy as np
 
 from .. import fp32 as F
+from .. import isa as I
 from .. import quant as Q
 from .. import language as ol
 from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, arg_words
+from . import generate as G
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.gather import dequant_row, gather_row, onehot, onehot_blocks
-from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid
+from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid, softcap
 from ..kernels.mlp import _chunk, swiglu_down
 from ..runtime import ALIGN
 
@@ -195,6 +197,49 @@ def load_weights(model_dir) -> Weights:
     return Weights(model_dir)
 
 
+class LazyWeights(dict):
+    """load_weights' names over a checkpoint's safetensors files, each tensor read as fp32 when
+    it is asked for and not kept: for a model whose fp32 weights would not fit host RAM (a
+    MoE; its experts are packed one at a time, opentpu.llm.moe)."""
+
+    def __init__(self, model_dir):
+        super().__init__()
+        from safetensors import safe_open
+        self._at = {}
+        for f in sorted(Path(model_dir).glob("*.safetensors")):
+            h = safe_open(str(f), "pt")
+            for k in h.keys():
+                if not k.startswith(("model.visual.", "mtp.")):
+                    self._at[k.replace("model.language_model.", "model.", 1)] = (h, k)
+
+    def __getitem__(self, k):
+        import torch
+        h, name = self._at[k]
+        return h.get_tensor(name).to(torch.float32).numpy()
+
+    def part(self, k, i):
+        """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
+        read alone."""
+        import torch
+        h, name = self._at[k]
+        return h.get_slice(name)[i].to(torch.float32).numpy()
+
+    def __contains__(self, k):
+        return k in self._at
+
+    def __iter__(self):
+        return iter(self._at)
+
+    def __len__(self):
+        return len(self._at)
+
+    def keys(self):
+        return self._at.keys()
+
+    def items(self):
+        return ((k, self[k]) for k in self._at)
+
+
 def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
     """cos, sin [rope_dim/2] for one position (HF rotate-half convention); with LongRoPE's
     (spec.rope_div, spec.rope_scale) each frequency divided by its factor and both tables
@@ -229,7 +274,8 @@ def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None, D: int = 128,
     else:
         emb = {"embed": b.alloc(4 * V * H)}
     return {**emb, "cos_t": b.alloc(4 * cap * half), "sin_t": b.alloc(4 * cap * half),
-            "zmask": b.alloc(4 * (cap + block)), "half": half, "block": block, "D": D}
+            "zmask": b.alloc(4 * (cap + block)), "half": half, "block": block, "D": D,
+            "gen": G.alloc(b, spec, cap, block)}
 
 
 def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
@@ -251,6 +297,7 @@ def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
         put(s, lk["zmask"], z)
         if "onehot" in lk:
             put(s, lk["onehot"], onehot(lk["D"], lk["M"], "int8"))
+        G.build(put, s, S, spec, cap, lk["gen"])
 
 
 def _lookup_desc(lk: dict, spec, cap: int) -> dict:
@@ -264,6 +311,7 @@ def _lookup_desc(lk: dict, spec, cap: int) -> dict:
         d["embed_q"] = _qdesc(*lk["embed_q"], spec.vocab, spec.hidden, lk["D"])
         M, D = lk["M"], lk["D"]
         d["onehot"] = _tdesc(lk["onehot"], (M, onehot_blocks(D, M, "int8") * D))
+    d["gen"] = G.desc(lk["gen"], spec, cap)
     return d
 
 
@@ -633,6 +681,12 @@ class Image:
         """(programs, run_args): qwen3_step at a run-time position (compile_decode)."""
         return compile_decode(self, qwen3_step, blocks, lo, block)
 
+    def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
+                         chain: bool = True, samp=None, debug: bool = False,
+                         part: int | None = None) -> list:
+        """The decode loop on the device for bucket `blocks` (qwen3_step in it, generate.py)."""
+        return G.compile_generate(self, qwen3_step, blocks, lo, block, chain, samp, debug, part)
+
     def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program per slice: the decode token at position `pos` (qwen3_step); with `tok`
         (an image with lookup tables) its inputs come from the tables, not the host."""
@@ -936,14 +990,34 @@ def _gather(m, eq, toks):
 
 
 def _lm_head(x, m, spec):
-    """Final norm and this slice's vocabulary rows of the LM head -> m.logits."""
+    """Final norm and this slice's vocabulary rows of the LM head -> m.logits, or, with
+    m.lm_sink set (the generate loop: opentpu/llm/generate.py), each chunk's logits tile to
+    m.lm_sink(tile, first vocabulary row) instead (and to m.logits too with m.lm_keep: the
+    generate loop's debug mode). With m.lm_split (the first part of a split generate program)
+    x itself to that DRAM tensor instead: the second part runs the head. A spec with a
+    softcap (Gemma's final_logit_softcapping) caps the chunks a sink samples from (lib.softcap;
+    not Greedy's, a raw sink: the cap keeps the order, and m.logits stays raw)."""
+    split = getattr(m, "lm_split", None)
+    if split is not None:
+        ol.store(split, x)
+        return
     sid = ol.program_id()
     xs = ol.quantize(rmsnorm(x, ol.load(m.g_final), spec.eps))
     chunk = min(HEAD_CHUNK, ol.tmem_words() // 8)
+    sink = getattr(m, "lm_sink", None)
     for c0 in range(0, m.v_loc, chunk):
         n = min(chunk, m.v_loc - c0)
         col = sid * m.v_loc + c0
-        ol.store(m.logits[:, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
+        if sink is None:
+            ol.store(m.logits[:, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
+        else:
+            y = ol.dot(xs, m.head[c0:c0 + n, :])
+            if getattr(m, "lm_keep", False):
+                ol.store(m.logits[:, col:col + n], y)
+            cap = getattr(spec, "softcap", None)
+            if cap and not getattr(sink, "raw", False):
+                y = softcap(y, cap)
+            sink(y, col)
 
 
 def _runs(rows):
@@ -1062,19 +1136,30 @@ def _lm_head_rows(x, m, spec, logit_rows):
 
 # =============================================================================== engine
 def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: str = "int8",
-                  head_format: str | None = None, lookup: bool = False, **kw) -> Config:
+                  head_format: str | None = None, lookup: bool = False,
+                  experts: int | None = None, **kw) -> Config:
     """The design configuration with DRAM sized for this model (power of two MiB)."""
     probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows, wformat,
-                       head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}))
+                       head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}),
+                       **({"experts": experts} if experts is not None else {}))
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
 
 
 class IsaBackend:
-    """The bit-exact ISA simulator, one persistent machine (DRAM keeps the KV cache)."""
+    """The bit-exact ISA simulator, one persistent machine (DRAM keeps the KV cache).
+    adopt: the images (arrays of their own) become the machine's DRAM, grown to DRAM_BYTES in
+    place instead of copied, so a 4 GiB image is held once; the caller gives them up."""
 
-    def __init__(self, cfg: Config, images: list):
-        self.machine = Machine(cfg, [[] for _ in range(cfg.S)], images)
+    def __init__(self, cfg: Config, images: list, adopt: bool = False):
+        own = adopt and all(isinstance(m, np.ndarray) and m.dtype == np.uint8 and m.ndim == 1
+                            and m.flags.owndata and len(m) <= cfg.DRAM_BYTES for m in images)
+        self.machine = Machine(cfg, [[] for _ in range(cfg.S)],
+                               [None] * cfg.S if own else images)
+        if own:
+            for s, m in zip(self.machine.slices, images):
+                m.resize(cfg.DRAM_BYTES, refcheck=False)
+                s.dram = m
 
     def write(self, s: int, addr: int, data: np.ndarray) -> None:
         v = np.ascontiguousarray(data).view(np.uint8).reshape(-1)
@@ -1084,6 +1169,8 @@ class IsaBackend:
         return self.machine.slices[s].dram[addr:addr + nbytes].copy()
 
     args = True                 # run(programs, args): the run's arguments (R8..R15)
+    generates = True            # runs the generate loop (RLD, ARGMAX: Engine.generate_card)
+    chains = True               # and HALT CHAIN: one run crosses the attention buckets
 
     def run(self, programs: list, args=None) -> dict:
         self.machine.load(programs, args).run(max_steps=1 << 40)
@@ -1093,13 +1180,12 @@ class IsaBackend:
 _WORKER: tuple | None = None                # (image, block) in the compile worker process
 
 
-def _worker_init(spec, cfg, cap, batch, rows, block, wformat, head_format,
-                 lookup: bool = False) -> None:
-    """The worker's image: the engine's layout (weight formats, and the resident decode's
-    lookup tables: its programs must address the same image)."""
+def _worker_init(spec, cfg, cap, batch, rows, block, image_kw: dict) -> None:
+    """The worker's image: the engine's layout (spec.image with the engine's keywords: weight
+    formats, the resident decode's lookup tables, a MoE's expert slots; its programs must
+    address the same image)."""
     global _WORKER
-    _WORKER = (spec.image(cfg, cap, batch, rows, wformat, head_format,
-                          **({"lookup": True} if lookup else {})), block)
+    _WORKER = (spec.image(cfg, cap, batch, rows, **image_kw), block)
     _exit_with_parent()
 
 
@@ -1138,24 +1224,27 @@ def _worker_decode(blocks: int, lo: int):
     return np.asarray(assemble(progs[0]), np.uint32), ra
 
 
-def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int, toks=None):
+def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int, toks=None,
+                  whole: bool = True):
     """The worker process: fit_chunk's run, its program assembled (one slice)."""
     from ..isa import assemble
     image, block = _WORKER
-    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit, toks)
+    n, progs, fit = fit_chunk(image, block, seq, p0, n, left, fit, toks, whole)
     return n, None if progs is None else np.asarray(assemble(progs[0]), np.uint32), fit
 
 
 def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
-              tokens=None):
+              tokens=None, whole: bool = True):
     """The next prefill run of sequence `seq` at position p0: up to n of the `left` remaining
     prompt tokens, as many as fit TMEM and ACT RAM (at most `fit` rows) and the instruction
     memory (attention is unrolled per row, head and block: the program grows with the context).
     Only the prompt's last run computes logits (its last row). Returns (R, compile_rows'
     programs or None for R = 1, the rows that fit TMEM as far as known). `tokens` (at least n):
-    the run's inputs come from the image's tables (compile_rows tokens)."""
-    imem = image.cfg.IMEM_WORDS
-    n = min(n, fit, left)
+    the run's inputs come from the image's tables (compile_rows tokens). whole: R is at most
+    MCOLS or a multiple of it (_whole_passes): each weight streams once per MCOLS rows, so 5
+    rows at MCOLS 4 cost what 8 do."""
+    imem, mc = image.cfg.IMEM_WORDS, image.cfg.MCOLS if whole else 1 << 30
+    n = _whole_passes(min(n, fit, left), mc)
     while n > 1:
         try:
             progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
@@ -1164,13 +1253,20 @@ def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
         except CompileError as e:
             if "TMEM" not in str(e) and "ACT RAM full" not in str(e):
                 raise
-            n = fit = n - 1
+            fit = n - 1
+            n = _whole_passes(fit, mc)
             continue
         size = max(map(len, progs))
         if size * 8 <= imem:
             return n, progs, fit
-        n = min(n - 1, n * imem // (8 * size))  # about proportional to the rows
+        n = _whole_passes(min(n - 1, n * imem // (8 * size)), mc)  # ~ proportional to the rows
     return 1, None, fit
+
+
+def _whole_passes(n: int, mc: int) -> int:
+    """The rows of a prefill run of at most n: n up to MCOLS (one pass of each weight), else
+    whole passes of MCOLS rows."""
+    return n if n <= mc else n - n % mc
 
 
 class Engine:
@@ -1220,10 +1316,12 @@ class Engine:
                  backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
-                 resident: bool = False):
+                 resident: bool = False, experts: int | None = None, pool_file=None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
+        if experts is not None:             # a MoE model's expert slots per layer
+            wkw["experts"] = experts
         # an int8 embedding is dequantized on the device (the image's tables), never the host
         int8_embed = getattr(spec, "embed", "f32") == "int8"
         lookup = (bool(resident) or int8_embed) and batch == 1 and has_lookup(spec)
@@ -1231,6 +1329,7 @@ class Engine:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
+        self._image_kw = wkw                # the compile worker's image is built the same way
         # with the tables every run reads its inputs from the image (the token ids are compiled
         # into the per-position and prefill programs); else the host writes them: the
         # embedding rows and the RoPE rows of a table computed once, here
@@ -1242,13 +1341,31 @@ class Engine:
         self._rope = None if self.device_inputs else \
             [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         images = self.image.build(W)
-        self.backend = IsaBackend(self.cfg, images) if backend == "isa" else backend(
+        self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)
         self.resident = bool(resident) and lookup and bool(getattr(self.backend, "args", False))
+        # path (a), docs/offload.md: the experts stream into the image's slots; the host's
+        # server moves them (the ISA simulator calls it when every slice waits on WAITW; the
+        # card's backend polls it while a run is in flight)
+        self.server = None
+        if getattr(self.image, "offload", None) is not None:
+            self.server = self.image.serve(W, self.backend, pool_file)
+            if isinstance(self.backend, IsaBackend):
+                self.backend.machine.host = lambda m: self.server.poll()
+            elif hasattr(self.backend, "host"):
+                self.backend.host = self.server.poll
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
+        self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
+                                            # (a list, or split: (first parts, second parts))
+        self.gen_split = None               # split generate programs: None when a bucket's
+                                            # does not fit, True always, False never
+        self._chained: dict = {}            # mode -> (key, its buckets in the chain area)
+        self.gen_debug = False              # generate_card: the logits too (gen_logits)
+        self.gen_logits = None
         self.poss = [0] * batch
-        self.stream_logits = True           # step(): stream the logits when the backend can
+        # step(): stream the logits when the backend can (not while its wait serves the host)
+        self.stream_logits = getattr(self.backend, "host", None) is None
         # rows per run that fit TMEM (prefill_chunks), at most the image's fit_rows (Gemma 4:
         # the ACT rows, so that a run streams the weights once)
         self._fit_rows = min(self.rows, getattr(self.image, "fit_rows", self.rows))
@@ -1285,8 +1402,7 @@ class Engine:
         self._pool = ProcessPoolExecutor(
             self._ahead, mp_context=mp.get_context("spawn"), initializer=_worker_init,
             initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block,
-                      self.image.wformat, self.image.head_format,
-                      bool(getattr(self.image, "lookup", None))))
+                      self._image_kw))
         self._ready = self._pool.submit(_worker_ready)
 
     def _take(self, key, fn, *args):
@@ -1491,9 +1607,10 @@ class Engine:
                for r in logit_rows]
         return np.array(out, np.float32).reshape(len(logit_rows), v)
 
-    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int, toks=None):
+    def _chunk(self, seq: int, p0: int, n: int, left: int, fit: int, toks=None,
+               whole: bool = True):
         """fit_chunk, its programs prepared for the backend."""
-        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit, toks)
+        n, progs, fit = fit_chunk(self.image, self.block, seq, p0, n, left, fit, toks, whole)
         prep = getattr(self.backend, "prepare", None)
         if progs is not None and prep is not None:
             prep(progs)
@@ -1510,15 +1627,18 @@ class Engine:
         last row. Per row the arithmetic is the decode kernel's, so the KV cache and logits
         are bit-identical to feeding the tokens one by one. A run shrinks when its program
         does not fit TMEM or IMEM (long contexts); a single token runs the decode kernel.
+        Without `chunk` a run of more than MCOLS rows takes whole passes of MCOLS rows (each
+        pass streams every weight: fit_chunk).
         With the pipeline, the next run's program (after the last run: the first decode
         step's) is compiled while the device runs the current one."""
         tokens = [int(t) for t in tokens]
+        whole = chunk is None               # else runs of exactly `chunk` where they fit
         chunk = self.rows if chunk is None else max(1, min(chunk, self.rows))
         i = 0
         while i < len(tokens):
             p0, left = self.poss[seq], len(tokens) - i
-            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(tokens[i:],
-                                                                                  chunk))
+            key = ("rows", seq, p0, chunk, left, self._fit_rows,
+                   self._chunk_toks(tokens[i:], chunk), whole)
             n, progs, self._fit_rows = self._take(key, self._chunk, *key[1:])
             part, last = tokens[i:i + n], n == left
             if not last:
@@ -1531,7 +1651,8 @@ class Engine:
                     progs = self.image.compile_rows(rows, lr, self.block,
                                                     **self._tokens_kw(part))
                 if not last:
-                    self._prefetch_chunks(seq, p0 + n, chunk, left - n, tokens[i + n:])
+                    self._prefetch_chunks(seq, p0 + n, chunk, left - n, tokens[i + n:],
+                                          whole)
                 elif seq == 0:
                     self._prefetch(p0 + n)
                 lg = self._run_rows(rows, part, lr, progs)
@@ -1545,7 +1666,8 @@ class Engine:
         `chunk` of `rest`, the run takes as many as fit), or None."""
         return tuple(rest[:chunk]) if self.device_inputs else None
 
-    def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int, rest=()) -> None:
+    def _prefetch_chunks(self, seq: int, p0: int, chunk: int, left: int, rest=(),
+                         whole: bool = True) -> None:
         """Precompile the runs of a prompt from position p0 on, as many as the pipeline has
         workers (a chunk's trace can take longer than its run: Qwen3.5 on the card), each
         predicted to take as many rows as the last one (TMEM and IMEM limit a run: the program
@@ -1555,10 +1677,12 @@ class Engine:
         for _ in range(self._ahead):
             if left <= 0:
                 break
-            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(rest, chunk))
+            key = ("rows", seq, p0, chunk, left, self._fit_rows, self._chunk_toks(rest, chunk),
+                   whole)
             if key not in queued:
                 self._submit(key, self._chunk, _worker_chunk, *key[1:])
             n = min(chunk, self._fit_rows, self._run_rows_n, left)
+            n = _whole_passes(n, self.cfg.MCOLS) if whole else n
             p0, left, rest = p0 + n, left - n, rest[n:]
 
     def prefill(self, tokens, seq: int = 0, chunk: int | None = None) -> np.ndarray:
@@ -1597,6 +1721,157 @@ class Engine:
             if all(done):
                 break
             nxt = [int(np.argmax(r)) for r in self.step_batch(nxt)]
+        return out
+
+    # ---- the decode loop on the device (opentpu/llm/generate.py)
+    @property
+    def can_generate(self) -> bool:
+        """generate_card works here: resident decode on a backend that runs the generate
+        programs (the ISA simulator; the card with the ISA's RLD and ARGMAX)."""
+        return (self.resident and self.image.lookup.get("gen") is not None
+                and bool(getattr(self.backend, "generates", False)))
+
+    def _generate_prog(self, blocks: int, samp=None):
+        """The generate program of a bucket, greedy or sampled as `samp` (G.Sampling) is
+        compiled for (once per bucket and samp.key), chaining to the next bucket's when the
+        backend runs HALT CHAIN; with self.gen_debug the LM head also stores the logits (each
+        token's over the last: generate_card reads the last token's)."""
+        key = (blocks, None if samp is None else samp.key, self.gen_debug)
+        if key not in self._gens:
+            lo = max((blocks - 1) * self.block, self._conv_lo)
+            progs = G.compile_bucket(self.image, blocks, lo, self.block,
+                                     chain=bool(getattr(self.backend, "chains", False)),
+                                     samp=samp, debug=self.gen_debug, split=self.gen_split)
+            prep = getattr(self.backend, "prepare", None)
+            if prep is not None:
+                for p in (progs if isinstance(progs, tuple) else (progs,)):
+                    prep(p)
+            self._gens[key] = progs
+        return self._gens[key]
+
+    def _generate_chain(self, b0: int, b1: int, samp=None) -> None:
+        """Buckets b0 + 1 .. b1 in the chain area of samp's mode and its table (each written
+        once per samp.key)."""
+        g = self.image.lookup["gen"]
+        mode = int(samp is not None)
+        key = (None if samp is None else samp.key, self.gen_debug)
+        if self._chained.get(mode, (key,))[0] != key:
+            self._chained.pop(mode)            # compiled for other sampling buffers
+        have = self._chained.setdefault(mode, (key, set()))[1]
+        # a split bucket chains back to its own first part: b0's programs too
+        lo = b0 if isinstance(self._generate_prog(b0, samp), tuple) else b0 + 1
+        new = [k for k in range(lo, b1 + 1) if k not in have]
+        if not new:
+            return
+        for k in new:
+            progs = self._generate_prog(k, samp)
+            for j, pj in enumerate(progs if isinstance(progs, tuple) else (progs,)):
+                for s, prog in enumerate(pj):
+                    self.backend.write(s, G.prog_slot(g, k, mode, j), I.assemble(prog))
+        have |= set(new)
+        for s in range(self.cfg.S):
+            words = {}
+            for k in have:
+                progs = self._generate_prog(k, samp)
+                words[k] = (tuple(I.assemble(p[s]) for p in progs) if isinstance(progs, tuple)
+                            else I.assemble(progs[s]))
+            self.backend.write(s, G.ptab_addr(g, mode), G.ptab_words(g, {
+                k: w[0] if isinstance(w, tuple) else w for k, w in words.items()}, mode))
+            self.backend.write(s, G.ptab2_addr(g, mode), G.ptab_words(g, {
+                k: w if isinstance(w, tuple) else (w,) for k, w in words.items()}, mode,
+                split=True))
+
+    def _generate_inputs(self, samp, p: int, nb: int, context, rng) -> None:
+        """The sampled loop's per-run inputs: the uniforms of positions p + 1 .. p + nb (the
+        host's generator), and, with the repetition penalty, its factors for the context's ids
+        (the device adds the tokens it generates)."""
+        g = self.image.lookup["gen"]
+        u = np.minimum(rng.random(nb).astype(np.float32), np.float32(1 - 2.0 ** -24))
+        pa = pb = None
+        if samp.pen:
+            V = G._vpad(self.spec)
+            pa, pb = np.ones(V, np.float32), np.ones(V, np.float32)
+            ix = np.unique(np.asarray(list(context), np.int64))
+            pa[ix] = np.float32(1.0) / np.float32(samp.penalty)
+            pb[ix] = samp.penalty
+        for s in range(self.cfg.S):
+            self.backend.write(s, g["uni"] + 4 * (p + 1), u)
+            if pa is not None:
+                self.backend.write(s, g["pa"], pa)
+                self.backend.write(s, g["pb"], pb)
+
+    def generate_card(self, tok: int, n: int, stop_ids=None, on_token=None,
+                      stop=None, sampling=None, context=(), rng=None) -> list:
+        """Feed `tok` at the next position and generate up to n tokens after it on the device:
+        the generate loop picks each token there and feeds it back, and stops at a stop id
+        (default: the model's EOS ids; the stop id is returned, not fed). Greedy, or with
+        `sampling` (G.Sampling: temperature, top-k, top-p, repetition penalty over `context`,
+        the ids so far with tok; the uniforms from `rng`, a numpy Generator). One device run
+        per attention bucket reached (one in all with HALT CHAIN); the logits never leave the
+        device. on_token(t) for each token as the host reads it; stop() (polled while the card
+        runs, on backends that stream the tokens) halts the loop after the token in flight.
+        Returns the tokens; self.pos is then the position of the last one (fed next, unless it
+        is a stop id)."""
+        if not self.can_generate:
+            raise RuntimeError("generate_card needs resident decode on a backend that runs "
+                               "the generate loop")
+        samp = sampling
+        if samp is not None and rng is None:
+            raise ValueError("a sampled generate_card needs rng (the uniforms)")
+        ids = list(self.spec.eos if stop_ids is None else stop_ids)
+        n = min(n, self.cap - self.pos)
+        out, g, ctx = [], self.image.lookup["gen"], list(context)
+        while n > 0:
+            p = self.pos
+            if p < self._conv_lo:             # before the first run-time position
+                lg = self.step(tok)
+                got = [int(np.argmax(lg)) if samp is None else
+                       G.reference_pick(lg, samp, ctx, rng.random(), self.cfg.S,
+                                        getattr(self.spec, "softcap", None))]
+                if on_token is not None:
+                    on_token(got[0])
+            else:
+                b0 = p // self.block + 1
+                b1 = b0
+                if getattr(self.backend, "chains", False):     # the whole run on the device
+                    b1 = (p + n - 1) // self.block + 1
+                    self._generate_chain(b0, b1, samp)
+                progs = self._generate_prog(b0, samp)
+                if isinstance(progs, tuple):      # split: the run starts at the first part
+                    progs = progs[0]
+                nb = min(n, b1 * self.block - p)
+                if samp is not None:
+                    self._generate_inputs(samp, p, nb, ctx, rng)
+                for s in range(self.cfg.S):
+                    self.backend.write(s, g["state"], G.state_words(self.spec, tok, p, n, ids,
+                                                                    self.block, samp))
+                    self.backend.write(s, g["out"] + 4 * (p + 1),
+                                       np.full(nb, G.OUT_MARK, np.uint32))
+                runner = getattr(self.backend, "run_generate", None)
+                if runner is not None:     # the card: tokens as they land, stop() halts
+                    st, got = runner(progs, g["out"] + 4 * (p + 1), nb, on_token, stop,
+                                     g["state"])
+                else:
+                    st = self.backend.run(progs)
+                    w = self.backend.read(0, g["out"] + 4 * (p + 1), 4 * nb).view(np.uint32)
+                    k = int(np.argmax(w == G.OUT_MARK)) if (w == G.OUT_MARK).any() else nb
+                    got = [int(x) for x in w[:k].view(np.float32)]
+                    if on_token is not None:
+                        for t in got:
+                            on_token(t)
+                self.stats.append(st)
+                self.pos += len(got)
+                if self.gen_debug:          # the logits of the run's last token
+                    io, v = self.image.io, self.image.v_loc
+                    self.gen_logits = np.concatenate([
+                        self.backend.read(s, io["logits"] + 4 * s * v, 4 * v).view(np.float32)
+                        for s in range(self.cfg.S)])
+            out += got
+            ctx += got
+            n -= len(got)
+            if not got or got[-1] in ids or (stop is not None and stop()):
+                break
+            tok = got[-1]
         return out
 
     def generate(self, prompt, max_new: int = 32, sampler=None, on_token=None) -> list:

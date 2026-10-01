@@ -75,6 +75,7 @@ STREAM_RETRY = 0.1e-3           # probe again after this when it is not complete
 STREAM_PROBE = 0.5e-3           # probe interval when no completion time is known yet
 TAIL_SETTLE = 5e-3              # after HALTED: how long the last stores may take to land
 WR_SETTLE = 2e-3                # after HALTED: the longest wait for WR_IDLE
+HOST_IDLE = 50e-6               # BoardBackend.host: the sleep between polls it had nothing for
 
 
 # ------------------------------------------------------------------------------ address map
@@ -754,9 +755,11 @@ class Board:
             t.reg_write(R.R_TRACE_CTRL, 0)
         t.reg_write(R_CTRL, 0)
         if st & ST_ERROR:
-            raise RuntimeError("the program stopped on an illegal instruction")
+            raise RuntimeError("a WAITW timed out (STATUS WAIT_TO)" if st & R.ST_WAIT_TO else
+                               "the program stopped on an illegal instruction")
         if st & ST_AXI_ERR:
-            raise RuntimeError("a DRAM access got an AXI error response")
+            raise RuntimeError("the memory path reported an error (STATUS AXI_ERR: a DDR3 controller "
+                               "broke its port contract; on MIG bitstreams, an AXI error response)")
         return stats
 
     def _trace_out(self, count: int, drop: int, depth: int, keep_first: bool,
@@ -827,18 +830,25 @@ def device_config(info: dict, **kw):
 
 
 # ------------------------------------------------------------------------------ Engine backend
-def sim_config(spec, cap: int, base=None, rows: int | None = None, lookup: bool = False):
+def sim_config(spec, cap: int, base=None, rows: int | None = None, lookup: bool = False,
+               wformat: str = "int8", head_format: str | None = None):
     """`base` (default board_config()) with the DRAM cut to what the model needs (power of
     two): the image with I/O rows for `rows` tokens per run (default the Engine's
     PREFILL_ROWS; lookup: with the resident decode's tables, Engine(resident=True)), then the
     program area. The board model's memory, and the ISA reference that runs the same
-    layout."""
+    layout. The image sized is the int8 one (the largest: every format of a model gets the
+    same DRAM), or where that is over 4 GiB (Qwen3.5-4B) the one in `wformat` / `head_format`."""
     from opentpu.isasim import board_config
     from opentpu.llm.qwen3 import PREFILL_ROWS, has_lookup
     base = base or board_config()
     lookup = lookup or getattr(spec, "embed", "f32") == "int8"     # as Engine: always tables
-    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS,
-                       **({"lookup": True} if lookup and has_lookup(spec) else {}))
+    kw = {"lookup": True} if lookup and has_lookup(spec) else {}
+    big = replace(base, DRAM_BYTES=1 << 32)
+    try:
+        probe = spec.image(big, cap, 1, rows or PREFILL_ROWS, **kw)
+    except MemoryError:
+        probe = spec.image(big, cap, 1, rows or PREFILL_ROWS, wformat=wformat,
+                           head_format=head_format, **kw)
     need = -(-probe.nbytes // 4096) * 4096 + 4 * base.IMEM_WORDS
     return replace(base, DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
 
@@ -909,6 +919,10 @@ class BoardBackend:
         self._key = 0
         self._ratio = 1.0                   # run wall time / (CYCLES / CORE_KHZ), smoothed
         self._seen = None                   # HALTED seen by the streamed wait (perf_counter)
+        # path (a)'s expert server (opentpu/host/offload.py, ExpertServer.poll), set by the
+        # Engine: called over and over while a run is in flight, it serves the card's requests
+        # (a MoE layer's WAITWs wait for it, docs/offload.md 5.2); nonzero when it served one
+        self.host = None
         # streamed logits (start(stream=...)): the region holding the sentinel, the pieces to
         # mark again once the next run has started, the pieces' completion times last token
         self.streams = bool(getattr(self.board.t, "streams", False))
@@ -1041,6 +1055,8 @@ class BoardBackend:
         try:
             if self._stream is not None:
                 self._stream_logits(feed)
+            elif self.host is not None:
+                self._serve()
             # halted already (seen by the streamed wait): read the counters, no sleep
             st = self.board.wait(expect=0.0 if self._seen else self._expect)
             if self._stream is not None:
@@ -1054,6 +1070,17 @@ class BoardBackend:
         if self.status is not None:
             self.status.token(st["cycles"], khz, dram=self._layout(True))
         return st
+
+    def _serve(self) -> None:
+        """Serve the host hook until the run halts (not on the board model, which runs a
+        script: no host during a run)."""
+        t = self.board.t
+        if getattr(t, "batched", False):
+            return
+        while not t.reg_read(R_STATUS) & ST_HALTED:
+            if not self.host():
+                time.sleep(HOST_IDLE)
+        self._seen = time.perf_counter()
 
     def _next_expect(self, dev: float) -> float:
         """The next run's expected wall time: this run's device time (CYCLES / CORE_KHZ) times
@@ -1167,6 +1194,73 @@ class BoardBackend:
     def run(self, programs: list) -> dict:
         self.start(programs)
         return self.wait()
+
+    # ---- the decode loop on the card (Engine.generate_card)
+    @property
+    def generates(self) -> bool:
+        """The bitstream runs the generate programs: RLD, VOP ARGMAX, HALT CHAIN (CAPS bit30)."""
+        return bool((self.info.get("caps") or {}).get("gen"))
+
+    chains = generates
+
+    def run_generate(self, programs, out: int, n: int, on_token=None, stop=None,
+                     state: int | None = None):
+        """Start a generate program and hand over its tokens as they land in out[] (up to n
+        fp32 ids from byte address `out`, OUT_MARK until written) while the card runs; stop()
+        true writes the state block's stop word (at `state`): the card halts after the token in
+        flight. Returns (the run's counters, the tokens). The host reads 64-byte beats of out[]
+        only, never the logits."""
+        from opentpu.llm import generate as G
+        b, t = self.board, self.board.t
+        self.start(programs)
+        got, k, asked = [], 0, False
+        gap = self._expects.get(("gen", self._key), 0.0) or 0.002   # seconds per token
+        t_tok = time.perf_counter()
+
+        def take() -> int:
+            nonlocal k, t_tok
+            a = out + 4 * k
+            m = min(n - k, (64 - a % 64) // 4 + 16)            # to the next beat's end
+            w = b.read(a, 4 * m).view(np.uint32)
+            new = w[:int(np.argmax(w == G.OUT_MARK))] if (w == G.OUT_MARK).any() else w
+            for x in new.view(np.float32):
+                got.append(int(x))
+                if on_token is not None:
+                    on_token(int(x))
+            k += len(new)
+            if len(new):
+                t_tok = time.perf_counter()
+            return len(new)
+
+        # the board model replays its register script in one simulation per flush: no reads
+        # while the program runs, the tokens are read after it halts
+        host = self.host
+        while k < n and not getattr(t, "batched", False):
+            served = host() if host is not None else 0
+            if take():
+                continue
+            if t.reg_read(R_STATUS) & ST_HALTED:
+                break
+            if stop is not None and not asked and state is not None and stop():
+                b.write(state + 4 * G.S_HALT, np.ones(1, np.float32))
+                asked = True
+            if served:
+                continue
+            # wake up a little before the next token is due, then every 50 us (with a host
+            # hook every HOST_IDLE: the card's MoE layers wait for it)
+            due = t_tok + gap - time.perf_counter()
+            time.sleep(HOST_IDLE if host is not None else min(max(due * 0.5, 5e-5), 1e-3))
+        st = b.wait(expect=0.0)
+        self._running = None
+        while k < n and take():                            # the last tokens, after HALTED
+            pass
+        khz = self.info["core_khz"]
+        if got and khz:
+            self._expects[("gen", self._key)] = st["cycles"] / (khz * 1e3) / len(got)
+        self.last = (programs, st)
+        if self.status is not None:
+            self.status.token(st["cycles"], khz, dram=self._layout(True))
+        return st, got
 
     def close(self) -> None:
         if self.status is not None:

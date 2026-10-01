@@ -47,7 +47,10 @@ from ..isasim import Config
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
 from ..kernels.mlp import _chunk
+from ..host.offload import ExpertServer, Layout
 from ..runtime import quantize_rows
+from . import generate as G
+from . import moe as MO
 from .qwen3 import (RunPos, _inputs, _inputs_rows, _lookup_alloc, _lookup_build, _lookup_desc,
                     _tok_arg, _tokens_arg, compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
@@ -77,12 +80,24 @@ class Spec:
     tied: bool = True
     bos: int = 1
     eos: tuple = (7,)
+    moe: MO.MoESpec | None = None   # LFM2-MoE: layers moe.first.. have routed experts
     embed: str = "f32"      # the embedding rows: fp32, or "int8" per D block (as qwen3.Spec:
                             # gathered on the device from the tied int8 head or a table)
 
     @property
     def layers(self) -> int:
         return len(self.kinds)
+
+    def is_moe(self, i: int) -> bool:
+        return self.moe is not None and i >= self.moe.first
+
+    @property
+    def lkinds(self) -> tuple:
+        """Each layer's kind, and for a MoE model whether it is a MoE layer (what the plan
+        loops over: a hardware loop runs layers of one kind)."""
+        if self.moe is None:
+            return self.kinds
+        return tuple((k, self.is_moe(i)) for i, k in enumerate(self.kinds))
 
     @property
     def rope_dim(self) -> int:
@@ -103,6 +118,14 @@ class Spec:
         if g.exists():
             eos = json.loads(g.read_text()).get("eos_token_id", eos)
         rope = c.get("rope_parameters") or {}
+        moe = None
+        if c.get("model_type") == "lfm2_moe":
+            if not c.get("use_expert_bias", True):
+                raise ValueError("LFM2-MoE without the expert bias is not supported")
+            moe = MO.MoESpec(E=c["num_experts"], k=c["num_experts_per_tok"],
+                             ffn=c["moe_intermediate_size"], first=c["num_dense_layers"],
+                             norm=c.get("norm_topk_prob", True),
+                             scale=c.get("routed_scaling_factor", 1.0))
         return Spec(hidden=c["hidden_size"],
                     kinds=tuple(ATTN if t == "full_attention" else CONV for t in c["layer_types"]),
                     n_q=c["num_attention_heads"], n_kv=c["num_key_value_heads"],
@@ -112,7 +135,9 @@ class Spec:
                     theta=rope.get("rope_theta", c.get("rope_theta", 1e6)),
                     tied=c.get("tie_word_embeddings", c.get("tie_embedding", True)),
                     bos=c.get("bos_token_id", 1),
-                    eos=tuple(eos) if isinstance(eos, list) else (eos,))
+                    eos=tuple(eos) if isinstance(eos, list) else (eos,), moe=moe,
+                    # a MoE's DRAM beside its layers is expert slots: its table int8
+                    embed="int8" if moe is not None else "f32")
 
     def check(self, cfg: Config) -> None:
         S, D = cfg.S, cfg.D
@@ -126,14 +151,18 @@ class Spec:
                 (self.vocab % S == 0, f"vocab {self.vocab} % S"),
                 (max(self.ffn, self.n_q * self.head_dim, self.hidden) <= cfg.ACT_BLOCKS * D,
                  "an inner dimension exceeds ACT RAM")]
+        if self.moe is not None:
+            need += [(S == 1, "MoE layers run on one slice"),
+                     (self.moe.ffn % D == 0, f"expert width {self.moe.ffn} % D"),
+                     (self.moe.k <= self.moe.E, "top-k above the expert count")]
         bad = [m for ok, m in need if not ok]
         if bad:
             raise ValueError("model does not map onto this openTPU config: " + "; ".join(bad))
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
-              lookup: bool = False) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup)
+              lookup: bool | str = False, experts: int | None = None) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts)
 
 
 def plan(kinds) -> list:
@@ -199,6 +228,9 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
                 o[:, hq] = (s / s.sum(axis=1, keepdims=True)) @ v[:, hq // G]
             x = x + o.reshape(T, -1) @ W[a + "out_proj.weight"].T
         h = _norm(x, W[p + "ffn_norm.weight"], spec.eps)
+        if spec.is_moe(i):
+            x = x + _moe_reference(h, W, p, spec.moe)
+            continue
         g = h @ W[p + "feed_forward.w1.weight"].T
         u = h @ W[p + "feed_forward.w3.weight"].T
         x = x + ((g / (1 + np.exp(-g))) * u) @ W[p + "feed_forward.w2.weight"].T
@@ -207,8 +239,22 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
     return x @ head.T
 
 
+def _moe_reference(h, W, p: str, mo) -> np.ndarray:
+    """The routed experts' sum for the rows of h [T, H] (fp32, Hugging Face's math)."""
+    f = p + "feed_forward."
+    logits = h @ W[f + "gate.weight"].T
+    y = np.zeros_like(h)
+    for t in range(h.shape[0]):
+        ids, w = MO.route(logits[t], W[f + "expert_bias"], mo)
+        for e, we in zip(ids, w):
+            ep = f"{f}experts.{e}."
+            g, u = h[t] @ W[ep + "w1.weight"].T, h[t] @ W[ep + "w3.weight"].T
+            y[t] += np.float32(we) * (((g / (1 + np.exp(-g))) * u) @ W[ep + "w2.weight"].T)
+    return y
+
+
 def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "int8",
-                    head_format: str | None = None) -> np.ndarray:
+                    head_format: str | None = None, routes: list | None = None) -> np.ndarray:
     """float64 decode with openTPU's quantization points and none of its rounding (as
     qwen3.emulated_logits); a zero-padded K or q block quantizes like its head_dim values."""
     d, G, H, K = spec.head_dim, spec.n_q // spec.n_kv, spec.hidden, spec.conv_k
@@ -268,6 +314,22 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
                     o[hq] = (_fake_q(ppad, D)[:T] @ Vh[hq // G]) / pp.sum()
                 x = x + w(a + "out_proj.weight") @ _fake_q(o.reshape(-1), D)
             h = _fake_q(norm(x, W[p + "ffn_norm.weight"]), D)
+            if spec.is_moe(i):
+                f = p + "feed_forward."
+                if f + "gate.weight" not in Wq:     # the router is int8 in every format
+                    Wq[f + "gate.weight"] = _fake_w(W[f + "gate.weight"], D, "int8")
+                lg = Wq[f + "gate.weight"] @ h
+                ids, wts = MO.route(lg, W[f + "expert_bias"], spec.moe)
+                if routes is not None:              # (token, layer, ids, the choice's margin)
+                    sel = np.sort(1 / (1 + np.exp(-lg)) + W[f + "expert_bias"])[::-1]
+                    k = spec.moe.k
+                    routes.append((len(out), i, ids, sel[k - 1] - sel[k] if k < len(sel)
+                                   else np.inf))
+                for e, we in zip(ids, wts):
+                    ep = f"{f}experts.{e}."
+                    g, u = w(ep + "w1.weight") @ h, w(ep + "w3.weight") @ h
+                    x = x + we * (w(ep + "w2.weight") @ _fake_q((g / (1 + np.exp(-g))) * u, D))
+                continue
             g = w(p + "feed_forward.w1.weight") @ h
             u = w(p + "feed_forward.w3.weight") @ h
             x = x + w(p + "feed_forward.w2.weight") @ _fake_q((g / (1 + np.exp(-g))) * u, D)
@@ -288,7 +350,8 @@ class Image:
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False):
+                 wformat: str = "int8", head_format: str | None = None, lookup: bool | str = False,
+                 experts: int | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("LFM2 runs one sequence: batch=1")
@@ -302,8 +365,9 @@ class Image:
         self.dk = -(-d // D) * D                        # cached K row / query width
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
-        self.plan = plan(spec.kinds)
+        self.plan = plan(spec.lkinds)
         self.mlp_loop = sum(len(u) for _, u, _ in self.plan) > MLP_UNROLL_BODIES
+        mo = spec.moe
         b = _Bump()
         R = rows
         self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * d * R), "sin": b.alloc(2 * d * R),
@@ -312,12 +376,22 @@ class Image:
         lb = _Bump()                                    # offsets inside one layer block
         common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
         mlp = {"wg": (self.f_loc, H), "wu": (self.f_loc, H)}
-        for name, (n, k) in mlp.items():
-            common[name] = (lb.alloc(n * rb(k)), lb.alloc(4 * n * (k // D)))
         self.dchunk = _chunk(self.f_loc, D, D if wformat == "int8" else 2 * D)
-        common["wd"] = [(lb.alloc(self.h_loc * rb(self.dchunk)),
-                         lb.alloc(4 * self.h_loc * (self.dchunk // D)))
-                        for _ in range(F_ // self.dchunk)]
+        # the dense MLP: in every layer block, or for a MoE model (whose MoE layers have none)
+        # in a region of its own, one MLP per dense layer (layers 0 .. moe.first - 1)
+        mb = lb if mo is None else _Bump()
+        dense = {name: (mb.alloc(n * rb(k)), mb.alloc(4 * n * (k // D)))
+                 for name, (n, k) in mlp.items()}
+        dense["wd"] = [(mb.alloc(self.h_loc * rb(self.dchunk)),
+                        mb.alloc(4 * self.h_loc * (self.dchunk // D)))
+                       for _ in range(F_ // self.dchunk)]
+        if mo is None:
+            common.update(dense)
+        else:                       # the router (int8 in every format), its bias, j * E
+            self.mlp_ofs, self.DS = dense, (mb.next + 4095) // 4096 * 4096
+            common.update(router=(lb.alloc(mo.E * H), lb.alloc(4 * mo.E * (H // D))),
+                          ebias=lb.alloc(4 * mo.E), gbase=lb.alloc(4))
+            mlp = {}
         self.mats = {CONV: {"win": (3 * self.h_loc, H), "wout": (self.h_loc, H), **mlp},
                      ATTN: {"wq": (self.nq_loc * d, H), "wk": (self.nkv_loc * d, H),
                             "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d), **mlp}}
@@ -347,6 +421,17 @@ class Image:
         shared = spec.tied and self.head_format == "int8" and S == 1
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
                                     M=cfg.MCOLS) if lookup else {}
+        self.offload = None
+        if mo is not None:          # the dense MLPs, then path (a)'s words and expert slots
+            self.dense0 = (b.next + 4095) // 4096 * 4096
+            b.next = self.dense0 + mo.first * self.DS
+            self.fmt = MO.ExpertFormat(H, mo.ffn, D, wformat)
+            n = mo.E if experts is None else experts
+            if not mo.k <= n <= mo.E:
+                raise ValueError(f"{n} expert slots per layer: from top-k {mo.k} to {mo.E}")
+            self.offload = Layout.build((b.next + 4095) // 4096 * 4096, mo.E, mo.k,
+                                        [n] * (spec.layers - mo.first), self.fmt.nbytes)
+            b.next = self.offload.end
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -405,11 +490,21 @@ class Image:
                 put_q(Lo["wk"], rows(wk, self.nkv_loc * d))
                 put_q(Lo["wv"], rows(wv, self.nkv_loc * d))
                 put_q(Lo["wo"], rows(wo, n))
-            put_q(Lo["wg"], rows(W[p + "feed_forward.w1.weight"], self.f_loc))
-            put_q(Lo["wu"], rows(W[p + "feed_forward.w3.weight"], self.f_loc))
+            if spec.is_moe(i):
+                f, mo = p + "feed_forward.", spec.moe
+                put_q(Lo["router"], [W[f + "gate.weight"]], "int8")
+                put(0, Lo["ebias"], f32(W[f + "expert_bias"]))
+                put(0, Lo["gbase"], f32([(i - mo.first) * mo.E]))
+                continue
+            mb, mofs = base, self.lofs[kind]
+            if spec.moe is not None:
+                mb, mofs = self.dense0 + i * self.DS, self.mlp_ofs
+            for name, hf in (("wg", "w1"), ("wu", "w3")):
+                put_q(tuple(mb + x for x in mofs[name]),
+                      rows(W[p + f"feed_forward.{hf}.weight"], self.f_loc))
             C_ = self.dchunk
-            for j, pair in enumerate(self.lofs[kind]["wd"]):
-                put_q((base + pair[0], base + pair[1]),
+            for j, pair in enumerate(mofs["wd"]):
+                put_q((mb + pair[0], mb + pair[1]),
                       [r[:, j * C_:(j + 1) * C_] for r in rows(W[p + "feed_forward.w2.weight"], n)])
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
         put_q(self.head, rows(head, self.v_loc), self.head_format)
@@ -417,11 +512,28 @@ class Image:
             _lookup_build(put, S, W, spec, self.cap, self.lookup)
         return imgs
 
+    # ---- path (a): the expert pool and its server (docs/offload.md)
+    def expert(self, W: dict, g: int) -> np.ndarray:
+        """Global expert g (MoE layer g // E, expert g % E) in its slot's bytes."""
+        mo = self.spec.moe
+        p = f"model.layers.{mo.first + g // mo.E}.feed_forward.experts.{g % mo.E}."
+        return self.fmt.pack(W[p + "w1.weight"], W[p + "w3.weight"], W[p + "w2.weight"])
+
+    def serve(self, W: dict, backend, pool_file=None) -> ExpertServer:
+        """The host's expert server on the backend's DRAM (moe.serve)."""
+        return MO.serve(self.offload, lambda g: self.expert(W, g), backend, pool_file)
+
     # ---- programs
     def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):
         """(programs, run_args): lfm2_step at a run-time position (qwen3.compile_decode); the
         convolutions need lo >= conv_k - 1 (every tap of the state ring is a past token)."""
         return compile_decode(self, lfm2_step, blocks, lo, block)
+
+    def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
+                         chain: bool = True, samp=None, debug: bool = False,
+                         part: int | None = None) -> list:
+        """The decode loop on the device for bucket `blocks` (lfm2_step in it, generate.py)."""
+        return G.compile_generate(self, lfm2_step, blocks, lo, block, chain, samp, debug, part)
 
     def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program per slice: the decode token at position `pos` (lfm2_step)."""
@@ -431,6 +543,9 @@ class Image:
 
     def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
         """One program per slice: consecutive positions of the sequence at once (lfm2_rows)."""
+        if self.spec.moe is not None and len(rows) > 1:
+            raise ValueError("a MoE model runs one row per program (its MoE block routes one "
+                             "token)")
         if len(rows) > self.rows:
             raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
         if any(r != (0, rows[0][1] + i) for i, r in enumerate(rows)):
@@ -447,23 +562,43 @@ class Image:
         D, d, H, K, n = cfg.D, spec.head_dim, spec.hidden, spec.conv_k, self.h_loc
 
         def layer(li, kind):
-            """Descriptors of layer `li` (an int or a hardware-loop expression) of `kind`."""
+            """Descriptors of layer `li` (an int or a hardware-loop expression) of `kind` (for
+            a MoE model: (kind, is a MoE layer), Spec.lkinds)."""
+            moe = False
+            if isinstance(kind, tuple):
+                kind, moe = kind
             off = Affine.of(self.layer0) + Affine.of(li) * self.LS
             lofs = self.lofs[kind]
             fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             ns = SimpleNamespace(g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
-                                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
+                                 g_post=Tensor(off + lofs["g_post"], (H,), (1,)), moe=moe,
                                  mlp_loop=self.mlp_loop)
             for name, (r, k) in self.mats[kind].items():
                 da, sa = lofs[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (r, k), Q.row_bytes(k, fm, D),
                                           4 * (k // D), D, wf=wf))
-            C = self.dchunk
-            rc = Q.row_bytes(C, fm, D)
-            parts = tuple(QTensor(off + da, off + sa, (n, C), rc, 4 * (C // D), D, wf=wf)
-                          for da, sa in lofs["wd"])
-            ns.wd = QTensor(parts[0].data, parts[0].scale, (n, spec.ffn), rc, 4 * (C // D), D,
-                            parts=parts, pw=C, wf=wf)
+            if moe:
+                E = spec.moe.E
+                da, sa = lofs["router"]
+                ns.router = QTensor(off + da, off + sa, (E, H), H, 4 * (H // D), D)
+                ns.ebias = Tensor(off + lofs["ebias"], (E,), (1,))
+                ns.gbase = Tensor(off + lofs["gbase"], (1,), (1,))
+            else:
+                mofs, moff = lofs, off
+                if spec.moe is not None:            # the dense layers' MLP region
+                    mofs = self.mlp_ofs
+                    moff = Affine.of(self.dense0) + Affine.of(li) * self.DS
+                    for name in ("wg", "wu"):
+                        da, sa = mofs[name]
+                        setattr(ns, name, QTensor(moff + da, moff + sa, (self.f_loc, H),
+                                                  Q.row_bytes(H, fm, D), 4 * (H // D), D,
+                                                  wf=wf))
+                C = self.dchunk
+                rc = Q.row_bytes(C, fm, D)
+                parts = tuple(QTensor(moff + da, moff + sa, (n, C), rc, 4 * (C // D), D, wf=wf)
+                              for da, sa in mofs["wd"])
+                ns.wd = QTensor(parts[0].data, parts[0].scale, (n, spec.ffn), rc, 4 * (C // D),
+                                D, parts=parts, pw=C, wf=wf)
             if kind == CONV:
                 ns.taps = Tensor(off + lofs["taps"], (K, n), (n, 1))
                 ns.state = Tensor(off + lofs["state"], (2 * K, n), (n, 1))     # _ring_rows
@@ -476,8 +611,12 @@ class Image:
                 ns.kvs = [ns.kv]
             return ns
 
+        dev = None
+        if self.offload is not None:
+            L = self.offload
+            dev = SimpleNamespace(mbox=L.mbox, served=L.served, dir=L.dir, fmt=self.fmt)
         return SimpleNamespace(
-            spec=spec, layer=layer, plan=self.plan,
+            spec=spec, layer=layer, plan=self.plan, moe_dev=dev,
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (d // 2,)),
             sin=_tdesc(self.io["sin"], (d // 2,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
@@ -541,11 +680,14 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
 
     def layer(li, kind):
         lw = m.layer(li, kind)
-        if kind == CONV:
+        if (kind[0] if isinstance(kind, tuple) else kind) == CONV:
             x.set(_conv(x, lw, pos, spec))
         else:
             x.set(_attention(x, lw, c, s_, pos, spec, block))
-        x.set(_mlp(x, lw, spec))
+        if lw.moe:
+            x.set(MO.moe_ffn(x, lw, spec.moe, m.moe_dev, spec.eps))
+        else:
+            x.set(_mlp(x, lw, spec))
 
     run_layers(m.plan, layer)
     _lm_head(x, m, spec)

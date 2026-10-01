@@ -9,6 +9,8 @@ import numpy as np
 from opentpu import isa as I
 from opentpu.isasim import Machine
 
+from .regs import R_STATUS, ST_HALTED
+
 DATA, W8, SC, OUT = 0, 0x10000, 0x20000, 0x30000
 PROG_AT = 0x3C0000
 ZERO_AT = 0x380000              # 256 KiB of zeros below PROG_AT: run_demo clears TMEM from it first
@@ -193,6 +195,128 @@ def run_demo(board, cfg, prog: list | None = None,
     return True, f"{st['cycles']} cycles", st
 
 
+# ---- WAITW on the host's writes (CAPS bit31, docs/isa.md "WAITW"): the host writes data, then a
+# flag word, while the card waits on the flag; the LD after the card's WAITW must read the data.
+# On the card that is the order of XDMA's writes (each pwrite returns after its B) through
+# otpu_mem_ch into LiteDRAM against the accelerator's reads of both channels.
+WB = 0x200000                   # DRAM (below CHAIN_AT and PROG_AT): four flags, a 64-byte beat each
+W_TOK = WB + 0x1000             # the word WAITW took, stored from TMEM (a whole beat)
+W_DATA = WB + 0x10000           # the host's data: up to 32768 words at a word offset of 0..15
+W_RES = WB + 0x40000            # the card's copy of it
+W_T = 0xFF00                    # TMEM: WAITW's word (the data from 0)
+W_SIZES = (16, 17, 1000, 4096, 32768)   # words
+W_KINDS = ("EQ", "NE", "GE", "EQ mask")
+W_TIMEOUT = 1 << 29             # cycles: 5.4 s at 100 MHz (the host's writes take milliseconds)
+
+
+def waitw_round(r: int, seed: int = 5, sizes=W_SIZES) -> dict:
+    """Round r of waitw_host: its data (size, word offset), flag beat, compare, poll interval,
+    the host's delay before its writes, and the flag's words: `pre` (written before the run; the
+    condition fails on it) and `word` (written after the data; it holds)."""
+    rng = np.random.default_rng([seed, r])
+    kind = W_KINDS[r % len(W_KINDS)]
+    v, lo = int(rng.integers(1 << 20, 1 << 30)), int(rng.integers(0, 1 << 16))
+    mask, cmp = 0xFFFFFFFF, I.C_EQ
+    if kind == "EQ":
+        pre, word, ref = v ^ 1, v, v
+    elif kind == "NE":                      # waits for any change of the flag
+        pre, word, ref, cmp = v, v + 1, v, I.C_NE
+    elif kind == "GE":                      # a counter the host advances
+        pre, word, ref, cmp = v - 1 - lo, v + lo % 3, v, I.C_GE
+    else:                                   # the high half only; the low half changes too
+        hi = v & 0xFFFF
+        mask, ref = 0xFFFF0000, hi << 16
+        pre, word = (hi ^ 1) << 16 | lo, hi << 16 | (lo ^ 0x5A5A)
+    n = sizes[r % len(sizes)]
+    return dict(kind=kind, n=n, data=W_DATA + 4 * int(rng.integers(0, 16)),
+                flag=WB + 64 * (r // len(W_KINDS) % 4), cmp=cmp, mask=mask, ref=ref, pre=pre,
+                word=word, interval=(0, 64, 1000)[r % 3],
+                delay=float(rng.choice([0.0, 0.0, 0.002, 0.02])))
+
+
+def waitw_host_program(p: dict, timeout: int = W_TIMEOUT) -> list:
+    """WAITW on round p's flag, then the data to TMEM and back to W_RES, and the word it took."""
+    return [I.waitw(p["flag"], W_T, p["ref"], p["cmp"], mask=p["mask"], interval=p["interval"],
+                    timeout=timeout),
+            I.ld(p["data"], 0, p["n"]), I.st(W_RES, 0, p["n"]), I.st(W_TOK, W_T, 16), I.halt()]
+
+
+def _u32(*v) -> np.ndarray:
+    return np.array([x & 0xFFFFFFFF for x in v], "<u4")
+
+
+def waitw_host(board, rounds: int = 20, seed: int = 5, sizes=W_SIZES,
+               live: bool | None = None) -> tuple[bool, str]:
+    """`rounds` rounds of waitw_round: the host fills the data with old words and the flag with
+    `pre`, starts the card, checks that it waits (STATUS not HALTED), then writes the new data and
+    then the flag; the card's copy must be the new data, and the word WAITW took the flag.
+    live=False (the default on a batched transport, the board model, which runs a script) writes
+    the new data and the flag before the start instead: WAITW holds at its first read."""
+    live = not getattr(board.t, "batched", False) if live is None else live
+    board.scrub()
+    cyc = []
+    for r in range(rounds):
+        p = waitw_round(r, seed, sizes)
+        what = (f"round {r} ({p['kind']}, {p['n']} words at {p['data']:#x}, flag {p['flag']:#x}, "
+                f"interval {p['interval']})")
+        rng = np.random.default_rng([seed, r, 1])
+        old, new = (rng.integers(0, 1 << 32, p["n"], dtype=np.uint32) for _ in range(2))
+        board.write(W_RES, np.full(p["n"], 0xDEADBEEF, "<u4"))
+        board.write(W_TOK, np.full(16, 0xDEADBEEF, "<u4"))
+        board.write(p["data"], old if live else new)
+        board.write(p["flag"], _u32(p["pre"] if live else p["word"]))
+        board.load_program(PROG_AT, np.asarray(I.assemble(waitw_host_program(p)), np.uint32))
+        board.start()
+        if live:
+            time.sleep(p["delay"])
+            if board.t.reg_read(R_STATUS) & ST_HALTED:
+                try:
+                    board.wait(1.0)
+                except RuntimeError:
+                    pass
+                return False, f"{what}: the card halted before the host wrote the flag"
+            board.write(p["data"], new)
+            board.write(p["flag"], _u32(p["word"]))
+        try:
+            st = board.wait(timeout=30.0)
+        except RuntimeError as e:
+            return False, f"{what}: {e} (a WAITW timeout: the flag not seen in {W_TIMEOUT} cycles)"
+        got = board.read(W_RES, 4 * p["n"]).view("<u4")
+        tok = int(board.read(W_TOK, 4).view("<u4")[0])
+        bad = np.nonzero(got != new)[0]
+        if len(bad):
+            k = int(bad[0])
+            return False, (f"{what}: {len(bad)} of {p['n']} words are not the host's data "
+                           f"({int((got[bad] == old[bad]).sum())} the old words, "
+                           f"{int((got[bad] == 0xDEADBEEF).sum())} never stored), first word {k}: "
+                           f"got {int(got[k]):#010x} want {int(new[k]):#010x}")
+        if tok != p["word"]:
+            return False, f"{what}: WAITW took {tok:#010x}, the host wrote {p['word']:#010x}"
+        cyc.append(st["cycles"])
+    return True, (f"{rounds} rounds{', the host writing during the run' if live else ''}, "
+                  f"{min(sizes)}..{max(sizes)} words, {min(cyc)}..{max(cyc)} cycles")
+
+
+def waitw_timeout(board) -> tuple[bool, str]:
+    """A WAITW that never holds stops the card at its timeout with HALTED, ERROR and WAIT_TO
+    (Board.wait's 'WAITW timed out'; bitstreams before WAIT_TO: ERROR alone, 'illegal
+    instruction'); the next run, a WAITW that holds, runs normally."""
+    board.write(WB, _u32(0x1234))
+    board.load_program(PROG_AT, np.asarray(I.assemble(
+        [I.waitw(WB, W_T, 0x1235, I.C_EQ, interval=100, timeout=100000), I.halt()]), np.uint32))
+    try:
+        board.run(timeout=10.0)
+        return False, "a WAITW that never holds ran to its HALT (no timeout)"
+    except RuntimeError as e:
+        if "illegal instruction" not in str(e) and "WAITW timed out" not in str(e):
+            raise
+        how = "ERROR and WAIT_TO" if "WAIT_TO" in str(e) else "ERROR (no WAIT_TO)"
+    board.load_program(PROG_AT, np.asarray(I.assemble(
+        [I.waitw(WB, W_T, 0x1234, I.C_EQ, timeout=100000), I.halt()]), np.uint32))
+    st = board.run(timeout=10.0)
+    return True, f"{how} at the timeout; the next run halted normally ({st['cycles']} cycles)"
+
+
 def pattern_test(board, regions: list[tuple[int, int]], seed: int = 1) -> tuple[bool, str]:
     """Write random bytes to every region (logical addresses), read them back."""
     rng = np.random.default_rng(seed)
@@ -299,9 +423,9 @@ def model_check(t, cfg, model: str, tokens: int, sim: bool, wformat: str = "int8
                                   tokenize=True)
     ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
     cap = 256
-    rcfg = sim_config(spec, cap, cfg)                     # same layout, DRAM sized to the model
-    tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if sim else t
     fmt = {"wformat": wformat, "head_format": head_format}
+    rcfg = sim_config(spec, cap, cfg, **fmt)              # same layout, DRAM sized to the model
+    tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if sim else t
     dev = Engine(spec, W, cap=cap, cfg=rcfg if sim else cfg,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tq, model=path.name),
                  **fmt)

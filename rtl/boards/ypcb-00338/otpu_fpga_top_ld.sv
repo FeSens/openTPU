@@ -155,12 +155,14 @@ module otpu_fpga_top_ld #(
   always_ff @(posedge core_clk) core_rst <= !core_rstn;
   always_ff @(posedge xdma_aclk) xrst <= !xdma_aresetn;
 
-  // ---- the channels' controller ports (otpu_mem_ch <-> the LiteDRAM core), sys_clk
-  logic [1:0]        c_cmd_valid, c_cmd_ready, c_cmd_we, c_wdata_valid, c_wdata_ready;
-  logic [1:0]        c_rdata_valid, c_ready;
-  logic [1:0][24:0]  c_cmd_addr;
-  logic [1:0][511:0] c_wdata_data, c_rdata_data;
-  logic [1:0][63:0]  c_wdata_we;
+  // ---- the channels' controller ports (otpu_mem_ch <-> the LiteDRAM core), sys_clk: two per
+  // channel, [channel][port] (port 1 = the core's c<n>b_*: the odd banks)
+  logic [1:0][1:0]        c_cmd_valid, c_cmd_ready, c_cmd_we, c_wdata_valid, c_wdata_ready;
+  logic [1:0][1:0]        c_rdata_valid;
+  logic [1:0]             c_ready;
+  logic [1:0][1:0][24:0]  c_cmd_addr;
+  logic [1:0][1:0][511:0] c_wdata_data, c_rdata_data;
+  logic [1:0][1:0][63:0]  c_wdata_we;
 
   // ---- LiteDRAM: both channels, their CSRs (BAR0 0x10000) and calibration ready bits
   otpu_litedram u_ld (
@@ -171,16 +173,26 @@ module otpu_fpga_top_ld #(
     .ctl_bvalid(mc_bvalid), .ctl_bready(mc_bready), .ctl_bresp(mc_bresp),
     .ctl_arvalid(mc_arvalid), .ctl_arready(mc_arready), .ctl_araddr(mc_araddr[15:0]),
     .ctl_rvalid(mc_rvalid), .ctl_rready(mc_rready), .ctl_rdata(mc_rdata), .ctl_rresp(mc_rresp),
-    .c0_cmd_valid(c_cmd_valid[0]), .c0_cmd_ready(c_cmd_ready[0]), .c0_cmd_we(c_cmd_we[0]),
-    .c0_cmd_addr(c_cmd_addr[0]), .c0_wdata_valid(c_wdata_valid[0]),
-    .c0_wdata_ready(c_wdata_ready[0]), .c0_wdata_data(c_wdata_data[0]),
-    .c0_wdata_we(c_wdata_we[0]), .c0_rdata_valid(c_rdata_valid[0]), .c0_rdata_ready(1'b1),
-    .c0_rdata_data(c_rdata_data[0]), .c0_ready(c_ready[0]),
-    .c1_cmd_valid(c_cmd_valid[1]), .c1_cmd_ready(c_cmd_ready[1]), .c1_cmd_we(c_cmd_we[1]),
-    .c1_cmd_addr(c_cmd_addr[1]), .c1_wdata_valid(c_wdata_valid[1]),
-    .c1_wdata_ready(c_wdata_ready[1]), .c1_wdata_data(c_wdata_data[1]),
-    .c1_wdata_we(c_wdata_we[1]), .c1_rdata_valid(c_rdata_valid[1]), .c1_rdata_ready(1'b1),
-    .c1_rdata_data(c_rdata_data[1]), .c1_ready(c_ready[1]),
+    .c0_cmd_valid(c_cmd_valid[0][0]), .c0_cmd_ready(c_cmd_ready[0][0]), .c0_cmd_we(c_cmd_we[0][0]),
+    .c0_cmd_addr(c_cmd_addr[0][0]), .c0_wdata_valid(c_wdata_valid[0][0]),
+    .c0_wdata_ready(c_wdata_ready[0][0]), .c0_wdata_data(c_wdata_data[0][0]),
+    .c0_wdata_we(c_wdata_we[0][0]), .c0_rdata_valid(c_rdata_valid[0][0]), .c0_rdata_ready(1'b1),
+    .c0_rdata_data(c_rdata_data[0][0]), .c0_ready(c_ready[0]),
+    .c0b_cmd_valid(c_cmd_valid[0][1]), .c0b_cmd_ready(c_cmd_ready[0][1]), .c0b_cmd_we(c_cmd_we[0][1]),
+    .c0b_cmd_addr(c_cmd_addr[0][1]), .c0b_wdata_valid(c_wdata_valid[0][1]),
+    .c0b_wdata_ready(c_wdata_ready[0][1]), .c0b_wdata_data(c_wdata_data[0][1]),
+    .c0b_wdata_we(c_wdata_we[0][1]), .c0b_rdata_valid(c_rdata_valid[0][1]), .c0b_rdata_ready(1'b1),
+    .c0b_rdata_data(c_rdata_data[0][1]),
+    .c1_cmd_valid(c_cmd_valid[1][0]), .c1_cmd_ready(c_cmd_ready[1][0]), .c1_cmd_we(c_cmd_we[1][0]),
+    .c1_cmd_addr(c_cmd_addr[1][0]), .c1_wdata_valid(c_wdata_valid[1][0]),
+    .c1_wdata_ready(c_wdata_ready[1][0]), .c1_wdata_data(c_wdata_data[1][0]),
+    .c1_wdata_we(c_wdata_we[1][0]), .c1_rdata_valid(c_rdata_valid[1][0]), .c1_rdata_ready(1'b1),
+    .c1_rdata_data(c_rdata_data[1][0]), .c1_ready(c_ready[1]),
+    .c1b_cmd_valid(c_cmd_valid[1][1]), .c1b_cmd_ready(c_cmd_ready[1][1]), .c1b_cmd_we(c_cmd_we[1][1]),
+    .c1b_cmd_addr(c_cmd_addr[1][1]), .c1b_wdata_valid(c_wdata_valid[1][1]),
+    .c1b_wdata_ready(c_wdata_ready[1][1]), .c1b_wdata_data(c_wdata_data[1][1]),
+    .c1b_wdata_we(c_wdata_we[1][1]), .c1b_rdata_valid(c_rdata_valid[1][1]), .c1b_rdata_ready(1'b1),
+    .c1b_rdata_data(c_rdata_data[1][1]),
     .ddram0_dq, .ddram0_dqs_p, .ddram0_dqs_n, .ddram0_a, .ddram0_ba, .ddram0_ras_n,
     .ddram0_cas_n, .ddram0_we_n, .ddram0_reset_n, .ddram0_clk_p, .ddram0_clk_n, .ddram0_cke,
     .ddram0_cs_n, .ddram0_odt,

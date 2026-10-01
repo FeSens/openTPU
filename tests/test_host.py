@@ -81,8 +81,8 @@ def test_v3_info_snapshot_and_rates():
     assert i["regmap"] == 3 and i["core_khz"] == 100_000 and i["build_id"] == 0x1234ABCD
     assert i["caps"] == {"trace": True, "temp": True, "i2c": False, "ddr": False, "w4": True,
                          "pair": False, "dstep": False, "chash": False, "act_rows": False,
-                         "args": False, "stream": False, "hostcal": False, "trace_depth": 4096,
-                         "pq_window": 64}
+                         "args": False, "stream": False, "hostcal": False, "gen": False,
+                         "waitw": False, "trace_depth": 4096, "pq_window": 64}
     assert i["ddr_mts"] is None
     assert i["temp_c"] == pytest.approx(0x9C4 * 503.975 / 4096 - 273.15, abs=0.01)
     s0, s1 = b.snapshot(), b.snapshot()
@@ -240,6 +240,20 @@ def test_selftest_stops_at_config_on_a_stale_environment(no_cfg_env, capsys):
     assert "MCOLS=4 but OTPU_MCOLS=2" in out and "stopped at stage 'config'" in out
 
 
+def test_sim_config_sizes_the_format_when_int8_is_over_4gib():
+    """sim_config sizes the DRAM for the int8 image (every format of a model gets the same
+    layout), or, where that is over 4 GiB (Qwen3.5-4B: 4.3 GiB), for the run's formats."""
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Spec
+    spec = Spec(hidden=2048, layers=2, n_q=16, n_kv=4, head_dim=128, ffn=8192, vocab=2_200_000)
+    with pytest.raises(MemoryError):
+        sim_config(spec, 256)
+    cfg = sim_config(spec, 256, wformat="fp4", head_format="fp4")
+    assert cfg.DRAM_BYTES == 1 << 32
+    small = Spec(hidden=256, layers=2, n_q=4, n_kv=2, head_dim=128, ffn=512, vocab=1000)
+    assert sim_config(small, 256, wformat="fp4") == sim_config(small, 256)
+
+
 def test_4bit_image_needs_a_4bit_bitstream(run_dir):
     """An Engine with 4-bit weights refuses a bitstream without 4-bit MM support (CAPS bit4)."""
     from opentpu import lens as L
@@ -292,8 +306,7 @@ def test_compile_worker_builds_the_engines_image():
     from opentpu.llm import qwen3 as Q
     spec, W = L._tiny_qwen()
     eng = Q.Engine(spec, W, cap=256, wformat="fp4", head_format="int8", resident=True)
-    Q._worker_init(spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block, "fp4", "int8",
-                   True)
+    Q._worker_init(spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block, eng._image_kw)
     try:
         assert np.array_equal(Q._worker_compile(5), I.assemble(eng.image.compile_step(5)[0]))
         words, ra = Q._worker_decode(1, 0)
@@ -1380,6 +1393,8 @@ def test_diag_hints_from_the_pattern_of_failures():
     assert len(h) == 1 and "on a bitstream that has them (register map 3)" in h[0]
     h = diagnose(rows(mxu=FAIL, vpu=FAIL, dma=FAIL, control=FAIL))
     assert h[0].startswith("every program fails")
+    h = diagnose(rows(dma=PASS, waitw=PASS, **{"waitw-host": FAIL}))
+    assert len(h) == 1 and "the order of XDMA's writes" in h[0]
 
 
 @pytest.mark.parametrize("regmap,need,ok,text", [

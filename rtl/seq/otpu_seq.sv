@@ -16,6 +16,13 @@
 // clear (ustart), and it may consume the stream once all dependencies are clear (urel). Deep
 // prefetch therefore overlaps the stream with whatever produces the MM's stationary operand.
 //
+// RLD (docs/isa.md) is dispatched like a unit instruction (to the collective unit, whose slice
+// reads the TMEM word itself); R then holds the next instruction until the value comes back
+// (rl_v): younger instructions may use R[rd] in their addresses and LOOP counts. The hold
+// (rl_wait) is a flip-flop, so the fetch-enable path only gains one registered term. HALT with
+// flag CHAIN reports R[ra] (the program's DRAM address) and R[rb] (its instructions) with the
+// halt (ch_*): the slice reloads IMEM from there and restarts (otpu_slice).
+//
 // IMEM is a synchronous RAM (FPGA block RAM) of rows of IPR = D/32 instructions -- one DRAM
 // chunk, so the slice's loader writes one row per cycle. It is read one instruction ahead, at
 // fa: the exact pc that R moves to next (computed from flip-flops only). When R moves on, the
@@ -42,6 +49,11 @@ module otpu_seq
   output logic [31:0]         icount,
   output seq_ev_t             ev,          // trace and activity events, a cycle late (otpu_pkg)
   input  logic [31:0]         rinit  [8],  // R8..R15 while in reset: the run's arguments
+  input  logic                rl_v,        // RLD's value is back: R[rd] = rl_val
+  input  logic [31:0]         rl_val,
+  output logic                ch_req,      // the halt is a HALT CHAIN: to ch_addr, ch_n
+  output logic [31:0]         ch_addr,
+  output logic [31:0]         ch_n,
   // IMEM write port (the loader; used while the slice is held in reset)
   input  logic                im_we,
   input  logic [31:0]         im_row,
@@ -64,6 +76,8 @@ module otpu_seq
   logic [31:0] pc, cyc;
   logic [31:0] R [16];
   logic        stopping;         // HALT fetched: wait for the window to drain
+  logic        rl_wait;          // an RLD is out: R holds until its value is back
+  logic [3:0]  rl_rd;
 
   // loop stack
   logic [2:0]  sp;
@@ -78,15 +92,19 @@ module otpu_seq
   // The footprint as the window keeps it: ranges stored by space, so ranges in different
   // spaces, and two reads, are never compared. No valid bits: an invalid range has hi = 0,
   // which overlaps nothing (b.lo < 0 is false) -- exactly ov()'s v terms. Routing (fp_seg):
-  //   LD:     d[0] = rd0          t[0] = wr0 W
-  //   ST:     d[0] = wr0 (dw)     t[0] = rd0
-  //   DSTEP:  d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2
-  //   STREAM: d[0] = wr0 (dw)     t[0] = wr1 W, t[1] = rd0, t2 = rd1, t3 = rd2, t4 = rd3
-  //   MM:     d = rd0, rd1        t[0] = wr0 W, t[1] = wr1 W (RMAX), t2 = rd3 (ASCALE), a = rd2
-  //   QACT:                       t[0] = rd0, t[1] = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
-  //   QST:    d = wr0, wr1 (dw)   t[0] = rd0
-  //   VOP:                        t[0] = wr0 W, t[1] = rd0, t2 = rd1, t3 = rd2 (OUTER)
-  //   GATHER:                     t[0] = wr0 W, t[1] = rd0
+  //   LD:     d[0] = rd0          t0 = wr0 W
+  //   ST:     d[0] = wr0 (dw)     t0 = rd0
+  //   DSTEP:  d[0] = wr0 (dw)     t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2
+  //   STREAM: d[0] = wr0 (dw)     t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2, t4 = rd3
+  //   MM:     d = rd0, rd1        t0 = hull(wr0, wr1) W (RMAX), t2 = rd3 (ASCALE), a = rd2
+  //   QACT:                       t0 = rd0, t1 = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
+  //   QST:    d = wr0, wr1 (dw)   t0 = rd0
+  //   VOP:                        t0 = wr0 W, t1 = rd0, t2 = rd1, t3 = rd2 (OUTER)
+  //   GATHER:                     t0 = wr0 W, t1 = rd0
+  // Only t0 may be written, so a footprint pair has 9 TMEM range pairs to compare. MM's RMAX
+  // (the row maxima, the spare row after the output tile) is folded into its output range: the
+  // hull [min lo, max hi) covers both, so every dependency on either is kept (ovr() is monotone
+  // in the range); it adds only the output tile's padding words between them (ors - N).
   // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. ACT ranges
   // start below 2^8 (an 8-bit field) and are at most 2^16 - 1 long, so [alo, ahi) is exact.
   // TMEM ranges keep TAW/TAW+1 bits: TMEM holds 2^16 words, so every access the ISA allows has
@@ -100,7 +118,8 @@ module otpu_seq
     logic            all;
     logic            dw;        // the DRAM ranges are writes
     r32_t  [1:0]     d;         // DRAM
-    rtw_t  [1:0]     t;         // TMEM
+    rtw_t            t0;        // TMEM, the only range that may be written
+    rt_t             t1;        // TMEM, always a read
     rt_t             t2;        // TMEM, always a read
     rt_t             t3;        // TMEM, always a read
     rt_t             t4;        // TMEM, always a read (STREAM's constants)
@@ -126,11 +145,23 @@ module otpu_seq
     return x.v && (x.lo[31:TAW] != '0 || x.hi[31:TAW+1] != '0);
   endfunction
 
+  // the smallest range covering a and b (an invalid one, hi = 0, covers nothing)
+  function automatic rt_t hull(input rt_t a, input rt_t b);
+    rt_t o;
+    if (b.hi == '0) o = a;
+    else if (a.hi == '0) o = b;
+    else begin
+      o.lo = (b.lo < a.lo) ? b.lo : a.lo;
+      o.hi = (b.hi > a.hi) ? b.hi : a.hi;
+    end
+    return o;
+  endfunction
+
   function automatic fps_t fp_seg(input logic [7:0] op, input fp_t f);
     fps_t s;
-    rng_t a, t0, t1, t2, t3, t4;  // ACT; TMEM t[0], t[1], t2, t3, t4
-    logic w0, w1;
-    s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; t3 = '0; t4 = '0; w0 = 1'b0; w1 = 1'b0;
+    rng_t a, t0, t1, t2, t3, t4, h;  // ACT; TMEM t0, t1, t2, t3, t4; MM's RMAX (into t0)
+    logic w0;
+    s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; t3 = '0; t4 = '0; h = '0; w0 = 1'b0;
     case (op)
       OP_LD: begin
         s.d[0] = r32(f.rd[0]); t0 = f.wr[0]; w0 = 1'b1;
@@ -144,7 +175,7 @@ module otpu_seq
       end
       OP_MM: begin
         s.d[0] = r32(f.rd[0]); s.d[1] = r32(f.rd[1]);
-        t0 = f.wr[0]; w0 = 1'b1; t1 = f.wr[1]; w1 = 1'b1; t2 = f.rd[3];
+        t0 = f.wr[0]; w0 = 1'b1; h = f.wr[1]; t2 = f.rd[3];
         a = f.rd[2];
       end
       OP_QACT: begin
@@ -161,11 +192,15 @@ module otpu_seq
       OP_GATHER: begin
         t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0];
       end
+      OP_RLD: t0 = f.rd[0];
+      OP_WAITW: begin
+        s.dw = 1'b1; s.d[0] = r32(f.wr[0]); t0 = f.wr[1]; w0 = 1'b1;
+      end
       default: ;   // BAR: all
     endcase
-    s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2) || tovf(t3) || tovf(t4);
-    s.t[0].w = w0; s.t[0].r = rt(t0);
-    s.t[1].w = w1; s.t[1].r = rt(t1);
+    s.all = f.all || tovf(t0) || tovf(t1) || tovf(t2) || tovf(t3) || tovf(t4) || tovf(h);
+    s.t0.w = w0; s.t0.r = hull(rt(t0), rt(h));
+    s.t1 = rt(t1);
     s.t2 = rt(t2);
     s.t3 = rt(t3);
     s.t4 = rt(t4);
@@ -183,21 +218,18 @@ module otpu_seq
   endfunction
 
   // {conflict, conflict_dram} (otpu_pkg) on segregated footprints: the same-space pairs with at
-  // least one write -- 4 DRAM, 16 TMEM (t[i] x t[j]; t[i] x t2..t4 both ways) and 1 ACT range
-  // pair
+  // least one write -- 4 DRAM, 9 TMEM (t0 x t0; t0 x t1..t4 both ways) and 1 ACT range pair
   function automatic logic [1:0] conf_s(input fps_t n, input fps_t e);
     logic any, dram;
     any = n.all || e.all; dram = any;
-    for (int i = 0; i < 2; i++) begin
-      for (int j = 0; j < 2; j++) begin
+    for (int i = 0; i < 2; i++)
+      for (int j = 0; j < 2; j++)
         if ((n.dw || e.dw) && ovr(n.d[i], e.d[j])) begin any = 1'b1; dram = 1'b1; end
-        if ((n.t[i].w || e.t[j].w) && ovr_t(n.t[i].r, e.t[j].r)) any = 1'b1;
-      end
-      if (n.t[i].w && (ovr_t(n.t[i].r, e.t2) || ovr_t(n.t[i].r, e.t3) ||
-                       ovr_t(n.t[i].r, e.t4))) any = 1'b1;
-      if (e.t[i].w && (ovr_t(n.t2, e.t[i].r) || ovr_t(n.t3, e.t[i].r) ||
-                       ovr_t(n.t4, e.t[i].r))) any = 1'b1;
-    end
+    if ((n.t0.w || e.t0.w) && ovr_t(n.t0.r, e.t0.r)) any = 1'b1;
+    if (n.t0.w && (ovr_t(n.t0.r, e.t1) || ovr_t(n.t0.r, e.t2) || ovr_t(n.t0.r, e.t3) ||
+                   ovr_t(n.t0.r, e.t4))) any = 1'b1;
+    if (e.t0.w && (ovr_t(n.t1, e.t0.r) || ovr_t(n.t2, e.t0.r) || ovr_t(n.t3, e.t0.r) ||
+                   ovr_t(n.t4, e.t0.r))) any = 1'b1;
     if ((n.aw || e.aw) && {9'd0, n.alo} < e.ahi && {9'd0, e.alo} < n.ahi) any = 1'b1;
     return {any, dram};
   endfunction
@@ -321,7 +353,7 @@ module otpu_seq
   endtask
 
   always_comb
-    r_ret = ir_v && !stopping && !halted &&
+    r_ret = ir_v && !stopping && !halted && !rl_wait &&
             (op == OP_NOP || op == OP_HALT || op == OP_LI || op == OP_ADDI ||
              (op == OP_LOOP && lp));
 
@@ -347,7 +379,7 @@ module otpu_seq
       OP_LOOP: adv = lp;
       default: adv = dunit >= 0 && r_take;
     endcase
-    ld = !ir_v || (!stopping && !halted && adv);
+    ld = !ir_v || (!stopping && !halted && !rl_wait && adv);
     hit1 = (sp != 0) && (stk_end[sp-1] == fa);
     hit2 = (sp >= 2) && (stk_end[sp-2] == fa);
     hit = hit1 && stk_rem[sp-1] > 1;                                          // D
@@ -365,7 +397,7 @@ module otpu_seq
     if (rst) fa_n = '0;
     else if (ir_v && op == OP_LOOP && !lp) fa_n = lp_z ? pc + 1 + iw[1] : pc + 1;
     else fa_n = succ;
-    fe = rst || (ir_v && op == OP_LOOP && !lp && !stopping && !halted) || ld;
+    fe = rst || (ir_v && op == OP_LOOP && !lp && !stopping && !halted && !rl_wait) || ld;
     fa_d = fe ? fa_n : fa;
   end
 
@@ -458,9 +490,23 @@ module otpu_seq
   end
 
 `ifndef SYNTHESIS
-  // shadow of c_fp / sfp in otpu_pkg form: the scoreboard is checked against conflict()
-  fp_t c_ref;
-  fp_t sfp_ref [WIN];
+  // shadow of c_fp / sfp in otpu_pkg form: the scoreboard is checked against conflict(), on
+  // the footprints with MM's RMAX range folded into its output range as fp_seg does (ref), and
+  // for coverage on the footprints as they are (raw)
+  fp_t c_ref, c_raw;
+  fp_t sfp_ref [WIN], sfp_raw [WIN];
+
+  // fp_seg's hull in otpu_pkg form: two TMEM write ranges (only MM with RMAX) become one
+  function automatic fp_t fp_hull(input fp_t f);
+    fp_t o;
+    o = f;
+    if (f.wr[0].v && f.wr[0].sp == SP_TMEM && f.wr[1].v && f.wr[1].sp == SP_TMEM) begin
+      o.wr[0].lo = (f.wr[1].lo < f.wr[0].lo) ? f.wr[1].lo : f.wr[0].lo;
+      o.wr[0].hi = (f.wr[1].hi > f.wr[0].hi) ? f.wr[1].hi : f.wr[0].hi;
+      o.wr[1].v = 1'b0;
+    end
+    return o;
+  endfunction
 `endif
 
   always_ff @(posedge clk) begin
@@ -470,6 +516,7 @@ module otpu_seq
       uq_r <= '0;
       pc <= '0; sp <= '0; cyc <= '0;
       halted <= 1'b0; error <= 1'b0; stopping <= 1'b0;
+      rl_wait <= 1'b0; ch_req <= 1'b0;
       p_v <= 1'b0; s_v <= 1'b0; q_v <= 1'b0; c_v <= 1'b0; lp <= 1'b0;
       icount <= '0;
       sv <= '0; sstarted <= '0; sready <= '0;
@@ -487,15 +534,21 @@ module otpu_seq
                  (at_end && stk_rem[sp-1] > 1) ? stk_start[sp-1] : pc + 1))
         $fatal(1, "otpu_seq: fetch address %0d does not follow pc %0d", fa, pc);
       // the segregated footprints give exactly otpu_pkg's conflict() and conflict_dram(); a
-      // footprint whose TMEM ranges overflowed rt_t (all raised by fp_seg) conflicts with all
+      // footprint whose TMEM ranges overflowed rt_t (all raised by fp_seg) conflicts with all.
+      // The hull only adds dependencies: every conflict() of the raw footprints is kept
       if (c_v)
-        for (int i = 0; i < WIN; i++)
+        for (int i = 0; i < WIN; i++) begin
+          logic [1:0] cs;
+          cs = conf_s(c_fp, sfp[i]);
           if (sv[i] && (c_fp.all == c_ref.all && sfp[i].all == sfp_ref[i].all ?
-                        conf_s(c_fp, sfp[i]) != {conflict(c_ref, sfp_ref[i]),
-                                                 conflict_dram(c_ref, sfp_ref[i])} :
-                        conf_s(c_fp, sfp[i]) != 2'b11))
+                        cs != {conflict(c_ref, sfp_ref[i]), conflict_dram(c_ref, sfp_ref[i])} :
+                        cs != 2'b11))
             $fatal(1, "otpu_seq: scoreboard differs from conflict() for pc %0d vs slot %0d",
                    c_pc, i);
+          if (sv[i] && conflict(c_raw, sfp_raw[i]) && !cs[1])
+            $fatal(1, "otpu_seq: scoreboard misses a conflict() of pc %0d vs slot %0d",
+                   c_pc, i);
+        end
       // fp_seg's assumptions: ACT ranges fit [alo, ahi), DRAM ranges share their write role
       if (q_v && q_adv) begin
         logic dr, dwr;
@@ -565,6 +618,7 @@ module otpu_seq
         sfp[free_slot] <= c_fp;
 `ifndef SYNTHESIS
         sfp_ref[free_slot] <= c_ref;
+        sfp_raw[free_slot] <= c_raw;
 `endif
       end
       // ---- Q: footprint ranges
@@ -574,7 +628,8 @@ module otpu_seq
           c_cmd <= q_cmd; c_unit <= q_unit; c_pc <= q_pc;
           c_fp <= fp_seg(q_cmd.op, q_fp);
 `ifndef SYNTHESIS
-          c_ref <= q_fp;
+          c_ref <= fp_hull(q_fp);
+          c_raw <= q_fp;
 `endif
         end
       end
@@ -595,13 +650,23 @@ module otpu_seq
         end
       end
       if (r_take) p_v <= 1'b0;
+      // ---- RLD's value (R holds meanwhile, so nothing below writes R this cycle)
+      if (rl_v) begin
+        if (rl_rd != 0) R[rl_rd] <= rl_val;
+        rl_wait <= 1'b0;
+      end
       // ---- R: fetch / execute control / hand over
       if (stopping) begin
         if (sv == '0 && pipe_empty) halted <= 1'b1;
-      end else if (!halted && ir_v) begin
+      end else if (!halted && ir_v && !rl_wait) begin
         case (op)
           OP_NOP: advance();
-          OP_HALT: stopping <= 1'b1;
+          OP_HALT: begin
+            stopping <= 1'b1;
+            ch_req <= flags[HF_CHAIN];
+            ch_addr <= rv(ra);
+            ch_n <= rv(rb);
+          end
           OP_LI: begin
             if (rd != 0) R[rd] <= iw[1];
             advance();
@@ -633,6 +698,10 @@ module otpu_seq
               p_v <= 1'b1;
               p_cmd <= dcmd; p_unit <= 3'(dunit); p_pc <= pc;
               advance();
+              if (op == OP_RLD) begin
+                rl_wait <= 1'b1;
+                rl_rd <= rd;
+              end
             end
           end
         endcase

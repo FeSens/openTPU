@@ -340,7 +340,7 @@ the failing checks with their details and the diagnosis. Exit code 1 on any FAIL
 
 | Section | Checks |
 |---|---|
-| platform | PCIe link speed and width (sysfs; expected 2.5 GT/s x8), XDMA module and device nodes, ID, VERSION -> configuration, BUILD_ID and CORE_KHZ, calibration of each channel, STATUS ERROR / AXI_ERR (cleared with CLEAR if left by an earlier run), die temperature, the power estimate from `power.json` (an estimate, INFO) |
+| platform | PCIe link speed and width (sysfs; expected 2.5 GT/s x8), XDMA module and device nodes, ID, VERSION -> configuration, BUILD_ID and CORE_KHZ, calibration of each channel, STATUS ERROR / AXI_ERR (cleared with CLEAR if left by an earlier run; AXI_ERR from a controller's broken port contract stays), die temperature, the power estimate from `power.json` (an estimate, INFO) |
 | regs | SCRATCH, PROG_ADDR, PROG_N, TRACE_ADDR: 68 write / read patterns each (walking 1, walking 0, all 0 / 1, checkerboards; stuck bits named); TRACE_CTRL bits; read-only registers: sane values (VERSION, REGMAP, CAPS, CORE_KHZ, 0xDEADBEEF on an undefined offset) and ignoring writes; SNAP and the free-running counters |
 | mem | per channel (raw channel addresses): walking 1 and walking 0 over the 512 bits of a beat, walking address bits (aliasing named), 16 random blocks spread over the channel, 200 sub-beat updates (merged into whole beats on the host, see section 2), DMA bandwidth each way; the interleave through the accelerator's address map; with `--mem full` a march C- over every byte with address-in-address data (progress line; errors per byte lane, DQ bit and address bit) |
 | isa | one program per instruction variant (`opentpu/host/opchecks.py`, 93 at MCOLS=2), each compared with the ISA simulator bit for bit: NOP, HALT, LI / ADDI, LOOP (nested, count from a register, count 0), BAR; LD / ST aligned, unaligned, short, register offsets; MM plain, UNIT, ACC, RMAX, ACC+RMAX, UNIT+ACC+ASCALE, M=1, another ACT block, a row stride, register operands; QACT ROW / CSCALE / RSCALE; QST dense, strided, ROW; GATHER; every VOP function under each legal broadcast mode (FULL / ROW / COL / SCALAR for the binary ones and RDOT), OUTER with each decay mode; the composite and simple functions on edge values (zeros, denormals, the largest floats, infinities) |
@@ -448,8 +448,11 @@ buffer and the I2C pins); `opentpu/host/regs.py` has the same as constants. The 
 4. `CTRL = CLEAR` (zero the per-run counters; also holds the core in reset), `CTRL = RUN`;
 5. poll `STATUS.HALTED`; read `STATUS`, `CYCLES`, `ICOUNT`, the DRAM port counters (and
    `TRACE_COUNT`, `TRACE_DROP`, the records);
-6. `CTRL = 0`. `STATUS.ERROR` (illegal instruction) and `STATUS.AXI_ERR` (a DRAM access got an
-   error response) make the driver raise.
+6. `CTRL = 0`. `STATUS.ERROR` (illegal instruction) and `STATUS.AXI_ERR` make the driver raise.
+   AXI_ERR means a channel's DDR3 controller broke its port contract (`otpu_mem_ch`'s n_err:
+   read data from both ports in one cycle, or with no read outstanding). It is sticky until the
+   controller's reset, so reload the bitstream. On MIG bitstreams it meant an AXI error
+   response.
 
 **Version 1, 2 and 3 bitstreams.** `Board.info()` reads REGMAP. Version 3 adds the MXU_STARVE
 counter (`otpu-smi`: "MXU-starve" in the stalls line); on a version 2 bitstream the snapshots,
@@ -666,6 +669,12 @@ with an int8 head, DDR3-1066 bank model at 116 MHz, position 9 (the worst case),
 1,289,001 cycles against 1,260,820 (+2.2%, 90.0 against 92.0 tok/s device); at a bucket's end
 the two meet. Against the ~0.5 ms of host time per token it removes (4% of an 11 ms token)
 it is a gain at every position.
+
+**The decode loop on the card** (docs/autodecode.md) removes the host from each token
+entirely. `Engine.generate_card` starts one run per reply, and the card picks every token
+itself: greedy, or chat.sampler's top-k / top-p / temperature / repetition penalty. It feeds
+each token back and writes it to `out[]`. `otpu-chat` takes this path whenever the engine and
+the bitstream can (`Chat.on_card`, CAPS bit30).
 
 The chat interface draws each token while the card runs the next one: `Chat` hands a token to
 `on_update` from `Engine.step`'s `on_start` hook (called once the run is started), so the

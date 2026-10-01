@@ -1,8 +1,10 @@
-# LFM2 on openTPU (LFM2.5-230M)
+# LFM2 on openTPU (LFM2.5-230M, LFM2-2.6B)
 
 openTPU runs a second model family next to Qwen3: Liquid AI's LFM2, checked with
-[LFM2.5-230M](https://huggingface.co/LiquidAI/LFM2.5-230M). It uses the same ISA, RTL, W8A8
-numerics and host driver as Qwen3; only the model code is new (`opentpu/llm/lfm2.py`).
+[LFM2.5-230M](https://huggingface.co/LiquidAI/LFM2.5-230M) and
+[LFM2-2.6B](https://huggingface.co/LiquidAI/LFM2-2.6B) ([below](#lfm2-26b)). It uses the same
+ISA, RTL, W8A8 numerics and host driver as Qwen3; only the model code is new
+(`opentpu/llm/lfm2.py`).
 
 ```sh
 hf download LiquidAI/LFM2.5-230M --local-dir models/LFM2.5-230M
@@ -232,6 +234,84 @@ At 116 MHz the token is now at 95.8% of the core port's roofline (157.8 MB); the
 efficiency is 83%. The attention layers still take 125 K cycles for 91 K of bytes: the Q
 projections stream at ~70% while the V^T read-modify-writes share the DRAM, and each head's
 softmax chain adds ~0.7 K cycles after them.
+
+## LFM2-2.6B
+
+```sh
+hf download LiquidAI/LFM2-2.6B --local-dir models/LFM2-2.6B
+otpu-chat --model lfm2-2.6b --backend board --wformat fp4 --head-format int8
+python3 tools/compare_hf.py --model lfm2-2.6b --cfg board --tokens 16
+```
+
+The same architecture, larger: 30 layers, hidden size 2048, 32 query heads and 8 KV heads of 64,
+a SwiGLU MLP 10752 wide, the same 65536-token vocabulary and tied LM head (the config says so
+with `tie_embedding`, which `lfm2.Spec.from_hf` reads too). The layers are 22 convolutions and 8
+attention layers, in the order `c c A c c A c c c A c c c A c c c A c c c A c c A c c A c c`.
+
+**Ten layer bodies.** `lfm2.plan` finds `c x 2, A, (c c A c) x 5, (c A c) x 2, c`: three
+hardware loops and two unrolled layers, 10 layer bodies against LFM2.5-230M's 4. Each body has
+its MLP, and with every F chunk of the MLP unrolled (12 chunks of 896 in int8, 14 of 768 in
+4-bit) the MLPs alone took 1200-1400 of the 4K-instruction IMEM. The resident decode program was
+2458 instructions in its first 256-position bucket and grew 283 per bucket, so it stopped
+fitting at 1536 positions.
+
+**The MLP's chunks as a hardware loop.** A plan of more than 8 layer bodies (`lfm2.MLP_UNROLL_BODIES`)
+runs each MLP's chunks as a hardware loop (`kernels.mlp.swiglu_down(loop=True)`). The loop is
+software-pipelined as the unrolled chunks are: two buffers hold gate / up of alternate chunks,
+each iteration runs two chunks, and the MXU streams chunk k + 1's gate / up while the VPU
+computes chunk k's `silu(g) * u`. Chunk 0 runs before the loop, the last one or two after it.
+The operations and their order are the unrolled ones', so the results are bit-identical
+(`tests/test_lfm2.py`, also on the RTL). LFM2.5-230M keeps its unrolled chunks: its programs are
+unchanged. The resident decode program is now 1749 instructions in bucket 1 and at most 3717
+over the 16 buckets of a 4096-token context.
+
+**Prefill** runs 3 or 4 rows per device run (TMEM and IMEM limit it; before the loop and the
+query-head change in `qwen3._attention_rows`, 1 or 2).
+
+**DRAM.** At a 2048-token KV capacity with the resident decode's tables (the fp32 embedding
+table is 512 MiB): 3093 MiB in int8, 1934 MiB with 4-bit layers and an int8 head.
+
+### On the card
+
+The production image, build B (`deploy_fused133c_79c5707a`, 133.33 MHz, DDR3-1066), 2026-09-30,
+`tools/qual/perf.py` (a 512-token prompt, then 64 greedy decode tokens with the host's argmax in
+the loop) and `tools/decode_profile.py` (96 tokens, the logits streamed):
+
+| Weights | Decode, device / wall | Streamed decode, device / wall | Prefill, device | DRAM while decoding |
+|:--|--:|--:|--:|--:|
+| int8 | 6.05 / 6.03 tok/s | | 21.4 tok/s | 16.1 GB/s (94%), 2661 MB/token |
+| 4-bit, int8 head | 10.96 / 10.93 tok/s | 11.07 / 11.02 tok/s | 20.6 tok/s | 15.8 GB/s (93%), 1444 MB/token |
+
+Decode reads every weight once per token, so it runs at the DRAM's rate: 1.44 GB per token in
+4-bit at 15.8 GB/s is 11 tokens/s. The previous image (`deploy_champ_e698dcd7`) decoded at
+5.59 and 10.04 tok/s, at 87% and 85% of the peak. The card gives the ISA simulator's tokens, bit
+for bit, per-position and with the resident decode program (`tools/qual/refs.py card`, 32
+tokens of otpu-selftest's prompt; both formats on e698dcd7). Prefill runs 3-4 rows per device
+run (512 tokens in 150 runs in int8, 169 in 4-bit); a run takes about as long as one decode
+token in int8 and 1.6 in 4-bit.
+
+### Accuracy
+
+Greedy decoding on the ISA simulator in the card's configuration vs Hugging Face fp32
+(`tools/compare_hf.py --cfg CFG.pkl`, int8, the README's eight raw prompts, 16 tokens): 4 of 8
+identical. The numpy reference matches Hugging Face's logits to 4e-5.
+
+| Prompt | Same tokens | First difference: HF's rank of the device's token, logit gap | Max logit error | Min cosine |
+|:--|:--|:--|--:|--:|
+| A prime number larger than 100 is | 0 | #4, 0.288 | 0.52 | 0.9995 |
+| The capital of France is | all 16 | | 0.76 | 0.9979 |
+| def fibonacci(n): | all 16 | | 1.13 | 0.9958 |
+| Water boils at | 8 | #2, 0.033 | 1.29 | 0.9987 |
+| The quick brown fox | all 16 | | 0.87 | 0.9985 |
+| In 1969, the first person to walk on the moon was | 9 | #2, 0.075 | 0.68 | 0.9976 |
+| The largest planet in the solar system is | all 16 | | 0.91 | 0.9987 |
+| import numpy as np | 0 | #3, 0.853 | 7.38 | 0.8725 |
+
+The `import numpy as np` prompt ends in a newline, and at that first step the device's logits
+are far from Hugging Face's (cosine 0.87). The float64 emulation with the same int8
+quantization points picks the device's token (`import`) too, so the int8 quantization moves it,
+not the kernels. On a prompt without such a tie the device agrees with the emulation to a
+cosine of 0.9990.
 
 ## Tests
 

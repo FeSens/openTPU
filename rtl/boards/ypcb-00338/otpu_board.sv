@@ -71,7 +71,8 @@ module otpu_board #(
   output logic [1:0][63:0]  n_wmask,   // 1 = write the byte
   input  logic [1:0]        n_rvalid,  // read data in read-command order, no backpressure
   input  logic [1:0][511:0] n_rdata,
-  input  logic [1:0][15:0]  n_wdone    // write beats the controller has taken (mod 2^16)
+  input  logic [1:0][15:0]  n_wdone,   // write beats the controller has taken (mod 2^16)
+  input  logic [1:0]        n_err      // a channel's controller broke its port contract (sticky)
 );
   import otpu_pkg::*;
 
@@ -109,7 +110,7 @@ module otpu_board #(
   end
 
   // ---- control
-  logic run, ld_start, ld_busy, halted, error, wr_idle;
+  logic run, ld_start, ld_busy, halted, error, wait_to, wr_idle;
   logic [31:0] ld_addr, ld_n, icount;
   logic [31:0] arg [8];               // the run's arguments (ARG0..7: R8..R15 at the start)
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_par, b_rvalid, b_rtag, b_rdy;
@@ -135,8 +136,8 @@ module otpu_board #(
     .s_bready(s_ctl_bready), .s_araddr(s_ctl_araddr), .s_arvalid(s_ctl_arvalid),
     .s_arready(s_ctl_arready), .s_rdata(s_ctl_rdata), .s_rresp(s_ctl_rresp),
     .s_rvalid(s_ctl_rvalid), .s_rready(s_ctl_rready),
-    .run, .ld_start, .arg, .ld_addr, .ld_n, .ld_busy, .halted, .error, .icount, .wr_idle,
-    .axi_err(1'b0),                    // (no error responses on the native ports)
+    .run, .ld_start, .arg, .ld_addr, .ld_n, .ld_busy, .halted, .error, .wait_to, .icount, .wr_idle,
+    .axi_err(|n_err),                  // the channels' bridges (otpu_mem_ch)
     .calib(cal_s2),
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
     .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(b_req && !b_rdy),
@@ -189,10 +190,19 @@ module otpu_board #(
     .coll_req, .coll_cmd, .coll_ack,
     .coll_ren, .coll_raddr, .coll_rdata,
     .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl), .coll_gnt(coll_gl),
-    .halted, .error, .icount, .pf, .dump(1'b0));
+    .halted, .error, .wait_to, .icount, .pf, .dump(1'b0));
 
+  // the collective's reset through a register of its own, next to it: it leaves reset a cycle
+  // after the slice, idle either way (133.33 MHz, 110ec6d: core_rst -> u_coll's state, 0 levels,
+  // 97% route, +0.162 ns); a request can only come many cycles after reset (checked)
+  logic coll_rst;
+  always_ff @(posedge clk) coll_rst <= core_rst;
+`ifndef SYNTHESIS
+  always @(posedge clk)
+    if (coll_rst && coll_req) $fatal(1, "otpu_board: a collective request in reset");
+`endif
   otpu_coll #(.S(1), .LANES(LANES)) u_coll (
-    .clk, .rst(core_rst), .req(coll_req), .cmds(coll_cmds), .gnt(coll_gl), .ack(coll_ack),
+    .clk, .rst(coll_rst), .req(coll_req), .cmds(coll_cmds), .gnt(coll_gl), .ack(coll_ack),
     .r_en(coll_ren), .r_addr(coll_raddr), .r_data(coll_rdata),
     .w_en(coll_wen), .w_addr(coll_waddr), .w_data(coll_wdata));
 

@@ -261,6 +261,22 @@ module otpu_mxu
   // pops: a register, so no adder sits in front of the block RAM address
   logic [PW-1:0]  f_rd;
   logic [SPW-1:0] s_rd;
+  // The chunk FIFO is FG block RAM column groups (whole 36-bit BRAM columns each, so no more
+  // block RAMs than one RAM of the chunk's width), each with its own copies of the write and
+  // read addresses (f_tl, f_rdl: f_tail's and f_rd's updates): one register no longer drives
+  // every block RAM of the chunk across its span (133.33 MHz, bb7f844: f_rd -> u_fd ADDRB, 0
+  // levels, fanout 31, 6.6 ns of route, +0.081 ns, the core's worst; 110ec6d: f_tail -> ADDRA
+  // +0.201). f_tail and f_rd remain for the checks.
+  localparam int FW = D * 8;
+  localparam int FC = (FW + 35) / 36;       // 36-bit block RAM columns
+  localparam int FG = (FC < 4) ? FC : 4;
+  function automatic int fg_lo(input int g);
+    int c;
+    c = 0;
+    for (int i = 0; i < g; i++) c = c + FC / FG + ((i < FC % FG) ? 1 : 0);
+    return (36 * c < FW) ? 36 * c : FW;
+  endfunction
+  (* keep *) logic [FG-1:0][PW-1:0] f_tl, f_rdl;
 
   // ================================================================== consumer control
   logic [15:0] ck;
@@ -424,9 +440,26 @@ module otpu_mxu
   always_ff @(posedge clk) begin
     if (a_rvalid) f_scale[s_tail] <= {a_rdata2, a_rdata};
   end
-  (* keep_hierarchy = "yes" *)
-  otpu_ram_sdp #(.W(D * 8), .N(DEPTH)) u_fd (
-    .clk, .we(b_rvalid), .wa(f_tail), .wd(b_rdata), .re(en_c), .ra(f_rd), .rd(w0));
+  for (genvar g = 0; g < FG; g++) begin : g_fd
+    localparam int LO = fg_lo(g);
+    localparam int W = ((g == FG - 1) ? FW : fg_lo(g + 1)) - LO;
+    (* keep_hierarchy = "yes" *)
+    otpu_ram_sdp #(.W(W), .N(DEPTH)) u_fd (
+      .clk, .we(b_rvalid), .wa(f_tl[g]), .wd(b_rdata[LO +: W]), .re(en_c), .ra(f_rdl[g]),
+      .rd(w0[LO +: W]));
+  end
+`ifndef SYNTHESIS
+  // the groups' address copies are f_tail and f_rd (all reset together)
+  bit fd_rst;                                         // (registers start arbitrary)
+  initial fd_rst = 1'b0;
+  always @(posedge clk) begin
+    if (rst) fd_rst <= 1'b1;
+    for (int g = 0; g < FG; g++)
+      if (!rst && fd_rst && (f_tl[g] != f_tail || f_rdl[g] != f_rd))
+        $fatal(1, "otpu_mxu: FIFO group %0d addresses %0d / %0d, not %0d / %0d", g, f_tl[g],
+               f_rdl[g], f_tail, f_rd);
+  end
+`endif
 
   always_ff @(posedge clk) if (en_c) begin
     // S0: the popped chunk, its ACT RAM block and scales
@@ -702,15 +735,24 @@ module otpu_mxu
       for (genvar i = 0; i < D; i++) begin : g_p
         otpu_skew #(.W(8), .N(i % CLS + j)) u_a (.clk, .en(en_c), .d(a0[(j*D + i)*8 +: 8]),
                                                .q(as_k[j][i]));
-        otpu_pe #(.FIRST(i % CLS == 0), .LAST(i % CLS == CLS - 1)) u_pe (.clk, .en(en_c),
-          .act(as_k[j][i]), .wlo(wc[j][i][7:0]), .whi(wc[j][i][15:8]), .sel(c_hi[j]),
+        // columns past the first register their weights in the DSP (WREG), from the previous
+        // column's hop: a copy of wc[j] (133.33 MHz, 110ec6d: wc -> PE A / D, 0 levels, 95%
+        // route, +0.266 ns, 36 endpoints)
+        localparam int JW = (j == 0) ? 0 : j - 1;
+        otpu_pe #(.FIRST(i % CLS == 0), .LAST(i % CLS == CLS - 1), .WREG(j != 0)) u_pe (
+          .clk, .en(en_c), .act(as_k[j][i]), .wlo(wc[JW][i][7:0]), .whi(wc[JW][i][15:8]),
+          .sel(c_hi[j]),
           .pcin((i % CLS == 0) ? 48'd0 : pc[j][(i % CLS == 0) ? i : i - 1]), .pcout(pc[j][i]),
           .p(preg[j][i]));
 `ifndef SYNTHESIS
         // the DSP's select register is hi0[j] (both are c_hi[j], loaded with en_c)
-        always @(posedge clk)
+        always @(posedge clk) begin
           if (hi_v && u_pe.selr != hi0[j])
             $fatal(1, "otpu_mxu: PE %0d.%0d's select %0d is not hi0 %0d", j, i, u_pe.selr, hi0[j]);
+          // and its weight registers are wc[j] (both wc[j - 1], loaded with en_c)
+          if (hi_v && j != 0 && {u_pe.whr, u_pe.wlr} != wc[j][i])
+            $fatal(1, "otpu_mxu: PE %0d.%0d's weights are not wc", j, i);
+        end
 `endif
       end
     end
@@ -868,6 +910,16 @@ module otpu_mxu
   logic [NL-1:0] dln;
   wire  [MW-1:0] c_Mn = d_last ? h.Ml : MW'(MCOLS);   // its results
   logic [LANES-1:0][31:0] daddr_l, dval_l;
+  // The drain lanes' addresses, dad[dj + k], are registered (dal): set wherever dj or dad move,
+  // the step's from registers (dad[dj + ncnt + k]), so the grant only picks. The TMEM write
+  // request and the arbiter's bank masks then start at flip-flops, not at the dj multiplexer
+  // (133.33 MHz, 110ec6d: dj -> dad[dj + k] -> t_waddr -> the MXU's bank mask -> the grants ->
+  // the VPU's WBUF head enables, 12 levels, +0.168 ns; -> TMEM's pw_a, +0.274)
+  logic [NL-1:0][31:0] dal;
+  function automatic logic [NL-1:0][31:0] dlane_a(input logic [31:0] a [MCOLS],
+                                                  input logic [MW-1:0] j);
+    for (int k = 0; k < NL; k++) dlane_a[k] = (32'(j) + 32'(k) < MCOLS) ? a[MW'(j) + MW'(k)] : '0;
+  endfunction
   logic [LANES-1:0][7:0]  dcol_l;
   // (OVL: the result FIFO's head row is the head command's while it has rows not yet drained)
   wire  drain_go = rf_nz && (!OVL || rl_nz) && (!c_asc || al_st == 2'd2);
@@ -896,15 +948,17 @@ module otpu_mxu
       $fatal(1, "otpu_mxu: drain step d_last %0d ncnt %0d d_fin %0d (dg1 %0d G %0d dj %0d M %0d run %0d)",
              d_last, ncnt, d_fin, dg1, c_G, dj, mn, c_run);
   end
+  always @(posedge clk) if (!rst && q_n != 0 && dal != dlane_a(dad, dj))
+    $fatal(1, "otpu_mxu: the drain lanes' addresses are not dad[dj + k] (dj %0d)", dj);
   always @(posedge clk) if (!rst && (rf_nz != (rf_n != 0) || rl_nz != (rows_live != 0)))
     $fatal(1, "otpu_mxu: rf_nz %0d (rf_n %0d), rl_nz %0d (rows_live %0d)", rf_nz, rf_n, rl_nz, rows_live);
 `endif
   // (the lanes' addresses and values do not wait for the count: only the enables do)
   always_comb begin
     daddr_l = '0; dval_l = '0; dcol_l = '0;
+    daddr_l[NL-1:0] = dal;
     for (int k = 0; k < NL; k++)
       if (32'(dj) + 32'(k) < MCOLS) begin
-        daddr_l[k] = dad[MW'(dj) + MW'(k)];
         dval_l[k] = rfh[MW'(dj) + MW'(k)];
         dcol_l[k] = 8'(dj) + 8'(k);
       end
@@ -1122,7 +1176,7 @@ module otpu_mxu
       i_act <= 1'b0;
       q_n <= '0; pn <= 1'b0; rows_p <= '0;
       occ <= '0;
-      f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0;
+      f_head <= '0; f_tail <= '0; f_count <= '0; f_rd <= '0; f_tl <= '0; f_rdl <= '0;
       s_head <= '0; s_tail <= '0; s_count <= '0; s_rd <= '0;
       ck <= '0; cg <= '0; dg <= '0; dg1 <= 8'd1; c_left <= '0; cl_ld <= 1'b0; rows_live <= '0;
       rf_q <= '0; rf_hs <= 1'b0; rf_t <= '0; rf_n <= '0; rf_nz <= 1'b0; rl_nz <= 1'b0;
@@ -1199,7 +1253,10 @@ module otpu_mxu
         end
       end
       // ---- FIFO pushes
-      if (b_rvalid) f_tail <= f_tail + 1;
+      if (b_rvalid) begin
+        f_tail <= f_tail + 1;
+        for (int g = 0; g < FG; g++) f_tl[g] <= f_tl[g] + 1;
+      end
       if (a_rvalid) begin
         s_tail <= s_tail + 1;
       end
@@ -1214,8 +1271,13 @@ module otpu_mxu
           c_left <= c_left - 1;
         end
         // the next read: the next entry, or back to the head for the row's next group
-        if (last_k && !last_g) f_rd <= f_head;
-        else if (cdone) f_rd <= f_rd + 1;
+        if (last_k && !last_g) begin
+          f_rd <= f_head;
+          f_rdl <= {FG{f_head}};
+        end else if (cdone) begin
+          f_rd <= f_rd + 1;
+          for (int g = 0; g < FG; g++) f_rdl[g] <= f_rdl[g] + 1;
+        end
         if (!c_unit) s_rd <= (last_k && !last_g) ? s_head : s_rd + 1;
         if (ck == 0) begin
           if (!OVL || !pn) rl = rl + 1;
@@ -1252,17 +1314,26 @@ module otpu_mxu
             if (d_last) begin                       // the next weight row, group 0
               dg <= '0; dg1 <= 8'd1;
               for (int j = 0; j < MCOLS; j++) begin
-                dad[j] <= drow[j] + 32'd1;
-                drow[j] <= drow[j] + 32'd1;
+                logic [31:0] a;
+                a = drow[j] + 32'd1;
+                dad[j] <= a;
+                drow[j] <= a;
+                if (j < NL) dal[j] <= a;
               end
             end else begin                          // the next group of this row
               dg <= dg + 8'd1; dg1 <= dg1 + 8'd1;
-              for (int j = 0; j < MCOLS; j++) dad[j] <= dad[j] + h.gs;
+              for (int j = 0; j < MCOLS; j++) begin
+                logic [31:0] a;
+                a = dad[j] + h.gs;
+                dad[j] <= a;
+                if (j < NL) dal[j] <= a;
+              end
             end
             rn = rn - 1;
             rl = rl - 1;
           end else begin
             dj <= dj + ncnt;
+            dal <= dlane_a(dad, dj + ncnt);
           end
         end
         // RMAX (rx: registered so the lane selection and the max compare are in different cycles)
@@ -1336,10 +1407,11 @@ module otpu_mxu
         pnx = 1'b0;                               // the next command is both heads now
         dj <= '0;
         for (int j = 0; j < MCOLS; j++) begin
-          dad[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
-                                           : n.out + n.jo[j];
-          drow[j] <= (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0])
-                                            : n.out + n.jo[j];
+          logic [31:0] a;
+          a = (start && q_n == 2'd1) ? cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]) : n.out + n.jo[j];
+          dad[j] <= a;
+          drow[j] <= a;
+          if (j < NL) dal[j] <= a;
         end
         mx_done <= 1'b0; mx_have <= '0;
         al_st <= 2'd0; al_i <= '0; mx_i <= '0;
@@ -1351,8 +1423,11 @@ module otpu_mxu
       // the head's output base (set when a command becomes head)
       if (start && q_n == 0) begin
         for (int j = 0; j < MCOLS; j++) begin
-          dad[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
-          drow[j] <= cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+          logic [31:0] a;
+          a = cmd.w3 + 32'(j) * 32'(cmd.w6[15:0]);
+          dad[j] <= a;
+          drow[j] <= a;
+          if (j < NL) dal[j] <= a;
         end
       end
       // the entries: completing the head swaps them (the next entry, or the command accepted
@@ -1454,13 +1529,14 @@ endmodule
 // front of its pre-adder and multiplier. The select is registered in the DSP (INMODEREG, loaded
 // with en): sel is its next value, so the fabric's route to the DSP column ends at the INMODE
 // register instead of before the pre-adder and multiplier (133.33 MHz, 812bb01: hi0 -> INMODE,
-// 0 levels, 4.4 ns of route and a 2.4 ns setup, +0.174 ns). Simulation uses the equivalent
-// behavioural model.
-module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
+// 0 levels, 4.4 ns of route and a 2.4 ns setup, +0.174 ns). WREG registers the weights too (A
+// and D registers, loaded with en: wlo and whi are their next values). Simulation uses the
+// equivalent behavioural model.
+module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0, parameter bit WREG = 1'b0) (
   input  logic               clk,
   input  logic               en,
   input  logic [7:0]         act,
-  input  logic [7:0]         wlo,
+  input  logic [7:0]         wlo,               // WREG: the weights from the next cycle on
   input  logic [7:0]         whi,
   input  logic               sel,               // the select from the next cycle on
   input  logic [47:0]        pcin,
@@ -1471,7 +1547,8 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
   logic [47:0] pf;
   DSP48E1 #(
     .A_INPUT("DIRECT"), .B_INPUT("DIRECT"), .USE_DPORT("TRUE"), .USE_MULT("MULTIPLY"),
-    .USE_SIMD("ONE48"), .AREG(0), .ACASCREG(0), .BREG(1), .BCASCREG(1), .CREG(0), .DREG(0),
+    .USE_SIMD("ONE48"), .AREG(WREG ? 1 : 0), .ACASCREG(WREG ? 1 : 0), .BREG(1), .BCASCREG(1),
+    .CREG(0), .DREG(WREG ? 1 : 0),
     .ADREG(0), .MREG(1), .PREG(LAST ? 0 : 1), .INMODEREG(1), .OPMODEREG(0), .ALUMODEREG(0),
     .CARRYINREG(0), .CARRYINSELREG(0), .USE_PATTERN_DETECT("NO_PATDET"),
     .AUTORESET_PATDET("NO_RESET"), .MASK(48'h3fffffffffff), .PATTERN(48'h0),
@@ -1481,7 +1558,8 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
     .A({{22{wlo[7]}}, wlo}), .B({{10{act[7]}}, act}), .C(48'd0), .D({{17{whi[7]}}, whi}),
     .INMODE({2'b00, sel, sel, 1'b0}), .OPMODE(FIRST ? 7'b000_01_01 : 7'b001_01_01),
     .ALUMODE(4'b0000), .CARRYIN(1'b0), .CARRYINSEL(3'b000),
-    .CEA1(1'b0), .CEA2(1'b0), .CEB1(en), .CEB2(en), .CEC(1'b0), .CED(1'b0), .CEAD(1'b0),
+    .CEA1(1'b0), .CEA2(WREG ? en : 1'b0), .CEB1(en), .CEB2(en), .CEC(1'b0),
+    .CED(WREG ? en : 1'b0), .CEAD(1'b0),
     .CEM(en), .CEP(LAST ? 1'b0 : en), .CEALUMODE(1'b0), .CECTRL(1'b0), .CECARRYIN(1'b0),
     .CEINMODE(en),
     .RSTA(1'b0), .RSTB(1'b0), .RSTC(1'b0), .RSTD(1'b0), .RSTM(1'b0), .RSTP(1'b0),
@@ -1491,14 +1569,17 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0) (
     .OVERFLOW(), .UNDERFLOW(), .PATTERNDETECT(), .PATTERNBDETECT());
   assign p = pf[23:0];
 `else
-  logic [7:0] br;
+  logic [7:0] br, wlr, whr;
   logic       selr;
   logic signed [15:0] m;
   wire  signed [23:0] pn = (FIRST ? 24'sd0 : $signed(pcin[23:0])) + 24'(m);
+  wire  [7:0] wl = WREG ? wlr : wlo, wh = WREG ? whr : whi;
   always_ff @(posedge clk) if (en) begin
     br <= act;
     selr <= sel;
-    m <= 16'(int'($signed(br)) * int'($signed(selr ? whi : wlo)));
+    wlr <= wlo;
+    whr <= whi;
+    m <= 16'(int'($signed(br)) * int'($signed(selr ? wh : wl)));
   end
   if (LAST) begin : g_comb
     assign p = pn;

@@ -112,3 +112,17 @@ def test_mlp_kernel_4bit(fmt):
                    deq["w_down"], 1e-6)
     got = launch(mlp, Config(S=2), **args).outputs["out"]
     assert rel(got, want) < 0.01
+
+
+@pytest.mark.parametrize("fmt", ["int8", "int4", "fp4"])
+def test_quantize_mxu_in_row_pieces_is_the_same(fmt, monkeypatch):
+    """quantize_mxu quantizes a tall matrix QUANT_ROWS rows at a time (a big vocabulary's LM
+    head): the same bytes and scales as all rows at once."""
+    rng = np.random.default_rng(0)
+    W = (rng.standard_normal((1000, 512)) * np.exp(rng.standard_normal((1000, 1)))).astype(
+        np.float32)
+    W[3, :128] = 0
+    whole = Q.quantize_mxu(W, fmt)
+    monkeypatch.setattr(Q, "QUANT_ROWS", 96)
+    pieces = Q.quantize_mxu(W, fmt)
+    assert all(np.array_equal(a, b) and a.dtype == b.dtype for a, b in zip(whole, pieces))

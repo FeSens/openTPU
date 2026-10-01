@@ -29,6 +29,10 @@
 //       per chunk; a run of one kind never starts inside a run of the other. SE advances with
 //       `pe` (ss_pe), a register: a cycle it may take a segment (or, after the last one, a
 //       bubble) needs a segment in the buffer and room for two more updated segments.
+//   WAITW  an LD of one word whose delivery waits for its condition (docs/isa.md): the word is
+//       taken from the chunk as the LD would write it (C1), compared (C2), and written to TMEM
+//       through lane 0 if it holds (C3); else the DMA waits w5 cycles and reads the chunk again.
+//       Past w6 cycles (w6 != 0) it stops with `err` (the slice's error, seen by the host).
 // The DRAM port may refuse a request (b_gnt low) and read data may take any time to return (in
 // order). An ST or a DSTEP completes once the DRAM has acknowledged all its writes (wr_idle).
 module otpu_dma
@@ -45,6 +49,7 @@ module otpu_dma
   input  cmd_t                    cmd,
   output logic                    rdy,
   output logic                    done,
+  output logic                    err,        // a WAITW timed out
   // DRAM port B (the DMA has priority on it; read responses are routed back by tag)
   output logic                    b_req,
   input  logic                    b_gnt,      // the request is taken this cycle
@@ -250,13 +255,46 @@ module otpu_dma
   wire  ds_wr_nx = (og_nx >= GW'(SPC)) &&
                    (ds_wr || (!ds_rr_nx && (og_nx >= GW'(RUN * SPC) || ds_left == 0)));
   assign ds_wreq = ds_wr;
-  // the gather: one simple dual-port RAM per segment position (write: the segment from SE at
-  // chunk gt / SPC; read: chunk gh)
+  // the gather: one simple dual-port RAM per segment position and lane (write: word l of the
+  // segment from SE at chunk gt / SPC; read: chunk gh). The write is registered here (the
+  // segment, and per RAM a kept copy of its enable and chunk), so it lands an edge after SE
+  // hands it over: from SE's registers straight into the RAMs' data inputs and gt's fan-out to
+  // their write addresses, it was 0 levels at +0.228 ns on the fused 133.33 MHz build c2830d6.
+  // og counts the segment as before, so a write run may read the chunk in the cycle the
+  // segment is still in the register: that cycle takes it from there (gb_by, from registers:
+  // the in-flight segment's enable and whether its chunk is the one gh points at, gb_eq,
+  // registered from gh's next value, so b_wdata stays one LUT after the RAM). Only a chunk's
+  // last segment can be read in flight (a run reads complete chunks), so only position
+  // SPC - 1 has the bypass
+  localparam int GCW = $clog2(NGC);
+  logic [W*32-1:0] y_q;                               // the segment in flight
+  (* keep *) logic           gb_we [SPC][W];          // it lands in the (p, l) RAM ...
+  (* keep *) logic [GCW-1:0] gb_wa [SPC][W];          // ... at this chunk
+  (* keep *) logic           gb_eq [W];               // the bypass (position SPC - 1)
   for (genvar p = 0; p < SPC; p++) begin : g_gb
-    (* ram_style = "distributed" *) logic [W*32-1:0] gb [NGC];
-    always_ff @(posedge clk)
-      if (y_keep && 32'(gt) % SPC == p) gb[32'(gt) / SPC] <= y_p;
-    assign gq[p] = gb[gh];
+    for (genvar l = 0; l < W; l++) begin : g_l
+      (* ram_style = "distributed" *) logic [31:0] gb [NGC];
+      always_ff @(posedge clk)
+        if (gb_we[p][l]) gb[gb_wa[p][l]] <= y_q[32 * l +: 32];
+      wire gb_by = p == SPC - 1 && gb_we[p][l] && gb_eq[l];   // chunk gh's segment p is in y_q
+      assign gq[p][32 * l +: 32] = gb_by ? y_q[32 * l +: 32] : gb[gh];
+`ifndef SYNTHESIS
+      // the bypass is taken exactly when a write run reads the segment still in flight
+      always_ff @(posedge clk)
+        if (!rst && ds_wreq && gb_by != (gb_we[p][l] && gb_wa[p][l] == gh))
+          $fatal(1, "otpu_dma: gather bypass %0b for chunk %0d segment %0d", gb_by, gh, p);
+`endif
+    end
+  end
+  always_ff @(posedge clk) begin
+    y_q <= y_p;
+    for (int p = 0; p < SPC; p++)
+      for (int l = 0; l < W; l++) begin
+        gb_we[p][l] <= y_keep && 32'(gt) % SPC == p;
+        gb_wa[p][l] <= GCW'(32'(gt) / SPC);
+      end
+    for (int l = 0; l < W; l++)
+      gb_eq[l] <= GCW'(32'(gt) / SPC) == ((ds_wreq && b_gnt) ? GCW'(gh + 1'b1) : gh);
   end
   always_comb
     for (int l = 0; l < W; l++) begin
@@ -444,6 +482,23 @@ module otpu_dma
   assign fk_a = fk_on ? fs_a : 32'd0;
   assign fk_m = fk_on ? fs_m : '0;
 
+  // ---- WAITW: the word of the chunk delivered (C1: ww_c1, ww_w), the compare (C2: ww_c2,
+  // ww_ok), the TMEM write through lane 0 and the end, or the wait (ww_sl, ww_n) and the next
+  // read; ww_tc counts the cycles against the timeout
+  logic        is_ww, ww_c1, ww_c2, ww_ok, ww_sl;
+  logic [1:0]  ww_cmp;
+  logic [31:0] ww_a, ww_t, ww_ref, ww_mask, ww_iv, ww_to, ww_n, ww_tc, ww_w;
+  function automatic logic ww_holds(input logic [31:0] v, input logic [31:0] ref_,
+                                    input logic [1:0] c);
+    logic [31:0] dif;
+    dif = v - ref_;
+    case (c)
+      2'd0:    return v == ref_;
+      2'd1:    return v != ref_;
+      default: return !dif[31];                    // GE: the difference >= 0, signed
+    endcase
+  endfunction
+
   // the delivered segment (in lb_q) goes to the TMEM write register; its position in the
   // chunk, lanes and TMEM address come with it (dv_*)
   logic                   dv_v, ld_last;
@@ -456,7 +511,7 @@ module otpu_dma
   always_comb begin
     lw_en = '0; lw_addr = '0; lw_data = '0;
     for (int l = 0; l < W; l++) begin
-      lw_en[l] = dv_v && dv_m[l];
+      lw_en[l] = dv_v && dv_m[l] && !is_ww;          // a WAITW's word waits for its compare
       lw_addr[l] = dv_a + 32'(l);
       lw_data[l] = lb_q[32 * (dv_p * W + l) +: 32];
       if (ds_ow) begin
@@ -464,6 +519,11 @@ module otpu_dma
         lw_addr[l] = ds_oa + 32'(oi) * W + 32'(l);
         lw_data[l] = ob_q[l];
       end
+    end
+    if (ww_c2 && ww_ok) begin                       // WAITW (C3): the word that held
+      lw_en[0] = 1'b1;
+      lw_addr[0] = ww_t;
+      lw_data[0] = ww_w;
     end
   end
   always_ff @(posedge clk) begin
@@ -581,10 +641,11 @@ module otpu_dma
       ds_dsc <= 1'b0; ds_dsd <= 1'b0; ds_su <= 1'b0; ds_wait <= 1'b0;
       ds_fill <= 1'b0; ds_run <= 1'b0; ds_out <= 1'b0;
       ss_req <= 1'b0;
+      is_ww <= 1'b0; ww_c1 <= 1'b0; ww_c2 <= 1'b0; ww_sl <= 1'b0; err <= 1'b0;
     end else if (start && (cmd.op == OP_DSTEP || cmd.op == OP_STREAM)) begin
       // the reads start at the setup: a DSTEP's next cycle, a STREAM's once its descriptor is in
       sc <= cmd;
-      is_ds <= 1'b1; is_st <= 1'b0; ds_zero <= cmd.flags[DF_ZERO];
+      is_ds <= 1'b1; is_st <= 1'b0; is_ww <= 1'b0; ds_zero <= cmd.flags[DF_ZERO];
       sleft <= '0; sl_nz <= 1'b0; sl_one <= 1'b0;   // no LD delivery into TMEM
       cleft <= '0; cl_nz <= 1'b0; cl_one <= 1'b0;
       occ <= '0; {oc_nf, oc_lr} <= oc_of('0); cnt <= '0; wp <= '0; rp <= '0;
@@ -600,11 +661,15 @@ module otpu_dma
       // one carry chain each: the counts from the start's offset in its segment / chunk
       logic [31:0] a, n, ow, oc, nc, ns;
       a = cmd.w1 >> 2;
-      n = cmd.w3;
+      n = (cmd.op == OP_WAITW) ? 32'd1 : cmd.w3;     // WAITW: one word (w3 is its reference)
       ow = a % W;
       oc = a % CW;
       is_st <= (cmd.op == OP_ST);
       is_ds <= 1'b0;
+      is_ww <= (cmd.op == OP_WAITW);
+      ww_a <= a; ww_t <= cmd.w2; ww_ref <= cmd.w3; ww_mask <= cmd.w4; ww_iv <= cmd.w5;
+      ww_to <= cmd.w6; ww_cmp <= cmd.flags[1:0]; ww_tc <= '0;
+      ww_c1 <= 1'b0; ww_c2 <= 1'b0; ww_sl <= 1'b0;
       dw <= a;
       de <= a + n;
       sw <= a & ~32'(W - 1);
@@ -621,7 +686,7 @@ module otpu_dma
       st_fin <= 1'b0;
       cbm <= '0;
       ackw <= 1'b0;
-      if (cmd.w3 == 0) done <= 1'b1;
+      if (n == 0) done <= 1'b1;
       else busy <= 1'b1;
     end else if (ackw) begin
       if (wr_idle) begin
@@ -732,9 +797,38 @@ module otpu_dma
         if (b_rvalid) wp <= wp + 1'b1;
         if (ld_eat) rp <= rp + 1'b1;
         if (ld_dv && sl_one) ld_last <= 1'b1;
-        if (ld_last) begin
+        if (ld_last && !is_ww) begin
           busy <= 1'b0;
           ld_fin <= 1'b1;
+        end
+        if (is_ww) begin
+          ww_tc <= ww_tc + 1;
+          if (ww_to != 0 && ww_tc == ww_to) err <= 1'b1;       // stays busy: the slice stops
+          ww_c1 <= dv_v;
+          if (dv_v) ww_w <= lb_q[32 * (ww_a % CW) +: 32];
+          ww_c2 <= ww_c1;
+          if (ww_c1) ww_ok <= ww_holds(ww_w & ww_mask, ww_ref, ww_cmp);
+          if (ww_c2) begin
+            if (ww_ok) begin
+              busy <= 1'b0;
+              ld_fin <= 1'b1;
+            end else begin
+              ww_sl <= 1'b1;
+              ww_n <= ww_iv;
+            end
+          end
+          if (ww_sl && !err) begin
+            if (ww_n != 0) ww_n <= ww_n - 1;
+            else begin                            // read the word again: the LD of one word
+              ww_sl <= 1'b0;
+              sw <= ww_a & ~32'(W - 1);
+              so <= ww_t - ww_a % W;
+              for (int l = 0; l < W; l++) sm[l] <= 32'(l) == ww_a % W;
+              sleft <= 1; sl_nz <= 1'b1; sl_one <= 1'b1;
+              ic <= ww_a & ~32'(CW - 1);
+              cleft <= 1; cl_nz <= 1'b1; cl_one <= 1'b1;
+            end
+          end
         end
       end else begin
         // the buffer: complete chunks in, write runs out (chunk addresses from ic, in order).

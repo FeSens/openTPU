@@ -590,11 +590,17 @@ embedding to the head. An MM against a one-hot operand reads the token's row out
 the card already holds.
 - It uses no extra DRAM and no host, and gets LFM2.5 back to ~27 slots per layer (~13 tok/s at
   Gen1, by the model above).
-- models3's `kernels.lib.gather_row` and gemma4's `kernels/gather.py` do this. They are being
-  merged into one shared module, which phase 2 will build on once it is on main.
+- The shared `kernels/gather.py` (main 77405e5) does this, and phase 2 uses it: LFM2.5-8B-A1B
+  gets 28 slots per layer, and Qwen3.5-35B-A3B 32 instead of 9. The 35B's embedding is untied,
+  so its rows come from an int8 table of 0.5 GB. The int8 embeddings of SmolLM3,
+  Phi-4-mini and Qwen3.5-4B use it too.
+- It is `Spec.embed` "int8" (main 2a04beb, `qwen3._embed`), which a MoE checkpoint's `from_hf`
+  sets at any vocabulary size: beside a MoE's layers the DRAM is expert slots. The prompt's
+  per-position programs and the resident decode then read every input from the image, so the
+  host writes no embedding or RoPE row.
 
 A host-written row fetched by `WAITW` (section 7) stays for rows that are not in the card at
-all, such as E4B's per-layer embeddings. Phase 2's first 8B run keeps the fp32 table (20 slots
+all, such as E4B's per-layer embeddings. Phase 2's first 8B run kept the fp32 table (20 slots
 per layer).
 
 ## 6. PCIe Gen2
@@ -703,9 +709,50 @@ The target is LFM2.5-8B-A1B end to end on the ISA simulator: the card's 4 GiB DR
 router on the card, per-layer LRU expert slots and host DMA. It is built on autodecode's ISA
 (ARGMAX, RLD, CHAIN), with no Vivado and no card time.
 
-Status (branch offload-p2, on autodecode's branch): items 1-3 are built. On a tiny LFM2 MoE
+Status (branch offload-p2, on autodecode's branch): items 1-4 are built. On a tiny LFM2 MoE
 with 2 slots per layer, the logits are bit-identical to an all-resident run, in prefill and in
-the card's generate loop. The LFM2.5-8B-A1B run against HF (item 4) is next.
+the card's generate loop. The MoE block also runs on the RTL (autodecode's WAITW, the Verilator
+board model through the host driver) with every expert resident, bit-identical to the ISA
+simulator. A live daemon is not tested there: the board model runs a fixed script, with no host
+during a run.
+
+LFM2.5-8B-A1B on the ISA simulator with the card's 4 GiB (fp4 experts, int8 head, the card's
+generate loop), against HF's bf16 greedy tokens (`tools/offload/moe_card.py`):
+
+| run | slots per layer | tokens | against HF | hit rate | misses per decode token |
+|---|---|---|---|---|---|
+| fp32 embedding table | 20 of 32 | 16 | token-exact | 86% | 9.9 |
+| gathered embedding (section 5.9) | 28 of 32 | 144 | the first 19 | 97.8% | 1.54 (2.11 in the second half) |
+| the same, a longer answer ("Describe the water cycle ...") | 28 of 32 | 160 | the first 4 | 98.5% | 0.87 (0.67) |
+
+- Both first different picks are fp4's, not the device's. At token 19 HF's bf16 logits tie four
+  ways (within 0.25). At token 4 of the longer run HF ties 600 and 358 at 46.75, with 278 at
+  44.05. The card ranks 278, 358 and 600 at 46.65, 46.35 and 46.12. `lfm2.emulated_logits`'
+  float64 decode of the same fp4 weights, with none of the device's rounding, gives 46.74,
+  46.32 and 46.17 (`tools/offload/emul_step.py`, the experts fake-quantized per use):
+  quantizing the weights moves 278 up 2.7 logits, and the device's arithmetic adds nothing.
+- The misses are out of 88 expert uses per token.
+- On the card's own routes, cachesim's per-layer LRU at 28 slots gives 98.0% and 1.7 misses per
+  token (the card: 97.8%, 1.9 over all 163 tokens). The card warms its slots with experts 0..27,
+  cachesim from a profile.
+- By section 4's model, those routes run at 12.7 tok/s at Gen1 (13.4 at Gen2). The resident
+  bound is 13.7.
+
+Qwen3.5-35B-A3B (item 5) has:
+- the softmax rule and the shared expert (`MoESpec.rule`, `shared`);
+- 16 key heads for 32 value heads (main 4ab54a4);
+- 32 slots per layer with the gathered embedding.
+
+Its generate program fits IMEM with the DeltaNet pair loop (docs/qwen35.md, group-major
+DeltaNet blocks): 2,282 instructions in bucket 1. On the ISA simulator with the card's 4 GiB
+(4,084 MiB image, 1,280 slots of 1.67 MB, a pool of 10,240 experts) its 16 tokens are HF's
+exactly, every one picked by the card's generate loop. Of 11,840 expert requests 62.4% hit;
+decode missed 95.7 experts per token (113.4 in its second half), against 111 predicted.
+cachesim's per-layer LRU on the card's routes gives 64.7% and 113.1 misses per token (37
+tokens), its optimum 80.5% and 62.3. That run wrote the prompt's first three embedding rows
+from the host. Run again with `Spec.embed` "int8" (above), every input comes from the image:
+the same 16 tokens, and the same requests, hits and misses, since the gathered rows are the
+host's bit for bit.
 
 1. **The MoE block in `ol` kernels:**
    - the router MM;
@@ -722,14 +769,62 @@ the card's generate loop. The LFM2.5-8B-A1B run against HF (item 4) is next.
    - the directory copy and per-layer LRU;
    - DMA of misses into slots.
 
-   The same code serves the simulator (through the hook) and, later, the card (a thread beside
-   `run_generate`).
+   The same code serves the simulator (through the hook) and the card: `BoardBackend.host`
+   polls it while a run is in flight, in `wait` and in `run_generate`'s token loop, on the
+   one host thread. A fake card that computes in a thread over the host's DRAM
+   (`tests/test_lfm2_moe.py`) checks it: with 2 slots per layer, misses are served while the
+   card waits, and the logits and tokens are the ISA simulator's bit for bit.
 4. **Tests:**
    - bit-identical logits against an all-resident run, on a small MoE with a tiny cache;
    - the protocol's corner cases (section 5.7);
    - LFM2.5-8B-A1B token-exact against HF (greedy), with the card's 4 GiB DRAM.
 5. **Then** Gemma 4 26B-A4B on the `gemma4` port's layers, and Qwen3.5-35B-A3B on Qwen3.5's.
-6. **The card** (through team-lead):
+6. **The card** (through team-lead), done (section 10):
    - `WAITW` in RTL (autodecode) and its ordering check;
    - the misses' DMA while the core runs;
    - tok/s against the model above.
+
+## 10. On the card
+
+The production bitstream (build B, 79c5707a, 133.33 MHz, DDR3-1066, WAITW and the generate
+loop) ran path (a) on 2026-09-30. The host side ran on opentpu, with no reload. The models were
+LFM2.5-8B-A1B and Qwen3.5-35B-A3B, fp4 with an int8 head, and every token was picked by the
+card's generate loop. The experts streamed from a packed pool file (each expert in the card's
+slot format, packed once) into the per-layer LRU slots. The host only read the file and wrote
+DRAM:
+
+    python3 tools/offload/moe_card.py MODEL --check hf.json --cfg dev.pkl --pool pool.bin --card
+
+The reference for each run is the ISA simulator's run with the bitstream's configuration (`--cfg`:
+PAIR, DSTEP and STREAM on). The configuration changes the arithmetic: the 8B's 160-token run
+with `isasim.board_config()` leaves these tokens at token 111. The card gave the simulator's
+tokens, the same prefill logits (sha256) and the same misses per token:
+
+| run | against the simulator | against HF | tok/s (wall / device) | hit rate | misses per decode token | MB streamed per decode token | host serving per token |
+|---|---|---|---|---|---|---|---|
+| 8B, 16 tokens, 28 slots | bit for bit | token-exact | 8.61 / 9.38 | 96.4% | 1.47 | 8.4 | 18.8 ms |
+| 8B, 160 tokens ("Describe the water cycle ...") | bit for bit | the first 4 (fp4, section 9) | 10.03 / 10.10 | 98.5% | 0.89 (0.65 in the second half) | 5.2 | 10.1 ms |
+| 35B-A3B, 16 tokens, 32 slots | bit for bit | token-exact | 2.02 / 2.04 | 62.4% | 95.9 (113.9) | 155 | 370 ms |
+
+- The device rate is the token count over the run's cycles, which include the WAITW stalls on
+  misses. Wall time is within 1% of device time: the host's polling loop costs nothing visible.
+- The 8B decodes at 99 ms per token, of which the host's serving is about 10 ms. Section 4's
+  model gives 12.7 tok/s on these routes; models3's dense runs measured about 13% under the bank
+  model too.
+- The 35B decodes at 490 ms per token, of which the serving is 370 ms: the run is streaming-bound.
+  - The PCIe writes take 285 ms. 155 MB goes at 544 MB/s, against the 1.37 GB/s selftest
+    bandwidth: each expert is one synchronous 1.67 MB write, then its 8-byte directory entry.
+  - The pool reads take 89 ms (the 17 GB file, from the page cache and the disk).
+  - Compute is the remaining 120 ms, so about 8 tok/s is the ceiling with the streaming
+    hidden. At the selftest's write rate the writes alone would take about 115 ms per token.
+- On the simulator, the last request of an 8B run (all hits) is posted but never served: the
+  simulator's host hook runs only while a WAITW blocks. On the card the host serves it, so the
+  card counts one more request (4 more hits).
+- The checkpoints on the card's host are the routed experts' complement (1.4 GB for the 8B, 4.6
+  GB for the 35B). The image build reads no expert; the pool file holds them.
+
+The first run found a bug. The Engine's compile worker process, which the card's backend
+compiles ahead in, built its image without the MoE's `experts`: every expert resident, over
+DRAM (4568 MiB for 4096). It failed at the first prefill step, before the card ran anything.
+The worker now builds the image with the Engine's own keywords (`Engine._image_kw`), and
+tests/test_lfm2_moe.py checks it. The ISA simulator compiles in-process and never ran into it.

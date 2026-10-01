@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The production LiteDRAM core for the YPCB-00338: both DDR3 channels (72 bits, A7DDRPHY at
-DDR3-1066) with one native user port each, generated as one Verilog module, otpu_litedram, for
+DDR3-1066) with two native user ports each, generated as one Verilog module, otpu_litedram, for
 the board top (docs/litedram.md, section 7). It replaces the two MIGs.
 
     python3 gen_core.py --out build_core          # -> build_core/otpu_litedram.v, .xdc, csr.csv,
@@ -14,16 +14,25 @@ The module (every port is a plain Verilog port; the DDR3 pads are the only I/O):
                              native ports' clock (otpu_mem_ch's controller side)
     ctl_clk, ctl_rst    in   the CSR port's clock and reset (XDMA's axi_aclk / BAR0)
     ctl_*               AXI-Lite slave, 16-bit byte address, 32-bit data: the CSRs (calibration,
-                        ECC counters, the ready bits), csr.csv offsets; crosses into sys_clk
-    c0_* / c1_*         each channel's native port in sys_clk, 512-bit data through LiteDRAM's
-                        ECC (SECDED per 64-bit word): cmd_valid/ready/we/addr[24:0] (64-byte beat
-                        index in the channel), wdata_valid/ready/data[511:0]/we[63:0],
+                        ECC counters, the ready bits), csr.csv offsets; crosses into sys_clk.
+                        The CSR bus has a register stage per channel's banks (csr_pipe.py):
+                        an access takes 5 sys cycles
+    c0_* / c1_*         each channel's first native port in sys_clk, 512-bit data through
+                        LiteDRAM's ECC (SECDED per 64-bit word): cmd_valid/ready/we/addr[24:0]
+                        (64-byte beat index in the channel), wdata_valid/ready/data[511:0]/we[63:0],
                         rdata_valid/ready/data[511:0]. Write data is taken when the controller
                         wants it (wdata_ready), whatever wdata_valid says, so a write command may
                         go only with its data already valid; partial beats are an error (no DM
                         pins, and ECC words are whole): the user side reads, merges and writes
                         whole beats. Reads return in command order; rdata_ready is ignored
                         (there is no backpressure).
+    c0b_* / c1b_*       each channel's second native port, the same (its own crossbar master
+                        and ECC encoder; one read decoder serves both ports: ecc_ports.py). The
+                        crossbar keeps a master's commands in one bank at a time, so the user
+                        side (otpu_mem_ch) puts the even banks' beats on the first port and the
+                        odd banks' on the second: one port's bank change no longer waits for the
+                        other's commands. The two ports' commands are not ordered against each
+                        other; read data comes back one beat a cycle over both.
     c0_ready, c1_ready  out  the channel is calibrated: set (cal_ready, cal1_ready) at the end of
                         opentpu.host.ddrcal.calibrate_channel, by the host or, with --selfcal, by
                         the core's own CPU; cleared by rst
@@ -32,7 +41,8 @@ Per channel, as the test image (tools/litedram/ld_test.py, whose CRG, BIST and D
 this reuses): the DQS clock on an MMCM output with fine phase shift, driven by the host
 (phase*_dqs_*), and a BIST on a second crossbar port (bist*_*) for calibration's traffic check.
 Channel 0's CSR names are bare (ddrphy_, sdram_, bist_, phase_, ecc_, cal_), channel 1's carry
-a 1. The ECC counts corrected and uncorrectable words (ecc_sec_errors, ecc_ded_errors).
+a 1. The ECC counts corrected and uncorrectable words (ecc_sec_errors, ecc_ded_errors), both
+ports' reads: the CSR map is the one-port core's.
 
 --selfcal (tools/litedram/calcpu.py, docs/litedram.md section 10): a small CPU (VexRiscv minimal)
 in the core calibrates both channels at reset with ddrcal's algorithm (firmware
@@ -60,7 +70,6 @@ from litex.soc.interconnect.axi import (AXILiteInterface, AXILiteClockDomainCros
 from litex.soc.integration.soc_core import SoCCore
 
 from litedram.common import LiteDRAMNativePort
-from litedram.frontend.ecc import LiteDRAMNativePortECC
 from litedram.phy import s7ddrphy
 from litedram.init import get_sdram_phy_py_header
 
@@ -70,6 +79,9 @@ import ypcb_platform as ypcb                                    # noqa: E402
 from ld_test import (CRG, WLCRG, DQSPhase, BIST, MT41K256M8_tRFC160, WriteClocks,  # noqa: E402
                      reset_value)
 from wl7ddrphy import WL7DDRPHY                                 # noqa: E402
+from ecc_ports import NativePortsECC                            # noqa: E402
+from csr_pipe import PipelinedCSR                               # noqa: E402
+from dfii_q import registered_injector                         # noqa: E402
 import calcpu                                                   # noqa: E402
 from calcpu import Cal, FirmwareBuilder, build_firmware, one_file  # noqa: E402
 
@@ -84,17 +96,19 @@ USER = [("clk50g", 0, Pins(1)), ("rst", 0, Pins(1)), ("sys_clk", 0, Pins(1)),
          Subsignal("araddr", Pins(16)), Subsignal("rvalid", Pins(1)), Subsignal("rready", Pins(1)),
          Subsignal("rdata", Pins(32)), Subsignal("rresp", Pins(2)))]
 for _c in (0, 1):
-    USER += [(f"c{_c}", 0,
-              Subsignal("cmd_valid", Pins(1)), Subsignal("cmd_ready", Pins(1)),
-              Subsignal("cmd_we", Pins(1)), Subsignal("cmd_addr", Pins(AW)),
-              Subsignal("wdata_valid", Pins(1)), Subsignal("wdata_ready", Pins(1)),
-              Subsignal("wdata_data", Pins(DW)), Subsignal("wdata_we", Pins(DW // 8)),
-              Subsignal("rdata_valid", Pins(1)), Subsignal("rdata_ready", Pins(1)),
-              Subsignal("rdata_data", Pins(DW)), Subsignal("ready", Pins(1)))]
+    for _u in ("", "b"):                     # each channel's two ports (the even, the odd banks)
+        USER += [(f"c{_c}{_u}", 0,
+                  Subsignal("cmd_valid", Pins(1)), Subsignal("cmd_ready", Pins(1)),
+                  Subsignal("cmd_we", Pins(1)), Subsignal("cmd_addr", Pins(AW)),
+                  Subsignal("wdata_valid", Pins(1)), Subsignal("wdata_ready", Pins(1)),
+                  Subsignal("wdata_data", Pins(DW)), Subsignal("wdata_we", Pins(DW // 8)),
+                  Subsignal("rdata_valid", Pins(1)), Subsignal("rdata_ready", Pins(1)),
+                  Subsignal("rdata_data", Pins(DW)))
+                 + ((Subsignal("ready", Pins(1)),) if _u == "" else ())]
 USER_NAMES = {u[0] for u in USER}
 
 
-class OTPULiteDRAM(SoCCore):
+class OTPULiteDRAM(PipelinedCSR, SoCCore):
     mem_map = {"csr": 0x0000_0000}
 
     def __init__(self, f=133.333e6, dqs_phase=90, bist=True, phy="a7", groups=None, selfcal=False,
@@ -106,7 +120,7 @@ class OTPULiteDRAM(SoCCore):
         platform.add_extension(USER)
         clk50 = platform.request("clk50g")
         self.crg = CRG(platform, f, dqs_phase, two=True, clk50=clk50) if phy == "a7" else \
-            WLCRG(platform, f, clk50=clk50)
+            WLCRG(platform, f, clk50=clk50, rst_reg=True)
         self.comb += self.crg.rst.eq(platform.request("rst"))
         SoCCore.__init__(self, platform, f, ident="openTPU LiteDRAM", cpu_type=None,
                          integrated_rom_size=0, integrated_sram_size=0, with_uart=False,
@@ -130,34 +144,43 @@ class OTPULiteDRAM(SoCCore):
                                       sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
                                       write_latency_calibration=True, ddr_clk="sys4x" + sfx)
             setattr(self, "ddrphy" + sfx, p)
-            self.add_sdram("sdram" + sfx, phy=p, module=MT41K256M8_tRFC160(f, "1:4"),
-                           with_soc_interconnect=False)
+            # the software-injected commands (calibration) a cycle after their CSR write (dfii_q.py)
+            with registered_injector():
+                self.add_sdram("sdram" + sfx, phy=p, module=MT41K256M8_tRFC160(f, "1:4"),
+                               with_soc_interconnect=False)
             core = getattr(self, "sdram" + sfx)
             setattr(self, "phase" + sfx, DQSPhase(getattr(self, "wclk" + sfx) if phy == "wl" else
                                                   self.crg.mmcm if ch == 0 else self.crg.mmcm1))
-            # the user port: 512 bits through the ECC (576 on the crossbar)
-            raw = core.crossbar.get_port()
-            assert raw.address_width == AW and raw.data_width == DW + 64, (raw.address_width, raw.data_width)
-            user = LiteDRAMNativePort("both", AW, DW)
-            ecc = LiteDRAMNativePortECC(user, raw, with_error_injection=False)
-            setattr(self, "ecc" + sfx, ecc)
-            pads = platform.request(f"c{ch}")
-            self.comb += [
-                user.cmd.valid.eq(pads.cmd_valid), pads.cmd_ready.eq(user.cmd.ready),
-                user.cmd.we.eq(pads.cmd_we), user.cmd.addr.eq(pads.cmd_addr),
-                user.cmd.last.eq(1),
-                user.wdata.valid.eq(pads.wdata_valid), pads.wdata_ready.eq(user.wdata.ready),
-                user.wdata.data.eq(pads.wdata_data), user.wdata.we.eq(pads.wdata_we),
-                pads.rdata_valid.eq(user.rdata.valid), user.rdata.ready.eq(pads.rdata_ready),
-                pads.rdata_data.eq(user.rdata.data),
-            ]
+            # the user ports (the even banks', the odd banks'): 512 bits through the ECC (576 on
+            # the crossbar), one read decoder for both
+            users, raws = [], []
+            for u in ("", "b"):
+                raw = core.crossbar.get_port()
+                assert raw.address_width == AW and raw.data_width == DW + 64, (raw.address_width, raw.data_width)
+                user = LiteDRAMNativePort("both", AW, DW)
+                users.append(user)
+                raws.append(raw)
+                upads = platform.request(f"c{ch}{u}")
+                self.comb += [
+                    user.cmd.valid.eq(upads.cmd_valid), upads.cmd_ready.eq(user.cmd.ready),
+                    user.cmd.we.eq(upads.cmd_we), user.cmd.addr.eq(upads.cmd_addr),
+                    user.cmd.last.eq(1),
+                    user.wdata.valid.eq(upads.wdata_valid), upads.wdata_ready.eq(user.wdata.ready),
+                    user.wdata.data.eq(upads.wdata_data), user.wdata.we.eq(upads.wdata_we),
+                    upads.rdata_valid.eq(user.rdata.valid), user.rdata.ready.eq(upads.rdata_ready),
+                    upads.rdata_data.eq(user.rdata.data),
+                ]
+                if u == "":
+                    pads = upads
+            setattr(self, "ecc" + sfx, NativePortsECC(users, raws))
             cal = Cal()
             setattr(self, "cal" + sfx, cal)
             self.comb += pads.ready.eq(cal.ready.storage)
             if bist:
                 setattr(self, "bist" + sfx, BIST(core.crossbar.get_port(), modules=9))
 
-        # CSRs: AXI-Lite (ctl_clk) -> sys -> the CSR bus, BAR0 offsets relative to the window
+        # CSRs: AXI-Lite (ctl_clk) -> sys -> the CSR bus (a register stage per group of banks:
+        # PipelinedCSR), BAR0 offsets relative to the window
         self.cd_ctl = ClockDomain()
         self.comb += [self.cd_ctl.clk.eq(platform.request("ctl_clk")),
                       self.cd_ctl.rst.eq(platform.request("ctl_rst"))]

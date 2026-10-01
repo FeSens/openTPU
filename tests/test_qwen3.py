@@ -126,6 +126,19 @@ def test_tiny_device_inputs(tiny, monkeypatch):
     assert [s.get("rows", 1) for s in a.stats] == [1, 1, 6, 6, 3, 1, 1, 1]
 
 
+def test_tiny_prefill_runs_take_whole_mxu_passes(tiny):
+    """A default prefill run of more than MCOLS rows takes whole passes of MCOLS rows (each
+    pass streams every weight: 7 rows would cost what 8 do); an explicit chunk is kept."""
+    from opentpu.isasim import board_config
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 15)]
+    cfg = board_config(DRAM_BYTES=1 << 24, MCOLS=4)
+    a, b = Engine(spec, W, cap=256, cfg=cfg), Engine(spec, W, cap=256, cfg=cfg)
+    assert np.array_equal(a.prefill(toks), b.prefill(toks, chunk=7))
+    assert [s.get("rows", 1) for s in a.stats] == [8, 4, 3]
+    assert [s.get("rows", 1) for s in b.stats] == [7, 7, 1]
+
+
 def test_tiny_reset_reuses_cache(tiny):
     _, W, spec = tiny
     eng = Engine(spec, W, cap=128)
