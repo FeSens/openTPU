@@ -390,6 +390,32 @@ def test_quant_eval_emulation(kv, moe, moe_g2):
     assert (np.linalg.norm(out - ref, axis=1) / np.linalg.norm(ref, axis=1)).max() < 0.04
 
 
+def test_quant_eval_resumes(moe, tmp_path):
+    """tools/gemma4_quant_eval.py's checkpoint: a run stopped inside a layer (killed at the
+    memory floor) resumes after the last layer it finished, with the same logits."""
+    Q = _quant_eval()
+    _, W, spec = moe
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 20)]
+    want = Q.emulate(spec, W, toks, wformat="fp4")
+    ck, moe_block, seen = tmp_path / "ck.npz", Q._moe, []
+
+    def stop(spec_, W_, p, *a):
+        seen.append(p)
+        if len(seen) == 3:
+            raise KeyboardInterrupt
+        return moe_block(spec_, W_, p, *a)
+    Q._moe = stop
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            Q.emulate(spec, W, toks, wformat="fp4", ckpt=str(ck))
+    finally:
+        Q._moe = moe_block
+    with np.load(ck) as z:
+        assert int(z["layer"]) == 1
+    assert np.array_equal(Q.emulate(spec, W, toks, wformat="fp4", ckpt=str(ck)), want)
+    assert not np.array_equal(Q.emulate(spec, W, toks, wformat="int8", ckpt=str(ck)), want)
+
+
 def test_moe_compile_worker_builds_the_image(moe):
     """The compile worker process (the card's backend compiles ahead in it) builds the
     engine's image, its K expert slots per layer included, and the same programs."""

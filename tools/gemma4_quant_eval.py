@@ -16,10 +16,13 @@ switched one at a time and per-kind weight formats (docs/gemma4.md, "Long contex
 WF / HEAD: int8, fp4, int4 or none (float weights). The whole sequence runs at once: 900 tokens of
 E2B take about 1 min in float, 10 min with fp4 layers (the 4-bit quantization's search).
 26B-A4B (its MoE block, K = V global layers, no PLE): --formats experts=fp4 for 4-bit experts
-(about 1.2 s of quantization an expert, 3840 of them: THREADS at a time).
+(about 1.2 s of quantization an expert, 3840 of them: THREADS at a time; the 4-bit matrices go
+through opentpu.qcache, so a study's later runs read them: OTPU_IMAGE_CACHE=<dir> for a cache of
+its own, 13 GB for the 26B's fp4 experts).
 """
 import argparse
 import math
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +30,8 @@ from dataclasses import replace
 
 import numpy as np
 
+from opentpu import qcache as QC
+from opentpu import quant as Q
 from opentpu.kernels import gather as GA
 from opentpu.llm import gemma4 as G
 from opentpu.llm.qwen3 import _fake_q, _fake_w
@@ -35,7 +40,7 @@ THREADS = 4     # experts quantized at once (numpy's 4-bit search releases the G
 
 
 def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", rows=None,
-            quant=None, wmap=None, on_rows=None):
+            quant=None, wmap=None, on_rows=None, ckpt=None):
     """gemma4.emulated_logits over the whole sequence at once: the logits [len(rows), vocab]
     before the soft cap (rows: default all), or with on_rows each group of up to 64 rows handed
     to on_rows(first row, logits). wformat / hf: the layers' and the head's formats, "none" for
@@ -43,15 +48,16 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
     (or "down" / "gateup" of it), "ple": format}, a key "kind@a-b" for layers a..b only
     (checkpoint layers; it wins over "kind"). quant: the activation quantization points
     applied, a subset of {"act" (the matmul inputs), "kv" (K / V), "p" (P)}; default all, none
-    with wformat "none".
+    with wformat "none". ckpt: a file the residual is saved to after each layer and resumed
+    from (the same tokens and formats; a model without KV-shared layers): a run killed at the
+    memory floor loses at most a layer.
 
     A MoE block (26B-A4B; docs/offload.md section 11): the weightless RMSNorm of x quantized
     into the router (int8, router.scale / sqrt(H) folded into its columns; the top k of its
     logits, their softmax), and times pre_feedforward_layernorm_2's gain, quantized, into the
     experts (wmap "experts", else wformat; per_expert_scale folded into the down projection,
-    the width padded with zeros to whole D-blocks). The device (moe.moe_ffn at 2c57dc2) folds
-    that gain into gate / up instead and quantizes one activation for both: _moe's docstring
-    says what that costs; it is to follow."""
+    the width padded with zeros to whole D-blocks), as moe.moe_ffn runs it (g_exp); _moe's
+    docstring says what folding that gain into gate / up instead cost."""
     hf = hf or wformat
     none = wformat == "none"
     quant = (set() if none else {"act", "kv", "p"}) if quant is None else set(quant)
@@ -86,6 +92,9 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
             fmt = fmt_of(n)
         a = np.asarray(W[n] if a is None else a, np.float32)
         a = np.pad(a, ((0, 0), (0, -a.shape[1] % D)))       # whole D-blocks (MLP widths)
+        if fmt in QC.FORMATS:   # 4-bit through opentpu.qcache: the runs of a study share it
+            q, sc = QC.quantize_mxu(a, fmt, D)      # (rows padded to whole D-byte chunks)
+            return Q.dequantize_w4(q[:, :a.shape[1] // 2], sc, fmt, D)        # (= _fake_w's)
         return a.astype(np.float64) if fmt == "none" else _fake_w(a, D, fmt)
 
     def padq(v, n):             # an activation [T, f] padded with zeros to n columns, quantized
@@ -115,7 +124,17 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
         del wp, wpq, pe
     ii = np.arange(T)[:, None]
     K, V = {}, {}
-    for i in range(L):
+    key, start = None, 0
+    if ckpt is not None and all(spec.kv_src[i] == i for i in range(L)):
+        key = repr((list(tokens), wformat, hf, ple_format, sorted(quant), sorted(wmap.items())))
+        try:
+            with np.load(ckpt) as z:
+                if str(z["key"]) == key:
+                    start, x = int(z["layer"]) + 1, z["x"].copy()
+                    print(f"  resumed after layer {start - 1}", flush=True)
+        except (OSError, KeyError, ValueError):
+            pass
+    for i in range(start, L):
         p = f"model.layers.{spec.src(i)}."
         a = p + "self_attn."
         kind, d, n_kv = spec.kinds[i], spec.hd(i), spec.kvh(i)
@@ -169,15 +188,23 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
             y = fq(g) @ wq(p + "per_layer_projection.weight").T
             x = x + G._norm(y, W[p + "post_per_layer_input_norm.weight"], eps)
         x = x * np.asarray(W[p + "layer_scalar"], np.float64)
+        if key is not None:
+            tmp = f"{ckpt}.tmp.npz"
+            np.savez(tmp, key=key, layer=i, x=x)
+            os.replace(tmp, ckpt)
     rows = list(range(T)) if rows is None else rows
     xl = fq(G._norm(x[rows], W["model.norm.weight"], eps))
-    E = W[head]
+
+    def head_rows(r0):          # (a checkpoint's head read 16384 rows at a time: 0.2 GB)
+        if isinstance(W, G.Weights):
+            f, n = W._files[head]
+            return G._Rows(f, n)[r0:r0 + 16384]
+        return W[head][r0:r0 + 16384]
+    starts = range(0, spec.vocab, 16384)
     if on_rows is None:
-        return np.concatenate([xl @ wq(None, hf, E[r0:r0 + 16384]).T
-                               for r0 in range(0, len(E), 16384)], 1)
+        return np.concatenate([xl @ wq(None, hf, head_rows(r0)).T for r0 in starts], 1)
     # the quantized head held in float32 (E4B's in float64 would be 5.4 GB)
-    Eq = [wq(None, hf, E[r0:r0 + 16384]).T.astype(np.float32) for r0 in range(0, len(E), 16384)]
-    del E
+    Eq = [wq(None, hf, head_rows(r0)).T.astype(np.float32) for r0 in starts]
     for i0 in range(0, len(rows), 64):      # on_rows(first row, logits [<= 64, vocab])
         on_rows(i0, np.concatenate([xl[i0:i0 + 64] @ e for e in Eq], 1))
 
@@ -285,9 +312,12 @@ def main():
             lg[np.arange(n), ids[i0 + 1:i0 + 1 + n]]
         top1[i0:i0 + n] = lg.argmax(1)
 
+    ckpt = f"{out}.ckpt.npz"                 # (a run killed at the memory floor resumes)
     emulate(spec, W, ids, wformat=wf, hf=hf, quant=quant, wmap=wmap,
-            rows=list(range(len(ids) - 1)), on_rows=on_rows)
+            rows=list(range(len(ids) - 1)), on_rows=on_rows, ckpt=ckpt)
     np.savez(out, nll=nll, top1=top1)
+    if os.path.exists(ckpt):
+        os.remove(ckpt)
     print(f"{what}: {len(ids) - 1} positions, mean NLL {nll.mean():.4f}, ppl "
           f"{np.exp(nll.mean()):.3f}; {time.time() - t0:.0f} s")
 
