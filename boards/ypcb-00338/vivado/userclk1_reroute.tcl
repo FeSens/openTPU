@@ -3,9 +3,12 @@
 # block RAMs, which the IP's XDC places next to PCIE_X0Y0, so they are route only and neither
 # placement nor phys_opt moves them (the FAST probe 81432ad7: -0.045 ns, 0.93 of 1.42 ns route).
 # If one fails, the nets of the failing userclk1 paths are routed again, constraint driven
-# (route_design -auto_delay); the result is kept only if userclk1's worst slack improves and
-# neither the other clocks' setup nor any hold gets worse below zero. Otherwise, or on an error,
-# the routed design is reopened from the checkpoint written before.
+# (route_design -auto_delay), which can overshoot into hold (7b1cc919's checkpoint: the RX block
+# RAM's DIPBDIP from -0.045 / +0.187 ns setup / hold to +0.295 / -0.032); a hold failure then gets
+# a re-entrant route_design (there: +0.118 / +0.107, userclk1 +0.033 / +0.018, 10 minutes). The
+# result is kept only if userclk1's worst slack improves, every net is routed and neither the other
+# clocks' setup nor any hold gets worse below zero. Otherwise, or on an error, the routed design
+# is reopened from the checkpoint written before.
 proc otpu_ws {args} {
   set p [lindex [get_timing_paths -quiet -max_paths 1 -nworst 1 {*}$args] 0]
   if {$p eq ""} { return 1e9 }
@@ -28,6 +31,10 @@ if {[info exists ::env(PCIE_GEN)] && $::env(PCIE_GEN) eq "2" && [llength $uc1] =
       write_checkpoint -force $ckpt
       route_design -unroute -nets $nets
       route_design -nets $nets -auto_delay
+      if {[otpu_ws -hold] < 0} {
+        puts "userclk1 rerouted, hold [otpu_ws -hold] ns: re-entrant route_design"
+        route_design
+      }
       set u1 [otpu_ws -setup -to $uc1]
       set o1 [otpu_ws -setup -to $others]
       set h1 [otpu_ws -hold]
