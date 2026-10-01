@@ -65,7 +65,7 @@ def _states(eng, spec, slot):
     for li, k in enumerate(spec.kinds):
         if k != "linear":
             continue
-        dn = m.layer(li, "linear").dn
+        dn = m.layer(li).dn
         for q in range(img.nl // 2):
             for t in [dn.state(q, 0), dn.state(q, 1), dn.window(q)]:
                 n, b = 4 * int(np.prod(t.shape)), Affine.of(t.base).static()

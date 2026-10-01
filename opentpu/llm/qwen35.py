@@ -72,7 +72,7 @@ from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.deltanet import gates, l2norm_rows
 from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
-from .lfm2 import plan, run_layers
+from .lfm2 import _place, plan, run_layers
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
@@ -617,7 +617,8 @@ class Image(EmbedHost):
     """Per-slice DRAM layout of a Qwen3.5 model. Every slice uses the same addresses.
 
     [ I/O: x_in, cos, sin | final norm | logits | per-pair gates ] [ layer 0 block ] ...
-    [ layer L-1 block ] [ LM head rows of this slice ]. All layer blocks have one size: both
+    [ layer L-1 block ] [ LM head rows of this slice ]. The layer blocks of a formats group (a
+    layer's DeltaNet, attention, gate / up and down formats: Image.lf) have one size: both
     kinds start with the norms and this slice's MLP rows. A DeltaNet block then holds, for
     this slice's heads (a contiguous range), the projections pair by pair (the q, k, v rows of
     head 0, of head 1, then the z rows of heads 0 and 1; then heads 2 and 3, ...; with shared q
@@ -637,8 +638,10 @@ class Image(EmbedHost):
     them, so it fits the registers beside a run-time position's (resident decode), and the
     unrolled pairs of a bigger model need not fit IMEM.
 
-    Weight formats as qwen3.Image (`formats` over the KINDS of this file; a MoE's experts in
-    `wformat`, its router int8).
+    Weight formats as qwen3.Image (`formats` over the KINDS of this file, per layer range; a
+    MoE's experts in `wformat`, its router int8): the layers run as the runs of lfm2.plan over
+    their (kind, formats group) keys, each run's blocks one after the other; the MTP layer takes
+    the formats without a range.
 
     Spec.mtp (MTP decoding, opentpu/llm/mtp.py): every DeltaNet state and convolution window
     has two slots (the state's second after the first, a pair's second window after its
@@ -661,14 +664,11 @@ class Image(EmbedHost):
         H, d, F_, K = spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
         wformat, formats = FM.named(spec, wformat, formats)
         fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
-        kf = FM.uniform(fmt, {"delta": [i for i, t in enumerate(spec.kinds) if t == LIN],
-                              "attn": [i for i, t in enumerate(spec.kinds) if t == ATTN],
-                              "gateup": range(spec.layers), "down": range(spec.layers)})
+        # each layer's formats group: DeltaNet, attention, gate / up, down (the layers of a
+        # group share a block size and the common part's offsets, as one group did)
+        self.lf = tuple((fmt("delta", i), fmt("attn", i), fmt("gateup", i), fmt("down", i))
+                        for i in range(spec.layers))
         self.wformat, self.head_format = wformat, fmt("head")
-        self.mf = {"wh": kf["delta"], "wab": kf["delta"], "wout": kf["delta"],
-                   "wq": kf["attn"], "wgate": kf["attn"], "wk": kf["attn"], "wv": kf["attn"],
-                   "wo": kf["attn"], "wg": kf["gateup"], "wu": kf["gateup"],
-                   "wd": kf["down"]}            # each projection's format (KINDS)
         self.formats = _formats(spec, formats)
         rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
         dk, dv = spec.lin_dk, spec.lin_dv
@@ -691,7 +691,6 @@ class Image(EmbedHost):
         self.CV0 = K * self.CP + (K - 1) * self.CP      # a pair's taps, then its window
         self.slots = 2 if spec.mtp else 1               # DeltaNet state and window slots
         self.CVW = self.CV0 + (self.slots - 1) * (K - 1) * self.CP     # (then window 1)
-        self.plan = plan(spec.kinds)
         b = _Bump()
         self.io = {"x": b.alloc(4 * H * rows), "cos": b.alloc(2 * spec.rope_dim * rows),
                    "sin": b.alloc(2 * spec.rope_dim * rows), "gf": b.alloc(4 * H),
@@ -702,20 +701,9 @@ class Image(EmbedHost):
         if spec.mtp:                # the final norm's rows (the MTP's input), the draft ids
             self.io.update(hid=b.alloc(4 * H * rows), draft=b.alloc(4 * rows))
         self.layer0 = b.next
-        lb = _Bump()                                    # offsets inside one layer block
-        common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
         mlp = {"wg": (self.f_loc, H), "wu": (self.f_loc, H)}
-        for name, (n, k) in mlp.items():
-            common[name] = (lb.alloc(n * rb(k, self.mf[name])), lb.alloc(4 * n * (k // D)))
-        self.dchunk = _chunk(self.f_loc, D, D if self.mf["wd"] == "int8" else 2 * D)
-        common["wd"] = [(lb.alloc(self.h_loc * rb(self.dchunk, self.mf["wd"])),
-                         lb.alloc(4 * self.h_loc * (self.dchunk // D)))
-                        for _ in range(F_ // self.dchunk)]
         mo = spec.moe
-        if mo is not None:          # the router (int8, the shared expert's gate its last row)
-            common.update(router=(lb.alloc((mo.E + 1) * H), lb.alloc(4 * (mo.E + 1) * (H // D))),
-                          gbase=lb.alloc(4))
-        nl, C = self.nl, self.C
+        nl = self.nl
         self.og = 4 if nl % 4 == 0 else 2               # heads per out_proj MM
         self.mats = {LIN: {"wh": (nl // 2 * self.RP, H), "wab": (2 * nl, H),
                            "wout": (nl // self.og * H, self.og * dv),
@@ -723,51 +711,38 @@ class Image(EmbedHost):
                      ATTN: {"wq": (self.nq_loc * d, H), "wgate": (self.nq_loc * d, H),
                             "wk": (self.nkv_loc * d, H), "wv": (self.nkv_loc * d, H),
                             "wo": (self.h_loc, spec.n_q * d), **mlp}}
-        lnb = _Bump(lb.next)
-        lin = dict(common, alog=lnb.alloc(4 * nl), dtb=lnb.alloc(4 * nl), gn=lnb.alloc(4 * dv))
         self.grouped = nl // 2 > PAIR_LOOP if spec.pair_loop is None else spec.pair_loop
         if self.grouped:            # per head group: its pairs' blocks, then its out_proj block
-            og = self.og
             del self.mats[LIN]["wh"], self.mats[LIN]["wout"]
-            pb, gb = _Bump(), _Bump()
-            fd = self.mf["wh"]
-            self.pofs = {"wh": (pb.alloc(self.RP * rb(H, fd)), pb.alloc(4 * self.RP * (H // D))),
-                         "cv": pb.alloc(4 * self.CVW),
-                         "state": pb.alloc(4 * 2 * dv * dk * self.slots)}
             self.sbytes = 4 * 2 * dv * dk               # a pair's state slots: [slot, head]
-            self.PS = pb.next                           # a pair's block, bytes
-            for _ in range(og // 2):
-                gb.alloc(self.PS)
-            self.gofs = {"wout": (gb.alloc(H * rb(og * dv, fd)),
-                                  gb.alloc(4 * H * (og * dv // D))),
-                         "eb": gb.alloc(4 * 4 * (og // 2))}     # its pairs' gates, per token
-            self.GS = gb.next                           # a head group's block
-            lin["groups"] = lnb.alloc(nl // og * self.GS)
         else:
-            lin.update(cv=lnb.alloc(4 * nl // 2 * self.CVW),  # per pair: taps, then the ring
-                       state=lnb.alloc(4 * nl * dv * dk * self.slots))
             self.sbytes = 4 * nl * dv * dk              # the layer's states: [slot, head]
-        ab = _Bump(lb.next)
-        attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
-        for kind, bump, L in ((LIN, lnb, lin), (ATTN, ab, attn)):
-            for name, (n, k) in self.mats[kind].items():
-                if name not in L:
-                    L[name] = (bump.alloc(n * rb(k, self.mf[name])), bump.alloc(4 * n * (k // D)))
-        attn["kv"] = [{"k": ab.alloc(cap * d), "ks": ab.alloc(4 * cap * (d // D)),
-                       "vt": ab.alloc(d * cap), "vs": ab.alloc(4 * cap)}
-                      for _ in range(self.nkv_loc)]
-        self.lofs = {LIN: lin, ATTN: attn}
-        self.LS = (max(lnb.next, ab.next) + 4095) // 4096 * 4096
+        # formats group -> its block layouts (_layout); layer 0's those of the image
+        self.layouts = {g: self._layout(g, mlp, rb) for g in dict.fromkeys(self.lf)}
+        g0 = self.layouts[self.lf[0]]
+        self.lofs, self.LS, self.mf, self.dchunk = g0.lofs, g0.LS, g0.mf, g0.dchunk
+        if self.grouped:
+            self.pofs, self.PS, self.gofs, self.GS = g0.pofs, g0.PS, g0.gofs, g0.GS
+        # the runs (plan): a layer's key is its kind and formats group; then the MTP layer
+        self.keys = tuple(zip(spec.kinds, self.lf))
+        self.plan = plan(self.keys)
+        self.loc = _place(b, self.plan, lambda k: self.layouts[k[1]].LS)
+        if spec.mtp:                # an attention block after the model's (the formats without a
+            gm = tuple(fmt(k, spec.layers) for k in ("delta", "attn", "gateup", "down"))  # range)
+            if gm not in self.layouts:
+                self.layouts[gm] = self._layout(gm, mlp, rb)
+            self.keys += ((ATTN, gm),)
+            self.loc.update(_place(b, [(spec.layers, self.keys[-1:], 1)],
+                                   lambda k: self.layouts[k[1]].LS))
         n_attn = spec.kinds.count(ATTN)
         head = cap * d + 4 * cap * (d // D) + d * cap + 4 * cap
         self.kv_bytes = ((n_attn + spec.mtp) * self.nkv_loc * head      # KV cache, conv ring
                          + (spec.layers - n_attn) * 4 * self.slots *
                          (nl // 2 * (K - 1) * self.CP + nl * dv * dk))   # and state
-        b.next = self.layer0 + (spec.layers + spec.mtp) * self.LS     # (the MTP layer block)
         self.mtpo, self.nd = {}, min(MTP_VOCAB, spec.vocab)
         if spec.mtp:                # the MTP's norms (embedding, hidden, output), fc, draft head
             self.mtpo = {"ge": b.alloc(4 * H), "gh": b.alloc(4 * H), "gm": b.alloc(4 * H),
-                         "fc": (b.alloc(H * rb(2 * H, self.mf["wq"])),      # (attn's)
+                         "fc": (b.alloc(H * rb(2 * H, self.mtp_fc)),       # (attn's)
                                 b.alloc(4 * H * (2 * H // D))),
                          "dh": (b.alloc(self.nd * Q.row_bytes(H, "fp4", D)),
                                 b.alloc(4 * self.nd * (H // D)))}
@@ -799,16 +774,86 @@ class Image(EmbedHost):
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
                               f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
 
-    def pair_offset(self, q: int) -> int:
-        """Pair q's block in a group-major DeltaNet layer block (bytes from its start)."""
-        g, i = divmod(q, self.og // 2)
-        return self.lofs[LIN]["groups"] + g * self.GS + i * self.PS
+    @property
+    def mtp_fc(self) -> str:
+        """The MTP's fc format: its layer's attention format."""
+        return self.layouts[self.keys[self.spec.layers][1]].mf["wq"]
 
-    def cv_offset(self, q: int) -> int:
-        """Pair q's taps, then its window, in a DeltaNet layer block (bytes from its start)."""
+    def _layout(self, g: tuple, mlp: dict, rb) -> SimpleNamespace:
+        """The layer block layouts of formats group g (DeltaNet, attention, gate / up, down):
+        each projection's format (mf), W_down's chunk, the DeltaNet and attention blocks'
+        offsets (the norms and the MLP first, at the same offsets in both) and their size LS;
+        group-major, a pair's block (pofs, PS) and a head group's (gofs, GS)."""
+        spec, cfg, cap = self.spec, self.cfg, self.cap
+        D, H, d, F_ = cfg.D, spec.hidden, spec.head_dim, spec.ffn
+        dk, dv, nl, og = spec.lin_dk, spec.lin_dv, self.nl, self.og
+        fl, fa, fg, fd = g
+        mf = {"wh": fl, "wab": fl, "wout": fl, "wq": fa, "wgate": fa, "wk": fa, "wv": fa,
+              "wo": fa, "wg": fg, "wu": fg, "wd": fd}       # each projection's format (KINDS)
+        lb = _Bump()                                    # offsets inside one layer block
+        common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
+        for name, (n, k) in mlp.items():
+            common[name] = (lb.alloc(n * rb(k, mf[name])), lb.alloc(4 * n * (k // D)))
+        dchunk = _chunk(self.f_loc, D, D if fd == "int8" else 2 * D)
+        common["wd"] = [(lb.alloc(self.h_loc * rb(dchunk, fd)),
+                         lb.alloc(4 * self.h_loc * (dchunk // D)))
+                        for _ in range(F_ // dchunk)]
+        mo = spec.moe
+        if mo is not None:          # the router (int8, the shared expert's gate its last row)
+            common.update(router=(lb.alloc((mo.E + 1) * H), lb.alloc(4 * (mo.E + 1) * (H // D))),
+                          gbase=lb.alloc(4))
+        ns = SimpleNamespace(mf=mf, dchunk=dchunk)
+        lnb = _Bump(lb.next)
+        lin = dict(common, alog=lnb.alloc(4 * nl), dtb=lnb.alloc(4 * nl), gn=lnb.alloc(4 * dv))
+        if self.grouped:            # per head group: its pairs' blocks, then its out_proj block
+            pb, gb = _Bump(), _Bump()
+            ns.pofs = {"wh": (pb.alloc(self.RP * rb(H, fl)), pb.alloc(4 * self.RP * (H // D))),
+                       "cv": pb.alloc(4 * self.CVW),
+                       "state": pb.alloc(4 * 2 * dv * dk * self.slots)}
+            ns.PS = pb.next                             # a pair's block, bytes
+            for _ in range(og // 2):
+                gb.alloc(ns.PS)
+            ns.gofs = {"wout": (gb.alloc(H * rb(og * dv, fl)),
+                                gb.alloc(4 * H * (og * dv // D))),
+                       "eb": gb.alloc(4 * 4 * (og // 2))}       # its pairs' gates, per token
+            ns.GS = gb.next                             # a head group's block
+            lin["groups"] = lnb.alloc(nl // og * ns.GS)
+        else:
+            lin.update(cv=lnb.alloc(4 * nl // 2 * self.CVW),  # per pair: taps, then the ring
+                       state=lnb.alloc(4 * nl * dv * dk * self.slots))
+        ab = _Bump(lb.next)
+        attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
+        for kind, bump, L in ((LIN, lnb, lin), (ATTN, ab, attn)):
+            for name, (n, k) in self.mats[kind].items():
+                if name not in L:
+                    L[name] = (bump.alloc(n * rb(k, mf[name])), bump.alloc(4 * n * (k // D)))
+        attn["kv"] = [{"k": ab.alloc(cap * d), "ks": ab.alloc(4 * cap * (d // D)),
+                       "vt": ab.alloc(d * cap), "vs": ab.alloc(4 * cap)}
+                      for _ in range(self.nkv_loc)]
+        ns.lofs = {LIN: lin, ATTN: attn}
+        ns.LS = (max(lnb.next, ab.next) + 4095) // 4096 * 4096
+        return ns
+
+    def _off(self, li, it=None) -> Affine:
+        """The block address of layer li (static), or of element li of its run's unit at
+        iteration `it` (a loop variable)."""
+        base, us, i, o, _ = self.loc[li]
+        return Affine(base + o) + Affine.of(i if it is None else it) * us
+
+    def pair_offset(self, q: int, lay=None) -> int:
+        """Pair q's block in a group-major DeltaNet layer block of layouts `lay` (layer 0's by
+        default) (bytes from its start)."""
+        lay = self.layouts[self.lf[0]] if lay is None else lay
+        g, i = divmod(q, self.og // 2)
+        return lay.lofs[LIN]["groups"] + g * lay.GS + i * lay.PS
+
+    def cv_offset(self, q: int, lay=None) -> int:
+        """Pair q's taps, then its window, in a DeltaNet layer block of layouts `lay` (layer
+        0's by default) (bytes from its start)."""
+        lay = self.layouts[self.lf[0]] if lay is None else lay
         if self.grouped:
-            return self.pair_offset(q) + self.pofs["cv"]
-        return self.lofs[LIN]["cv"] + 4 * q * self.CVW
+            return self.pair_offset(q, lay) + lay.pofs["cv"]
+        return lay.lofs[LIN]["cv"] + 4 * q * self.CVW
 
     # ---- contents
     def build(self, W: dict) -> list[np.ndarray]:
@@ -822,8 +867,6 @@ class Image(EmbedHost):
         def put(s, addr, a):
             v = np.ascontiguousarray(a).view(np.uint8).reshape(-1)
             imgs[s][addr:addr + v.size] = v
-
-        mf = self.mf
 
         def put_q1(s, addr_pair, a, fmt):
             q, sc = QC.quantize_mxu(a, fmt, D)
@@ -850,9 +893,10 @@ class Image(EmbedHost):
         if spec.mtp:                                # the MTP layer: one more attention block
             layers.append((spec.layers, ATTN, "mtp.layers.0."))
         for i, kind, p in layers:
-            base = self.layer0 + i * self.LS
+            base, lay = self._off(i).const, self.layouts[self.keys[i][1]]
+            mf = lay.mf
             Lo = {k: (tuple(base + x for x in v) if isinstance(v, tuple) else
-                      (base + v if isinstance(v, int) else v)) for k, v in self.lofs[kind].items()}
+                      (base + v if isinstance(v, int) else v)) for k, v in lay.lofs[kind].items()}
             for s in range(S):
                 put(s, Lo["g_in"], g1(p + "input_layernorm.weight"))
                 put(s, Lo["g_post"], g1(p + "post_attention_layernorm.weight"))
@@ -883,13 +927,13 @@ class Image(EmbedHost):
                 if self.grouped:
                     for s in range(S):
                         for q, (pr, pt) in enumerate(zip(prows[s], ptaps[s])):
-                            o = base + self.pair_offset(q)
-                            put_q1(s, (o + self.pofs["wh"][0], o + self.pofs["wh"][1]), pr,
+                            o = base + self.pair_offset(q, lay)
+                            put_q1(s, (o + lay.pofs["wh"][0], o + lay.pofs["wh"][1]), pr,
                                    mf["wh"])
-                            put(s, o + self.pofs["cv"], pt)
+                            put(s, o + lay.pofs["cv"], pt)
                         for g, go in enumerate(gouts[s]):
-                            o = Lo["groups"] + g * self.GS
-                            put_q1(s, (o + self.gofs["wout"][0], o + self.gofs["wout"][1]), go,
+                            o = Lo["groups"] + g * lay.GS
+                            put_q1(s, (o + lay.gofs["wout"][0], o + lay.gofs["wout"][1]), go,
                                    mf["wout"])
                 else:
                     put_q(Lo["wh"], [np.concatenate(pr) for pr in prows], mf["wh"])
@@ -922,8 +966,8 @@ class Image(EmbedHost):
             mp = spec.mlp_prefix(p)
             put_q(Lo["wg"], rows(W[mp + "gate_proj.weight"], self.f_loc), mf["wg"])
             put_q(Lo["wu"], rows(W[mp + "up_proj.weight"], self.f_loc), mf["wu"])
-            C_ = self.dchunk
-            for j, pair in enumerate(self.lofs[kind]["wd"]):
+            C_ = lay.dchunk
+            for j, pair in enumerate(lay.lofs[kind]["wd"]):
                 put_q((base + pair[0], base + pair[1]),
                       [r[:, j * C_:(j + 1) * C_] for r in rows(W[mp + "down_proj.weight"], n)],
                       mf["wd"])
@@ -938,7 +982,7 @@ class Image(EmbedHost):
             for k, n in (("ge", "pre_fc_norm_embedding"), ("gh", "pre_fc_norm_hidden"),
                          ("gm", "norm")):
                 put(0, mo[k], g1(f"mtp.{n}.weight"))
-            put_q(mo["fc"], [W["mtp.fc.weight"]], mf["wq"])
+            put_q(mo["fc"], [W["mtp.fc.weight"]], self.mtp_fc)
             put_q(mo["dh"], [head[:self.nd]], "fp4")
         put_q(self.head, rows(head, self.v_loc), self.head_format)
         if self.lookup:
@@ -1021,13 +1065,17 @@ class Image(EmbedHost):
         sl = dict(tp=K * self.CP, wwords=(K - 1) * self.CP, slot=slot,
                   sbytes=self.sbytes if self.slots > 1 else 0)
 
-        def layer(li, kind):
-            """Descriptors of layer `li` (an int or a hardware-loop expression) of `kind`."""
-            off = Affine.of(self.layer0) + Affine.of(li) * self.LS
-            lofs = self.lofs[kind]
+        def layer(li, it=None):
+            """Descriptors of layer `li` (static), or of element li of its run's unit at
+            iteration `it` (a hardware-loop variable). Its kind and formats group from
+            self.keys (the MTP layer's: li = spec.layers)."""
+            kind, g = self.keys[li]
+            lay = self.layouts[g]
+            off = self._off(li, it)
+            lofs, mf = lay.lofs[kind], lay.mf
             ns = SimpleNamespace(g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
                                  g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
-                                 moe=spec.moe is not None)
+                                 moe=spec.moe is not None, kind=kind)
             if ns.moe:
                 E = spec.moe.E
                 da, sa = lofs["router"]
@@ -1035,11 +1083,11 @@ class Image(EmbedHost):
                 ns.gbase = Tensor(off + lofs["gbase"], (1,), (1,))
             for name, (r, k) in self.mats[kind].items():
                 da, sa = lofs[name]
-                fm = self.mf[name]
+                fm = mf[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (r, k), Q.row_bytes(k, fm, D),
                                           4 * (k // D), D, wf=Q.mxu_wf(fm)))
-            Cd = self.dchunk
-            fm = self.mf["wd"]
+            Cd = lay.dchunk
+            fm = mf["wd"]
             wf = Q.mxu_wf(fm)
             rc = Q.row_bytes(Cd, fm, D)
             parts = tuple(QTensor(off + da, off + sa, (n, Cd), rc, 4 * (Cd // D), D, wf=wf)
@@ -1052,18 +1100,18 @@ class Image(EmbedHost):
                 ns.gn = Tensor(off + lofs["gn"], (dv,), (1,))
                 og, R2 = self.og, self.RP
                 if self.grouped:            # the parts of pair 0 (group 0)
-                    fm = self.mf["wh"]
+                    fm = mf["wh"]
                     wf = Q.mxu_wf(fm)
                     g0 = off + lofs["groups"]
-                    (whd, whs), (wod, wos) = self.pofs["wh"], self.gofs["wout"]
+                    (whd, whs), (wod, wos) = lay.pofs["wh"], lay.gofs["wout"]
                     ns.dn = DeltaNetParts(
                         nl, og, QTensor(g0 + whd, g0 + whs, (R2, H), Q.row_bytes(H, fm, D),
                                         4 * (H // D), D, wf=wf),
-                        Tensor(g0 + self.pofs["cv"], (self.CV0,), (1,)),
-                        Tensor(g0 + self.pofs["state"], (2, dv, dk), (dv * dk, dk, 1)),
+                        Tensor(g0 + lay.pofs["cv"], (self.CV0,), (1,)),
+                        Tensor(g0 + lay.pofs["state"], (2, dv, dk), (dv * dk, dk, 1)),
                         QTensor(g0 + wod, g0 + wos, (H, og * dv), Q.row_bytes(og * dv, fm, D),
-                                4 * (og * dv // D), D, wf=wf), H, self.GS, self.PS,
-                        Tensor(g0 + self.gofs["eb"], (og // 2, 4), (4, 1)), self.shared, **sl)
+                                4 * (og * dv // D), D, wf=wf), H, lay.GS, lay.PS,
+                        Tensor(g0 + lay.gofs["eb"], (og // 2, 4), (4, 1)), self.shared, **sl)
                 else:
                     # (a pair's taps and window 0: the decode loads them at once; window 1
                     # after them, DeltaNetParts.window)
@@ -1086,11 +1134,11 @@ class Image(EmbedHost):
                                   hint_off=L.layers * L.E)
         mtp = {}
         if spec.mtp:
-            mo, ff = self.mtpo, self.mf["wq"]
+            mo, ff = self.mtpo, self.mtp_fc
             mtp = dict(hid=_tdesc(self.io["hid"], (self.rows, H)), nd=self.nd,
                        draft=_tdesc(self.io["draft"], (self.rows,)),
                        mtp=SimpleNamespace(
-                           layer=layer(spec.layers, ATTN),
+                           layer=layer(spec.layers),
                            ge=_tdesc(mo["ge"], (H,)), gh=_tdesc(mo["gh"], (H,)),
                            gm=_tdesc(mo["gm"], (H,)),
                            fc=QTensor(*mo["fc"], (H, 2 * H), Q.row_bytes(2 * H, ff, D),
@@ -1574,11 +1622,11 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     spec = m.spec
     x, c, s_ = _inputs(m, pos, tok)
 
-    def layer(li, kind):
-        lw = m.layer(li, kind)
+    def layer(li, it):
+        lw = m.layer(li, it)
         if lw.moe and spec.moe.hint:        # the router's guess, before the mixer
             MO.moe_hint(x, lw, spec.moe, m.moe_dev, spec.eps)
-        if kind == LIN:
+        if lw.kind == LIN:
             dn = _deltanet_dstep if ol.has_dstep() else _deltanet
             x.set(dn(x, lw, pos, spec, m.hs))
         else:
@@ -1984,9 +2032,9 @@ def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=
     rows = [(0, p0 + r) for r in range(R)]
     x, c, s_ = _inputs_rows(m, rows, tokens)
 
-    def layer(li, kind):
-        lw = m.layer(li, kind)
-        if kind == LIN:
+    def layer(li, it):
+        lw = m.layer(li, it)
+        if lw.kind == LIN:
             x.set(_deltanet_rows(x, lw, p0, spec, m.gr[0:R, :], m.on[0:R, :], fork))
         else:
             x.set(_attention_rows(x, lw, c, s_, rows, spec, block, gated=True))
