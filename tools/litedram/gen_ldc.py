@@ -2,7 +2,8 @@
 """One channel of the production LiteDRAM controller as a simulation model: LiteDRAM's own
 controller (bank machines, multiplexer, refresher) and crossbar, from the commit the production
 core pins (boards/ypcb-00338/litedram/core.json), with gen_core.py's settings -- the MT41K256M8
-geometry with tRFC 160 ns, 1:4, the default ControllerSettings, the two user ports (the even and
+geometry with tRFC 160 ns, 1:4, the core's ControllerSettings (LiteDRAM's defaults but
+ctl_settings.py's refresh postponing and read / write times), the two user ports (the even and
 the odd banks', otpu_mem_ch's split) through LiteDRAMNativePortECC's encoders and one decoder
 (ecc_ports.py, as the core) and a third, idle crossbar port (the BIST's) -- behind a DFI stub PHY
 with WL7DDRPHY's latencies and no memory. So the command scheduling is the card's; the data is
@@ -10,12 +11,14 @@ not modelled (reads return the ECC decode of zeros). sim/verilator/otpu_ldc_mem.
 the board's bridge (otpu_mem_ch) with the data held in the model.
 
     python3 gen_ldc.py OUT.v [--name otpu_ldc_ch] [--cmd-buffer-depth 8] [--no-refresh]
-                      [--postponing 1] [--ports 2] [--no-lock]
+                      [--postponing 2] [--read-time 256] [--write-time 128] [--ports 2]
+                      [--no-lock]
 
 DDR3-1066 only (the controller at 133.33 MHz, CL 7 / CWL 6, the latencies WL7DDRPHY derives
 from them, the data-sheet timings in that clock): the board's DDR3 never runs faster, the rate
 its HR banks are specified for, so the generator has no other rate. The options are for
-experiments: the controller's command buffer depth, no refresh, refresh postponing, the number
+experiments: the controller's command buffer depth, no refresh, refresh postponing, the
+multiplexer's read and write times (the defaults: the core's, ctl_settings.py), the number
 of user ports (the one-port core's: --ports 1, its signals unprefixed; more: p<i>_*), and the
 crossbar without its lock (a master's commands in one bank at a time; without it read data may
 come back out of order, so it is a timing bound only).
@@ -44,6 +47,7 @@ import litedram.core.crossbar as xbar
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ecc_ports import NativePortsECC                            # noqa: E402
 from dfii_q import registered_injector                         # noqa: E402
+from ctl_settings import CONTROLLER                             # noqa: E402
 
 
 class MT41K256M8_tRFC160(MT41K256M8):
@@ -75,7 +79,9 @@ class StubPHY(Module):
 
 
 class Channel(Module):
-    def __init__(self, cmd_buffer_depth=8, refresh=True, postponing=1, nports=1):
+    def __init__(self, cmd_buffer_depth=8, refresh=True,
+                 postponing=CONTROLLER["refresh_postponing"], nports=1,
+                 read_time=CONTROLLER["read_time"], write_time=CONTROLLER["write_time"]):
         clk_freq = SYS_MHZ * 1e6
         module = MT41K256M8_tRFC160(clk_freq, "1:4")
         # WL7DDRPHY's latencies (tools/litedram/wl7ddrphy.py): read 8, write 1
@@ -91,7 +97,8 @@ class Channel(Module):
                          bitslips=8, with_dm=False, **self.lat)
         self.submodules.phy = StubPHY(module, ps)
         cs = ControllerSettings(cmd_buffer_depth=cmd_buffer_depth, with_refresh=refresh,
-                                refresh_postponing=postponing)
+                                refresh_postponing=postponing, read_time=read_time,
+                                write_time=write_time)
         with registered_injector():         # as the production core (dfii_q.py)
             self.submodules.core = core = LiteDRAMCore(self.phy, module.geom_settings,
                                                        module.timing_settings, clk_freq,
@@ -119,7 +126,9 @@ def main():
     ap.add_argument("--name", default="otpu_ldc_ch")
     ap.add_argument("--cmd-buffer-depth", type=int, default=8)
     ap.add_argument("--no-refresh", action="store_true")
-    ap.add_argument("--postponing", type=int, default=1)
+    ap.add_argument("--postponing", type=int, default=CONTROLLER["refresh_postponing"])
+    ap.add_argument("--read-time", type=int, default=CONTROLLER["read_time"])
+    ap.add_argument("--write-time", type=int, default=CONTROLLER["write_time"])
     ap.add_argument("--ports", type=int, default=2)
     ap.add_argument("--no-lock", action="store_true")
     a = ap.parse_args()
@@ -131,7 +140,8 @@ def main():
                 getattr(self.controller, "bank" + str(nb)).lock = Signal()
             orig(self)
         xbar.LiteDRAMCrossbar.do_finalize = do_finalize
-    ch = Channel(a.cmd_buffer_depth, not a.no_refresh, a.postponing, a.ports)
+    ch = Channel(a.cmd_buffer_depth, not a.no_refresh, a.postponing, a.ports, a.read_time,
+                 a.write_time)
     for i, u in enumerate(ch.users):
         pre = f"p{i}_" if a.ports > 1 else ""
         for sig, n in ((u.cmd.valid, "cmd_valid"), (u.cmd.ready, "cmd_ready"),
@@ -145,7 +155,8 @@ def main():
     hdr = (f"// generated by tools/litedram/gen_ldc.py: {a.name}, DDR3-{MTS} "
            f"({SYS_MHZ} MHz; {', '.join(f'{k} {v}' for k, v in ch.lat.items())}), "
            f"cmd_buffer_depth {a.cmd_buffer_depth}, refresh {not a.no_refresh} (postponing "
-           f"{a.postponing}), {a.ports} user port(s), lock {not a.no_lock}; tREFI {t.tREFI} "
+           f"{a.postponing}), read_time {a.read_time}, write_time {a.write_time}, {a.ports} user "
+           f"port(s), lock {not a.no_lock}; tREFI {t.tREFI} "
            f"tRFC {t.tRFC} tRP {t.tRP} tRCD {t.tRCD} tRAS {t.tRAS} tWR {t.tWR} tWTR {t.tWTR} "
            f"tCCD {t.tCCD} tRRD {t.tRRD} tFAW {t.tFAW}\n")
     open(a.out, "w").write(hdr + str(convert(ch, ios=ch.ios, name=a.name)))
