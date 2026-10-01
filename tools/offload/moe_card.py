@@ -61,7 +61,8 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
          host_loop: bool = False, embed: str | None = None, trace: str | None = None,
-         cfg_file: str | None = None, on_card: bool = False, policy: str = "lfu") -> dict:
+         cfg_file: str | None = None, on_card: bool = False, policy: str = "lfu",
+         embed_host: bool | None = None) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -73,8 +74,10 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         spec = replace(spec, embed=embed)
     W = LazyWeights(model)
     cfg = pickle.loads(Path(cfg_file).read_bytes()) if cfg_file else board_config()
+    ekw = {} if embed_host is None else {"embed_host": embed_host}   # (default: the image's)
     if not experts:
-        experts = fit_experts(spec, cfg, cap, wformat="fp4", head_format="int8", lookup=True)
+        experts = fit_experts(spec, cfg, cap, wformat="fp4", head_format="int8", lookup=True,
+                              **ekw)
     backend = "isa"
     if on_card:
         from opentpu.host.board import BoardBackend, XdmaTransport
@@ -83,7 +86,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                                                model=Path(model).name)
     t = time.time()
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat="fp4", head_format="int8",
-                 resident=True, experts=experts, pool_file=pool, backend=backend)
+                 resident=True, experts=experts, pool_file=pool, backend=backend, **ekw)
     load_s = time.time() - t
     srv = eng.server
     srv.policy = policy                         # the slots' replacement (ExpertServer)
@@ -183,7 +186,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     return dict(tokens=got, match=got == ref["tokens"][:len(got)], first_diff=diff,
                 at_first_diff=at,
                 experts_per_layer=experts, slots=L.layers * experts, pool=L.layers * L.E,
-                policy=policy,
+                policy=policy, embed_host=bool(getattr(eng.image, "embed_host", False)),
+                row_requests=eng.row_server.seq if eng.row_server is not None else None,
                 image_mib=round(eng.image.nbytes / 2**20), slot_mb=round(L.slot_bytes / 1e6, 2),
                 requests=srv.seq, hits=srv.hits, misses=srv.misses,
                 misses_per_token_decode=round(float(dec.mean()), 2) if len(dec) else None,
@@ -236,6 +240,9 @@ def main():
     ap.add_argument("--policy", choices=("lru", "lfu"), default="lfu",
                     help="the expert slots' replacement (ExpertServer): least recently used, or "
                          "least decayed use")
+    ap.add_argument("--embed-table", choices=("host", "card"), default=None,
+                    help="an untied int8 embedding table on the host (embed_host: the card asks "
+                         "for each token's row; a MoE's default) or on the card")
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
@@ -244,7 +251,8 @@ def main():
         return
     ref = json.loads(Path(a.check).read_text())
     r = card(a.model, ref, a.n, a.experts, a.cap, a.pool, a.host_loop, a.embed, a.trace,
-             a.cfg, a.card, a.policy)
+             a.cfg, a.card, a.policy,
+             None if a.embed_table is None else a.embed_table == "host")
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

@@ -55,7 +55,7 @@ from . import moe as MO
 from .qwen3 import (RunPos, _inputs, _inputs_rows, _lookup_alloc, _lookup_build, _lookup_desc,
                     _tok_arg, _tokens_arg, compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
-                    _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables)
+                    _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables, EmbedHost)
 
 CONV, ATTN = "conv", "attn"
 # A plan with more layer bodies than this runs each MLP's F chunks as a hardware loop
@@ -162,8 +162,10 @@ class Spec:
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
-              lookup: bool | str = False, experts: int | None = None) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts)
+              lookup: bool | str = False, experts: int | None = None,
+              embed_host: bool | None = None) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts,
+                     embed_host)
 
 
 def plan(kinds) -> list:
@@ -339,7 +341,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
 
 
 # =============================================================================== DRAM image
-class Image:
+class Image(EmbedHost):
     """Per-slice DRAM layout of an LFM2 model. Every slice uses the same addresses.
 
     [ I/O: x_in, cos, sin | final norm | logits ] [ layer 0 block ] ... [ layer L-1 block ]
@@ -352,7 +354,7 @@ class Image:
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool | str = False,
-                 experts: int | None = None):
+                 experts: int | None = None, embed_host: bool | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("LFM2 runs one sequence: batch=1")
@@ -420,8 +422,15 @@ class Image:
                      b.alloc(4 * self.v_loc * (H // D)))
         # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
         shared = spec.tied and self.head_format == "int8" and S == 1
+        if embed_host is None:      # an int8 table of its own on the host by default where its
+            embed_host = (bool(lookup) and not shared         # DRAM is expert slots
+                          and getattr(spec, "embed", "f32") == "int8" and spec.moe is not None)
+        if embed_host and not lookup:
+            raise ValueError("embed_host needs the image's lookup tables (lookup=True)")
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
-                                    M=cfg.MCOLS) if lookup else {}
+                                    M=cfg.MCOLS, embed_host=bool(embed_host),
+                                    rows=rows) if lookup else {}
+        self.choices = {"embed_host": self.embed_host}     # (the compile worker's image)
         self.offload = None
         if mo is not None:          # the dense MLPs, then path (a)'s words and expert slots
             self.dense0 = (b.next + 4095) // 4096 * 4096

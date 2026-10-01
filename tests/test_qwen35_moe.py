@@ -3,6 +3,8 @@ the card routes (softmax of the k largest logits) and computes every expert and 
 shared expert; the host's server moves the missing experts. A tiny random model against
 Hugging Face transformers and the quantized emulation; a small cache gives the same logits
 bit for bit as one holding every expert."""
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -111,6 +113,75 @@ def test_small_cache_is_bit_exact(tiny, wformat):
     got = np.array([small.step(t) for t in toks])
     assert small.server.misses > len(toks)
     assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+
+
+def _untied(tiny):
+    """The tiny model with an LM head of its own: its int8 embedding table is the image's own
+    (a tied int8 head's rows are gathered from the head)."""
+    _, W, spec = tiny
+    W = dict(W, **{"lm_head.weight": W["model.embed_tokens.weight"] * np.float32(1.25)})
+    return replace(spec, tied=False, embed="int8"), W
+
+
+def test_the_embedding_table_on_the_host(tiny):
+    """A MoE model's int8 embedding table of its own stays on the host (embed_host, the
+    default; the card's DRAM is expert slots): the card holds a slot of one row, which the host
+    writes before each run, and in the card's generate loop the host's row server after each
+    sampled token's post. Prefill, the generate loop and the resident steps give the table on
+    the card's logits and tokens bit for bit (k slots per layer). A tied int8 head's rows stay
+    the gather's."""
+    spec, W = _untied(tiny)
+    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=K, embed_host=False)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K, **kw)
+            for kw in ({}, {"embed_host": False}))
+    assert a.image.embed_host and a.row_server is not None and not b.image.embed_host
+    assert b.image.nbytes - a.image.nbytes >= spec.vocab * spec.hidden
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 12)]
+    la, lb = a.prefill(toks), b.prefill(toks)
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    t0 = int(np.argmax(la))
+    got = a.generate_card(t0, 8, stop_ids=[])
+    assert got == b.generate_card(t0, 8, stop_ids=[]) and a.row_server.seq >= 7
+    for t in got[-3:]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    _, W1, s1 = tiny
+    tied = Engine(replace(s1, embed="int8"), W1, cap=512, cfg=cfg, rows=1, resident=True,
+                  experts=K)
+    assert not tied.image.embed_host and tied.row_server is None
+
+
+def test_the_live_card_asks_the_host_for_experts_and_embedding_rows(tiny, tmp_path):
+    """The host's two servers beside a card that computes while they work
+    (tests/test_lfm2_moe.py's _LiveCard, CHASH's map): the experts from a split-format pool
+    and the embedding rows (embed_host) through one BoardDram, its DMA thread writing while the
+    card waits. Resident steps and the card's generate loop give the ISA simulator's logits
+    and tokens bit for bit, every expert and row request served during the runs."""
+    from test_lfm2_moe import _LiveCard
+    from opentpu.host.board import BoardBackend
+    from opentpu.host.offload import BoardDram
+    from opentpu.isasim import board_config
+    spec, W = _untied(tiny)
+    cfg = board_config(DRAM_BYTES=1 << 25)
+    card = _LiveCard.make(cfg, chash=True)
+    card.threaded = True
+    kw = dict(cap=256, cfg=cfg, rows=1, resident=True, experts=K)
+    isa = Engine(spec, W, **kw)
+    brd = Engine(spec, W, **kw, backend=lambda c, imgs: BoardBackend(c, imgs, transport=card),
+                 pool_file=tmp_path / "pool.bin")
+    assert brd.image.embed_host and isinstance(brd.server.mem, BoardDram)
+    assert brd.row_server.mem is brd.server.mem
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 6)]
+    for t in toks:
+        a, b = isa.step(t), brd.step(t)
+        assert card.error is None, card.error
+        assert np.array_equal(a.view(np.uint32), b.view(np.uint32)), brd.pos
+    t0, waits = int(np.argmax(a)), card.waits
+    got = brd.generate_card(t0, 8, stop_ids=[])
+    assert card.error is None, card.error
+    assert got == isa.generate_card(t0, 8, stop_ids=[]) and card.waits > waits
+    assert brd.row_server.seq >= 7 and isa.row_server.seq >= 7     # (the last token's post:
+                                                                    # served when the host looks)
+    assert brd.server.misses == isa.server.misses > len(toks)
 
 
 def test_the_card_generates_with_streamed_experts(tiny):
