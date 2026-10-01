@@ -1342,6 +1342,9 @@ class Engine:
         self._host_rows = getattr(self.image, "host_rows", None)
         self._rope = None if self.device_inputs else \
             [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
+        if pool_file is not None and getattr(self.image, "offload", None) is not None:
+            from .moe import open_pool      # its read into the page cache runs during the build
+            pool_file = open_pool(self.image.offload, pool_file)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)

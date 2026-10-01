@@ -59,7 +59,9 @@ LOOP min(left, 256 - tpos) times            (RLD of the device-computed count)
     each run-time argument c * var: RLD MUL of the state word into its register
     the step (the model's resident decode step, unchanged); the LM head hands each logits
         chunk to the sampler instead of storing it (m.lm_sink)
-    the sampler's token -> out[p + 1]
+    the model's post of the sampler's token, if it has one (m.post_token; see "Rows the
+        host keeps")
+    the token -> out[p + 1]
     stop: the token is a stop id, or the host set the stop word -> LOOP stop {HALT}
     the state: tok, tpos + 1 mod 256, ring + 1 mod K, left - 1
 ST the state block
@@ -107,6 +109,19 @@ the split frees the head, the sampler and its TMEM, and no more. The layers of o
 dimensions they do not from bucket 8 on (4197 and 4157 instructions), and neither does the
 resident decode there (4254, 4214). The fix for that is in the kernel: the DeltaNet head
 pairs in a loop at a run-time position.
+
+**Rows the host keeps.** Gemma 4 E4B keeps its PLE table on the host (`ple_host`,
+docs/gemma4_e4b.md), so the loop asks the host for each token's record:
+
+- after the sampler, the model's `post_token` posts the token's id to the image's PLE mailbox
+  (kernels/mailbox.py, in offload's format: the fence `WAITW served >= seq`, the id, then
+  seq + 1); in the split form this is in the second part;
+- the host's `RowServer` (opentpu/host/offload.py), which the backend polls during the run,
+  writes the record into row 0 of the PLE slot, then `served = seq`;
+- the next token's step waits for that (`WAITW served >= seq`, timeout 2^30 cycles) before
+  its PLE gather. The WAITW's footprint (all of DRAM) orders the record's reads after it.
+
+The other models have no post, so their programs are unchanged.
 
 ## Greedy
 
@@ -217,6 +232,10 @@ true, it writes the state's stop word, and the card halts after the token in fli
     buckets 1 / 2 / 3 / 4 / 5 / 6 / 7 / 8 (9..16 repeat 6..8): greedy 1,385 / 1,473 / 1,573 /
     1,617 / 1,661 / 1,741 / 1,785 / 1,829, its resident decode 51 fewer; sampled 1,667 /
     1,755 / 1,855 / 1,899 / 1,943 / 2,022 / 2,066 / 2,110;
+  - the PLE table on the host (tests/test_gemma4.py, tiny Gemma 4): the loop's tokens equal
+    those with the table on the card, greedy in one program and split and sampled, and the
+    RowServer serves each sampled token in order; the same beside a fake card that computes
+    while the host serves;
   - the sampled loop matching `reference_pick` in every mode, including greedy with the
     penalty;
   - chat turns, greedy and sampled, with resume and EOS;

@@ -152,6 +152,32 @@ def test_formats_by_fit(tiny, monkeypatch):
     assert (again.nbytes, again.lf, again.head_format) == (eng.image.nbytes, eng.image.lf, "fp4")
 
 
+def test_quantization_cache_policy(tiny, tmp_path, monkeypatch):
+    """The image build's cache of quantization jobs (gemma4._cached_job): 4-bit jobs only
+    (int8 quantizes about as fast as the cache reads it back), none with OTPU_IMAGE_CACHE=0,
+    and no write that would leave the disk under QCACHE_FLOOR free; a hit is the job's own
+    result."""
+    _, W, _ = tiny
+    monkeypatch.setenv("OTPU_QCACHE", str(tmp_path))
+    monkeypatch.delenv("OTPU_IMAGE_CACHE", raising=False)
+    monkeypatch.setattr(G, "_LOCAL_W", W)
+    name = "model.layers.0.mlp.gate_proj.weight"
+    job = lambda fmt: ("mat", name, None, 1.0, fmt, 128)            # noqa: E731
+    files = lambda: sorted(tmp_path.rglob("*.npz"))                 # noqa: E731
+    G._cached_job(("fp", job("int8")))
+    assert files() == []
+    a = G._cached_job(("fp", job("fp4")))
+    assert len(files()) == 1
+    b = G._cached_job(("fp", job("fp4")))                            # the hit
+    assert all(np.array_equal(x, y) for x, y in zip(a, b))
+    monkeypatch.setenv("OTPU_IMAGE_CACHE", "0")
+    G._cached_job(("fp", job("int4")))
+    monkeypatch.delenv("OTPU_IMAGE_CACHE")
+    monkeypatch.setattr(G, "QCACHE_FLOOR", 1 << 62)
+    G._cached_job(("fp", job("int4")))
+    assert len(files()) == 1
+
+
 @pytest.mark.parametrize("ple", ["int8", "fp4"])
 def test_records_roundtrip(ple):
     """pack_records / dequant_records: the device's gather values of a packed table."""

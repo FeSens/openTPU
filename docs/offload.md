@@ -845,23 +845,236 @@ On omarchy's i5-12600KF, with the DMA dropped (`tools/offload/slot_bench.py --nu
 about 3 ms per miss. `BoardDram` (opentpu/host/offload.py, used on any transport that DMAs from
 a worker thread, `dram_of`) does three things instead:
 - It writes an expert's two channel runs in one pass, `np.take` of 64-byte beats with CHASH's
-  swaps. It reads straight from the pool file's pages (the pool hands over its memmap rows) into
-  page-aligned staging buffers, then makes one DMA call per channel. No bounce.
+  swaps, from the pool's bytes into page-aligned staging buffers, then makes one DMA call per
+  channel. No bounce.
 - It keeps the host's own words in a shadow (`served` and the directory: the card only reads
   them) and writes them as whole 128-byte blocks, without a read.
 - One worker thread makes every DMA call in order while the server stages the next expert, so
   an expert's data lands before its entry and every entry before `served`. `ExpertServer.poll`
   flushes before it returns.
 
-The pool file is also read ahead into the page cache when the server starts
-(`posix_fadvise WILLNEED`), so the staging copy reads RAM. The host CPU per 1.67 MB expert on
-omarchy is 0.58-0.65 ms, overlapped with the DMA. tests/test_offload_server.py checks that the
-card's two channel memories end up byte for byte as `Board.write` leaves them, with and without
-CHASH. tests/test_lfm2_moe.py runs the fake card that computes beside the host with `BoardDram`.
+tests/test_offload_server.py checks that the card's two channel memories end up byte for byte as
+`Board.write` leaves them, with and without CHASH. tests/test_lfm2_moe.py runs the fake card that
+computes beside the host with `BoardDram`.
 
-The projection for the 35B. DMA at the link's 1.6-1.7 GB/s (docs/host.md: writes from 1 MiB per
-call, placed) takes 97 ms per token for its 155 MB. Each request's first staging copy, not
-overlapped, adds about 30 ms. The entries and `served`, as 64-byte DMA calls of about 12 us each,
-add about 6 ms. That is about 133 ms of serving per token instead of 370, so about 250 ms a
-token, or 4 tok/s instead of 2.0. The 8B, at 0.89 misses per token, gains about 5% (10.0 to about
-10.6 tok/s).
+The card ran it on 2026-09-30 (build B, the same references as section 10, all bit for bit):
+
+| | before (`Board.write`) | `BoardDram` |
+|---|---|---|
+| `slot_bench`, 1.67 MB experts from RAM, 3 misses a request | 3.46 ms an expert, 483 MB/s | 1.74 ms, 958 MB/s (the DMA thread 1.40 GB/s) |
+| `slot_bench`, 5.85 MB experts from RAM | 11.1 ms, 528 MB/s | 5.28 ms, 1109 MB/s (1.48 GB/s) |
+| 35B-A3B, 16 tokens | 2.02 / 2.04 tok/s | 2.75 / 2.80 tok/s |
+| 8B, 16 tokens | 8.61 / 9.38 tok/s | 9.34 / 10.04 tok/s |
+
+The 35B's token took 357 ms. The host spent 242 ms of it answering requests, of which the DMA
+thread wrote for 111 ms at 1.405 GB/s. The rest was staging, on the critical path because it was
+slower than the DMA it fed: 1.69 ms an expert on the card's host (an i7-4790) against 1.19 ms
+of DMA. Two things made it slow:
+- The pool's pages: `np.take` read the pool file's memmap. A page not yet in the process's map
+  costs a fault, and a page not in the page cache a read of the disk (about 115 MB/s on scattered
+  reads), with the GIL held: the DMA thread waits too. `posix_fadvise` only asks for the read:
+  nothing waits for it, or keeps the pages.
+- The gather itself: about 1 ms for 1.67 MB on the i7-4790, from a cold source.
+
+So now:
+- The pool file has a split format (`opentpu.host.offload.split_order`). Each 4 KiB of an
+  expert is stored as its two channel runs under CHASH, as they are when the block lands where
+  the card's chunk index has even parity above its low 5 bits. Where that parity is odd, the
+  two runs trade channels. `BoardDram` reads an expert with one `os.preadv` whose buffers are
+  the 2 KiB pieces of its staging runs, in file order and routed by each block's parity. There
+  is no gather, and the GIL is released for the copy. A slot that is not page-aligned, or a
+  card without CHASH, takes the slot's bytes as before. `MO.serve` writes new pool files in
+  this format (`<pool>.format`), and tools/offload/pool_split.py converts a file packed before.
+- A thread reads every packed expert of the pool file once. This is the host's RAM tier in the
+  page cache: for the 35B, 4333 experts, 7.2 GB. The Engine opens the pool (`moe.open_pool`)
+  before it builds the image, so the read runs during the build (9 minutes for the 35B). The
+  pages stay the kernel's to reclaim: nothing is pinned or locked, so other jobs on the host
+  cannot run out of memory because of it. `moe_card` logs the packed experts' bytes in the page
+  cache (mincore) when the pool opens, at load and at decode, and how much the thread had read.
+- When no DMA is in flight (a request's first miss), `BoardDram` reads the expert in parts
+  (`pieces`, 2 by default) and queues each part's DMA as soon as it is read, so the link starts
+  after the first part. Each part costs one more DMA call per channel, about 50 us each (session
+  2's two expert sizes: 1.67 MB at 1.395 GB/s and 5.85 MB at 1.484 GB/s fit 1.52 GB/s plus 50 us
+  a call). A later miss's read overlaps the DMA ahead of it, so it goes whole.
+- `BoardDram` keeps each slot's beat indices for the gather of the slot format, and writes the
+  host's own words without `Board.write`'s general path.
+
+On the card's host, with the DMA dropped (`slot_bench --null`, 1.67 MB experts, 3 misses a
+request; another job's card session ran beside it):
+
+| experts from | host ms per expert | of which staging |
+|---|---|---|
+| RAM, slot format, session 2's code | 1.38 | 1.00 |
+| RAM, slot format | 1.16 | 1.01 |
+| the pool file, slot format, in the page cache | 1.46 | 0.97, plus the read |
+| the pool file, split format, in the page cache | 0.67 | 0.57 |
+
+The 35B's projection. The DMA, at 1.19 ms an expert (session 2's 1.405 GB/s), is now the bound:
+111 ms per token for its 93 misses. Each request's first staging (about 0.6 ms, about 40
+requests a token) adds about 25 ms, and the entries and `served` about 5 ms. That is about 141
+ms of serving per token instead of 242, so a token of about 256 ms: 3.9 tok/s, against 2.75
+measured with session 2's code. The first staging in two parts exposes about 0.3 ms of it plus
+two DMA calls (0.1 ms): about 7 ms a token less, so about 4.0 tok/s. The 8B, at 0.89 misses
+per token, changes little.
+
+tests/test_offload_server.py checks the split format: the order is a permutation (a short last
+block included), and the records read back give the slot's bytes. `BoardDram` reading a
+split-format file leaves the card's channel memories as `Board.write` does, at slots of either
+page parity and off a page, with a request's first miss in 1 to 3 parts; a staging pair goes back
+only after its last part (one pair, a slow link). `preadv` resumes a short read. The conversion
+tool is covered too, and `PoolFile.resident` (on Linux: a file dropped from the cache, then
+warmed).
+tests/test_lfm2_moe.py runs the fake card with CHASH's map and a split-format pool file,
+bit for bit against the ISA simulator.
+
+### 10.2 Session 3: the split pool on the card
+
+The card ran 4ae8dac on 2026-10-01, 02:37-02:50, on build B (79c5707a, reloaded after another
+session's qualification run; the selftest passed before and after), against the same references:
+
+| run | session 2 (`BoardDram`, slot-format pool) | session 3 (split pool, RAM tier, parts) |
+|---|---|---|
+| 35B-A3B, 16 tokens | 2.75 / 2.80 tok/s | **3.79 / 3.87** tok/s (+38%) |
+| 8B, 160 tokens | 10.03 / 10.10 (session 1) | **10.64 / 10.71** (+6%) |
+
+(wall / device). Both runs give the simulator's tokens and prefill logits bit for bit. The 35B
+gives HF's 16 tokens; the 8B differs from HF at token 4, as before (fp4, section 9).
+
+The 35B's decode token is 258 ms, and the host answers requests for 153 ms of it (242 in
+session 2):
+- 92 ms waiting for the DMA queue;
+- 53 ms in the main thread: staging (0.53 ms an expert, overlapped but for each request's first
+  part) and the directory;
+- the rest, the mailbox reads and `served`.
+
+The DMA thread wrote 107 ms of it, at 1.455 GB/s: the host is now bound by the link. Section
+11.3's event model, with this host, predicted 3.94 tok/s.
+
+The RAM tier: after the card host's reboot, 0.41 GB of the 35B's 7.24 GB of packed experts was
+in the page cache when the pool opened. The warm thread had all of it in by the end of the image
+build (552 s), and all of it was still resident at decode. The 8B's 4.12 GB went from 0 to all.
+
+`slot_bench` on the card (3 misses a request, 1.67 MB experts):
+
+| experts from | ms per expert | the DMA thread |
+|---|---|---|
+| RAM, slot format (the gather) | 1.72 | 1.44 GB/s |
+| the split pool as found after the reboot (the disk) | 3.84 | 1.33 GB/s |
+| the split pool warm, the first miss whole | 1.66 | 1.42 GB/s |
+| the split pool warm, in 2 parts (the default) | 1.54 | 1.39 GB/s |
+| the split pool warm, in 4 parts | 1.58 | 1.35 GB/s |
+| the slot-format pool warm (preadv, then the gather) | 1.84 | 1.41 GB/s |
+
+What is left:
+- **Small DMA calls (host).** Each directory entry and `served` changes one 64-byte beat, but
+  goes to the card as a whole 128-byte block: two DMA calls of about 50 us. One call each
+  would save about 7 ms a token (*estimate*).
+- **The misses themselves.** 93 a token at 1.19 ms each is 111 ms of link time. The next
+  levers are a better replacement policy and more slots.
+
+## 11. Gemma 4 26B-A4B: design note
+
+This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
+note covers the model, how its layer maps onto `gemma4.py` and `moe.py`, the fit, and the
+expected rate. The code waits for review, and is split with the gemma4 agent (below).
+
+### 11.1 The model
+
+From `config.json` and transformers' `modeling_gemma4.py`:
+- 30 layers, hidden 2816, vocabulary 262,144, tied embedding, logits soft-capped at 30. No
+  per-layer embeddings (`hidden_size_per_layer_input` 0) and no KV-shared layers.
+- Attention:
+  - 25 sliding layers: window 1024, 16 query heads and 8 KV heads of 256.
+  - 5 full layers (every sixth): 16 query heads and 2 KV heads of 512, K = V. A full layer has
+    no `v_proj`. V is `v_norm` (unit RMSNorm) of the K projection's raw output; K is
+    `k_norm` then RoPE. The cache still holds both.
+- Every layer has a MoE block beside a dense MLP. With r the residual after attention:
+
+      dense = post_ffn_norm_1(mlp(pre_ffn_norm(r)))                  2112 wide, GELU-tanh
+      w, ids = router(r)
+      moe   = post_ffn_norm_2(sum_i w_i expert_ids[i](pre_ffn_norm_2(r)))
+      x     = (r + post_ffn_norm(dense + moe)) * layer_scalar
+
+  - The router: unit RMSNorm of r, times `router.scale` and H^-0.5, then `router.proj`
+    [128, H], a softmax over all 128, the top 8 renormalized, and each weight times
+    `router.per_expert_scale[id]`.
+  - Experts: 128 per layer, top 8, width 704, GELU-tanh. The checkpoint stores them fused per
+    layer: `experts.gate_up_proj` [128, 1408, 2816] (gate rows first) and `experts.down_proj`
+    [128, 2816, 704].
+- The checkpoint is 51.6 GB in bf16. omarchy has it whole. opentpu's copy in
+  ~/openTPU/models is an interrupted download: the first shard (49.9 GB) is missing, with a
+  17.9 GB `.incomplete` file in `.cache` dated 2026-09-30 00:07.
+
+### 11.2 How the layer maps
+
+On `moe.py`'s side (offload) no new card mechanism is needed:
+- **The expert slot.** `ExpertFormat` with F padded from 704 to 768. fp4 blocks run 128
+  along K, and gemma4's `ffn % 2D` check applies. The padding is zero rows of gate and up and
+  zero columns of down, which is exact: gelu(0) * 0 = 0. The expert is 3.45 MB instead of 3.16.
+- **Folds at packing, no card ops:**
+  - `per_expert_scale[e]` into expert e's W_down (it scales the expert's output linearly);
+  - `router.scale` * H^-0.5 into `router.proj`'s columns;
+  - `pre_ffn_norm_2`'s gain into the experts' gate and up columns.
+  The router and the experts then share one input: the unit RMSNorm of r, quantized once, as
+  `moe_ffn` does now. The emulation must first show that folding the gain before the 4-bit
+  quantization costs no accuracy against a second quantized input. If it does cost, the
+  experts get their own normed input (one more VPU pass per layer).
+- **The rule.** The softmax rule as written (`MoESpec.rule` "softmax"): the softmax of the 8
+  largest logits is the renormalized top 8 of the full softmax. The order is the same, ties to
+  the first.
+- **`MoESpec.act`.** GELU-tanh in the expert (`swiglu_down(act=gelu_tanh)`, as gemma4's dense
+  MLP).
+- **`moe_ffn` split into its parts.** It now returns `x + acc`. Gemma needs the experts' sum
+  alone (`post_ffn_norm_2` is an RMSNorm of the sum), and wants its dense MLP to run after
+  the request is posted, while the host streams. That is section 4's `d_post`, worth +14% in
+  the model. So `moe_ffn` takes `beside` (code to emit after the post, before the expert
+  loops) and can return the weighted sum without the residual. LFM2's and Qwen3.5's programs
+  stay word for word the same.
+
+On `gemma4.py`'s side (gemma4):
+- `Spec.from_hf` accepts `enable_moe_block` and `attention_k_eq_v`.
+- Global layers get their own KV head count (2 against 8) and K = V. ACT RAM holds 16 x 512
+  = 8192 (board: 128 blocks of 128).
+- The dense MLP is padded from 2112 to 2304 (`ffn % 2D`), or the check is relaxed to D (2176).
+- The layer calls `moe_ffn` with the dense MLP as `beside` and combines the two norms. The
+  image places the router weights and norms, and `Layout`'s slots after the rest.
+- The generate loop polls the expert server too (qwen3.Engine already wires every server).
+
+### 11.3 The fit and the rate
+
+On the card: the non-expert weights are 1.64 GB (survey, fp4 with the int8 head and
+embedding: 761 MB of it) plus 26 MB of dense padding. KV is about 0.2 GB: the 25 sliding
+rings of 1024 + a block, 8 x 256, and the 5 full layers at 4096 positions, 2 x 512. With
+0.3 GB kept for KV, I/O and programs, the rest holds the slots.
+
+`cachesim.py` replays the four 2048-token traces through the event model, with:
+- the per-layer LRU, warmed from the other texts' profile;
+- the expert at 3.45 MB (`--expert-bits 4.636`) and the dense MLP's 9.5 MB after the router;
+- the link at session 2's 1.4 GB/s, 50 us a DMA call, and a 450 us host lead (the first
+  staging in parts plus the poll).
+
+Calibration: the same model with session 2's effective host (staging-bound: 0.99 GB/s, 1.8
+ms lead) gives the 35B 2.84 tok/s, against 2.80 measured on the card (device). With the host
+as in 10.1 it gives 3.94.
+
+| gemma-4-26B-A4B | slots (per layer) | misses / token (of 240) | MB / token streamed | tok/s | all resident (bound) |
+|:--|--:|--:|--:|--:|--:|
+| int8 head | 682 (22.7) | 62.5 | 216 | 3.51 | 5.71 |
+| fp4 head (`--head-bits 4.25`) | 789 (26.3) | 53.2 | 184 | 4.19 | 6.72 |
+
+- The fp4 head pays twice: 369 MB fewer bytes a token, and 107 more slots. On E2B it is an
+  opt-in (cosine 0.974 -> 0.971, +14% decode), and its accuracy on the 26B is to be measured.
+- Prefetch still loses here (3.0-3.7 against 3.5-4.2 without).
+
+### 11.4 Host side and plan
+
+- **Host files.** opentpu gets a stripped checkpoint (the non-expert weights, about 7.4 GB in
+  bf16, 4.8 GB of it the text model's) and a split-format pool (3840 experts x 3.45 MB = 13.2 GB fp4), both made on omarchy
+  from the whole checkpoint. The RAM tier then reads 13.2 GB into a 31 GB host's page cache.
+- **Plan.**
+  1. Emulation on omarchy (float64 + fake quantization against HF bf16, a few prompts): the
+     folds and padding, fp4 against int8 head, greedy tokens.
+  2. `moe.py`'s parts (offload) and gemma4's attention and from_hf (gemma4), meeting at a
+     tiny random Gemma4-MoE model in tests. The layer composition is checked against HF and
+     the ISA simulator bit for bit, the card's side with the live fake card and a split pool.
+  3. The full model's ISA-simulator reference on omarchy, then a card session.

@@ -21,31 +21,56 @@ from types import SimpleNamespace
 
 import numpy as np
 
-SIZES = {"q35": 1671168, "lfm8b": 5853184}      # bytes per expert slot (ExpertFormat, fp4)
+SIZES = {"q35": 1671168, "lfm8b": 5849088}      # bytes per expert slot (ExpertFormat, fp4)
 
 
-def bench(board, slot: int, k: int, reqs: int, base: int, kind: str, pool_file=None) -> dict:
-    from opentpu.host.offload import LINE, BackendDram, BoardDram, ExpertServer, Layout
+def bench(board, slot: int, k: int, reqs: int, base: int, kind: str, pool_file=None,
+          reader="pread", warm=False, pieces=2) -> dict:
+    from pathlib import Path
+
+    from opentpu.host.offload import (LINE, SPLIT, BackendDram, BoardDram, ExpertServer, Layout,
+                                      PoolFile)
     E = k * (reqs + 1)                          # every id new: k misses per request
     lay = Layout.build(base, E, k, (E,), slot)
-    if pool_file:                   # a real pool file's packed experts (its pages), each
-        mm = np.memmap(pool_file, np.uint8, "r")          # memory its own E of them
-        mm = mm[:len(mm) // slot * slot].reshape(-1, slot)
+    if pool_file:                   # a real pool file's packed experts, each memory its own E
         done = np.fromfile(str(pool_file) + ".packed", np.uint8)
-        ids = np.nonzero(done)[0][(kind == "board") * E:][:E]
-        if len(ids) < E:
+        if Path(pool_file).stat().st_size != len(done) * slot:
+            raise ValueError(f"{pool_file}: not {len(done)} slots of {slot} bytes")
+        gids = np.nonzero(done)[0][(kind == "board") * E:][:E]
+        if len(gids) < E:
             raise ValueError(f"{pool_file}: fewer than {2 * E} packed experts")
-        pool = [mm[g] for g in ids]
+        fmt = Path(str(pool_file) + ".format")
+        split = fmt.exists() and fmt.read_text().strip() == SPLIT
+        if reader == "mmap":        # the memmap's rows (its pages; the split format's bytes
+            mm = np.memmap(pool_file, np.uint8, "r")         # as if the slot's: a rate only)
+            mm = mm[:len(mm) // slot * slot].reshape(-1, slot)
+            pool = [mm[g] for g in gids]
+        else:                       # MO.serve's reader, its warm thread first with --warm
+            pf = PoolFile(pool_file, slot, split)
+            if warm:
+                pf.warm(gids).join()
+            pool = None
     else:
         pool = np.random.default_rng(0).integers(0, 256, (E, slot), dtype=np.uint8)
     if kind == "board":
-        mem = BoardDram(SimpleNamespace(board=board), lay)
+        mem = BoardDram(SimpleNamespace(board=board), lay, pieces=pieces)
     else:
         mem = BackendDram(SimpleNamespace(write=lambda s, a, d: board.write(a, d),
                                           read=lambda s, a, n: board.read(a, n)))
-    srv = ExpertServer(mem, lay, lambda g: pool[g])
+    srv = ExpertServer(mem, lay, (lambda g: pool[g]) if pool is not None else
+                       (lambda g: pf.get(int(gids[g]))))
     srv.load(())
-    t_serve = 0.0
+    t_serve, tm = 0.0, {"stage": 0.0, "flush": 0.0}
+    for name in tm:                             # BoardDram: the staging, the waits for the DMA
+        f = getattr(mem, "write_slot" if name == "stage" else "flush", None)
+        if f is not None:
+            def timed(*a, _f=f, _n=name):
+                t0 = time.perf_counter()
+                try:
+                    return _f(*a)
+                finally:
+                    tm[_n] += time.perf_counter() - t0
+            setattr(mem, "write_slot" if name == "stage" else "flush", timed)
     for seq in range(1, reqs + 1):
         ids = [(seq - 1) * k + i for i in range(k)]
         board.write(lay.row, np.array(ids + [0] * (LINE // 4 - k), np.float32))
@@ -59,6 +84,9 @@ def bench(board, slot: int, k: int, reqs: int, base: int, kind: str, pool_file=N
              ms_per_request=round(1e3 * t_serve / reqs, 3), mb_s=round(mb / t_serve))
     if kind == "board":
         r["dma_gb_s"] = round(mem.dma_bytes / mem.dma_s / 1e9, 3) if mem.dma_s else None
+        r["direct"] = mem.direct                # read from the file into the runs
+        r["pieces"] = mem.pieces
+        r.update({f"{x}_ms_per_expert": round(1e3 * v / (reqs * k), 3) for x, v in tm.items()})
     return r
 
 
@@ -72,6 +100,13 @@ def main():
     ap.add_argument("--sizes", nargs="*", default=list(SIZES))
     ap.add_argument("--pool", help="read the experts from this pool file (one --sizes entry: "
                                    "its slot size), not host RAM")
+    ap.add_argument("--reader", choices=("pread", "mmap"), default="pread",
+                    help="--pool: MO.serve's reader (os.preadv; a split-format file straight "
+                         "into the channel runs), or the memmap's rows")
+    ap.add_argument("--pieces", type=int, default=2,
+                    help="BoardDram: the parts of an expert read when no DMA is in flight")
+    ap.add_argument("--warm", action="store_true", help="--pool pread: read the experts into "
+                                                        "the page cache first (the warm thread)")
     a = ap.parse_args()
     from opentpu.host.board import Board
     if a.null:
@@ -95,7 +130,7 @@ def main():
             for kind in ("backend", "board"):
                 print(json.dumps(dict(size=s, chash=board.chash,
                                       **bench(board, SIZES[s], a.k, a.reqs, a.base, kind,
-                                              a.pool))),
+                                              a.pool, a.reader, a.warm, a.pieces))),
                       flush=True)
     finally:
         board.close()

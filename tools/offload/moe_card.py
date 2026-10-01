@@ -88,7 +88,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     srv = eng.server
     srv.history, per_req = [], []               # each request's ids and misses
     serve, pool_of, mem = srv.serve, srv.pool, srv.mem
-    tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0, stage=0.0, flush=0.0)  # host's s
+    tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0, stage=0.0, flush=0.0,   # host's s
+              poll=0.0)
 
     def timed(part, f):
         def g(*a):
@@ -109,13 +110,34 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if hasattr(mem, "write_slot"):              # BoardDram: staging (the main thread), and
         mem.write_slot = timed("stage", mem.write_slot)     # waiting for the DMA thread
         mem.flush = timed("flush", mem.flush)
+    if callable(getattr(eng.backend, "host", None)):
+        polled = eng.backend.host
+
+        def served():                           # the polls that served a request: the card
+            t0 = time.perf_counter()            # waits from its post to served (with the
+            r = polled()                        # poll's own latency)
+            if r:
+                tm["poll"] += time.perf_counter() - t0
+            return r
+        eng.backend.host = served
+    warm, pf = getattr(srv, "pool_warm", None), getattr(srv, "pool_file", None)
+
+    def warm_at():                              # the pool file's packed experts: read by the
+        if warm is None:                        # warm thread, and in the page cache
+            return None
+        r = pf.resident(pf.ids)
+        return dict(read_gb=round(warm.bytes / 1e9, 2), done=not warm.is_alive(),
+                    resident_gb=None if r is None else round(r / 1e9, 2))
+    warm_load = warm_at()
     ids = ref["ids"]
     t = time.time()
     lg = eng.prefill(ids if host_loop else ids[:-1])
     prefill_s = time.time() - t
+    warm_decode = warm_at()
     lg_sha = hashlib.sha256(np.asarray(lg, np.float32).tobytes()).hexdigest()[:16]
     tm0, b0, st0 = dict(tm), srv.bytes, len(eng.stats)
     dma0 = (getattr(mem, "dma_s", 0.0), getattr(mem, "dma_bytes", 0))
+    direct0 = getattr(mem, "direct", 0)         # experts read from the file into their runs
     t = time.time()
     top = []                    # host loop: the device's 8 best (id, logit) per step
 
@@ -135,7 +157,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if hasattr(mem, "dma_s"):                   # the DMA thread's own time and rate
         ds, db = mem.dma_s - dma0[0], mem.dma_bytes - dma0[1]
         host.update(dma_s=round(ds, 3), dma_gbs=round(db / ds / 1e9, 3) if ds else None,
-                    memory=type(mem).__name__)
+                    memory=type(mem).__name__, direct=mem.direct - direct0)
     khz = (getattr(eng.backend, "info", None) or {}).get("core_khz")
     cyc = sum(s.get("cycles", 0) for s in eng.stats[st0:])       # (the simulator: none)
     dev_s = cyc / (khz * 1e3) if khz else None
@@ -174,6 +196,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 tok_s_wall=round(len(got) / gen_s, 2) if gen_s else None,
                 tok_s_device=round(len(got) / dev_s, 2) if dev_s else None,
                 host_decode_s=host,
+                pool_warm=dict(packed_gb=round(len(pf.ids) * pf.slot / 1e9, 2),
+                               split=pf.split, resident_gb_at_open=None
+                               if pf.resident_at_open is None else
+                               round(pf.resident_at_open / 1e9, 2),
+                               at_load=warm_load, at_decode=warm_decode) if warm else None,
                 bytes_per_token_decode=round(host["bytes"] / max(1, len(got))),
                 top=top or None)
 
