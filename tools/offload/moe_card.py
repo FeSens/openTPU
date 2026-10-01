@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
@@ -64,13 +65,16 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          cfg_file: str | None = None, on_card: bool = False, policy: str = "lfu",
          embed_host: bool | None = None, hints: bool | None = None,
          hint_part: int | None = None, hint_drop: bool = False,
-         hint_trace: str | None = None) -> dict:
+         hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
+         formats: str | None = None) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
     from opentpu.isasim import board_config
     from opentpu.llm import load_spec
     from opentpu.llm.qwen3 import Engine, LazyWeights
+    if formats is not None:                     # per-kind formats (Gemma 4: "experts=fp4"
+        os.environ["OTPU_FORMATS"] = formats    # beside int8 layers; opentpu/llm/formats.py)
     spec = load_spec(model)                     # a MoE's Spec.embed: "int8" (from_hf)
     if embed is not None:
         spec = replace(spec, embed=embed)
@@ -80,7 +84,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     cfg = pickle.loads(Path(cfg_file).read_bytes()) if cfg_file else board_config()
     ekw = {} if embed_host is None else {"embed_host": embed_host}   # (default: the image's)
     if not experts:
-        experts = fit_experts(spec, cfg, cap, wformat="fp4", head_format="int8", lookup=True,
+        experts = fit_experts(spec, cfg, cap, wformat=wformat, head_format=head_format,
+                              lookup=True,
                               **ekw)
     backend = "isa"
     if on_card:
@@ -89,7 +94,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         backend = lambda c, imgs: BoardBackend(c, imgs, transport=tr,      # noqa: E731
                                                model=Path(model).name)
     t = time.time()
-    eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat="fp4", head_format="int8",
+    eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend, **ekw)
     load_s = time.time() - t
     srv = eng.server
@@ -264,6 +269,9 @@ def main():
     ap.add_argument("--embed-table", choices=("host", "card"), default=None,
                     help="an untied int8 embedding table on the host (embed_host: the card asks "
                          "for each token's row; a MoE's default) or on the card")
+    ap.add_argument("--wformat", default="fp4", help="the weights' format (the experts' too)")
+    ap.add_argument("--head-format", default="int8", help="the LM head's format")
+    ap.add_argument("--formats", help="per-kind formats, OTPU_FORMATS (Gemma 4: experts=fp4)")
     ap.add_argument("--hint-part", type=int, default=0,
                     help="KiB of a hinted expert per idle poll (default: ExpertServer's 512)")
     ap.add_argument("--hint-drop", action="store_true",
@@ -283,7 +291,7 @@ def main():
              a.cfg, a.card, a.policy,
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
-             a.hint_trace)
+             a.hint_trace, a.wformat, a.head_format, a.formats)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
