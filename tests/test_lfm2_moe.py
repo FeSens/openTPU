@@ -133,8 +133,8 @@ def test_padded_expert_width(tiny):
 
 def test_moe_ffn_beside_and_no_residual(tiny, monkeypatch):
     """moe_ffn's `beside` (work emitted right after the request is posted: Gemma 4's dense MLP,
-    while the host streams) and residual=False (the caller adds x): with work beside every MoE
-    layer, decode on the ISA simulator and on the live fake card (misses served during the
+    while the host streams), residual=False (the caller adds x) and y_first (the experts'
+    outputs placed first in TMEM): with work beside every MoE layer, decode on the ISA simulator and on the live fake card (misses served during the
     runs) gives the plain programs' logits bit for bit."""
     from opentpu import language as ol
     from opentpu.host.board import BoardBackend
@@ -152,7 +152,7 @@ def test_moe_ffn_beside_and_no_residual(tiny, monkeypatch):
             n[0] += 1
             t = ol.empty((1, x.cols))
             t.set(x * 2.0 + 1.0)
-        return x + real(x, lw, mo, dev, eps, beside=beside, residual=False)
+        return x + real(x, lw, mo, dev, eps, beside=beside, residual=False, y_first=True)
     monkeypatch.setattr(MO, "moe_ffn", moe_ffn)
     card = _LiveCard.make(cfg)
     for backend in ("isa", lambda c, imgs: BoardBackend(c, imgs, transport=card)):

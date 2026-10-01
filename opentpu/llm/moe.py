@@ -245,7 +245,7 @@ def route(logits: np.ndarray, bias: np.ndarray | None, mo: MoESpec):
 
 # ---------------------------------------------------------------------------- the device
 def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
-            residual: bool = True):
+            residual: bool = True, y_first: bool = False):
     """x + the MoE FFN of one token (module docstring). lw: the layer's g_post [H], router
     QTensor [E, H] ([E + 1, H] with a shared expert: its gate is row E), ebias Tensor [E]
     (sigmoid_bias), gbase Tensor [1] (j * E as fp32), and with a shared expert its SwiGLU
@@ -255,11 +255,14 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     beside(): emits work that needs no expert (Gemma 4's dense MLP) right after the request is
     posted, so that it runs while the host streams the missing experts (docs/offload.md 5.3);
     moe_ffn's register is free during it. residual=False: the FFN's output without x (Gemma 4
-    norms the experts' sum before its residual)."""
+    norms the experts' sum before its residual). y_first: the experts' [k, H] outputs take
+    their TMEM before the router's input does (Gemma 4 26B-A4B: 22,544 words, which only the
+    free space before the step's later tiles holds)."""
     b = current()
     if ol.num_programs() != 1:
         raise CompileError("moe_ffn runs on one slice")
     E, k, H = mo.E, mo.k, x.cols
+    y = ol.empty((k, H)) if y_first else None
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
     lg = ol.dot(xs, lw.router)
     sc, sel = ol.empty((E,)), ol.empty((E,))
@@ -314,7 +317,8 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     gid = ol.empty((k,))
     gid.set(ids + ol.load(lw.gbase))                    # global ids: j * E + index
     pe[OFF, :].set(gid * 8.0)                           # their directory entries' offsets
-    y = ol.empty((k, H))
+    if y is None:
+        y = ol.empty((k, H))
     for i in range(k):                                  # y's rows (ol.empty may pad them)
         pe[ROW, i:i + 1].set(float(i * y.rs))
     # the fence, then the request: seq + 1 and the ids
