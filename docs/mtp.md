@@ -330,24 +330,121 @@ for n-gram and about 0.05 for MTP with a 32K fp4 draft head (10 MB layer + 17 MB
 | Qwen3.5-0.8B, MTP + 32K head, VOPs beside the DSTEPs (hardware; c_2 = 1.12, estimated) | 1.17 | 0.17 | 1.28x | 1.45x | 1.58x |
 | Qwen3.5-0.8B, n-gram | 1.21 | 0.21 | 1.24x | 1.40x | 1.53x |
 
-All projected; a is unknown for our models until phase 0 measures it.
+These are projections; section 7.1 measures a.
 - The one published number is DeepSeek-V3's: 85-90% acceptance of its MTP's second token.
 - n-gram's a counts only iterations that found a draft. The others cost exactly a plain step.
+  So its rows above overstate it: most tokens get no draft (section 7.1).
 - Qwen3.5's per-row DeltaNet cost makes it the least favourable model per row. The rows
   kernel's overlap is in (section 1). What is left is the stream engine's work, which the
   DSTEPs and the VOPs share. A multi-token DSTEP (docs/stream.md 5.2: T tokens per state
   pass) would also cut the state traffic: the state is read once for both rows and written
   once per row. Its datapath time stays per row.
 
+### 7.1 Measured acceptance (phase 0)
+
+`tools/mtp_accept.py` measures a offline, on the Hugging Face model on omarchy (float32;
+bfloat16 for Qwen3.5-4B and Gemma 4 E2B). It uses no card and no simulator.
+
+- **Prompts.** There are nine, each through the model's chat template with thinking off:
+  - three chat questions;
+  - three code tasks, one of them an edit of given code;
+  - three summaries of a given text: Pride and Prejudice's first chapter (tools/data) and two
+    short texts in the tool.
+
+  Each runs for up to 256 tokens, greedy and sampled. Sampling uses otpu-chat's defaults;
+  Gemma's and SmolLM3's come from their generation_config.json. omarchy's Gemma 4 E2B is the
+  pre-trained checkpoint, which has no chat template, so its prompts are a plain
+  "User: ... Assistant:" dialogue.
+- **Drafts.** Every generated token after the first gets drafts from the tokens before it:
+  - n-gram (6.2) at g = 2, at g = 3, and "3>2": g = 3 where it matches, else g = 2;
+  - Qwen3.5's MTP head (6.1), teacher-forced over the sequence, with five LM heads: the full
+    float head, its fp4 copy, and fp4 heads over the 16K, 32K and 64K lowest ids. A BPE
+    vocabulary numbers its tokens by merge order, which follows frequency: the 32K lowest ids
+    cover 94% of the tokens the models generate here (16K: 88%, 64K: 97%). The activations
+    go through int8, as the card's QACT.
+- **Acceptance.** Greedy: the draft equals the model's token. Sampled: the probability p(d)
+  under the processed distribution (5.2), averaged.
+- **Speedup.** The k = 1 loop's expected cost over each sequence, with every token emitted
+  once:
+  - a plain step costs 1;
+  - an iteration with a draft costs c_2 + c_draft and emits two tokens when the draft is
+    accepted;
+  - the token right after an accepted draft gets no iteration of its own. n-gram's hits come in
+    runs, so per-token rates overstate its gain.
+
+  c_2 is 1.21 for every model (Qwen3.5-0.8B's, section 1). c_draft is the MTP layer plus its
+  head, as a share of a 0.8B token: 0.035 / 0.05 / 0.08 for the 16K / 32K / 64K heads, 0.25
+  for the full fp4 head, 0.46 for the full int8 head. It is 0 for n-gram.
+
+**Qwen3.5's MTP head** (all nine prompts; acceptance, then speedup):
+
+| draft LM head | c_draft | 0.8B greedy | 0.8B sampled | 2B greedy | 2B sampled | 4B greedy |
+|---|---|---|---|---|---|---|
+| full (int8 on the card) | 0.46 | 0.76, 1.04x | 0.71, 1.01x | 0.79, 1.06x | 0.76, 1.04x | 0.81, 1.07x |
+| full fp4 | 0.25 | 0.76, 1.19x | 0.71, 1.15x | 0.78, 1.20x | 0.75, 1.19x | 0.80, 1.22x |
+| fp4, 16K ids | 0.035 | 0.71, 1.37x | 0.65, 1.31x | 0.72, 1.38x | 0.69, 1.36x | 0.73, 1.37x |
+| **fp4, 32K ids** | 0.05 | 0.73, 1.36x | 0.67, 1.32x | 0.74, 1.38x | 0.72, 1.36x | 0.76, 1.38x |
+| fp4, 64K ids | 0.08 | 0.75, 1.34x | 0.69, 1.29x | 0.76, 1.36x | 0.74, 1.34x | 0.79, 1.37x |
+
+By prompt kind, 32K head, greedy (0.8B / 2B / 4B):
+- chat: 0.64, 1.29x / 0.66, 1.31x / 0.70, 1.33x;
+- code: 0.87, 1.49x / 0.88, 1.49x / 0.89, 1.50x;
+- summaries: 0.68, 1.32x / 0.70, 1.37x / 0.70, 1.34x.
+
+The 2B and 4B columns use the 0.8B's c_2 and c_draft. A bigger model's MTP layer and draft
+head are a smaller share of its token, so their c_draft is lower; their c_2 is not
+measured.
+
+**n-gram, 3>2** (all nine prompts; greedy / sampled):
+
+| model | tokens with a draft | accepted | speedup | summaries, greedy | code, greedy |
+|---|---|---|---|---|---|
+| Qwen3-0.6B | 0.36 / 0.35 | 0.60 / 0.60 | 1.08x / 1.09x | 1.18x | 1.08x |
+| LFM2.5-230M | 0.26 / 0.22 | 0.53 / 0.53 | 1.05x / 1.04x | 1.09x | 1.09x |
+| LFM2-2.6B | 0.24 / 0.22 | 0.47 / 0.46 | 1.04x / 1.03x | 1.04x | 1.07x |
+| SmolLM3-3B | 0.28 / 0.26 | 0.50 / 0.49 | 1.05x / 1.05x | 1.07x | 1.08x |
+| Gemma 4 E2B (pre-trained) | 0.61 / 0.38 | 0.80 / 0.55 | 1.23x / 1.09x | 1.52x | 1.18x |
+| Qwen3.5-0.8B | 0.34 / 0.27 | 0.54 / 0.49 | 1.07x / 1.05x | 1.09x | 1.08x |
+| Qwen3.5-2B | 0.27 / 0.25 | 0.47 / 0.46 | 1.04x / 1.04x | 1.08x | 1.06x |
+
+g = 2 alone is within 0.01x of 3>2. g = 3 alone drafts less often (11-22% of the tokens) and
+gains less (1.03-1.07x).
+
+What follows:
+
+- **Qwen3.5 gets the MTP drafter, with the 32K fp4 draft head.** It gives 1.36x / 1.38x greedy
+  on the 0.8B / 2B, 1.32x / 1.36x sampled, and 1.49x on code.
+  - Between 16K and 64K the head size hardly matters. 32K is the middle. 64K's extra
+    acceptance does not pay for its larger head. 16K covers only 88% of the tokens and loses
+    about as much acceptance as its smaller head saves.
+  - The full heads cost more per draft than their acceptance returns. The int8 one comes to
+    1.04x.
+  - This matches section 7's a = 0.7 column (1.35x).
+- **MTP beats n-gram even where n-gram matches.** At the tokens where g = 3 matches, the 32K
+  MTP head is accepted 0.78 (0.8B) and 0.82 (2B), against n-gram's 0.58 and 0.54. Qwen3.5
+  needs no n-gram.
+- **On the chat checkpoints, n-gram gives 1.03-1.09x on average** and up to 1.18x on
+  summaries.
+  - Only 22-36% of tokens get a draft, and about half of those are accepted.
+  - A token without a draft costs a plain step, so it never loses (1.00x on chat at worst).
+    That makes it safe to leave on, but it is a small win at c_2 = 1.21.
+  - At Qwen3's measured c_2 of 1.16 it gives 1.10x, and at LFM2.5's 1.09 it gives 1.07x.
+  - Gemma 4 E2B's numbers are higher because its pre-trained checkpoint copies: greedy, it
+    repeats the request and the text it was asked to summarize. That makes 1.52x on summaries
+    a copy rate, not a summary. A chat checkpoint (gemma-4-E2B-it) needs its own run.
+- **With VOPs beside the DSTEPs** (c_2 about 1.12, section 1), the 0.8B's 32K MTP comes to
+  1.47x greedy and 1.42x sampled.
+- **Caveats:**
+  - The float model stands in for the card's fp4 one.
+  - Nine prompts give a few hundred drafts per kind.
+  - c_2 is measured only for Qwen3.5-0.8B, Qwen3 and LFM2.5.
+
 ## 8. Plan
 
-0. **Acceptance study, no card.**
-   - For Qwen3.5-0.8B and 4B, run the MTP head (from the checkpoint, in numpy or torch on
-     omarchy) with the full head, the fp4 head and 16K / 32K / 64K draft heads.
-   - For every model, run the n-gram drafter at g = 2 and 3.
-   - Use the qual prompts plus a chat / code / summarization set, at the greedy and sampled
-     defaults.
-   - Output: a per model and drafter, and the choice of draft head.
+0. **Acceptance study, no card:** done (section 7.1, `tools/mtp_accept.py`).
+   - Qwen3.5's MTP head with a 32K fp4 draft head: accepted 0.73 / 0.67 (0.8B, greedy /
+     sampled), 1.36x / 1.32x at c_2 = 1.21. The 2B is about the same.
+   - n-gram for the other models: 1.03-1.09x.
 1. **The rows kernel's DSTEP overlap for Qwen3.5** (section 1): done. `_rows_pipelined` runs
    two pairs ahead, as `_deltanet_dstep` does: the 2-row run -1.9% (1.21x), prefill -2.2% at
    6 rows. The rest is the stream engine's work (section 1).
