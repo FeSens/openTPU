@@ -778,7 +778,52 @@ host's bit for bit.
    - the protocol's corner cases (section 5.7);
    - LFM2.5-8B-A1B token-exact against HF (greedy), with the card's 4 GiB DRAM.
 5. **Then** Gemma 4 26B-A4B on the `gemma4` port's layers, and Qwen3.5-35B-A3B on Qwen3.5's.
-6. **The card** (through team-lead):
+6. **The card** (through team-lead), done (section 10):
    - `WAITW` in RTL (autodecode) and its ordering check;
    - the misses' DMA while the core runs;
    - tok/s against the model above.
+
+## 10. On the card
+
+The production bitstream (build B, 79c5707a, 133.33 MHz, DDR3-1066, WAITW and the generate
+loop) ran path (a) on 2026-09-30. The host side ran on opentpu, with no reload. The models were
+LFM2.5-8B-A1B and Qwen3.5-35B-A3B, fp4 with an int8 head, and every token was picked by the
+card's generate loop. The experts streamed from a packed pool file (each expert in the card's
+slot format, packed once) into the per-layer LRU slots. The host only read the file and wrote
+DRAM:
+
+    python3 tools/offload/moe_card.py MODEL --check hf.json --cfg dev.pkl --pool pool.bin --card
+
+The reference for each run is the ISA simulator's run with the bitstream's configuration (`--cfg`:
+PAIR, DSTEP and STREAM on). The configuration changes the arithmetic: the 8B's 160-token run
+with `isasim.board_config()` leaves these tokens at token 111. The card gave the simulator's
+tokens, the same prefill logits (sha256) and the same misses per token:
+
+| run | against the simulator | against HF | tok/s (wall / device) | hit rate | misses per decode token | MB streamed per decode token | host serving per token |
+|---|---|---|---|---|---|---|---|
+| 8B, 16 tokens, 28 slots | bit for bit | token-exact | 8.61 / 9.38 | 96.4% | 1.47 | 8.4 | 18.8 ms |
+| 8B, 160 tokens ("Describe the water cycle ...") | bit for bit | the first 4 (fp4, section 9) | 10.03 / 10.10 | 98.5% | 0.89 (0.65 in the second half) | 5.2 | 10.1 ms |
+| 35B-A3B, 16 tokens, 32 slots | bit for bit | token-exact | 2.02 / 2.04 | 62.4% | 95.9 (113.9) | 155 | 370 ms |
+
+- The device rate is the token count over the run's cycles, which include the WAITW stalls on
+  misses. Wall time is within 1% of device time: the host's polling loop costs nothing visible.
+- The 8B decodes at 99 ms per token, of which the host's serving is about 10 ms. Section 4's
+  model gives 12.7 tok/s on these routes; models3's dense runs measured about 13% under the bank
+  model too.
+- The 35B decodes at 490 ms per token, of which the serving is 370 ms: the run is streaming-bound.
+  - The PCIe writes take 285 ms. 155 MB goes at 544 MB/s, against the 1.37 GB/s selftest
+    bandwidth: each expert is one synchronous 1.67 MB write, then its 8-byte directory entry.
+  - The pool reads take 89 ms (the 17 GB file, from the page cache and the disk).
+  - Compute is the remaining 120 ms, so about 8 tok/s is the ceiling with the streaming
+    hidden. At the selftest's write rate the writes alone would take about 115 ms per token.
+- On the simulator, the last request of an 8B run (all hits) is posted but never served: the
+  simulator's host hook runs only while a WAITW blocks. On the card the host serves it, so the
+  card counts one more request (4 more hits).
+- The checkpoints on the card's host are the routed experts' complement (1.4 GB for the 8B, 4.6
+  GB for the 35B). The image build reads no expert; the pool file holds them.
+
+The first run found a bug. The Engine's compile worker process, which the card's backend
+compiles ahead in, built its image without the MoE's `experts`: every expert resident, over
+DRAM (4568 MiB for 4096). It failed at the first prefill step, before the card ran anything.
+The worker now builds the image with the Engine's own keywords (`Engine._image_kw`), and
+tests/test_lfm2_moe.py checks it. The ISA simulator compiles in-process and never ran into it.
