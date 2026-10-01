@@ -98,6 +98,12 @@ matches for 12 tokens. At token 13 HF takes ` a` and the device ` also`. That is
 in the emulation of these formats ` a` leads by 0.028 before the cap, against 0.98 in float
 and 1.17 in int8.
 
+After the 900 tokens of *Pride and Prejudice* (ISA simulator, cap 1024, these formats), the
+device follows HF for 4 tokens. At the 5th, HF takes ` such`, the device ` that`. The model is
+unsure there: in float ` such` leads ` that` by only 0.83, at logits near 7. Even int8 layers
+and head pick ` it` (` such` 0.18 below). The emulation of these formats has ` it` 4.90,
+` that` 4.42, ` such` 4.29.
+
 **Mixes that fit 4 GiB.** int8 everywhere is 4.557 GiB, so a mix must save 598 MB. Each of
 these does:
 
@@ -260,7 +266,7 @@ agreed with offload.
    steps and prefill runs.
 2. **Weight formats per layer** (done): `gemma4.layer_formats`, and the scan and mixes above.
 3. **E4B on the ISA simulator against Hugging Face in the default formats.** Greedy, 3
-   prompts x 24 tokens as for E2B (done: 2 of 3 identical, above), then the 900-token text. The HF reference needs 12-13 GB if
+   prompts x 24 tokens as for E2B, then the 900-token text (done, above). The HF reference needs 12-13 GB if
    its PLE rows are read on demand (hf_lean.py with a lazy per-layer embedding), so it runs on
    omarchy.
 4. **RTL cycles** (done, above), on the DDR3-1066 bank model and the LiteDRAM co-simulation.
