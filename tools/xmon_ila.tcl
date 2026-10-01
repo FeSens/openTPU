@@ -28,8 +28,15 @@ foreach ila [get_hw_ilas -of_objects $dev] {
   puts "ILA $ila: $cell"
   foreach p [get_hw_probes -of_objects $ila] { puts "  probe [get_property NAME $p]" }
   if {[string match *u_ila_x* $cell]} { set key x; set pat ix_ev } else { continue }
-  set ev [get_hw_probes -quiet -of_objects $ila -filter "NAME =~ *$pat*"]
-  if {[llength $ev] != 1} { error "ILA $cell: no single probe *$pat* (got '$ev')" }
+  # the events probe is the ILA's probe0, ix_ev (synthesis may rename its net: by port, then by
+  # name, then by width, the only 16-bit probe)
+  set ev {}
+  foreach f [list {PROBE_PORT == probe0} "NAME =~ *$pat*" {WIDTH == 16}] {
+    if {[catch {get_hw_probes -quiet -of_objects $ila -filter $f} ev]} { set ev {} }
+    if {[llength $ev] == 1} { puts "events probe: $ev ($f)"; break }
+  }
+  if {[llength $ev] != 1} { error "ILA $cell: no events probe (probe0, *$pat*, 16 bits)" }
+  report_property $ev
   set_property CONTROL.TRIGGER_MODE BASIC_ONLY $ila
   set_property CONTROL.CAPTURE_MODE BASIC $ila
   set_property CONTROL.DATA_DEPTH 4096 $ila
