@@ -175,6 +175,33 @@ def test_build_goes_through_the_image_cache(tiny, tmp_path, monkeypatch):
     assert np.array_equal(first, again) and len(list(tmp_path.rglob("*.npz"))) == n
 
 
+def test_build_workers(tiny, tmp_path, monkeypatch):
+    """Image.build from a checkpoint (Weights) quantizes in worker processes: the image is the
+    in-line build's, byte for byte; a worker's job returns the opentpu.qcache counts it made,
+    which the parent adds to its own (prebuild prints them)."""
+    from safetensors.numpy import save_file
+    from opentpu import qcache as QC
+    _, W, spec = tiny
+    save_file({"model.language_model." + k[6:]: np.ascontiguousarray(v) for k, v in W.items()
+               if k.startswith("model.")}, str(tmp_path / "model.safetensors"))
+    monkeypatch.setenv("OTPU_IMAGE_CACHE", "0")
+    monkeypatch.setenv("OTPU_BUILD_JOBS", "2")
+    img = spec.image(_cfg(), 1024, wformat="fp4", head_format="int8")
+    want = img.build(W)
+    got = img.build(G.Weights(tmp_path))
+    assert len(got) == len(want) and all(np.array_equal(a, b) for a, b in zip(got, want))
+    monkeypatch.setenv("OTPU_IMAGE_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(QC, "MIN_ELEMS", 0)
+    monkeypatch.setattr(QC, "FREE_FLOOR", 0)
+    monkeypatch.setattr(G, "_JOB_W", W)
+    job = ("mat", "model.layers.0.mlp.gate_proj.weight", None, 1.0, "fp4", 128)
+    out, n = G._worker_job(job)
+    assert n == {"hit": 0, "miss": 1, "write": 1, "skip": 0}
+    again, n = G._worker_job(job)
+    assert n == {"hit": 1, "miss": 0, "write": 0, "skip": 0}
+    assert all(np.array_equal(a, b) for a, b in zip(out, again))
+
+
 @pytest.mark.parametrize("ple", ["int8", "fp4"])
 def test_records_roundtrip(ple):
     """pack_records / dequant_records: the device's gather values of a packed table."""
