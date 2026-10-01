@@ -1121,6 +1121,37 @@ run gave the ISA simulator's tokens and prefill logits bit for bit (`q35ref16`).
 - The polls' reads: 25-27 us each with `BoardDram.read`'s beat read, against 90 us (12.6). The
   link ran at 1.41 GB/s while busy.
 
+### 10.5 Session 9: the paired experts
+
+moe-pair (main d29bfe9) runs the experts' 4-bit MMs paired, as the layers' own; before it every
+expert ran at one block a cycle (its slot address, a register, failed the pairing's alignment
+test). The co-simulation gave LFM2.5-8B +35-40% and the link-bound 35B and 26B +3-4%. Card
+session 9 (2026-10-01, the production build after B, 72256074: B with xdma_rnum_rids 8, Gen1;
+`tools/offload/sessions/session9.sh`, the first run of the repo's `card_moe.sh`) ran both trees
+in one session, A B A B: A main 7d879e6 against its references, B d29bfe9 against the ISA
+simulator's references remade at d29bfe9 (`reference.sh` on omarchy). All 12 runs gave their
+tree's tokens and prefill logits bit for bit.
+
+| tok/s (two runs) | A, unpaired | B, paired | B / A |
+|:--|:--|:--|:--|
+| LFM2.5-8B-A1B, 160 tokens, 28 slots a layer | 10.65, 10.67 | 14.49, 14.53 | **+36.1%** |
+| Qwen3.5-35B-A3B, 128 tokens, the table on the host | 3.40, 3.35 | 2.78, 2.21 | (the host's) |
+| gemma-4-26B-A4B, 128 tokens | 2.69, 2.66 | 2.40, 2.37 | (other tokens) |
+
+- LFM2.5-8B decodes from its slots (0.9 misses a token): its cycles a run fell from 1.98e9 to
+  1.46e9, the co-simulation's gain.
+- The 35B's two trees missed the same experts (102.7 a token) and moved them at the same rate
+  (DMA 16.0-16.3 s, 1.34-1.37 GB/s), but B's staging (the main thread's reads of the pool into
+  the staging buffers, and its waits for a free pair) took 20.2 and 32.3 s against A's 10.5 and
+  11.4, with as much of the pool in the page cache at decode (12.7-16.1 of 17.1 GB) and the same
+  host code: the host's, and it hides the projected 3-4%. The next session logs the process's
+  RSS and the pool's residency at the end of decode.
+- The 26B's paired sums changed its tokens (B's equal HF's greedy, as its new reference; A's
+  part from it at token 5, a tie): B's text asks for 88.1 experts a token against 68.6, so its
+  rate is not comparable.
+- The build's H2C ran at 1.34-1.40 GB/s during the runs, against B's 1.41-1.42: the 8 read IDs'
+  cost ld-memch measured.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
@@ -1396,21 +1427,24 @@ byte (BoardDram's one queue).
   idle polls (84 hints, 102 landed, 4 misses against 101 without hints), and the logits and
   tokens are the ISA simulator's with the table on the card and no hints.
 - `test_hints_are_off_by_default`: `Spec.from_hf`'s programs are those of `hint=False`. The
-  35B's default program is the one with the table on the host and no hints (sha256
-  862438adb0e68f58 under `isasim.board_config()`).
-- `tools/offload/program_sha.py CFGDIR [--cfg card.pkl]` gives these hashes from the configs
-  alone. Under the card's configuration (`--cfg`: PAIR, DSTEP, STREAM) main d29bfe9 (moe-pair,
-  the experts' 4-bit MMs paired) changed every MoE program and no other; `board_config()`, with
-  PAIR off, shows no change:
+  35B's default program is the one with the table on the host and no hints.
+- `tools/offload/program_sha.py CFGDIR [--cfg card.pkl]` gives the programs' sha256 from the
+  configs alone, under `isasim.board_config()` or the card's configuration (`--cfg`: PAIR,
+  DSTEP, STREAM on). moe-pair (main d29bfe9: the experts' 4-bit MMs paired) changed every MoE
+  program under the card's configuration and none under `board_config()`, whose PAIR is off;
+  moe-prefill (the count word) and fmt-b2 (Qwen3.5's and LFM2's layer blocks moved) changed the
+  MoE programs under both, the logits bit for bit the same:
 
-| programs (card's configuration) | before moe-pair (7d879e6) | d29bfe9 |
-|:--|:--|:--|
-| LFM2.5-8B-A1B fp4 / int8 head, 28 slots | a8a77ef7dd5d9e68 | f3ee4b46b30a02c8 |
-| Qwen3.5-35B-A3B fp4 / int8 head, 32 slots (default: the table on the host) | 98bd49dd45aea3ef | 2fa1b39f30cbae74 |
-| the same, the table on the card | 6a4ec5701cd4dbbe | a76315cf6f7fbad3 |
-| gemma-4-26B-A4B fp4 / int8 head, 22 slots | ae48f2854896caed | 0d547648a5f4815b |
-| gemma-4-26B-A4B int8 / fp4 experts / fp4 head, 18 slots (the card's) | a67dd5bb5e3d4dee | 48151736927d3e35 |
-| gemma-4 E2B, E4B (dense) | 01b705bf299ef984, f8547a57b9f6b3c2 | the same |
+| programs | before moe-pair (7d879e6), card's | d29bfe9, card's | main f81070d, card's | main f81070d, `board_config()` |
+|:--|:--|:--|:--|:--|
+| LFM2.5-8B-A1B fp4 / int8 head, 28 slots | a8a77ef7dd5d9e68 | f3ee4b46b30a02c8 | b6fa581f65694d84 | 48f9128881c9a8e3 |
+| Qwen3.5-35B-A3B fp4 / int8 head, 32 slots (default: the table on the host) | 98bd49dd45aea3ef | 2fa1b39f30cbae74 | 397058f4f6fa4fee | fd3f913e1fdb8e75 |
+| the same, the table on the card | 6a4ec5701cd4dbbe | a76315cf6f7fbad3 | 591e5a7857d67298 | 24d53322fc433629 |
+| gemma-4-26B-A4B fp4 / int8 head, 22 slots | ae48f2854896caed | 0d547648a5f4815b | 9f227c517759b907 | 5df28254c5c3e5e3 |
+| gemma-4-26B-A4B int8 / fp4 experts / fp4 head, 18 slots (the card's) | a67dd5bb5e3d4dee | 48151736927d3e35 | b593ab41215a2883 | d913f5e18b657a20 |
+| gemma-4 E2B, E4B (dense) | 01b705bf299ef984, f8547a57b9f6b3c2 | the same | the same | d511a6d7a138c7e3, 24be53bc4e6094a4 |
+
+(Before moe-prefill the 35B's default under `board_config()` was 862438adb0e68f58.)
 
 ### 12.5 On the card: session 5
 

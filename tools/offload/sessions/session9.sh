@@ -9,8 +9,8 @@
 #   8b160     LFM2.5-8B-A1B, 160 tokens (session 3: 10.64), when its pool is staged
 # each run against its own tree's reference (tokens, prefill sha). The co-simulation projects
 # +3-4% for the 35B and the 26B (link-bound at Gen1) and +35-40% for LFM2.5-8B. The first live
-# run of the repo's card_moe.sh. About 35 min (AB=B: tree B alone, about 18). It stops at a
-# mismatch, a timeout or an error (a FAIL, a selftest's included).
+# run of the repo's card_moe.sh; results: docs/offload.md 10.5. About 35 min (AB=B: tree B
+# alone, about 18). It stops at a mismatch, a timeout or an error (a FAIL, a selftest's).
 # WAITPOOL=s: LFM2.5-8B's pool is streamed in while this holds the lock (opentpu's disk keeps it
 # only for the session): the sparse file made here, then pack_pool.py send | recv from a host
 # with the whole checkpoint, ending with POOL.done; up to s seconds, a pool not whole removed.
