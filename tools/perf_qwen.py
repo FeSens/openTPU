@@ -50,7 +50,8 @@ PHASE_NAMES = {"head_step": "DeltaNet", "_deltanet": "DeltaNet", "_pair_segment"
                "_attention": "attention", "_attend_heads": "attention", "_conv": "conv",
                "_mlp": "MLP", "swiglu_down": "MLP", "_lm_head": "LM head",
                "_attention_rows": "attention", "qwen3_rows": "LM head",
-               "_ple": "PLE", "_ple_inputs": "PLE", "_gathered": "gather"}
+               "_ple": "PLE", "_ple_inputs": "PLE", "_gathered": "gather",
+               "qwen35_mtp": "MTP"}
 
 
 def _phase(ins):
@@ -167,6 +168,11 @@ def main():
                          "tokens from pos in one run (greedy, or --sample); cycles per token")
     ap.add_argument("--sample", default=None, metavar="T,K,P,PEN",
                     help="--generate sampled: temperature, top-k, top-p, repetition penalty")
+    ap.add_argument("--mtp", choices=["verify", "draft"], default=None,
+                    help="Qwen3.5 MTP decoding (opentpu/llm/mtp.py, docs/mtp.md 9): the k = 1 "
+                         "verify run (2 rows, logits of both, the hidden rows stored, the "
+                         "DeltaNet steps of row 1 into the other state slot) or the MTP "
+                         "drafter's run over 2 rows")
     ap.add_argument("--timeline", help="print the instructions of dynamic index range A:B")
     ap.add_argument("--idle", action="store_true", help="list DRAM-idle stretches (64-cycle windows)")
     ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4", "mix"],
@@ -200,12 +206,15 @@ def main():
     elif layers[0]:
         spec = dataclasses.replace(spec, **({"kinds": spec.kinds[:layers[0]]}
                                             if hasattr(spec, "kinds") else {"layers": layers[0]}))
+    if a.mtp:
+        spec = dataclasses.replace(spec, mtp=True)
+        a.rows, a.logits = 2, "all"
     R = max(1, a.rows)
     if a.cap is None:
         a.cap = 256 * ((a.pos + R - 1) // 256 + 1)
     if a.pos + R - 1 >= a.cap:
         ap.error(f"--pos {a.pos} needs --cap above it (the KV write would land past the cache)")
-    W = load_weights(path)
+    W = load_weights(path, mtp=bool(a.mtp))
     wkw = dict(wformat=a.wformat, head_format=a.head_format, rows=R,
                **({"lookup": True} if a.resident else {}))
     mk = {"MCOLS": a.mcols} if a.mcols else {}
@@ -233,7 +242,12 @@ def main():
         import opentpu.llm.qwen3 as Q
         Q.ATTN_DEPTH = a.depth
     args = None
-    if a.rows:
+    if a.mtp == "draft":
+        progs = img.compile_mtp(a.pos, R, None, *([a.block] if a.block else []))
+    elif a.mtp == "verify":
+        progs = img.compile_rows([(0, a.pos + r) for r in range(R)], list(range(R)),
+                                 *([a.block] if a.block else []), fork=True, hidden=True)
+    elif a.rows:
         lr = {"last": [R - 1], "all": list(range(R)), "none": []}[a.logits]
         progs = img.compile_rows([(0, a.pos + r) for r in range(R)], lr,
                                  *([a.block] if a.block else []),

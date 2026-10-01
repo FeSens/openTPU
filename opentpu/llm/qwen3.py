@@ -128,14 +128,15 @@ class Weights(Mapping):
 
     CACHE = 16 << 20
 
-    def __init__(self, model_dir):
+    def __init__(self, model_dir, mtp: bool = False):
         from safetensors import safe_open
         self._files, self._where = [], {}
+        skip = ("model.visual.",) if mtp else ("model.visual.", "mtp.")
         for f in sorted(Path(model_dir).glob("*.safetensors")):
             h = safe_open(str(f), framework="pt")
             self._files.append(h)
             for k in h.keys():
-                if k.startswith(("model.visual.", "mtp.")):
+                if k.startswith(skip):
                     continue
                 self._where[k.replace("model.language_model.", "model.", 1)] = (h, k, None)
         self._split_fused(Path(model_dir))
@@ -191,18 +192,18 @@ class Weights(Mapping):
         return name in self._where
 
 
-def load_weights(model_dir) -> Weights:
+def load_weights(model_dir, mtp: bool = False) -> Weights:
     """All tensors of a HF safetensors checkpoint as fp32 numpy arrays, converted when first
     used (Weights). Of a multimodal checkpoint (Qwen3.5) only the language model is loaded,
     under the names of a text-only one (model.language_model.* -> model.*): not the vision
-    tower or the multi-token prediction layers. Gemma 4: gemma4.load_weights (its PLE table
-    read by rows)."""
+    tower, nor the multi-token prediction layers (mtp.*) unless `mtp` (Qwen3.5's drafter,
+    opentpu/llm/mtp.py). Gemma 4: gemma4.load_weights (its PLE table read by rows)."""
     cfg = Path(model_dir) / "config.json"
     if cfg.exists() and json.loads(cfg.read_text()).get("model_type") in ("gemma4",
                                                                           "gemma4_text"):
         from .gemma4 import load_weights as gemma4_weights
         return gemma4_weights(model_dir)
-    return Weights(model_dir)
+    return Weights(model_dir, mtp)
 
 
 class LazyWeights(dict):
@@ -1306,14 +1307,16 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     _lm_head_rows(x, m, spec, logit_rows)
 
 
-def _lm_head_rows(x, m, spec, logit_rows):
+def _lm_head_rows(x, m, spec, logit_rows, xn=None):
     """Final norm and this slice's vocabulary rows of the LM head for the rows `logit_rows`
-    of x (a contiguous range, or empty: nothing) -> m.logitsr."""
+    of x (a contiguous range, or empty: nothing) -> m.logitsr. xn: the final norm of x's rows,
+    already computed."""
     if not logit_rows:
         return
     sid = ol.program_id()
     a, e = logit_rows[0], logit_rows[-1] + 1
-    xs = ol.quantize(rmsnorm(x[a:e, :], ol.load(m.g_final), spec.eps))
+    xs = ol.quantize(rmsnorm(x[a:e, :], ol.load(m.g_final), spec.eps) if xn is None
+                     else xn[a:e, :])
     chunk = min(HEAD_CHUNK, ol.tmem_words() // (8 * (e - a)))
     for c0 in range(0, m.v_loc, chunk):
         n = min(chunk, m.v_loc - c0)
