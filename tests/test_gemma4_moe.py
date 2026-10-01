@@ -356,11 +356,12 @@ def _quant_eval():
     return mod
 
 
-def test_quant_eval_emulation(kv, moe):
+def test_quant_eval_emulation(kv, moe, moe_g2):
     """tools/gemma4_quant_eval.py's batched emulation of these models: with float weights it is
-    reference_logits (the MoE's folds exact); without the MoE, int8 and fp4 equal
-    emulated_logits (up to rounding ties); its MoE block in int8 (weights and activations) is
-    within the dense MLP's error of the reference block (~2%)."""
+    reference_logits (the MoE's folds exact); int8 and fp4 equal emulated_logits (up to
+    rounding ties), the MoE's too (its two inputs: the router's, the experts' with the gain
+    with outliers); its MoE block in int8 (weights and activations) is within the dense MLP's
+    error of the reference block (~2%)."""
     from opentpu.llm.qwen3 import _fake_q, _fake_w
     Q = _quant_eval()
     toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 20)]
@@ -368,11 +369,12 @@ def test_quant_eval_emulation(kv, moe):
         _, W, spec = m
         ref = G.reference_logits(spec, W, toks)
         assert np.abs(Q.emulate(spec, W, toks, wformat="none") - ref).max() < 1e-3
-    _, W, spec = kv
-    for wf in ("int8", "fp4"):
-        a = Q.emulate(spec, W, toks, wformat=wf)
-        b = G.emulated_logits(spec, W, toks, wformat=wf)
-        assert np.abs(a - b).max() < 1e-3 * np.abs(b).max()
+    for m in (kv, moe, moe_g2):
+        _, W, spec = m
+        for wf in ("int8", "fp4"):
+            a = Q.emulate(spec, W, toks, wformat=wf)
+            b = G.emulated_logits(spec, W, toks, wformat=wf)
+            assert np.abs(a - b).max() < 1e-3 * np.abs(b).max()
     _, W, spec = moe
     x = np.random.default_rng(5).standard_normal((64, 256)).astype(np.float32) * 3
     p = "model.layers.3."
