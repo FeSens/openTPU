@@ -1397,7 +1397,20 @@ byte (BoardDram's one queue).
   tokens are the ISA simulator's with the table on the card and no hints.
 - `test_hints_are_off_by_default`: `Spec.from_hf`'s programs are those of `hint=False`. The
   35B's default program is the one with the table on the host and no hints (sha256
-  862438adb0e68f58).
+  862438adb0e68f58 under `isasim.board_config()`).
+- `tools/offload/program_sha.py CFGDIR [--cfg card.pkl]` gives these hashes from the configs
+  alone. Under the card's configuration (`--cfg`: PAIR, DSTEP, STREAM) main d29bfe9 (moe-pair,
+  the experts' 4-bit MMs paired) changed every MoE program and no other; `board_config()`, with
+  PAIR off, shows no change:
+
+| programs (card's configuration) | before moe-pair (7d879e6) | d29bfe9 |
+|:--|:--|:--|
+| LFM2.5-8B-A1B fp4 / int8 head, 28 slots | a8a77ef7dd5d9e68 | f3ee4b46b30a02c8 |
+| Qwen3.5-35B-A3B fp4 / int8 head, 32 slots (default: the table on the host) | 98bd49dd45aea3ef | 2fa1b39f30cbae74 |
+| the same, the table on the card | 6a4ec5701cd4dbbe | a76315cf6f7fbad3 |
+| gemma-4-26B-A4B fp4 / int8 head, 22 slots | ae48f2854896caed | 0d547648a5f4815b |
+| gemma-4-26B-A4B int8 / fp4 experts / fp4 head, 18 slots (the card's) | a67dd5bb5e3d4dee | 48151736927d3e35 |
+| gemma-4 E2B, E4B (dense) | 01b705bf299ef984, f8547a57b9f6b3c2 | the same |
 
 ### 12.5 On the card: session 5
 

@@ -21,7 +21,7 @@
 # Before each run the other pools leave the page cache and the run's pool is read into it. A run
 # whose files are not staged in O is skipped. Selftest before and after.
 # Run: otpu-lock --wait 3600 -- tools/offload/sessions/card_moe.sh   (RUNS="8b16 8b160 q35";
-# env.sh's T, O, R; PSFX=.split or "" for the pools' format; G26POOL)
+# env.sh's T, O, R, RF; PSFX=.split or "" for the pools' format; G26POOL)
 set -u
 source "$(dirname "$0")/env.sh"
 PSFX=${PSFX-.split}       # the pool files: the split format (.split.bin), or "" for the slot format
@@ -64,7 +64,7 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [g26lm2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2")
 for name in ${RUNS:-8b16 8b160 q35}; do
   read -r md pool n hf ref out ex pol extra <<< "${RUN[$name]}"
-  if [ ! -f $O/$md/config.json ] || [ ! -f $O/$pool ] || [ ! -f $O/$ref.json ]; then
+  if [ ! -f $O/$md/config.json ] || [ ! -f $O/$pool ] || [ ! -f $RF/$ref.json ]; then
     echo "  [SKIP] $name: not staged"; continue; fi
   echo "=== $name $(date +%T)"
   python - $O/$pool $O/pool-*.bin $O/$(dirname $G26POOL)/pool-*.bin <<'PY'
@@ -90,7 +90,7 @@ PY
     > $R/$out.log 2>&1
   echo "  exit $? $(date +%T)"; grep -E "Error|Traceback" $R/$out.log | tail -3
   [ -f $R/$out.json ] || continue
-  python - $R/$out.json $O/$ref.json $O/$hf <<'PY'
+  python - $R/$out.json $RF/$ref.json $O/$hf <<'PY'
 import json, sys
 c, r, h = (json.load(open(f)) for f in sys.argv[1:])
 same = c["tokens"][:len(r["tokens"])] == r["tokens"]      # (a longer run: the reference's prefix)
