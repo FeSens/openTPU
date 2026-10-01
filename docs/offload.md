@@ -1340,3 +1340,42 @@ simulator's tokens and prefill logits bit for bit (`q35ref16`).
 - So hints are off by default. Two host-side variants are next: a request withdrawing its
   layer's hinted experts it does not name, and 128 KiB parts. They come back on only when one
   beats the table on the host without hints on the card.
+
+### 12.6 Session 6: the variants, and the host's timeline
+
+Card session 6 (2026-10-01, build B, Gen1): the 35B, 16 tokens, the pool read into the page
+cache before each run (17.11 of 17.11 GB resident). Each run bit for bit as the ISA simulator's.
+`ExpertServer(drop=True)` (`moe_card --hint-drop`): a request withdraws its layer's hinted
+experts it does not name that have not landed; `--hint-part` sets the part; `--hint-trace`
+writes the decode's timeline (when each hint, request and part was seen and done).
+
+| run | tok/s wall / device | misses a decode token | MB a decode token |
+|:--|--:|--:|--:|
+| table on the host, no hints (session 5's run again) | 3.78 / 3.86 | 79.2 | 130 |
+| + hints, 512 KiB parts | 3.97 / 4.06 | 79.8 | 152 |
+| + hints, drop | 4.11 / 4.21 | 80.9 | 136 |
+| + hints, 128 KiB parts | 4.04 / 4.13 | 80.0 | 147 |
+| + hints, drop, 128 KiB parts | 4.21 / 4.30 | 80.9 | 134 |
+| table on the card, no hints (warm) | 4.11 / 4.20 | 89.5 | 147 |
+
+- **Noise.** The same run as session 5's 4.23 / 4.33 gave 3.78 / 3.86: the same misses and
+  bytes, the host's serving 1.10 s against 0.64 s. At 16 tokens the host's variance is about
+  6%, as large as every difference here.
+- **The timeline.** The host sees a request 1.2-1.4 ms after it served the layer's hint (the
+  mixer's time). A 512 KiB part takes 0.61 ms from poll to flush (0.86 GB/s: the poll's read,
+  the staging and the wait), a 128 KiB one 0.28 ms. So less than one 1.67 MB expert moves
+  before its request: with drop no hinted expert landed early (all 3160 sent on request), and
+  drop only saves the link's time on wrong hints. The event model assumed the link's full rate
+  for parts and found +6.5%; the card cannot get there with synchronous parts in the mixer's
+  1.3 ms. Hints would need asynchronous parts and an earlier post (the next layer's router at
+  the end of this one, `prev_r`); parked.
+- **The polls' reads.** 9663 reads took 0.87 s, 90 us each: Board.read fetches a whole 128-byte
+  chunk, one c2h call per channel. `BoardDram.read` now reads bytes within one 64-byte beat (a
+  seq, a request's row) as that beat alone, one call. The event model gives about 1.5% tok/s
+  for each 100 us the host sees a request sooner (35B, 1680 slots, Gen1: 4.66 / 4.52 / 4.39
+  tok/s at 250 / 450 / 650 us). Next steps for the latency, in order:
+  1. one read for both mailboxes (the row server's beside the expert server's: an image layout
+     change);
+  2. spinning without the 50 us sleep while a request is due;
+  3. a future bitstream: the card writing its request's seq where the host sees it without a
+     DMA read (a doorbell register or an MSI), so that the host waits on no read at all.
