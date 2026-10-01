@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
@@ -30,9 +31,12 @@ def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) 
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
     tok = AutoTokenizer.from_pretrained(model)
-    ids = tok.apply_chat_template([{"role": "user", "content": prompt}],
-                                  add_generation_prompt=True, tokenize=True)
-    ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
+    if tok.chat_template is not None:
+        ids = tok.apply_chat_template([{"role": "user", "content": prompt}],
+                                      add_generation_prompt=True, tokenize=True)
+        ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
+    else:                                       # a checkpoint without one (the 26B's download):
+        ids = list(tok(prompt)["input_ids"])    # the prompt as plain text, after BOS
     kw = {}
     if max_memory:                              # the rest offloaded to disk (accelerate)
         kw = dict(device_map="auto", max_memory={"cpu": max_memory},
@@ -62,13 +66,18 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
          host_loop: bool = False, embed: str | None = None, trace: str | None = None,
          cfg_file: str | None = None, on_card: bool = False, policy: str = "lfu",
-         embed_host: bool | None = None, hints: bool | None = None) -> dict:
+         embed_host: bool | None = None, hints: bool | None = None,
+         hint_part: int | None = None, hint_drop: bool = False,
+         hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
+         formats: str | None = None) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
     from opentpu.isasim import board_config
     from opentpu.llm import load_spec
     from opentpu.llm.qwen3 import Engine, LazyWeights
+    if formats is not None:                     # per-kind formats (Gemma 4: "experts=fp4"
+        os.environ["OTPU_FORMATS"] = formats    # beside int8 layers; opentpu/llm/formats.py)
     spec = load_spec(model)                     # a MoE's Spec.embed: "int8" (from_hf)
     if embed is not None:
         spec = replace(spec, embed=embed)
@@ -78,7 +87,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     cfg = pickle.loads(Path(cfg_file).read_bytes()) if cfg_file else board_config()
     ekw = {} if embed_host is None else {"embed_host": embed_host}   # (default: the image's)
     if not experts:
-        experts = fit_experts(spec, cfg, cap, wformat="fp4", head_format="int8", lookup=True,
+        experts = fit_experts(spec, cfg, cap, wformat=wformat, head_format=head_format,
+                              lookup=True,
                               **ekw)
     backend = "isa"
     if on_card:
@@ -87,7 +97,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         backend = lambda c, imgs: BoardBackend(c, imgs, transport=tr,      # noqa: E731
                                                model=Path(model).name)
     t = time.time()
-    eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat="fp4", head_format="int8",
+    eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend, **ekw)
     load_s = time.time() - t
     srv = eng.server
@@ -97,6 +107,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0, stage=0.0, flush=0.0,   # host's s
               poll=0.0, hint=0.0)
 
+    calls = dict.fromkeys(tm, 0)                # and how many calls
+
     def timed(part, f):
         def g(*a):
             t0 = time.perf_counter()
@@ -104,6 +116,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 return f(*a)
             finally:
                 tm[part] += time.perf_counter() - t0
+                calls[part] += 1
         return g
 
     def counted(ids_):
@@ -112,6 +125,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         per_req.append(srv.misses - m0)
     srv.serve = counted
     srv.step = timed("hint", srv.step)          # a hinted expert's part on idle time (polls')
+    if hint_part:                               # the hints' handling (ExpertServer)
+        srv.part = hint_part
+    srv.drop = hint_drop
     srv.pool = timed("pool", pool_of)
     mem.write, mem.read = timed("write", mem.write), timed("read", mem.read)
     if hasattr(mem, "write_slot"):              # BoardDram: staging (the main thread), and
@@ -142,7 +158,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     prefill_s = time.time() - t
     warm_decode = warm_at()
     lg_sha = hashlib.sha256(np.asarray(lg, np.float32).tobytes()).hexdigest()[:16]
-    tm0, b0, st0 = dict(tm), srv.bytes, len(eng.stats)
+    tm0, b0, st0, calls0 = dict(tm), srv.bytes, len(eng.stats), dict(calls)
+    if hint_trace:                              # the decode's timeline of hints and requests
+        srv.events = []
     dma0 = (getattr(mem, "dma_s", 0.0), getattr(mem, "dma_bytes", 0))
     direct0 = getattr(mem, "direct", 0)         # experts read from the file into their runs
     t = time.time()
@@ -159,8 +177,12 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     else:                       # the prompt's last token fed by the card's loop: every pick
         got = eng.generate_card(ids[-1], n, stop_ids=[])        # on the card
     gen_s = time.time() - t
+    if hint_trace:
+        Path(hint_trace).write_text(json.dumps(srv.events))
+        srv.events = None
     host = {k: round(tm[k] - tm0[k], 3) for k in tm}          # the decode's
-    host.update(bytes=srv.bytes - b0, polls_read_s=host.pop("read"))
+    host.update(bytes=srv.bytes - b0, polls_read_s=host.pop("read"),
+                polls_reads=calls["read"] - calls0["read"])     # (each a card read's DMA)
     if hasattr(mem, "dma_s"):                   # the DMA thread's own time and rate
         ds, db = mem.dma_s - dma0[0], mem.dma_bytes - dma0[1]
         host.update(dma_s=round(ds, 3), dma_gbs=round(db / ds / 1e9, 3) if ds else None,
@@ -193,7 +215,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 row_requests=eng.row_server.seq if eng.row_server is not None else None,
                 hint=spec.moe.hint,
                 hints=dict(served=srv.hints, prefetched=srv.prefetched, promoted=srv.promoted,
-                           dropped=srv.dropped) if spec.moe.hint else None,
+                           dropped=srv.dropped, withdrawn=srv.withdrawn, part=srv.part,
+                           drop=srv.drop) if spec.moe.hint else None,
                 image_mib=round(eng.image.nbytes / 2**20), slot_mb=round(L.slot_bytes / 1e6, 2),
                 requests=len(srv.history), hits=srv.hits, misses=srv.misses,
                 misses_per_token_decode=round(float(dec.mean()), 2) if len(dec) else None,
@@ -249,6 +272,14 @@ def main():
     ap.add_argument("--embed-table", choices=("host", "card"), default=None,
                     help="an untied int8 embedding table on the host (embed_host: the card asks "
                          "for each token's row; a MoE's default) or on the card")
+    ap.add_argument("--wformat", default="fp4", help="the weights' format (the experts' too)")
+    ap.add_argument("--head-format", default="int8", help="the LM head's format")
+    ap.add_argument("--formats", help="per-kind formats, OTPU_FORMATS (Gemma 4: experts=fp4)")
+    ap.add_argument("--hint-part", type=int, default=0,
+                    help="KiB of a hinted expert per idle poll (default: ExpertServer's 512)")
+    ap.add_argument("--hint-drop", action="store_true",
+                    help="a request withdraws its layer's hinted experts it does not name")
+    ap.add_argument("--hint-trace", help="the decode's hint and request timeline as JSON")
     ap.add_argument("--hints", choices=("on", "off"), default=None,
                     help="the router's prefetch hints before each mixer (docs/offload.md 12; "
                          "default: the model's, on for Qwen3.5-MoE)")
@@ -262,7 +293,8 @@ def main():
     r = card(a.model, ref, a.n, a.experts, a.cap, a.pool, a.host_loop, a.embed, a.trace,
              a.cfg, a.card, a.policy,
              None if a.embed_table is None else a.embed_table == "host",
-             None if a.hints is None else a.hints == "on")
+             None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
+             a.hint_trace, a.wformat, a.head_format, a.formats)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

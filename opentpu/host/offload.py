@@ -263,10 +263,12 @@ class ExpertServer:
     simulator's slice DRAM through SimDram, or the board through BoardBackend's read / write).
     pool(g): expert g in the card's slot format, `layout.slot_bytes` long (host RAM or a file;
     the host never computes with it). part: the bytes of a hinted expert one idle poll sends
-    (a request waits for at most one part on the link)."""
+    (a request waits for at most one part on the link). drop: a request withdraws its layer's
+    hinted experts it does not name that have not landed (their slots free again, the link
+    kept for the next layer's hints)."""
 
     def __init__(self, mem, layout: Layout, pool, policy: str = "lru", half: float = 32.0,
-                 part: int = 512 << 10):
+                 part: int = 512 << 10, drop: bool = False):
         self.mem, self.L, self.pool = mem, layout, pool
         if policy not in ("lru", "lfu"):
             raise ValueError(f"replacement policy {policy!r}")
@@ -275,7 +277,7 @@ class ExpertServer:
         # the victim: the layer's least recently used expert the request does not name, or with
         # "lfu" the one of least use, each use decaying by half every `half` requests of its
         # layer (docs/offload.md 10.3: 9-15% fewer misses than LRU on the traces)
-        self.policy, self.half, self.part = policy, half, part
+        self.policy, self.half, self.part, self.drop = policy, half, part, drop
         self.lru = [OrderedDict() for _ in range(layout.layers)]    # g -> slot address
         self.t = [0] * layout.layers                                # requests per layer
         self.use: list = [{} for _ in range(layout.layers)]          # g -> log2 use + t / half
@@ -284,9 +286,13 @@ class ExpertServer:
         self.seq = 0                        # the last request served
         self.hits = self.misses = self.bytes = 0
         # hints served; hinted experts landed on idle time, sent by the request that named
-        # them, replaced before they landed
-        self.hints = self.prefetched = self.promoted = self.dropped = 0
+        # them, replaced before they landed, withdrawn by their layer's request (drop)
+        self.hints = self.prefetched = self.promoted = self.dropped = self.withdrawn = 0
         self.history: list | None = None    # a list: each request's ids are appended
+        # a list: (perf_counter when seen, when done, "h" hint / "d" request / "p" a hint's
+        # part, its layer or expert, misses or the expert's bytes sent): the host's timeline of
+        # the hints (moe_card --hint-trace)
+        self.events: list | None = None
 
     def load(self, warm=()) -> None:
         """At image load: an empty directory and mailbox, then the experts `warm` names (global
@@ -313,18 +319,23 @@ class ExpertServer:
                 lru.move_to_end(g)
         self._flush()
         self.hits = self.misses = self.bytes = 0     # counted from here: the requests'
-        self.hints = self.prefetched = self.promoted = self.dropped = 0
+        self.hints = self.prefetched = self.promoted = self.dropped = self.withdrawn = 0
 
     def poll(self) -> int:
         """Serve the card's request if it posted one since the last served, else send a part of
         a hinted expert; returns 1 if it did either. The card's seq is read first, then the
         row."""
         seq = int(np.frombuffer(bytes(self.mem.read(self.L.mbox, 4)), np.float32)[0])
+        t0 = time.perf_counter()
         if seq == self.seq:
             if not self.pending:
                 return 0
+            g = next(iter(self.pending))
             self.step()
             self._flush()
+            if self.events is not None:
+                self.events.append((t0, time.perf_counter(), "p", g,
+                                    self.pending.get(g, self.L.slot_bytes)))
             return 1
         if seq != self.seq + 1:
             raise RuntimeError(f"the card posted request {seq} with {self.seq} served: its "
@@ -332,6 +343,7 @@ class ExpertServer:
         ids = [int(g) for g in np.frombuffer(bytes(self.mem.read(self.L.row, 4 * self.L.k)),
                                              np.float32)]
         G = self.L.E * self.L.layers
+        m0 = self.misses
         if ids[0] >= G:
             self.hint([g - G for g in ids])
         else:
@@ -341,6 +353,9 @@ class ExpertServer:
         self.seq = seq
         self.mem.write(self.L.served, _f32(seq))
         self._flush()                       # (no DMA of the server's in flight after poll)
+        if self.events is not None:
+            self.events.append((t0, time.perf_counter(), "h" if ids[0] >= G else "d",
+                                ids[0] % G // self.L.E, self.misses - m0))
         return 1
 
     def _flush(self) -> None:
@@ -374,6 +389,11 @@ class ExpertServer:
                 continue
             self.misses += 1
             self._insert(j, g, self._slot(j, ids))
+        if self.drop:                       # its layer's hints it does not name, withdrawn
+            for g in [g for g in self.pending if g // self.L.E == j and g not in ids]:
+                del self.pending[g]
+                self.free[j].append(lru.pop(g))
+                self.withdrawn += 1
 
     def hint(self, ids) -> None:
         """A hint: the k global ids the layer's router picks on its input (docs/offload.md 12).
@@ -727,6 +747,16 @@ class BoardDram:
         self.dma_bytes += 2 * len(bufs[0][a:b])
 
     def read(self, addr: int, n: int) -> bytes:
+        """n bytes from the card. Within one 64-byte beat (a poll's seq, a request's row) that
+        beat alone, one DMA call on its channel (Board.read reads the whole 128-byte chunk, one
+        call per channel: a poll's read took 90 us on the card)."""
+        h = self.blk // 2
+        if addr % h + n <= h:
+            m, c = addr // self.blk, addr // h % 2
+            if self.board.chash:
+                c ^= m.bit_count() & 1
+            beat = np.asarray(self.board.t.mem_read(c, m * h, h)).view(np.uint8)
+            return beat[addr % h:addr % h + n].tobytes()
         return np.asarray(self.board.read(addr, n)).view(np.uint8).tobytes()
 
 
