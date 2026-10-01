@@ -747,6 +747,16 @@ class BoardDram:
         self.dma_bytes += 2 * len(bufs[0][a:b])
 
     def read(self, addr: int, n: int) -> bytes:
+        """n bytes from the card. Within one 64-byte beat (a poll's seq, a request's row) that
+        beat alone, one DMA call on its channel (Board.read reads the whole 128-byte chunk, one
+        call per channel: a poll's read took 90 us on the card)."""
+        h = self.blk // 2
+        if addr % h + n <= h:
+            m, c = addr // self.blk, addr // h % 2
+            if self.board.chash:
+                c ^= m.bit_count() & 1
+            beat = np.asarray(self.board.t.mem_read(c, m * h, h)).view(np.uint8)
+            return beat[addr % h:addr % h + n].tobytes()
         return np.asarray(self.board.read(addr, n)).view(np.uint8).tobytes()
 
 

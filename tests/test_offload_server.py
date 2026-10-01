@@ -471,3 +471,28 @@ def test_a_request_withdraws_its_layers_unnamed_hints_with_drop():
     _post(mem, lay, 4, [7, 4])                      # 7 takes 3's slot: 0 stays
     srv.poll()
     assert set(srv.lru[0]) == {0, 4, 7} and _landed(mem, lay, srv, 7)
+
+
+@pytest.mark.parametrize("chash", [False, True])
+def test_board_dram_reads_a_beat_as_board_read_does(chash):
+    """BoardDram.read of bytes within one 64-byte beat (a poll's seq, a request's row) reads that
+    beat alone from its channel (CHASH's swap or not) and gives Board.read's bytes; a longer
+    read is Board.read's."""
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import BoardDram
+
+    b = Board(FakeTransport(ch_bytes=1 << 16, devname=None))
+    b.info()["caps"]["chash"] = chash
+    x = np.random.default_rng(1).integers(0, 256, 1 << 14, dtype=np.uint8)
+    b.write(0, x)
+    m = BoardDram(SimpleNamespace(board=b), Layout.build(4096, 4, 2, (2,), 128))
+    calls, mr = [], b.t.mem_read
+    b.t.mem_read = lambda *a, **k: calls.append(a) or mr(*a, **k)
+    for addr, n in [(0, 4), (64, 4), (4096 + 64, 16), (100 * 128 + 60, 4), (5 * 128 + 64, 64),
+                    (7 * 128 + 60, 8), (3 * 128, 128)]:
+        calls.clear()
+        assert m.read(addr, n) == x[addr:addr + n].tobytes(), (addr, n)
+        assert len(calls) == (1 if addr % 64 + n <= 64 else 2), (addr, n)
