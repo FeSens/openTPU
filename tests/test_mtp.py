@@ -241,3 +241,33 @@ def test_mtp_loop_on_the_device_is_plain_greedy(P, drafter, fmt, N, stop):
     assert eng.pos == ref.pos == P + len(want) - 1
     assert all(np.array_equal(a, b) for a, b in
                zip(_states(eng, spec, dec.slot), _states(ref, spec, 0)))
+
+
+def test_mtp_loop_on_rtl(have_verilator):
+    """The MTP loop on the Verilator RTL (the board's memory path): from the same DRAM state (a
+    251-token prefill on the ISA simulator), one run of the loop across the first bucket's end (V, E, D, D1 and the next
+    bucket's V through HALT CHAIN, both parities, drafts from the host's table, every third
+    wrong): the tokens and the image's DRAM equal the ISA simulator's."""
+    from opentpu import rtlsim
+    from opentpu.llm.rtl_backend import RtlBackend
+    _, W, spec = _tiny_model(8)
+    W = _mtp_weights(W, spec)
+    P, N = 251, 9
+    prompt = [int(t) for t in np.random.default_rng(P).integers(0, 1000, P)]
+    want = _plain(spec, W, prompt, N, {})
+    right = np.zeros(514, np.float32)
+    right[P:P + N] = want
+    drafts = np.where(np.arange(514) % 3, right, (right + 7) % 1000)
+    eng = mtp_engine(spec, W, cap=512, cfg=CFG)
+    dec = MTPDecoder(eng)
+    a0, d = dec.prefill(prompt, MTPStats())
+    isa, n = eng.backend, eng.image.nbytes
+    rtl = RtlBackend(eng.cfg, [isa.machine.slices[0].dram[:n]], uarch=rtlsim.BOARD_UARCH,
+                     axi=True, boot=True)
+    st = dec.loop_card(a0, d, N, drafts=drafts)
+    assert st.tokens == want and 0 < sum(st.accepted) < st.iterations
+    eng.backend, eng.pos, dec.slot = rtl, P, 0
+    eng.__dict__.pop("_mtp_gen")            # the chain area: written again, to the RTL's DRAM
+    got = dec.loop_card(a0, d, N, drafts=drafts)
+    assert got.tokens == want
+    assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])

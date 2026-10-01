@@ -233,17 +233,25 @@ class MTPDecoder:
         the iterations' accepted drafts (their count, from the device's counters). drafts
         (tests): the draft of each position q (drafts[q], q < cap + 2) instead of the MTP's,
         from the first iteration's on."""
-        eng, img = self.eng, self.img
-        spec, block = img.spec, eng.block
-        ids = list(spec.eos if stop is None else stop)
         st = MTPStats(prompt=len(prompt))
         t0 = time.perf_counter()
         a0, d = self.prefill(prompt, st)
         st.prefill_s, st.prefill_compile_s = time.perf_counter() - t0, st.compile_s
+        return self.loop_card(a0, d, max_new, stop, on_token, drafts, st)
+
+    def loop_card(self, a0: int, d: int, max_new: int = 32, stop=None, on_token=None,
+                  drafts=None, st: MTPStats | None = None) -> MTPStats:
+        """generate_card after its prefill: a0 (the token at Engine.pos, emitted) and d (the
+        draft of the next position) -> the device's run of the MTP loop from the committed
+        slot (see generate_card)."""
+        eng, img = self.eng, self.img
+        spec, block = img.spec, eng.block
+        ids = list(spec.eos if stop is None else stop)
+        st = MTPStats(prompt=eng.pos) if st is None else st
         st.tokens.append(a0)
         if on_token is not None:
             on_token(a0)
-        P = len(prompt)
+        P = eng.pos
         n = min(max_new - 1, img.cap - P - 2)
         if a0 in ids or n <= 0:
             return st
