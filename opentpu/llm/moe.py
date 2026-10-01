@@ -26,6 +26,12 @@ It holds one register (the resident decode's run arguments and the layer loops h
 rest): the per-expert values are the columns of a small tile that each loop rotates, so
 expert i is always at column 0 in iteration i.
 
+With MoESpec.hint the layer also posts a prefetch hint before its mixer (`moe_hint`,
+docs/offload.md section 12): its router on the layer's input, the k best as a request whose
+ids are offset by layers x E; the host replaces their slots' victims at once and moves the
+missing experts in the link's idle time, and the route's own request finds them landed or on
+their way.
+
 `ExpertFormat` is one expert's slot: gate and up [F, H] and W_down's column parts, laid out as a
 layer block's MLP (lfm2.Image), so the FFN is kernels.mlp.swiglu_down at the slot's address
 (a compiler.DevVar: the register RLD sets). One slice (S = 1, the board's).
@@ -43,6 +49,7 @@ from .. import language as ol
 from .. import quant as Q
 from ..compiler import Affine, CompileError, DevVar, QTensor, Tensor, current
 from ..host.offload import LINE, SPLIT, ExpertServer, Layout, PoolFile, dram_of, to_split
+from ..kernels import mailbox as MB
 from ..kernels.lib import gelu_tanh, rmsnorm, sigmoid, silu
 from ..kernels.mlp import _chunk, swiglu_down
 
@@ -63,6 +70,8 @@ class MoESpec:
     shared: int = 0                  # a shared expert's width (Qwen: the layer's dense MLP,
                                      # times sigmoid(x . w_gate)), 0: none
     act: str = "silu"                # the experts' gate: SiLU, or "gelu_tanh" (Gemma 4)
+    hint: bool = False               # each layer posts its router's k best on its input as a
+                                     # prefetch hint before its mixer (moe_hint; Qwen3.5)
 
     def __post_init__(self):
         if self.rule not in ("sigmoid_bias", "softmax"):
@@ -245,6 +254,41 @@ def route(logits: np.ndarray, bias: np.ndarray | None, mo: MoESpec):
 
 
 # ---------------------------------------------------------------------------- the device
+def moe_hint(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float) -> None:
+    """Path (a)'s prefetch hint (docs/offload.md section 12), before the layer's mixer: its
+    router on the layer's input x through moe_ffn's norm, the k best by the model's rule (no
+    weights), posted as a request whose global ids are offset by dev.hint_off (layers x E: the
+    host's mark of a hint). The host writes served once it has replaced the hinted experts'
+    victims, before their transfers, so the route's fence (moe_ffn) waits for no expert; an
+    expert still on its way reads as missing there and is waited for by its entry. lw and dev
+    as moe_ffn's. One register."""
+    b = current()
+    E, k = mo.E, mo.k
+    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
+    lg = ol.dot(xs, lw.router)
+    del xs
+    sel, pr, ids, tmp = ol.empty((E,)), ol.empty((2,)), ol.empty((k,)), ol.empty((k,))
+    if mo.rule == "softmax":
+        sel.set(lg[0, 0:E])
+    else:
+        sel.set(sigmoid(lg[0, 0:E]) + ol.load(lw.ebias))
+    del lg
+    r = b.scratch()
+    lp = b.begin_loop(k)                # the k best, as the route picks them
+    b.emit(I.argmax(pr.base, sel.base, 1, E, comment="hint: best"))
+    b.emit(I.rld(r, pr.base + 1, comment="its index"))
+    b.emit(I.vop(I.V_FILL, sel.base, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, NEG, ra=r,
+                 comment="knock out"))
+    if k > 1:
+        tmp[0:k - 1].set(ids[1:k])
+        ids[0:k - 1].set(tmp[0:k - 1])
+    b.emit(I.vop(I.V_COPY, ids.base + k - 1, pr.base + 1, 0, 1, 1, 0, 0, 0, comment="id"))
+    b.end_loop(lp)
+    b.unscratch(r)
+    ids.set(ids + ol.load(lw.gbase) + float(dev.hint_off))
+    MB.post(dev.mbox, ids)
+
+
 def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
             residual: bool = True, y_first: bool = False):
     """x + the MoE FFN of one token (module docstring). lw: the layer's g_post [H], router

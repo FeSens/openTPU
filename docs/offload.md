@@ -50,9 +50,10 @@ host fp4 kernel.
 
   - The card computes the experts it has while the missing ones stream. That is worth +12-14%
     over waiting for the last one on Gemma 4 and Qwen3.5.
-  - Prefetch from router predictions is at best neutral (Qwen3.5 at Gen2). Otherwise it loses
-    1-14% with the prediction's k best, and more with its 2k best: cache pollution, plus the
-    link and DRAM time of wrong guesses.
+  - Prefetch from router predictions is at best neutral (Qwen3.5 at Gen2) under LRU slots.
+    Otherwise it loses 1-14% with the prediction's k best, and more with its 2k best: cache
+    pollution, plus the link and DRAM time of wrong guesses. With the slots by decayed use
+    the k best pay on Qwen3.5-35B-A3B, +3-6.5% (section 12, built).
   - 4-bit experts are worth 2.3-2.9x over int8.
   - Request and flag latency (10-100 us) moves results by under 1%.
 - **Design (section 5).** One new instruction, `WAITW` (wait on a DRAM word), agreed with
@@ -527,8 +528,8 @@ With the slots replaced by decayed use (section 5.5), wrong guesses cost less: a
 expert holds no use until a request names it, so the next miss replaces it first, not a used
 expert. At 1.4 GB/s the k best of `pre` then pay on Qwen3.5-35B-A3B: 4.42 against 4.15 tok/s
 at 1280 slots (10 of 23 prefetches a token wasted, against 33 of 49 under LRU). On Gemma 4
-they break even (3.79 against 3.78; `prev_r` 3.86). It would need the card to run each layer's
-router before its mixer and post the hint; not built.
+they break even (3.79 against 3.78; `prev_r` 3.86). Section 12 builds them for Qwen3.5-MoE:
+the card runs each layer's router before its mixer and posts the hint.
 
 ### 5.5 Eviction
 
@@ -1203,3 +1204,110 @@ range is the middle way (per-layer slot sizes in `Layout`).
      tiny random Gemma4-MoE model in tests. The layer composition is checked against HF and
      the ISA simulator bit for bit, the card's side with the live fake card and a split pool.
   3. The full model's ISA-simulator reference on omarchy, then a card session.
+
+## 12. Router hints: prefetch from the layer's input
+
+Section 5.4 measured prefetch not to pay under LRU slots. With the slots replaced by decayed
+use (section 5.5), one variant does: before its mixer, each MoE layer runs its router on the
+layer's input (`pre`, section 3) and posts the k best as a hint. The host moves the missing
+ones on the link's idle time. The card then routes as before, and the experts it names are on
+their way, or in, by the time it asks. `MoESpec.hint`: on for Qwen3.5-MoE (`Spec.from_hf`),
+off for the others.
+
+### 12.1 What it buys
+
+`cachesim.py`'s event model (section 11.3's calibration: 2.84 against 2.80 tok/s in session 2,
+3.94 against 3.87 in session 3), Qwen3.5-35B-A3B, slots by decayed use, tok/s (simulated):
+
+| 35B | link | without | with hints (`pre`, k best) |
+|:--|:--|--:|--:|
+| 1280 slots (the table on the card) | Gen1, 1.4 GB/s | 4.15 | 4.42 (+6.5%) |
+| 1560 slots (the table on the host, 5.9) | Gen1 | 4.41 | 4.69 (+6.3%) |
+| 1280 slots | Gen2, 2.8 GB/s | 5.52 | 5.74 (+4.0%) |
+| 1560 slots | Gen2 | 5.75 | 5.93 (+3.1%) |
+
+Per token at 1280 slots, Gen1:
+- demand transfers go from 100.7 to 93.9;
+- 23.0 hinted experts land, 10.5 of them unused before they are replaced;
+- the link goes from 52% to 70% busy.
+
+Why it pays now and did not under LRU: a hinted expert holds no use until a request names it,
+so the next miss in its layer replaces it first. A wrong hint costs one slot for a while, not
+the least recently used expert, which LRU replaced with it (raising the misses: 33 of 49 hints
+wasted, 110 demands a token). The k best are enough; 2k waste more than they catch.
+
+The model gives Gemma 4 26B-A4B nothing from `pre` (3.79 against 3.78 at Gen1, 682 slots) and
+2% from `prev_r` (the next layer's router at the end of this one). The hint stays off there.
+
+The card's own cost, not in the model: one more router per MoE layer (the 35B's: an RMSNorm, a
+257 x 2048 int8 MM of 0.5 MB, k `ARGMAX`, a post), about 50 us, 2 ms a token (0.8%;
+*estimate*).
+
+### 12.2 The card
+
+`moe.moe_hint`, per MoE layer before its mixer:
+
+1. **The k best.** The RMSNorm of the layer's input with the router's norm gain, `QACT`, the
+   router MM, and the k best by the model's rule: the route's `ARGMAX` knock-out loop, without
+   the weights.
+2. **The post.** The global ids plus G = layers x E (an id at G or above marks a hint), as a
+   request: `WAITW served GE seq`, the ids, `seq + 1`.
+
+Then the mixer, then the route as before (section 5.2). The route's fence waits for the hint's
+`served`, which the host writes once it has given the hinted experts their slots, before any
+of their bytes move. A hinted expert still on its way reads as missing (present 0), and the
+card's `WAITW NE 0` on its entry waits for it as for any miss.
+
+No ISA change and no new word: the same mailbox, row and `served`, and one register, as the
+route. The generate program's layer loops hold the hint's code once per layer kind. The
+programs of every model without hints are unchanged (sha256: E2B, E4B, LFM2.5-8B-A1B, the
+26B, the 35B with hints off, the tiny MoEs).
+
+### 12.3 The host
+
+`ExpertServer.hint`, for a request at G and above:
+- each named expert not in a slot gets one at once: a free slot, or the victim (least decayed
+  use, never one the hint names), its entry cleared;
+- the expert joins `pending`, its bytes not moved yet; no use is counted, so a hinted expert
+  no request names is its layer's next victim;
+- then `served = seq`.
+
+`ExpertServer.step`, from a poll that finds no request: the next part (512 KiB) of the oldest
+pending expert, one DMA call per channel, and its entry when the last part is in. The poll
+waits for that part (BoardDram's flush) before it returns, as for a request, so no DMA of the
+server's is in flight while anything else uses the card. A request waits for at most the part
+on the link, 0.37 ms at Gen1 (the model's preemption at the next chunk).
+
+A request (`serve`):
+- naming a pending expert: the rest of it at once, then its entry (a miss, `promoted`);
+- missing an expert: a victim as before, which may be a pending expert (`dropped`: what was
+  sent of it is lost, and its entry still reads 0).
+
+BoardDram's staging pairs take a part in their first bytes (a part and an expert alternate
+without new buffers); a split-format pool's part is its own blocks (`SplitRecord.part`).
+
+The "lru" policy answers a hint with `served` alone: an LRU victim of a wrong hint is a recent
+expert (section 5.4).
+
+**Race-freedom.** The card uses layer j's slots between its route's fence and its next fence
+for layer j, a token later. The hint for layer j comes before the route's fence, so the host's
+hint work (victims, cleared entries) is done when the fence passes (`served` covers it), and
+the card reads present flags only after. A hinted expert's slot is written only while its
+entry reads 0, by idle steps or by the request that names it; its entry is set after its last
+byte (BoardDram's one queue).
+
+### 12.4 Tests and status
+
+- `tests/test_offload_server.py`: a hint's slots and cleared entries at once, its parts on idle
+  polls and its entry after the last; a request sending the rest of a pending expert, or
+  replacing one; "lru" ignoring hints; BoardDram's writes of hinted parts equal to Board.write's
+  (the bytes and split formats, with and without CHASH).
+- `tests/test_qwen35_moe.py`: the tiny Qwen3.5-MoE with hints, k + 1 slots, gives the logits and
+  the card's generated tokens of the same engine without hints bit for bit (ISA simulator,
+  which calls the host only when the card waits: 96 hints, 107 hinted experts sent when the
+  route named them). On the live fake card (CHASH, a split pool, the embedding table on the
+  host: one BoardDram for the experts and the rows, 64 KiB parts) the hinted experts land on
+  idle polls (84 hints, 102 landed, 4 misses against 101 without hints), and the logits and
+  tokens are the ISA simulator's with the table on the card and no hints.
+- On the card: not yet. The plan is a session with the 35B, 16 tokens, by decayed use, with and
+  without hints (`moe_card.py --hints on|off`; expect +5-6% at Gen1).

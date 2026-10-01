@@ -55,10 +55,11 @@ def tiny():
 
 def test_from_hf_gives_a_moe_the_int8_embedding(tiny, tmp_path):
     """A Qwen3.5-MoE checkpoint's Spec gathers its embedding rows on the device in int8 at any
-    vocabulary size (its DRAM beside the layers is expert slots)."""
+    vocabulary size (its DRAM beside the layers is expert slots), and posts a prefetch hint
+    before each mixer (docs/offload.md 12)."""
     tiny[0].config.save_pretrained(tmp_path)
     s = Spec.from_hf(tmp_path)
-    assert s.moe is not None and s.embed == "int8"
+    assert s.moe is not None and s.embed == "int8" and s.moe.hint
 
 
 def _engine(spec, W, experts=None, **kw):
@@ -202,3 +203,70 @@ def test_the_card_generates_with_streamed_experts(tiny):
     misses = a.server.misses
     assert a.generate_card(t0, 10, stop_ids=[]) == ref
     assert a.server.misses > misses
+
+
+def _hinted(spec):
+    return replace(spec, moe=replace(spec.moe, hint=True))
+
+
+def test_hints_move_experts_early_and_change_no_logit(tiny):
+    """MoESpec.hint: each layer's router on its input, before the mixer, posts its k best (the
+    host gives them slots at once, by decayed use). k + 1 slots per layer: per-token steps and
+    the card's generate loop give the logits and tokens of the same engine without hints bit
+    for bit; every MoE layer posts one hint per token, and the hinted experts the route then
+    names are sent when it asks (the ISA simulator calls the host only when the card waits:
+    no idle polls)."""
+    _, W, spec = tiny
+    L = len(KINDS)
+    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=K + 1)
+    a, b = (Engine(s, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K + 1)
+            for s in (_hinted(spec), spec))
+    assert a.server.policy == "lfu"
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 8)]
+    for t in toks:
+        x, y = a.step(t), b.step(t)
+        assert np.array_equal(x.view(np.uint32), y.view(np.uint32)), a.pos
+    assert a.server.hints == len(toks) * L and b.server.hints == 0
+    assert a.server.promoted > 0 and a.server.prefetched == 0
+    t0 = int(np.argmax(x))
+    assert a.generate_card(t0, 8, stop_ids=[]) == b.generate_card(t0, 8, stop_ids=[])
+    assert a.server.hints >= (len(toks) + 7) * L
+
+
+def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_path):
+    """Hints beside a card that computes while the host works (tests/test_lfm2_moe.py's
+    _LiveCard, CHASH's map, a split-format pool), with the embedding table on the host: one
+    BoardDram for the experts and the rows. The host sends the hinted experts in parts (64 KiB
+    here) while the card runs its mixers, the rest of one the route names at once. Resident
+    steps and the card's generate loop give the ISA simulator's logits and tokens with the
+    table on the card and no hints bit for bit, with hinted experts landed before the route
+    asked."""
+    from test_lfm2_moe import _LiveCard
+    from opentpu.host.board import BoardBackend
+    from opentpu.host.offload import RUN, BoardDram
+    from opentpu.isasim import board_config
+    spec, W = _untied(tiny)
+    cfg = board_config(DRAM_BYTES=1 << 25)
+    card = _LiveCard.make(cfg, chash=True)
+    card.threaded = True
+    kw = dict(cap=256, cfg=cfg, rows=1, resident=True, experts=K + 1)
+    isa = Engine(spec, W, **kw, embed_host=False)
+    brd = Engine(_hinted(spec), W, **kw,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card),
+                 pool_file=tmp_path / "pool.bin")
+    assert brd.image.embed_host and not isa.image.embed_host
+    assert isinstance(brd.server.mem, BoardDram) and brd.row_server.mem is brd.server.mem
+    assert brd.server.L.slot_bytes > 16 * RUN
+    brd.server.part = 16 * RUN
+    toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 6)]
+    for t in toks:
+        a, b = isa.step(t), brd.step(t)
+        assert card.error is None, card.error
+        assert np.array_equal(a.view(np.uint32), b.view(np.uint32)), brd.pos
+    t0 = int(np.argmax(a))
+    got = brd.generate_card(t0, 8, stop_ids=[])
+    assert card.error is None, card.error
+    assert got == isa.generate_card(t0, 8, stop_ids=[])
+    s = brd.server
+    assert s.hints >= 13 * len(KINDS) and s.prefetched > 0 and s.mem.direct > 0
+    assert s.misses < isa.server.misses and brd.row_server.seq >= 7
