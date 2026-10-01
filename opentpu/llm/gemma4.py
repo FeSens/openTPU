@@ -930,7 +930,7 @@ class Image:
     def build(self, W, jobs: int | None = None) -> list[np.ndarray]:
         """The DRAM image with every weight quantized in place, KV cache empty. The matrices
         are quantized by `jobs` worker processes (default: OTPU_BUILD_JOBS, else 4) when W is
-        a checkpoint's Weights, and cached by content (_quantized)."""
+        a checkpoint's Weights, the 4-bit ones through opentpu.qcache (_job)."""
         spec, cfg = self.spec, self.cfg
         D, H, P, L = cfg.D, spec.hidden, spec.ple_dim, spec.layers
         self._W = W                                     # host_inputs gathers its rows
@@ -1291,7 +1291,11 @@ def _job(W, job) -> tuple:
 
 
 def _worker_job(job) -> tuple:
-    return _job(_JOB_W, job)
+    """_job in a worker process, with the opentpu.qcache counts it made (the parent adds them
+    to its own: prebuild prints them)."""
+    s0 = dict(QC.stats)
+    out = _job(_JOB_W, job)
+    return out, {k: QC.stats[k] - s0[k] for k in s0}
 
 
 def _run_tasks(W, jobs: list, n: int | None = None):
@@ -1307,7 +1311,10 @@ def _run_tasks(W, jobs: list, n: int | None = None):
     from concurrent.futures import ProcessPoolExecutor
     with ProcessPoolExecutor(n, mp_context=mp.get_context("spawn"), initializer=_job_init,
                              initargs=(str(W.model_dir),)) as pool:
-        yield from pool.map(_worker_job, jobs)
+        for out, counts in pool.map(_worker_job, jobs):
+            for k, v in counts.items():
+                QC.stats[k] += v
+            yield out
 
 
 # =============================================================================== kernel

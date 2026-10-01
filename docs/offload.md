@@ -1101,13 +1101,16 @@ On `moe.py`'s side (offload) no new card mechanism is needed:
   The router reads the unit RMSNorm of r, quantized, as `moe_ffn` does for every model.
 - **The experts' own input.** `pre_ffn_norm_2`'s gain is not folded: the experts read the
   unit norm times the gain, quantized (`moe_ffn`'s `g_exp`; one `QACT` with column scale,
-  8 more instructions a program). Folded into the gate and up columns, the gain's outliers
-  (its max about 8x its rms in the 26B) set every column block's scale, and the other columns
-  lose their precision: on the real model, int8 dense layers with fp4 experts gave perplexity
-  127 against float's 1.235 (gemma4's emulation), the MoE block's relative error 0.27-0.51
-  from layer 10 on with int8 experts. In tests/test_gemma4_moe.py's tiny model with 4
-  channels of the gain at 8x, the int8 device against HF goes from a median cosine of 0.977
-  (folded) to 0.994.
+  8 more instructions a program). With the gain folded into the gate and up columns, the
+  experts would read the unit norm quantized, whose blocks are scaled by the residual's
+  outlier channels, which the gain all but zeroes (the 26B's layer 10: |x| 17 where the gain
+  is 0, the gain up to 92 elsewhere), and the gain's own outliers would set the weights'
+  column blocks. On the real model that gave perplexity 127 against float's 1.235 (int8 dense
+  layers, fp4 experts; gemma4's emulation), the MoE block's relative error 0.27-0.51 from
+  layer 10 on with int8 experts (the dense MLP, which quantizes norm times gain: 0.01-0.04).
+  The router keeps the fold: a flipped route costs little. In tests/test_gemma4_moe.py's tiny
+  model with 4 channels of the gain at 8x, the int8 device against HF goes from a median
+  cosine of 0.977 (folded) to 0.994.
 - **The rule.** The softmax rule as written (`MoESpec.rule` "softmax"): the softmax of the 8
   largest logits is the renormalized top 8 of the full softmax. The order is the same, ties to
   the first.
