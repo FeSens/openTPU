@@ -101,7 +101,7 @@ print(f"  [{'PASS' if same and c['prefill_logits_sha'] == r['prefill_logits_sha'
 k = ("tok_s_wall", "tok_s_device", "hits", "misses", "misses_per_token_decode",
      "misses_per_token_decode_2nd_half", "bytes_per_token_decode", "host_decode_s", "load_s",
      "prefill_s", "generate_s", "experts_per_layer", "policy", "pool_warm", "embed_host",
-     "hints", "layer_major", "prefill_requests", "prefill_misses")
+     "hints", "layer_major", "prefill_requests", "prefill_misses", "host_mem", "device_counters")
 print("  " + json.dumps({x: c.get(x) for x in k}))
 PY
 done
