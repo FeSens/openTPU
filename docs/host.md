@@ -724,6 +724,24 @@ otpu-lock -- sh -c 'openFPGALoader -c digilent_hs2 build/deploy_burst_a691ea98/o
 the image cache, before waiting for the lock, so the command's tools build their images from
 it ([board.md](board.md), "Qualifying a bitstream").
 
+**Quiet sessions.** A prebuild runs beside whatever session holds the card. A session that
+measures host-sensitive performance keeps it off the host while it runs: wall tok/s, or
+offload's MoE streaming, which is bound by the page cache and the host's DMA. Under the lock,
+it writes its pid into `~/otpu-build/QUIET` (`OTPU_QUIET`) at the start and removes the file
+at the end:
+
+```sh
+echo $$ > ~/otpu-build/QUIET
+trap '[ "$(cat ~/otpu-build/QUIET 2>/dev/null)" = $$ ] && rm -f ~/otpu-build/QUIET' EXIT
+```
+
+A prebuild starts no build while the file is there and its pid is alive. A run it is building
+when the file appears is stopped at once, its memory freed, and built again after the session
+(from what the cache holds by then: each run builds in its own process). After an hour of
+waiting in all (`OTPU_PREBUILD_QUIET_WAIT`, seconds) it stops, and the tools quantize under
+the lock, as when a prebuild fails. A file whose pid is gone (a session killed before its trap
+ran) is ignored.
+
 Do not wait for the card with `pgrep -f` loops: the pattern appears in the waiting shell's own
 command line, and in other waiters', so they match each other and wait forever (seen at bring-up).
 

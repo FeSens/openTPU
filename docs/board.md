@@ -436,7 +436,8 @@ kept (a configuration whose matrices differ only misses). It skips runs with no 
 and it builds nothing while MemAvailable is under 20 GB (`OTPU_PREBUILD_MIN_GB`; a 4-bit 4B
 builds in up to 17 GB): the tools then quantize under the lock as before. It loads the models
 from the tree on `PYTHONPATH`, as the session's tools do. A prebuild runs beside whatever
-session holds the card, at nice 19.
+session holds the card, at nice 19, except one that keeps the host quiet for its measurements
+(`~/otpu-build/QUIET`, [host.md](host.md) section 8).
 
 The cache is `~/otpu-build/qcache/mxu` on a host with `~/otpu-build` (`OTPU_IMAGE_CACHE=<dir>`;
 `0` turns it off). It keeps 30 GB (`OTPU_IMAGE_CACHE_GB`), drops the least recently used entries
