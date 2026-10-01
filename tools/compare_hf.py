@@ -103,7 +103,8 @@ def main() -> None:
         from opentpu.host.board import sim_config
         from opentpu.isasim import board_config
         base = board_config() if a.cfg == "board" else pickle.loads(Path(a.cfg).read_bytes())
-        cfg = sim_config(spec, cap, replace(base, DRAM_BYTES=1 << 32))
+        cfg = sim_config(spec, cap, replace(base, DRAM_BYTES=1 << 32), wformat=a.wformat,
+                         head_format=a.head_format)
     eng = Engine(spec, W, cap=cap, cfg=cfg, backend=backend, wformat=a.wformat,
                  head_format=a.head_format, resident=a.resident)
     print(f"device: {a.backend} {eng.cfg}, weights {a.wformat}, head {a.head_format or a.wformat}"

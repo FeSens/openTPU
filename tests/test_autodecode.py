@@ -1,6 +1,7 @@
 """The on-card decode loop's ISA (docs/isa.md): VOP ARGMAX, RLD and HALT CHAIN on the ISA
 simulator."""
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -534,6 +535,115 @@ def test_a_softcap_caps_the_sampled_logits(tiny, split):
         t = int(np.argmax(b.step(t)))
         ref.append(t)
     assert a.generate_card(t0, 6, stop_ids=[]) == ref
+
+
+@pytest.fixture(scope="module")
+def tiny_gemma4(tmp_path_factory):
+    """tests/test_gemma4.py's tiny Gemma 4: sliding (head_dim 128) and global (256) layers,
+    shared KV layers, per-layer inputs gathered on the device, the softcap 30 (its greedy
+    tokens vary at the default initializer_range; at 0.1 and up they repeat one token)."""
+    import json
+    pytest.importorskip("transformers.models.gemma4")
+    from opentpu.llm import gemma4
+    S_, F_ = "sliding_attention", "full_attention"
+    kinds = (S_, S_, F_, S_, S_, F_, S_, F_, F_)
+    torch.manual_seed(0)
+    hc = transformers.Gemma4TextConfig(
+        hidden_size=256, num_hidden_layers=len(kinds), num_attention_heads=8,
+        num_key_value_heads=1, head_dim=128, global_head_dim=256, intermediate_size=512,
+        vocab_size=1000, vocab_size_per_layer_input=1000, hidden_size_per_layer_input=128,
+        layer_types=list(kinds), num_kv_shared_layers=3, use_double_wide_mlp=True,
+        sliding_window=512, final_logit_softcapping=30.0, max_position_embeddings=4096)
+    m = transformers.models.gemma4.modeling_gemma4.Gemma4ForCausalLM(hc).float().eval()
+    with torch.no_grad():
+        for n, q in m.named_parameters():
+            if "norm" in n:
+                k = "k_norm" in n
+                q.copy_((0.13 if k else 1.0) + (0.01 if k else 0.1) * torch.randn_like(q))
+        for n, b in m.named_buffers():
+            if n.endswith("layer_scalar"):
+                b.copy_(0.5 + torch.rand_like(b))
+    d = tmp_path_factory.mktemp("gemma4")
+    (d / "config.json").write_text(json.dumps(hc.to_dict()))
+    return {k: v.float().numpy() for k, v in m.state_dict().items()}, gemma4.Spec.from_hf(d)
+
+
+def _gemma4_engines(tiny_gemma4, n=2, **kw):
+    from opentpu.isasim import board_config
+    from opentpu.llm.qwen3 import Engine
+    W, spec = tiny_gemma4
+    return [Engine(spec, W, cap=1024, cfg=board_config(DRAM_BYTES=1 << 26), wformat="fp4",
+                   head_format="int8", resident=True, **kw) for _ in range(n)]
+
+
+@pytest.mark.parametrize("split", [None, True])
+def test_gemma4_generate_matches_the_host_loop(tiny_gemma4, split):
+    """Gemma 4's decode loop on the device (gemma4_step at a RunPos: the token's embedding and
+    PLE rows gathered, the run-time masks) gives the host's resident greedy loop token for
+    token, across the bucket boundary at 256, in one program or split; then sampled with the
+    model's softcap (30) in _lm_head, reference_pick's ids from the capped logits."""
+    W, spec = tiny_gemma4
+    a, b = _gemma4_engines(tiny_gemma4)
+    a.gen_split = split
+    assert a.can_generate and spec.softcap == 30.0
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    lg = a.prefill(toks)
+    t0 = int(np.argmax(lg))
+    assert int(np.argmax(b.prefill(toks))) == t0
+    ref, t = [], t0
+    for _ in range(12):
+        t = int(np.argmax(b.step(t)))
+        ref.append(t)
+    assert len(set(ref)) > 3
+    assert a.generate_card(t0, 12, stop_ids=[]) == ref
+    assert all(isinstance(p, tuple) == bool(split) for p in a._gens.values())
+    samp = G.Sampling(0.8, 5, 0.9, 1.1)
+    ctx = toks + [t0] + ref
+    got = a.generate_card(ref[-1], 8, stop_ids=[], sampling=samp, context=ctx,
+                          rng=np.random.default_rng(7))
+    u, want, c = np.random.default_rng(7).random(8), [], list(ctx)
+    for i in range(8):
+        t = G.reference_pick(b.step(c[-1]), samp, c, u[i], 1, softcap=spec.softcap)
+        want.append(t)
+        c.append(t)
+    assert got == want
+
+
+@pytest.mark.parametrize("split", [None, True])
+def test_gemma4_generate_on_rtl(have_verilator, tiny_gemma4, split):
+    """Gemma 4's generate loop on the Verilator RTL: from the ISA simulator's DRAM after a
+    248-token prefill, 12 greedy tokens across the bucket boundary in one run: the tokens and
+    the whole DRAM of the ISA simulator's run."""
+    from opentpu.llm.rtl_backend import RtlBackend
+    eng, = _gemma4_engines(tiny_gemma4, 1)
+    eng.gen_split = split
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    t0 = int(np.argmax(eng.prefill(toks)))
+    isa, n = eng.backend, eng.image.nbytes
+    rtl = RtlBackend(eng.cfg, [s.dram[:n] for s in isa.machine.slices])
+    pos = eng.pos
+    want = eng.generate_card(t0, 12, stop_ids=[])
+    eng.backend, eng.pos, eng._chained = rtl, pos, {}
+    got = eng.generate_card(t0, 12, stop_ids=[])
+    assert got == want and len(set(got)) > 3
+    assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])
+
+
+@pytest.mark.skipif(not (Path(__file__).resolve().parent.parent / "models" / "gemma-4-E2B" /
+                     "config.json").exists(), reason="no models/gemma-4-E2B")
+def test_gemma4_e2b_generate_fits_imem():
+    """Gemma 4 E2B on the board (fp4 layers, int8 LM head and PLE, 4096 tokens, the generate
+    area in the 4 GiB image): every bucket's generate program, greedy and sampled, is one
+    program under IMEM (layout only, no weights)."""
+    from opentpu.isasim import board_config
+    from opentpu.llm import gemma4
+    spec = gemma4.Spec.from_hf(Path(__file__).resolve().parent.parent / "models" / "gemma-4-E2B")
+    img = spec.image(board_config(), 4096, 1, 8, "fp4", "int8", lookup=True)
+    assert img.nbytes < 1 << 32
+    for samp in (None, G.Sampling(1.0, 64, 0.95, 1.0)):
+        for blocks in (1, 3, 8, 16):
+            progs = G.compile_bucket(img, blocks, (blocks - 1) * 256, 256, samp=samp)
+            assert not isinstance(progs, tuple) and G.fits(img, progs), (blocks, samp)
 
 
 class _Tok:

@@ -592,7 +592,8 @@ the card already holds.
   Gen1, by the model above).
 - The shared `kernels/gather.py` (main 77405e5) does this, and phase 2 uses it: LFM2.5-8B-A1B
   gets 28 slots per layer, and Qwen3.5-35B-A3B 32 instead of 9. The 35B's embedding is untied,
-  so its rows come from an int8 table of 0.5 GB.
+  so its rows come from an int8 table of 0.5 GB. The int8 embeddings of SmolLM3,
+  Phi-4-mini and Qwen3.5-4B use it too.
 - It is `Spec.embed` "int8" (main 2a04beb, `qwen3._embed`), which a MoE checkpoint's `from_hf`
   sets at any vocabulary size: beside a MoE's layers the DRAM is expert slots. The prompt's
   per-position programs and the resident decode then read every input from the image, so the

@@ -240,6 +240,20 @@ def test_selftest_stops_at_config_on_a_stale_environment(no_cfg_env, capsys):
     assert "MCOLS=4 but OTPU_MCOLS=2" in out and "stopped at stage 'config'" in out
 
 
+def test_sim_config_sizes_the_format_when_int8_is_over_4gib():
+    """sim_config sizes the DRAM for the int8 image (every format of a model gets the same
+    layout), or, where that is over 4 GiB (Qwen3.5-4B: 4.3 GiB), for the run's formats."""
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Spec
+    spec = Spec(hidden=2048, layers=2, n_q=16, n_kv=4, head_dim=128, ffn=8192, vocab=2_200_000)
+    with pytest.raises(MemoryError):
+        sim_config(spec, 256)
+    cfg = sim_config(spec, 256, wformat="fp4", head_format="fp4")
+    assert cfg.DRAM_BYTES == 1 << 32
+    small = Spec(hidden=256, layers=2, n_q=4, n_kv=2, head_dim=128, ffn=512, vocab=1000)
+    assert sim_config(small, 256, wformat="fp4") == sim_config(small, 256)
+
+
 def test_4bit_image_needs_a_4bit_bitstream(run_dir):
     """An Engine with 4-bit weights refuses a bitstream without 4-bit MM support (CAPS bit4)."""
     from opentpu import lens as L

@@ -194,6 +194,47 @@ the device, KV capacity 4096; instructions per bucket of 256 positions, buckets 
 From bucket 6 on the gather's two token arguments leave too few registers for the attention's
 block loop unless the token's are given back after the gather (docs/isa.md "Arguments").
 
+## Qwen3.5-2B and Qwen3.5-4B
+
+The larger text decoders run on the same code (`--model qwen35-2b`, `--model qwen35-4b`); the
+images below are at a 2048-token KV capacity with the resident decode's tables:
+
+| | 0.8B | 2B | 4B |
+|:--|--:|--:|--:|
+| layers ((3 DeltaNet + 1 attention) x n) | 24 | 24 | 32 |
+| hidden size | 1024 | 2048 | 2560 |
+| DeltaNet value / key heads | 16 / 16 | 16 / 16 | 32 / 16 |
+| MLP width | 3584 | 6144 | 9216 |
+| embedding (`Spec.embed`) | fp32 | fp32 | int8, gathered from the head |
+| image, int8 / 4-bit + int8 head (MiB) | 1764 / 1518 | 3864 / 3191 | 4257 (over 4 GiB) / 2535 |
+| prefill rows per run | 6 | 4 | 3 |
+
+**The embedding.** Every Qwen3.5 has a 248,320-token vocabulary, so its fp32 embedding table is
+0.95 GiB (0.8B), 1.9 GiB (2B) and 2.4 GiB (4B). Above `qwen35.EMBED_F32_MAX` (2 GiB)
+`Spec.from_hf` makes the embedding int8: the device gathers the token's row from the tied int8
+LM head, as for SmolLM3 and Phi-4-mini ([llama.md](llama.md)). The 4B's resident decode then
+has 8 run arguments, and the gather's are given back after it (`ol.release`), so the attention
+finds its registers at every bucket (at most 2,022 instructions, the table above).
+
+**Checked.** On the RTL in the card's configuration (`tools/perf_qwen.py --check`, 4 layers,
+pos 128), bit-exact against the ISA simulator:
+- 2B, int8: 6,207,867 cycles.
+- 4B, 4-bit with an int8 head, resident decode: 7,361,583 cycles; int8: 9,135,760; a
+  3-row prefill run: 9,174,478.
+
+The 2B's resident run on the RTL does not fit the Verilator memory model (its lookup tables
+hold 2 GB of fp32 embedding rows).
+
+On the ISA simulator in the card's configuration against Hugging Face fp32
+(`tools/compare_hf.py --cfg CFG.pkl`, the README's eight raw prompts, 16 tokens):
+- 2B, int8: 6 of 8 identical. The other two differ at near-ties, where the device takes HF's
+  second choice, 0.033 and 0.084 logits below the top. The max logit error is 1.61 and the min
+  cosine 0.9927.
+- 4B, 4-bit with an int8 head (its int8 image is over 4 GiB): 3 of 8 identical. The other five
+  differ at near-ties, where the device takes HF's second choice, 0.072 to 0.414 logits below
+  the top. The max logit error is 5.73 and the min cosine 0.941: 4-bit weights move the logits
+  more than int8 ones.
+
 ## Qwen3.5-MoE
 
 `Spec.moe` covers Qwen3.5-35B-A3B: 256 experts of 512, top 8, and a shared expert of 512 in

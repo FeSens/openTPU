@@ -5,17 +5,23 @@ own, co-simulated, rtlsim.MEMORY's LDC) or the calibrated bank model (--mem mode
 otpu_native_mem, profile.ddr3_plusargs, 300 ns read latency).
 
     python3 tools/perf_ddr.py CACHE.json IMGDIR --model qwen3 --format fp4 [--mem ldc]
-                              [--mhz 100,133.33,150,200] [--ddr 1066]
+                              [--mhz 100,133.33,150,200] [--ddr 1066] [--prefixes]
     python3 tools/perf_ddr.py CACHE.json IMGDIR --table [--models qwen3,qwen35,lfm2]
                               [--formats fp4,int8] [--mem ldc] [--mhz ...] [--ddr ...]
+                              [--prefixes]
 
-The whole model's token is built from layer prefixes, as tools/perf_prefill.py builds prefill:
-the first layer, then per layer kind the difference of two prefixes (so a run is one or two
-layers plus the LM head, not the whole model). Each prefix's DRAM image is built once, streamed
-to IMGDIR as tb_top loads it (the image, then the program at the boot address), and every point
-then runs the simulator on that file (the DRAM dump goes nowhere): the driver stays at a few
-hundred MB whatever the model. Points are cached in CACHE.json (one entry per prefix and point,
-with the DRAM commands), so a stopped run resumes. --table prints Mcycles/token, tokens/s, the
+A point is the whole model's token, simulated (2-3 minutes per point for these models on the
+co-simulated controller). --prefixes builds it from layer prefixes instead, as
+tools/perf_prefill.py builds prefill: the first layer, then per layer kind the difference of two
+prefixes (a run is one or two layers plus the LM head). That is faster but wrong on the card's
+two-port controller: there the second layer costs less than the layers after it (Qwen3 fp4 at
+133.33 MHz: 83.9k cycles, against 91.8k for every layer from the third on), and Qwen3's token
+comes out 5.4% short (3.691 against 3.903 Mcycles; the card: 3.939). The whole model is within
+1.1% of the card (docs/litedram.md section 11). Each image (whole model or prefix) is built
+once, streamed to IMGDIR as tb_top loads it (the image, then the program at the boot address),
+and every point then runs the simulator on that file (the DRAM dump goes nowhere). Points are
+cached in CACHE.json (one entry per layer count and point, with the DRAM commands), so a stopped
+run resumes. --table prints Mcycles/token, tokens/s, the
 DRAM bytes read and written per token and GB/s. The configuration comes from the environment
 (the board's: OTPU_MCOLS=4 OTPU_MXU=systolic OTPU_PAIR=1 OTPU_DSTEP=1 OTPU_STREAM=1). The KV cache
 holds --cap positions (default 2048), the LM head is int8 (--head).
@@ -82,9 +88,10 @@ class LazyW:
 
 class Grid:
     def __init__(self, cache: Path, imgdir: Path, mem: str, pos: int, cap: int, head: str,
-                 plus: list | None = None):
+                 plus: list | None = None, prefixes: bool = False):
         self.cache_p, self.imgdir, self.mem = cache, imgdir, mem
         self.pos, self.cap, self.head = pos, cap, head
+        self.use_prefixes = prefixes
         self.plus = list(plus or [])
         self.cache = json.loads(cache.read_text()) if cache.exists() else {}
 
@@ -182,9 +189,16 @@ class Grid:
                re.findall(r"MEM ch\d rd=(\d+) wr=(\d+) row_miss=(\d+) rmw=(\d+)", out)]
         return int(m.group(1)), [sum(x[i] for x in mem) for i in range(4)]
 
+    def layer_counts(self, spec) -> list:
+        """The layer counts a point simulates: the whole model's, or its prefixes'."""
+        return self.prefixes(spec)[2] if self.use_prefixes else [len(_kinds(spec))]
+
     def full(self, name, spec, wf, mhz, ddr):
-        """The whole model's token cycles and DRAM commands from its prefixes (None if any is
-        missing)."""
+        """The whole model's token cycles and DRAM commands (None if not simulated yet): the
+        whole model's run, or (--prefixes) built from its prefixes."""
+        if not self.use_prefixes:
+            k = self.key(name, len(_kinds(spec)), wf, mhz, ddr)
+            return self.cache.get(k), self.cache.get(k + "|mem")
         kinds, diff, ns = self.prefixes(spec)
         c = {n: self.cache.get(self.key(name, n, wf, mhz, ddr)) for n in ns}
         m = {n: self.cache.get(self.key(name, n, wf, mhz, ddr) + "|mem") for n in ns}
@@ -198,7 +212,7 @@ class Grid:
 
     def run(self, name, wf, mhzs, ddrs):
         spec = load_spec(model_dir(name))
-        _, _, ns = self.prefixes(spec)
+        ns = self.layer_counts(spec)
         self.imgdir.mkdir(parents=True, exist_ok=True)
         W = LazyW(model_dir(name))
         metas = {n: self.image(name, spec, W, n, wf) for n in ns}
@@ -253,8 +267,10 @@ def main():
     ap.add_argument("--head", default="int8", choices=["int8", "int4", "fp4"])
     ap.add_argument("--plus", action="append", default=[],
                     help="extra simulator argument (repeatable; part of the cache key)")
+    ap.add_argument("--prefixes", action="store_true",
+                    help="build the token from layer prefixes (fast; short on two ports)")
     a = ap.parse_args()
-    g = Grid(a.cache, a.imgdir, a.mem, a.pos, a.cap, a.head, a.plus)
+    g = Grid(a.cache, a.imgdir, a.mem, a.pos, a.cap, a.head, a.plus, a.prefixes)
     mhzs = [float(x) for x in a.mhz.split(",")]
     ddrs = [int(x) for x in a.ddr.split(",")]
     if a.table:

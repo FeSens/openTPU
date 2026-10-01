@@ -504,6 +504,14 @@ def _sink(b, m, g, samp, st, pos, consts, debug):
     return sink
 
 
+def _post(m, tok) -> None:
+    """The model's post of the sampled token to the host, when it has one (m.post_token: Gemma
+    4 E4B asks for the token's PLE record, which the next token's step waits for)."""
+    post = getattr(m, "post_token", None)
+    if post is not None:
+        post(tok)
+
+
 def _token_end(b, g, st, pos, spec, block, samp, sink, tok, split: bool = False) -> None:
     """The token to out[p + 1], HALT at a stop, the next token's state in st: tok, the
     run-time variables the step used (in a split program's second part every one: the step
@@ -588,6 +596,7 @@ def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
     b.run_words = {name: st.base + slot for name, slot in SLOT.items()}
     step.fn(m=m, pos=pos, block=block)
     tok = sink.token()
+    _post(m, tok)
     _token_end(b, g, st, pos, spec, block, samp, sink, tok)
     _arguments(b, body, mark, st, spec, block)
     b.end_loop(loop)
@@ -630,6 +639,7 @@ def _generate_head(m, pos, block, step, spec, samp=None, debug=False):
     sink = _sink(b, m, g, samp, st, pos, consts, debug)
     (getattr(step, "head", None) or _lm_head)(ol.load(g.xs), m, spec)
     tok = sink.token()
+    _post(m, tok)
     _token_end(b, g, st, pos, spec, block, samp, sink, tok, split=True)
     _arguments(b, body, mark, st, spec, block)
     ol.store(g.state[:S_HALT], st[:S_HALT])      # not the host's stop word
@@ -657,7 +667,8 @@ def compile_generate(image, kernel, blocks: int, lo: int, block: int, chain: boo
         raise ValueError(f"lo {lo} is not in bucket {blocks}")
     if part is not None and not chain:
         raise ValueError("a split generate program chains (HALT CHAIN)")
-    rp = RunPos(blocks, block, lo, image.lookup["zmask"], image.cap)
+    # the bucket's mask rows (Gemma 4 computes its own, m.mask: no table)
+    rp = RunPos(blocks, block, lo, image.lookup.get("zmask", 0), image.cap)
     fn, kw = {None: (_generate, {"chain": chain, "debug": debug}), 0: (_generate_layers, {}),
               1: (_generate_head, {"debug": debug})}[part]
     progs = []
