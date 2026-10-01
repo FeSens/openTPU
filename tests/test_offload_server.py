@@ -382,14 +382,14 @@ def test_lfu_policy_evicts_the_least_decayed_use():
         assert set(srv.lru[0]) == cache
 
 
-def _hint_setup(policy="lfu", warm=(0, 1, 2), slot=2 * 4096 + 128):
+def _hint_setup(policy="lfu", warm=(0, 1, 2), slot=2 * 4096 + 128, **kw):
     """Layer 0 of 3 slots with `warm` (LRU order 2, 1, 0: 0 newest), experts of three 4 KiB parts
     (the last 128 bytes)."""
     from opentpu.host.offload import RUN
     lay = Layout.build(4096, E, K, (3, 3), slot)
     mem = SimDram(np.zeros(lay.end + 4096, np.uint8))
     srv = ExpertServer(mem, lay, lambda g: np.full(slot, g + 1, np.uint8).tobytes(),
-                       policy=policy, part=RUN)
+                       policy=policy, part=RUN, **kw)
     srv.load(list(warm))
     return lay, mem, srv, E * 2
 
@@ -451,3 +451,23 @@ def test_lru_ignores_hints_and_a_hint_is_one_layers():
     _post(mem, lay, 2, [G + 3, G + E + 4])
     with pytest.raises(ValueError, match="one layer"):
         srv.poll()
+
+
+def test_a_request_withdraws_its_layers_unnamed_hints_with_drop():
+    """drop=True: a request withdraws its layer's hinted experts it does not name that have not
+    landed (their slots free again, nothing more sent), and keeps the others' layers' hints; the
+    next miss in the layer takes a freed slot without replacing a cached expert."""
+    lay, mem, srv, G = _hint_setup(drop=True, warm=(0, 1, 2, E))
+    _post(mem, lay, 1, [G + E + 5, G + E + 6])     # layer 1: two free slots, 5 and 6
+    srv.poll()
+    _post(mem, lay, 2, [G + 3, G + 4])             # layer 0: 3 replaces 2, 4 replaces 1
+    srv.poll()
+    srv.poll()                                      # one part of 5 (the oldest)
+    assert dict(srv.pending) == {E + 5: 4096, E + 6: 0, 3: 0, 4: 0}
+    _post(mem, lay, 3, [4, 0])                      # 3 withdrawn; layer 1's stay
+    assert srv.poll() == 1 and srv.withdrawn == 1 and srv.dropped == 0
+    assert list(srv.pending) == [E + 5, E + 6] and 3 not in srv.lru[0]
+    assert _entry(mem, lay, 3) == (0, 0.0) and len(srv.free[0]) == 1
+    _post(mem, lay, 4, [7, 4])                      # 7 takes 3's slot: 0 stays
+    srv.poll()
+    assert set(srv.lru[0]) == {0, 4, 7} and _landed(mem, lay, srv, 7)
