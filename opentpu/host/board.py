@@ -30,6 +30,7 @@ import os
 import struct
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -132,6 +133,22 @@ def _readinto(fd: int, mv: memoryview, off: int) -> int:
     return len(b)
 
 
+# One lock per card for the process: a host->card and a card->host DMA call never overlap. On the
+# card (2026-10-01, builds B 79c5707a at Gen1 and ccae1763 at Gen2), XDMA writes from one thread
+# while another thread read from the card slipped the host->card data by 64 bytes for good (every
+# later write landed 64 B behind its address on both channels, until the FPGA was reloaded): two
+# slips within 15 s of overlapped traffic, none in 225 GB of writes or 11 GB of reads alone. Calls
+# in one direction keep their pipelining with host work (Board.write / read's worker); a call
+# waits at most one DMA_CHUNK of the other direction. The device lock keeps other processes off
+# the DMA channels (not inside one otpu-lock: its processes share the card, each with this lock
+# for its own threads only).
+_DMA_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _dma_lock(dev: str) -> threading.Lock:
+    return _DMA_LOCKS.setdefault(dev, threading.Lock())
+
+
 def _addr(a: np.ndarray) -> int:
     return a.__array_interface__["data"][0]
 
@@ -158,6 +175,7 @@ class XdmaTransport:
     ecc = True                  # the card's DRAM needs Board.scrub after configuration
     threaded = True             # Board may run the DMA calls in a worker thread (Board.write/read)
     streams = True              # DMA while the accelerator runs (BoardBackend streamed logits)
+    _dma = _dma_lock("")        # its card's DMA lock (__init__); this one for a transport built bare
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
         self.dev, self.devname = dev, Path(dev).name
@@ -165,6 +183,7 @@ class XdmaTransport:
         # (OTPU_LOCK_WAIT) must hold no file on the card, or `otpu-setup --rescan` of the
         # holder, which refuses while the device is open, is blocked by the queue.
         self._otpu_lock = DeviceLock(self.devname) if dma else None
+        self._dma = _dma_lock(os.path.realpath(dev))  # the card's DMA calls, one at a time
         self.h2c = self.c2h = -1
         try:
             if dma:
@@ -229,11 +248,12 @@ class XdmaTransport:
         while pos < len(a):
             k = min(DMA_CHUNK, len(a) - pos)
             src = a[pos:pos + k]
-            if not _write_ok(_addr(src), base + pos):       # bounce: 0.77 -> 1.7 GB/s
-                st = self._stage(k, base + pos)
-                st[:] = src
-                src = st
-            n = os.pwrite(self.h2c, memoryview(src), base + pos)
+            with self._dma:                         # never during a card->host call
+                if not _write_ok(_addr(src), base + pos):   # bounce: 0.77 -> 1.7 GB/s
+                    st = self._stage(k, base + pos)
+                    st[:] = src
+                    src = st
+                n = os.pwrite(self.h2c, memoryview(src), base + pos)
             if n <= 0:
                 raise IOError("XDMA h2c write failed")
             pos += n
@@ -252,12 +272,13 @@ class XdmaTransport:
         pos = 0
         while pos < n:
             want = min(DMA_CHUNK, n - pos)
-            if direct:
-                k = _readinto(self.c2h, mv[pos:pos + want], base + pos)
-            else:
-                st = self._stage(want, base + pos)
-                k = _readinto(self.c2h, memoryview(st), base + pos)
-                mv[pos:pos + k] = memoryview(st)[:k]
+            with self._dma:                         # never during a host->card call
+                if direct:
+                    k = _readinto(self.c2h, mv[pos:pos + want], base + pos)
+                else:
+                    st = self._stage(want, base + pos)
+                    k = _readinto(self.c2h, memoryview(st), base + pos)
+                    mv[pos:pos + k] = memoryview(st)[:k]
             if k <= 0:
                 raise IOError("XDMA c2h read failed")
             pos += k

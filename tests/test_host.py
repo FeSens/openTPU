@@ -1772,3 +1772,65 @@ def test_xdma_transport_writes_whole_beats(tmp_path, monkeypatch):
     assert all(o % 64 == 0 and n % 64 == 0 for o, n in writes)
     assert np.array_equal(t.mem_read(0, 0, 4096), ref)
     os.close(fd)
+
+
+def test_xdma_dma_calls_never_overlap(monkeypatch):
+    """XdmaTransport runs one DMA call per card at a time, whatever the threads: a host->card call
+    never overlaps a card->host one (on the card such an overlap slipped later host writes by 64
+    bytes for good, 2026-10-01). Two threads, one writing and one reading through two transports
+    of the same card (as offload's DMA worker and the main thread's polls can), against stand-ins
+    for the driver calls that record how many run at once; with the lock taken out, the same test
+    sees them overlap."""
+    import contextlib
+    import threading
+    import time as _time
+    from opentpu.host import board
+
+    live, peak, guard = [0], [0], threading.Lock()
+
+    def call(n):
+        with guard:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+        _time.sleep(0.002)
+        with guard:
+            live[0] -= 1
+        return n
+
+    monkeypatch.setattr(board.os, "pwrite", lambda fd, mv, off: call(len(mv)))
+    monkeypatch.setattr(board, "_readinto", lambda fd, mv, off: call(len(mv)))
+
+    def transport():
+        t = object.__new__(board.XdmaTransport)
+        t.h2c = t.c2h = 99
+        t._dma = board._dma_lock("/dev/xdma-test")
+        return t
+
+    def run(nolock: bool) -> int:
+        tw, tr = transport(), transport()
+        if nolock:
+            tw._dma = tr._dma = contextlib.nullcontext()
+        peak[0] = 0
+        data = board.placed(4096, 0)
+        stop = threading.Event()
+
+        def writer():
+            while not stop.is_set():
+                tw.mem_write(0, 0, data)
+
+        def reader():
+            while not stop.is_set():
+                tr.mem_read(1, 4096, 64)
+
+        th = [threading.Thread(target=writer), threading.Thread(target=reader)]
+        for x in th:
+            x.start()
+        _time.sleep(0.3)
+        stop.set()
+        for x in th:
+            x.join()
+        return peak[0]
+
+    assert run(nolock=True) == 2            # the stand-ins see an overlap when there is one
+    assert run(nolock=False) == 1
+    assert board._dma_lock("/dev/xdma-test") is board._dma_lock("/dev/xdma-test")
