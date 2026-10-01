@@ -225,6 +225,21 @@ pos 128), bit-exact against the ISA simulator:
 The 2B's resident run on the RTL does not fit the Verilator memory model (its lookup tables
 hold 2 GB of fp32 embedding rows).
 
+**On the card.** Production build B (`deploy_fused133c_79c5707a`, 133.33 MHz, DDR3-1066),
+2026-10-01, `tools/qual/perf.py` (a 512-token prompt, then 64 greedy decode tokens with the
+host's argmax in the loop), device / wall tok/s:
+
+| Model | Weights | Decode | Prefill, device | DRAM while decoding |
+|:--|:--|--:|--:|--:|
+| 2B | int8 | 8.02 / 8.00 | 38.2 | 16.0 GB/s (94%), 1968 MB/token |
+| 2B | 4-bit, int8 head | 12.09 / 12.03 | 41.7 | 15.8 GB/s (92%), 1282 MB/token |
+| 4B | 4-bit, int8 head | 5.88 / 5.87 | 12.9 | 15.7 GB/s (92%), 2623 MB/token |
+
+All three give the ISA simulator's tokens bit for bit, per-position and with the resident
+decode program (`tools/qual/refs.py card`, 32 tokens of otpu-selftest's prompt). The 2B's
+prefill runs 4 rows (512 tokens in 128 runs). The 4B's runs 3 rows (171 runs), and each takes
+about 1.4 decode tokens' time.
+
 On the ISA simulator in the card's configuration against Hugging Face fp32
 (`tools/compare_hf.py --cfg CFG.pkl`, the README's eight raw prompts, 16 tokens):
 - 2B, int8: 6 of 8 identical. The other two differ at near-ties, where the device takes HF's
