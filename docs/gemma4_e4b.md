@@ -1,9 +1,10 @@
 # Gemma 4 E4B: the per-layer embeddings from the host
 
-Status: the PLE slot runs on the ISA simulator and the RTL (bit-exact), and the weight formats
-are chosen (section "Accuracy"). The card's generate loop and the card itself are next. Numbers
-are measured (with how), computed from the checkpoint's config and the image allocator
-(`gemma4.Image`), or marked *estimate*.
+Status: runs on the card (build B, 2026-10-01): token for token the ISA simulator's on every
+decode path, the card's generate loop included, at 3.78 tok/s (tools/qual/perf.py) and 3.83
+tok/s in the generate loop (section "On the card"). The weight formats are in section
+"Accuracy". Numbers are measured (with how), computed from the checkpoint's config and the
+image allocator (`gemma4.Image`), or marked *estimate*.
 
 [gemma-4-E4B](https://huggingface.co/google/gemma-4-E4B) is the first model of the roadmap that
 does not fit the card's 4 GiB. It is dense, and its body at fp4 fits with room to spare. What
@@ -162,9 +163,11 @@ repository in September 2026. Same emulation, ppl:
   layers, down 0-23 and the head in fp4). With fp4 layers and the int8 head it is 2.803 GB:
   attention 312 MB, the MLPs 1,755 MB, the per-layer inputs 29 + 15 MB and the head 692 MB.
   KV and I/O add a few MB.
-- **Speed:** E2B streams 1,475 MB a token at 9.63 tok/s on the card (docs/gemma4.md), 14.2
-  GB/s. At that rate E4B gives **about 3.4 tok/s** in the default formats, and 5.1 with fp4
-  layers (*estimate*). The RTL's 42-layer scaling below gives 3.5 and 5.0.
+- **Speed:** E2B streamed 1,475 MB a token at 9.63 tok/s on the card's previous image
+  (e698dcd7; docs/gemma4.md), 14.2 GB/s. At that rate E4B gives **about 3.4 tok/s** in the
+  default formats, and 5.1 with fp4 layers (*estimate*). The RTL's 42-layer scaling below
+  gives 3.5 and 5.0. Measured on build B: 3.78 tok/s, 4,215 MB a token at 15.95 GB/s
+  (section "On the card").
 - **PCIe:** one 11,264-byte record per token (5,888 fp4), host to card. At the measured Gen1
   rate (1.3 GB/s, docs/offload.md section 1) that is 9 us, plus the DMA's fixed cost, about
   30-40 us in all (*estimate*, offload's figure for a 22-43 KB row). That is 0.02% of a
@@ -201,7 +204,8 @@ without), attention x 3.556, PLE x 3.5, the head as it is.
 - Default formats: MLP 27.68 M, attention 6.51 M, PLE 0.82 M and head 3.25 M. That is
   **about 38.3 M cycles, 3.5 tok/s at 133.33 MHz** (*estimate*).
 - fp4 layers: 26.6 M cycles, 5.0 tok/s.
-- E2B runs 13.84 M cycles on the card.
+- E2B ran 13.84 M cycles on the card's previous image (e698dcd7), which the co-simulation
+  matches. Build B runs it in 12.61 M (-8.9%), and E4B in 35.24 M, 8.0% under the estimate.
 
 ## The slot
 
@@ -272,6 +276,29 @@ The row reaches the slot in one of two ways.
   bit-identical to main's, per-position and resident, int8 and fp4. With the fp4 head its 4-row
   runs now fit TMEM too (main: TMEM exhausted, so 2-row runs).
 
+## On the card
+
+Build B (`deploy_fused133c_79c5707a`, 133.33 MHz, DDR3-1066), 2026-10-01. The default formats
+(int8 layers; the head and down 0-23 in fp4), the PLE table on the host as int8 records, cap
+2048: a 3.958 GiB image, the Engine built in 158 s on opentpu.
+
+- **Token-exact** against the ISA simulator. After prefill runs of the 11-token prompt `The
+  lighthouse keeper climbed the stairs at dusk, and`: its first token, then 24 tokens each by
+  resident decode steps, per-position steps, and the card's generate loop, greedy and sampled
+  (temperature 0.8, top-k 40, top-p 0.95). In the loop, the `RowServer`'s history (the tokens
+  the card asked rows for: 23 greedy, 24 sampled) equals the tokens.
+- **tools/qual/perf.py** (64 greedy tokens after the 512-token prompt, the host's argmax in
+  the loop): 35.242 M cycles a token, 3.78 tok/s device, 3.75 wall. 4,215 MB read a token,
+  15.95 GB/s while running (94% of the peak); the MXU starved 0%. The prompt in 128 4-row
+  prefill runs: 14.8 tok/s device, 14.1 wall.
+- **The card's generate loop** (`tools/decode_profile.py --card-loop --greedy`, 64 tokens,
+  one PLE row served per token): 34.784 M cycles a token, 3.83 tok/s device, 3.81 wall; 343 ms
+  before the first token, 80.5 ms of it compiling.
+- **The wait for the row** costs 0.56%. E2B, whose table fits the card, ran the generate loop
+  both ways (greedy, int8 head): 12.173 M cycles a token with the table on the host
+  (`OTPU_PLE_HOST=1`) against 12.105 M on the card, 68K cycles (0.51 ms). Wall is 10.83 tok/s
+  both ways.
+
 ## Plan
 
 1. **The slot option** (done): `Image(ple_host=)` / OTPU_PLE_HOST, `Image.host_rows`, the
@@ -289,4 +316,5 @@ The row reaches the slot in one of two ways.
    the fence holds at its first read in a resident step. E4B's generate programs fit IMEM
    as one program: greedy 1,753 / 2,197 instructions (bucket 1 / 8), sampled
    2,035 / 2,478.
-6. **The card**, through team-lead: token-exactness and tok/s against the 3.5 above.
+6. **The card** (done, section "On the card"): token-exact on every decode path; 3.78 tok/s
+   (perf.py) and 3.83 in the card's generate loop, against the 3.5 estimated.
