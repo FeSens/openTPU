@@ -801,7 +801,7 @@ run-time arguments from it (`run_words`), and stores it before the CHAIN.
 ### 10.1 Milestone 1: the loop on the ISA simulator
 
 `tools/mtp_decode.py --loop device --no-plain --want <phase 2's tokens>` (fp4, int8 head,
-cap 4096, the card's MCOLS 4 / PAIR / DSTEP / STREAM), 48 tokens per prompt. Every prompt
+cap 1024, the card's MCOLS 4 / PAIR / DSTEP / STREAM), 48 tokens per prompt. Every prompt
 gives plain greedy's tokens:
 
 | model | prompt | iterations / accepted | phase 2 (host loop) |

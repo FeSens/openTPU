@@ -52,6 +52,7 @@ class MTPStats:
     compile_s: float = 0.0                          # host seconds compiling the programs
     prefill_s: float = 0.0                          # host seconds of the prefill (wall)
     prefill_compile_s: float = 0.0                  # ... compiling its programs
+    timed_out: bool = False                         # loop_card: the deadline wrote the stop word
 
     @property
     def iterations(self) -> int:
@@ -222,7 +223,7 @@ class MTPDecoder:
         return done
 
     def generate_card(self, prompt, max_new: int = 32, stop=None, on_token=None,
-                      drafts=None) -> MTPStats:
+                      drafts=None, deadline: float | None = None) -> MTPStats:
         """Greedy MTP decoding with the loop on the device (docs/mtp.md 10): the prefill as
         generate()'s (its last logits' argmax on the host, as Engine.generate_card's callers
         take it), then one device run that verifies, drafts and chains through the buckets'
@@ -232,15 +233,18 @@ class MTPDecoder:
         the committed state slot read back). st.runs: the run's counters (CYCLES), st.accepted
         the iterations' accepted drafts (their count, from the device's counters). drafts
         (tests): the draft of each position q (drafts[q], q < cap + 2) instead of the MTP's,
-        from the first iteration's on."""
+        from the first iteration's on. deadline (seconds, a card's run_generate): past it the
+        host writes the stop word (st.timed_out; the card halts at its next verify), and 10 s
+        later a run still going raises TimeoutError."""
         st = MTPStats(prompt=len(prompt))
         t0 = time.perf_counter()
         a0, d = self.prefill(prompt, st)
         st.prefill_s, st.prefill_compile_s = time.perf_counter() - t0, st.compile_s
-        return self.loop_card(a0, d, max_new, stop, on_token, drafts, st)
+        return self.loop_card(a0, d, max_new, stop, on_token, drafts, st, deadline)
 
     def loop_card(self, a0: int, d: int, max_new: int = 32, stop=None, on_token=None,
-                  drafts=None, st: MTPStats | None = None) -> MTPStats:
+                  drafts=None, st: MTPStats | None = None,
+                  deadline: float | None = None) -> MTPStats:
         """generate_card after its prefill: a0 (the token at Engine.pos, emitted) and d (the
         draft of the next position) -> the device's run of the MTP loop from the committed
         slot (see generate_card)."""
@@ -271,7 +275,18 @@ class MTPDecoder:
         first = progs[(b0, (E0 if P % block == block - 1 else V0) + self.slot)]
         run = getattr(eng.backend, "run_generate", None)
         if run is not None:
-            stats, got = run(first, g["out"] + 4 * (P + 1), n, on_token, None, g["state"])
+            late = None
+            if deadline is not None:
+                end = time.perf_counter() + deadline
+
+                def late() -> bool:
+                    now = time.perf_counter()
+                    if now > end + 10.0:
+                        raise TimeoutError(f"the MTP loop runs {deadline + 10:.0f} s, its stop "
+                                           f"word unanswered")
+                    st.timed_out = st.timed_out or now > end
+                    return st.timed_out
+            stats, got = run(first, g["out"] + 4 * (P + 1), n, on_token, late, g["state"])
         else:
             stats = eng.backend.run(first)
             w = eng.backend.read(0, g["out"] + 4 * (P + 1), 4 * n).view(np.uint32)

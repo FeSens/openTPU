@@ -116,7 +116,11 @@ def run(a) -> None:
         t0 = time.time()
         eng.reset()
         dec = MTPDecoder(eng)
-        st = (dec.generate_card if a.loop == "device" else dec.generate)(ids, max_new=a.tokens)
+        if a.loop == "device":
+            dl = a.deadline if a.deadline is not None else 10.0 + 0.5 * a.tokens
+            st = dec.generate_card(ids, max_new=a.tokens, deadline=dl if a.card else None)
+        else:
+            st = dec.generate(ids, max_new=a.tokens)
         dt = time.time() - t0
         runs, cyc = {}, {}
         for k, _, s_ in st.runs:
@@ -142,8 +146,14 @@ def run(a) -> None:
               f"{st.acceptance:.2f}, runs {runs}, {r['seconds']} s"
               + (f", {r['mtp_card']}" if a.card else "")
               + f"; {tok.decode(st.tokens)[:80]!r}", flush=True)
+        if st.timed_out:
+            r["timed_out"] = True
+            print(f"prompt {i}: the device loop ran past its deadline", flush=True)
         if a.out:
             Path(a.out).write_text(json.dumps(res))
+        if a.stop_on_mismatch and (st.timed_out or not r["equal"]):
+            _close(eng)
+            raise SystemExit(4 if st.timed_out else 3)
     _close(eng)
 
 
@@ -290,6 +300,12 @@ def main() -> None:
     ap.add_argument("--prebuild", action="store_true",
                     help="build both images into the image cache, no card (with --card CFG)")
     ap.add_argument("--quiet-wait", type=float, default=3600.0)
+    ap.add_argument("--stop-on-mismatch", action="store_true",
+                    help="exit 3 at the first prompt whose tokens differ from plain greedy's, "
+                         "4 at a device loop past its deadline (--deadline)")
+    ap.add_argument("--deadline", type=float, default=None,
+                    help="seconds for one device loop run (--loop device on the card): then "
+                         "the host's stop word (default 10 + 0.5 s per token)")
     ap.add_argument("--summary", nargs="+")
     ap.add_argument("--cycles", help="decode step, verify and draft cycles (perf_qwen)")
     a = ap.parse_args()
