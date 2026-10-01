@@ -32,6 +32,14 @@ ids are offset by layers x E; the host replaces their slots' victims at once and
 missing experts in the link's idle time, and the route's own request finds them landed or on
 their way.
 
+`moe_ffn_rows` is the layer on R rows at once (layer-major prefill, docs/offload.md section 13):
+each row routes as moe_ffn's; one request carries the rows' R x k ids (the count at mbox + 4);
+the card finds their union (each id's first place among them) and runs each union expert once
+on all R rows, storing each row's unweighted output to its (row, rank) place in a DRAM scratch
+of [R k + 1, H] (R k <= 16, the request's one line; the last row a sink for the outputs no row
+chose); each row then sums its own k in its router's order, so a row's result is moe_ffn's bit
+for bit.
+
 `ExpertFormat` is one expert's slot: gate and up [F, H] and W_down's column parts, laid out as a
 layer block's MLP (lfm2.Image), so the FFN is kernels.mlp.swiglu_down at the slot's address
 (a compiler.DevVar: the register RLD sets). One slice (S = 1, the board's).
@@ -286,7 +294,11 @@ def moe_hint(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float) -> None:
     b.end_loop(lp)
     b.unscratch(r)
     ids.set(ids + ol.load(lw.gbase) + float(dev.hint_off))
-    MB.post(dev.mbox, ids)
+    seq = MB.wait_served(dev.mbox)                  # MB.post, with the request's count
+    ol.store(Tensor(Affine(dev.mbox + LINE), (k,), (1,)), ids)
+    ol.store(Tensor(Affine(dev.mbox + 4), (1,), (1,)), ol.full((1,), float(k)))
+    seq.set(seq + 1.0)
+    ol.store(Tensor(Affine(dev.mbox), (1,), (1,)), seq)
 
 
 def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
@@ -379,6 +391,7 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     b.rld(r, seq, raw=True, comment="seq (bits)")
     b.waitw(word, dev.served, 0, I.C_GE, rc=r, comment="fence: served >= seq")
     ol.store(Tensor(Affine(dev.mbox + LINE), (k,), (1,)), gid)
+    ol.store(Tensor(Affine(dev.mbox + 4), (1,), (1,)), ol.full((1,), float(k)))  # (its count)
     seq.set(seq + 1.0)
     ol.store(Tensor(Affine(dev.mbox), (1,), (1,)), seq)
     if beside is not None:                              # while the host streams
@@ -422,3 +435,165 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     if mo.shared:
         acc = acc + swiglu_down(xs, lw.wg, lw.wu, lw.wd) * gate[:, None]
     return x + acc if residual else acc
+
+
+def moe_ffn_rows(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
+                 residual: bool = True):
+    """x + the MoE FFN of R token rows at once (x [R, H], R * k <= LINE / 4: one request row):
+    a layer-major prefill run's (docs/offload.md 13). Every row routes as moe_ffn's; one
+    request names the rows' R * k ids (repeats included: the host serves each once) and their
+    count (the word after seq); each expert of the rows' union runs once, on every row (one MM
+    of R rows: with PAIR, R <= 2 cost what one does), and each row that chose it stores its
+    output, unweighted, to its place (row, rank) of dev.scratch [R * k + 1, H] (the last row a
+    sink for the rows that did not); then each row sums its experts' outputs, weighted, in its
+    router's order. So a row's result is moe_ffn's on that row alone, bit for bit, whatever
+    the cache held. lw, dev (and dev.scratch), beside and residual as moe_ffn's.
+
+    The union: for each row q, eq[n, j] = 1 - min(1, |id_n - id_q,j|) over every entry n of
+    the request (the ids are integers: 1 where equal); its row sums say whether row q chose
+    entry n's expert (found) and at which rank (the sum of j eq[n, j]), which gives the byte
+    offset of entry n's output for row q in the scratch; an entry whose expert an earlier row
+    chose is not computed again. One register, as moe_ffn's."""
+    b = current()
+    if ol.num_programs() != 1:
+        raise CompileError("moe_ffn_rows runs on one slice")
+    R, H, E, k = x.rows, x.cols, mo.E, mo.k
+    N = R * k
+    if N > LINE // 4:
+        raise CompileError(f"{R} rows of {k} experts: more ids than a request row holds")
+    if getattr(lw, "g_exp", None) is None:
+        xs = xe = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
+    else:
+        xn = rmsnorm(x, ol.load(lw.g_post), eps)
+        xs, xe = ol.quantize(xn), ol.quantize(xn * ol.load(lw.g_exp)[None, :])
+        del xn
+    lg = ol.dot(xs, lw.router)                          # [R, E] (+ the shared expert's gate)
+    gid, wts = ol.empty((R, k), dense=True), ol.empty((R, k), dense=True)
+    pr, tmp, ids = ol.empty((2,)), ol.empty((k,)), ol.empty((k,))
+    gb = ol.load(lw.gbase)
+    r = b.scratch()
+    for q in range(R):                                  # each row's k best, as moe_ffn's
+        sc, sel = ol.empty((E,)), ol.empty((E,))
+        if mo.rule == "softmax":
+            sc.set(lg[q, 0:E])
+            sel.set(sc)
+        else:
+            sc.set(sigmoid(lg[q, 0:E]))
+            sel.set(sc + ol.load(lw.ebias))
+        wt = wts[q, :]
+        lp = b.begin_loop(k)
+        b.emit(I.argmax(pr.base, sel.base, 1, E, comment="moe: best"))
+        b.emit(I.rld(r, pr.base + 1, comment="its index"))
+        b.emit(I.vop(I.V_FILL, sel.base, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, NEG, ra=r,
+                     comment="knock out"))
+        if k > 1:
+            tmp[0:k - 1].set(wt[1:k])
+            wt[0:k - 1].set(tmp[0:k - 1])
+            tmp[0:k - 1].set(ids[1:k])
+            ids[0:k - 1].set(tmp[0:k - 1])
+        b.emit(I.vop(I.V_COPY, wt.base + k - 1, sc.base, 0, 1, 1, 0, 0, 0, rb=r,
+                     comment="weight"))
+        b.emit(I.vop(I.V_COPY, ids.base + k - 1, pr.base + 1, 0, 1, 1, 0, 0, 0, comment="id"))
+        b.end_loop(lp)
+        del sc, sel
+        if mo.rule == "softmax":                        # column 0 holds the largest
+            e = ol.exp2((wt - wt[0:1]) * ol.LOG2E)
+            wt.set(e * ol.recip(ol.sum(e)))
+            del e
+        elif mo.norm:
+            wt.set(wt * ol.recip(ol.sum(wt) + 1e-6))
+        if mo.scale != 1.0:
+            wt.set(wt * float(mo.scale))
+        gid[q, :].set(ids + gb)                         # global ids: j * E + index
+    del ids, tmp
+    gf = gid.reshape(1, N)[0, :]                        # the request's entries, row by row
+    # pe's rows (columns: the entries; every loop over them rotates pe left by one, so entry
+    # n is at column 0 in iteration n): present and computed here, missing, the directory
+    # offset, and per row q the byte offset of the entry's output for q in the scratch
+    EP, MISS, OFF, TG = 0, 1, 2, 3
+    RB, SINK = 4 * H, N * 4 * H
+    pe, tpe = ol.empty((TG + R, N)), ol.empty((TG + R, N))
+    rank = ol.empty((k,))
+    for j in range(k):
+        rank[j:j + 1].set(float(j))
+    dup = ol.zeros((N,))
+    for q in range(R):
+        d = ol.empty((N, k))
+        d.set(gf[:, None])
+        eq = 1.0 - ol.minimum(ol.abs(d - gid[q, :][None, :]), 1.0)
+        del d
+        found = ol.sum(eq)                              # [N]: row q chose entry n's expert
+        at = ol.sum(eq * rank[None, :])                 # its rank in row q
+        del eq
+        pe[TG + q, :].set(found * ((at + float(q * k)) * float(RB) - float(SINK)) + float(SINK))
+        if q + 1 < R:                                   # later rows' entries chosen before
+            dup[(q + 1) * k:N].set(dup[(q + 1) * k:N] + found[(q + 1) * k:N])
+        del found, at
+    pe[OFF, :].set(gf * 8.0)
+
+    def rotate():
+        tpe[:, 0:N - 1].set(pe[:, 1:N])
+        tpe[:, N - 1:N].set(pe[:, 0:1])
+        pe[:, :].set(tpe[:, :])
+
+    # the fence, then the request: the ids, their count, seq + 1
+    word = ol.empty((1,))
+    seq = ol.load(Tensor(Affine(dev.mbox), (1,), (1,)))
+    b.rld(r, seq, raw=True, comment="seq (bits)")
+    b.waitw(word, dev.served, 0, I.C_GE, rc=r, comment="fence: served >= seq")
+    ol.store(Tensor(Affine(dev.mbox + LINE), (N,), (1,)), gf)
+    ol.store(Tensor(Affine(dev.mbox + 4), (1,), (1,)), ol.full((1,), float(N)))
+    seq.set(seq + 1.0)
+    ol.store(Tensor(Affine(dev.mbox), (1,), (1,)), seq)
+    if beside is not None:                              # while the host streams
+        b.unscratch(r)
+        beside()
+        r = b.scratch()
+    col = lambda row: pe.base + row * pe.rs                       # noqa: E731 (column 0)
+    lp = b.begin_loop(N)                                # the directory: present flags
+    b.emit(I.rld(r, col(OFF), comment="entry offset"))
+    b.emit(I.ld(dev.dir + 4, col(EP), 1, ra=r, comment="entry: present"))
+    rotate()
+    b.end_loop(lp)
+    keep = 1.0 - ol.minimum(dup, 1.0)                   # entries computed here: the union
+    pe[MISS, :].set((pe[EP, :] * -1.0 + 1.0) * keep)
+    pe[EP, :].set(pe[EP, :] * keep)
+    del keep, dup
+    ex = dev.fmt.descs(DevVar("expert slot", r, align=LINE))      # (slots: LINE-aligned)
+
+    def expert():
+        """The expert whose slot is R[r] on every row; each row's output to its place."""
+        o = swiglu_down(xe, ex.wg, ex.wu, ex.wd, act=ACTS[mo.act])
+        b.check_live(o)
+        for q in range(R):
+            b.emit(I.rld(r, col(TG + q), comment="its place for this row"))
+            ol.store(Tensor(Affine(dev.scratch) + DevVar("place", r), (H,), (1,)), o[q, :])
+
+    for flag, wait in ((EP, False), (MISS, True)):
+        lp = b.begin_loop(N)
+        b.emit(I.rld(r, col(flag), comment="missing" if wait else "present"))
+        inner = b.begin_loop(0, rcount=r)               # (the count is read here: r is free)
+        b.emit(I.rld(r, col(OFF), comment="entry offset"))
+        b.waitw(word, dev.dir, 0, I.C_NE, ra=r, comment="its slot" if not wait else
+                "wait: its slot")
+        b.rld(r, word, raw=True, comment="its slot")
+        expert()
+        b.end_loop(inner)
+        rotate()
+        b.end_loop(lp)
+    b.unscratch(r)
+    out = ol.empty((R, H))
+    for q in range(R):                                  # each row's sum in its router's order
+        acc = None
+        for i in range(k):
+            y = ol.load(Tensor(Affine(dev.scratch + (q * k + i) * RB), (1, H), (H, 1))) * \
+                wts[q, i:i + 1]
+            acc = y if acc is None else acc + y
+        out[q:q + 1, :].set(acc)
+        del acc, y
+    if mo.shared:
+        g = ol.empty((R,))
+        g.column().set(lg[:, E:E + 1])
+        gate = sigmoid(g)
+        out = out + swiglu_down(xs, lw.wg, lw.wu, lw.wd) * gate[:, None]
+    return x + out if residual else out

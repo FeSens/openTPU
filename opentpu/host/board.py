@@ -60,6 +60,13 @@ DMA_CHUNK = 8 << 20             # bytes per XDMA read/write call: the driver pin
 #   buffer read from a page-aligned card address is the slow case).
 # d % 4096 == DMA_PLACE satisfies both. Buffers that do not are bounced through a staging buffer.
 DMA_PLACE = 2048
+# XDMA's H2C engine laps its read buffer (8 KiB) when the card holds up its writes: a host->card
+# call of more than 4 KiB while the channel is busy (a run's traffic, or a card->host read)
+# writes data from 8 KiB further on, or stale data, and the engine keeps that slip until the
+# bitstream is loaded again (docs/host.md, "XDMA's H2C overrun"). Calls of 4 KiB were clean
+# under both. So while a run is in flight Board.write moves at most RUN_H2C bytes per call and
+# channel (XdmaTransport.run_h2c); larger writes belong before or after the run.
+RUN_H2C = 4096
 PIPE = 2 * DMA_CHUNK            # Board.write / read: logical bytes per pipelined piece
 POLL_SPIN = 100e-6              # poll: seconds of back-to-back register reads before sleeping
 POLL_MAX_SLEEP = 1e-3           # poll: longest sleep between reads
@@ -205,6 +212,7 @@ class XdmaTransport:
     ecc = True                  # the card's DRAM needs Board.scrub after configuration
     threaded = True             # Board may run the DMA calls in a worker thread (Board.write/read)
     streams = True              # DMA while the accelerator runs (BoardBackend streamed logits)
+    run_h2c = RUN_H2C           # Board.write's bytes per call and channel during a run
     _dma = _DmaLock("", flock=False)    # a transport built bare (tests): its threads only
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
@@ -525,6 +533,7 @@ class Board:
         self._info = None
         self._trace = None              # (depth, keep_first) of a started traced run
         self._t_run = 0.0               # when the started run began (perf_counter)
+        self.in_run = False             # started and not seen halted: writes in RUN_H2C calls
         self._pool = None           # the DMA worker thread (large reads / writes on the card)
         if check:
             ident = self.t.reg_read(R_ID)
@@ -629,6 +638,12 @@ class Board:
         if self.chash:                                  # channel order (a copy)
             data = data if own else data.copy()
             hash_swap(a0, data.reshape(-1, 2, BEAT))
+        lim = getattr(self.t, "run_h2c", 0) if self.in_run else 0
+        if lim:                                         # a run is in flight (RUN_H2C)
+            for c, off, part in split(a0, data):
+                for i in range(0, len(part), lim):
+                    self.t.mem_write(c, off + i, part[i:i + lim])
+            return
         if not (getattr(self.t, "threaded", False) and len(data) > PIPE):
             for c, off, part in split(a0, data):
                 self.t.mem_write(c, off, part)
@@ -760,6 +775,7 @@ class Board:
             t.reg_write(R.R_TRACE_CTRL, R.TR_CLEAR)
             t.reg_write(R.R_TRACE_CTRL, R.TR_ENABLE | (R.TR_STOP_WHEN_FULL if keep_first else 0))
         t.reg_write(R_CTRL, CTRL_CLEAR)
+        self.in_run = True
         t.reg_write(R_CTRL, CTRL_RUN)
         self._t_run = time.perf_counter()
 
@@ -780,6 +796,7 @@ class Board:
         while not getattr(t, "batched", False) and not st0 & R.ST_WR_IDLE and \
                 time.perf_counter() - self.t_seen < WR_SETTLE:
             st0 = t.reg_read(R_STATUS)
+        self.in_run = False
         self.seen_exact = getattr(t, "poll_exact", False)   # else an upper bound
         if traced:                      # the last cycles' events still drain into the buffer
             t.poll(R.R_TRACE_CTRL, R.TR_BUSY, 0, timeout)
@@ -974,11 +991,14 @@ class BoardBackend:
         # Engine: called over and over while a run is in flight, it serves the card's requests
         # (a MoE layer's WAITWs wait for it, docs/offload.md 5.2); nonzero when it served one
         self.host = None
-        # streamed logits (start(stream=...)): the region holding the sentinel, the pieces to
-        # mark again once the next run has started, the pieces' completion times last token
+        # streamed logits (start(stream=...)): the region holding the sentinel, the region to
+        # mark again after the next RUN and that marking in flight (on the DMA worker), the
+        # pieces' completion times last token
         self.streams = bool(getattr(self.board.t, "streams", False))
         self._armed = None                  # (addr, nbytes, piece) filled with SENTINEL
-        self._rearm: list = []
+        self._remark = None                 # (addr, nbytes): marked again after the next RUN
+        self._rearm = None                  # the marking in flight (a Future)
+        self._marks = np.zeros(0, np.uint32)    # SENTINEL words for it
         self._stream = None                 # the running program's (addr, nbytes, piece)
         self._due: dict = {}
         self.last_stream: dict = {}         # the last streamed wait: pieces during the run...
@@ -1025,6 +1045,7 @@ class BoardBackend:
             self.status.update(dram=self._layout())
 
     def write(self, s: int, addr: int, data: np.ndarray) -> None:
+        self._settle()
         a = self._armed
         if a is not None and addr < a[0] + a[1] and a[0] < addr + np.asarray(data).nbytes:
             self._armed = None
@@ -1056,9 +1077,11 @@ class BoardBackend:
         pieces of `piece` bytes (the LM head's chunks, late in the run), and wait(feed) hands
         each piece over as soon as it is complete. The region holds SENTINEL words before the
         run: written here when it does not (the first streamed run, or after anything else
-        wrote the region), else the whole region is marked again right
-        after this start, while the run is still far from its LM head. Needs a transport that
-        allows DMA during a run (`streams`).
+        wrote the region), else the whole region is marked again right after this start, on
+        the DMA worker while the run is still far from its LM head, in calls of RUN_H2C (a
+        larger one that meets the run's traffic laps XDMA's H2C buffer; after the run instead,
+        the marks took 1.0-1.6 ms of every token's critical path); wait() waits for them before
+        its first probe. Needs a transport that allows DMA during a run (`streams`).
 
         args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit25). The
         program in IMEM stays there: starting the same `programs` object again (a program
@@ -1066,6 +1089,7 @@ class BoardBackend:
         device's state between runs (not SimTransport: it loads again)."""
         if args is not None and not self.args:
             raise ConfigMismatch("this bitstream takes no run arguments (CAPS bit25 clear)")
+        self._settle()
         res = self._resident
         if res is None or res[0] is not programs or not getattr(self.board.t, "keeps_state",
                                                                   True):
@@ -1084,19 +1108,19 @@ class BoardBackend:
             self._resident = (programs, words)
         if args is not None:
             self.board.set_args(list(args) + [0] * (8 - len(args)))
+        remark, self._remark = self._remark, None
         if stream is not None and self._armed != stream:
             self.board.write(stream[0], np.full(stream[1] // 4, SENTINEL, np.uint32))
-            self._armed, self._rearm = stream, []
+            self._armed, remark = stream, None
         elif stream is None:
-            self._armed = None                      # the run may write the region
+            self._armed, remark = None, None        # the run may write the region
         self._seen = None
         self._key = len(self._resident[1])
         self._expect = self._expects.get(self._key, 0.0)
         self.board.start(trace=self.trace)
         self._running, self._stream = programs, stream
-        for a, n in self._rearm:
-            self.board.write(a, np.full(n // 4, SENTINEL, np.uint32))
-        self._rearm = []
+        if remark is not None:                      # in RUN_H2C calls (Board.in_run)
+            self._rearm = self.board._worker().submit(self.board.write, remark[0], self._marks)
 
     def wait(self, feed=None) -> dict:
         """Wait for the started program; returns its counters (run's second half). After a
@@ -1113,7 +1137,7 @@ class BoardBackend:
             if self._stream is not None:
                 self._stream_tail(feed)
         except BaseException:
-            self._armed, self._stream = None, None  # the region's state is unknown
+            self._armed, self._stream, self._remark = None, None, None   # the region: unknown
             raise
         khz = self.info["core_khz"]
         self._expects[self._key] = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
@@ -1163,6 +1187,7 @@ class BoardBackend:
         t, b = self.board.t, self.board
         addr = self._stream[0]
         pieces, due = self._pieces(), {}
+        self._settle()                              # the region marked before a probe
         t0, i, probes, tries = b._t_run, 0, 0, 0
         halted = False
         # from POLL_EARLY (+ 3%) before the expected end on, the slices are short, so a run
@@ -1238,9 +1263,18 @@ class BoardBackend:
                                "does not write the whole logits region, or a marking raced it")
         self.last_stream["tail_retries"] = tries
         feed(o, w)                                  # the rest in one piece
-        self._rearm = [(addr, n)]                  # every piece: marked after the next start
+        if len(self._marks) != n // 4:
+            self._marks = np.full(n // 4, SENTINEL, np.uint32)
+        self._remark = (addr, n)                    # every piece: marked after the next start
         self._stream = None
         self.last_stream.update(tail_bytes=n - o, tail_s=time.perf_counter() - t0)
+
+    def _settle(self) -> None:
+        """Wait for the marking of the streamed logits' region (start's, on the DMA worker),
+        raising its error."""
+        f, self._rearm = self._rearm, None
+        if f is not None:
+            f.result()
 
     def run(self, programs: list) -> dict:
         self.start(programs)

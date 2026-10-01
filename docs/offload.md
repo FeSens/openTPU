@@ -1463,3 +1463,116 @@ writes the decode's timeline (when each hint, request and part was seen and done
   2. spinning without the 50 us sleep while a request is due;
   3. a future bitstream: the card writing its request's seq where the host sees it without a
      DMA read (a doorbell register or an MSI), so that the host waits on no read at all.
+
+## 13. Layer-major prefill
+
+Today a prompt runs token by token through the decode step. Each token's MoE layers ask for
+their k experts with per-layer slots, so the prompt pays decode's miss rate: 69 misses a token
+for gemma-4-26B-A4B, 183 s to the first token of a 512-token prompt at Gen1 (the event model
+below; the card measured 361 ms a token in session 8, the model 357). More rows a program
+(token-major, R rows through every layer) barely helps: 18 slots a layer hold about one row's
+union, and 4 rows' union is already 18.2 experts.
+
+Layer-major runs the whole prompt chunk through one layer before the next. Only one layer is
+active, so every slot can serve it; the chunk's union per layer is nearly all its experts, each
+brought once and used by every row that chose it.
+
+### 13.1 The bound
+
+`ttft.py`'s event model (scratchpad): the router traces of four texts, the card's times
+co-simulated (`tools/moe_prefill_cosim.py`: RTL + LiteDRAM, 133.33 MHz, DDR3-1066, build B's
+MCOLS 4 / PAIR / DSTEP / STREAM), the link at its measured 1.42 GB/s, 50 us a DMA call, a
+request's 450 us lead and 0.42 ms of host time a miss (fitted so that R = 1 matches the card:
+26B 357 against 361 ms a token, 35B 255 against 259). TTFT of a 512-token prompt, Gen1:
+
+| | 26B | 35B |
+|:--|--:|--:|
+| today (token by token, experts unpaired) | 183 s | 131 s |
+| token-major, R = 2 / 4 / 8 | 1.36 / 1.48 / 1.59x | 1.46 / 1.59 / 1.64x |
+| layer-major, R = 1 / 2 / 4 | 1.91 / 2.95 / 3.97x | 2.19 / 3.11 / 3.55x |
+| layer-major misses a token | 5.4 | 14.2 |
+
+Layer-major then gives the decode slots back (a restore: 1.6 s for the 26B, 2.7 s for the
+35B, in the table). With every slot one layer's (pooled), R = 1 already halves the TTFT: the
+link stops being the bound, and the MoE runs at the card's rate.
+
+### 13.2 The card
+
+`Image.compile_layer_run(li, blocks, block, R)` (gemma4.py): one program for R rows through
+layer li, at run-time positions (`RunPos`: the first row's position and its row in the chunk
+are run arguments). The chunk's rows live in DRAM (`xbuf`, the image's prefill rows); a run
+loads its R rows, runs attention (each row its own position, rope row and mask pair) and the
+MLP, and stores them back. With R > 1 the chunk's embedding rows come first (one embed run a
+token); with R = 1 layer 0 gathers its row itself. After the last layer, `compile_prefill_head`
+runs the final norm and LM head on the chunk's last row. A run stays inside one attention
+block (the host splits runs there), so the token-index tiles stay static.
+
+`moe.moe_ffn_rows` is the MoE layer on R rows (section 5.2's route, R times):
+1. each row routes as moe_ffn's (the router, the k best, the weights): R x k global ids;
+2. one request: the fence, the R x k ids to the row (repeats included), their count to
+   mbox + 4, seq + 1; then the part beside the request (Gemma's dense MLP);
+3. the union, on the card: for each row q, `eq = 1 - min(1, |id - id_q|)` against all R x k
+   ids; an id is the union's at its first place, and every later place is a repeat;
+4. each union expert once, on all R rows (present first, then the misses, as moe_ffn), its
+   R outputs stored unweighted to each row's (row, rank) place in a DRAM scratch of
+   [R k + 1, H]; a row that did not choose the expert stores to the sink row;
+5. each row sums its k outputs times its weights in its router's order, then the shared
+   expert and the residual.
+
+So each row's result equals moe_ffn's bit for bit, whatever the slots held. R x k <= 16: the
+request is one line. Build B runs a 4-bit MM paired at <= 2 rows; 3-4 rows run at half rate,
+so R = 2 is the point for 4-bit experts until the TMEM layout for R = 4 is done.
+
+### 13.3 The request
+
+`mbox + 4` holds the request's count of ids as a float. Every post writes it: moe_ffn and
+moe_hint write k, moe_ffn_rows writes R x k. The host reads seq and the count in one 8-byte
+read, takes that many ids from the row, drops repeats in order, and reads 0.0 as k (images
+made before the count). For R = 4 (32 ids) a second line follows the first (`row2`, after the
+directory), so R = 4 needs no protocol change. The no-overlap invariant holds: the card's fence
+(WAITW served >= seq) comes before every post, and the host flushes each request's DMA before
+its next poll.
+
+### 13.4 The host
+
+`Engine(layer_major=R)`: `prefill` of sequence 0 goes to `prefill_layers`, which runs each
+chunk of the image's prefill rows layer by layer, runs of `min(R, rows left, rows to the
+block's end)`, then the head run, and reads the logits. Programs are compiled once per (layer,
+blocks, rows). `moe_card.py --layer-major R` runs it on the card. The pooled slots (every slot
+the active layer's during prefill, then the decode slots restored) are the expert server's
+part; with per-layer slots R = 2 runs (16 ids <= 18 slots), at token-major's miss rate.
+
+### 13.5 Tests and status
+
+`test_moe_layer_major_prefill_is_bit_exact` (test_gemma4_moe.py): a tiny Gemma 4 MoE, 262
+tokens in chunks of 100 (a chunk crossing an attention block), int8 R = 1, fp4 R = 1 and 2,
+int8 R = 4 (k = 2): the logits, the KV cache and the DRAM from layer 0 to the head equal
+token-by-token prefill's, and three decode steps after it.
+
+Co-simulated layer runs, the 26B at position 256 (RTL + LiteDRAM, 133.33 MHz; a zero image, so
+every row picks the same 8 experts):
+
+| layer | R = 1 | R = 2 (union 8) |
+|:--|--:|--:|
+| sliding | 6.13 ms | 7.30 ms |
+| global | 6.69 ms | 7.47 ms |
+
+With R = 2's real union (about 12 experts a run) that is about 4.1 ms a row, about 65 s to
+the first token at Gen1 against 183 s (2.8x; R = 1: about 96-101 s, 1.8-1.9x), with the pooled
+slots.
+
+On the card (2026-10-01, build B, Gen1, `tools/offload/sessions/layer_major.sh`, tree 678b976):
+the 26B as session 8's g26a (int8 layers, fp4 experts and head, 18 slots a layer by decayed
+use), 16 tokens after wiki.txt's first paragraph (124 prompt tokens), its prompt three ways.
+All three give the same prefill logits (sha256 90e6b6e06e19da99) and the same 16 tokens, HF's
+greedy ones; decode 2.53 tok/s each. With per-layer slots (not pooled):
+
+| prompt | prefill | requests | misses in the prompt |
+|:--|--:|--:|--:|
+| token by token (g26t16) | 45 s (363 ms a token) | 3720 | 9252 |
+| layer-major R = 1 (g26lm1) | 44 s | 3720 | 9252 |
+| layer-major R = 2 (g26lm2) | 35 s (282 ms a token) | 1860 | 9013 |
+
+R = 1 with per-layer slots sees token by token's requests in the same order per layer, so the
+same misses (10613 in the whole run, both). R = 2 is already 1.29x: two rows a run, and the
+union's repeats (-2.6% misses). The rest of the bound needs the pooled slots.

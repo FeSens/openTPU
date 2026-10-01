@@ -28,7 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ITEMS = ["io-write", "compile-wait", "prog-upload", "imem-load", "start", "counters",
-         "logits-tail", "logits-read", "status", "sample", "detok", "ui"]
+         "logits-tail", "logits-mark", "logits-read", "status", "sample", "detok", "ui"]
 
 
 def profile(model, out: Path, name: str, args: list[str]) -> dict:
