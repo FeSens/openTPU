@@ -89,6 +89,44 @@ def test_unaligned_read_modify_write(addr, n, chash):
         assert np.array_equal(t.ch[c][off:off + BEAT], ref[beat * BEAT:(beat + 1) * BEAT])
 
 
+@pytest.mark.parametrize("chash", [False, True])
+@pytest.mark.parametrize("addr,n", [(0, 1 << 16), (4096 + 64, 20000), (300, 9000)])
+def test_writes_during_a_run_move_run_h2c_per_call(addr, n, chash):
+    """While a run is in flight (Board.start .. wait) a transport with run_h2c (XdmaTransport:
+    XDMA's H2C engine laps its read buffer on a longer call that meets the card's traffic,
+    docs/host.md) gets Board.write's bytes in calls of at most run_h2c per channel, the same
+    bytes in the same places; outside a run, one call per channel."""
+    class T(MemTransport):
+        run_h2c = 4096
+
+        def __init__(self):
+            super().__init__(ch_bytes=1 << 17, chash=chash)
+            self.calls = []
+
+        def mem_write(self, c, off, data):
+            self.calls.append(len(data))
+            super().mem_write(c, off, data)
+
+        def reg_write(self, off, val):
+            pass
+
+    rng = np.random.default_rng(n)
+    t = T()
+    b = Board(t, check=False)
+    ref = rng.integers(0, 256, 1 << 17).astype(np.uint8)
+    b.write(0, ref)
+    assert t.calls == [1 << 16, 1 << 16]
+    b.start()
+    assert b.in_run
+    t.calls = []
+    new = rng.integers(0, 256, n).astype(np.uint8)
+    b.write(addr, new)
+    ref[addr:addr + n] = new
+    assert max(t.calls) <= 4096 and sum(t.calls) >= n
+    b.in_run = False                        # (wait() clears it once HALTED is seen)
+    assert np.array_equal(b.read(0, len(ref)), ref)
+
+
 # ------------------------------------------------------------------------------ board model
 CFG = board_config(DRAM_BYTES=1 << 22)
 
