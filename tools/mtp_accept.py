@@ -21,8 +21,10 @@ with a one-hot draft accepts with probability p(d) under the processed distribut
 
 Writes a JSON with, per prompt, the ids and per drafter one value per drafted token (None:
 no draft); --summary prints acceptance and the projected k = 1 speedup from such files (and
-"ngram3>2": g = 3 where it matches, else g = 2). A checkpoint without a chat template (a
-pre-trained one) gets a plain "User: ... Assistant:" dialogue. docs/mtp.md 7.1 has the results.
+"ngram3>2": g = 3 where it matches, else g = 2; greedy, also "ngram3>2>1": else g = 1, from the
+ids, since a greedy draft is accepted when it is the next id). A checkpoint without a chat
+template (a pre-trained one) gets a plain "User: ... Assistant:" dialogue. docs/mtp.md 7.1 has
+the results.
 
     tools/mtp_accept.py --model Qwen3.5-0.8B --mtp --mode greedy --out q35-greedy.json
     tools/mtp_accept.py --summary q35-greedy.json [--c2 1.21]"""
@@ -308,6 +310,11 @@ def summary(files, c2: float, cdraft: dict) -> None:
         for p in r["prompts"]:      # g = 3 where it matches, else g = 2 (its matches include 3's)
             p["ngram3>2"] = [v3 if v3 is not None else v2
                              for v3, v2 in zip(p["ngram3"], p["ngram2"])]
+            if r["mode"] == "greedy":
+                ids, n0 = p["ids"], p["prompt_tokens"] + 1
+                g1 = [None if (d := ngram_draft(ids[:i], 1)) is None else float(d == ids[i])
+                      for i in range(n0, len(ids))]
+                p["ngram3>2>1"] = [v if v is not None else v1 for v, v1 in zip(p["ngram3>2"], g1)]
         keys = [k for k in r["prompts"][0] if k.startswith(("ngram", "mtp"))]
         for k in keys:
             c = c2 + cdraft.get(k.split("-", 1)[1] if k.startswith("mtp") else "ngram", 0.0)
@@ -339,12 +346,16 @@ def main() -> None:
     ap.add_argument("--out", help="the JSON to write")
     ap.add_argument("--summary", nargs="+", help="print the summary of these JSON files")
     ap.add_argument("--c2", type=float, default=1.21, help="a 2-row verify run, in decode steps")
+    ap.add_argument("--cdraft", default="",
+                    help="drafter costs in decode steps over the defaults, e.g. fp4-32K=0.04")
     a = ap.parse_args()
     if a.summary:
         # the drafter's own cost per iteration, in decode steps (docs/mtp.md 6.1, Qwen3.5-0.8B):
         # the MTP layer (about 2%) plus its head; n-gram's lookup is free
-        summary(a.summary, a.c2, {"full": 0.46, "fp4": 0.25, "fp4-16K": 0.035,
-                                  "fp4-32K": 0.05, "fp4-64K": 0.08, "ngram": 0.0})
+        cd = {"full": 0.46, "fp4": 0.25, "fp4-16K": 0.035, "fp4-32K": 0.05, "fp4-64K": 0.08,
+              "ngram": 0.0}
+        cd.update({k: float(v) for k, v in (x.split("=") for x in a.cdraft.split(",") if x)})
+        summary(a.summary, a.c2, cd)
         return
     run(a)
 
