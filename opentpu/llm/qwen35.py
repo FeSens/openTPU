@@ -1424,9 +1424,9 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         """y += ON . out_proj columns [c0, c1) of head group g (heads of dv columns)."""
         ol.dot(ON, dn.wout(g)[:, c0 * dv:c1 * dv], acc=y)
 
-    def head_in(X, taps, a, out=None):
+    def head_in(X, taps, a, out=None, act=True):
         """Block a of the channels of the pair whose rows are in X (head a's q k v; shared, q, k,
-        v of a, v of b): the convolution and SiLU -> [R, bw] (into `out`)."""
+        v of a, v of b): the convolution and SiLU (act) -> [R, bw] (into `out`)."""
         U = ol.empty([R, bw]) if out is None else out
         for r0, r1 in rgroups:                          # the convolution, as _deltanet's conv
             t = min(K - 1, p0 + r0)
@@ -1441,7 +1441,8 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             U[r0:r1, :].set(u + X[K - 1 + r0 - t:K - 1 + r1 - t, a * bw:(a + 1) * bw] *
                             taps[a * K + K - 1 - t, :][None, :])
             del u
-        U.set(silu(U))
+        if act:
+            U.set(silu(U))
         return U
 
     def head(p, X, Z, taps, a):
@@ -1604,15 +1605,14 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             DMA  pair p + 2's taps, window and gates
 
         Per pair and row the operations of heads() / shared_heads(), out_proj over the same
-        groups in the same order: the same words. A head's q, k (normed in place) and v stay
-        in its convolution's rows, which DSTEP reads as they are. The taps have one buffer:
-        pair p + 2's are loaded after pair p + 1's convolution read pair p + 1's."""
-        if sh:          # q | k of the key head, and the two heads' v
-            QKb = [ol.empty([R, 2 * dk]) for _ in range(2)]
-            Vb = [[ol.empty([R, dv]) for _ in range(2)] for _ in range(2)]
-        else:           # per head: q | k | v rows
-            Ub = [[ol.empty([R, C]) for _ in range(2)] for _ in range(2)]
-        O = [ol.empty([R, dv]) for _ in range(2)]
+        groups in the same order: the same words. The VPU's steps take both heads at once (a
+        SiLU over the pair's channels, a norm over rows (row, head)), as _deltanet_dstep's
+        take its heads as rows. A head's q, k (normed in place) and v stay in the pair's
+        convolved rows, which DSTEP reads as they are. The taps have one buffer: pair p + 2's
+        are loaded after pair p + 1's convolution read pair p + 1's."""
+        Ub = [ol.empty([R, CP], dense=True) for _ in range(2)]  # the pair's convolved channels
+        O2 = ol.empty([R, 2 * dv], dense=True)          # o of both heads
+        O = [O2[:, 0:dv], O2[:, dv:2 * dv]]
         GDBb = [ol.empty([R, 4]) for _ in range(2)]     # decays, then betas, of the pair's heads
         ON = ol.empty([R, og * dv])                     # the group's normed, gated o
 
@@ -1637,37 +1637,33 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         def prep(p, t):
             taps, X, _ = PB[t]
             taps = taps.reshape(nb * K, bw)
-            if sh:                                      # q and k once, the two heads' v
-                for i in range(2):
-                    U = head_in(X, taps, i)
-                    QKb[t][:, i * dk:(i + 1) * dk].set(
-                        l2norm_rows(U, dk ** -0.5 if i == 0 else 1.0))
-                    del U
-                for a in range(2):
-                    head_in(X, taps, 2 + a, out=Vb[t][a])
-            else:
-                for a in range(2):
-                    U = head_in(X, taps, a, out=Ub[t][a])
-                    U[:, 0:dk].set(l2norm_rows(U[:, 0:dk], dk ** -0.5))
-                    U[:, dk:2 * dk].set(l2norm_rows(U[:, dk:2 * dk]))
+            U = Ub[t]
+            for a in range(nb):                         # each block's convolution
+                head_in(X, taps, a, out=U[:, a * bw:(a + 1) * bw], act=False)
+            U.set(silu(U))
+            # q and k L2-normed in place: shared, the key head's; else both heads', as rows
+            # (row, head) of the pair's channels
+            H = U if sh else U.reshape(2 * R, C)
+            H[:, 0:dk].set(l2norm_rows(H[:, 0:dk], dk ** -0.5))
+            H[:, dk:2 * dk].set(l2norm_rows(H[:, dk:2 * dk]))
             store_window(p, t)
 
         def dsteps(p, t):
+            U = Ub[t]
             for a in range(2):
-                qk = QKb[t] if sh else Ub[t][a][:, 0:2 * dk]
-                v = Vb[t][a] if sh else Ub[t][a][:, 2 * dk:C]
+                qk = U[:, 0:2 * dk] if sh else U[:, a * C:a * C + 2 * dk]
+                v = U[:, (2 + a) * dk:(3 + a) * dk] if sh else U[:, a * C + 2 * dk:(a + 1) * C]
                 for r in range(R):
                     ol.deltanet_step(dn.state(p, a), qk[r, :], v[r, :], GDBb[t][r, a:a + 1],
                                      GDBb[t][r, 2 + a:3 + a], O[a][r, :],
                                      zero=(p0 == 0 and r == 0))
 
         def post(t):
-            Z = PB[t][2]
-            for a in range(2):
-                c = (2 * t + a) * dv
-                gz = silu(Z[:, a * dv:(a + 1) * dv])
-                ON[:, c:c + dv].set(rmsnorm(O[a], gn, eps) * gz)
-                del gz
+            """Pair t's gated RMSNorm into its columns of ON: the norm over rows (row, head)."""
+            gz = silu(PB[t][2])
+            on = rmsnorm(O2.reshape(2 * R, dv), gn, eps).reshape(R, 2 * dv)
+            ON[:, 2 * t * dv:(2 * t + 2) * dv].set(on * gz)
+            del gz, on
 
         def segment(p, t, last1, last2, g=None, half=None):
             """Pair p; last1: no pair p + 1, last2: no pair p + 2; g: the head group pair p

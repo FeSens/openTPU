@@ -346,7 +346,8 @@ class RowLayout:
     slot: int
     row_bytes: int
 
-    WORDS = 3 * LINE        # the mailbox's bytes
+    WORDS = 4 * LINE        # the mailbox's bytes: served's 128-byte block too (a board write
+                            # of one word reads and writes back its whole block)
 
     @property
     def row(self) -> int:

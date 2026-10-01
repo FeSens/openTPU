@@ -21,7 +21,7 @@ the wires, this is a good place to start.
 
 ## Results
 
-The design runs seven modern models with their real weights on an Inspur YPCB-00338 card
+The design runs nine modern models with their real weights on an Inspur YPCB-00338 card
 (Xilinx Kintex-7 xc7k480t, two DDR3 channels), and the card produces the same tokens as the
 simulator, bit for bit.
 
@@ -41,11 +41,15 @@ simulator, bit for bit.
 | SmolLM3-3B | 4-bit, int8 head | 8.74 tok/s | 8.72 tok/s | 22.8 tok/s | 15.7 GB/s (92%) |
 | Phi-4-mini (3.8B) | int8 | 3.99 tok/s | 3.98 tok/s | 13.8 tok/s | 16.0 GB/s (94%) |
 | Phi-4-mini (3.8B) | 4-bit, int8 head | 6.56 tok/s | 6.55 tok/s | 15.0 tok/s | 15.8 GB/s (92%) |
+| Qwen3.5-2B | int8 | 8.02 tok/s | 8.00 tok/s | 38.2 tok/s | 16.0 GB/s (94%) |
+| Qwen3.5-2B | 4-bit, int8 head | 12.09 tok/s | 12.03 tok/s | 41.7 tok/s | 15.8 GB/s (92%) |
+| Qwen3.5-4B | 4-bit, int8 head | 5.88 tok/s | 5.87 tok/s | 12.9 tok/s | 15.7 GB/s (92%) |
 
 *Measured on the card: the first three models on 2026-09-29 with the production image
-`deploy_champ_e698dcd7`. LFM2-2.6B, SmolLM3-3B and Phi-4-mini on 2026-09-30 with build B,
-`deploy_fused133c_79c5707a`, production since then. Build B decodes these three 8-9% faster
-than e698dcd7, at 92-94% of the DRAM peak instead of 84-87%.*
+`deploy_champ_e698dcd7`. LFM2-2.6B, SmolLM3-3B and Phi-4-mini on 2026-09-30, and Qwen3.5-2B
+and 4B on 2026-10-01, with build B, `deploy_fused133c_79c5707a`, production since then. Build B
+decodes LFM2-2.6B, SmolLM3 and Phi-4-mini 8-9% faster than e698dcd7, at 92-94% of the DRAM peak
+instead of 84-87%. Qwen3.5-4B's int8 image is over 4 GiB.*
 - *The image: main e698dcd at 133.33 MHz, one bitstream for all models. It has LiteDRAM
   controllers calibrated by a small CPU inside the memory core, a four-column systolic matrix
   unit and the stream engine ([docs/stream.md](docs/stream.md)). DDR3-1066, with a 17.1 GB/s
@@ -174,7 +178,7 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 
 | Command | What it does |
 |:--|:--|
-| `otpu-chat` | chat with Qwen3-0.6B, LFM2.5-230M (`--model lfm2`), Qwen3.5-0.8B (`--model qwen35`), LFM2-2.6B (`lfm2-2.6b`), SmolLM3-3B (`smollm3`) or Phi-4-mini (`phi4-mini`) |
+| `otpu-chat` | chat with Qwen3-0.6B, LFM2.5-230M (`--model lfm2`), Qwen3.5-0.8B (`--model qwen35`), LFM2-2.6B (`lfm2-2.6b`), SmolLM3-3B (`smollm3`), Phi-4-mini (`phi4-mini`) or Qwen3.5-2B / 4B (`qwen35-2b`, `qwen35-4b`) |
 | `otpu-smi` | temperature, power, DRAM bandwidth and per-unit utilization |
 | `otpu-lens` | record a run and open it in the profiler |
 | `otpu-selftest`, `otpu-diag` | check that the card works |
