@@ -342,7 +342,7 @@ class Chat:
             warm()
 
     def _template(self, add_prompt=True) -> list[int]:
-        if getattr(self.tok, "chat_template", None) is None:   # a base model: the text as is
+        if getattr(self.tok, "chat_template", "") is None:     # a base model: the text as is
             return list(self.tok("".join(m["content"] for m in self.history))["input_ids"])
         ids = self.tok.apply_chat_template(self.history, add_generation_prompt=add_prompt,
                                            enable_thinking=self.think, tokenize=True)
