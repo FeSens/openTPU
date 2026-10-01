@@ -1509,7 +1509,7 @@ block (the host splits runs there), so the token-index tiles stay static.
 
 Qwen3.5-MoE (qwen35.py, the same entry points): a DeltaNet layer of R rows is
 `_deltanet_rows` (its state steps row after row, by DSTEP on the card), an attention layer
-`_attention_rows` at run-time rows (`RunPos.row`: row r's position and mask row from the
+`_attention_rows` at run-time rows (`RunPos.offset`: row r's position and mask row from the
 run's), a row alone the decode step's layer. From position conv_k - 1 on, every position
 reads the whole convolution window, so one program serves them all; the first conv_k - 1
 rows of a sequence run at compile-time positions, from their embedding rows. The embedding

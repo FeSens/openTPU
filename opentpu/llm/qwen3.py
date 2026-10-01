@@ -994,7 +994,7 @@ class RunPos:
     def values(token: int, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:
         return {"tpos": p % block, "tok": token, "ring": (p + 1) % K}
 
-    def row(self, r: int) -> "RunPos":
+    def offset(self, r: int) -> "RunPos":
         """Row r of a run of rows from this position, in its attention block (a layer-major
         prefill run, Engine.prefill_layers): position p + r, its mask row r entries on (the
         same run-time values)."""
@@ -1254,7 +1254,7 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     results are bit-identical to R decode steps: heads narrower than D (LFM2) are padded, RoPE
     may cover part of a head (Qwen3.5), `gated` multiplies the output by sigmoid(W_gate x),
     and a query group wider than the MXU attends in parts of MCOLS heads. A row's position may
-    be a run-time one (RunPos.row: a layer-major prefill run), its K / V appended row by row."""
+    be a run-time one (RunPos.offset: a layer-major prefill run), its K / V appended row by row."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
     R = len(rows)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
