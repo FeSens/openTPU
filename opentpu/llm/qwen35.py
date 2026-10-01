@@ -2191,7 +2191,7 @@ def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
     elif R == 1:
         x.set(_attention(x, lw, c, s_, pos, spec, block, gated=True))
     else:
-        rows = [(0, pos.row(r) if run else pos + r) for r in range(R)]
+        rows = [(0, pos.offset(r) if run else pos + r) for r in range(R)]
         x.set(_attention_rows(x, lw, c, s_, rows, spec, block, gated=True))
     if not lw.moe:
         x.set(_mlp(x, lw, spec))
