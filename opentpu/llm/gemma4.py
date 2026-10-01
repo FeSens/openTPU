@@ -1060,10 +1060,16 @@ def _job(W, job) -> tuple:
     return (_ple_records(_job_matrix(W, name, sel, 1.0), cols, fmt, D, S, scale),)
 
 
+QCACHE_FLOOR = 20 << 30          # free disk a cache write must leave (as opentpu.qcache's)
+
+
 def _qcache_dir() -> Path | None:
     """Where quantized matrices are kept (OTPU_QCACHE; default ~/otpu-build/qcache when
-    ~/otpu-build exists, as on the build and card hosts; none otherwise)."""
+    ~/otpu-build exists, as on the build and card hosts; none otherwise, or with
+    OTPU_IMAGE_CACHE=0, the image caches' switch)."""
     import os
+    if os.environ.get("OTPU_IMAGE_CACHE") == "0":
+        return None
     d = os.environ.get("OTPU_QCACHE")
     if d:
         return Path(d)
@@ -1073,11 +1079,15 @@ def _qcache_dir() -> Path | None:
 
 def _cached_job(args) -> tuple:
     """_job in a worker (or in line), through the cache: the key is the checkpoint's
-    fingerprint, the job and the quantizer's source."""
+    fingerprint, the job and the quantizer's source. Only 4-bit jobs are cached (int8
+    quantizes about as fast as the cache reads it back), and no write leaves the disk under
+    QCACHE_FLOOR free."""
     import hashlib
+    import shutil
     fp, job = args
     W = _JOB_W if _JOB_W is not None else _LOCAL_W
-    d = _qcache_dir() if fp else None
+    fmt = job[4]                        # ("mat" | "ple", tensor, selection, ., format, ...)
+    d = _qcache_dir() if fp and fmt != "int8" else None
     if d is not None:
         src = (Path(Q.__file__).read_bytes() + Path(GA.__file__).read_bytes())
         k = hashlib.sha256(repr((fp, job)).encode() + src).hexdigest()[:24]
@@ -1088,6 +1098,8 @@ def _cached_job(args) -> tuple:
     out = _job(W, job)
     if d is not None:
         f.parent.mkdir(parents=True, exist_ok=True)
+        if shutil.disk_usage(f.parent).free - sum(a.nbytes for a in out) < QCACHE_FLOOR:
+            return out
         tmp = f.with_suffix(".tmp.npz")
         np.savez(tmp, **{f"a{i}": a for i, a in enumerate(out)})
         tmp.rename(f)
