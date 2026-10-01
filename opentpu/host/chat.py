@@ -41,7 +41,8 @@ from opentpu.llm.qwen3 import Engine, load_weights
 # presence penalty).
 SAMPLING = {"qwen3": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0),
             "lfm2": dict(temperature=0.1, top_k=50, top_p=1.0, repetition_penalty=1.05),
-            "qwen35": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0)}
+            "qwen35": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0),
+            "gemma4": dict(temperature=1.0, top_k=64, top_p=0.95, repetition_penalty=1.0)}
 
 
 def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
