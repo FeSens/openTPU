@@ -1,7 +1,13 @@
+import os
+
 import numpy as np
 import pytest
 
 from opentpu import rtlsim
+
+# the tests quantize afresh, not through a host's image cache (opentpu/qcache.py), unless one
+# is set (test_qcache.py sets its own)
+os.environ.setdefault("OTPU_IMAGE_CACHE", "0")
 
 
 def pytest_addoption(parser):

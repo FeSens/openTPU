@@ -547,3 +547,23 @@ def _rows_dstep_on_rtl(W, spec, dram=1 << 24):
     v = spec.vocab
     assert np.array_equal(drams[0][io["logits"] + 4 * 5 * v:io["logits"] + 4 * 6 * v]
                           .view(np.float32), want)
+
+
+def test_tiny_image_from_the_quantization_cache(tiny, tmp_path, monkeypatch):
+    """Image.build through the 4-bit quantization cache (opentpu/qcache.py) gives the uncached
+    image, byte for byte, and a second build quantizes nothing."""
+    from opentpu import qcache
+    _, W, spec = tiny
+    eng = Engine(spec, W, cap=256, wformat="fp4", head_format="int8")
+    want = eng.image.build(W)
+    monkeypatch.setenv("OTPU_IMAGE_CACHE", str(tmp_path))
+    monkeypatch.setattr(qcache, "MIN_ELEMS", 0)
+    monkeypatch.setattr(qcache, "FREE_FLOOR", 0)
+    monkeypatch.setattr(qcache, "stats", dict.fromkeys(qcache.stats, 0))
+    first = eng.image.build(W)
+    n = dict(qcache.stats)
+    again = eng.image.build(W)
+    assert n["miss"] > 0 and n["write"] == n["miss"]
+    assert qcache.stats["miss"] == n["miss"] and qcache.stats["hit"] == 2 * n["hit"] + n["miss"]
+    for got in (first, again):
+        assert all(np.array_equal(a, b) for a, b in zip(got, want))
