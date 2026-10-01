@@ -31,6 +31,7 @@ straight into the runs it DMAs (one os.preadv, the GIL released) instead of gath
 """
 from __future__ import annotations
 
+import math
 import os
 import queue
 import threading
@@ -249,9 +250,17 @@ class ExpertServer:
     pool(g): expert g in the card's slot format, `layout.slot_bytes` long (host RAM or a file;
     the host never computes with it)."""
 
-    def __init__(self, mem, layout: Layout, pool):
+    def __init__(self, mem, layout: Layout, pool, policy: str = "lru", half: float = 32.0):
         self.mem, self.L, self.pool = mem, layout, pool
+        if policy not in ("lru", "lfu"):
+            raise ValueError(f"replacement policy {policy!r}")
+        # the victim: the layer's least recently used expert the request does not name, or with
+        # "lfu" the one of least use, each use decaying by half every `half` requests of its
+        # layer (docs/offload.md 10.3: 9-15% fewer misses than LRU on the traces)
+        self.policy, self.half = policy, half
         self.lru = [OrderedDict() for _ in range(layout.layers)]    # g -> slot address
+        self.t = [0] * layout.layers                                # requests per layer
+        self.use: list = [{} for _ in range(layout.layers)]          # g -> log2 use + t / half
         self.free = [[a + i * layout.slot_bytes for i in range(n)] for a, n in layout.slots]
         self.seq = 0                        # the last request served
         self.hits = self.misses = self.bytes = 0
@@ -269,10 +278,13 @@ class ExpertServer:
             fr.extend(lru.values())
             lru.clear()
         self.seq = 0
+        self.t = [0] * L.layers
+        self.use = [{} for _ in range(L.layers)]
         for g in warm:
             j = g // L.E
             if self.free[j] and g not in self.lru[j]:
                 self._insert(j, g, self.free[j].pop(0))
+                self.use[j][g] = 0.0            # one use, before the first request
         for lru in self.lru:                # the profile's first expert is the most recent
             for g in reversed(list(lru)):
                 lru.move_to_end(g)
@@ -309,7 +321,10 @@ class ExpertServer:
         j = ids[0] // E
         if any(g // E != j or not 0 <= g < E * self.L.layers for g in ids):
             raise ValueError(f"request {ids} is not one layer's experts")
-        lru = self.lru[j]
+        self.t[j] += 1
+        lru, use, t = self.lru[j], self.use[j], self.t[j] / self.half
+        for g in ids:                       # the decayed use count, kept as log2 + t / half
+            use[g] = math.log2(2.0 ** (use[g] - t) + 1.0) + t if g in use else t
         for g in ids:
             if g in lru:
                 lru.move_to_end(g)
@@ -319,7 +334,11 @@ class ExpertServer:
             if self.free[j]:
                 slot = self.free[j].pop(0)
             else:
-                victim = next((v for v in lru if v not in ids), None)
+                if self.policy == "lfu":
+                    victim = min((v for v in lru if v not in ids),
+                                 key=lambda v: use.get(v, -math.inf), default=None)
+                else:
+                    victim = next((v for v in lru if v not in ids), None)
                 if victim is None:
                     raise RuntimeError(f"layer {j}: {len(lru)} slots for a request of "
                                        f"{len(ids)}")
@@ -439,7 +458,9 @@ class BoardDram:
       (SplitRecord) is read straight into the runs, and when nothing is in flight (a
       request's first miss) in `pieces` parts, each DMAed as soon as it is read;
     - the host's own words (served and the directory: the card only reads them) are kept in a
-      shadow and written as whole 128-byte blocks, with no read first;
+      shadow and written with no read first: a write within one 64-byte beat (an entry,
+      served) as that beat alone, one DMA call on its channel; a longer one as whole 128-byte
+      blocks;
     - one worker thread makes every DMA call in order, while the server stages the next
       expert: an expert's data lands before its directory entry, every entry before served
       (one queue, one h2c stream). flush() waits for the queue and raises a worker's error;
@@ -501,6 +522,11 @@ class BoardDram:
         a = addr - self.lo
         if 0 <= a and a + len(b) <= len(self.shadow):         # the host's own words
             self.shadow[a:a + len(b)] = b
+            h = self.blk // 2
+            if a % h + len(b) <= h:                             # one beat: one DMA call
+                out, at = self.shadow[a - a % h:a - a % h + h].copy(), self.lo + a - a % h
+                self._put(lambda: self._beat(at, out))
+                return
             a0, a1 = a // self.blk * self.blk, -(-(a + len(b)) // self.blk) * self.blk
             out, at = self.shadow[a0:a1].copy(), self.lo + a0
             self._put(lambda: self._blocks(at, out))
@@ -568,6 +594,14 @@ class BoardDram:
         np.take(beats, i0, out=bufs[0].view("V64"))           # channel 0's run
         np.take(beats, self._i1, out=bufs[1].view("V64"))     # channel 1's
         self._put(lambda: self._dma(addr // 2, bufs), i)
+
+    def _beat(self, at: int, data: np.ndarray) -> None:
+        """One 64-byte beat of the host's words (at: 64-byte aligned) to the channel that holds
+        it (CHASH: beat b of chunk m on channel b ^ parity(m))."""
+        m, c = at // self.blk, at // (self.blk // 2) % 2
+        if self.board.chash:
+            c ^= m.bit_count() & 1
+        self.board.t.mem_write(c, m * (self.blk // 2), data)
 
     def _blocks(self, at: int, data: np.ndarray) -> None:
         """Whole chunks of the host's words (at, len: multiples of 128) to the two channels, as

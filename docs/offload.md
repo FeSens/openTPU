@@ -192,12 +192,13 @@ The rest are ties between the k-th and (k+1)-th expert. bf16 logits make those c
 second top-k (of 2k) breaks them the other way. The recorded choice is the model's own.
 
 `tools/offload/cachesim.py` replays each trace in decode order: token by token, layer by layer,
-a layer's k experts at once. It plays them against a cache of C expert slots, under five
+a layer's k experts at once. It plays them against a cache of C expert slots, under six
 policies:
 
 - `static`: the C experts most picked in the other three texts, never replaced;
 - `lru`: shared by all layers;
 - `lru_layer`: the slots split evenly over the layers;
+- `lfu_layer`: per layer too, the victim the cached expert of least decayed use (section 5.5);
 - `lfu`: counts, with the profile as a prior;
 - `opt`: Belady, the upper bound.
 
@@ -249,8 +250,22 @@ Prediction accuracy: the share of a layer's top-k that the prediction's top-k na
 - **Global LRU thrashes below one token's sweep.** A token asks every layer in turn, a loop of
   L x k experts. At 5% of Gemma 4's pool (192 slots, fewer than the 240 a token asks for) it
   hits nothing. Split per layer, it degrades gracefully. At the card's sizes the two are within
-  a point. The runtime uses per-layer LRU, which also makes eviction race-free on the card
-  (section 5.2).
+  a point. The runtime splits its slots per layer, which also makes eviction race-free on the
+  card (section 5.2).
+- **Decayed use beats recency.** Per layer, replacing the expert whose uses, each halving every
+  32 requests of its layer, sum least (`lfu_layer`) misses 9-15% less than `lru_layer` at the
+  card's sizes (misses a token):
+
+  | Model | slots | lru_layer | lfu_layer |
+  |:--|:--|--:|--:|
+  | LFM2.5-8B-A1B | 28 a layer | 0.83 | 0.73 |
+  | gemma-4-26B-A4B | 682, fp4 experts and int8 head (section 11.3) | 62.9 | 53.6 |
+  | gemma-4-26B-A4B | 789, fp4 head | 53.5 | 45.3 |
+  | Qwen3.5-35B-A3B | 1280, the card's (32 a layer) | 111.4 | 100.7 |
+
+  Half-lives of 16 to 128 requests are within a point. Allotting the slots unevenly over the
+  layers (from the other texts' curves) gains nothing. Unlike the undecayed `lfu` above, it
+  forgets a text's old experts within some 100 tokens.
 - **Room above LRU.** Belady's bound misses half as often as LRU: 27.6 against 57.3 per token
   on Gemma 4, and 59 against 110 on Qwen3.5. A policy that knew reuse better could find up to
   2x fewer misses, but the predictions below do not (section 5.4).
@@ -508,12 +523,28 @@ Prefetch does help when the card waits for a layer's last expert: +7% on Qwen3.5
 against 4.99). Computing the hits first already hides that time (5.77). The design therefore
 carries no hints, and the ISA needs nothing for them.
 
+With the slots replaced by decayed use (section 5.5), wrong guesses cost less: a prefetched
+expert holds no use until a request names it, so the next miss replaces it first, not a used
+expert. At 1.4 GB/s the k best of `pre` then pay on Qwen3.5-35B-A3B: 4.42 against 4.15 tok/s
+at 1280 slots (10 of 23 prefetches a token wasted, against 33 of 49 under LRU). On Gemma 4
+they break even (3.79 against 3.78; `prev_r` 3.86). It would need the card to run each layer's
+router before its mixer and post the hint; not built.
+
 ### 5.5 Eviction
 
-Per-layer LRU, warmed at load from a profile, with every resident weight pinned outside the
-cache (dense, shared experts, norms, head).
+Per layer, warmed at load from a profile, with every resident weight pinned outside the cache
+(dense, shared experts, norms, head). The victim is the cached expert, not in the request, of
+least decayed use (`ExpertServer` policy "lfu", the default since card session 4, section
+10.3):
+- each use counts 2^(-age / 32), its age in requests of its layer;
+- a warm expert counts one use at load;
+- ties go to the least recently used.
 
-- LFU and static profiles lose to it, by 30-50 points on Gemma 4.
+The server keeps each expert's sum as log2 + t / 32, one update per use. It misses 9-15% less
+than per-layer LRU (section 3), and on the card 2.4% less over the 35B's first 16 tokens (6.4%
+over their second half).
+
+- Undecayed LFU and static profiles lose to LRU, by 30-50 points on Gemma 4.
 - Belady's bound (0.885 against 0.761 on Gemma 4) is the headroom, but predictions do not
   reach it (section 5.4).
 - The per-layer split is within a point of a global LRU at the card's sizes. It is what makes
@@ -971,6 +1002,47 @@ What is left:
   would save about 7 ms a token (*estimate*).
 - **The misses themselves.** 93 a token at 1.19 ms each is 111 ms of link time. The next
   levers are a better replacement policy and more slots.
+
+### 10.3 Session 4: one-beat writes and the decayed-use policy
+
+The card ran 929cf9e on 2026-10-01, 04:12-04:31, on build B (79c5707a, as loaded; the selftest
+passed before and after), against session 3's references. Both changes are host-only:
+- each directory entry and `served` goes to the card as its one 64-byte beat, one DMA call on
+  its channel, not as its 128-byte block in two calls;
+- the slots' replacement by decayed use (section 5.5), run beside LRU.
+
+| Qwen3.5-35B-A3B, 16 tokens | session 3 | session 4, LRU | session 4, decayed use |
+|---|--:|--:|--:|
+| tok/s (wall / device) | 3.79 / 3.87 | **3.90 / 3.98** | **3.95 / 4.04** |
+| decode cycles | 551.5 M | 535.6 M | 528.7 M |
+| misses a decode token (second half) | 95.9 (113.9) | 95.9 (113.9) | 93.5 (106.6) |
+| the host's flush / DMA (s) | 1.47 / 1.71 | 1.28 / 1.76 | 1.34 / 1.75 |
+
+All three give the simulator's tokens and prefill logits bit for bit, and HF's 16 tokens.
+
+- The one-beat writes save 7.4 ms a token (the estimate was 7).
+- Decayed use misses 2.4% less over the 16 decode tokens and 6.4% less over their second half;
+  the traces' 2048 tokens give 9.6%. It misses more in the prompt (4508 against 4457 in all),
+  before its counts build up.
+
+`slot_bench` (1.67 MB experts, 3 misses a request): from RAM 1.61 ms an expert (1.72 in session
+3), the split pool warm 1.47 ms (1.54).
+
+The event model (section 11.3's, `--stream-policies lru,lfu`) for more slots on the 35B, tok/s
+at 1.4 GB/s:
+
+| Qwen3.5-35B-A3B | LRU | decayed use |
+|:--|--:|--:|
+| 1280 slots, int8 head (the card's) | 3.94 | 4.15 |
+| 1440 slots | 4.08 | 4.30 |
+| 1600 slots | 4.22 | 4.45 |
+| fp4 head, 1280 slots | 4.24 | 4.48 |
+| fp4 head, 1440 slots (the head's freed bytes) | 4.40 | 4.66 |
+
+The fp4 head pays twice, as on Gemma 4: 254 MB fewer a token and some 150 more slots. Its
+accuracy on the 35B is to be measured. With decayed use, Gemma 4 26B-A4B's rows in section 11.3
+become 3.78 (fp4 experts, int8 head), 4.52 (fp4 head), 1.68 (int8 experts, int8 head) and
+1.92 (int8 experts, fp4 head) tok/s.
 
 ## 11. Gemma 4 26B-A4B: design note
 

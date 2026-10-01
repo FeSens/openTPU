@@ -125,6 +125,23 @@ def test_small_cache_is_bit_exact(tiny, wformat):
     assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
 
 
+def test_lfu_policy_is_bit_exact(tiny):
+    """The slots replaced by least decayed use (ExpertServer policy "lfu", moe.serve's default)
+    instead of LRU: other misses, the same logits bit for bit."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(7).integers(0, 1000, 12)]
+    full = _engine(spec, W)
+    ref = np.array([full.step(t) for t in toks])
+    got = {}
+    for policy in ("lru", "lfu"):
+        eng = _engine(spec, W, experts=4)
+        assert eng.server.policy == "lfu"
+        eng.server.policy = policy
+        got[policy] = (np.array([eng.step(t) for t in toks]), eng.server.misses)
+        assert np.array_equal(got[policy][0].view(np.uint32), ref.view(np.uint32))
+    assert got["lfu"][1] > len(toks) and got["lfu"][1] != got["lru"][1]
+
+
 def test_pool_file_is_the_same_pool(tiny, tmp_path):
     """The pool packed once into a file (the page cache or the SSD tier) serves the same bytes
     (read back with pread as they are packed); a second engine reuses the file, its warm
