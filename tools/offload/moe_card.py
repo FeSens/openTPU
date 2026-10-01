@@ -69,7 +69,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          embed_host: bool | None = None, hints: bool | None = None,
          hint_part: int | None = None, hint_drop: bool = False,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
-         formats: str | None = None) -> dict:
+         formats: str | None = None, layer_major: int = 0) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -97,6 +97,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         backend = lambda c, imgs: BoardBackend(c, imgs, transport=tr,      # noqa: E731
                                                model=Path(model).name)
     t = time.time()
+    if layer_major:                             # the prompt a layer at a time, runs of R rows
+        ekw["layer_major"] = layer_major        # (docs/offload.md 13)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend, **ekw)
     load_s = time.time() - t
@@ -156,6 +158,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     t = time.time()
     lg = eng.prefill(ids if host_loop else ids[:-1])
     prefill_s = time.time() - t
+    pre = len(per_req) if layer_major else 0    # layer-major: a request per layer run
     warm_decode = warm_at()
     lg_sha = hashlib.sha256(np.asarray(lg, np.float32).tobytes()).hexdigest()[:16]
     tm0, b0, st0, calls0 = dict(tm), srv.bytes, len(eng.stats), dict(calls)
@@ -192,11 +195,12 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     dev_s = cyc / (khz * 1e3) if khz else None
     L = eng.image.offload
     J, E = L.layers, L.E
-    T = len(per_req) // J                       # whole tokens (the last request may be unread)
-    mpt = np.array(per_req[:T * J]).reshape(T, J).sum(1)       # misses per token
-    dec = mpt[len(ids):]
+    T = (len(per_req) - pre) // J               # whole tokens (the last request may be unread)
+    mpt = np.array(per_req[pre:pre + T * J]).reshape(T, J).sum(1)  # misses per token
+    prompt = (0 if host_loop else 1) if pre else len(ids)   # the prompt's tokens among them
+    dec = mpt[prompt:]
     if trace:                                   # the card's routes, as router_trace.py's
-        req = np.array(srv.history[:T * J]).reshape(T, J, -1)
+        req = np.array(srv.history[pre:pre + T * J]).reshape(T, J, -1)
         first = spec.moe.first
         z = {f"L{first + j}_idx": (req[:, j] - j * E).astype(np.int16) for j in range(J)}
         z.update({f"L{first + j}_ok": np.float64(1.0) for j in range(J)})
@@ -223,7 +227,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 expert_uses_per_token=J * spec.moe.k,
                 misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
                 if len(dec) else None,
-                misses_per_token=mpt.tolist(),
+                misses_per_token=mpt.tolist(), layer_major=layer_major,
+                prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
                 loop="host" if host_loop else "card", embed=spec.embed,
                 backend="card" if on_card else "isa", cfg=cfg_file, prefill_logits_sha=lg_sha,
@@ -283,6 +288,9 @@ def main():
     ap.add_argument("--hints", choices=("on", "off"), default=None,
                     help="the router's prefetch hints before each mixer (docs/offload.md 12; "
                          "default: the model's, on for Qwen3.5-MoE)")
+    ap.add_argument("--layer-major", type=int, default=0, metavar="R",
+                    help="prefill a layer at a time in runs of R rows (docs/offload.md 13; "
+                         "default 0: token by token)")
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
@@ -294,7 +302,7 @@ def main():
              a.cfg, a.card, a.policy,
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
-             a.hint_trace, a.wformat, a.head_format, a.formats)
+             a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

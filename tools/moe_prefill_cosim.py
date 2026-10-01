@@ -91,14 +91,14 @@ def load_model(d):
     return "qwen35", M, M.Spec.from_hf(d)
 
 
-def model_image(kind, M, spec, prefix, variant, R, cfg, cap):
+def model_image(kind, M, spec, prefix, variant, R, cfg, cap, **kw):
     if kind == "gemma4":
         s = spec.truncated([int(x) for x in prefix.split(",")])
         if variant == "dense":
             s = dataclasses.replace(s, experts=0, top_k=0, expert_ffn=0)
             return s, s.image(cfg, cap, rows=R, wformat="int8", head_format="fp4", formats="")
         return s, s.image(cfg, cap, rows=R, wformat="int8", head_format="fp4",
-                          formats="experts=fp4", experts=s.top_k)
+                          formats="experts=fp4", experts=s.top_k, **kw)
     n = int(prefix)
     s = dataclasses.replace(spec, kinds=spec.kinds[:n])
     if variant == "dense":
@@ -153,6 +153,32 @@ def cmd_rows(a):
             print(json.dumps(rec), flush=True)
 
 
+def cmd_layer(a):
+    """The layer-major prefill's program (compile_layer_run) of the prefix's last layer, one row
+    at position pos, every expert present (the timing hack)."""
+    from opentpu.compiler import arg_words
+    from opentpu.llm.qwen3 import RunPos
+    kind, M, spec = load_model(a.model)
+    cfg = cfg_of()
+    for prefix in a.prefix.split(":"):
+        s, img = model_image(kind, M, spec, prefix, "moe", 1, cfg, a.cap, lookup=True)
+        li = s.layers - 1
+        progs, ra = img.compile_layer_run(li, a.pos // img.block + 1, img.block, R=a.R,
+                                          embedded=a.R > 1)
+        args = arg_words(ra, dict(RunPos.values(791, a.pos, 1, img.block), row=3))
+        dram = np.zeros(img.nbytes, np.uint8)
+        timing_hack(img, dram)
+        t = time.time()
+        plus = rtlsim.ldc_plusargs(1066, MHZ) + ddr3_plusargs(3200 / 3, MHZ)[2:]
+        _, _, st = rtlsim.run(cfg, progs, [dram], uarch=rtlsim.BOARD_UARCH, axi=True, boot=True,
+                              stall=0, bw=100, lat=round(0.3 * MHZ), max_cycles=1 << 40,
+                              ldc=1066, args=args, plusargs=["+axi_dram=1", "+axi_map=1"] + plus)
+        print(json.dumps(dict(model=Path(a.model).name, prefix=prefix, layer=li, R=a.R, pos=a.pos,
+                              instructions=len(progs[0]), args=len(ra), cycles=st["cycles"],
+                              ms=round(st["cycles"] / (MHZ * 1e3), 3),
+                              sim_s=round(time.time() - t))), flush=True)
+
+
 @ol.jit
 def _expert_rows(m, M, with_expert=True):
     x = ol.load(m.x[0:M, :])
@@ -200,11 +226,18 @@ def main():
     r.add_argument("--cap", type=int, default=1024)
     r.add_argument("--compile-only", action="store_true")
     r.add_argument("--profile", action="store_true", help="per place: cycles (stderr)")
+    la = sub.add_parser("layer")
+    la.add_argument("model")
+    la.add_argument("--prefix", default="0,1:0,5")
+    la.add_argument("--pos", type=int, default=256)
+    la.add_argument("--R", type=int, default=1, help="rows a run (all routed alike: the zero "
+                    "image's router ties, so a run's union is k experts)")
+    la.add_argument("--cap", type=int, default=1024)
     e = sub.add_parser("expert")
     e.add_argument("model")
     e.add_argument("--M", default="1,2,3,4,8")
     a = ap.parse_args()
-    {"rows": cmd_rows, "expert": cmd_expert}[a.cmd](a)
+    {"rows": cmd_rows, "expert": cmd_expert, "layer": cmd_layer}[a.cmd](a)
 
 
 if __name__ == "__main__":
