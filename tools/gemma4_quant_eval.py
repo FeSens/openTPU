@@ -15,6 +15,8 @@ switched one at a time and per-kind weight formats (docs/gemma4.md, "Long contex
 
 WF / HEAD: int8, fp4, int4 or none (float weights). The whole sequence runs at once: 900 tokens of
 E2B take about 1 min in float, 10 min with fp4 layers (the 4-bit quantization's search).
+26B-A4B (its MoE block, K = V global layers, no PLE): --formats experts=fp4 for 4-bit experts
+(about 1.2 s of quantization an expert: 3840 of them).
 """
 import argparse
 import math
@@ -38,7 +40,13 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
     (or "down" / "gateup" of it), "ple": format}, a key "kind@a-b" for layers a..b only
     (checkpoint layers; it wins over "kind"). quant: the activation quantization points
     applied, a subset of {"act" (the matmul inputs), "kv" (K / V), "p" (P)}; default all, none
-    with wformat "none"."""
+    with wformat "none".
+
+    A MoE block (26B-A4B) as the device runs it (docs/offload.md section 11): one activation,
+    the weightless RMSNorm of x quantized, into the router (int8, router.scale / sqrt(H) folded
+    into its columns; the top k of its logits, their softmax) and the experts (wmap "experts",
+    else wformat; pre_feedforward_layernorm_2's gain folded into gate / up, per_expert_scale
+    into the down projection, the width padded with zeros to whole D-blocks)."""
     hf = hf or wformat
     none = wformat == "none"
     quant = (set() if none else {"act", "kv", "p"}) if quant is None else set(quant)
@@ -60,6 +68,8 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
 
     def fmt_of(n):              # attn; mlp, or down / gateup within it; ple
         li = int(n.split(".")[2])
+        if ".experts." in n:
+            return get("experts", li, wformat)
         if ".self_attn." in n:
             return get("attn", li, wformat)
         if ".mlp." in n:
@@ -69,34 +79,42 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
     def wq(n, fmt=wformat, a=None):
         if n is not None and fmt == wformat and n.startswith("model.layers."):
             fmt = fmt_of(n)
-        a = W[n] if a is None else a
-        return np.asarray(a, np.float64) if fmt == "none" else _fake_w(a, D, fmt)
+        a = np.asarray(W[n] if a is None else a, np.float32)
+        a = np.pad(a, ((0, 0), (0, -a.shape[1] % D)))       # whole D-blocks (MLP widths)
+        return a.astype(np.float64) if fmt == "none" else _fake_w(a, D, fmt)
+
+    def padq(v, n):             # an activation [T, f] padded with zeros to n columns, quantized
+        return fq(np.pad(v, ((0, 0), (0, n - v.shape[1]))))
 
     T, H, P, L = len(tokens), spec.hidden, spec.ple_dim, spec.layers
-    n_q, n_kv, eps = spec.n_q, spec.n_kv, spec.eps
-    Gq = n_q // n_kv
+    n_q, eps = spec.n_q, spec.eps
     uniq, inv = np.unique(np.asarray(tokens), return_inverse=True)
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
     x = wq(head, hf, G._rows(W, head, uniq.tolist()))[inv] * math.sqrt(H)
-    cols = np.concatenate([np.arange(spec.src(i) * P, (spec.src(i) + 1) * P) for i in range(L)])
-    pe = np.asarray(G._rows(W, G.Weights.PLE, uniq.tolist()), np.float32)[:, cols] * np.float32(
-        (P / 2) ** 0.5)
-    if not none:
-        S = GA.record_blocks(-(-L * P // D), ple_format)
-        pe = GA.dequant_records(GA.pack_records(pe, ple_format, D, S), ple_format, D, S)[:, :L * P]
-    pe = np.asarray(pe, np.float64)[inv]
-    wp = W["model.per_layer_model_projection.weight"].reshape(-1, P, H)[
-        [spec.src(i) for i in range(L)]].reshape(-1, H)
-    wpq = wq(None, wmap.get("ple", wformat), a=wp) * H ** -0.5
-    gpl = np.asarray(W["model.per_layer_projection_norm.weight"], np.float64) * 2 ** -0.5
-    pli = G._norm((fq(x) @ wpq.T).reshape(T, L, P), gpl, eps) + pe.reshape(T, L, P)
-    del wp, wpq, pe
+    pli = None
+    if P:
+        cols = np.concatenate([np.arange(spec.src(i) * P, (spec.src(i) + 1) * P)
+                               for i in range(L)])
+        pe = np.asarray(G._rows(W, G.Weights.PLE, uniq.tolist()), np.float32)[:, cols] * \
+            np.float32((P / 2) ** 0.5)
+        if not none:
+            S = GA.record_blocks(-(-L * P // D), ple_format)
+            pe = GA.dequant_records(GA.pack_records(pe, ple_format, D, S), ple_format, D,
+                                    S)[:, :L * P]
+        pe = np.asarray(pe, np.float64)[inv]
+        wp = W["model.per_layer_model_projection.weight"].reshape(-1, P, H)[
+            [spec.src(i) for i in range(L)]].reshape(-1, H)
+        wpq = wq(None, wmap.get("ple", wformat), a=wp) * H ** -0.5
+        gpl = np.asarray(W["model.per_layer_projection_norm.weight"], np.float64) * 2 ** -0.5
+        pli = G._norm((fq(x) @ wpq.T).reshape(T, L, P), gpl, eps) + pe.reshape(T, L, P)
+        del wp, wpq, pe
     ii = np.arange(T)[:, None]
     K, V = {}, {}
     for i in range(L):
         p = f"model.layers.{spec.src(i)}."
         a = p + "self_attn."
-        kind, d = spec.kinds[i], spec.hd(i)
+        kind, d, n_kv = spec.kinds[i], spec.hd(i), spec.kvh(i)
+        Gq = n_q // n_kv
         tab = [G.rope_tables(spec, pos, kind) for pos in range(T)]
         c = np.stack([t[0] for t in tab])[:, None, :]
         s_ = np.stack([t[1] for t in tab])[:, None, :]
@@ -105,7 +123,7 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
         q = fq(G._rot(G._norm(q, W[a + "q_norm.weight"], eps), c, s_, d // 2))
         if spec.kv_src[i] == i:
             k = (h @ wq(a + "k_proj.weight").T).reshape(T, n_kv, d)
-            v = (h @ wq(a + "v_proj.weight").T).reshape(T, n_kv, d)
+            v = k if spec.kv_same(i) else (h @ wq(a + "v_proj.weight").T).reshape(T, n_kv, d)
             K[i] = fk(G._rot(G._norm(k, W[a + "k_norm.weight"], eps), c, s_, d // 2))
             V[i] = fk(G._norm(v, None, eps), d)
         Kh, Vh = K[spec.kv_src[i]], V[spec.kv_src[i]]
@@ -132,13 +150,20 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
         att = fq(o.reshape(T, -1)) @ wq(a + "o_proj.weight").T
         x = x + G._norm(att, W[p + "post_attention_layernorm.weight"], eps)
         h = fq(G._norm(x, W[p + "pre_feedforward_layernorm.weight"], eps))
-        m = fq(G._gelu(h @ wq(p + "mlp.gate_proj.weight").T) * (h @ wq(p + "mlp.up_proj.weight").T)) \
-            @ wq(p + "mlp.down_proj.weight").T
+        wd = wq(p + "mlp.down_proj.weight")
+        m = padq(G._gelu(h @ wq(p + "mlp.gate_proj.weight").T) *
+                 (h @ wq(p + "mlp.up_proj.weight").T), wd.shape[1]) @ wd.T
+        del wd
+        if spec.experts:
+            m = G._norm(m, W[p + "post_feedforward_layernorm_1.weight"], eps) + \
+                G._norm(_moe(spec, W, p, x, wq, fq, padq, none), W[
+                    p + "post_feedforward_layernorm_2.weight"], eps)
         x = x + G._norm(m, W[p + "post_feedforward_layernorm.weight"], eps)
-        g = G._gelu(fq(x) @ wq(p + "per_layer_input_gate.weight").T) * pli[:, i]
-        y = fq(g) @ wq(p + "per_layer_projection.weight").T
-        x = (x + G._norm(y, W[p + "post_per_layer_input_norm.weight"], eps)) * \
-            np.asarray(W[p + "layer_scalar"], np.float64)
+        if pli is not None:
+            g = G._gelu(fq(x) @ wq(p + "per_layer_input_gate.weight").T) * pli[:, i]
+            y = fq(g) @ wq(p + "per_layer_projection.weight").T
+            x = x + G._norm(y, W[p + "post_per_layer_input_norm.weight"], eps)
+        x = x * np.asarray(W[p + "layer_scalar"], np.float64)
     rows = list(range(T)) if rows is None else rows
     xl = fq(G._norm(x[rows], W["model.norm.weight"], eps))
     E = W[head]
@@ -152,6 +177,30 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
         on_rows(i0, np.concatenate([xl[i0:i0 + 64] @ e for e in Eq], 1))
 
 
+def _moe(spec, W, p, x, wq, fq, padq, none):
+    """The MoE block of layer prefix p on rows x [T, H] (emulate's docstring), float64."""
+    r, F = p + "router.", spec.expert_ffn
+    xs = fq(G._norm(x, None, spec.eps))
+    wr = np.asarray(W[r + "proj.weight"], np.float32) * (
+        np.asarray(W[r + "scale"], np.float32) * np.float32(spec.hidden ** -0.5))[None, :]
+    lg = xs @ wq(None, "none" if none else "int8", a=wr).T                  # [T, E]
+    top = np.argsort(-lg, axis=1, kind="stable")[:, :spec.top_k]
+    w = np.take_along_axis(lg, top, 1)
+    w = np.exp(w - w[:, :1])
+    w /= w.sum(1, keepdims=True)
+    g2 = np.asarray(W[p + "pre_feedforward_layernorm_2.weight"], np.float32)[None, :]
+    pes = np.asarray(W[r + "per_expert_scale"], np.float32)
+    out = np.zeros_like(xs)
+    for e in np.unique(top):
+        t, j = np.nonzero(top == e)
+        gu = G._rows(W, p + "experts.gate_up_proj", [int(e)])[0] * g2      # [2F, H]
+        n = p + "experts.down_proj"             # (its name: the experts' format, wmap)
+        dq = wq(n, a=G._rows(W, n, [int(e)])[0] * pes[e])                   # [H, F padded]
+        u = G._gelu(xs[t] @ wq(n, a=gu[:F]).T) * (xs[t] @ wq(n, a=gu[F:]).T)
+        out[t] += w[t, j][:, None] * (padq(u, dq.shape[1]) @ dq.T)
+    return out
+
+
 def top(spec, tok, lg, n=5):
     cap = G.softcap(spec, lg)
     t = np.argsort(-lg)[:n]
@@ -163,8 +212,8 @@ def main():
     ap.add_argument("mode", choices=["step", "nll", "check"])
     ap.add_argument("args", nargs="+")
     ap.add_argument("--formats", default="", help="per-kind layer formats: attn, mlp (or down, "
-                    "gateup), ple, e.g. attn=int8,down=int8; kind@a-b: layers a..b only "
-                    "(gateup@0-6=fp4)")
+                    "gateup), ple, experts, e.g. attn=int8,down=int8; kind@a-b: layers a..b "
+                    "only (gateup@0-6=fp4)")
     ap.add_argument("--quant", default=None, help="the activation points (default all): act,kv,p")
     ap.add_argument("--out", help="step: save the logits (before the cap) to this npz")
     a = ap.parse_args()

@@ -156,3 +156,45 @@ def test_chunked_prefill_is_bit_exact(kv):
 def test_moe_image_is_not_yet_on_the_device(moe):
     with pytest.raises(NotImplementedError):
         _engine(moe)
+
+
+def _quant_eval():
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parent.parent / "tools" / "gemma4_quant_eval.py"
+    s = importlib.util.spec_from_file_location("gemma4_quant_eval", path)
+    mod = importlib.util.module_from_spec(s)
+    s.loader.exec_module(mod)
+    return mod
+
+
+def test_quant_eval_emulation(kv, moe):
+    """tools/gemma4_quant_eval.py's batched emulation of these models: with float weights it is
+    reference_logits (the MoE's folds exact); without the MoE, int8 and fp4 equal
+    emulated_logits (up to rounding ties); its MoE block in int8 (weights and activations) is
+    within the dense MLP's error of the reference block (~2%)."""
+    from opentpu.llm.qwen3 import _fake_q, _fake_w
+    Q = _quant_eval()
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 20)]
+    for m in (kv, moe):
+        _, W, spec = m
+        ref = G.reference_logits(spec, W, toks)
+        assert np.abs(Q.emulate(spec, W, toks, wformat="none") - ref).max() < 1e-3
+    _, W, spec = kv
+    for wf in ("int8", "fp4"):
+        a = Q.emulate(spec, W, toks, wformat=wf)
+        b = G.emulated_logits(spec, W, toks, wformat=wf)
+        assert np.abs(a - b).max() < 1e-3 * np.abs(b).max()
+    _, W, spec = moe
+    x = np.random.default_rng(5).standard_normal((64, 256)).astype(np.float32) * 3
+    p = "model.layers.3."
+    ref = G._moe(spec, W, p, x)
+
+    def wq(n, fmt="int8", a=None):
+        a = np.asarray(W[n] if a is None else a, np.float32)
+        return _fake_w(np.pad(a, ((0, 0), (0, -a.shape[1] % 128))), 128, fmt)
+
+    fq = lambda v, d=128: _fake_q(np.asarray(v, np.float64), d)                 # noqa: E731
+    padq = lambda v, n: fq(np.pad(v, ((0, 0), (0, n - v.shape[1]))))           # noqa: E731
+    out = Q._moe(spec, W, p, x, wq, fq, padq, False)
+    assert (np.linalg.norm(out - ref, axis=1) / np.linalg.norm(ref, axis=1)).max() < 0.04
