@@ -91,6 +91,21 @@ def mem_gb() -> float | None:
     return None
 
 
+def sweep_temps(d: Path, age: float = 3600.0) -> int:
+    """Remove the cache's temporary files (qcache._store's `.<key>.<pid>.npz`) older than
+    `age` seconds: a build killed while writing an entry leaves one, and the cache's size cap
+    does not count it. The number removed."""
+    n, old = 0, time.time() - age
+    for p in d.glob("*/.*.npz"):
+        try:
+            if p.stat().st_mtime < old:
+                p.unlink()
+                n += 1
+        except FileNotFoundError:
+            pass
+    return n
+
+
 def quiet_file() -> Path:
     """While this file exists a session measures host-sensitive performance, and no prebuild
     may load the host (OTPU_QUIET; default ~/otpu-build/QUIET)."""
@@ -152,6 +167,8 @@ def main(argv=None) -> int:
         return 1
     if a.one:
         return _build_one(pickle.loads(path.read_bytes()), a.runs[0])
+    if d.is_dir() and (n := sweep_temps(d)):
+        print(f"prebuild: removed {n} temporary files of killed builds", flush=True)
     runs = [r for r in a.runs if is_4bit(r)]
     print(f"prebuild: cache {d}, configuration {path}; {' '.join(runs) or 'no 4-bit runs'}",
           flush=True)
