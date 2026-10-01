@@ -1307,16 +1307,14 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     _lm_head_rows(x, m, spec, logit_rows)
 
 
-def _lm_head_rows(x, m, spec, logit_rows, xn=None):
+def _lm_head_rows(x, m, spec, logit_rows):
     """Final norm and this slice's vocabulary rows of the LM head for the rows `logit_rows`
-    of x (a contiguous range, or empty: nothing) -> m.logitsr. xn: the final norm of x's rows,
-    already computed."""
+    of x (a contiguous range, or empty: nothing) -> m.logitsr."""
     if not logit_rows:
         return
     sid = ol.program_id()
     a, e = logit_rows[0], logit_rows[-1] + 1
-    xs = ol.quantize(rmsnorm(x[a:e, :], ol.load(m.g_final), spec.eps) if xn is None
-                     else xn[a:e, :])
+    xs = ol.quantize(rmsnorm(x[a:e, :], ol.load(m.g_final), spec.eps))
     chunk = min(HEAD_CHUNK, ol.tmem_words() // (8 * (e - a)))
     for c0 in range(0, m.v_loc, chunk):
         n = min(chunk, m.v_loc - c0)
@@ -1425,7 +1423,7 @@ def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int, toks=None,
 
 
 def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
-              tokens=None, whole: bool = True):
+              tokens=None, whole: bool = True, **kw):
     """The next prefill run of sequence `seq` at position p0: up to n of the `left` remaining
     prompt tokens, as many as fit TMEM and ACT RAM (at most `fit` rows) and the instruction
     memory (attention is unrolled per row, head and block: the program grows with the context).
@@ -1433,14 +1431,15 @@ def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
     programs or None for R = 1, the rows that fit TMEM as far as known). `tokens` (at least n):
     the run's inputs come from the image's tables (compile_rows tokens). whole: R is at most
     MCOLS or a multiple of it (_whole_passes): each weight streams once per MCOLS rows, so 5
-    rows at MCOLS 4 cost what 8 do."""
+    rows at MCOLS 4 cost what 8 do. kw: compile_rows' own (MTP decoding's hidden, slot)."""
     imem, mc = image.cfg.IMEM_WORDS, image.cfg.MCOLS if whole else 1 << 30
     n = _whole_passes(min(n, fit, left), mc)
     while n > 1:
         try:
             progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
                                        [n - 1] if n == left else [], block,
-                                       **({} if tokens is None else {"tokens": tokens[:n]}))
+                                       **({} if tokens is None else {"tokens": tokens[:n]}),
+                                       **kw)
         except CompileError as e:
             if "TMEM" not in str(e) and "ACT RAM full" not in str(e):
                 raise
@@ -1663,9 +1662,10 @@ class Engine:
         """The step program for `pos`: the precompiled one when it is for `pos`."""
         return self._take(("step", pos), self._compile, pos)
 
-    def _compile_decode(self, blocks: int):
-        progs, ra = self.image.compile_decode(blocks, max((blocks - 1) * self.block,
-                                                          self._conv_lo), self.block)
+    def _compile_decode(self, blocks: int, lo: int | None = None):
+        """lo: the bucket's first position (_worker_decode's; the compile thread gets it too)."""
+        lo = max((blocks - 1) * self.block, self._conv_lo) if lo is None else lo
+        progs, ra = self.image.compile_decode(blocks, lo, self.block)
         prep = getattr(self.backend, "prepare", None)
         if prep is not None:
             prep(progs)
@@ -1858,7 +1858,10 @@ class Engine:
         weight streams once for the R rows (ceil(R / MCOLS) MMs), each row attends causally
         over the cache and the rows before it, and only the last run computes logits, for its
         last row. Per row the arithmetic is the decode kernel's, so the KV cache and logits
-        are bit-identical to feeding the tokens one by one. A run shrinks when its program
+        are bit-identical to feeding the tokens one by one -- but with PAIR, a 4-bit MM of a
+        run of more than MCOLS / 2 rows does not pair as the decode kernel's does, and its
+        sums round in another order (qwen35_rows; tests/test_qwen35.py
+        test_prefill_pair_sum_order). A run shrinks when its program
         does not fit TMEM or IMEM (long contexts); a single token runs the decode kernel.
         Without `chunk` a run of more than MCOLS rows takes whole passes of MCOLS rows (each
         pass streams every weight: fit_chunk).

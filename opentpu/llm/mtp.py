@@ -13,21 +13,28 @@ with the loop on the card (docs/mtp.md 2, 3). Each iteration at position p, with
     commit   c ^= n, p += 1 + n, t = a_n
 
 Greedy, the tokens are those of plain greedy decode bit for bit: every emitted token is the
-argmax of a logits row the decode step would compute (the rows kernel is bit-identical to
-decode steps) on the committed state. Rejected rows leave nothing behind: the KV caches (the
-model's and the MTP layer's) are positional and are overwritten before they are read, and
-the recurrent state and windows of a rejected row sit in the uncommitted slot.
+argmax of a logits row the decode step would compute on the committed state (the rows
+kernel is bit-identical to decode steps; with PAIR and 4-bit weights where its MMs pair as
+the steps' do: 2 rows at MCOLS >= 4, qwen35_rows). Rejected rows leave nothing behind: the
+KV caches (the model's and the MTP layer's) are positional and are overwritten before they
+are read, and the recurrent state and windows of a rejected row sit in the uncommitted
+slot.
 
-The prompt's prefill stores `hid` for every row and runs the MTP layer over the prompt's rows
-(h_i, x_(i+1)), which fills its KV cache; its last row (h_(P-1), a0) gives the first draft.
+The prompt's prefill takes plain prefill's runs (qwen3.fit_chunk: the same rows, so its
+MMs pair as plain prefill's do), stores `hid` for every row and runs the MTP layer over the
+prompt's rows (h_i, x_(i+1)), which fills its KV cache; its last row (h_(P-1), a0) gives the
+first draft.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from .qwen3 import Engine
+from .qwen3 import Engine, fit_chunk
+
+MTP_ROWS = 4            # the MTP layer's rows per run in the prefill (its TMEM: [R, 2H] input)
 
 
 @dataclass
@@ -37,6 +44,10 @@ class MTPStats:
     tokens: list = field(default_factory=list)
     accepted: list = field(default_factory=list)
     runs: list = field(default_factory=list)        # (kind, rows, stats of the backend's run)
+    slots: list = field(default_factory=list)       # each verify run's committed slot (parity)
+    compile_s: float = 0.0                          # host seconds compiling the programs
+    prefill_s: float = 0.0                          # host seconds of the prefill (wall)
+    prefill_compile_s: float = 0.0                  # ... compiling its programs
 
     @property
     def iterations(self) -> int:
@@ -64,6 +75,11 @@ class MTPDecoder:
             raise ValueError("MTPDecoder needs an Engine made by mtp_engine (Spec.mtp, lookup)")
         if engine.cfg.S != 1:
             raise ValueError("MTP decoding runs on one slice")
+        fmts = {img.wformat, img.head_format, *getattr(img, "mf", {}).values()}
+        if engine.cfg.PAIR and fmts - {"int8", None} and 2 * 2 > engine.cfg.MCOLS:
+            raise ValueError("with PAIR and 4-bit weights a 2-row verify run pairs its MMs as "
+                             "the decode steps do only at MCOLS >= 4 (qwen35_rows): its tokens "
+                             "would not be plain decode's bit for bit")
         self.eng, self.img = engine, img
         self.slot = 0
 
@@ -82,33 +98,51 @@ class MTPDecoder:
 
     def _verify(self, p: int, toks, logit_rows, fork: bool, st: MTPStats, kind: str):
         rows = [(0, p + j) for j in range(len(toks))]
+        t0 = time.perf_counter()
         progs = self.img.compile_rows(rows, logit_rows, self.eng.block, tokens=toks,
                                       slot=self.slot, fork=fork, hidden=True)
+        st.compile_s += time.perf_counter() - t0
+        if fork:
+            st.slots.append(self.slot)
         self._run(progs, kind, len(toks), st)
 
-    def _draft(self, p: int, toks, st: MTPStats, kind: str) -> list:
-        self._run(self.img.compile_mtp(p, len(toks), toks, self.eng.block), kind, len(toks), st)
+    def _draft(self, p: int, toks, st: MTPStats, kind: str, h0: int = 0) -> list:
+        t0 = time.perf_counter()
+        progs = self.img.compile_mtp(p, len(toks), toks, self.eng.block, h0=h0)
+        st.compile_s += time.perf_counter() - t0
+        self._run(progs, kind, len(toks), st)
         return self._drafts(len(toks))
 
     # ---- generation
-    def prefill(self, prompt, st: MTPStats, chunk: int = 4):
-        """The prompt in runs of up to `chunk` rows, each followed by the MTP layer over its
-        rows; returns (a0, the first draft)."""
+    def prefill(self, prompt, st: MTPStats, chunk: int = MTP_ROWS):
+        """The prompt in plain prefill's runs (qwen3.fit_chunk, Engine.prefill's: their rows
+        and so their MMs' pairing are its), each storing its rows' hidden, then the MTP layer
+        over them in runs of up to `chunk` rows; returns (a0, the first draft)."""
         prompt = [int(t) for t in prompt]
         P, p = len(prompt), self.eng.pos
         if p != 0:
             raise ValueError("MTP decoding starts from an empty context (Engine.reset)")
-        chunk = max(1, min(chunk, self.img.rows))
+        self.slot = 0
         a0 = draft = None
+        fit = self.img.rows
         while p < P:
-            n = min(chunk, P - p)
-            last = p + n == P
-            self._verify(p, prompt[p:p + n], [n - 1] if last else [], False, st, "prefill")
+            left = P - p
+            t0 = time.perf_counter()
+            n, progs, fit = fit_chunk(self.img, self.eng.block, 0, p, self.img.rows, left, fit,
+                                      prompt[p:], hidden=True, slot=self.slot)
+            if progs is None:           # one row: the rows kernel (plain prefill's decode step)
+                progs = self.img.compile_rows([(0, p)], [0] if n == left else [],
+                                              self.eng.block, tokens=prompt[p:p + 1],
+                                              slot=self.slot, hidden=True)
+            st.compile_s += time.perf_counter() - t0
+            self._run(progs, "prefill", n, st)
             nxt = prompt[p + 1:p + n + 1]
-            if last:
+            if n == left:
                 a0 = int(np.argmax(self._logits(n)[n - 1]))
                 nxt = nxt + [a0]
-            draft = self._draft(p, nxt, st, "mtp prefill")[n - 1]
+            for j in range(0, n, chunk):
+                k = min(chunk, n - j)
+                draft = self._draft(p + j, nxt[j:j + k], st, "mtp prefill", h0=j)[k - 1]
             p += n
         self.eng.pos = P
         return a0, draft
@@ -120,7 +154,9 @@ class MTPDecoder:
         tokens so far) -> the draft for that position instead of the MTP's."""
         stop = set(self.img.spec.eos if stop is None else stop)
         st = MTPStats(prompt=len(prompt))
+        t0 = time.perf_counter()
         a0, d = self.prefill(prompt, st)
+        st.prefill_s, st.prefill_compile_s = time.perf_counter() - t0, st.compile_s
         out, p, t = st.tokens, len(prompt), a0
         out.append(a0)
         while len(out) < max_new and out[-1] not in stop and p + 1 < self.img.cap:

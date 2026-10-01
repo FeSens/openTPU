@@ -996,18 +996,18 @@ class Image(EmbedHost):
                 for s in range(self.cfg.S)]
 
     def compile_mtp(self, p0: int, R: int, tokens=None, block: int = ATTN_BLOCK,
-                    keep: bool = False) -> list:
+                    keep: bool = False, h0: int = 0) -> list:
         """One program per slice: the MTP drafter over R rows at positions p0 .. (qwen35_mtp;
         Spec.mtp), the tokens' embedding rows from the image's tables (`tokens`) or the I/O
         area's x rows (the host's, as qwen35_rows'). keep: the draft head's logits to the I/O
-        area's logits rows too."""
+        area's logits rows too. h0: the first hidden row (m.hid[h0:h0 + R])."""
         if not self.spec.mtp:
             raise ValueError("the MTP drafter needs an MTP image (Spec.mtp)")
-        if not 0 < R <= self.rows:
-            raise ValueError(f"{R} MTP rows, the image's I/O area holds {self.rows}")
+        if not 0 < R <= self.rows or not 0 <= h0 <= self.rows - R:
+            raise ValueError(f"MTP rows {h0}..{h0 + R}, the image's I/O area holds {self.rows}")
         rows = [(0, p0 + r) for r in range(R)]
         return [qwen35_mtp.trace(self.cfg, s, {"m": self.descriptors(s), "p0": p0, "R": R,
-                                               "block": block, "keep": keep,
+                                               "block": block, "keep": keep, "h0": h0,
                                                **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
@@ -1974,7 +1974,12 @@ def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=
     """R prompt tokens at positions p0 .. p0+R-1 at once: their embeddings m.xr and RoPE
     tables m.cosr / m.sinr, or those of `tokens` from the image's tables (qwen3._inputs_rows) ->
     logits of the rows in `logit_rows` (a contiguous range, or empty). Bit-identical to R
-    qwen35_step runs.
+    qwen35_step runs, but for the order of a 4-bit MM's sums with PAIR when 2R > MCOLS: a
+    step's MMs pair (column reuse), a wider run's do not (Builder.stationary), and a paired
+    MM adds each even K-block to the odd one before the partial sums. The difference is a
+    rounding of a sum, which an activation's int8 rounding downstream can turn into one
+    quantization step (tests/test_qwen35.py test_prefill_pair_sum_order). Runs of at most
+    MCOLS / 2 rows pair as the steps do and are bit-identical.
 
     MTP decoding (Spec.mtp, docs/mtp.md 9): `hidden` stores every row's final-normed hidden
     (the LM head's input) to m.hid for the MTP layer; `fork` (the verify run) leaves the
@@ -1993,18 +1998,20 @@ def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=
         x.set(_mlp(x, lw, spec))
 
     run_layers(m.plan, layer)
-    xn = None
-    if hidden:
-        xn = rmsnorm(x, ol.load(m.g_final), spec.eps)
-        ol.store(m.hid[0:R, :], xn)
-    _lm_head_rows(x, m, spec, logit_rows, xn)
+    if hidden:                  # row by row: one row of TMEM (a prompt run's R rows fit)
+        g = ol.load(m.g_final)
+        for r in range(R):
+            ol.store(m.hid[r:r + 1, :], rmsnorm(x[r:r + 1, :], g, spec.eps))
+        del g
+    _lm_head_rows(x, m, spec, logit_rows)
 
 
 @ol.jit
-def qwen35_mtp(m, p0: int, R: int, block: int = ATTN_BLOCK, keep: bool = False, tokens=None):
+def qwen35_mtp(m, p0: int, R: int, block: int = ATTN_BLOCK, keep: bool = False, tokens=None,
+               h0: int = 0):
     """The MTP drafter (Spec.mtp; docs/mtp.md 6.1, 9) over R rows at positions p0 .. p0+R-1:
-    row r takes the main model's final-normed hidden at p0 + r (m.hid: a verify run's or a
-    prompt chunk's, qwen35_rows hidden) and the token at p0 + r + 1 (tokens[r], its embedding
+    row r takes the main model's final-normed hidden at p0 + r (m.hid[h0 + r]: a verify run's
+    or a prompt run's, qwen35_rows hidden) and the token at p0 + r + 1 (tokens[r], its embedding
     from the image's tables; without tokens m.xr's row, qwen3._inputs_rows) and drafts the
     token at p0 + r + 2, the id of the draft head's largest logit (its rows: the MTP_VOCAB
     lowest ids), into m.draft[r]:
@@ -2025,7 +2032,7 @@ def qwen35_mtp(m, p0: int, R: int, block: int = ATTN_BLOCK, keep: bool = False, 
     cat = ol.empty([R, 2 * H], dense=True)
     cat[:, 0:H].set(rmsnorm(e, ol.load(mt.ge), eps))
     del e
-    cat[:, H:2 * H].set(rmsnorm(ol.load(m.hid[0:R, :]), ol.load(mt.gh), eps))
+    cat[:, H:2 * H].set(rmsnorm(ol.load(m.hid[h0:h0 + R, :]), ol.load(mt.gh), eps))
     x = ol.dot(ol.quantize(cat), mt.fc)                 # [R, H] (one slice: Spec.check)
     del cat
     lw = mt.layer
