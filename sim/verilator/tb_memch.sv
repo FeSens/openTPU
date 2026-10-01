@@ -192,6 +192,26 @@ module tb_memch #(
     .m_arvalid(carv), .m_arready(carr), .m_arid(cari), .m_araddr(cara), .m_arlen(carl),
     .m_rvalid(crvx), .m_rready(crrx), .m_rid(cri), .m_rdata(crdx), .m_rresp(crre), .m_rlast(crl));
 
+  // +cov: xclk cycles in which each XDMA-side queue was full (the split's order FIFOs, the bridges'
+  // AW / AR queues)
+  longint cv_ow = 0, cv_ob = 0, cv_or = 0;
+  longint cv_xwi [2] = '{0, 0}, cv_xbq [2] = '{0, 0}, cv_xai [2] = '{0, 0}, cv_xrq [2] = '{0, 0};
+  bit cov = 1'b0;
+  initial cov = $test$plusargs("cov");
+  always @(posedge xclk) if (!xrst) begin
+    cv_ow += longint'(!u_split.u_split.u_ow.wready);
+    cv_ob += longint'(!u_split.u_split.u_ob.wready);
+    cv_or += longint'(!u_split.u_split.u_or.wready);
+    cv_xwi[0] += longint'(!g_ch[0].u_ch.xwi_wr);  cv_xwi[1] += longint'(!g_ch[1].u_ch.xwi_wr);
+    cv_xbq[0] += longint'(!g_ch[0].u_ch.xbq_wr);  cv_xbq[1] += longint'(!g_ch[1].u_ch.xbq_wr);
+    cv_xai[0] += longint'(!g_ch[0].u_ch.xai_wr);  cv_xai[1] += longint'(!g_ch[1].u_ch.xai_wr);
+    cv_xrq[0] += longint'(!g_ch[0].u_ch.xrq_wr);  cv_xrq[1] += longint'(!g_ch[1].u_ch.xrq_wr);
+  end
+  final if (cov)
+    $display("cov full cycles: ow %0d ob %0d or %0d | xwi %0d/%0d xbq %0d/%0d xai %0d/%0d xrq %0d/%0d",
+             cv_ow, cv_ob, cv_or, cv_xwi[0], cv_xwi[1], cv_xbq[0], cv_xbq[1], cv_xai[0], cv_xai[1],
+             cv_xrq[0], cv_xrq[1]);
+
   // the end: every master done; or the error bits
   longint tmax = 2000000, dual = 0;
   initial void'($value$plusargs("tmax=%d", tmax));
@@ -548,6 +568,7 @@ module tb_memch_axi #(
   longint nrb = 0, nwb = 0, nsh = 0, nsp = 0;
   longint nwl = 0, nbr = 0;                 // bursts whose last W beat went, B responses
   int gapw = 20, mstall = 30, wpct = 50, seq = 0, xfull = 70, psh = 10, psp = 10;
+  int outs = OUTS;                          // +outs: bursts in flight per direction
   int a2x_rd [2], a2x_chk [2], x2a_wr [2];
   logic [31:0] nexto = 0;                   // +seq: the next burst's offset
   longint c0 = -1, c1 = 0, cyc = 0;         // first and last data cycles
@@ -567,6 +588,7 @@ module tb_memch_axi #(
     void'($value$plusargs("xfull=%d", xfull));
     void'($value$plusargs("psh=%d", psh));
     void'($value$plusargs("psp=%d", psp));
+    void'($value$plusargs("outs=%d", outs));
     for (int i = 0; i < NB; i++) begin sh[i] = 8'h00; unk[i] = 1'b0; end
     for (int i = 0; i < NB / 64; i++) begin wp[i] = 0; rp[i] = 0; end
     for (int i = 0; i < 2 * NSP * 32; i++) begin ssh[i] = 8'h00; sunk[i] = 1'b0; end
@@ -660,14 +682,14 @@ module tb_memch_axi #(
           bit rd_;
           logic [511:0] p;
           rd_ = a2x_rd[c] < int'(a2x_pub[c]) && (x2a_wr[c] >= NS || $urandom % 2 == 0);
-          if (rd_ && !(arvalid && !arready) && rdq.size() < OUTS) begin
+          if (rd_ && !(arvalid && !arready) && rdq.size() < outs) begin
             p = pat(c, 0, a2x_rd[c]);
             for (int j = 0; j < 4; j++) rq.push_back('{0, id, j == 3, 1'b1, p[128 * j +: 128], '1});
             rdq.push_back('{0, 0, id, c, -1});
             arvalid <= 1'b1; araddr <= (32'(c) << 31) | (32'(A2X + a2x_rd[c]) << 6); arlen <= 8'd3; arid <= id;
             a2x_rd[c]++;
             issued++;
-          end else if (!rd_ && x2a_wr[c] < NS && !(awvalid && !awready) && bq.size() < OUTS) begin
+          end else if (!rd_ && x2a_wr[c] < NS && !(awvalid && !awready) && bq.size() < outs) begin
             p = pat(c, 1, x2a_wr[c]);
             for (int j = 0; j < 4; j++) wq.push_back('{p[128 * j +: 128], '1, j == 3});
             bq.push_back('{0, 0, id, c, -1});
@@ -683,7 +705,7 @@ module tb_memch_axi #(
           s = c * NSP + $urandom % NSP;
           wr_ = ($urandom % 2) == 0;
           a = (32'(c) << 31) | (32'(SPL + s % NSP) << 6) | 32'd32;
-          if (wr_ && swp[s] == 0 && srp[s] == 0 && !(awvalid && !awready) && bq.size() < OUTS) begin
+          if (wr_ && swp[s] == 0 && srp[s] == 0 && !(awvalid && !awready) && bq.size() < outs) begin
             for (int j = 0; j < 2; j++) begin
               w_t x;
               for (int k = 0; k < BYTES; k++) begin
@@ -698,7 +720,7 @@ module tb_memch_axi #(
             bq.push_back('{0, 0, id, -1, s});
             awvalid <= 1'b1; awaddr <= a; awlen <= 8'd1; awid <= id;
             issued++;
-          end else if (!wr_ && swp[s] == 0 && !(arvalid && !arready) && rdq.size() < OUTS) begin
+          end else if (!wr_ && swp[s] == 0 && !(arvalid && !arready) && rdq.size() < outs) begin
             for (int j = 0; j < 2; j++) begin
               r_t r;
               r.idx = 0; r.id = id; r.last = j == 1; r.shd = 1'b1;
@@ -727,7 +749,7 @@ module tb_memch_axi #(
           if (n * BYTES > SPAN - off) n = (SPAN - off) / BYTES;
           i0 = idx_of(a);
           b0 = i0 / 64; b1 = (i0 + n * BYTES - 1) / 64;
-          ok = wr_ ? (!(awvalid && !awready) && bq.size() < OUTS) : (!(arvalid && !arready) && rdq.size() < OUTS);
+          ok = wr_ ? (!(awvalid && !awready) && bq.size() < outs) : (!(arvalid && !arready) && rdq.size() < outs);
           for (int b = b0; b <= b1 && ok; b++) if (wp[b] != 0 || (wr_ && rp[b] != 0)) ok = 1'b0;
           if (ok) begin
             nexto = (off + n * BYTES) % SPAN;

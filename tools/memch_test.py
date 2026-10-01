@@ -90,6 +90,14 @@ SCEN["xresetshort"] = ["+xreset=2000", "+xrep=3001", "+xrlen=2", "+axi_stall=85"
 # controller takes a command in 3% of its cycles, so the output register outlasts the hold,
 # and XDMA writes only, so the hold does not wait for its reads)
 SCEN["xresetshortsh"] = ["+psh=60", "+axi_stall=97", "+wpct=100", "+ntx=1000"] + SCEN["xresetshort"]
+# PCIe Gen2's clocks (xdma_aclk 250 MHz, the core and the controller at 133.33): mixed traffic,
+# repeated XDMA resets, partial beats, and B / R held with up to 32 bursts in flight, so the split's
+# B and R order FIFOs and the bridges' AW / AR queues run full (+cov counts their full cycles)
+G2 = ["+xp=200", "+up=375", "+cp=375"]
+SCEN["gen2"] = G2 + ["+ntx=10000", "+seed=40"]
+SCEN["gen2xres"] = G2 + ["+xreset=3000", "+xrep=6151", "+outs=32", "+mstall=70", "+seed=41"]
+SCEN["gen2part"] = G2 + ["+ppct=60", "+raw=60", "+xfull=20", "+psh=30", "+psp=30", "+seed=42"]
+SCEN["gen2full"] = G2 + ["+outs=32", "+mstall=85", "+axi_stall=50", "+ldn_busy=30", "+seed=43"]
 for i in range(10, 30):
     SCEN[f"s{i}"] = [f"+seed={i}", f"+psh={5 + i % 4 * 15}", f"+ppct={i % 5 * 20}", f"+wpct={30 + i % 3 * 20}"]
 # functional runs: 3000 runs or bursts per master unless the scenario says otherwise (the first
@@ -104,7 +112,8 @@ FUNC += [("cred", s) for s in ["default", "credstress"]]
 FUNC += [("xreg", s) for s in ["default", "seed2", "xreset", "resets", "xresetlat", "xresetrep",
                                "resetsrep", "xresetshort", "xresetshortsh", "mstall70", "nogaps",
                                "partial", "ctlstall", "fastcore", "slowcore", "shared", "shared21",
-                               "pubstall", "seqrd", "seqwr", "seqmix"]]
+                               "pubstall", "seqrd", "seqwr", "seqmix", "gen2", "gen2xres",
+                               "gen2part", "gen2full"]]
 
 # throughput: sequential 32-beat runs (64-beat bursts for XDMA), one kind of master at a time,
 # whole beats unless the run says otherwise (the first plusarg of a name wins)
