@@ -991,11 +991,12 @@ class BoardBackend:
         # Engine: called over and over while a run is in flight, it serves the card's requests
         # (a MoE layer's WAITWs wait for it, docs/offload.md 5.2); nonzero when it served one
         self.host = None
-        # streamed logits (start(stream=...)): the region holding the sentinel, its marking
-        # after a run (on the DMA worker, waited for before anything else writes the card),
-        # the pieces' completion times last token
+        # streamed logits (start(stream=...)): the region holding the sentinel, the region to
+        # mark again after the next RUN and that marking in flight (on the DMA worker), the
+        # pieces' completion times last token
         self.streams = bool(getattr(self.board.t, "streams", False))
         self._armed = None                  # (addr, nbytes, piece) filled with SENTINEL
+        self._remark = None                 # (addr, nbytes): marked again after the next RUN
         self._rearm = None                  # the marking in flight (a Future)
         self._marks = np.zeros(0, np.uint32)    # SENTINEL words for it
         self._stream = None                 # the running program's (addr, nbytes, piece)
@@ -1076,10 +1077,11 @@ class BoardBackend:
         pieces of `piece` bytes (the LM head's chunks, late in the run), and wait(feed) hands
         each piece over as soon as it is complete. The region holds SENTINEL words before the
         run: written here when it does not (the first streamed run, or after anything else
-        wrote the region), else it was marked again after the last run (_stream_tail, on the
-        DMA worker while the host takes the token; waited for here, before RUN: a write that
-        size must not meet a run, RUN_H2C). Needs a transport that allows DMA during a run
-        (`streams`).
+        wrote the region), else the whole region is marked again right after this start, on
+        the DMA worker while the run is still far from its LM head, in calls of RUN_H2C (a
+        larger one that meets the run's traffic laps XDMA's H2C buffer; after the run instead,
+        the marks took 1.0-1.6 ms of every token's critical path); wait() waits for them before
+        its first probe. Needs a transport that allows DMA during a run (`streams`).
 
         args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit25). The
         program in IMEM stays there: starting the same `programs` object again (a program
@@ -1106,16 +1108,19 @@ class BoardBackend:
             self._resident = (programs, words)
         if args is not None:
             self.board.set_args(list(args) + [0] * (8 - len(args)))
+        remark, self._remark = self._remark, None
         if stream is not None and self._armed != stream:
             self.board.write(stream[0], np.full(stream[1] // 4, SENTINEL, np.uint32))
-            self._armed = stream
+            self._armed, remark = stream, None
         elif stream is None:
-            self._armed = None                      # the run may write the region
+            self._armed, remark = None, None        # the run may write the region
         self._seen = None
         self._key = len(self._resident[1])
         self._expect = self._expects.get(self._key, 0.0)
         self.board.start(trace=self.trace)
         self._running, self._stream = programs, stream
+        if remark is not None:                      # in RUN_H2C calls (Board.in_run)
+            self._rearm = self.board._worker().submit(self.board.write, remark[0], self._marks)
 
     def wait(self, feed=None) -> dict:
         """Wait for the started program; returns its counters (run's second half). After a
@@ -1132,7 +1137,7 @@ class BoardBackend:
             if self._stream is not None:
                 self._stream_tail(feed)
         except BaseException:
-            self._armed, self._stream = None, None  # the region's state is unknown
+            self._armed, self._stream, self._remark = None, None, None   # the region: unknown
             raise
         khz = self.info["core_khz"]
         self._expects[self._key] = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
@@ -1182,6 +1187,7 @@ class BoardBackend:
         t, b = self.board.t, self.board
         addr = self._stream[0]
         pieces, due = self._pieces(), {}
+        self._settle()                              # the region marked before a probe
         t0, i, probes, tries = b._t_run, 0, 0, 0
         halted = False
         # from POLL_EARLY (+ 3%) before the expected end on, the slices are short, so a run
@@ -1223,9 +1229,8 @@ class BoardBackend:
             # next token; else it came between the last two probes
             due[i] = d - STREAM_EARLY if tries == 1 and d is not None else \
                 time.perf_counter() - t0
-            # its SENTINEL marks go back after the run (with the tail's): a write here
-            # kept the host busy when the run ended (HALTED seen up to 0.15 ms late), and
-            # more than RUN_H2C a call must not meet the run
+            # its SENTINEL marks go back after the next start (with the tail's): a write
+            # here kept the host busy when the run ended (HALTED seen up to 0.15 ms late)
             i, tries = i + 1, 0
         self._due.update(due)
         self.last_stream = {"during": i, "pieces": len(pieces), "probes": probes}
@@ -1258,20 +1263,15 @@ class BoardBackend:
                                "does not write the whole logits region, or a marking raced it")
         self.last_stream["tail_retries"] = tries
         feed(o, w)                                  # the rest in one piece
-        # every piece marked again, on the DMA worker while the host takes the token (the run
-        # has ended: whole calls); start() and write() wait for it
         if len(self._marks) != n // 4:
             self._marks = np.full(n // 4, SENTINEL, np.uint32)
-        if n <= PIPE:                               # (a larger write pipelines on the worker)
-            self._rearm = self.board._worker().submit(self.board.write, addr, self._marks)
-        else:
-            self.board.write(addr, self._marks)
+        self._remark = (addr, n)                    # every piece: marked after the next start
         self._stream = None
         self.last_stream.update(tail_bytes=n - o, tail_s=time.perf_counter() - t0)
 
     def _settle(self) -> None:
-        """Wait for the marking of the streamed logits' region (_stream_tail's), raising its
-        error."""
+        """Wait for the marking of the streamed logits' region (start's, on the DMA worker),
+        raising its error."""
         f, self._rearm = self._rearm, None
         if f is not None:
             f.result()
