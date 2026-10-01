@@ -252,9 +252,11 @@ against float's 1.601, the argmax float's at 15 of them; with g2 folded 2.508, 9
 - fp4 experts cost +0.024, the fp4 head +0.012 (+0.033 with both), fp4 dense layers (attention
   and the dense MLP) +0.050; fp4 dense layers and fp4 experts together +0.099, more than the
   sum.
-- The experts are where 4-bit pays: about 2x the expert slots of int8 on the card (fp4 experts:
-  682 with the int8 head, 789 with the fp4 head; int8: 351 and 406; offload.md section 11.3).
-  The dense layers stay int8.
+- The experts are where 4-bit pays: their slots on the card double. The dense layers and the
+  head set the rest of the card: with fp4 experts (3.45 MB a slot; cap 4096, the lookup
+  tables), int8 dense layers leave 420 slots (14 a layer) with the int8 head and 540 with the
+  fp4 head, fp4 dense layers 660 and 780; a decode token reads 1725 MB of int8 dense layers
+  or 911 MB of fp4, and 761 MB of int8 head or 392 MB of fp4.
 
 Two earlier runs with g2 folded are void: int8 layers, fp4 experts and the int8 head gave ppl
 127.3, fp4 layers 138.4.
