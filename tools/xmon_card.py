@@ -11,6 +11,8 @@ opentpu/host/xmon.py). Run on the card's host, alone on the card (under otpu-loc
         Exit 0 clean, 3 bad data on the host, 4 a DMA failed, 5 a flag with the host's data clean.
     xmon_card.py snap       SNAP and print the monitors
     xmon_card.py clear      CLEAR them
+On a bitstream without the monitors, XMON_HOSTONLY=1 runs `run` with the host's checks alone
+(a production build's gate).
 
 Writes only 0x40000000 .. 0x7effffff of each channel; reads 0x7f000000 + 16 MiB.
 """
@@ -35,8 +37,18 @@ def now() -> str:
     return time.strftime("%H:%M:%S")
 
 
+MON = True                              # the bitstream has the monitors (else XMON_HOSTONLY)
+
+
+def mflags(t) -> int:
+    return X.flags(t) if MON else 0
+
+
 def report(t, why: str) -> None:
     print(f"=== {why} ({now()})", flush=True)
+    if not MON:
+        print("flags 0x0000 (no monitors: the host's checks only)", flush=True)
+        return
     try:
         print(X.describe(X.snap(t)), flush=True)
     except Exception as e:              # noqa: BLE001 - a report never stops the run
@@ -79,14 +91,15 @@ def run(t, secs: float, mode: str, seed: int) -> int:
     for ch in (0, 1):
         for o in range(0, RDN, 1 << 22):
             t.mem_write(ch, RD + o, X.data(ch, RD + o, 1 << 22))
-    X.clear(t)
+    if MON:
+        X.clear(t)
     time.sleep(0.01)
     lock = threading.Lock() if mode == "serial" else _NoLock()
     stats = {"rd": 0, "bad": None}
     stop = threading.Event()
     th = threading.Thread(target=reader, args=(stop, lock, stats, seed), daemon=True)
     th.start()
-    print(f"run {mode} {secs:.0f} s seed {seed}, {now()}; flags {X.flags(t):#06x}"
+    print(f"run {mode} {secs:.0f} s seed {seed}, {now()}; flags {mflags(t):#06x}"
           f"{'' if os.environ.get('XMON_PLACE') is None else '; host = card + ' + os.environ['XMON_PLACE']}"
           f"{f'; writes <= {MAXN} B' if MAXN < 1 << 20 else ''}", flush=True)
     t0 = last = lastf = time.time()
@@ -113,7 +126,7 @@ def run(t, secs: float, mode: str, seed: int) -> int:
                 break
             if time.time() - lastf > 0.5:
                 lastf = time.time()
-                f = X.flags(t)
+                f = mflags(t)
                 if f:
                     rc = 5
                     print(f"FLAGS {f:#06x} {' '.join(X.flag_names(f))} after {lastf - t0:.1f} s", flush=True)
@@ -121,7 +134,7 @@ def run(t, secs: float, mode: str, seed: int) -> int:
             if time.time() - last > 30:
                 last = time.time()
                 print(f"  {now()} +{last - t0:5.0f} s: {nw} writes, {nb / 1e9:.2f} GB written,"
-                      f" {stats['rd'] / 1e9:.2f} GB read; flags {X.flags(t):#06x}", flush=True)
+                      f" {stats['rd'] / 1e9:.2f} GB read; flags {mflags(t):#06x}", flush=True)
     except Exception as e:              # noqa: BLE001 - a failed DMA is a result
         stats["bad"] = f"writer DMA failed after {time.time() - t0:.1f} s, {nw} writes: {e!r}"
         stats["dma"] = True
@@ -140,10 +153,13 @@ def main(a: list[str]) -> int:
     if not a or a[0] not in ("run", "snap", "clear"):
         print(__doc__)
         return 2
+    global MON
     t = XdmaTransport("/dev/xdma0")
     if not X.present(t):
         print(f"no DMA monitors in this bitstream (0xF00 reads {t.reg_read(X.REG):#010x})")
-        return 2
+        if a[0] != "run" or os.environ.get("XMON_HOSTONLY") != "1":
+            return 2
+        MON = False
     if a[0] == "snap":
         report(t, "snap")
         return 0
