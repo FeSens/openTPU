@@ -137,9 +137,8 @@ def gemma_expert(W, p: str, e: int):
     H], gate rows first; `p + "experts.down_proj"` [E, H, F]) as W_gate, W_up [F, H] and W_down
     [H, F] for ExpertFormat.pack, router.per_expert_scale[e] folded into W_down (it multiplies
     the expert's output). pre_feedforward_layernorm_2's gain stays out: moe_ffn applies it to
-    the experts' input (lw.g_exp; folded into the columns its outliers, up to 8x the gain's
-    rms in the 26B, would coarsen every other column's block). A lazy W with `part` reads the
-    one expert."""
+    the experts' input before quantizing it (lw.g_exp; docs/offload.md 11.2). A lazy W with
+    `part` reads the one expert."""
     k = p + "experts."
     get = getattr(W, "part", None)
     gu, dn = ((get(k + "gate_up_proj", e), get(k + "down_proj", e)) if get is not None else
@@ -252,9 +251,9 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     QTensor [E, H] ([E + 1, H] with a shared expert: its gate is row E), ebias Tensor [E]
     (sigmoid_bias), gbase Tensor [1] (j * E as fp32), and with a shared expert its SwiGLU
     wg, wu, wd; with g_exp [H] (Gemma 4: pre_feedforward_layernorm_2's gain) the routed
-    experts read their own quantized input, the norm times g_exp, and the router the norm
-    (a gain with outliers folded into the experts' columns would coarsen every other column's
-    block). dev: the offload words (mbox, served, dir: static DRAM addresses) and `fmt`,
+    experts read their own quantized input, the norm times g_exp, and the router the norm (the
+    norm alone, quantized, has its blocks scaled by the residual's outlier channels, which the
+    gain zeroes: docs/offload.md 11.2). dev: the offload words (mbox, served, dir: static DRAM addresses) and `fmt`,
     the ExpertFormat.
 
     beside(): emits work that needs no expert (Gemma 4's dense MLP) right after the request is
