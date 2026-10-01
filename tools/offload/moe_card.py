@@ -120,11 +120,14 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 tm["poll"] += time.perf_counter() - t0
             return r
         eng.backend.host = served
-    warm = getattr(srv, "pool_warm", None)      # the pool file's read into the page cache
+    warm, pf = getattr(srv, "pool_warm", None), getattr(srv, "pool_file", None)
 
-    def warm_at():
-        return None if warm is None else dict(gb=round(warm.bytes / 1e9, 2),
-                                              done=not warm.is_alive())
+    def warm_at():                              # the pool file's packed experts: read by the
+        if warm is None:                        # warm thread, and in the page cache
+            return None
+        r = pf.resident(pf.ids)
+        return dict(read_gb=round(warm.bytes / 1e9, 2), done=not warm.is_alive(),
+                    resident_gb=None if r is None else round(r / 1e9, 2))
     warm_load = warm_at()
     ids = ref["ids"]
     t = time.time()
@@ -193,7 +196,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 tok_s_wall=round(len(got) / gen_s, 2) if gen_s else None,
                 tok_s_device=round(len(got) / dev_s, 2) if dev_s else None,
                 host_decode_s=host,
-                pool_warm=dict(at_load=warm_load, at_decode=warm_decode) if warm else None,
+                pool_warm=dict(packed_gb=round(len(pf.ids) * pf.slot / 1e9, 2),
+                               split=pf.split, resident_gb_at_open=None
+                               if pf.resident_at_open is None else
+                               round(pf.resident_at_open / 1e9, 2),
+                               at_load=warm_load, at_decode=warm_decode) if warm else None,
                 bytes_per_token_decode=round(host["bytes"] / max(1, len(got))),
                 top=top or None)
 

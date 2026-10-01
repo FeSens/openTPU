@@ -102,9 +102,10 @@ def preadv(fd: int, bufs: list, off: int) -> None:
 
 
 class SplitRecord:
-    """An expert in the split format, read from its file when it is written: readv(bufs) reads
-    its bytes in file order into the buffers. BoardDram on a CHASH card reads it straight into
-    its two channel runs; as bytes (bytes(), np.asarray) it is the slot's own bytes."""
+    """An expert in the split format, read from its file when it is written: readv(bufs, at)
+    reads its bytes from byte `at` on, in file order, into the buffers. BoardDram on a CHASH
+    card reads it straight into its two channel runs; as bytes (bytes(), np.asarray) it is the
+    slot's own bytes."""
 
     def __init__(self, n: int, readv):
         self.n, self.readv = n, readv
@@ -138,10 +139,40 @@ class PoolFile:
         self.fd, self.slot, self.split = os.open(path, os.O_RDONLY), slot, split
         self.bufs = [mmap.mmap(-1, slot) for _ in range(2)]
         self.k, self.warm_t = 0, None
+        self.arr = self.packed = self.ids = self.resident_at_open = None    # (moe.open_pool)
+
+    def resident(self, ids) -> int | None:
+        """Bytes of these experts in the page cache (mincore over the file's pages), or None
+        where the host cannot tell."""
+        import ctypes
+        import mmap
+        size = os.fstat(self.fd).st_size
+        if not size or not len(ids):
+            return 0
+        try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            mm = mmap.mmap(self.fd, size, prot=mmap.PROT_READ)
+        except (OSError, AttributeError, ValueError):
+            return None
+        pg = mmap.PAGESIZE
+        vec = (ctypes.c_ubyte * -(-size // pg))()
+        try:
+            v = np.frombuffer(mm, np.uint8)
+            rc = libc.mincore(ctypes.c_void_p(v.ctypes.data), ctypes.c_size_t(size), vec)
+            del v
+        finally:
+            mm.close()
+        if rc != 0:
+            return None
+        cum = np.concatenate([[0], np.cumsum(np.frombuffer(vec, np.uint8) & 1)])
+        g = np.asarray(ids, np.int64)
+        lo, hi = g * self.slot // pg, -(-(g + 1) * self.slot // pg)
+        return int(np.minimum((cum[hi] - cum[lo]) * pg, self.slot).sum())
 
     def get(self, g: int):
         if self.split:
-            return SplitRecord(self.slot, lambda bufs: preadv(self.fd, bufs, g * self.slot))
+            return SplitRecord(self.slot,
+                               lambda bufs, at=0: preadv(self.fd, bufs, g * self.slot + at))
         self.k ^= 1
         preadv(self.fd, [memoryview(self.bufs[self.k])], g * self.slot)
         return np.frombuffer(self.bufs[self.k], np.uint8)
@@ -402,8 +433,10 @@ class BoardDram:
     widens every smaller write with a read of the card; the 35B-A3B's card run wrote 544 MB/s
     against the link's 1.37. Here:
     - write_slot: an expert's bytes go to the two channels' runs in one pass (the beat
-      interleave and CHASH's swaps, `np.take` of 64-byte beats), straight from the pool's
-      pages into page-aligned staging buffers, then one DMA call per channel;
+      interleave and CHASH's swaps, `np.take` of 64-byte beats) into page-aligned staging
+      buffers, then one DMA call per channel; an expert of a split-format pool file
+      (SplitRecord) is read straight into the runs, and when nothing is in flight (a
+      request's first miss) in `pieces` parts, each DMAed as soon as it is read;
     - the host's own words (served and the directory: the card only reads them) are kept in a
       shadow and written as whole 128-byte blocks, with no read first;
     - one worker thread makes every DMA call in order, while the server stages the next
@@ -412,7 +445,7 @@ class BoardDram:
       ExpertServer calls it before poll returns, so no DMA of the server's is in flight
       while anything else uses the card."""
 
-    def __init__(self, backend, layout: Layout, depth: int = 3):
+    def __init__(self, backend, layout: Layout, depth: int = 3, pieces: int = 2):
         from .board import BEAT
         self.board, self.L = backend.board, layout
         blk = 2 * BEAT                        # a chunk: one beat on each channel
@@ -430,6 +463,7 @@ class BoardDram:
         self._thread: threading.Thread | None = None
         self.dma_s, self.dma_bytes = 0.0, 0     # the worker's slot DMA: seconds and bytes
         self.direct = 0                         # experts read from the file into their runs
+        self.pieces, self._lead = pieces, True  # _lead: no DMA in flight since the last flush
 
     # ---- the worker
     def _work(self) -> None:
@@ -454,6 +488,7 @@ class BoardDram:
 
     def flush(self) -> None:
         self._q.join()
+        self._lead = True
         if self._err is not None:
             e, self._err = self._err, None
             raise e
@@ -502,11 +537,19 @@ class BoardDram:
                 and len(data) % self.blk == 0):
             self._staging(len(data))            # the file's runs, read in place
             i = self._free.get()
-            par = _parity(addr // RUN + np.arange(self._pieces[i].shape[0]))
-            data.readv(self._pieces[i][np.arange(len(par)), par].reshape(-1).tolist())
-            bufs = self._bufs[i]
+            nb = self._pieces[i].shape[0]
+            iov = self._pieces[i][np.arange(nb), _parity(addr // RUN + np.arange(nb))]
+            bufs, h = self._bufs[i], RUN // 2
+            # nothing in flight: the link waits for this read, so it goes in parts (each one
+            # DMA call per channel more)
+            parts = self.pieces if self._lead or not self._q.unfinished_tasks else 1
+            self._lead = False
+            cut = sorted({nb * p // parts for p in range(parts + 1)})
+            for j0, j1 in zip(cut[:-1], cut[1:]):
+                data.readv(iov[j0:j1].reshape(-1).tolist(), j0 * RUN)
+                self._put(lambda a=j0 * h, b=j1 * h: self._dma(addr // 2, bufs, a, b),
+                          i if j1 == nb else None)
             self.direct += 1
-            self._put(lambda: self._dma(addr // 2, bufs), i)
             return
         src = (np.ascontiguousarray(data).view(np.uint8).reshape(-1)
                if isinstance(data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))
@@ -535,12 +578,13 @@ class BoardDram:
             run = np.where(sw[:, None], v[:, 1 - c], v[:, c])
             self.board.t.mem_write(c, at // 2, run.reshape(-1))
 
-    def _dma(self, off: int, bufs) -> None:
+    def _dma(self, off: int, bufs, a: int = 0, b: int | None = None) -> None:
+        """bufs[c][a:b] to channel c's run from channel offset off + a."""
         t0 = time.perf_counter()
         for c in (0, 1):
-            self.board.t.mem_write(c, off, bufs[c])
+            self.board.t.mem_write(c, off + a, bufs[c][a:b])
         self.dma_s += time.perf_counter() - t0
-        self.dma_bytes += 2 * len(bufs[0])
+        self.dma_bytes += 2 * len(bufs[0][a:b])
 
     def read(self, addr: int, n: int) -> bytes:
         return np.asarray(self.board.read(addr, n)).view(np.uint8).tobytes()

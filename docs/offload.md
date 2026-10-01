@@ -885,9 +885,17 @@ So now:
   is no gather, and the GIL is released for the copy. A slot that is not page-aligned, or a
   card without CHASH, takes the slot's bytes as before. `MO.serve` writes new pool files in
   this format (`<pool>.format`), and tools/offload/pool_split.py converts a file packed before.
-- A thread reads every packed expert of the pool file once, when the server starts. This is
-  the host's RAM tier in the page cache: for the 35B, 4333 experts, 7.2 GB. `moe_card` reports
-  how much the thread had read at load and at decode.
+- A thread reads every packed expert of the pool file once. This is the host's RAM tier in the
+  page cache: for the 35B, 4333 experts, 7.2 GB. The Engine opens the pool (`moe.open_pool`)
+  before it builds the image, so the read runs during the build (9 minutes for the 35B). The
+  pages stay the kernel's to reclaim: nothing is pinned or locked, so other jobs on the host
+  cannot run out of memory because of it. `moe_card` logs the packed experts' bytes in the page
+  cache (mincore) when the pool opens, at load and at decode, and how much the thread had read.
+- When no DMA is in flight (a request's first miss), `BoardDram` reads the expert in parts
+  (`pieces`, 2 by default) and queues each part's DMA as soon as it is read, so the link starts
+  after the first part. Each part costs one more DMA call per channel, about 50 us each (session
+  2's two expert sizes: 1.67 MB at 1.395 GB/s and 5.85 MB at 1.484 GB/s fit 1.52 GB/s plus 50 us
+  a call). A later miss's read overlaps the DMA ahead of it, so it goes whole.
 - `BoardDram` keeps each slot's beat indices for the gather of the slot format, and writes the
   host's own words without `Board.write`'s general path.
 
@@ -905,11 +913,16 @@ The 35B's projection. The DMA, at 1.19 ms an expert (session 2's 1.405 GB/s), is
 111 ms per token for its 93 misses. Each request's first staging (about 0.6 ms, about 40
 requests a token) adds about 25 ms, and the entries and `served` about 5 ms. That is about 141
 ms of serving per token instead of 242, so a token of about 256 ms: 3.9 tok/s, against 2.75
-measured with session 2's code. The 8B, at 0.89 misses per token, changes little.
+measured with session 2's code. The first staging in two parts exposes about 0.3 ms of it plus
+two DMA calls (0.1 ms): about 7 ms a token less, so about 4.0 tok/s. The 8B, at 0.89 misses
+per token, changes little.
 
 tests/test_offload_server.py checks the split format: the order is a permutation (a short last
 block included), and the records read back give the slot's bytes. `BoardDram` reading a
 split-format file leaves the card's channel memories as `Board.write` does, at slots of either
-page parity and off a page. `preadv` resumes a short read. The conversion tool is covered too.
+page parity and off a page, with a request's first miss in 1 to 3 parts; a staging pair goes back
+only after its last part (one pair, a slow link). `preadv` resumes a short read. The conversion
+tool is covered too, and `PoolFile.resident` (on Linux: a file dropped from the cache, then
+warmed).
 tests/test_lfm2_moe.py runs the fake card with CHASH's map and a split-format pool file,
 bit for bit against the ISA simulator.

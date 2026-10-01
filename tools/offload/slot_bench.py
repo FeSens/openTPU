@@ -25,7 +25,7 @@ SIZES = {"q35": 1671168, "lfm8b": 5849088}      # bytes per expert slot (ExpertF
 
 
 def bench(board, slot: int, k: int, reqs: int, base: int, kind: str, pool_file=None,
-          reader="pread", warm=False) -> dict:
+          reader="pread", warm=False, pieces=2) -> dict:
     from pathlib import Path
 
     from opentpu.host.offload import (LINE, SPLIT, BackendDram, BoardDram, ExpertServer, Layout,
@@ -53,7 +53,7 @@ def bench(board, slot: int, k: int, reqs: int, base: int, kind: str, pool_file=N
     else:
         pool = np.random.default_rng(0).integers(0, 256, (E, slot), dtype=np.uint8)
     if kind == "board":
-        mem = BoardDram(SimpleNamespace(board=board), lay)
+        mem = BoardDram(SimpleNamespace(board=board), lay, pieces=pieces)
     else:
         mem = BackendDram(SimpleNamespace(write=lambda s, a, d: board.write(a, d),
                                           read=lambda s, a, n: board.read(a, n)))
@@ -85,6 +85,7 @@ def bench(board, slot: int, k: int, reqs: int, base: int, kind: str, pool_file=N
     if kind == "board":
         r["dma_gb_s"] = round(mem.dma_bytes / mem.dma_s / 1e9, 3) if mem.dma_s else None
         r["direct"] = mem.direct                # read from the file into the runs
+        r["pieces"] = mem.pieces
         r.update({f"{x}_ms_per_expert": round(1e3 * v / (reqs * k), 3) for x, v in tm.items()})
     return r
 
@@ -102,6 +103,8 @@ def main():
     ap.add_argument("--reader", choices=("pread", "mmap"), default="pread",
                     help="--pool: MO.serve's reader (os.preadv; a split-format file straight "
                          "into the channel runs), or the memmap's rows")
+    ap.add_argument("--pieces", type=int, default=2,
+                    help="BoardDram: the parts of an expert read when no DMA is in flight")
     ap.add_argument("--warm", action="store_true", help="--pool pread: read the experts into "
                                                         "the page cache first (the warm thread)")
     a = ap.parse_args()
@@ -127,7 +130,7 @@ def main():
             for kind in ("backend", "board"):
                 print(json.dumps(dict(size=s, chash=board.chash,
                                       **bench(board, SIZES[s], a.k, a.reqs, a.base, kind,
-                                              a.pool, a.reader, a.warm))),
+                                              a.pool, a.reader, a.warm, a.pieces))),
                       flush=True)
     finally:
         board.close()

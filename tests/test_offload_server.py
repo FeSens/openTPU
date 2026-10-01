@@ -137,16 +137,18 @@ def test_preadv_resumes_short_reads(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("chash", [False, True])
-@pytest.mark.parametrize("slot,fmt", [(128 * 37, "bytes"), (64 * 75, "bytes"),
-                                      (4096 * 3, "split"), (128 * 37, "split")])
-def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, tmp_path):
+@pytest.mark.parametrize("slot,fmt,pieces", [(128 * 37, "bytes", 2), (64 * 75, "bytes", 2),
+                                             (4096 * 3, "split", 3), (4096 * 3, "split", 1),
+                                             (128 * 37, "split", 2)])
+def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, tmp_path):
     """BoardDram (the card's fast path: one-pass channel runs, a worker thread's DMA, the
     host's words from a shadow without reading the card) leaves the card's two channel memories
     exactly as BackendDram's Board.write does, request after request: the slots (with CHASH's
     swaps or not), the directory and served. A slot of a half chunk falls back to Board.write.
     split: the pool a file in the split format, read with preadv straight into the channel
     runs under CHASH at a page-aligned slot (pages of either parity; a slot of 37 chunks is
-    every other slot off a page: the slot's bytes there, as without CHASH)."""
+    every other slot off a page: the slot's bytes there, as without CHASH); a request's first
+    miss in `pieces` parts, each DMAed when it is read."""
     from types import SimpleNamespace
 
     from opentpu.host.board import Board
@@ -168,7 +170,14 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, tmp_path):
         f.write_bytes(b"".join(to_split(pool(g)).tobytes() for g in range(8)))
         fast_pool = PoolFile(f, slot, split=True).get
     ba, bb = board(), board()
-    fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay), lay, fast_pool)
+    fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay, pieces=pieces), lay,
+                        fast_pool)
+    dmas, dma = [], fast.mem._dma
+
+    def counted(off, bufs, a=0, b=None):
+        dmas.append(len(bufs[0][a:b]) < len(bufs[0]))
+        dma(off, bufs, a, b)
+    fast.mem._dma = counted
     plain = ExpertServer(BackendDram(SimpleNamespace(write=lambda s, a, d: bb.write(a, d),
                                                      read=lambda s, a, n: bb.read(a, n))),
                          lay, pool)
@@ -189,6 +198,7 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, tmp_path):
         same()
     assert fast.misses == plain.misses > 0 and fast.bytes == plain.bytes
     assert (fast.mem.direct > 0) == (fmt == "split" and chash)
+    assert any(dmas) == (fmt == "split" and chash and pieces > 1)     # a part's DMA
     assert float(np.frombuffer(ba.read(lay.served, 4), np.float32)[0]) == len(reqs)
 
 
@@ -237,3 +247,63 @@ def test_pool_split_tool_copies_the_packed_experts(tmp_path, monkeypatch):
     pf = PoolFile(dst, slot, split=True)
     for g in np.nonzero(packed)[0]:
         assert bytes(pf.get(int(g))) == x[g].tobytes()
+
+
+def test_pool_file_residency(tmp_path):
+    """PoolFile.resident: the packed experts' bytes in the page cache (mincore). Experts just
+    written are there, a hole of the sparse file (never written or read) is not. On Linux, a
+    file the kernel drops from the cache (POSIX_FADV_DONTNEED after fsync; not tmpfs) comes
+    back with the warm thread."""
+    import os
+    import sys
+
+    from opentpu.host.offload import PoolFile
+    slot, n = 4096 * 4, 6
+    f = tmp_path / "pool.bin"
+    f.write_bytes(np.random.default_rng(0).integers(0, 256, slot * 4, dtype=np.uint8).tobytes())
+    os.truncate(f, slot * n)                            # experts 4 and 5: a hole
+    pf = PoolFile(f, slot, split=False)
+    if pf.resident(range(n)) is None:
+        pytest.skip("no mincore here")
+    assert pf.resident(range(n)) == 4 * slot and pf.resident([2, 3, 5]) == 2 * slot
+    if sys.platform != "linux":
+        return
+    fd = os.open(f, os.O_RDONLY)
+    os.fsync(fd)
+    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    os.close(fd)
+    if pf.resident(range(4)) < 4 * slot:                # (tmpfs keeps its pages)
+        pf.warm(range(4)).join(timeout=60)
+        assert pf.resident(range(4)) == 4 * slot
+
+
+def test_board_dram_keeps_a_staging_pair_until_its_last_part(tmp_path):
+    """A staging pair goes back to the free list only after its expert's last part is on the
+    card: with one pair and a slow link, the next expert's read waits for it (else it would
+    overwrite the parts still queued)."""
+    import time
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import BoardDram, PoolFile, to_split
+
+    class Slow(FakeTransport):
+        def mem_write(self, ch, off, data):
+            if len(data) > 1024:
+                time.sleep(2e-3)
+            super().mem_write(ch, off, data)
+
+    slot = 4096 * 3
+    x = np.random.default_rng(0).integers(0, 256, (8, slot), dtype=np.uint8)
+    f = tmp_path / "pool.bin"
+    f.write_bytes(b"".join(to_split(r).tobytes() for r in x))
+    b = Board(Slow(ch_bytes=1 << 20, devname=None))
+    b.info()["caps"]["chash"] = True
+    lay = Layout.build(4096, 4, 2, (2, 3), slot)
+    srv = ExpertServer(BoardDram(SimpleNamespace(board=b), lay, depth=1, pieces=3), lay,
+                       PoolFile(f, slot, split=True).get)
+    srv.load(range(8))
+    for g in srv.lru[0].keys() | srv.lru[1].keys():
+        s = srv.lru[g // 4][g]
+        assert np.array_equal(np.asarray(b.read(s, slot)).view(np.uint8), x[g]), g

@@ -120,18 +120,44 @@ class ExpertFormat:
         return SimpleNamespace(wg=q(self.wg, F, H), wu=q(self.wu, F, H), wd=wd)
 
 
+def open_pool(layout: Layout, pool_file) -> PoolFile:
+    """The expert pool file for `layout`, opened, and its packed experts' read into the page
+    cache started (PoolFile.warm: the host's RAM tier; the Engine opens it before it builds the
+    image, so the read runs during the build). The file is the whole pool's size (sparse until
+    packed), and `<pool_file>.packed` marks the experts in it (a file of the right size without
+    one is a pool packed whole). A new file is in the split format
+    (opentpu.host.offload.split_order), as `<pool_file>.format` says; a file without it holds
+    the slot format. The page cache stays the kernel's to reclaim: nothing is pinned."""
+    L = layout
+    n = L.layers * L.E
+    path = Path(pool_file)
+    done = Path(str(path) + ".packed")
+    fresh = not path.exists() or path.stat().st_size != n * L.slot_bytes
+    if fresh:
+        with open(path, "wb") as f:
+            f.truncate(n * L.slot_bytes)
+    if fresh or not done.exists() or done.stat().st_size != n:
+        done.write_bytes(bytes(n) if fresh else bytes([1]) * n)
+    fmt = Path(str(path) + ".format")
+    if fresh:
+        fmt.write_text(SPLIT + "\n")
+    pf = PoolFile(path, L.slot_bytes, fmt.exists() and fmt.read_text().strip() == SPLIT)
+    pf.arr = np.memmap(path, np.uint8, "r+", shape=(n, L.slot_bytes))
+    pf.packed = np.memmap(done, np.uint8, "r+", shape=(n,))
+    pf.ids = np.nonzero(np.asarray(pf.packed))[0]
+    pf.resident_at_open = pf.resident(pf.ids)
+    pf.warm(pf.ids)
+    return pf
+
+
 def serve(layout: Layout, expert, backend, pool_file=None, warm=True) -> ExpertServer:
     """The host's expert server on the backend's DRAM (slice 0); with `warm`, the slots filled
     with each layer's first experts. expert(g): global expert g's slot bytes. An expert is
-    packed when it is first asked for and kept in host RAM, or, with `pool_file`, in that file
-    (the page cache, or the SSD tier), which keeps it for later runs: the file is the whole
-    pool's size (sparse until packed), and `<pool_file>.packed` marks the experts in it (a
-    file of the right size without one is a pool packed whole). A new file is in the split
-    format (opentpu.host.offload.split_order), as `<pool_file>.format` says; a file without
-    it holds the slot format. A thread reads the packed experts into the page cache
-    (`server.pool_warm`)."""
+    packed when it is first asked for and kept in host RAM, or, with `pool_file` (a path, or
+    open_pool's PoolFile), in that file (the page cache, or the SSD tier), which keeps it for
+    later runs (`server.pool`: the PoolFile)."""
     L = layout
-    n = L.layers * L.E
+    pf = None
     if pool_file is None:
         cache: dict = {}
 
@@ -140,30 +166,16 @@ def serve(layout: Layout, expert, backend, pool_file=None, warm=True) -> ExpertS
                 cache[g] = expert(g).tobytes()
             return cache[g]
     else:
-        path = Path(pool_file)
-        done = Path(str(path) + ".packed")
-        fresh = not path.exists() or path.stat().st_size != n * L.slot_bytes
-        if fresh:
-            with open(path, "wb") as f:
-                f.truncate(n * L.slot_bytes)
-        if fresh or not done.exists() or done.stat().st_size != n:
-            done.write_bytes(bytes(n) if fresh else bytes([1]) * n)
-        fmt = Path(str(path) + ".format")
-        if fresh:
-            fmt.write_text(SPLIT + "\n")
-        split = fmt.exists() and fmt.read_text().strip() == SPLIT
-        arr = np.memmap(path, np.uint8, "r+", shape=(n, L.slot_bytes))
-        packed = np.memmap(done, np.uint8, "r+", shape=(n,))
-        pf = PoolFile(path, L.slot_bytes, split)
-        pf.warm(np.nonzero(np.asarray(packed))[0])
+        pf = pool_file if isinstance(pool_file, PoolFile) else open_pool(L, pool_file)
 
         def pool(g):                    # read from the file (the memmap's writes are in the
-            if not packed[g]:           # page cache preadv reads)
-                arr[g] = to_split(expert(g)) if split else expert(g)
-                packed[g] = 1
+            if not pf.packed[g]:        # page cache preadv reads)
+                pf.arr[g] = to_split(expert(g)) if pf.split else expert(g)
+                pf.packed[g] = 1
             return pf.get(g)
     srv = ExpertServer(dram_of(backend, L), L, pool)
-    srv.pool_warm = None if pool_file is None else pf.warm_t
+    srv.pool_file = pf
+    srv.pool_warm = None if pf is None else pf.warm_t
     srv.load([j * L.E + e for j in range(L.layers) for e in range(L.E)] if warm else ())
     return srv
 
