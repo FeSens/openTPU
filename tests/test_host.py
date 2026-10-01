@@ -292,8 +292,7 @@ def test_compile_worker_builds_the_engines_image():
     from opentpu.llm import qwen3 as Q
     spec, W = L._tiny_qwen()
     eng = Q.Engine(spec, W, cap=256, wformat="fp4", head_format="int8", resident=True)
-    Q._worker_init(spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block, "fp4", "int8",
-                   True)
+    Q._worker_init(spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block, eng._image_kw)
     try:
         assert np.array_equal(Q._worker_compile(5), I.assemble(eng.image.compile_step(5)[0]))
         words, ra = Q._worker_decode(1, 0)

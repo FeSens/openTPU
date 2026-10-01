@@ -140,6 +140,25 @@ def test_pool_file_is_the_same_pool(tiny, tmp_path):
     assert f.stat().st_size == (len(KINDS) - 1) * E * eng.image.offload.slot_bytes
 
 
+def test_compile_worker_builds_the_moe_image(tiny):
+    """The compile worker process (the card's backend compiles ahead in it) builds the engine's
+    image, K expert slots per layer included: with E it would be over the DRAM that
+    device_config sized for K (the 8B's first card run: 4568 MiB for 4096)."""
+    from opentpu import isa as I
+    from opentpu.llm import qwen3 as Q
+    _, W, spec = tiny
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=K)
+    eng = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K)
+    Q._worker_init(spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block, eng._image_kw)
+    try:
+        img = Q._WORKER[0]
+        assert img.nbytes == eng.image.nbytes and img.offload == eng.image.offload
+        words, _ = Q._worker_decode(1, 2)               # (from the first run-time position)
+        assert np.array_equal(words, I.assemble(eng.image.compile_decode(1, 2)[0][0]))
+    finally:
+        Q._WORKER = None
+
+
 @pytest.mark.parametrize("embed", ["f32", "int8"])
 def test_the_card_generates_with_streamed_experts(tiny, embed):
     """The decode loop on the card (autodecode's generate program, resident decode) with k
