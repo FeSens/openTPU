@@ -45,11 +45,14 @@ unchanged. A quantized store (QST) writes whole blocks, so V's rows are stored p
 weights stream exactly their real bytes. The padding costs KV-cache bandwidth only: half of the
 K stream, about 1.3% of the token at a 1024-token context.
 
-**Hybrid layer loop.** All layer blocks in DRAM have the same size, so layer i starts at
-`layer0 + i * LS` whatever its kind. The kernel runs the repeated `(conv, attn)` unit as one
-hardware loop of 6 iterations, and the first and last conv layers unrolled (`lfm2.plan`). The
-program is 819 instructions at position 0 and 1414 at position 4095, well inside the board's
-4K-instruction IMEM.
+**Hybrid layer loop.** The kernel runs the repeated `(conv, attn)` unit as one hardware loop of
+6 iterations, and the first and last conv layers unrolled (`lfm2.plan`). The program is 819
+instructions at position 0 and 1414 at position 4095, well inside the board's 4K-instruction
+IMEM. Each layer block in DRAM has its kind's size (conv or attention, in its formats group:
+`Image.layouts`), and the blocks are placed run by run (`Image.loc`): layer i starts at
+`Image._off(i)`, and a loop steps by its unit's size. (Until the per-layer weight formats every
+block had the larger kind's size, so layer i started at `layer0 + i * LS`; LFM2.5-230M's int8
+image at a 4096-token capacity went from 334 to 276 MiB, LFM2-2.6B's from 2639 to 2595.)
 
 Nothing new was needed in the ISA or the RTL. The shared kernel code gained two small
 generalizations: `KVDesc` takes a V width (`dv`), and `qwen3._attention` pads heads narrower
