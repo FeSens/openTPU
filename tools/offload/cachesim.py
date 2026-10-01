@@ -12,6 +12,9 @@ shared by all layers (every expert of a model has the same size), for each polic
 - `lru`: least recently used, replaced on a miss;
 - `lru_layer`: the same with the slots split evenly over the layers (a token sweeps the layers in
   order, a loop that a global LRU smaller than the sweep thrashes on);
+- `lfu_layer`: per layer too, the victim the cached expert of least decayed use (each use halving
+  every `--half` requests of its layer, a warm expert one use at the start; ties to the least
+  recently used): ExpertServer's policy "lfu";
 - `lfu`: least often used (counts so far, the profile's counts as a prior), ties by recency;
 - `opt`: Belady's optimum (evict the expert needed furthest in the future): an upper bound.
 
@@ -25,14 +28,16 @@ best.
 With `--survey` (tools/offload/survey.py --json): the card's cache size (4 GiB less the model's
 on-card part and a reserve) joins the sizes, and each replay becomes tokens per second under
 path (a) of docs/offload.md section 4, the card computing everything and the host only moving
-experts (`linksim`), with and without prefetch from the predictions. `--host-frac`: the SSD
-tier, a host RAM holding that fraction of the pool (LRU) over the SSD.
+experts (`linksim`), with and without prefetch from the predictions, the slots replaced as
+`--stream-policies` says (lru, lfu: as lru_layer, lfu_layer). `--host-frac`: the SSD tier, a host
+RAM holding that fraction of the pool (LRU) over the SSD.
 """
 from __future__ import annotations
 
 import argparse
 import heapq
 import json
+import math
 from collections import OrderedDict, deque
 from pathlib import Path
 
@@ -65,7 +70,22 @@ def top_set(counts, C):
     return [int(i) for i in np.argsort(-counts, kind="stable")[:C]]
 
 
-def simulate(req, C, policy, warm, prior=None):
+def decayed(use, ids, t):
+    """Uses of `ids` at time t (in half-lives) into `use`: each expert's sum of 2^(u - t) over
+    its uses u, kept as log2 of the sum + t (ExpertServer.serve's form)."""
+    for e in ids:
+        use[e] = math.log2(2.0 ** (use[e] - t) + 1.0) + t if e in use else t
+
+
+def victim(c, ids, use=None):
+    """The cached expert to replace: not in the request, least recently used (c's order), or
+    of least decayed use (ties to the least recent) with `use`."""
+    if use is None:
+        return next(v for v in c if v not in ids)
+    return min((v for v in c if v not in ids), key=lambda v: use.get(v, -math.inf))
+
+
+def simulate(req, C, policy, warm, prior=None, half=32.0):
     """Replay; returns misses per token and the per-(token, layer) miss sets."""
     T, L, k = req.shape
     miss_tok = np.zeros(T, np.int64)
@@ -99,7 +119,7 @@ def simulate(req, C, policy, warm, prior=None):
                 if m:
                     miss_at[(t, j)] = m
         return miss_tok, miss_at
-    if policy == "lru_layer":
+    if policy in ("lru_layer", "lfu_layer"):
         E = int(req.max()) // L + 1 if prior is None else len(prior) // L
         caps = [C // L + (j < C % L) for j in range(L)]
         cs = [OrderedDict() for _ in range(L)]
@@ -107,19 +127,25 @@ def simulate(req, C, policy, warm, prior=None):
             j = e // E
             if len(cs[j]) < caps[j]:
                 cs[j][e] = None
+        uses = None
+        if policy == "lfu_layer":                         # ExpertServer.load: one use each,
+            uses = [dict.fromkeys(c, 0.0) for c in cs]    # the profile's best the most recent
+            cs = [OrderedDict.fromkeys(reversed(c)) for c in cs]
         for t in range(T):
             for j in range(L):
                 c = cs[j]
+                ids = [int(e) for e in req[t, j]]
+                if uses:
+                    decayed(uses[j], ids, (t + 1) / half)
                 m = []
-                for e in req[t, j]:
-                    e = int(e)
+                for e in ids:
                     if e in c:
                         c.move_to_end(e)
                     else:
                         m.append(e)
                 for e in m:
                     if len(c) >= max(caps[j], k):
-                        c.popitem(last=False)
+                        del c[victim(c, ids, uses and uses[j])]
                     c[e] = None
                 miss_tok[t] += len(m)
                 if m:
@@ -220,9 +246,11 @@ def resident_time(L, k, by, hw):
     return (L * (by["d_pre"] + by["d_post"] + k * by["x"]) + by["head"]) / hw["dram"]
 
 
-def linksim(req, preds, caps, warm, hw, by, pred=None, width=None, host=None, overlap="each"):
+def linksim(req, preds, caps, warm, hw, by, pred=None, width=None, host=None, overlap="each",
+            policy="lru", half=32.0):
     """Path (a), docs/offload.md section 4: the card computes everything and the experts it
-    lacks stream over PCIe into per-layer LRU slots, one token and layer at a time.
+    lacks stream over PCIe into per-layer slots (`policy` lru, or lfu: lfu_layer's victims,
+    `half`), one token and layer at a time.
 
     Per MoE layer the card runs its mixer and router (`d_pre` bytes), posts the k expert ids
     (the host sees them `req` seconds later and DMAs the missing ones one after another,
@@ -250,6 +278,10 @@ def linksim(req, preds, caps, warm, hw, by, pred=None, width=None, host=None, ov
     for j, ws in enumerate(warm):
         for e in ws[:caps[j]]:
             caches[j][e] = -1.0
+    uses = None
+    if policy == "lfu":                                # as simulate's lfu_layer
+        uses = [dict.fromkeys(c, 0.0) for c in caches]
+        caches = [OrderedDict((e, c[e]) for e in reversed(c)) for c in caches]
     hc = None
     if host is not None:
         hs, order = host
@@ -276,15 +308,15 @@ def linksim(req, preds, caps, warm, hw, by, pred=None, width=None, host=None, ov
     def evict_into(j, e, v, protect):
         c = caches[j]
         if len(c) >= max(caps[j], k):
-            victim = next(q for q in c if q not in protect)
-            if c[victim] is None:                      # a queued prefetch: drop it
+            q = victim(c, protect, uses and uses[j])
+            if c[q] is None:                           # a queued prefetch: drop it
                 for it in pending:
-                    if it[1] == j and it[2] == victim:
+                    if it[1] == j and it[2] == q:
                         it[3] = -1.0
-            if (j, victim) in unused:
-                unused.discard((j, victim))
+            if (j, q) in unused:
+                unused.discard((j, q))
                 cnt["wasted"] += 1
-            del c[victim]
+            del c[q]
         c[e] = v
 
     def advance(now):
@@ -324,6 +356,8 @@ def linksim(req, preds, caps, warm, hw, by, pred=None, width=None, host=None, ov
                 post(j, preds[pred][j][tok, :width], t + hw["req"])
             tr = t + t_pre + debt * t_exp               # the router is done
             want = [int(e) for e in req[tok, j]]
+            if uses:
+                decayed(uses[j], want, (tok + 1) / half)
             td = tr + hw["req"]                         # the host sees the request
             pre0 = cnt["prefetched"]
             advance(td)
@@ -382,7 +416,9 @@ def main():
     ap.add_argument("traces", nargs="+")
     ap.add_argument("--frac", default="0.05,0.1,0.15,0.2,0.3,0.4,0.5,0.6,0.75,0.9")
     ap.add_argument("--slots", default="", help="extra cache sizes in expert slots")
-    ap.add_argument("--policies", default="static,lru,lru_layer,lfu,opt")
+    ap.add_argument("--policies", default="static,lru,lru_layer,lfu_layer,lfu,opt")
+    ap.add_argument("--half", type=float, default=32.0,
+                    help="lfu_layer: a use's half-life, in requests of its layer")
     ap.add_argument("--json")
     ap.add_argument("--survey", help="tools/offload/survey.py --json output: bytes, card slots")
     ap.add_argument("--repo", help="the model's row in --survey (default: the trace's model)")
@@ -400,6 +436,8 @@ def main():
                     help="a MoE layer's work after its router that needs no expert (MB)")
     ap.add_argument("--stream-slots", default="",
                     help="cache sizes to run the stream model at (default: the card's)")
+    ap.add_argument("--stream-policies", default="lru",
+                    help="the stream model's slot replacement: lru, lfu (lfu_layer's)")
     ap.add_argument("--host-frac", default="",
                     help="host RAM caches of these pool fractions over an SSD (section 8)")
     ap.add_argument("--ssd-gbs", type=float, default=0.51, help="SSD reads, O_DIRECT 4 MiB")
@@ -453,8 +491,9 @@ def main():
             warm = top_set(prof, C)
             warm_all = top_set(prof, n)
             for pol in a.policies.split(","):
-                mt, ma = simulate(x["req"], C, pol, warm_all if pol == "lru_layer" else warm,
-                                  prof)
+                mt, ma = simulate(x["req"], C, pol,
+                                  warm_all if pol in ("lru_layer", "lfu_layer") else warm, prof,
+                                  a.half)
                 T = x["req"].shape[0]
                 r = dict(text=Path(x["meta"]["text"]).name, slots=C, frac=C / n, policy=pol,
                          hit=1 - mt.sum() / (T * L * k), miss_mean=float(mt.mean()),
@@ -491,32 +530,33 @@ def main():
               f"prefetches / wasted prefetches per token, the link's busy share)")
         for C in ssizes:
             caps = [C // L + (j < C % L) for j in range(L)]
-            for hf in hosts:
-                for pc in hw["pcie"]:
-                    line = []
-                    for name, pr, w in cfgs:
-                        res = []
-                        for i, x in enumerate(tr):
-                            others = [y["req"] for j, y in enumerate(tr) if j != i] or [x["req"]]
-                            prof = sum(freq(r, n) for r in others)
-                            warm = [[int(j * E + e) for e in np.argsort(-prof[j * E:(j + 1) * E],
-                                                                        kind="stable")]
-                                    for j in range(L)]
-                            host = None
-                            if hf is not None:
-                                hs = max(C, int(round(hf * n)))
-                                host = (hs, top_set(prof, n))
-                            res.append(linksim(x["req"], x["preds"], caps, warm,
-                                               dict(hw, pcie_one=pc), by, pr, w, host,
-                                               a.overlap))
-                        m = {q: float(np.mean([r_[q] for r_ in res])) for q in res[0]}
-                        row = dict(slots=C, host_frac=hf, pcie=pc, config=name, **m)
-                        (ssd if hf is not None else stream).append(row)
-                        line.append(f"{name} {m['tok_s']:.2f} ({m['demand']:.1f}/"
-                                    f"{m['prefetched']:.1f}/{m['wasted']:.1f}, "
-                                    f"{m['link']:.2f})")
-                    tag = f"host RAM {hf:.0%} of the pool, " if hf is not None else ""
-                    print(f"  {C} slots, {tag}PCIe {pc / 1e9:.1f} GB/s: " + "; ".join(line))
+            for hf, pc, sp in [(h, p, s) for h in hosts for p in hw["pcie"]
+                               for s in a.stream_policies.split(",")]:
+                line = []
+                for name, pr, w in cfgs:
+                    res = []
+                    for i, x in enumerate(tr):
+                        others = [y["req"] for j, y in enumerate(tr) if j != i] or [x["req"]]
+                        prof = sum(freq(r, n) for r in others)
+                        warm = [[int(j * E + e) for e in np.argsort(-prof[j * E:(j + 1) * E],
+                                                                    kind="stable")]
+                                for j in range(L)]
+                        host = None
+                        if hf is not None:
+                            hs = max(C, int(round(hf * n)))
+                            host = (hs, top_set(prof, n))
+                        res.append(linksim(x["req"], x["preds"], caps, warm,
+                                           dict(hw, pcie_one=pc), by, pr, w, host,
+                                           a.overlap, sp, a.half))
+                    m = {q: float(np.mean([r_[q] for r_ in res])) for q in res[0]}
+                    row = dict(slots=C, host_frac=hf, pcie=pc, config=name, policy=sp, **m)
+                    (ssd if hf is not None else stream).append(row)
+                    line.append(f"{name} {m['tok_s']:.2f} ({m['demand']:.1f}/"
+                                f"{m['prefetched']:.1f}/{m['wasted']:.1f}, "
+                                f"{m['link']:.2f})")
+                tag = f"host RAM {hf:.0%} of the pool, " if hf is not None else ""
+                print(f"  {C} slots {sp}, {tag}PCIe {pc / 1e9:.1f} GB/s: "
+                      + "; ".join(line))
     if a.json:
         Path(a.json).write_text(json.dumps(dict(model=tr[0]["meta"]["model"], E=E, layers=L, k=k,
                                                 stream=stream, ssd=ssd, overlap=a.overlap,

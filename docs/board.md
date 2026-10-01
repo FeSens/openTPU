@@ -445,8 +445,7 @@ first, and writes nothing that would leave under 20 GB of free disk; a prebuild 
 temporary files of builds killed while writing (older than an hour). int8 is not cached: it
 quantizes about as fast as the matrix hashes. Its keys hold no host, so a cache filled on omarchy
 can be copied (`rsync -a ~/otpu-build/qcache/mxu/ opentpu:otpu-build/qcache/mxu/`). The tests
-run without it (`tests/conftest.py`). Gemma 4's build keeps its own cache of quantization jobs
-(`OTPU_QCACHE`, [gemma4.md](gemma4.md)).
+run without it (`tests/conftest.py`). Gemma 4's build goes through it too ([gemma4.md](gemma4.md)).
 
 ### First light (measured on the card, 2026-09-26)
 

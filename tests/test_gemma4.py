@@ -152,31 +152,27 @@ def test_formats_by_fit(tiny, monkeypatch):
     assert (again.nbytes, again.lf, again.head_format) == (eng.image.nbytes, eng.image.lf, "fp4")
 
 
-def test_quantization_cache_policy(tiny, tmp_path, monkeypatch):
-    """The image build's cache of quantization jobs (gemma4._cached_job): 4-bit jobs only
-    (int8 quantizes about as fast as the cache reads it back), none with OTPU_IMAGE_CACHE=0,
-    and no write that would leave the disk under QCACHE_FLOOR free; a hit is the job's own
-    result."""
-    _, W, _ = tiny
-    monkeypatch.setenv("OTPU_QCACHE", str(tmp_path))
-    monkeypatch.delenv("OTPU_IMAGE_CACHE", raising=False)
-    monkeypatch.setattr(G, "_LOCAL_W", W)
-    monkeypatch.setattr(G, "QCACHE_FLOOR", 0)      # (the test's tmp: omarchy's is a 16 GB tmpfs)
-    name = "model.layers.0.mlp.gate_proj.weight"
-    job = lambda fmt: ("mat", name, None, 1.0, fmt, 128)            # noqa: E731
-    files = lambda: sorted(tmp_path.rglob("*.npz"))                 # noqa: E731
-    G._cached_job(("fp", job("int8")))
-    assert files() == []
-    a = G._cached_job(("fp", job("fp4")))
-    assert len(files()) == 1
-    b = G._cached_job(("fp", job("fp4")))                            # the hit
-    assert all(np.array_equal(x, y) for x, y in zip(a, b))
-    monkeypatch.setenv("OTPU_IMAGE_CACHE", "0")
-    G._cached_job(("fp", job("int4")))
-    monkeypatch.delenv("OTPU_IMAGE_CACHE")
-    monkeypatch.setattr(G, "QCACHE_FLOOR", 1 << 62)
-    G._cached_job(("fp", job("int4")))
-    assert len(files()) == 1
+def test_build_goes_through_the_image_cache(tiny, tmp_path, monkeypatch):
+    """The image build's 4-bit matrices go through opentpu.qcache (its key: the matrix's
+    content): a second build of the same model takes them from the cache, byte for byte the
+    first's, without quantizing; int8 is not cached."""
+    from opentpu import qcache as QC
+    from opentpu import quant as Q
+    _, W, spec = tiny
+    monkeypatch.setenv("OTPU_IMAGE_CACHE", str(tmp_path))
+    monkeypatch.setattr(QC, "MIN_ELEMS", 0)                     # (the tiny model's matrices)
+    monkeypatch.setattr(QC, "FREE_FLOOR", 0)                    # (omarchy's tmp: 16 GB tmpfs)
+    first = spec.image(_cfg(), 1024, wformat="fp4", head_format="int8").build(W)[0]
+    n = len(list(tmp_path.rglob("*.npz")))
+    assert n > 0
+    real = Q.quantize_mxu
+
+    def int8_only(a, fmt, D=128):
+        assert fmt == "int8", "a 4-bit matrix quantized again"
+        return real(a, fmt, D)
+    monkeypatch.setattr(Q, "quantize_mxu", int8_only)
+    again = spec.image(_cfg(), 1024, wformat="fp4", head_format="int8").build(W)[0]
+    assert np.array_equal(first, again) and len(list(tmp_path.rglob("*.npz"))) == n
 
 
 @pytest.mark.parametrize("ple", ["int8", "fp4"])
