@@ -207,13 +207,15 @@ def outer(x: Tile, y: Tile, acc: Tile | None = None, decay: Tile | None = None) 
 
 
 def deltanet_step(state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile, o: Tile,
-                  zero: bool = False) -> None:
+                  zero: bool = False, dst: Tensor | None = None) -> None:
     """One Gated DeltaNet head step in the DMA (DSTEP, Config.DSTEP): the fp32 state [rows,
     cols] in DRAM is updated in place, row by row, kv = S[r] . k, d = (v[r] - kv * decay) *
     beta, S[r] = S[r] * decay + d * k, o[r] = S[r] . q, with qk = [q | k]. Bit-identical to
     the RDOT, MUL, SUB, MUL, OUTER, RDOT the VPU would run on the loaded state. `zero`: the
-    state starts at +0 and is not read (the first token)."""
-    current().deltanet_step(state, qk, v, decay, beta, o, zero)
+    state starts at +0 and is not read (the first token). `dst`: the new state is written
+    there and `state` keeps the old one (a STREAM: Config.STREAM; the speculative verify's
+    rejectable row, docs/mtp.md 9)."""
+    current().deltanet_step(state, qk, v, decay, beta, o, zero, dst)
 
 
 def has_dstep() -> bool:
