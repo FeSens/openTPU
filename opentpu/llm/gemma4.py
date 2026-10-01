@@ -17,6 +17,15 @@ Gemma 4 E2B has 35 layers, hidden size 1536, a 262,144-token vocabulary and a ti
              of the layer (layer_scalar). The embedding is scaled by sqrt(H); the final logits
              are soft-capped, 30 tanh(z / 30) (monotonic: the host applies it).
 
+Gemma 4 26B-A4B (30 layers, hidden 2816) differs: 16 query heads on 8 KV heads of 256 (sliding,
+a 1024-token window) and on 2 of 512 (global) whose V is the K projection (attention_k_eq_v: no
+v_proj; V the weightless RMSNorm of the raw K projection, K normed by k_norm and RoPE'd); no
+per-layer inputs; a 2112-wide MLP (the image pads it to its down projection's column quantum:
+2176 int8, 2304 4-bit) beside a mixture of 128 experts (top 8, 704 wide, gelu_tanh):
+x += norm(norm_1(MLP(norm(x))) + norm_2(MoE(norm'(x)))), the router on x itself (RMSNorm,
+x scale / sqrt(H), softmax, the top 8 renormalized, x per_expert_scale). The MoE block runs in
+reference_logits only so far (Image raises).
+
 How it maps onto openTPU:
   * The embedding and PLE rows are gathered on the device (kernels/gather.py): the tied int8 LM
     head is the embedding table, and the PLE table (int8 or 4-bit, one record per token laid
@@ -106,6 +115,12 @@ class Spec:
     fit_formats: str = ""   # the formats an int8 image takes when it does not fit the card
                             # (Image): from_hf's, the LM head and the own-KV layers' down
                             # projections in fp4 (docs/gemma4_e4b.md)
+    n_kv_global: int = 0    # the global layers' KV heads (0: n_kv)
+    k_eq_v: bool = False    # global layers: V is the K projection (no v_proj), normed
+                            # without a weight before K's norm and RoPE (26B-A4B)
+    experts: int = 0        # MoE beside each layer's MLP (0: none): experts, top-k, width
+    top_k: int = 0
+    expert_ffn: int = 0
 
     @property
     def layers(self) -> int:
@@ -118,12 +133,18 @@ class Spec:
     def hd(self, i: int) -> int:
         return self.global_head_dim if self.kinds[i] == FULL else self.head_dim
 
+    def kvh(self, i: int) -> int:
+        """Layer i's KV heads."""
+        return self.n_kv_global if self.kinds[i] == FULL and self.n_kv_global else self.n_kv
+
+    def kv_same(self, i: int) -> bool:
+        """Layer i's V is its K projection (attention_k_eq_v, global layers)."""
+        return self.k_eq_v and self.kinds[i] == FULL
+
     @staticmethod
     def from_hf(model_dir) -> "Spec":
         top = json.loads((Path(model_dir) / "config.json").read_text())
         c = top.get("text_config", top)
-        if c.get("enable_moe_block") or c.get("attention_k_eq_v"):
-            raise ValueError("Gemma 4 with MoE blocks or K = V attention is not supported")
         L = c["num_hidden_layers"]
         kinds = tuple(FULL if t == "full_attention" else SLIDE for t in c["layer_types"])
         # the global layers' head size and KV heads: global_head_dim / num_global_key_value_
@@ -132,10 +153,13 @@ class Spec:
         if any(kinds[i] != FULL or set(v) - {"head_dim", "num_key_value_heads"}
                for i, v in over.items()):
             raise ValueError(f"per-layer config {over} is not supported")
+        # (HF: num_global_key_value_heads only with attention_k_eq_v)
+        kev = bool(c.get("attention_k_eq_v"))
         gkv = {v.get("num_key_value_heads") for v in over.values()} | \
-            {c.get("num_global_key_value_heads")}
-        if gkv - {None, c["num_key_value_heads"]}:
-            raise ValueError("global layers with their own KV head count are not supported")
+            {c.get("num_global_key_value_heads") if kev else None}
+        gkv -= {None}
+        if len(gkv) > 1 or (not kev and gkv - {c["num_key_value_heads"]}):
+            raise ValueError(f"global layers' KV heads {sorted(gkv)} are not supported")
         gds = {v["head_dim"] for v in over.values() if "head_dim" in v}
         if len(gds) > 1:
             raise ValueError(f"global layers with different head sizes {sorted(gds)}")
@@ -150,6 +174,9 @@ class Spec:
         if g.get("rope_type", "proportional") != "proportional" or \
                 s.get("rope_type", "default") != "default":
             raise ValueError("RoPE types other than default (sliding) / proportional (global)")
+        if c.get("hidden_activation", "gelu_pytorch_tanh") != "gelu_pytorch_tanh":
+            raise ValueError(f"activation {c['hidden_activation']} is not gelu_tanh")
+        moe = c.get("enable_moe_block", False)
         # int8 layers that do not fit: the head and the down projections in fp4 in the layers
         # with their own K / V, one loop (E4B's best mix that keeps two loops)
         fit = f"head=fp4,down@0-{first - 1}=fp4" if first > 0 else "head=fp4"
@@ -164,15 +191,19 @@ class Spec:
                     softcap=c.get("final_logit_softcapping"),
                     tied=top.get("tie_word_embeddings", c.get("tie_word_embeddings", True)),
                     bos=c.get("bos_token_id", 2),
-                    eos=(c.get("eos_token_id", 1), 106), fit_formats=fit)
+                    eos=(c.get("eos_token_id", 1), 106), fit_formats=fit,
+                    n_kv_global=gkv.pop() if gkv else 0, k_eq_v=kev,
+                    experts=c["num_experts"] if moe else 0,
+                    top_k=c["top_k_experts"] if moe else 0,
+                    expert_ffn=c["moe_intermediate_size"] if moe else 0)
 
     def check(self, cfg: Config) -> None:
         D = cfg.D
         need = [(cfg.S == 1, "one slice (a single KV head)"),
                 (self.head_dim % D == 0 and self.global_head_dim % D == 0, "head dims % D"),
                 (self.hidden % D == 0 and self.ple_dim % D == 0, "hidden, ple_dim % D"),
-                (all(f % (2 * D) == 0 for f in self.ffn), "ffn % 2D"),
-                (self.n_q % self.n_kv == 0, "n_q % n_kv"),
+                (all(self.n_q % self.kvh(i) == 0 for i in range(self.layers)),
+                 "n_q % KV heads"),
                 (self.global_rot <= self.global_head_dim // 2, "global_rot"),
                 (self.window % ATTN_BLOCK == 0, f"window % {ATTN_BLOCK}"),
                 (max(self.n_q * self.global_head_dim, self.hidden) <= cfg.ACT_BLOCKS * D,
@@ -348,15 +379,46 @@ def ple_inputs(spec: Spec, W, x0, tokens) -> np.ndarray:
     return (pp + pe) * f32(2 ** -0.5)
 
 
+def moe_route(spec: Spec, W, p: str, x) -> tuple[np.ndarray, np.ndarray]:
+    """The router of layer prefix p on rows x [T, H] (the residual stream before the MLP):
+    (experts [T, top_k], weights [T, top_k]): softmax over RMSNorm(x) scale / sqrt(H) W_r, the
+    top k renormalized, times their per_expert_scale."""
+    r = p + "router."
+    z = _norm(x, None, spec.eps) * W[r + "scale"] * np.float32(spec.hidden ** -0.5)
+    s = z @ W[r + "proj.weight"].T
+    pr = np.exp(s - s.max(axis=1, keepdims=True))
+    pr /= pr.sum(axis=1, keepdims=True)
+    top = np.argsort(-pr, axis=1, kind="stable")[:, :spec.top_k]
+    w = np.take_along_axis(pr, top, 1)
+    return top, w / w.sum(axis=1, keepdims=True) * W[r + "per_expert_scale"][top]
+
+
+def _moe(spec: Spec, W, p: str, x) -> np.ndarray:
+    """The MoE block of layer prefix p (fp32): sum over the routed experts e of w_e W_down,e
+    (gelu_tanh(W_gate,e h) * W_up,e h), h = pre_feedforward_layernorm_2(x); each expert's
+    weights read once."""
+    top, wt = moe_route(spec, W, p, x)
+    h = _norm(x, W[p + "pre_feedforward_layernorm_2.weight"], spec.eps)
+    F = spec.expert_ffn
+    out = np.zeros_like(h)
+    for e in np.unique(top):
+        t, j = np.nonzero(top == e)
+        gu = _rows(W, p + "experts.gate_up_proj", [int(e)])[0]          # [2F, H]
+        a = h[t] @ gu.T
+        y = (_gelu(a[:, :F]) * a[:, F:]) @ _rows(W, p + "experts.down_proj", [int(e)])[0].T
+        np.add.at(out, t, y * wt[t, j][:, None])
+    return out
+
+
 def reference_logits(spec: Spec, W, tokens) -> np.ndarray:
     """fp32 numpy forward of the whole sequence (causal); returns logits [T, vocab] before the
     soft cap (softcap() applies it)."""
     tokens = list(tokens)
-    T, H, G = len(tokens), spec.hidden, spec.n_q // spec.n_kv
+    T, H = len(tokens), spec.hidden
     f32 = np.float32
     E = W["model.embed_tokens.weight"]
     x = E[tokens] * f32(math.sqrt(H))
-    pli = ple_inputs(spec, W, x, tokens)
+    pli = ple_inputs(spec, W, x, tokens) if spec.ple_dim else None
     tab = {k: [rope_tables(spec, p, k) for p in range(T)] for k in (SLIDE, FULL)}
     ii, jj = np.arange(T)[:, None], np.arange(T)[None, :]
     masks = {FULL: np.where(jj <= ii, 0, -np.inf).astype(f32),
@@ -365,15 +427,16 @@ def reference_logits(spec: Spec, W, tokens) -> np.ndarray:
     for i in range(spec.layers):
         p = f"model.layers.{spec.src(i)}."
         a = p + "self_attn."
-        kind, d = spec.kinds[i], spec.hd(i)
+        kind, d, nkv = spec.kinds[i], spec.hd(i), spec.kvh(i)
+        G = spec.n_q // nkv
         cos = np.stack([c for c, _ in tab[kind]])[:, None, :]
         sin = np.stack([s for _, s in tab[kind]])[:, None, :]
         h = _norm(x, W[p + "input_layernorm.weight"], spec.eps)
         q = (h @ W[a + "q_proj.weight"].T).reshape(T, spec.n_q, d)
         q = _rot(_norm(q, W[a + "q_norm.weight"], spec.eps), cos, sin, d // 2)
         if spec.kv_src[i] == i:
-            k = (h @ W[a + "k_proj.weight"].T).reshape(T, spec.n_kv, d)
-            v = (h @ W[a + "v_proj.weight"].T).reshape(T, spec.n_kv, d)
+            k = (h @ W[a + "k_proj.weight"].T).reshape(T, nkv, d)
+            v = k if spec.kv_same(i) else (h @ W[a + "v_proj.weight"].T).reshape(T, nkv, d)
             kv[i] = (_rot(_norm(k, W[a + "k_norm.weight"], spec.eps), cos, sin, d // 2),
                      _norm(v, None, spec.eps))
         k, v = kv[spec.kv_src[i]]
@@ -387,10 +450,15 @@ def reference_logits(spec: Spec, W, tokens) -> np.ndarray:
         h = _norm(x, W[p + "pre_feedforward_layernorm.weight"], spec.eps)
         m = (_gelu(h @ W[p + "mlp.gate_proj.weight"].T) * (h @ W[p + "mlp.up_proj.weight"].T)) \
             @ W[p + "mlp.down_proj.weight"].T
+        if spec.experts:                        # the MoE beside the MLP, on the same residual
+            m = _norm(m, W[p + "post_feedforward_layernorm_1.weight"], spec.eps) + \
+                _norm(_moe(spec, W, p, x), W[p + "post_feedforward_layernorm_2.weight"],
+                      spec.eps)
         x = x + _norm(m, W[p + "post_feedforward_layernorm.weight"], spec.eps)
-        g = _gelu(x @ W[p + "per_layer_input_gate.weight"].T) * pli[:, i]
-        y = g @ W[p + "per_layer_projection.weight"].T
-        x = x + _norm(y, W[p + "post_per_layer_input_norm.weight"], spec.eps)
+        if pli is not None:
+            g = _gelu(x @ W[p + "per_layer_input_gate.weight"].T) * pli[:, i]
+            y = g @ W[p + "per_layer_projection.weight"].T
+            x = x + _norm(y, W[p + "post_per_layer_input_norm.weight"], spec.eps)
         x = x * W[p + "layer_scalar"]
     x = _norm(x, W["model.norm.weight"], spec.eps)
     head = E if spec.tied else W["lm_head.weight"]
@@ -406,44 +474,52 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
     (per D tokens), the embedding and PLE rows as the device gathers them (int8 / 4-bit), the
     exact sliding window. Before the soft cap."""
     from .qwen3 import _fake_q, _fake_w
+    if spec.experts:
+        raise NotImplementedError("the MoE block's emulation")
     lf, pf, fh = layer_formats(spec, wformat, formats)
     hf = head_format or fh or wformat
     f64 = np.float64
     Wq: dict = {}
 
     def w(n, fmt):
-        if (n, fmt) not in Wq:
-            Wq[n, fmt] = _fake_w(W[n], D, fmt)
+        if (n, fmt) not in Wq:              # columns padded with zeros to whole D-blocks
+            a = np.asarray(W[n], np.float32)    # (an MLP's down projection: _ffn_pad)
+            Wq[n, fmt] = _fake_w(np.pad(a, ((0, 0), (0, -a.shape[1] % D))), D, fmt)
         return Wq[n, fmt]
 
-    H, P, L, G = spec.hidden, spec.ple_dim, spec.layers, spec.n_q // spec.n_kv
+    H, P, L = spec.hidden, spec.ple_dim, spec.layers
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
-    cols = np.concatenate([np.arange(spec.src(i) * P, (spec.src(i) + 1) * P) for i in range(L)])
-    S = GA.record_blocks(-(-L * P // D), ple_format)
-    wp = W["model.per_layer_model_projection.weight"].reshape(-1, P, H)[
-        [spec.src(i) for i in range(L)]].reshape(-1, H)
-    wpq = _fake_w(wp, D, pf) * H ** -0.5
-    gpl = np.asarray(W["model.per_layer_projection_norm.weight"], f64) * 2 ** -0.5
+    if P:
+        cols = np.concatenate([np.arange(spec.src(i) * P, (spec.src(i) + 1) * P)
+                               for i in range(L)])
+        S = GA.record_blocks(-(-L * P // D), ple_format)
+        wp = W["model.per_layer_model_projection.weight"].reshape(-1, P, H)[
+            [spec.src(i) for i in range(L)]].reshape(-1, H)
+        wpq = _fake_w(wp, D, pf) * H ** -0.5
+        gpl = np.asarray(W["model.per_layer_projection_norm.weight"], f64) * 2 ** -0.5
     K, V = {}, {}
     out = []
     for pos, tk in enumerate(tokens):
         x = w(head, hf)[tk] * math.sqrt(H)
-        pe = GA.dequant_records(GA.pack_records(
-            np.asarray(W[Weights.PLE][[tk]], np.float32)[:, cols] * np.float32(
-                (P / 2) ** 0.5), ple_format, D, S), ple_format, D, S)[0, :L * P]
-        pli = _norm((wpq @ _fake_q(x, D)).reshape(L, P), gpl, spec.eps) + pe.reshape(L, P)
+        if P:
+            pe = GA.dequant_records(GA.pack_records(
+                np.asarray(W[Weights.PLE][[tk]], np.float32)[:, cols] * np.float32(
+                    (P / 2) ** 0.5), ple_format, D, S), ple_format, D, S)[0, :L * P]
+            pli = _norm((wpq @ _fake_q(x, D)).reshape(L, P), gpl, spec.eps) + \
+                pe.reshape(L, P)
         for i in range(L):
             p = f"model.layers.{spec.src(i)}."
             a = p + "self_attn."
-            kind, d = spec.kinds[i], spec.hd(i)
+            kind, d, nkv = spec.kinds[i], spec.hd(i), spec.kvh(i)
+            G = spec.n_q // nkv
             fa, fg, fd, fp = lf[i]
             c, s_ = rope_tables(spec, pos, kind)
             h = _fake_q(_norm(x, W[p + "input_layernorm.weight"], spec.eps), D)
             q = (w(a + "q_proj.weight", fa) @ h).reshape(spec.n_q, d)
             q = _rot(_norm(q, W[a + "q_norm.weight"], spec.eps), c, s_, d // 2)
             if spec.kv_src[i] == i:
-                k = (w(a + "k_proj.weight", fa) @ h).reshape(spec.n_kv, d)
-                v = (w(a + "v_proj.weight", fa) @ h).reshape(spec.n_kv, d)
+                k = (w(a + "k_proj.weight", fa) @ h).reshape(nkv, d)
+                v = k if spec.kv_same(i) else (w(a + "v_proj.weight", fa) @ h).reshape(nkv, d)
                 k = _rot(_norm(k, W[a + "k_norm.weight"], spec.eps), c, s_, d // 2)
                 K.setdefault(i, []).append(_fake_q(k, D))
                 V.setdefault(i, []).append(_fake_q(_norm(v, None, spec.eps), d))
@@ -461,14 +537,16 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
             att = w(a + "o_proj.weight", fa) @ _fake_q(o.reshape(-1), D)
             x = x + _norm(att, W[p + "post_attention_layernorm.weight"], spec.eps)
             h = _fake_q(_norm(x, W[p + "pre_feedforward_layernorm.weight"], spec.eps), D)
-            m = w(p + "mlp.down_proj.weight", fd) @ _fake_q(
-                _gelu(w(p + "mlp.gate_proj.weight", fg) @ h) *
-                (w(p + "mlp.up_proj.weight", fg) @ h), D)
+            wd = w(p + "mlp.down_proj.weight", fd)
+            u = _gelu(w(p + "mlp.gate_proj.weight", fg) @ h) * \
+                (w(p + "mlp.up_proj.weight", fg) @ h)
+            m = wd @ _fake_q(np.pad(u, (0, wd.shape[1] - len(u))), D)
             x = x + _norm(m, W[p + "post_feedforward_layernorm.weight"], spec.eps)
-            g = _gelu(w(p + "per_layer_input_gate.weight", fp) @ _fake_q(x, D)) * pli[i]
-            y = w(p + "per_layer_projection.weight", fp) @ _fake_q(g, D)
-            x = (x + _norm(y, W[p + "post_per_layer_input_norm.weight"], spec.eps)) * \
-                np.asarray(W[p + "layer_scalar"], f64)
+            if P:
+                g = _gelu(w(p + "per_layer_input_gate.weight", fp) @ _fake_q(x, D)) * pli[i]
+                y = w(p + "per_layer_projection.weight", fp) @ _fake_q(g, D)
+                x = x + _norm(y, W[p + "post_per_layer_input_norm.weight"], spec.eps)
+            x = x * np.asarray(W[p + "layer_scalar"], f64)
         out.append(w(head, hf) @ _fake_q(_norm(x, W["model.norm.weight"], spec.eps), D))
     return np.array(out)
 
@@ -496,6 +574,19 @@ def _mlp_chunk(f: int, D: int, q: int) -> int:
     if c <= MLP_CHUNK:
         return c
     return next((k for k in range(MLP_CHUNK - MLP_CHUNK % q, 0, -q) if f % k == 0), c)
+
+
+def _ffn_pad(f: int, fd: str, D: int) -> int:
+    """The MLP width a layer block holds: f rounded up to its down projection's column quantum
+    (D for int8, 2D for 4-bit: 26B-A4B's 2112 -> 2176 / 2304), the gate / up rows and down
+    columns past f zero (gelu_tanh(0) * 0 = 0: the same sums)."""
+    q = D if fd == "int8" else 2 * D
+    return -(-f // q) * q
+
+
+def _norms(P: int) -> tuple:
+    """A layer block's norm weights (g_ple: with per-layer inputs)."""
+    return ("g_in", "g_attn", "g_pre", "g_ffn") + (("g_ple",) if P else ())
 
 
 def _key(spec: Spec, i: int, lf: tuple = ()) -> tuple:
@@ -594,6 +685,8 @@ class Image:
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Gemma 4 runs one sequence: batch=1")
+        if spec.experts:
+            raise NotImplementedError("Gemma 4's MoE block (enable_moe_block) on the device")
         if cap % block:
             raise ValueError(f"KV capacity must be a multiple of the attention block {block}")
         import os
@@ -610,6 +703,8 @@ class Image:
             ple_format = os.environ.get("OTPU_PLE_FORMAT")
         if ple_host is None and os.environ.get("OTPU_PLE_HOST") is not None:
             ple_host = os.environ["OTPU_PLE_HOST"] == "1"
+        if not spec.ple_dim:                    # no per-layer inputs: no table to place
+            ple_format, ple_host = "int8", False
         if ple_format is None or ple_host is None:
             opts = [(f, h) for h in ([False, True] if ple_host is None else [ple_host])
                     for f in (["int8", "fp4"] if ple_format is None else [ple_format])
@@ -640,8 +735,8 @@ class Image:
         self.rw = hs + 2 * rot                  # a RoPE row: cos, sin (sliding), cos, sin (global)
         dmax = max(hs, hg)
         self.ps = -(-max(4 * self.rw, dmax + 4 * dmax // D) // D) * D  # K / RoPE row stride
-        self.ple_S = GA.record_blocks(-(-L * P // D), ple_format)       # PLE record blocks
-        self.ple_rec = GA.record_bytes(self.ple_S, ple_format, D)
+        self.ple_S = GA.record_blocks(-(-L * P // D), ple_format) if P else 0  # record blocks
+        self.ple_rec = GA.record_bytes(self.ple_S, ple_format, D) if P else 0
         b = _Bump()
         R = rows
         self.io = {"x": b.alloc(4 * H * R), "pe": b.alloc(4 * self.ple_S * D * R),
@@ -651,9 +746,10 @@ class Image:
                    "g_pln": b.alloc(4 * P)}
         if self.ple_host:           # the generate loop's requests for the next token's record
             self.io["ple_mbox"] = b.alloc(RowLayout.WORDS)
-        self.wproj = (b.alloc(L * P * rb(H, self.pformat)), b.alloc(4 * L * P * (H // D)))
+        self.wproj = (b.alloc(L * P * rb(H, self.pformat)), b.alloc(4 * L * P * (H // D))) \
+            if P else None
         # layer blocks: one layout per key
-        self.dchunk = {(f, fd): _mlp_chunk(f, D, D if fd == "int8" else 2 * D)
+        self.dchunk = {(f, fd): _mlp_chunk(_ffn_pad(f, fd, D), D, D if fd == "int8" else 2 * D)
                        for f, (_, _, fd, _) in zip(spec.ffn, self.lf)}
         self.bofs, self.bsize = {}, {}
         for i in range(L):
@@ -664,22 +760,27 @@ class Image:
             d = hg if kind == FULL else hs
             nq = spec.n_q * d
             lb = _Bump()
-            o = {n: lb.alloc(4 * H) for n in ("g_in", "g_attn", "g_pre", "g_ffn", "g_ple")}
+            o = {n: lb.alloc(4 * H) for n in _norms(P)}
             o["ls"], o["qn"] = lb.alloc(4), lb.alloc(4 * d)
-            mats = {"wq": (nq, H, fa), "wo": (H, nq, fa), "wg": (ff, H, fg), "wu": (ff, H, fg),
-                    "wpg": (P, H, fp), "wpp": (H, P, fp)}
+            fp_ = _ffn_pad(ff, fd, D)
+            mats = {"wq": (nq, H, fa), "wo": (H, nq, fa), "wg": (fp_, H, fg), "wu": (fp_, H, fg)}
+            if P:
+                mats.update(wpg=(P, H, fp), wpp=(H, P, fp))
+            nkv = spec.kvh(i)
             if own:
                 o["kn"] = lb.alloc(4 * d)
-                mats.update(wk=(spec.n_kv * d, H, fa), wv=(spec.n_kv * d, H, fa))
+                mats.update(wk=(nkv * d, H, fa))
+                if not spec.kv_same(i):
+                    mats.update(wv=(nkv * d, H, fa))
             for n, (r, c, f) in mats.items():
                 o[n] = (lb.alloc(r * rb(c, f)), lb.alloc(4 * r * (c // D)))
             C = self.dchunk[ff, fd]
             o["wd"] = [(lb.alloc(H * rb(C, fd)), lb.alloc(4 * H * (C // D)))
-                       for _ in range(ff // C)]
+                       for _ in range(fp_ // C)]
             if own:
                 ck = self.ring if kind == SLIDE else cap
                 o["kv"] = [{"k": lb.alloc(ck * self.ps), "vt": lb.alloc(d * ck),
-                            "vs": lb.alloc(4 * ck)} for _ in range(spec.n_kv)]
+                            "vs": lb.alloc(4 * ck)} for _ in range(nkv)]
             o["mats"] = mats
             self.bofs[k], self.bsize[k] = o, (lb.next + 4095) // 4096 * 4096
         self.runs = plan([self._key(i) for i in range(L)])
@@ -711,8 +812,8 @@ class Image:
         self.ple_store = None           # ple_host: [vocab, ple_rec] uint8, filled by build
         self.lookup = {}
         if lookup:
-            fmts = sorted({"int8" if self.head_format == "int8" else "4bit",
-                           "int8" if ple_format == "int8" else "4bit"})
+            fmts = sorted({"int8" if self.head_format == "int8" else "4bit"} |
+                          ({"int8" if ple_format == "int8" else "4bit"} if P else set()))
             self.lookup = {"rope_t": b.alloc(cap * self.ps), "iota": b.alloc(4 * block),
                            "onehot": {f: b.alloc(4 * cfg.MCOLS * D * GA.onehot_blocks(
                                D, cfg.MCOLS, "int8" if f == "int8" else "fp4")) for f in fmts},
@@ -729,7 +830,7 @@ class Image:
     def _kv_bytes(self, i: int) -> int:
         d = self.spec.hd(i)
         ck = self.ring if self.spec.kinds[i] == SLIDE else self.cap
-        return self.spec.n_kv * ck * (self.ps + d + 4)
+        return self.spec.kvh(i) * ck * (self.ps + d + 4)
 
     def _off(self, li, it=None) -> Affine:
         """The block address of layer li (static), or of element li of its run's unit at
@@ -756,16 +857,19 @@ class Image:
 
         tasks = []          # (DRAM addresses, (kind, tensor, selection, scale, format, ...))
         put(self.io["gf"], f32(W["model.norm.weight"]))
-        put(self.io["g_pln"], f32(W["model.per_layer_projection_norm.weight"]
-                                  * np.float32(2 ** -0.5)))
+        if P:
+            put(self.io["g_pln"], f32(W["model.per_layer_projection_norm.weight"]
+                                      * np.float32(2 ** -0.5)))
         put(self.io["z2"], np.concatenate([np.full(self.block, -np.inf, np.float32),
                                            np.full(self.block, np.inf, np.float32)]))
-        rows = [r for i in range(L) for r in range(spec.src(i) * P, (spec.src(i) + 1) * P)]
-        tasks.append((self.wproj, ("mat", "model.per_layer_model_projection.weight",
-                                   ("rows", tuple(rows)), H ** -0.5, self.pformat, D)))
-        norms = {"g_in": "input_layernorm", "g_attn": "post_attention_layernorm",
-                 "g_pre": "pre_feedforward_layernorm", "g_ffn": "post_feedforward_layernorm",
-                 "g_ple": "post_per_layer_input_norm"}
+        if P:
+            rows = [r for i in range(L)
+                    for r in range(spec.src(i) * P, (spec.src(i) + 1) * P)]
+            tasks.append((self.wproj, ("mat", "model.per_layer_model_projection.weight",
+                                       ("rows", tuple(rows)), H ** -0.5, self.pformat, D)))
+        norms = dict(zip(_norms(P), ("input_layernorm", "post_attention_layernorm",
+                                     "pre_feedforward_layernorm", "post_feedforward_layernorm",
+                                     "post_per_layer_input_norm")))
         for i in range(L):
             p = f"model.layers.{spec.src(i)}."
             a = p + "self_attn."
@@ -777,13 +881,13 @@ class Image:
             put(base + o["qn"], f32(W[a + "q_norm.weight"]))
             src = {"wq": a + "q_proj", "wo": a + "o_proj", "wg": p + "mlp.gate_proj",
                    "wu": p + "mlp.up_proj", "wpg": p + "per_layer_input_gate",
-                   "wpp": p + "per_layer_projection"}
+                   "wpp": p + "per_layer_projection", "wk": a + "k_proj", "wv": a + "v_proj"}
             if k[1]:
                 put(base + o["kn"], f32(W[a + "k_norm.weight"]))
-                src.update(wk=a + "k_proj", wv=a + "v_proj")
-            for n, hf in src.items():
+            for n, (r, _, f) in o["mats"].items():     # gate / up: rows padded with zeros
+                sel = ("pad", r) if n in ("wg", "wu") and r != spec.ffn[i] else None
                 tasks.append((tuple(base + x for x in o[n]),
-                              ("mat", hf + ".weight", None, 1.0, o["mats"][n][2], D)))
+                              ("mat", src[n] + ".weight", sel, 1.0, f, D)))
             fd = self.lf[i][2]
             C = self.dchunk[k[2], fd]
             for j, pair in enumerate(o["wd"]):
@@ -798,7 +902,7 @@ class Image:
                           ("mat", head, ("rowrange", r, e), 1.0, self.head_format, D)))
         if self.ple_host:                               # the host's store: record t at t rec
             self.ple_store = np.zeros((spec.vocab, self.ple_rec), np.uint8)
-        for r in range(0, spec.vocab, PLE_CHUNK):
+        for r in range(0, spec.vocab if P else 0, PLE_CHUNK):
             e = min(spec.vocab, r + PLE_CHUNK)
             tasks.append(((-1 - r if self.ple_host else self.ple + r * self.ple_rec,),
                           ("ple", Weights.PLE, ("rowrange", r, e), tuple(self._cols()),
@@ -852,10 +956,12 @@ class Image:
         q, s = Q.quantize_mxu(_rows(W, "model.embed_tokens.weight" if spec.tied else
                                     "lm_head.weight", tokens), self.head_format, D)
         es = [GA.dequant_row(q[i], s[i], self.head_format, D) for i in range(len(tokens))]
-        pe = GA.dequant_records(self._ple_records(_rows(W, Weights.PLE, tokens), self._cols()),
-                                self.ple_format, D, self.ple_S)
-        return [(self.io["x"], np.array(es, np.float32)), (self.io["pe"], pe),
-                (self.io["rope"], self.rope_rows(positions))]
+        out = [(self.io["x"], np.array(es, np.float32)),
+               (self.io["rope"], self.rope_rows(positions))]
+        if spec.ple_dim:
+            out.append((self.io["pe"], GA.dequant_records(self._ple_records(
+                _rows(W, Weights.PLE, tokens), self._cols()), self.ple_format, D, self.ple_S)))
+        return out
 
     def host_rows(self, tokens) -> list:
         """The writes of a run's rows from the tables the host keeps, before the run: with
@@ -950,9 +1056,9 @@ class Image:
             if jt is not None:
                 off = off + Affine.of(jt[0]) * jt[2]
             d = spec.hd(li)
-            ns = SimpleNamespace(kind=kind, own=own, hd=d, ffn=ff,
-                                 **{n: Tensor(off + o[n], (H,), (1,))
-                                    for n in ("g_in", "g_attn", "g_pre", "g_ffn", "g_ple")})
+            ns = SimpleNamespace(kind=kind, own=own, hd=d, ffn=ff, nkv=spec.kvh(li),
+                                 same=spec.kv_same(li),
+                                 **{n: Tensor(off + o[n], (H,), (1,)) for n in _norms(P)})
             ns.ls = Tensor(off + o["ls"], (1,), (1,))
             ns.qn = Tensor(off + o["qn"], (d,), (1,))
             for n, (r, c, f) in o["mats"].items():
@@ -963,8 +1069,8 @@ class Image:
             rc = Q.row_bytes(C, fd, D)
             parts = tuple(QTensor(off + da, off + sa, (H, C), rc, 4 * (C // D), D, wf=wf)
                           for da, sa in o["wd"])
-            ns.wd = QTensor(parts[0].data, parts[0].scale, (H, ff), rc, 4 * (C // D), D,
-                            parts=parts, pw=C, wf=wf)
+            ns.wd = QTensor(parts[0].data, parts[0].scale, (H, C * len(parts)), rc,
+                            4 * (C // D), D, parts=parts, pw=C, wf=wf)
             if own:
                 ns.kn = Tensor(off + o["kn"], (d,), (1,))
                 ns.kv = kv(li, off)
@@ -976,7 +1082,8 @@ class Image:
                 Affine(li - self.loc[li][2] * self._unit(li)) + Affine.of(it) * self._unit(li)
             if jt is not None:
                 lidx = lidx + Affine.of(jt[0]) * jt[1]
-            ns.pli = Tensor(Affine(self.io["pli"]) + lidx * (4 * P), (R, P), (L * P, 1))
+            if P:
+                ns.pli = Tensor(Affine(self.io["pli"]) + lidx * (4 * P), (R, P), (L * P, 1))
             return ns
 
         ns = SimpleNamespace(
@@ -991,12 +1098,12 @@ class Image:
             logitsr=_tdesc(self.io["logits"], (R, spec.vocab)),
             pli=_tdesc(self.io["pli"], (R, L, P)),
             mask=_tdesc(self.io["mask"], (2, self.block)), z2=self.io["z2"],
-            wproj=_qdesc(*self.wproj, L * P, H, D, self.pformat),
+            wproj=_qdesc(*self.wproj, L * P, H, D, self.pformat) if P else None,
             head=_qdesc(*self.head, spec.vocab, H, D, self.head_format), v_loc=spec.vocab,
             ple=QTensor(Affine(self.ple), Affine(self.ple + self.ple_S * (
                 D if self.ple_format == "int8" else D // 2)),
                 (R if self.ple_host else spec.vocab, self.ple_S * D),
-                self.ple_rec, self.ple_rec, D, wf=Q.mxu_wf(self.ple_format)))
+                self.ple_rec, self.ple_rec, D, wf=Q.mxu_wf(self.ple_format)) if P else None)
         if self.lookup:
             lk = self.lookup
             ns.rope_t = Tensor(Affine(lk["rope_t"]), (self.cap, self.rw), (self.ps // 4, 1))
@@ -1044,8 +1151,12 @@ def _job_matrix(W, name, sel, scale) -> np.ndarray:
             a = np.asarray(W[name], np.float32)[sel[1]:sel[2]]
     elif sel[0] == "rows":
         a = np.asarray(W[name], np.float32)[list(sel[1])]
-    else:
+    elif sel[0] == "pad":                   # the first sel[1] rows, zeros past the tensor's
+        a = np.asarray(W[name], np.float32)
+        a = np.pad(a, ((0, sel[1] - len(a)), (0, 0)))
+    else:                                   # columns, zeros past the tensor's
         a = np.asarray(W[name], np.float32)[:, sel[1]:sel[2]]
+        a = np.pad(a, ((0, 0), (0, sel[2] - sel[1] - a.shape[1])))
     a = np.asarray(a, np.float32)
     return a if scale == 1.0 else a * np.float32(scale)
 
@@ -1185,9 +1296,11 @@ def _attention(x, lw, m, pos, ropes, block: int):
     """x + norm(W_o attention(norm(x))) for the rows of x (row r at position pos[r]; one row at
     a RunPos). Own K / V: projected, normed, RoPE'd (K) and appended row by row; the KV-shared
     layers read their source's cache. The query group of each KV head attends in parts of
-    MCOLS heads, every (row, part) one entry of the pipelined flash attention."""
+    MCOLS heads, every (row, part) one entry of the pipelined flash attention. K = V (lw.same):
+    V is the K projection, normed without a weight (K: with k_norm, then RoPE'd)."""
     spec = m.spec
-    R, d, G, eps = x.rows, lw.hd, spec.n_q // spec.n_kv, spec.eps
+    R, d, nkv, eps = x.rows, lw.hd, lw.nkv, spec.eps
+    G = spec.n_q // nkv
     c0, nr = (0, spec.head_dim // 2) if lw.kind == SLIDE else (spec.head_dim, spec.global_rot)
 
     def cos_sin(r):
@@ -1198,14 +1311,15 @@ def _attention(x, lw, m, pos, ropes, block: int):
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     q = ol.dot(xs, lw.wq)                                   # [R, nq*d]
     if lw.own:
-        k, v = ol.dot(xs, lw.wk), ol.dot(xs, lw.wv)         # [R, nkv*d]
+        k = ol.dot(xs, lw.wk)                               # [R, nkv*d]
+        v = k if lw.same else ol.dot(xs, lw.wv)
         kn = ol.load(lw.kn)
         for r in range(R):
             c, s_ = cos_sin(r)
-            kr = _rope(rmsnorm(k[r, :].reshape(spec.n_kv, d), kn, eps), c, s_)
-            vr = rmsnorm(v[r, :].reshape(spec.n_kv, d), None, eps)
+            kr = _rope(rmsnorm(k[r, :].reshape(nkv, d), kn, eps), c, s_)
+            vr = rmsnorm(v[r, :].reshape(nkv, d), None, eps)
             slot = _slot(m, lw.kind, pos[r] if isinstance(pos, list) else pos)
-            for j in range(spec.n_kv):
+            for j in range(nkv):
                 ol.kv_append(kv, j, slot, kr[j:j + 1, :], vr[j:j + 1, :])
         del k, v, kr, vr, kn
     del xs
@@ -1221,7 +1335,7 @@ def _attention(x, lw, m, pos, ropes, block: int):
         Qs.append(_rope(rmsnorm(qr, qn, eps), c, s_, qr))
         pr = pos[r] if isinstance(pos, list) else pos
         seq = (_slide_seq if lw.kind == SLIDE else _full_seq)(m, pr, block)
-        ent += [(r, j, g0, min(G, g0 + mc), seq) for j in range(spec.n_kv)
+        ent += [(r, j, g0, min(G, g0 + mc), seq) for j in range(nkv)
                 for g0 in range(0, G, mc)]
     del q, qr
 
@@ -1252,10 +1366,11 @@ def _add_norm(x, y, g, eps, scale=None):
 
 
 def _mlp(x, lw, spec):
+    """x + norm(MLP(norm(x))); without per-layer inputs, then x layer_scalar."""
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_pre), spec.eps))
     y = swiglu_down(xs, lw.wg, lw.wu, lw.wd, chunk=lw.wd.pw, act=gelu_tanh)
     del xs
-    _add_norm(x, y, ol.load(lw.g_ffn), spec.eps)
+    _add_norm(x, y, ol.load(lw.g_ffn), spec.eps, None if spec.ple_dim else ol.load(lw.ls))
 
 
 def _ple(x, lw, spec):
@@ -1305,8 +1420,9 @@ def _gathered(m, pos):
     e = GA.gather_row(op(m.head_format), m.head, pos.tok, m.head_format)
     if m.ple_host:          # the slot's row 0 holds the token's record once the host has
         MB.wait_served(m.ple_mbox)      # served every request (the generate loop's post)
-    pe = GA.gather_record(op(m.ple_format), m.ple, 0 if m.ple_host else pos.tok, m.ple_format,
-                          m.S)                          # ple_host: the slot's row
+    pe = None if m.ple is None else \
+        GA.gather_record(op(m.ple_format), m.ple, 0 if m.ple_host else pos.tok, m.ple_format,
+                         m.S).reshape(1, m.S * D)       # ple_host: the slot's row
     ops.clear()
     ropes = ol.load(m.rope_t[pos.pos:pos.pos + 1, :])       # [1, rw]
     tp = ol.load(m.iota[pos.tpos:pos.tpos + 1])             # [1]: tpos as a float
@@ -1314,7 +1430,7 @@ def _gathered(m, pos):
     ol.store(m.mask[0, :], end)
     ol.store(m.mask[1, :], end * -1.0)
     del end
-    return e.reshape(1, H), pe.reshape(1, m.S * D), ropes
+    return e.reshape(1, H), pe, ropes
 
 
 def _gathered_rows(m, tokens):
@@ -1323,7 +1439,7 @@ def _gathered_rows(m, tokens):
     a time, as the host-written ones)."""
     H = m.spec.hidden
     e = ol.empty([len(tokens), H])
-    for fmt, tab in ((m.head_format, "head"), (m.ple_format, "ple")):
+    for fmt, tab in ((m.head_format, "head"), (m.ple_format, "ple"))[:2 if m.ple else 1]:
         f = "int8" if fmt == "int8" else "4bit"
         oh = ol.quantize(ol.load(m.onehot[f]))
         for r, t in enumerate(tokens):
@@ -1358,14 +1474,16 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
         e, pe, ropes = ol.load(m.x[0:R, :]), None, ol.load(m.rope[0:R, :])
     x = e * math.sqrt(spec.hidden)
     del e
-    _ple_inputs(m, x, pe)
+    if spec.ple_dim:
+        _ple_inputs(m, x, pe)
     del pe
 
     def layer(li, it=None, jt=None):
         lw = m.layer(li, it, jt)
         _attention(x, lw, m, pos, ropes, block)             # each adds to x in place
         _mlp(x, lw, spec)
-        _ple(x, lw, spec)
+        if spec.ple_dim:
+            _ple(x, lw, spec)
 
     def unit(first, it=None):
         for e0, su, r, nb in m.subs[first]:
