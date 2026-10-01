@@ -4,8 +4,9 @@
 # (otpu_native_sys), outside the block design, in front of the LiteDRAM core. External interfaces:
 #   M_AXI_CTL     AXI4-Lite master -> the accelerator's control registers (BAR0 0x0000, core_clk)
 #   M_AXI_DMA     AXI4 master, 128b -> the channels (XDMA's DMA, xdma_aclk; bit 31 = channel)
-#   M_AXI_MEMCAL  AXI4-Lite master -> the LiteDRAM core's CSRs (BAR0 0x10000, 64 KB, xdma_aclk:
-#                 the core crosses them into its own clock; opentpu/host/memcal.py)
+#   M_AXI_MEMCAL  AXI4-Lite master -> the LiteDRAM core's CSRs (BAR0 0x10000, 64 KB, xdma_aclk;
+#                 core_clk at PCIE_GEN 2: the core crosses them into its own clock;
+#                 opentpu/host/memcal.py)
 # and device_temp (the XADC die-temperature code, core_clk; BAR0 0x30000: the XADC registers).
 #
 # Clocks: the 50 MHz clock arrives already on a global buffer (otpu_fpga_top_ld.sv: the LiteDRAM
@@ -59,8 +60,12 @@ foreach p $lites {
     CONFIG.HAS_BURST 0 CONFIG.HAS_LOCK 0 CONFIG.HAS_PROT 0 CONFIG.HAS_CACHE 0 CONFIG.HAS_QOS 0 \
     CONFIG.HAS_REGION 0] $m
 }
-set_property CONFIG.FREQ_HZ $XDMA_HZ [get_bd_intf_ports M_AXI_MEMCAL]
-set_property CONFIG.ASSOCIATED_BUSIF {M_AXI_CTL} [get_bd_ports core_clk]
+# the LiteDRAM CSRs in xdma_aclk; at Gen2 (250 MHz) in core_clk, the SmartConnect crossing them
+# as it does the control registers (otpu_fpga_top_ld.sv: the core's ctl_clk)
+set MEMCAL_CORE [expr {$PCIE_GEN == 2}]
+set_property CONFIG.FREQ_HZ [expr {$MEMCAL_CORE ? $CORE_HZ : $XDMA_HZ}] [get_bd_intf_ports M_AXI_MEMCAL]
+set_property CONFIG.ASSOCIATED_BUSIF [expr {$MEMCAL_CORE ? "M_AXI_CTL:M_AXI_MEMCAL" : "M_AXI_CTL"}] \
+  [get_bd_ports core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_rstn} [get_bd_ports core_clk]
 set_property CONFIG.FREQ_HZ $CORE_HZ [get_bd_ports core_clk]
 
@@ -133,10 +138,11 @@ connect_bd_net [get_bd_pins xdma_0/user_lnk_up] [get_bd_ports pcie_link_up]
 connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_ports xdma_aclk]
 connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_ports xdma_aresetn]
 
-# XDMA's DMA master leaves the design as it is (otpu_axi_split2 takes it in the top)
+# XDMA's DMA master leaves the design as it is (otpu_dma_split takes it in otpu_native_sys)
 make_bd_intf_pins_external [get_bd_intf_pins xdma_0/M_AXI]
 set_property NAME M_AXI_DMA [get_bd_intf_ports -of [get_bd_intf_nets -of [get_bd_intf_pins xdma_0/M_AXI]]]
-set_property CONFIG.ASSOCIATED_BUSIF {M_AXI_DMA:M_AXI_MEMCAL} [get_bd_ports xdma_aclk]
+set_property CONFIG.ASSOCIATED_BUSIF [expr {$MEMCAL_CORE ? "M_AXI_DMA" : "M_AXI_DMA:M_AXI_MEMCAL"}] \
+  [get_bd_ports xdma_aclk]
 set_property CONFIG.ASSOCIATED_RESET {xdma_aresetn} [get_bd_ports xdma_aclk]
 set_property CONFIG.FREQ_HZ $XDMA_HZ [get_bd_ports xdma_aclk]
 
@@ -154,7 +160,7 @@ connect_bd_net [get_bd_pins xadc_temp/temp_out] [get_bd_ports device_temp]
 
 # ------------------------------------------------------------------ control interconnect
 # XDMA's AXI-Lite master (BAR0): the control registers (into core_clk), the XADC (core_clk) and
-# the LiteDRAM CSRs (in xdma_aclk)
+# the LiteDRAM CSRs (in xdma_aclk; into core_clk at Gen2)
 set scl [create_bd_cell -type ip -vlnv [ip_vlnv smartconnect] sc_ctl]
 set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {3} CONFIG.NUM_CLKS {2}] $scl
 connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_pins sc_ctl/aclk]

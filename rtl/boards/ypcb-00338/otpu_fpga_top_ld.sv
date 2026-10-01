@@ -12,10 +12,11 @@
 // Clocks: the 50 MHz oscillator, on one global buffer, feeds the block design's MMCM (core_clk)
 // and the LiteDRAM core's (its sys_clk, 133.33 MHz, the channels' controller side; each
 // channel's DDR3 clocks from a write clock MMCM cascaded from sys, placed by otpu_top_ld.xdc);
-// xdma_aclk (125 MHz) is XDMA's. otpu_mem_ch crosses between the three; the LiteDRAM core
-// crosses its CSR port from xdma_aclk into sys_clk itself. constraints/otpu_top_native.tcl and
-// otpu_mem_ch.tcl constrain the crossings (no asynchronous clock groups: their max delays must
-// stay in force).
+// xdma_aclk (125 MHz; 250 at PCIE_GEN 2) is XDMA's. otpu_mem_ch crosses between the three; the
+// LiteDRAM core crosses its CSR port into sys_clk itself, from xdma_aclk (from core_clk at
+// PCIE_GEN 2, where the block design's SmartConnect puts M_AXI_MEMCAL on core_clk).
+// constraints/otpu_top_native.tcl and otpu_mem_ch.tcl constrain the crossings (no asynchronous
+// clock groups: their max delays must stay in force).
 // Resets: core_rst from the block design (MMCM lock, PCIe PERST#), xrst from XDMA's axi_aresetn;
 // the LiteDRAM core has none (its MMCMs' lock resets it), so a PCIe reset or a host driver
 // restart keeps the channels calibrated, and only a new configuration needs the host to
@@ -31,7 +32,10 @@ module otpu_fpga_top_ld #(
   parameter int CORE_KHZ = 100000,          // core_clk as the block design makes it (CORE_KHZ register)
   parameter logic [31:0] BUILD_ID = 32'h0,  // the git commit (BUILD_ID register)
   parameter int DDR_MTS = 1066,             // the DDR3 data rate the LiteDRAM core runs (DDR_MTS register)
-  parameter bit DSTEP = 1'b1                // the DMA's DSTEP datapath (CAPS bit6; 0: left out)
+  parameter bit DSTEP = 1'b1,               // the DMA's DSTEP datapath (CAPS bit6; 0: left out)
+  parameter int PCIE_GEN = 1                // 1: Gen1 x8, xdma_aclk 125 MHz; 2: Gen2 x8, 250 MHz,
+                                            // slices to the bridges (otpu_native_sys XREG),
+                                            // the LiteDRAM CSRs on core_clk (bd_native.tcl)
 ) (
   // board
   input  logic        SYS_CLK,              // 50 MHz, AA28
@@ -97,7 +101,7 @@ module otpu_fpga_top_ld #(
   logic [1:0]  ctl_bresp, ctl_rresp;
   logic ctl_awvalid, ctl_awready, ctl_wvalid, ctl_wready, ctl_bvalid, ctl_bready;
   logic ctl_arvalid, ctl_arready, ctl_rvalid, ctl_rready;
-  // ---- the LiteDRAM CSRs (AXI4-Lite, BD master -> the core, xdma_aclk)
+  // ---- the LiteDRAM CSRs (AXI4-Lite, BD master -> the core; xdma_aclk, core_clk at PCIE_GEN 2)
   logic [31:0] mc_awaddr, mc_araddr, mc_wdata, mc_rdata;
   logic [3:0]  mc_wstrb;
   logic [1:0]  mc_bresp, mc_rresp;
@@ -167,7 +171,7 @@ module otpu_fpga_top_ld #(
   // ---- LiteDRAM: both channels, their CSRs (BAR0 0x10000) and calibration ready bits
   otpu_litedram u_ld (
     .clk50g(clk50), .rst(1'b0), .sys_clk(ld_sys_clk), .sys_rst(ld_sys_rst),
-    .ctl_clk(xdma_aclk), .ctl_rst(xrst),
+    .ctl_clk(PCIE_GEN == 2 ? core_clk : xdma_aclk), .ctl_rst(PCIE_GEN == 2 ? core_rst : xrst),
     .ctl_awvalid(mc_awvalid), .ctl_awready(mc_awready), .ctl_awaddr(mc_awaddr[15:0]),
     .ctl_wvalid(mc_wvalid), .ctl_wready(mc_wready), .ctl_wdata(mc_wdata), .ctl_wstrb(mc_wstrb),
     .ctl_bvalid(mc_bvalid), .ctl_bready(mc_bready), .ctl_bresp(mc_bresp),
@@ -213,7 +217,7 @@ module otpu_fpga_top_ld #(
   otpu_native_sys #(.MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .VPU_CL(VPU_CL), .MXU_IMPL(MXU_IMPL),
                     .LANES(LANES),
                     .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS),
-                    .DSTEP(DSTEP), .HOSTCAL(1'b1)) u_sys (
+                    .DSTEP(DSTEP), .HOSTCAL(1'b1), .XREG(PCIE_GEN == 2)) u_sys (
     .clk(core_clk), .rst(core_rst), .xclk(xdma_aclk), .xrst,
     .calib, .temp(device_temp), .led(board_led), .i2c_lo, .i2c_pin({lm73_alert_n, i2c_lvl}),
     .s_ctl_awaddr(ctl_awaddr[11:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),

@@ -6,14 +6,14 @@
 # The clocks: core_clk (the block design's MMCM) and the channels' controller clock (the
 # LiteDRAM core's sys, its MMCM on the same 50 MHz buffer) come from the 50 MHz oscillator, so
 # Vivado relates them;
-# xdma_aclk (125 MHz) comes from the PCIe reference clock and is asynchronous to all of them, but
-# nothing declares it so: no set_clock_groups and no clock-to-clock false path, which would take
-# priority over otpu_mem_ch's set_max_delay -datapath_only and leave its crossings untimed. Every
-# path between two of the clocks is therefore a max delay without clock skew, here, in
-# otpu_mem_ch.tcl, in LiteX's XDC (its synchronizers' first stages are false paths by their
-# mr_ff / ars_ff attributes), in the SmartConnect's own constraints (the control registers,
-# xdma_aclk -> core_clk) or a false path into a 2-flip-flop synchronizer (otpu_top_ld.xdc: the
-# temperature, the I2C pins).
+# xdma_aclk (125 MHz; 250 at PCIE_GEN 2) comes from the PCIe reference clock and is asynchronous
+# to all of them, but nothing declares it so: no set_clock_groups and no clock-to-clock false
+# path, which would take priority over otpu_mem_ch's set_max_delay -datapath_only and leave its
+# crossings untimed. Every path between two of the clocks is therefore a max delay without clock
+# skew, here, in otpu_mem_ch.tcl, in LiteX's XDC (its synchronizers' first stages are false paths
+# by their mr_ff / ars_ff attributes), in the SmartConnect's own constraints (the control
+# registers, xdma_aclk -> core_clk; the LiteDRAM CSRs too at PCIE_GEN 2) or a false path into a
+# 2-flip-flop synchronizer (otpu_top_ld.xdc: the temperature, the I2C pins).
 #
 # The clocks by the pins of otpu_mem_ch u_sys/u_ch0, the ones its scoped constraints use.
 set c_core [get_clocks -quiet -of_objects [get_pins -quiet u_sys/u_ch0/clk]]
@@ -27,20 +27,28 @@ foreach v {c_core c_ucl c_x} {
 set t_core [get_property -quiet -min PERIOD $c_core]
 set t_ucl  [get_property -quiet -min PERIOD $c_ucl]
 set t_x    [get_property -quiet -min PERIOD $c_x]
+# The LiteDRAM core's CSR clock: xdma_aclk, core_clk at PCIE_GEN 2 (otpu_fpga_top_ld.sv)
+set c_ctl  [get_clocks -quiet -of_objects [get_pins -quiet u_ld/ctl_clk]]
+if {[llength $c_ctl] != 1} {
+  puts "CRITICAL WARNING: \[otpu_top_native.tcl\] the LiteDRAM CSR clock is '$c_ctl', expected one clock: xdma_aclk assumed"
+  set c_ctl $c_x
+}
+set t_ctl  [get_property -quiet -min PERIOD $c_ctl]
 
 # ---- the LiteDRAM core (u_ld)
 if {[llength [get_cells -quiet u_ld]]} {
-  # The core's CSR port (BAR0 0x10000), AXI-Lite in xdma_aclk, crossed into sys (both channels'
-  # controller clock, c_ucl) by LiteX's AXILiteClockDomainCrossing (stream AsyncFIFOs: gray
-  # pointers through MultiRegs, whose first stages LiteX's XDC false-paths; the storage written in
-  # one clock and read in the other). One destination period, datapath only, into the registers
-  # of the other clock inside the core and nowhere else.
-  if {[llength $c_ucl] == 1 && [llength $c_x] == 1} {
+  # The core's CSR port (BAR0 0x10000), AXI-Lite in its ctl_clk (c_ctl: xdma_aclk, core_clk at
+  # PCIE_GEN 2), crossed into sys (both channels' controller clock, c_ucl) by LiteX's
+  # AXILiteClockDomainCrossing (stream AsyncFIFOs: gray pointers through MultiRegs, whose first
+  # stages LiteX's XDC false-paths; the storage written in one clock and read in the other). One
+  # destination period, datapath only, into the registers of the other clock inside the core and
+  # nowhere else.
+  if {[llength $c_ucl] == 1 && [llength $c_ctl] == 1} {
     set ld_sys [filter -quiet [all_registers -clock $c_ucl] {NAME =~ u_ld/*}]
-    set ld_x   [filter -quiet [all_registers -clock $c_x] {NAME =~ u_ld/*}]
-    if {[llength $ld_sys]} { set_max_delay -datapath_only -from $c_x -to $ld_sys $t_ucl }
-    if {[llength $ld_x]}   { set_max_delay -datapath_only -from $c_ucl -to $ld_x $t_x }
-    puts "otpu_top_native.tcl: LiteDRAM CSR crossing, [llength $ld_sys] sys / [llength $ld_x] xdma_aclk registers in u_ld"
+    set ld_ctl [filter -quiet [all_registers -clock $c_ctl] {NAME =~ u_ld/*}]
+    if {[llength $ld_sys]}  { set_max_delay -datapath_only -from $c_ctl -to $ld_sys $t_ucl }
+    if {[llength $ld_ctl]}  { set_max_delay -datapath_only -from $c_ucl -to $ld_ctl $t_ctl }
+    puts "otpu_top_native.tcl: LiteDRAM CSR crossing, [llength $ld_sys] sys / [llength $ld_ctl] [get_property NAME $c_ctl] registers in u_ld"
   }
   # LiteX's MMCM and PLL reset chains (per primitive 8 FDCE in the 50 MHz clock that feeds it,
   # crg_mmcm_reset -> s7mmcm_reset0..): their reset, the ctrl CSR's soc_rst, comes from sys. The
@@ -69,8 +77,9 @@ if {[llength [get_cells -quiet u_ld]]} {
 # ---- report_cdc waivers for XDMA's read data. Each channel's XDMA read-data FIFO u_xr
 # (distributed RAM, written in the controller clock) is read asynchronously onto its R channel
 # (x_rdata, x_rid, x_rresp, x_rlast), which otpu_axi_split2 muxes combinationally into XDMA's
-# M_AXI; its paths are limited to one xdma_aclk period by otpu_mem_ch.tcl (-through the RAM's
-# outputs). The endpoints are XDMA's (and otpu_axi_split2's order FIFO, popped on the last beat),
+# M_AXI (at PCIE_GEN 2 into otpu_dma_split's register slice); its paths are limited to one
+# xdma_aclk period by otpu_mem_ch.tcl (-through the RAM's outputs). The endpoints are XDMA's (and
+# otpu_axi_split2's order FIFO, popped on the last beat; the slice's registers at PCIE_GEN 2),
 # outside the module, so the waivers are here, from the RAMs' write clocks to exactly the
 # endpoints the RAMs' outputs reach outside u_ch0 / u_ch1. Safe by the pointer protocol: XDMA
 # takes a beat only with x_rvalid, the FIFO's registered not-empty in xdma_aclk, and an entry is

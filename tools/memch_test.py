@@ -29,10 +29,12 @@ SRC = [RTL / "otpu_afifo.sv", RTL / "otpu_axi_split2.sv", RTL / "otpu_mem_ch.sv"
 JOBS = os.environ.get("MEMCH_JOBS", "4")      # C++ compile jobs per build
 PAR = int(os.environ.get("MEMCH_PAR", "3"))   # simulations at once
 
-# builds: tb_memch parameters (cred: a 16-beat accelerator read-data FIFO)
+# builds: tb_memch parameters (cred: a 16-beat accelerator read-data FIFO; xreg: otpu_dma_split's
+# register slices, as at PCIe Gen2)
 BUILDS = {
     "ldn": dict(),
     "cred": dict(ARD=16),
+    "xreg": dict(XREG=1),
 }
 
 SCEN = {
@@ -99,6 +101,10 @@ FUNC = [("ldn", s) for s in ["default", "seed2", "seed3", "seed4", "xreset", "ar
                              "doublebeat"]]
 FUNC += [("ldn", f"s{i}") for i in range(10, 30)]
 FUNC += [("cred", s) for s in ["default", "credstress"]]
+FUNC += [("xreg", s) for s in ["default", "seed2", "xreset", "resets", "xresetlat", "xresetrep",
+                               "resetsrep", "xresetshort", "xresetshortsh", "mstall70", "nogaps",
+                               "partial", "ctlstall", "fastcore", "slowcore", "shared", "shared21",
+                               "pubstall", "seqrd", "seqwr", "seqmix"]]
 
 # throughput: sequential 32-beat runs (64-beat bursts for XDMA), one kind of master at a time,
 # whole beats unless the run says otherwise (the first plusarg of a name wins)
@@ -116,6 +122,8 @@ PERF += [("ldn", "acc seq rd busy2", ["+wpct=0", "+xdma_ntx=0", "+ldn_busy=2"] +
          ("ldn", "acc seq wr busy2", ["+wpct=100", "+xdma_ntx=0", "+ldn_busy=2"] + PERF_BASE),
          ("ldn", "acc seq rd stall10", ["+wpct=0", "+xdma_ntx=0", "+axi_stall=10"] + PERF_BASE),
          ("ldn", "acc seq wr stall10", ["+wpct=100", "+xdma_ntx=0", "+axi_stall=10"] + PERF_BASE)]
+PERF += [("xreg", "xdma seq rd", ["+wpct=0", "+acc0_ntx=0", "+acc1_ntx=0"] + PERF_BASE),
+         ("xreg", "xdma seq wr", ["+wpct=100", "+acc0_ntx=0", "+acc1_ntx=0"] + PERF_BASE)]
 
 # mutations: (name, build, substitutions, scenarios[, "missed": a known blind spot])
 MUT = [
@@ -218,6 +226,13 @@ MUT = [
      [("x_req <= xrst || (x_req && !x_hs2);", "x_req <= xrst;")], ["xresetshort"]),
     ("reset: the accelerator's request not kept up until its hold is seen (a short reset)", "ldn",
      [("a_req <= rst || (a_req && !a_hs2);", "a_req <= rst;")], ["aresetshort"]),
+    # otpu_dma_split's register slices
+    ("slice: the skid entry not loaded (a beat taken under backpressure lost)", "xreg",
+     [("otpu_axi_split2.sv", "if (!adv && take) sk_d <= s_data;", "if (1'b0) sk_d <= s_data;")],
+     ["mstall70", "default"]),
+    ("slice: ready not dropped with the skid entry full (a beat overwritten)", "xreg",
+     [("otpu_axi_split2.sv", "else if (take) begin sk_v <= 1'b1; s_ready <= 1'b0; end",
+       "else if (take) begin sk_v <= 1'b1; s_ready <= 1'b1; end")], ["mstall70", "default"]),
 ]
 
 

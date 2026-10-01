@@ -1,7 +1,7 @@
-// Unit test of the memory channel path (rtl/boards/ypcb-00338: otpu_mem_ch, otpu_axi_split2,
+// Unit test of the memory channel path (rtl/boards/ypcb-00338: otpu_mem_ch, otpu_dma_split,
 // otpu_afifo) in front of the controllers: two random native masters (the accelerator's side,
 // core clock), one per channel, and an XDMA master (128-bit AXI, axi_aclk) through the split onto
-// both channels; each channel's controller is a model of LiteDRAM's two native ports (sys; a
+// both channels (XREG: with its register slices, as at PCIe Gen2); each channel's controller is a model of LiteDRAM's two native ports (sys; a
 // port per bank parity, the ports unordered against each other), which takes whole beats only
 // (otpu_mem_ch's read-modify-write). Three unrelated clocks (+cp= / +up= / +xp=: half periods).
 //
@@ -54,7 +54,8 @@ endpackage
 
 module tb_memch #(
   parameter int ARD = 64,
-  parameter int XRD = 16
+  parameter int XRD = 16,
+  parameter bit XREG = 1'b0
 );
   int cp = 414, up = 375, xp = 400;        // half periods: 120.8 / 133.3 / 125 MHz
   logic clk = 1'b0, uclk = 1'b0, xclk = 1'b0;
@@ -125,10 +126,13 @@ module tb_memch #(
   logic [127:0] xwd, xrd;
   logic [15:0] xws;
   logic [1:0] xbre, xrre;
-  logic [1:0] cawv, cawr, cwvx, cwrx, cbv, cbr, carv, carr, crvx, crrx, crl;
-  logic [1:0][3:0] cbi, cri;
+  logic [1:0] cawv, cawr, cwvx, cwrx, cwl, cbv, cbr, carv, carr, crvx, crrx, crl;
+  logic [1:0][3:0] cawi, cari, cbi, cri;
+  logic [1:0][31:0] cawa, cara;
+  logic [1:0][7:0] cawl, carl;
   logic [1:0][1:0] cbre, crre;
-  logic [1:0][127:0] crdx;
+  logic [1:0][127:0] cwdx, crdx;
+  logic [1:0][15:0] cws;
   logic dump = 1'b0;
 
   for (genvar c = 0; c < 2; c++) begin : g_ch
@@ -145,10 +149,12 @@ module tb_memch #(
       .n_wvalid(nwv[c]), .n_wready(nwr[c]), .n_wdata(nwd[c]), .n_wmask(nwm[c]),
       .n_rvalid(nrv[c]), .n_rdata(nrd[c]), .n_wdone(nwdone[c]), .n_err(nerr[c]),
       .xclk, .xrst,
-      .x_awvalid(cawv[c]), .x_awready(cawr[c]), .x_awid(xawi), .x_awaddr(xawa), .x_awlen(xawl),
-      .x_wvalid(cwvx[c]), .x_wready(cwrx[c]), .x_wdata(xwd), .x_wstrb(xws), .x_wlast(xwl),
+      .x_awvalid(cawv[c]), .x_awready(cawr[c]), .x_awid(cawi[c]), .x_awaddr(cawa[c]),
+      .x_awlen(cawl[c]), .x_wvalid(cwvx[c]), .x_wready(cwrx[c]), .x_wdata(cwdx[c]),
+      .x_wstrb(cws[c]), .x_wlast(cwl[c]),
       .x_bvalid(cbv[c]), .x_bready(cbr[c]), .x_bid(cbi[c]), .x_bresp(cbre[c]),
-      .x_arvalid(carv[c]), .x_arready(carr[c]), .x_arid(xari), .x_araddr(xara), .x_arlen(xarl),
+      .x_arvalid(carv[c]), .x_arready(carr[c]), .x_arid(cari[c]), .x_araddr(cara[c]),
+      .x_arlen(carl[c]),
       .x_rvalid(crvx[c]), .x_rready(crrx[c]), .x_rid(cri[c]), .x_rdata(crdx[c]), .x_rresp(crre[c]),
       .x_rlast(crl[c]),
       .uclk, .urst,
@@ -173,16 +179,17 @@ module tb_memch #(
     .rvalid(xrv), .rready(xrr), .rid(xri), .rdata(xrd), .rresp(xrre), .rlast(xrl),
     .a2x_pub, .x2a_pub, .done(xdone), .bad(xbad));
 
-  otpu_axi_split2 #(.IDW(4), .DW(128)) u_split (
+  otpu_dma_split #(.REG(XREG), .IDW(4), .DW(128)) u_split (
     .clk(xclk), .rst(xrst),
     .s_awvalid(xawv), .s_awready(xawr), .s_awid(xawi), .s_awaddr(xawa), .s_awlen(xawl),
     .s_wvalid(xwv), .s_wready(xwr), .s_wdata(xwd), .s_wstrb(xws), .s_wlast(xwl),
     .s_bvalid(xbv), .s_bready(xbr), .s_bid(xbi), .s_bresp(xbre),
     .s_arvalid(xarv), .s_arready(xarr), .s_arid(xari), .s_araddr(xara), .s_arlen(xarl),
     .s_rvalid(xrv), .s_rready(xrr), .s_rid(xri), .s_rdata(xrd), .s_rresp(xrre), .s_rlast(xrl),
-    .m_awvalid(cawv), .m_awready(cawr), .m_wvalid(cwvx), .m_wready(cwrx),
+    .m_awvalid(cawv), .m_awready(cawr), .m_awid(cawi), .m_awaddr(cawa), .m_awlen(cawl),
+    .m_wvalid(cwvx), .m_wready(cwrx), .m_wdata(cwdx), .m_wstrb(cws), .m_wlast(cwl),
     .m_bvalid(cbv), .m_bready(cbr), .m_bid(cbi), .m_bresp(cbre),
-    .m_arvalid(carv), .m_arready(carr),
+    .m_arvalid(carv), .m_arready(carr), .m_arid(cari), .m_araddr(cara), .m_arlen(carl),
     .m_rvalid(crvx), .m_rready(crrx), .m_rid(cri), .m_rdata(crdx), .m_rresp(crre), .m_rlast(crl));
 
   // the end: every master done; or the error bits
