@@ -1143,9 +1143,8 @@ From `config.json` and transformers' `modeling_gemma4.py`:
   - Experts: 128 per layer, top 8, width 704, GELU-tanh. The checkpoint stores them fused per
     layer: `experts.gate_up_proj` [128, 1408, 2816] (gate rows first) and `experts.down_proj`
     [128, 2816, 704].
-- The checkpoint is 51.6 GB in bf16. omarchy has it whole. opentpu's copy in
-  ~/openTPU/models is an interrupted download: the first shard (49.9 GB) is missing, with a
-  17.9 GB `.incomplete` file in `.cache` dated 2026-09-30 00:07.
+- The checkpoint is 51.6 GB in bf16. omarchy has it whole; opentpu has the stripped one (11.4).
+  The download is the base model: no chat template, so the references use plain-text prompts.
 
 ### 11.2 How the layer maps
 
@@ -1237,9 +1236,10 @@ prefetch, tok/s (*simulated*; the model ran about 15% above the 35B's card at 12
 | fp4 / fp4 | 780 (26) | 4.45 (45.9) | 5.67 | 6.62 | ~+0.108 |
 
 Against the bar of +0.01 NLL for +10%, the fp4 head pays (+0.009 for +20%) and fp4 dense
-layers do not (+0.075 for +39%): int8 dense, fp4 experts, fp4 head, 540 slots, pending
-gemma4's re-measure on another text. `moe_card --wformat int8 --formats experts=fp4
---head-format fp4`.
+layers do not (+0.075 for +39%): int8 dense, fp4 experts, fp4 head, 540 slots. On unseen text
+(this file's first 900 tokens, float perplexity 10.02; docs/gemma4.md) the choice holds: +0.036
+NLL against float, the fp4 head +0.002 of it. `moe_card --wformat int8 --formats experts=fp4
+--head-format fp4`; on the card: 11.5.
 
 ### 11.4 Host side and plan
 
@@ -1252,7 +1252,37 @@ gemma4's re-measure on another text. `moe_card --wformat int8 --formats experts=
   2. `moe.py`'s parts (offload) and gemma4's attention and from_hf (gemma4), meeting at a
      tiny random Gemma4-MoE model in tests. The layer composition is checked against HF and
      the ISA simulator bit for bit, the card's side with the live fake card and a split pool.
-  3. The full model's ISA-simulator reference on omarchy, then a card session.
+  3. The full model's ISA-simulator reference on omarchy, then a card session: done (11.5).
+
+### 11.5 On the card: session 8
+
+Card session 8 (2026-10-01, production build B, Gen1, main 2a0b962): the decided formats (int8
+dense layers, fp4 experts and head), 540 slots (18 a layer) by decayed use, the split pool
+warm, 128 tokens after wiki.txt's first paragraph (125 tokens, plain text), twice.
+
+- **Correct.** Both runs gave the ISA simulator's 16 tokens and prefill logits bit for bit
+  (`q26ref16`, sha 28a40421a62a0cd2; 77 min on omarchy), and the same 128 tokens. HF's bf16
+  greedy differs from token 5, where its top two tie at 26.125.
+
+| 26B, 128 tokens | tok/s wall / device | misses a decode token (2nd half) | MB a decode token | link busy |
+|:--|--:|--:|--:|--:|
+| int8 / fp4 experts / fp4 head | **2.77, 2.77** / 2.77, 2.77 | 68.6 (66.4) | 238 | 21.4 of 46 s, 1.42 GB/s |
+
+- The simulated 3.19 (11.3) is 15% above the card, as on the 35B at 128 tokens (10.4). Gen2's
+  4.11 so scales to about 3.5.
+- A run: the image 312 s the first time (the int8 layers quantized on the host), 44 s from the
+  cache; prefill 47 s (a token a step, 125 of them); 128 tokens 46 s.
+- **The DMA guard** (`XdmaTransport`'s lock, main 2a0b962: no host->card call overlaps a
+  card->host one). The server's polls never wait on it: every poll reads with `BoardDram`'s
+  queue drained (`poll` flushes before it returns). The lock costs 1.8 us a DMA call on opentpu
+  (flock on tmpfs 1.4, the thread lock 0.4). The polls' reads took 33 us against session 7's
+  25; the lock is 2 us of that, the rest is unexplained (the host had rebooted; the XDMA
+  options are the same). Two reads a request, at 12.6's 1.5% for each 100 us: about 0.25%.
+- **The page cache between models.** A 35B run after the two 26B runs gave session 7's tokens
+  at 1.70 tok/s against 3.84: 8.7 of its 17.1 GB pool in the page cache at decode (16.5 in
+  session 7). The 26B pool's pages, read twice, outlived the 35B's, read once by the warm-up,
+  so staging read the disk (49.9 s against 6.6). The card scripts now drop the other pools
+  (`posix_fadvise` DONTNEED) before the warm-up.
 
 ## 12. Router hints: prefetch from the layer's input
 
