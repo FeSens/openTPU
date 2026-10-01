@@ -31,9 +31,12 @@ def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) 
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
     tok = AutoTokenizer.from_pretrained(model)
-    ids = tok.apply_chat_template([{"role": "user", "content": prompt}],
-                                  add_generation_prompt=True, tokenize=True)
-    ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
+    if tok.chat_template is not None:
+        ids = tok.apply_chat_template([{"role": "user", "content": prompt}],
+                                      add_generation_prompt=True, tokenize=True)
+        ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
+    else:                                       # a checkpoint without one (the 26B's download):
+        ids = list(tok(prompt)["input_ids"])    # the prompt as plain text, after BOS
     kw = {}
     if max_memory:                              # the rest offloaded to disk (accelerate)
         kw = dict(device_map="auto", max_memory={"cpu": max_memory},
