@@ -98,6 +98,12 @@ SCEN["gen2"] = G2 + ["+ntx=10000", "+seed=40"]
 SCEN["gen2xres"] = G2 + ["+xreset=3000", "+xrep=6151", "+outs=32", "+mstall=70", "+seed=41"]
 SCEN["gen2part"] = G2 + ["+ppct=60", "+raw=60", "+xfull=20", "+psh=30", "+psp=30", "+seed=42"]
 SCEN["gen2full"] = G2 + ["+outs=32", "+mstall=85", "+axi_stall=50", "+ldn_busy=30", "+seed=43"]
+# W far ahead of AW (+awdly: each AW up to 200-300 cycles after its W beats are queued) with up to
+# 64 bursts in flight, 128-byte bursts (+wlen=8) or mixed, and with repeated XDMA resets
+SCEN["gen2deep"] = G2 + ["+awdly=200", "+outs=64", "+wlen=8", "+gapw=0", "+mstall=60", "+wpct=80", "+seed=44"]
+SCEN["gen2deepx"] = G2 + ["+awdly=300", "+outs=64", "+gapw=0", "+mstall=40", "+xreset=3000", "+xrep=6151", "+seed=45"]
+SCEN["gen2deep128"] = G2 + ["+awdly=100", "+outs=64", "+wlen=8", "+psh=40", "+gapw=0", "+mstall=85",
+                            "+axi_stall=50", "+seed=46"]
 for i in range(10, 30):
     SCEN[f"s{i}"] = [f"+seed={i}", f"+psh={5 + i % 4 * 15}", f"+ppct={i % 5 * 20}", f"+wpct={30 + i % 3 * 20}"]
 # functional runs: 3000 runs or bursts per master unless the scenario says otherwise (the first
@@ -113,7 +119,7 @@ FUNC += [("xreg", s) for s in ["default", "seed2", "xreset", "resets", "xresetla
                                "resetsrep", "xresetshort", "xresetshortsh", "mstall70", "nogaps",
                                "partial", "ctlstall", "fastcore", "slowcore", "shared", "shared21",
                                "pubstall", "seqrd", "seqwr", "seqmix", "gen2", "gen2xres",
-                               "gen2part", "gen2full"]]
+                               "gen2part", "gen2full", "gen2deep", "gen2deepx", "gen2deep128"]]
 
 # throughput: sequential 32-beat runs (64-beat bursts for XDMA), one kind of master at a time,
 # whole beats unless the run says otherwise (the first plusarg of a name wins)
@@ -242,6 +248,16 @@ MUT = [
     ("slice: ready not dropped with the skid entry full (a beat overwritten)", "xreg",
      [("otpu_axi_split2.sv", "else if (take) begin sk_v <= 1'b1; s_ready <= 1'b0; end",
        "else if (take) begin sk_v <= 1'b1; s_ready <= 1'b1; end")], ["mstall70", "default"]),
+    # otpu_sfifo RO (registered flags): the split's order FIFOs, the bridges' XDMA queues
+    ("RO: wready from the pointers before this cycle's push and pop (a push into a full queue)", "xreg",
+     [("else begin rv <= wp_n != rp_n; wr <= (wp_n - rp_n) != (AW + 1)'(DEPTH); end",
+       "else begin rv <= wp_n != rp_n; wr <= (wp - rp) != (AW + 1)'(DEPTH); end")], ["gen2full", "gen2deep"]),
+    ("RO: rvalid from the pointers before this cycle's push and pop (a pop from an empty queue)", "xreg",
+     [("else begin rv <= wp_n != rp_n; wr <= (wp_n - rp_n) != (AW + 1)'(DEPTH); end",
+       "else begin rv <= wp != rp; wr <= (wp_n - rp_n) != (AW + 1)'(DEPTH); end")], ["gen2full", "gen2deep"]),
+    ("split: an AW taken with its B route FIFO full (a route entry lost)", "xreg",
+     [("otpu_axi_split2.sv", "assign s_awready = ow_wr && ob_wr && m_awready[awc];",
+       "assign s_awready = ow_wr && m_awready[awc];")], ["gen2full", "gen2deep"]),
 ]
 
 

@@ -212,6 +212,74 @@ module tb_memch #(
              cv_ow, cv_ob, cv_or, cv_xwi[0], cv_xwi[1], cv_xbq[0], cv_xbq[1], cv_xai[0], cv_xai[1],
              cv_xrq[0], cv_xrq[1]);
 
+  // Checks on the XDMA side, every xclk cycle:
+  // - each registered-flag queue (otpu_sfifo RO: the split's order FIFOs, the bridges' AW / AR
+  //   queues) has rvalid = not empty and wready = not full of its pointers, and never more than
+  //   DEPTH entries;
+  // - W bursts (WLAST beats taken) never outnumber the AWs taken, at the split's input and at
+  //   each bridge, and each bridge's B responses never outnumber its W bursts; at the end all
+  //   three counts agree, per bridge and at the split (in bursts since the last XDMA reset).
+  int ro_err [11];
+  tb_ro_chk #(.DEPTH(16), .NAME("split u_ow")) u_ck0 (.clk(xclk), .rst(xrst),
+    .wp(u_split.u_split.u_ow.wp), .rp(u_split.u_split.u_ow.rp), .rvalid(u_split.u_split.u_ow.rvalid),
+    .wready(u_split.u_split.u_ow.wready), .nerr(ro_err[0]));
+  tb_ro_chk #(.DEPTH(16), .NAME("split u_ob")) u_ck1 (.clk(xclk), .rst(xrst),
+    .wp(u_split.u_split.u_ob.wp), .rp(u_split.u_split.u_ob.rp), .rvalid(u_split.u_split.u_ob.rvalid),
+    .wready(u_split.u_split.u_ob.wready), .nerr(ro_err[1]));
+  tb_ro_chk #(.DEPTH(16), .NAME("split u_or")) u_ck2 (.clk(xclk), .rst(xrst),
+    .wp(u_split.u_split.u_or.wp), .rp(u_split.u_split.u_or.rp), .rvalid(u_split.u_split.u_or.rvalid),
+    .wready(u_split.u_split.u_or.wready), .nerr(ro_err[2]));
+  for (genvar c = 0; c < 2; c++) begin : g_ck
+    tb_ro_chk #(.DEPTH(4), .NAME(c ? "ch1 u_xai" : "ch0 u_xai")) u_ckai (.clk(xclk), .rst(g_ch[c].u_ch.x_crst),
+      .wp(g_ch[c].u_ch.u_xai.wp), .rp(g_ch[c].u_ch.u_xai.rp), .rvalid(g_ch[c].u_ch.u_xai.rvalid),
+      .wready(g_ch[c].u_ch.u_xai.wready), .nerr(ro_err[3 + 4 * c]));
+    tb_ro_chk #(.DEPTH(4), .NAME(c ? "ch1 u_xwi" : "ch0 u_xwi")) u_ckwi (.clk(xclk), .rst(g_ch[c].u_ch.x_crst),
+      .wp(g_ch[c].u_ch.u_xwi.wp), .rp(g_ch[c].u_ch.u_xwi.rp), .rvalid(g_ch[c].u_ch.u_xwi.rvalid),
+      .wready(g_ch[c].u_ch.u_xwi.wready), .nerr(ro_err[4 + 4 * c]));
+    tb_ro_chk #(.DEPTH(16), .NAME(c ? "ch1 u_xrq" : "ch0 u_xrq")) u_ckrq (.clk(xclk), .rst(g_ch[c].u_ch.x_crst),
+      .wp(g_ch[c].u_ch.u_xrq.wp), .rp(g_ch[c].u_ch.u_xrq.rp), .rvalid(g_ch[c].u_ch.u_xrq.rvalid),
+      .wready(g_ch[c].u_ch.u_xrq.wready), .nerr(ro_err[5 + 4 * c]));
+    tb_ro_chk #(.DEPTH(16), .NAME(c ? "ch1 u_xbq" : "ch0 u_xbq")) u_ckbq (.clk(xclk), .rst(g_ch[c].u_ch.x_crst),
+      .wp(g_ch[c].u_ch.u_xbq.wp), .rp(g_ch[c].u_ch.u_xbq.rp), .rvalid(g_ch[c].u_ch.u_xbq.rvalid),
+      .wready(g_ch[c].u_ch.u_xbq.wready), .nerr(ro_err[6 + 4 * c]));
+  end
+  longint n_aw_i = 0, n_wl_i = 0, n_aw [2] = '{0, 0}, n_wl [2] = '{0, 0}, n_b [2] = '{0, 0};
+  int cnt_err = 0;
+  always @(posedge xclk) begin
+    if (xrst) begin
+      n_aw_i = 0; n_wl_i = 0;
+      for (int c = 0; c < 2; c++) begin n_aw[c] = 0; n_wl[c] = 0; n_b[c] = 0; end
+    end else begin
+      n_aw_i += longint'(u_split.i_awvalid && u_split.i_awready);
+      n_wl_i += longint'(u_split.i_wvalid && u_split.i_wready && u_split.i_wlast);
+      for (int c = 0; c < 2; c++) begin
+        n_aw[c] += longint'(cawv[c] && cawr[c]);
+        n_wl[c] += longint'(cwvx[c] && cwrx[c] && cwl[c]);
+        n_b[c]  += longint'(cbv[c] && cbr[c]);
+      end
+      if (n_wl_i > n_aw_i || n_wl[0] > n_aw[0] || n_wl[1] > n_aw[1] || n_b[0] > n_wl[0] ||
+          n_b[1] > n_wl[1]) begin
+        if (cnt_err < 5)
+          $display("ERROR counts: split AW %0d WLAST %0d; ch0 AW %0d WLAST %0d B %0d; ch1 AW %0d WLAST %0d B %0d",
+                   n_aw_i, n_wl_i, n_aw[0], n_wl[0], n_b[0], n_aw[1], n_wl[1], n_b[1]);
+        cnt_err++;
+      end
+    end
+  end
+  function automatic bit xchk_bad();
+    int e = cnt_err;
+    for (int i = 0; i < 11; i++) e += ro_err[i];
+    if (n_aw_i != n_wl_i || n_aw[0] != n_wl[0] || n_aw[1] != n_wl[1] || n_b[0] != n_aw[0] ||
+        n_b[1] != n_aw[1] || n_aw_i != n_aw[0] + n_aw[1]) begin
+      $display("ERROR counts at the end: split AW %0d WLAST %0d; ch0 AW %0d WLAST %0d B %0d; ch1 AW %0d WLAST %0d B %0d",
+               n_aw_i, n_wl_i, n_aw[0], n_wl[0], n_b[0], n_aw[1], n_wl[1], n_b[1]);
+      e++;
+    end
+    return e != 0;
+  endfunction
+  final if (cov) $display("cov counts: split AW %0d WLAST %0d; ch0 AW %0d B %0d; ch1 AW %0d B %0d",
+                          n_aw_i, n_wl_i, n_aw[0], n_b[0], n_aw[1], n_b[1]);
+
   // the end: every master done; or the error bits
   longint tmax = 2000000, dual = 0;
   initial void'($value$plusargs("tmax=%d", tmax));
@@ -229,12 +297,39 @@ module tb_memch #(
       dump <= 1'b1;
       repeat (4) @(posedge clk);
       if (dual != 0) $display("ERROR n_err %b after the double beat", nerr);
-      $display("%s cycles=%0d", (|abad || xbad || dual != 0) ? "FAIL" : "PASS", ccyc);
+      $display("%s cycles=%0d", (|abad || xbad || dual != 0 || xchk_bad()) ? "FAIL" : "PASS", ccyc);
       $finish;
     end
     if (ccyc > tmax) begin
       $display("TIMEOUT acc done %b xdma done %b", adone, xdone);
       $finish;
+    end
+  end
+endmodule
+
+// One otpu_sfifo RO's registered flags against its pointers (tb_memch's XDMA-side checks).
+module tb_ro_chk #(
+  parameter int DEPTH = 16,
+  parameter string NAME = "fifo"
+) (
+  input  logic                     clk,
+  input  logic                     rst,
+  input  logic [$clog2(DEPTH):0]   wp,
+  input  logic [$clog2(DEPTH):0]   rp,
+  input  logic                     rvalid,
+  input  logic                     wready,
+  output int                       nerr
+);
+  localparam int AW = $clog2(DEPTH);
+  logic [AW:0] used;
+  assign used = wp - rp;
+  initial nerr = 0;
+  always @(posedge clk) if (!rst) begin
+    if (rvalid !== (used != 0) || wready !== (used != (AW + 1)'(DEPTH)) || used > (AW + 1)'(DEPTH)) begin
+      if (nerr < 5)
+        $display("ERROR %s: rvalid %b wready %b with %0d entries (wp %0d rp %0d)", NAME, rvalid,
+                 wready, used, wp, rp);
+      nerr++;
     end
   end
 endmodule
@@ -569,9 +664,22 @@ module tb_memch_axi #(
   longint nwl = 0, nbr = 0;                 // bursts whose last W beat went, B responses
   int gapw = 20, mstall = 30, wpct = 50, seq = 0, xfull = 70, psh = 10, psp = 10;
   int outs = OUTS;                          // +outs: bursts in flight per direction
+  // +awdly=N: a write burst's AW goes out 0..N-1 cycles after its W beats are queued (in burst
+  // order), so W runs ahead of AW by up to +outs bursts; +wlen=N: N-beat bursts (e.g. 8: 128 B)
+  int awdly = 0, wlen = 0;
+  typedef struct { logic [31:0] a; logic [7:0] len; logic [IDW-1:0] id; longint t; } aw_t;
+  aw_t awq [$];
   int a2x_rd [2], a2x_chk [2], x2a_wr [2];
   logic [31:0] nexto = 0;                   // +seq: the next burst's offset
   longint c0 = -1, c1 = 0, cyc = 0;         // first and last data cycles
+
+  // without +awdly the AW goes out with its burst (the channel must be free); with it, through awq
+  logic aw_free;
+  assign aw_free = awdly == 0 ? !(awvalid && !awready) : awq.size() < 64;
+  task automatic aw_issue(input logic [31:0] a, input logic [7:0] len, input logic [IDW-1:0] id);
+    if (awdly == 0) begin awvalid <= 1'b1; awaddr <= a; awlen <= len; awid <= id; end
+    else awq.push_back('{a, len, id, cyc + longint'($urandom % awdly)});
+  endtask
 
   function automatic int idx_of(input logic [31:0] a);
     if (a[31] != WIN0[31]) return int'(SPAN + (a - WIN1));
@@ -589,6 +697,8 @@ module tb_memch_axi #(
     void'($value$plusargs("psh=%d", psh));
     void'($value$plusargs("psp=%d", psp));
     void'($value$plusargs("outs=%d", outs));
+    void'($value$plusargs("awdly=%d", awdly));
+    void'($value$plusargs("wlen=%d", wlen));
     for (int i = 0; i < NB; i++) begin sh[i] = 8'h00; unk[i] = 1'b0; end
     for (int i = 0; i < NB / 64; i++) begin wp[i] = 0; rp[i] = 0; end
     for (int i = 0; i < 2 * NSP * 32; i++) begin ssh[i] = 8'h00; sunk[i] = 1'b0; end
@@ -611,7 +721,7 @@ module tb_memch_axi #(
       for (int i = 0; i < NB / 64; i++) begin wp[i] = 0; rp[i] = 0; end
       for (int i = 0; i < 2 * NSP; i++) begin swp[i] = 0; srp[i] = 0; end
       for (int c = 0; c < 2; c++) begin x2a_wr[c] = int'(x2a_pub[c]); a2x_rd[c] = a2x_chk[c]; end
-      wq.delete(); rq.delete(); bq.delete(); rdq.delete();
+      wq.delete(); rq.delete(); bq.delete(); rdq.delete(); awq.delete();
       nwl = 0; nbr = 0;
       awvalid <= 1'b0; wvalid <= 1'b0; arvalid <= 1'b0; bready <= 1'b0; rready <= 1'b0;
     end else begin
@@ -689,11 +799,11 @@ module tb_memch_axi #(
             arvalid <= 1'b1; araddr <= (32'(c) << 31) | (32'(A2X + a2x_rd[c]) << 6); arlen <= 8'd3; arid <= id;
             a2x_rd[c]++;
             issued++;
-          end else if (!rd_ && x2a_wr[c] < NS && !(awvalid && !awready) && bq.size() < outs) begin
+          end else if (!rd_ && x2a_wr[c] < NS && aw_free && bq.size() < outs) begin
             p = pat(c, 1, x2a_wr[c]);
             for (int j = 0; j < 4; j++) wq.push_back('{p[128 * j +: 128], '1, j == 3});
             bq.push_back('{0, 0, id, c, -1});
-            awvalid <= 1'b1; awaddr <= (32'(c) << 31) | (32'(X2A + x2a_wr[c]) << 6); awlen <= 8'd3; awid <= id;
+            aw_issue((32'(c) << 31) | (32'(X2A + x2a_wr[c]) << 6), 8'd3, id);
             x2a_wr[c]++;
             issued++;
           end
@@ -705,7 +815,7 @@ module tb_memch_axi #(
           s = c * NSP + $urandom % NSP;
           wr_ = ($urandom % 2) == 0;
           a = (32'(c) << 31) | (32'(SPL + s % NSP) << 6) | 32'd32;
-          if (wr_ && swp[s] == 0 && srp[s] == 0 && !(awvalid && !awready) && bq.size() < outs) begin
+          if (wr_ && swp[s] == 0 && srp[s] == 0 && aw_free && bq.size() < outs) begin
             for (int j = 0; j < 2; j++) begin
               w_t x;
               for (int k = 0; k < BYTES; k++) begin
@@ -718,7 +828,7 @@ module tb_memch_axi #(
             end
             swp[s]++;
             bq.push_back('{0, 0, id, -1, s});
-            awvalid <= 1'b1; awaddr <= a; awlen <= 8'd1; awid <= id;
+            aw_issue(a, 8'd1, id);
             issued++;
           end else if (!wr_ && swp[s] == 0 && !(arvalid && !arready) && rdq.size() < outs) begin
             for (int j = 0; j < 2; j++) begin
@@ -744,12 +854,12 @@ module tb_memch_axi #(
           w = $urandom % 2;
           off = seq != 0 ? nexto : ($urandom % (SPAN / BYTES)) * BYTES;
           a = (w != 0 ? WIN1 : WIN0) + off;
-          n = seq != 0 ? LMAX : 1 + $urandom % LMAX;
+          n = seq != 0 ? LMAX : wlen != 0 ? wlen : 1 + $urandom % LMAX;
           if (n * BYTES > 4096 - (a & 4095)) n = (4096 - (a & 4095)) / BYTES;
           if (n * BYTES > SPAN - off) n = (SPAN - off) / BYTES;
           i0 = idx_of(a);
           b0 = i0 / 64; b1 = (i0 + n * BYTES - 1) / 64;
-          ok = wr_ ? (!(awvalid && !awready) && bq.size() < outs) : (!(arvalid && !arready) && rdq.size() < outs);
+          ok = wr_ ? (aw_free && bq.size() < outs) : (!(arvalid && !arready) && rdq.size() < outs);
           for (int b = b0; b <= b1 && ok; b++) if (wp[b] != 0 || (wr_ && rp[b] != 0)) ok = 1'b0;
           if (ok) begin
             nexto = (off + n * BYTES) % SPAN;
@@ -769,7 +879,7 @@ module tb_memch_axi #(
               end
               for (int b = b0; b <= b1; b++) wp[b]++;
               bq.push_back('{b0, b1 - b0 + 1, id, -1, -1});
-              awvalid <= 1'b1; awaddr <= a; awlen <= 8'(n - 1); awid <= id;
+              aw_issue(a, 8'(n - 1), id);
             end else begin
               for (int j = 0; j < n; j++) rq.push_back('{i0 + j * BYTES, id, j == n - 1, 1'b0, '0, '0});
               for (int b = b0; b <= b1; b++) rp[b]++;
@@ -779,9 +889,15 @@ module tb_memch_axi #(
           end
         end
       end
+      // ---- the delayed AWs (+awdly), in burst order
+      if (awdly != 0 && (!awvalid || awready) && awq.size() != 0 && awq[0].t <= cyc) begin
+        awvalid <= 1'b1; awaddr <= awq[0].a; awlen <= awq[0].len; awid <= awq[0].id;
+        void'(awq.pop_front());
+      end
     end
   end
   assign done = (issued >= ntx && bq.size() == 0 && rdq.size() == 0 && wq.size() == 0 && !awvalid &&
+                 awq.size() == 0 &&
                  !arvalid) || nerr != 0;
   assign bad  = nerr != 0;
 
