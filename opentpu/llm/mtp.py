@@ -23,6 +23,7 @@ The prompt's prefill stores `hid` for every row and runs the MTP layer over the 
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -37,6 +38,10 @@ class MTPStats:
     tokens: list = field(default_factory=list)
     accepted: list = field(default_factory=list)
     runs: list = field(default_factory=list)        # (kind, rows, stats of the backend's run)
+    slots: list = field(default_factory=list)       # each verify run's committed slot (parity)
+    compile_s: float = 0.0                          # host seconds compiling the programs
+    prefill_s: float = 0.0                          # host seconds of the prefill (wall)
+    prefill_compile_s: float = 0.0                  # ... compiling its programs
 
     @property
     def iterations(self) -> int:
@@ -82,12 +87,19 @@ class MTPDecoder:
 
     def _verify(self, p: int, toks, logit_rows, fork: bool, st: MTPStats, kind: str):
         rows = [(0, p + j) for j in range(len(toks))]
+        t0 = time.perf_counter()
         progs = self.img.compile_rows(rows, logit_rows, self.eng.block, tokens=toks,
                                       slot=self.slot, fork=fork, hidden=True)
+        st.compile_s += time.perf_counter() - t0
+        if fork:
+            st.slots.append(self.slot)
         self._run(progs, kind, len(toks), st)
 
     def _draft(self, p: int, toks, st: MTPStats, kind: str) -> list:
-        self._run(self.img.compile_mtp(p, len(toks), toks, self.eng.block), kind, len(toks), st)
+        t0 = time.perf_counter()
+        progs = self.img.compile_mtp(p, len(toks), toks, self.eng.block)
+        st.compile_s += time.perf_counter() - t0
+        self._run(progs, kind, len(toks), st)
         return self._drafts(len(toks))
 
     # ---- generation
@@ -120,7 +132,9 @@ class MTPDecoder:
         tokens so far) -> the draft for that position instead of the MTP's."""
         stop = set(self.img.spec.eos if stop is None else stop)
         st = MTPStats(prompt=len(prompt))
+        t0 = time.perf_counter()
         a0, d = self.prefill(prompt, st)
+        st.prefill_s, st.prefill_compile_s = time.perf_counter() - t0, st.compile_s
         out, p, t = st.tokens, len(prompt), a0
         out.append(a0)
         while len(out) < max_new and out[-1] not in stop and p + 1 < self.img.cap:

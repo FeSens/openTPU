@@ -1653,9 +1653,10 @@ class Engine:
         """The step program for `pos`: the precompiled one when it is for `pos`."""
         return self._take(("step", pos), self._compile, pos)
 
-    def _compile_decode(self, blocks: int):
-        progs, ra = self.image.compile_decode(blocks, max((blocks - 1) * self.block,
-                                                          self._conv_lo), self.block)
+    def _compile_decode(self, blocks: int, lo: int | None = None):
+        """lo: the bucket's first position (_worker_decode's; the compile thread gets it too)."""
+        lo = max((blocks - 1) * self.block, self._conv_lo) if lo is None else lo
+        progs, ra = self.image.compile_decode(blocks, lo, self.block)
         prep = getattr(self.backend, "prepare", None)
         if prep is not None:
             prep(progs)
