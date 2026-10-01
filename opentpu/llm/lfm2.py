@@ -40,6 +40,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from .. import fp32 as F
+from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
 from ..compiler import Affine, KVDesc, QTensor, Tensor
@@ -451,7 +452,7 @@ class Image:
 
         def put_q(addr_pair, parts, fmt=self.wformat):
             for s, p in enumerate(parts):
-                q, sc = Q.quantize_mxu(p, fmt, D)
+                q, sc = QC.quantize_mxu(p, fmt, D)
                 put(s, addr_pair[0], q)
                 put(s, addr_pair[1], sc)
 

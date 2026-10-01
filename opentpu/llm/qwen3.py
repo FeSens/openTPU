@@ -30,6 +30,7 @@ import numpy as np
 
 from .. import fp32 as F
 from .. import isa as I
+from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
 from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, arg_words
@@ -631,7 +632,7 @@ class Image:
 
         def put_q(addr_pair, parts, fmt=self.wformat):
             for s, p in enumerate(parts):
-                q, sc = Q.quantize_mxu(p, fmt, D)
+                q, sc = QC.quantize_mxu(p, fmt, D)
                 put(s, addr_pair[0], q)
                 put(s, addr_pair[1], sc)
 
