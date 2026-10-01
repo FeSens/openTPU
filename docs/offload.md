@@ -884,6 +884,13 @@ tokens, the same prefill logits (sha256) and the same misses per token:
 - The checkpoints on the card's host are the routed experts' complement (1.4 GB for the 8B, 4.6
   GB for the 35B). The image build reads no expert; the pool file holds them.
 
+The sessions' scripts are in tools/offload/sessions: `card_moe.sh` (the runs, each checked against
+its references), `session5.sh` to `session8.sh` and `gen2.sh` (each session's runs, its tree in
+its header), `reference.sh` and `hf_reference.sh` (the ISA simulator's and HF's references), with
+the paths in `env.sh`. The host's files come from `tools/offload/strip_experts.py` (the
+checkpoint without its experts) and `pack_pool.py` (the pool, packed in workers or streamed to
+another host).
+
 The first run found a bug. The Engine's compile worker process, which the card's backend
 compiles ahead in, built its image without the MoE's `experts`: every expert resident, over
 DRAM (4568 MiB for 4096). It failed at the first prefill step, before the card ran anything.

@@ -286,3 +286,63 @@ def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_pat
     s = brd.server
     assert s.hints >= 13 * len(KINDS) and s.prefetched > 0 and s.mem.direct > 0
     assert s.misses < isa.server.misses and brd.row_server.seq >= 7
+
+
+def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
+    """tools/offload/pack_pool.py: init then two workers pack every expert of a checkpoint as the
+    image's split slot bytes, each marked packed; send | recv into a second pool, on the host of
+    the checkpoint without its experts (strip_experts.py), gives the same file."""
+    import io
+    import runpy
+    import sys
+    from pathlib import Path
+
+    from safetensors.numpy import save_file
+
+    from opentpu.host.offload import to_split
+    from opentpu.llm.qwen3 import LazyWeights
+
+    m = tmp_path / "model"                          # HF's tensor names, as LazyWeights reads them
+    tiny[0].config.save_pretrained(m)
+    save_file({k: np.ascontiguousarray(v) for k, v in tiny[1].items()},
+              str(m / "model.safetensors"))
+    tools = Path(__file__).resolve().parents[1] / "tools" / "offload"
+    tool = str(tools / "pack_pool.py")
+
+    def run(*args, stdin=None, stdout=None):
+        monkeypatch.setattr(sys, "argv", ["pack_pool.py", *map(str, args)])
+        if stdin is not None:
+            monkeypatch.setattr(sys, "stdin", stdin)
+        if stdout is not None:
+            monkeypatch.setattr(sys, "stdout", stdout)
+        runpy.run_path(tool, run_name="__main__")
+        monkeypatch.undo()
+
+    a, b = tmp_path / "a.bin", tmp_path / "b.bin"
+    for p in (a, b):
+        run(m, p, "init")
+    run(m, a, "pack", 0, 2)
+    run(m, a, "pack", 1, 2)
+    img = runpy.run_path(tool)["image"](str(m), "fp4")
+    L = img.offload
+    n, slot = L.layers * L.E, L.slot_bytes
+    assert np.fromfile(str(a) + ".packed", np.uint8).tolist() == [1] * n
+    W, pool = LazyWeights(m), np.fromfile(a, np.uint8).reshape(n, slot)
+    for g in range(n):
+        assert np.array_equal(pool[g], np.asarray(to_split(img.expert(W, g))).view(np.uint8)), g
+    ids = tmp_path / "ids.txt"
+    ids.write_text("\n".join(map(str, range(n - 1, -1, -1))))
+    out = tmp_path / "stream"
+    with open(out, "wb") as f:
+        run(m, "-", "send", ids, stdout=f)
+    stripped = tmp_path / "stripped"
+    monkeypatch.setattr(sys, "argv", ["strip_experts.py", str(m), str(stripped)])
+    runpy.run_path(str(tools / "strip_experts.py"), run_name="__main__")
+    monkeypatch.undo()
+    from safetensors import safe_open
+    with safe_open(str(stripped / "model.safetensors"), "np") as h:
+        assert set(h.keys()) == {k for k in tiny[1] if ".experts." not in k}
+    with open(out, "rb") as f:
+        run(stripped, b, "recv", stdin=f)
+    assert a.read_bytes() == b.read_bytes()
+    assert Path(str(b) + ".packed").read_bytes() == bytes([1] * n)
