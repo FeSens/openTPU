@@ -370,34 +370,32 @@ def test_streamed_tail_waits_for_the_last_stores(run_dir, lag):
     eng.backend.close()
 
 
-def test_streamed_decode_marks_in_small_calls_during_the_run(run_dir, monkeypatch):
-    """Streamed logits: the SENTINEL marks go back right after the next RUN, on the DMA worker,
-    in calls of the transport's run_h2c (XDMA's H2C engine laps its read buffer when a longer
-    host->card call meets the card's traffic: docs/host.md), and are on the card before the
-    wait's first probe: every step gets its own run's logits, never the last run's."""
+def test_streamed_decode_writes_nothing_during_the_run(run_dir):
+    """Streamed logits: the SENTINEL marks go back after a run and are on the card before the
+    next RUN, never while a run is in flight (XDMA's H2C engine laps its read buffer when a
+    host->card call of more than 4 KiB meets the card's traffic: docs/host.md); every run
+    starts with the whole region marked."""
     from opentpu import lens as L
-    from opentpu.host.board import sim_config
-    from opentpu.llm import qwen3 as Q
-    from opentpu.llm.qwen3 import Engine
-    monkeypatch.setattr(Q, "HEAD_CHUNK", 128)      # pieces of 128 logits: 8 in the tiny vocab
+    from opentpu.host.board import SENTINEL, sim_config
+    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
 
     class Card(FakeTransport):
-        run_h2c = 512
-
         def __init__(self, **kw):
             super().__init__(**kw)
-            self.during = []
+            self.during, self.marked = [], []
 
         def mem_write(self, ch, off, data):
             if self.t_run is not None and time.perf_counter() - self.t_run < self.run_s:
                 self.during.append(len(data))
             super().mem_write(ch, off, data)
 
-        def _put(self, addr, b):            # each run's logits its own: + the run's number
-            a, n, _ = self.logits
-            if a <= addr < a + n:
-                b = (b.view(np.float32) + np.float32(self.runs)).view(np.uint8)
-            super()._put(addr, b)
+        def reg_write(self, off, val):
+            if off == R.R_CTRL and val & R.CTRL_RUN and self.logits is not None:
+                a, n, _ = self.logits
+                w = np.concatenate([self.ch[(a + o) // 64 % 2][(a + o) // 128 * 64:][:64]
+                                    for o in range(0, n, 64)])[:n].view(np.uint32)
+                self.marked.append(bool((w == SENTINEL).all()))
+            super().reg_write(off, val)
 
     spec, W = L._tiny_qwen()
     cfg = sim_config(spec, 256)
@@ -406,15 +404,13 @@ def test_streamed_decode_marks_in_small_calls_during_the_run(run_dir, monkeypatc
     eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
     v = eng.image.v_loc
-    t.logits = (eng.image.io["logits"], 4 * v, 4 * 128)
+    t.logits = (eng.image.io["logits"], 4 * v, 4 * min(HEAD_CHUNK, eng.cfg.TMEM_WORDS // 8))
     want = np.arange(v, dtype=np.float32) % 997 * 1e-3
     for tok in range(5):
-        eng.backend._due = {i: 0.0 for i in range(64)}    # every piece probed from the start
-        got = eng.step(tok)
-        assert np.array_equal(got, want + np.float32(t.runs)), (tok, t.runs)
-        assert eng.backend.last_stream["during"] > 0          # pieces probed during the run
+        assert np.array_equal(eng.step(tok), want)
     eng.backend.close()
-    assert len(t.during) >= 4 * 8 and max(t.during) <= 512, t.during
+    assert t.during == []
+    assert len(t.marked) == 5 and all(t.marked), t.marked
 
 
 def test_streamed_wait_sees_the_halt_soon(run_dir, monkeypatch):
