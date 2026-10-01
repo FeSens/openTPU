@@ -82,6 +82,10 @@ def run(a) -> None:
     # plain greedy decode first, then the MTP loop: one engine (one DRAM image) at a time
     t0 = time.time()
     eng = Engine(spec, W, cap=a.cap, cfg=cfg, resident=True, **wkw, **_backend(a, path))
+    # no host -> card write while a run is in flight: a streamed step (the prefill's one-row
+    # run) marks its logits region again after the start, and XDMA's H2C corrupts writes over
+    # 4 KiB issued while the card reads the channel (the MTP loop never streams)
+    eng.stream_logits = False
     print(f"plain engine built in {time.time() - t0:.0f} s", flush=True)
     wants = []
     for i, kind, ids in prompts:
