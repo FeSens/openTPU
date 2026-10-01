@@ -16,12 +16,13 @@ switched one at a time and per-kind weight formats (docs/gemma4.md, "Long contex
 WF / HEAD: int8, fp4, int4 or none (float weights). The whole sequence runs at once: 900 tokens of
 E2B take about 1 min in float, 10 min with fp4 layers (the 4-bit quantization's search).
 26B-A4B (its MoE block, K = V global layers, no PLE): --formats experts=fp4 for 4-bit experts
-(about 1.2 s of quantization an expert: 3840 of them).
+(about 1.2 s of quantization an expert, 3840 of them: THREADS at a time).
 """
 import argparse
 import math
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 import numpy as np
@@ -29,6 +30,8 @@ import numpy as np
 from opentpu.kernels import gather as GA
 from opentpu.llm import gemma4 as G
 from opentpu.llm.qwen3 import _fake_q, _fake_w
+
+THREADS = 4     # experts quantized at once (numpy's 4-bit search releases the GIL: 2.8x on 4)
 
 
 def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", rows=None,
@@ -190,14 +193,23 @@ def _moe(spec, W, p, x, wq, fq, padq, none):
     w /= w.sum(1, keepdims=True)
     g2 = np.asarray(W[p + "pre_feedforward_layernorm_2.weight"], np.float32)[None, :]
     pes = np.asarray(W[r + "per_expert_scale"], np.float32)
+    n = p + "experts.down_proj"                 # (its name: the experts' format, wmap)
+    es = [int(e) for e in np.unique(top)]
+
+    def fake(gu, dn, e):        # expert e's gate, up, down [H, F padded] as the device holds them
+        return wq(n, a=gu[:F]), wq(n, a=gu[F:]), wq(n, a=dn * pes[e])
+
     out = np.zeros_like(xs)
-    for e in np.unique(top):
-        t, j = np.nonzero(top == e)
-        gu = G._rows(W, p + "experts.gate_up_proj", [int(e)])[0] * g2      # [2F, H]
-        n = p + "experts.down_proj"             # (its name: the experts' format, wmap)
-        dq = wq(n, a=G._rows(W, n, [int(e)])[0] * pes[e])                   # [H, F padded]
-        u = G._gelu(xs[t] @ wq(n, a=gu[:F]).T) * (xs[t] @ wq(n, a=gu[F:]).T)
-        out[t] += w[t, j][:, None] * (padq(u, dq.shape[1]) @ dq.T)
+    with ThreadPoolExecutor(THREADS) as ex:    # THREADS experts at a time (their fp64 copies)
+        for i in range(0, len(es), THREADS):
+            batch = es[i:i + THREADS]
+            jobs = [ex.submit(fake, G._rows(W, p + "experts.gate_up_proj", [e])[0] * g2,
+                              G._rows(W, n, [e])[0], e) for e in batch]
+            for e, job in zip(batch, jobs):
+                gq, uq, dq = job.result()
+                t, j = np.nonzero(top == e)
+                u = G._gelu(xs[t] @ gq.T) * (xs[t] @ uq.T)
+                out[t] += w[t, j][:, None] * (padq(u, dq.shape[1]) @ dq.T)
     return out
 
 
