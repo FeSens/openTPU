@@ -24,3 +24,20 @@ def test_rules_and_pick(monkeypatch):
 def test_rules_reject(bad):
     with pytest.raises(ValueError, match="weight format"):
         FM.rules(bad, KINDS)
+
+
+def test_named_mix(monkeypatch):
+    """wformat "mix": int8 with the model's mix (Spec.mix), unless a formats string is given;
+    other wformats are themselves; a model without a mix refuses it."""
+    from types import SimpleNamespace
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    spec = SimpleNamespace(mix="attn=fp4,mlp@8-23=fp4")
+    assert FM.named(spec, "mix", None) == ("int8", "attn=fp4,mlp@8-23=fp4")
+    assert FM.named(spec, "mix", "attn=int4") == ("int8", "attn=int4")
+    assert FM.named(spec, "fp4", None) == ("fp4", None)
+    monkeypatch.setenv("OTPU_FORMATS", "down=fp4")
+    assert FM.named(spec, "mix", None) == ("int8", "down=fp4")
+    monkeypatch.delenv("OTPU_FORMATS")
+    with pytest.raises(ValueError, match="no recommended mix"):
+        FM.named(SimpleNamespace(mix=""), "mix", None)
+    assert FM.mix_for({"model_type": "none"}) == ""

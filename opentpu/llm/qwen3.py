@@ -74,6 +74,7 @@ class Spec:
     #                           int8 LM head holds them: the device gathers them from it,
     #                           kernels.gather.gather_row)
     formats: str = ""         # weight formats per kind over the image's wformat (KINDS)
+    mix: str = ""             # the recommended mix (wformat "mix": formats.named, MIXES)
 
     @property
     def rope_dim(self) -> int:
@@ -93,7 +94,7 @@ class Spec:
                     ffn=c["intermediate_size"], vocab=c["vocab_size"], eps=c["rms_norm_eps"],
                     theta=c.get("rope_theta", 1e6), tied=c.get("tie_word_embeddings", True),
                     bos=c.get("bos_token_id", 151643),
-                    eos=tuple(eos) if isinstance(eos, list) else (eos,))
+                    eos=tuple(eos) if isinstance(eos, list) else (eos,), mix=FM.mix_for(c))
 
     def check(self, cfg: Config) -> None:
         S, D = cfg.S, cfg.D
@@ -564,6 +565,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     d, G = spec.head_dim, spec.n_q // spec.n_kv
     Wq: dict = {}
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+    wformat, formats = FM.named(spec, wformat, formats)
     fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
 
     def w(n):
@@ -681,6 +683,7 @@ class Image(EmbedHost):
         S, D = cfg.S, cfg.D
         H, d, F_ = spec.hidden, spec.head_dim, spec.ffn
         self.spec, self.cfg, self.cap = spec, cfg, cap
+        wformat, formats = FM.named(spec, wformat, formats)
         fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
         # each layer's formats (attention, gate / up, down: its block's layout), the head's,
         # and the formats string (for the compile worker)

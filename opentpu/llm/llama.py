@@ -24,6 +24,7 @@ import json
 import math
 from pathlib import Path
 
+from . import formats as FM
 from .qwen3 import Spec
 
 MODEL_TYPES = ("llama", "smollm3", "phi3")
@@ -77,4 +78,5 @@ def spec_from_hf(model_dir) -> Spec:
                 ffn=c["intermediate_size"], vocab=c["vocab_size"], eps=c["rms_norm_eps"],
                 theta=theta, tied=c.get("tie_word_embeddings", False),
                 bos=c.get("bos_token_id"), eos=tuple(eos) if isinstance(eos, list) else (eos,),
-                qk_norm=False, rotary=0 if rotary == d else rotary, embed="int8", **extra)
+                qk_norm=False, rotary=0 if rotary == d else rotary, embed="int8",
+                mix=FM.mix_for(c), **extra)

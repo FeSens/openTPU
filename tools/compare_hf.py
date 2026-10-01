@@ -54,7 +54,7 @@ def main() -> None:
     ap.add_argument("--cfg", help="the device configuration: a pickled Config (tools/qual/refs.py "
                     "cfg, e.g. the card's), or 'board' (isasim.board_config); default the "
                     "design configuration")
-    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4"])
+    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4", "mix"])
     ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"])
     ap.add_argument("--backend", default="isa", choices=["isa", "board"],
                     help="the ISA simulator, or the card (--cfg does not apply)")

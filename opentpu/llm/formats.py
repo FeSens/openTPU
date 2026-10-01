@@ -10,12 +10,40 @@ the Llama-likes: attn, mlp, gateup, down, head; LFM2 also conv, Qwen3.5 also del
 the default of "gateup" and "down", and "head" takes no range. The string comes from the
 caller, else the OTPU_FORMATS environment variable, else the model's own default
 (Spec.formats).
+
+The Qwen3 / Llama-like, LFM2 and Qwen3.5 models also have a named choice, wformat "mix": int8
+with the model's recommended formats string (Spec.mix, from MIXES: docs/formats.md), unless
+the caller or OTPU_FORMATS gives one. wformat int8, int4 and fp4 stay uniform.
 """
 from __future__ import annotations
 
 import os
 
 FORMATS = ("int8", "int4", "fp4")
+MIX = "mix"                 # the named choice: int8 with the model's mix (Spec.mix)
+
+# the recommended mixes over int8 (wformat "mix", docs/formats.md), by (model_type, layers,
+# hidden size, vocabulary) of the checkpoint's config
+MIXES: dict = {}
+
+
+def mix_for(config: dict) -> str:
+    """The recommended mix of a checkpoint's (text) config, "" for none."""
+    return MIXES.get((config.get("model_type"), config.get("num_hidden_layers"),
+                      config.get("hidden_size"), config.get("vocab_size")), "")
+
+
+def named(spec, wformat: str, formats: str | None) -> tuple:
+    """(wformat, formats) of a weight choice: "mix" is int8 with spec.mix (unless `formats`
+    or OTPU_FORMATS gives a formats string); any other wformat is itself."""
+    if wformat != MIX:
+        return wformat, formats
+    if formats is None:
+        formats = os.environ.get("OTPU_FORMATS", getattr(spec, "mix", ""))
+    if not formats:
+        raise ValueError("wformat mix: this model has no recommended mix (Spec.mix, "
+                         "formats.MIXES)")
+    return "int8", formats
 
 
 def rules(formats: str | None, kinds, default: str = "", unranged=("head",)) -> list:

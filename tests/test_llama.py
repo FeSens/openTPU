@@ -235,6 +235,11 @@ def test_tiny_formats_by_layer_range(tiny, monkeypatch):
     lo, hi = img.layer0, img.head[0]                # every layer block: weights and KV cache
     assert np.array_equal(a.backend.machine.slices[0].dram[lo:hi],
                           b.backend.machine.slices[0].dram[lo:hi])
+    # the named choice: wformat "mix" is int8 with Spec.mix, the same image
+    named = dataclasses.replace(spec, mix=fm).image(cfg, 256, wformat="mix")
+    assert named.lf == img.lf and named.nbytes == mix.image(cfg, 256).nbytes
+    with pytest.raises(ValueError, match="no recommended mix"):
+        spec.image(cfg, 256, wformat="mix")
 
 
 def test_nope_is_one_loop_body(tiny):

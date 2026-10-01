@@ -649,7 +649,7 @@ def main(argv=None):
     ap.add_argument("--repetition-penalty", type=float)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--max-new", type=int, default=1024, help="tokens per reply at most")
-    ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4"],
+    ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4", "mix"],
                     help="weight format of the layers (docs/quant.md; fp4 needs a bitstream "
                          "with 4-bit MM support)")
     ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
