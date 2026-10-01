@@ -99,6 +99,7 @@ class Spec:
     ckpt_layers: tuple | None = None   # the checkpoint layer of each layer (None: the same)
     embed: str = "int8"     # the embedding rows are dequantized on the device only (from the
                             # quantized LM head): an Engine always gets the lookup tables
+    formats: str = ""       # per-layer weight formats over the image's wformat (layer_formats)
 
     @property
     def layers(self) -> int:
@@ -173,9 +174,10 @@ class Spec:
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
-              ple_format: str | None = None, ple_host: bool | None = None) -> "Image":
+              ple_format: str | None = None, ple_host: bool | None = None,
+              formats: str | None = None) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, ple_format,
-                     ple_host=ple_host)
+                     ple_host=ple_host, formats=formats)
 
     def truncated(self, layers) -> "Spec":
         """A model of some of the checkpoint's layers (in order): each shared layer attends to
@@ -387,18 +389,20 @@ def reference_logits(spec: Spec, W, tokens) -> np.ndarray:
 
 
 def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
-                    head_format: str | None = None, ple_format: str = "int8") -> np.ndarray:
+                    head_format: str | None = None, ple_format: str = "int8",
+                    formats: str | None = None) -> np.ndarray:
     """float64 decode with openTPU's quantization points and none of its rounding (as
-    qwen3.emulated_logits): weights in their formats, int8 matmul inputs per D-block, int8 K
-    (per token and D-block) and V (per token), int8 P (per D tokens), the embedding and PLE
-    rows as the device gathers them (int8 / 4-bit), the exact sliding window. Before the soft
-    cap."""
+    qwen3.emulated_logits): weights in their formats (per layer: layer_formats, as Image),
+    int8 matmul inputs per D-block, int8 K (per token and D-block) and V (per token), int8 P
+    (per D tokens), the embedding and PLE rows as the device gathers them (int8 / 4-bit), the
+    exact sliding window. Before the soft cap."""
     from .qwen3 import _fake_q, _fake_w
     hf = head_format or wformat
     f64 = np.float64
     Wq: dict = {}
+    lf, pf = layer_formats(spec, wformat, formats)
 
-    def w(n, fmt=wformat):
+    def w(n, fmt):
         if (n, fmt) not in Wq:
             Wq[n, fmt] = _fake_w(W[n], D, fmt)
         return Wq[n, fmt]
@@ -409,7 +413,7 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
     S = GA.record_blocks(-(-L * P // D), ple_format)
     wp = W["model.per_layer_model_projection.weight"].reshape(-1, P, H)[
         [spec.src(i) for i in range(L)]].reshape(-1, H)
-    wpq = _fake_w(wp, D, wformat) * H ** -0.5
+    wpq = _fake_w(wp, D, pf) * H ** -0.5
     gpl = np.asarray(W["model.per_layer_projection_norm.weight"], f64) * 2 ** -0.5
     K, V = {}, {}
     out = []
@@ -423,13 +427,14 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
             p = f"model.layers.{spec.src(i)}."
             a = p + "self_attn."
             kind, d = spec.kinds[i], spec.hd(i)
+            fa, fg, fd, fp = lf[i]
             c, s_ = rope_tables(spec, pos, kind)
             h = _fake_q(_norm(x, W[p + "input_layernorm.weight"], spec.eps), D)
-            q = (w(a + "q_proj.weight") @ h).reshape(spec.n_q, d)
+            q = (w(a + "q_proj.weight", fa) @ h).reshape(spec.n_q, d)
             q = _rot(_norm(q, W[a + "q_norm.weight"], spec.eps), c, s_, d // 2)
             if spec.kv_src[i] == i:
-                k = (w(a + "k_proj.weight") @ h).reshape(spec.n_kv, d)
-                v = (w(a + "v_proj.weight") @ h).reshape(spec.n_kv, d)
+                k = (w(a + "k_proj.weight", fa) @ h).reshape(spec.n_kv, d)
+                v = (w(a + "v_proj.weight", fa) @ h).reshape(spec.n_kv, d)
                 k = _rot(_norm(k, W[a + "k_norm.weight"], spec.eps), c, s_, d // 2)
                 K.setdefault(i, []).append(_fake_q(k, D))
                 V.setdefault(i, []).append(_fake_q(_norm(v, None, spec.eps), d))
@@ -444,14 +449,15 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
                 ppad = np.zeros(-(-T // D) * D)
                 ppad[:T] = pp
                 o[hq] = (_fake_q(ppad, D)[:T] @ Vh[hq // G]) / pp.sum()
-            att = w(a + "o_proj.weight") @ _fake_q(o.reshape(-1), D)
+            att = w(a + "o_proj.weight", fa) @ _fake_q(o.reshape(-1), D)
             x = x + _norm(att, W[p + "post_attention_layernorm.weight"], spec.eps)
             h = _fake_q(_norm(x, W[p + "pre_feedforward_layernorm.weight"], spec.eps), D)
-            m = w(p + "mlp.down_proj.weight") @ _fake_q(
-                _gelu(w(p + "mlp.gate_proj.weight") @ h) * (w(p + "mlp.up_proj.weight") @ h), D)
+            m = w(p + "mlp.down_proj.weight", fd) @ _fake_q(
+                _gelu(w(p + "mlp.gate_proj.weight", fg) @ h) *
+                (w(p + "mlp.up_proj.weight", fg) @ h), D)
             x = x + _norm(m, W[p + "post_feedforward_layernorm.weight"], spec.eps)
-            g = _gelu(w(p + "per_layer_input_gate.weight") @ _fake_q(x, D)) * pli[i]
-            y = w(p + "per_layer_projection.weight") @ _fake_q(g, D)
+            g = _gelu(w(p + "per_layer_input_gate.weight", fp) @ _fake_q(x, D)) * pli[i]
+            y = w(p + "per_layer_projection.weight", fp) @ _fake_q(g, D)
             x = (x + _norm(y, W[p + "post_per_layer_input_norm.weight"], spec.eps)) * \
                 np.asarray(W[p + "layer_scalar"], f64)
         out.append(w(head, hf) @ _fake_q(_norm(x, W["model.norm.weight"], spec.eps), D))
@@ -482,9 +488,47 @@ def _mlp_chunk(f: int, D: int, q: int) -> int:
     return next((k for k in range(MLP_CHUNK - MLP_CHUNK % q, 0, -q) if f % k == 0), c)
 
 
-def _key(spec: Spec, i: int) -> tuple:
-    """What decides a layer block's layout: attention kind, own K / V, MLP width."""
-    return spec.kinds[i], spec.kv_src[i] == i, spec.ffn[i]
+def _key(spec: Spec, i: int, lf: tuple = ()) -> tuple:
+    """What decides a layer block's layout: attention kind, own K / V, MLP width, and the
+    layer's weight formats (layer_formats)."""
+    return spec.kinds[i], spec.kv_src[i] == i, spec.ffn[i], lf
+
+
+def layer_formats(spec: Spec, wformat: str, formats: str | None = None) -> tuple:
+    """Each layer's weight formats (attention, gate / up, down, its PLE gate and projection)
+    and the PLE projection's: `wformat`, except where `formats` says otherwise (None: the
+    OTPU_FORMATS environment variable, else spec.formats). `formats` is comma-separated
+    "kind=fmt" or "kind@a-b=fmt", checkpoint layers a..b (a range wins over the whole model);
+    the kinds are attn (q, k, v, o), mlp (gateup and down), gateup, down, ple (a layer's PLE
+    gate and projection; without a range, the PLE projection too). docs/gemma4_e4b.md."""
+    import os
+    if formats is None:
+        formats = os.environ.get("OTPU_FORMATS", spec.formats)
+    rules = []
+    for item in formats.replace(" ", "").split(","):
+        if not item:
+            continue
+        key, _, fmt = item.partition("=")
+        kind, _, span = key.partition("@")
+        lo, _, hi = span.partition("-")
+        if kind not in ("attn", "mlp", "gateup", "down", "ple") or \
+                fmt not in ("int8", "int4", "fp4") or (span and not (lo + hi).isdigit()):
+            raise ValueError(f"weight format {item!r}: kind[@a-b]=int8|int4|fp4")
+        rules.append((kind, int(lo) if span else 0, int(hi or lo) if span else 1 << 30,
+                      bool(span), fmt))
+
+    def get(kind, c, default):
+        hit = sorted((not r, i) for i, (k, lo, hi, r, _) in enumerate(rules)
+                     if k == kind and lo <= c <= hi)
+        return rules[hit[0][1]][4] if hit else default
+
+    lf = []
+    for i in range(spec.layers):
+        c = spec.src(i)
+        mlp = get("mlp", c, wformat)
+        lf.append((get("attn", c, wformat), get("gateup", c, mlp), get("down", c, mlp),
+                   get("ple", c, wformat)))
+    return tuple(lf), next((r[4] for r in rules if r[0] == "ple" and not r[3]), wformat)
 
 
 class _KV(KVDesc):
@@ -516,11 +560,13 @@ class Image:
     the host-written inputs of a per-position or prefill run (the gathered embedding and PLE
     rows, the RoPE rows), the logits, and the per-layer inputs [rows, layers, ple_dim].
 
-    Formats: `wformat` for the layers' projections and the PLE projection, `head_format` for
-    the LM head (the embedding table too), `ple_format` for the PLE table ("int8", "int4",
-    "fp4"). `ple_host`: the PLE table stays on the host (docs/gemma4_e4b.md): the image holds a
-    slot of `rows` records, which the host writes before each run (host_rows; the records of
-    the run's tokens, read from ple_store, which build fills) and the gathers read at the row.
+    Formats: `wformat` for the layers' projections and the PLE projection, except where
+    `formats` sets a kind's format per layer (layer_formats: a layer block's layout and its
+    loop follow its formats), `head_format` for the LM head (the embedding table too),
+    `ple_format` for the PLE table ("int8", "int4", "fp4"). `ple_host`: the PLE table stays on
+    the host (docs/gemma4_e4b.md): the image holds a slot of `rows` records, which the host
+    writes before each run (host_rows; the records of the run's tokens, read from ple_store,
+    which build fills) and the gathers read at the row.
     None for either (and OTPU_PLE_FORMAT / OTPU_PLE_HOST unset): the table on the card in int8
     if the image then fits 4 GiB, else in fp4, else on the host in int8.
     """
@@ -528,7 +574,7 @@ class Image:
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
                  ple_format: str | None = None, block: int = ATTN_BLOCK,
-                 ple_host: bool | None = None):
+                 ple_host: bool | None = None, formats: str | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Gemma 4 runs one sequence: batch=1")
@@ -545,7 +591,8 @@ class Image:
                     if not (h and f != "int8" and ple_format is None)]
             for ple_format, ple_host in opts:           # the first that fits (else the last)
                 if Image(spec, replace(cfg, DRAM_BYTES=1 << 40), cap, 1, rows, wformat,
-                         head_format, lookup, ple_format, block, ple_host).nbytes <= 1 << 32:
+                         head_format, lookup, ple_format, block, ple_host,
+                         formats).nbytes <= 1 << 32:
                     break
         self.ple_host = bool(ple_host)
         D, H, P, L = cfg.D, spec.hidden, spec.ple_dim, spec.layers
@@ -555,7 +602,8 @@ class Image:
         self.block = block
         self.wformat, self.head_format, self.ple_format = wformat, head_format or wformat, \
             ple_format
-        rb = lambda k: Q.row_bytes(k, wformat, D)                       # noqa: E731
+        self.lf, self.pformat = layer_formats(spec, wformat, formats)
+        rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
         self.v_loc = spec.vocab
         self.ring = min(cap, spec.window + RING_BLOCKS * block)         # sliding cache slots
         hs, hg, rot = spec.head_dim, spec.global_head_dim, spec.global_rot
@@ -571,37 +619,38 @@ class Image:
                    "logits": b.alloc(4 * spec.vocab * R), "pli": b.alloc(4 * R * L * P),
                    "mask": b.alloc(4 * 2 * block), "z2": b.alloc(4 * 2 * block),
                    "g_pln": b.alloc(4 * P)}
-        self.wproj = (b.alloc(L * P * rb(H)), b.alloc(4 * L * P * (H // D)))
+        self.wproj = (b.alloc(L * P * rb(H, self.pformat)), b.alloc(4 * L * P * (H // D)))
         # layer blocks: one layout per key
-        self.dchunk = {f: _mlp_chunk(f, D, D if wformat == "int8" else 2 * D)
-                       for f in set(spec.ffn)}
+        self.dchunk = {(f, fd): _mlp_chunk(f, D, D if fd == "int8" else 2 * D)
+                       for f, (_, _, fd, _) in zip(spec.ffn, self.lf)}
         self.bofs, self.bsize = {}, {}
         for i in range(L):
-            k = _key(spec, i)
+            k = self._key(i)
             if k in self.bofs:
                 continue
-            kind, own, ff = k
+            kind, own, ff, (fa, fg, fd, fp) = k
             d = hg if kind == FULL else hs
             nq = spec.n_q * d
             lb = _Bump()
             o = {n: lb.alloc(4 * H) for n in ("g_in", "g_attn", "g_pre", "g_ffn", "g_ple")}
             o["ls"], o["qn"] = lb.alloc(4), lb.alloc(4 * d)
-            mats = {"wq": (nq, H), "wo": (H, nq), "wg": (ff, H), "wu": (ff, H),
-                    "wpg": (P, H), "wpp": (H, P)}
+            mats = {"wq": (nq, H, fa), "wo": (H, nq, fa), "wg": (ff, H, fg), "wu": (ff, H, fg),
+                    "wpg": (P, H, fp), "wpp": (H, P, fp)}
             if own:
                 o["kn"] = lb.alloc(4 * d)
-                mats.update(wk=(spec.n_kv * d, H), wv=(spec.n_kv * d, H))
-            for n, (r, c) in mats.items():
-                o[n] = (lb.alloc(r * rb(c)), lb.alloc(4 * r * (c // D)))
-            C = self.dchunk[ff]
-            o["wd"] = [(lb.alloc(H * rb(C)), lb.alloc(4 * H * (C // D))) for _ in range(ff // C)]
+                mats.update(wk=(spec.n_kv * d, H, fa), wv=(spec.n_kv * d, H, fa))
+            for n, (r, c, f) in mats.items():
+                o[n] = (lb.alloc(r * rb(c, f)), lb.alloc(4 * r * (c // D)))
+            C = self.dchunk[ff, fd]
+            o["wd"] = [(lb.alloc(H * rb(C, fd)), lb.alloc(4 * H * (C // D)))
+                       for _ in range(ff // C)]
             if own:
                 ck = self.ring if kind == SLIDE else cap
                 o["kv"] = [{"k": lb.alloc(ck * self.ps), "vt": lb.alloc(d * ck),
                             "vs": lb.alloc(4 * ck)} for _ in range(spec.n_kv)]
             o["mats"] = mats
             self.bofs[k], self.bsize[k] = o, (lb.next + 4095) // 4096 * 4096
-        self.runs = plan([_key(spec, i) for i in range(L)])
+        self.runs = plan([self._key(i) for i in range(L)])
         # a unit's own repeated part (4 sliding layers of 4 sliding + 1 global) loops again,
         # inside: {run's first layer: [(first element, part, repeats, the part's bytes)]}
         self.subs = {first: [(e0, su, r, sum(self.bsize[k] for k in su))
@@ -641,6 +690,9 @@ class Image:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
                               f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
 
+    def _key(self, i: int) -> tuple:
+        return _key(self.spec, i, self.lf[i])
+
     def _kv_bytes(self, i: int) -> int:
         d = self.spec.hd(i)
         ck = self.ring if self.spec.kinds[i] == SLIDE else self.cap
@@ -677,14 +729,14 @@ class Image:
                                            np.full(self.block, np.inf, np.float32)]))
         rows = [r for i in range(L) for r in range(spec.src(i) * P, (spec.src(i) + 1) * P)]
         tasks.append((self.wproj, ("mat", "model.per_layer_model_projection.weight",
-                                   ("rows", tuple(rows)), H ** -0.5, self.wformat, D)))
+                                   ("rows", tuple(rows)), H ** -0.5, self.pformat, D)))
         norms = {"g_in": "input_layernorm", "g_attn": "post_attention_layernorm",
                  "g_pre": "pre_feedforward_layernorm", "g_ffn": "post_feedforward_layernorm",
                  "g_ple": "post_per_layer_input_norm"}
         for i in range(L):
             p = f"model.layers.{spec.src(i)}."
             a = p + "self_attn."
-            k = _key(spec, i)
+            k = self._key(i)
             o, base = self.bofs[k], self._off(i).static()
             for n, hf in norms.items():
                 put(base + o[n], f32(W[p + hf + ".weight"]))
@@ -698,12 +750,13 @@ class Image:
                 src.update(wk=a + "k_proj", wv=a + "v_proj")
             for n, hf in src.items():
                 tasks.append((tuple(base + x for x in o[n]),
-                              ("mat", hf + ".weight", None, 1.0, self.wformat, D)))
-            C = self.dchunk[k[2]]
+                              ("mat", hf + ".weight", None, 1.0, o["mats"][n][2], D)))
+            fd = self.lf[i][2]
+            C = self.dchunk[k[2], fd]
             for j, pair in enumerate(o["wd"]):
                 tasks.append((tuple(base + x for x in pair),
                               ("mat", p + "mlp.down_proj.weight", ("cols", j * C, (j + 1) * C),
-                               1.0, self.wformat, D)))
+                               1.0, fd, D)))
         head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
         rb = Q.row_bytes(H, self.head_format, D)
         for r in range(0, spec.vocab, HEAD_CHUNK):
@@ -827,10 +880,9 @@ class Image:
     def descriptors(self, sid: int = 0) -> SimpleNamespace:
         spec, cfg = self.spec, self.cfg
         D, H, P, L, R = cfg.D, spec.hidden, spec.ple_dim, spec.layers, self.rows
-        fm, wf = self.wformat, Q.mxu_wf(self.wformat)
 
         def kv(li, off):
-            d, o = spec.hd(li), self.bofs[_key(spec, li)]
+            d, o = spec.hd(li), self.bofs[self._key(li)]
             ck = self.ring if spec.kinds[li] == SLIDE else self.cap
             return _KV({j: {n: off + v for n, v in e.items()} for j, e in enumerate(o["kv"])},
                        ck, d, D, self.ps)
@@ -839,8 +891,8 @@ class Image:
             """Descriptors of layer li (static), or of the layer at li's place in its run's
             unit at iteration `it` (a loop variable) and, jt = (loop variable, layers, bytes),
             at iteration jt of the unit's inner loop over a repeated part of it."""
-            k = _key(spec, li)
-            kind, own, ff = k
+            k = self._key(li)
+            kind, own, ff, (_, _, fd, _) = k
             o, off = self.bofs[k], self._off(li, it)
             if jt is not None:
                 off = off + Affine.of(jt[0]) * jt[2]
@@ -850,12 +902,12 @@ class Image:
                                     for n in ("g_in", "g_attn", "g_pre", "g_ffn", "g_ple")})
             ns.ls = Tensor(off + o["ls"], (1,), (1,))
             ns.qn = Tensor(off + o["qn"], (d,), (1,))
-            for n, (r, c) in o["mats"].items():
+            for n, (r, c, f) in o["mats"].items():
                 da, sa = o[n]
-                setattr(ns, n, QTensor(off + da, off + sa, (r, c), Q.row_bytes(c, fm, D),
-                                       4 * (c // D), D, wf=wf))
-            C = self.dchunk[ff]
-            rc = Q.row_bytes(C, fm, D)
+                setattr(ns, n, QTensor(off + da, off + sa, (r, c), Q.row_bytes(c, f, D),
+                                       4 * (c // D), D, wf=Q.mxu_wf(f)))
+            C, wf = self.dchunk[ff, fd], Q.mxu_wf(fd)
+            rc = Q.row_bytes(C, fd, D)
             parts = tuple(QTensor(off + da, off + sa, (H, C), rc, 4 * (C // D), D, wf=wf)
                           for da, sa in o["wd"])
             ns.wd = QTensor(parts[0].data, parts[0].scale, (H, ff), rc, 4 * (C // D), D,
@@ -885,7 +937,7 @@ class Image:
             logitsr=_tdesc(self.io["logits"], (R, spec.vocab)),
             pli=_tdesc(self.io["pli"], (R, L, P)),
             mask=_tdesc(self.io["mask"], (2, self.block)), z2=self.io["z2"],
-            wproj=_qdesc(*self.wproj, L * P, H, D, fm),
+            wproj=_qdesc(*self.wproj, L * P, H, D, self.pformat),
             head=_qdesc(*self.head, spec.vocab, H, D, self.head_format), v_loc=spec.vocab,
             ple=QTensor(Affine(self.ple), Affine(self.ple + self.ple_S * (
                 D if self.ple_format == "int8" else D // 2)),

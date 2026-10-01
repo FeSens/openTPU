@@ -3,6 +3,7 @@ per-layer embeddings gathered on the device, against Hugging Face transformers. 
 model always runs; the real model's programs are compiled when its config is in
 models/gemma-4-E2B."""
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -95,6 +96,36 @@ def test_tiny_matches_hf_and_emulation(tiny):
     assert _cos(dev[:12], emu).min() > 0.99
 
 
+MIX = "attn@0-2=fp4,down@3-5=fp4,gateup@6-8=fp4,ple@6-8=fp4"
+
+
+def test_per_layer_formats(tiny):
+    """Weight formats per layer and kind (Spec.formats, docs/gemma4_e4b.md): a layer block's
+    layout follows its formats, so the loops split where they change. A 4-row prefill equals
+    token-by-token decoding bit for bit, and the device follows the emulation of the same
+    formats, closer than the all-int8 emulation."""
+    _, W, spec = tiny
+    mix = replace(spec, formats=MIX)
+    img = mix.image(_cfg(), 1024)
+    assert [(f, len(u), r) for f, u, r in img.runs] == [(0, 1, 2), (2, 1, 1), (3, 1, 2),
+                                                         (5, 1, 1), (6, 1, 1), (7, 1, 2)]
+    assert img.lf[:3] == (("fp4", "int8", "int8", "int8"),) * 3
+    assert img.lf[3:6] == (("int8", "int8", "fp4", "int8"),) * 3
+    assert img.lf[6:] == (("int8", "fp4", "int8", "fp4"),) * 3 and img.pformat == "int8"
+    assert img.nbytes < spec.image(_cfg(), 1024).nbytes
+    with pytest.raises(ValueError, match="weight format"):
+        G.layer_formats(spec, "int8", "mlp@0-2=fp8")
+    toks = [int(t) for t in np.random.default_rng(8).integers(0, 1000, 12)]
+    a = Engine(mix, W, cap=1024, cfg=_cfg())
+    b = Engine(mix, W, cap=1024, cfg=_cfg())
+    dev = np.array([G.softcap(spec, b.step(t)) for t in toks])
+    assert np.array_equal(G.softcap(spec, a.prefill(toks, chunk=4)), dev[-1])
+    emu = G.softcap(spec, G.emulated_logits(mix, W, toks))
+    e8 = G.softcap(spec, G.emulated_logits(spec, W, toks))
+    assert _cos(dev, emu).min() > 0.99
+    assert np.abs(dev - emu).mean() < 0.7 * np.abs(dev - e8).mean()
+
+
 @pytest.mark.parametrize("ple", ["int8", "fp4"])
 def test_records_roundtrip(ple):
     """pack_records / dequant_records: the device's gather values of a packed table."""
@@ -105,13 +136,16 @@ def test_records_roundtrip(ple):
     assert np.abs(back - rows).max() / np.abs(rows).max() < (0.005 if ple == "int8" else 0.15)
 
 
-@pytest.mark.parametrize("wf,ple", [("int8", "int8"), ("fp4", "fp4")])
-def test_resident_gathers_are_bit_exact(tiny, wf, ple, monkeypatch):
+@pytest.mark.parametrize("wf,ple,fm", [("int8", "int8", ""), ("fp4", "fp4", ""),
+                                       ("int8", "int8", MIX)], ids=["int8", "fp4", "mix"])
+def test_resident_gathers_are_bit_exact(tiny, wf, ple, fm, monkeypatch):
     """Resident decode gathers the embedding and PLE rows on the device and computes its
     attention masks at the run-time position: the logits equal the per-position programs'
-    (host-written rows), bit for bit, across the first bucket boundary."""
+    (host-written rows), bit for bit, across the first bucket boundary; also with formats per
+    layer (OTPU_FORMATS)."""
     _, W, spec = tiny
     monkeypatch.setenv("OTPU_PLE_FORMAT", ple)
+    monkeypatch.setenv("OTPU_FORMATS", fm)
     toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 300)]
     a = Engine(spec, W, cap=1024, cfg=_cfg(), wformat=wf, resident=True)
     b = Engine(spec, W, cap=1024, cfg=_cfg(), wformat=wf)
