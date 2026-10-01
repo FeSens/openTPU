@@ -56,8 +56,9 @@ def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) 
 
 
 def host_mem() -> dict | None:
-    """The host's memory now, GB (Linux /proc): this process's and its children's resident
-    (rss, its peak hwm) and swapped, the system's available, page cache, anonymous and swap
+    """The host's memory now, GB (Linux /proc): this process's resident (rss, its peak hwm;
+    rss_file the mapped files' pages, which the page cache holds and may drop) and swapped, its
+    children's resident and swapped, the system's available, page cache, anonymous and swap
     used."""
     def kb(path, keys):
         try:
@@ -66,7 +67,7 @@ def host_mem() -> dict | None:
                         if k in keys}
         except OSError:
             return {}
-    me = kb("/proc/self/status", ("VmRSS", "VmHWM", "VmSwap"))
+    me = kb("/proc/self/status", ("VmRSS", "VmHWM", "VmSwap", "RssFile"))
     if not me:
         return None
     kids = {"VmRSS": 0, "VmSwap": 0}
@@ -82,7 +83,8 @@ def host_mem() -> dict | None:
                              "SwapFree"))
     gb = lambda v: round(v / 1e6, 2)            # noqa: E731 (kB)
     return dict(rss=gb(me.get("VmRSS", 0)), hwm=gb(me.get("VmHWM", 0)),
-                swap=gb(me.get("VmSwap", 0)), children_rss=gb(kids["VmRSS"]),
+                rss_file=gb(me.get("RssFile", 0)), swap=gb(me.get("VmSwap", 0)),
+                children_rss=gb(kids["VmRSS"]),
                 children_swap=gb(kids["VmSwap"]), total=gb(m.get("MemTotal", 0)),
                 available=gb(m.get("MemAvailable", 0)), cached=gb(m.get("Cached", 0)),
                 anon=gb(m.get("AnonPages", 0)),

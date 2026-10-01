@@ -1185,8 +1185,9 @@ After session 9's 35B (the same misses and DMA, staging 10.5 -> 20-32 s), moe_ca
 - `host_decode_s.stage_wait`: staging's waits for a free staging pair, the DMA thread's
   (`BoardDram.wait_s`); the rest of `stage` is the reads and the copies;
 - `pool_warm.at_end`: the pool's bytes in the page cache after the decode, beside `at_decode`;
-- `host_mem` at decode and at its end: the process's and its children's (the compile worker)
-  resident and swapped GB, and the host's available, page cache, anonymous and swap used;
+- `host_mem` at decode and at its end: the process's and its children's (the compile workers)
+  resident and swapped GB (`rss_file`: the process's mapped files, page cache it may lose), and
+  the host's available, page cache, anonymous and swap used;
 - `device_counters`: the free-running counters' change over the decode (SNAP; MXU_BUSY, DMA_BUSY
   with the WAITW stalls, DRAM_RD / WR, INSTR, ...);
 - `misses_per_request_decode`: each request's misses (a token's layers in order).
