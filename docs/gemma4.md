@@ -248,15 +248,41 @@ against float's 1.601, the argmax float's at 15 of them; with g2 folded 2.508, 9
 | fp4 | int8 | int8 | 0.2611 | +0.0503 | 1.298 | 0.971 |
 | fp4 | fp4 | int8 | 0.3101 | +0.0992 | 1.364 | 0.958 |
 
-- int8 costs nothing: the int8 model is float's to 1e-4 in NLL.
-- fp4 experts cost +0.024, the fp4 head +0.012 (+0.033 with both), fp4 dense layers (attention
-  and the dense MLP) +0.050; fp4 dense layers and fp4 experts together +0.099, more than the
-  sum.
-- The experts are where 4-bit pays: their slots on the card double. The dense layers and the
-  head set the rest of the card: with fp4 experts (3.45 MB a slot; cap 4096, the lookup
-  tables), int8 dense layers leave 420 slots (14 a layer) with the int8 head and 540 with the
-  fp4 head, fp4 dense layers 660 and 780; a decode token reads 1725 MB of int8 dense layers
-  or 911 MB of fp4, and 761 MB of int8 head or 392 MB of fp4.
+The model knows this text (ppl 1.235), which can hide a format's cost. The first 900 tokens of
+docs/offload.md, written for this repository in September 2026 (a text no model has seen;
+float ppl 10.02):
+
+| Dense layers | Experts | Head | NLL | ΔNLL | ppl | Top-1 = float's |
+|---|---|---|---:|---:|---:|---:|
+| float | float | float | 2.3045 | | 10.02 | 1 |
+| int8 | int8 | int8 | 2.3179 | +0.0134 | 10.15 | 0.951 |
+| int8 | fp4 | int8 | 2.3380 | +0.0334 | 10.36 | 0.939 |
+| int8 | fp4 | fp4 | 2.3404 | +0.0359 | 10.39 | 0.920 |
+
+- int8 costs nothing on Austen and +0.013 on the new text.
+- fp4 experts cost +0.024 over int8 on Austen and +0.020 on the new text; the fp4 head on top
+  of them +0.009 and +0.002; fp4 dense layers (attention and the dense MLP) +0.050 (Austen),
+  and with fp4 experts +0.099, more than the sum.
+
+**The choice: int8 dense layers, fp4 experts, the fp4 head.** The dense layers and the head
+set the card's room for expert slots: with fp4 experts (3.45 MB a slot; cap 4096, the lookup
+tables) int8 dense layers leave 420 slots (14 a layer) with the int8 head and 540 with the fp4
+head, fp4 dense layers 660 and 780; a decode token reads 1725 MB of int8 dense layers or 911 MB
+of fp4, and 761 MB of int8 head or 392 MB of fp4. offload's event model (`cachesim.py`, four
+2048-token texts, decayed-use slots, the host of [offload.md](offload.md) section 11.3), tok/s
+(relative: the 35B ran about 15% under the same model on the card):
+
+| Dense layers / head | Slots | Misses / token (of 240) | Gen1 | Gen2 (2.8 GB/s) | All resident |
+|---|---:|---:|---:|---:|---:|
+| int8 / int8 | 420 | 83.8 | 2.66 | 3.54 | 4.26 |
+| int8 / fp4 | 540 | 67.5 | 3.19 | 4.11 | 4.79 |
+| fp4 / int8 | 660 | 55.5 | 3.70 | 4.77 | 5.64 |
+| fp4 / fp4 | 780 | 45.9 | 4.45 | 5.67 | 6.62 |
+
+Against the bar of about +0.01 NLL per +10% decode rate: the fp4 head buys +20% for +0.009
+(Austen) / +0.002 (new text); fp4 dense layers +39% for +0.075, twice the bar. fp4 experts
+about double the rate of int8 experts (offload.md section 11.3) for +0.020-0.024; int8 experts
+stay an opt-in for accuracy.
 
 Two earlier runs with g2 folded are void: int8 layers, fp4 experts and the int8 head gave ppl
 127.3, fp4 layers 138.4.
