@@ -926,3 +926,110 @@ tool is covered too, and `PoolFile.resident` (on Linux: a file dropped from the 
 warmed).
 tests/test_lfm2_moe.py runs the fake card with CHASH's map and a split-format pool file,
 bit for bit against the ISA simulator.
+
+## 11. Gemma 4 26B-A4B: design note
+
+This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
+note covers the model, how its layer maps onto `gemma4.py` and `moe.py`, the fit, and the
+expected rate. The code waits for review, and is split with the gemma4 agent (below).
+
+### 11.1 The model
+
+From `config.json` and transformers' `modeling_gemma4.py`:
+- 30 layers, hidden 2816, vocabulary 262,144, tied embedding, logits soft-capped at 30. No
+  per-layer embeddings (`hidden_size_per_layer_input` 0) and no KV-shared layers.
+- Attention:
+  - 25 sliding layers: window 1024, 16 query heads and 8 KV heads of 256.
+  - 5 full layers (every sixth): 16 query heads and 2 KV heads of 512, K = V. A full layer has
+    no `v_proj`. V is `v_norm` (unit RMSNorm) of the K projection's raw output; K is
+    `k_norm` then RoPE. The cache still holds both.
+- Every layer has a MoE block beside a dense MLP. With r the residual after attention:
+
+      dense = post_ffn_norm_1(mlp(pre_ffn_norm(r)))                  2112 wide, GELU-tanh
+      w, ids = router(r)
+      moe   = post_ffn_norm_2(sum_i w_i expert_ids[i](pre_ffn_norm_2(r)))
+      x     = (r + post_ffn_norm(dense + moe)) * layer_scalar
+
+  - The router: unit RMSNorm of r, times `router.scale` and H^-0.5, then `router.proj`
+    [128, H], a softmax over all 128, the top 8 renormalized, and each weight times
+    `router.per_expert_scale[id]`.
+  - Experts: 128 per layer, top 8, width 704, GELU-tanh. The checkpoint stores them fused per
+    layer: `experts.gate_up_proj` [128, 1408, 2816] (gate rows first) and `experts.down_proj`
+    [128, 2816, 704].
+- The checkpoint is 51.6 GB in bf16. omarchy has it whole. opentpu's copy in
+  ~/openTPU/models is an interrupted download: the first shard (49.9 GB) is missing, with a
+  17.9 GB `.incomplete` file in `.cache` dated 2026-09-30 00:07.
+
+### 11.2 How the layer maps
+
+On `moe.py`'s side (offload) no new card mechanism is needed:
+- **The expert slot.** `ExpertFormat` with F padded from 704 to 768. fp4 blocks run 128
+  along K, and gemma4's `ffn % 2D` check applies. The padding is zero rows of gate and up and
+  zero columns of down, which is exact: gelu(0) * 0 = 0. The expert is 3.45 MB instead of 3.16.
+- **Folds at packing, no card ops:**
+  - `per_expert_scale[e]` into expert e's W_down (it scales the expert's output linearly);
+  - `router.scale` * H^-0.5 into `router.proj`'s columns;
+  - `pre_ffn_norm_2`'s gain into the experts' gate and up columns.
+  The router and the experts then share one input: the unit RMSNorm of r, quantized once, as
+  `moe_ffn` does now. The emulation must first show that folding the gain before the 4-bit
+  quantization costs no accuracy against a second quantized input. If it does cost, the
+  experts get their own normed input (one more VPU pass per layer).
+- **The rule.** The softmax rule as written (`MoESpec.rule` "softmax"): the softmax of the 8
+  largest logits is the renormalized top 8 of the full softmax. The order is the same, ties to
+  the first.
+- **`MoESpec.act`.** GELU-tanh in the expert (`swiglu_down(act=gelu_tanh)`, as gemma4's dense
+  MLP).
+- **`moe_ffn` split into its parts.** It now returns `x + acc`. Gemma needs the experts' sum
+  alone (`post_ffn_norm_2` is an RMSNorm of the sum), and wants its dense MLP to run after
+  the request is posted, while the host streams. That is section 4's `d_post`, worth +14% in
+  the model. So `moe_ffn` takes `beside` (code to emit after the post, before the expert
+  loops) and can return the weighted sum without the residual. LFM2's and Qwen3.5's programs
+  stay word for word the same.
+
+On `gemma4.py`'s side (gemma4):
+- `Spec.from_hf` accepts `enable_moe_block` and `attention_k_eq_v`.
+- Global layers get their own KV head count (2 against 8) and K = V. ACT RAM holds 16 x 512
+  = 8192 (board: 128 blocks of 128).
+- The dense MLP is padded from 2112 to 2304 (`ffn % 2D`), or the check is relaxed to D (2176).
+- The layer calls `moe_ffn` with the dense MLP as `beside` and combines the two norms. The
+  image places the router weights and norms, and `Layout`'s slots after the rest.
+- The generate loop polls the expert server too (qwen3.Engine already wires every server).
+
+### 11.3 The fit and the rate
+
+On the card: the non-expert weights are 1.64 GB (survey, fp4 with the int8 head and
+embedding: 761 MB of it) plus 26 MB of dense padding. KV is about 0.2 GB: the 25 sliding
+rings of 1024 + a block, 8 x 256, and the 5 full layers at 4096 positions, 2 x 512. With
+0.3 GB kept for KV, I/O and programs, the rest holds the slots.
+
+`cachesim.py` replays the four 2048-token traces through the event model, with:
+- the per-layer LRU, warmed from the other texts' profile;
+- the expert at 3.45 MB (`--expert-bits 4.636`) and the dense MLP's 9.5 MB after the router;
+- the link at session 2's 1.4 GB/s, 50 us a DMA call, and a 450 us host lead (the first
+  staging in parts plus the poll).
+
+Calibration: the same model with session 2's effective host (staging-bound: 0.99 GB/s, 1.8
+ms lead) gives the 35B 2.84 tok/s, against 2.80 measured on the card (device). With the host
+as in 10.1 it gives 3.94.
+
+| gemma-4-26B-A4B | slots (per layer) | misses / token (of 240) | MB / token streamed | tok/s | all resident (bound) |
+|:--|--:|--:|--:|--:|--:|
+| int8 head | 682 (22.7) | 62.5 | 216 | 3.51 | 5.71 |
+| fp4 head (`--head-bits 4.25`) | 789 (26.3) | 53.2 | 184 | 4.19 | 6.72 |
+
+- The fp4 head pays twice: 369 MB fewer bytes a token, and 107 more slots. On E2B it is an
+  opt-in (cosine 0.974 -> 0.971, +14% decode), and its accuracy on the 26B is to be measured.
+- Prefetch still loses here (3.0-3.7 against 3.5-4.2 without).
+
+### 11.4 Host side and plan
+
+- **Host files.** opentpu gets a stripped checkpoint (the non-expert weights, about 7.4 GB in
+  bf16, 4.8 GB of it the text model's) and a split-format pool (3840 experts x 3.45 MB = 13.2 GB fp4), both made on omarchy
+  from the whole checkpoint. The RAM tier then reads 13.2 GB into a 31 GB host's page cache.
+- **Plan.**
+  1. Emulation on omarchy (float64 + fake quantization against HF bf16, a few prompts): the
+     folds and padding, fp4 against int8 head, greedy tokens.
+  2. `moe.py`'s parts (offload) and gemma4's attention and from_hf (gemma4), meeting at a
+     tiny random Gemma4-MoE model in tests. The layer composition is checked against HF and
+     the ISA simulator bit for bit, the card's side with the live fake card and a split pool.
+  3. The full model's ISA-simulator reference on omarchy, then a card session.
