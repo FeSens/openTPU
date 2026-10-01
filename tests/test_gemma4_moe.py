@@ -145,6 +145,25 @@ def test_resident_is_bit_exact(kv, wf):
         assert np.array_equal(a.step(t), b.step(t))
 
 
+def test_sliding_k_rows_at_their_own_stride(kv):
+    """Spec.k_rows (from_hf: MoE models): the sliding layers' K rows at a row and its scales
+    (256 bytes here, not the RoPE row's 768): the same logits bit for bit, resident and
+    per-position, past the ring's wrap, and a smaller image."""
+    _, W, spec = kv
+    toks = [int(t) for t in np.random.default_rng(7).integers(0, 1000, 700)]
+    sk = G.replace(spec, k_rows=True)
+    a = Engine(sk, W, cap=1024, cfg=_cfg(), resident=True)
+    b = Engine(spec, W, cap=1024, cfg=_cfg(), resident=True)
+    c = Engine(sk, W, cap=1024, cfg=_cfg())
+    assert a.image.ks[G.SLIDE] == 256 and b.image.ks[G.SLIDE] == a.image.ps == 768
+    assert a.image.nbytes < b.image.nbytes
+    la, lb, lc = (e.prefill(toks[:680]) for e in (a, b, c))
+    assert np.array_equal(la, lb) and np.array_equal(la, lc)
+    for t in toks[680:]:
+        ra = a.step(t)
+        assert np.array_equal(ra, b.step(t)) and np.array_equal(ra, c.step(t))
+
+
 def test_chunked_prefill_is_bit_exact(kv):
     toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 11)]
     a, b = _engine(kv), _engine(kv)

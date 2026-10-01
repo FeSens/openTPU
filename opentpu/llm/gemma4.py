@@ -125,6 +125,8 @@ class Spec:
     experts: int = 0        # MoE beside each layer's MLP (0: none): experts, top-k, width
     top_k: int = 0
     expert_ffn: int = 0
+    k_rows: bool = False    # sliding K rows at their own stride, not the RoPE row's (Image.ks):
+                            # 26B-A4B's 8 KV heads x 25 layers, 414 -> 146 MB at 1152 slots
 
     @property
     def layers(self) -> int:
@@ -210,7 +212,7 @@ class Spec:
                     n_kv_global=gkv.pop() if gkv else 0, k_eq_v=kev,
                     experts=c["num_experts"] if moe else 0,
                     top_k=c["top_k_experts"] if moe else 0,
-                    expert_ffn=c["moe_intermediate_size"] if moe else 0)
+                    expert_ffn=c["moe_intermediate_size"] if moe else 0, k_rows=moe)
 
     def check(self, cfg: Config) -> None:
         D = cfg.D
@@ -708,8 +710,8 @@ def expert_format(spec: Spec, wformat: str, formats: str | None = None) -> str:
 
 class _KV(KVDesc):
     """qwen3's KV cache layout, but K rows `ps` bytes apart with each row's block scales right
-    after its data: a run-time position adds pos * ps to both (and to the RoPE row), one
-    argument word. A multi-row K append must go row by row (QST writes one row's scales after
+    after its data: a run-time position adds pos * ps to both (global layers: the RoPE row's
+    stride too, one argument word; sliding layers: their slot tpos * ps). A multi-row K append must go row by row (QST writes one row's scales after
     the other's)."""
 
     def __init__(self, heads: dict, cap: int, d: int, D: int, ps: int):
@@ -807,6 +809,11 @@ class Image:
         self.rw = hs + 2 * rot                  # a RoPE row: cos, sin (sliding), cos, sin (global)
         dmax = max(hs, hg)
         self.ps = -(-max(4 * self.rw, dmax + 4 * dmax // D) // D) * D  # K / RoPE row stride
+        # K rows of a kind: global layers' at a run-time position pos * ps (the RoPE row's
+        # argument word); sliding layers' too, or with spec.k_rows their own (a row and its
+        # scales: tpos * that, an argument word and address register more)
+        self.ks = {FULL: self.ps, SLIDE: -(-(hs + 4 * hs // D) // D) * D if spec.k_rows
+                   else self.ps}
         self.ple_S = GA.record_blocks(-(-L * P // D), ple_format) if P else 0  # record blocks
         self.ple_rec = GA.record_bytes(self.ple_S, ple_format, D) if P else 0
         b = _Bump()
@@ -854,7 +861,7 @@ class Image:
                        for _ in range(fp_ // C)]
             if own:
                 ck = self.ring if kind == SLIDE else cap
-                o["kv"] = [{"k": lb.alloc(ck * self.ps), "vt": lb.alloc(d * ck),
+                o["kv"] = [{"k": lb.alloc(ck * self.ks[kind]), "vt": lb.alloc(d * ck),
                             "vs": lb.alloc(4 * ck)} for _ in range(nkv)]
             o["mats"] = mats
             self.bofs[k], self.bsize[k] = o, (lb.next + 4095) // 4096 * 4096
@@ -914,7 +921,7 @@ class Image:
     def _kv_bytes(self, i: int) -> int:
         d = self.spec.hd(i)
         ck = self.ring if self.spec.kinds[i] == SLIDE else self.cap
-        return self.spec.kvh(i) * ck * (self.ps + d + 4)
+        return self.spec.kvh(i) * ck * (self.ks[self.spec.kinds[i]] + d + 4)
 
     def _off(self, li, it=None) -> Affine:
         """The block address of layer li (static), or of element li of its run's unit at
@@ -1147,7 +1154,7 @@ class Image:
             d, o = spec.hd(li), self.bofs[self._key(li)]
             ck = self.ring if spec.kinds[li] == SLIDE else self.cap
             return _KV({j: {n: off + v for n, v in e.items()} for j, e in enumerate(o["kv"])},
-                       ck, d, D, self.ps)
+                       ck, d, D, self.ks[spec.kinds[li]])
 
         def layer(li, it=None, jt=None):
             """Descriptors of layer li (static), or of the layer at li's place in its run's
