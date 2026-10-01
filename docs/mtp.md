@@ -798,6 +798,41 @@ run-time arguments from it (`run_words`), and stores it before the CHAIN.
 2. A card session against `generate_card`: tokens equal, and tok/s on the 2B, 0.8B and,
    if it fits, the 4B.
 
+### 10.1 Milestone 1: the loop on the ISA simulator
+
+`tools/mtp_decode.py --loop device --no-plain --want <phase 2's tokens>` (fp4, int8 head,
+cap 4096, the card's MCOLS 4 / PAIR / DSTEP / STREAM), 48 tokens per prompt. Every prompt
+gives plain greedy's tokens:
+
+| model | prompt | iterations / accepted | phase 2 (host loop) |
+|---|---|---|---|
+| 2B | 0 (chat, 30 tokens) | 29 / 18 | 29 / 18 |
+| 2B | 3 (code, 35) | 25 / 22 | 25 / 22 |
+| 2B | 7 (summary, 237) | 27 / 20 | 26 / 21 |
+| 0.8B | 0 | 29 / 18 | 29 / 19 |
+| 0.8B | 3 | 27 / 20 | 27 / 20 |
+| 0.8B | 7 | 28 / 19 | 28 / 20 |
+
+- Prompt 7 runs past position 256, so it covers E, D1 and the wrap into the next bucket.
+- The loop accepts less than phase 2 in two places, both by design:
+  - With one token left, n is 0 on the card. Phase 2 counted that iteration's draft.
+  - On the 2B's prompt 7, E at position 255 verifies no draft, which costs one iteration.
+
+The first run found a compiler bug: the verify's row 1 embedded a wrong row (at 16 DeltaNet
+heads, the 0.8B's and 2B's). A run-time argument whose register an address had taken
+moved into a released register at the first release, which was before row 1's token was
+used. A moved argument now goes into a register at that register's own release
+(`Builder._move_arg`). The tiny tests' 8 heads never move an argument, so
+`test_mtp_loop_on_the_device_is_plain_greedy[kh16]` runs 16.
+
+Programs at cap 4096 (instructions; every one fits its 8K slot):
+
+| model | V | E | D | D1 |
+|---|---|---|---|---|
+| 0.8B | 2395-2688 | 1979-2125 | 423-715 | 336-482 |
+| 2B | 2165-2458 | 1749-1895 | 363-655 | 276-422 |
+| 4B | 2648-3240 | 2133-2431 | 613-1197 | 424-716 |
+
 ## 11. Open questions
 
 - The MTP dataflow (section 6.1) is **confirmed against mlx_vlm 0.6.8**'s Qwen3.5 drafter:
