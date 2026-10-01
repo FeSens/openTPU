@@ -1558,5 +1558,21 @@ every row picks the same 8 experts):
 | global | 6.69 ms | 7.47 ms |
 
 With R = 2's real union (about 12 experts a run) that is about 4.1 ms a row, about 65 s to
-the first token at Gen1 against 183 s (2.8x; R = 1: about 96-101 s, 1.8-1.9x). On the card
-after the pooled slots.
+the first token at Gen1 against 183 s (2.8x; R = 1: about 96-101 s, 1.8-1.9x), with the pooled
+slots.
+
+On the card (2026-10-01, build B, Gen1, `tools/offload/sessions/layer_major.sh`, tree 678b976):
+the 26B as session 8's g26a (int8 layers, fp4 experts and head, 18 slots a layer by decayed
+use), 16 tokens after wiki.txt's first paragraph (124 prompt tokens), its prompt three ways.
+All three give the same prefill logits (sha256 90e6b6e06e19da99) and the same 16 tokens, HF's
+greedy ones; decode 2.53 tok/s each. With per-layer slots (not pooled):
+
+| prompt | prefill | requests | misses in the prompt |
+|:--|--:|--:|--:|
+| token by token (g26t16) | 45 s (363 ms a token) | 3720 | 9252 |
+| layer-major R = 1 (g26lm1) | 44 s | 3720 | 9252 |
+| layer-major R = 2 (g26lm2) | 35 s (282 ms a token) | 1860 | 9013 |
+
+R = 1 with per-layer slots sees token by token's requests in the same order per layer, so the
+same misses (10613 in the whole run, both). R = 2 is already 1.29x: two rows a run, and the
+union's repeats (-2.6% misses). The rest of the bound needs the pooled slots.
