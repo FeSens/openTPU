@@ -280,14 +280,19 @@ module otpu_mem_ch #(
   logic [6:0] x_arn, x_awn;                // 64-byte beats of the burst, minus one
   assign x_arn = 7'(({1'b0, x_arlen} + {7'b0, x_araddr[5:4]}) >> 2);
   assign x_awn = 7'(({1'b0, x_awlen} + {7'b0, x_awaddr[5:4]}) >> 2);
-  otpu_sfifo #(.W(32), .DEPTH(4)) u_xai (.clk(xclk), .rst(x_crst), .wvalid(xai_wv), .wready(xai_wr),
-    .wdata({x_arn, x_araddr[30:6]}), .rvalid(xai_rv), .rready(xai_rr), .rdata(xai_rd));
-  otpu_sfifo #(.W(27), .DEPTH(4)) u_xwi (.clk(xclk), .rst(x_crst), .wvalid(xwi_wv), .wready(xwi_wr),
-    .wdata({x_awaddr[5:4], x_awaddr[30:6]}), .rvalid(xwi_rv), .rready(xwi_rr), .rdata(xwi_rd));
-  otpu_sfifo #(.W(XRQ), .DEPTH(16)) u_xrq (.clk(xclk), .rst(x_crst), .wvalid(xrq_wv), .wready(xrq_wr),
-    .wdata({x_arid, x_arlen, x_araddr[5:4]}), .rvalid(xrq_rv), .rready(xrq_rr), .rdata(xrq_rd));
-  otpu_sfifo #(.W(XIDW + 7), .DEPTH(16)) u_xbq (.clk(xclk), .rst(x_crst), .wvalid(xbq_wv), .wready(xbq_wr),
-    .wdata({x_awid, x_awn}), .rvalid(xbq_rv), .rready(xbq_rr), .rdata(xbq_rd));
+  // their heads from registers (RO): the R, B and write-packing logic starts from flip-flops
+  otpu_sfifo #(.W(32), .DEPTH(4), .RO(1'b1)) u_xai (.clk(xclk), .rst(x_crst), .wvalid(xai_wv),
+    .wready(xai_wr), .wdata({x_arn, x_araddr[30:6]}), .rvalid(xai_rv), .rready(xai_rr),
+    .rdata(xai_rd));
+  otpu_sfifo #(.W(27), .DEPTH(4), .RO(1'b1)) u_xwi (.clk(xclk), .rst(x_crst), .wvalid(xwi_wv),
+    .wready(xwi_wr), .wdata({x_awaddr[5:4], x_awaddr[30:6]}), .rvalid(xwi_rv), .rready(xwi_rr),
+    .rdata(xwi_rd));
+  otpu_sfifo #(.W(XRQ), .DEPTH(16), .RO(1'b1)) u_xrq (.clk(xclk), .rst(x_crst), .wvalid(xrq_wv),
+    .wready(xrq_wr), .wdata({x_arid, x_arlen, x_araddr[5:4]}), .rvalid(xrq_rv), .rready(xrq_rr),
+    .rdata(xrq_rd));
+  otpu_sfifo #(.W(XIDW + 7), .DEPTH(16), .RO(1'b1)) u_xbq (.clk(xclk), .rst(x_crst),
+    .wvalid(xbq_wv), .wready(xbq_wr), .wdata({x_awid, x_awn}), .rvalid(xbq_rv), .rready(xbq_rr),
+    .rdata(xbq_rd));
   assign x_arready = !x_crst && xai_wr && xrq_wr;
   assign xai_wv    = x_arvalid && x_arready;
   assign xrq_wv    = xai_wv;
@@ -302,6 +307,8 @@ module otpu_mem_ch #(
   logic         x_wfirst, x_wpush, x_selw, x_rlastb;
   logic [511:0] x_wbuf, x_wdata_full;
   logic [63:0]  x_wstb, x_wstb_full;
+  logic [3:0]   x_wsfull;                // the lanes of x_wstb with every strobe set
+  logic         x_wfull;                 // x_wstb_full all set (no AND over its 64 bits)
   assign x_wlane  = x_wfirst ? xwi_rd[26:25] : x_wlane_r;
   assign x_wpush  = x_wlane == 2'd3 || x_wlast;
   assign x_selw   = xwi_rv && x_wvalid && x_wpush;
@@ -316,12 +323,14 @@ module otpu_mem_ch #(
   assign xq_wd    = x_selw ? {1'b1, 25'(xwi_rd[24:0] + x_woff)} : {1'b0, 25'(xai_rd[24:0] + x_roff)};
   assign x_wready = !x_crst && xwi_rv && (!x_wpush || (xq_wr && xd_wr));
   assign xd_wv    = x_wvalid && x_wready && x_wpush;
-  assign xd_wd    = {~&x_wstb_full, x_wstb_full, x_wdata_full};
+  assign x_wfull  = &x_wstrb && &(x_wsfull | (4'b1 << x_wlane));
+  assign xd_wd    = {~x_wfull, x_wstb_full, x_wdata_full};
   assign xai_rr   = xq_wv && !x_selw && x_rlastb;
   assign xwi_rr   = x_wvalid && x_wready && x_wlast;
   always_ff @(posedge xclk) begin
     if (x_crst) begin
       x_roff <= '0; x_woff <= '0; x_wlane_r <= '0; x_wfirst <= 1'b1; x_wbuf <= '0; x_wstb <= '0;
+      x_wsfull <= '0;
     end else begin
       if (xq_wv && !x_selw) x_roff <= x_rlastb ? '0 : x_roff + 1'b1;
       if (x_wvalid && x_wready) begin
@@ -329,9 +338,10 @@ module otpu_mem_ch #(
         x_wlane_r <= x_wlane + 1'b1;
         if (x_wpush) begin
           x_woff <= x_wlast ? '0 : x_woff + 1'b1;
-          x_wbuf <= '0; x_wstb <= '0;
+          x_wbuf <= '0; x_wstb <= '0; x_wsfull <= '0;
         end else begin
           x_wbuf <= x_wdata_full; x_wstb <= x_wstb_full;
+          x_wsfull[x_wlane] <= &x_wstrb;
         end
       end
     end
@@ -591,9 +601,12 @@ module otpu_mem_ch #(
 endmodule
 
 // Synchronous FIFO, first-word fall-through, distributed RAM (the channel bridge's queues).
+// RO = 1: the head entry from a register, so no path from rdata starts at the read pointer and
+// goes through the RAM; the same cycles (rdata differs only while rvalid is low).
 module otpu_sfifo #(
   parameter int W = 8,
-  parameter int DEPTH = 16
+  parameter int DEPTH = 16,
+  parameter bit RO = 1'b0
 ) (
   input  logic         clk,
   input  logic         rst,
@@ -609,7 +622,6 @@ module otpu_sfifo #(
   logic [AW:0] wp, rp;
   assign wready = (wp - rp) != (AW + 1)'(DEPTH);
   assign rvalid = wp != rp;
-  assign rdata  = mem[rp[AW-1:0]];
   always_ff @(posedge clk) begin
     if (rst) begin wp <= '0; rp <= '0; end
     else begin
@@ -618,4 +630,20 @@ module otpu_sfifo #(
     end
   end
   always_ff @(posedge clk) if (wvalid && wready) mem[wp[AW-1:0]] <= wdata;
+  if (RO) begin : g_ro
+    // the next head: on a pop the entry after it (this cycle's write if there is none), into an
+    // empty FIFO this cycle's write
+    logic [W-1:0]  head;
+    logic [AW-1:0] rp1;
+    logic          one;
+    assign rp1 = rp[AW-1:0] + 1'b1;
+    assign one = (wp - rp) == (AW + 1)'(1);
+    always_ff @(posedge clk) begin
+      if (rvalid && rready) head <= one ? wdata : mem[rp1];
+      else if (!rvalid)     head <= wdata;
+    end
+    assign rdata = head;
+  end else begin : g_ra
+    assign rdata = mem[rp[AW-1:0]];
+  end
 endmodule
