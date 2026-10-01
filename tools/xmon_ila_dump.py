@@ -9,7 +9,8 @@ import csv
 import sys
 
 HSK_X = ["awv", "awr", "wv", "wr", "wl", "bv", "br", "arv", "arr", "rv", "rr", "rl"]
-EV_X = ["WSHIFT", "RSHIFT", "WLAST", "RLAST", "WSTALL", "BSTALL", "RSTALL", "PROTO", "hs", "aw/w"]
+EV_X = ["WSHIFT", "RSHIFT", "WLAST", "RLAST", "WSTALL", "BSTALL", "RSTALL", "PROTO", "hs", "aw/w",
+        "N_FLAG"]
 HSK_N = ["cv0", "cv1", "cr0", "cr1", "we0", "we1", "wv0", "wv1", "wr0", "wr1", "rv0", "rv1"]
 EV_N = ["WBAD0", "WBAD1", "RBAD0", "RBAD1", "WOVF0", "WOVF1", "ROVF0", "ROVF1", "hs"]
 

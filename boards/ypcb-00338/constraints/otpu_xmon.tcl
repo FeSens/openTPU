@@ -3,7 +3,8 @@
 # Its clocks: clk (the core clock: the register side), xclk (XDMA's), uclk (channel 0's
 # controller). The crossings:
 #   - SNAP / CLEAR requests (toggles, clk) into xclk and uclk, their acknowledgements (toggles)
-#     back, and the sticky flags (bit by bit) into clk: ASYNC_REG pairs, one source period;
+#     back, the sticky flags (bit by bit) into clk, and channel 0's "a flag is set" into xclk (the
+#     ILA's trigger): ASYNC_REG pairs, one source period;
 #   - the shadows (xclk / uclk), read in clk through otpu_ctrl's read multiplexer: loaded only by a
 #     SNAP, read by the host after the SNAP's acknowledgement has crossed (microseconds later), so
 #     not timed.
@@ -26,6 +27,8 @@ xmon_md $c_xcl {c_xa_reg[0]} $t_xcl
 xmon_md $c_ucl {c_ua_reg[0]} $t_ucl
 xmon_md $c_xcl [lmap i {0 1 2 3 4 5 6 7} {string cat c_xf1_reg\[$i\]}] $t_xcl
 xmon_md $c_ucl [lmap i {0 1 2} {string cat c_nf1_reg\[$i\]}] $t_ucl
+# the ILA's channel-0 flag (debug builds with the ILA only)
+if {[llength [get_cells -quiet {x_nf_reg[0]}]]} { xmon_md $c_ucl {x_nf_reg[0]} $t_ucl }
 
 set sh [get_cells -quiet {sx_reg* sn_reg*}]
 puts "otpu_xmon.tcl: [llength $sh] shadow registers"

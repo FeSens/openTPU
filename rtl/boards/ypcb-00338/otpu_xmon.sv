@@ -55,8 +55,9 @@
 //   30, 31     N_REXP, N_RGOT: the first bad read beat's
 // Clock crossings: the requests and acknowledgements as toggles, the flags bit by bit, all through
 // ASYNC_REG pairs; the shadows are read in clk only after the acknowledgement crossed
-// (constraints/otpu_xmon.tcl). With OTPU_ILA defined (create_project.tcl at XMON) two ILAs
-// (otpu_ila_x in xclk, otpu_ila_n in uclk) take the registered signals and the check events.
+// (constraints/otpu_xmon.tcl). With OTPU_ILA defined (create_project.tcl at XMON) one ILA,
+// otpu_ila_x in xclk (Vivado's BASIC license tier takes one ILA per design), takes XDMA's master's
+// registered signals and the check events, channel 0's flags among them (synchronized).
 module otpu_xmon #(
   parameter int TW = 26,                     // watchdog: 2^TW xclk cycles (0.54 s at 125 MHz)
   parameter logic [31:0] MAGIC = 32'h584D_4F4E
@@ -368,30 +369,23 @@ module otpu_xmon #(
   end
 
 `ifdef OTPU_ILA
-  // the ILAs (create_project.tcl makes them at XMON): the registered signals and the events, each
+  // the ILA (create_project.tcl makes it at XMON): the registered signals and the events, each
   // probe a named signal (tools/xmon_ila.tcl finds the probes by these names)
+  (* ASYNC_REG = "TRUE" *) logic [1:0] x_nf = '0;    // a channel-0 flag set (uclk, sticky)
+  always_ff @(posedge xclk) x_nf <= {x_nf[0], |n_flag};
   wire [11:0] ix_hsk = hsk;
   wire [31:0] ix_awaddr = awa, ix_araddr = ara;
   wire [7:0]  ix_awlen = awl, ix_arlen = arl;
   wire [63:0] ix_wtagaddr = {wd[127:96], wd[63:32]}, ix_rtagaddr = {rd[127:96], rd[63:32]};
   wire [15:0] ix_ids = {awi, bi, ari, ri};
   // ix_ev: [7:0] the events (as FLAGS [7:0]), [8] a handshake on any channel (capture
-  // qualification: the cycles that moved), [9] on AW or W
-  wire [15:0] ix_ev = {6'd0, aw_hs || w_hs, aw_hs || w_hs || b_hs || ar_hs || r_hs,
+  // qualification: the cycles that moved), [9] on AW or W, [10] a channel-0 flag is set
+  wire [15:0] ix_ev = {5'd0, x_nf[1], aw_hs || w_hs, aw_hs || w_hs || b_hs || ar_hs || r_hs,
                        (we_v && we_pro) || (re_v && re_pro), ev_rs, ev_bs, ev_ws, re_v && re_lbad,
                        we_v && we_lbad, re_v && re_sd && re_bad, we_v && we_sd && we_bad};
   otpu_ila_x u_ila_x (
     .clk(xclk), .probe0(ix_hsk), .probe1(ix_awaddr), .probe2(ix_awlen), .probe3(ix_wtagaddr),
     .probe4(ix_araddr), .probe5(ix_arlen), .probe6(ix_rtagaddr), .probe7(ix_ids), .probe8(ix_ev));
-  wire [11:0] in_hsk = {nrv, nwr, nwv, ncwe, ncr, ncv};
-  wire [49:0] in_addr = {nca[1], nca[0]};
-  wire [63:0] in_waddr = {nwd[1][63:32], nwd[0][63:32]}, in_raddr = {nrd[1][63:32], nrd[0][63:32]};
-  // in_ev: [1:0] a bad write beat per port, [3:2] a bad read beat, [5:4] / [7:6] write / read
-  // queue overflow, [8] a command or data handshake on either port
-  wire [15:0] in_ev = {7'd0, |{wc_hs, rc_hs, wd_hs, rd_hs}, pr_v & pr_pro, pw_v & pw_pro, pr_b, pw_b};
-  otpu_ila_n u_ila_n (
-    .clk(uclk), .probe0(in_hsk), .probe1(in_addr), .probe2(in_waddr), .probe3(in_raddr),
-    .probe4(in_ev));
 `endif
 endmodule
 

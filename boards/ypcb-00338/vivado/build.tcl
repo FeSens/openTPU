@@ -27,7 +27,7 @@ if {!$impl_only} {
   generate_target all [get_files otpu_bd.bd]
   export_ip_user_files -of_objects [get_files otpu_bd.bd] -no_script -sync -force -quiet
   create_ip_run [get_files otpu_bd.bd]
-  # the debug build's ILAs (create_project.tcl, OTPU_XMON=1)
+  # the debug build's ILA (create_project.tcl, OTPU_XMON=1)
   foreach ip [get_ips -quiet otpu_ila_*] {
     generate_target all $ip
     create_ip_run $ip

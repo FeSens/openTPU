@@ -74,13 +74,13 @@ foreach f $rtl {
 set_property verilog_define {SYNTHESIS} [get_filesets sources_1]
 
 # ---- OTPU_XMON=1 (run_vivado.sh XMON=1): a debug build with XDMA's DMA monitors (otpu_xmon, in
-# otpu_native_sys: registers 0xF00) and their two ILAs, otpu_ila_x (XDMA's master, xclk) and
-# otpu_ila_n (channel 0's controller ports, uclk); probe widths as otpu_xmon connects them, 4096
-# samples, capture qualification (record only the cycles a condition picks)
+# otpu_native_sys: registers 0xF00) and an ILA, otpu_ila_x (XDMA's master, xclk; one ILA: Vivado's
+# BASIC license tier refuses a second, Chipscope 16-620); probe widths as otpu_xmon connects them,
+# 4096 samples, capture qualification (record only the cycles a condition picks)
 set XMON [expr {[info exists ::env(OTPU_XMON)] && $::env(OTPU_XMON) eq "1"}]
 if {$XMON} {
   set_property verilog_define {SYNTHESIS OTPU_ILA} [get_filesets sources_1]
-  foreach {name widths} {otpu_ila_x {12 32 8 64 32 8 64 16 16} otpu_ila_n {12 50 64 64 16}} {
+  foreach {name widths} {otpu_ila_x {12 32 8 64 32 8 64 16 16}} {
     create_ip -name ila -vendor xilinx.com -library ip -module_name $name
     set cfg [list CONFIG.C_NUM_OF_PROBES [llength $widths] CONFIG.C_DATA_DEPTH 4096 \
                CONFIG.C_EN_STRG_QUAL 1 CONFIG.C_INPUT_PIPE_STAGES 1]
