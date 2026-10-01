@@ -41,7 +41,8 @@ from opentpu.llm.qwen3 import Engine, load_weights
 # presence penalty).
 SAMPLING = {"qwen3": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0),
             "lfm2": dict(temperature=0.1, top_k=50, top_p=1.0, repetition_penalty=1.05),
-            "qwen35": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0)}
+            "qwen35": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0),
+            "gemma4": dict(temperature=1.0, top_k=64, top_p=0.95, repetition_penalty=1.0)}
 
 
 def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
@@ -341,6 +342,8 @@ class Chat:
             warm()
 
     def _template(self, add_prompt=True) -> list[int]:
+        if getattr(self.tok, "chat_template", "") is None:     # a base model: the text as is
+            return list(self.tok("".join(m["content"] for m in self.history))["input_ids"])
         ids = self.tok.apply_chat_template(self.history, add_generation_prompt=add_prompt,
                                            enable_thinking=self.think, tokenize=True)
         return list(ids["input_ids"] if hasattr(ids, "keys") else ids)

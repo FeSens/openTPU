@@ -69,6 +69,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from .. import fp32 as F
+from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
 from ..compiler import Affine, KVDesc, QTensor, Tensor
@@ -306,15 +307,6 @@ class Weights(dict):
         """Rows idx (a list) of tensor k, fp32, without loading the rest."""
         f, name = self._files[k]
         return _Rows(f, name)[list(idx)]
-
-    @property
-    def fingerprint(self) -> str:
-        """What identifies the checkpoint's contents: its config and the tensor files' sizes."""
-        import hashlib
-        h = hashlib.sha256((self.model_dir / "config.json").read_bytes())
-        for p in sorted(self.model_dir.glob("*.safetensors")):
-            h.update(f"{p.name}:{p.stat().st_size}".encode())
-        return h.hexdigest()[:16]
 
 
 def load_weights(model_dir) -> Weights:
@@ -1162,84 +1154,34 @@ def _job_matrix(W, name, sel, scale) -> np.ndarray:
 
 
 def _job(W, job) -> tuple:
-    """One job: ("mat", tensor, selection, scale, format, D) -> the MXU rows and scale words;
+    """One job: ("mat", tensor, selection, scale, format, D) -> the MXU rows and scale words
+    (4-bit through opentpu.qcache, the image caches' disk cache of the quantizer's results);
     ("ple", tensor, row range, columns, format, D, S, scale) -> the PLE records."""
     if job[0] == "mat":
         _, name, sel, scale, fmt, D = job
-        return Q.quantize_mxu(_job_matrix(W, name, sel, scale), fmt, D)
+        return QC.quantize_mxu(_job_matrix(W, name, sel, scale), fmt, D)
     _, name, sel, cols, fmt, D, S, scale = job
     return (_ple_records(_job_matrix(W, name, sel, 1.0), cols, fmt, D, S, scale),)
 
 
-QCACHE_FLOOR = 20 << 30          # free disk a cache write must leave (as opentpu.qcache's)
-
-
-def _qcache_dir() -> Path | None:
-    """Where quantized matrices are kept (OTPU_QCACHE; default ~/otpu-build/qcache when
-    ~/otpu-build exists, as on the build and card hosts; none otherwise, or with
-    OTPU_IMAGE_CACHE=0, the image caches' switch)."""
-    import os
-    if os.environ.get("OTPU_IMAGE_CACHE") == "0":
-        return None
-    d = os.environ.get("OTPU_QCACHE")
-    if d:
-        return Path(d)
-    home = Path.home() / "otpu-build"
-    return home / "qcache" if home.is_dir() else None
-
-
-def _cached_job(args) -> tuple:
-    """_job in a worker (or in line), through the cache: the key is the checkpoint's
-    fingerprint, the job and the quantizer's source. Only 4-bit jobs are cached (int8
-    quantizes about as fast as the cache reads it back), and no write leaves the disk under
-    QCACHE_FLOOR free."""
-    import hashlib
-    import shutil
-    fp, job = args
-    W = _JOB_W if _JOB_W is not None else _LOCAL_W
-    fmt = job[4]                        # ("mat" | "ple", tensor, selection, ., format, ...)
-    d = _qcache_dir() if fp and fmt != "int8" else None
-    if d is not None:
-        src = (Path(Q.__file__).read_bytes() + Path(GA.__file__).read_bytes())
-        k = hashlib.sha256(repr((fp, job)).encode() + src).hexdigest()[:24]
-        f = d / fp / f"{k}.npz"
-        if f.exists():
-            z = np.load(f)
-            return tuple(z[f"a{i}"] for i in range(len(z.files)))
-    out = _job(W, job)
-    if d is not None:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        if shutil.disk_usage(f.parent).free - sum(a.nbytes for a in out) < QCACHE_FLOOR:
-            return out
-        tmp = f.with_suffix(".tmp.npz")
-        np.savez(tmp, **{f"a{i}": a for i, a in enumerate(out)})
-        tmp.rename(f)
-    return out
-
-
-_LOCAL_W = None
+def _worker_job(job) -> tuple:
+    return _job(_JOB_W, job)
 
 
 def _run_tasks(W, jobs: list, n: int | None = None):
     """Results of the jobs, in order: in n worker processes when W is a checkpoint's Weights,
     else in line."""
     import os
-    global _LOCAL_W
-    fp = W.fingerprint if isinstance(W, Weights) else None
     n = int(os.environ.get("OTPU_BUILD_JOBS", 4)) if n is None else n
-    if fp is None or n <= 1:
-        _LOCAL_W = W
-        try:
-            for j in jobs:
-                yield _cached_job((fp, j))
-        finally:
-            _LOCAL_W = None
+    if not isinstance(W, Weights) or n <= 1:
+        for j in jobs:
+            yield _job(W, j)
         return
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
     with ProcessPoolExecutor(n, mp_context=mp.get_context("spawn"), initializer=_job_init,
                              initargs=(str(W.model_dir),)) as pool:
-        yield from pool.map(_cached_job, [(fp, j) for j in jobs])
+        yield from pool.map(_worker_job, jobs)
 
 
 # =============================================================================== kernel
