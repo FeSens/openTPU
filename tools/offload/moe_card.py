@@ -55,6 +55,40 @@ def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) 
                 top=top, seconds=round(time.time() - t, 1))
 
 
+def host_mem() -> dict | None:
+    """The host's memory now, GB (Linux /proc): this process's and its children's resident
+    (rss, its peak hwm) and swapped, the system's available, page cache, anonymous and swap
+    used."""
+    def kb(path, keys):
+        try:
+            with open(path) as f:
+                return {k: int(v.split()[0]) for k, _, v in (ln.partition(":") for ln in f)
+                        if k in keys}
+        except OSError:
+            return {}
+    me = kb("/proc/self/status", ("VmRSS", "VmHWM", "VmSwap"))
+    if not me:
+        return None
+    kids = {"VmRSS": 0, "VmSwap": 0}
+    for d in Path("/proc").iterdir():           # (the Engine's compile worker)
+        try:
+            if d.name.isdigit() and int((d / "stat").read_text().rsplit(")", 1)[1].split()[1]) \
+                    == os.getpid():
+                for k, v in kb(d / "status", ("VmRSS", "VmSwap")).items():
+                    kids[k] += v
+        except (OSError, ValueError, IndexError):
+            continue
+    m = kb("/proc/meminfo", ("MemTotal", "MemAvailable", "Cached", "AnonPages", "SwapTotal",
+                             "SwapFree"))
+    gb = lambda v: round(v / 1e6, 2)            # noqa: E731 (kB)
+    return dict(rss=gb(me.get("VmRSS", 0)), hwm=gb(me.get("VmHWM", 0)),
+                swap=gb(me.get("VmSwap", 0)), children_rss=gb(kids["VmRSS"]),
+                children_swap=gb(kids["VmSwap"]), total=gb(m.get("MemTotal", 0)),
+                available=gb(m.get("MemAvailable", 0)), cached=gb(m.get("Cached", 0)),
+                anon=gb(m.get("AnonPages", 0)),
+                swap_used=gb(m.get("SwapTotal", 0) - m.get("SwapFree", 0)))
+
+
 def fit_experts(spec, cfg, cap: int, **kw) -> int:
     """The expert slots per MoE layer that fill the card's DRAM beside the rest of the image."""
     from dataclasses import replace
@@ -166,6 +200,12 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         srv.events = []
     dma0 = (getattr(mem, "dma_s", 0.0), getattr(mem, "dma_bytes", 0))
     direct0 = getattr(mem, "direct", 0)         # experts read from the file into their runs
+    wait0 = getattr(mem, "wait_s", 0.0)         # staging's waits for the DMA thread
+    if pf is not None:                          # the decode's pool reads: page cache or disk
+        pf.io = {}
+    board = getattr(eng.backend, "board", None)     # the card's free-running counters
+    snap = getattr(board, "snapshot", None)
+    snap0, mem_decode = snap() if snap else None, host_mem()
     t = time.time()
     top = []                    # host loop: the device's 8 best (id, logit) per step
 
@@ -180,6 +220,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     else:                       # the prompt's last token fed by the card's loop: every pick
         got = eng.generate_card(ids[-1], n, stop_ids=[])        # on the card
     gen_s = time.time() - t
+    snap1, mem_end, warm_end = snap() if snap0 else None, host_mem(), warm_at()
     if hint_trace:
         Path(hint_trace).write_text(json.dumps(srv.events))
         srv.events = None
@@ -190,6 +231,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         ds, db = mem.dma_s - dma0[0], mem.dma_bytes - dma0[1]
         host.update(dma_s=round(ds, 3), dma_gbs=round(db / ds / 1e9, 3) if ds else None,
                     memory=type(mem).__name__, direct=mem.direct - direct0)
+    if hasattr(mem, "wait_s"):                  # stage = these waits + the pool's reads + copies
+        host.update(stage_wait=round(mem.wait_s - wait0, 3))
+    if pf is not None:
+        host.update(reads={k: [v[0], round(v[1], 3), v[2], v[3]] for k, v in pf.io.items()})
+        pf.io = None
     khz = (getattr(eng.backend, "info", None) or {}).get("core_khz")
     cyc = sum(s.get("cycles", 0) for s in eng.stats[st0:])       # (the simulator: none)
     dev_s = cyc / (khz * 1e3) if khz else None
@@ -240,7 +286,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                                split=pf.split, resident_gb_at_open=None
                                if pf.resident_at_open is None else
                                round(pf.resident_at_open / 1e9, 2),
-                               at_load=warm_load, at_decode=warm_decode) if warm else None,
+                               at_load=warm_load, at_decode=warm_decode, at_end=warm_end)
+                if warm else None,
+                host_mem=dict(at_decode=mem_decode, at_end=mem_end),
+                device_counters={k: v - snap0[k] for k, v in snap1.items()} if snap1 else None,
+                misses_per_request_decode=per_req[pre + prompt * J:pre + T * J],
                 bytes_per_token_decode=round(host["bytes"] / max(1, len(got))),
                 top=top or None)
 

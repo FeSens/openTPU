@@ -160,7 +160,12 @@ class PoolFile:
     page-aligned buffers in turn (used before the next get: the server writes an expert
     before it asks for the next). warm(ids) reads those experts once in a thread, into the
     page cache: the card's host disk serves about 115 MB/s to scattered reads, 13 ms an
-    expert of 1.67 MB. It moves bytes only."""
+    expert of 1.67 MB. It moves bytes only.
+
+    `io`, when set to {} (moe_card's decode), counts the reads by where they came from:
+    "cached" the reads whose pages were all in the page cache just before (mincore), "disk"
+    the others ("unknown" where mincore cannot tell), each [reads, seconds, bytes, bytes not
+    in the page cache]."""
 
     def __init__(self, path, slot: int, split: bool):
         import mmap
@@ -168,6 +173,8 @@ class PoolFile:
         self.bufs = [mmap.mmap(-1, slot) for _ in range(2)]
         self.k, self.warm_t = 0, None
         self.arr = self.packed = self.ids = self.resident_at_open = None    # (moe.open_pool)
+        self.io: dict | None = None
+        self._mc = None                 # io's mincore: (the file's map, its view, libc)
 
     def resident(self, ids) -> int | None:
         """Bytes of these experts in the page cache (mincore over the file's pages), or None
@@ -197,12 +204,48 @@ class PoolFile:
         lo, hi = g * self.slot // pg, -(-(g + 1) * self.slot // pg)
         return int(np.minimum((cum[hi] - cum[lo]) * pg, self.slot).sum())
 
+    def _absent(self, off: int, n: int) -> int | None:
+        """Bytes of the file's pages under [off, off + n) not in the page cache (mincore), or
+        None where the host cannot tell."""
+        import ctypes
+        import mmap
+        if self._mc is None:
+            try:
+                mm = mmap.mmap(self.fd, os.fstat(self.fd).st_size, prot=mmap.PROT_READ)
+                self._mc = (mm, np.frombuffer(mm, np.uint8),
+                            ctypes.CDLL(None, use_errno=True))
+            except (OSError, AttributeError, ValueError):
+                self._mc = False
+        if not self._mc or n <= 0:
+            return None
+        pg = mmap.PAGESIZE
+        lo, hi = off // pg, -(-(off + n) // pg)
+        vec = (ctypes.c_ubyte * (hi - lo))()
+        if self._mc[2].mincore(ctypes.c_void_p(self._mc[1].ctypes.data + lo * pg),
+                               ctypes.c_size_t((hi - lo) * pg), vec) != 0:
+            return None
+        return (hi - lo - int((np.frombuffer(vec, np.uint8) & 1).sum())) * pg
+
+    def _read(self, bufs, off: int) -> None:
+        if self.io is None:
+            return preadv(self.fd, bufs, off)
+        n = sum(map(len, bufs))
+        gone = self._absent(off, n)
+        t0 = time.perf_counter()
+        preadv(self.fd, bufs, off)
+        s = self.io.setdefault("unknown" if gone is None else "disk" if gone else "cached",
+                               [0, 0.0, 0, 0])
+        s[0] += 1
+        s[1] += time.perf_counter() - t0
+        s[2] += n
+        s[3] += gone or 0
+
     def get(self, g: int):
         if self.split:
             return SplitRecord(self.slot,
-                               lambda bufs, at=0: preadv(self.fd, bufs, g * self.slot + at))
+                               lambda bufs, at=0: self._read(bufs, g * self.slot + at))
         self.k ^= 1
-        preadv(self.fd, [memoryview(self.bufs[self.k])], g * self.slot)
+        self._read([memoryview(self.bufs[self.k])], g * self.slot)
         return np.frombuffer(self.bufs[self.k], np.uint8)
 
     def warm(self, ids) -> threading.Thread:
@@ -700,6 +743,7 @@ class BoardDram:
         self._thread: threading.Thread | None = None
         self.dma_s, self.dma_bytes = 0.0, 0     # the worker's slot DMA: seconds and bytes
         self.direct = 0                         # experts read from the file into their runs
+        self.wait_s = 0.0                       # the server's waits for a free staging pair
         self.pieces, self._lead = pieces, True  # _lead: no DMA in flight since the last flush
 
     # ---- the worker
@@ -764,6 +808,13 @@ class BoardDram:
         for i in range(self.depth):
             self._free.put(i)
 
+    def _pair(self) -> int:
+        """A staging pair the worker is done with (waiting for it: wait_s)."""
+        t0 = time.perf_counter()
+        i = self._free.get()
+        self.wait_s += time.perf_counter() - t0
+        return i
+
     def _split_pieces(self, nbytes: int) -> list:
         """Per staging pair, an nbytes record's RUN / 2-byte pieces of the two runs, in file
         order for either parity ([block, parity, run])."""
@@ -784,7 +835,7 @@ class BoardDram:
         if (isinstance(data, SplitRecord) and self.board.chash and addr % RUN == 0
                 and len(data) % self.blk == 0):
             self._staging(len(data))            # the file's runs, read in place
-            i = self._free.get()
+            i = self._pair()
             pieces = self._split_pieces(len(data))[i]
             nb = pieces.shape[0]
             iov = pieces[np.arange(nb), _parity(addr // RUN + np.arange(nb))]
@@ -812,7 +863,7 @@ class BoardDram:
                                        else self._base[:n])
         i1 = self._i1[:n]
         np.bitwise_xor(i0, 1, out=i1)           # channel 1 takes each chunk's other beat
-        i = self._free.get()                    # a staging pair the worker is done with
+        i = self._pair()                        # a staging pair the worker is done with
         bufs, beats, h = self._bufs[i], src.view("V64"), n * self.blk // 2
         np.take(beats, i0, out=bufs[0][:h].view("V64"))       # channel 0's run
         np.take(beats, i1, out=bufs[1][:h].view("V64"))       # channel 1's
