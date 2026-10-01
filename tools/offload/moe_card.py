@@ -99,6 +99,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0, stage=0.0, flush=0.0,   # host's s
               poll=0.0, hint=0.0)
 
+    calls = dict.fromkeys(tm, 0)                # and how many calls
+
     def timed(part, f):
         def g(*a):
             t0 = time.perf_counter()
@@ -106,6 +108,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 return f(*a)
             finally:
                 tm[part] += time.perf_counter() - t0
+                calls[part] += 1
         return g
 
     def counted(ids_):
@@ -147,7 +150,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     prefill_s = time.time() - t
     warm_decode = warm_at()
     lg_sha = hashlib.sha256(np.asarray(lg, np.float32).tobytes()).hexdigest()[:16]
-    tm0, b0, st0 = dict(tm), srv.bytes, len(eng.stats)
+    tm0, b0, st0, calls0 = dict(tm), srv.bytes, len(eng.stats), dict(calls)
     if hint_trace:                              # the decode's timeline of hints and requests
         srv.events = []
     dma0 = (getattr(mem, "dma_s", 0.0), getattr(mem, "dma_bytes", 0))
@@ -170,7 +173,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         Path(hint_trace).write_text(json.dumps(srv.events))
         srv.events = None
     host = {k: round(tm[k] - tm0[k], 3) for k in tm}          # the decode's
-    host.update(bytes=srv.bytes - b0, polls_read_s=host.pop("read"))
+    host.update(bytes=srv.bytes - b0, polls_read_s=host.pop("read"),
+                polls_reads=calls["read"] - calls0["read"])     # (each a card read's DMA)
     if hasattr(mem, "dma_s"):                   # the DMA thread's own time and rate
         ds, db = mem.dma_s - dma0[0], mem.dma_bytes - dma0[1]
         host.update(dma_s=round(ds, 3), dma_gbs=round(db / ds / 1e9, 3) if ds else None,
