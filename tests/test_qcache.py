@@ -257,7 +257,7 @@ def test_prebuild_keeps_quiet_while_a_session_measures(tmp_path, monkeypatch, ca
     def go_quiet(n):
         if n == 2 and not _Child.log.count(("stop", "a:fp4:int8")):
             q.write_text(str(os.getpid()))
-            later(q.unlink)
+            later(q.unlink, 1.0)            # long after _watch's look, even on a busy host
     monkeypatch.setattr(PB, "_spawn", lambda cmd: _Child(cmd, during=go_quiet))
     assert PB.main(runs) == 0
     assert _Child.log == [("start", "a:fp4:int8"), ("stop", "a:fp4:int8"),
@@ -277,3 +277,24 @@ def test_prebuild_keeps_quiet_while_a_session_measures(tmp_path, monkeypatch, ca
     monkeypatch.setenv("OTPU_PREBUILD_QUIET_WAIT", "0.05")
     assert PB.main(runs) == 0 and _Child.log == []
     assert "the tools quantize the rest under the lock" in capsys.readouterr().out
+
+
+def test_prebuild_removes_old_temporary_files(tmp_path, monkeypatch, capsys):
+    """A build killed while writing a cache entry leaves `.<key>.<pid>.npz`, which the size cap
+    does not count: prebuild removes those older than an hour, and not a fresh one (a write in
+    progress)."""
+    import time
+    c = tmp_path / "c"
+    (c / "ab").mkdir(parents=True)
+    old, new, entry = c / "ab/.abc.12.npz", c / "ab/.abd.13.npz", c / "ab/abe.npz"
+    for f in (old, new, entry):
+        f.write_bytes(b"x")
+    t = time.time() - 7200
+    os.utime(old, (t, t))
+    os.utime(entry, (t, t))
+    monkeypatch.setenv("OTPU_IMAGE_CACHE", str(c))
+    cfg = tmp_path / "cfg.pkl"
+    cfg.write_bytes(pickle.dumps(0))
+    assert PB.main(["--cfg", str(cfg), "a:int8:-"]) == 0
+    assert not old.exists() and new.exists() and entry.exists()
+    assert "removed 1 temporary files" in capsys.readouterr().out

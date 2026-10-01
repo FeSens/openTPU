@@ -441,7 +441,8 @@ session holds the card, at nice 19, except one that keeps the host quiet for its
 
 The cache is `~/otpu-build/qcache/mxu` on a host with `~/otpu-build` (`OTPU_IMAGE_CACHE=<dir>`;
 `0` turns it off). It keeps 30 GB (`OTPU_IMAGE_CACHE_GB`), drops the least recently used entries
-first, and writes nothing that would leave under 20 GB of free disk. int8 is not cached: it
+first, and writes nothing that would leave under 20 GB of free disk; a prebuild removes the
+temporary files of builds killed while writing (older than an hour). int8 is not cached: it
 quantizes about as fast as the matrix hashes. Its keys hold no host, so a cache filled on omarchy
 can be copied (`rsync -a ~/otpu-build/qcache/mxu/ opentpu:otpu-build/qcache/mxu/`). The tests
 run without it (`tests/conftest.py`). Gemma 4's build keeps its own cache of quantization jobs
