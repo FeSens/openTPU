@@ -270,6 +270,7 @@ module tb_memch_nat #(
     void'($value$plusargs({NAME, "_ntx=%d"}, ntx));
     void'($value$plusargs("mstall=%d", mstall));
     void'($value$plusargs("wpct=%d", wpct));
+    void'($value$plusargs({NAME, "_wpct=%d"}, wpct));
     void'($value$plusargs("seq=%d", seq));
     void'($value$plusargs("gapw=%d", gapw));
     void'($value$plusargs("gapc=%d", gapc));

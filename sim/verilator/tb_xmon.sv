@@ -6,10 +6,14 @@
 // register side as the host does (SNAP, the acknowledgements, the shadows).
 //
 // The master writes self-describing data (each 16-byte beat: MAGIC, its address, the address
-// inverted, the burst's tag): first both windows whole (256-byte bursts), then +ntx random writes
-// and +ntx random reads at once (1 to +maxlen beats from any 16-byte offset, so partial 64-byte
-// beats go through otpu_mem_ch's read-modify-write), up to +outs bursts of each in flight, with
-// valid gaps (+gap) and B / R backpressure (+stall), and checks every read beat itself.
+// inverted, the burst's tag): first both windows whole (256-byte bursts), then +xw_ntx random
+// writes and +xr_ntx random reads at once (both +ntx by default; 1 to +maxlen beats from any
+// 16-byte offset, so partial 64-byte beats go through otpu_mem_ch's read-modify-write), up to
+// +outs bursts of each in flight, with valid gaps (+gap) and B / R backpressure (+stall), and
+// checks every read beat itself. Beside it, on each channel's accelerator port, tb_memch's random
+// native master (tb_memch.sv: tb_memch_nat, named xacc0 / xacc1: +xacc0_ntx runs, +xacc0_wpct
+// percent writes, partial writes, its own read checks) over beats 0..511, the XDMA window being
+// past them; run with +psh=0 +psp=0 (no regions shared with tb_memch's XDMA master).
 // +inj=K (at event +injn=N) puts in one fault, where the card's could be:
 //   1 XDMA: the W data from burst tag N on describes the address 64 bytes below its own (the
 //     card's slip)
@@ -19,8 +23,9 @@
 //   5 controller: channel 0's N-th read data beat is the beat before it again
 //   6 split: the N-th R beat XDMA sees is the beat before it again
 //   7 downstream: after N B responses, B valid stays low
-// The end: the master done, or nothing moving for 3 x 2^TW cycles. Prints the monitor's words, the
-// master's own count of bad read beats and one RESULT line.
+// The end: all masters done, or XDMA's not done and nothing moving on it for 3 x 2^TW cycles.
+// Prints the monitor's words, the XDMA master's count of bad read beats and one RESULT line, then
+// CLEARs, SNAPs again and checks the words are zero.
 module tb_xmon #(
   parameter int LDC = 1,
   parameter int TW = 12
@@ -97,6 +102,22 @@ module tb_xmon #(
     .m_arvalid(carv), .m_arready(carr),
     .m_rvalid(crvx), .m_rready(crrx), .m_rid(cri), .m_rdata(crdx), .m_rresp(crre), .m_rlast(crl));
 
+  // ---- the accelerators' random masters (tb_memch_nat), one per channel
+  logic [1:0] ncv, ncr, ncwe, nwv, nwr, nrv, nerr, adone, abad;
+  logic [1:0][24:0] nca;
+  logic [1:0][511:0] nwd, nrd;
+  logic [1:0][63:0] nwm;
+  logic [1:0][15:0] nwdone;
+  logic [1:0][31:0] a2x_pub;
+  for (genvar c = 0; c < 2; c++) begin : g_acc
+    tb_memch_nat #(.CH(c), .NB(512), .NAME(c ? "xacc1" : "xacc0")) u_acc (
+      .clk, .rst,
+      .n_cvalid(ncv[c]), .n_cready(ncr[c]), .n_cwe(ncwe[c]), .n_caddr(nca[c]),
+      .n_wvalid(nwv[c]), .n_wready(nwr[c]), .n_wdata(nwd[c]), .n_wmask(nwm[c]),
+      .n_rvalid(nrv[c]), .n_rdata(nrd[c]), .n_wdone(nwdone[c]),
+      .a2x_pub(a2x_pub[c]), .x2a_pub(32'd0), .done(adone[c]), .bad(abad[c]));
+  end
+
   // ---- the bridges and the controllers; c_*: as the controllers see them (otpu_xmon: channel 0)
   logic [1:0][1:0] ccv, ccr, ccwe, cwv, cwr, crv;
   logic [1:0][1:0][24:0] cca;
@@ -104,17 +125,11 @@ module tb_xmon #(
   logic [1:0][1:0][63:0] cwe;
   logic dump = 1'b0;
   for (genvar c = 0; c < 2; c++) begin : g_ch
-    logic [24:0] nca;
-    logic [511:0] nwd, nrd;
-    logic [63:0] nwm;
-    logic [15:0] nwdone;
-    logic ncr, nwr, nrv, nerr;
-    assign nca = '0; assign nwd = '0; assign nwm = '0;
     otpu_mem_ch #(.XIDW(4)) u_ch (
       .clk, .rst,
-      .n_cvalid(1'b0), .n_cready(ncr), .n_cwe(1'b0), .n_caddr(nca),
-      .n_wvalid(1'b0), .n_wready(nwr), .n_wdata(nwd), .n_wmask(nwm),
-      .n_rvalid(nrv), .n_rdata(nrd), .n_wdone(nwdone), .n_err(nerr),
+      .n_cvalid(ncv[c]), .n_cready(ncr[c]), .n_cwe(ncwe[c]), .n_caddr(nca[c]),
+      .n_wvalid(nwv[c]), .n_wready(nwr[c]), .n_wdata(nwd[c]), .n_wmask(nwm[c]),
+      .n_rvalid(nrv[c]), .n_rdata(nrd[c]), .n_wdone(nwdone[c]), .n_err(nerr[c]),
       .xclk, .xrst,
       .x_awvalid(cawv[c]), .x_awready(cawr[c]), .x_awid(d_awi), .x_awaddr(d_awa), .x_awlen(d_awl),
       .x_wvalid(cwvx[c]), .x_wready(cwrx[c]), .x_wdata(d_wd), .x_wstrb(d_ws), .x_wlast(d_wl),
@@ -126,12 +141,12 @@ module tb_xmon #(
       .c_cmd_valid(ccv[c]), .c_cmd_ready(ccr[c]), .c_cmd_we(ccwe[c]), .c_cmd_addr(cca[c]),
       .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(mwd[c]),
       .c_wdata_we(cwe[c]), .c_rdata_valid(crv[c]), .c_rdata_data(crd[c]));
-    always @(posedge uclk) if (!urst && nerr) begin
+    always @(posedge uclk) if (!urst && nerr[c]) begin
       $display("FAIL channel %0d: otpu_mem_ch n_err", c);
       $finish;
     end
     if (LDC) begin : g_ldc
-      otpu_ldc_model #(.CH(c)) u_mem (
+      otpu_ldc_model #(.BEATS(1 << 15), .CH(c)) u_mem (
         .clk(uclk), .rst(urst),
         .c_cmd_valid(ccv[c]), .c_cmd_ready(ccr[c]), .c_cmd_we(ccwe[c]), .c_cmd_addr(cca[c]),
         .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
@@ -182,7 +197,8 @@ module tb_xmon #(
     if ((d_awv && d_awr) || (d_wv && d_wr) || (d_bv && d_br) || (d_arv && d_arr) || (d_rv && d_rr))
       idle <= 0;
     else idle <= idle + 1;
-    if (!xrst && (xdone || idle > 3 * (longint'(1) << TW) || xcyc > tmax)) fin <= 1'b1;
+    if (!xrst && ((xdone && &adone) || (!xdone && idle > 3 * (longint'(1) << TW)) || xcyc > tmax))
+      fin <= 1'b1;
   end
   localparam string NAMES [32] = '{"FLAGS", "SNAPS", "X_AW", "X_W", "X_B", "X_AR", "X_R", "X_WCHK",
     "X_RCHK", "X_WBAD", "X_RBAD", "X_WEXP", "X_WGOT", "X_WTAG", "X_REXP", "X_RGOT", "X_STALL",
@@ -199,8 +215,9 @@ module tb_xmon #(
       if (word[1][15:8] == word[1][7:0] && word[1][23:16] == word[1][7:0]) break;
     end
     for (int k = 0; k < 32; k++) $display("XMON %-8s %08h %0d", NAMES[k], word[k], word[k]);
-    $display("RESULT inj=%0d done=%0d flags=%04h xerrs=%0d xrchk=%0d nwb=%0d nb=%0d nrb=%0d snaps=%06h",
-             inj, xdone, word[0][15:0], xerrs, xrchk, nwb, nb, nrb, word[1][23:0]);
+    $display("RESULT inj=%0d done=%0d flags=%04h xerrs=%0d xrchk=%0d nwb=%0d nb=%0d nrb=%0d snaps=%06h acc=%0d%0d accbad=%0d",
+             inj, xdone, word[0][15:0], xerrs, xrchk, nwb, nb, nrb, word[1][23:0], adone[1], adone[0],
+             |abad);
     // CLEAR, then SNAP again: everything zero but the live words, if the master has stopped
     clr <= 1'b1;
     @(posedge clk);
@@ -216,7 +233,8 @@ module tb_xmon #(
     begin
       int nz;
       nz = word[0][15:0] != 0 || word[1][7:0] != 8'd2 || word[1][15:8] != 8'd2 || word[1][23:16] != 8'd2;
-      for (int k = 2; k < 32; k++) if (k != 18 && k != 19 && word[k] != 0) nz++;
+      // (channel 0's counts only once the accelerators have stopped)
+      for (int k = 2; k < 32; k++) if (k != 18 && k != 19 && (k < 20 || &adone) && word[k] != 0) nz++;
       $display("CLEAR %s", nz == 0 ? "ok" : "BAD");
     end
     $finish;
@@ -264,9 +282,13 @@ module tb_xmon_dma #(
   output longint       nrb
 );
   typedef struct { logic [31:0] a; int len; int tag; } burst_t;
-  int ntx = 2000, outs = 8, gap = 20, stall = 30, maxlen = 16;
+  int ntx = 2000, outs = 8, gap = 20, stall = 30, maxlen = 16, ntxw, ntxr;
   initial begin
     void'($value$plusargs("ntx=%d", ntx));
+    ntxw = ntx;
+    ntxr = ntx;
+    void'($value$plusargs("xw_ntx=%d", ntxw));
+    void'($value$plusargs("xr_ntx=%d", ntxr));
     void'($value$plusargs("outs=%d", outs));
     void'($value$plusargs("gap=%d", gap));
     void'($value$plusargs("stall=%d", stall));
@@ -306,7 +328,7 @@ module tb_xmon_dma #(
             aw_b.a = (npre % 2 != 0 ? 32'h8000_0000 : 32'h0) | (BASE + 32'(npre / 2 * 256));
             aw_b.tag = tag;
             npre++;
-          end else if (phase == 1 && nw < ntx) begin
+          end else if (phase == 1 && nw < ntxw) begin
             aw_b = rnd(tag);
             nw++;
           end else aw_b.len = 0;
@@ -352,7 +374,7 @@ module tb_xmon_dma #(
       if (phase == 0 && npre == NPRE && b_out == 0) phase = 1;
       if (!arvalid || arready) begin
         arvalid <= 1'b0;
-        if (phase == 1 && nr < ntx && r_out < outs && $urandom % 100 >= 32'(gap)) begin
+        if (phase == 1 && nr < ntxr && r_out < outs && $urandom % 100 >= 32'(gap)) begin
           ar_b = rnd(0);
           arvalid <= 1'b1;
           araddr <= ar_b.a;
@@ -385,7 +407,7 @@ module tb_xmon_dma #(
         end
       end
       rready <= $urandom % 100 >= 32'(stall);
-      done <= phase == 1 && nw == ntx && nr == ntx && b_out == 0 && r_out == 0;
+      done <= phase == 1 && nw == ntxw && nr == ntxr && b_out == 0 && r_out == 0;
     end
   end
   initial begin errs = 0; rchk = 0; nwb = 0; nb = 0; nrb = 0; end
