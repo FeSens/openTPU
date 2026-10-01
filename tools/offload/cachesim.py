@@ -407,6 +407,8 @@ def main():
                     help="compute each missing expert when it lands, or all after the last")
     ap.add_argument("--expert-bits", type=float, default=4.25,
                     help="bits per expert weight (4.25: fp4 blocks; 8.25: int8)")
+    ap.add_argument("--head-bits", type=float, default=8.25,
+                    help="bits per LM head weight (8.25: int8; 4.25: fp4)")
     a = ap.parse_args()
     tr = [load(p) for p in a.traces]
     E, L = tr[0]["E"], tr[0]["req"].shape[1]
@@ -418,12 +420,14 @@ def main():
         rs = json.loads(Path(a.survey).read_text())
         name = a.repo or Path(tr[0]["meta"]["model"]).name
         d = next(r for r in rs if r["repo"] == name or r["repo"].split("/")[-1] == name)
-        head = (d["head"] or d["embed"]) * 8.25 / 8
-        dl = (d["tok_bytes"] - d["tok_expert_bytes"] - head) / L
+        head8 = (d["head"] or d["embed"]) * 8.25 / 8         # the survey's: int8
+        head = head8 * a.head_bits / 8.25
+        dl = (d["tok_bytes"] - d["tok_expert_bytes"] - head8) / L
         xb = d["expert_bytes"] * a.expert_bits / 4.25
         by = dict(x=xb, head=head, d_pre=dl - a.post_mb * 1e6,
                   d_post=a.post_mb * 1e6)
-        card = int((a.card_gib * 2**30 - d["resident_bytes"] - a.reserve_gb * 1e9) // xb)
+        card = int((a.card_gib * 2**30 - d["resident_bytes"] + head8 - head
+                    - a.reserve_gb * 1e9) // xb)
         card = max(k, min(card, n))
         extra.add(card)
         print(f"  survey {d['repo']}: expert {xb / 1e6:.2f} MB, dense "
