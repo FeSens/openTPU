@@ -18,8 +18,8 @@ The cache ($REFCACHE, default ~/otpu-build/refcache) is keyed by what decides th
 simulator's tokens: the sources of the opentpu package minus the card's host code
 (opentpu/host, which only drives the card; the simulator configuration it derives,
 sim_config, is hashed as a value), the ISA configuration, the model checkpoint (config and
-file sizes), the formats, the prompt, its token ids (the chat template's output, with the date
-pinned) and the token count. A host-only change (a poll fix)
+file sizes), the formats (WF, HF and OTPU_FORMATS), the prompt, its token ids (the chat
+template's output, with the date pinned) and the token count. A host-only change (a poll fix)
 reuses the references; any compiler, kernel or simulator change recomputes them. The key has
 no machine or path in it, so references computed on another box (the Mac, under its load
 rules) can be copied into the cache directory: `rsync -a ~/otpu-build/refcache/ omarchy:...`.
@@ -101,7 +101,8 @@ def key(cfg, model: str, wf: str, hf: str, n: int) -> tuple[Path, dict]:
     parts = {"src": source_hash(), "sim_cfg": repr(sim_config(spec, CAP, cfg, **fmt)),
              "model": path.name, "ckpt": model_fingerprint(path), "wf": wf, "hf": hf,
              "ntok": n, "cap": CAP, "prompt": PROMPT,
-             "ids": hashlib.sha256(json.dumps(ids).encode()).hexdigest()[:16]}
+             "ids": hashlib.sha256(json.dumps(ids).encode()).hexdigest()[:16],
+             "formats": os.environ.get("OTPU_FORMATS")}     # per-kind formats (Spec.formats)
     k = hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:20]
     return cache_root() / f"{model}_{wf}_{hf}_{n}_{k}.pkl", parts
 
