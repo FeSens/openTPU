@@ -185,6 +185,30 @@ def test_small_cache_is_bit_exact(tiny, wformat):
     assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
 
 
+def test_experts_run_paired(tiny):
+    """With column reuse (PAIR), a 4-bit expert's MMs run paired as the layers' own do: its slot
+    address is a register (DevVar), but every slot is LINE-aligned, so its scale words pair
+    8-byte aligned. On the board configuration that halves an expert's cycles (26B-A4B: 0.38
+    -> 0.21 ms, co-simulated). A small cache still gives the logits of one holding every
+    expert, bit for bit."""
+    from opentpu import isa as I
+    _, W, spec = tiny
+
+    def paired(experts=None):
+        cfg = device_config(spec, 256, S=1, experts=experts, wformat="fp4", PAIR=True)
+        return Engine(spec, W, cap=256, cfg=cfg, experts=experts, wformat="fp4")
+    full = paired()
+    prog = full.image.compile_step(3)[0]
+    ex = [i for i in prog if i.op == I.MM and any(fn == "expert" for _, _, fn in i.src)]
+    assert ex and all(i.flags & I.F_PAIR for i in ex)
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 8)]
+    ref = np.array([full.step(t) for t in toks])
+    small = paired(K)
+    got = np.array([small.step(t) for t in toks])
+    assert small.server.misses > len(toks)
+    assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+
+
 def test_lfu_policy_is_bit_exact(tiny):
     """The slots replaced by least decayed use (ExpertServer policy "lfu", moe.serve's default)
     instead of LRU: other misses, the same logits bit for bit."""

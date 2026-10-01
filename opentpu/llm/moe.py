@@ -393,7 +393,7 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     rotate()
     b.end_loop(lp)
     pe[MISS, :].set(pe[EP, :] * -1.0 + 1.0)
-    ex = dev.fmt.descs(DevVar("expert slot", r))
+    ex = dev.fmt.descs(DevVar("expert slot", r, align=LINE))   # (slots: LINE-aligned)
 
     def expert():
         """The expert whose slot is R[r], weighted, into its row of y."""
