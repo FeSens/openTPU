@@ -144,7 +144,8 @@ class Spec:
             moe = MO.MoESpec(E=c["num_experts"], k=c["num_experts_per_tok"],
                              ffn=c["moe_intermediate_size"], rule="softmax",
                              norm=c.get("norm_topk_prob", True),
-                             shared=c["shared_expert_intermediate_size"])
+                             shared=c["shared_expert_intermediate_size"],
+                             hint=True)     # a prefetch hint before each mixer (offload.md 12)
         return Spec(hidden=c["hidden_size"],
                     kinds=tuple(ATTN if t == "full_attention" else LIN for t in c["layer_types"]),
                     n_q=c["num_attention_heads"], n_kv=c["num_key_value_heads"], head_dim=d,
@@ -892,7 +893,8 @@ class Image:
         dev = None
         if self.offload is not None:
             L = self.offload
-            dev = SimpleNamespace(mbox=L.mbox, served=L.served, dir=L.dir, fmt=self.fmt)
+            dev = SimpleNamespace(mbox=L.mbox, served=L.served, dir=L.dir, fmt=self.fmt,
+                                  hint_off=L.layers * L.E)
         return SimpleNamespace(
             spec=spec, layer=layer, plan=self.plan, moe_dev=dev,
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (spec.rope_dim // 2,)),
@@ -1363,6 +1365,8 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
 
     def layer(li, kind):
         lw = m.layer(li, kind)
+        if lw.moe and spec.moe.hint:        # the router's guess, before the mixer
+            MO.moe_hint(x, lw, spec.moe, m.moe_dev, spec.eps)
         if kind == LIN:
             dn = _deltanet_dstep if ol.has_dstep() else _deltanet
             x.set(dn(x, lw, pos, spec, m.hs))

@@ -61,7 +61,8 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
          host_loop: bool = False, embed: str | None = None, trace: str | None = None,
-         cfg_file: str | None = None, on_card: bool = False, policy: str = "lfu") -> dict:
+         cfg_file: str | None = None, on_card: bool = False, policy: str = "lfu",
+         hints: bool | None = None) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -71,6 +72,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     spec = load_spec(model)                     # a MoE's Spec.embed: "int8" (from_hf)
     if embed is not None:
         spec = replace(spec, embed=embed)
+    if hints is not None:                       # (default: the Spec's, Qwen3.5-MoE's on)
+        spec = replace(spec, moe=replace(spec.moe, hint=hints))
     W = LazyWeights(model)
     cfg = pickle.loads(Path(cfg_file).read_bytes()) if cfg_file else board_config()
     if not experts:
@@ -90,7 +93,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     srv.history, per_req = [], []               # each request's ids and misses
     serve, pool_of, mem = srv.serve, srv.pool, srv.mem
     tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0, stage=0.0, flush=0.0,   # host's s
-              poll=0.0)
+              poll=0.0, hint=0.0)
 
     def timed(part, f):
         def g(*a):
@@ -106,6 +109,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         timed("serve", serve)(ids_)
         per_req.append(srv.misses - m0)
     srv.serve = counted
+    srv.step = timed("hint", srv.step)          # a hinted expert's part on idle time (polls')
     srv.pool = timed("pool", pool_of)
     mem.write, mem.read = timed("write", mem.write), timed("read", mem.read)
     if hasattr(mem, "write_slot"):              # BoardDram: staging (the main thread), and
@@ -183,9 +187,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     return dict(tokens=got, match=got == ref["tokens"][:len(got)], first_diff=diff,
                 at_first_diff=at,
                 experts_per_layer=experts, slots=L.layers * experts, pool=L.layers * L.E,
-                policy=policy,
+                policy=policy, hint=spec.moe.hint,
+                hints=dict(served=srv.hints, prefetched=srv.prefetched, promoted=srv.promoted,
+                           dropped=srv.dropped) if spec.moe.hint else None,
                 image_mib=round(eng.image.nbytes / 2**20), slot_mb=round(L.slot_bytes / 1e6, 2),
-                requests=srv.seq, hits=srv.hits, misses=srv.misses,
+                requests=len(srv.history), hits=srv.hits, misses=srv.misses,
                 misses_per_token_decode=round(float(dec.mean()), 2) if len(dec) else None,
                 expert_uses_per_token=J * spec.moe.k,
                 misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
@@ -236,6 +242,9 @@ def main():
     ap.add_argument("--policy", choices=("lru", "lfu"), default="lfu",
                     help="the expert slots' replacement (ExpertServer): least recently used, or "
                          "least decayed use")
+    ap.add_argument("--hints", choices=("on", "off"), default=None,
+                    help="the router's prefetch hints before each mixer (docs/offload.md 12; "
+                         "default: the model's, on for Qwen3.5-MoE)")
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
@@ -244,7 +253,7 @@ def main():
         return
     ref = json.loads(Path(a.check).read_text())
     r = card(a.model, ref, a.n, a.experts, a.cap, a.pool, a.host_loop, a.embed, a.trace,
-             a.cfg, a.card, a.policy)
+             a.cfg, a.card, a.policy, None if a.hints is None else a.hints == "on")
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
