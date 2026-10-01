@@ -617,18 +617,18 @@ class Image(EmbedHost):
     """Per-slice DRAM layout of a Qwen3.5 model. Every slice uses the same addresses.
 
     [ I/O: x_in, cos, sin | final norm | logits | per-pair gates ] [ layer 0 block ] ...
-    [ layer L-1 block ] [ LM head rows of this slice ]. The layer blocks of a formats group (a
-    layer's DeltaNet, attention, gate / up and down formats: Image.lf) have one size: both
-    kinds start with the norms and this slice's MLP rows. A DeltaNet block then holds, for
-    this slice's heads (a contiguous range), the projections pair by pair (the q, k, v rows of
-    head 0, of head 1, then the z rows of heads 0 and 1; then heads 2 and 3, ...; with shared q
-    and k, the pair's key head's q, k, then v of each head, then z of each), the a and b
-    rows, out_proj as one [H, og * dv] column block per og heads, per pair the convolution taps
-    and then the convolution ring, the recurrent state (per head [dv, dk] fp32, transposed) and
-    the per-head constants (the window: K - 1 rows, _past). An attention block holds the q/k
-    norms, the projections (the gate rows of q_proj as their own matrix) and this slice's KV
-    heads with room for `cap` tokens. The I/O area holds `rows` token rows (x, cos, sin,
-    logits) for chunked prefill.
+    [ layer L-1 block ] [ LM head rows of this slice ]. A layer block's layout and size are its
+    kind's in its formats group (a layer's DeltaNet, attention, gate / up and down formats:
+    Image.lf); both kinds start with the norms and this slice's MLP rows, at the same offsets
+    in a group. A DeltaNet block then holds, for this slice's heads (a contiguous range), the
+    projections pair by pair (the q, k, v rows of head 0, of head 1, then the z rows of heads 0
+    and 1; then heads 2 and 3, ...; with shared q and k, the pair's key head's q, k, then v of
+    each head, then z of each), the a and b rows, out_proj as one [H, og * dv] column block per
+    og heads, per pair the convolution taps and then the convolution ring, the recurrent state
+    (per head [dv, dk] fp32, transposed) and the per-head constants (the window: K - 1 rows,
+    _past). An attention block holds the q/k norms, the projections (the gate rows of q_proj as
+    their own matrix) and this slice's KV heads with room for `cap` tokens. The I/O area holds
+    `rows` token rows (x, cos, sin, logits) for chunked prefill.
 
     Group-major DeltaNet blocks (Spec.pair_loop; by default when a slice has more than
     PAIR_LOOP pairs of heads): the projections, the out_proj blocks, the taps and windows, the
@@ -720,20 +720,20 @@ class Image(EmbedHost):
         # formats group -> its block layouts (_layout); layer 0's those of the image
         self.layouts = {g: self._layout(g, mlp, rb) for g in dict.fromkeys(self.lf)}
         g0 = self.layouts[self.lf[0]]
-        self.lofs, self.LS, self.mf, self.dchunk = g0.lofs, g0.LS, g0.mf, g0.dchunk
+        self.lofs, self.mf, self.dchunk = g0.lofs, g0.mf, g0.dchunk
         if self.grouped:
             self.pofs, self.PS, self.gofs, self.GS = g0.pofs, g0.PS, g0.gofs, g0.GS
         # the runs (plan): a layer's key is its kind and formats group; then the MTP layer
         self.keys = tuple(zip(spec.kinds, self.lf))
         self.plan = plan(self.keys)
-        self.loc = _place(b, self.plan, lambda k: self.layouts[k[1]].LS)
+        self.loc = _place(b, self.plan, lambda k: self.layouts[k[1]].size[k[0]])
         if spec.mtp:                # an attention block after the model's (the formats without a
             gm = tuple(fmt(k, spec.layers) for k in ("delta", "attn", "gateup", "down"))  # range)
             if gm not in self.layouts:
                 self.layouts[gm] = self._layout(gm, mlp, rb)
             self.keys += ((ATTN, gm),)
             self.loc.update(_place(b, [(spec.layers, self.keys[-1:], 1)],
-                                   lambda k: self.layouts[k[1]].LS))
+                                   lambda k: self.layouts[k[1]].size[k[0]]))
         n_attn = spec.kinds.count(ATTN)
         head = cap * d + 4 * cap * (d // D) + d * cap + 4 * cap
         self.kv_bytes = ((n_attn + spec.mtp) * self.nkv_loc * head      # KV cache, conv ring
@@ -782,7 +782,7 @@ class Image(EmbedHost):
     def _layout(self, g: tuple, mlp: dict, rb) -> SimpleNamespace:
         """The layer block layouts of formats group g (DeltaNet, attention, gate / up, down):
         each projection's format (mf), W_down's chunk, the DeltaNet and attention blocks'
-        offsets (the norms and the MLP first, at the same offsets in both) and their size LS;
+        offsets (the norms and the MLP first, at the same offsets in both) and sizes (size);
         group-major, a pair's block (pofs, PS) and a head group's (gofs, GS)."""
         spec, cfg, cap = self.spec, self.cfg, self.cap
         D, H, d, F_ = cfg.D, spec.hidden, spec.head_dim, spec.ffn
@@ -831,7 +831,7 @@ class Image(EmbedHost):
                        "vt": ab.alloc(d * cap), "vs": ab.alloc(4 * cap)}
                       for _ in range(self.nkv_loc)]
         ns.lofs = {LIN: lin, ATTN: attn}
-        ns.LS = (max(lnb.next, ab.next) + 4095) // 4096 * 4096
+        ns.size = {LIN: (lnb.next + 4095) // 4096 * 4096, ATTN: (ab.next + 4095) // 4096 * 4096}
         return ns
 
     def _off(self, li, it=None) -> Affine:

@@ -186,6 +186,11 @@ def _place(b, runs, size) -> dict:
     return loc
 
 
+def _kind(key) -> str:
+    """A layer's kind from its Spec.lkinds entry (for a MoE model: kind, is a MoE layer)."""
+    return key[0] if isinstance(key, tuple) else key
+
+
 def plan(kinds) -> list:
     """The layers as runs [(first layer, unit of kinds, repeats)]: the repeated unit covering
     the most layers becomes one hardware loop; the layers before and after it are planned the
@@ -382,15 +387,16 @@ class Image(EmbedHost):
     """Per-slice DRAM layout of an LFM2 model. Every slice uses the same addresses.
 
     [ I/O: x_in, cos, sin | final norm | logits ] [ layer 0 block ] ... [ layer L-1 block ]
-    [ LM head rows of this slice ]. The layer blocks of a formats group (a layer's conv,
-    attention, gate / up and down formats: Image.lf) have one size: both kinds start with the
-    norms and this slice's MLP rows; a conv block then holds the taps, the state ring and this
-    slice's rows of in_proj (its channels of B, C and x) and out_proj; an attention block holds
-    the q/k norms, the projections and this slice's KV heads with room for `cap` tokens. The
-    I/O area holds `rows` token rows (x, cos, sin, logits) for chunked prefill. Weight formats
-    as qwen3.Image (`formats` over the KINDS of this file, per layer range; a MoE's experts in
-    `wformat`, its router int8, its dense layers' MLPs one format): the layers run as the
-    runs of plan over their (kind, formats group) keys, each run's blocks one after the other.
+    [ LM head rows of this slice ]. A layer block's layout and size are its kind's in its
+    formats group (a layer's conv, attention, gate / up and down formats: Image.lf); both kinds
+    start with the norms and this slice's MLP rows, at the same offsets in a group; a conv
+    block then holds the taps, the state ring and this slice's rows of in_proj (its channels of
+    B, C and x) and out_proj; an attention block holds the q/k norms, the projections and this
+    slice's KV heads with room for `cap` tokens. The I/O area holds `rows` token rows (x, cos,
+    sin, logits) for chunked prefill. Weight formats as qwen3.Image (`formats` over the KINDS
+    of this file, per layer range; a MoE's experts in `wformat`, its router int8, its dense
+    layers' MLPs one format): the layers run as the runs of plan over their (kind, formats
+    group) keys, each run's blocks one after the other.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
@@ -436,14 +442,14 @@ class Image(EmbedHost):
         # a MoE's dense MLP region)
         self.layouts = {g: self._layout(g, mlp, rb) for g in dict.fromkeys(self.lf)}
         g0 = self.layouts[self.lf[0]]
-        self.lofs, self.LS, self.mf, self.dchunk = g0.lofs, g0.LS, g0.mf, g0.dchunk
+        self.lofs, self.mf, self.dchunk = g0.lofs, g0.mf, g0.dchunk
         if mo is not None:
             self.mlp_ofs, self.DS = g0.mlp_ofs, g0.DS
         # the runs (plan): a layer's key is its kind and formats group
         self.keys = tuple(zip(spec.lkinds, self.lf))
         self.plan = plan(self.keys)
         self.mlp_loop = sum(len(u) for _, u, _ in self.plan) > MLP_UNROLL_BODIES
-        self.loc = _place(b, self.plan, lambda k: self.layouts[k[1]].LS)
+        self.loc = _place(b, self.plan, lambda k: self.layouts[k[1]].size[_kind(k[0])])
         dk = self.dk
         n_attn = spec.kinds.count(ATTN)
         head = cap * dk + 4 * cap * (dk // D) + dk * cap + 4 * cap
@@ -482,7 +488,7 @@ class Image(EmbedHost):
     def _layout(self, g: tuple, mlp: dict, rb) -> SimpleNamespace:
         """The layer block layouts of formats group g (conv, attention, gate / up, down): each
         projection's format (mf), W_down's chunk, the conv and attention blocks' offsets (the
-        norms and the dense MLP first, at the same offsets in both) and their size LS."""
+        norms and the dense MLP first, at the same offsets in both) and sizes (size)."""
         spec, cfg, cap = self.spec, self.cfg, self.cap
         D, H, d, F_, K = cfg.D, spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
         fc, fa, fg, fd = g
@@ -521,7 +527,7 @@ class Image(EmbedHost):
                        "vt": ab.alloc(dk * cap), "vs": ab.alloc(4 * cap)}
                       for _ in range(self.nkv_loc)]
         ns.lofs = {CONV: conv, ATTN: attn}
-        ns.LS = (max(cb.next, ab.next) + 4095) // 4096 * 4096
+        ns.size = {CONV: (cb.next + 4095) // 4096 * 4096, ATTN: (ab.next + 4095) // 4096 * 4096}
         return ns
 
     def _off(self, li, it=None) -> Affine:

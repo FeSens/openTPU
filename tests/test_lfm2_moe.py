@@ -149,7 +149,7 @@ def test_formats_by_layer_range_keep_one_dense_layout(tiny, monkeypatch):
     cfg = board_config(DRAM_BYTES=1 << 24)
     img = spec.image(cfg, 256, formats="conv@1-4=fp4,attn@1-4=fp4")
     g0, g = img.lf[0], ("fp4", "fp4", "int8", "int8")
-    assert img.lf[1:] == (g,) * 4 and img.layouts[g0].LS != img.layouts[g].LS
+    assert img.lf[1:] == (g,) * 4 and img.layouts[g0].size != img.layouts[g].size
     assert img.plan == [(0, ((("conv", False), g0),), 1),
                         (1, ((("attn", True), g), (("conv", True), g)), 2)]
     two = dataclasses.replace(spec, moe=dataclasses.replace(spec.moe, first=2))
