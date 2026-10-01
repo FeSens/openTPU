@@ -271,9 +271,11 @@ The host's rules:
   `Board.write` splits writes made between `Board.start` and the `wait` that sees HALTED
   (`XdmaTransport.run_h2c`). The requests that `RowServer` serves while the card waits are
   covered by this (E4B's PLE record, 11 KiB).
-- Large writes go before or after a run. The streamed logits' SENTINEL marks (4 x vocab bytes)
-  go back after the run, on the DMA worker while the host takes the token. `start` waits for
-  them before RUN.
+- Large writes go before or after a run. On a bitstream with RLD (CAPS bit30) the streamed
+  decode's programs fill their logits region themselves (section 7, "Streamed logits"), so the
+  host writes nothing there. Without RLD the host's SENTINEL marks (4 x vocab bytes) go back
+  after the run, on the DMA worker while the host takes the token, and `start` waits for them
+  before RUN.
 - H2C and C2H calls never overlap (the DMA lock).
 - Not covered: the offload's expert writes (`offload.BoardDram`, MBs while the card waits in
   WAITW) still go whole. The fix there is an XDMA configuration that cannot lap its buffer
@@ -613,6 +615,44 @@ goes on (`BoardBackend.start(stream=...)` / `wait(feed)`, `Engine.step(sink=...)
   is not a streamed decode step (a prefill, a batch) makes the next step mark the whole region
   again (256 KiB for LFM2, before its RUN). Transports without DMA during a run (the board
   model) read the logits after the run as before; `Engine.stream_logits = False` turns it off.
+- On a bitstream with RLD (CAPS bit30, `BoardBackend.fills`) the host marks nothing: the step
+  programs fill the region themselves (`Engine` compiles them with `image.stream_fill`,
+  `qwen3.fill_logits`). Their first instructions after the address registers' LIs are:
+  - a FILL of a TMEM tile with -inf (`FILL_SENTINEL`, 0xFF800000: FILL keeps it, as `ftz`
+    changes only denormals and NaN, and the LM head's logits are finite);
+  - its stores over the region;
+  - one word loaded back from the last store. An ST completes only once the DRAM has taken
+    all its writes, and the scoreboard makes the load wait for it, so the host's reads see
+    the fill.
+  - an RLD of that word. It holds every later instruction until the word is back.
+
+  So once the card's ICOUNT has counted the instruction after the RLD, the fill has landed.
+  `Engine.step` passes that count with the stream (`stream=(addr, nbytes, piece, gate)`,
+  `qwen3.fill_gate`), and the host probes no chunk before ICOUNT reaches it. Until then the
+  region still holds the last token's logits. The rest of the program is the one compiled
+  without the fill, instruction for instruction (TMEM's next-fit cursor is put back), and its
+  logits and DRAM are bit for bit the plain program's on the ISA simulator
+  (`tests/test_*::*filling_step_programs*`).
+
+  The fill replaces two host markings:
+  - The marks after the run (h2c-run, main ba3137b) cost 3.3% of LFM2's tokens/s on the card.
+  - The marks during the run in 4 KiB calls on the worker (mark-in-run, 8d3c37e, reverted in
+    01a82eb) lost a race on the card: on LFM2 fp4's 11 ms run the worker thread, starved of the
+    GIL by the compile, marked a chunk after the LM head had written it.
+
+  The fill itself costs the device, on the co-simulated controller at 133.33 MHz:
+
+  | logits | words | fill |
+  |---|---|---|
+  | LFM2 | 65,536 | 72 us, 0.7% of a 10.1 ms token |
+  | Qwen3 | 151,936 | 157 us, 0.6% of 26.7 ms |
+  | Qwen3.5 | 248,320 | 252 us, 0.7% of 36.6 ms |
+  | Gemma 4 | 262,144 | 265 us |
+
+  The stores move 8 words a cycle from TMEM (3.6-3.95 GB/s). The fake card that runs the ISA
+  simulator models the fill landing late and the old logits until then; the tests check the
+  logits bit for bit under that, and under compile and GIL contention at LFM2's 11 ms run
+  (tests/test_lfm2.py). Without the gate the first chunk read is stale.
 
 This DMA during a run is new on the card: the whole path is tested against a fake card that
 runs the ISA simulator and reveals the logits late, chunk by chunk (bit-exact logits and the

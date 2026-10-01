@@ -26,6 +26,7 @@ from opentpu.host.board import Board, BoardBackend, ConfigMismatch, device_confi
 from opentpu.host.fake import RATES, FakeTransport
 from opentpu.host.runstate import DeviceBusy, RunnerStatus, read_status
 from opentpu.isasim import board_config
+from conftest import IsaCard
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -502,73 +503,6 @@ def test_resident_decode_takes_run_arguments(run_dir):
 
 
 # ------------------------------------------------------------------------------ streamed logits
-class _IsaCard(FakeTransport):
-    """A fake card that computes: RUN runs the loaded program on the ISA simulator over the
-    channel memories. What the run writes shows at once, except [late_addr, +late_n) (the
-    logits): piece i of `piece` bytes shows at run_s * (0.4 + 0.5 * i / pieces), its first
-    half of beats a little before the rest (the beats of one store land out of order)."""
-    streams = True
-
-    def __init__(self, cfg, late, piece, run_s=0.06, **kw):
-        super().__init__(ch_bytes=cfg.DRAM_BYTES // 2, devname=None, run_s=run_s, **kw)
-        self.cfg, self.late, self.piece = cfg, late, piece
-        self.pending = []                                     # (time, channel, offset, bytes)
-
-    def _flat(self):
-        from opentpu.host.board import join
-        return join([c for c in self.ch])
-
-    def _apply(self):
-        now = time.perf_counter()
-        keep = []
-        for t, c, off, b in self.pending:
-            if t <= now:
-                self.ch[c][off:off + len(b)] = b
-            else:
-                keep.append((t, c, off, b))
-        self.pending = keep
-
-    def reg_write(self, off, val):
-        from opentpu import isa as I
-        from opentpu.host import regs as R
-        from opentpu.host.board import split
-        from opentpu.isasim import Machine
-        rising = off == R.R_CTRL and val & R.CTRL_RUN and not self.regs[R.R_CTRL] & R.CTRL_RUN
-        super().reg_write(off, val)
-        if not rising:
-            return
-        self._apply()
-        dram = self._flat()
-        a, n = self.regs[R.R_PROG_ADDR], self.regs[R.R_PROG_N]
-        w = dram[a:a + 32 * n].view(np.uint32).reshape(n, 8)
-        m = Machine(self.cfg, [[I.Instr.decode(x) for x in w]], [dram.copy()])
-        m.run()
-        new = m.slices[0].dram
-        la, ln = self.late
-        t0 = self.t_run = time.perf_counter()               # the run starts now
-        new_late = new[la:la + ln].copy()
-        new[la:la + ln] = dram[la:la + ln]                    # the logits come later
-        for c, off, part in split(0, new):
-            self.ch[c][:] = part
-        npieces = -(-ln // self.piece)
-        for i, o in enumerate(range(0, ln, self.piece)):
-            k = min(self.piece, ln - o)
-            t = t0 + self.run_s * (0.4 + 0.5 * i / npieces)
-            buf = np.zeros(-(-k // 128) * 128, np.uint8)
-            buf[:k] = new_late[o:o + k]
-            for j, (c, off, part) in enumerate(split(la + o, buf)):
-                # channel 0's beats a little before channel 1's
-                self.pending.append((t + 0.002 * j, c, off, part[:len(part)]))
-
-    def reg_read(self, off):
-        self._apply()
-        return super().reg_read(off)
-
-    def mem_read(self, ch, off, n, out=None):
-        self._apply()
-        return super().mem_read(ch, off, n, out)
-
-
 def _big_vocab_qwen(V=20000):
     from opentpu import lens as L
     spec, W = L._tiny_qwen()
@@ -590,7 +524,7 @@ def test_streamed_logits_match_the_isa_simulator(no_cfg_env):
     cfg = sim_config(spec, 256)
     ref = Engine(spec, W, cap=256, cfg=cfg)
     piece = 4 * min(HEAD_CHUNK, cfg.TMEM_WORDS // 8)
-    card = _IsaCard(cfg, None, piece)
+    card = IsaCard(cfg, None, piece)
     eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
     card.late = (eng.image.io["logits"], 4 * spec.vocab)
@@ -611,6 +545,88 @@ def test_streamed_logits_match_the_isa_simulator(no_cfg_env):
         assert ls["pieces"] == 3 and ls["during"] >= 1 and ls["tail_bytes"] <= 2 * piece, (i, ls, eng.backend._due)
         t = pa(want, ctx)
         assert sink.result() == t
+    eng.backend.close()
+
+
+@pytest.mark.parametrize("resident", [False, True])
+def test_a_filling_step_program_is_the_plain_one_with_the_fill_first(no_cfg_env, resident):
+    """qwen3.fill_logits (a streamed step's program on a card that fills): the address
+    registers' LIs, then FILL, the stores of the logits, the word loaded back and its RLD, then
+    the plain program instruction for instruction (fill_gate: ICOUNT past the RLD). On the ISA
+    simulator its logits and the whole DRAM after each step are the plain program's."""
+    from opentpu import lens as L
+    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine, fill_gate
+    spec, W = _big_vocab_qwen()
+    a = Engine(spec, W, cap=256, resident=resident)
+    b = Engine(spec, W, cap=256, resident=resident)
+    a.image.stream_fill = True
+    for t in (5, 7, 9):
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+    for sa, sb in zip(a.backend.machine.slices, b.backend.machine.slices):
+        assert np.array_equal(sa.dram, sb.dram)
+    img = a.image
+    progs = {}
+    for fill in (True, False):
+        img.stream_fill = fill
+        progs[fill] = img.compile_decode(1, 0)[0][0] if resident else img.compile_step(3)[0]
+    f, p = progs[True], progs[False]
+    n = next(i for i, x in enumerate(p) if x.op != I.LI)
+    stores = -(-img.v_loc // min(HEAD_CHUNK, a.cfg.TMEM_WORDS // 8))     # per slice
+    assert [x.op for x in f[n:n + stores + 3]] == [I.VOP] + [I.ST] * stores + [I.LD, I.RLD]
+    assert fill_gate(f) == fill_gate(np.asarray(I.assemble(f), np.uint32)) == n + stores + 4
+    words = lambda x: np.asarray(I.assemble(x), np.uint32)       # noqa: E731
+    assert np.array_equal(words(f[:n]), words(p[:n]))
+    assert np.array_equal(words(f[n + stores + 3:]), words(p[n:]))
+    with pytest.raises(ValueError):
+        fill_gate(p)                                # a program without the fill has no gate
+
+
+def test_streamed_logits_wait_for_the_fill(no_cfg_env, monkeypatch):
+    """A card that fills (CAPS bit30): the step programs fill their logits region themselves
+    and the host writes nothing there, before, during or after a run. Until the fill has
+    landed the region holds the last token's logits (here: until 30% of the run), and the
+    host reads no piece before ICOUNT says so: the logits are the ISA simulator's, token after
+    token, with a prefill run in between. Without the gate the first piece read is stale."""
+    from opentpu.host.board import sim_config
+    from opentpu.llm import qwen3 as Q
+    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
+    spec, W = _big_vocab_qwen()
+    cfg = sim_config(spec, 256)
+    ref = Engine(spec, W, cap=256, cfg=cfg)
+    piece = 4 * min(HEAD_CHUNK, cfg.TMEM_WORDS // 8)
+
+    class Card(IsaCard):
+        def mem_write(self, ch, off, data):
+            if self.late is not None:
+                la, ln = self.late
+                lo, hi = off * 2, off * 2 + 2 * len(data)       # the logical span it touches
+                assert not (lo < la + ln and la < hi), "a host write into the logits region"
+            super().mem_write(ch, off, data)
+
+    card = Card(cfg, None, piece, fill_at=0.3, gen=True)
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    card.late = (eng.image.io["logits"], 4 * spec.vocab)
+    assert eng.backend.fills and eng.image.stream_fill
+    t = 5
+    for i in range(5):
+        if i == 2:
+            assert np.array_equal(ref.prefill([7, 8]).view(np.uint32),
+                                  eng.prefill([7, 8]).view(np.uint32))
+        want, got = ref.step(t), eng.step(t)
+        assert np.array_equal(want.view(np.uint32), got.view(np.uint32)), i
+        ls = eng.backend.last_stream
+        assert ls["pieces"] == 3 and ls["during"] >= 1, (i, ls)
+        t = int(np.argmax(want))
+    eng.backend.close()
+    # the control: a host that does not wait for the fill takes the last token's logits
+    monkeypatch.setattr(Q, "fill_gate", lambda prog: 0)
+    card = Card(cfg, None, piece, fill_at=0.3, gen=True)
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    card.late = (eng.image.io["logits"], 4 * spec.vocab)
+    ref = Engine(spec, W, cap=256, cfg=cfg)
+    assert not np.array_equal(ref.step(5).view(np.uint32), eng.step(5).view(np.uint32))
     eng.backend.close()
 
 

@@ -232,6 +232,17 @@ def test_resident_gathers_are_bit_exact(tiny, wf, ple, fm, monkeypatch):
         assert np.array_equal(a.step(t), b.step(t))
 
 
+@pytest.mark.parametrize("resident", [False, True])
+def test_filling_step_programs_are_transparent(tiny, resident):
+    """The step programs that fill their logits first (the card's streamed decode) give the
+    plain programs' logits and DRAM bit for bit, per position and resident."""
+    from conftest import assert_fill_is_transparent
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(8).integers(0, 1000, 6)]
+    assert_fill_is_transparent(lambda: Engine(spec, W, cap=1024, cfg=_cfg(), resident=resident),
+                               toks)
+
+
 def test_ring_wrap_resident_is_bit_exact(tiny):
     """Positions 760..775: the sliding window's start and end blocks, across the ring's wrap
     (768 slots), resident against per-position."""
