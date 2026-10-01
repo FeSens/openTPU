@@ -1061,6 +1061,12 @@ as in 10.1 it gives 3.94.
 |:--|--:|--:|--:|--:|--:|
 | int8 head | 682 (22.7) | 62.5 | 216 | 3.51 | 5.71 |
 | fp4 head (`--head-bits 4.25`) | 789 (26.3) | 53.2 | 184 | 4.19 | 6.72 |
+| int8 experts (6.69 MB: `--expert-bits 9.0`), int8 head | 351 (11.7) | 107.5 | 719 | 1.55 | |
+| int8 experts, fp4 head | 406 (13.5) | 97.0 | 649 | 1.75 | |
+
+int8 experts give half the slots and twice the bytes a miss: under half the rate. The choice
+waits for the perplexity of fp4 experts (gemma4's 900-token runs, both heads); a split by layer
+range is the middle way (per-layer slot sizes in `Layout`).
 
 - The fp4 head pays twice: 369 MB fewer bytes a token, and 107 more slots. On E2B it is an
   opt-in (cosine 0.974 -> 0.971, +14% decode), and its accuracy on the 26B is to be measured.
