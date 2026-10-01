@@ -21,7 +21,7 @@ def _cos(a, b):
     return (a * b).sum(-1) / np.linalg.norm(a, axis=-1) / np.linalg.norm(b, axis=-1)
 
 
-def _tiny():
+def _tiny(F=F):
     torch.manual_seed(0)
     hc = transformers.Lfm2MoeConfig(
         hidden_size=256, num_hidden_layers=len(KINDS), num_attention_heads=4,
@@ -110,6 +110,59 @@ def test_device_follows_hf_and_routes_on_the_card(tiny):
             checked += 1
     assert checked >= len(toks) - 2
     assert eng.server.misses == 0
+
+
+def test_padded_expert_width(tiny):
+    """An expert width that is not a whole number of its format's chunks (2D for 4-bit: 384
+    here, Gemma 4's 704) is padded in the slot with zero rows of W_gate / W_up and zero columns
+    of W_down (moe.ExpertFormat; exact, act(0) * 0 = 0): the logits follow the 4-bit
+    emulation of the unpadded model (as the 256-wide model's do: median cosine 0.989; a token
+    whose routing turns on a near-tie differs), and a small cache gives the full cache's bit for
+    bit."""
+    _, W, spec = _tiny(F=384)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 10)]
+    full = _engine(spec, W, wformat="fp4")
+    assert (full.image.fmt.F0, full.image.fmt.F) == (384, 512)
+    ref = np.array([full.step(t) for t in toks])
+    assert np.median(_cos(ref, emulated_logits(spec, W, toks, wformat="fp4"))) > 0.99
+    small = _engine(spec, W, experts=K, wformat="fp4")
+    got = np.array([small.step(t) for t in toks])
+    assert small.server.misses > len(toks)
+    assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+
+
+def test_moe_ffn_beside_and_no_residual(tiny, monkeypatch):
+    """moe_ffn's `beside` (work emitted right after the request is posted: Gemma 4's dense MLP,
+    while the host streams), residual=False (the caller adds x) and y_first (the experts'
+    outputs placed first in TMEM): with work beside every MoE layer, decode on the ISA simulator and on the live fake card (misses served during the
+    runs) gives the plain programs' logits bit for bit."""
+    from opentpu import language as ol
+    from opentpu.host.board import BoardBackend
+    from opentpu.isasim import board_config
+    from opentpu.llm import moe as MO
+    _, W, spec = tiny
+    cfg = board_config(DRAM_BYTES=1 << 24)
+    toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 6)]
+    plain = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K)
+    ref = np.array([plain.step(t) for t in toks])
+    real, n = MO.moe_ffn, [0]
+
+    def moe_ffn(x, lw, mo, dev, eps):
+        def beside():                       # VPU work the result does not use
+            n[0] += 1
+            t = ol.empty((1, x.cols))
+            t.set(x * 2.0 + 1.0)
+        return x + real(x, lw, mo, dev, eps, beside=beside, residual=False, y_first=True)
+    monkeypatch.setattr(MO, "moe_ffn", moe_ffn)
+    card = _LiveCard.make(cfg)
+    for backend in ("isa", lambda c, imgs: BoardBackend(c, imgs, transport=card)):
+        eng = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K,
+                     backend=backend, pipeline=False)
+        got = np.array([eng.step(t) for t in toks])
+        assert card.error is None, card.error
+        assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+        assert eng.server.misses > len(toks)
+    assert n[0] > 0 and card.waits > 0
 
 
 @pytest.mark.parametrize("wformat", ["int8", "fp4"])

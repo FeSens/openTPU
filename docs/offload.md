@@ -1039,8 +1039,20 @@ at 1.4 GB/s:
 | fp4 head, 1280 slots | 4.24 | 4.48 |
 | fp4 head, 1440 slots (the head's freed bytes) | 4.40 | 4.66 |
 
-The fp4 head pays twice, as on Gemma 4: 254 MB fewer a token and some 150 more slots. Its
-accuracy on the 35B is to be measured. With decayed use, Gemma 4 26B-A4B's rows in section 11.3
+The fp4 head pays twice, as on Gemma 4: 254 MB fewer a token and some 150 more slots, but it
+costs the 35B 2.4% perplexity. Hugging Face's final hidden states (bf16) over 900 tokens of
+docs/isa.md's prose, through the head in float and in openTPU's formats (its input int8 per
+block, as QACT):
+
+| Qwen3.5-35B-A3B LM head | perplexity | KL(float, head) | top-1 as float's |
+|:--|--:|--:|--:|
+| float | 22.62 | 0 | 1 |
+| int8 | 22.63 | 0.0003 | 0.990 |
+| fp4 | 23.16 (+2.4%) | 0.018 | 0.889 |
+
+The model has memorized the opening of Pride and Prejudice (perplexity 1.05 in every format),
+so that text says nothing here. The head stays int8 by default; fp4 is an opt-in
+(`head_format`), as on Gemma 4 E2B. With decayed use, Gemma 4 26B-A4B's rows in section 11.3
 become 3.78 (fp4 experts, int8 head), 4.52 (fp4 head), 1.68 (int8 experts, int8 head) and
 1.92 (int8 experts, fp4 head) tok/s.
 
@@ -1133,6 +1145,12 @@ as in 10.1 it gives 3.94.
 |:--|--:|--:|--:|--:|--:|
 | int8 head | 682 (22.7) | 62.5 | 216 | 3.51 | 5.71 |
 | fp4 head (`--head-bits 4.25`) | 789 (26.3) | 53.2 | 184 | 4.19 | 6.72 |
+| int8 experts (6.69 MB: `--expert-bits 9.0`), int8 head | 351 (11.7) | 107.5 | 719 | 1.55 | |
+| int8 experts, fp4 head | 406 (13.5) | 97.0 | 649 | 1.75 | |
+
+int8 experts give half the slots and twice the bytes a miss: under half the rate. The choice
+waits for the perplexity of fp4 experts (gemma4's 900-token runs, both heads); a split by layer
+range is the middle way (per-layer slot sizes in `Layout`).
 
 - The fp4 head pays twice: 369 MB fewer bytes a token, and 107 more slots. On E2B it is an
   opt-in (cosine 0.974 -> 0.971, +14% decode), and its accuracy on the 26B is to be measured.
