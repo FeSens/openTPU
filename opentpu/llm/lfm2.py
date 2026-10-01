@@ -50,6 +50,7 @@ from ..kernels.lib import rmsnorm
 from ..kernels.mlp import _chunk
 from ..host.offload import ExpertServer, Layout
 from ..runtime import quantize_rows
+from . import formats as FM
 from . import generate as G
 from . import moe as MO
 from .qwen3 import (RunPos, _inputs, _inputs_rows, _lookup_alloc, _lookup_build, _lookup_desc,
@@ -84,6 +85,7 @@ class Spec:
     moe: MO.MoESpec | None = None   # LFM2-MoE: layers moe.first.. have routed experts
     embed: str = "f32"      # the embedding rows: fp32, or "int8" per D block (as qwen3.Spec:
                             # gathered on the device from the tied int8 head or a table)
+    formats: str = ""       # weight formats per kind over the image's wformat (KINDS)
 
     @property
     def layers(self) -> int:
@@ -256,18 +258,36 @@ def _moe_reference(h, W, p: str, mo) -> np.ndarray:
     return y
 
 
+KINDS = ("attn", "conv", "mlp", "gateup", "down", "head")    # a formats string's weight kinds
+
+
+def weight_kind(n: str) -> tuple:
+    """(kind, layer) of checkpoint weight `n` (KINDS: the head, or a layer's attention,
+    convolution in / out, MLP w1 / w3 or w2 projection; a MoE's experts are the image's
+    wformat: "experts")."""
+    if not n.startswith("model.layers."):
+        return "head", 0
+    i = int(n.split(".")[2])
+    if ".experts." in n:
+        return "experts", i
+    return ("conv" if ".conv." in n else "attn" if ".self_attn." in n else
+            "down" if n.endswith(".w2.weight") else "gateup"), i
+
+
 def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "int8",
-                    head_format: str | None = None, routes: list | None = None) -> np.ndarray:
+                    head_format: str | None = None, routes: list | None = None,
+                    formats: str | None = None) -> np.ndarray:
     """float64 decode with openTPU's quantization points and none of its rounding (as
     qwen3.emulated_logits); a zero-padded K or q block quantizes like its head_dim values."""
     d, G, H, K = spec.head_dim, spec.n_q // spec.n_kv, spec.hidden, spec.conv_k
     Wq: dict = {}
 
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+    fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
 
     def w(n):
-        if n not in Wq:        # the weight formats as in Image (wformat, head_format)
-            Wq[n] = _fake_w(W[n], D, (head_format or wformat) if n == head else wformat)
+        if n not in Wq:        # the weight formats as in Image (wformat, head_format, formats)
+            Wq[n] = _fake_w(W[n], D, fmt(*weight_kind(n)))
         return Wq[n]
 
     def norm(v, g):

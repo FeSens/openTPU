@@ -5,9 +5,11 @@ string says otherwise:
     "kind=fmt,kind@a-b=fmt,..."     fmt: int8, int4 or fp4; a..b: checkpoint layers (a: one)
 
 A rule with a range wins over one without, and among equals the first one in the string. Each
-model names the kinds it has (Gemma 4: attn, mlp, gateup, down, ple, head, experts); "head"
-takes no range. The string comes from the caller, else the OTPU_FORMATS environment variable,
-else the model's own default (Spec.formats).
+model names the kinds it has (Gemma 4: attn, mlp, gateup, down, ple, head, experts; Qwen3 and
+the Llama-likes: attn, mlp, gateup, down, head; LFM2 also conv, Qwen3.5 also delta); "mlp" is
+the default of "gateup" and "down", and "head" takes no range. The string comes from the
+caller, else the OTPU_FORMATS environment variable, else the model's own default
+(Spec.formats).
 """
 from __future__ import annotations
 
@@ -47,3 +49,35 @@ def pick(rules_: list, kind: str, layer: int, default):
 def plain(rules_: list) -> dict:
     """{kind: format} of the rules without a range (the first one of each kind)."""
     return {r[0]: r[4] for r in reversed(rules_) if not r[3]}
+
+
+SUB = {"gateup": "mlp", "down": "mlp"}      # a kind whose default is another kind's format
+
+
+def resolver(formats: str | None, kinds, default: str, wformat: str,
+             head_format: str | None = None):
+    """fmt(kind, layer): the format of a weight of `kind` in checkpoint layer `layer` (rules
+    of `formats` as rules(); else the kind's SUB parent's, else `wformat`); the head's is
+    `head_format`, else the formats' head rule, else `wformat`."""
+    r = rules(formats, kinds, default)
+    head = head_format or plain(r).get("head") or wformat
+
+    def fmt(kind: str, layer: int = 0) -> str:
+        if kind == "head":
+            return head
+        base = pick(r, SUB[kind], layer, wformat) if kind in SUB else wformat
+        return pick(r, kind, layer, base)
+    return fmt
+
+
+def uniform(fmt, kinds, layers) -> dict:
+    """{kind: format} of a model whose layers share one layout (each kind one format in every
+    layer: Qwen3, LFM2, Qwen3.5); ValueError when a rule's range splits a kind."""
+    out = {}
+    for k in kinds:
+        fs = {fmt(k, i) for i in layers}
+        if len(fs) > 1:
+            raise ValueError(f"weight formats: {k} in {sorted(fs)} by layer, this model's "
+                             f"layers hold one format per kind")
+        out[k] = fs.pop() if fs else fmt(k)
+    return out

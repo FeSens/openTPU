@@ -73,6 +73,7 @@ from ..kernels.deltanet import gates, l2norm_rows
 from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
 from .lfm2 import plan, run_layers
+from . import formats as FM
 from . import generate as G
 from . import moe as MO
 from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fake_q, _fake_w,
@@ -117,6 +118,7 @@ class Spec:
                                     # head are even)
     moe: MO.MoESpec | None = None   # Qwen3.5-MoE: every layer's MLP is routed experts plus a
                                     # shared expert (ffn: its width, the layer block's MLP)
+    formats: str = ""       # weight formats per kind over the image's wformat (KINDS)
 
     @property
     def layers(self) -> int:
@@ -313,8 +315,22 @@ def _moe_reference(h, W, p: str, mo) -> np.ndarray:
     return y
 
 
+KINDS = ("attn", "delta", "mlp", "gateup", "down", "head")   # a formats string's weight kinds
+
+
+def weight_kind(n: str) -> tuple:
+    """(kind, layer) of checkpoint weight `n` (KINDS: the head, or a layer's attention,
+    DeltaNet (in_proj_*, out_proj), MLP gate / up or down projection; Qwen3.5-MoE's shared
+    expert is the MLP)."""
+    if not n.startswith("model.layers."):
+        return "head", 0
+    return ("delta" if ".linear_attn." in n else "attn" if ".self_attn." in n else
+            "down" if ".down_proj." in n else "gateup", int(n.split(".")[2]))
+
+
 def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "int8",
-                    head_format: str | None = None, routes: list | None = None) -> np.ndarray:
+                    head_format: str | None = None, routes: list | None = None,
+                    formats: str | None = None) -> np.ndarray:
     """float64 decode with openTPU's quantization points and none of its rounding (as
     qwen3.emulated_logits): int8 weights and matmul inputs per D-block, int8 K and V, int8 P.
     The DeltaNet state, convolution and gates are exact (they are fp32 on the device).
@@ -325,10 +341,11 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     Wq: dict = {}
 
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+    fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
 
     def w(n):
-        if n not in Wq:        # the weight formats as in Image (wformat, head_format)
-            Wq[n] = _fake_w(W[n], D, (head_format or wformat) if n == head else wformat)
+        if n not in Wq:        # the weight formats as in Image (wformat, head_format, formats)
+            Wq[n] = _fake_w(W[n], D, fmt(*weight_kind(n)))
         return Wq[n]
 
     def g1(n):

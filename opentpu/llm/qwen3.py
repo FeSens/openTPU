@@ -34,6 +34,7 @@ from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
 from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, arg_words
+from . import formats as FM
 from . import generate as G
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Bucket, _attend_heads
@@ -72,6 +73,7 @@ class Spec:
     embed: str = "f32"        # the embedding rows: fp32, or "int8" (per D block, as the tied
     #                           int8 LM head holds them: the device gathers them from it,
     #                           kernels.gather.gather_row)
+    formats: str = ""         # weight formats per kind over the image's wformat (KINDS)
 
     @property
     def rope_dim(self) -> int:
@@ -533,19 +535,32 @@ def _fake_w(a, D: int, fmt: str = "int8"):
     return Q.quantize_w4(a, fmt, D)[2].astype(np.float64)
 
 
+KINDS = ("attn", "mlp", "gateup", "down", "head")     # the weight kinds of a formats string
+
+
+def weight_kind(n: str) -> tuple:
+    """(kind, layer) of checkpoint weight `n` (KINDS: the head, or a layer's attention, MLP
+    gate / up or down projection)."""
+    if not n.startswith("model.layers."):
+        return "head", 0
+    return ("attn" if ".self_attn." in n else "down" if ".down_proj." in n else "gateup",
+            int(n.split(".")[2]))
+
+
 def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "int8",
-                    head_format: str | None = None) -> np.ndarray:
+                    head_format: str | None = None, formats: str | None = None) -> np.ndarray:
     """float64 decode that applies openTPU's quantization points but none of its rounding:
-    int8 (or 4-bit: `wformat`, `head_format` as in Image) weights, int8 matmul inputs per
-    D-block, int8 K (per token, D-block) and V (per token), int8 P (per D tokens). Separates
-    quantization error from kernel bugs."""
+    int8 (or 4-bit: `wformat`, `head_format`, `formats` as in Image) weights, int8 matmul
+    inputs per D-block, int8 K (per token, D-block) and V (per token), int8 P (per D tokens).
+    Separates quantization error from kernel bugs."""
     d, G = spec.head_dim, spec.n_q // spec.n_kv
     Wq: dict = {}
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+    fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
 
     def w(n):
         if n not in Wq:
-            Wq[n] = _fake_w(W[n], D, (head_format or wformat) if n == head else wformat)
+            Wq[n] = _fake_w(W[n], D, fmt(*weight_kind(n)))
         return Wq[n]
 
     def norm(v, g):
