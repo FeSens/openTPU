@@ -13,9 +13,11 @@ DRAM words (`Layout`), all 4-byte words at 64-byte aligned bases:
     mbox + 4               its count of ids, as a float (the card writes it with each request:
                            k; a prefill run of R rows R k, repeats included, moe.moe_ffn_rows;
                            0.0 is read as k)
-    mbox + 64              the global expert ids of request seq (floats)
+    mbox + 64              the global expert ids of request seq (floats): the first 16
     served                 the last request the host has finished, as a float
     dir + 8 * g            expert g's entry: {slot address (u32), present (f32: 1.0 or 0.0)}
+    row2                   ids 17-32 of a request of more than 16 (a layout of 2 lines only:
+                           the 128-byte block after the directory)
 
 A global expert id is `j * E + e` for the j-th MoE layer's expert e (the card's ARGMAX gives it
 with base j * E). Per request the host, for each id missing from its copy of the directory:
@@ -24,6 +26,14 @@ to its entry, writes the new expert into its slot and then {slot, 1.0} to the ne
 the last id, `served = seq`. The card fences each layer before it posts, `WAITW served >= seq`
 (its last request), so one request row is enough, and no eviction for a layer is in flight
 while it uses that layer's slots (docs/offload.md 5.2).
+
+During a layer-major prefill (docs/offload.md 13: one MoE layer at a time over the whole
+prompt) the slots are pooled (`begin_prefill`): a missing expert of the running layer takes a
+free slot of any layer, else the slot of the least recently used expert the request does not
+name, of any layer (a finished layer's first). `end_prefill` restores each layer's own number
+of slots: a layer keeps its experts of most decayed use up to it, the rest leave (their entries
+cleared), and with "lazy" (the default; docs/offload.md 13) decode's misses fill the slots, with
+"eager" each layer's experts of most use in the prompt are loaded at once.
 
 A request whose ids are at G = layers x E and above is a hint (docs/offload.md 12: the layer's
 router on its input, before its mixer). With the "lfu" policy the host gives each hinted expert
@@ -220,23 +230,34 @@ class Layout:
     mbox: int
     served: int
     dir: int
+    row2: int = 0          # a request's second line of ids (0: requests of at most 16)
 
     @staticmethod
-    def build(base: int, E: int, k: int, slots_per_layer, slot_bytes: int) -> "Layout":
+    def build(base: int, E: int, k: int, slots_per_layer, slot_bytes: int,
+              lines: int = 1) -> "Layout":
         """The words from `base` up (64-byte aligned), then the slots, layer after layer, from
         the next 4 KiB page (slot_bytes keeps them D-byte aligned: the MXU streams whole
-        chunks)."""
-        if base % LINE or slot_bytes % LINE or not 0 < k <= LINE // 4:
-            raise ValueError("unaligned base or slot size, or k too large")
+        chunks). lines=2: requests of up to 32 ids (a layer-major prefill's runs of 4 rows),
+        their second line after the directory on a 128-byte block of its own (outside
+        BoardDram's shadow of the host's words); 1 leaves every address as it was."""
+        if base % LINE or slot_bytes % LINE or not 0 < k <= LINE // 4 or lines not in (1, 2):
+            raise ValueError("unaligned base or slot size, k too large, or not 1 or 2 lines")
         mbox = base
         served = mbox + 2 * LINE
         d = served + LINE
-        a = -(-(d + 8 * E * len(slots_per_layer)) // 4096) * 4096     # slots page-aligned
+        end = d + 8 * E * len(slots_per_layer)
+        row2 = -(-end // (2 * LINE)) * 2 * LINE if lines == 2 else 0
+        a = -(-(row2 + LINE if row2 else end) // 4096) * 4096        # slots page-aligned
         slots = []
         for n in slots_per_layer:
             slots.append((a, int(n)))
             a += int(n) * slot_bytes
-        return Layout(E, k, tuple(slots), slot_bytes, mbox, served, d)
+        return Layout(E, k, tuple(slots), slot_bytes, mbox, served, d, row2)
+
+    @property
+    def max_ids(self) -> int:
+        """The most ids a request carries."""
+        return (2 if self.row2 else 1) * LINE // 4
 
     @property
     def layers(self) -> int:
@@ -286,6 +307,8 @@ class ExpertServer:
         self.use: list = [{} for _ in range(layout.layers)]          # g -> log2 use + t / half
         self.free = [[a + i * layout.slot_bytes for i in range(n)] for a, n in layout.slots]
         self.pending: OrderedDict = OrderedDict()   # hinted, in a slot, not landed: g -> bytes sent
+        self.pooled = False                 # a layer-major prefill: every slot serves its layer
+        self.order: OrderedDict = OrderedDict()      # pooled: the experts in slots, oldest first
         self.seq = 0                        # the last request served
         self.hits = self.misses = self.bytes = 0
         # hints served; hinted experts landed on idle time, sent by the request that named
@@ -309,6 +332,8 @@ class ExpertServer:
             fr.extend(lru.values())
             lru.clear()
         self.pending.clear()
+        self.pooled = False
+        self.order.clear()
         self.seq = 0
         self.t = [0] * L.layers
         self.use = [{} for _ in range(L.layers)]
@@ -345,8 +370,14 @@ class ExpertServer:
             raise RuntimeError(f"the card posted request {seq} with {self.seq} served: its "
                                f"fence (WAITW served >= seq) is missing")
         n = n or self.L.k                   # (a multi-row request's count: its ids, repeats
-        ids = list(dict.fromkeys(int(g) for g in np.frombuffer(     # included, each served once)
-            bytes(self.mem.read(self.L.row, 4 * n)), np.float32)))
+        if not 0 < n <= self.L.max_ids:     # included, each served once)
+            raise RuntimeError(f"request {seq} of {n} ids: the layout's lines hold "
+                               f"{self.L.max_ids}")
+        h = LINE // 4
+        raw = bytes(self.mem.read(self.L.row, 4 * min(n, h)))
+        if n > h:
+            raw += bytes(self.mem.read(self.L.row2, 4 * (n - h)))
+        ids = list(dict.fromkeys(int(g) for g in np.frombuffer(raw, np.float32)))
         G = self.L.E * self.L.layers
         m0 = self.misses
         if ids[0] >= G:
@@ -393,7 +424,11 @@ class ExpertServer:
                     self.hits += 1
                 continue
             self.misses += 1
-            self._insert(j, g, self._slot(j, ids))
+            self._insert(j, g, self._pool_slot(j, ids) if self.pooled else self._slot(j, ids))
+        if self.pooled:
+            for g in ids:
+                self.order[g] = None
+                self.order.move_to_end(g)
         if self.drop:                       # its layer's hints it does not name, withdrawn
             for g in [g for g in self.pending if g // self.L.E == j and g not in ids]:
                 del self.pending[g]
@@ -408,7 +443,7 @@ class ExpertServer:
         5.4: an LRU victim of a wrong hint is a recent expert)."""
         j = self._layer(ids)
         self.hints += 1
-        if self.policy != "lfu":
+        if self.policy != "lfu" or self.pooled:
             return
         lru = self.lru[j]
         for g in ids:
@@ -466,6 +501,64 @@ class ExpertServer:
         else:
             self.mem.write(self.L.entry(victim), np.zeros(2, np.uint32))
         return lru.pop(victim)
+
+    def _pool_slot(self, j: int, ids) -> int:
+        """Pooled: a free slot of layer j, else of any layer, else the slot of the least
+        recently used expert of any layer the request does not name (its entry cleared)."""
+        for fr in [self.free[j]] + self.free:
+            if fr:
+                return fr.pop(0)
+        victim = next((v for v in self.order if v not in ids), None)
+        if victim is None:
+            raise RuntimeError(f"{len(self.order)} slots for a request of {len(ids)}")
+        del self.order[victim]
+        self.mem.write(self.L.entry(victim), np.zeros(2, np.uint32))
+        return self.lru[victim // self.L.E].pop(victim)
+
+    def begin_prefill(self) -> None:
+        """A layer-major prefill starts (docs/offload.md 13): every slot serves the layer its
+        requests name. Hints still on their way are dropped (their slots free; their entries
+        read 0 already)."""
+        for g in list(self.pending):
+            del self.pending[g]
+            j = g // self.L.E
+            self.free[j].append(self.lru[j].pop(g))
+            self.dropped += 1
+        self.order = OrderedDict((g, None) for lru in self.lru for g in lru)
+        self.pooled = True
+
+    def end_prefill(self, restore: str = "lazy") -> None:
+        """The prefill ends: each layer gets its own number of slots back. A layer keeps its
+        experts of most decayed use (the prompt's requests) up to it; the others leave, their
+        entries cleared. "lazy": decode's misses fill the free slots (docs/offload.md 13: a
+        restore of every layer's set costs more than the misses it saves); "eager": each
+        layer's experts of most use not in a slot are loaded now."""
+        if restore not in ("lazy", "eager"):
+            raise ValueError(f"restore {restore!r}")
+        spare = [a for fr in self.free for a in fr]
+        for fr in self.free:
+            fr.clear()
+        for j, (_, n) in enumerate(self.L.slots):
+            lru, use = self.lru[j], self.use[j]
+            if len(lru) > n:
+                keep = set(sorted(lru, key=lambda g: use.get(g, -math.inf), reverse=True)[:n])
+                for g in [g for g in lru if g not in keep]:
+                    self.mem.write(self.L.entry(g), np.zeros(2, np.uint32))
+                    spare.append(lru.pop(g))
+        for j, (_, n) in enumerate(self.L.slots):
+            while len(self.lru[j]) + len(self.free[j]) < n:
+                self.free[j].append(spare.pop())
+        self.pooled = False
+        self.order.clear()
+        if restore == "eager":
+            for j in range(self.L.layers):
+                use = self.use[j]
+                for g in sorted(use, key=lambda g: use[g], reverse=True):
+                    if not self.free[j]:
+                        break
+                    if g not in self.lru[j]:
+                        self._insert(j, g, self.free[j].pop(0))
+        self._flush()
 
     def _insert(self, j: int, g: int, slot: int) -> None:
         data = self.pool(g)
