@@ -100,9 +100,9 @@ class DevVar(RunVar):
     address may add 1 * var; it then uses R[reg] as its base, like a run-time argument's
     register."""
 
-    def __init__(self, name: str, reg: int):
+    def __init__(self, name: str, reg: int, align: int = 1):
         super().__init__(name)
-        self.reg = reg
+        self.reg, self.align = reg, align       # align: the value is a multiple of it
 
 
 ARG0 = 8                        # the run's arguments ARG0..7 are R8..R15 at the start
@@ -1467,7 +1467,8 @@ class Builder:
         # PAIR reads a chunk's two scale words as one 8-byte-aligned pair
         pair = st.pair and w.wf != I.W8 and (w.scale is None or (
             w.srs % 8 == 0 and Affine.of(w.scale).const % 8 == 0
-            and all(c % 8 == 0 for c in Affine.of(w.scale).terms.values())))
+            and all(c * getattr(v, "align", 1) % 8 == 0
+                    for v, c in Affine.of(w.scale).terms.items())))
         m0 = 0
         for ab, mc in st.chunks:
             ins = I.mm(sa, ssa, out.base + m0 * ors, N, st.KB, w.rs, ors, mc, ab, w.srs,
