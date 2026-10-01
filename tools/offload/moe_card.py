@@ -69,7 +69,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          embed_host: bool | None = None, hints: bool | None = None,
          hint_part: int | None = None, hint_drop: bool = False,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
-         formats: str | None = None, layer_major: int = 0) -> dict:
+         formats: str | None = None, layer_major: int = 0, pooled: bool = True) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -98,7 +98,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                                                model=Path(model).name)
     t = time.time()
     if layer_major:                             # the prompt a layer at a time, runs of R rows
-        ekw["layer_major"] = layer_major        # (docs/offload.md 13)
+        ekw.update(layer_major=layer_major, pooled=pooled)  # (docs/offload.md 13)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend, **ekw)
     load_s = time.time() - t
@@ -228,6 +228,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(), layer_major=layer_major,
+                pooled=pooled if layer_major else None,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
                 loop="host" if host_loop else "card", embed=spec.embed,
@@ -291,6 +292,8 @@ def main():
     ap.add_argument("--layer-major", type=int, default=0, metavar="R",
                     help="prefill a layer at a time in runs of R rows (docs/offload.md 13; "
                          "default 0: token by token)")
+    ap.add_argument("--per-layer-slots", action="store_true",
+                    help="--layer-major with each layer's own slots (default: pooled)")
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
@@ -302,7 +305,8 @@ def main():
              a.cfg, a.card, a.policy,
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
-             a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major)
+             a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
+             not a.per_layer_slots)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
