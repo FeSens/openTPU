@@ -19,8 +19,8 @@
 #   g26t16, g26lm1, g26lm2: the 26B at 16 tokens, its prompt token by token (as g26a) or layer
 #     by layer in runs of 1 or 2 rows (--layer-major; docs/offload.md 13)
 #   q35t16, q35lm1, q35lm2: the same for the 35B as q35e (the table on the host, no hints)
-#   (layer-major runs pool the slots: every slot serves the running layer; g26lm2s, q35lm2s:
-#   each layer's own slots, --per-layer-slots)
+#   (lm1, lm2: each layer's own slots, --per-layer-slots; g26lmp2, q35lmp2: layer-major R = 2
+#   with the slots pooled, every slot serving the running layer)
 # Before each run the other pools leave the page cache and the run's pool is read into it. A run
 # whose files are not staged in O is skipped. Selftest before and after.
 # Run: otpu-lock --wait 3600 -- tools/offload/sessions/card_moe.sh   (RUNS="8b16 8b160 q35";
@@ -63,13 +63,13 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [g26a]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128a 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
   [g26b]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128b 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
   [g26t16]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
-  [g26lm1]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm1 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 1"
-  [g26lm2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2"
-  [g26lm2s]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2s 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2 --per-layer-slots"
+  [g26lm1]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm1 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 1 --per-layer-slots"
+  [g26lm2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2 --per-layer-slots"
+  [g26lmp2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lmp2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2"
   [q35t16]="$Q35 16 q35-hf.json q35ref16 q35card16t 0 lfu --embed-table host --hints off"
-  [q35lm1]="$Q35 16 q35-hf.json q35ref16 q35card16lm1 0 lfu --embed-table host --hints off --layer-major 1"
-  [q35lm2]="$Q35 16 q35-hf.json q35ref16 q35card16lm2 0 lfu --embed-table host --hints off --layer-major 2"
-  [q35lm2s]="$Q35 16 q35-hf.json q35ref16 q35card16lm2s 0 lfu --embed-table host --hints off --layer-major 2 --per-layer-slots")
+  [q35lm1]="$Q35 16 q35-hf.json q35ref16 q35card16lm1 0 lfu --embed-table host --hints off --layer-major 1 --per-layer-slots"
+  [q35lm2]="$Q35 16 q35-hf.json q35ref16 q35card16lm2 0 lfu --embed-table host --hints off --layer-major 2 --per-layer-slots"
+  [q35lmp2]="$Q35 16 q35-hf.json q35ref16 q35card16lmp2 0 lfu --embed-table host --hints off --layer-major 2")
 for name in ${RUNS:-8b16 8b160 q35}; do
   read -r md pool n hf ref out ex pol extra <<< "${RUN[$name]}"
   if [ ! -f $O/$md/config.json ] || [ ! -f $O/$pool ] || [ ! -f $O/$ref.json ]; then

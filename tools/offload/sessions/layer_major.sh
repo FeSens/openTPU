@@ -3,8 +3,9 @@
 # 16 tokens of gemma-4-26B-A4B as session 8's g26a (int8 layers, fp4 experts and head, 18 slots
 # a layer by decayed use, wiki.txt's first paragraph) and of Qwen3.5-35B-A3B as q35e (the
 # table on the host, no hints), each prompt token by token (g26t16, q35t16) or layer by layer
-# in runs of 1 or 2 rows (g26lm1/2, q35lm1/2: the slots pooled; g26lm2s, q35lm2s: each
-# layer's own). RUNS picks the runs (default: the 35B's four, then the 26B's pooled R = 2).
+# in runs of 1 or 2 rows (g26lm1/2, q35lm1/2: each layer's own slots; g26lmp2, q35lmp2: R = 2
+# with the slots pooled). RUNS picks the runs (default: the 35B's three with per-layer slots,
+# then the pooled ones last, so that a pooled failure costs only its own runs).
 # A model's runs must give the same prefill logits and tokens (layer-major is bit-exact with
 # token by token on the ISA simulator, pooled or not); each is also checked against the ISA
 # simulator's reference (reference.sh) and HF's; and against the runs of an earlier session in
@@ -15,7 +16,24 @@ SESSION=${SESSION:-lm2}; source "$(dirname "$0")/env.sh"
 exec > >(tee -a $R/session.log) 2>&1
 [ -e $O/gemma-4-26B-A4B ] || ln -s ${G26:-$HOME/openTPU/models/gemma-4-26B-A4B} $O/gemma-4-26B-A4B
 echo "layer_major start $(date +%T) tree $rev mem $(mem) GB"
-RUNS="${RUNS:-q35t16 q35lm1 q35lm2 q35lm2s g26lm2}" bash "$here/card_moe.sh"
+check() {      # the model's runs so far (and O/lm's) agree, and this run wrote its result
+  python - $R $1 <<'PY'
+import glob, json, sys
+o, run = sys.argv[1:]
+m = run[:3]
+fs = glob.glob(f"{o}/{m}card16*.json") + glob.glob(f"{o}/../lm/{m}card16*.json")
+n = len(glob.glob(f"{o}/{m}card16*.json"))
+same = len({(json.load(open(f))["prefill_logits_sha"], tuple(json.load(open(f))["tokens"]))
+            for f in fs}) == 1
+sys.exit(0 if same and n else 1)
+PY
+}
+for run in ${RUNS:-q35t16 q35lm1 q35lm2 q35lmp2 g26lmp2}; do   # one at a time: stop at the
+  n0=$(ls $R/${run:0:3}card16*.json 2>/dev/null | wc -l)        # first failed or differing run
+  RUNS=$run bash "$here/card_moe.sh"
+  n1=$(ls $R/${run:0:3}card16*.json 2>/dev/null | wc -l)
+  if [ "$n1" -le "$n0" ] || ! check $run; then echo "STOP after $run: no result, or it differs"; break; fi
+done
 echo "layer_major end $(date +%T)"
 python - $R <<'PY'
 import glob, json, os, sys
