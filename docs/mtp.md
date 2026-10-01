@@ -134,8 +134,8 @@ tokens are compile-time values, as prefill needs. The verify run is the same ker
   row stride (`tests/test_autodecode.py::test_argmax_index_base_and_row_stride`). Greedy needs
   only the per-row maximum's index. Sampled needs each row's logits through the sampler
   (section 5.2).
-- **The hidden rows x** (before the final norm) go to DRAM for the MTP drafter, as `m.lm_split`
-  stores x for the split generate programs.
+- **The hidden rows** go to DRAM for the MTP drafter after the final norm (the LM head's
+  input), as `m.lm_split` stores x for the split generate programs.
 - **Programs per bucket:** the verify program, the plain program and (for MTP) the draft
   kernel, chained as today's split programs are (`ptab2`). The chain area holds 8K instructions
   per bucket and mode.
@@ -233,25 +233,28 @@ So the MTP layer is one full-attention layer (gated, 8 query heads and 2 KV head
 own KV cache) with the dense MLP. It has 20.4 M parameters, about 10 MB in fp4. The embedding
 and the LM head are the model's (tied).
 
-The dataflow, in the published Qwen3-Next / DeepSeek-V3 form:
+The dataflow follows the one installed reference, mlx_vlm 0.6.8's drafter
+(`mlx_vlm/speculative/drafters/qwen3_5_mtp/qwen3_5_mtp.py`, `_forward_hidden`). transformers
+and mlx_lm drop the weights, and vLLM and SGLang are not installed:
 
 ```
 e = pre_fc_norm_embedding(embed(token at t + 1))
-h = pre_fc_norm_hidden(hidden of the main model at t)
-x = fc(concat(e, h))                       [2H] -> [H]
-x = the MTP decoder layer at position t + 1 (its own KV cache)
-draft for t + 2 = argmax(lm_head(norm(x)))
+h = pre_fc_norm_hidden(hidden of the main model at t, after its final norm model.norm)
+x = fc(concat(e, h))                       [2H] -> [H], the embedding first
+x = the MTP decoder layer (gated full attention + SwiGLU), RoPE position t, its own KV cache
+draft for t + 2 = argmax(lm_head(mtp.norm(x)))     lm_head = the tied embedding
 ```
 
-No reference implementation is installed here (transformers drops the weights; vLLM and
-SGLang are not installed). **To confirm against vLLM's `qwen3_next_mtp.py` before building:**
-the concat order (embedding first is the published form), whether h is taken before or after
-the main model's final norm, the norm the draft's head uses (mtp.norm), and the MTP layer's
-position.
+- Every MTP norm is zero-centred, x * (1 + w), as the model's are (qwen35's `g1`).
+- The position is the hidden's (mlx_vlm). transformers' generic MtpLayer uses the token's
+  instead. Both work: the layer attends only to its own cache, and RoPE is relative.
+- mlx_vlm drafts 2 tokens per round by feeding the layer's normed output back as the next
+  hidden. After the verify, it pushes the accepted tokens through the MTP layer with the main
+  model's verify hiddens to get the next draft, as below.
 
 On the card, per iteration:
 
-- **The MTP layer runs over the verify run's rows**, (x_i, a_i) for i = 0..k. That keeps its KV
+- **The MTP layer runs over the verify run's rows**, (normed x_i, a_i) for i = 0..k. That keeps its KV
   cache filled at every accepted position. It is a (k + 1)-row run of one layer, so its weights
   stream once (about 2% of a 0.8B token).
 - **The draft comes from row n** (a run-time row: RLD of n into the address of the row read).
@@ -359,8 +362,8 @@ All projected; a is unknown for our models until phase 0 measures it.
 
 ## 9. Open questions
 
-- The reference details of the MTP dataflow (section 6.1): concat order, pre- or post-norm
-  hidden, the MTP layer's position.
+- The MTP dataflow is read from mlx_vlm's drafter (section 6.1). Phase 0 checks it against the
+  checkpoint's own acceptance: a wrong detail shows up as near-zero acceptance.
 - Whether the 4B / 35B-A3B MTP layers are dense or MoE (the 0.8B's MLP is dense). Their
   checkpoints are on omarchy and opentpu, not on the Mac.
 - The draft-head frequency table: from a tokenizer-level corpus count, or from the token ids'
