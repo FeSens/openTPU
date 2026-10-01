@@ -21,7 +21,7 @@ the wires, this is a good place to start.
 
 ## Results
 
-The design runs four modern models with their real weights on an Inspur YPCB-00338 card
+The design runs seven modern models with their real weights on an Inspur YPCB-00338 card
 (Xilinx Kintex-7 xc7k480t, two DDR3 channels), and the card produces the same tokens as the
 simulator, bit for bit.
 
@@ -35,8 +35,17 @@ simulator, bit for bit.
 | Qwen3.5-0.8B | 4-bit, int8 head | 24.5 tok/s | 23.3 tok/s | 66.7 tok/s | 14.1 GB/s (83%) |
 | Gemma 4 E2B | 4-bit, int8 head | 9.6 tok/s | 9.6 tok/s | 9.9 tok/s\* | 14.2 GB/s (83%) |
 | Gemma 4 E2B | 4-bit, 4-bit head | 11.0 tok/s | 11.0 tok/s | 11.4 tok/s\* | 14.1 GB/s (82%) |
+| LFM2-2.6B | int8 | 6.05 tok/s | 6.03 tok/s | 21.4 tok/s | 16.1 GB/s (94%) |
+| LFM2-2.6B | 4-bit, int8 head | 10.96 tok/s | 10.93 tok/s | 20.6 tok/s | 15.8 GB/s (93%) |
+| SmolLM3-3B | int8 | 5.00 tok/s | 4.99 tok/s | 21.1 tok/s | 16.0 GB/s (94%) |
+| SmolLM3-3B | 4-bit, int8 head | 8.74 tok/s | 8.72 tok/s | 22.8 tok/s | 15.7 GB/s (92%) |
+| Phi-4-mini (3.8B) | int8 | 3.99 tok/s | 3.98 tok/s | 13.8 tok/s | 16.0 GB/s (94%) |
+| Phi-4-mini (3.8B) | 4-bit, int8 head | 6.56 tok/s | 6.55 tok/s | 15.0 tok/s | 15.8 GB/s (92%) |
 
-*Measured on the card on 2026-09-29 with the production image `deploy_champ_e698dcd7`.*
+*Measured on the card: the first three models on 2026-09-29 with the production image
+`deploy_champ_e698dcd7`. LFM2-2.6B, SmolLM3-3B and Phi-4-mini on 2026-09-30 with build B,
+`deploy_fused133c_79c5707a`, production since then. Build B decodes these three 8-9% faster
+than e698dcd7, at 92-94% of the DRAM peak instead of 84-87%.*
 - *The image: main e698dcd at 133.33 MHz, one bitstream for all models. It has LiteDRAM
   controllers calibrated by a small CPU inside the memory core, a four-column systolic matrix
   unit and the stream engine ([docs/stream.md](docs/stream.md)). DDR3-1066, with a 17.1 GB/s
@@ -58,7 +67,10 @@ With the logits streamed back while the card runs (`tools/decode_profile.py`, 96
 decode is faster, in device / wall tok/s:
 - LFM2: 89.5 / 84.5;
 - Qwen3: 33.7 / 33.3;
-- Qwen3.5: 24.6 / 24.2.
+- Qwen3.5: 24.6 / 24.2;
+- LFM2-2.6B: 11.07 / 11.02 (build B);
+- SmolLM3-3B: 8.92 / 8.89 (build B);
+- Phi-4-mini: 6.69 / 6.67 (build B).
 
 The previous production image, se-cand3, was built with the Xilinx MIG, a two-column matrix
 unit and a 120.755 MHz clock. Measured the same way, the new image:
@@ -162,7 +174,7 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 
 | Command | What it does |
 |:--|:--|
-| `otpu-chat` | chat with Qwen3-0.6B, LFM2.5-230M (`--model lfm2`) or Qwen3.5-0.8B (`--model qwen35`) |
+| `otpu-chat` | chat with Qwen3-0.6B, LFM2.5-230M (`--model lfm2`), Qwen3.5-0.8B (`--model qwen35`), LFM2-2.6B (`lfm2-2.6b`), SmolLM3-3B (`smollm3`) or Phi-4-mini (`phi4-mini`) |
 | `otpu-smi` | temperature, power, DRAM bandwidth and per-unit utilization |
 | `otpu-lens` | record a run and open it in the profiler |
 | `otpu-selftest`, `otpu-diag` | check that the card works |
@@ -174,7 +186,7 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
    becomes instructions.
 3. [`opentpu/isasim.py`](opentpu/isasim.py): the simulator, which is the spec.
 4. [`rtl/`](rtl): the hardware, starting from [`rtl/top/otpu_top.sv`](rtl/top/otpu_top.sv).
-5. [docs/lfm2.md](docs/lfm2.md), [docs/qwen35.md](docs/qwen35.md),
+5. [docs/lfm2.md](docs/lfm2.md), [docs/qwen35.md](docs/qwen35.md), [docs/llama.md](docs/llama.md),
    [docs/benchmarks.md](docs/benchmarks.md): whole models and where their cycles go.
 6. [docs/board.md](docs/board.md): the physical card, from clocks to PCIe.
 
