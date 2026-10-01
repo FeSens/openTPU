@@ -427,13 +427,12 @@ def test_native_memory_path(have_verilator, prog, seed, stall, lat):
 # The card's channels (rtlsim's LDC: the board's bridge otpu_mem_ch and LiteDRAM's own controller,
 # generated with the production core's settings, sim/verilator/otpu_ldc_mem.sv). The controller
 # alone, on one channel's sequential reads or writes on one port (the BIST's pattern), moves what
-# the card's BIST measures. The core before memeff's refresh postponing: 91.0% of peak reading,
-# 90.1% writing on the card (docs/litedram.md section 7), 90.9% / 90.1% here. With postponing 2,
-# 90.4% / 89.9% here: behind one port's crossbar lock a burst of refreshes costs more than single
-# ones (on two ports, the path decode and XDMA take, it costs less: section 11). The card's
-# figures are the memeff core's once its build has measured them; until then these are the
-# simulation's.
-@pytest.mark.parametrize("we,card", [(0, 0.904), (1, 0.899)], ids=["read", "write"])
+# the card's BIST measures: with memeff's refresh postponing 2, 90.4% of peak reading, 89.8%
+# writing on the card (build f8c6c950, docs/litedram.md section 11), 90.4% / 89.9% here. The core
+# before it: 91.0% / 90.1% on the card, 90.9% / 90.1% here; behind one port's crossbar lock a
+# burst of refreshes costs more than single ones (on two ports, the path decode and XDMA take, it
+# costs less: section 11).
+@pytest.mark.parametrize("we,card", [(0, 0.904), (1, 0.898)], ids=["read", "write"])
 def test_ldc_sequential_is_the_card_bist(have_verilator, tmp_path, we, card):
     import re
     exe = rtlsim.build("tb_ldc_replay", [rtlsim.TB / "otpu_ldc_ch.v",

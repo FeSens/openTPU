@@ -1308,8 +1308,8 @@ card's channels behind the adapter (`otpu_top` AXI = 2):
 
 | | simulation | card |
 |---|---|---|
-| sequential reads, one channel, the controller alone (the BIST's pattern; memeff: 90.4%) | 90.9% of peak | 91.0% |
-| sequential writes (memeff: 89.9%) | 90.1% | 90.1% |
+| sequential reads, one channel, the controller alone (the BIST's pattern; memeff: 90.4%, card 90.4%) | 90.9% of peak | 91.0% |
+| sequential writes (memeff: 89.9%, card 89.8%) | 90.1% | 90.1% |
 | Qwen3 4-bit decode, pos 544, int8 head: Mcycles/token at 100 / 133.33 MHz | 3.734 / 4.218 | 3.731 / 4.256 (+0.1 / -0.9%) |
 | LFM2 4-bit, the same | 1.348 / 1.541 | 1.357 / 1.554 (-0.7 / -0.8%) |
 | Qwen3.5 4-bit, the same | 4.636 / 5.360 | 4.673 / 5.435 (-0.8 / -1.4%) |
@@ -1735,8 +1735,36 @@ operating point: pos 544, KV capacity 2048, int8 LM head; main f311476 against m
     90.1% -> 89.9%. Behind one port's crossbar lock, a single refresh costs about 13 cycles of
     throughput, since part of it overlaps the lock's bank-change gaps. In a burst, each costs
     more (about 25 cycles in bursts of 8).
-  - So the card's BIST figure drops by about half a point. `test_ldc_sequential_is_the_card_bist`
-    now expects the simulation's figures until the memeff build's BIST measures them.
+  - So the card's BIST figure drops by about half a point. The card measured it (below):
+    `test_ldc_sequential_is_the_card_bist` expects 90.4% / 89.8%.
+
+**On the card** (build `f8c6c950`, `deploy_memeff_f8c6c950`: main 3ff7cfd + memeff, 133.33 MHz,
+full effort, opentpu, 2026-10-01). Timing: WNS +0.104 ns, WHS +0.019 ns (build B, 79c5707a:
++0.017 / +0.016). The A read FIFO is 2 x 171 RAM64M; its worst path is +0.350 ns, the tail
+register's fanout to the write addresses (0 levels, 97% route). Slice LUTs 173,379 (B 172,837),
+FF 133,503 (134,197), slices 75.0% (75.3%); `otpu_native_dram` +1,268 LUTs (APF, AD 64). The
+qualification (`qual.sh fast`) passes: 0 FAIL lines, 42 PASS. Both channels calibrate, with write
+windows as wide as B's (770 / 1222 ps against 737 / 1222; the PHY is the same). The BIST (2 GiB,
+2 passes, both channels): reads 90.4%, writes 89.8% of peak, no errors (the simulation: 90.4 /
+89.9; B: 91.0 / 90.1). The scrub after it: no ECC errors.
+
+Decode on the card, Mcycles/token (`qual.sh`'s prefill + decode counters, 64 tokens; the DRAM
+bytes per token are B's):
+
+| | build B | memeff | change | the simulation's |
+|---|---|---|---|---|
+| Qwen3 4-bit | 3.940 | 3.877 | -1.60% | -1.50% |
+| LFM2 4-bit | 1.431 | 1.413 | -1.26% | -1.27% |
+| Qwen3.5 4-bit | 5.006 | 4.895 | -2.22% | -2.30% |
+| Qwen3 8-bit | 5.735 | 5.652 | -1.45% | -1.41% |
+| LFM2 8-bit | 2.096 | 2.069 | -1.29% | -1.35% |
+| Qwen3.5 8-bit | 7.036 | 6.884 | -2.16% | -2.09% |
+
+- **The simulation's prediction holds** within 0.1 points on every model.
+- **Bandwidth while decoding** goes from 88-92% of the 17.1 GB/s peak to 90-94%.
+- **The streamed-logits decode** (`decode_profile`, 96 steps) gives the same picture: Qwen3 4-bit
+  36.92 -> 37.47 tokens/s, LFM2 97.53 -> 98.84, Qwen3.5 26.76 -> 27.35. The on-card decode loop
+  gives Qwen3 37.37 -> 37.89 and LFM2 97.65 -> 98.89.
 
 ### The core clock at DDR3-1066: the co-simulated grid
 
