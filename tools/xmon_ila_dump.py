@@ -50,10 +50,11 @@ def main(a: list[str]) -> int:
         f = {n: num(r[j]) for j, n in enumerate(names)}
         g = lambda pat: next((v for n, v in f.items() if pat in n), 0)  # noqa: E731
         if is_x:
-            line = (f"{bits(g('ix_hsk'), HSK_X):40s} aw {g('ix_awaddr'):08x}/{g('ix_awlen'):3d} "
+            hs, ad = g("ix_hsids"), g("ix_addr")
+            line = (f"{bits(hs & 0xFFF, HSK_X):40s} aw {ad & 0xFFFFFFFF:08x}/{ad >> 32 & 0xFF:3d} "
                     f"w {g('ix_wtagaddr') & 0xFFFFFFFF:08x} t{g('ix_wtagaddr') >> 32:x} "
-                    f"ar {g('ix_araddr'):08x}/{g('ix_arlen'):3d} r {g('ix_rtagaddr') & 0xFFFFFFFF:08x} "
-                    f"ids {g('ix_ids'):04x} {bits(g('ix_ev'), EV_X)}")
+                    f"ar {ad >> 40 & 0xFFFFFFFF:08x}/{ad >> 72:3d} r {g('ix_rtagaddr') & 0xFFFFFFFF:08x} "
+                    f"ids {hs >> 12:04x} {bits(g('ix_ev'), EV_X)}")
         else:
             a_ = g("in_addr")
             line = (f"{bits(g('in_hsk'), HSK_N):40s} c0 {a_ & 0x1FFFFFF:07x} c1 {a_ >> 25:07x} "

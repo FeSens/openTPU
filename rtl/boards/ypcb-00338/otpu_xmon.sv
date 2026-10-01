@@ -56,8 +56,9 @@
 // Clock crossings: the requests and acknowledgements as toggles, the flags bit by bit, all through
 // ASYNC_REG pairs; the shadows are read in clk only after the acknowledgement crossed
 // (constraints/otpu_xmon.tcl). With OTPU_ILA defined (create_project.tcl at XMON) one ILA,
-// otpu_ila_x in xclk (Vivado's BASIC license tier takes one ILA per design), takes XDMA's master's
-// registered signals and the check events, channel 0's flags among them (synchronized).
+// otpu_ila_x in xclk (Vivado's BASIC license tier takes one ILA per design, of five probes at
+// most), takes XDMA's master's registered signals and the check events, channel 0's flags among
+// them (synchronized).
 module otpu_xmon #(
   parameter int TW = 26,                     // watchdog: 2^TW xclk cycles (0.54 s at 125 MHz)
   parameter logic [31:0] MAGIC = 32'h584D_4F4E
@@ -373,19 +374,19 @@ module otpu_xmon #(
   // probe a named signal (tools/xmon_ila.tcl finds the probes by these names)
   (* ASYNC_REG = "TRUE" *) logic [1:0] x_nf = '0;    // a channel-0 flag set (uclk, sticky)
   always_ff @(posedge xclk) x_nf <= {x_nf[0], |n_flag};
-  wire [11:0] ix_hsk = hsk;
-  wire [31:0] ix_awaddr = awa, ix_araddr = ara;
-  wire [7:0]  ix_awlen = awl, ix_arlen = arl;
+  // five probes at most (the BASIC tier): ix_ev, ix_hsids {AWID, BID, ARID, RID, the handshake
+  // signals as hsk}, ix_addr {ARLEN, ARADDR, AWLEN, AWADDR}, W's and R's {tag, address} words
+  wire [27:0] ix_hsids = {awi, bi, ari, ri, hsk};
+  wire [79:0] ix_addr = {arl, ara, awl, awa};
   wire [63:0] ix_wtagaddr = {wd[127:96], wd[63:32]}, ix_rtagaddr = {rd[127:96], rd[63:32]};
-  wire [15:0] ix_ids = {awi, bi, ari, ri};
   // ix_ev: [7:0] the events (as FLAGS [7:0]), [8] a handshake on any channel (capture
   // qualification: the cycles that moved), [9] on AW or W, [10] a channel-0 flag is set
   wire [15:0] ix_ev = {5'd0, x_nf[1], aw_hs || w_hs, aw_hs || w_hs || b_hs || ar_hs || r_hs,
                        (we_v && we_pro) || (re_v && re_pro), ev_rs, ev_bs, ev_ws, re_v && re_lbad,
                        we_v && we_lbad, re_v && re_sd && re_bad, we_v && we_sd && we_bad};
   otpu_ila_x u_ila_x (
-    .clk(xclk), .probe0(ix_hsk), .probe1(ix_awaddr), .probe2(ix_awlen), .probe3(ix_wtagaddr),
-    .probe4(ix_araddr), .probe5(ix_arlen), .probe6(ix_rtagaddr), .probe7(ix_ids), .probe8(ix_ev));
+    .clk(xclk), .probe0(ix_ev), .probe1(ix_hsids), .probe2(ix_addr), .probe3(ix_wtagaddr),
+    .probe4(ix_rtagaddr));
 `endif
 endmodule
 
