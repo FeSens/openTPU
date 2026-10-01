@@ -1772,3 +1772,68 @@ def test_xdma_transport_writes_whole_beats(tmp_path, monkeypatch):
     assert all(o % 64 == 0 and n % 64 == 0 for o, n in writes)
     assert np.array_equal(t.mem_read(0, 0, 4096), ref)
     os.close(fd)
+
+
+def test_xdma_dma_calls_never_overlap(tmp_path, monkeypatch):
+    """XdmaTransport runs one DMA call per card at a time, whatever the threads or processes: a
+    host->card call never overlaps a card->host one (on the card such an overlap slipped later
+    host writes by 64 bytes for good, or wedged the host->card engine, 2026-10-01). A writer and
+    a reader thread through two transports of the card (offload's DMA worker and the main
+    thread's polls), and through two separate locks of the card, as two processes under one
+    otpu-lock hold them (flock on the run directory's lock file), against stand-ins for the driver
+    calls that record how many run at once; with the lock taken out they overlap."""
+    import contextlib
+    import threading
+    import time as _time
+    from opentpu.host import board
+
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    live, peak, guard = [0], [0], threading.Lock()
+
+    def call(n):
+        with guard:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+        _time.sleep(0.002)
+        with guard:
+            live[0] -= 1
+        return n
+
+    monkeypatch.setattr(board.os, "pwrite", lambda fd, mv, off: call(len(mv)))
+    monkeypatch.setattr(board, "_readinto", lambda fd, mv, off: call(len(mv)))
+
+    def transport(lock):
+        t = object.__new__(board.XdmaTransport)
+        t.h2c = t.c2h = 99
+        t._dma = lock
+        return t
+
+    def run(lw, lr) -> int:
+        tw, tr = transport(lw), transport(lr)
+        peak[0] = 0
+        data = board.placed(4096, 0)
+        stop = threading.Event()
+
+        def writer():
+            while not stop.is_set():
+                tw.mem_write(0, 0, data)
+
+        def reader():
+            while not stop.is_set():
+                tr.mem_read(1, 4096, 64)
+
+        th = [threading.Thread(target=writer), threading.Thread(target=reader)]
+        for x in th:
+            x.start()
+        _time.sleep(0.3)
+        stop.set()
+        for x in th:
+            x.join()
+        return peak[0]
+
+    none = contextlib.nullcontext()
+    assert run(none, none) == 2                     # the stand-ins see an overlap when there is one
+    one = board._dma_lock("xdmaT")                  # one process: its transports share the lock
+    assert one is board._dma_lock("xdmaT") and run(one, one) == 1
+    assert run(board._DmaLock("xdmaT"), board._DmaLock("xdmaT")) == 1  # two processes: the flock
+    assert (tmp_path / "xdmaT.dma").exists()
