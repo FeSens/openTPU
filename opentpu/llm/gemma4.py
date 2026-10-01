@@ -65,11 +65,13 @@ from .. import language as ol
 from ..compiler import Affine, KVDesc, QTensor, Tensor
 from ..isasim import Config
 from ..kernels import gather as GA
+from ..kernels import mailbox as MB
 from ..kernels.attention import Blocks, Bucket, _attend_heads
 from ..kernels.lib import gelu_tanh, rmsnorm, rope
 from ..kernels.mlp import _chunk, swiglu_down
 from . import generate as G
 from .lfm2 import plan
+from ..host.offload import BackendDram, RowLayout, RowServer
 from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, _Bump, _lm_head, _lm_head_rows, _qdesc, _tdesc)
 
 SLIDE, FULL = "sliding", "full"
@@ -647,6 +649,8 @@ class Image:
                    "logits": b.alloc(4 * spec.vocab * R), "pli": b.alloc(4 * R * L * P),
                    "mask": b.alloc(4 * 2 * block), "z2": b.alloc(4 * 2 * block),
                    "g_pln": b.alloc(4 * P)}
+        if self.ple_host:           # the generate loop's requests for the next token's record
+            self.io["ple_mbox"] = b.alloc(RowLayout.WORDS)
         self.wproj = (b.alloc(L * P * rb(H, self.pformat)), b.alloc(4 * L * P * (H // D)))
         # layer blocks: one layout per key
         self.dchunk = {(f, fd): _mlp_chunk(f, D, D if fd == "int8" else 2 * D)
@@ -863,6 +867,16 @@ class Image:
             raise ValueError(f"{len(tokens)} tokens, the PLE slot holds {self.rows}")
         return [(self.ple, self.ple_store[[int(t) for t in tokens]].reshape(-1))]
 
+    def row_server(self, backend) -> RowServer | None:
+        """ple_host: the host's server of the generate loop's requests (each token's id, posted
+        after sampling; the token's record into slot row 0, docs/gemma4_e4b.md), on the
+        backend's DRAM; None with the table on the card."""
+        if not self.ple_host:
+            return None
+        return RowServer(BackendDram(backend), RowLayout(self.io["ple_mbox"], self.ple,
+                                                         self.ple_rec),
+                         lambda t: self.ple_store[t])
+
     # ---- programs
     def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):
         """(programs, run_args): gemma4_step at a run-time position (qwen3.RunPos; the image
@@ -969,6 +983,7 @@ class Image:
             spec=spec, layer=layer, runs=self.runs, subs=self.subs, rows=R, block=self.block,
             ring=self.ring, rw=self.rw, S=self.ple_S, ple_format=self.ple_format,
             head_format=self.head_format, ple_host=self.ple_host,
+            ple_mbox=self.io.get("ple_mbox"),
             x=_tdesc(self.io["x"], (R, H)), pe=_tdesc(self.io["pe"], (R, self.ple_S * D)),
             rope=_tdesc(self.io["rope"], (R, self.rw)), g_final=_tdesc(self.io["gf"], (H,)),
             g_pln=_tdesc(self.io["g_pln"], (P,)),
@@ -989,6 +1004,10 @@ class Image:
             ns.onehot = {f: _tdesc(a, (cfg.MCOLS, D * GA.onehot_blocks(
                 D, cfg.MCOLS, "int8" if f == "int8" else "fp4"))) for f, a in lk["onehot"].items()}
             ns.gen = G.desc(lk["gen"], spec, self.cap)
+        # the generate loop's post of the sampled token (generate.py): ple_host, a request for
+        # its record, which the next token's gather waits for (_gathered)
+        mbox = self.io.get("ple_mbox")
+        ns.post_token = None if mbox is None else (lambda tok: MB.post(mbox, tok))
         return ns
 
     def _unit(self, li) -> int:
@@ -1284,6 +1303,8 @@ def _gathered(m, pos):
         return ops[f]
 
     e = GA.gather_row(op(m.head_format), m.head, pos.tok, m.head_format)
+    if m.ple_host:          # the slot's row 0 holds the token's record once the host has
+        MB.wait_served(m.ple_mbox)      # served every request (the generate loop's post)
     pe = GA.gather_record(op(m.ple_format), m.ple, 0 if m.ple_host else pos.tok, m.ple_format,
                           m.S)                          # ple_host: the slot's row
     ops.clear()

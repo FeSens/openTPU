@@ -170,6 +170,64 @@ class ExpertServer:
         self.bytes += len(data)
 
 
+@dataclass(frozen=True)
+class RowLayout:
+    """A mailbox of its own for rows the host keeps (Gemma 4 E4B's PLE records,
+    docs/gemma4_e4b.md), in Layout's format: seq at mbox, the request's id at mbox + 64,
+    served at mbox + 128, each on its own line; the row goes to `slot`."""
+    mbox: int
+    slot: int
+    row_bytes: int
+
+    WORDS = 3 * LINE        # the mailbox's bytes
+
+    @property
+    def row(self) -> int:
+        return self.mbox + LINE
+
+    @property
+    def served(self) -> int:
+        return self.mbox + 2 * LINE
+
+
+class RowServer:
+    """Serves the card's row requests: request seq names one id (the card posts it after a
+    fence, as a MoE layer its experts), the host writes rows(id) into the slot, then
+    served = seq. Data movement only: rows(id) is the row in the card's format, read from
+    host RAM or a file. mem as ExpertServer's."""
+
+    def __init__(self, mem, layout: RowLayout, rows):
+        self.mem, self.L, self.rows = mem, layout, rows
+        self.seq = 0                        # the last request served
+        self.bytes = 0
+        self.history: list | None = None    # a list: each request's id is appended
+
+    def load(self) -> None:
+        """At image load: an empty mailbox."""
+        self.mem.write(self.L.mbox, np.zeros(RowLayout.WORDS // 4, np.float32))
+        self.seq = 0
+
+    def poll(self) -> int:
+        """Serve the card's request if it posted one since the last served; returns 1 if so."""
+        seq = int(np.frombuffer(bytes(self.mem.read(self.L.mbox, 4)), np.float32)[0])
+        if seq == self.seq:
+            return 0
+        if seq != self.seq + 1:
+            raise RuntimeError(f"the card posted row request {seq} with {self.seq} served: "
+                               f"its fence (WAITW served >= seq) is missing")
+        g = int(np.frombuffer(bytes(self.mem.read(self.L.row, 4)), np.float32)[0])
+        if self.history is not None:
+            self.history.append(g)
+        data = self.rows(g)
+        if len(data) != self.L.row_bytes:
+            raise ValueError(f"row {g}: {len(data)} bytes, the slot holds {self.L.row_bytes}")
+        self.mem.write(self.L.slot, data)
+        self.bytes += len(data)
+        self.seq = seq
+        self.mem.write(self.L.served, _f32(seq))
+        return 1
+
+
 class SimDram:
     """An ISA simulator slice's DRAM (a uint8 array) as ExpertServer's memory."""
 

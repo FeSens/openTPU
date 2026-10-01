@@ -238,15 +238,18 @@ def test_device_inputs_are_bit_exact(tiny):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("resident", [False, True], ids=["per-position", "resident"])
-def test_token_on_board_rtl_is_bit_exact(have_verilator, tiny, resident):
+@pytest.mark.parametrize("resident,host", [(False, "0"), (True, "0"), (True, "1")],
+                         ids=["per-position", "resident", "resident-ple-host"])
+def test_token_on_board_rtl_is_bit_exact(have_verilator, tiny, resident, host, monkeypatch):
     """A token at position 600 (the window's first block masked at its start) on the Verilator
     RTL through the board's memory path (AXI adapter, boot loader) equals the ISA simulator bit
     for bit, logits and the whole DRAM image (caches); resident, with the device's gathers and
-    run-time masks."""
+    run-time masks; and with the PLE table on the host (the slot the host writes, the fence
+    on its mailbox: WAITW holding at its first read)."""
     from opentpu import rtlsim
     from opentpu.llm.rtl_backend import RtlBackend
     _, W, spec = tiny
+    monkeypatch.setenv("OTPU_PLE_HOST", host)
     toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 601)]
     eng = Engine(spec, W, cap=1024, cfg=_cfg(), wformat="fp4", head_format="int8",
                  resident=resident)
@@ -286,6 +289,74 @@ def test_ple_on_host_is_bit_exact(tiny, resident, monkeypatch):
     assert (lo, hi) == (b.image.layer0, b.image.head[0])
     assert np.array_equal(a.backend.machine.slices[0].dram[lo:hi],
                           b.backend.machine.slices[0].dram[lo:hi])
+
+
+@pytest.mark.parametrize("split", [None, True], ids=["one", "split"])
+def test_generate_with_ple_on_host(tiny, split, monkeypatch):
+    """The card's generate loop with the PLE table on the host (docs/gemma4_e4b.md): after
+    sampling, each token's id goes to the image's PLE mailbox (offload's format), the host's
+    RowServer (here the ISA simulator's WAITW hook; on the card the backend's poll) writes
+    its record into slot row 0, and the next token's step waits for that (WAITW served >= seq)
+    before its gather. The tokens equal those of the table on the card, greedy across the
+    bucket boundary at 256 (one program, or split) and sampled, and a host-written step after
+    the loop (its last request served first) gives the same logits."""
+    from opentpu.llm import generate as GEN
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    engs = []
+    for host in ("0", "1"):
+        monkeypatch.setenv("OTPU_PLE_HOST", host)
+        e = Engine(spec, W, cap=1024, cfg=_cfg(), wformat="fp4", head_format="int8",
+                   resident=True)
+        e.gen_split = split
+        engs.append(e)
+    a, b = engs
+    assert a.row_server is None and b.row_server is not None and b.can_generate
+    b.row_server.history = []
+    t0 = int(np.argmax(a.prefill(toks)))
+    assert int(np.argmax(b.prefill(toks))) == t0
+    ref = a.generate_card(t0, 12, stop_ids=[])
+    assert b.generate_card(t0, 12, stop_ids=[]) == ref and len(set(ref)) > 3
+    h = b.row_server.history
+    assert len(h) >= 11 and h == ref[:len(h)]           # each sampled token, in order
+    samp = GEN.Sampling(0.8, 5, 0.9, 1.1)
+    ctx = toks + [t0] + ref
+    got = [e.generate_card(ref[-1], 8, stop_ids=[], sampling=samp, context=ctx,
+                           rng=np.random.default_rng(7)) for e in (a, b)]
+    assert got[0] == got[1]
+    assert np.array_equal(a.step(got[0][-1]), b.step(got[1][-1]))
+    assert b.row_server.seq == len(ref) + len(got[1])
+
+
+def test_ple_rows_served_during_a_live_cards_runs(tiny, monkeypatch):
+    """The host's side as it runs beside a card: BoardBackend polls the RowServer while a run is
+    in flight, over a fake card that computes in a thread on the host's DRAM
+    (tests/test_lfm2_moe.py's _LiveCard), so the generate loop's PLE fences wait for the host's
+    writes during the run (here the host is the faster: they hold at their first read).
+    Prefill, resident steps and the generate loop give the ISA simulator's logits and tokens
+    bit for bit."""
+    from test_lfm2_moe import _LiveCard
+    from opentpu.host.board import BoardBackend
+    _, W, spec = tiny
+    monkeypatch.setenv("OTPU_PLE_HOST", "1")
+    cfg = _cfg()
+    card = _LiveCard.make(cfg)
+    kw = dict(cap=1024, cfg=cfg, wformat="fp4", head_format="int8", resident=True)
+    isa = Engine(spec, W, **kw)
+    brd = Engine(spec, W, **kw, backend=lambda c, imgs: BoardBackend(c, imgs, transport=card))
+    assert brd.can_generate and brd.backend.host is not None and brd.image.ple_host
+    toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 6)]
+    a, b = isa.prefill(toks), brd.prefill(toks)
+    assert card.error is None, card.error
+    assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
+    t0 = int(np.argmax(a))
+    for e in (isa, brd):
+        e.step(t0)
+    got = brd.generate_card(t0, 8, stop_ids=[])
+    assert card.error is None, card.error
+    assert got == isa.generate_card(t0, 8, stop_ids=[])
+    assert brd.row_server.seq >= 7 and isa.row_server.seq >= 7    # served during the run:
+                                                                  # else a fence never holds
 
 
 def test_one_sequence_one_slice(tiny):

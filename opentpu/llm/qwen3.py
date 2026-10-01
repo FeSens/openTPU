@@ -1352,10 +1352,18 @@ class Engine:
         self.server = None
         if getattr(self.image, "offload", None) is not None:
             self.server = self.image.serve(W, self.backend, pool_file)
+        # rows of tables the host keeps, asked for by the generate loop (Gemma 4 E4B: each
+        # token's PLE record into the slot, opentpu.host.offload.RowServer)
+        rs = getattr(self.image, "row_server", None)
+        self.row_server = rs(self.backend) if rs is not None else None
+        servers = [x for x in (self.server, self.row_server) if x is not None]
+        if servers:
+            poll = servers[0].poll if len(servers) == 1 else \
+                (lambda: sum(x.poll() for x in servers))
             if isinstance(self.backend, IsaBackend):
-                self.backend.machine.host = lambda m: self.server.poll()
+                self.backend.machine.host = lambda m: poll()
             elif hasattr(self.backend, "host"):
-                self.backend.host = self.server.poll
+                self.backend.host = poll
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
@@ -1579,6 +1587,8 @@ class Engine:
                                                       **self._tokens_kw(tokens)))
 
     def _write_host_rows(self, tokens) -> None:
+        if self.row_server is not None:     # a request the last run posted, served first: its
+            self.row_server.poll()          # row must not land after these
         if self._host_rows is not None:
             for a, v in self._host_rows(tokens):
                 for s in range(self.cfg.S):
@@ -1844,7 +1854,8 @@ class Engine:
                 nb = min(n, b1 * self.block - p)
                 if samp is not None:
                     self._generate_inputs(samp, p, nb, ctx, rng)
-                for s in range(self.cfg.S):
+                self._write_host_rows([tok])        # the first token's rows (then the loop's
+                for s in range(self.cfg.S):         # requests, served while it runs)
                     self.backend.write(s, g["state"], G.state_words(self.spec, tok, p, n, ids,
                                                                     self.block, samp))
                     self.backend.write(s, g["out"] + 4 * (p + 1),
