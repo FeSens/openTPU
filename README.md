@@ -70,6 +70,18 @@ unit and a 120.755 MHz clock. Measured the same way, the new image:
 
 The earlier images and their numbers are in [docs/board.md](docs/board.md), section 5.
 
+Mixture-of-experts models bigger than the card's 4 GiB run with their experts streamed from host
+storage ([docs/offload.md](docs/offload.md), section 10). The card routes each token and computes
+every expert, and it keeps the experts in per-layer slots in its DRAM. The host only copies
+missing experts from a pool file into those slots. Measured on 2026-09-30 with build B
+(79c5707a), the card's own decode loop picking every token, 4-bit experts, int8 head:
+- **LFM2.5-8B-A1B** (8.5B parameters, 1.7B active): 10.0 tok/s over 160 tokens. 98.5% of expert
+  uses hit the slots, and 5.2 MB streamed per token.
+- **Qwen3.5-35B-A3B** (34.7B parameters, 3.0B active): 2.0 tok/s, with Hugging Face's 16 greedy
+  tokens. 62% of expert uses hit, and 155 MB streamed per token. It is bound by the host's
+  PCIe writes.
+- Both match the simulator bit for bit.
+
 4-bit weights ([docs/quant.md](docs/quant.md)) use FP4 values with two-level block scales, 4.25
 bits per weight, and keep the LM head in int8 for accuracy. They cut the bytes per token by about
 a third and raise decode speed by 40% (Qwen3.5) to 45% (Qwen3, LFM2), at a measurable cost in
