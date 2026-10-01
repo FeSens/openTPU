@@ -696,7 +696,10 @@ class Builder:
             else:
                 if run[0] not in self.run_seen:
                     self.run_seen.append(run[0])
-                if words is None or len(a.terms) == 1:
+                # c * var alone takes an argument register; with run_words, once all of them
+                # are taken, an address register loaded from var's word where it is used
+                room = run[0] in self.run_args or len(self.run_args) < 16 - ARG0
+                if words is None or (len(a.terms) == 1 and room):
                     arg = self.arg_reg(v, c)
                     if len(a.terms) == 1:           # the argument register itself
                         return arg, a.const
@@ -778,12 +781,16 @@ class Builder:
 
     def _init_before_loops(self, key, ins: I.Instr) -> None:
         """Put `ins` before the outermost live loop among key's terms (the register must hold
-        its run-time value when that loop starts; the loops step and reset it from there)."""
+        its run-time value when that loop starts; the loops step and reset it from there), or,
+        for c * var alone (run_words: the argument registers all taken), right here."""
         for d, lb in enumerate(self.loops):
             if (lb.loop, dict(key).get(lb.loop)) in key:
                 items = self.stack[d]
                 items.insert(next(i for i, x in enumerate(items) if x is lb), ins)
                 return
+        if len(key) == 1 and self.run_words is not None:
+            self.stack[-1].append(ins)
+            return
         raise CompileError("a run-time address outside its loops")    # (a bare argument)
 
     def _spare_for(self, key):

@@ -709,6 +709,28 @@ byte-identical on this branch.
   and 1.58x on the 4B (`mtp_accept.py --summary --c2 --cdraft`).
 - **The card column** is today's device tok/s times the speedup in cycles.
 
+**On the card** (2026-10-01; build B 79c5707a at 133.33 MHz, DDR3-1066; `tools/mtp_decode.py
+--card`; the same three prompts, 48 tokens each).
+- Plain greedy decode is the production loop (`generate_card`). The MTP loop is phase 2's,
+  driven by the host.
+- **Tokens:** equal on all six prompts, to plain greedy on the card and to the ISA simulator's.
+- **Acceptance:** the simulator's, run for run.
+- **Parities:** both exercised (verify runs per slot: 2B 37 / 43, 0.8B 40 / 44).
+
+| model | plain, device tok/s | MTP, device tok/s | speedup (chat / code / summary) | co-simulated | c_2 card (co-sim) | c_draft card |
+|---|---|---|---|---|---|---|
+| Qwen3.5-0.8B | 27.13 | 36.26 | 1.336x (1.29 / 1.39 / 1.33) | 1.347x | 1.207 (1.196) | 0.051 |
+| Qwen3.5-2B | 12.19 | 19.41 | 1.593x (1.47 / 1.70 / 1.63) | 1.593x | 1.055 (1.055) | 0.054 |
+
+Device tok/s counts the runs' CYCLES at the core clock, for the tokens after the prefill's.
+
+**Wall tok/s is host-bound.** Each iteration compiles two programs on the host.
+- 2B: plain 11.95 against MTP 7.09. The compiles are 11.8 s of the loop's 19.9 s; without
+  them, 17.47.
+- 0.8B: plain 25.80 against MTP 8.10. The compiles are 12.6 s of 17.4 s; without them, 29.42.
+
+Phase 3's loop on the card removes both the compiles and the host round trips.
+
 **Fit for phase 3** (compiled at positions 544 and 4094, board configuration, rows = 8):
 
 | model | verify (instructions, TMEM words) | draft | decode step |
@@ -720,7 +742,63 @@ byte-identical on this branch.
 IMEM holds 4,096 instructions and TMEM 64K words. The phase 3 programs are these kernels at a
 `RunPos`, with the loop's few hundred instructions on top.
 
-## 10. Open questions
+## 10. Phase 3 design: the loop on the card
+
+The phase 2 kernels run at a run-time position and chain on the card. The host then only
+prefills, writes the state block and reads `out[]`, as `generate_card` does.
+
+**Programs per attention bucket b** (positions [t0, t0 + 256); compiled once per bucket,
+in the chain area):
+
+| program | rows | what it does | chains to |
+|---|---|---|---|
+| V[b][c] | (t, d) at p, p + 1, tpos <= 254 | the verify (`qwen35_rows` fork + hidden, slot c), an ARGMAX per row on the card: a0, a1; the emission; out[]; stop | D[b], or HALT |
+| D[b] | (hid_r, a_r) at p, p + 1 | the MTP layer, draft[r]; the commit | V or E, by (bucket, parity) |
+| E[b][c] | t at p = t0 + 255 (static) | the decode step (slot c), hidden, ARGMAX a0; out[]; stop | D1[b], or HALT |
+| D1[b] | (hid_0, a0) at p | the MTP layer, one row; the commit | V[b + 1][c] |
+
+- **Rows are kept in one bucket.** A verify at tpos = 255 would put row 1 in the next
+  bucket. That position takes E instead.
+  - E steps one row and keeps the MTP layer's KV cache whole: D1 runs its row.
+  - Its draft d is dropped (one position in 256).
+- **The parity is compile-time** (section 9), so V and E have one program per c.
+- **Emission:** k = 1 + n, where n = (d == a0), but n counts only when tokens are left and
+  a0 is not a stop id.
+  - out[p + 1] = a0. With k = 2 also out[p + 2] = a1 (a LOOP of count k - 1).
+  - Then left -= k. At a stop, the host's stop word, or no tokens left, the program commits
+    the state and HALTs.
+- **The commit** (D, D1; V or E on a halt):
+  - tok = a_n, d = draft_n, c ^= n.
+  - tpos += 1 + n. 256 wraps to the next bucket.
+  - The chain offset into the table is 8 * (6 * wrap + 2 * [tpos == 255] + c), all fp32
+    arithmetic on the state block.
+
+**Kernels at a run-time position** (`qwen3.RunRows`, R rows at t0 + tpos + r):
+- **Inputs:** the embeddings at run-time tokens: tok, and tok1 for row 1 (the draft in V,
+  a1 in D). The RoPE rows come at pos.pos .. + R.
+- **Attention:** the KV appends go one row per append (V^T tiles). Row r's mask is the
+  bucket's, shifted by r positions.
+- **DeltaNet:** `_deltanet_rows` needs nothing. At p >= K - 1 its window does not depend on
+  the position (section 9).
+- **The LM head rows** feed one Greedy sink per row. `qwen35_mtp` already ends in one.
+
+**State block** (generate.py words, plus): d, a0, a1, n, c. Each program loads it and its
+run-time arguments from it (`run_words`), and stores it before the CHAIN.
+
+**Host:**
+- `MTPDecoder.generate_card`: the prefill (phase 2: plain prefill's runs, then the MTP over
+  them; a0 and the first draft).
+- The state block, the chain area for the buckets reached, then a run from V or E.
+- `run_generate` reads the tokens, 1 or 2 per iteration.
+- The final state gives the slot and the position.
+
+**Milestones:**
+1. On the ISA simulator, the 2B's three prompts give plain greedy's tokens. Tiny models
+   cross buckets with a small block and hit both parities, E, stops and max tokens.
+2. A card session against `generate_card`: tokens equal, and tok/s on the 2B, 0.8B and,
+   if it fits, the 4B.
+
+## 11. Open questions
 
 - The MTP dataflow (section 6.1) is **confirmed against mlx_vlm 0.6.8**'s Qwen3.5 drafter:
   - the concat order is the embedding first, then the hidden;
