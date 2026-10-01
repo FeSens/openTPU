@@ -68,6 +68,7 @@ from ..kernels import gather as GA
 from ..kernels.attention import Blocks, Bucket, _attend_heads
 from ..kernels.lib import gelu_tanh, rmsnorm, rope
 from ..kernels.mlp import _chunk, swiglu_down
+from . import generate as G
 from .lfm2 import plan
 from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, _Bump, _lm_head, _lm_head_rows, _qdesc, _tdesc)
 
@@ -619,7 +620,8 @@ class Image:
                            "int8" if ple_format == "int8" else "4bit"})
             self.lookup = {"rope_t": b.alloc(cap * self.ps), "iota": b.alloc(4 * block),
                            "onehot": {f: b.alloc(4 * cfg.MCOLS * D * GA.onehot_blocks(
-                               D, cfg.MCOLS, "int8" if f == "int8" else "fp4")) for f in fmts}}
+                               D, cfg.MCOLS, "int8" if f == "int8" else "fp4")) for f in fmts},
+                           "gen": G.alloc(b, spec, cap, block)}       # the decode loop's area
         self.kv_bytes = sum(self._kv_bytes(i) for i in range(L) if spec.kv_src[i] == i)
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
@@ -711,6 +713,7 @@ class Image:
             put(lk["iota"], np.arange(self.block, dtype=np.float32))
             for f, addr in lk["onehot"].items():
                 put(addr, GA.onehot(D, cfg.MCOLS, "int8" if f == "int8" else "fp4"))
+            G.build(lambda s, addr, a: put(addr, a), 0, 1, spec, self.cap, lk["gen"])
         return [img]
 
     def _cols(self) -> np.ndarray:
@@ -764,6 +767,15 @@ class Image:
         b = gemma4_step.trace(self.cfg, 0, {"m": self.descriptors(0), "pos": rp,
                                             "block": block})
         return [b.finish()], list(b.run_args)
+
+    def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
+                         chain: bool = True, samp=None, debug: bool = False,
+                         part: int | None = None) -> list:
+        """The decode loop on the device for bucket `blocks` (gemma4_step at its RunPos in it,
+        generate.py; the sampler's chunks soft-capped by qwen3._lm_head)."""
+        if block != self.block:
+            raise ValueError(f"the image is laid out for attention blocks of {self.block}")
+        return G.compile_generate(self, gemma4_step, blocks, lo, block, chain, samp, debug, part)
 
     def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program: the decode token at position `pos`; its inputs from the host
@@ -865,6 +877,7 @@ class Image:
             ns.iota = _tdesc(lk["iota"], (self.block,))
             ns.onehot = {f: _tdesc(a, (cfg.MCOLS, D * GA.onehot_blocks(
                 D, cfg.MCOLS, "int8" if f == "int8" else "fp4"))) for f, a in lk["onehot"].items()}
+            ns.gen = G.desc(lk["gen"], spec, self.cap)
         return ns
 
     def _unit(self, li) -> int:

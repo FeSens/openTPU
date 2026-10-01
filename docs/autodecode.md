@@ -6,8 +6,8 @@ feeds it back through the embedding gather, advances the position and writes the
 `out[]`. It stops on a stop id or after N tokens. The host only streams the tokens and
 detokenizes them. It never reads the logits.
 
-The same bitstream runs it for every model: Qwen3, LFM2 and Qwen3.5 today. The loop wraps
-the model's resident decode step, which is unchanged. The ISA gains three pieces: `RLD`,
+The same bitstream runs it for every model: Qwen3, LFM2, Qwen3.5 and Gemma 4 today. The loop
+wraps the model's resident decode step, which is unchanged. The ISA gains three pieces: `RLD`,
 `VOP ARGMAX` and `HALT CHAIN` (docs/isa.md).
 
 ```python
@@ -209,6 +209,14 @@ true, it writes the state's stop word, and the card halts after the token in fli
   - the ISA pieces;
   - greedy generation matching the host's resident loop token for token on tiny Qwen3, LFM2
     and Qwen3.5, at S = 1 and 2, across the bucket boundary (HALT CHAIN) and at a stop id;
+  - the same on a tiny Gemma 4 (one slice; its embedding and PLE rows gathered at the run-time
+    token, its own mask rows), in one program and split, then sampled with the model's
+    softcap of 30 against `reference_pick`;
+  - Gemma 4 E2B's generate programs (fp4, int8 head and PLE, 4096 tokens; the generate area
+    adds 11 MiB, 3,750 MiB in all) fit IMEM in one program at every bucket. Instructions at
+    buckets 1 / 2 / 3 / 4 / 5 / 6 / 7 / 8 (9..16 repeat 6..8): greedy 1,385 / 1,473 / 1,573 /
+    1,617 / 1,661 / 1,741 / 1,785 / 1,829, its resident decode 51 fewer; sampled 1,667 /
+    1,755 / 1,855 / 1,899 / 1,943 / 2,022 / 2,066 / 2,110;
   - the sampled loop matching `reference_pick` in every mode, including greedy with the
     penalty;
   - chat turns, greedy and sampled, with resume and EOS;
@@ -217,8 +225,9 @@ true, it writes the state's stop word, and the card halts after the token in fli
   - RLD (with MUL), ARGMAX and HALT CHAIN against the ISA simulator, and otpu-diag's gen
     checks in the board's configuration;
   - 12 tokens from a 248-token prefill across the bucket boundary in one run, greedy and
-    sampled (top-k, top-p, the penalty), on tiny Qwen3, LFM2 and Qwen3.5 at S = 1 and 2: the
-    tokens and the whole DRAM equal the ISA simulator's.
+    sampled (top-k, top-p, the penalty), on tiny Qwen3, LFM2 and Qwen3.5 at S = 1 and 2, and
+    greedy on tiny Gemma 4 in one program and split: the tokens and the whole DRAM equal the
+    ISA simulator's.
 - **Board model.** `tests/test_board.py`, tb_board through `SimTransport`: the same run through
   `BoardBackend.run_generate` (CAPS bit30), and the gen checks.
 - **Existing programs** are unchanged: perf_qwen (Qwen3.5 fp4, 2 layers) 2,477,721 cycles and

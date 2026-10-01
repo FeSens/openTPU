@@ -657,7 +657,8 @@ def compile_generate(image, kernel, blocks: int, lo: int, block: int, chain: boo
         raise ValueError(f"lo {lo} is not in bucket {blocks}")
     if part is not None and not chain:
         raise ValueError("a split generate program chains (HALT CHAIN)")
-    rp = RunPos(blocks, block, lo, image.lookup["zmask"], image.cap)
+    # the bucket's mask rows (Gemma 4 computes its own, m.mask: no table)
+    rp = RunPos(blocks, block, lo, image.lookup.get("zmask", 0), image.cap)
     fn, kw = {None: (_generate, {"chain": chain, "debug": debug}), 0: (_generate_layers, {}),
               1: (_generate_head, {"debug": debug})}[part]
     progs = []
