@@ -189,6 +189,45 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, config, first, chunk, dstep):
     assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[17:], want[17:]))
 
 
+@pytest.mark.parametrize("nk,grouped", [(16, False), (8, False), (8, True)],
+                         ids=["kh16", "kh8", "kh8-grouped"])
+def test_dstep_rows_pipeline_is_bit_exact(nk, grouped):
+    """16 DeltaNet value heads on one slice (8 pairs, out_proj groups of 4) with DSTEP: the
+    chunked prefill's pairs run software pipelined (_deltanet_rows' _rows_pipelined, its
+    hardware loop over the middle pairs; 16 key heads, or 8 with q and k shared, array- or
+    group-major) and give the logits, KV cache, conv rings and DeltaNet states of
+    token-by-token decode, chunks of 2 and 6 from positions 0 and 5 (group-major: the taps,
+    windows and states of every pair, then the next tokens' logits)."""
+    import dataclasses
+    _, W, spec = _tiny_model(nk, 16)
+    spec = dataclasses.replace(spec, pair_loop=grouped)
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=True, PAIR=True)
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 13)]
+    ref = Engine(spec, W, cap=256, cfg=cfg)
+    assert ref.image.grouped == grouped
+    want = [ref.step(t) for t in toks]
+    eng = Engine(spec, W, cap=256, cfg=cfg)
+    got = eng.prefill(toks[:2], chunk=2)
+    assert np.array_equal(got.view(np.uint32), want[1].view(np.uint32))
+    for t in toks[2:5]:
+        eng.step(t)
+    got = eng.prefill(toks[5:11], chunk=6)
+    assert np.array_equal(got.view(np.uint32), want[10].view(np.uint32)) and eng.pos == 11
+    assert eng.stats[0]["rows"] == 2 and eng.stats[4]["rows"] == 6
+    ref11 = Engine(spec, W, cap=256, cfg=cfg)
+    for t in toks[:11]:
+        ref11.step(t)
+    if grouped:     # (the group blocks also hold the decode's gates of its last token)
+        for li, k in enumerate(spec.kinds):
+            if k == "linear":
+                for q in range(spec.lin_heads // 2):
+                    assert all(np.array_equal(x, y) for x, y in
+                               zip(_pair_parts(eng, li, q), _pair_parts(ref11, li, q))), (li, q)
+    else:
+        assert all(np.array_equal(a, b) for a, b in zip(_layers_dram(eng), _layers_dram(ref11)))
+    assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[11:], want[11:]))
+
+
 @pytest.mark.parametrize("config", ["design", "board"])
 @pytest.mark.parametrize("unit", ["dstep", "stream"])
 def test_tiny_dstep_is_bit_exact(tiny, config, unit):
@@ -473,13 +512,22 @@ def test_tiny_vt_tiles_bit_exact(tiny, monkeypatch):
 def test_tiny_prefill_rows_dstep_on_rtl(tiny, have_verilator):
     """A 6-row prefill run with DSTEP (a DSTEP per row and head) on the RTL's board memory
     path: DRAM equals the ISA simulator's, and the logits equal token-by-token decode's."""
+    _rows_dstep_on_rtl(*tiny[1:])
+
+
+def test_prefill_rows_pipeline_on_rtl(have_verilator):
+    """The same with 16 DeltaNet heads (8 pairs): _rows_pipelined's hardware loop over the
+    middle pairs on the RTL."""
+    _rows_dstep_on_rtl(*_tiny_model(16, 16)[1:], dram=1 << 25)
+
+
+def _rows_dstep_on_rtl(W, spec, dram=1 << 24):
     from opentpu import rtlsim
     from opentpu.isasim import Machine
     from opentpu.llm.qwen3 import rope_tables
-    _, W, spec = tiny
     toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 9)]
-    want = Engine(spec, W, cap=256, cfg=board_config(DRAM_BYTES=1 << 24)).prefill(toks, chunk=1)
-    cfg = board_config(DRAM_BYTES=1 << 24, DSTEP=True)
+    want = Engine(spec, W, cap=256, cfg=board_config(DRAM_BYTES=dram)).prefill(toks, chunk=1)
+    cfg = board_config(DRAM_BYTES=dram, DSTEP=True)
     eng = Engine(spec, W, cap=256, cfg=cfg)
     eng.prefill(toks[:3])                         # a state, ring and cache to continue from
     rows = [(0, 3 + j) for j in range(6)]

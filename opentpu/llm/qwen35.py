@@ -1416,9 +1416,6 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     if not dstep:
         St = ol.empty([dv * dk]).reshape(dv, dk)
         w = ol.empty([dv])
-    ONp = ol.empty([R, 2 * dv])                         # normed, gated o of a pair per row
-    GDB = ol.empty([R, 4])                              # decays, then betas, of the pair's heads
-    GD, GB = GDB[:, 0:2], GDB[:, 2:4]
     full = max(0, K - 1 - p0)                           # rows before it lack positions < 0
     rgroups = [(r, r + 1) for r in range(min(full, R))] + ([(full, R)] if full < R else [])
     split = og == 4 and NP > 1                          # _deltanet's last group, in pairs
@@ -1427,10 +1424,10 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         """y += ON . out_proj columns [c0, c1) of head group g (heads of dv columns)."""
         ol.dot(ON, dn.wout(g)[:, c0 * dv:c1 * dv], acc=y)
 
-    def head_in(X, taps, a):
+    def head_in(X, taps, a, out=None):
         """Block a of the channels of the pair whose rows are in X (head a's q k v; shared, q, k,
-        v of a, v of b): the convolution and SiLU -> [R, bw]."""
-        U = ol.empty([R, bw])
+        v of a, v of b): the convolution and SiLU -> [R, bw] (into `out`)."""
+        U = ol.empty([R, bw]) if out is None else out
         for r0, r1 in rgroups:                          # the convolution, as _deltanet's conv
             t = min(K - 1, p0 + r0)
             cur = X[K - 1 + r0:K - 1 + r1, a * bw:(a + 1) * bw]
@@ -1526,8 +1523,9 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     # a pair's projections, taps and ring rows; two sets with DSTEP (pair p + 1's projections
     # stream while pair p's DSTEPs run)
     NB = 2 if dstep and split and gp == 2 else 1
-    PB = [(ol.empty([K * CP]), ol.empty([K - 1 + R, CP]), ol.empty([R, 2 * dv]))
-          for _ in range(NB)]
+    taps1 = ol.empty([K * CP]) if NB == 2 else None     # (_rows_pipelined: one taps buffer)
+    PB = [(ol.empty([K * CP]) if taps1 is None else taps1, ol.empty([K - 1 + R, CP]),
+           ol.empty([R, 2 * dv])) for _ in range(NB)]
 
     def project(p, b, window=True):
         """Pair p's taps, q k v rows (ring, then its projections) and z into buffers b; window:
@@ -1593,29 +1591,129 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         """ol.range(n), or the single index 0 unrolled."""
         return ol.range(n) if n > 1 else range(n)
 
+    def _rows_pipelined():
+        """The pairs software pipelined as _deltanet_dstep, two pairs ahead (pair p in buffer
+        set t = p % 2), so that the MXU and the VPU work while the DMA runs the DSTEPs:
+
+            MXU  the q k v projections of pair p + 2
+            DMA  pair p's 2 R DSTEPs
+            VPU  pair p + 1's convolution, SiLU and norms beside them (its window stored),
+                 then pair p's gated RMSNorm into its columns of ON (TMEM)
+            MXU  the z projections of pair p + 2 (after pair p's gate read its z), then the
+                 out_proj of the head group pair p completes (the last group pair by pair)
+            DMA  pair p + 2's taps, window and gates
+
+        Per pair and row the operations of heads() / shared_heads(), out_proj over the same
+        groups in the same order: the same words. A head's q, k (normed in place) and v stay
+        in its convolution's rows, which DSTEP reads as they are. The taps have one buffer:
+        pair p + 2's are loaded after pair p + 1's convolution read pair p + 1's."""
+        if sh:          # q | k of the key head, and the two heads' v
+            QKb = [ol.empty([R, 2 * dk]) for _ in range(2)]
+            Vb = [[ol.empty([R, dv]) for _ in range(2)] for _ in range(2)]
+        else:           # per head: q | k | v rows
+            Ub = [[ol.empty([R, C]) for _ in range(2)] for _ in range(2)]
+        O = [ol.empty([R, dv]) for _ in range(2)]
+        GDBb = [ol.empty([R, 4]) for _ in range(2)]     # decays, then betas, of the pair's heads
+        ON = ol.empty([R, og * dv])                     # the group's normed, gated o
+
+        def mm_x(p, t):
+            ol.dot(xs, dn.wh(p)[0:CP, :], out=PB[t][1][K - 1:K - 1 + R, :])
+
+        def mm_z(p, t):
+            ol.dot(xs, dn.wh(p)[CP:RP, :], out=PB[t][2])                 # z of a, of b
+
+        def fetch(p, t, taps=True):
+            X = PB[t][1]
+            if taps:
+                ol.load(dn.cv(p)[0:TP], out=taps1)     # rows (block, tap)
+            for j in range(1, min(K, p0 + 1)):          # positions p0-K+1 ..: the window
+                sl = TP + (K - 1 - j) * CP              # (_past)
+                ol.load(dn.cv(p)[sl:sl + CP], out=X[K - 1 - j, :])
+            q = dn.index(p)
+            for r in range(R):
+                ol.load(gr[r, 2 * q:2 * q + 2], out=GDBb[t][r, 0:2])
+                ol.load(gr[r, nl + 2 * q:nl + 2 * q + 2], out=GDBb[t][r, 2:4])
+
+        def prep(p, t):
+            taps, X, _ = PB[t]
+            taps = taps.reshape(nb * K, bw)
+            if sh:                                      # q and k once, the two heads' v
+                for i in range(2):
+                    U = head_in(X, taps, i)
+                    QKb[t][:, i * dk:(i + 1) * dk].set(
+                        l2norm_rows(U, dk ** -0.5 if i == 0 else 1.0))
+                    del U
+                for a in range(2):
+                    head_in(X, taps, 2 + a, out=Vb[t][a])
+            else:
+                for a in range(2):
+                    U = head_in(X, taps, a, out=Ub[t][a])
+                    U[:, 0:dk].set(l2norm_rows(U[:, 0:dk], dk ** -0.5))
+                    U[:, dk:2 * dk].set(l2norm_rows(U[:, dk:2 * dk]))
+            store_window(p, t)
+
+        def dsteps(p, t):
+            for a in range(2):
+                qk = QKb[t] if sh else Ub[t][a][:, 0:2 * dk]
+                v = Vb[t][a] if sh else Ub[t][a][:, 2 * dk:C]
+                for r in range(R):
+                    ol.deltanet_step(dn.state(p, a), qk[r, :], v[r, :], GDBb[t][r, a:a + 1],
+                                     GDBb[t][r, 2 + a:3 + a], O[a][r, :],
+                                     zero=(p0 == 0 and r == 0))
+
+        def post(t):
+            Z = PB[t][2]
+            for a in range(2):
+                c = (2 * t + a) * dv
+                gz = silu(Z[:, a * dv:(a + 1) * dv])
+                ON[:, c:c + dv].set(rmsnorm(O[a], gn, eps) * gz)
+                del gz
+
+        def segment(p, t, last1, last2, g=None, half=None):
+            """Pair p; last1: no pair p + 1, last2: no pair p + 2; g: the head group pair p
+            completes; half: pair p's half of the last group (flushed pair by pair)."""
+            if not last2:
+                mm_x(p + 2, t)
+            dsteps(p, t)
+            if not last1:
+                prep(p + 1, 1 - t)
+            post(t)
+            if not last2:
+                mm_z(p + 2, t)
+            if half is not None:
+                flush(ng - 1, ON[:, 2 * half * dv:(2 * half + 2) * dv], 2 * half, 2 * half + 2)
+            elif g is not None:
+                flush(g, ON, 0, og)
+            if not last2:
+                fetch(p + 2, t)
+
+        def unrolled(p):
+            last = p >= NP - 2
+            segment(p, p % 2, p + 1 >= NP, p + 2 >= NP,
+                    None if last or p % 2 == 0 else (p - 1) // 2, p - (NP - 2) if last else None)
+
+        fetch(0, 0)
+        mm_x(0, 0)
+        mm_z(0, 0)
+        fetch(1, 1, taps=False)
+        mm_x(1, 1)
+        mm_z(1, 1)
+        prep(0, 0)
+        ol.load(dn.cv(1)[0:TP], out=taps1)             # after pair 0's convolution
+        unrolled(0)
+        n_it = max(0, (NP - 3) // 2)                    # segments 1 .. NP - 3: every part
+        for i in loop(n_it):
+            segment(2 * i + 1, 1, False, False, g=i)
+            segment(2 * i + 2, 0, False, False)
+        for p in range(1 + 2 * n_it, NP):
+            unrolled(p)
+
     if NB == 2:
-        # groups of 2 pairs, software pipelined: the projections of the pair after the next
-        # one stream while a pair's DSTEPs run (the same operations, in another order)
-        project(0, 0, window=False)
-        for g in loop(ng - 1):
-            project(2 * g + 1, 1, window=False)
-            heads(2 * g, 0)
-            store_window(2 * g, 0)
-            ol.store(on[:, 0:2 * dv], ONp)
-            project(2 * g + 2, 0, window=False)
-            heads(2 * g + 1, 1)
-            store_window(2 * g + 1, 1)
-            ol.store(on[:, 2 * dv:4 * dv], ONp)
-            flush(g, ol.load(on), 0, og)
-        q0 = 2 * (ng - 1)                               # the last group, pair by pair
-        project(q0 + 1, 1, window=False)
-        heads(q0, 0)
-        store_window(q0, 0)
-        flush(ng - 1, ONp, 0, 2)
-        heads(q0 + 1, 1)
-        store_window(q0 + 1, 1)
-        flush(ng - 1, ONp, 2, 4)
+        _rows_pipelined()
         return x + ol.all_reduce(y)
+    ONp = ol.empty([R, 2 * dv])                         # normed, gated o of a pair per row
+    GDB = ol.empty([R, 4])                              # decays, then betas, of the pair's heads
+    GD, GB = GDB[:, 0:2], GDB[:, 2:4]
     for g in loop(ng - 1 if split else ng):             # whole groups
         if gp == 1:
             pair(g)
