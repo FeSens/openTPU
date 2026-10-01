@@ -42,7 +42,7 @@ from .. import isa as I
 from .. import language as ol
 from .. import quant as Q
 from ..compiler import Affine, CompileError, DevVar, QTensor, Tensor, current
-from ..host.offload import LINE, ExpertServer, Layout, dram_of
+from ..host.offload import LINE, SPLIT, ExpertServer, Layout, PoolFile, dram_of, to_split
 from ..kernels.lib import rmsnorm, sigmoid
 from ..kernels.mlp import _chunk, swiglu_down
 
@@ -120,25 +120,16 @@ class ExpertFormat:
         return SimpleNamespace(wg=q(self.wg, F, H), wu=q(self.wu, F, H), wd=wd)
 
 
-def _read_ahead(path) -> None:
-    """Ask the kernel to read the pool file into the page cache in the background (Linux), so a
-    miss's staging copy reads RAM, not the disk. It moves bytes only: the host's RAM tier."""
-    import os
-    if hasattr(os, "posix_fadvise"):
-        fd = os.open(path, os.O_RDONLY)
-        try:
-            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_WILLNEED)
-        finally:
-            os.close(fd)
-
-
 def serve(layout: Layout, expert, backend, pool_file=None, warm=True) -> ExpertServer:
     """The host's expert server on the backend's DRAM (slice 0); with `warm`, the slots filled
     with each layer's first experts. expert(g): global expert g's slot bytes. An expert is
     packed when it is first asked for and kept in host RAM, or, with `pool_file`, in that file
     (the page cache, or the SSD tier), which keeps it for later runs: the file is the whole
     pool's size (sparse until packed), and `<pool_file>.packed` marks the experts in it (a
-    file of the right size without one is a pool packed whole)."""
+    file of the right size without one is a pool packed whole). A new file is in the split
+    format (opentpu.host.offload.split_order), as `<pool_file>.format` says; a file without
+    it holds the slot format. A thread reads the packed experts into the page cache
+    (`server.pool_warm`)."""
     L = layout
     n = L.layers * L.E
     if pool_file is None:
@@ -157,16 +148,22 @@ def serve(layout: Layout, expert, backend, pool_file=None, warm=True) -> ExpertS
                 f.truncate(n * L.slot_bytes)
         if fresh or not done.exists() or done.stat().st_size != n:
             done.write_bytes(bytes(n) if fresh else bytes([1]) * n)
+        fmt = Path(str(path) + ".format")
+        if fresh:
+            fmt.write_text(SPLIT + "\n")
+        split = fmt.exists() and fmt.read_text().strip() == SPLIT
         arr = np.memmap(path, np.uint8, "r+", shape=(n, L.slot_bytes))
         packed = np.memmap(done, np.uint8, "r+", shape=(n,))
-        _read_ahead(path)
+        pf = PoolFile(path, L.slot_bytes, split)
+        pf.warm(np.nonzero(np.asarray(packed))[0])
 
-        def pool(g):                    # the expert's pages (no copy: the DMA's staging
-            if not packed[g]:           # reads them)
-                arr[g] = expert(g)
+        def pool(g):                    # read from the file (the memmap's writes are in the
+            if not packed[g]:           # page cache preadv reads)
+                arr[g] = to_split(expert(g)) if split else expert(g)
                 packed[g] = 1
-            return arr[g]
+            return pf.get(g)
     srv = ExpertServer(dram_of(backend, L), L, pool)
+    srv.pool_warm = None if pool_file is None else pf.warm_t
     srv.load([j * L.E + e for j in range(L.layers) for e in range(L.E)] if warm else ())
     return srv
 

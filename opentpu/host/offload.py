@@ -24,9 +24,14 @@ while it uses that layer's slots (docs/offload.md 5.2).
 
 On the card the server's memory is `BoardDram` (`dram_of`): the experts' DMA at the link's
 rate, in a worker thread, the host's own words without a read of the card first.
+
+The pool can be a file (`PoolFile`). Its split format (`split_order`) keeps each 4 KiB of an
+expert as its two channel runs under CHASH, so that BoardDram reads an expert from the file
+straight into the runs it DMAs (one os.preadv, the GIL released) instead of gathering them.
 """
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
@@ -36,6 +41,124 @@ from dataclasses import dataclass
 import numpy as np
 
 LINE = 64              # the mailbox's words, its row and each flag on their own 64-byte lines
+RUN = 4096             # the split pool format's block: 32 chunks, its two channel runs
+SPLIT = "split4k"      # the split format's name in a pool file's <file>.format
+IOV_MAX = 1024         # buffers per os.preadv (Linux's UIO_MAXIOV)
+
+
+def _parity(x: np.ndarray) -> np.ndarray:
+    x = x.astype(np.uint64)
+    for s in (32, 16, 8, 4, 2, 1):
+        x ^= x >> np.uint64(s)
+    return (x & np.uint64(1)).astype(np.intp)
+
+
+_ORDERS: dict = {}
+
+
+def split_order(n: int) -> np.ndarray:
+    """The split pool format of an n-byte expert (n a multiple of 128): the file's 64-byte beat
+    k is the expert's beat order[k]. Each RUN-byte block (32 chunks of two beats; the last
+    block may be shorter) holds first the beats channel 0 takes when the block lands where the
+    card's chunk index has even parity above its low 5 bits (CHASH: chunk i's beat parity(i)),
+    then the others: the block's two channel runs. Where that parity is odd the runs trade
+    channels (BoardDram.write_slot)."""
+    if n not in _ORDERS:
+        m = np.arange(n // 128)
+        i, j = m % 32, m // 32
+        c = np.minimum(32, n // 128 - 32 * j)            # the chunks in m's block
+        p = _parity(i)
+        order = np.empty(n // 64, np.intp)
+        order[64 * j + i] = 2 * m + p
+        order[64 * j + c + i] = 2 * m + 1 - p
+        _ORDERS[n] = order
+    return _ORDERS[n]
+
+
+def to_split(data) -> np.ndarray:
+    """An expert's bytes (the card's slot format) in the split pool format."""
+    b = np.ascontiguousarray(data).view(np.uint8).reshape(-1)
+    return b.view("V64")[split_order(len(b))].view(np.uint8)
+
+
+def preadv(fd: int, bufs: list, off: int) -> None:
+    """Fill the buffers (writable memoryviews of bytes), in order, from file offset `off`:
+    os.preadv in groups of IOV_MAX, a short read resumed."""
+    bufs, i = list(bufs), 0
+    while i < len(bufs):
+        grp = bufs[i:i + IOV_MAX]
+        k = os.preadv(fd, grp, off)
+        if k <= 0:
+            raise OSError(f"preadv at {off}: end of file")
+        off += k
+        if k == sum(map(len, grp)):             # the whole group: the usual case
+            i += len(grp)
+            continue
+        while k >= len(bufs[i]):
+            k -= len(bufs[i])
+            i += 1
+        if k:
+            bufs[i] = bufs[i][k:]
+
+
+class SplitRecord:
+    """An expert in the split format, read from its file when it is written: readv(bufs) reads
+    its bytes in file order into the buffers. BoardDram on a CHASH card reads it straight into
+    its two channel runs; as bytes (bytes(), np.asarray) it is the slot's own bytes."""
+
+    def __init__(self, n: int, readv):
+        self.n, self.readv = n, readv
+
+    def __len__(self) -> int:
+        return self.n
+
+    def __array__(self, dtype=None, copy=None) -> np.ndarray:
+        f = np.empty(self.n, np.uint8)
+        self.readv([memoryview(f)])
+        out = np.empty(self.n, np.uint8)
+        out.view("V64")[split_order(self.n)] = f.view("V64")
+        return out if dtype is None else out.astype(dtype)
+
+    def __bytes__(self) -> bytes:
+        return self.__array__().tobytes()
+
+
+class PoolFile:
+    """The expert pool in a file (every expert's `slot` bytes at g * slot; the page cache is
+    the host's RAM tier, the disk below it), read with os.preadv (the GIL released: a memmap
+    page not in the page cache would block the whole process on the disk). `split`: the split
+    format, get(g) a SplitRecord; else the slot format, get(g) the bytes in one of two
+    page-aligned buffers in turn (used before the next get: the server writes an expert
+    before it asks for the next). warm(ids) reads those experts once in a thread, into the
+    page cache: the card's host disk serves about 115 MB/s to scattered reads, 13 ms an
+    expert of 1.67 MB. It moves bytes only."""
+
+    def __init__(self, path, slot: int, split: bool):
+        import mmap
+        self.fd, self.slot, self.split = os.open(path, os.O_RDONLY), slot, split
+        self.bufs = [mmap.mmap(-1, slot) for _ in range(2)]
+        self.k, self.warm_t = 0, None
+
+    def get(self, g: int):
+        if self.split:
+            return SplitRecord(self.slot, lambda bufs: preadv(self.fd, bufs, g * self.slot))
+        self.k ^= 1
+        preadv(self.fd, [memoryview(self.bufs[self.k])], g * self.slot)
+        return np.frombuffer(self.bufs[self.k], np.uint8)
+
+    def warm(self, ids) -> threading.Thread:
+        import mmap
+        scratch = memoryview(mmap.mmap(-1, self.slot))
+
+        def run():
+            for g in ids:
+                preadv(self.fd, [scratch], int(g) * self.slot)
+                t.bytes += self.slot
+        t = threading.Thread(target=run, daemon=True, name="otpu-pool-warm")
+        t.bytes = 0
+        t.start()
+        self.warm_t = t
+        return t
 
 
 @dataclass(frozen=True)
@@ -240,12 +363,15 @@ class BoardDram:
             raise ValueError("served must start a 128-byte block of the host's own words")
         self.blk, self.lo = blk, layout.served
         self.shadow = np.zeros(-(-(end - self.lo) // blk) * blk, np.uint8)
-        self.depth, self._bufs, self._base = depth, None, None
+        self.depth, self._bufs, self._base, self._i1 = depth, None, None, None
+        self._idx: dict = {}                  # slot address -> channel 0's beat indices
+        self._pieces: list = []               # per staging pair: its split-format pieces
         self._free: queue.Queue = queue.Queue()
         self._q: queue.Queue = queue.Queue()
         self._err: BaseException | None = None
         self._thread: threading.Thread | None = None
         self.dma_s, self.dma_bytes = 0.0, 0     # the worker's slot DMA: seconds and bytes
+        self.direct = 0                         # experts read from the file into their runs
 
     # ---- the worker
     def _work(self) -> None:
@@ -283,32 +409,73 @@ class BoardDram:
             self.shadow[a:a + len(b)] = b
             a0, a1 = a // self.blk * self.blk, -(-(a + len(b)) // self.blk) * self.blk
             out, at = self.shadow[a0:a1].copy(), self.lo + a0
-            self._put(lambda: self.board.write(at, out))
+            self._put(lambda: self._blocks(at, out))
         else:                                                   # the card's words: in order
             self.flush()
             self.board.write(addr, b)
 
+    def _staging(self, nbytes: int) -> None:
+        """depth pairs of page-aligned buffers for an expert's two channel runs, and for the
+        split format each pair's RUN / 2-byte pieces, in file order for either parity."""
+        if self._bufs is not None and len(self._bufs[0][0]) == nbytes // 2:
+            return
+        self.flush()
+        n = nbytes // self.blk
+        self._bufs = [[_page_buf(nbytes // 2) for _ in (0, 1)] for _ in range(self.depth)]
+        self._base = 2 * np.arange(n, dtype=np.intp)
+        self._i1, self._idx = np.empty(n, np.intp), {}
+        h = RUN // 2
+        nb = -(-nbytes // RUN)
+        self._pieces = []
+        for b0, b1 in self._bufs:
+            v = np.empty((nb, 2, 2), object)
+            for j in range(nb):
+                p0, p1 = memoryview(b0)[j * h:(j + 1) * h], memoryview(b1)[j * h:(j + 1) * h]
+                v[j, 0, 0], v[j, 0, 1], v[j, 1, 0], v[j, 1, 1] = p0, p1, p1, p0
+            self._pieces.append(v)
+        while not self._free.empty():
+            self._free.get()
+        for i in range(self.depth):
+            self._free.put(i)
+
     def write_slot(self, addr: int, data) -> None:
         from .board import swapped
+        if (isinstance(data, SplitRecord) and self.board.chash and addr % RUN == 0
+                and len(data) % self.blk == 0):
+            self._staging(len(data))            # the file's runs, read in place
+            i = self._free.get()
+            par = _parity(addr // RUN + np.arange(self._pieces[i].shape[0]))
+            data.readv(self._pieces[i][np.arange(len(par)), par].reshape(-1).tolist())
+            bufs = self._bufs[i]
+            self.direct += 1
+            self._put(lambda: self._dma(addr // 2, bufs), i)
+            return
         src = (np.ascontiguousarray(data).view(np.uint8).reshape(-1)
                if isinstance(data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))
         n = len(src) // self.blk
         if addr % self.blk or len(src) % self.blk:
             return self.write(addr, src)
-        if self._bufs is None or len(self._bufs[0][0]) != len(src) // 2:
-            self.flush()
-            self._bufs = [[_page_buf(len(src) // 2) for _ in (0, 1)] for _ in range(self.depth)]
-            self._base = 2 * np.arange(n, dtype=np.intp)
-            while not self._free.empty():
-                self._free.get()
-            for i in range(self.depth):
-                self._free.put(i)
+        self._staging(len(src))
+        i0 = self._idx.get(addr)
+        if i0 is None:                          # once per slot: CHASH's swaps at its address
+            i0 = self._idx[addr] = (self._base + swapped(addr, n) if self.board.chash
+                                    else self._base)
+        np.bitwise_xor(i0, 1, out=self._i1)     # channel 1 takes each chunk's other beat
         i = self._free.get()                    # a staging pair the worker is done with
         bufs, beats = self._bufs[i], src.view("V64")
-        p = swapped(addr, n).astype(np.intp) if self.board.chash else 0
-        np.take(beats, self._base + p, out=bufs[0].view("V64"))       # channel 0's run
-        np.take(beats, self._base + 1 - p, out=bufs[1].view("V64"))   # channel 1's
+        np.take(beats, i0, out=bufs[0].view("V64"))           # channel 0's run
+        np.take(beats, self._i1, out=bufs[1].view("V64"))     # channel 1's
         self._put(lambda: self._dma(addr // 2, bufs), i)
+
+    def _blocks(self, at: int, data: np.ndarray) -> None:
+        """Whole chunks of the host's words (at, len: multiples of 128) to the two channels, as
+        Board.write does (CHASH's swaps), without its general path's copies."""
+        from .board import BEAT, swapped
+        v = data.reshape(-1, 2, BEAT)
+        sw = swapped(at, len(v)) if self.board.chash else np.zeros(len(v), bool)
+        for c in (0, 1):
+            run = np.where(sw[:, None], v[:, 1 - c], v[:, c])
+            self.board.t.mem_write(c, at // 2, run.reshape(-1))
 
     def _dma(self, off: int, bufs) -> None:
         t0 = time.perf_counter()

@@ -126,17 +126,23 @@ def test_small_cache_is_bit_exact(tiny, wformat):
 
 
 def test_pool_file_is_the_same_pool(tiny, tmp_path):
-    """The pool packed once into a file (the page cache or the SSD tier) serves the same bytes;
-    a second engine reuses the file."""
+    """The pool packed once into a file (the page cache or the SSD tier) serves the same bytes
+    (read back with pread as they are packed); a second engine reuses the file, its warm
+    thread reading the packed experts into the page cache."""
     _, W, spec = tiny
-    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 6)]
-    ref = np.array([_engine(spec, W, experts=K).step(t) for t in [toks[0]]])
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 3)]
+    full = _engine(spec, W, experts=K)
+    ref = np.array([full.step(t) for t in toks])
     f = tmp_path / "pool.bin"
-    for _ in range(2):
+    for i in range(2):
         eng = Engine(spec, W, cap=256, cfg=device_config(spec, 256, S=1, experts=K),
                      experts=K, pool_file=f)
-        got = np.array([eng.step(t) for t in [toks[0]]])
+        got = np.array([eng.step(t) for t in toks])
         assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+        warm = eng.server.pool_warm             # (the same tokens: no expert packed second)
+        warm.join(timeout=60)
+        packed = int(np.fromfile(str(f) + ".packed", np.uint8).sum())
+        assert packed > 0 and warm.bytes == (packed if i else 0) * eng.image.offload.slot_bytes
     assert f.stat().st_size == (len(KINDS) - 1) * E * eng.image.offload.slot_bytes
 
 
@@ -217,15 +223,17 @@ class _LiveCard:
     """A fake card that computes while the host works (built on opentpu.host.fake): LOAD takes
     the program from DRAM, RUN runs it with ARG0..7 on the ISA simulator in a thread, over one
     DRAM the host's reads and writes reach at once (the two channels interleaved in 64-byte
-    beats, as the card's). A MoE layer's WAITW then waits for the host's writes during the
-    run, as on the card; HALTED rises when the program halts."""
+    beats, as the card's; with `chash` CHASH's map, chunk m's beat b on channel b ^ parity(m)).
+    A MoE layer's WAITW then waits for the host's writes during the run, as on the card;
+    HALTED rises when the program halts."""
 
     @staticmethod
-    def make(cfg):
+    def make(cfg, chash=False):
         import threading
         import time
         from opentpu import isa as I
         from opentpu.host import regs as R
+        from opentpu.host.board import swapped
         from opentpu.host.fake import FakeTransport
         from opentpu.isasim import Machine
 
@@ -236,15 +244,22 @@ class _LiveCard:
                 self.flat = self.mem.reshape(-1)
                 self.prog, self.thread, self.error, self.waits = None, None, None, 0
 
+            def _beats(self, ch, b0, b1):
+                """Channel ch's beats b0..b1: (chunks, halves) of mem."""
+                m = np.arange(b0, b1)
+                return m, ch ^ swapped(128 * b0, b1 - b0).astype(np.intp) if chash else ch
+
             def mem_write(self, ch, off, data):
-                v, b0, b1 = self.mem[:, ch, :], off // 64, -(-(off + len(data)) // 64)
-                rows = v[b0:b1].reshape(-1)
+                b0, b1 = off // 64, -(-(off + len(data)) // 64)
+                m, h = self._beats(ch, b0, b1)
+                rows = self.mem[m, h].reshape(-1)
                 rows[off - 64 * b0:off - 64 * b0 + len(data)] = data
-                v[b0:b1] = rows.reshape(-1, 64)
+                self.mem[m, h] = rows.reshape(-1, 64)
 
             def mem_read(self, ch, off, n, out=None):
-                v, b0, b1 = self.mem[:, ch, :], off // 64, -(-(off + n) // 64)
-                r = v[b0:b1].reshape(-1)[off - 64 * b0:off - 64 * b0 + n]
+                b0, b1 = off // 64, -(-(off + n) // 64)
+                m, h = self._beats(ch, b0, b1)
+                r = self.mem[m, h].reshape(-1)[off - 64 * b0:off - 64 * b0 + n]
                 if out is None:
                     return r.copy()
                 out[:] = r
@@ -287,6 +302,8 @@ class _LiveCard:
                     self.thread.start()
 
             def reg_read(self, off):
+                if off == R.R_CAPS:
+                    return super().reg_read(off) | (R.CAP_CHASH if chash else 0)
                 if off == R.R_STATUS:
                     run = bool(self.regs[R.R_CTRL] & R.CTRL_RUN)
                     done = run and self.thread is not None and not self.thread.is_alive()
@@ -297,8 +314,8 @@ class _LiveCard:
         return Live()
 
 
-@pytest.mark.parametrize("threaded", [False, True])
-def test_the_host_serves_the_card_during_its_runs(tiny, threaded):
+@pytest.mark.parametrize("mode", ["sync", "threaded", "split"])
+def test_the_host_serves_the_card_during_its_runs(tiny, mode, tmp_path):
     """The card's side of path (a) with the host's server as it runs beside a card: the backend
     polls it while a run is in flight (BoardBackend.host), and it moves the missing experts
     into the slots while the card's MoE layers wait for them (a fake card that computes in a
@@ -306,17 +323,21 @@ def test_the_host_serves_the_card_during_its_runs(tiny, threaded):
     decode, and the card's generate loop give the ISA simulator's logits and tokens bit for
     bit, with misses served during the runs. threaded: a transport that DMAs from a worker
     thread (XdmaTransport's), so the server's memory is BoardDram (its DMA thread writing while
-    the card computes)."""
+    the card computes). split: also CHASH's map, and the experts from a pool file in the split
+    format, read straight into the channel runs at the page-aligned slots (every other slot
+    here: the others take the slot's bytes)."""
     from opentpu.host.board import BoardBackend
     from opentpu.host.offload import BackendDram, BoardDram
     from opentpu.isasim import board_config
     _, W, spec = tiny
     cfg = board_config(DRAM_BYTES=1 << 24)
-    card = _LiveCard.make(cfg)
-    card.threaded = threaded
+    card = _LiveCard.make(cfg, chash=mode == "split")
+    card.threaded = threaded = mode != "sync"
     isa = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K)
     brd = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K,
-                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card))
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card),
+                 pool_file=tmp_path / "pool.bin" if mode == "split" else None)
+    assert brd.backend.board.chash == (mode == "split")
     assert brd.resident and brd.can_generate and brd.backend.host is not None
     assert not brd.stream_logits
     assert isinstance(brd.server.mem, BoardDram if threaded else BackendDram)
@@ -334,6 +355,8 @@ def test_the_host_serves_the_card_during_its_runs(tiny, threaded):
     assert brd.server.seq == isa.server.seq == (len(toks) + 8) * len(brd.image.offload.slots)
     if threaded:                            # the experts went the one-pass way, not Board.write
         assert brd.server.mem._bufs is not None
+    if mode == "split":                     # and read into the runs (the split format)
+        assert 0 < brd.server.mem.direct < brd.server.misses and brd.server.pool_warm
 
 
 @pytest.mark.parametrize("embed", ["f32", "int8"])

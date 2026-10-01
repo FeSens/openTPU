@@ -91,18 +91,67 @@ def test_bad_requests():
         srv.serve([0, 1])                           # 2 ids, 1 slot
 
 
+def test_split_format_is_the_slot_bytes_reordered(tmp_path):
+    """split_order is a permutation of the slot's beats (a short last block included);
+    to_split and a SplitRecord read back from a file (PoolFile, os.preadv) give the slot's
+    bytes."""
+    from opentpu.host.offload import PoolFile, SplitRecord, split_order, to_split
+    for n in (4096 * 3, 128 * 37, 128):
+        o = split_order(n)
+        assert np.array_equal(np.sort(o), np.arange(n // 64))
+        x = np.random.default_rng(n).integers(0, 256, (3, n), dtype=np.uint8)
+        f = tmp_path / f"pool{n}.bin"
+        f.write_bytes(b"".join(to_split(r).tobytes() for r in x))
+        pf = PoolFile(f, n, split=True)
+        for g in (2, 0, 1):
+            r = pf.get(g)
+            assert isinstance(r, SplitRecord) and len(r) == n
+            assert bytes(r) == x[g].tobytes() and np.array_equal(np.asarray(r), x[g])
+
+
+def test_preadv_resumes_short_reads(tmp_path, monkeypatch):
+    """offload.preadv fills every buffer in order when os.preadv stops short (in the middle of
+    a buffer) and over more buffers than one call takes (IOV_MAX)."""
+    import os
+
+    from opentpu.host import offload as O
+    data = np.random.default_rng(0).integers(0, 256, 20000, dtype=np.uint8).tobytes()
+    f = tmp_path / "f.bin"
+    f.write_bytes(data)
+    sizes = np.random.default_rng(1).integers(1, 9, 3000)
+    bufs = [memoryview(bytearray(int(n))) for n in sizes]
+    real, calls = os.preadv, []
+
+    def stingy(fd, bs, off):                # 6 buffers and half the 7th at most
+        calls.append(len(bs))
+        assert len(bs) <= O.IOV_MAX
+        return real(fd, list(bs[:6]) + ([bs[6][:len(bs[6]) // 2]] if len(bs) > 6 else []), off)
+    monkeypatch.setattr(os, "preadv", stingy)
+    fd = os.open(f, os.O_RDONLY)
+    try:
+        O.preadv(fd, bufs, 100)
+    finally:
+        os.close(fd)
+    assert b"".join(bytes(b) for b in bufs) == data[100:100 + int(sizes.sum())]
+    assert max(calls) == O.IOV_MAX and len(calls) > len(bufs) // 7
+
+
 @pytest.mark.parametrize("chash", [False, True])
-@pytest.mark.parametrize("slot", [128 * 37, 64 * 75])          # whole chunks; a half one
-def test_board_dram_writes_what_board_write_writes(chash, slot):
+@pytest.mark.parametrize("slot,fmt", [(128 * 37, "bytes"), (64 * 75, "bytes"),
+                                      (4096 * 3, "split"), (128 * 37, "split")])
+def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, tmp_path):
     """BoardDram (the card's fast path: one-pass channel runs, a worker thread's DMA, the
     host's words from a shadow without reading the card) leaves the card's two channel memories
     exactly as BackendDram's Board.write does, request after request: the slots (with CHASH's
-    swaps or not), the directory and served. A slot of a half chunk falls back to Board.write."""
+    swaps or not), the directory and served. A slot of a half chunk falls back to Board.write.
+    split: the pool a file in the split format, read with preadv straight into the channel
+    runs under CHASH at a page-aligned slot (pages of either parity; a slot of 37 chunks is
+    every other slot off a page: the slot's bytes there, as without CHASH)."""
     from types import SimpleNamespace
 
     from opentpu.host.board import Board
     from opentpu.host.fake import FakeTransport
-    from opentpu.host.offload import BackendDram, BoardDram
+    from opentpu.host.offload import BackendDram, BoardDram, PoolFile, to_split
 
     def board():
         b = Board(FakeTransport(ch_bytes=1 << 20, devname=None))
@@ -113,8 +162,13 @@ def test_board_dram_writes_what_board_write_writes(chash, slot):
         return np.random.default_rng(g).integers(0, 256, slot, dtype=np.uint8)
 
     lay = Layout.build(4096, 4, 2, (2, 3), slot)
+    fast_pool = pool
+    if fmt == "split":
+        f = tmp_path / "pool.bin"
+        f.write_bytes(b"".join(to_split(pool(g)).tobytes() for g in range(8)))
+        fast_pool = PoolFile(f, slot, split=True).get
     ba, bb = board(), board()
-    fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay), lay, pool)
+    fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay), lay, fast_pool)
     plain = ExpertServer(BackendDram(SimpleNamespace(write=lambda s, a, d: bb.write(a, d),
                                                      read=lambda s, a, n: bb.read(a, n))),
                          lay, pool)
@@ -134,6 +188,7 @@ def test_board_dram_writes_what_board_write_writes(chash, slot):
         assert fast.poll() == plain.poll() == 1
         same()
     assert fast.misses == plain.misses > 0 and fast.bytes == plain.bytes
+    assert (fast.mem.direct > 0) == (fmt == "split" and chash)
     assert float(np.frombuffer(ba.read(lay.served, 4), np.float32)[0]) == len(reqs)
 
 
@@ -158,3 +213,27 @@ def test_board_dram_raises_a_dma_error_at_flush():
                        lay, lambda g: np.zeros(128 * 37, np.uint8))
     with pytest.raises(IOError, match="h2c"):
         srv.load([0])
+
+
+def test_pool_split_tool_copies_the_packed_experts(tmp_path, monkeypatch):
+    """tools/offload/pool_split.py: a slot-format pool file's packed experts, in the split
+    format; MO.serve's reader gives back their bytes."""
+    import runpy
+    import sys
+    from pathlib import Path
+
+    from opentpu.host.offload import SPLIT, PoolFile
+    n, slot = 5, 128 * 37
+    x = np.random.default_rng(0).integers(0, 256, (n, slot), dtype=np.uint8)
+    packed = np.array([1, 0, 1, 1, 0], np.uint8)
+    src, dst = tmp_path / "pool.bin", tmp_path / "pool.split.bin"
+    src.write_bytes((x * packed[:, None]).tobytes())
+    Path(str(src) + ".packed").write_bytes(packed.tobytes())
+    tool = Path(__file__).parent.parent / "tools/offload/pool_split.py"
+    monkeypatch.setattr(sys, "argv", ["pool_split.py", str(src), str(dst)])
+    runpy.run_path(str(tool), run_name="__main__")
+    assert Path(str(dst) + ".format").read_text().strip() == SPLIT
+    assert Path(str(dst) + ".packed").read_bytes() == packed.tobytes()
+    pf = PoolFile(dst, slot, split=True)
+    for g in np.nonzero(packed)[0]:
+        assert bytes(pf.get(int(g))) == x[g].tobytes()

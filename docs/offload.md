@@ -844,23 +844,71 @@ On omarchy's i5-12600KF, with the DMA dropped (`tools/offload/slot_bench.py --nu
 about 3 ms per miss. `BoardDram` (opentpu/host/offload.py, used on any transport that DMAs from
 a worker thread, `dram_of`) does three things instead:
 - It writes an expert's two channel runs in one pass, `np.take` of 64-byte beats with CHASH's
-  swaps. It reads straight from the pool file's pages (the pool hands over its memmap rows) into
-  page-aligned staging buffers, then makes one DMA call per channel. No bounce.
+  swaps, from the pool's bytes into page-aligned staging buffers, then makes one DMA call per
+  channel. No bounce.
 - It keeps the host's own words in a shadow (`served` and the directory: the card only reads
   them) and writes them as whole 128-byte blocks, without a read.
 - One worker thread makes every DMA call in order while the server stages the next expert, so
   an expert's data lands before its entry and every entry before `served`. `ExpertServer.poll`
   flushes before it returns.
 
-The pool file is also read ahead into the page cache when the server starts
-(`posix_fadvise WILLNEED`), so the staging copy reads RAM. The host CPU per 1.67 MB expert on
-omarchy is 0.58-0.65 ms, overlapped with the DMA. tests/test_offload_server.py checks that the
-card's two channel memories end up byte for byte as `Board.write` leaves them, with and without
-CHASH. tests/test_lfm2_moe.py runs the fake card that computes beside the host with `BoardDram`.
+tests/test_offload_server.py checks that the card's two channel memories end up byte for byte as
+`Board.write` leaves them, with and without CHASH. tests/test_lfm2_moe.py runs the fake card that
+computes beside the host with `BoardDram`.
 
-The projection for the 35B. DMA at the link's 1.6-1.7 GB/s (docs/host.md: writes from 1 MiB per
-call, placed) takes 97 ms per token for its 155 MB. Each request's first staging copy, not
-overlapped, adds about 30 ms. The entries and `served`, as 64-byte DMA calls of about 12 us each,
-add about 6 ms. That is about 133 ms of serving per token instead of 370, so about 250 ms a
-token, or 4 tok/s instead of 2.0. The 8B, at 0.89 misses per token, gains about 5% (10.0 to about
-10.6 tok/s).
+The card ran it on 2026-09-30 (build B, the same references as section 10, all bit for bit):
+
+| | before (`Board.write`) | `BoardDram` |
+|---|---|---|
+| `slot_bench`, 1.67 MB experts from RAM, 3 misses a request | 3.46 ms an expert, 483 MB/s | 1.74 ms, 958 MB/s (the DMA thread 1.40 GB/s) |
+| `slot_bench`, 5.85 MB experts from RAM | 11.1 ms, 528 MB/s | 5.28 ms, 1109 MB/s (1.48 GB/s) |
+| 35B-A3B, 16 tokens | 2.02 / 2.04 tok/s | 2.75 / 2.80 tok/s |
+| 8B, 16 tokens | 8.61 / 9.38 tok/s | 9.34 / 10.04 tok/s |
+
+The 35B's token took 357 ms. The host spent 242 ms of it answering requests, of which the DMA
+thread wrote for 111 ms at 1.405 GB/s. The rest was staging, on the critical path because it was
+slower than the DMA it fed: 1.69 ms an expert on the card's host (an i7-4790) against 1.19 ms
+of DMA. Two things made it slow:
+- The pool's pages: `np.take` read the pool file's memmap. A page not yet in the process's map
+  costs a fault, and a page not in the page cache a read of the disk (about 115 MB/s on scattered
+  reads), with the GIL held: the DMA thread waits too. `posix_fadvise` only asks for the read:
+  nothing waits for it, or keeps the pages.
+- The gather itself: about 1 ms for 1.67 MB on the i7-4790, from a cold source.
+
+So now:
+- The pool file has a split format (`opentpu.host.offload.split_order`). Each 4 KiB of an
+  expert is stored as its two channel runs under CHASH, as they are when the block lands where
+  the card's chunk index has even parity above its low 5 bits. Where that parity is odd, the
+  two runs trade channels. `BoardDram` reads an expert with one `os.preadv` whose buffers are
+  the 2 KiB pieces of its staging runs, in file order and routed by each block's parity. There
+  is no gather, and the GIL is released for the copy. A slot that is not page-aligned, or a
+  card without CHASH, takes the slot's bytes as before. `MO.serve` writes new pool files in
+  this format (`<pool>.format`), and tools/offload/pool_split.py converts a file packed before.
+- A thread reads every packed expert of the pool file once, when the server starts. This is
+  the host's RAM tier in the page cache: for the 35B, 4333 experts, 7.2 GB. `moe_card` reports
+  how much the thread had read at load and at decode.
+- `BoardDram` keeps each slot's beat indices for the gather of the slot format, and writes the
+  host's own words without `Board.write`'s general path.
+
+On the card's host, with the DMA dropped (`slot_bench --null`, 1.67 MB experts, 3 misses a
+request; another job's card session ran beside it):
+
+| experts from | host ms per expert | of which staging |
+|---|---|---|
+| RAM, slot format, session 2's code | 1.38 | 1.00 |
+| RAM, slot format | 1.16 | 1.01 |
+| the pool file, slot format, in the page cache | 1.46 | 0.97, plus the read |
+| the pool file, split format, in the page cache | 0.67 | 0.57 |
+
+The 35B's projection. The DMA, at 1.19 ms an expert (session 2's 1.405 GB/s), is now the bound:
+111 ms per token for its 93 misses. Each request's first staging (about 0.6 ms, about 40
+requests a token) adds about 25 ms, and the entries and `served` about 5 ms. That is about 141
+ms of serving per token instead of 242, so a token of about 256 ms: 3.9 tok/s, against 2.75
+measured with session 2's code. The 8B, at 0.89 misses per token, changes little.
+
+tests/test_offload_server.py checks the split format: the order is a permutation (a short last
+block included), and the records read back give the slot's bytes. `BoardDram` reading a
+split-format file leaves the card's channel memories as `Board.write` does, at slots of either
+page parity and off a page. `preadv` resumes a short read. The conversion tool is covered too.
+tests/test_lfm2_moe.py runs the fake card with CHASH's map and a split-format pool file,
+bit for bit against the ISA simulator.
