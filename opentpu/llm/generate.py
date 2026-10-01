@@ -8,7 +8,9 @@ kernel at a run-time position, qwen3.RunPos; the step itself is unchanged) in a 
         each run-time argument c * var: RLD MUL of the variable's state word into its
             argument register (the registers the host wrote before each run)
         the step: the LM head hands each logits chunk to the sampler (m.lm_sink)
-        the sampler's token -> out[p + 1]  (fp32 ids, one word per position)
+        the model's post of the sampler's token, if it has one (m.post_token: Gemma 4 E4B
+            asks the host for the token's PLE record, which the next token's step waits for)
+        the token -> out[p + 1]  (fp32 ids, one word per position)
         stop: the token is a stop id, or the host's stop word is set -> LOOP stop {HALT}
         the state: tok = the token, tpos + 1, ring + 1 mod K, tokens left - 1
     ST the state block, HALT
