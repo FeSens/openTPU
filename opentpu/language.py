@@ -309,8 +309,9 @@ def range(n: int):  # noqa: A001
     loop = b.begin_loop(n)
     try:
         yield loop
-    finally:
-        b.end_loop(loop)
+    except GeneratorExit:       # closed while suspended: the build was given up inside the
+        return                  # body (its loop stack is not this loop's to end)
+    b.end_loop(loop)
 
 
 def static_range(*args):

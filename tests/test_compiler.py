@@ -118,6 +118,27 @@ def test_stationary_overwritten_inside_loop_is_an_error():
                        w=Weight(np.zeros((8, 64), np.float32)), out=Output((1, 8)))
 
 
+def test_a_build_given_up_inside_loops_leaves_them_open():
+    """A build given up inside nested ol.range loops (as the generate loop's fallback to its
+    split form gives up one too deeply nested) leaves their generators suspended; closing them
+    later, in any order (garbage collection: the outer one first here), does not end the loops
+    on the abandoned builder (end_loop would assert on its loop stack, an exception Python can
+    only print)."""
+    gens = []
+
+    @ol.jit
+    def k(x, out):
+        for g in (ol.range(2), ol.range(2)):
+            next(g)
+            gens.append(g)
+        raise CompileError("given up")
+
+    with pytest.raises(CompileError, match="given up"):
+        compile_kernel(k, Config(), x=Input(np.zeros((1, 8), np.float32)), out=Output((1, 8)))
+    for g in gens:
+        g.close()
+
+
 def test_shape_errors():
     @ol.jit
     def k(x, out):
