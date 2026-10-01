@@ -1507,6 +1507,14 @@ token); with R = 1 layer 0 gathers its row itself. After the last layer, `compil
 runs the final norm and LM head on the chunk's last row. A run stays inside one attention
 block (the host splits runs there), so the token-index tiles stay static.
 
+Qwen3.5-MoE (qwen35.py, the same entry points): a DeltaNet layer of R rows is
+`_deltanet_rows` (its state steps row after row, by DSTEP on the card), an attention layer
+`_attention_rows` at run-time rows (`RunPos.row`: row r's position and mask row from the
+run's), a row alone the decode step's layer. From position conv_k - 1 on, every position
+reads the whole convolution window, so one program serves them all; the first conv_k - 1
+rows of a sequence run at compile-time positions, from their embedding rows. The embedding
+rows come from the host's table as in decode (the host writes each before its run).
+
 `moe.moe_ffn_rows` is the MoE layer on R rows (section 5.2's route, R times):
 1. each row routes as moe_ffn's (the router, the k best, the weights): R x k global ids;
 2. one request: the fence, the R x k ids to the row (repeats included), their count to
@@ -1576,3 +1584,17 @@ greedy ones; decode 2.53 tok/s each. With per-layer slots (not pooled):
 R = 1 with per-layer slots sees token by token's requests in the same order per layer, so the
 same misses (10613 in the whole run, both). R = 2 is already 1.29x: two rows a run, and the
 union's repeats (-2.6% misses). The rest of the bound needs the pooled slots.
+
+Qwen3.5-35B-A3B's layer runs, co-simulated as the 26B's (position 256, a zero image: union 8):
+
+| layer | R = 1 | R = 2 (per 2 rows) |
+|:--|--:|--:|
+| DeltaNet | 2.54 ms | 2.94 ms |
+| attention | 2.00 ms | 2.25 ms |
+
+That is 96 ms a token at R = 1 and 55 ms at R = 2 (union 8; about 65 with R = 2's real union),
+before the link. `test_layer_major_prefill_is_bit_exact` (test_qwen35_moe.py): a tiny
+Qwen3.5-MoE, 262 tokens in chunks of 100, int8 R = 1 and fp4 R = 2 with build B's PAIR /
+DSTEP / STREAM, the table on the host: the logits, states, windows and KV cache equal token by
+token's, then 3 decode steps. Dense Qwen3.5 programs are sha-identical; the MoE images gain
+xbuf and the scratch (42 / 35 slots a layer, as before).

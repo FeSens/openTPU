@@ -994,6 +994,16 @@ class RunPos:
     def values(token: int, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:
         return {"tpos": p % block, "tok": token, "ring": (p + 1) % K}
 
+    def row(self, r: int) -> "RunPos":
+        """Row r of a run of rows from this position, in its attention block (a layer-major
+        prefill run, Engine.prefill_layers): position p + r, its mask row r entries on (the
+        same run-time values)."""
+        q = object.__new__(type(self))
+        q.__dict__.update(self.__dict__)
+        q.tpos, q.pos = self.tpos + r, self.pos + r
+        q.bucket = Bucket(self.blocks, self.bucket.z - 4 * r)
+        return q
+
 
 def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = False):
     """x + W_o . attention(x) for one token, this slice's heads; returns the new residual
@@ -1243,7 +1253,8 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     flash-attention stream (_attend_heads). Per row the arithmetic is _attention's, so the
     results are bit-identical to R decode steps: heads narrower than D (LFM2) are padded, RoPE
     may cover part of a head (Qwen3.5), `gated` multiplies the output by sigmoid(W_gate x),
-    and a query group wider than the MXU attends in parts of MCOLS heads."""
+    and a query group wider than the MXU attends in parts of MCOLS heads. A row's position may
+    be a run-time one (RunPos.row: a layer-major prefill run), its K / V appended row by row."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
     R = len(rows)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
@@ -1259,8 +1270,12 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     for j, hh in enumerate(heads):
         kj = _rope_rows_padded(_norm_heads(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
         vj = _padded(v[:, j * d:(j + 1) * d])
-        for sq, p0, r0, n in _runs(rows):
-            ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
+        if isinstance(rows[0][1], RunPos):
+            for r, (sq, p) in enumerate(rows):
+                ol.kv_append(lw.kvs[sq], hh, p.pos, kj[r:r + 1, :], vj[r:r + 1, :])
+        else:
+            for sq, p0, r0, n in _runs(rows):
+                ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
         del kj, vj
     del k, v
     # queries as [R * nq, dk]: (row r, KV head j) is the G contiguous rows r*nq + j*G ...
@@ -1281,8 +1296,8 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
 
     _attend_heads([Q[r * nq + j * G + g0:r * nq + j * G + g1, :] for r, j, g0, g1 in ent],
                   [lw.kvs[rows[r][0]] for r, *_ in ent], [heads[j] for _, j, _, _ in ent],
-                  [rows[r][1] + 1 for r, *_ in ent], block, scale, depth=ATTN_DEPTH,
-                  emit=emit)
+                  [rows[r][1].bucket if isinstance(rows[r][1], RunPos) else rows[r][1] + 1
+                   for r, *_ in ent], block, scale, depth=ATTN_DEPTH, emit=emit)
     del Q
     if gated:                                   # after the heads: o * sigmoid(gate), rounded
         for h0 in range(0, nq, mc):             # as _attention's (acc / l) * sg; mc heads at
@@ -1935,8 +1950,10 @@ class Engine:
         `layer_major` rows (the image's compile_layer_run: the first row's position and chunk
         row as run arguments; a run stays in one attention block), so that the expert slots
         serve one layer at a time; then the LM head of the last row. Runs of more than one row
-        start from the chunk's embedding rows (one embed run a token). Bit-identical to step()
-        token by token (the KV cache, the logits). Returns the logits after the last token."""
+        start from the chunk's embedding rows (one embed run a token). A model with
+        convolutions (conv_k > 1) runs its rows before position conv_k - 1 at compile-time
+        positions, from their embedding rows too. Bit-identical to step() token by token (the
+        states, the KV cache, the logits). Returns the logits after the last token."""
         img, K, B, R = self.image, getattr(self.spec, "conv_k", 1), self.block, self.layer_major
         self._drain()
         tokens = [int(t) for t in tokens]
@@ -1956,17 +1973,23 @@ class Engine:
 
         for c0 in range(0, len(tokens), img.prefill_rows):
             part, p0 = tokens[c0:c0 + img.prefill_rows], self.pos
-            if R > 1:
-                for i, t in enumerate(part):
-                    run((-1, (p0 + i) // B + 1, 1, True),
-                        dict(RunPos.values(t, p0 + i, K, B), row=i))
+            low = max(0, min(len(part), K - 1 - p0))    # rows at compile-time positions
+            for i, t in enumerate(part[:len(part) if R > 1 else low]):
+                self._write_host_rows([t])              # (embed_host: the token's row)
+                run((-1, (p0 + i) // B + 1, 1, True), dict(RunPos.values(t, p0 + i, K, B), row=i))
             for li in range(self.spec.layers):
                 i = 0
                 while i < len(part):
                     p = p0 + i
-                    n = min(R, len(part) - i, B - p % B)
-                    run((li, p // B + 1, n, R > 1),
-                        dict(RunPos.values(part[i], p, K, B), row=i))
+                    if i < low:
+                        n = min(R, low - i)
+                        run((li, None, n, True, p), {"row": i})
+                    else:
+                        n = min(R, len(part) - i, B - p % B)
+                        if li == 0 and R == 1:          # (the run gathers its embedding row)
+                            self._write_host_rows([part[i]])
+                        run((li, p // B + 1, n, R > 1),
+                            dict(RunPos.values(part[i], p, K, B), row=i))
                     i += n
             self.pos = p0 + len(part)
         run("head", {"row": len(part) - 1})
@@ -1976,12 +1999,18 @@ class Engine:
 
     def _layer_run(self, key):
         """prefill_layers' programs, compiled once: (layer (-1: the embed run), blocks, rows,
-        embedded) or "head" -> (programs, run_args, the program assembled for a backend that
-        runs words, else None)."""
+        embedded), (layer, None, rows, True, compile-time position) or "head" -> (programs,
+        run_args, the program assembled for a backend that runs words, else None)."""
         if key not in self._layer_runs:
             img = self.image
-            progs, ra = img.compile_prefill_head() if key == "head" else \
-                img.compile_layer_run(key[0], key[1], self.block, R=key[2], embedded=key[3])
+            if key == "head":
+                progs, ra = img.compile_prefill_head()
+            elif key[1] is None:                # (a compile-time position)
+                progs, ra = img.compile_layer_run(key[0], key[4] // self.block + 1, self.block,
+                                                  R=key[2], embedded=True, at=key[4])
+            else:
+                progs, ra = img.compile_layer_run(key[0], key[1], self.block, R=key[2],
+                                                  embedded=key[3])
             words = np.asarray(I.assemble(progs[0]), np.uint32) \
                 if getattr(self.backend, "runs_words", False) else None
             self._layer_runs[key] = (progs, ra, words)

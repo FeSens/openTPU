@@ -221,6 +221,40 @@ def test_the_card_generates_with_streamed_experts(tiny):
     assert a.server.misses > misses
 
 
+@pytest.mark.parametrize("wformat,R,b", [("int8", 1, False), ("fp4", 2, True)])
+def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, monkeypatch):
+    """The prompt layer by layer (Engine.prefill_layers, docs/offload.md 13): every row of a
+    chunk through a layer before the next, in runs of R rows at their run-time position and
+    chunk row (R > 1: _deltanet_rows, _attention_rows at run-time rows, moe.moe_ffn_rows), the
+    rows before conv_k - 1 at compile-time positions, gives token-by-token prefill's logits,
+    DeltaNet states and windows and KV cache bit for bit: 262 tokens in chunks of 100 rows, the
+    last crossing an attention block (runs split at its end), 2k slots per layer, the table on
+    the host (each embedding row the host's); then the next decode steps. b: build B's PAIR,
+    DSTEP and STREAM (the state steps by DSTEP)."""
+    from opentpu.llm import qwen35 as Q35
+    monkeypatch.setattr(Q35, "PREFILL_CHUNK", 100)
+    spec, W = _untied(tiny)
+    kw = dict(MCOLS=4, PAIR=True, DSTEP=True, STREAM=True) if b else {}
+    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=2 * K, wformat=wformat,
+                        **kw)
+    a, ref = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=2 * K,
+                     wformat=wformat, **lm) for lm in ({"layer_major": R}, {}))
+    assert a.image.embed_host and a.image.prefill_rows == 100
+    toks = [int(t) for t in np.random.default_rng(7).integers(0, 1000, 262)]
+    la, lb = a.prefill(toks), ref.prefill(toks)
+    assert a.pos == ref.pos == len(toks)
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    img = a.image
+    assert np.array_equal(a.backend.machine.slices[0].dram[img.layer0:img.head[0]],
+                          ref.backend.machine.slices[0].dram[img.layer0:img.head[0]])
+    assert a.server.misses > 0
+    t = int(np.argmax(la))
+    for _ in range(3):
+        ga, gb = a.step(t), ref.step(t)
+        assert np.array_equal(ga.view(np.uint32), gb.view(np.uint32))
+        t = int(np.argmax(ga))
+
+
 def _hinted(spec):
     return replace(spec, moe=replace(spec.moe, hint=True))
 
