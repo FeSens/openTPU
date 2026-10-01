@@ -1560,7 +1560,11 @@ finished layer's), its entry cleared. `end_prefill(restore)` after the last run'
 each layer gets its own number of slots back, keeping its experts of most decayed use up to it
 (the others leave, their entries cleared); "lazy" (the default) leaves the free slots to
 decode's misses, "eager" loads each layer's experts of most use in the prompt. Both run between
-polls, with the server flushed.
+polls, with the server flushed. `Engine.prefill_layers` calls them around the layer runs (before
+the first, then once the last has halted, before the head run): `Engine(pooled=True,
+restore="lazy")` by default, `moe_card.py --per-layer-slots` for each layer's own.
+`test_moe_pooled_slots_cut_the_prompts_misses` (test_gemma4_moe.py, lazy and eager): pooled
+against per-layer slots, the same logits and decode steps bit for bit, under half the misses.
 
 Lazy, by cachesim.py's event model (11.3) on the traces (four texts, two 512-token prompts each,
 then N tokens of decode by decayed use; the 26B as on the card, 540 slots, the 35B 1680; Gen1
