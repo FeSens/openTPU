@@ -20,19 +20,31 @@ misses. Builds start only while MemAvailable is at least MIN_GB (OTPU_PREBUILD_M
 4B builds in up to 17 GB); with less, prebuild says so and leaves the quantizing to the tools.
 The models load from the tree on PYTHONPATH, as the session's tools do. Prints each run's
 hits, misses and seconds.
+
+A session that measures host-sensitive performance (wall tok/s, host-bound MoE streaming)
+creates the quiet file (~/otpu-build/QUIET, OTPU_QUIET) for its duration, with its pid in it.
+Prebuild waits while it exists (up to OTPU_PREBUILD_QUIET_WAIT seconds in all, default an hour;
+then it stops, and the tools quantize under the lock), and a run being built when it appears is
+stopped at once and built again after it: each run builds in its own process (`--one`). A
+quiet file whose pid is gone (a session killed before its trap ran) is ignored.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import pickle
+import subprocess
+import sys
 import time
 from pathlib import Path
 
 from .. import qcache
+from .runstate import pid_alive
 
 CAP = 256               # the KV capacity does not change the matrices (refs.py's)
 MIN_GB = 20.0
+QUIET_WAIT = 3600.0     # s: the longest a prebuild waits for the quiet file to go
+POLL = 10.0             # s between looks at it
 FORMATS4 = ("fp4", "int4")
 
 
@@ -79,9 +91,55 @@ def mem_gb() -> float | None:
     return None
 
 
+def quiet_file() -> Path:
+    """While this file exists a session measures host-sensitive performance, and no prebuild
+    may load the host (OTPU_QUIET; default ~/otpu-build/QUIET)."""
+    return Path(os.environ.get("OTPU_QUIET", Path.home() / "otpu-build/QUIET"))
+
+
+def quiet() -> bool:
+    """The quiet file is there, and the session that made it (the pid in it, when it holds
+    one) is alive: a session killed before its trap removed the file does not hold prebuilds
+    back."""
+    try:
+        text = quiet_file().read_text().strip()
+    except OSError:
+        return False
+    return not text.isdigit() or pid_alive(int(text))
+
+
+def _spawn(cmd: list):
+    return subprocess.Popen(cmd)
+
+
+def _watch(child) -> bool:
+    """Wait for a run's build; stop it (False) when the quiet file appears."""
+    while child.poll() is None:
+        if quiet():
+            child.terminate()
+            child.wait()
+            return False
+        time.sleep(POLL)
+    return True
+
+
+def _build_one(cfg, run: str) -> int:
+    from ..llm import load_spec, model_dir
+    from ..llm.qwen3 import load_weights
+    m, wf, hf = run.split(":")
+    t0 = time.time()
+    p = model_dir(m)
+    n = prebuild(cfg, load_spec(p), load_weights(p), wf, None if hf == "-" else hf)
+    skip = f", {n['skip']} not written (disk space)" if n["skip"] else ""
+    print(f"{run}: {n['hit']} cached, {n['miss']} quantized, {n['write']} written{skip} "
+          f"({time.time() - t0:.0f} s)", flush=True)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="prebuild", description=__doc__.split("\n")[0])
     ap.add_argument("--cfg", help="the card's configuration (tools/qual/refs.py cfg)")
+    ap.add_argument("--one", action="store_true", help=argparse.SUPPRESS)  # a run's worker
     ap.add_argument("runs", nargs="+", help="MODEL:WF:HF")
     a = ap.parse_args(argv)
     d = qcache.cache_dir()
@@ -92,26 +150,43 @@ def main(argv=None) -> int:
     if path is None or not path.is_file():
         print(f"prebuild: no card configuration ({path or 'none found'}); give --cfg")
         return 1
-    cfg = pickle.loads(path.read_bytes())
+    if a.one:
+        return _build_one(pickle.loads(path.read_bytes()), a.runs[0])
     runs = [r for r in a.runs if is_4bit(r)]
     print(f"prebuild: cache {d}, configuration {path}; {' '.join(runs) or 'no 4-bit runs'}",
           flush=True)
-    from ..llm import load_spec, model_dir
-    from ..llm.qwen3 import load_weights
     need = float(os.environ.get("OTPU_PREBUILD_MIN_GB", MIN_GB))
+    budget = float(os.environ.get("OTPU_PREBUILD_QUIET_WAIT", QUIET_WAIT))
+    waited, told = 0.0, False
     for r in runs:
-        m, wf, hf = r.split(":")
-        free = mem_gb()
-        if free is not None and free < need:
-            print(f"{r}: not built, MemAvailable {free:.1f} GiB < {need:g} (the tools quantize "
-                  "it)", flush=True)
-            continue
-        t0 = time.time()
-        p = model_dir(m)
-        n = prebuild(cfg, load_spec(p), load_weights(p), wf, None if hf == "-" else hf)
-        skip = f", {n['skip']} not written (disk space)" if n["skip"] else ""
-        print(f"{r}: {n['hit']} cached, {n['miss']} quantized, {n['write']} written{skip} "
-              f"({time.time() - t0:.0f} s)", flush=True)
+        while True:
+            while quiet():                              # a session measures: not now
+                if waited >= budget:
+                    print(f"prebuild: {quiet_file()} stayed for {waited:.0f} s; the tools "
+                          "quantize the rest under the lock", flush=True)
+                    return 0
+                if not told:
+                    print(f"prebuild: waiting while {quiet_file()} exists (a session "
+                          "measures)", flush=True)
+                    told = True
+                time.sleep(POLL)
+                waited += POLL
+            told = False
+            free = mem_gb()
+            if free is not None and free < need:
+                print(f"{r}: not built, MemAvailable {free:.1f} GiB < {need:g} (the tools "
+                      "quantize it)", flush=True)
+                break
+            # each run in its own process: stopped at once (its memory freed) when a session
+            # goes quiet, and built again after it, from what the cache holds by then
+            child = _spawn([sys.executable, "-m", "opentpu.host.prebuild", "--one", "--cfg",
+                            str(path), r])
+            if _watch(child):
+                if child.returncode:
+                    print(f"{r}: the build failed (exit {child.returncode}); the tools "
+                          "quantize it", flush=True)
+                break
+            print(f"{r}: stopped, {quiet_file()} appeared; again after it", flush=True)
     return 0
 
 
