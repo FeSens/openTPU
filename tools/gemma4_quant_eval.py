@@ -34,9 +34,11 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
     """gemma4.emulated_logits over the whole sequence at once: the logits [len(rows), vocab]
     before the soft cap (rows: default all), or with on_rows each group of up to 64 rows handed
     to on_rows(first row, logits). wformat / hf: the layers' and the head's formats, "none" for
-    float weights (the PLE table then float too); wmap: per-kind layer formats {"attn", "mlp",
-    "ple": format}. quant: the activation quantization points applied, a subset of {"act" (the
-    matmul inputs), "kv" (K / V), "p" (P)}; default all, none with wformat "none"."""
+    float weights (the PLE table then float too); wmap: per-kind layer formats {"attn", "mlp"
+    (or "down" / "gateup" of it), "ple": format}, a key "kind@a-b" for layers a..b only
+    (checkpoint layers; it wins over "kind"). quant: the activation quantization points
+    applied, a subset of {"act" (the matmul inputs), "kv" (K / V), "p" (P)}; default all, none
+    with wformat "none"."""
     hf = hf or wformat
     none = wformat == "none"
     quant = (set() if none else {"act", "kv", "p"}) if quant is None else set(quant)
@@ -47,12 +49,26 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
 
     wmap = wmap or {}                   # per-kind layer formats: attn, mlp, ple (else wformat)
 
-    def kind_of(n):
-        return "attn" if ".self_attn." in n else "mlp" if ".mlp." in n else "ple"
+    def get(k, li, default):    # wmap[k] ("kind" or "kind@a-b": layers a..b only)
+        for key, f in wmap.items():
+            kind, _, span = key.partition("@")
+            if kind == k and span:
+                lo, _, hi = span.partition("-")
+                if int(lo) <= li <= int(hi or lo):
+                    return f
+        return wmap.get(k, default)
+
+    def fmt_of(n):              # attn; mlp, or down / gateup within it; ple
+        li = int(n.split(".")[2])
+        if ".self_attn." in n:
+            return get("attn", li, wformat)
+        if ".mlp." in n:
+            return get("down" if ".down_proj" in n else "gateup", li, get("mlp", li, wformat))
+        return get("ple", li, wformat)
 
     def wq(n, fmt=wformat, a=None):
         if n is not None and fmt == wformat and n.startswith("model.layers."):
-            fmt = wmap.get(kind_of(n), wformat)
+            fmt = fmt_of(n)
         a = W[n] if a is None else a
         return np.asarray(a, np.float64) if fmt == "none" else _fake_w(a, D, fmt)
 
@@ -129,7 +145,8 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
     if on_rows is None:
         return np.concatenate([xl @ wq(None, hf, E[r0:r0 + 16384]).T
                                for r0 in range(0, len(E), 16384)], 1)
-    Eq = [wq(None, hf, E[r0:r0 + 16384]).T for r0 in range(0, len(E), 16384)]
+    # the quantized head held in float32 (E4B's in float64 would be 5.4 GB)
+    Eq = [wq(None, hf, E[r0:r0 + 16384]).T.astype(np.float32) for r0 in range(0, len(E), 16384)]
     del E
     for i0 in range(0, len(rows), 64):      # on_rows(first row, logits [<= 64, vocab])
         on_rows(i0, np.concatenate([xl[i0:i0 + 64] @ e for e in Eq], 1))
@@ -145,8 +162,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("mode", choices=["step", "nll", "check"])
     ap.add_argument("args", nargs="+")
-    ap.add_argument("--formats", default="", help="per-kind layer formats, e.g. attn=int8")
+    ap.add_argument("--formats", default="", help="per-kind layer formats: attn, mlp (or down, "
+                    "gateup), ple, e.g. attn=int8,down=int8; kind@a-b: layers a..b only "
+                    "(gateup@0-6=fp4)")
     ap.add_argument("--quant", default=None, help="the activation points (default all): act,kv,p")
+    ap.add_argument("--out", help="step: save the logits (before the cap) to this npz")
     a = ap.parse_args()
     if a.mode == "check":
         spec, W = G.Spec.from_hf(a.args[0]), G.load_weights(a.args[0])
@@ -167,7 +187,8 @@ def main():
     path, ref = a.args[0], np.load(a.args[1])
     spec, W = G.Spec.from_hf(path), G.load_weights(path)
     wf, hf = (a.args[3], a.args[4]) if a.mode == "step" else (a.args[2], a.args[3])
-    what = f"{wf} layers{' ' + str(wmap) if wmap else ''}, {hf} head, points {a.quant or 'all'}"
+    pts = a.quant if a.quant is not None else "none" if wf == "none" else "all"
+    what = f"{wf} layers{' ' + str(wmap) if wmap else ''}, {hf} head, points {pts or 'none'}"
     t0 = time.time()
     if a.mode == "step":
         step = int(a.args[2])
@@ -180,6 +201,8 @@ def main():
         print("  top 5 (token, logit, capped):", top(spec, tok, lg))
         print(f"  REF's token {want} {tok.decode([want])!r}: rank {int((lg > lg[want]).sum()) + 1}, "
               f"{float(lg.max() - lg[want]):.4f} below the top (before the cap)")
+        if a.out:
+            np.savez(a.out, logits=lg)
         return
     out = a.args[4]
     ids = [int(t) for t in ref["ids0"]]

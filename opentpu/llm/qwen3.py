@@ -1329,12 +1329,17 @@ class Engine:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
-        self._image_kw = wkw                # the compile worker's image is built the same way
+        # the compile worker's image is built the same way, with the choices this image made
+        # (Gemma 4: the PLE table's place and format, the formats by fit)
+        self._image_kw = {**wkw, **getattr(self.image, "choices", {})}
         # with the tables every run reads its inputs from the image (the token ids are compiled
         # into the per-position and prefill programs); else the host writes them: the
         # embedding rows and the RoPE rows of a table computed once, here
         self.device_inputs = bool(getattr(self.image, "lookup", None))
         self.embed = Embedding(spec, W, self.cfg.D)
+        # rows of tables the host keeps (Gemma 4 E4B's PLE records): read from the image's
+        # store and written before each run, data movement only
+        self._host_rows = getattr(self.image, "host_rows", None)
         self._rope = None if self.device_inputs else \
             [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         images = self.image.build(W)
@@ -1347,10 +1352,18 @@ class Engine:
         self.server = None
         if getattr(self.image, "offload", None) is not None:
             self.server = self.image.serve(W, self.backend, pool_file)
+        # rows of tables the host keeps, asked for by the generate loop (Gemma 4 E4B: each
+        # token's PLE record into the slot, opentpu.host.offload.RowServer)
+        rs = getattr(self.image, "row_server", None)
+        self.row_server = rs(self.backend) if rs is not None else None
+        servers = [x for x in (self.server, self.row_server) if x is not None]
+        if servers:
+            poll = servers[0].poll if len(servers) == 1 else \
+                (lambda: sum(x.poll() for x in servers))
             if isinstance(self.backend, IsaBackend):
-                self.backend.machine.host = lambda m: self.server.poll()
+                self.backend.machine.host = lambda m: poll()
             elif hasattr(self.backend, "host"):
-                self.backend.host = self.server.poll
+                self.backend.host = poll
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         self._gens: dict = {}               # the generate loop: (blocks, mode) -> programs
@@ -1516,6 +1529,7 @@ class Engine:
             kw = {"args": arg_words(ra, RunPos.values(int(token), self.pos,
                                                       getattr(self.spec, "conv_k", 1),
                                                       self.block))}
+        self._write_host_rows([token])
         start = getattr(self.backend, "start", None)
         v_loc = self.image.v_loc
         vocab = S * v_loc
@@ -1572,6 +1586,14 @@ class Engine:
                               self.image.compile_rows(rows, logit_rows, self.block,
                                                       **self._tokens_kw(tokens)))
 
+    def _write_host_rows(self, tokens) -> None:
+        if self.row_server is not None:     # a request the last run posted, served first: its
+            self.row_server.poll()          # row must not land after these
+        if self._host_rows is not None:
+            for a, v in self._host_rows(tokens):
+                for s in range(self.cfg.S):
+                    self.backend.write(s, a, v)
+
     def _tokens_kw(self, tokens) -> dict:
         """compile_rows' tokens, with device inputs (the host writes none)."""
         return {"tokens": [int(t) for t in tokens]} if self.device_inputs else {}
@@ -1587,6 +1609,7 @@ class Engine:
                 self.backend.write(s, io["x"], x)
                 self.backend.write(s, io["cos"], self._rope[0][ps])
                 self.backend.write(s, io["sin"], self._rope[1][ps])
+        self._write_host_rows(tokens)
         st = self.backend.run(programs)
         st["rows"] = len(rows)
         self.stats.append(st)
@@ -1831,7 +1854,8 @@ class Engine:
                 nb = min(n, b1 * self.block - p)
                 if samp is not None:
                     self._generate_inputs(samp, p, nb, ctx, rng)
-                for s in range(self.cfg.S):
+                self._write_host_rows([tok])        # the first token's rows (then the loop's
+                for s in range(self.cfg.S):         # requests, served while it runs)
                     self.backend.write(s, g["state"], G.state_words(self.spec, tok, p, n, ids,
                                                                     self.block, samp))
                     self.backend.write(s, g["out"] + 4 * (p + 1),
