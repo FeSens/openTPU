@@ -19,6 +19,7 @@ DDR ?= 1066
 # ACT_ROWS: ACT RAM rows, the most rows of one MM (default MCOLS; 8: prefill's 8-row MMs stream
 #   each weight once, the MXU replaying it per MCOLS rows)
 # BUILD_ID: the BUILD_ID register (8 hex digits; default: the git commit)
+# PCIE_GEN: 1 (Gen1 x8, the default) or 2 (Gen2 x8, xdma_aclk 250 MHz), from the environment
 ifeq ($(FAST),1)
 CORE_MHZ ?= 100
 else

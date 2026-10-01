@@ -10,9 +10,11 @@
 #
 # Clocks: the 50 MHz clock arrives already on a global buffer (otpu_fpga_top_ld.sv: the LiteDRAM
 # core's MMCMs share it), so the clock wizard has no input buffer and makes core_clk only.
-# xdma_aclk 125 MHz (Gen1 x8, 128 bits).
+# xdma_aclk 125 MHz (Gen1 x8, 128 bits; 250 MHz at Gen2 x8).
 #
-# Variables (set before sourcing): CORE_MHZ.
+# Variables (set before sourcing): CORE_MHZ. Environment: PCIE_GEN, 1 (Gen1 x8, the production
+# setting, the default) or 2 (Gen2 x8: 5 GT/s, xdma_aclk 250 MHz, the PCIe block's userclk1 500 MHz;
+# docs/offload.md section 6).
 
 # the newest installed version of an IP
 proc ip_vlnv {name} {
@@ -31,6 +33,11 @@ set CORE_DIV [expr {round(double($VCO) / $CORE_MHZ * 8) / 8.0}]
 set CORE_MHZ_ACT [format %.3f [expr {double($VCO) / $CORE_DIV}]]
 set CORE_HZ [expr {int(floor($VCO * 1.0e6 / $CORE_DIV))}]
 puts "core_clk: $CORE_MHZ_ACT MHz (MMCM divide $CORE_DIV)"
+set PCIE_GEN [expr {[info exists ::env(PCIE_GEN)] && $::env(PCIE_GEN) ne "" ? $::env(PCIE_GEN) : 1}]
+if {$PCIE_GEN ni {1 2}} { error "bd_native.tcl: PCIE_GEN $PCIE_GEN (1 or 2)" }
+set XDMA_MHZ [expr {$PCIE_GEN == 2 ? 250 : 125}]
+set XDMA_HZ [expr {$XDMA_MHZ * 1000000}]
+puts "PCIe: Gen$PCIE_GEN x8, xdma_aclk $XDMA_MHZ MHz"
 
 # ------------------------------------------------------------------ external ports
 create_bd_port -dir I -type clk -freq_hz 50000000 sys_clk_50
@@ -52,7 +59,7 @@ foreach p $lites {
     CONFIG.HAS_BURST 0 CONFIG.HAS_LOCK 0 CONFIG.HAS_PROT 0 CONFIG.HAS_CACHE 0 CONFIG.HAS_QOS 0 \
     CONFIG.HAS_REGION 0] $m
 }
-set_property CONFIG.FREQ_HZ 125000000 [get_bd_intf_ports M_AXI_MEMCAL]
+set_property CONFIG.FREQ_HZ $XDMA_HZ [get_bd_intf_ports M_AXI_MEMCAL]
 set_property CONFIG.ASSOCIATED_BUSIF {M_AXI_CTL} [get_bd_ports core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_rstn} [get_bd_ports core_clk]
 set_property CONFIG.FREQ_HZ $CORE_HZ [get_bd_ports core_clk]
@@ -91,7 +98,7 @@ connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins rst_core/dcm_locked]
 connect_bd_net [get_bd_ports pcie_perstn] [get_bd_pins rst_core/ext_reset_in]
 connect_bd_net [get_bd_pins rst_core/peripheral_aresetn] [get_bd_ports core_rstn]
 
-# ------------------------------------------------------------------ PCIe: XDMA, Gen1 x8
+# ------------------------------------------------------------------ PCIe: XDMA, Gen1 (Gen2) x8
 # The production settings and identity, those of every bitstream since the first (the host tells
 # the memory build from CAPS, not from the PCI identity).
 set ibuf [create_bd_cell -type ip -vlnv [ip_vlnv util_ds_buf] refclk_buf]
@@ -102,9 +109,9 @@ set xdma [create_bd_cell -type ip -vlnv [ip_vlnv xdma] xdma_0]
 set_property -dict [list \
   CONFIG.mode_selection {Advanced} \
   CONFIG.pl_link_cap_max_link_width {X8} \
-  CONFIG.pl_link_cap_max_link_speed {2.5_GT/s} \
+  CONFIG.pl_link_cap_max_link_speed [expr {$PCIE_GEN == 2 ? "5.0_GT/s" : "2.5_GT/s"}] \
   CONFIG.axi_data_width {128_bit} \
-  CONFIG.axisten_freq {125} \
+  CONFIG.axisten_freq $XDMA_MHZ \
   CONFIG.ref_clk_freq {100_MHz} \
   CONFIG.pf0_device_id {7028} \
   CONFIG.pf0_class_code_base {12} CONFIG.pf0_class_code_sub {00} \
@@ -131,7 +138,7 @@ make_bd_intf_pins_external [get_bd_intf_pins xdma_0/M_AXI]
 set_property NAME M_AXI_DMA [get_bd_intf_ports -of [get_bd_intf_nets -of [get_bd_intf_pins xdma_0/M_AXI]]]
 set_property CONFIG.ASSOCIATED_BUSIF {M_AXI_DMA:M_AXI_MEMCAL} [get_bd_ports xdma_aclk]
 set_property CONFIG.ASSOCIATED_RESET {xdma_aresetn} [get_bd_ports xdma_aclk]
-set_property CONFIG.FREQ_HZ 125000000 [get_bd_ports xdma_aclk]
+set_property CONFIG.FREQ_HZ $XDMA_HZ [get_bd_ports xdma_aclk]
 
 # ------------------------------------------------------------------ XADC (die temperature)
 # temp_out for the accelerator's TEMP register, the XADC registers at BAR0 0x30000.
@@ -184,7 +191,8 @@ foreach {cell want} {rst_core 0} {
   set got [get_property CONFIG.C_EXT_RESET_HIGH [get_bd_cells $cell]]
   if {$got != $want} { error "$cell: C_EXT_RESET_HIGH is $got, expected $want" }
 }
-foreach {k want} {pf0_device_id 7028 pf0_class_code 120000 pf0_subsystem_id 4F54 pf0_revision_id 01} {
+foreach {k want} [list pf0_device_id 7028 pf0_class_code 120000 pf0_subsystem_id 4F54 \
+                       pf0_revision_id 01 axisten_freq $XDMA_MHZ] {
   set got [get_property CONFIG.$k [get_bd_cells xdma_0]]
   if {$got ne $want} { error "xdma_0: $k is $got, expected $want" }
 }
