@@ -257,6 +257,34 @@ def test_board_dram_raises_a_dma_error_at_flush():
         srv.load([0])
 
 
+def test_board_dram_reads_only_with_its_queue_drained():
+    """BoardDram.read raises while the worker's DMA is queued or in flight (a card->host call
+    beside a host->card one slips the card's writes); after flush it reads. ExpertServer's polls
+    on BoardDram (test_board_dram_writes_what_board_write_writes) never meet it."""
+    import threading
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import BoardDram, _f32
+
+    go = threading.Event()
+
+    class Slow(FakeTransport):
+        def mem_write(self, ch, off, data):
+            go.wait(10)
+            super().mem_write(ch, off, data)
+
+    lay = Layout.build(4096, 4, 2, (2, 2), 128 * 37)
+    m = BoardDram(SimpleNamespace(board=Board(Slow(ch_bytes=1 << 20, devname=None))), lay)
+    m.write(lay.served, _f32(3.0))                  # one beat: one DMA call in the worker
+    with pytest.raises(RuntimeError, match="flush first"):
+        m.read(lay.mbox, 4)
+    go.set()
+    m.flush()
+    assert np.frombuffer(m.read(lay.served, 4), np.float32)[0] == 3.0
+
+
 def test_pool_split_tool_copies_the_packed_experts(tmp_path, monkeypatch):
     """tools/offload/pool_split.py: a slot-format pool file's packed experts, in the split
     format; MO.serve's reader gives back their bytes."""

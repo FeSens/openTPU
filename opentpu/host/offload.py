@@ -749,7 +749,13 @@ class BoardDram:
     def read(self, addr: int, n: int) -> bytes:
         """n bytes from the card. Within one 64-byte beat (a poll's seq, a request's row) that
         beat alone, one DMA call on its channel (Board.read reads the whole 128-byte chunk, one
-        call per channel: a poll's read took 90 us on the card)."""
+        call per channel: a poll's read took 90 us on the card). Raises with the worker's DMA
+        queued or in flight: the server's reads never meet its writes (ExpertServer flushes
+        before poll returns), as the card needs (a card->host call beside a host->card one slips
+        the card's writes, board._DmaLock)."""
+        if self._q.unfinished_tasks:
+            raise RuntimeError(f"BoardDram.read with {self._q.unfinished_tasks} of the worker's "
+                               f"DMA calls unfinished: flush first")
         h = self.blk // 2
         if addr % h + n <= h:
             m, c = addr // self.blk, addr // h % 2
