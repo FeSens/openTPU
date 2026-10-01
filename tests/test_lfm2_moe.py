@@ -297,23 +297,29 @@ class _LiveCard:
         return Live()
 
 
-def test_the_host_serves_the_card_during_its_runs(tiny):
+@pytest.mark.parametrize("threaded", [False, True])
+def test_the_host_serves_the_card_during_its_runs(tiny, threaded):
     """The card's side of path (a) with the host's server as it runs beside a card: the backend
     polls it while a run is in flight (BoardBackend.host), and it moves the missing experts
     into the slots while the card's MoE layers wait for them (a fake card that computes in a
     thread over the host's DRAM). k slots per layer: prefill, per-position and resident
     decode, and the card's generate loop give the ISA simulator's logits and tokens bit for
-    bit, with misses served during the runs."""
+    bit, with misses served during the runs. threaded: a transport that DMAs from a worker
+    thread (XdmaTransport's), so the server's memory is BoardDram (its DMA thread writing while
+    the card computes)."""
     from opentpu.host.board import BoardBackend
+    from opentpu.host.offload import BackendDram, BoardDram
     from opentpu.isasim import board_config
     _, W, spec = tiny
     cfg = board_config(DRAM_BYTES=1 << 24)
     card = _LiveCard.make(cfg)
+    card.threaded = threaded
     isa = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K)
     brd = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=K,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=card))
     assert brd.resident and brd.can_generate and brd.backend.host is not None
     assert not brd.stream_logits
+    assert isinstance(brd.server.mem, BoardDram if threaded else BackendDram)
     toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 6)]
     for tok in toks:
         a, b = isa.step(tok), brd.step(tok)
@@ -326,6 +332,8 @@ def test_the_host_serves_the_card_during_its_runs(tiny):
     assert got == isa.generate_card(t0, 8, stop_ids=[])
     assert brd.server.misses > misses and card.waits > waits      # served during the loop
     assert brd.server.seq == isa.server.seq == (len(toks) + 8) * len(brd.image.offload.slots)
+    if threaded:                            # the experts went the one-pass way, not Board.write
+        assert brd.server.mem._bufs is not None
 
 
 @pytest.mark.parametrize("embed", ["f32", "int8"])

@@ -827,3 +827,40 @@ compiles ahead in, built its image without the MoE's `experts`: every expert res
 DRAM (4568 MiB for 4096). It failed at the first prefill step, before the card ran anything.
 The worker now builds the image with the Engine's own keywords (`Engine._image_kw`), and
 tests/test_lfm2_moe.py checks it. The ISA simulator compiles in-process and never ran into it.
+
+### 10.1 The expert server's DMA at the link's rate
+
+`Board.write`, which the server used through `BackendDram`, sends an expert to the card in
+three steps:
+- The bytes are copied out of the pool, and CHASH's swaps and the two channel runs copy them
+  three more times. A numpy buffer sits 16 bytes past a page, so each channel run then bounces
+  through the staging buffer for the DMA's alignment.
+- Two DMA calls follow, synchronously.
+- Each 8-byte directory entry and the `served` word is widened to 128 bytes, with a read of the
+  card first.
+
+On omarchy's i5-12600KF, with the DMA dropped (`tools/offload/slot_bench.py --null`), that is
+1.3 ms of host CPU per 1.67 MB expert. On the card's slower host, plus the DMA, the 35B paid
+about 3 ms per miss. `BoardDram` (opentpu/host/offload.py, used on any transport that DMAs from
+a worker thread, `dram_of`) does three things instead:
+- It writes an expert's two channel runs in one pass, `np.take` of 64-byte beats with CHASH's
+  swaps. It reads straight from the pool file's pages (the pool hands over its memmap rows) into
+  page-aligned staging buffers, then makes one DMA call per channel. No bounce.
+- It keeps the host's own words in a shadow (`served` and the directory: the card only reads
+  them) and writes them as whole 128-byte blocks, without a read.
+- One worker thread makes every DMA call in order while the server stages the next expert, so
+  an expert's data lands before its entry and every entry before `served`. `ExpertServer.poll`
+  flushes before it returns.
+
+The pool file is also read ahead into the page cache when the server starts
+(`posix_fadvise WILLNEED`), so the staging copy reads RAM. The host CPU per 1.67 MB expert on
+omarchy is 0.58-0.65 ms, overlapped with the DMA. tests/test_offload_server.py checks that the
+card's two channel memories end up byte for byte as `Board.write` leaves them, with and without
+CHASH. tests/test_lfm2_moe.py runs the fake card that computes beside the host with `BoardDram`.
+
+The projection for the 35B. DMA at the link's 1.6-1.7 GB/s (docs/host.md: writes from 1 MiB per
+call, placed) takes 97 ms per token for its 155 MB. Each request's first staging copy, not
+overlapped, adds about 30 ms. The entries and `served`, as 64-byte DMA calls of about 12 us each,
+add about 6 ms. That is about 133 ms of serving per token instead of 370, so about 250 ms a
+token, or 4 tok/s instead of 2.0. The 8B, at 0.89 misses per token, gains about 5% (10.0 to about
+10.6 tok/s).
