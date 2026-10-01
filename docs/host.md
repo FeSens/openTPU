@@ -652,7 +652,25 @@ goes on (`BoardBackend.start(stream=...)` / `wait(feed)`, `Engine.step(sink=...)
   The stores move 8 words a cycle from TMEM (3.6-3.95 GB/s). The fake card that runs the ISA
   simulator models the fill landing late and the old logits until then; the tests check the
   logits bit for bit under that, and under compile and GIL contention at LFM2's 11 ms run
-  (tests/test_lfm2.py). Without the gate the first chunk read is stale.
+  (tests/test_lfm2.py). Without the gate the first chunk read is stale. The transparency tests
+  start every filling step from random TMEM: no step program reads what an earlier run left
+  there, so the fill's tile takes nothing a step keeps across tokens.
+
+  No logit is ever -inf, which would read as an unwritten word, stop the step with that error
+  after 5 ms, and not be returned:
+  - The LM head's input is RMS-normalized (|x_i| <= sqrt(H) x max|g|), and its weights and
+    scales are finite, so its fp32 outputs are finite.
+  - A non-finite hidden state gives NaN (0x7FC00000 or 0xFFC00000), not -inf.
+  - Nothing masks, pads or caps `m.logits`. Gemma 4's soft-cap applies only to the sampler's
+    chunks in the on-card loop, whose programs do not fill. The vocabulary is not padded:
+    `v_loc` is the vocabulary at S = 1, the only case that streams.
+
+  A cheaper variant is parked: fill only the beat the host probes in each chunk (one beat per
+  32 KiB, about 1 us), and read a chunk only after a STATUS read with WR_IDLE that follows the
+  probe showing its beat written. The DMA issues an ST's chunks in address order, so the
+  chunk's last beat is accepted last, and WR_IDLE means every accepted write is visible. It
+  would save the 0.6-0.7%, but its ordering rests on the DMA's write order rather than on the
+  ISA (the RLD), and the tail would no longer catch a chunk left partly unwritten.
 
 This DMA during a run is new on the card: the whole path is tested against a fake card that
 runs the ISA simulator and reveals the logits late, chunk by chunk (bit-exact logits and the

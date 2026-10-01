@@ -49,10 +49,15 @@ def assert_same_state(ri, rr):
 def assert_fill_is_transparent(make, toks):
     """Step programs compiled with fill (qwen3.fill_logits, the card's streamed decode) against
     the plain ones on the ISA simulator: the logits and every slice's DRAM after each step,
-    bit for bit. make() builds an Engine."""
+    bit for bit. make() builds an Engine. The filling engine's TMEM is random before each step
+    (the simulator keeps TMEM between runs, as the card does): no step program reads what an
+    earlier run left there, so the fill's tile can take no state the steps keep across tokens."""
     a, b = make(), make()
     a.image.stream_fill = True
+    rng = np.random.default_rng(11)
     for t in toks:
+        for s in a.backend.machine.slices:
+            s.tmem[:] = rng.integers(0, 1 << 32, s.tmem.shape, np.uint64).astype(s.tmem.dtype)
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), a.pos
     for sa, sb in zip(a.backend.machine.slices, b.backend.machine.slices):
         assert np.array_equal(sa.dram, sb.dram)

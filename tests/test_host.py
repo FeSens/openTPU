@@ -553,17 +553,13 @@ def test_a_filling_step_program_is_the_plain_one_with_the_fill_first(no_cfg_env,
     """qwen3.fill_logits (a streamed step's program on a card that fills): the address
     registers' LIs, then FILL, the stores of the logits, the word loaded back and its RLD, then
     the plain program instruction for instruction (fill_gate: ICOUNT past the RLD). On the ISA
-    simulator its logits and the whole DRAM after each step are the plain program's."""
-    from opentpu import lens as L
+    simulator its logits and the whole DRAM after each step are the plain program's, from any
+    TMEM contents (conftest.assert_fill_is_transparent)."""
+    from conftest import assert_fill_is_transparent
     from opentpu.llm.qwen3 import HEAD_CHUNK, Engine, fill_gate
     spec, W = _big_vocab_qwen()
+    assert_fill_is_transparent(lambda: Engine(spec, W, cap=256, resident=resident), (5, 7, 9))
     a = Engine(spec, W, cap=256, resident=resident)
-    b = Engine(spec, W, cap=256, resident=resident)
-    a.image.stream_fill = True
-    for t in (5, 7, 9):
-        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
-    for sa, sb in zip(a.backend.machine.slices, b.backend.machine.slices):
-        assert np.array_equal(sa.dram, sb.dram)
     img = a.image
     progs = {}
     for fill in (True, False):
