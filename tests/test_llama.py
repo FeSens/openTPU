@@ -172,6 +172,36 @@ def test_tiny_chunked_prefill_is_bit_exact(tiny, first, chunk):
     assert all(np.array_equal(x.dram[lo:hi], y.dram[lo:hi]) for x, y in zip(ma, mb))
 
 
+def test_tiny_formats_per_kind(tiny, monkeypatch):
+    """Weight formats per kind (Spec.formats, opentpu/llm/formats.py) over a 4-bit image: each
+    kind's projections in their format, one layer layout; the device follows the emulation of
+    the same formats, closer than the all-fp4 emulation; resident decode and a chunked prefill
+    give token-by-token decoding's logits bit for bit. A range that splits a kind across the
+    layers is refused (one layout)."""
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    _, _, spec, W = tiny
+    mix = dataclasses.replace(spec, formats="attn=int8,gateup=fp4,down=int4,head=int8")
+    cfg = board_config(DRAM_BYTES=1 << 26)
+    a = Engine(mix, W, cap=256, cfg=cfg, wformat="fp4")
+    assert a.image.mf == dict(wq="int8", wk="int8", wv="int8", wo="int8", wg="fp4", wu="fp4",
+                              wd="int4") and a.image.head_format == "int8"
+    assert mix.image(cfg, 256).nbytes < spec.image(cfg, 256).nbytes
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 12)]
+    dev = np.array([a.step(t) for t in toks])
+    emu = emulated_logits(mix, W, toks, wformat="fp4")
+    e4 = emulated_logits(spec, W, toks, wformat="fp4", head_format="int8")
+    assert _cos(dev, emu).min() > 0.9995
+    assert np.abs(dev - emu).mean() < 0.7 * np.abs(dev - e4).mean()
+    r = Engine(mix, W, cap=256, cfg=cfg, wformat="fp4", resident=True)
+    b = Engine(mix, W, cap=256, cfg=cfg, wformat="fp4")
+    assert r.resident
+    for t, want in zip(toks[:4], dev):
+        assert np.array_equal(r.step(t).view(np.uint32), want.view(np.uint32))
+    assert np.array_equal(b.prefill(toks, chunk=4).view(np.uint32), dev[-1].view(np.uint32))
+    with pytest.raises(ValueError, match="weight formats"):
+        spec.image(cfg, 256, formats="mlp@0=fp4")
+
+
 def test_nope_is_one_loop_body(tiny):
     """The rope gate keeps one layer body for every layer: the program does not grow with
     the number of layers without RoPE."""

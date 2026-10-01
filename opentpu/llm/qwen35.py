@@ -73,12 +73,13 @@ from ..kernels.deltanet import gates, l2norm_rows
 from ..kernels.lib import rmsnorm, silu
 from ..kernels.mlp import _chunk
 from .lfm2 import plan, run_layers
+from . import formats as FM
 from . import generate as G
 from . import moe as MO
 from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fake_q, _fake_w,
-                    _inputs, _inputs_rows, _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build,
-                    _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode,
-                    rope_tables, EmbedHost)
+                    _formats, _inputs, _inputs_rows, _lm_head, _lm_head_rows, _lookup_alloc,
+                    _lookup_build, _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg, _tokens_arg,
+                    compile_decode, rope_tables, EmbedHost)
 
 LIN, ATTN = "linear", "attn"
 PAIR_LOOP = 8       # pairs of DeltaNet heads per slice that decode unrolled at a run-time position
@@ -117,6 +118,7 @@ class Spec:
                                     # head are even)
     moe: MO.MoESpec | None = None   # Qwen3.5-MoE: every layer's MLP is routed experts plus a
                                     # shared expert (ffn: its width, the layer block's MLP)
+    formats: str = ""       # weight formats per kind over the image's wformat (KINDS)
 
     @property
     def layers(self) -> int:
@@ -191,9 +193,9 @@ class Spec:
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
               lookup: bool | str = False, experts: int | None = None,
-              embed_host: bool | None = None) -> "Image":
+              embed_host: bool | None = None, formats: str | None = None) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts,
-                     embed_host)
+                     embed_host, formats)
 
 
 # =============================================================================== reference
@@ -314,8 +316,22 @@ def _moe_reference(h, W, p: str, mo) -> np.ndarray:
     return y
 
 
+KINDS = ("attn", "delta", "mlp", "gateup", "down", "head")   # a formats string's weight kinds
+
+
+def weight_kind(n: str) -> tuple:
+    """(kind, layer) of checkpoint weight `n` (KINDS: the head, or a layer's attention,
+    DeltaNet (in_proj_*, out_proj), MLP gate / up or down projection; Qwen3.5-MoE's shared
+    expert is the MLP)."""
+    if not n.startswith("model.layers."):
+        return "head", 0
+    return ("delta" if ".linear_attn." in n else "attn" if ".self_attn." in n else
+            "down" if ".down_proj." in n else "gateup", int(n.split(".")[2]))
+
+
 def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "int8",
-                    head_format: str | None = None, routes: list | None = None) -> np.ndarray:
+                    head_format: str | None = None, routes: list | None = None,
+                    formats: str | None = None) -> np.ndarray:
     """float64 decode with openTPU's quantization points and none of its rounding (as
     qwen3.emulated_logits): int8 weights and matmul inputs per D-block, int8 K and V, int8 P.
     The DeltaNet state, convolution and gates are exact (they are fp32 on the device).
@@ -326,10 +342,11 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     Wq: dict = {}
 
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+    fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
 
     def w(n):
-        if n not in Wq:        # the weight formats as in Image (wformat, head_format)
-            Wq[n] = _fake_w(W[n], D, (head_format or wformat) if n == head else wformat)
+        if n not in Wq:        # the weight formats as in Image (wformat, head_format, formats)
+            Wq[n] = _fake_w(W[n], D, fmt(*weight_kind(n)))
         return Wq[n]
 
     def g1(n):
@@ -542,11 +559,15 @@ class Image(EmbedHost):
     out_proj block and its pairs' gates (DeltaNetParts). A decode's loop over the pairs then steps one address register for all of
     them, so it fits the registers beside a run-time position's (resident decode), and the
     unrolled pairs of a bigger model need not fit IMEM.
+
+    Weight formats as qwen3.Image (`formats` over the KINDS of this file; a MoE's experts in
+    `wformat`, its router int8).
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool | str = False,
-                 experts: int | None = None, embed_host: bool | None = None):
+                 experts: int | None = None, embed_host: bool | None = None,
+                 formats: str | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Qwen3.5 runs one sequence: batch=1")
@@ -554,8 +575,17 @@ class Image(EmbedHost):
             raise ValueError("KV capacity must be a multiple of D")
         S, D = cfg.S, cfg.D
         H, d, F_, K = spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
-        self.wformat, self.head_format = wformat, head_format or wformat
-        rb = lambda k: Q.row_bytes(k, wformat, D)                       # noqa: E731
+        fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
+        kf = FM.uniform(fmt, {"delta": [i for i, t in enumerate(spec.kinds) if t == LIN],
+                              "attn": [i for i, t in enumerate(spec.kinds) if t == ATTN],
+                              "gateup": range(spec.layers), "down": range(spec.layers)})
+        self.wformat, self.head_format = wformat, fmt("head")
+        self.mf = {"wh": kf["delta"], "wab": kf["delta"], "wout": kf["delta"],
+                   "wq": kf["attn"], "wgate": kf["attn"], "wk": kf["attn"], "wv": kf["attn"],
+                   "wo": kf["attn"], "wg": kf["gateup"], "wu": kf["gateup"],
+                   "wd": kf["down"]}            # each projection's format (KINDS)
+        self.formats = _formats(spec, formats)
+        rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
         dk, dv = spec.lin_dk, spec.lin_dv
         self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, rows
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
@@ -587,9 +617,9 @@ class Image(EmbedHost):
         common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
         mlp = {"wg": (self.f_loc, H), "wu": (self.f_loc, H)}
         for name, (n, k) in mlp.items():
-            common[name] = (lb.alloc(n * rb(k)), lb.alloc(4 * n * (k // D)))
-        self.dchunk = _chunk(self.f_loc, D, D if wformat == "int8" else 2 * D)
-        common["wd"] = [(lb.alloc(self.h_loc * rb(self.dchunk)),
+            common[name] = (lb.alloc(n * rb(k, self.mf[name])), lb.alloc(4 * n * (k // D)))
+        self.dchunk = _chunk(self.f_loc, D, D if self.mf["wd"] == "int8" else 2 * D)
+        common["wd"] = [(lb.alloc(self.h_loc * rb(self.dchunk, self.mf["wd"])),
                          lb.alloc(4 * self.h_loc * (self.dchunk // D)))
                         for _ in range(F_ // self.dchunk)]
         mo = spec.moe
@@ -611,12 +641,14 @@ class Image(EmbedHost):
             og = self.og
             del self.mats[LIN]["wh"], self.mats[LIN]["wout"]
             pb, gb = _Bump(), _Bump()
-            self.pofs = {"wh": (pb.alloc(self.RP * rb(H)), pb.alloc(4 * self.RP * (H // D))),
+            fd = self.mf["wh"]
+            self.pofs = {"wh": (pb.alloc(self.RP * rb(H, fd)), pb.alloc(4 * self.RP * (H // D))),
                          "cv": pb.alloc(4 * self.CVW), "state": pb.alloc(4 * 2 * dv * dk)}
             self.PS = pb.next                           # a pair's block, bytes
             for _ in range(og // 2):
                 gb.alloc(self.PS)
-            self.gofs = {"wout": (gb.alloc(H * rb(og * dv)), gb.alloc(4 * H * (og * dv // D))),
+            self.gofs = {"wout": (gb.alloc(H * rb(og * dv, fd)),
+                                  gb.alloc(4 * H * (og * dv // D))),
                          "eb": gb.alloc(4 * 4 * (og // 2))}     # its pairs' gates, per token
             self.GS = gb.next                           # a head group's block
             lin["groups"] = lnb.alloc(nl // og * self.GS)
@@ -628,7 +660,7 @@ class Image(EmbedHost):
         for kind, bump, L in ((LIN, lnb, lin), (ATTN, ab, attn)):
             for name, (n, k) in self.mats[kind].items():
                 if name not in L:
-                    L[name] = (bump.alloc(n * rb(k)), bump.alloc(4 * n * (k // D)))
+                    L[name] = (bump.alloc(n * rb(k, self.mf[name])), bump.alloc(4 * n * (k // D)))
         attn["kv"] = [{"k": ab.alloc(cap * d), "ks": ab.alloc(4 * cap * (d // D)),
                        "vt": ab.alloc(d * cap), "vs": ab.alloc(4 * cap)}
                       for _ in range(self.nkv_loc)]
@@ -652,7 +684,8 @@ class Image(EmbedHost):
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
                                     M=cfg.MCOLS, embed_host=bool(embed_host),
                                     rows=rows) if lookup else {}
-        self.choices = {"embed_host": self.embed_host}     # (the compile worker's image)
+        self.choices = {"embed_host": self.embed_host,          # (the compile worker's
+                        "formats": self.formats}                # image)
         self.offload = None
         if mo is not None:          # path (a)'s words and expert slots (docs/offload.md)
             self.fmt = MO.ExpertFormat(H, mo.ffn, D, wformat)
@@ -691,12 +724,14 @@ class Image(EmbedHost):
             v = np.ascontiguousarray(a).view(np.uint8).reshape(-1)
             imgs[s][addr:addr + v.size] = v
 
-        def put_q1(s, addr_pair, a, fmt=self.wformat):
+        mf = self.mf
+
+        def put_q1(s, addr_pair, a, fmt):
             q, sc = QC.quantize_mxu(a, fmt, D)
             put(s, addr_pair[0], q)
             put(s, addr_pair[1], sc)
 
-        def put_q(addr_pair, parts, fmt=self.wformat):
+        def put_q(addr_pair, parts, fmt):
             for s, p in enumerate(parts):
                 put_q1(s, addr_pair, p, fmt)
 
@@ -747,20 +782,22 @@ class Image(EmbedHost):
                     for s in range(S):
                         for q, (pr, pt) in enumerate(zip(prows[s], ptaps[s])):
                             o = base + self.pair_offset(q)
-                            put_q1(s, (o + self.pofs["wh"][0], o + self.pofs["wh"][1]), pr)
+                            put_q1(s, (o + self.pofs["wh"][0], o + self.pofs["wh"][1]), pr,
+                                   mf["wh"])
                             put(s, o + self.pofs["cv"], pt)
                         for g, go in enumerate(gouts[s]):
                             o = Lo["groups"] + g * self.GS
-                            put_q1(s, (o + self.gofs["wout"][0], o + self.gofs["wout"][1]), go)
+                            put_q1(s, (o + self.gofs["wout"][0], o + self.gofs["wout"][1]), go,
+                                   mf["wout"])
                 else:
-                    put_q(Lo["wh"], [np.concatenate(pr) for pr in prows])
-                    put_q(Lo["wout"], [np.concatenate(go) for go in gouts])
+                    put_q(Lo["wh"], [np.concatenate(pr) for pr in prows], mf["wh"])
+                    put_q(Lo["wout"], [np.concatenate(go) for go in gouts], mf["wout"])
                     for s in range(S):
                         for q, pt in enumerate(ptaps[s]):
                             put(s, Lo["cv"] + q * 4 * self.CVW, pt)
                 put_q(Lo["wab"], [np.concatenate([W[a + "in_proj_a.weight"][hh.start:hh.stop],
                                                   W[a + "in_proj_b.weight"][hh.start:hh.stop]])
-                                  for hh in hs])
+                                  for hh in hs], mf["wab"])
                 for s, hh in enumerate(hs):
                     put(s, Lo["alog"], f32(W[a + "A_log"][hh.start:hh.stop]))
                     put(s, Lo["dtb"], f32(W[a + "dt_bias"][hh.start:hh.stop]))
@@ -775,18 +812,19 @@ class Image(EmbedHost):
                         spec.n_q, spec.n_kv, d, S)
                 wq, wk, wv, wo = head_parallel_attention_weights(qg[:, 0].reshape(-1, H), *args)
                 wgate = head_parallel_attention_weights(qg[:, 1].reshape(-1, H), *args)[0]
-                put_q(Lo["wq"], rows(wq, self.nq_loc * d))
-                put_q(Lo["wgate"], rows(wgate, self.nq_loc * d))
-                put_q(Lo["wk"], rows(wk, self.nkv_loc * d))
-                put_q(Lo["wv"], rows(wv, self.nkv_loc * d))
-                put_q(Lo["wo"], rows(wo, n))
+                put_q(Lo["wq"], rows(wq, self.nq_loc * d), mf["wq"])
+                put_q(Lo["wgate"], rows(wgate, self.nq_loc * d), mf["wgate"])
+                put_q(Lo["wk"], rows(wk, self.nkv_loc * d), mf["wk"])
+                put_q(Lo["wv"], rows(wv, self.nkv_loc * d), mf["wv"])
+                put_q(Lo["wo"], rows(wo, n), mf["wo"])
             mp = spec.mlp_prefix(p)
-            put_q(Lo["wg"], rows(W[mp + "gate_proj.weight"], self.f_loc))
-            put_q(Lo["wu"], rows(W[mp + "up_proj.weight"], self.f_loc))
+            put_q(Lo["wg"], rows(W[mp + "gate_proj.weight"], self.f_loc), mf["wg"])
+            put_q(Lo["wu"], rows(W[mp + "up_proj.weight"], self.f_loc), mf["wu"])
             C_ = self.dchunk
             for j, pair in enumerate(self.lofs[kind]["wd"]):
                 put_q((base + pair[0], base + pair[1]),
-                      [r[:, j * C_:(j + 1) * C_] for r in rows(W[mp + "down_proj.weight"], n)])
+                      [r[:, j * C_:(j + 1) * C_] for r in rows(W[mp + "down_proj.weight"], n)],
+                      mf["wd"])
             if spec.moe is not None:
                 put_q(Lo["router"], [np.concatenate([W[p + "mlp.gate.weight"],
                                                      W[p + "mlp.shared_expert_gate.weight"]])],
@@ -852,7 +890,6 @@ class Image(EmbedHost):
             """Descriptors of layer `li` (an int or a hardware-loop expression) of `kind`."""
             off = Affine.of(self.layer0) + Affine.of(li) * self.LS
             lofs = self.lofs[kind]
-            fm, wf = self.wformat, Q.mxu_wf(self.wformat)
             ns = SimpleNamespace(g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
                                  g_post=Tensor(off + lofs["g_post"], (H,), (1,)),
                                  moe=spec.moe is not None)
@@ -863,9 +900,12 @@ class Image(EmbedHost):
                 ns.gbase = Tensor(off + lofs["gbase"], (1,), (1,))
             for name, (r, k) in self.mats[kind].items():
                 da, sa = lofs[name]
+                fm = self.mf[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (r, k), Q.row_bytes(k, fm, D),
-                                          4 * (k // D), D, wf=wf))
+                                          4 * (k // D), D, wf=Q.mxu_wf(fm)))
             Cd = self.dchunk
+            fm = self.mf["wd"]
+            wf = Q.mxu_wf(fm)
             rc = Q.row_bytes(Cd, fm, D)
             parts = tuple(QTensor(off + da, off + sa, (n, Cd), rc, 4 * (Cd // D), D, wf=wf)
                           for da, sa in lofs["wd"])
@@ -877,6 +917,8 @@ class Image(EmbedHost):
                 ns.gn = Tensor(off + lofs["gn"], (dv,), (1,))
                 og, R2 = self.og, self.RP
                 if self.grouped:            # the parts of pair 0 (group 0)
+                    fm = self.mf["wh"]
+                    wf = Q.mxu_wf(fm)
                     g0 = off + lofs["groups"]
                     (whd, whs), (wod, wos) = self.pofs["wh"], self.gofs["wout"]
                     ns.dn = DeltaNetParts(
