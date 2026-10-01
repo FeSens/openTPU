@@ -52,16 +52,25 @@ What sets these costs:
     +1.01 M per row (DeltaNet 1.36 M -> 2.37 M; +38 MB of traffic per row, which is 2 x 18 MiB of
     state).
     - Only about 0.3 M of that is the state traffic itself (38 MB at 128 B per cycle).
-    - The rest is serialization: the 2-row run's MXU sits idle for 1.59 M cycles, against
-      0.07 M in the decode step. The gaps are after the QACTs of `_deltanet_rows`' `flush`
-      (3 x 227K) and after `store_window`'s STs (2 x 133K).
-    - The decode kernel `_deltanet_dstep` pipelines two pairs ahead: the MXU projects pair
-      p + 2 while the DMA runs pair p's DSTEPs.
-    - `_deltanet_rows` is one pair ahead (`NB` = 2 buffer sets) and runs 2 R DSTEPs per pair.
-      Its out_proj flushes and window stores wait on them.
-    - The two rows' DSTEPs take 2 x 0.65 M cycles (288 head steps of 2,248 cycles), about the
-      MXU's 1.1 M for DeltaNet's weights. So with the same overlap, a 2-row run would cost
-      about 1.05x a decode step (projected). That would also speed up Qwen3.5's prefill.
+    - The rest is the stream engine. DSTEP runs on it and the VOPs wait while a DSTEP holds it
+      (docs/isa.md, DSTEP), so a pair's VPU work (convolution, SiLU, norms, the gated RMSNorm)
+      and its 2 R DSTEPs (2,248 cycles per head step) run one after the other.
+    - With one row (a 4-layer co-sim of the rows kernel) the DeltaNet layers are MXU-bound:
+      the MXU is busy 97% of their cycles, the engine 93%. With two rows the engine is the
+      bound: busy 95.5% (the DSTEPs 72% of the cycles), the MXU 77%. The VPU's share hardly
+      grows with the rows; its VOPs are short, so their latency sets their time.
+    - The rows kernel now pipelines the pairs two ahead, as the decode kernel `_deltanet_dstep`
+      does (`_rows_pipelined`: the MXU projects pair p + 2 while the engine runs pair p's
+      DSTEPs). The 2-row run went from 6,101,487 to 5,984,177 cycles: 1.21x a decode step,
+      -1.9%. Prefill runs gain about as much (4 rows -2.3%, 6 rows -2.2%).
+    - This note projected 1.05x before. That projection set the two rows' DSTEPs (2 x 0.65 M)
+      against the MXU's 1.1 M for DeltaNet's weights and left out the VPU work sharing the
+      engine.
+    - Two things would cut the rest, and the MXU bounds both at about 1.12x (estimated: the
+      DeltaNet layers at the MXU's busy time):
+      - VOPs running beside a DSTEP. That is hardware: the engine's slot-0 loop is the DSTEP's
+        datapath.
+      - Fewer VOPs per pair, for example both heads' element-wise steps in one VOP.
   - LFM2's convolutions and short attention are cheap: +0.12 M per row.
 - **The LM head is 35-44% of a decode token.** The verify run pays it once: 2 rows share the
   head's weights. But a drafter that runs the full head for every draft token pays that share
@@ -304,24 +313,26 @@ emits 1 + a tokens and costs c_2 + c_draft decode steps:
 
 speedup = (1 + a) / (c_2 + c_draft)
 
-c_2 comes from section 1; c_draft is 0 for n-gram and about 0.05 for MTP with a 32K fp4 draft
-head (10 MB layer + 17 MB head over 574 MB per 0.8B token).
+c_2 comes from section 1 (Qwen3.5-0.8B: 1.21, with the pipelined rows kernel). c_draft is 0
+for n-gram and about 0.05 for MTP with a 32K fp4 draft head (10 MB layer + 17 MB head over
+574 MB per 0.8B token).
 
 | model, drafter | c_2 + c_draft | break-even a | a = 0.5 | a = 0.7 | a = 0.85 |
 |---|---|---|---|---|---|
 | Qwen3-0.6B, n-gram | 1.16 | 0.16 | 1.29x | 1.46x | 1.59x |
 | LFM2.5-230M, n-gram | 1.09 | 0.09 | 1.38x | 1.56x | 1.70x |
-| Qwen3.5-0.8B, MTP + 32K head | 1.28 | 0.28 | 1.17x | 1.32x | 1.44x |
-| Qwen3.5-0.8B, MTP + 32K head, rows kernel overlapped (c_2 = 1.05, projected) | 1.10 | 0.10 | 1.36x | 1.55x | 1.68x |
-| Qwen3.5-0.8B, n-gram | 1.23 | 0.23 | 1.22x | 1.38x | 1.50x |
+| Qwen3.5-0.8B, MTP + 32K head | 1.26 | 0.26 | 1.19x | 1.35x | 1.47x |
+| Qwen3.5-0.8B, MTP + 32K head, the engine's VOPs cut (c_2 = 1.12, estimated) | 1.17 | 0.17 | 1.28x | 1.45x | 1.58x |
+| Qwen3.5-0.8B, n-gram | 1.21 | 0.21 | 1.24x | 1.40x | 1.53x |
 
 All projected; a is unknown for our models until phase 0 measures it.
 - The one published number is DeepSeek-V3's: 85-90% acceptance of its MTP's second token.
 - n-gram's a counts only iterations that found a draft. The others cost exactly a plain step.
-- Qwen3.5's per-row DeltaNet cost makes it the least favourable model per row today. Most of
-  that cost is the rows kernel's missing overlap (section 1), which is a compiler change. A
-  multi-token DSTEP (docs/stream.md 5.2: T tokens per state pass) would also cut the state
-  traffic: the state is read once for both rows and written once per row.
+- Qwen3.5's per-row DeltaNet cost makes it the least favourable model per row. The rows
+  kernel's overlap is in (section 1). What is left is the stream engine's work, which the
+  DSTEPs and the VOPs share. A multi-token DSTEP (docs/stream.md 5.2: T tokens per state
+  pass) would also cut the state traffic: the state is read once for both rows and written
+  once per row. Its datapath time stays per row.
 
 ## 8. Plan
 
@@ -332,9 +343,9 @@ All projected; a is unknown for our models until phase 0 measures it.
    - Use the qual prompts plus a chat / code / summarization set, at the greedy and sampled
      defaults.
    - Output: a per model and drafter, and the choice of draft head.
-1. **The rows kernel's DSTEP overlap for Qwen3.5** (section 1): `_deltanet_rows` pipelined
-   as deep as `_deltanet_dstep`. It is a compiler change, with cycles measured as in section 1.
-   It pays for prefill even without MTP.
+1. **The rows kernel's DSTEP overlap for Qwen3.5** (section 1): done. `_rows_pipelined` runs
+   two pairs ahead, as `_deltanet_dstep` does: the 2-row run -1.9% (1.21x), prefill -2.2% at
+   6 rows. The rest is the stream engine's work (section 1).
 2. **ISA simulator: verify, accept and roll back (greedy, n-gram).**
    - Rows kernels at a RunPos.
    - Scratch-RLD tokens.
