@@ -118,9 +118,9 @@ At 2048 tokens the image is 3.636 GiB (372 MiB free). The on-card decode loop's 
 5 to 7 MiB with its three 1 MiB logit vectors) fits in what is free. With an fp4 PLE table
 (`OTPU_PLE_FORMAT=fp4`) the records are 4,864 bytes and int8 layers fit too (3.424 GiB); the
 default picks int8 whenever the image fits 4 GiB. The build
-quantizes the matrices in worker processes (`OTPU_BUILD_JOBS`, default 4) into a cache keyed by
-the checkpoint and the quantizer's sources (`OTPU_QCACHE`, default `~/otpu-build/qcache`): 324 s
-cold on omarchy, 8 s cached.
+quantizes the matrices in worker processes (`OTPU_BUILD_JOBS`, default 4), the 4-bit ones through
+the image caches' disk cache (`opentpu/qcache.py`, [board.md](board.md); int8 matrices and the
+PLE records are quantized at each build): 324 s cold on omarchy.
 
 ## Accuracy
 

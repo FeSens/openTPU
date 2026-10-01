@@ -6,8 +6,8 @@ the card host, and every card tool built it again under the card lock).
 qwen35) quantize every weight matrix with it, so any build of a model and format fills the
 cache for every other: perf.py, refs.py card (per-position or resident) and decode_profile
 build different layouts (lookup tables, rows, KV capacity) from the same matrices.
-`tools/qual/prebuild.py` builds them ahead, outside otpu-lock. (Gemma 4 keeps its own cache of
-quantization jobs, gemma4._cached_job.)
+`opentpu/host/prebuild.py` builds them ahead, outside otpu-lock (gemma4's build too: its
+quantization jobs' matrices go through quantize_mxu in its worker processes).
 
 The key is the matrix's content: a hash of its fp32 bytes and shape, the format, D, the
 quantizer's parameters (the scale search), the source of quant.py and the numpy version. Any
