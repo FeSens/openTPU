@@ -31,6 +31,10 @@ path (a) of docs/offload.md section 4, the card computing everything and the hos
 experts (`linksim`), with and without prefetch from the predictions, the slots replaced as
 `--stream-policies` says (lru, lfu: as lru_layer, lfu_layer). `--host-frac`: the SSD tier, a host
 RAM holding that fraction of the pool (LRU) over the SSD.
+
+Calibration (docs/offload.md 10.4, 11.5): at 128 tokens on the card (Gen1, decayed use) the
+rates came out about 15% below the model's on both MoEs: the 35B 3.86 tok/s against 4.52, the
+26B 2.77 against 3.19.
 """
 from __future__ import annotations
 
