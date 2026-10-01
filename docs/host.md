@@ -227,6 +227,58 @@ through `rtl/mem/otpu_axi_dram.sv`) are single 512-bit beats from a 64-byte-alig
 are the closest the host can come to that shape, and the kernel stage's masked writes and every
 model run have never hung. The accelerator path is very likely safe, not proven.
 
+**XDMA's H2C overrun.** A host->card DMA call of more than 4 KiB that meets other traffic on
+its channel can corrupt it. The other traffic can be a card->host read or the accelerator's
+own DRAM traffic during a run. The written data then comes from the wrong place, or the H2C
+engine wedges (BUSY, errno 110). The engine keeps the fault until the bitstream is loaded
+again: every later write is off, even with nothing else running.
+- The symptom: the Gen2 candidate's qualification failed with a 128 B slip, and production B
+  slips too (64 B) under overlapped host reads and writes. A DMA lock (`_dma_lock`: one DMA
+  call at a time per card, across threads and processes) stopped that case.
+- XMON localized it. XMON is a debug build (branch `xmon`) with self-describing data checks
+  on XDMA's AXI master and on channel 0's controller ports, plus an ILA on the master.
+- With XMON, the data is already wrong as XDMA's master issues it. The AXI handshakes before it
+  are clean, so the fault starts inside XDMA, not in `otpu_dma_split`, `otpu_mem_ch` or
+  LiteDRAM.
+
+Card runs, 2026-10-01 (opentpu, Gen1 x8; XMON at 100 MHz, B at 133.33 MHz, both the same).
+The tools are `tools/acc_overlap.py` and `tools/xmon_card.py`. `XMON_MAXN` caps the host's
+calls; `XMON_PLACE` places its buffers.
+
+| host traffic | against | calls | result |
+|---|---|---|---|
+| writes | accelerator loads | 4 KiB - 1 MiB | wedge or corruption in < 10 s (B and XMON) |
+| writes, buffer page = card page | accelerator loads | 4 KiB - 1 MiB | in ~1 s, no DMA error (silent) |
+| writes | host reads | 64 B - 1 MiB | in 1.5 s |
+| writes | accelerator loads | 4 KiB | clean, 120 s, 1.5 M calls |
+| writes | host reads (141 GB) | <= 4 KiB | clean, 300 s, 1.65 M calls |
+| writes alone | - | 64 B - 1 MiB | clean, 60 s, 11 GB |
+| reads | accelerator stores | 4 KiB - 1 MiB | clean, 120 s (B) |
+
+What the monitors saw at XDMA's master:
+- In the middle of a clean 512-byte burst the W data jumps exactly 8192 B ahead (from
+  0x7f0b30a0 to 0x7f0b50b0). The engine's read buffer looks lapped.
+- In another run, WLAST came 8 beats late from a burst that a card 4 KiB boundary split in two
+  (AW e80 len 23 + AW 000 len 7; W ran 32 beats + 8), and the engine stopped sending W.
+- After a fault, a fresh write with nothing else running carried data from a write minutes
+  earlier.
+- Card->host reads have no completions to buffer and were never wrong.
+- Placing the buffers does not help. Small calls do: the engine then never has more than
+  4 KiB of reads outstanding.
+
+The host's rules:
+- No write call of more than `RUN_H2C` (4 KiB) per channel while a run is in flight.
+  `Board.write` splits writes made between `Board.start` and the `wait` that sees HALTED
+  (`XdmaTransport.run_h2c`). The requests that `RowServer` serves while the card waits are
+  covered by this (E4B's PLE record, 11 KiB).
+- Large writes go before or after a run. The streamed logits' SENTINEL marks (4 x vocab bytes)
+  go back after the run, on the DMA worker while the host takes the token. `start` waits for
+  them before RUN.
+- H2C and C2H calls never overlap (the DMA lock).
+- Not covered: the offload's expert writes (`offload.BoardDram`, MBs while the card waits in
+  WAITW) still go whole. The fix there is an XDMA configuration that cannot lap its buffer
+  (fewer outstanding read requests).
+
 **IOMMU.** If DMA transfers fail on a machine with the IOMMU on, boot with `iommu=pt` (Intel:
 `intel_iommu=on iommu=pt`).
 
@@ -543,13 +595,15 @@ goes on (`BoardBackend.start(stream=...)` / `wait(feed)`, `Engine.step(sink=...)
 - Before the run the logits region holds a word the device never stores, 0xFFFFFFFF (its NaN
   is canonical: 0x7FC00000, or 0xFFC00000 after a sign flip). A chunk is complete when none of
   its words is left: the host probes the chunk's last beat (one 64-byte read), then reads the
-  chunk and checks every word, and writes the marker back into it (the run is past it).
+  chunk and checks every word (its marker goes back after the run, below).
 - The probes start 0.3 ms before the time the same chunk was seen complete in the last token
   (every 0.5 ms on the first), and retry every 0.1 ms; a chunk already complete at its first
   probe moves its time 0.3 ms earlier, so the schedule follows the run both ways. The waits are
   sleeps of at most 1 ms (a long sleep overshoots: 38% on macOS). HALTED ends the loop; the last
   chunk (written just before the halt) and any other still pending are read in one read after
-  it, and marked again right after the next token's RUN (its LM head is milliseconds away).
+  it. Then the whole region is marked again on the DMA worker while the host takes the token,
+  and the next RUN waits for that: a host->card write of that size must not meet a run ("XDMA's
+  H2C overrun" in section 2).
 - The sampler takes each chunk as it comes (`pick.stream(context)`, chat.sampler): the
   repetition penalty and the 64-logit block maxima of the top-k prefilter are applied per chunk,
   so after the halt only the selection is left (21-31 us against 44-108 us for the whole
