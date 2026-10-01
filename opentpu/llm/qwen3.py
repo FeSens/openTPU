@@ -1522,7 +1522,8 @@ class Engine:
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
                  resident: bool = False, experts: int | None = None, pool_file=None,
-                 embed_host: bool | None = None, layer_major: int = 0):
+                 embed_host: bool | None = None, layer_major: int = 0, pooled: bool = True,
+                 restore: str = "lazy"):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
@@ -1592,6 +1593,7 @@ class Engine:
         # token by token): its programs, (layer, blocks, rows, embedded) and "head" ->
         # (programs, run_args)
         self.layer_major = int(layer_major)
+        self.pooled, self.restore = pooled, restore     # (the expert slots during it)
         self._layer_runs: dict = {}
         if self.layer_major and not (getattr(self.image, "prefill_rows", 0) and self.device_inputs
                                      and getattr(self.backend, "args", False) and batch == 1):
@@ -1955,8 +1957,11 @@ class Engine:
         serve one layer at a time; then the LM head of the last row. Runs of more than one row
         start from the chunk's embedding rows (one embed run a token). A model with
         convolutions (conv_k > 1) runs its rows before position conv_k - 1 at compile-time
-        positions, from their embedding rows too. Bit-identical to step() token by token (the
-        states, the KV cache, the logits). Returns the logits after the last token."""
+        positions, from their embedding rows too. The expert server's slots are pooled for the
+        prompt (ExpertServer.begin_prefill: every slot serves the running layer) and given
+        back to their layers before the head runs (end_prefill: `restore`, "lazy" by default).
+        Bit-identical to step() token by token (the states, the KV cache, the logits): only
+        the slots the experts sit in move. Returns the logits after the last token."""
         img, K, B, R = self.image, getattr(self.spec, "conv_k", 1), self.block, self.layer_major
         self._drain()
         tokens = [int(t) for t in tokens]
@@ -1974,6 +1979,9 @@ class Engine:
                       args=arg_words(ra, vals))
                 self.stats.append(self.backend.wait())
 
+        srv = self.server if self.pooled else None
+        if srv is not None and hasattr(srv, "begin_prefill"):
+            srv.begin_prefill()
         for c0 in range(0, len(tokens), img.prefill_rows):
             part, p0 = tokens[c0:c0 + img.prefill_rows], self.pos
             low = max(0, min(len(part), K - 1 - p0))    # rows at compile-time positions
@@ -1995,6 +2003,8 @@ class Engine:
                             dict(RunPos.values(part[i], p, K, B), row=i))
                     i += n
             self.pos = p0 + len(part)
+        if srv is not None and hasattr(srv, "end_prefill"):    # (the last run's request is
+            srv.end_prefill(self.restore)                       # served: it has halted)
         run("head", {"row": len(part) - 1})
         io, S, v_loc = img.io, self.cfg.S, img.v_loc
         return np.concatenate([self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc)
