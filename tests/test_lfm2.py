@@ -119,7 +119,7 @@ def test_tiny_formats_by_layer_range(tiny, monkeypatch):
     g0, g = ("int8", "int8", "fp4", "fp4"), ("fp4", "int4", "int8", "int8")
     assert img.lf == (g0,) + (g,) * 4
     assert img.plan == [(0, (("conv", g0),), 1), (1, (("attn", g), ("conv", g)), 2)]
-    assert img.layouts[g0].LS != img.layouts[g].LS
+    assert img.layouts[g0].size != img.layouts[g].size
     assert [img._off(i).const for i in range(5)] == sorted(img._off(i).const for i in range(5))
     assert mix.image(cfg, 256).nbytes < spec.image(cfg, 256).nbytes
     toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
@@ -296,11 +296,11 @@ def test_tiny_resident_decode_is_bit_exact(tiny):
         p += run
     assert sorted(a._decodes) == [1, 2, 3] and not b._decodes
     ia, ib = a.image, b.image
-    assert (ia.layer0, ia.LS) == (ib.layer0, ib.LS)
+    assert (ia.layer0, ia.loc) == (ib.layer0, ib.loc)
     ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.nbytes].copy() for e in (a, b))
     for li, k in enumerate(spec.kinds):     # the state rings' scratch rows (_ring_rows)
         if k == "conv":
-            o = li * ib.LS + ib.lofs["conv"]["state"]
+            o = ib._off(li).const - ib.layer0 + ib.lofs["conv"]["state"]
             ma[o:o + 4 * ib.h_loc] = mb[o:o + 4 * ib.h_loc] = 0
     assert np.array_equal(ma, mb)
 

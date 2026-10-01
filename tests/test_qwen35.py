@@ -144,7 +144,7 @@ def test_tiny_formats_by_layer_range(tiny, monkeypatch, grouped):
     assert img.grouped == grouped and img.lf == (g0,) * 3 + (g,) * 3
     assert img.plan == [(0, (("linear", g0),), 2), (2, (("attn", g0),), 1),
                         (3, (("linear", g),), 2), (5, (("attn", g),), 1)]
-    assert img.layouts[g0].LS != img.layouts[g].LS
+    assert img.layouts[g0].size != img.layouts[g].size
     assert [img._off(i).const for i in range(6)] == sorted(img._off(i).const for i in range(6))
     assert mix.image(cfg, 256).nbytes < spec.image(cfg, 256).nbytes
     toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
@@ -365,14 +365,13 @@ def test_tiny_resident_decode_is_bit_exact(tiny, dstep):
         p += run
     assert sorted(a._decodes) == [1, 2] and not b._decodes
     ia, ib = a.image, b.image
-    assert (ia.layer0, ia.LS) == (ib.layer0, ib.LS)
-    ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.layer0 + len(spec.kinds) * ib.LS]
-              .copy() for e in (a, b))
+    assert (ia.layer0, ia.loc, ia.head) == (ib.layer0, ib.loc, ib.head)
+    ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.head[0]].copy() for e in (a, b))
     TP = spec.conv_k * ib.CP
     for li, k in enumerate(spec.kinds):     # row 0 of each pair's ring is scratch (_ring)
         if k == "linear":
             for q in range(ib.nl // 2):
-                o = li * ib.LS + ib.cv_offset(q) + 4 * TP
+                o = ib._off(li).const - ib.layer0 + ib.cv_offset(q) + 4 * TP
                 ma[o:o + 4 * ib.CP] = mb[o:o + 4 * ib.CP] = 0
     assert np.array_equal(ma, mb)
 
@@ -389,7 +388,7 @@ def tiny_pairs(request):
 def _pair_parts(eng, li, q):
     """Pair q's taps and window, and its two states, in layer li (either layout)."""
     im, d = eng.image, eng.backend.machine.slices[0].dram
-    o = im.layer0 + li * im.LS
+    o = im._off(li).const
     n = 4 * 2 * eng.spec.lin_dv * eng.spec.lin_dk
     st = o + (im.pair_offset(q) + im.pofs["state"] if im.grouped else
               im.lofs["linear"]["state"] + q * n)
