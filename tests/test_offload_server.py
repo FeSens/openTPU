@@ -89,3 +89,72 @@ def test_bad_requests():
         srv.serve([0, E + 1])                       # two layers
     with pytest.raises(RuntimeError):
         srv.serve([0, 1])                           # 2 ids, 1 slot
+
+
+@pytest.mark.parametrize("chash", [False, True])
+@pytest.mark.parametrize("slot", [128 * 37, 64 * 75])          # whole chunks; a half one
+def test_board_dram_writes_what_board_write_writes(chash, slot):
+    """BoardDram (the card's fast path: one-pass channel runs, a worker thread's DMA, the
+    host's words from a shadow without reading the card) leaves the card's two channel memories
+    exactly as BackendDram's Board.write does, request after request: the slots (with CHASH's
+    swaps or not), the directory and served. A slot of a half chunk falls back to Board.write."""
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import BackendDram, BoardDram
+
+    def board():
+        b = Board(FakeTransport(ch_bytes=1 << 20, devname=None))
+        b.info()["caps"]["chash"] = chash
+        return b
+
+    def pool(g):
+        return np.random.default_rng(g).integers(0, 256, slot, dtype=np.uint8)
+
+    lay = Layout.build(4096, 4, 2, (2, 3), slot)
+    ba, bb = board(), board()
+    fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay), lay, pool)
+    plain = ExpertServer(BackendDram(SimpleNamespace(write=lambda s, a, d: bb.write(a, d),
+                                                     read=lambda s, a, n: bb.read(a, n))),
+                         lay, pool)
+    for srv in (fast, plain):
+        srv.load([0, 4])
+    assert isinstance(fast.mem, BoardDram) and ba.chash == chash
+
+    def same():
+        for c in (0, 1):
+            assert np.array_equal(ba.t.ch[c], bb.t.ch[c]), c
+    same()
+    reqs = [[0, 1], [4, 6], [2, 3], [5, 7], [1, 2], [6, 4], [3, 0], [7, 5]]
+    for seq, ids in enumerate(reqs, 1):
+        for b in (ba, bb):                  # the card's post: the row, then seq
+            b.write(lay.row, np.array(ids + [0] * (LINE // 4 - len(ids)), np.float32))
+            b.write(lay.mbox, np.float32(seq).tobytes())
+        assert fast.poll() == plain.poll() == 1
+        same()
+    assert fast.misses == plain.misses > 0 and fast.bytes == plain.bytes
+    assert float(np.frombuffer(ba.read(lay.served, 4), np.float32)[0]) == len(reqs)
+
+
+def test_board_dram_raises_a_dma_error_at_flush():
+    """A DMA call that fails in BoardDram's worker is raised by the next flush (ExpertServer.poll
+    calls it), not lost."""
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import BoardDram
+
+    class Broken(FakeTransport):
+        def mem_write(self, ch, off, data):
+            if len(data) > 1024:
+                raise IOError("XDMA h2c write failed")
+            super().mem_write(ch, off, data)
+
+    lay = Layout.build(4096, 4, 2, (2, 2), 128 * 37)
+    srv = ExpertServer(BoardDram(SimpleNamespace(board=Board(Broken(ch_bytes=1 << 20,
+                                                                    devname=None))), lay),
+                       lay, lambda g: np.zeros(128 * 37, np.uint8))
+    with pytest.raises(IOError, match="h2c"):
+        srv.load([0])

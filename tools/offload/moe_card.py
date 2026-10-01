@@ -88,7 +88,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     srv = eng.server
     srv.history, per_req = [], []               # each request's ids and misses
     serve, pool_of, mem = srv.serve, srv.pool, srv.mem
-    tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0)     # the host's seconds, by part
+    tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0, stage=0.0, flush=0.0)  # host's s
 
     def timed(part, f):
         def g(*a):
@@ -106,12 +106,16 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     srv.serve = counted
     srv.pool = timed("pool", pool_of)
     mem.write, mem.read = timed("write", mem.write), timed("read", mem.read)
+    if hasattr(mem, "write_slot"):              # BoardDram: staging (the main thread), and
+        mem.write_slot = timed("stage", mem.write_slot)     # waiting for the DMA thread
+        mem.flush = timed("flush", mem.flush)
     ids = ref["ids"]
     t = time.time()
     lg = eng.prefill(ids if host_loop else ids[:-1])
     prefill_s = time.time() - t
     lg_sha = hashlib.sha256(np.asarray(lg, np.float32).tobytes()).hexdigest()[:16]
     tm0, b0, st0 = dict(tm), srv.bytes, len(eng.stats)
+    dma0 = (getattr(mem, "dma_s", 0.0), getattr(mem, "dma_bytes", 0))
     t = time.time()
     top = []                    # host loop: the device's 8 best (id, logit) per step
 
@@ -128,6 +132,10 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     gen_s = time.time() - t
     host = {k: round(tm[k] - tm0[k], 3) for k in tm}          # the decode's
     host.update(bytes=srv.bytes - b0, polls_read_s=host.pop("read"))
+    if hasattr(mem, "dma_s"):                   # the DMA thread's own time and rate
+        ds, db = mem.dma_s - dma0[0], mem.dma_bytes - dma0[1]
+        host.update(dma_s=round(ds, 3), dma_gbs=round(db / ds / 1e9, 3) if ds else None,
+                    memory=type(mem).__name__)
     khz = (getattr(eng.backend, "info", None) or {}).get("core_khz")
     cyc = sum(s.get("cycles", 0) for s in eng.stats[st0:])       # (the simulator: none)
     dev_s = cyc / (khz * 1e3) if khz else None

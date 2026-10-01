@@ -21,9 +21,15 @@ to its entry, writes the new expert into its slot and then {slot, 1.0} to the ne
 the last id, `served = seq`. The card fences each layer before it posts, `WAITW served >= seq`
 (its last request), so one request row is enough, and no eviction for a layer is in flight
 while it uses that layer's slots (docs/offload.md 5.2).
+
+On the card the server's memory is `BoardDram` (`dram_of`): the experts' DMA at the link's
+rate, in a worker thread, the host's own words without a read of the card first.
 """
 from __future__ import annotations
 
+import queue
+import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -116,6 +122,7 @@ class ExpertServer:
         for lru in self.lru:                # the profile's first expert is the most recent
             for g in reversed(list(lru)):
                 lru.move_to_end(g)
+        self._flush()
         self.hits = self.misses = self.bytes = 0     # counted from here: the requests'
 
     def poll(self) -> int:
@@ -134,7 +141,13 @@ class ExpertServer:
         self.serve(ids)
         self.seq = seq
         self.mem.write(self.L.served, _f32(seq))
+        self._flush()                       # (no DMA of the server's in flight after poll)
         return 1
+
+    def _flush(self) -> None:
+        f = getattr(self.mem, "flush", None)
+        if f is not None:
+            f()
 
     def serve(self, ids) -> None:
         """One request: its k global ids, all of one MoE layer."""
@@ -164,7 +177,7 @@ class ExpertServer:
         data = self.pool(g)
         if len(data) != self.L.slot_bytes:
             raise ValueError(f"expert {g}: {len(data)} bytes, slots hold {self.L.slot_bytes}")
-        self.mem.write(slot, data)
+        getattr(self.mem, "write_slot", self.mem.write)(slot, data)
         self.mem.write(self.L.entry(g), np.array([slot], np.uint32).tobytes() + _f32(1.0))
         self.lru[j][g] = slot
         self.bytes += len(data)
@@ -198,3 +211,125 @@ class BackendDram:
 
     def read(self, addr: int, n: int) -> bytes:
         return np.asarray(self.backend.read(self.s, addr, n)).view(np.uint8).tobytes()
+
+
+class BoardDram:
+    """The card's DRAM as ExpertServer's memory at the link's rate (a BoardBackend's Board over
+    a transport that may DMA from a worker thread: XdmaTransport). Board.write, which
+    BackendDram calls, copies an expert's 1.67-5.85 MB four times on its way (the slot's bytes
+    out of the pool, CHASH's swaps, the two channel runs, a bounce for the DMA's alignment) and
+    widens every smaller write with a read of the card; the 35B-A3B's card run wrote 544 MB/s
+    against the link's 1.37. Here:
+    - write_slot: an expert's bytes go to the two channels' runs in one pass (the beat
+      interleave and CHASH's swaps, `np.take` of 64-byte beats), straight from the pool's
+      pages into page-aligned staging buffers, then one DMA call per channel;
+    - the host's own words (served and the directory: the card only reads them) are kept in a
+      shadow and written as whole 128-byte blocks, with no read first;
+    - one worker thread makes every DMA call in order, while the server stages the next
+      expert: an expert's data lands before its directory entry, every entry before served
+      (one queue, one h2c stream). flush() waits for the queue and raises a worker's error;
+      ExpertServer calls it before poll returns, so no DMA of the server's is in flight
+      while anything else uses the card."""
+
+    def __init__(self, backend, layout: Layout, depth: int = 3):
+        from .board import BEAT
+        self.board, self.L = backend.board, layout
+        blk = 2 * BEAT                        # a chunk: one beat on each channel
+        end = layout.dir + 8 * layout.E * layout.layers
+        if layout.served % blk or layout.served < layout.mbox + 2 * LINE:
+            raise ValueError("served must start a 128-byte block of the host's own words")
+        self.blk, self.lo = blk, layout.served
+        self.shadow = np.zeros(-(-(end - self.lo) // blk) * blk, np.uint8)
+        self.depth, self._bufs, self._base = depth, None, None
+        self._free: queue.Queue = queue.Queue()
+        self._q: queue.Queue = queue.Queue()
+        self._err: BaseException | None = None
+        self._thread: threading.Thread | None = None
+        self.dma_s, self.dma_bytes = 0.0, 0     # the worker's slot DMA: seconds and bytes
+
+    # ---- the worker
+    def _work(self) -> None:
+        while True:
+            fn, slot = self._q.get()
+            try:
+                if self._err is None:
+                    fn()
+            except BaseException as e:          # noqa: BLE001 (raised by flush)
+                self._err = e
+            finally:
+                if slot is not None:
+                    self._free.put(slot)
+                self._q.task_done()
+
+    def _put(self, fn, slot=None) -> None:
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._work, daemon=True,
+                                            name="otpu-offload-dma")
+            self._thread.start()
+        self._q.put((fn, slot))
+
+    def flush(self) -> None:
+        self._q.join()
+        if self._err is not None:
+            e, self._err = self._err, None
+            raise e
+
+    # ---- the memory
+    def write(self, addr: int, data) -> None:
+        b = (np.ascontiguousarray(data).view(np.uint8).reshape(-1)
+             if isinstance(data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))
+        a = addr - self.lo
+        if 0 <= a and a + len(b) <= len(self.shadow):         # the host's own words
+            self.shadow[a:a + len(b)] = b
+            a0, a1 = a // self.blk * self.blk, -(-(a + len(b)) // self.blk) * self.blk
+            out, at = self.shadow[a0:a1].copy(), self.lo + a0
+            self._put(lambda: self.board.write(at, out))
+        else:                                                   # the card's words: in order
+            self.flush()
+            self.board.write(addr, b)
+
+    def write_slot(self, addr: int, data) -> None:
+        from .board import swapped
+        src = (np.ascontiguousarray(data).view(np.uint8).reshape(-1)
+               if isinstance(data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))
+        n = len(src) // self.blk
+        if addr % self.blk or len(src) % self.blk:
+            return self.write(addr, src)
+        if self._bufs is None or len(self._bufs[0][0]) != len(src) // 2:
+            self.flush()
+            self._bufs = [[_page_buf(len(src) // 2) for _ in (0, 1)] for _ in range(self.depth)]
+            self._base = 2 * np.arange(n, dtype=np.intp)
+            while not self._free.empty():
+                self._free.get()
+            for i in range(self.depth):
+                self._free.put(i)
+        i = self._free.get()                    # a staging pair the worker is done with
+        bufs, beats = self._bufs[i], src.view("V64")
+        p = swapped(addr, n).astype(np.intp) if self.board.chash else 0
+        np.take(beats, self._base + p, out=bufs[0].view("V64"))       # channel 0's run
+        np.take(beats, self._base + 1 - p, out=bufs[1].view("V64"))   # channel 1's
+        self._put(lambda: self._dma(addr // 2, bufs), i)
+
+    def _dma(self, off: int, bufs) -> None:
+        t0 = time.perf_counter()
+        for c in (0, 1):
+            self.board.t.mem_write(c, off, bufs[c])
+        self.dma_s += time.perf_counter() - t0
+        self.dma_bytes += 2 * len(bufs[0])
+
+    def read(self, addr: int, n: int) -> bytes:
+        return np.asarray(self.board.read(addr, n)).view(np.uint8).tobytes()
+
+
+def _page_buf(n: int) -> np.ndarray:
+    """n bytes of page-aligned host memory: an h2c DMA at full speed from any 64-byte aligned
+    card address (opentpu.host.board, DMA_PLACE: writes need host - card = 0 mod 64)."""
+    import mmap
+    return np.frombuffer(mmap.mmap(-1, n), np.uint8)
+
+
+def dram_of(backend, layout: Layout):
+    """ExpertServer's memory on `backend`: BoardDram on a card whose transport DMAs from a
+    worker thread (XdmaTransport), else BackendDram (the ISA simulator, the board models)."""
+    t = getattr(getattr(backend, "board", None), "t", None)
+    return BoardDram(backend, layout) if getattr(t, "threaded", False) else BackendDram(backend)
