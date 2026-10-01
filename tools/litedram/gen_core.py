@@ -56,6 +56,9 @@ Clocks: clk50 -> MMCM (sys, sys4x, channel 0's DQS), a second MMCM (channel 1's 
 checked against the MIG project's pins; the top's DDR3 ports keep the names ddram0_*, ddram1_*),
 the banks' internal VREF and LiteX's reset-synchronizer paths; the top adds the clock relations
 (ctl_clk and sys_clk are asynchronous: the CSR port crosses them through FIFOs).
+
+The controllers take LiteDRAM's default ControllerSettings except ctl_settings.py's (refresh
+postponing, the multiplexer's read and write times), which gen_ldc.py's simulation model shares.
 """
 import argparse
 import json
@@ -70,6 +73,7 @@ from litex.soc.interconnect.axi import (AXILiteInterface, AXILiteClockDomainCros
 from litex.soc.integration.soc_core import SoCCore
 
 from litedram.common import LiteDRAMNativePort
+from litedram.core.controller import ControllerSettings
 from litedram.phy import s7ddrphy
 from litedram.init import get_sdram_phy_py_header
 
@@ -82,6 +86,7 @@ from wl7ddrphy import WL7DDRPHY                                 # noqa: E402
 from ecc_ports import NativePortsECC                            # noqa: E402
 from csr_pipe import PipelinedCSR                               # noqa: E402
 from dfii_q import registered_injector                         # noqa: E402
+from ctl_settings import CONTROLLER                             # noqa: E402
 import calcpu                                                   # noqa: E402
 from calcpu import Cal, FirmwareBuilder, build_firmware, one_file  # noqa: E402
 
@@ -147,7 +152,8 @@ class OTPULiteDRAM(PipelinedCSR, SoCCore):
             # the software-injected commands (calibration) a cycle after their CSR write (dfii_q.py)
             with registered_injector():
                 self.add_sdram("sdram" + sfx, phy=p, module=MT41K256M8_tRFC160(f, "1:4"),
-                               with_soc_interconnect=False)
+                               with_soc_interconnect=False,
+                               controller_settings=ControllerSettings(**CONTROLLER))
             core = getattr(self, "sdram" + sfx)
             setattr(self, "phase" + sfx, DQSPhase(getattr(self, "wclk" + sfx) if phy == "wl" else
                                                   self.crg.mmcm if ch == 0 else self.crg.mmcm1))
