@@ -927,6 +927,51 @@ warmed).
 tests/test_lfm2_moe.py runs the fake card with CHASH's map and a split-format pool file,
 bit for bit against the ISA simulator.
 
+### 10.2 Session 3: the split pool on the card
+
+The card ran 4ae8dac on 2026-10-01, 02:37-02:50, on build B (79c5707a, reloaded after another
+session's qualification run; the selftest passed before and after), against the same references:
+
+| run | session 2 (`BoardDram`, slot-format pool) | session 3 (split pool, RAM tier, parts) |
+|---|---|---|
+| 35B-A3B, 16 tokens | 2.75 / 2.80 tok/s | **3.79 / 3.87** tok/s (+38%) |
+| 8B, 160 tokens | 10.03 / 10.10 (session 1) | **10.64 / 10.71** (+6%) |
+
+(wall / device). Both runs give the simulator's tokens and prefill logits bit for bit. The 35B
+gives HF's 16 tokens; the 8B differs from HF at token 4, as before (fp4, section 9).
+
+The 35B's decode token is 258 ms, and the host answers requests for 153 ms of it (242 in
+session 2):
+- 92 ms waiting for the DMA queue;
+- 53 ms in the main thread: staging (0.53 ms an expert, overlapped but for each request's first
+  part) and the directory;
+- the rest, the mailbox reads and `served`.
+
+The DMA thread wrote 107 ms of it, at 1.455 GB/s: the host is now bound by the link. Section
+11.3's event model, with this host, predicted 3.94 tok/s.
+
+The RAM tier: after the card host's reboot, 0.41 GB of the 35B's 7.24 GB of packed experts was
+in the page cache when the pool opened. The warm thread had all of it in by the end of the image
+build (552 s), and all of it was still resident at decode. The 8B's 4.12 GB went from 0 to all.
+
+`slot_bench` on the card (3 misses a request, 1.67 MB experts):
+
+| experts from | ms per expert | the DMA thread |
+|---|---|---|
+| RAM, slot format (the gather) | 1.72 | 1.44 GB/s |
+| the split pool as found after the reboot (the disk) | 3.84 | 1.33 GB/s |
+| the split pool warm, the first miss whole | 1.66 | 1.42 GB/s |
+| the split pool warm, in 2 parts (the default) | 1.54 | 1.39 GB/s |
+| the split pool warm, in 4 parts | 1.58 | 1.35 GB/s |
+| the slot-format pool warm (preadv, then the gather) | 1.84 | 1.41 GB/s |
+
+What is left:
+- **Small DMA calls (host).** Each directory entry and `served` changes one 64-byte beat, but
+  goes to the card as a whole 128-byte block: two DMA calls of about 50 us. One call each
+  would save about 7 ms a token (*estimate*).
+- **The misses themselves.** 93 a token at 1.19 ms each is 111 ms of link time. The next
+  levers are a better replacement policy and more slots.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
