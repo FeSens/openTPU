@@ -635,6 +635,33 @@ A host-written row fetched by `WAITW` (section 7) stays for rows that are not in
 all, such as E4B's per-layer embeddings. Phase 2's first 8B run kept the fp32 table (20 slots
 per layer).
 
+**An untied table on the host (`embed_host`).** A model whose int8 embedding table is its own
+(untied, as Qwen3.5-35B-A3B's 0.5 GB) can keep it on the host instead, the way E4B keeps its
+PLE records:
+- The card holds a slot of the image's rows (one for a MoE engine), each row a record: its
+  H int8 values, then its H / D scale words (the head's format), in whole MXU chunks
+  (`qwen3.embed_record`), and a row mailbox (`RowLayout`).
+- Before a run the host writes the run's rows into the slot (`Image.host_rows`, as for E4B).
+  In the card's generate loop each sampled token is posted to the mailbox (`MB.post`), the
+  host's `RowServer` writes its row into slot row 0 (one DMA call through the expert server's
+  `BoardDram`, in order with its writes), and the next token's gather waits for `served`
+  first (`MB.wait_served`, then `gather_row` of row 0). Data movement only: the host keeps
+  the table as the card would hold it (`qwen3.embed_store`).
+- The default: on for a MoE model with an int8 table of its own (its DRAM is expert slots),
+  off for a dense one unless its image does not fit with the table (the Engine then retries
+  with it on the host). A tied int8 head's rows stay the gather's. `Engine(embed_host=...)`
+  and `moe_card --embed-table host|card` choose.
+- Qwen3.5-35B-A3B at the board's 4 GiB: 34-35 slots a layer fit with the table on the card,
+  42 (1680) with it on the host (cap 512-4096). The model of section 10.3 (decayed use, Gen1)
+  gives 4.41 tok/s at 1560 slots and 4.45 at 1600, against 4.15 at the card runs' 1280
+  (*projection*). Its programs change (the gather's wait and the
+  post); every other model's are the same (sha256: E2B, E4B, LFM2.5-8B-A1B, the tiny MoEs;
+  the 35B with `embed_host=False`).
+- Tests: tests/test_qwen35_moe.py (prefill, the generate loop and the resident steps bit for
+  bit against the table on the card; the live fake card with both servers through one
+  `BoardDram`), test_lfm2_moe.py (the generate loop), test_qwen3.py (a dense model moved to
+  the host when its image does not fit, the same logits).
+
 ## 6. PCIe Gen2
 
 | Model | tok/s, Gen1 -> Gen2 | link busy, Gen1 -> Gen2 |
@@ -1276,8 +1303,11 @@ byte (BoardDram's one queue).
   replacing one; "lru" ignoring hints; BoardDram's writes of hinted parts equal to Board.write's
   (the bytes and split formats, with and without CHASH).
 - `tests/test_qwen35_moe.py`: the tiny Qwen3.5-MoE with hints, k + 1 slots, gives the logits and
-  the card's generated tokens of the same engine without hints bit for bit (ISA simulator);
-  on the live fake card (CHASH, a split pool through BoardDram, 64 KiB parts) hinted experts
-  land on idle polls, and the logits and tokens are the ISA simulator's without hints.
+  the card's generated tokens of the same engine without hints bit for bit (ISA simulator,
+  which calls the host only when the card waits: 96 hints, 107 hinted experts sent when the
+  route named them). On the live fake card (CHASH, a split pool, the embedding table on the
+  host: one BoardDram for the experts and the rows, 64 KiB parts) the hinted experts land on
+  idle polls (84 hints, 102 landed, 4 misses against 101 without hints), and the logits and
+  tokens are the ISA simulator's with the table on the card and no hints.
 - On the card: not yet. The plan is a session with the 35B, 16 tokens, by decayed use, with and
   without hints (`moe_card.py --hints on|off`; expect +5-6% at Gen1).

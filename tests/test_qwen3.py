@@ -35,6 +35,31 @@ def tiny():
     return m, W, Spec(256, 2, 4, 2, 128, 512, 1000)
 
 
+def test_the_embedding_table_goes_to_the_host_when_it_does_not_fit(tiny):
+    """A dense model's int8 embedding table of its own stays on the card (embed_host off),
+    unless the image does not fit with it: then the Engine keeps it on the host, the card
+    holding a slot of the prefill's rows, with the same logits (8-row prefill, steps); asked
+    to keep it on the card, the image does not fit."""
+    from dataclasses import replace
+    _, W, spec = tiny
+    spec = replace(spec, tied=False, embed="int8")
+    W = dict(W, **{"lm_head.weight": W["model.embed_tokens.weight"] * np.float32(1.25)})
+    big = device_config(spec, 256, rows=8, lookup=True, embed_host=False)
+    a = Engine(spec, W, cap=256, cfg=big, rows=8)
+    assert a.device_inputs and not a.image.embed_host and a.row_server is None
+    host = spec.image(big, 256, 1, 8, lookup=True, embed_host=True).nbytes
+    small = replace(big, DRAM_BYTES=-(-host // 4096) * 4096)
+    assert small.DRAM_BYTES < a.image.nbytes
+    b = Engine(spec, W, cap=256, cfg=small, rows=8)
+    assert b.image.embed_host and b.image.nbytes == host
+    with pytest.raises(MemoryError):
+        Engine(spec, W, cap=256, cfg=small, rows=8, embed_host=False)
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 13)]
+    assert np.array_equal(a.prefill(toks).view(np.uint32), b.prefill(toks).view(np.uint32))
+    for t in toks[:3]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+
+
 def test_tiny_matches_hf(tiny):
     m, W, spec = tiny
     toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 140)]  # > one KV block

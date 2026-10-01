@@ -38,6 +38,8 @@ from . import generate as G
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
+from ..host.offload import BackendDram, RowLayout, RowServer
+from ..kernels import mailbox as MB
 from ..kernels.gather import dequant_row, gather_row, onehot, onehot_blocks
 from ..kernels.lib import rmsnorm, rope, rope_rows, sigmoid, softcap
 from ..kernels.mlp import _chunk, swiglu_down
@@ -108,8 +110,8 @@ class Spec:
 
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
-              lookup: bool = False) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup)
+              lookup: bool = False, embed_host: bool | None = None) -> "Image":
+        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, embed_host)
 
 
 class Weights(Mapping):
@@ -257,20 +259,33 @@ def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
 
 # =============================================================================== lookup tables
 def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None, D: int = 128,
-                  head: tuple | None = None, M: int = 4) -> dict:
+                  head: tuple | None = None, M: int = 4, embed_host: bool = False,
+                  rows: int = 1) -> dict:
     """DRAM for the device-side inputs of a run-time position (RunPos): every token's embedding
     row, the RoPE cos / sin rows of every position, and the attention mask table
     (attention.Bucket: cap entries +inf, then a block of -inf). The embedding rows are fp32
     (flushed, as the host writes them), or with spec.embed "int8" int8 with a scale per D block
     (kernels.gather.gather_row, with its one-hot operand for M MXU columns): the LM head's
     rows when `head` (its data and scale addresses) is given -- a tied int8 head whole on one
-    slice -- else a table of their own."""
+    slice -- else a table of their own, or with `embed_host` a slot of `rows` of them that the
+    host fills from the table it keeps (embed_record: each row's int8 data, then its scale
+    words) and a mailbox for the generate loop's requests (opentpu.host.offload.RowLayout)."""
     block = block or ATTN_BLOCK
     half = len(rope_tables(spec, 0)[0])
     V, H = spec.vocab, spec.hidden
+    if embed_host and (getattr(spec, "embed", "f32") != "int8" or head is not None):
+        raise ValueError("embed_host: the model's int8 embedding table of its own (Spec.embed "
+                         "int8, not the tied int8 head's rows)")
     if getattr(spec, "embed", "f32") == "int8":
-        emb = {"embed_q": head, "own": False} if head is not None else \
-            {"embed_q": (b.alloc(V * H), b.alloc(4 * V * (H // D))), "own": True}
+        if head is not None:
+            emb = {"embed_q": head, "own": False}
+        elif embed_host:
+            rec = embed_record(H, D)
+            slot = b.alloc(rows * rec)
+            emb = {"embed_q": (slot, slot + H), "own": False, "host": True, "rec": rec,
+                   "rows": rows, "mbox": b.alloc(RowLayout.WORDS)}
+        else:
+            emb = {"embed_q": (b.alloc(V * H), b.alloc(4 * V * (H // D))), "own": True}
         emb.update(onehot=b.alloc(4 * M * onehot_blocks(D, M, "int8") * D), M=M)
     else:
         emb = {"embed": b.alloc(4 * V * H)}
@@ -287,6 +302,8 @@ def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
         e = F.ftz(np.asarray(W["model.embed_tokens.weight"], np.float32))
     elif lk["own"]:
         eq, es = Q.quantize_mxu(W["model.embed_tokens.weight"], "int8", lk["D"])
+    elif lk.get("host"):                    # the host's table, in the slot's record format
+        lk["store"] = embed_store(W["model.embed_tokens.weight"], lk["D"])
     for s in range(S):
         if "embed" in lk:
             put(s, lk["embed"], e)
@@ -308,12 +325,70 @@ def _lookup_desc(lk: dict, spec, cap: int) -> dict:
          "sin_t": _tdesc(lk["sin_t"], (cap, lk["half"])), "zmask": lk["zmask"]}
     if "embed" in lk:
         d["embed"] = _tdesc(lk["embed"], (spec.vocab, spec.hidden))
+    elif lk.get("host"):        # the slot: rows of records (the int8 row, then its scales)
+        a, sa = lk["embed_q"]
+        d["embed_q"] = QTensor(Affine(a), Affine(sa), (lk["rows"], spec.hidden), lk["rec"],
+                               lk["rec"], lk["D"], wf=Q.mxu_wf("int8"))
+        d["embed_mbox"] = mbox = lk["mbox"]
+        d["post_token"] = lambda tok: MB.post(mbox, tok)    # the generate loop's request
     else:
         d["embed_q"] = _qdesc(*lk["embed_q"], spec.vocab, spec.hidden, lk["D"])
+    if "embed" not in lk:
         M, D = lk["M"], lk["D"]
         d["onehot"] = _tdesc(lk["onehot"], (M, onehot_blocks(D, M, "int8") * D))
     d["gen"] = G.desc(lk["gen"], spec, cap)
     return d
+
+
+def embed_record(H: int, D: int) -> int:
+    """Bytes of one int8 embedding row in a host-filled slot (embed_host): its H int8 values,
+    then its H / D scale words (the LM head's format, quant.quantize_mxu), whole MXU chunks."""
+    return -(-(H + 4 * (H // D)) // ALIGN) * ALIGN
+
+
+def embed_store(table, D: int) -> np.ndarray:
+    """The int8 embedding table [V, H] the host keeps (embed_host), in the slot's record format
+    (embed_record): [V, record bytes] uint8, quantized as the on-card table would be."""
+    V, H = table.shape
+    out = np.zeros((V, embed_record(H, D)), np.uint8)
+    for r0 in range(0, V, Q.QUANT_ROWS):
+        q, sc = Q.quantize_mxu(np.asarray(table[r0:r0 + Q.QUANT_ROWS], np.float32), "int8", D)
+        n = len(q)
+        out[r0:r0 + n, :H] = np.asarray(q).view(np.uint8).reshape(n, H)
+        out[r0:r0 + n, H:H + 4 * (H // D)] = np.asarray(sc).view(np.uint8).reshape(n, -1)
+    return out
+
+
+class EmbedHost:
+    """An Image's side of embed_host (its int8 embedding table on the host, the card holding a
+    slot of the run's rows: _lookup_alloc): the rows the host writes before a run, and the
+    server of the generate loop's requests (each sampled token's row into slot row 0). Data
+    movement only, as Gemma 4 E4B's PLE records (docs/offload.md 5.9)."""
+
+    @property
+    def embed_host(self) -> bool:
+        return bool(getattr(self, "lookup", None) and self.lookup.get("host"))
+
+    def host_rows(self, tokens) -> list:
+        """[(slot address, the tokens' records)] before a run of these token rows ([] with the
+        table on the card)."""
+        if not self.embed_host:
+            return []
+        lk = self.lookup
+        if len(tokens) > lk["rows"]:
+            raise ValueError(f"{len(tokens)} tokens, the embedding slot holds {lk['rows']}")
+        return [(lk["embed_q"][0], lk["store"][[int(t) for t in tokens]].reshape(-1))]
+
+    def row_server(self, backend) -> RowServer | None:
+        """The host's server of the generate loop's requests, on the backend's DRAM (the
+        Engine gives it the expert server's memory when there is one); None with the table on
+        the card."""
+        if not self.embed_host:
+            return None
+        lk = self.lookup
+        return RowServer(BackendDram(backend), RowLayout(lk["mbox"], lk["embed_q"][0],
+                                                         lk["rec"]),
+                         lambda t: lk["store"][t])
 
 
 class Embedding:
@@ -361,6 +436,12 @@ def _tokens_arg(image, tokens, rows) -> dict:
     if len(tokens) != len(rows):
         raise ValueError(f"{len(tokens)} tokens for {len(rows)} rows")
     return {"tokens": [int(t) for t in tokens]}
+
+
+def has_embed_host(spec) -> bool:
+    """The model's image can keep its int8 embedding table on the host (embed_host)."""
+    import inspect
+    return "embed_host" in inspect.signature(spec.image).parameters
 
 
 def has_lookup(spec) -> bool:
@@ -546,7 +627,7 @@ def _tdesc(addr: int, shape) -> Tensor:
     return Tensor(Affine(addr), shape, tuple(reversed(strides)))
 
 
-class Image:
+class Image(EmbedHost):
     """Per-slice DRAM layout of a Qwen3 model. Every slice uses the same addresses.
 
     [ I/O: x_in, cos, sin | final norm | logits ] [ layer 0 block ] ... [ layer L-1 block ]
@@ -562,7 +643,8 @@ class Image:
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
-                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False):
+                 wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
+                 embed_host: bool | None = None):
         spec.check(cfg)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
@@ -612,8 +694,14 @@ class Image:
                      b.alloc(4 * self.v_loc * (H // D)))
         # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
         shared = spec.tied and self.head_format == "int8" and S == 1
+        if embed_host is None:      # dense: the int8 table stays on the card (the Engine moves
+            embed_host = False      # it to the host when the image does not fit otherwise)
+        if embed_host and not lookup:
+            raise ValueError("embed_host needs the image's lookup tables (lookup=True)")
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
-                                    M=cfg.MCOLS) if lookup else {}
+                                    M=cfg.MCOLS, embed_host=bool(embed_host),
+                                    rows=rows) if lookup else {}
+        self.choices = {"embed_host": self.embed_host}     # (the compile worker's image)
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
@@ -952,9 +1040,17 @@ def _inputs(m, pos, tok=None):
 
 def _embed(m, tok):
     """Token `tok`'s embedding row [1, H] (an int or a run-time value) from the image's tables:
-    the fp32 table's row, or the int8 row gathered on the device (Spec.embed "int8")."""
+    the fp32 table's row, or the int8 row gathered on the device (Spec.embed "int8"); with the
+    table on the host (embed_host) the slot's row 0, once the host has served every request
+    (the generate loop's post of the token; before other runs the host writes the row)."""
     eq = getattr(m, "embed_q", None)
-    return ol.load(m.embed[tok:tok + 1, :]) if eq is None else next(_gather(m, eq, [tok]))
+    if eq is None:
+        return ol.load(m.embed[tok:tok + 1, :])
+    mbox = getattr(m, "embed_mbox", None)
+    if mbox is not None:
+        MB.wait_served(mbox)
+        tok = 0
+    return next(_gather(m, eq, [tok]))
 
 
 def _inputs_rows(m, rows, tokens=None):
@@ -975,8 +1071,9 @@ def _inputs_rows(m, rows, tokens=None):
     for _, p0, r0, n in _runs(rows):
         ol.load(m.cos_t[p0:p0 + n, :], out=c[r0:r0 + n, :])
         ol.load(m.sin_t[p0:p0 + n, :], out=s_[r0:r0 + n, :])
-    if eq is not None:
-        for r, g in enumerate(_gather(m, eq, tokens)):
+    if eq is not None:              # embed_host: the slot's rows (the host writes them first)
+        idx = range(len(tokens)) if getattr(m, "embed_mbox", None) is not None else tokens
+        for r, g in enumerate(_gather(m, eq, idx)):
             x[r:r + 1, :].set(g)
     return x, c, s_
 
@@ -1138,11 +1235,12 @@ def _lm_head_rows(x, m, spec, logit_rows):
 # =============================================================================== engine
 def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: str = "int8",
                   head_format: str | None = None, lookup: bool = False,
-                  experts: int | None = None, **kw) -> Config:
+                  experts: int | None = None, embed_host: bool | None = None, **kw) -> Config:
     """The design configuration with DRAM sized for this model (power of two MiB)."""
     probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows, wformat,
                        head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}),
-                       **({"experts": experts} if experts is not None else {}))
+                       **({"experts": experts} if experts is not None else {}),
+                       **({"embed_host": embed_host} if embed_host is not None else {}))
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
 
@@ -1317,19 +1415,31 @@ class Engine:
                  backend="isa", block: int = ATTN_BLOCK, batch: int = 1,
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
-                 resident: bool = False, experts: int | None = None, pool_file=None):
+                 resident: bool = False, experts: int | None = None, pool_file=None,
+                 embed_host: bool | None = None):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
         if experts is not None:             # a MoE model's expert slots per layer
             wkw["experts"] = experts
+        if embed_host is not None:          # the int8 embedding table on the host (default: the
+            wkw["embed_host"] = embed_host  # image's choice, a MoE's untied table there)
         # an int8 embedding is dequantized on the device (the image's tables), never the host
         int8_embed = getattr(spec, "embed", "f32") == "int8"
         lookup = (bool(resident) or int8_embed) and batch == 1 and has_lookup(spec)
         if lookup:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
-        self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
+        try:
+            self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
+        except MemoryError as e:            # an int8 embedding table of its own that does not
+            if embed_host is not None or not (lookup and int8_embed and has_embed_host(spec)):
+                raise                       # fit beside the rest: on the host (docs/offload.md
+            try:                            # 5.9)
+                self.image = spec.image(self.cfg, cap, batch, self.rows,
+                                        **{**wkw, "embed_host": True})
+            except (MemoryError, ValueError):
+                raise e from None
         # the compile worker's image is built the same way, with the choices this image made
         # (Gemma 4: the PLE table's place and format, the formats by fit)
         self._image_kw = {**wkw, **getattr(self.image, "choices", {})}
@@ -1360,6 +1470,8 @@ class Engine:
         # token's PLE record into the slot, opentpu.host.offload.RowServer)
         rs = getattr(self.image, "row_server", None)
         self.row_server = rs(self.backend) if rs is not None else None
+        if self.row_server is not None and self.server is not None:
+            self.row_server.mem = self.server.mem   # one memory, in order (BoardDram's queue)
         servers = [x for x in (self.server, self.row_server) if x is not None]
         if servers:
             poll = servers[0].poll if len(servers) == 1 else \
@@ -1593,6 +1705,9 @@ class Engine:
     def _write_host_rows(self, tokens) -> None:
         if self.row_server is not None:     # a request the last run posted, served first: its
             self.row_server.poll()          # row must not land after these
+            flush = getattr(self.row_server.mem, "flush", None)
+            if flush is not None:           # (BoardDram: written by its DMA thread)
+                flush()
         if self._host_rows is not None:
             for a, v in self._host_rows(tokens):
                 for s in range(self.cfg.S):

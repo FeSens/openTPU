@@ -76,6 +76,13 @@ def _engine(spec, W, experts=None, **kw):
     return Engine(spec, W, cap=256, cfg=cfg, experts=experts, **kw)
 
 
+def _untied(spec, W):
+    """The tiny model with an LM head of its own: its int8 embedding table is the image's own
+    (a tied int8 head's rows are gathered from the head)."""
+    W = dict(W, **{"lm_head.weight": W["model.embed_tokens.weight"] * np.float32(1.25)})
+    return dataclasses.replace(spec, tied=False, embed="int8"), W
+
+
 def test_reference_matches_hf(tiny):
     m, W, spec = tiny
     toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 24)]
@@ -235,17 +242,23 @@ def test_compile_worker_builds_the_moe_image(tiny):
         Q._WORKER = None
 
 
-@pytest.mark.parametrize("embed", ["f32", "int8"])
+@pytest.mark.parametrize("embed", ["f32", "int8", "host"])
 def test_the_card_generates_with_streamed_experts(tiny, embed):
     """The decode loop on the card (autodecode's generate program, resident decode) with k
     slots per layer: the experts stream between the tokens it picks, and it gives the host's
-    resident loop token for token (int8: the embedding row gathered from the tied head)."""
+    resident loop token for token (int8: the embedding row gathered from the tied head; host:
+    an int8 table of its own kept on the host, embed_host, a MoE's default: each sampled
+    token's row asked of the host's row server, against the table on the card)."""
     _, W, spec = tiny
-    spec = dataclasses.replace(spec, embed=embed)
-    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=K)
-    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K)
-            for _ in range(2))
-    assert a.can_generate
+    if embed == "host":
+        spec, W = _untied(spec, W)
+    else:
+        spec = dataclasses.replace(spec, embed=embed)
+    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=K, embed_host=False)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K, **kw)
+            for kw in ({}, {"embed_host": False}))
+    assert a.can_generate and a.image.embed_host == (embed == "host") and not b.image.embed_host
+    assert (a.row_server is None) == (embed != "host")
     toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 20)]
     t0 = int(np.argmax(a.prefill(toks)))
     assert int(np.argmax(b.prefill(toks))) == t0
@@ -256,6 +269,8 @@ def test_the_card_generates_with_streamed_experts(tiny, embed):
     misses = a.server.misses
     assert a.generate_card(t0, 12, stop_ids=[]) == ref
     assert a.server.misses > misses
+    if embed == "host":                     # each sampled token's row, from the host
+        assert a.row_server.seq >= 11 and b.image.nbytes - a.image.nbytes >= 1000 * 256
 
 
 def test_moe_on_board_model(tiny, have_verilator):
