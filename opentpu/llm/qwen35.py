@@ -65,7 +65,7 @@ from .. import fp32 as F
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
-from ..compiler import Affine, KVDesc, QTensor, Tensor
+from ..compiler import Affine, CompileError, KVDesc, QTensor, Tensor, current
 from ..host.offload import ExpertServer, Layout
 from ..isasim import Config
 from ..kernels.layouts import head_parallel_attention_weights
@@ -76,13 +76,16 @@ from .lfm2 import plan, run_layers
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
-from .qwen3 import (ATTN_BLOCK, RunPos, _attention, _attention_rows, _Bump, _fake_q, _fake_w,
-                    _formats, _inputs, _inputs_rows, _lm_head, _lm_head_rows, _lookup_alloc,
-                    _lookup_build, _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg, _tokens_arg,
-                    compile_decode, rope_tables, EmbedHost)
+from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, RunPos, _attention, _attention_rows, _Bump,
+                    _fake_q, _fake_w, _formats, _inputs, _inputs_rows, _lm_head, _lm_head_rows,
+                    _lookup_alloc, _lookup_build, _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg,
+                    _tokens_arg, compile_decode, rope_tables, EmbedHost)
 
 LIN, ATTN = "linear", "attn"
 PAIR_LOOP = 8       # pairs of DeltaNet heads per slice that decode unrolled at a run-time position
+MTP_VOCAB = 32768   # the MTP's draft head: the fp4 rows of this many lowest ids (byte-level BPE
+                    # ids follow merge frequency: they cover 94% of the generated tokens;
+                    # docs/mtp.md 7.1)
 EMBED_F32_MAX = 2 << 30     # bytes: a larger fp32 embedding table (over half the card's DRAM,
 #                             Qwen3.5-4B and up) is int8, gathered from the head (Spec.embed)
 
@@ -120,6 +123,9 @@ class Spec:
                                     # shared expert (ffn: its width, the layer block's MLP)
     formats: str = ""       # weight formats per kind over the image's wformat (KINDS)
     mix: str = ""           # the recommended mix (wformat "mix": formats.named, MIXES)
+    mtp: bool = False       # the image holds the MTP drafter (the checkpoint's mtp.* layer, a
+                            # draft head) and two slots of every DeltaNet state and convolution
+                            # window for the speculative verify (opentpu/llm/mtp.py, docs/mtp.md 9)
 
     @property
     def layers(self) -> int:
@@ -181,6 +187,9 @@ class Spec:
                 (self.vocab % S == 0, f"vocab {self.vocab} % S"),
                 (max(self.ffn, self.n_q * self.head_dim, self.hidden) <= cfg.ACT_BLOCKS * D,
                  "an inner dimension exceeds ACT RAM")]
+        if self.mtp:
+            need += [(self.moe is None, "MTP decoding of a MoE model"),
+                     (S == 1, "MTP decoding runs on one slice")]
         if self.moe is not None:
             mo = self.moe
             need += [(S == 1, "MoE layers run on one slice"),
@@ -224,8 +233,9 @@ def _rot(v, c, s, rd):
     return np.concatenate([v1 * c - v2 * s, v2 * c + v1 * s, v[..., rd:]], axis=-1)
 
 
-def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
-    """fp32 numpy forward of the whole sequence (causal); returns logits [T, vocab]."""
+def reference_logits(spec: Spec, W: dict, tokens, hidden: bool = False):
+    """fp32 numpy forward of the whole sequence (causal); returns logits [T, vocab] (hidden:
+    and the final norm's rows [T, H], the MTP layer's input)."""
     tokens = list(tokens)
     T, d, G, eps, K = len(tokens), spec.head_dim, spec.n_q // spec.n_kv, spec.eps, spec.conv_k
     nh, nk, dk, dv = spec.lin_heads, spec.lin_nk, spec.lin_dk, spec.lin_dv
@@ -292,7 +302,48 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
         x = x + y
     x = _norm(x, g1("model.norm.weight"), eps)
     head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
-    return x @ head.T
+    return (x @ head.T, x) if hidden else x @ head.T
+
+
+def mtp_reference(spec: Spec, W: dict, hid, tokens) -> np.ndarray:
+    """fp32 numpy MTP drafter (docs/mtp.md 6.1) over T rows at positions 0 .. T-1: row q takes
+    the final-normed hidden at q (hid [T, H]) and the token at q + 1 (tokens[q]); returns the
+    draft head's logits [T, min(MTP_VOCAB, vocab)] (causal over the rows, its own KV)."""
+    T, d, G, eps = len(tokens), spec.head_dim, spec.n_q // spec.n_kv, spec.eps
+    f32 = np.float32
+    emb = W["model.embed_tokens.weight"]
+
+    def g1(n):
+        return (1 + W[n]).astype(f32)
+
+    e = _norm(emb[list(tokens)].astype(f32), g1("mtp.pre_fc_norm_embedding.weight"), eps)
+    h = _norm(np.asarray(hid, f32), g1("mtp.pre_fc_norm_hidden.weight"), eps)
+    x = np.concatenate([e, h], axis=1) @ W["mtp.fc.weight"].T
+    cs = [rope_tables(spec, p) for p in range(T)]
+    cos = np.stack([c for c, _ in cs])[:, None, :]
+    sin = np.stack([s for _, s in cs])[:, None, :]
+    mask = np.triu(np.full((T, T), -np.inf, f32), 1)
+    p, a = "mtp.layers.0.", "mtp.layers.0.self_attn."
+    hn = _norm(x, g1(p + "input_layernorm.weight"), eps)
+    qg = (hn @ W[a + "q_proj.weight"].T).reshape(T, spec.n_q, 2 * d)
+    q, gate = qg[..., :d], qg[..., d:]
+    k = (hn @ W[a + "k_proj.weight"].T).reshape(T, spec.n_kv, d)
+    v = (hn @ W[a + "v_proj.weight"].T).reshape(T, spec.n_kv, d)
+    q = _rot(_norm(q, g1(a + "q_norm.weight"), eps), cos, sin, spec.rope_dim)
+    k = _rot(_norm(k, g1(a + "k_norm.weight"), eps), cos, sin, spec.rope_dim)
+    o = np.zeros((T, spec.n_q, d), f32)
+    for hq in range(spec.n_q):
+        sc = q[:, hq] @ k[:, hq // G].T / math.sqrt(d) + mask
+        sc = np.exp(sc - sc.max(axis=1, keepdims=True))
+        o[:, hq] = (sc / sc.sum(axis=1, keepdims=True)) @ v[:, hq // G]
+    o = o / (1 + np.exp(-gate))
+    x = x + o.reshape(T, -1) @ W[a + "o_proj.weight"].T
+    hn = _norm(x, g1(p + "post_attention_layernorm.weight"), eps)
+    x = x + (_silu(hn @ W[p + "mlp.gate_proj.weight"].T) * (hn @ W[p + "mlp.up_proj.weight"].T)) \
+        @ W[p + "mlp.down_proj.weight"].T
+    x = _norm(x, g1("mtp.norm.weight"), eps)
+    head = emb if spec.tied else W["lm_head.weight"]
+    return x @ head[:min(MTP_VOCAB, spec.vocab)].T
 
 
 def _expert(W, p: str, e: int):
@@ -459,15 +510,24 @@ class DeltaNetParts:
 
     shared (Image.shared): the pair's two value heads have one key head; its rows are the key
     head's q and k once, then v of a, of b, then z of a, of b, and its taps rows (block, tap) of
-    four blocks of dk (q, k, v a, v b) instead of two of 2 dk + dv (the heads)."""
+    four blocks of dk (q, k, v a, v b) instead of two of 2 dk + dv (the heads).
+
+    Slots (Spec.mtp): the states and windows come in two slots, `slot` the one holding the
+    committed ones (state, window), the other at sbytes bytes / wwords words after slot 0's
+    (the speculative verify's rejectable row writes there: docs/mtp.md 9). tp: the taps' words
+    before the window in cv."""
 
     def __init__(self, nl: int, og: int, wh: QTensor, cv: Tensor, state: Tensor,
                  wout: QTensor, H: int, gs: int = 0, ps: int = 0, eb: Tensor | None = None,
-                 shared: bool = False):
+                 shared: bool = False, tp: int = 0, wwords: int = 0, slot: int = 0,
+                 sbytes: int = 0):
         self.nl, self.og, self.gp, self.H, self.shared = nl, og, og // 2, H, shared
         self.grouped, self.gs, self.ps = gs > 0, gs, ps
         self._wh, self._cv, self._state, self._wout, self._eb = wh, cv, state, wout, eb
         self.R2 = wh.shape[0] if self.grouped else wh.shape[0] // (nl // 2)
+        self.tp, self.wwords, self.slot, self.sbytes = tp, wwords, slot, sbytes
+        if slot and not sbytes:
+            raise CompileError("state slot 1 needs an image with slots (Spec.mtp)")
 
     def split(self, p) -> tuple:
         """(g, i) of pair p (a loop expression: its loop terms multiples of og / 2)."""
@@ -503,12 +563,26 @@ class DeltaNetParts:
         c = self._cv
         return Tensor(c.base + self._off(p), c.shape, c.strides)
 
-    def state(self, p, a: int) -> Tensor:
-        """The state of head a (0, 1) of pair p."""
+    def state(self, p, a: int, slot: int | None = None) -> Tensor:
+        """The state of head a (0, 1) of pair p: in the committed slot, or in `slot`."""
+        slot = self.slot if slot is None else slot
+        if slot and not self.sbytes:
+            raise CompileError("state slot 1 needs an image with slots (Spec.mtp)")
         if not self.grouped:
-            return self._state[2 * self.index(p) + a]
-        s = self._state
-        return Tensor(s.base + self._off(p), s.shape, s.strides)[a]
+            t = self._state[2 * self.index(p) + a]
+        else:
+            s = self._state
+            t = Tensor(s.base + self._off(p), s.shape, s.strides)[a]
+        return Tensor(t.base + slot * self.sbytes, t.shape, t.strides) if slot else t
+
+    def window(self, p, slot: int | None = None) -> Tensor:
+        """Pair p's convolution window (K - 1 rows of its channels, oldest first, after its
+        taps): in the committed slot, or in `slot`."""
+        slot = self.slot if slot is None else slot
+        if slot and not self.sbytes:
+            raise CompileError("window slot 1 needs an image with slots (Spec.mtp)")
+        c = self.cv(p)
+        return Tensor(c.base + 4 * (self.tp + slot * self.wwords), (self.wwords,), (1,))
 
     def wout(self, g) -> QTensor:
         if not self.grouped:
@@ -565,6 +639,13 @@ class Image(EmbedHost):
 
     Weight formats as qwen3.Image (`formats` over the KINDS of this file; a MoE's experts in
     `wformat`, its router int8).
+
+    Spec.mtp (MTP decoding, opentpu/llm/mtp.py): every DeltaNet state and convolution window
+    has two slots (the state's second after the first, a pair's second window after its
+    first), one more attention layer block after the model's holds the MTP layer
+    (mtp.layers.0) with its own KV cache, then its norms, fc and the draft head (fp4 rows of
+    the MTP_VOCAB lowest ids); the I/O area gains `hid` (the final norm's rows) and `draft`
+    (each row's draft id).
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
@@ -607,7 +688,9 @@ class Image(EmbedHost):
         self.nb, self.bw = (4, dk) if self.shared else (2, self.C)
         self.CP = self.nb * self.bw
         self.RP = self.CP + 2 * dv                      # a pair's projected rows (then z of a, b)
-        self.CVW = K * self.CP + (K - 1) * self.CP      # a pair's taps, then its window
+        self.CV0 = K * self.CP + (K - 1) * self.CP      # a pair's taps, then its window
+        self.slots = 2 if spec.mtp else 1               # DeltaNet state and window slots
+        self.CVW = self.CV0 + (self.slots - 1) * (K - 1) * self.CP     # (then window 1)
         self.plan = plan(spec.kinds)
         b = _Bump()
         self.io = {"x": b.alloc(4 * H * rows), "cos": b.alloc(2 * spec.rope_dim * rows),
@@ -616,6 +699,8 @@ class Image(EmbedHost):
                    "hs": b.alloc(4 * 2 * self.nl),     # per pair: decays of a, b; betas
                    "gr": b.alloc(4 * 2 * self.nl * rows),  # chunked prefill, per row: decays,
                    "on": b.alloc(4 * 4 * spec.lin_dv * rows)}  # betas; a head group's outputs
+        if spec.mtp:                # the final norm's rows (the MTP's input), the draft ids
+            self.io.update(hid=b.alloc(4 * H * rows), draft=b.alloc(4 * rows))
         self.layer0 = b.next
         lb = _Bump()                                    # offsets inside one layer block
         common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
@@ -647,7 +732,9 @@ class Image(EmbedHost):
             pb, gb = _Bump(), _Bump()
             fd = self.mf["wh"]
             self.pofs = {"wh": (pb.alloc(self.RP * rb(H, fd)), pb.alloc(4 * self.RP * (H // D))),
-                         "cv": pb.alloc(4 * self.CVW), "state": pb.alloc(4 * 2 * dv * dk)}
+                         "cv": pb.alloc(4 * self.CVW),
+                         "state": pb.alloc(4 * 2 * dv * dk * self.slots)}
+            self.sbytes = 4 * 2 * dv * dk               # a pair's state slots: [slot, head]
             self.PS = pb.next                           # a pair's block, bytes
             for _ in range(og // 2):
                 gb.alloc(self.PS)
@@ -658,7 +745,8 @@ class Image(EmbedHost):
             lin["groups"] = lnb.alloc(nl // og * self.GS)
         else:
             lin.update(cv=lnb.alloc(4 * nl // 2 * self.CVW),  # per pair: taps, then the ring
-                       state=lnb.alloc(4 * nl * dv * dk))
+                       state=lnb.alloc(4 * nl * dv * dk * self.slots))
+            self.sbytes = 4 * nl * dv * dk              # the layer's states: [slot, head]
         ab = _Bump(lb.next)
         attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
         for kind, bump, L in ((LIN, lnb, lin), (ATTN, ab, attn)):
@@ -672,10 +760,17 @@ class Image(EmbedHost):
         self.LS = (max(lnb.next, ab.next) + 4095) // 4096 * 4096
         n_attn = spec.kinds.count(ATTN)
         head = cap * d + 4 * cap * (d // D) + d * cap + 4 * cap
-        self.kv_bytes = (n_attn * self.nkv_loc * head                   # KV cache, conv ring
-                         + (spec.layers - n_attn) * 4 * (nl // 2 * (K - 1) * self.CP
-                                                         + nl * dv * dk))  # and state
-        b.next = self.layer0 + spec.layers * self.LS
+        self.kv_bytes = ((n_attn + spec.mtp) * self.nkv_loc * head      # KV cache, conv ring
+                         + (spec.layers - n_attn) * 4 * self.slots *
+                         (nl // 2 * (K - 1) * self.CP + nl * dv * dk))   # and state
+        b.next = self.layer0 + (spec.layers + spec.mtp) * self.LS     # (the MTP layer block)
+        self.mtpo, self.nd = {}, min(MTP_VOCAB, spec.vocab)
+        if spec.mtp:                # the MTP's norms (embedding, hidden, output), fc, draft head
+            self.mtpo = {"ge": b.alloc(4 * H), "gh": b.alloc(4 * H), "gm": b.alloc(4 * H),
+                         "fc": (b.alloc(H * rb(2 * H, self.mf["wq"])),      # (attn's)
+                                b.alloc(4 * H * (2 * H // D))),
+                         "dh": (b.alloc(self.nd * Q.row_bytes(H, "fp4", D)),
+                                b.alloc(4 * self.nd * (H // D)))}
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
         # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
@@ -751,8 +846,11 @@ class Image(EmbedHost):
         for s in range(S):
             put(s, self.io["gf"], g1("model.norm.weight"))
         NK, rk = spec.lin_nk * dk, spec.lin_heads // spec.lin_nk
-        for i, kind in enumerate(spec.kinds):
-            p, base = f"model.layers.{i}.", self.layer0 + i * self.LS
+        layers = [(i, kind, f"model.layers.{i}.") for i, kind in enumerate(spec.kinds)]
+        if spec.mtp:                                # the MTP layer: one more attention block
+            layers.append((spec.layers, ATTN, "mtp.layers.0."))
+        for i, kind, p in layers:
+            base = self.layer0 + i * self.LS
             Lo = {k: (tuple(base + x for x in v) if isinstance(v, tuple) else
                       (base + v if isinstance(v, int) else v)) for k, v in self.lofs[kind].items()}
             for s in range(S):
@@ -835,6 +933,13 @@ class Image(EmbedHost):
                       "int8")
                 put(0, Lo["gbase"], f32([i * spec.moe.E]))
         head = W["model.embed_tokens.weight"] if spec.tied else W["lm_head.weight"]
+        if spec.mtp:                # (one slice: Spec.check)
+            mo = self.mtpo
+            for k, n in (("ge", "pre_fc_norm_embedding"), ("gh", "pre_fc_norm_hidden"),
+                         ("gm", "norm")):
+                put(0, mo[k], g1(f"mtp.{n}.weight"))
+            put_q(mo["fc"], [W["mtp.fc.weight"]], mf["wq"])
+            put_q(mo["dh"], [head[:self.nd]], "fp4")
         put_q(self.head, rows(head, self.v_loc), self.head_format)
         if self.lookup:
             _lookup_build(put, S, W, spec, self.cap, self.lookup)
@@ -868,9 +973,10 @@ class Image(EmbedHost):
                                                 "block": block, **_tok_arg(self, tok)}).finish()
                 for s in range(self.cfg.S)]
 
-    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None,
+                     slot: int = 0, fork: bool = False, hidden: bool = False) -> list:
         """One program per slice: consecutive positions of the sequence at once
-        (qwen35_rows)."""
+        (qwen35_rows); slot, fork, hidden: MTP decoding's (qwen35_rows, docs/mtp.md 9)."""
         if self.spec.moe is not None:
             raise ValueError("a MoE model runs its prompt through the decode step (its MoE "
                              "block routes one token): rows=1")
@@ -878,17 +984,42 @@ class Image(EmbedHost):
             raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
         if any(r != (0, rows[0][1] + i) for i, r in enumerate(rows)):
             raise ValueError("Qwen3.5 rows must be consecutive positions of sequence 0")
-        return [qwen35_rows.trace(self.cfg, s, {"m": self.descriptors(s), "p0": rows[0][1],
+        if (fork or hidden) and not self.spec.mtp:
+            raise ValueError("fork / hidden rows need an MTP image (Spec.mtp)")
+        mtp = {"fork": True} if fork else {}
+        if hidden:
+            mtp["hidden"] = True
+        return [qwen35_rows.trace(self.cfg, s, {"m": self.descriptors(s, slot), "p0": rows[0][1],
                                                 "R": len(rows), "logit_rows": list(logit_rows),
-                                                "block": block,
+                                                "block": block, **mtp,
                                                 **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
+    def compile_mtp(self, p0: int, R: int, tokens=None, block: int = ATTN_BLOCK,
+                    keep: bool = False) -> list:
+        """One program per slice: the MTP drafter over R rows at positions p0 .. (qwen35_mtp;
+        Spec.mtp), the tokens' embedding rows from the image's tables (`tokens`) or the I/O
+        area's x rows (the host's, as qwen35_rows'). keep: the draft head's logits to the I/O
+        area's logits rows too."""
+        if not self.spec.mtp:
+            raise ValueError("the MTP drafter needs an MTP image (Spec.mtp)")
+        if not 0 < R <= self.rows:
+            raise ValueError(f"{R} MTP rows, the image's I/O area holds {self.rows}")
+        rows = [(0, p0 + r) for r in range(R)]
+        return [qwen35_mtp.trace(self.cfg, s, {"m": self.descriptors(s), "p0": p0, "R": R,
+                                               "block": block, "keep": keep,
+                                               **_tokens_arg(self, tokens, rows)}).finish()
+                for s in range(self.cfg.S)]
+
     # ---- kernel descriptors
-    def descriptors(self, sid: int) -> SimpleNamespace:
+    def descriptors(self, sid: int, slot: int = 0) -> SimpleNamespace:
+        """The kernels' descriptors of slice sid; `slot`: the DeltaNet states' and windows'
+        committed slot (DeltaNetParts; Spec.mtp)."""
         spec, cfg = self.spec, self.cfg
         D, d, H, K, n = cfg.D, spec.head_dim, spec.hidden, spec.conv_k, self.h_loc
         dk, dv, nl, C = spec.lin_dk, spec.lin_dv, self.nl, self.C
+        sl = dict(tp=K * self.CP, wwords=(K - 1) * self.CP, slot=slot,
+                  sbytes=self.sbytes if self.slots > 1 else 0)
 
         def layer(li, kind):
             """Descriptors of layer `li` (an int or a hardware-loop expression) of `kind`."""
@@ -928,16 +1059,18 @@ class Image(EmbedHost):
                     ns.dn = DeltaNetParts(
                         nl, og, QTensor(g0 + whd, g0 + whs, (R2, H), Q.row_bytes(H, fm, D),
                                         4 * (H // D), D, wf=wf),
-                        Tensor(g0 + self.pofs["cv"], (self.CVW,), (1,)),
+                        Tensor(g0 + self.pofs["cv"], (self.CV0,), (1,)),
                         Tensor(g0 + self.pofs["state"], (2, dv, dk), (dv * dk, dk, 1)),
                         QTensor(g0 + wod, g0 + wos, (H, og * dv), Q.row_bytes(og * dv, fm, D),
                                 4 * (og * dv // D), D, wf=wf), H, self.GS, self.PS,
-                        Tensor(g0 + self.gofs["eb"], (og // 2, 4), (4, 1)), self.shared)
+                        Tensor(g0 + self.gofs["eb"], (og // 2, 4), (4, 1)), self.shared, **sl)
                 else:
-                    ns.cv = Tensor(off + lofs["cv"], (nl // 2, self.CVW), (self.CVW, 1))
+                    # (a pair's taps and window 0: the decode loads them at once; window 1
+                    # after them, DeltaNetParts.window)
+                    ns.cv = Tensor(off + lofs["cv"], (nl // 2, self.CV0), (self.CVW, 1))
                     ns.state = Tensor(off + lofs["state"], (nl, dv, dk), (dv * dk, dk, 1))
                     ns.dn = DeltaNetParts(nl, og, ns.wh, ns.cv, ns.state, ns.wout, H,
-                                          shared=self.shared)
+                                          shared=self.shared, **sl)
             else:
                 ns.qn = Tensor(off + lofs["qn"], (d,), (1,))
                 ns.kn = Tensor(off + lofs["kn"], (d,), (1,))
@@ -951,8 +1084,20 @@ class Image(EmbedHost):
             L = self.offload
             dev = SimpleNamespace(mbox=L.mbox, served=L.served, dir=L.dir, fmt=self.fmt,
                                   hint_off=L.layers * L.E)
+        mtp = {}
+        if spec.mtp:
+            mo, ff = self.mtpo, self.mf["wq"]
+            mtp = dict(hid=_tdesc(self.io["hid"], (self.rows, H)), nd=self.nd,
+                       draft=_tdesc(self.io["draft"], (self.rows,)),
+                       mtp=SimpleNamespace(
+                           layer=layer(spec.layers, ATTN),
+                           ge=_tdesc(mo["ge"], (H,)), gh=_tdesc(mo["gh"], (H,)),
+                           gm=_tdesc(mo["gm"], (H,)),
+                           fc=QTensor(*mo["fc"], (H, 2 * H), Q.row_bytes(2 * H, ff, D),
+                                      4 * (2 * H // D), D, wf=Q.mxu_wf(ff)),
+                           dh=_qdesc(*mo["dh"], self.nd, H, D, "fp4")))
         return SimpleNamespace(
-            spec=spec, layer=layer, plan=self.plan, moe_dev=dev,
+            spec=spec, layer=layer, plan=self.plan, moe_dev=dev, **mtp,
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (spec.rope_dim // 2,)),
             sin=_tdesc(self.io["sin"], (spec.rope_dim // 2,)), g_final=_tdesc(self.io["gf"], (H,)),
             logits=_tdesc(self.io["logits"], (1, spec.vocab)),
@@ -1063,8 +1208,12 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
             ol.dot(xs, dn.wh(p)[c0:c1, :], out=P[t][:, c0:c1])
 
     def fetch_cv(p):
-        """Pair p's taps and convolution window (one load)."""
-        ol.load(dn.cv(p), out=CV)
+        """Pair p's taps and convolution window (one load; slot 1's window: two)."""
+        if dn.slot:
+            ol.load(dn.cv(p)[0:TP], out=CV[0:TP])
+            ol.load(dn.window(p), out=CV[TP:TP + (K - 1) * CP])
+        else:
+            ol.load(dn.cv(p), out=CV)
 
     def fetch_eb(p, t):
         ol.load(dn.gates(p, hs), out=EB[t])
@@ -1085,10 +1234,11 @@ def _deltanet(x, lw, pos: int, spec: Spec, hs):
         """Pair p's convolution into U[t] (j: only head j of the pair)."""
         a, n = hb(j)
         pre = P[t][0, a * bw:(a + n) * bw]
-        s0 = TP + (K - 2) * CP + a * bw                 # the window's last row: this position
-        ol.store(dn.cv(p)[s0:s0 + n * bw], pre)
+        win = dn.window(p)
+        s0 = (K - 2) * CP + a * bw                      # the window's last row: this position
+        ol.store(win[s0:s0 + n * bw], pre)
         if a + n == nb:                                 # its other rows, one up (_past)
-            ol.store(dn.cv(p)[TP:TP + (K - 2) * CP], CV[TP + CP:TP + (K - 1) * CP])
+            ol.store(win[0:(K - 2) * CP], CV[TP + CP:TP + (K - 1) * CP])
         taps = CV[0:TP].reshape(nb * K, bw)
 
         def tap(i):
@@ -1288,7 +1438,11 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
             ol.dot(xs, dn.wh(p)[c0:c1, :], out=P[t][:, c0:c1])
 
     def fetch_cv(p):
-        ol.load(dn.cv(p), out=CV)
+        if dn.slot:                                     # (slot 1's window: two loads)
+            ol.load(dn.cv(p)[0:TP], out=CV[0:TP])
+            ol.load(dn.window(p), out=CV[TP:TP + (K - 1) * CP])
+        else:
+            ol.load(dn.cv(p), out=CV)
 
     def fetch_eb(p, t):
         ol.load(dn.gates(p, hs), out=EB[t])
@@ -1296,10 +1450,11 @@ def _deltanet_dstep(x, lw, pos: int, spec: Spec, hs):
     def conv(p, t, j=None):
         a, n = hb(j)
         pre = P[t][0, a * bw:(a + n) * bw]
-        s0 = TP + (K - 2) * CP + a * bw                 # the window's last row: this position
-        ol.store(dn.cv(p)[s0:s0 + n * bw], pre)
+        win = dn.window(p)
+        s0 = (K - 2) * CP + a * bw                      # the window's last row: this position
+        ol.store(win[s0:s0 + n * bw], pre)
         if a + n == nb:                                 # its other rows, one up (_past)
-            ol.store(dn.cv(p)[TP:TP + (K - 2) * CP], CV[TP + CP:TP + (K - 1) * CP])
+            ol.store(win[0:(K - 2) * CP], CV[TP + CP:TP + (K - 1) * CP])
         taps = CV[0:TP].reshape(nb * K, bw)
 
         def tap(i):
@@ -1437,7 +1592,7 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     _lm_head(x, m, spec)
 
 
-def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
+def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on, fork: bool = False):
     """_deltanet for R consecutive positions p0 .. p0+R-1 at once. The projections stream once
     for the R rows, pair of heads by pair; the convolution runs over the pair's rows before
     it in the chunk and its ring; each head's state is loaded once, updated and read row after
@@ -1452,7 +1607,12 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     group's normed outputs through `on` ([R, og * dv]) before its out_proj.
 
     With DSTEP (ol.has_dstep()) each row's step is one DSTEP on the state in DRAM (the DMA
-    streams it through its datapath and back), row after row, instead of the VPU passes."""
+    streams it through its datapath and back), row after row, instead of the VPU passes.
+
+    fork (the speculative verify, docs/mtp.md 9): the last row's state and window go to the
+    other slot (DeltaNetParts), so the committed slot keeps those after the row before it:
+    the last row's step is a STREAM into the other slot (or, on the VPU path, the state is
+    stored after the row before it too)."""
     eps, K, R = spec.eps, spec.conv_k, x.rows
     dk, dv = spec.lin_dk, spec.lin_dv
     dn = lw.dn
@@ -1477,6 +1637,14 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
     if not dstep:
         St = ol.empty([dv * dk]).reshape(dv, dk)
         w = ol.empty([dv])
+    if fork and (R < 2 or p0 < K - 1):
+        raise CompileError("a forked rows run needs 2 rows or more, from position conv_k - 1")
+
+    def fdst(p, a, r):
+        """Where row r's step writes head a of pair p: in place, or (fork, the last row) the
+        other slot."""
+        return dn.state(p, a, 1 - dn.slot) if fork and r == R - 1 else None
+
     full = max(0, K - 1 - p0)                           # rows before it lack positions < 0
     rgroups = [(r, r + 1) for r in range(min(full, R))] + ([(full, R)] if full < R else [])
     split = og == 4 and NP > 1                          # _deltanet's last group, in pairs
@@ -1517,7 +1685,8 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             O = ol.empty([R, dv])
             for r in range(R):
                 ol.deltanet_step(dn.state(p, a), QK[r, :], U[r, 2 * dk:C], GDB[r, a:a + 1],
-                                 GDB[r, 2 + a:3 + a], O[r, :], zero=(p0 == 0 and r == 0))
+                                 GDB[r, 2 + a:3 + a], O[r, :], zero=(p0 == 0 and r == 0),
+                                 dst=fdst(p, a, r))
             del QK
             ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
             return
@@ -1529,12 +1698,14 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             St.set(0.0)
         O = ol.empty([R, dv])
         for r in range(R):                              # the recurrence, token by token
+            if fork and r == R - 1:
+                ol.store(dn.state(p, a), St)
             dh, bh = GD[r, a:a + 1], GB[r, a:a + 1]
             w.set(St @ Kn[r, :])
             w.set((U[r, 2 * dk:C] - w * dh) * bh)
             ol.outer(w, Kn[r, :], acc=St, decay=dh)
             O[r, :].set(St @ Qn[r, :])
-        ol.store(dn.state(p, a), St)
+        ol.store(dn.state(p, a, 1 - dn.slot) if fork else dn.state(p, a), St)
         ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
 
     def shared_heads(p, X, Z, taps):
@@ -1553,7 +1724,8 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             for a in range(2):
                 for r in range(R):
                     ol.deltanet_step(dn.state(p, a), QK[r, :], V[a][r, :], GDB[r, a:a + 1],
-                                     GDB[r, 2 + a:3 + a], O[a][r, :], zero=(p0 == 0 and r == 0))
+                                     GDB[r, 2 + a:3 + a], O[a][r, :], zero=(p0 == 0 and r == 0),
+                                     dst=fdst(p, a, r))
             del QK, V
             for a in range(2):
                 ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O[a], gn, eps) * GZ[a])
@@ -1573,12 +1745,14 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
                 St.set(0.0)
             O = ol.empty([R, dv])
             for r in range(R):                          # the recurrence, token by token
+                if fork and r == R - 1:
+                    ol.store(dn.state(p, a), St)
                 dh, bh = GD[r, a:a + 1], GB[r, a:a + 1]
                 w.set(St @ Kn[r, :])
                 w.set((V[r, :] - w * dh) * bh)
                 ol.outer(w, Kn[r, :], acc=St, decay=dh)
                 O[r, :].set(St @ Qn[r, :])
-            ol.store(dn.state(p, a), St)
+            ol.store(dn.state(p, a, 1 - dn.slot) if fork else dn.state(p, a), St)
             ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O, gn, eps) * GZ)
             del V, GZ, O
 
@@ -1595,18 +1769,23 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         the projections would hold the DMA's queue, and the DSTEPs behind it)."""
         taps, X, Z = PB[b]
         ol.load(dn.cv(p)[0:TP], out=taps)              # rows (block, tap)
+        win = dn.window(p)
         for j in range(1, min(K, p0 + 1)):              # positions p0-K+1 ..: the window
-            sl = TP + (K - 1 - j) * CP                  # (_past)
-            ol.load(dn.cv(p)[sl:sl + CP], out=X[K - 1 - j, :])
+            sl = (K - 1 - j) * CP                       # (_past)
+            ol.load(win[sl:sl + CP], out=X[K - 1 - j, :])
         ol.dot(xs, dn.wh(p)[0:CP, :], out=X[K - 1:K - 1 + R, :])
         ol.dot(xs, dn.wh(p)[CP:RP, :], out=Z)                            # z of a, of b
         if window:
             store_window(p, b)
 
     def store_window(p, b):
+        """The next window; fork: the one after the row before the last in the committed slot,
+        the last row's in the other."""
         X = PB[b][1]
-        for i in range(K - 1):                          # the next window
-            ol.store(dn.cv(p)[TP + i * CP:TP + (i + 1) * CP], X[R + i, :])
+        for s, r0 in ((dn.slot, R - 1), (1 - dn.slot, R)) if fork else ((dn.slot, R),):
+            win = dn.window(p, s)
+            for i in range(K - 1):
+                ol.store(win[i * CP:(i + 1) * CP], X[r0 + i, :])
 
     def heads(p, b):
         """Pair p's heads from buffers b -> ONp. With DSTEP both heads' VPU work (convolution,
@@ -1639,7 +1818,8 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
         for a in range(2):
             for r in range(R):
                 ol.deltanet_step(dn.state(p, a), QK[a][r, :], V[a][r, :], GDB[r, a:a + 1],
-                                 GDB[r, 2 + a:3 + a], O[a][r, :], zero=(p0 == 0 and r == 0))
+                                 GDB[r, 2 + a:3 + a], O[a][r, :], zero=(p0 == 0 and r == 0),
+                                 dst=fdst(p, a, r))
         del QK, V
         for a in range(2):
             ONp[:, a * dv:(a + 1) * dv].set(rmsnorm(O[a], gn, eps) * GZ[a])
@@ -1687,9 +1867,10 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
             X = PB[t][1]
             if taps:
                 ol.load(dn.cv(p)[0:TP], out=taps1)     # rows (block, tap)
+            win = dn.window(p)
             for j in range(1, min(K, p0 + 1)):          # positions p0-K+1 ..: the window
-                sl = TP + (K - 1 - j) * CP              # (_past)
-                ol.load(dn.cv(p)[sl:sl + CP], out=X[K - 1 - j, :])
+                sl = (K - 1 - j) * CP                   # (_past)
+                ol.load(win[sl:sl + CP], out=X[K - 1 - j, :])
             q = dn.index(p)
             for r in range(R):
                 ol.load(gr[r, 2 * q:2 * q + 2], out=GDBb[t][r, 0:2])
@@ -1717,7 +1898,7 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
                 for r in range(R):
                     ol.deltanet_step(dn.state(p, a), qk[r, :], v[r, :], GDBb[t][r, a:a + 1],
                                      GDBb[t][r, 2 + a:3 + a], O[a][r, :],
-                                     zero=(p0 == 0 and r == 0))
+                                     zero=(p0 == 0 and r == 0), dst=fdst(p, a, r))
 
         def post(t):
             """Pair t's gated RMSNorm into its columns of ON: the norm over rows (row, head)."""
@@ -1788,11 +1969,17 @@ def _deltanet_rows(x, lw, p0: int, spec: Spec, gr, on):
 
 
 @ol.jit
-def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=None):
+def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=None,
+                fork: bool = False, hidden: bool = False):
     """R prompt tokens at positions p0 .. p0+R-1 at once: their embeddings m.xr and RoPE
     tables m.cosr / m.sinr, or those of `tokens` from the image's tables (qwen3._inputs_rows) ->
     logits of the rows in `logit_rows` (a contiguous range, or empty). Bit-identical to R
-    qwen35_step runs."""
+    qwen35_step runs.
+
+    MTP decoding (Spec.mtp, docs/mtp.md 9): `hidden` stores every row's final-normed hidden
+    (the LM head's input) to m.hid for the MTP layer; `fork` (the verify run) leaves the
+    DeltaNet states and windows after row R-2 in the committed slot and those after row R-1
+    in the other (_deltanet_rows)."""
     spec = m.spec
     rows = [(0, p0 + r) for r in range(R)]
     x, c, s_ = _inputs_rows(m, rows, tokens)
@@ -1800,10 +1987,61 @@ def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=
     def layer(li, kind):
         lw = m.layer(li, kind)
         if kind == LIN:
-            x.set(_deltanet_rows(x, lw, p0, spec, m.gr[0:R, :], m.on[0:R, :]))
+            x.set(_deltanet_rows(x, lw, p0, spec, m.gr[0:R, :], m.on[0:R, :], fork))
         else:
             x.set(_attention_rows(x, lw, c, s_, rows, spec, block, gated=True))
         x.set(_mlp(x, lw, spec))
 
     run_layers(m.plan, layer)
-    _lm_head_rows(x, m, spec, logit_rows)
+    xn = None
+    if hidden:
+        xn = rmsnorm(x, ol.load(m.g_final), spec.eps)
+        ol.store(m.hid[0:R, :], xn)
+    _lm_head_rows(x, m, spec, logit_rows, xn)
+
+
+@ol.jit
+def qwen35_mtp(m, p0: int, R: int, block: int = ATTN_BLOCK, keep: bool = False, tokens=None):
+    """The MTP drafter (Spec.mtp; docs/mtp.md 6.1, 9) over R rows at positions p0 .. p0+R-1:
+    row r takes the main model's final-normed hidden at p0 + r (m.hid: a verify run's or a
+    prompt chunk's, qwen35_rows hidden) and the token at p0 + r + 1 (tokens[r], its embedding
+    from the image's tables; without tokens m.xr's row, qwen3._inputs_rows) and drafts the
+    token at p0 + r + 2, the id of the draft head's largest logit (its rows: the MTP_VOCAB
+    lowest ids), into m.draft[r]:
+
+        e = pre_fc_norm_embedding(embed(token)), h = pre_fc_norm_hidden(hid)
+        x = fc([e, h])                          one MM, K = 2H, the embedding first
+        x = the MTP decoder layer               gated attention over its own KV cache (RoPE at
+                                                p0 + r), the MLP: an attention layer block
+        draft = ARGMAX(draft head(mtp.norm(x)))
+
+    The layer appends every row's K/V before any row attends, so a row whose hidden belongs to
+    a rejected draft is overwritten by the next run's row at that position before anything
+    reads it. keep: the draft head's logits to m.logitsr too (tests)."""
+    spec, mt, b = m.spec, m.mtp, current()
+    H, eps = spec.hidden, spec.eps
+    rows = [(0, p0 + r) for r in range(R)]
+    e, c, s_ = _inputs_rows(m, rows, tokens)
+    cat = ol.empty([R, 2 * H], dense=True)
+    cat[:, 0:H].set(rmsnorm(e, ol.load(mt.ge), eps))
+    del e
+    cat[:, H:2 * H].set(rmsnorm(ol.load(m.hid[0:R, :]), ol.load(mt.gh), eps))
+    x = ol.dot(ol.quantize(cat), mt.fc)                 # [R, H] (one slice: Spec.check)
+    del cat
+    lw = mt.layer
+    x.set(_attention_rows(x, lw, c, s_, rows, spec, block, gated=True))
+    x.set(_mlp(x, lw, spec))
+    xs = ol.quantize(rmsnorm(x, ol.load(mt.gm), eps))
+    del x
+    chunk = min(HEAD_CHUNK, ol.tmem_words() // (8 * R))
+    sinks = [G.Greedy(b, m.nd, chunk) for _ in range(R)]
+    for c0 in range(0, m.nd, chunk):
+        n = min(chunk, m.nd - c0)
+        y = ol.dot(xs, mt.dh[c0:c0 + n, :])
+        if keep:
+            ol.store(m.logitsr[0:R, c0:c0 + n], y)
+        for r, sk in enumerate(sinks):
+            sk(y[r:r + 1, :], c0)
+        del y
+    for r, sk in enumerate(sinks):
+        ol.store(m.draft[r:r + 1], sk.token())
