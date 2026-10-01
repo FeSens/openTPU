@@ -93,6 +93,11 @@ tokens matched HF; they diverged at tokens 4, 2 and 0. The device follows the fp
 6.46 before the cap, the emulation's at 9.92 and the device's at 10.68. So the loss is the
 format's, not a kernel's.
 
+In the default formats (below), 2 of the 3 prompts match HF for all 24 tokens. Prompt 0
+matches for 12 tokens. At token 13 HF takes ` a` and the device ` also`. That is a near-tie:
+in the emulation of these formats ` a` leads by 0.028 before the cap, against 0.98 in float
+and 1.17 in int8.
+
 **Mixes that fit 4 GiB.** int8 everywhere is 4.557 GiB, so a mix must save 598 MB. Each of
 these does:
 
@@ -147,7 +152,7 @@ repository in September 2026. Same emulation, ppl:
   KV and I/O add a few MB.
 - **Speed:** E2B streams 1,475 MB a token at 9.63 tok/s on the card (docs/gemma4.md), 14.2
   GB/s. At that rate E4B gives **about 3.4 tok/s** in the default formats, and 5.1 with fp4
-  layers (*estimate*; the RTL's 42-layer scaling below agrees: 3.4 and 5.0).
+  layers (*estimate*). The RTL's 42-layer scaling below gives 3.5 and 5.0.
 - **PCIe:** one 11,264-byte record per token (5,888 fp4), host to card. At the measured Gen1
   rate (1.3 GB/s, docs/offload.md section 1) that is 9 us, plus the DMA's fixed cost, about
   30-40 us in all (*estimate*, offload's figure for a 22-43 KB row). That is 0.02% of a
@@ -159,24 +164,32 @@ repository in September 2026. Same emulation, ppl:
 
 ## On the RTL
 
-One resident decode token on the Verilator RTL (production configuration, the board's memory
-path at 133.33 MHz, `tools/perf_qwen.py --model models/gemma-4-E4B --layers
-0,1,2,3,4,5,24,25,26,27,28,29 --pos 600 --wformat fp4 --head-format int8 --resident --ddr 1066
-[--ldc] --mhz 133.33 --check` with `OTPU_PLE_HOST=1`, the slot written as the Engine writes
-it). The full image does not fit the simulated memory, so the run takes 12 of the 42 layers:
-an own unit, a KV-shared unit, and the full LM head. DRAM after the token is bit-identical to
-the ISA simulator's.
+One resident decode token on the Verilator RTL at position 600:
+- the production configuration;
+- the board's memory path at 133.33 MHz;
+- `OTPU_PLE_HOST=1`, with the slot written as the Engine writes it;
+- `tools/perf_qwen.py --model models/gemma-4-E4B --layers 0,1,2,3,4,5,24,25,26,27,28,29 --pos
+  600 --resident --ddr 1066 [--ldc] --mhz 133.33 --check`, with the formats below.
 
-| Memory model | Cycles | Head | MLP | Attention | PLE | Gathers |
-|---|---:|---:|---:|---:|---:|---:|
-| DDR3-1066 bank model | 10,830,271 | 5.583 M | 4.081 M | 1.019 M | 0.136 M | 10,526 |
-| LiteDRAM's controller (`--ldc`) | 12,022,156 | 6.163 M | 4.598 M | 1.111 M | 0.140 M | 10,309 |
+The full image does not fit the simulated memory, so the run takes 12 of the 42 layers: an own
+unit, a KV-shared unit, and the full LM head. In every run, DRAM after the token is
+bit-identical to the ISA simulator's.
 
-The co-simulated controller is within 1% of the card on E2B (docs/board.md). Scaling its
-per-layer phases to 42 layers gives MLP 16.09 M, attention 3.89 M, PLE 0.49 M and head
-6.16 M: **about 26.6 M cycles, 5.0 tok/s at 133.33 MHz** (*estimate*). E2B runs 13.84 M on the
-card. These runs have fp4 layers. Scaled by bytes to the default formats' 4.140 GB a token,
-that is about 39 M cycles, **3.4 tok/s** (*estimate*, until the RTL runs those formats).
+| Formats | Memory model | Cycles | MLP | Head | Attention | PLE | Gathers |
+|---|---|---:|---:|---:|---:|---:|---:|
+| default (`--wformat int8 --head-format fp4`, OTPU_FORMATS=down@0-23=fp4) | DDR3-1066 bank model | 12,057,622 | 7.230 M | 2.897 M | 1.681 M | 0.229 M | 20,580 |
+| | LiteDRAM's controller (`--ldc`) | 13,349,697 | 8.010 M | 3.253 M | 1.831 M | 0.236 M | 19,941 |
+| fp4 layers, int8 head | DDR3-1066 bank model | 10,830,271 | 4.081 M | 5.583 M | 1.019 M | 0.136 M | 10,526 |
+| | LiteDRAM's controller | 12,022,156 | 4.598 M | 6.163 M | 1.111 M | 0.140 M | 10,309 |
+
+The co-simulated controller is within 1% of the card on E2B (docs/board.md). Its phases are
+scaled to 42 layers by bytes: the MLP x 3.456 (24 layers with the fp4 down projection, 18
+without), attention x 3.556, PLE x 3.5, the head as it is.
+
+- Default formats: MLP 27.68 M, attention 6.51 M, PLE 0.82 M and head 3.25 M. That is
+  **about 38.3 M cycles, 3.5 tok/s at 133.33 MHz** (*estimate*).
+- fp4 layers: 26.6 M cycles, 5.0 tok/s.
+- E2B runs 13.84 M cycles on the card.
 
 ## The slot
 
@@ -247,12 +260,11 @@ agreed with offload.
    steps and prefill runs.
 2. **Weight formats per layer** (done): `gemma4.layer_formats`, and the scan and mixes above.
 3. **E4B on the ISA simulator against Hugging Face in the default formats.** Greedy, 3
-   prompts x 24 tokens as for E2B, then the 900-token text. The HF reference needs 12-13 GB if
+   prompts x 24 tokens as for E2B (done: 2 of 3 identical, above), then the 900-token text. The HF reference needs 12-13 GB if
    its PLE rows are read on demand (hf_lean.py with a lazy per-layer embedding), so it runs on
    omarchy.
-4. **RTL cycles** in the default formats (fp4 layers: done, above), on the DDR3-1066 bank model
-   and the LiteDRAM co-simulation.
+4. **RTL cycles** (done, above), on the DDR3-1066 bank model and the LiteDRAM co-simulation.
 5. **The generate loop's wait**, once autodecode's loop and `WAITW` are on main: the post, the
    `RowServer`, and the wait, first on the ISA simulator's host hook, then the RTL.
    `compile_generate` for Gemma comes with it.
-6. **The card**, through team-lead: token-exactness and tok/s against the 3.4 above.
+6. **The card**, through team-lead: token-exactness and tok/s against the 3.5 above.
