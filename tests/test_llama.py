@@ -198,8 +198,43 @@ def test_tiny_formats_per_kind(tiny, monkeypatch):
     for t, want in zip(toks[:4], dev):
         assert np.array_equal(r.step(t).view(np.uint32), want.view(np.uint32))
     assert np.array_equal(b.prefill(toks, chunk=4).view(np.uint32), dev[-1].view(np.uint32))
-    with pytest.raises(ValueError, match="weight formats"):
-        spec.image(cfg, 256, formats="mlp@0=fp4")
+
+
+def test_tiny_formats_by_layer_range(tiny, monkeypatch):
+    """Weight formats per layer range (formats.py's kind@a-b): a layer block layout per
+    combination, the layers in runs of one layout (a hardware loop each, its blocks with their
+    own stride): the device follows the emulation of the same formats; resident decode and a
+    chunked prefill give token-by-token decoding's logits bit for bit; the KV caches of every
+    layer end equal."""
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    _, _, spec, W = tiny
+    L = spec.layers
+    h = L // 2                      # attention fp4 in the first half, the MLP in the second,
+    fm = f"attn@0-{h - 1}=fp4,mlp@{h}-{L - 1}=fp4"              # one down int4 (SmolLM3)
+    if L >= 8:
+        fm += f",down@{h + 1}=int4"
+    mix = dataclasses.replace(spec, formats=fm)
+    cfg = board_config(DRAM_BYTES=1 << 26)
+    a = Engine(mix, W, cap=256, cfg=cfg)
+    img = a.image
+    assert img.lf[0] == ("fp4", "int8", "int8") and img.lf[-1] == ("int8", "fp4", "fp4")
+    assert len(img.runs) == (2 if L < 8 else 4) and len(set(img.bsize.values())) > 1
+    assert [img._off(i).const for i in range(L)] == sorted(img._off(i).const for i in range(L))
+    assert mix.image(cfg, 256).nbytes < spec.image(cfg, 256).nbytes
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
+    dev = np.array([a.step(t) for t in toks])
+    emu, e8 = emulated_logits(mix, W, toks), emulated_logits(spec, W, toks)
+    assert _cos(dev, emu).min() > 0.9995
+    assert np.abs(dev - emu).mean() < 0.7 * np.abs(dev - e8).mean()
+    r = Engine(mix, W, cap=256, cfg=cfg, resident=True)
+    b = Engine(mix, W, cap=256, cfg=cfg)
+    assert r.resident
+    for t, want in zip(toks[:4], dev):
+        assert np.array_equal(r.step(t).view(np.uint32), want.view(np.uint32))
+    assert np.array_equal(b.prefill(toks, chunk=4).view(np.uint32), dev[-1].view(np.uint32))
+    lo, hi = img.layer0, img.head[0]                # every layer block: weights and KV cache
+    assert np.array_equal(a.backend.machine.slices[0].dram[lo:hi],
+                          b.backend.machine.slices[0].dram[lo:hi])
 
 
 def test_nope_is_one_loop_body(tiny):
