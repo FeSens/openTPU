@@ -61,7 +61,7 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
          host_loop: bool = False, embed: str | None = None, trace: str | None = None,
-         cfg_file: str | None = None, on_card: bool = False, policy: str = "lru") -> dict:
+         cfg_file: str | None = None, on_card: bool = False, policy: str = "lfu") -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -233,7 +233,7 @@ def main():
                                   "bitstream's); default isasim.board_config()")
     ap.add_argument("--card", action="store_true",
                     help="run on the card (/dev/xdma0) instead of the ISA simulator")
-    ap.add_argument("--policy", choices=("lru", "lfu"), default="lru",
+    ap.add_argument("--policy", choices=("lru", "lfu"), default="lfu",
                     help="the expert slots' replacement (ExpertServer): least recently used, or "
                          "least decayed use")
     a = ap.parse_args()

@@ -94,8 +94,9 @@ on 2026-10-01 with build B (79c5707a), the card's own decode loop picking every 
 experts, int8 head:
 - **LFM2.5-8B-A1B** (8.5B parameters, 1.7B active): 10.6 tok/s over 160 tokens. 98.5% of expert
   uses hit the slots, and 5.2 MB streamed per token.
-- **Qwen3.5-35B-A3B** (34.7B parameters, 3.0B active): 3.8 tok/s, with Hugging Face's 16 greedy
-  tokens. 62% of expert uses hit, and 155 MB streamed per token at 1.46 GB/s over PCIe.
+- **Qwen3.5-35B-A3B** (34.7B parameters, 3.0B active): 3.95 tok/s, with Hugging Face's 16
+  greedy tokens. 62% of expert uses hit, and 153 MB streamed per token at 1.41 GB/s over PCIe
+  (section 10.3).
 - Both match the simulator bit for bit.
 
 4-bit weights ([docs/quant.md](docs/quant.md)) use FP4 values with two-level block scales, 4.25

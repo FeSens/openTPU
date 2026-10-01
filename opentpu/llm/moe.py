@@ -150,12 +150,14 @@ def open_pool(layout: Layout, pool_file) -> PoolFile:
     return pf
 
 
-def serve(layout: Layout, expert, backend, pool_file=None, warm=True) -> ExpertServer:
+def serve(layout: Layout, expert, backend, pool_file=None, warm=True,
+          policy: str = "lfu") -> ExpertServer:
     """The host's expert server on the backend's DRAM (slice 0); with `warm`, the slots filled
     with each layer's first experts. expert(g): global expert g's slot bytes. An expert is
     packed when it is first asked for and kept in host RAM, or, with `pool_file` (a path, or
     open_pool's PoolFile), in that file (the page cache, or the SSD tier), which keeps it for
-    later runs (`server.pool`: the PoolFile)."""
+    later runs (`server.pool`: the PoolFile). `policy`: the slots' replacement (ExpertServer's;
+    least decayed use, docs/offload.md 5.5)."""
     L = layout
     pf = None
     if pool_file is None:
@@ -173,7 +175,7 @@ def serve(layout: Layout, expert, backend, pool_file=None, warm=True) -> ExpertS
                 pf.arr[g] = to_split(expert(g)) if pf.split else expert(g)
                 pf.packed[g] = 1
             return pf.get(g)
-    srv = ExpertServer(dram_of(backend, L), L, pool)
+    srv = ExpertServer(dram_of(backend, L), L, pool, policy=policy)
     srv.pool_file = pf
     srv.pool_warm = None if pf is None else pf.warm_t
     srv.load([j * L.E + e for j in range(L.layers) for e in range(L.E)] if warm else ())
