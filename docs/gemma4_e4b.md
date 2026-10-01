@@ -146,9 +146,15 @@ repository in September 2026. Same emulation, ppl:
 - The default, `down@0-23=fp4` with the fp4 head, keeps today's two loops. Its prefill runs
   4 rows up to about position 1000, like the fp4 image.
 - Formats are set per layer and kind by `Spec.formats`, `Image(formats=)` or `OTPU_FORMATS`
-  (`gemma4.layer_formats`: "kind[@a-b]=fmt", over `wformat`). For now the default mix is
-  `wformat="int8", head_format="fp4", OTPU_FORMATS=down@0-23=fp4`. `Spec.from_hf` does not
-  set it yet.
+  (`gemma4.layer_formats`: "kind[@a-b]=fmt", over `wformat`; `head=fmt` for the LM head).
+- **The default follows the fit, not the model.** `Spec.from_hf` stores a mix,
+  `Spec.fit_formats`: the head and the own-KV layers' down projections in fp4 (E4B:
+  `head=fp4,down@0-23=fp4`). An int8 image (`wformat="int8"`, nothing else asked) takes it
+  only when it fits 4 GiB beside no PLE choice. E2B's int8 image fits (3.442 GiB, fp4 PLE
+  records on the card), so it stays as it is, and E2B's default fp4 layers never take it.
+  E4B's int8 image takes it: 3.958 GiB at 2048 tokens with the lookup tables and the
+  generate area, the PLE table on the host. `Image.choices` holds what was chosen, so the
+  Engine's compile worker builds the same image (`Engine._image_kw`).
 
 ## Per token
 

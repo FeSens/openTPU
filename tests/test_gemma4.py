@@ -126,6 +126,32 @@ def test_per_layer_formats(tiny):
     assert np.abs(dev - emu).mean() < 0.7 * np.abs(dev - e8).mean()
 
 
+def test_formats_by_fit(tiny, monkeypatch):
+    """The formats follow the fit (Spec.fit_formats, docs/gemma4_e4b.md): an int8 image that
+    fits the card beside no PLE choice takes the head and the own-KV layers' down projections
+    in fp4 (one loop's format, so no extra loop); an image that fits, or not int8, is as asked.
+    The Engine's compile worker gets the choices (Engine._image_kw): its image is the same
+    without choosing again."""
+    _, W, spec = tiny
+    assert spec.fit_formats == "head=fp4,down@0-5=fp4"
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    big = spec.image(_cfg(), 1024, ple_host=True, formats="")
+    mix = spec.image(_cfg(), 1024, ple_host=True, formats=spec.fit_formats)
+    assert spec.image(_cfg(), 1024).formats == ""
+    monkeypatch.setattr(G, "CARD_BYTES", (big.nbytes + mix.nbytes) // 2)
+    img = spec.image(_cfg(), 1024)
+    assert img.formats == spec.fit_formats and img.head_format == "fp4" and img.ple_host
+    assert img.lf[5] == ("int8", "int8", "fp4", "int8") and img.lf[6] == ("int8",) * 4
+    assert img.nbytes == mix.nbytes and img.runs == mix.runs and len(img.runs) == len(big.runs)
+    assert spec.image(_cfg(), 1024, wformat="fp4").formats == ""
+    eng = Engine(spec, W, cap=1024, cfg=_cfg())
+    kw = eng._image_kw
+    assert kw["formats"] == spec.fit_formats and kw["ple_host"] and kw["head_format"] == "fp4"
+    monkeypatch.setattr(G, "CARD_BYTES", 1 << 32)
+    again = spec.image(eng.cfg, 1024, 1, eng.rows, **kw)
+    assert (again.nbytes, again.lf, again.head_format) == (eng.image.nbytes, eng.image.lf, "fp4")
+
+
 @pytest.mark.parametrize("ple", ["int8", "fp4"])
 def test_records_roundtrip(ple):
     """pack_records / dequant_records: the device's gather values of a packed table."""
@@ -278,6 +304,7 @@ def test_real_model_programs_fit():
     spec = G.Spec.from_hf(REAL)
     img = spec.image(board_config(), 4096, 1, 8, "fp4", "int8", lookup=True)
     assert img.ple_format == "int8" and img.nbytes < 1 << 32
+    assert spec.image(board_config(), 4096, 1, 8, lookup=True).formats == ""   # int8 fits
     for blocks in (1, 3, 16):
         progs, ra = img.compile_decode(blocks, (blocks - 1) * 256)
         assert 8 * len(progs[0]) <= board_config().IMEM_WORDS
@@ -300,3 +327,10 @@ def test_e4b_programs_fit():
         assert 8 * len(progs[0]) <= board_config().IMEM_WORDS
         assert len(ra) == 5
     img.compile_rows([(0, r) for r in range(4)], [3], img.block, tokens=[5, 6, 7, 8])
+    # int8 layers do not fit: the formats by fit, two loops, decode and 4-row runs fit
+    mix = spec.image(board_config(), 2048, 1, 8, lookup=True)
+    assert mix.formats == "head=fp4,down@0-23=fp4" and mix.head_format == "fp4"
+    assert mix.ple_host and 3.9 * 2**30 < mix.nbytes < 1 << 32 and len(mix.runs) == 2
+    progs, ra = mix.compile_decode(8, 7 * mix.block)
+    assert 8 * len(progs[0]) <= board_config().IMEM_WORDS
+    mix.compile_rows([(0, r) for r in range(4)], [3], mix.block, tokens=[5, 6, 7, 8])

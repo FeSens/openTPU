@@ -1329,7 +1329,9 @@ class Engine:
             wkw["lookup"] = True
         self.cfg = cfg or device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
         self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
-        self._image_kw = wkw                # the compile worker's image is built the same way
+        # the compile worker's image is built the same way, with the choices this image made
+        # (Gemma 4: the PLE table's place and format, the formats by fit)
+        self._image_kw = {**wkw, **getattr(self.image, "choices", {})}
         # with the tables every run reads its inputs from the image (the token ids are compiled
         # into the per-position and prefill programs); else the host writes them: the
         # embedding rows and the RoPE rows of a table computed once, here

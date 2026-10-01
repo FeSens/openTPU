@@ -101,6 +101,9 @@ class Spec:
     embed: str = "int8"     # the embedding rows are dequantized on the device only (from the
                             # quantized LM head): an Engine always gets the lookup tables
     formats: str = ""       # per-layer weight formats over the image's wformat (layer_formats)
+    fit_formats: str = ""   # the formats an int8 image takes when it does not fit the card
+                            # (Image): from_hf's, the LM head and the own-KV layers' down
+                            # projections in fp4 (docs/gemma4_e4b.md)
 
     @property
     def layers(self) -> int:
@@ -145,6 +148,9 @@ class Spec:
         if g.get("rope_type", "proportional") != "proportional" or \
                 s.get("rope_type", "default") != "default":
             raise ValueError("RoPE types other than default (sliding) / proportional (global)")
+        # int8 layers that do not fit: the head and the down projections in fp4 in the layers
+        # with their own K / V, one loop (E4B's best mix that keeps two loops)
+        fit = f"head=fp4,down@0-{first - 1}=fp4" if first > 0 else "head=fp4"
         return Spec(hidden=c["hidden_size"], kinds=kinds, kv_src=src,
                     ffn=tuple(2 * ff if wide and i >= first > 0 else ff for i in range(L)),
                     n_q=c["num_attention_heads"], n_kv=c["num_key_value_heads"],
@@ -156,7 +162,7 @@ class Spec:
                     softcap=c.get("final_logit_softcapping"),
                     tied=top.get("tie_word_embeddings", c.get("tie_word_embeddings", True)),
                     bos=c.get("bos_token_id", 2),
-                    eos=(c.get("eos_token_id", 1), 106))
+                    eos=(c.get("eos_token_id", 1), 106), fit_formats=fit)
 
     def check(self, cfg: Config) -> None:
         D = cfg.D
@@ -398,10 +404,10 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
     (per D tokens), the embedding and PLE rows as the device gathers them (int8 / 4-bit), the
     exact sliding window. Before the soft cap."""
     from .qwen3 import _fake_q, _fake_w
-    hf = head_format or wformat
+    lf, pf, fh = layer_formats(spec, wformat, formats)
+    hf = head_format or fh or wformat
     f64 = np.float64
     Wq: dict = {}
-    lf, pf = layer_formats(spec, wformat, formats)
 
     def w(n, fmt):
         if (n, fmt) not in Wq:
@@ -475,6 +481,7 @@ def softcap(spec: Spec, logits: np.ndarray) -> np.ndarray:
 
 # =============================================================================== DRAM image
 RING_BLOCKS = 1         # sliding K / V ring: the window plus this many attention blocks
+CARD_BYTES = 1 << 32    # the card's DRAM: the PLE table's place and the formats follow the fit
 PLE_CHUNK = 8192        # PLE records quantized per pass (host memory)
 BIG = 2.0 ** 100        # (tpos + 0.5 - c) * BIG * BIG: +-inf, the run-time mask rows
 MLP_CHUNK = 768         # the MLP's F chunk at most: 4 prefill rows' gate / up in flight fit TMEM
@@ -496,12 +503,13 @@ def _key(spec: Spec, i: int, lf: tuple = ()) -> tuple:
 
 
 def layer_formats(spec: Spec, wformat: str, formats: str | None = None) -> tuple:
-    """Each layer's weight formats (attention, gate / up, down, its PLE gate and projection)
-    and the PLE projection's: `wformat`, except where `formats` says otherwise (None: the
-    OTPU_FORMATS environment variable, else spec.formats). `formats` is comma-separated
-    "kind=fmt" or "kind@a-b=fmt", checkpoint layers a..b (a range wins over the whole model);
-    the kinds are attn (q, k, v, o), mlp (gateup and down), gateup, down, ple (a layer's PLE
-    gate and projection; without a range, the PLE projection too). docs/gemma4_e4b.md."""
+    """Each layer's weight formats (attention, gate / up, down, its PLE gate and projection),
+    the PLE projection's and the LM head's: `wformat` (the head: None), except where `formats`
+    says otherwise (None: the OTPU_FORMATS environment variable, else spec.formats).
+    `formats` is comma-separated "kind=fmt" or "kind@a-b=fmt", checkpoint layers a..b (a range
+    wins over the whole model); the kinds are attn (q, k, v, o), mlp (gateup and down),
+    gateup, down, ple (a layer's PLE gate and projection; without a range, the PLE projection
+    too) and head (no range). docs/gemma4_e4b.md."""
     import os
     if formats is None:
         formats = os.environ.get("OTPU_FORMATS", spec.formats)
@@ -512,8 +520,9 @@ def layer_formats(spec: Spec, wformat: str, formats: str | None = None) -> tuple
         key, _, fmt = item.partition("=")
         kind, _, span = key.partition("@")
         lo, _, hi = span.partition("-")
-        if kind not in ("attn", "mlp", "gateup", "down", "ple") or \
-                fmt not in ("int8", "int4", "fp4") or (span and not (lo + hi).isdigit()):
+        if kind not in ("attn", "mlp", "gateup", "down", "ple", "head") or \
+                fmt not in ("int8", "int4", "fp4") or (span and not (lo + hi).isdigit()) or \
+                (span and kind == "head"):
             raise ValueError(f"weight format {item!r}: kind[@a-b]=int8|int4|fp4")
         rules.append((kind, int(lo) if span else 0, int(hi or lo) if span else 1 << 30,
                       bool(span), fmt))
@@ -529,7 +538,8 @@ def layer_formats(spec: Spec, wformat: str, formats: str | None = None) -> tuple
         mlp = get("mlp", c, wformat)
         lf.append((get("attn", c, wformat), get("gateup", c, mlp), get("down", c, mlp),
                    get("ple", c, wformat)))
-    return tuple(lf), next((r[4] for r in rules if r[0] == "ple" and not r[3]), wformat)
+    plain = {r[0]: r[4] for r in reversed(rules) if not r[3]}
+    return tuple(lf), plain.get("ple", wformat), plain.get("head")
 
 
 class _KV(KVDesc):
@@ -569,7 +579,10 @@ class Image:
     writes before each run (host_rows; the records of the run's tokens, read from ple_store,
     which build fills) and the gathers read at the row.
     None for either (and OTPU_PLE_FORMAT / OTPU_PLE_HOST unset): the table on the card in int8
-    if the image then fits 4 GiB, else in fp4, else on the host in int8.
+    if the image then fits 4 GiB, else in fp4, else on the host in int8. `formats` None (and
+    OTPU_FORMATS unset): spec.formats, or, when it is empty, the layers are int8 and no PLE
+    choice fits them in 4 GiB, spec.fit_formats (E4B: the head and down 0-23 in fp4).
+    `choices` holds what was chosen.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
@@ -582,6 +595,15 @@ class Image:
         if cap % block:
             raise ValueError(f"KV capacity must be a multiple of the attention block {block}")
         import os
+        if formats is None:
+            formats = os.environ.get("OTPU_FORMATS")
+        if formats is None:
+            formats = spec.formats
+            if not formats and wformat == "int8" and spec.fit_formats and \
+                    Image(spec, replace(cfg, DRAM_BYTES=1 << 40), cap, 1, rows, wformat,
+                          head_format, lookup, ple_format, block, ple_host,
+                          "").nbytes > CARD_BYTES:
+                formats = spec.fit_formats  # int8 layers do not fit beside any PLE choice
         if ple_format is None:
             ple_format = os.environ.get("OTPU_PLE_FORMAT")
         if ple_host is None and os.environ.get("OTPU_PLE_HOST") is not None:
@@ -593,7 +615,7 @@ class Image:
             for ple_format, ple_host in opts:           # the first that fits (else the last)
                 if Image(spec, replace(cfg, DRAM_BYTES=1 << 40), cap, 1, rows, wformat,
                          head_format, lookup, ple_format, block, ple_host,
-                         formats).nbytes <= 1 << 32:
+                         formats).nbytes <= CARD_BYTES:
                     break
         self.ple_host = bool(ple_host)
         D, H, P, L = cfg.D, spec.hidden, spec.ple_dim, spec.layers
@@ -601,9 +623,14 @@ class Image:
         # prefill rows per run: an MM streams its weights once per ACT RAM row chunk
         self.fit_rows = max(cfg.MCOLS, cfg.ACT_ROWS)
         self.block = block
-        self.wformat, self.head_format, self.ple_format = wformat, head_format or wformat, \
-            ple_format
-        self.lf, self.pformat = layer_formats(spec, wformat, formats)
+        self.lf, self.pformat, fh = layer_formats(spec, wformat, formats)
+        self.wformat, self.head_format, self.ple_format = wformat, \
+            head_format or fh or wformat, ple_format
+        self.formats = formats
+        # the choices made here, so that another image of these keywords is this one (the
+        # Engine's compile worker)
+        self.choices = dict(formats=formats, ple_format=ple_format, ple_host=self.ple_host,
+                            head_format=self.head_format)
         rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
         self.v_loc = spec.vocab
         self.ring = min(cap, spec.window + RING_BLOCKS * block)         # sliding cache slots
