@@ -830,18 +830,25 @@ def device_config(info: dict, **kw):
 
 
 # ------------------------------------------------------------------------------ Engine backend
-def sim_config(spec, cap: int, base=None, rows: int | None = None, lookup: bool = False):
+def sim_config(spec, cap: int, base=None, rows: int | None = None, lookup: bool = False,
+               wformat: str = "int8", head_format: str | None = None):
     """`base` (default board_config()) with the DRAM cut to what the model needs (power of
     two): the image with I/O rows for `rows` tokens per run (default the Engine's
     PREFILL_ROWS; lookup: with the resident decode's tables, Engine(resident=True)), then the
     program area. The board model's memory, and the ISA reference that runs the same
-    layout."""
+    layout. The image sized is the int8 one (the largest: every format of a model gets the
+    same DRAM), or where that is over 4 GiB (Qwen3.5-4B) the one in `wformat` / `head_format`."""
     from opentpu.isasim import board_config
     from opentpu.llm.qwen3 import PREFILL_ROWS, has_lookup
     base = base or board_config()
     lookup = lookup or getattr(spec, "embed", "f32") == "int8"     # as Engine: always tables
-    probe = spec.image(replace(base, DRAM_BYTES=1 << 32), cap, 1, rows or PREFILL_ROWS,
-                       **({"lookup": True} if lookup and has_lookup(spec) else {}))
+    kw = {"lookup": True} if lookup and has_lookup(spec) else {}
+    big = replace(base, DRAM_BYTES=1 << 32)
+    try:
+        probe = spec.image(big, cap, 1, rows or PREFILL_ROWS, **kw)
+    except MemoryError:
+        probe = spec.image(big, cap, 1, rows or PREFILL_ROWS, wformat=wformat,
+                           head_format=head_format, **kw)
     need = -(-probe.nbytes // 4096) * 4096 + 4 * base.IMEM_WORDS
     return replace(base, DRAM_BYTES=1 << max(22, (need - 1).bit_length()))
 
