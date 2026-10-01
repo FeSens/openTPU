@@ -253,6 +253,58 @@ def test_moe_resident_and_the_card_loop(moe):
     assert c.server.misses > misses
 
 
+def test_moe_lfu_policy_is_bit_exact(moe):
+    """The slots replaced by least decayed use (moe.serve's default, ExpertServer policy "lfu")
+    or by LRU, 4 slots of 8 per layer: other misses, the full cache's logits bit for bit."""
+    toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 16)]
+    full = _moe_engine(moe)
+    ref = np.array([full.step(t) for t in toks])
+    misses = {}
+    for policy in ("lru", "lfu"):
+        eng = _moe_engine(moe, experts=4)
+        assert eng.server.policy == "lfu"
+        eng.server.policy = policy
+        got = np.array([eng.step(t) for t in toks])
+        assert np.array_equal(got.view(np.uint32), ref.view(np.uint32)), policy
+        misses[policy] = eng.server.misses
+    assert misses["lfu"] > len(toks) and misses["lfu"] != misses["lru"]
+
+
+def test_moe_live_card_streams_from_a_split_pool(moe, tmp_path):
+    """The host's side of path (a) as it runs beside a card (tests/test_lfm2_moe.py's
+    _LiveCard: a fake card computing in a thread over the host's DRAM, with CHASH's channel
+    map), k slots per layer: the experts come from a pool file in the split format, read into
+    the channel runs and written by BoardDram's DMA thread while the card's MoE layers wait.
+    Resident steps and the card's generate loop give the ISA simulator's logits and tokens bit
+    for bit, with misses served during the runs."""
+    from test_lfm2_moe import _LiveCard
+    from opentpu.host.board import BoardBackend
+    from opentpu.host.offload import BoardDram
+    _, W, spec = moe
+    cfg = _cfg()
+    card = _LiveCard.make(cfg, chash=True)
+    card.threaded = True
+    kw = dict(cap=1024, cfg=cfg, rows=1, resident=True, experts=K)
+    isa = Engine(spec, W, **kw)
+    brd = Engine(spec, W, **kw, backend=lambda c, imgs: BoardBackend(c, imgs, transport=card),
+                 pool_file=tmp_path / "pool.bin")
+    assert brd.backend.board.chash and brd.can_generate and brd.backend.host is not None
+    assert isinstance(brd.server.mem, BoardDram) and brd.server.pool_file.split
+    toks = [int(t) for t in np.random.default_rng(8).integers(0, 1000, 6)]
+    for t in toks:
+        a, b = isa.step(t), brd.step(t)
+        assert card.error is None, card.error
+        assert np.array_equal(a.view(np.uint32), b.view(np.uint32)), brd.pos
+    assert brd.server.misses > len(toks) and card.waits > 0
+    t0, misses, waits = int(np.argmax(a)), brd.server.misses, card.waits
+    got = brd.generate_card(t0, 8, stop_ids=[])
+    assert card.error is None, card.error
+    assert got == isa.generate_card(t0, 8, stop_ids=[])
+    assert brd.server.misses > misses and card.waits > waits      # served during the loop
+    assert brd.server.misses == isa.server.misses
+    assert 0 < brd.server.mem.direct <= brd.server.misses and brd.server.pool_warm
+
+
 def test_moe_formats(moe):
     """experts=fmt sets the experts' format (one slot size for every layer); a range is
     refused; the router stays int8."""
