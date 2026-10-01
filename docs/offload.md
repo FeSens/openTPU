@@ -1527,20 +1527,47 @@ so R = 2 is the point for 4-bit experts until the TMEM layout for R = 4 is done.
 
 `mbox + 4` holds the request's count of ids as a float. Every post writes it: moe_ffn and
 moe_hint write k, moe_ffn_rows writes R x k. The host reads seq and the count in one 8-byte
-read, takes that many ids from the row, drops repeats in order, and reads 0.0 as k (images
-made before the count). For R = 4 (32 ids) a second line follows the first (`row2`, after the
-directory), so R = 4 needs no protocol change. The no-overlap invariant holds: the card's fence
-(WAITW served >= seq) comes before every post, and the host flushes each request's DMA before
-its next poll.
+read, takes that many ids from the row, drops repeats in order, and reads 0.0 as k (images made
+before the count). For R = 4 (32 ids) a second line holds ids 17-32: `row2`, the 128-byte block
+after the directory (outside BoardDram's shadow of the host's words), in a layout built with
+`Layout.build(..., lines=2)`; the card writes the ids, then the count, then seq, and the host
+reads `row2` when the count is over 16. `lines=1` leaves every address as before, so R = 4
+needs no protocol change and today's images do not move. The no-overlap invariant holds: the
+card's fence (WAITW served >= seq) comes before every post, and the host flushes each request's
+DMA before its next poll.
 
 ### 13.4 The host
 
 `Engine(layer_major=R)`: `prefill` of sequence 0 goes to `prefill_layers`, which runs each
 chunk of the image's prefill rows layer by layer, runs of `min(R, rows left, rows to the
 block's end)`, then the head run, and reads the logits. Programs are compiled once per (layer,
-blocks, rows). `moe_card.py --layer-major R` runs it on the card. The pooled slots (every slot
-the active layer's during prefill, then the decode slots restored) are the expert server's
-part; with per-layer slots R = 2 runs (16 ids <= 18 slots), at token-major's miss rate.
+blocks, rows). `moe_card.py --layer-major R` runs it on the card. With per-layer slots R = 2
+runs (16 ids <= 18 slots), at token-major's miss rate.
+
+The pooled slots are the expert server's, host only: the card reads an expert's slot from its
+directory entry, whichever layer the slot was laid out for. `ExpertServer.begin_prefill()`
+before the first layer run: a missing expert takes a free slot of any layer, else the slot of
+the least recently used expert of any layer the request does not name (in layer-major order a
+finished layer's), its entry cleared. `end_prefill(restore)` after the last run's request:
+each layer gets its own number of slots back, keeping its experts of most decayed use up to it
+(the others leave, their entries cleared); "lazy" (the default) leaves the free slots to
+decode's misses, "eager" loads each layer's experts of most use in the prompt. Both run between
+polls, with the server flushed.
+
+Lazy, by cachesim.py's event model (11.3) on the traces (four texts, two 512-token prompts each,
+then N tokens of decode by decayed use; the 26B as on the card, 540 slots, the 35B 1680; Gen1
+1.4 GB/s): eager's restore loads 443 experts (26B) / 1312 (35B), and the next tokens use too
+few of them to pay it back.
+
+| | eager: restore + N = 16 / 128 | lazy | lazy + the eager set as idle-link prefetches |
+|:--|:--|:--|:--|
+| 26B | 1.21 + 5.23 / 1.21 + 42.54 s | **5.94 / 43.31 s** | 5.92 / 43.29 s |
+| 35B | 1.63 + 3.65 / 1.63 + 28.91 s | **4.33 / 29.68 s** | 4.38 / 29.74 s |
+
+Lazy's decode starts with fewer of each layer's experts (26B: 84 against 67 misses a token over
+the first 16), and pays about 0.7-0.8 s for it in all, less than eager's restore; the
+prefetches find little idle link time beside decode's misses. The pooled prefill misses 5.4
+experts a prompt token on the 26B, 15.1 on the 35B.
 
 ### 13.5 Tests and status
 
