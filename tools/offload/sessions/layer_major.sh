@@ -4,8 +4,9 @@
 # a layer by decayed use, wiki.txt's first paragraph) and of Qwen3.5-35B-A3B as q35e (the
 # table on the host, no hints), each prompt token by token (g26t16, q35t16) or layer by layer
 # in runs of 1 or 2 rows (g26lm1/2, q35lm1/2: each layer's own slots; g26lmp2, q35lmp2: R = 2
-# with the slots pooled). RUNS picks the runs (default: the 35B's three with per-layer slots,
-# then the pooled ones last, so that a pooled failure costs only its own runs).
+# with the slots pooled). RUNS picks the runs (default: the 35B's three and the 26B's R = 2
+# with per-layer slots, then the pooled ones last, so that a pooled failure costs only its own
+# runs; the 26B's must give O/lm's 90e6b6e06e19da99).
 # A model's runs must give the same prefill logits and tokens (layer-major is bit-exact with
 # token by token on the ISA simulator, pooled or not); each is also checked against the ISA
 # simulator's reference (reference.sh) and HF's; and against the runs of an earlier session in
@@ -28,7 +29,7 @@ same = len({(json.load(open(f))["prefill_logits_sha"], tuple(json.load(open(f))[
 sys.exit(0 if same and n else 1)
 PY
 }
-for run in ${RUNS:-q35t16 q35lm1 q35lm2 q35lmp2 g26lmp2}; do   # one at a time: stop at the
+for run in ${RUNS:-q35t16 q35lm1 q35lm2 g26lm2 q35lmp2 g26lmp2}; do   # one at a time: stop at the
   n0=$(ls $R/${run:0:3}card16*.json 2>/dev/null | wc -l)        # first failed or differing run
   RUNS=$run bash "$here/card_moe.sh"
   n1=$(ls $R/${run:0:3}card16*.json 2>/dev/null | wc -l)
