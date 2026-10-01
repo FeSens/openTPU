@@ -16,6 +16,7 @@ Writes only 0x40000000 .. 0x7effffff of each channel; reads 0x7f000000 + 16 MiB.
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -27,6 +28,7 @@ from opentpu.host.board import XdmaTransport
 
 LO, HI = 0x40000000, 0x7F000000
 RD, RDN = 0x7F000000, 16 << 20
+MAXN = int(os.environ.get("XMON_MAXN", 1 << 20))   # the largest host write
 
 
 def now() -> str:
@@ -84,7 +86,9 @@ def run(t, secs: float, mode: str, seed: int) -> int:
     stop = threading.Event()
     th = threading.Thread(target=reader, args=(stop, lock, stats, seed), daemon=True)
     th.start()
-    print(f"run {mode} {secs:.0f} s seed {seed}, {now()}; flags {X.flags(t):#06x}", flush=True)
+    print(f"run {mode} {secs:.0f} s seed {seed}, {now()}; flags {X.flags(t):#06x}"
+          f"{'' if os.environ.get('XMON_PLACE') is None else '; host = card + ' + os.environ['XMON_PLACE']}"
+          f"{f'; writes <= {MAXN} B' if MAXN < 1 << 20 else ''}", flush=True)
     t0 = last = lastf = time.time()
     nw = nb = 0
     rc = 0
@@ -92,9 +96,9 @@ def run(t, secs: float, mode: str, seed: int) -> int:
     try:
         while time.time() - t0 < secs and not stop.is_set():
             ch = int(rng.integers(2))
-            n = int(rng.choice([64, 128, 256, 512, 4096, 65536, 1 << 20]))
+            n = int(rng.choice([k for k in (64, 128, 256, 512, 4096, 65536, 1 << 20) if k <= MAXN]))
             off = LO + int(rng.integers(0, (HI - LO - n) // 64)) * 64
-            d = X.data(ch, off, n, tag)
+            d = X.placed(ch, off, X.data(ch, off, n, tag))
             with lock:
                 t.mem_write(ch, off, d)
             with lock:

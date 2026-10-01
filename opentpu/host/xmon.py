@@ -8,6 +8,8 @@ The monitors check each such beat on XDMA's master (against its AW / AR address)
 """
 from __future__ import annotations
 
+import mmap
+import os
 import time
 
 import numpy as np
@@ -103,6 +105,19 @@ def data(ch: int, off: int, n: int, tag: int = 0) -> np.ndarray:
     w[:, 2] = ~a
     w[:, 3] = tag & 0xFFFFFFFF
     return w.reshape(-1).view(np.uint8)
+
+
+def placed(ch: int, off: int, a: np.ndarray) -> np.ndarray:
+    """a itself, or (XMON_PLACE=d in the environment) a copy in fresh host memory at d from its
+    card address mod 4096. The driver's descriptors follow the host pages, so they start at card
+    offset -d mod 4096; d = 0 keeps every descriptor inside one card page."""
+    d = os.environ.get("XMON_PLACE")
+    if d is None:
+        return a
+    m = mmap.mmap(-1, len(a) + 4096)
+    b = np.frombuffer(m, np.uint8, len(a), (BASE[ch] + off + int(d)) % 4096)
+    b[:] = a
+    return b
 
 
 def first_bad(got: np.ndarray, ch: int, off: int) -> tuple[int, int] | None:

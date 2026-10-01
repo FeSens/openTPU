@@ -37,12 +37,13 @@ foreach ila [get_hw_ilas -of_objects $dev] {
   }
   if {[llength $ev] != 1} { error "ILA $cell: no events probe (probe0, *$pat*, 16 bits)" }
   report_property $ev
-  set_property CONTROL.TRIGGER_MODE BASIC_ONLY $ila
-  set_property CONTROL.CAPTURE_MODE BASIC $ila
-  set_property CONTROL.DATA_DEPTH 4096 $ila
-  set_property CONTROL.TRIGGER_POSITION 4000 $ila
+  # (TRIGGER_MODE is read-only BASIC_ONLY on an ILA without advanced triggers)
+  foreach {p v} {CONTROL.CAPTURE_MODE BASIC CONTROL.DATA_DEPTH 4096 CONTROL.TRIGGER_POSITION 4000} {
+    if {[catch {set_property $p $v $ila} e]} { puts "ILA $cell: $p not set: $e" }
+  }
+  puts "ILA $cell: [get_property CONTROL.TRIGGER_MODE $ila] / [get_property CONTROL.CAPTURE_MODE $ila], position [get_property CONTROL.TRIGGER_POSITION $ila]"
   set_property TRIGGER_COMPARE_VALUE {neq16'bXXXXX0XX00000000} $ev
-  set_property CAPTURE_COMPARE_VALUE {neq16'h0000} $ev
+  if {[catch {set_property CAPTURE_COMPARE_VALUE {neq16'h0000} $ev} e]} { puts "ILA $cell: no capture qualification: $e" }
   lappend ilas $key $ila
 }
 if {[llength $ilas] != 2} { error "expected otpu_ila_x, found: $ilas" }

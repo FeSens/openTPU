@@ -18,6 +18,7 @@ channel offsets 0x7f000000 + 16 MiB, and 0x7e000000 for the closing check.
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -36,6 +37,7 @@ from opentpu.host.board import Board, XdmaTransport, device_config  # noqa: E402
 
 RD, RDN = 0x7F000000, 16 << 20
 CHK = 0x7E000000
+MAXN = int(os.environ.get("XMON_MAXN", 1 << 20))   # the host's largest transfer (4 KiB, 64 KiB, 1 MiB)
 N_DMA = 512                           # 64 KiB tiles per run: 32 MiB
 
 
@@ -50,7 +52,7 @@ def host_side(mode: str, stop: threading.Event, stats: dict, seed: int) -> None:
     try:
         while not stop.is_set():
             ch = int(rng.integers(2))
-            n = int(rng.choice([4096, 65536, 1 << 20]))
+            n = int(rng.choice([k for k in (4096, 65536, 1 << 20) if k <= MAXN] or [MAXN]))
             off = RD + int(rng.integers(0, (RDN - n) // 64)) * 64
             if mode == "rd":
                 got = t2.mem_read(ch, off, n)
@@ -59,7 +61,7 @@ def host_side(mode: str, stop: threading.Event, stats: dict, seed: int) -> None:
                     stats["bad"] = f"host read: ch{ch} {off + b[0]:#x} (of {off:#x}+{n}) described {b[1]:#x}"
                     stop.set()
             else:
-                t2.mem_write(ch, off, X.data(ch, off, n, tag))
+                t2.mem_write(ch, off, X.placed(ch, off, X.data(ch, off, n, tag)))
                 tag += 1
             stats["bytes"] += n
     except Exception as e:              # noqa: BLE001 - a failed DMA is a result
@@ -91,7 +93,9 @@ def main(a: list[str]) -> int:
     for ch in (0, 1):                                   # the host's region, self-describing
         for o in range(0, RDN, 1 << 22):
             t.mem_write(ch, RD + o, X.data(ch, RD + o, 1 << 22))
-    print(f"{mode}: accelerator '{am}' {N_DMA * 64} KiB per run, {secs:.0f} s, seed {seed}, {now()}",
+    print(f"{mode}: accelerator '{am}' {N_DMA * 64} KiB per run, {secs:.0f} s, seed {seed}, {now()}"
+          f"{'' if os.environ.get('XMON_PLACE') is None else ', host = card + ' + os.environ['XMON_PLACE']}"
+          f"{f', transfers <= {MAXN} B' if MAXN < 1 << 20 else ''}",
           flush=True)
     stats = {"bytes": 0, "bad": None}
     stop = threading.Event()
