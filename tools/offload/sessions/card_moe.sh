@@ -16,6 +16,8 @@
 #   q35e128a/b, q35c128a/b: q35e and q35c at 128 tokens (their first 16 against the reference)
 #   g26a, g26b: gemma-4-26B-A4B (int8 layers, fp4 experts and head, slots filling the DRAM: 18 a
 #     layer), 128 tokens after wiki.txt's first paragraph (q26-hf.json, q26ref16.json: 16 tokens)
+#   g26t16, g26lm1, g26lm2: the 26B at 16 tokens, its prompt token by token (as g26a) or layer
+#     by layer in runs of 1 or 2 rows (--layer-major; docs/offload.md 13)
 # Before each run the other pools leave the page cache and the run's pool is read into it. A run
 # whose files are not staged in O is skipped. Selftest before and after.
 # Run: otpu-lock --wait 3600 -- tools/offload/sessions/card_moe.sh   (RUNS="8b16 8b160 q35";
@@ -56,7 +58,10 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [q35c128a]="$Q35 128 q35-hf.json q35ref16 q35card128ca 0 lfu --embed-table card --hints off"
   [q35c128b]="$Q35 128 q35-hf.json q35ref16 q35card128cb 0 lfu --embed-table card --hints off"
   [g26a]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128a 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
-  [g26b]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128b 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4")
+  [g26b]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128b 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
+  [g26t16]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
+  [g26lm1]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm1 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 1"
+  [g26lm2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2")
 for name in ${RUNS:-8b16 8b160 q35}; do
   read -r md pool n hf ref out ex pol extra <<< "${RUN[$name]}"
   if [ ! -f $O/$md/config.json ] || [ ! -f $O/$pool ] || [ ! -f $O/$ref.json ]; then
@@ -96,7 +101,7 @@ print(f"  [{'PASS' if same and c['prefill_logits_sha'] == r['prefill_logits_sha'
 k = ("tok_s_wall", "tok_s_device", "hits", "misses", "misses_per_token_decode",
      "misses_per_token_decode_2nd_half", "bytes_per_token_decode", "host_decode_s", "load_s",
      "prefill_s", "generate_s", "experts_per_layer", "policy", "pool_warm", "embed_host",
-     "hints")
+     "hints", "layer_major", "prefill_requests", "prefill_misses")
 print("  " + json.dumps({x: c.get(x) for x in k}))
 PY
 done
