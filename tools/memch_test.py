@@ -25,7 +25,7 @@ OUT = Path(os.environ.get("MEMCH_OUT", ROOT / "build" / "memch"))
 RTL = ROOT / "rtl" / "boards" / "ypcb-00338"
 TB = ROOT / "sim" / "verilator"
 SRC = [RTL / "otpu_afifo.sv", RTL / "otpu_axi_split2.sv", RTL / "otpu_mem_ch.sv",
-       TB / "otpu_ldn_model.sv", TB / "tb_memch.sv"]
+       TB / "otpu_ldn_model.sv", TB / "otpu_ldc_model.sv", TB / "otpu_ldc_ch.v", TB / "tb_memch.sv"]
 JOBS = os.environ.get("MEMCH_JOBS", "4")      # C++ compile jobs per build
 PAR = int(os.environ.get("MEMCH_PAR", "3"))   # simulations at once
 
@@ -35,6 +35,9 @@ BUILDS = {
     "ldn": dict(),
     "cred": dict(ARD=16),
     "xreg": dict(XREG=1),
+    # LiteDRAM's own controller (otpu_ldc_ch.v, the production core's settings) for the model
+    "ldc": dict(LDC=1),
+    "ldcx": dict(LDC=1, XREG=1),
 }
 
 SCEN = {

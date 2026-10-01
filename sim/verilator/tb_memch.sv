@@ -55,7 +55,8 @@ endpackage
 module tb_memch #(
   parameter int ARD = 64,
   parameter int XRD = 16,
-  parameter bit XREG = 1'b0
+  parameter bit XREG = 1'b0,
+  parameter bit LDC = 1'b0                // the controllers: LiteDRAM's own (otpu_ldc_model), else the model
 );
   int cp = 414, up = 375, xp = 400;        // half periods: 120.8 / 133.3 / 125 MHz
   logic clk = 1'b0, uclk = 1'b0, xclk = 1'b0;
@@ -162,11 +163,19 @@ module tb_memch #(
       .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
       .c_wdata_we(cwe[c]), .c_rdata_valid(crv[c]), .c_rdata_data(crd[c]));
 
-    otpu_ldn_model #(.BEATS(BEATS), .CH(c)) u_mem (
-      .clk(uclk), .rst(urst),
-      .c_cmd_valid(ccv[c]), .c_cmd_ready(ccr[c]), .c_cmd_we(ccwe[c]), .c_cmd_addr(cca[c]),
-      .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
-      .c_wdata_we(cwe[c]), .c_rdata_valid(crv[c]), .c_rdata_data(crd[c]), .dump);
+    if (LDC) begin : g_ldc
+      otpu_ldc_model #(.BEATS(BEATS), .CH(c)) u_mem (
+        .clk(uclk), .rst(urst),
+        .c_cmd_valid(ccv[c]), .c_cmd_ready(ccr[c]), .c_cmd_we(ccwe[c]), .c_cmd_addr(cca[c]),
+        .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
+        .c_wdata_we(cwe[c]), .c_rdata_valid(crv[c]), .c_rdata_data(crd[c]), .dump);
+    end else begin : g_ldn
+      otpu_ldn_model #(.BEATS(BEATS), .CH(c)) u_mem (
+        .clk(uclk), .rst(urst),
+        .c_cmd_valid(ccv[c]), .c_cmd_ready(ccr[c]), .c_cmd_we(ccwe[c]), .c_cmd_addr(cca[c]),
+        .c_wdata_valid(cwv[c]), .c_wdata_ready(cwr[c]), .c_wdata_data(cwd[c]),
+        .c_wdata_we(cwe[c]), .c_rdata_valid(crv[c]), .c_rdata_data(crd[c]), .dump);
+    end
   end
 
   tb_memch_axi #(.IDW(4), .WIN0(XWIN), .WIN1(XWIN | 32'h8000_0000), .SPAN(SPAN), .LMAX(64),
