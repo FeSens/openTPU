@@ -27,11 +27,16 @@ foreach v {c_core c_ucl c_x} {
 set t_core [get_property -quiet -min PERIOD $c_core]
 set t_ucl  [get_property -quiet -min PERIOD $c_ucl]
 set t_x    [get_property -quiet -min PERIOD $c_x]
-# The LiteDRAM core's CSR clock: xdma_aclk, core_clk at PCIE_GEN 2 (otpu_fpga_top_ld.sv)
-set c_ctl  [get_clocks -quiet -of_objects [get_pins -quiet u_ld/ctl_clk]]
+# The LiteDRAM core's CSR clock (its ctl_clk): xdma_aclk, core_clk at PCIE_GEN 2
+# (otpu_fpga_top_ld.sv), whichever of the two clocks registers in u_ld. Not from the pin
+# u_ld/ctl_clk: synthesis does not keep it (7b1cc919 found no clock there, kept the crossing's
+# max delays on xdma_aclk and left core_clk <-> sys timed as synchronous, 2.5 ns apart).
+set c_ctl {}
+foreach c [concat $c_core $c_x] {
+  if {[llength [filter -quiet [all_registers -clock $c] {NAME =~ u_ld/*}]]} { lappend c_ctl $c }
+}
 if {[llength $c_ctl] != 1} {
-  puts "CRITICAL WARNING: \[otpu_top_native.tcl\] the LiteDRAM CSR clock is '$c_ctl', expected one clock: xdma_aclk assumed"
-  set c_ctl $c_x
+  puts "CRITICAL WARNING: \[otpu_top_native.tcl\] the LiteDRAM CSR clock is '$c_ctl', expected one of core_clk and xdma_aclk to clock registers in u_ld: crossing unconstrained"
 }
 set t_ctl  [get_property -quiet -min PERIOD $c_ctl]
 

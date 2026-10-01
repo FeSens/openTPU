@@ -601,8 +601,9 @@ module otpu_mem_ch #(
 endmodule
 
 // Synchronous FIFO, first-word fall-through, distributed RAM (the channel bridge's queues).
-// RO = 1: the head entry from a register, so no path from rdata starts at the read pointer and
-// goes through the RAM; the same cycles (rdata differs only while rvalid is low).
+// RO = 1: rvalid, wready and the head entry from registers (their next values), so no path from
+// them starts at the pointers or goes through the RAM; the same cycles (rdata differs only while
+// rvalid is low).
 module otpu_sfifo #(
   parameter int W = 8,
   parameter int DEPTH = 16,
@@ -620,8 +621,6 @@ module otpu_sfifo #(
   localparam int AW = $clog2(DEPTH);
   (* ram_style = "distributed" *) logic [W-1:0] mem [DEPTH];
   logic [AW:0] wp, rp;
-  assign wready = (wp - rp) != (AW + 1)'(DEPTH);
-  assign rvalid = wp != rp;
   always_ff @(posedge clk) begin
     if (rst) begin wp <= '0; rp <= '0; end
     else begin
@@ -632,18 +631,27 @@ module otpu_sfifo #(
   always_ff @(posedge clk) if (wvalid && wready) mem[wp[AW-1:0]] <= wdata;
   if (RO) begin : g_ro
     // the next head: on a pop the entry after it (this cycle's write if there is none), into an
-    // empty FIFO this cycle's write
+    // empty FIFO this cycle's write; the flags from the pointers after this cycle's push and pop
     logic [W-1:0]  head;
     logic [AW-1:0] rp1;
-    logic          one;
-    assign rp1 = rp[AW-1:0] + 1'b1;
-    assign one = (wp - rp) == (AW + 1)'(1);
+    logic [AW:0]   wp_n, rp_n;
+    logic          one, rv = 1'b0, wr = 1'b1;
+    assign rp1  = rp[AW-1:0] + 1'b1;
+    assign one  = (wp - rp) == (AW + 1)'(1);
+    assign wp_n = wp + (AW + 1)'(wvalid && wready);
+    assign rp_n = rp + (AW + 1)'(rvalid && rready);
     always_ff @(posedge clk) begin
       if (rvalid && rready) head <= one ? wdata : mem[rp1];
       else if (!rvalid)     head <= wdata;
+      if (rst) begin rv <= 1'b0; wr <= 1'b1; end
+      else begin rv <= wp_n != rp_n; wr <= (wp_n - rp_n) != (AW + 1)'(DEPTH); end
     end
-    assign rdata = head;
+    assign rvalid = rv;
+    assign wready = wr;
+    assign rdata  = head;
   end else begin : g_ra
-    assign rdata = mem[rp[AW-1:0]];
+    assign wready = (wp - rp) != (AW + 1)'(DEPTH);
+    assign rvalid = wp != rp;
+    assign rdata  = mem[rp[AW-1:0]];
   end
 endmodule

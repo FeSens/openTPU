@@ -64,12 +64,16 @@ module otpu_axi_split2 #(
   assign awc = s_awaddr[31];
   assign arc = s_araddr[31];
 
-  otpu_sfifo #(.W(1), .DEPTH(OD)) u_ow (.clk, .rst, .wvalid(s_awvalid && s_awready), .wready(ow_wr),
-    .wdata(awc), .rvalid(ow_rv), .rready(s_wvalid && s_wready && s_wlast), .rdata(ow_rd));
-  otpu_sfifo #(.W(1), .DEPTH(OD)) u_ob (.clk, .rst, .wvalid(s_awvalid && s_awready), .wready(ob_wr),
-    .wdata(awc), .rvalid(ob_rv), .rready(s_bvalid && s_bready), .rdata(ob_rd));
-  otpu_sfifo #(.W(1), .DEPTH(OD)) u_or (.clk, .rst, .wvalid(s_arvalid && s_arready), .wready(or_wr),
-    .wdata(arc), .rvalid(or_rv), .rready(s_rvalid && s_rready && s_rlast), .rdata(or_rd));
+  // the order FIFOs' flags and heads from registers (RO): they steer every channel's valids,
+  // readies and the R / B muxes
+  otpu_sfifo #(.W(1), .DEPTH(OD), .RO(1'b1)) u_ow (.clk, .rst, .wvalid(s_awvalid && s_awready),
+    .wready(ow_wr), .wdata(awc), .rvalid(ow_rv), .rready(s_wvalid && s_wready && s_wlast),
+    .rdata(ow_rd));
+  otpu_sfifo #(.W(1), .DEPTH(OD), .RO(1'b1)) u_ob (.clk, .rst, .wvalid(s_awvalid && s_awready),
+    .wready(ob_wr), .wdata(awc), .rvalid(ob_rv), .rready(s_bvalid && s_bready), .rdata(ob_rd));
+  otpu_sfifo #(.W(1), .DEPTH(OD), .RO(1'b1)) u_or (.clk, .rst, .wvalid(s_arvalid && s_arready),
+    .wready(or_wr), .wdata(arc), .rvalid(or_rv), .rready(s_rvalid && s_rready && s_rlast),
+    .rdata(or_rd));
 
   assign m_awvalid = {s_awvalid && ow_wr && ob_wr && awc, s_awvalid && ow_wr && ob_wr && !awc};
   assign s_awready = ow_wr && ob_wr && m_awready[awc];
@@ -115,9 +119,11 @@ module otpu_skid #(
     else if (take) begin sk_v <= 1'b1; s_ready <= 1'b0; end
     else s_ready <= !sk_v;
   end
+  // the skid entry loads whenever it is empty (taken or not: unused until sk_v), so its enable is a
+  // flip-flop's
   always_ff @(posedge clk) begin
     if (adv) m_data <= sk_v ? sk_d : s_data;
-    if (!adv && take) sk_d <= s_data;
+    if (!sk_v) sk_d <= s_data;
   end
 endmodule
 

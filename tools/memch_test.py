@@ -228,7 +228,7 @@ MUT = [
      [("a_req <= rst || (a_req && !a_hs2);", "a_req <= rst;")], ["aresetshort"]),
     # otpu_dma_split's register slices
     ("slice: the skid entry not loaded (a beat taken under backpressure lost)", "xreg",
-     [("otpu_axi_split2.sv", "if (!adv && take) sk_d <= s_data;", "if (1'b0) sk_d <= s_data;")],
+     [("otpu_axi_split2.sv", "if (!sk_v) sk_d <= s_data;", "if (1'b0) sk_d <= s_data;")],
      ["mstall70", "default"]),
     ("slice: ready not dropped with the skid entry full (a beat overwritten)", "xreg",
      [("otpu_axi_split2.sv", "else if (take) begin sk_v <= 1'b1; s_ready <= 1'b0; end",
