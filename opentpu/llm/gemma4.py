@@ -23,8 +23,11 @@ v_proj; V the weightless RMSNorm of the raw K projection, K normed by k_norm and
 per-layer inputs; a 2112-wide MLP (the image pads it to its down projection's column quantum:
 2176 int8, 2304 4-bit) beside a mixture of 128 experts (top 8, 704 wide, gelu_tanh):
 x += norm(norm_1(MLP(norm(x))) + norm_2(MoE(norm'(x)))), the router on x itself (RMSNorm,
-x scale / sqrt(H), softmax, the top 8 renormalized, x per_expert_scale). The MoE block runs in
-reference_logits only so far (Image raises).
+x scale / sqrt(H), softmax, the top 8 renormalized, x per_expert_scale). On the device the
+experts stream into DRAM slots (moe.moe_ffn, path (a) of docs/offload.md, section 11): one
+token per program (rows = 1); the router and the experts read one quantized unit-norm input,
+the norm gains and per_expert_scale folded into their weights (moe.gemma_router /
+gemma_expert); the dense MLP is emitted beside the expert request, while the host streams.
 
 How it maps onto openTPU:
   * The embedding and PLE rows are gathered on the device (kernels/gather.py): the tied int8 LM
@@ -79,8 +82,9 @@ from ..kernels.attention import Blocks, Bucket, _attend_heads
 from ..kernels.lib import gelu_tanh, rmsnorm, rope
 from ..kernels.mlp import _chunk, swiglu_down
 from . import generate as G
+from . import moe as MO
 from .lfm2 import plan
-from ..host.offload import BackendDram, RowLayout, RowServer
+from ..host.offload import BackendDram, ExpertServer, Layout, RowLayout, RowServer
 from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, _Bump, _lm_head, _lm_head_rows, _qdesc, _tdesc)
 
 SLIDE, FULL = "sliding", "full"
@@ -141,6 +145,15 @@ class Spec:
         """Layer i's V is its K projection (attention_k_eq_v, global layers)."""
         return self.k_eq_v and self.kinds[i] == FULL
 
+    @property
+    def moe(self) -> MO.MoESpec | None:
+        """The MoE block beside every layer's MLP (moe.moe_ffn): HF's softmax over the experts,
+        its top k renormalized (the softmax of the k largest logits), gelu_tanh experts."""
+        if not self.experts:
+            return None
+        return MO.MoESpec(E=self.experts, k=self.top_k, ffn=self.expert_ffn, rule="softmax",
+                          act="gelu_tanh")
+
     @staticmethod
     def from_hf(model_dir) -> "Spec":
         top = json.loads((Path(model_dir) / "config.json").read_text())
@@ -180,6 +193,8 @@ class Spec:
         # int8 layers that do not fit: the head and the down projections in fp4 in the layers
         # with their own K / V, one loop (E4B's best mix that keeps two loops)
         fit = f"head=fp4,down@0-{first - 1}=fp4" if first > 0 else "head=fp4"
+        if moe:                 # a MoE's DRAM beside its layers is expert slots (Image experts)
+            fit = ""
         return Spec(hidden=c["hidden_size"], kinds=kinds, kv_src=src,
                     ffn=tuple(2 * ff if wide and i >= first > 0 else ff for i in range(L)),
                     n_q=c["num_attention_heads"], n_kv=c["num_key_value_heads"],
@@ -215,9 +230,9 @@ class Spec:
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
               ple_format: str | None = None, ple_host: bool | None = None,
-              formats: str | None = None) -> "Image":
+              formats: str | None = None, experts: int | None = None) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, ple_format,
-                     ple_host=ple_host, formats=formats)
+                     ple_host=ple_host, formats=formats, experts=experts)
 
     def truncated(self, layers) -> "Spec":
         """A model of some of the checkpoint's layers (in order): each shared layer attends to
@@ -301,6 +316,12 @@ class Weights(dict):
 
     def get(self, k, default=None):
         return self[k] if k in self._files else default
+
+    def part(self, k, i) -> np.ndarray:
+        """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
+        read alone, fp32."""
+        f, name = self._files[k]
+        return f.get_slice(name)[int(i)].float().numpy()
 
     def rows(self, k, idx) -> np.ndarray:
         """Rows idx (a list) of tensor k, fp32, without loading the rest."""
@@ -467,16 +488,21 @@ def reference_logits(spec: Spec, W, tokens) -> np.ndarray:
 
 def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
                     head_format: str | None = None, ple_format: str = "int8",
-                    formats: str | None = None) -> np.ndarray:
+                    formats: str | None = None, routes: list | None = None,
+                    routing: dict | None = None) -> np.ndarray:
     """float64 decode with openTPU's quantization points and none of its rounding (as
     qwen3.emulated_logits): weights in their formats (per layer: layer_formats, as Image),
     int8 matmul inputs per D-block, int8 K (per token and D-block) and V (per token), int8 P
     (per D tokens), the embedding and PLE rows as the device gathers them (int8 / 4-bit), the
-    exact sliding window. Before the soft cap."""
+    exact sliding window; the MoE block as moe_ffn runs it (the int8 router and the experts in
+    expert_format on one quantized unit-norm input, the gains folded: moe.gemma_router /
+    gemma_expert), each token's (position, layer, experts, the k-th logit's margin over the
+    next) appended to `routes`; `routing` {(position, layer): experts} replaces the top k
+    where it has an entry (the card's choices: a near-tie routes either way). Before the soft
+    cap."""
     from .qwen3 import _fake_q, _fake_w
-    if spec.experts:
-        raise NotImplementedError("the MoE block's emulation")
     lf, pf, fh = layer_formats(spec, wformat, formats)
+    ef = expert_format(spec, wformat, formats) if spec.experts else None
     hf = head_format or fh or wformat
     f64 = np.float64
     Wq: dict = {}
@@ -541,6 +567,29 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
             u = _gelu(w(p + "mlp.gate_proj.weight", fg) @ h) * \
                 (w(p + "mlp.up_proj.weight", fg) @ h)
             m = wd @ _fake_q(np.pad(u, (0, wd.shape[1] - len(u))), D)
+            if spec.experts:
+                xs = _fake_q(_norm(x, None, spec.eps), D)
+                if (p, "router") not in Wq:
+                    Wq[p, "router"] = _fake_w(MO.gemma_router(W, p), D, "int8")
+                lg = Wq[p, "router"] @ xs
+                top = np.argsort(-lg, kind="stable")[:spec.top_k]
+                if routing is not None and (pos, i) in routing:
+                    top = np.asarray(routing[pos, i])
+                    top = top[np.argsort(-lg[top], kind="stable")]
+                if routes is not None:
+                    nxt = np.sort(lg)[::-1][spec.top_k] if spec.top_k < len(lg) else -np.inf
+                    routes.append((pos, i, [int(e) for e in top], float(lg[top[-1]] - nxt)))
+                wt = np.exp(lg[top] - lg[top[0]])
+                y = np.zeros(H)
+                for e, we in zip(top, wt / wt.sum()):
+                    if (p, int(e)) not in Wq:
+                        Wq[p, int(e)] = [_fake_w(np.pad(a, ((0, 0), (0, -a.shape[1] % D))), D, ef)
+                                         for a in MO.gemma_expert(W, p, int(e))]
+                    eg, eu, ed = Wq[p, int(e)]
+                    u = _gelu(eg @ xs) * (eu @ xs)
+                    y += we * (ed @ _fake_q(np.pad(u, (0, ed.shape[1] - len(u))), D))
+                m = _norm(m, W[p + "post_feedforward_layernorm_1.weight"], spec.eps) + \
+                    _norm(y, W[p + "post_feedforward_layernorm_2.weight"], spec.eps)
             x = x + _norm(m, W[p + "post_feedforward_layernorm.weight"], spec.eps)
             if P:
                 g = _gelu(w(p + "per_layer_input_gate.weight", fp) @ _fake_q(x, D)) * pli[i]
@@ -584,9 +633,16 @@ def _ffn_pad(f: int, fd: str, D: int) -> int:
     return -(-f // q) * q
 
 
-def _norms(P: int) -> tuple:
-    """A layer block's norm weights (g_ple: with per-layer inputs)."""
-    return ("g_in", "g_attn", "g_pre", "g_ffn") + (("g_ple",) if P else ())
+def _norms(P: int, moe: bool = False) -> dict:
+    """A layer block's norm weights and their checkpoint names (g_ple: with per-layer inputs;
+    g_f1, g_f2: the dense MLP's and the MoE's output norms beside each other)."""
+    n = {"g_in": "input_layernorm", "g_attn": "post_attention_layernorm",
+         "g_pre": "pre_feedforward_layernorm", "g_ffn": "post_feedforward_layernorm"}
+    if P:
+        n["g_ple"] = "post_per_layer_input_norm"
+    if moe:
+        n.update(g_f1="post_feedforward_layernorm_1", g_f2="post_feedforward_layernorm_2")
+    return n
 
 
 def _key(spec: Spec, i: int, lf: tuple = ()) -> tuple:
@@ -602,23 +658,8 @@ def layer_formats(spec: Spec, wformat: str, formats: str | None = None) -> tuple
     `formats` is comma-separated "kind=fmt" or "kind@a-b=fmt", checkpoint layers a..b (a range
     wins over the whole model); the kinds are attn (q, k, v, o), mlp (gateup and down),
     gateup, down, ple (a layer's PLE gate and projection; without a range, the PLE projection
-    too) and head (no range). docs/gemma4_e4b.md."""
-    import os
-    if formats is None:
-        formats = os.environ.get("OTPU_FORMATS", spec.formats)
-    rules = []
-    for item in formats.replace(" ", "").split(","):
-        if not item:
-            continue
-        key, _, fmt = item.partition("=")
-        kind, _, span = key.partition("@")
-        lo, _, hi = span.partition("-")
-        if kind not in ("attn", "mlp", "gateup", "down", "ple", "head") or \
-                fmt not in ("int8", "int4", "fp4") or (span and not (lo + hi).isdigit()) or \
-                (span and kind == "head"):
-            raise ValueError(f"weight format {item!r}: kind[@a-b]=int8|int4|fp4")
-        rules.append((kind, int(lo) if span else 0, int(hi or lo) if span else 1 << 30,
-                      bool(span), fmt))
+    too), head (no range) and experts (expert_format). docs/gemma4_e4b.md."""
+    rules = _format_rules(spec, formats)
 
     def get(kind, c, default):
         hit = sorted((not r, i) for i, (k, lo, hi, r, _) in enumerate(rules)
@@ -633,6 +674,36 @@ def layer_formats(spec: Spec, wformat: str, formats: str | None = None) -> tuple
                    get("ple", c, wformat)))
     plain = {r[0]: r[4] for r in reversed(rules) if not r[3]}
     return tuple(lf), plain.get("ple", wformat), plain.get("head")
+
+
+def _format_rules(spec: Spec, formats: str | None) -> list:
+    """layer_formats' rules: (kind, first, last, ranged, format)."""
+    import os
+    if formats is None:
+        formats = os.environ.get("OTPU_FORMATS", spec.formats)
+    rules = []
+    for item in formats.replace(" ", "").split(","):
+        if not item:
+            continue
+        key, _, fmt = item.partition("=")
+        kind, _, span = key.partition("@")
+        lo, _, hi = span.partition("-")
+        if kind not in ("attn", "mlp", "gateup", "down", "ple", "head", "experts") or \
+                fmt not in ("int8", "int4", "fp4") or (span and not (lo + hi).isdigit()) or \
+                (span and kind == "head"):
+            raise ValueError(f"weight format {item!r}: kind[@a-b]=int8|int4|fp4")
+        rules.append((kind, int(lo) if span else 0, int(hi or lo) if span else 1 << 30,
+                      bool(span), fmt))
+    return rules
+
+
+def expert_format(spec: Spec, wformat: str, formats: str | None = None) -> str:
+    """The routed experts' format (one for every layer: their slots are one size): the
+    "experts=fmt" rule of `formats` (as layer_formats), else `wformat`."""
+    rules = [r for r in _format_rules(spec, formats) if r[0] == "experts"]
+    if any(r[3] for r in rules):
+        raise ValueError("expert formats per layer range are not on the device (one slot size)")
+    return rules[0][4] if rules else wformat
 
 
 class _KV(KVDesc):
@@ -681,12 +752,11 @@ class Image:
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
                  ple_format: str | None = None, block: int = ATTN_BLOCK,
-                 ple_host: bool | None = None, formats: str | None = None):
+                 ple_host: bool | None = None, formats: str | None = None,
+                 experts: int | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Gemma 4 runs one sequence: batch=1")
-        if spec.experts:
-            raise NotImplementedError("Gemma 4's MoE block (enable_moe_block) on the device")
         if cap % block:
             raise ValueError(f"KV capacity must be a multiple of the attention block {block}")
         import os
@@ -697,7 +767,7 @@ class Image:
             if not formats and wformat == "int8" and spec.fit_formats and \
                     Image(spec, replace(cfg, DRAM_BYTES=1 << 40), cap, 1, rows, wformat,
                           head_format, lookup, ple_format, block, ple_host,
-                          "").nbytes > CARD_BYTES:
+                          "", experts).nbytes > CARD_BYTES:
                 formats = spec.fit_formats  # int8 layers do not fit beside any PLE choice
         if ple_format is None:
             ple_format = os.environ.get("OTPU_PLE_FORMAT")
@@ -712,7 +782,7 @@ class Image:
             for ple_format, ple_host in opts:           # the first that fits (else the last)
                 if Image(spec, replace(cfg, DRAM_BYTES=1 << 40), cap, 1, rows, wformat,
                          head_format, lookup, ple_format, block, ple_host,
-                         formats).nbytes <= CARD_BYTES:
+                         formats, experts).nbytes <= CARD_BYTES:
                     break
         self.ple_host = bool(ple_host)
         D, H, P, L = cfg.D, spec.hidden, spec.ple_dim, spec.layers
@@ -724,6 +794,8 @@ class Image:
         self.wformat, self.head_format, self.ple_format = wformat, \
             head_format or fh or wformat, ple_format
         self.formats = formats
+        mo = spec.moe
+        self.efmt = expert_format(spec, wformat, formats) if mo else None
         # the choices made here, so that another image of these keywords is this one (the
         # Engine's compile worker)
         self.choices = dict(formats=formats, ple_format=ple_format, ple_host=self.ple_host,
@@ -760,8 +832,11 @@ class Image:
             d = hg if kind == FULL else hs
             nq = spec.n_q * d
             lb = _Bump()
-            o = {n: lb.alloc(4 * H) for n in _norms(P)}
+            o = {n: lb.alloc(4 * H) for n in _norms(P, bool(mo))}
             o["ls"], o["qn"] = lb.alloc(4), lb.alloc(4 * d)
+            if mo:                  # moe_ffn's input norm (ones: the gains are folded), the
+                o["g_post"], o["gbase"] = lb.alloc(4 * H), lb.alloc(4)      # layer's j * E,
+                o["router"] = (lb.alloc(mo.E * H), lb.alloc(4 * mo.E * (H // D)))  # int8
             fp_ = _ffn_pad(ff, fd, D)
             mats = {"wq": (nq, H, fa), "wo": (H, nq, fa), "wg": (fp_, H, fg), "wu": (fp_, H, fg)}
             if P:
@@ -818,6 +893,15 @@ class Image:
                            "onehot": {f: b.alloc(4 * cfg.MCOLS * D * GA.onehot_blocks(
                                D, cfg.MCOLS, "int8" if f == "int8" else "fp4")) for f in fmts},
                            "gen": G.alloc(b, spec, cap, block)}       # the decode loop's area
+        self.offload = None
+        if mo:                      # path (a)'s words and expert slots (docs/offload.md)
+            self.fmt = MO.ExpertFormat(H, mo.ffn, D, self.efmt)
+            n = mo.E if experts is None else experts
+            if not mo.k <= n <= mo.E:
+                raise ValueError(f"{n} expert slots per layer: from top-k {mo.k} to {mo.E}")
+            self.offload = Layout.build((b.next + 4095) // 4096 * 4096, mo.E, mo.k, [n] * L,
+                                        self.fmt.nbytes)
+            b.next = self.offload.end
         self.kv_bytes = sum(self._kv_bytes(i) for i in range(L) if spec.kv_src[i] == i)
         self.nbytes = b.next
         if self.nbytes > cfg.DRAM_BYTES:
@@ -867,9 +951,7 @@ class Image:
                     for r in range(spec.src(i) * P, (spec.src(i) + 1) * P)]
             tasks.append((self.wproj, ("mat", "model.per_layer_model_projection.weight",
                                        ("rows", tuple(rows)), H ** -0.5, self.pformat, D)))
-        norms = dict(zip(_norms(P), ("input_layernorm", "post_attention_layernorm",
-                                     "pre_feedforward_layernorm", "post_feedforward_layernorm",
-                                     "post_per_layer_input_norm")))
+        norms = _norms(P, spec.experts > 0)
         for i in range(L):
             p = f"model.layers.{spec.src(i)}."
             a = p + "self_attn."
@@ -879,6 +961,12 @@ class Image:
                 put(base + o[n], f32(W[p + hf + ".weight"]))
             put(base + o["ls"], f32(W[p + "layer_scalar"]).reshape(1))
             put(base + o["qn"], f32(W[a + "q_norm.weight"]))
+            if spec.experts:        # the router: proj x scale / sqrt(H) (int8), j * E
+                put(base + o["g_post"], np.ones(H, np.float32))
+                put(base + o["gbase"], np.float32([i * spec.experts]))
+                for addr, arr in zip(o["router"], Q.quantize_mxu(MO.gemma_router(W, p),
+                                                                 "int8", D)):
+                    put(base + addr, arr)
             src = {"wq": a + "q_proj", "wo": a + "o_proj", "wg": p + "mlp.gate_proj",
                    "wu": p + "mlp.up_proj", "wpg": p + "per_layer_input_gate",
                    "wpp": p + "per_layer_projection", "wk": a + "k_proj", "wv": a + "v_proj"}
@@ -973,6 +1061,18 @@ class Image:
             raise ValueError(f"{len(tokens)} tokens, the PLE slot holds {self.rows}")
         return [(self.ple, self.ple_store[[int(t) for t in tokens]].reshape(-1))]
 
+    # ---- path (a): the expert pool and its server (docs/offload.md)
+    def expert(self, W, g: int) -> np.ndarray:
+        """Global expert g (layer g // E, expert g % E) in its slot's bytes, the norm gain and
+        the per-expert scale folded in (moe.gemma_expert)."""
+        E = self.spec.experts
+        return self.fmt.pack(*MO.gemma_expert(W, f"model.layers.{self.spec.src(g // E)}.",
+                                              g % E))
+
+    def serve(self, W, backend, pool_file=None) -> ExpertServer:
+        """The host's expert server on the backend's DRAM (moe.serve)."""
+        return MO.serve(self.offload, lambda g: self.expert(W, g), backend, pool_file)
+
     def row_server(self, backend) -> RowServer | None:
         """ple_host: the host's server of the generate loop's requests (each token's id, posted
         after sampling; the token's record into slot row 0, docs/gemma4_e4b.md), on the
@@ -1017,6 +1117,9 @@ class Image:
         """One program: consecutive positions of the sequence at once; their inputs from the
         host (host_inputs), or with `tokens` (their ids, compiled in; lookup tables) gathered
         and loaded on the device."""
+        if self.spec.experts and len(rows) > 1:
+            raise ValueError("a MoE model runs one row per program (its MoE block routes one "
+                             "token)")
         if len(rows) > self.rows:
             raise ValueError(f"{len(rows)} rows, the image's I/O area holds {self.rows}")
         if any(r != (0, rows[0][1] + i) for i, r in enumerate(rows)):
@@ -1058,7 +1161,8 @@ class Image:
             d = spec.hd(li)
             ns = SimpleNamespace(kind=kind, own=own, hd=d, ffn=ff, nkv=spec.kvh(li),
                                  same=spec.kv_same(li),
-                                 **{n: Tensor(off + o[n], (H,), (1,)) for n in _norms(P)})
+                                 **{n: Tensor(off + o[n], (H,), (1,))
+                                    for n in _norms(P, spec.experts > 0)})
             ns.ls = Tensor(off + o["ls"], (1,), (1,))
             ns.qn = Tensor(off + o["qn"], (d,), (1,))
             for n, (r, c, f) in o["mats"].items():
@@ -1084,6 +1188,12 @@ class Image:
                 lidx = lidx + Affine.of(jt[0]) * jt[1]
             if P:
                 ns.pli = Tensor(Affine(self.io["pli"]) + lidx * (4 * P), (R, P), (L * P, 1))
+            if spec.experts:                        # moe_ffn's (lfm2's names)
+                E = spec.experts
+                ns.g_post = Tensor(off + o["g_post"], (H,), (1,))
+                ns.gbase = Tensor(off + o["gbase"], (1,), (1,))
+                da, sa = o["router"]
+                ns.router = QTensor(off + da, off + sa, (E, H), H, 4 * (H // D), D)
             return ns
 
         ns = SimpleNamespace(
@@ -1115,6 +1225,10 @@ class Image:
         # its record, which the next token's gather waits for (_gathered)
         mbox = self.io.get("ple_mbox")
         ns.post_token = None if mbox is None else (lambda tok: MB.post(mbox, tok))
+        ns.moe_dev = None
+        if self.offload is not None:
+            Lo = self.offload
+            ns.moe_dev = SimpleNamespace(mbox=Lo.mbox, served=Lo.served, dir=Lo.dir, fmt=self.fmt)
         return ns
 
     def _unit(self, li) -> int:
@@ -1377,11 +1491,26 @@ def _add_norm(x, y, g, eps, scale=None):
             x[sl, :].set((x[sl, :] + rmsnorm(y[sl, :], g, eps)) * scale)
 
 
-def _mlp(x, lw, spec):
-    """x + norm(MLP(norm(x))); without per-layer inputs, then x layer_scalar."""
-    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_pre), spec.eps))
-    y = swiglu_down(xs, lw.wg, lw.wu, lw.wd, chunk=lw.wd.pw, act=gelu_tanh)
-    del xs
+def _mlp(x, lw, spec, m=None):
+    """x + norm(MLP(norm(x))); with the MoE block (one row), x + norm(norm_1(MLP(norm(x))) +
+    norm_2(MoE(x))), the MLP emitted beside the MoE's request (while the host streams its
+    experts); without per-layer inputs, then x layer_scalar."""
+    def dense():
+        xs = ol.quantize(rmsnorm(x, ol.load(lw.g_pre), spec.eps))
+        return swiglu_down(xs, lw.wg, lw.wu, lw.wd, chunk=lw.wd.pw, act=gelu_tanh)
+
+    if spec.experts:
+        out = {}
+
+        def beside():
+            out["y"] = dense()
+
+        acc = MO.moe_ffn(x, lw, spec.moe, m.moe_dev, spec.eps, beside=beside, residual=False)
+        y = rmsnorm(out.pop("y"), ol.load(lw.g_f1), spec.eps) + \
+            rmsnorm(acc, ol.load(lw.g_f2), spec.eps)
+        del acc
+    else:
+        y = dense()
     _add_norm(x, y, ol.load(lw.g_ffn), spec.eps, None if spec.ple_dim else ol.load(lw.ls))
 
 
@@ -1493,7 +1622,7 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
     def layer(li, it=None, jt=None):
         lw = m.layer(li, it, jt)
         _attention(x, lw, m, pos, ropes, block)             # each adds to x in place
-        _mlp(x, lw, spec)
+        _mlp(x, lw, spec, m)
         if spec.ple_dim:
             _ple(x, lw, spec)
 

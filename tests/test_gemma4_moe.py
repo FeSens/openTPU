@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import opentpu.llm.gemma4 as G
+from opentpu.llm.qwen3 import Engine
 
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
@@ -37,8 +38,9 @@ def _model(tmp_path_factory, name, **kw):
                 p.copy_((0.13 if k else 1.0) + (0.01 if k else 0.1) * torch.randn_like(p))
             elif n.endswith("per_expert_scale"):
                 p.copy_(0.5 + torch.rand_like(p))
-            elif "experts" in n or "router" in n:
-                p.copy_(0.05 * torch.randn_like(p))
+            elif "experts" in n or "router" in n:   # (a router decisive enough that the
+                p.copy_((0.5 if "router.proj" in n else 0.05) * torch.randn_like(p))  # int8 one
+                # mostly picks the same experts: its logits ~1 apart, not ~0.1)
         for n, b in m.named_buffers():
             if n.endswith("layer_scalar"):
                 b.copy_(0.5 + torch.rand_like(b))
@@ -86,7 +88,6 @@ def _cfg():
 
 
 def _engine(kv, **kw):
-    from opentpu.llm.qwen3 import Engine
     _, W, spec = kv
     return Engine(spec, W, cap=1024, cfg=_cfg(), **kw)
 
@@ -153,9 +154,97 @@ def test_chunked_prefill_is_bit_exact(kv):
                           b.backend.machine.slices[0].dram[img.layer0:img.head[0]])
 
 
-def test_moe_image_is_not_yet_on_the_device(moe):
-    with pytest.raises(NotImplementedError):
-        _engine(moe)
+K = 2                   # the tiny MoE's top k: the smallest expert cache
+
+
+def _moe_engine(moe, **kw):
+    _, W, spec = moe
+    return Engine(spec, W, cap=1024, cfg=_cfg(), rows=1, **kw)
+
+
+@pytest.mark.parametrize("wf", ["int8", "fp4"])
+def test_moe_device_follows_the_emulation(moe, wf):
+    """The MoE block on the device (moe.moe_ffn: the router and every expert on the card, the
+    dense MLP emitted beside the request, the two norms combined) follows the emulation of the
+    same quantization given the card's choice of experts (the emulation's own differs where
+    the k-th and the next logit are near a tie: the device's attention differs from the
+    emulation's by ~1e-3 from the second position on, as in every Gemma 4 model): the first
+    token to the VPU's EXP2 / RECIP (the routing weights' softmax), the others to cosine >
+    0.99. The card's experts in the first layer,
+    whose input no routing has touched, are the emulation's wherever its k-th logit is clear
+    of the next; int8 follows HF."""
+    m, W, spec = moe
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 12)]
+    eng = _moe_engine(moe, wformat=wf)
+    assert (eng.image.fmt.F0, eng.image.fmt.F) == (96, 128 if wf == "int8" else 256)
+    eng.server.history = []
+    dev = np.array([eng.step(t) for t in toks])
+    eng.server.poll()                   # (the last layer's request, served at a next fence)
+    L, E, card = spec.layers, spec.experts, eng.server.history
+    assert len(card) == len(toks) * L and eng.server.misses == 0
+    assert all(g // E == j % L for j, r in enumerate(card) for g in r)
+    routes = []
+    G.emulated_logits(spec, W, toks, wformat=wf, routes=routes)
+    clear = [(t, ids) for t, layer, ids, margin in routes if layer == 0 and margin > 0.05]
+    assert len(clear) >= len(toks) // 2
+    assert all(sorted(card[t * L]) == sorted(ids) for t, ids in clear)
+    emu = G.emulated_logits(spec, W, toks, wformat=wf, routing={
+        (j // L, j % L): [g % E for g in r] for j, r in enumerate(card)})
+    c = _cos(dev, emu)
+    assert c[0] > 1 - 1e-4 and c.min() > 0.99, c
+    if wf == "int8":
+        with torch.no_grad():
+            hf = m(torch.tensor([toks])).logits[0].numpy()
+        assert np.median(_cos(G.softcap(spec, dev), hf)) > 0.98
+
+
+@pytest.mark.parametrize("wf", ["int8", "fp4"])
+def test_moe_small_cache_is_bit_exact(moe, wf):
+    """k slots per layer: nearly every request misses and streams (while the dense MLP runs
+    beside it); the logits do not move."""
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 10)]
+    full = _moe_engine(moe, wformat=wf)
+    ref = np.array([full.step(t) for t in toks])
+    small = _moe_engine(moe, wformat=wf, experts=K)
+    got = np.array([small.step(t) for t in toks])
+    assert small.server.misses > len(toks)
+    assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+
+
+def test_moe_resident_and_the_card_loop(moe):
+    """Resident decode (the token's rows gathered on the device) gives the per-position
+    programs' logits bit for bit, with k slots per layer; the decode loop on the card (the
+    generate program) gives the host's resident loop token for token while the experts stream
+    between the tokens it picks."""
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 20)]
+    a = _moe_engine(moe, experts=K, resident=True)
+    b = _moe_engine(moe, experts=K)
+    assert a.resident and a.can_generate
+    la, lb = a.prefill(toks), b.prefill(toks)
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    c = _moe_engine(moe, experts=K, resident=True)
+    c.prefill(toks)
+    ref, t = [], int(np.argmax(la))
+    t0 = t
+    for _ in range(8):
+        t = int(np.argmax(a.step(t)))
+        ref.append(t)
+    misses = c.server.misses
+    assert c.generate_card(t0, 8, stop_ids=[]) == ref
+    assert c.server.misses > misses
+
+
+def test_moe_formats(moe):
+    """experts=fmt sets the experts' format (one slot size for every layer); a range is
+    refused; the router stays int8."""
+    _, W, spec = moe
+    assert G.expert_format(spec, "int8", "experts=fp4") == "fp4"
+    assert G.expert_format(spec, "fp4", "") == "fp4"
+    with pytest.raises(ValueError, match="per layer range"):
+        G.expert_format(spec, "int8", "experts@0-2=fp4")
+    img = spec.image(_cfg(), 1024, rows=1, formats="experts=fp4", experts=K)
+    assert img.efmt == "fp4" and img.lf[0] == ("int8",) * 4
+    assert img.offload.slots[0][1] == K
 
 
 def _quant_eval():
@@ -198,3 +287,20 @@ def test_quant_eval_emulation(kv, moe):
     padq = lambda v, n: fq(np.pad(v, ((0, 0), (0, n - v.shape[1]))))           # noqa: E731
     out = Q._moe(spec, W, p, x, wq, fq, padq, False)
     assert (np.linalg.norm(out - ref, axis=1) / np.linalg.norm(ref, axis=1)).max() < 0.04
+
+
+def test_moe_compile_worker_builds_the_image(moe):
+    """The compile worker process (the card's backend compiles ahead in it) builds the
+    engine's image, its K expert slots per layer included, and the same programs."""
+    from opentpu import isa as I
+    from opentpu.llm import qwen3 as Q
+    _, W, spec = moe
+    eng = _moe_engine(moe, experts=K, resident=True)
+    Q._worker_init(spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block, eng._image_kw)
+    try:
+        img = Q._WORKER[0]
+        assert img.nbytes == eng.image.nbytes and img.offload == eng.image.offload
+        words, _ = Q._worker_decode(1, 2)
+        assert np.array_equal(words, I.assemble(eng.image.compile_decode(1, 2)[0][0]))
+    finally:
+        Q._WORKER = None
