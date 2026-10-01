@@ -45,11 +45,13 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
     applied, a subset of {"act" (the matmul inputs), "kv" (K / V), "p" (P)}; default all, none
     with wformat "none".
 
-    A MoE block (26B-A4B) as the device runs it (docs/offload.md section 11): one activation,
-    the weightless RMSNorm of x quantized, into the router (int8, router.scale / sqrt(H) folded
-    into its columns; the top k of its logits, their softmax) and the experts (wmap "experts",
-    else wformat; pre_feedforward_layernorm_2's gain folded into gate / up, per_expert_scale
-    into the down projection, the width padded with zeros to whole D-blocks)."""
+    A MoE block (26B-A4B; docs/offload.md section 11): the weightless RMSNorm of x quantized
+    into the router (int8, router.scale / sqrt(H) folded into its columns; the top k of its
+    logits, their softmax), and times pre_feedforward_layernorm_2's gain, quantized, into the
+    experts (wmap "experts", else wformat; per_expert_scale folded into the down projection,
+    the width padded with zeros to whole D-blocks). The device (moe.moe_ffn at 2c57dc2) folds
+    that gain into gate / up instead and quantizes one activation for both: _moe's docstring
+    says what that costs; it is to follow."""
     hf = hf or wformat
     none = wformat == "none"
     quant = (set() if none else {"act", "kv", "p"}) if quant is None else set(quant)
@@ -181,9 +183,15 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
 
 
 def _moe(spec, W, p, x, wq, fq, padq, none):
-    """The MoE block of layer prefix p on rows x [T, H] (emulate's docstring), float64."""
+    """The MoE block of layer prefix p on rows x [T, H] (emulate's docstring), float64: the
+    router reads the unit RMSNorm of x quantized; the experts read it times
+    pre_feedforward_layernorm_2's gain g2, quantized (g2 is ~0 on the residual's outlier
+    channels, up to 92 elsewhere: folded into gate / up instead, the quantization of the
+    unit norm and of those columns costs 0.18-0.51 relative error per block in int8 from
+    layer 10 on, against 0.007-0.018 with g2 on the activation)."""
     r, F = p + "router.", spec.expert_ffn
-    xs = fq(G._norm(x, None, spec.eps))
+    xn = G._norm(x, None, spec.eps)
+    xs = fq(xn)
     wr = np.asarray(W[r + "proj.weight"], np.float32) * (
         np.asarray(W[r + "scale"], np.float32) * np.float32(spec.hidden ** -0.5))[None, :]
     lg = xs @ wq(None, "none" if none else "int8", a=wr).T                  # [T, E]
@@ -191,7 +199,7 @@ def _moe(spec, W, p, x, wq, fq, padq, none):
     w = np.take_along_axis(lg, top, 1)
     w = np.exp(w - w[:, :1])
     w /= w.sum(1, keepdims=True)
-    g2 = np.asarray(W[p + "pre_feedforward_layernorm_2.weight"], np.float32)[None, :]
+    xe = fq(xn * np.asarray(W[p + "pre_feedforward_layernorm_2.weight"], np.float64)[None, :])
     pes = np.asarray(W[r + "per_expert_scale"], np.float32)
     n = p + "experts.down_proj"                 # (its name: the experts' format, wmap)
     es = [int(e) for e in np.unique(top)]
@@ -203,12 +211,12 @@ def _moe(spec, W, p, x, wq, fq, padq, none):
     with ThreadPoolExecutor(THREADS) as ex:    # THREADS experts at a time (their fp64 copies)
         for i in range(0, len(es), THREADS):
             batch = es[i:i + THREADS]
-            jobs = [ex.submit(fake, G._rows(W, p + "experts.gate_up_proj", [e])[0] * g2,
+            jobs = [ex.submit(fake, G._rows(W, p + "experts.gate_up_proj", [e])[0],
                               G._rows(W, n, [e])[0], e) for e in batch]
             for e, job in zip(batch, jobs):
                 gq, uq, dq = job.result()
                 t, j = np.nonzero(top == e)
-                u = G._gelu(xs[t] @ gq.T) * (xs[t] @ uq.T)
+                u = G._gelu(xe[t] @ gq.T) * (xe[t] @ uq.T)
                 out[t] += w[t, j][:, None] * (padq(u, dq.shape[1]) @ dq.T)
     return out
 
