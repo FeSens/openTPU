@@ -439,7 +439,9 @@ class BoardDram:
       (SplitRecord) is read straight into the runs, and when nothing is in flight (a
       request's first miss) in `pieces` parts, each DMAed as soon as it is read;
     - the host's own words (served and the directory: the card only reads them) are kept in a
-      shadow and written as whole 128-byte blocks, with no read first;
+      shadow and written with no read first: a write within one 64-byte beat (an entry,
+      served) as that beat alone, one DMA call on its channel; a longer one as whole 128-byte
+      blocks;
     - one worker thread makes every DMA call in order, while the server stages the next
       expert: an expert's data lands before its directory entry, every entry before served
       (one queue, one h2c stream). flush() waits for the queue and raises a worker's error;
@@ -501,6 +503,11 @@ class BoardDram:
         a = addr - self.lo
         if 0 <= a and a + len(b) <= len(self.shadow):         # the host's own words
             self.shadow[a:a + len(b)] = b
+            h = self.blk // 2
+            if a % h + len(b) <= h:                             # one beat: one DMA call
+                out, at = self.shadow[a - a % h:a - a % h + h].copy(), self.lo + a - a % h
+                self._put(lambda: self._beat(at, out))
+                return
             a0, a1 = a // self.blk * self.blk, -(-(a + len(b)) // self.blk) * self.blk
             out, at = self.shadow[a0:a1].copy(), self.lo + a0
             self._put(lambda: self._blocks(at, out))
@@ -568,6 +575,14 @@ class BoardDram:
         np.take(beats, i0, out=bufs[0].view("V64"))           # channel 0's run
         np.take(beats, self._i1, out=bufs[1].view("V64"))     # channel 1's
         self._put(lambda: self._dma(addr // 2, bufs), i)
+
+    def _beat(self, at: int, data: np.ndarray) -> None:
+        """One 64-byte beat of the host's words (at: 64-byte aligned) to the channel that holds
+        it (CHASH: beat b of chunk m on channel b ^ parity(m))."""
+        m, c = at // self.blk, at // (self.blk // 2) % 2
+        if self.board.chash:
+            c ^= m.bit_count() & 1
+        self.board.t.mem_write(c, m * (self.blk // 2), data)
 
     def _blocks(self, at: int, data: np.ndarray) -> None:
         """Whole chunks of the host's words (at, len: multiples of 128) to the two channels, as

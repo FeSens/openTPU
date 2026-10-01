@@ -144,7 +144,8 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, tmp
     """BoardDram (the card's fast path: one-pass channel runs, a worker thread's DMA, the
     host's words from a shadow without reading the card) leaves the card's two channel memories
     exactly as BackendDram's Board.write does, request after request: the slots (with CHASH's
-    swaps or not), the directory and served. A slot of a half chunk falls back to Board.write.
+    swaps or not), the directory and served (each entry and served one DMA call: its beat). A
+    slot of a half chunk falls back to Board.write.
     split: the pool a file in the split format, read with preadv straight into the channel
     runs under CHASH at a page-aligned slot (pages of either parity; a slot of 37 chunks is
     every other slot off a page: the slot's bytes there, as without CHASH); a request's first
@@ -189,6 +190,17 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, tmp
         for c in (0, 1):
             assert np.array_equal(ba.t.ch[c], bb.t.ch[c]), c
     same()
+    m, lo, hi = fast.mem, fast.mem.lo, fast.mem.lo + len(fast.mem.shadow)
+    words, calls, mw, w = [0], [0], ba.t.mem_write, m.write
+
+    def call(ch, off, data):                # DMA calls into the host's words
+        calls[0] += lo // 2 <= off < hi // 2
+        mw(ch, off, data)
+
+    def write(addr, data):                  # the server's writes of them
+        words[0] += lo <= addr < hi
+        w(addr, data)
+    ba.t.mem_write, m.write = call, write
     reqs = [[0, 1], [4, 6], [2, 3], [5, 7], [1, 2], [6, 4], [3, 0], [7, 5]]
     for seq, ids in enumerate(reqs, 1):
         for b in (ba, bb):                  # the card's post: the row, then seq
@@ -196,6 +208,7 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, tmp
             b.write(lay.mbox, np.float32(seq).tobytes())
         assert fast.poll() == plain.poll() == 1
         same()
+    assert calls[0] == words[0] > len(reqs)     # an entry or served: one beat, one DMA call
     assert fast.misses == plain.misses > 0 and fast.bytes == plain.bytes
     assert (fast.mem.direct > 0) == (fmt == "split" and chash)
     assert any(dmas) == (fmt == "split" and chash and pieces > 1)     # a part's DMA
