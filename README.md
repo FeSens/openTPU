@@ -21,7 +21,7 @@ the wires, this is a good place to start.
 
 ## Results
 
-The design runs nine modern models with their real weights on an Inspur YPCB-00338 card
+The design runs ten modern models with their real weights on an Inspur YPCB-00338 card
 (Xilinx Kintex-7 xc7k480t, two DDR3 channels), and the card produces the same tokens as the
 simulator, bit for bit.
 
@@ -33,8 +33,8 @@ simulator, bit for bit.
 | Qwen3-0.6B | 4-bit, int8 head | 31.3 tok/s | 30.7 tok/s | 103.4 tok/s | 13.9 GB/s (82%) |
 | Qwen3.5-0.8B | int8 | 17.6 tok/s | 16.3 tok/s | 61.4 tok/s | 14.5 GB/s (85%) |
 | Qwen3.5-0.8B | 4-bit, int8 head | 24.5 tok/s | 23.3 tok/s | 66.7 tok/s | 14.1 GB/s (83%) |
-| Gemma 4 E2B | 4-bit, int8 head | 9.6 tok/s | 9.6 tok/s | 9.9 tok/s\* | 14.2 GB/s (83%) |
-| Gemma 4 E2B | 4-bit, 4-bit head | 11.0 tok/s | 11.0 tok/s | 11.4 tok/s\* | 14.1 GB/s (82%) |
+| Gemma 4 E2B | 4-bit, int8 head | 10.57 tok/s | 10.53 tok/s | 32.1 tok/s | 15.6 GB/s (92%) |
+| Gemma 4 E2B | 4-bit, 4-bit head | 12.14 tok/s | 12.09 tok/s | 29.9 tok/s | 15.5 GB/s (91%) |
 | LFM2-2.6B | int8 | 6.05 tok/s | 6.03 tok/s | 21.4 tok/s | 16.1 GB/s (94%) |
 | LFM2-2.6B | 4-bit, int8 head | 10.96 tok/s | 10.93 tok/s | 20.6 tok/s | 15.8 GB/s (93%) |
 | SmolLM3-3B | int8 | 5.00 tok/s | 4.99 tok/s | 21.1 tok/s | 16.0 GB/s (94%) |
@@ -44,12 +44,13 @@ simulator, bit for bit.
 | Qwen3.5-2B | int8 | 8.02 tok/s | 8.00 tok/s | 38.2 tok/s | 16.0 GB/s (94%) |
 | Qwen3.5-2B | 4-bit, int8 head | 12.09 tok/s | 12.03 tok/s | 41.7 tok/s | 15.8 GB/s (92%) |
 | Qwen3.5-4B | 4-bit, int8 head | 5.88 tok/s | 5.87 tok/s | 12.9 tok/s | 15.7 GB/s (92%) |
+| Gemma 4 E4B | int8, 4-bit head and down 0-23 | 3.78 tok/s | 3.75 tok/s | 14.8 tok/s | 16.0 GB/s (94%) |
 
 *Measured on the card: the first three models on 2026-09-29 with the production image
-`deploy_champ_e698dcd7`. LFM2-2.6B, SmolLM3-3B and Phi-4-mini on 2026-09-30, and Qwen3.5-2B
-and 4B on 2026-10-01, with build B, `deploy_fused133c_79c5707a`, production since then. Build B
-decodes LFM2-2.6B, SmolLM3 and Phi-4-mini 8-9% faster than e698dcd7, at 92-94% of the DRAM peak
-instead of 84-87%. Qwen3.5-4B's int8 image is over 4 GiB.*
+`deploy_champ_e698dcd7`. LFM2-2.6B, SmolLM3-3B and Phi-4-mini on 2026-09-30, and Qwen3.5-2B and
+4B and Gemma 4 on 2026-10-01, with build B, `deploy_fused133c_79c5707a`, production since then.
+Build B decodes LFM2-2.6B, SmolLM3 and Phi-4-mini 8-9% faster than e698dcd7 (Gemma 4 E2B 10%),
+at 91-94% of the DRAM peak instead of 82-87%. Qwen3.5-4B's int8 image is over 4 GiB.*
 - *The image: main e698dcd at 133.33 MHz, one bitstream for all models. It has LiteDRAM
   controllers calibrated by a small CPU inside the memory core, a four-column systolic matrix
   unit and the stream engine ([docs/stream.md](docs/stream.md)). DDR3-1066, with a 17.1 GB/s
@@ -59,11 +60,13 @@ instead of 84-87%. Qwen3.5-4B's int8 image is over 4 GiB.*
   host's argmax in the loop (not streamed). "Device" counts only the cycles the accelerator runs;
   "wall" adds the host. Prefill is the 512-token prompt, on the device.*
 - *DRAM traffic comes from the card's own counters while it runs.*
-- *Gemma 4 E2B was measured on 2026-09-30 with the same image, its per-layer embedding tables
-  on the card (3.4-3.6 GiB images; [docs/gemma4.md](docs/gemma4.md)); in int8 it does not fit.
-  It matches the simulator with the resident decode program, and Hugging Face's greedy tokens
-  on three prompts, with either head. \*Its prompt ran one token per run (resident decode
-  steps), not in prefill runs.*
+- *Gemma 4 E2B keeps its per-layer embedding tables on the card (3.5-3.6 GiB images;
+  [docs/gemma4.md](docs/gemma4.md)); in int8 it does not fit. It matches Hugging Face's greedy
+  tokens on three prompts with either head. E4B's table (2.95 GB) stays on the host, which
+  copies one 11 KB row into the card per token; its image is 3.96 GiB, int8 with the head and
+  the first 24 layers' down projections in 4-bit ([docs/gemma4_e4b.md](docs/gemma4_e4b.md)).
+  In the card's own decode loop (the card picking every token) Gemma 4 decodes faster: E2B
+  11.01 / 12.73 tok/s (int8 / 4-bit head), E4B 3.83 tok/s, on the device.*
 - *Every configuration matches the simulator token for token, per-position and with the
   resident decode program. More detail in [docs/board.md](docs/board.md).*
 
@@ -94,8 +97,9 @@ on 2026-10-01 with build B (79c5707a), the card's own decode loop picking every 
 experts, int8 head:
 - **LFM2.5-8B-A1B** (8.5B parameters, 1.7B active): 10.6 tok/s over 160 tokens. 98.5% of expert
   uses hit the slots, and 5.2 MB streamed per token.
-- **Qwen3.5-35B-A3B** (34.7B parameters, 3.0B active): 3.8 tok/s, with Hugging Face's 16 greedy
-  tokens. 62% of expert uses hit, and 155 MB streamed per token at 1.46 GB/s over PCIe.
+- **Qwen3.5-35B-A3B** (34.7B parameters, 3.0B active): 3.95 tok/s, with Hugging Face's 16
+  greedy tokens. 62% of expert uses hit, and 153 MB streamed per token at 1.41 GB/s over PCIe
+  (section 10.3).
 - Both match the simulator bit for bit.
 
 4-bit weights ([docs/quant.md](docs/quant.md)) use FP4 values with two-level block scales, 4.25

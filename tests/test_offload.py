@@ -49,6 +49,39 @@ def test_policies_order_on_random_traces():
         assert all(m <= T * L * k for m in miss.values())
 
 
+def test_lfu_layer_is_the_servers_lfu():
+    """lfu_layer replays ExpertServer(policy="lfu"): the same misses token by token on a skewed
+    random trace of several layers from the same profile's warm start, and linksim's lfu streams
+    as many experts (its demand transfers, no prefetch)."""
+    from opentpu.host.offload import ExpertServer, Layout, SimDram
+    rng = np.random.default_rng(5)
+    T, L, E, k, cap, half = 300, 3, 16, 2, 5, 4.0
+    p = 1.0 / np.arange(1, E + 1) ** 1.2
+    perm = [rng.permutation(E) for _ in range(L)]
+    req = np.array([[perm[j][rng.choice(E, k, replace=False, p=p / p.sum())] + j * E
+                     for j in range(L)] for _ in range(T)])
+    prof = cs.freq(req[:60], E * L)
+    warm = cs.top_set(prof, E * L)
+    lfu, _ = cs.simulate(req, cap * L, "lfu_layer", warm, prof, half)
+    lru, _ = cs.simulate(req, cap * L, "lru_layer", warm, prof, half)
+    lay = Layout.build(4096, E, k, (cap,) * L, 128)
+    srv = ExpertServer(SimDram(np.zeros(lay.end + 4096, np.uint8)), lay,
+                       lambda g: bytes(128), policy="lfu", half=half)
+    srv.load(warm)
+    got = []
+    for t in range(T):
+        m0 = srv.misses
+        for j in range(L):
+            srv.serve([int(e) for e in req[t, j]])
+        got.append(srv.misses - m0)
+    assert lfu.tolist() == got
+    assert lfu.tolist() != lru.tolist()
+    by = dict(x=1e6, head=0.0, d_pre=1e6, d_post=0.0)
+    r = cs.linksim(req, {}, [cap] * L, [[e for e in warm if e // E == j] for j in range(L)],
+                   _hw(), by, policy="lfu", half=half)
+    assert abs(r["demand"] * T - sum(got)) < 1e-9
+
+
 def _hw(pcie=1.3e9):
     return dict(dram=14e9, call=30e-6, req=30e-6, done=15e-6, ssd=0.5e9, pcie_one=pcie)
 

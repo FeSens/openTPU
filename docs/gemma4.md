@@ -118,9 +118,9 @@ At 2048 tokens the image is 3.636 GiB (372 MiB free). The on-card decode loop's 
 5 to 7 MiB with its three 1 MiB logit vectors) fits in what is free. With an fp4 PLE table
 (`OTPU_PLE_FORMAT=fp4`) the records are 4,864 bytes and int8 layers fit too (3.424 GiB); the
 default picks int8 whenever the image fits 4 GiB. The build
-quantizes the matrices in worker processes (`OTPU_BUILD_JOBS`, default 4) into a cache keyed by
-the checkpoint and the quantizer's sources (`OTPU_QCACHE`, default `~/otpu-build/qcache`): 324 s
-cold on omarchy, 8 s cached.
+quantizes the matrices in worker processes (`OTPU_BUILD_JOBS`, default 4), the 4-bit ones through
+the image caches' disk cache (`opentpu/qcache.py`, [board.md](board.md); int8 matrices and the
+PLE records are quantized at each build): 324 s cold on omarchy.
 
 ## Accuracy
 
@@ -146,6 +146,12 @@ simulator's with both heads. With prefill runs of 4 rows (ISA simulator, the tok
 the int8 head gives the same 72 tokens; the fp4 head takes HF's third choice at the first
 prompt's third token, a three-way near tie (`\n\n` 24.62, ` It` 24.52, ` The` 24.39 after the
 cap).
+
+On build B (`deploy_fused133c_79c5707a`, production since 2026-09-30), 2026-10-01, with both
+heads, the card equals the ISA simulator on every decode path: after a prefill run of the
+11-token prompt `The lighthouse keeper climbed the stairs at dusk, and`, its first token and 24
+tokens each by resident decode steps, per-position steps, and the card's generate loop, greedy
+and sampled (temperature 0.8, top-k 40, top-p 0.95; `Engine.generate_card`).
 
 **Long context.** After 900 tokens of prose (past the 512-token window and the 768-slot ring;
 ISA simulator, fp4 layers), the device follows HF's greedy tokens for 5 tokens with either head,
@@ -206,17 +212,33 @@ projections 148 MB, the LM head 415 MB (int8 with its scales), the per-layer inp
 22 MB, K / V 17 MB. At the phases' measured efficiencies that is about 12.2 M cycles, **about
 10.9 tokens/s at 133.33 MHz** (a projection).
 
-On the card (production image, 2026-09-30; tools/qual/perf.py's method: 64 greedy tokens after
-the 512-token Austen prompt, the host's argmax in the loop; the prompt by resident decode steps):
+On the card (build B, `deploy_fused133c_79c5707a`, 2026-10-01; tools/qual/perf.py's method: 64
+greedy tokens after the 512-token Austen prompt, the host's argmax in the loop; the prompt in
+prefill runs, 4 rows each where they fit TMEM; cap 2048):
 
-| Head | Image | Decode, device | Decode, wall | Mcycles / token | DRAM read / token | DRAM while running | Prompt (steps) |
+| Head | Image | Decode, device | Decode, wall | Mcycles / token | DRAM read / token | DRAM while running | Prefill (runs) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| int8 | 3.629 GiB | 9.63 tok/s | 9.60 tok/s | 13.842 | 1475 MB | 14.22 GB/s (83%) | 9.93 tok/s |
-| fp4 | 3.441 GiB | 11.01 tok/s | 10.98 tok/s | 12.106 | 1274 MB | 14.05 GB/s (82%) | 11.40 tok/s |
+| int8 | 3.643 GiB | 10.57 tok/s | 10.53 tok/s | 12.611 | 1475 MB | 15.61 GB/s (92%) | 32.1 tok/s (128) |
+| fp4 | 3.456 GiB | 12.14 tok/s | 12.09 tok/s | 10.981 | 1274 MB | 15.49 GB/s (91%) | 29.9 tok/s (139) |
 
-The projection was 12% optimistic: the DDR3 bank model it rests on is about 10% optimistic at
-133.33 MHz, where LiteDRAM's controller is the limit ([board.md](board.md); `perf_qwen.py --ldc`
-co-simulates the controller). The MXU starved 1-2% of the running cycles.
+The MXU starved 1% of the running cycles. The card's generate loop (`tools/decode_profile.py
+--card-loop`, 64 tokens; the card samples and goes on, the host only reads the tokens):
+
+| Head | Greedy, device / wall | Mcycles / token | Sampled, device / wall | Mcycles / token |
+|---|---:|---:|---:|---:|
+| int8 | 11.01 / 10.83 tok/s | 12.105 | 10.92 / 10.74 tok/s | 12.206 |
+| fp4 | 12.73 / 12.52 tok/s | 10.476 | 12.61 / 12.23 tok/s | 10.576 |
+
+With the PLE table on the host instead (`OTPU_PLE_HOST=1`, E4B's slot and fence:
+[gemma4_e4b.md](gemma4_e4b.md)), the int8 head's greedy loop takes 12.173 M cycles a token:
+the wait for the host's row costs 0.56% (68K cycles, 0.51 ms). Wall is 10.83 tok/s both ways.
+(The int8 head's sampled run ended after 58 tokens.)
+
+The projection above (12.2 M cycles) is 3% optimistic on build B. On the previous image,
+`deploy_champ_e698dcd7` (2026-09-30), it was 12% optimistic: the int8 / fp4 heads ran 13.842 /
+12.106 M cycles, 9.63 / 11.01 tok/s at 83 / 82% of the peak. On that image LiteDRAM's
+controller was the limit, where the DDR3 bank model is about 10% optimistic ([board.md](board.md);
+`perf_qwen.py --ldc` co-simulates the controller).
 
 ## Tests
 

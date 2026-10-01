@@ -86,7 +86,8 @@ from wl7ddrphy import WL7DDRPHY                                 # noqa: E402
 from ecc_ports import NativePortsECC                            # noqa: E402
 from csr_pipe import PipelinedCSR                               # noqa: E402
 from dfii_q import registered_injector                         # noqa: E402
-from ctl_settings import CONTROLLER                             # noqa: E402
+from ctl_settings import CONTROLLER, MULTIPLEXER                # noqa: E402
+from fastmux import tuned_multiplexer                          # noqa: E402
 import calcpu                                                   # noqa: E402
 from calcpu import Cal, FirmwareBuilder, build_firmware, one_file  # noqa: E402
 
@@ -149,8 +150,9 @@ class OTPULiteDRAM(PipelinedCSR, SoCCore):
                                       sys_clk_freq=f, iodelay_clk_freq=200e6, cl=cl, cwl=cwl,
                                       write_latency_calibration=True, ddr_clk="sys4x" + sfx)
             setattr(self, "ddrphy" + sfx, p)
-            # the software-injected commands (calibration) a cycle after their CSR write (dfii_q.py)
-            with registered_injector():
+            # the software-injected commands (calibration) a cycle after their CSR write (dfii_q.py);
+            # the multiplexer's options (fastmux.py, ctl_settings.py)
+            with registered_injector(), tuned_multiplexer(**MULTIPLEXER):
                 self.add_sdram("sdram" + sfx, phy=p, module=MT41K256M8_tRFC160(f, "1:4"),
                                with_soc_interconnect=False,
                                controller_settings=ControllerSettings(**CONTROLLER))
