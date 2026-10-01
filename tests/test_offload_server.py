@@ -320,3 +320,44 @@ def test_board_dram_keeps_a_staging_pair_until_its_last_part(tmp_path):
     for g in srv.lru[0].keys() | srv.lru[1].keys():
         s = srv.lru[g // 4][g]
         assert np.array_equal(np.asarray(b.read(s, slot)).view(np.uint8), x[g]), g
+
+
+def test_lfu_policy_evicts_the_least_decayed_use():
+    """policy="lfu": the victim is the cached expert, not in the request, whose uses (each
+    halving every `half` requests of its layer; a warm expert one use at the start) sum least,
+    ties to the least recently used; checked request by request against that sum computed
+    directly, on a skewed random stream. LRU stays the default."""
+    half, slots = 4.0, 5
+    lay = Layout.build(4096, E, K, (slots,), SLOT)
+    srv = ExpertServer(SimDram(np.zeros(lay.end + 4096, np.uint8)), lay, _pool, policy="lfu",
+                       half=half)
+    srv.load([0, 1, 2, 3, 4])
+    assert ExpertServer(srv.mem, lay, _pool).policy == "lru"
+    rng = np.random.default_rng(3)
+    p = 1.0 / np.arange(1, E + 1) ** 1.2
+    uses = {g: [0] for g in range(5)}                  # request times of each expert's uses
+    cache, order = set(range(5)), [4, 3, 2, 1, 0]      # recency: least recent first
+    for t in range(1, 300):
+        ids = [int(g) for g in rng.choice(E, K, replace=False, p=p / p.sum())]
+        for g in ids:
+            uses.setdefault(g, []).append(t)
+        miss = [g for g in ids if g not in cache]
+        for g in ids:
+            if g in cache:
+                order.remove(g)
+                order.append(g)
+        want = []
+        for g in miss:
+            if len(cache) >= slots:
+                cand = [v for v in order if v not in ids]
+                sc = [sum(0.5 ** ((t - u) / half) for u in uses[v]) for v in cand]
+                v = cand[int(np.argmin(sc))]
+                cache.discard(v)
+                order.remove(v)
+                want.append(v)
+            cache.add(g)
+            order.append(g)
+        before = set(srv.lru[0])
+        srv.serve(ids)
+        assert before - set(srv.lru[0]) == set(want), (t, ids, want)
+        assert set(srv.lru[0]) == cache

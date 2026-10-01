@@ -61,7 +61,7 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
          host_loop: bool = False, embed: str | None = None, trace: str | None = None,
-         cfg_file: str | None = None, on_card: bool = False) -> dict:
+         cfg_file: str | None = None, on_card: bool = False, policy: str = "lru") -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -86,6 +86,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                  resident=True, experts=experts, pool_file=pool, backend=backend)
     load_s = time.time() - t
     srv = eng.server
+    srv.policy = policy                         # the slots' replacement (ExpertServer)
     srv.history, per_req = [], []               # each request's ids and misses
     serve, pool_of, mem = srv.serve, srv.pool, srv.mem
     tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0, stage=0.0, flush=0.0,   # host's s
@@ -182,6 +183,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     return dict(tokens=got, match=got == ref["tokens"][:len(got)], first_diff=diff,
                 at_first_diff=at,
                 experts_per_layer=experts, slots=L.layers * experts, pool=L.layers * L.E,
+                policy=policy,
                 image_mib=round(eng.image.nbytes / 2**20), slot_mb=round(L.slot_bytes / 1e6, 2),
                 requests=srv.seq, hits=srv.hits, misses=srv.misses,
                 misses_per_token_decode=round(float(dec.mean()), 2) if len(dec) else None,
@@ -231,6 +233,9 @@ def main():
                                   "bitstream's); default isasim.board_config()")
     ap.add_argument("--card", action="store_true",
                     help="run on the card (/dev/xdma0) instead of the ISA simulator")
+    ap.add_argument("--policy", choices=("lru", "lfu"), default="lru",
+                    help="the expert slots' replacement (ExpertServer): least recently used, or "
+                         "least decayed use")
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
@@ -239,7 +244,7 @@ def main():
         return
     ref = json.loads(Path(a.check).read_text())
     r = card(a.model, ref, a.n, a.experts, a.cap, a.pool, a.host_loop, a.embed, a.trace,
-             a.cfg, a.card)
+             a.cfg, a.card, a.policy)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
