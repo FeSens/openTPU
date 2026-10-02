@@ -1,6 +1,7 @@
 """LiteDRAM's multiplexer with three scheduling options (docs/litedram.md section 11, "The chooser
 and the turnarounds"), for the production core (gen_core.py) and its simulation model (gen_ldc.py);
-ctl_settings.py's MULTIPLEXER sets them (all off: LiteDRAM's multiplexer, byte for byte):
+ctl_settings.py's MULTIPLEXER sets them (the core's: FASTMUX, all three; all off: LiteDRAM's
+multiplexer, byte for byte):
 
 - rtw: the read-to-write turnaround as a command spacing in controller cycles, counted from the
   last read the multiplexer issued (a tXXDController, like tCCD's and tWTR's). The multiplexer
@@ -165,6 +166,9 @@ class Multiplexer(Module, AutoCSR):
         commands = [nop, choose_cmd.cmd, choose_req.cmd, refresher.cmd]
         steerer = _Steerer(commands, dfi)
         self.submodules += steerer
+        if hasattr(refresher, "idle"):        # idlerefresh.py's: no bank machine has a request
+            self.comb += refresher.idle.eq(~reduce(or_, [bm.req.valid | bm.req.lock
+                                                         for bm in bank_machines]))
 
         # tRRD timing (Row to Row delay) -----------------------------------------------------------
         self.submodules.trrdcon = trrdcon = tXXDController(settings.timing.tRRD)

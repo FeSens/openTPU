@@ -357,6 +357,7 @@ bash tools/qual/qual.sh deploy_bl32mx120_be388a32 full    # full
 | with CAPS bit31, WAITW on the host's writes (`tools/qual/waitw.py`): the host writes data, then a flag, while the card waits on the flag and then reads the data (XDMA's writes through otpu_mem_ch into LiteDRAM against the accelerator's reads); a WAITW timeout stops with ERROR | 200 rounds | 200 rounds |
 | after the soak: token-exact against the ISA simulator, 6 configurations, per-position and resident decode | yes | yes |
 | with CAPS bit30, the decode loop on the card (docs/autodecode.md): token-exact in 6 configurations, then `decode_profile --card-loop`, greedy and sampled | 6 + 4-bit profiles | 6 + all 6 profiles |
+| the DRAM's read / write turnarounds (`tools/qual/turnaround.py`, docs/litedram.md section 11): fp4 weight reads beside 64 KiB stores and loads of the tile stored before, the data against the ISA simulator, then both channels' ECC counters (sec / ded since the configuration) must be 0 | 30 s (`TURN`) | 30 s |
 | final `otpu-selftest` (after loading `REST` if set) | yes | yes |
 
 Every phase prints its duration; the table of phases is at the end and in `$OUT/phases.tsv`

@@ -1077,12 +1077,13 @@ class Image(EmbedHost):
                 for s in range(self.cfg.S)]
 
     def compile_layer_run(self, li: int, blocks: int, block: int = ATTN_BLOCK, R: int = 1,
-                          embedded: bool = False, at: int | None = None):
+                          embedded: bool = False, at: int | None = None, hint: bool = False):
         """(programs, run_args): qwen35_layer_run of layer li, R rows at a run-time position of
         bucket `blocks` (from conv_k - 1: the convolutions' taps) and a run-time row of the
         prefill chunk (run arguments: RunPos.values and "row"), or at the compile-time
-        position `at` (the rows before conv_k - 1; embedded); li < 0: qwen35_embed_run. The
-        image needs lookup tables and its prefill rows."""
+        position `at` (the rows before conv_k - 1; embedded); li < 0: qwen35_embed_run. hint:
+        the run ends with the next MoE layer's hint (qwen35_layer_run). The image needs lookup
+        tables and its prefill rows."""
         from ..compiler import RunVar
         spec, K = self.spec, self.spec.conv_k
         if not self.lookup or not self.prefill_rows:
@@ -1092,6 +1093,8 @@ class Image(EmbedHost):
         k = spec.moe.k if spec.moe is not None else 1
         if not 1 <= R <= RUN_ROWS or R * k > LINE // 4:
             raise ValueError(f"{R} rows a layer run")
+        if hint and self.offload is None:
+            raise ValueError("a layer run's hint needs the expert server's words (offload)")
         row = RunVar("row", self.prefill_rows)
         if R > 1 and li == 0 and not embedded and not self.embed_host:
             raise ValueError("layer 0's run of rows gathers them from the host's slot "
@@ -1110,7 +1113,7 @@ class Image(EmbedHost):
         else:
             b = qwen35_layer_run.trace(self.cfg, 0, {"m": m, "li": li, "pos": pos, "row": row,
                                                      "block": block, "R": R,
-                                                     "embedded": embedded})
+                                                     "embedded": embedded, "hint": hint})
         return [b.finish()], list(b.run_args)
 
     def compile_prefill_head(self):
@@ -2253,7 +2256,7 @@ def qwen35_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK, hidden
 
 @ol.jit
 def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
-                     embedded: bool = False):
+                     embedded: bool = False, hint: bool = False):
     """Layer-major prefill (a MoE model's, docs/offload.md 13: the whole prompt chunk through a
     layer before the next, so that the expert cache serves one layer at a time): the R prompt
     rows from `row` (a run-time value) at the positions pos .. pos + R - 1 (a RunPos, from
@@ -2263,8 +2266,10 @@ def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
     host's slot rows 0 .. R - 1 (embed_host); else qwen35_embed_run's), their output goes back
     there. One row runs qwen35_step's layer; more rows _deltanet_rows / _attention_rows and
     moe.moe_ffn_rows, each row bit for bit as the step's, so the chunk layer by layer leaves the
-    states, windows, KV cache and residual rows the per-position programs make. No router hints
-    (the run's request follows at once)."""
+    states, windows, KV cache and residual rows the per-position programs make. No router hint
+    of its own layer (the run's request follows at once); with `hint`, when layer li + 1 is a
+    MoE layer, the run ends with its hint: layer li + 1's router on the output rows
+    (moe.moe_hint_rows; docs/offload.md 13.9), which changes no row."""
     spec, K = m.spec, m.spec.conv_k
     run = isinstance(pos, RunPos)
     p = pos.pos if run else pos
@@ -2301,6 +2306,8 @@ def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
     else:
         x.set(MO.moe_ffn_rows(x, lw, spec.moe, m.moe_dev, spec.eps))
     ol.store(m.xbuf[row:row + R, :], x)
+    if hint and li + 1 < spec.layers and m.layer(li + 1).moe:
+        MO.moe_hint_rows(x, m.layer(li + 1), spec.moe, m.moe_dev, spec.eps)
 
 
 @ol.jit

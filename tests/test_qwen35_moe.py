@@ -291,14 +291,15 @@ def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, real, embed_runs,
 
 
 
-@pytest.mark.parametrize("ready", [True, False])
-def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
+@pytest.mark.parametrize("ready,hint", [(True, False), (False, False), (True, True)])
+def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready, hint):
     """Engine._precompile_layers: with the process pipeline (a backend running assembled words,
     as the board does) prefill_layers' programs all come from the worker processes
     (layer_programs in the worker's image, assembled), queued in the order they run; here the
     ISA simulator runs them (the words decoded), and the logits and the decode steps after
     equal token by token's bit for bit. With the workers not up yet (ready False: a prompt
-    right after the engine) each run compiles in line and its queued compile is dropped."""
+    right after the engine) each run compiles in line and its queued compile is dropped.
+    hint: the workers' programs post the next layer's hints (layer_ahead "hint")."""
     from opentpu import isa as I
     from opentpu.llm.qwen3 import IsaBackend
 
@@ -314,7 +315,8 @@ def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
     spec, W = _untied(tiny)
     cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
     a = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K, layer_major=2,
-               backend=lambda c, imgs: Words(c, imgs, adopt=True))
+               backend=lambda c, imgs: Words(c, imgs, adopt=True),
+               **({"layer_ahead": "hint"} if hint else {}))
     ref = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K)
     try:
         assert a._procs and a._ready.result(timeout=120)
@@ -336,6 +338,7 @@ def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
         la, lb = a.prefill(toks), ref.prefill(toks)
         assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
         assert a._layer_runs and not a._layer_next
+        assert (a.server.hints > 0) == hint
         assert all((progs is None) == ready and isinstance(w, np.ndarray)  # (None: the
                    for progs, _, w in a._layer_runs.values())             # worker's)
         if not ready:
@@ -344,6 +347,136 @@ def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
             assert np.array_equal(a.step(t).view(np.uint32), ref.step(t).view(np.uint32))
     finally:
         a._pool.shutdown()
+
+
+
+def test_layer_ahead_sends_the_next_layers_experts(tiny, monkeypatch):
+    """Engine(layer_ahead=orders): prefill_layers turns the server's layer ahead on
+    (begin_prefill(ahead=True)) and gives it each MoE layer's experts in the order's, as global
+    ids, between runs (ExpertServer.ahead_layer): the first layer's after begin_prefill, the
+    next layer's before each layer's first run, the first layer's again before the last layer
+    of a chunk another chunk follows (17 rows in chunks of 12 and 5). With the link's idle time
+    between runs (polls until none sends: the ISA simulator polls only while a run waits) the
+    queued experts land: fewer misses than without, the logits and the decode steps after
+    token by token's bit for bit."""
+    from opentpu.llm import qwen35 as Q35
+    monkeypatch.setattr(Q35, "PREFILL_CHUNK", 12)
+    spec, W = _untied(tiny)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
+    order = [[(e * 3 + j) % E for e in range(6)] for j in range(len(KINDS))]
+    a, b, ref = (Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K, **kw)
+                 for kw in ({"layer_major": 2, "layer_ahead": order}, {"layer_major": 2}, {}))
+    srv, calls = a.server, []
+    ahead, begin, run = srv.ahead_layer, srv.begin_prefill, a.backend.run
+
+    def ahead_layer(j, ids):
+        calls.append((j, list(ids)))
+        ahead(j, ids)
+
+    def idle_then_run(*args, **kw):             # the link's idle time before each run
+        while srv.poll():
+            pass
+        return run(*args, **kw)
+    srv.ahead_layer, a.backend.run = ahead_layer, idle_then_run
+    srv.begin_prefill = lambda **kw: (calls.append(("begin", kw)), begin(**kw))
+    toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 21)]
+    m0 = a.server.misses, b.server.misses
+    la, lb, lr = a.prefill(toks), b.prefill(toks), ref.prefill(toks)
+    assert a.image.prefill_rows == 12 and a.pos == len(toks)
+    assert calls[0] == ("begin", {"ahead": True})
+    assert [j for j, _ in calls[1:]] == [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
+    assert all(ids == [j * E + e for e in order[j]] for j, ids in calls[1:])
+    assert srv.aheads == 12 and srv.landed > 0
+    assert np.array_equal(la.view(np.uint32), lr.view(np.uint32))
+    assert np.array_equal(lb.view(np.uint32), lr.view(np.uint32))
+    assert a.server.misses - m0[0] < b.server.misses - m0[1]
+    for t in (5, 6):
+        assert np.array_equal(a.step(t).view(np.uint32), ref.step(t).view(np.uint32))
+    a.layer_ahead, got = True, []                # True: each layer's experts in index order
+    a._send_ahead(lambda j, ids: got.append((j, ids)), 2)
+    assert got == [(2, list(range(2 * E, 3 * E)))]
+
+
+def _no_mixers(W):
+    """W with every mixer's output projection zero: a layer's MoE block reads the layer's input
+    (x + 0), so its route is the hint the layer before posts."""
+    return {k: (np.zeros_like(v) if k.endswith(("self_attn.o_proj.weight",
+                                                "linear_attn.out_proj.weight")) else v)
+            for k, v in W.items()}
+
+
+def _record_hints(eng):
+    """eng's server's hints (each one's global ids, a list) and the requests named after
+    begin_prefill (ExpertServer.history after its call: it serves the last token step's
+    request first, settle)."""
+    srv, hints, mark = eng.server, [], []
+    hint, begin = srv.hint, srv.begin_prefill
+    srv.hint = lambda ids: (hints.append(list(ids)), hint(ids))
+    srv.begin_prefill = lambda **kw: (begin(**kw), mark.append(len(srv.history)))
+    srv.history = []
+    return hints, lambda: srv.history[mark[0]:]
+
+
+def test_layer_runs_hint_the_next_layer_and_change_no_logit(tiny):
+    """Engine(layer_ahead="hint"): each layer run but the last layer's ends with the next
+    layer's hint (moe.moe_hint_rows: that layer's router on the run's output rows, one line of
+    R k ids), served as the next run waits on its fence; begin_prefill gets AHEAD_PART and
+    every ahead_layer call names no expert. The logits and the decode steps after equal token
+    by token's bit for bit. With the mixers' output projections zero a layer's route reads the
+    layer's input, so each hint is the next layer's request for the same rows, ids in their
+    order: 20 rows, the first 3 token by token (conv_k - 1), then runs of 2 and one of 1."""
+    from opentpu.llm.qwen3 import AHEAD_PART
+    spec, W = _untied(tiny)
+    L = len(KINDS)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
+    a, ref = (Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K, **kw)
+              for kw in ({"layer_major": 2, "layer_ahead": "hint"}, {}))
+    calls, ahead, begin = [], a.server.ahead_layer, a.server.begin_prefill
+    a.server.ahead_layer = lambda j, ids: (calls.append(list(ids)), ahead(j, ids))
+    a.server.begin_prefill = lambda **kw: (calls.append(kw), begin(**kw))
+    toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 20)]
+    la, lr = a.prefill(toks), ref.prefill(toks)
+    assert calls[0] == {"ahead": True, "part": AHEAD_PART} and calls[1:] == [[]] * L
+    runs = 9                                    # (rows 3..19 in runs of 2, the last of 1)
+    assert a.server.hints == (L - 1) * runs
+    assert np.array_equal(la.view(np.uint32), lr.view(np.uint32))
+    for t in (5, 6):
+        assert np.array_equal(a.step(t).view(np.uint32), ref.step(t).view(np.uint32))
+    z = Engine(spec, _no_mixers(W), cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K,
+               layer_major=2, layer_ahead="hint")
+    hints, requests = _record_hints(z)
+    z.prefill(toks)
+    got = requests()
+    assert len(got) == L * runs and len(hints) == (L - 1) * runs
+    assert hints == got[runs:] and any(len(h) > K for h in hints)  # (two rows' ids)
+
+
+def test_layer_hints_queue_the_next_layer_and_its_experts_land_early(tiny):
+    """The server's side of layer_ahead "hint" (ExpertServer.hint with ahead_layer's queue on
+    the hinted layer: its ids to the end of the queue, docs/offload.md 13.4): with the link's
+    idle time before each run (polls until none sends: the ISA simulator polls only while a
+    run waits) the hinted experts land before the next layer's runs ask for them, so fewer
+    misses than layer-major runs without the layer ahead; the logits and the decode steps
+    after equal theirs bit for bit."""
+    spec, W = _untied(tiny)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
+    a, b = (Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K,
+                   layer_major=2, **kw) for kw in ({"layer_ahead": "hint"}, {}))
+    srv, run = a.server, a.backend.run
+
+    def idle_then_run(*args, **kw):
+        while srv.poll():
+            pass
+        return run(*args, **kw)
+    a.backend.run = idle_then_run
+    toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 20)]
+    m0 = a.server.misses, b.server.misses
+    la, lb = a.prefill(toks), b.prefill(toks)
+    assert srv.hinted_ahead > 0 and srv.landed > 0 and not srv.queue
+    assert a.server.misses - m0[0] < b.server.misses - m0[1]
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    for t in (5, 6):
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
 
 
 def _hinted(spec):
@@ -395,14 +528,15 @@ def test_hinted_experts_on_their_way_wait_on_their_tags_beat_by_beat(tiny):
     assert a.generate_card(t0, 6, stop_ids=[]) == b.generate_card(t0, 6, stop_ids=[])
 
 
-def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_path):
+@pytest.mark.parametrize("caps", [(0, 0), (1, 1)])
+def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_path, caps):
     """Hints beside a card that computes while the host works (tests/test_lfm2_moe.py's
     _LiveCard, CHASH's map, a split-format pool), with the embedding table on the host: one
     BoardDram for the experts and the rows. The host sends the hinted experts in parts (64 KiB
     here) while the card runs its mixers, the rest of one the route names at once. Resident
     steps and the card's generate loop give the ISA simulator's logits and tokens with the
     table on the card and no hints bit for bit, with hinted experts landed before the route
-    asked."""
+    asked; uncapped, and with each hint's best expert only (hint_n, hint_top: 12.7)."""
     from test_lfm2_moe import _LiveCard
     from opentpu.host.board import BoardBackend
     from opentpu.host.offload import RUN, BoardDram
@@ -420,6 +554,7 @@ def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_pat
     assert isinstance(brd.server.mem, BoardDram) and brd.row_server.mem is brd.server.mem
     assert brd.server.L.slot_bytes > 16 * RUN
     brd.server.part = 16 * RUN
+    brd.server.hint_n, brd.server.hint_top = caps
     toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 6)]
     for t in toks:
         a, b = isa.step(t), brd.step(t)
@@ -464,13 +599,17 @@ def test_moe_card_streams_as_the_resident_run(tiny, tmp_path, monkeypatch):
                                           "--out", str(out), *opts])
         mc.main()
         r = json.loads(out.read_text())
-        return r["tokens"], r["prefill_logits_sha"], r["misses"]
+        return r["tokens"], r["prefill_logits_sha"], r["misses"], r
     want = run("resident", "--experts", "0")
     got = run("split", "--experts", "2", "--pool", str(tmp_path / "pool.bin"),
               "--hint-trace", str(tmp_path / "trace.json"))
     old = run("legacy", "--experts", "2", "--legacy-serve")
+    capped = run("capped", "--experts", "3", "--hints", "on", "--hint-drop", "--hint-n", "1",
+                 "--hint-top", "1")                 # (docs/offload.md 12.7)
     assert want[2] == 0 and got[2] > 0 and old[2] > 0
-    assert got[:2] == old[:2] == want[:2]
+    assert got[:2] == old[:2] == want[:2] == capped[:2]
+    h = capped[3]["hints"]
+    assert (h["n"], h["top"], h["drop"]) == (1, 1, True) and h["served"] > 0
     assert json.loads((tmp_path / "trace.json").read_text())       # (the decode's timeline)
 
 
@@ -535,9 +674,10 @@ def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
 
 
 def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
-    """tools/offload/moe_card.py --layer-major 2 --prefill-trace (ISA): the prompt's timeline
-    holds each run (the embed runs, the layer runs by key, the head last) and each request with
-    its ids and misses, as many as the result's prefill_time and prefill_requests count."""
+    """tools/offload/moe_card.py --layer-major 2 --layer-ahead index --prefill-trace (ISA): the
+    prompt's timeline holds each run (the embed runs, the layer runs by key, the head last) and
+    each request with its ids and misses, as many as the result's prefill_time and
+    prefill_requests count; the layer ahead called once a MoE layer."""
     import json
     import pickle
     import runpy
@@ -560,7 +700,7 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", [
         "moe_card.py", str(m), "--check", str(tmp_path / "ref.json"), "-n", "1", "--cap", "256",
         "--cfg", str(tmp_path / "cfg.pkl"), "--experts", str(2 * K), "--layer-major", "2",
-        "--prefill-trace", str(tr), "--out", str(out)])
+        "--layer-ahead", "index", "--prefill-trace", str(tr), "--out", str(out)])
     runpy.run_path(str(Path(__file__).resolve().parents[1] / "tools" / "offload" / "moe_card.py"),
                    run_name="__main__")
     r, t = json.loads(out.read_text()), json.loads(tr.read_text())
@@ -573,3 +713,4 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     assert all(x[1] <= x[2] for x in t["runs"])                 # started, then done
     assert len(t["requests"]) == len(t["misses"]) == pt["requests"] == r["prefill_requests"]
     assert sum(t["misses"]) == r["prefill_misses"] and all(e[2] == "d" for e in t["events"])
+    assert r["layer_ahead"] == "index" and pt["ahead"]["calls"] == len(KINDS)  # (one chunk)

@@ -455,14 +455,33 @@ def test_logits_fill_rtl(have_verilator, stall):
 # The card's channels (rtlsim's LDC: the board's bridge otpu_mem_ch and LiteDRAM's own controller,
 # generated with the production core's settings, sim/verilator/otpu_ldc_mem.sv). The controller
 # alone, on one channel's sequential reads or writes on one port (the BIST's pattern), moves what
-# the card's BIST measures: with memeff's refresh postponing 2, 90.4% of peak reading, 89.8%
-# writing on the card (build f8c6c950, docs/litedram.md section 11), 90.4% / 89.9% here. The core
-# before it: 91.0% / 90.1% on the card, 90.9% / 90.1% here; behind one port's crossbar lock a
-# burst of refreshes costs more than single ones (on two ports, the path decode and XDMA take, it
-# costs less: section 11).
-@pytest.mark.parametrize("we,card", [(0, 0.904), (1, 0.898)], ids=["read", "write"])
-def test_ldc_sequential_is_the_card_bist(have_verilator, tmp_path, we, card):
+# the card's BIST measures: with memeff's refresh postponing 2 and LiteDRAM's multiplexer, 90.4%
+# of peak reading, 89.8% writing on the card (build f8c6c950, docs/litedram.md section 11),
+# 90.4% / 89.9% here. The core before it: 91.0% / 90.1% on the card, 90.9% / 90.1% here; behind
+# one port's crossbar lock a burst of refreshes costs more than single ones (on two ports, the
+# path decode and XDMA take, it costs less: section 11). The figures follow ctl_settings.py's
+# MULTIPLEXER: with fastmux (FASTMUX) the model moves 91.65% / 91.49%, with its fallback
+# (FASTMUX_SAFE) 90.38% / 90.17%; the first fastmux build's qual checks the card's BIST against
+# them (until then they are the model's own).
+BIST = {"stock": (0.904, 0.898), "FASTMUX": (0.9165, 0.9149), "FASTMUX_SAFE": (0.9038, 0.9017)}
+
+
+def _bist_figures():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ctl_settings", rtlsim.ROOT / "tools" / "litedram" / "ctl_settings.py")
+    cs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cs)
+    names = [k for k in ("FASTMUX", "FASTMUX_SAFE") if cs.MULTIPLEXER == getattr(cs, k)]
+    stock = cs.MULTIPLEXER == dict(rtw=None, same_cycle=False, direct_wtr=False)
+    assert names or stock, f"no BIST figures for MULTIPLEXER {cs.MULTIPLEXER}"
+    return BIST[names[0] if names else "stock"]
+
+
+@pytest.mark.parametrize("we", [0, 1], ids=["read", "write"])
+def test_ldc_sequential_is_the_card_bist(have_verilator, tmp_path, we):
     import re
+    card = _bist_figures()[we]
     exe = rtlsim.build("tb_ldc_replay", [rtlsim.TB / "otpu_ldc_ch.v",
                                          rtlsim.TB / "tb_ldc_replay.sv"])
     trace = tmp_path / "seq.txt"

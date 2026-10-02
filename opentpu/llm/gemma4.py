@@ -1104,11 +1104,11 @@ class Image:
         return [b.finish()], list(b.run_args)
 
     def compile_layer_run(self, li: int, blocks: int, block: int = ATTN_BLOCK, R: int = 1,
-                          embedded: bool = False):
+                          embedded: bool = False, hint: bool = False):
         """(programs, run_args): gemma4_layer_run of layer li, R rows at a run-time position of
         bucket `blocks` and a run-time row of the prefill chunk (run arguments: RunPos.values
-        and "row"); li < 0: gemma4_embed_run. The image needs lookup tables and its prefill
-        rows."""
+        and "row"); li < 0: gemma4_embed_run. hint: the run ends with the next layer's hint
+        (gemma4_layer_run). The image needs lookup tables and its prefill rows."""
         from ..compiler import RunVar
         from .qwen3 import RunPos
         if not self.lookup or not self.prefill_rows:
@@ -1117,6 +1117,8 @@ class Image:
             raise ValueError(f"the image is laid out for attention blocks of {self.block}")
         if not 1 <= R <= RUN_ROWS or R * (self.spec.top_k or 1) > LINE // 4:
             raise ValueError(f"{R} rows a layer run")
+        if hint and self.offload is None:
+            raise ValueError("a layer run's hint needs the expert server's words (offload)")
         rp = RunPos(blocks, block, (blocks - 1) * block, 0, self.cap)
         rp.tpos.bound -= R - 1          # the run's last row in the block too: tpos <= block - R
         row = RunVar("row", self.prefill_rows)
@@ -1126,7 +1128,8 @@ class Image:
         else:
             b = gemma4_layer_run.trace(self.cfg, 0, {"m": self.descriptors(0), "li": li,
                                                      "pos": rp, "row": row, "block": block,
-                                                     "R": R, "embedded": embedded})
+                                                     "R": R, "embedded": embedded,
+                                                     "hint": hint})
         return [b.finish()], list(b.run_args)
 
     def compile_prefill_head(self):
@@ -1299,6 +1302,7 @@ class Image:
             Lo = self.offload
             ns.moe_dev = SimpleNamespace(mbox=Lo.mbox, served=Lo.served, answer=Lo.answer,
                                          dir=Lo.dir, tag=Lo.tag, fmt=self.fmt,
+                                         hint_off=Lo.layers * Lo.E,
                                          scratch=self.io.get("moe_scratch"))
         return ns
 
@@ -1752,7 +1756,7 @@ def gemma4_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK):
 
 @ol.jit
 def gemma4_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
-                     embedded: bool = False):
+                     embedded: bool = False, hint: bool = False):
     """Layer-major prefill (a MoE model's: the whole prompt chunk through a layer before the
     next, so that the expert cache serves one layer at a time): the R prompt rows from `row`
     (a run-time value) at the run-time positions pos .. pos + R - 1 (qwen3.RunPos; in one
@@ -1761,7 +1765,9 @@ def gemma4_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
     gathered at pos.tok; else gemma4_embed_run's), their output goes back there; the MoE block
     of more than one row is moe.moe_ffn_rows. A row's arithmetic is gemma4_step's at its
     RunPos, so the chunk layer by layer leaves the KV cache and residual rows the per-position
-    programs make, bit for bit."""
+    programs make, bit for bit. With `hint` (a MoE model, li + 1 a layer) the run ends with
+    layer li + 1's hint: its router on the output rows (moe.moe_hint_rows; docs/offload.md
+    13.9), which changes no row."""
     spec = m.spec
     if spec.ple_dim:
         raise ValueError("layer-major prefill: a model without per-layer inputs")
@@ -1776,6 +1782,8 @@ def gemma4_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
     _attention(x, lw, m, pos if R == 1 else [_RowPos(pos, r) for r in range(R)], ropes, block)
     _mlp(x, lw, spec, m)
     ol.store(m.xbuf[row:row + R, :], x)
+    if hint and spec.experts and li + 1 < spec.layers:
+        MO.moe_hint_rows(x, m.layer(li + 1), spec.moe, m.moe_dev, spec.eps)
 
 
 @ol.jit

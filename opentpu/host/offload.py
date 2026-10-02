@@ -28,9 +28,10 @@ DRAM words (`Layout`), all 4-byte words at 64-byte aligned bases:
 A global expert id is `j * E + e` for the j-th MoE layer's expert e (the card's ARGMAX gives it
 with base j * E). Per request (docs/offload.md 10.11) the host, for each id missing from its
 copy of the directory, picks the layer's least recently used expert that the request does not
-name; writes the answer (one 64-byte beat: the missing ids' slots); writes each missing expert
-into its slot with its tag chunk, the tag word in the DMA's last beat; then the directory: {slot,
-1.0} to the new entries and {0, 0.0} to the victims'; then `served = seq`. The card fences each
+name; writes each missing expert into its slot with its tag chunk, the tag word in the DMA's
+last beat, and the answer (one 64-byte beat: the missing ids' slots) once the first expert's
+first part is on its way; then the directory: {slot, 1.0} to the new entries and {0, 0.0} to
+the victims'; then `served = seq`. The card fences each
 layer before it posts, `WAITW served >= seq` (its last request), so one request row and one
 answer are enough, and no eviction for a layer is in flight while it uses that layer's slots
 (docs/offload.md 5.2). It reads the present flags of the ids it posts from the directory: a
@@ -51,10 +52,10 @@ cleared), and with "lazy" (the default; docs/offload.md 13) decode's misses fill
 
 A request whose ids are at G = layers x E and above is a hint (docs/offload.md 12: the layer's
 router on its input, before its mixer). With the "lfu" policy the host gives each hinted expert
-not in a slot one now (a free one, or the victim, its entry cleared), writes served, and moves
-the experts on the link's idle time: one part per poll that finds no request, the tag with the
-last part, then the entry. A request naming one still on its way names its slot in the answer
-and sends the rest at once. "lru" ignores hints.
+not in a slot one now (a free one, or the victim, its entry cleared; hint_n / hint_top cap them,
+docs/offload.md 12.7), writes served, and moves the experts on the link's idle time: one part
+per poll that finds no request, the tag with the last part, then the entry. A request naming one
+still on its way names its slot in the answer and sends the rest at once. "lru" ignores hints.
 
 On the card the server's memory is `BoardDram` (`dram_of`): the experts' DMA at the link's
 rate, in a worker thread, the host's own words without a read of the card first.
@@ -247,7 +248,13 @@ class PoolFile:
         self.io: dict | None = None
         self.iov = True                 # get's records read through preadv_iov where libc has it
         self.mapped = mapped
-        self._mc = None                 # the file's read-only map: (map, its view, libc)
+        # mapped: each read's touch waits for touch_deferred (ExpertServer, once a request is
+        # served) instead of delaying the read's DMA (docs/offload.md 10.11)
+        self.defer_touch = False
+        self._touches: list = []
+        self._mc = None                 # the file's read-only map: (map, its view, libc,
+                                        # the view's address)
+        self._vec = None                # mincore's vector (_absent: reused)
         if mapped:                      # (made here: the warm thread and the server share it)
             self._map()
 
@@ -259,8 +266,10 @@ class PoolFile:
         if self._mc is None:
             try:
                 mm = mmap.mmap(self.fd, os.fstat(self.fd).st_size, prot=mmap.PROT_READ)
-                self._mc = (mm, np.frombuffer(mm, np.uint8),
-                            ctypes.CDLL(None, use_errno=True))
+                v = np.frombuffer(mm, np.uint8)
+                libc = ctypes.CDLL(None, use_errno=True)
+                libc.mincore.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p]
+                self._mc = (mm, v, libc, v.ctypes.data)
             except (OSError, AttributeError, ValueError):
                 self._mc = False
         return self._mc or None
@@ -271,6 +280,11 @@ class PoolFile:
         m = self._map()
         if m is not None and n > 0:
             int(m[1][off // mmap.PAGESIZE * mmap.PAGESIZE:off + n:mmap.PAGESIZE].sum())
+
+    def touch_deferred(self) -> None:
+        """The touches defer_touch held back, now."""
+        while self._touches:
+            self._touch(*self._touches.pop())
 
     def resident(self, ids) -> int | None:
         """Bytes of these experts in the page cache (mincore over the file's pages), or None
@@ -310,11 +324,13 @@ class PoolFile:
             return None
         pg = mmap.PAGESIZE
         lo, hi = off // pg, -(-(off + n) // pg)
-        vec = (ctypes.c_ubyte * (hi - lo))()
-        if m[2].mincore(ctypes.c_void_p(m[1].ctypes.data + lo * pg),
-                        ctypes.c_size_t((hi - lo) * pg), vec) != 0:
+        if self._vec is None or len(self._vec[1]) < hi - lo:
+            k = max(hi - lo, -(-self.slot // pg) + 1)
+            b = (ctypes.c_ubyte * k)()
+            self._vec = (b, np.frombuffer(b, np.uint8))
+        if m[2].mincore(m[3] + lo * pg, (hi - lo) * pg, self._vec[0]) != 0:
             return None
-        return (hi - lo - int((np.frombuffer(vec, np.uint8) & 1).sum())) * pg
+        return (hi - lo - int(np.count_nonzero(self._vec[1][:hi - lo] & 1))) * pg
 
     def _read(self, bufs, off: int) -> None:
         self._io(sum(map(len, bufs)), off, lambda: preadv(self.fd, bufs, off))
@@ -337,7 +353,10 @@ class PoolFile:
             s[2] += n
             s[3] += gone or 0
         if self.mapped:
-            self._touch(off, n)
+            if self.defer_touch:
+                self._touches.append((off, n))
+            else:
+                self._touch(off, n)
 
     def get(self, g: int):
         if self.split:
@@ -492,14 +511,20 @@ class ExpertServer:
         # hints served; hinted experts landed on idle time, sent by the request that named
         # them, replaced before they landed, withdrawn by their layer's request (drop)
         self.hints = self.prefetched = self.promoted = self.dropped = self.withdrawn = 0
+        # a hint's caps (docs/offload.md 12.7): of its first hint_top ids (its router's best
+        # first; 0: all), the first hint_n not in a slot get one (0: every one not in a slot)
+        self.hint_n = self.hint_top = 0
         self.history: list | None = None    # a list: each request's ids are appended
         # a list: (perf_counter when seen, when done, "h" hint / "d" request / "p" a hint's
         # part, its layer or expert, misses or the expert's bytes sent): the host's timeline of
         # the hints (moe_card --hint-trace)
         self.events: list | None = None
-        # called with a request's missing ids before the first is staged (PoolFile.willneed:
-        # the reads of those not in the page cache queued at once)
+        # called with a request's missing ids but its first once that one's first part is on
+        # its way (PoolFile.willneed: the reads of those not in the page cache queued at once)
         self.ahead = None
+        # the PoolFile behind pool, when there is one (moe.serve): the touches it defers run
+        # once a request is served, while the card computes
+        self.pool_file = None
         self._victims: list = []            # this request's victims: entries cleared at its end
         self.last = None                    # what the last poll served: ("d" / "h", its layer),
                                             # None for a hinted expert's part (PollPacer's key)
@@ -516,12 +541,14 @@ class ExpertServer:
         # a layer-major prefill's layer ahead (ahead_layer): its experts not yet given a slot,
         # most wanted first (each takes one when its first part goes on an idle poll), the ones
         # of them on their way (in `pending`), and the layers the runs until the next call may
-        # use (no victim from them); begin_prefill's part size while the prefill lasts
+        # use (no victim from them); begin_prefill's part size while the prefill lasts; the
+        # queue's layer (a hint for it adds to the queue: the card's own router, 13.4)
         self.queue: OrderedDict = OrderedDict()
         self._ahead: set = set()
         self._spare: frozenset = frozenset()
-        self._part, self._ahead_off = None, False
+        self._part, self._ahead_off, self._qlayer = None, False, None
         self.aheads = self.landed = 0       # ahead_layer's calls; its experts landed whole
+        self.hinted_ahead = 0               # ids hints added to its queue
 
     def load(self, warm=()) -> None:
         """At image load: an empty directory, mailbox and answer, every slot's tag zero, then
@@ -573,6 +600,7 @@ class ExpertServer:
             g = next(iter(self.pending))
             self.step()
             self._flush()
+            self._touched()
             self.last = None
             if self.events is not None:
                 self.events.append((t0, time.perf_counter(), "p", g,
@@ -607,6 +635,7 @@ class ExpertServer:
         self.seq = seq
         self.mem.write(self.L.served, _f32(seq))
         self._flush()                       # (no DMA of the server's in flight after poll)
+        self._touched()
         self.last = ("h" if ids[0] >= G else "d", ids[0] % G // self.L.E)
         if self.events is not None:
             self.events.append((t0, time.perf_counter(), "h" if ids[0] >= G else "d",
@@ -618,6 +647,10 @@ class ExpertServer:
         if f is not None:
             f()
 
+    def _touched(self) -> None:
+        if self.pool_file is not None:
+            self.pool_file.touch_deferred()
+
     def _layer(self, ids) -> int:
         E = self.L.E
         j = ids[0] // E
@@ -628,18 +661,15 @@ class ExpertServer:
     def serve(self, ids, pos=None) -> None:
         """One request: its k global ids, all of one MoE layer; pos: each one's answer word
         (its first place in the request; default its index). The missing ones' slots are
-        chosen first, then the answer goes, then each one's bytes with its tag, then the
-        directory's new and cleared entries (docs/offload.md 10.11)."""
+        chosen first, then each one's bytes go with its tag, the answer once the first one's
+        first part is on its way (the link starts on the expert), then the directory's new and
+        cleared entries (docs/offload.md 10.11)."""
         j = self._layer(ids)
         pos = list(range(len(ids))) if pos is None else pos
         self.t[j] += 1
         lru, use, t = self.lru[j], self.use[j], self.t[j] / self.half
         for g in ids:                       # the decayed use count, kept as log2 + t / half
             use[g] = math.log2(2.0 ** (use[g] - t) + 1.0) + t if g in use else t
-        if self.ahead is not None:
-            miss = [g for g in ids if g not in lru]
-            if miss:
-                self.ahead(miss)
         plan = []                           # (id, its answer word, slot, its rest only)
         for g, p in zip(ids, pos):
             if g in lru:
@@ -660,12 +690,19 @@ class ExpertServer:
             ans = np.zeros(self.L.max_ids, np.uint32)
             for g, p, slot, _ in plan:
                 ans[p] = slot
-            self.mem.write(self.L.answer, ans)
-            for g, p, slot, rest in plan:
+
+            later = [g for g, _, _, rest in plan[1:] if not rest]
+
+            def answer():                   # the first expert's first part on its way: the
+                self.mem.write(self.L.answer, ans)          # answer, and the other misses'
+                if self.ahead is not None and later:        # reads queued (ahead)
+                    self.ahead(later)
+            for n, (g, p, slot, rest) in enumerate(plan):
+                then = None if n else answer
                 if rest:
-                    self._send(g, self.L.slot_bytes, entry=False)
+                    self._send(g, self.L.slot_bytes, entry=False, then=then)
                 else:
-                    self._fetch(g, slot)
+                    self._fetch(g, slot, then)
                 self._dir(g, slot)
         if self.pooled:
             for g in ids:
@@ -722,17 +759,30 @@ class ExpertServer:
         """A hint: the k global ids the layer's router picks on its input (docs/offload.md 12).
         With "lfu" each one not in a slot gets one now (a free slot, or the victim's: its entry
         cleared) and waits in `pending` for the link's idle time (step); no use counted, so
-        a hinted expert no request names is the next victim. "lru" ignores hints (section
-        5.4: an LRU victim of a wrong hint is a recent expert)."""
+        a hinted expert no request names is the next victim. hint_n / hint_top cap them: of the
+        first hint_top ids the first hint_n not in a slot (docs/offload.md 12.7). The slot is
+        taken here, not when the first part goes: the victim's entry must be cleared before
+        `served` covers the hint, since the card may post the layer's request (and read the
+        victim's entry) as soon as it sees served. "lru" ignores hints (section 5.4: an LRU
+        victim of a wrong hint is a recent expert). A hint for ahead_layer's layer
+        (the card's router on the layer before it, in a layer-major prefill) adds to the end
+        of its queue instead (docs/offload.md 13.4)."""
         j = self._layer(ids)
         self.hints += 1
+        if j == self._qlayer:               # ahead_layer's layer: to the end of its queue, those
+            lru, q = self.lru[j], self.queue    # in no slot (on their way: in one) nor queued;
+            for g in ids:                   # no slot taken now (each when its first part goes)
+                if g not in lru and g not in q:
+                    q[g] = None
+                    self.hinted_ahead += 1
+            return
         if self.policy != "lfu" or self.pooled:
             return
         lru = self.lru[j]
-        for g in ids:
-            if g not in lru:
-                lru[g] = self._slot(j, ids)
-                self.pending[g] = 0
+        want = [g for g in (ids[:self.hint_top] if self.hint_top else ids) if g not in lru]
+        for g in want[:self.hint_n] if self.hint_n else want:
+            lru[g] = self._slot(j, ids)
+            self.pending[g] = 0
         self._clear()
 
     def step(self) -> None:
@@ -748,7 +798,7 @@ class ExpertServer:
                 if self.pooled:
                     self.order[g] = None
 
-    def _send(self, g: int, b: int, entry: bool = True) -> int:
+    def _send(self, g: int, b: int, entry: bool = True, then=None) -> int:
         """Hinted expert g's bytes from where it stands to b; its tag with them when that is
         the end, then (entry) its entry. Returns b."""
         slot, a = self.lru[g // self.L.E][g], self.pending[g]
@@ -763,7 +813,7 @@ class ExpertServer:
         else:
             part = (np.ascontiguousarray(data).view(np.uint8).reshape(-1) if isinstance(
                 data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))[a:b]
-        self._write(slot, a, part, g if b == n else None)
+        self._write(slot, a, part, g if b == n else None, then)
         self.bytes += b - a
         if b < n:
             self.pending[g] = b
@@ -774,26 +824,29 @@ class ExpertServer:
             self._dir_flush()
         return b
 
-    def _write(self, slot: int, at: int, data, tag: int | None = None) -> None:
+    def _write(self, slot: int, at: int, data, tag: int | None = None, then=None) -> None:
         """data to slot + at; with tag (expert g's), the slot's tag word {g + 1} after it, in
-        the same DMA's last beat (memories without write_slot: a write after it)."""
+        the same DMA's last beat (memories without write_slot: a write after it). then():
+        called once data's first part is on its way (the request's answer: write_slot)."""
         t = None if tag is None else (slot + self.L.tag, _tag_beat(tag + 1))
         w = getattr(self.mem, "write_slot", None)
         if w is not None:
-            w(slot + at, data, t)
+            w(slot + at, data, t, then)
         else:
             self.mem.write(slot + at, data)
             if t is not None:
                 self.mem.write(*t)
+            if then is not None:
+                then()
         if t is not None:
             self.armed.add(slot)
 
-    def _fetch(self, g: int, slot: int) -> None:
+    def _fetch(self, g: int, slot: int, then=None) -> None:
         """A missing expert into its slot, with its tag (the card waits on that)."""
         data = self.pool(g)
         if len(data) != self.L.slot_bytes:
             raise ValueError(f"expert {g}: {len(data)} bytes, slots hold {self.L.slot_bytes}")
-        self._write(slot, 0, data, g)
+        self._write(slot, 0, data, g, then)
         self.bytes += len(data)
 
     def _reuse(self, slot: int) -> int:
@@ -939,11 +992,13 @@ class ExpertServer:
         self._spare = frozenset((j, (j - 1) % L))
         lru = self.lru[j]
         self.queue = OrderedDict((int(g), None) for g in ids if g not in lru)
+        self._qlayer = j
 
     def _drop_ahead(self) -> None:
         """ahead_layer's queue emptied, and its experts on their way dropped: their slots free
         (no tag or entry was written for them)."""
         self.queue.clear()
+        self._qlayer = None
         for g in [g for g in self.pending if g in self._ahead]:
             del self.pending[g]
             j = g // self.L.E
@@ -1209,17 +1264,25 @@ class BoardDram:
 
     # ---- the worker
     def _work(self) -> None:
+        import contextlib
+        lock = getattr(self.board.t, "_dma", None) or contextlib.nullcontext()
         while True:
             fn, slot = self._q.get()
-            try:
-                if self._err is None:
-                    fn()
-            except BaseException as e:          # noqa: BLE001 (raised by flush)
-                self._err = e
-            finally:
-                if slot is not None:
-                    self._free.put(slot)
-                self._q.task_done()
+            with lock:                          # (held while calls are queued: each call's
+                while True:                     # own is then a reentry, no flock)
+                    try:
+                        if self._err is None:
+                            fn()
+                    except BaseException as e:      # noqa: BLE001 (raised by flush)
+                        self._err = e
+                    finally:
+                        if slot is not None:
+                            self._free.put(slot)
+                        self._q.task_done()
+                    try:
+                        fn, slot = self._q.get_nowait()
+                    except queue.Empty:
+                        break
 
     def _put(self, fn, slot=None) -> None:
         if self._thread is None:
@@ -1331,15 +1394,17 @@ class BoardDram:
         m, c = at // self.blk, at // (self.blk // 2) % 2
         return c ^ (m.bit_count() & 1) if self.board.chash else c
 
-    def write_slot(self, addr: int, data, tag=None) -> None:
+    def write_slot(self, addr: int, data, tag=None, then=None) -> None:
         """An expert's bytes (or a part's) to addr; tag: (address, its 64-byte beat), the slot's
         tag beat, which goes in the same DMA, last: right after the bytes (the slot's tag chunk
         starts there), the other channel's call first and the tag's channel's after it, the tag
-        its last beat (docs/offload.md 10.11); elsewhere, a call of its own after them."""
+        its last beat (docs/offload.md 10.11); elsewhere, a call of its own after them. then():
+        called once the first part's DMA is queued (ExpertServer: the request's answer, so the
+        link starts on the expert's lead)."""
         from .board import swapped
         n = data.nbytes if isinstance(data, np.ndarray) else len(data)
         if tag is not None and (tag[0] != addr + n or n % self.blk):
-            self.write_slot(addr, data)
+            self.write_slot(addr, data, None, then)
             self.write(*tag)
             return
         if (isinstance(data, SplitRecord) and self.board.chash and addr % RUN == 0
@@ -1357,12 +1422,12 @@ class BoardDram:
             par = self._par.get((addr, nb))
             if par is None:                     # (CHASH: where each block lands)
                 par = self._par[addr, nb] = _parity(addr // RUN + np.arange(nb)).astype(bool)
-            if data.readiov is not None:        # an iovec array: no buffer objects
-                t = self._iov(n)[i]
-                iov = np.where(par[:, None, None], t[:, ::-1], t).reshape(-1, 2)
+            if data.readiov is not None:        # an iovec array: no buffer objects (each
+                t = self._iov(n)[i]             # part's built as it is read)
 
                 def read(j0, j1):
-                    data.readiov(iov[2 * j0:2 * j1], j0 * RUN)
+                    p = par[j0:j1, None, None]
+                    data.readiov(np.where(p, t[j0:j1, ::-1], t[j0:j1]).reshape(-1, 2), j0 * RUN)
             else:
                 pv = self._split_pieces(n)[i][np.arange(nb), par.astype(np.intp)]
 
@@ -1377,12 +1442,17 @@ class BoardDram:
                 last = j1 == nb
                 self._put(lambda a=j0 * h, b=e if last else j1 * h, o=order if last else (0, 1):
                           self._dma(addr // 2, bufs, a, b, o), i if last else None)
+                if then is not None:
+                    then()
+                    then = None
             self.direct += 1
             return
         src = (np.ascontiguousarray(data).view(np.uint8).reshape(-1)
                if isinstance(data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))
         if addr % self.blk or len(src) % self.blk:
             self.write(addr, src)
+            if then is not None:
+                then()
             if tag is not None:
                 self.write(*tag)
             return
@@ -1405,6 +1475,8 @@ class BoardDram:
         np.take(beats, i0, out=bufs[0][:h].view("V64"))       # channel 0's run
         np.take(beats, i1, out=bufs[1][:h].view("V64"))       # channel 1's
         self._put(lambda: self._dma(addr // 2, bufs, 0, h, order), i)
+        if then is not None:
+            then()
 
     def _beat(self, at: int, data: np.ndarray) -> None:
         """One 64-byte beat of the host's words (at: 64-byte aligned) to the channel that holds

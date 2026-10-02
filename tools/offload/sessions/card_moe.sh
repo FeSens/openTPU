@@ -20,6 +20,9 @@
 #     session 10's names for the defaults since
 #   q35e128s, q35e128sl: q35e128r with its timeline and DMA calls (--hint-trace), served as now
 #     and as before docs/offload.md 10.8 (--legacy-serve); g26s, g26sl: g26r's the same
+#   q35e128hn, q35e128hn8: q35e128s with the router's hints (their programs: q35ref16h), each
+#     hint's best not in a slot sent (--hint-n 1) of its top 4 or 8, whole (1632 KiB parts),
+#     withdrawn if its request does not name it (--hint-drop; docs/offload.md 12.7)
 #   q35e128sp, g26sp: q35e128s / g26s with the decode's polls paced (--poll-idle predict:
 #     PollPacer, docs/offload.md 10.10); g26s50: g26s with a 50 us sleep between empty polls
 #   g26a, g26b: gemma-4-26B-A4B (int8 layers, fp4 experts and head, slots filling the DRAM: 18 a
@@ -78,6 +81,8 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [q35e128r]="$Q35 128 q35-hf.json q35ref16 q35card128er 0 lfu --embed-table host --hints off --release-weights --hint-trace $R/q35card128er.trace.json"
   [q35e128rw]="$Q35 128 q35-hf.json q35ref16 q35card128erw 0 lfu --embed-table host --hints off --release-weights --willneed --hint-trace $R/q35card128erw.trace.json"
   [q35e128s]="$Q35 128 q35-hf.json q35ref16 q35card128es 0 lfu --embed-table host --hints off --hint-trace $R/q35card128es.trace.json"
+  [q35e128hn]="$Q35 128 q35-hf.json q35ref16h q35card128ehn 0 lfu --embed-table host --hints on --hint-drop --hint-n 1 --hint-top 4 --hint-part 1632 --hint-trace $R/q35card128ehn.trace.json"
+  [q35e128hn8]="$Q35 128 q35-hf.json q35ref16h q35card128ehn8 0 lfu --embed-table host --hints on --hint-drop --hint-n 1 --hint-top 8 --hint-part 1632 --hint-trace $R/q35card128ehn8.trace.json"
   [q35e128sl]="$Q35 128 q35-hf.json q35ref16 q35card128esl 0 lfu --embed-table host --hints off --legacy-serve --hint-trace $R/q35card128esl.trace.json"
   [q35e128sp]="$Q35 128 q35-hf.json q35ref16 q35card128esp 0 lfu --embed-table host --hints off --poll-idle predict --hint-trace $R/q35card128esp.trace.json"
   [q35c128a]="$Q35 128 q35-hf.json q35ref16 q35card128ca 0 lfu --embed-table card --hints off"

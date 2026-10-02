@@ -1164,6 +1164,8 @@ COMPILE_AHEAD = 3    # decode programs compiled ahead by the worker processes (E
 DECODE_LEAD = 16     # resident decode: the next bucket's program is compiled from this many
                      # positions before the current bucket ends (Engine)
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
+AHEAD_PART = 1 << 20  # layer_ahead "hint": an idle poll's part of a queued expert (docs/offload.md
+                      # 13.9: 1 MiB parts against 13.8's 512 KiB, the per-part cost halved)
 
 
 def fill_logits(m) -> None:
@@ -1699,24 +1701,26 @@ def _worker_decode(blocks: int, lo: int):
     return np.asarray(assemble(progs[0]), np.uint32), ra
 
 
-def layer_programs(image, key, block: int):
+def layer_programs(image, key, block: int, hint: bool = False):
     """Engine.prefill_layers' run of `key`: (layer (-1: the embed run), blocks, rows,
     embedded), (layer, None, rows, True, compile-time position) or "head" -> (programs,
-    run_args)."""
+    run_args); hint: a layer's run ends with the next MoE layer's hint (Engine's layer_ahead
+    "hint")."""
     if key == "head":
         return image.compile_prefill_head()
+    kw = {"hint": True} if hint and key[0] >= 0 else {}
     if key[1] is None:                      # (a compile-time position)
         return image.compile_layer_run(key[0], key[4] // block + 1, block, R=key[2],
-                                       embedded=True, at=key[4])
-    return image.compile_layer_run(key[0], key[1], block, R=key[2], embedded=key[3])
+                                       embedded=True, at=key[4], **kw)
+    return image.compile_layer_run(key[0], key[1], block, R=key[2], embedded=key[3], **kw)
 
 
-def _worker_layer(key):
+def _worker_layer(key, hint: bool = False):
     """The worker process: layer_programs' program, assembled (one slice), and its
     run_args."""
     from ..isa import assemble
     image, block = _WORKER
-    progs, ra = layer_programs(image, key, block)
+    progs, ra = layer_programs(image, key, block, hint)
     return np.asarray(assemble(progs[0]), np.uint32), ra
 
 
@@ -1820,7 +1824,13 @@ class Engine:
     docs/offload.md 13); pooled: the expert slots pooled for it, given back by `restore`
     ("lazy" or "eager"); embed_runs: with the embedding rows from the host's table, its embed
     runs and compile-time-position runs (default off while the card's port A keeps its beats
-    across runs, 13.6: token steps first, and layer 0's runs gather their rows).
+    across runs, 13.6: token steps first, and layer 0's runs gather their rows); layer_ahead:
+    with pooled slots and a server that streams ahead (ExpertServer.ahead_layer), the next MoE
+    layer's experts sent while a layer runs (13.7): True for each layer's experts in index
+    order, or per MoE layer its expert indices in the order to send them (a static profile, most
+    used first; a shorter list sends fewer), or "hint": the card's own guess (13.9), each layer
+    run ends with the next MoE layer's router on its output rows, posted as a hint the server
+    adds to that layer's queue (each queue started empty; idle-poll parts of AHEAD_PART).
 
     prog_cache: the bucket programs (the generate loop's, the resident decode's, MTP's loop's)
     come from opentpu/progcache.py: compiled once per process and image layout, and kept on
@@ -1843,7 +1853,7 @@ class Engine:
                  embed_host: bool | None = None, layer_major: int = 0, pooled: bool = True,
                  restore: str = "lazy", embed_runs: bool = False, release_weights: bool = True,
                  pool_map: bool = True, prog_cache: bool | None = None,
-                 prompt_runs: bool = False):
+                 prompt_runs: bool = False, layer_ahead=None):
         self.spec, self.cap, self.block = spec, cap, block
         self.prog_cache = PC.enabled() if prog_cache is None else bool(prog_cache)
         self.prompt_runs = prompt_runs
@@ -1920,6 +1930,8 @@ class Engine:
         self.pooled, self.restore = pooled, restore     # (the expert slots during it)
         self.embed_runs = embed_runs        # (the embed and compile-time-position runs with
                                             # the embedding rows from the host: prefill_layers)
+        self.layer_ahead = layer_ahead      # (the next layer's experts sent during a layer's)
+        self.layer_hint = layer_ahead == "hint"     # (the runs' own guess of them: hints)
         self._layer_runs: dict = {}
         self._layer_next: dict = {}         # their compiles in the worker processes: Futures
         if self.layer_major and not (getattr(self.image, "prefill_rows", 0) and self.device_inputs
@@ -2326,7 +2338,13 @@ class Engine:
         server's slots are pooled for the prompt (ExpertServer.begin_prefill: every slot serves
         the running layer) and given back to their layers before the head runs (end_prefill:
         `restore`, "lazy" by default). With the process pipeline the runs' programs compile in
-        the worker processes ahead of their runs, in their order (_precompile_layers).
+        the worker processes ahead of their runs, in their order (_precompile_layers). With
+        `layer_ahead` the server is given the next MoE layer's experts to send while a layer
+        runs (ExpertServer.ahead_layer, between runs: the first MoE layer's after begin_prefill,
+        the next one's before each layer's first run in a chunk, the first one's again before a
+        chunk's last layer when another chunk follows); a request still names its own. With
+        "hint" those calls name none: the layer's runs post the next layer's experts as hints
+        (their router on the run's output rows), which the server queues.
         Bit-identical to step() token by token (the states, the KV cache, the logits): only
         the slots the experts sit in move. Returns the logits after the last token."""
         img, K, B, R = self.image, getattr(self.spec, "conv_k", 1), self.block, self.layer_major
@@ -2379,10 +2397,23 @@ class Engine:
             p0 += len(part)
         self._precompile_layers([k for _, runs in chunks for k, _, _ in runs] + ["head"])
         srv = self.server if self.pooled else None
+        send = getattr(srv, "ahead_layer", None) if self.layer_ahead else None
         if srv is not None and hasattr(srv, "begin_prefill"):
-            srv.begin_prefill()
-        for part, runs in chunks:
+            srv.begin_prefill(**({} if send is None else {"ahead": True} if not self.layer_hint
+                                 else {"ahead": True, "part": AHEAD_PART}))
+        if send is not None:
+            self._send_ahead(send, 0)
+            first, nm = self.spec.moe.first, img.offload.layers
+        for c, (part, runs) in enumerate(chunks):
+            cur = -1
             for key, vals, rows in runs:
+                if send is not None and key[0] > cur:   # a layer's first run: the next MoE
+                    cur = key[0]                        # layer's experts, or the first's for
+                    j = cur + 1 - first                 # the next chunk
+                    if cur + 1 == self.spec.layers and c + 1 < len(chunks):
+                        self._send_ahead(send, 0)
+                    elif 0 < j < nm:
+                        self._send_ahead(send, j)
                 if rows is not None:
                     self._write_host_rows(rows)
                 run(key, vals)
@@ -2394,6 +2425,14 @@ class Engine:
         io, S, v_loc = img.io, self.cfg.S, img.v_loc
         return np.concatenate([self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc)
                                .view(np.float32) for s in range(S)])
+
+    def _send_ahead(self, send, j: int) -> None:
+        """MoE layer j's experts to the server's ahead_layer, as global ids in layer_ahead's
+        order."""
+        E = self.image.offload.E
+        order = range(E) if self.layer_ahead is True else () if self.layer_hint else \
+            self.layer_ahead[j]
+        send(j, [j * E + int(e) for e in order])
 
     def _layer_run(self, key):
         """prefill_layers' programs, compiled once (layer_programs' key) -> (programs, run_args,
@@ -2408,7 +2447,7 @@ class Engine:
                 words, ra = fut.result()
                 self._layer_runs[key] = (None, ra, words)
             else:
-                progs, ra = layer_programs(self.image, key, self.block)
+                progs, ra = layer_programs(self.image, key, self.block, self.layer_hint)
                 words = np.asarray(I.assemble(progs[0]), np.uint32) \
                     if getattr(self.backend, "runs_words", False) else None
                 self._layer_runs[key] = (progs, ra, words)
@@ -2424,7 +2463,7 @@ class Engine:
             return
         for k in dict.fromkeys(keys):
             if k not in self._layer_runs and k not in self._layer_next:
-                self._layer_next[k] = self._pool.submit(_worker_layer, k)
+                self._layer_next[k] = self._pool.submit(_worker_layer, k, self.layer_hint)
 
     def step_batch(self, tokens) -> np.ndarray:
         """One token for each of the first len(tokens) sequences, each at its own next

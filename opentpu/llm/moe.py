@@ -43,7 +43,8 @@ the card finds their union (each id's first place among them) and runs each unio
 on all R rows, storing each row's unweighted output to its (row, rank) place in a DRAM scratch
 of [R k + 1, H] (R k <= 16, the request's one line; the last row a sink for the outputs no row
 chose); each row then sums its own k in its router's order, so a row's result is moe_ffn's bit
-for bit.
+for bit. `moe_hint_rows` is moe_hint on R rows: a layer-major run's hint for the next layer, its
+router on the run's output rows (section 13.9).
 
 `ExpertFormat` is one expert's slot: gate and up [F, H] and W_down's column parts, laid out as a
 layer block's MLP (lfm2.Image), so the FFN is kernels.mlp.swiglu_down at the slot's address
@@ -237,6 +238,8 @@ def serve(layout: Layout, expert, backend, pool_file=None, warm=True,
             return pf.get(g)
     srv = ExpertServer(dram_of(backend, L), L, pool, policy=policy)
     srv.pool_file = pf
+    if pf is not None:                  # (its reads' touches after each request is served)
+        pf.defer_touch = True
     srv.pool_warm = None if pf is None else pf.warm_t
     srv.load([j * L.E + e for j in range(L.layers) for e in range(L.E)] if warm else ())
     return srv
@@ -304,6 +307,51 @@ def moe_hint(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float) -> None:
     seq = MB.wait_served(dev.mbox)                  # MB.post, with the request's count
     ol.store(Tensor(Affine(dev.mbox + LINE), (k,), (1,)), ids)
     ol.store(Tensor(Affine(dev.mbox + 4), (1,), (1,)), ol.full((1,), float(k)))
+    seq.set(seq + 1.0)
+    ol.store(Tensor(Affine(dev.mbox), (1,), (1,)), seq)
+
+
+def moe_hint_rows(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float) -> None:
+    """moe_hint on R rows at once (x [R, H], R * k <= LINE / 4: one request row): each row's k
+    best by the router of lw's layer, through its norm (moe_ffn's route), posted as one hint
+    of the rows' R * k ids (repeats included) and their count. A layer-major prefill run's
+    hint for the next layer (docs/offload.md 13.9): layer j's run on its output rows, with
+    layer j + 1's lw, ahead of layer j + 1's runs. One register."""
+    b = current()
+    R, E, k = x.rows, mo.E, mo.k
+    N = R * k
+    if N > LINE // 4:
+        raise CompileError(f"{R} rows of {k} experts: more ids than a request row holds")
+    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
+    lg = ol.dot(xs, lw.router)                          # [R, E] (+ the shared expert's gate)
+    del xs
+    gid = ol.empty((R, k), dense=True)
+    pr, tmp, ids = ol.empty((2,)), ol.empty((k,)), ol.empty((k,))
+    off = ol.load(lw.gbase) + float(dev.hint_off)
+    r = b.scratch()
+    for q in range(R):                                  # each row's k best, as the route's
+        sel = ol.empty((E,))
+        if mo.rule == "softmax":
+            sel.set(lg[q, 0:E])
+        else:
+            sel.set(sigmoid(lg[q, 0:E]) + ol.load(lw.ebias))
+        lp = b.begin_loop(k)
+        b.emit(I.argmax(pr.base, sel.base, 1, E, comment="hint: best"))
+        b.emit(I.rld(r, pr.base + 1, comment="its index"))
+        b.emit(I.vop(I.V_FILL, sel.base, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, NEG, ra=r,
+                     comment="knock out"))
+        if k > 1:
+            tmp[0:k - 1].set(ids[1:k])
+            ids[0:k - 1].set(tmp[0:k - 1])
+        b.emit(I.vop(I.V_COPY, ids.base + k - 1, pr.base + 1, 0, 1, 1, 0, 0, 0, comment="id"))
+        b.end_loop(lp)
+        del sel
+        gid[q, :].set(ids + off)
+    b.unscratch(r)
+    del lg, ids, tmp, off
+    seq = MB.wait_served(dev.mbox)                  # MB.post, with the request's count
+    ol.store(Tensor(Affine(dev.mbox + LINE), (N,), (1,)), gid.reshape(1, N)[0, :])
+    ol.store(Tensor(Affine(dev.mbox + 4), (1,), (1,)), ol.full((1,), float(N)))
     seq.set(seq + 1.0)
     ol.store(Tensor(Affine(dev.mbox), (1,), (1,)), seq)
 

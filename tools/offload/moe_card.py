@@ -91,6 +91,25 @@ def host_mem() -> dict | None:
                 swap_used=gb(m.get("SwapTotal", 0) - m.get("SwapFree", 0)))
 
 
+def ahead_order(value: str, spec):
+    """--layer-ahead's order: "index" (True: each layer's experts in index order), "hint" (the
+    card's own guess: each layer run's hint for the next layer, docs/offload.md 13.9), or router
+    traces (router_trace.py's or --trace's, comma-separated): per MoE layer its experts by use
+    in them, most used first (a static profile; no model math on the host)."""
+    if value in ("index", "hint"):
+        return True if value == "index" else value
+    E, nl = spec.moe.E, spec.layers - spec.moe.first
+    cnt = np.zeros((nl, E))
+    for path in value.split(","):
+        z = np.load(path)
+        moe = sorted(int(k[1:-4]) for k in z.files if k.startswith("L") and k.endswith("_idx"))
+        if len(moe) != nl:
+            raise ValueError(f"{path}: {len(moe)} MoE layers, the model has {nl}")
+        for j, li in enumerate(moe):
+            cnt[j] += np.bincount(z[f"L{li}_idx"].astype(np.int64).ravel(), minlength=E)[:E]
+    return [np.argsort(-c, kind="stable").tolist() for c in cnt]
+
+
 def fit_experts(spec, cfg, cap: int, **kw) -> int:
     """The expert slots per MoE layer that fill the card's DRAM beside the rest of the image."""
     from dataclasses import replace
@@ -103,12 +122,14 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          host_loop: bool = False, embed: str | None = None, trace: str | None = None,
          cfg_file: str | None = None, on_card: bool = False, policy: str = "lfu",
          embed_host: bool | None = None, hints: bool | None = None,
-         hint_part: int | None = None, hint_drop: bool = False,
+         hint_part: int | None = None, hint_drop: bool = False, hint_n: int = 0,
+         hint_top: int = 0,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
          formats: str | None = None, layer_major: int = 0, pooled: bool = True,
          release_weights: bool = True, willneed: bool = True, pool_map: bool = True,
          legacy_serve: bool = False, embed_runs: bool = False,
-         poll_idle: str | None = None, prefill_trace: str | None = None) -> dict:
+         poll_idle: str | None = None, prefill_trace: str | None = None,
+         layer_ahead: str | None = None) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -139,12 +160,17 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if layer_major:                             # the prompt a layer at a time, runs of R rows
         ekw.update(layer_major=layer_major, pooled=pooled,  # (docs/offload.md 13)
                    embed_runs=embed_runs)           # (13.6: a bitstream with port A's fix)
+        if layer_ahead:                             # the next layer's experts during a layer's
+            ekw.update(layer_ahead=ahead_order(layer_ahead, spec))     # runs (13.7)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend,
                  release_weights=release_weights, pool_map=pool_map,  # (10.6, 10.7)
                  **ekw)
     load_s = time.time() - t
     srv = eng.server
+    if eng.layer_ahead and not (pooled and hasattr(srv, "ahead_layer")):
+        raise SystemExit("--layer-ahead needs pooled slots and a server that streams ahead "
+                         "(ExpertServer.ahead_layer)")
     srv.policy = policy                         # the slots' replacement (ExpertServer)
     srv.history, per_req = [], []               # each request's ids and misses
     serve, pool_of, mem = srv.serve, srv.pool, srv.mem
@@ -172,6 +198,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if hint_part:                               # the hints' handling (ExpertServer)
         srv.part = hint_part
     srv.drop = hint_drop
+    srv.hint_n, srv.hint_top = hint_n, hint_top
     srv.pool = timed("pool", pool_of)
     mem.write, mem.read = timed("write", mem.write), timed("read", mem.read)
     if hasattr(mem, "write_slot"):              # BoardDram: staging (the main thread), and
@@ -279,7 +306,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         requests=len(req),                          # slots, the logits' read
         serve_s=round(sum(e[1] - e[0] for e in req), 3),
         host={k: round(v, 3) for k, v in tm.items()},   # (all the prompt's: none before)
-        counters={k: v - snap_pre[k] for k, v in snap_end.items()} if snap_end else None)
+        counters={k: v - snap_pre[k] for k, v in snap_end.items()} if snap_end else None,
+        ahead=dict(calls=srv.aheads, landed=srv.landed, dropped=srv.dropped,  # (the layer
+                   promoted=srv.promoted, hints=sum(e[2] == "h" for e in pev),  # ahead's;
+                   queued=getattr(srv, "hinted_ahead", None))   # the hints' ids it queued)
+        if eng.layer_ahead else None)
     if prefill_trace:                           # the prompt's timeline (s from its start)
         z = lambda v: None if v is None else round(v - t_pre, 6)    # noqa: E731
         Path(prefill_trace).write_text(json.dumps(dict(
@@ -365,7 +396,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 hint=spec.moe.hint,
                 hints=dict(served=srv.hints, prefetched=srv.prefetched, promoted=srv.promoted,
                            dropped=srv.dropped, withdrawn=srv.withdrawn, part=srv.part,
-                           drop=srv.drop) if spec.moe.hint else None,
+                           drop=srv.drop, n=srv.hint_n, top=srv.hint_top)
+                if spec.moe.hint else None,
                 image_mib=round(eng.image.nbytes / 2**20), slot_mb=round(L.slot_bytes / 1e6, 2),
                 requests=len(srv.history), hits=srv.hits, misses=srv.misses,
                 misses_per_token_decode=round(float(dec.mean()), 2) if len(dec) else None,
@@ -375,6 +407,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 misses_per_token=mpt.tolist(), layer_major=layer_major,
                 pooled=pooled if layer_major else None,
                 embed_runs=embed_runs if layer_major else None,
+                layer_ahead=layer_ahead if layer_major else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
                 legacy_serve=legacy_serve, poll_idle=poll_idle,
                 pacer=dict(sleeps=pacer.sleeps, slept_s=round(pacer.slept, 3),
@@ -440,6 +473,11 @@ def main():
                     help="KiB of a hinted expert per idle poll (default: ExpertServer's 512)")
     ap.add_argument("--hint-drop", action="store_true",
                     help="a request withdraws its layer's hinted experts it does not name")
+    ap.add_argument("--hint-n", type=int, default=0,
+                    help="a hint's experts sent, at most (0: every one not in a slot; "
+                         "docs/offload.md 12.7)")
+    ap.add_argument("--hint-top", type=int, default=0,
+                    help="of a hint's first ids only (its router's best first; 0: all k)")
     ap.add_argument("--hint-trace", help="the decode's hint and request timeline as JSON")
     ap.add_argument("--prefill-trace",
                     help="the prompt's timeline as JSON: each run (its layer run, start, done, "
@@ -452,6 +490,12 @@ def main():
                          "default 0: token by token)")
     ap.add_argument("--per-layer-slots", action="store_true",
                     help="--layer-major with each layer's own slots (default: pooled)")
+    ap.add_argument("--layer-ahead", metavar="index|hint|TRACES",
+                    help="--layer-major with pooled slots: the next MoE layer's experts sent "
+                         "while a layer runs (docs/offload.md 13.7), each layer's in index "
+                         "order, the card's hints (each layer run's router of the next layer on "
+                         "its output rows, 13.9) or by their use in router traces "
+                         "(comma-separated .npz)")
     ap.add_argument("--embed-runs", action="store_true",
                     help="--layer-major with the embed runs and compile-time-position runs "
                          "for an embedding table on the host (Engine embed_runs; needs a "
@@ -488,9 +532,10 @@ def main():
              a.cfg, a.card, a.policy,
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
-             a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
+             a.hint_n, a.hint_top, a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
              not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
-             not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace)
+             not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace,
+             a.layer_ahead)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

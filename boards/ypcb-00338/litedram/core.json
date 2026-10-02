@@ -20,7 +20,7 @@
   "selfcal": true,
   "fw_id": "4461c052",
   "rd_reg": false,
-  "controller": "LiteDRAM's default ControllerSettings but refresh_postponing 2, read_time 256, write_time 128 (tools/litedram/ctl_settings.py)"
+  "controller": "LiteDRAM's default ControllerSettings but refresh_postponing 2, read_time 256, write_time 128 (tools/litedram/ctl_settings.py); the multiplexer: fastmux.py with ctl_settings.py's MULTIPLEXER = FASTMUX (rtw 3, same_cycle, direct_wtr)"
  },
  "python": "3.11.15",
  "packages": {
@@ -37,9 +37,9 @@
    "commit": "7b28f53b1f4c1732b4b503a844a4d5a0cc56416b"
   }
  },
- "generated": "2026-09-30",
+ "generated": "2026-10-02",
  "sha256": {
-  "otpu_litedram.v": "9c65b20a648eecafb18a2212ddd804e32553e3518d8093c2fd1b7bff1db7d545",
+  "otpu_litedram.v": "efd976a5a087f793fd49557ae3d95cc5569b3d8ff67f7b482c6eb18ce011f610",
   "otpu_litedram.xdc": "91991c2b6b41b9d98579d8b9515b634cdb9028a51dfa6f2e6ab608772a1b122e",
   "otpu_litedram_mem.init": "3539495b12fca557dbbe9fb3252bbb64acfe31c06f69ef5a810ac76b70da5cc5"
  },

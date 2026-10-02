@@ -3,6 +3,7 @@
     python3 tools/offload/cachesim.py TRACE.npz [TRACE.npz ...] [--frac 0.1,0.2,...]
                                       [--slots N,...] [--json out.json]
                                       [--survey survey.json [--repo NAME]] [--host-frac F,...]
+                                      [--prefetch PRED:TOP:N,...]
 
 The traces of one model on several texts. Each is replayed in decode order (token by token,
 layer by layer; a layer asks for its top-k experts at once) against a cache of C expert slots
@@ -23,7 +24,10 @@ Per policy and size: the hit rate, and the misses per token (mean, p50, p90, max
 time depends on its misses. Then, for the per-layer LRU cache, the share of its misses that a
 prediction would have named early enough to prefetch (`pre`: the layer's router on the layer's
 input, one mixer ahead; `prev_r` / `prev_in`: one layer ahead), taking the prediction's k or 2k
-best.
+best. `--prefetch PRED:TOP:N,...`: lfu_layer at each `--slots` size with ExpertServer's capped
+hints (docs/offload.md 12.7): before each request the first N of PRED's first TOP not in a slot
+take one, so a wrong one's victim costs a miss later; the misses, the experts sent and their
+precision.
 
 With `--survey` (tools/offload/survey.py --json): the card's cache size (4 GiB less the model's
 on-card part and a reserve) joins the sizes, and each replay becomes tokens per second under
@@ -218,6 +222,59 @@ def simulate(req, C, policy, warm, prior=None, half=32.0):
                     miss_at[(t, j)] = m
         return miss_tok, miss_at
     raise ValueError(policy)
+
+
+def prefetch(req, pred, E, C, warm, n, top, half=32.0):
+    """lfu_layer with a prefetch from a prediction (docs/offload.md 12.7): before each layer's
+    request the first n of the prediction's first `top` experts not in a slot take one, as
+    ExpertServer.hint with hint_n / hint_top does (the slot of least decayed use, no use counted
+    for the prefetched expert), so a wrong one evicts an expert a later request may want.
+    Returns the misses, the experts sent and the useful ones (named by a request while still in
+    their slot) per token."""
+    T, L, k = req.shape
+    caps = [C // L + (j < C % L) for j in range(L)]
+    cs = [OrderedDict() for _ in range(L)]
+    for e in warm:
+        j = e // E
+        if len(cs[j]) < caps[j]:
+            cs[j][e] = None
+    uses = [dict.fromkeys(c, 0.0) for c in cs]
+    cs = [OrderedDict.fromkeys(reversed(c)) for c in cs]
+    pending = [set() for _ in range(L)]         # prefetched, not named by a request yet
+    miss = sent = useful = 0
+    for t in range(T):
+        for j in range(L):
+            c, p = cs[j], pending[j]
+            if n and pred[j] is not None:
+                hint = [int(e) for e in pred[j][t][:k]]     # a hint's k ids: its victims
+                cand = [e for e in hint[:top] if e not in c][:n]    # are outside them (_slot)
+                for e in cand:
+                    if len(c) >= caps[j]:
+                        v = victim(c, hint, uses[j])
+                        del c[v]
+                        p.discard(v)
+                    c[e] = None
+                    p.add(e)
+                sent += len(cand)
+            ids = [int(e) for e in req[t, j]]
+            decayed(uses[j], ids, (t + 1) / half)
+            m = []
+            for e in ids:
+                if e in c:
+                    c.move_to_end(e)
+                    if e in p:
+                        useful += 1
+                        p.discard(e)
+                else:
+                    m.append(e)
+            for e in m:
+                if len(c) >= max(caps[j], k):
+                    v = victim(c, ids, uses[j])
+                    del c[v]
+                    p.discard(v)
+                c[e] = None
+            miss += len(m)
+    return miss / T, sent / T, useful / T
 
 
 def coverage(miss_at, preds, width):
@@ -454,6 +511,9 @@ def main():
                          "gemma4.Image's int8 layers)")
     ap.add_argument("--head-bits", type=float, default=8.25,
                     help="bits per LM head weight (8.25: int8; 4.25: fp4)")
+    ap.add_argument("--prefetch", default="",
+                    help="PRED:TOP:N,...: lfu_layer at each --slots size with a prefetch of the "
+                         "first N not in a slot of PRED's first TOP (12.7; e.g. pre:4:1)")
     a = ap.parse_args()
     tr = [load(p) for p in a.traces]
     E, L = tr[0]["E"], tr[0]["req"].shape[1]
@@ -527,6 +587,23 @@ def main():
                 f"{p} {np.mean([r['cover_k'][p] for r in lru]):.2f}/"
                 f"{np.mean([r['cover_2k'][p] for r in lru]):.2f}" for p in lru[0]["cover_k"])
         print(f"{C:>6} {C / n:5.2f} " + " ".join(f"{c:>13}" for c in cells) + cov)
+    pf = []
+    for C in sorted(extra) if a.prefetch else []:
+        warms = [top_set(sum(freq(y["req"], n) for y in tr if y is not x) if len(tr) > 1
+                         else freq(x["req"], n), n) for x in tr]
+        base = np.mean([prefetch(x["req"], None, E, C, w, 0, 0, a.half)[0]
+                        for x, w in zip(tr, warms)])
+        print(f"lfu_layer at {C} slots with a prefetch (mean over texts): none {base:.1f} "
+              "misses a token")
+        for spec in a.prefetch.split(","):
+            pr, top, m = spec.split(":")
+            res = np.mean([prefetch(x["req"], x["preds"][pr], E, C, w, int(m), int(top), a.half)
+                           for x, w in zip(tr, warms)], 0)
+            pf.append(dict(slots=C, pred=pr, top=int(top), n=int(m), misses=res[0], sent=res[1],
+                           useful=res[2], base=base))
+            print(f"  {spec}: {res[0]:.1f} misses a token ({(res[0] - base) / base:+.1%}), sent "
+                  f"{res[1]:.1f}, useful {res[2]:.1f} (precision {res[2] / max(res[1], 1e-9):.2f}), "
+                  f"misses saved per expert sent {(base - res[0]) / max(res[1], 1e-9):.2f}")
     stream, ssd = [], []
     if by:
         cfgs = [("stream", None, None)] + [(f"{p}-{w}", p, w) for p in ("pre", "prev_r")
@@ -573,7 +650,7 @@ def main():
                                                 accuracy={Path(x["meta"]["text"]).name:
                                                           accuracy(x["req"], x["preds"], k)
                                                           for x in tr},
-                                                rows=rows), indent=1))
+                                                rows=rows, prefetch=pf), indent=1))
 
 
 if __name__ == "__main__":
