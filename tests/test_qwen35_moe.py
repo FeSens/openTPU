@@ -309,6 +309,46 @@ def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_pat
     assert s.misses < isa.server.misses and brd.row_server.seq >= 7
 
 
+def test_moe_card_streams_as_the_resident_run(tiny, tmp_path, monkeypatch):
+    """tools/offload/moe_card.py end to end on the ISA simulator (a tiny Qwen3.5-MoE checkpoint,
+    the card's sessions' tool): with 2 slots a layer, from a split pool file with --hint-trace
+    and with --legacy-serve, its tokens and prefill logits' sha are the run's with every expert
+    in a slot. Its wrappers of ExpertServer's methods (serve, the memory's) follow their
+    signatures, so a change there fails here, not on a card (the reference run of
+    2026-10-02)."""
+    import importlib.util
+    import json
+    import sys
+    from pathlib import Path
+
+    from safetensors.numpy import save_file
+    m, W, _ = tiny
+    d = tmp_path / "tiny"
+    m.config.save_pretrained(d)                     # (the checkpoint's fused expert tensors)
+    save_file({k: np.ascontiguousarray(v) for k, v in W.items()}, str(d / "model.safetensors"))
+    ref = tmp_path / "ref.json"
+    ref.write_text(json.dumps({"ids": [11, 222, 333, 444, 55, 66], "tokens": [0] * 6}))
+    tool = Path(__file__).resolve().parents[1] / "tools" / "offload" / "moe_card.py"
+    spec = importlib.util.spec_from_file_location("moe_card", tool)
+    mc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mc)
+
+    def run(name, *opts):
+        out = tmp_path / f"{name}.json"
+        monkeypatch.setattr(sys, "argv", ["moe_card", str(d), "--check", str(ref), "-n", "6",
+                                          "--out", str(out), *opts])
+        mc.main()
+        r = json.loads(out.read_text())
+        return r["tokens"], r["prefill_logits_sha"], r["misses"]
+    want = run("resident", "--experts", "0")
+    got = run("split", "--experts", "2", "--pool", str(tmp_path / "pool.bin"),
+              "--hint-trace", str(tmp_path / "trace.json"))
+    old = run("legacy", "--experts", "2", "--legacy-serve")
+    assert want[2] == 0 and got[2] > 0 and old[2] > 0
+    assert got[:2] == old[:2] == want[:2]
+    assert json.loads((tmp_path / "trace.json").read_text())       # (the decode's timeline)
+
+
 def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
     """tools/offload/pack_pool.py: init then two workers pack every expert of a checkpoint as the
     image's split slot bytes, each marked packed; send | recv into a second pool, on the host of
