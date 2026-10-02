@@ -1904,3 +1904,32 @@ def test_xdma_dma_calls_never_overlap(tmp_path, monkeypatch):
     assert one is board._dma_lock("xdmaT") and run(one, one) == 1
     assert run(board._DmaLock("xdmaT"), board._DmaLock("xdmaT")) == 1  # two processes: the flock
     assert (tmp_path / "xdmaT.dma").exists()
+
+
+def test_dma_lock_is_reentrant_in_its_thread(tmp_path, monkeypatch):
+    """_DmaLock taken again by its holder (offload.BoardDram's worker holds it around a
+    request's calls, each call takes it too): one flock for the outermost, none inside; another
+    thread waits until the outermost is released."""
+    import threading
+    from opentpu.host import board
+
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    ops, flock = [], board.fcntl.flock
+    monkeypatch.setattr(board.fcntl, "flock", lambda fd, op: (ops.append(op), flock(fd, op)))
+    lock, order = board._DmaLock("xdmaR"), []
+
+    def other():
+        with lock:
+            order.append("other")
+    with lock:
+        with lock:
+            with lock:
+                pass
+        th = threading.Thread(target=other)
+        th.start()
+        th.join(0.2)
+        assert th.is_alive() and ops == [board.fcntl.LOCK_EX]
+        order.append("holder")
+    th.join(10)
+    assert order == ["holder", "other"]
+    assert ops == [board.fcntl.LOCK_EX, board.fcntl.LOCK_UN] * 2

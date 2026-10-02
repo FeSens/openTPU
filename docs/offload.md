@@ -1607,8 +1607,10 @@ landed, and one 64-byte call per request tells the card where its misses go.
 The host, per request with misses:
 1. **The answer**: one 64-byte beat (a new line after served; a two-line request's answer is
    two beats). Its word r is the slot address of rank r when that expert is missing, and 0 for
-   the hits. It is written before the request's first data call, while the first part of the
-   expert is read from the pool, so it adds nothing to the critical path.
+   the hits. It is written once the first expert's first part is on its way, so the link
+   starts on the expert (10.13; A wrote it before the first data call, which on the card cost
+   its 75-90 us ahead of the lead). The card waits on each word, so its place among the data
+   calls does not matter to the card.
 2. **Each missing expert's data, with a tag**: a 128-byte tag chunk after the record (the 35B's
    pitch grows by one 4 KiB block, the 26B's fits its padding). Its word 0 is nonzero. The
    record goes as today, one call per channel, and the channel that holds the tag word goes
@@ -1684,7 +1686,8 @@ slot keeps its 42 slots a layer (42.66 fit, from 42.77).
 
 The proof:
 - `test_offload_server`, the host's contract:
-  - the answer comes before any data of its request;
+  - the answer comes after its first expert's first part, before the rest (10.13; A: before
+    any data);
   - each record's tag is in the last beat of the last call;
   - the directory comes after the last data, and served after the directory;
   - an armed victim's tag is cleared before its data.
@@ -1746,7 +1749,8 @@ The proof on the ISA simulator (all on the Mac):
   LFM2-MoE and on Gemma 4's layer-major prefill.
 - The three models' existing MoE tests all pass on the new programs (63). That includes the
   live-card ones, BoardDram's threaded and split modes, and the layer-major prefill.
-- `test_offload_server` checks the contract call by call on the link: the answer first; each
+- `test_offload_server` checks the contract call by call on the link: the answer first (since
+  10.13, after the first expert's first part); each
   expert's last part on the other channel and then the tag's, with the tag as that call's last
   beat; the directory after them; served last. It also covers an armed victim's clear before
   its bytes, and a multi-row request's answer at each id's first place.
@@ -1975,6 +1979,60 @@ expert's lead DMA. Measure B's case again after it.
 The window block, WIN_BASE, the CAPS bit and the host side were not written. B is worth
 reconsidering when something uses the link's idle time (router hints) or a build has spare
 area for it.
+
+### 10.13 The request's head (offload-head)
+
+The head is the time from seen to the request's first data call. On the card it is 1.4-2.1 s per
+128 tokens (session 15), and A made it 0.35-0.65 s longer: A's answer went first, as the
+window's cold first call (75-90 us), and the first expert's lead DMA started 397-472 us after
+seen (10.11).
+
+Where the old path's ~300 us go (serve_emu's probe, 35B, medians from seen; 10.11):
+- Python: the row read's ~22 us beyond its 19 us C2H call, the slot pick (18 us) and the iovec
+  (25 us).
+- The pool: mincore (37 us), the lead's preadv (65 us) and its touch (22 us).
+- The handoff: the DMA thread starts the call 74 us after it is queued, as the threads trade
+  the GIL.
+- On the card, willneed adds ~15 us per other miss ahead of the lead.
+
+offload-head changes the host only. The programs and the card's contract stay as they are (the
+card waits on each answer word and each tag, 10.11):
+- The answer goes once the first expert's first part is queued (`BoardDram.write_slot(...,
+  then=)`). On the link it sits between that expert's two parts.
+- The other misses' willneed goes with the answer, no longer ahead of the lead.
+- A mapped pool's touches (10.7) wait until the request is served (`PoolFile.defer_touch`), and
+  run while the card computes.
+- mincore reuses one vector and its address. Each part's iovec is built as it is read, not the
+  whole record's first.
+- `_DmaLock` is reentrant. BoardDram's worker holds it across the calls queued behind each
+  other, so each call inside skips the flock's two system calls (each one more wait for the GIL).
+
+serve_emu (Gen2, card-calibrated, posts from the critical end; 128 tokens) gives crit in s.
+Sweeps hs1-hs3 ran on opentpu with the card idle; A, the merged design, is in every sweep (one
+35B A run right after hs3's warm-up, 15.49, is left out):
+
+| tree | 35B | 26B |
+|:--|:--|:--|
+| A | 13.57-14.72 | 20.26-21.35 |
+| H: the answer after the lead only (hs1) | 14.65-14.78 (A 14.72) | 22.47-22.56 (A 21.16-21.35) |
+| H2: H, willneed after the lead, touches deferred, mincore (hs2, hs3) | 13.09-13.35 (A 13.57-14.01) | 19.85-19.97 (A 20.26-20.49) |
+| H3: H2 and the reentrant lock, offload-head (hs3) | 12.97-13.03 (A 13.57) | 19.80 (A 20.39) |
+
+- The reorder alone did nothing for the 35B and cost the 26B 1.2 s. The gain comes with the
+  head's own steps cut: -0.55 to -0.6 s per 128 tokens on both models.
+- On the link, A's longest wait was the answer's for the first data: 150-185 us a request,
+  0.58-0.74 s per 128 tokens on the 35B. With H3 the answer goes 31-35 us after the lead's
+  part, and the next part 24-28 us after the answer.
+- hs4 adds N: H3 with the answer first again. It ran while a card session was live, so it is
+  indicative only. N matched H3 within 0.15 s on both models. On the emulator the answer's
+  place no longer matters once the head's steps are cut. The card's cold first call (75-90 us,
+  which the emulator does not model) may still favor H3.
+
+Prediction for the card: the 35B 5.08-5.16 -> 5.20-5.27 tok/s, the 26B 3.58 -> 3.63-3.65.
+The check is session 16 (`session16.sh`): main against this tree on the same bitstream, A B A
+B, q35e128s and g26s. Both must match their ISA references bit for bit. Main's Qwen3.5-35B
+programs changed after f725c2b (b0b2b541 -> 1a32006f, the MTP and layer-compile merges), so the
+35B needs refs-8100ffb; the 26B's programs did not, so refs-f725c2b still holds for it.
 
 ## 11. Gemma 4 26B-A4B: design note
 
