@@ -336,6 +336,36 @@ def test_moe_layer_major_prefill_is_bit_exact(moe, wf, R, monkeypatch):
         t = int(np.argmax(ga))
 
 
+@pytest.mark.parametrize("wf,R", [("int8", 2), ("fp4", 1), ("fp4", 2)])
+def test_moe_expert_major_prefill_is_bit_exact(moe, wf, R, monkeypatch):
+    """Expert-major MoE in the layer-major prefill (Engine(expert_major=True), docs/offload.md
+    13.11) on Gemma 4: each layer's runs route their rows, post the experts they chose as need
+    lines and run the dense MLP beside (normed, to the rows' records); then one expert run a
+    layer; the next layer's runs and the head end the layer (norm_2 of the experts' sum beside
+    the dense MLP's, the post-FFN norm and the layer scalar). The logits, the KV cache and the
+    decode steps after equal token by token's bit for bit: 40 tokens in chunks of 24 and 16
+    rows, 6 slots a layer behind test_qwen35_moe's stand-in server (_need_server)."""
+    from test_qwen35_moe import _need_server
+    monkeypatch.setattr(G, "PREFILL_CHUNK", 24)
+    toks = [int(t) for t in np.random.default_rng(13).integers(0, 1000, 40)]
+    a = _moe_engine(moe, wformat=wf, experts=6, layer_major=R, expert_major=True)
+    b = _moe_engine(moe, wformat=wf, experts=6)
+    st = _need_server(a)
+    la, lb = a.prefill(toks), b.prefill(toks)
+    assert a.pos == b.pos == len(toks)
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    runs = sum(-(-n // R) for n in (24, 16))
+    assert len(st.needs) == len(KINDS) * runs and st.sent >= st.waits > 0
+    img = a.image
+    assert np.array_equal(a.backend.machine.slices[0].dram[img.layer0:img.head[0]],
+                          b.backend.machine.slices[0].dram[img.layer0:img.head[0]])
+    t = int(np.argmax(la))
+    for _ in range(2):
+        ga, gb = a.step(t), b.step(t)
+        assert np.array_equal(ga.view(np.uint32), gb.view(np.uint32))
+        t = int(np.argmax(ga))
+
+
 def test_moe_layer_runs_hint_the_next_layer_and_change_no_logit(moe):
     """Engine(layer_ahead="hint") on Gemma 4: each layer run but the last layer's ends with the
     next layer's hint (moe.moe_hint_rows: its router, through its norm and scale, on the run's

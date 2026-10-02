@@ -1099,11 +1099,12 @@ class Image:
         return [b.finish()], list(b.run_args)
 
     def compile_layer_run(self, li: int, blocks: int, block: int = ATTN_BLOCK, R: int = 1,
-                          embedded: bool = False, hint: bool = False):
+                          embedded: bool = False, hint: bool = False, em: bool = False):
         """(programs, run_args): gemma4_layer_run of layer li, R rows at a run-time position of
         bucket `blocks` and a run-time row of the prefill chunk (run arguments: RunPos.values
         and "row"); li < 0: gemma4_embed_run. hint: the run ends with the next layer's hint
-        (gemma4_layer_run). The image needs lookup tables and its prefill rows."""
+        (gemma4_layer_run); em: expert-major (gemma4_layer_run; compile_expert_run). The image
+        needs lookup tables and its prefill rows."""
         from ..compiler import RunVar
         from .qwen3 import RunPos
         if not self.lookup or not self.prefill_rows:
@@ -1112,26 +1113,40 @@ class Image:
             raise ValueError(f"the image is laid out for attention blocks of {self.block}")
         if not 1 <= R <= RUN_ROWS or R * (self.spec.top_k or 1) > LINE // 4:
             raise ValueError(f"{R} rows a layer run")
-        if hint and self.offload is None:
-            raise ValueError("a layer run's hint needs the expert server's words (offload)")
+        if (hint or em) and self.offload is None:
+            raise ValueError("a layer run's hint or expert-major MoE needs the expert server's "
+                             "words (offload)")
+        if hint and em:
+            raise ValueError("expert-major layer runs post their own layer's needs, no hints")
         rp = RunPos(blocks, block, (blocks - 1) * block, 0, self.cap)
         rp.tpos.bound -= R - 1          # the run's last row in the block too: tpos <= block - R
         row = RunVar("row", self.prefill_rows)
         if li < 0:
             b = gemma4_embed_run.trace(self.cfg, 0, {"m": self.descriptors(0), "pos": rp,
-                                                     "row": row})
+                                                     "row": row, "em": em})
         else:
             b = gemma4_layer_run.trace(self.cfg, 0, {"m": self.descriptors(0), "li": li,
                                                      "pos": rp, "row": row, "block": block,
                                                      "R": R, "embedded": embedded,
-                                                     "hint": hint})
+                                                     "hint": hint, "em": em})
         return [b.finish()], list(b.run_args)
 
-    def compile_prefill_head(self):
-        """(programs, run_args): gemma4_prefill_head at a run-time row ("row")."""
+    def compile_prefill_head(self, em: bool = False):
+        """(programs, run_args): gemma4_prefill_head at a run-time row ("row"); em: from the
+        expert-major records, after the last layer's end."""
         from ..compiler import RunVar
         b = gemma4_prefill_head.trace(self.cfg, 0, {"m": self.descriptors(0),
-                                                    "row": RunVar("row", self.prefill_rows)})
+                                                    "row": RunVar("row", self.prefill_rows),
+                                                    "em": em})
+        return [b.finish()], list(b.run_args)
+
+    def compile_expert_run(self, li: int):
+        """(programs, run_args): moe.moe_expert_run of layer li (expert-major, docs/offload.md
+        13.11), the chunk's rows and entries (rows x k) run arguments ("rows", "entries")."""
+        if self.offload is None or not self.prefill_rows or self.cfg.S != 1:
+            raise ValueError("an expert run needs the expert server's words, the image's "
+                             "prefill rows and one slice")
+        b = gemma4_expert_run.trace(self.cfg, 0, {"m": self.descriptors(0), "li": li})
         return [b.finish()], list(b.run_args)
 
     def compile_generate(self, blocks: int, lo: int, block: int = ATTN_BLOCK,
@@ -1272,7 +1287,11 @@ class Image:
             ns.moe_dev = SimpleNamespace(mbox=Lo.mbox, served=Lo.served, answer=Lo.answer,
                                          dir=Lo.dir, tag=Lo.tag, fmt=self.fmt,
                                          hint_off=Lo.layers * Lo.E,
-                                         scratch=self.io.get("moe_scratch"))
+                                         scratch=self.io.get("moe_scratch"),
+                                         need_off=2 * Lo.layers * Lo.E,
+                                         em_base=Lo.slots[0][0],
+                                         em_rec=MO.em_record(spec.hidden, spec.top_k),
+                                         em_rows=self.prefill_rows)
         return ns
 
     def _unit(self, li) -> int:
@@ -1494,13 +1513,18 @@ def _add_norm(x, y, g, eps, scale=None):
             x[sl, :].set((x[sl, :] + rmsnorm(y[sl, :], g, eps)) * scale)
 
 
+def _dense(x, lw, spec):
+    """The dense MLP of norm(x)."""
+    xs = ol.quantize(rmsnorm(x, ol.load(lw.g_pre), spec.eps))
+    return swiglu_down(xs, lw.wg, lw.wu, lw.wd, chunk=lw.wd.pw, act=gelu_tanh)
+
+
 def _mlp(x, lw, spec, m=None):
     """x + norm(MLP(norm(x))); with the MoE block (one row), x + norm(norm_1(MLP(norm(x))) +
     norm_2(MoE(x))), the MLP emitted beside the MoE's request (while the host streams its
     experts); without per-layer inputs, then x layer_scalar."""
     def dense():
-        xs = ol.quantize(rmsnorm(x, ol.load(lw.g_pre), spec.eps))
-        return swiglu_down(xs, lw.wg, lw.wu, lw.wd, chunk=lw.wd.pw, act=gelu_tanh)
+        return _dense(x, lw, spec)
 
     if spec.experts:
         out = {}
@@ -1519,6 +1543,26 @@ def _mlp(x, lw, spec, m=None):
         del acc
     else:
         y = dense()
+    _add_norm(x, y, ol.load(lw.g_ffn), spec.eps, None if spec.ple_dim else ol.load(lw.ls))
+
+
+def _em_mlp(x, lw, spec, m, row):
+    """Expert-major's MoE layer (docs/offload.md 13.11), its run's part: the residual rows x
+    to their records, then the MoE's prologue with the dense MLP beside, its output normed
+    (norm_1) to the records' SH; the layer ends in the next run (_em_end)."""
+    ol.store(MO.em_x(m.moe_dev, row, x.rows, spec.hidden), x)
+    MO.moe_prologue_rows(x, lw, spec.moe, m.moe_dev, spec.eps, row,
+                         beside=lambda: rmsnorm(_dense(x, lw, spec), ol.load(lw.g_f1), spec.eps))
+
+
+def _em_end(x, lw, spec, m, row):
+    """The end of _em_mlp's layer (lw) for the rows x, after its expert run: x +
+    norm(SH + norm_2(the experts' sum)), then x layer_scalar, as _mlp's."""
+    acc = MO.moe_combine_rows(x, spec.moe, m.moe_dev, row, residual=False)
+    sh = ol.load(Tensor(MO.em_row(m.moe_dev, row) + 4 * spec.hidden * (spec.top_k + 1),
+                        (x.rows, spec.hidden), (m.moe_dev.em_rec // 4, 1)))
+    y = sh + rmsnorm(acc, ol.load(lw.g_f2), spec.eps)
+    del acc, sh
     _add_norm(x, y, ol.load(lw.g_ffn), spec.eps, None if spec.ple_dim else ol.load(lw.ls))
 
 
@@ -1677,7 +1721,7 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
 
 @ol.jit
 def gemma4_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
-                     embedded: bool = False, hint: bool = False):
+                     embedded: bool = False, hint: bool = False, em: bool = False):
     """Layer-major prefill (a MoE model's: the whole prompt chunk through a layer before the
     next, so that the expert cache serves one layer at a time): the R prompt rows from `row`
     (a run-time value) at the run-time positions pos .. pos + R - 1 (qwen3.RunPos; in one
@@ -1688,7 +1732,10 @@ def gemma4_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
     RunPos, so the chunk layer by layer leaves the KV cache and residual rows the per-position
     programs make, bit for bit. With `hint` (a MoE model, li + 1 a layer) the run ends with
     layer li + 1's hint: its router on the output rows (moe.moe_hint_rows; docs/offload.md
-    13.9), which changes no row."""
+    13.9), which changes no row. em: expert-major (docs/offload.md 13.11): the rows in the
+    scratch's records (moe.em_x), the layer before ended first (_em_end: its experts' outputs
+    from its expert run, with the dense MLP's), and the MoE layer's run ends with the prologue
+    (_em_mlp), its experts left to the layer's expert run (gemma4_expert_run)."""
     spec = m.spec
     if spec.ple_dim:
         raise ValueError("layer-major prefill: a model without per-layer inputs")
@@ -1698,9 +1745,14 @@ def gemma4_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
         del e
     else:
         ropes = _pos_rows(m, pos, R)
-        x = ol.load(m.xbuf[row:row + R, :])
+        x = ol.load(MO.em_x(m.moe_dev, row, R, spec.hidden) if em else m.xbuf[row:row + R, :])
+    if em and li > 0:               # (expert-major: the layer before ends here, _em_end)
+        _em_end(x, m.layer(li - 1), spec, m, row)
     lw = m.layer(li)
     _attention(x, lw, m, pos if R == 1 else [_RowPos(pos, r) for r in range(R)], ropes, block)
+    if em:
+        _em_mlp(x, lw, spec, m, row)
+        return
     _mlp(x, lw, spec, m)
     ol.store(m.xbuf[row:row + R, :], x)
     if hint and spec.experts and li + 1 < spec.layers:
@@ -1708,15 +1760,35 @@ def gemma4_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
 
 
 @ol.jit
-def gemma4_embed_run(m, pos, row):
+def gemma4_embed_run(m, pos, row, em: bool = False):
     """A layer-major prefill's input row (runs of more than one row): the token's embedding row
-    (gathered at pos.tok) times sqrt(H) -> m.xbuf[row], as gemma4_step's."""
+    (gathered at pos.tok) times sqrt(H) -> m.xbuf[row] (em: its record's X), as
+    gemma4_step's."""
     e, _, _ = _gathered(m, pos)
-    ol.store(m.xbuf[row:row + 1, :], e * math.sqrt(m.spec.hidden))
+    X = MO.em_x(m.moe_dev, row, 1, m.spec.hidden) if em else m.xbuf[row:row + 1, :]
+    ol.store(X, e * math.sqrt(m.spec.hidden))
 
 
 @ol.jit
-def gemma4_prefill_head(m, row):
+def gemma4_prefill_head(m, row, em: bool = False):
     """After a layer-major prefill's last layer: the final norm and the LM head of the residual
-    stream row m.xbuf[row] (a run-time value) -> m.logits, as gemma4_step's."""
-    _lm_head(ol.load(m.xbuf[row:row + 1, :]), m, m.spec)
+    stream row m.xbuf[row] (a run-time value) -> m.logits, as gemma4_step's. em: the row's
+    record's X, after the last layer's end (_em_end)."""
+    spec = m.spec
+    if not em:
+        _lm_head(ol.load(m.xbuf[row:row + 1, :]), m, spec)
+        return
+    x = ol.load(MO.em_x(m.moe_dev, row, 1, spec.hidden))
+    _em_end(x, m.layer(spec.layers - 1), spec, m, row)
+    _lm_head(x, m, spec)
+
+
+@ol.jit
+def gemma4_expert_run(m, li: int):
+    """Expert-major's expert run of layer li (moe.moe_expert_run, docs/offload.md 13.11): after
+    the layer's runs over a prefill chunk, each expert its rows chose once, in passes of two
+    rows; the chunk's rows and their entries (rows x k) are run arguments."""
+    from ..compiler import RunVar
+    C, k = m.moe_dev.em_rows, m.spec.top_k
+    MO.moe_expert_run(m.layer(li), m.spec.moe, m.moe_dev, RunVar("rows", C + 1),
+                      RunVar("entries", C * k + 1))

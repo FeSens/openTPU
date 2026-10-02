@@ -46,6 +46,14 @@ chose); each row then sums its own k in its router's order, so a row's result is
 for bit. `moe_hint_rows` is moe_hint on R rows: a layer-major run's hint for the next layer, its
 router on the run's output rows (section 13.9).
 
+Expert-major (sections 13.11, 13.12) splits a layer-major MoE layer over a chunk's runs: each
+run's `moe_prologue_rows` routes its rows, keeps their ids, weights and norm in the rows' records
+of a scratch (em_record; the server carves it from the first expert slots for the prefill), and
+posts the experts as a need line; then one `moe_expert_run` a layer runs each expert its rows
+chose once, in passes of two rows (ld-memch's bucketing), each pass waiting on its directory
+entry; the next layer's runs end the layer (`moe_combine_rows`). A row's arithmetic is
+moe_ffn_rows', bit for bit.
+
 `ExpertFormat` is one expert's slot: gate and up [F, H] and W_down's column parts, laid out as a
 layer block's MLP (lfm2.Image), so the FFN is kernels.mlp.swiglu_down at the slot's address
 (a compiler.DevVar: the register RLD sets). One slice (S = 1, the board's).
@@ -670,3 +678,300 @@ def moe_ffn_rows(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=No
         gate = sigmoid(g)
         out = out + swiglu_down(xs, lw.wg, lw.wu, lw.wd) * gate[:, None]
     return x + out if residual else out
+
+
+# ---------------------------------------------------------------------------- expert-major
+EM_PW = 4                   # an expert run's pass table: words a pass (its expert, entries A, B)
+_TWO23 = float(1 << 23)     # FILL's immediate plus a register: the float 2^23 + R (0 <= R < 2^23)
+
+
+def em_meta(k: int) -> int:
+    """Words of a record's tail: the row's k ids and k weights and its norm's 1 / rms, in whole
+    lines."""
+    w = LINE // 4
+    return -(-(2 * k + 1) // w) * w
+
+
+def em_record(H: int, k: int) -> int:
+    """Bytes of a chunk row's record in the expert-major scratch (docs/offload.md 13.11): the
+    row's residual X [H], its k experts' outputs OUT [k, H] (rank order), the shared expert's
+    output or the normed dense MLP's SH [H], then its tail (em_meta): global ids [k], weights
+    [k] and the 1 / rms of the norm before the router and the experts (fp32)."""
+    return 4 * ((k + 2) * H + em_meta(k))
+
+
+def em_slots(layout: Layout, nbytes: int) -> list:
+    """The slots a scratch of nbytes covers: the slot area's first ones, from the first slot on
+    (the slots follow one another, layer after layer). The server takes them for the prefill
+    and hands them back after it, with their tag beats zeroed."""
+    s = layout.all_slots()
+    n = -(-nbytes // layout.pitch)
+    if n > len(s):
+        raise ValueError(f"a scratch of {nbytes} bytes: {n} slots, the image has {len(s)}")
+    return s[:n]
+
+
+def em_row(dev: SimpleNamespace, row, r: int = 0) -> Affine:
+    """The byte address of the record of chunk row row + r (row: a run argument or an int)."""
+    return Affine(dev.em_base + r * dev.em_rec) + row * dev.em_rec
+
+
+def em_x(dev: SimpleNamespace, row, R: int, H: int) -> Tensor:
+    """The residual rows X of chunk rows row .. row + R - 1, [R, H] (expert-major's residual
+    stream: the records' first words)."""
+    return Tensor(em_row(dev, row), (R, H), (dev.em_rec // 4, 1))
+
+
+def moe_prologue_rows(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, row,
+                      beside=None) -> None:
+    """Expert-major's MoE prologue (docs/offload.md 13.11) of a layer-major run's R rows x [R,
+    H] (chunk rows from `row`, a run argument): each row's norm and route as moe_ffn_rows'; to
+    each row's record tail its k global ids and weights and the norm's 1 / rms (the expert run
+    norms the row again from X and it: bit for bit); then the rows' R k ids, offset by
+    dev.need_off (2 x layers x E), posted as a need line (a hint's post: the server streams
+    the experts no slot holds and answers nothing; the layer's expert run waits on their
+    directory entries); then to each row's SH the shared expert's output (SwiGLU of the layer
+    block times sigmoid of its gate's logit), or beside()'s ([R, H]: Gemma 4's normed dense
+    MLP, while the host streams). The caller stores x itself to the records' X (em_x). One
+    register."""
+    b = current()
+    if ol.num_programs() != 1:
+        raise CompileError("moe_prologue_rows runs on one slice")
+    R, H, E, k = x.rows, x.cols, mo.E, mo.k
+    N = R * k
+    if N > LINE // 4:
+        raise CompileError(f"{R} rows of {k} experts: more ids than a need line holds")
+    ss = ol.sum(x * x, axis=1)                          # rmsnorm's, its 1 / rms kept
+    rinv = ol.rsqrt(ss * (1.0 / H) + eps)
+    del ss
+    g = ol.load(lw.g_post)
+    if getattr(lw, "g_exp", None) is None:              # (as moe_ffn_rows' quantize(rmsnorm))
+        xs = ol.quantize((x * rinv[:, None]) * g[None, :])
+    else:
+        xn = (x * rinv[:, None]) * g[None, :]
+        xs = ol.quantize(xn)
+        del xn
+    del g
+    lg = ol.dot(xs, lw.router)                          # [R, E] (+ the shared expert's gate)
+    gid, wts = ol.empty((R, k), dense=True), ol.empty((R, k), dense=True)
+    pr, tmp, ids = ol.empty((2,)), ol.empty((k,)), ol.empty((k,))
+    gb = ol.load(lw.gbase)
+    r = b.scratch()
+    for q in range(R):                                  # each row's k best, as moe_ffn_rows'
+        sc, sel = ol.empty((E,)), ol.empty((E,))
+        if mo.rule == "softmax":
+            sc.set(lg[q, 0:E])
+            sel.set(sc)
+        else:
+            sc.set(sigmoid(lg[q, 0:E]))
+            sel.set(sc + ol.load(lw.ebias))
+        wt = wts[q, :]
+        lp = b.begin_loop(k)
+        b.emit(I.argmax(pr.base, sel.base, 1, E, comment="moe: best"))
+        b.emit(I.rld(r, pr.base + 1, comment="its index"))
+        b.emit(I.vop(I.V_FILL, sel.base, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, NEG, ra=r,
+                     comment="knock out"))
+        if k > 1:
+            tmp[0:k - 1].set(wt[1:k])
+            wt[0:k - 1].set(tmp[0:k - 1])
+            tmp[0:k - 1].set(ids[1:k])
+            ids[0:k - 1].set(tmp[0:k - 1])
+        b.emit(I.vop(I.V_COPY, wt.base + k - 1, sc.base, 0, 1, 1, 0, 0, 0, rb=r,
+                     comment="weight"))
+        b.emit(I.vop(I.V_COPY, ids.base + k - 1, pr.base + 1, 0, 1, 1, 0, 0, 0, comment="id"))
+        b.end_loop(lp)
+        del sc, sel
+        if mo.rule == "softmax":                        # column 0 holds the largest
+            e = ol.exp2((wt - wt[0:1]) * ol.LOG2E)
+            wt.set(e * ol.recip(ol.sum(e)))
+            del e
+        elif mo.norm:
+            wt.set(wt * ol.recip(ol.sum(wt) + 1e-6))
+        if mo.scale != 1.0:
+            wt.set(wt * float(mo.scale))
+        gid[q, :].set(ids + gb)                         # global ids: j * E + index
+    b.unscratch(r)
+    del ids, tmp, pr, gb
+    tail = 4 * H * (k + 2)
+    for q in range(R):                                  # the record tails
+        t = em_row(dev, row, q) + tail
+        ol.store(Tensor(t, (k,), (1,)), gid[q, :])
+        ol.store(Tensor(t + 4 * k, (k,), (1,)), wts[q, :])
+        ol.store(Tensor(t + 8 * k, (1,), (1,)), rinv[q:q + 1])
+    del wts, rinv
+    seq = MB.wait_served(dev.mbox)                      # the need line (MB.post, its count)
+    ol.store(Tensor(Affine(dev.mbox + LINE), (N,), (1,)),
+             gid.reshape(1, N)[0, :] + float(dev.need_off))
+    ol.store(Tensor(Affine(dev.mbox + 4), (1,), (1,)), ol.full((1,), float(N)))
+    seq.set(seq + 1.0)
+    ol.store(Tensor(Affine(dev.mbox), (1,), (1,)), seq)
+    del gid, seq
+    if mo.shared:
+        gs = ol.empty((R,))
+        gs.column().set(lg[:, E:E + 1])
+        gate = sigmoid(gs)
+        del gs
+        sh = swiglu_down(xs, lw.wg, lw.wu, lw.wd) * gate[:, None]
+    elif beside is not None:
+        del lg
+        sh = beside()
+    else:
+        return
+    for q in range(R):
+        ol.store(Tensor(em_row(dev, row, q) + 4 * H * (k + 1), (1, H), (H, 1)), sh[q:q + 1, :])
+
+
+def moe_combine_rows(x, mo: MoESpec, dev: SimpleNamespace, row, residual: bool = True):
+    """Expert-major's end of a MoE layer (docs/offload.md 13.11), in the next layer's run (or
+    the prefill's head): for each of the R rows x [R, H] from chunk row `row`, its experts'
+    outputs weighted and summed in its router's order, from its record (OUT, the tail's
+    weights), then the shared expert's output (SH) added, and x + that: moe_ffn_rows' sums,
+    bit for bit. residual=False: the routed sum alone (Gemma 4 norms it beside the dense MLP's,
+    which SH holds)."""
+    R, H, k = x.rows, x.cols, mo.k
+    out = ol.empty((R, H))
+    for q in range(R):                                  # each row's sum in its router's order
+        t = em_row(dev, row, q)
+        wt = ol.load(Tensor(t + 4 * H * (k + 2) + 4 * k, (k,), (1,)))
+        acc = None
+        for i in range(k):
+            y = ol.load(Tensor(t + 4 * H * (1 + i), (1, H), (H, 1))) * wt[i:i + 1]
+            acc = y if acc is None else acc + y
+        out[q:q + 1, :].set(acc)
+        del acc, y, wt
+    if not residual:
+        return out
+    if mo.shared:
+        out = out + ol.load(Tensor(em_row(dev, row) + 4 * H * (k + 1), (R, H),
+                                   (dev.em_rec // 4, 1)))
+    return x + out
+
+
+def moe_expert_run(lw, mo: MoESpec, dev: SimpleNamespace, rows, entries) -> None:
+    """Expert-major's expert run of one MoE layer (docs/offload.md 13.11), after the layer's
+    mixer runs over a chunk's `rows` rows (run arguments: rows, and entries = rows x k): every
+    (row, rank) entry's expert once on its row, each expert in passes of two of its entries.
+
+    1. The tables: per row (a loop of `rows`) its k ids from its record tail, and for each of
+       its entries its row and its output's place (the record's OUT row of its rank, in lines).
+    2. The bucketing (a loop of `entries`, ld-memch's): an entry closes its expert's open pass
+       (its B) or opens one (expert, A, and B = A until closed: an odd count's last pass
+       computes its row twice and stores the same output twice), the expert's parity toggled;
+       LOOPs counted by the parity and 1 - parity are the branches. Registers reach the tables
+       as FILL's 2^23 + R, made exact after the loop. The pass table holds entries / 2 + E
+       passes at most.
+    3. The passes (a loop of the passes counted): WAITW on the expert's directory entry (its
+       slot word != 0: the server writes an entry after its expert's data and tag, and keeps
+       a needed expert's slot until this run has read it), its slot's tag zeroed (as slot_of),
+       the two rows normed again from their X and 1 / rms and quantized (moe_ffn_rows'
+       expression), swiglu_down at the slot, each output row to its place.
+
+    The entry wait stops at MB.TIMEOUT with an error the host sees: the prefill never runs on
+    without an expert."""
+    b = current()
+    if ol.num_programs() != 1:
+        raise CompileError("moe_expert_run runs on one slice")
+    E, k, H = mo.E, mo.k, dev.fmt.H
+    N, REC, PW = dev.em_rows * k, dev.em_rec, EM_PW
+    PM = N // 2 + E
+    tail = 4 * H * (k + 2)
+    # 1. the tables: ids (global), each entry's row, each entry's place (lines from the base)
+    L, QR, PL = ol.empty((N,)), ol.empty((N,)), ol.empty((N,))
+    rr = b.arg_reg(rows, 1)
+    rd, rt, rq, rpl = (b.scratch() for _ in range(4))
+    lp = b.begin_loop(0, rcount=rr)
+    b.emit(I.ld(dev.em_base + tail, L.base, k, ra=rd, rb=rt, comment="the row's ids"))
+    b.emit(I.vop(I.V_FILL, QR.base, 0, 0, 1, k, 0, 0, 0, I.B_SCALAR, _TWO23, ra=rt, rd=rq,
+                 comment="its entries' row"))
+    for i in range(k):
+        b.emit(I.vop(I.V_FILL, PL.base + i, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR,
+                     _TWO23 + (1 + i) * H // 16, ra=rt, rd=rpl, comment="its place (lines)"))
+    b.emit(I.addi(rd, rd, REC, comment="next record"))
+    b.emit(I.addi(rt, rt, k, comment="its entries"))
+    b.emit(I.addi(rq, rq, 1, comment="next row"))
+    b.emit(I.addi(rpl, rpl, REC // LINE, comment="its record (lines)"))
+    b.end_loop(lp)
+    for r in (rd, rt, rq, rpl):
+        b.unscratch(r)
+    b.release_arg(rows)
+    QR.set(QR - _TWO23)
+    PL.set(PL - _TWO23)
+    gb = ol.load(lw.gbase)
+    L.set(L - gb)                                       # the layer's own indices
+    # 2. the bucketing
+    PAR, OPEN = ol.zeros((E,)), ol.zeros((E,))
+    PT = ol.empty((PM, PW), dense=True)
+    re = b.arg_reg(entries, 1)
+    rp, rnp, r1, r2, r3, r4 = (b.scratch() for _ in range(6))
+    lp = b.begin_loop(0, rcount=re)
+    b.emit(I.rld(r1, L.base, ra=rp, comment="its expert"))
+    b.emit(I.rld(r2, PAR.base, ra=r1, comment="parity"))
+    b.emit(I.rld(r3, PAR.base, ra=r1, mul=-1, comment="-parity"))
+    close = b.begin_loop(0, rcount=r2)
+    b.emit(I.rld(r4, OPEN.base, ra=r1, comment="its open pass (2^23 + word)"))
+    b.emit(I.vop(I.V_FILL, PT.base + 2 - (1 << 23), 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR,
+                 _TWO23, ra=r4, rd=rp, comment="close: B = entry"))
+    b.end_loop(close)
+    opn = b.begin_loop(1, rcount=r3)                    # 1 - parity
+    b.emit(I.vop(I.V_FILL, PT.base, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, _TWO23, ra=rnp, rd=r1,
+                 comment="open: its expert"))
+    for f in (1, 2):
+        b.emit(I.vop(I.V_FILL, PT.base + f, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, _TWO23, ra=rnp,
+                     rd=rp, comment="open: A = B = entry"))
+    b.emit(I.vop(I.V_FILL, OPEN.base, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, _TWO23, ra=r1, rd=rnp,
+                 comment="its open pass"))
+    b.emit(I.addi(rnp, rnp, PW, comment="next pass"))
+    b.end_loop(opn)
+    b.emit(I.vop(I.V_RSUB, PAR.base, PAR.base, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 1.0, ra=r1, rb=r1,
+                 comment="parity = 1 - parity"))
+    b.emit(I.addi(rp, rp, 1, comment="next entry"))
+    b.end_loop(lp)
+    NP = ol.full((1,), _TWO23)
+    b.emit(I.vop(I.V_FILL, NP.base, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, _TWO23, rd=rnp,
+                 comment="passes x PW"))
+    for r in (rp, rnp, r1, r2, r3, r4):
+        b.unscratch(r)
+    b.release_arg(entries)
+    del L, PAR, OPEN
+    PT.set(PT - _TWO23)
+    PT[:, 0:1].set(PT[:, 0:1] + gb)                     # global ids
+    NP.set((NP - _TWO23) * (1.0 / PW))
+    del gb
+    # 3. the passes
+    g = ol.load(lw.g_post)
+    ge = ol.load(lw.g_exp) if getattr(lw, "g_exp", None) is not None else None
+    word, xr, ri = ol.empty((1,)), ol.empty((2, H), dense=True), ol.empty((2,))
+    rq, rs, rn = b.scratch(), b.scratch(), b.scratch()
+    b.rld(rs, NP, comment="passes")
+    lp = b.begin_loop(0, rcount=rs)                     # (the count is read here: rs is free)
+    b.emit(I.rld(rs, PT.base, ra=rq, mul=8, comment="its directory entry"))
+    b.waitw(word, dev.dir, 0, I.C_NE, ra=rs, timeout=MB.TIMEOUT,
+            comment="wait: its slot (the entry)")
+    b.rld(rs, word, raw=True, comment="its slot")
+    ol.store(Tensor(Affine(dev.tag) + DevVar("expert slot", rs), (1,), (1,)), ol.zeros((1,)))
+    rec = DevVar("record", rn, align=LINE)
+    for j in range(2):
+        b.emit(I.rld(rn, PT.base + 1 + j, ra=rq, comment="entry"))
+        b.emit(I.rld(rn, QR.base, ra=rn, mul=REC, comment="its row's record"))
+        ol.load(Tensor(Affine(dev.em_base) + rec, (1, H), (H, 1)), out=xr[j:j + 1, :])
+        ol.load(Tensor(Affine(dev.em_base + tail + 8 * k) + rec, (1,), (1,)),
+                out=ri[j:j + 1])
+    if ge is None:                                      # (moe_ffn_rows' expressions)
+        xe = ol.quantize((xr * ri[:, None]) * g[None, :])
+    else:
+        xn = (xr * ri[:, None]) * g[None, :]
+        xe = ol.quantize(xn * ge[None, :])
+        del xn
+    ex = dev.fmt.descs(DevVar("expert slot", rs, align=LINE))
+    o = swiglu_down(xe, ex.wg, ex.wu, ex.wd, act=ACTS[mo.act])
+    b.check_live(o)
+    for j in range(2):
+        b.emit(I.rld(rn, PT.base + 1 + j, ra=rq, comment="entry"))
+        b.emit(I.rld(rn, PL.base, ra=rn, mul=LINE, comment="its place"))
+        ol.store(Tensor(Affine(dev.em_base) + DevVar("place", rn, align=LINE), (1, H), (H, 1)),
+                 o[j:j + 1, :])
+    del o, xe
+    b.emit(I.addi(rq, rq, PW, comment="next pass"))
+    b.end_loop(lp)
+    for r in (rq, rs, rn):
+        b.unscratch(r)
