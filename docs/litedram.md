@@ -1891,6 +1891,58 @@ its last (channel 1 within 0.1 points):
 - **So the controller is within about 6% of its data rate on decode,** and no single fix is worth
   more than about 1%. `fastmux` is the one to take, with a build that happens anyway.
 
+### The core's own gaps (2026-10-02)
+
+The idle time above is the core's. `tools/decode_gaps.py` runs the same whole-model token
+traced (`+trace`), on main d1cb669's RTL at 133.33 MHz:
+- **Blame:** each gap between two MMs (the MXU not streaming) goes to the instruction the next
+  MM waited for.
+- **Bounds:** the token again with a group of instructions replaced by NOPs (`--drop`,
+  `--drop-match`). The data come out wrong; the cycles are the bound for making that work free
+  or hidden.
+- **Micro-architecture variants:** the RTL with a timing-only knob changed (`--uarch`, over
+  `rtlsim.BOARD_UARCH`).
+
+Cycles per token against main (4-bit layers unless noted):
+
+| | Qwen3 | LFM2 | Qwen3.5 |
+|---|---|---|---|
+| main | 3,844,073 | 1,398,439 | 4,841,349 |
+| EXP2SUB free (a bound) | -3.59% | -3.00% | -0.07% |
+| every VPU and QACT instruction of attention free (a bound) | -3.17% | | |
+| attention's QACTs free | -0.48% | | |
+| q / k norms and RoPE free | -0.17% | | |
+| the norms before the weight MMs free | +0.04% | | |
+| the QACTs before the weight MMs free | +0.05% | | |
+| the DeltaNet output's QACT free (a bound) | | | -0.39% |
+| MXU prefetch FIFO 2048 chunks (1024) | 0.00% | | |
+| dispatch window 32 (16) | -0.72% | -0.57% | +0.03% |
+| TMEM: 2 writes per bank and cycle (1) | -3.53% | | |
+| **TMEM arbiter: the VPU ahead of the MXU drain** | **-2.97%** | **-2.41%** | **-0.41%** |
+| the same, Qwen3 8-bit (main 5,617,507) | -2.01% | | |
+| the next head's score MMs ahead of the PV MM (program order; ISA results unchanged) | -0.03% | +0.09% | |
+
+- **The idle time is attention's softmax.** Making EXP2SUB free takes away about as much as the
+  controller's idle (Qwen3: 137.8k cycles against 136.6k). A head's PV MM waits for its
+  probabilities: EXP2SUB on 2 x 256 scores, then QACT. The MXU runs its MMs in order, so the
+  next head's MMs wait behind that PV MM.
+- **EXP2SUB ran at about half its rate.** It averaged 501 cycles per 2 x 256 op, where its
+  three composite passes take about 270. The rest was the VPU frozen by the TMEM arbiter:
+  395k frozen VPU cycles per Qwen3 token.
+  - The VPU writes all its lanes' banks at once and was last in the priority order.
+  - So an MXU drain write in any one bank cost it the whole cycle.
+- **The fix is the arbiter's order:** DMA, COLL, VPU, MXU drain, QUANT. The drain holds instead,
+  which costs it little.
+  - It takes 83% of the EXP2SUB bound on Qwen3 and 80% on LFM2, and Qwen3.5 gains 0.4%.
+  - Two write ports per bank take a little more, but every replicated TMEM copy would need a
+    second write port (twice the copies, or a live-value table): not taken.
+- **Not worth taking:**
+  - The norm -> QACT -> MM chains cost nothing: the 1024-chunk MXU FIFO (128 KiB) streams the
+    next MM's weights through them, and 2048 chunks change nothing.
+  - Moving the next head's score MMs ahead of the PV MM changes nothing either: the VPU, not
+    the MXU's order, was the slow part.
+  - A 32-entry window is worth 0.6-0.7% but costs the window's hazard logic at 133.33 MHz.
+
 ### The core clock at DDR3-1066: the co-simulated grid
 
 Decode, 4-bit layers, int8 head, pos 544, one port per channel (the production controller);

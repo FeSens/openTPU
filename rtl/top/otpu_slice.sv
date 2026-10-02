@@ -1,7 +1,7 @@
 // One openTPU slice: sequencer (dispatch window + scoreboard), DMA, MXU + ACT RAM, quantizer,
 // VPU and TMEM. Units run concurrently. Shared resources are arbitrated every cycle:
 //   TMEM   each bank serves 3 reads + 1 write per cycle; units are granted all-or-nothing in
-//          the priority order DMA, COLL, MXU drain, QUANT, VPU (a unit that is not granted holds)
+//          the priority order DMA, COLL, VPU, MXU drain, QUANT (a unit that is not granted holds)
 //   DRAM B DMA first, then the MXU stream (read responses are routed back by tag)
 //   DRAM A the MXU scale stream (reads); QST writes have their own scalar write port (SW)
 // The slice's DRAM sits outside (otpu_top) so that board wrappers can swap it. The DRAM may
@@ -105,7 +105,11 @@ module otpu_slice
   // takes its buffered writes (otpu_vpu WBUF)
   localparam bit ARB_MASK = (RPB >= NRP * LANES) && (WPB == 1);
   localparam int W_DMA = 0, W_MXU = 1, W_COLL = 2, W_VPU = 3, NWP = 4;
-  localparam int G_DMA = 0, G_COLL = 1, G_MXU = 2, G_Q = 3, G_VPU = 4, NG = 5;
+  // The VPU ahead of the MXU drain: the VPU writes all its lanes' banks at once, so an MXU drain
+  // write in any one bank cost it the whole cycle, and decode's softmax (EXP2SUB, which the next
+  // PV MM waits for) ran at about half its rate; the drain holds a cycle instead
+  // (docs/litedram.md section 11, "The core's own gaps": Qwen3 4-bit -3.0% cycles per token).
+  localparam int G_DMA = 0, G_COLL = 1, G_VPU = 2, G_MXU = 3, G_Q = 4, NG = 5;
 
   // ---- sequencer
   cmd_t ucmd [NUNITS];
