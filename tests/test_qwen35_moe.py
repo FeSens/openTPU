@@ -509,6 +509,7 @@ def test_layer_ahead_on_a_live_card_with_idle_parts_v2(tiny, tmp_path):
     assert card.error is None, card.error
     assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
     assert s.hinted_ahead > 0 and s.mem.staged > 0 and not s.mem._held
+    assert s.holds > 0          # (run_clock seen during the runs: 0 on the card in pfv2, fixed)
     t = int(np.argmax(la))
     a, b = isa.step(t), brd.step(t)
     assert card.error is None, card.error
@@ -644,12 +645,12 @@ def test_moe_card_streams_as_the_resident_run(tiny, tmp_path, monkeypatch):
               "--hint-trace", str(tmp_path / "trace.json"))
     old = run("legacy", "--experts", "2", "--legacy-serve")
     capped = run("capped", "--experts", "3", "--hints", "on", "--hint-drop", "--hint-n", "1",
-                 "--hint-top", "1", "--idle-parts", "v2")   # (docs/offload.md 12.7, 13.12)
+                 "--hint-top", "1", "--idle-parts", "ra")   # (docs/offload.md 12.7, 13.12)
     assert want[2] == 0 and got[2] > 0 and old[2] > 0
     assert got[:2] == old[:2] == want[:2] == capped[:2]
     h = capped[3]["hints"]
     assert (h["n"], h["top"], h["drop"]) == (1, 1, True) and h["served"] > 0
-    assert capped[3]["idle_parts"]["mode"] == "v2" and got[3]["idle_parts"]["mode"] == "v1"
+    assert capped[3]["idle_parts"]["mode"] == "ra" and got[3]["idle_parts"]["mode"] == "v2"
     assert json.loads((tmp_path / "trace.json").read_text())       # (the decode's timeline)
 
 

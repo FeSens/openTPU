@@ -2675,6 +2675,33 @@ The other runs, all bit for bit:
   tok/s.
 - The 35B's warm-up ran 0.6% under A1 (gemma4's pfhint2 saw 5% on a prefill).
 
+### 12.10 Hints: closed (off)
+
+The 35B decode hints (top 4, n 1, whole-expert parts, `--hint-drop`) against no hints, on the
+card:
+
+| session | parts | pairs | mean |
+|:--|:--|:--|--:|
+| 17 (12.9) | v1 | +0.6%, +1.5% | +1.0% |
+| 17 (12.9), top 8 | v1 | +2.3%, +0.0% | +1.1% |
+| pfv2 (13.12) | v2, the hold not acting | +0.09, +0.13 tok/s | +2.09% |
+| 18 (13.12) | ra | +0.030, +0.130 tok/s | +1.51% |
+| 18 (13.12) | v2, the default | +0.010, +0.080 tok/s | +0.85% |
+
+On the default parts the gain is +0.85%, under the 2% bar, so the hints stay off and are
+closed.
+
+The misses fall as predicted: -22% (102.85 to about 80 a token). It doesn't pay, because the
+time saved on requests goes back into the card's own time (12.9's split for session 17):
+- Contention: the hinted experts, about 3,900 a run and 6.6 GB, go while the card computes,
+  at 13.8's 0.17 s a GB. That is about 1.1 s.
+- The hint polls: about 1 s of host time, partly in the card's path.
+- Requests seen behind an idle part: about 0.5 s with v1's parts. v2 shortens a part, but it
+  cuts neither the contention nor the polls.
+
+What could reopen them: hinting only where a miss costs more than a sent expert does, or a
+hint poll of fewer DMA calls.
+
 ## 13. Layer-major prefill
 
 Today a prompt runs token by token through the decode step. Each token's MoE layers ask for
@@ -3365,8 +3392,9 @@ about 0.42 ms a part plus 0.33 ms a MiB. Where the 0.42 ms goes:
 - The last part's entry, one more call (35-45 us). The 0.085 ms between events is the next
   poll's mailbox read (one 64-byte c2h call) and the loop.
 
-Two changes, opt-in until a card A/B (`moe_card --idle-parts`: v1 as before, ra, halt, v2
-both; `ExpertServer.read_ahead`, `halt_aware`):
+Two changes (`moe_card --idle-parts`: v2, both, the default since session 18 below; v1 as
+before, the default until then; ra; halt; `ExpertServer.read_ahead` and `halt_aware`, both on by
+default since session 18):
 
 `read_ahead`:
 - `_stage_next`: before a poll flushes, the part the next idle poll would send is read into a
@@ -3410,9 +3438,109 @@ hop, the lock); with none of it a 1 MiB part would take about 0.38 ms:
 | a whole 35B expert (1.59 MiB) | two parts and a poll: 1.46 ms | ~0.12 + 0.53 + 0.05 + 0.04 = 0.74 ms |
 | a whole 26B expert (3.29 MiB) | three parts and two polls: ~2.3 ms (0.795, 0.795, 0.505) | ~0.12 + 1.09 + 0.09 = 1.3 ms |
 
-The contention (13.8) is per byte, so neither change touches it. Card measurement: with
-gemma4's whole-expert parts, as an A/B on the 35B's layer-ahead predictor and the decode
-hints (a discarded warm-up run, then A B B A).
+The contention (13.8) is per byte, so neither change touches it.
+
+On the card: session pfv2 (gemma4; 2026-10-02 14:28-14:52 opentpu; build 542fc43a; 15 runs, all
+bit for bit). Each pair ran after a warm-up, in A B B A order. The prefills are layer-major with
+the layer-ahead predictor (`--layer-ahead hint --ahead-part 4096`).
+
+| | A (v1, or base) | B (v2) | pairs B - A | mean B - A | predicted |
+|:--|:--|:--|:--|:--|:--|
+| 35B prefill wall, s | 12.838, 12.645 | 12.469, 12.502 | -0.369, -0.143 | **-0.256** | -0.6 |
+| 26B prefill wall, s | 15.813, 15.818 | 15.823, 15.845 | +0.010, +0.027 | **+0.018** | -0.3 |
+| 35B decode, hints top 4 + v2 against no hints, tok/s | 5.28, 5.25 | 5.37, 5.38 | +0.09, +0.13 | **+2.09%** | +2% |
+
+- A whole expert's idle part took 0.961 / 0.963 ms on the 35B (v1: 1.21-1.45 ms) and 1.73 /
+  1.68 ms on the 26B (v1: 1.92 ms). A 1632 KiB decode part took 0.87-0.89 ms.
+- The 35B's -0.26 s comes from the shorter parts alone. Device time fell 0.13 s (fewer
+  waits). The late halts fell 0.15 s: a run ending with a part in flight was seen late by
+  0.58 ms median, against 0.73 ms with v1.
+- The hold never acted: holds was 0 in every v2 run, so as many runs ended with a part in
+  flight as with v1 (1296 / 1280 against 1295 / 1273).
+- The 26B lands its whole queue either way (213 misses). Its runs with no part in flight were
+  seen 0.09 s later with v2 (0.18 s to 0.27 s). That is the read-ahead's host reads (3.3 MB a
+  part) at a run's end.
+
+Why the hold never acted. BoardBackend.wait cleared the running programs before it served the
+run, so run_clock() returned None at every poll of the run. It worked in the unit tests, which
+put a clock on the memory, and the live-card tests never counted holds.
+- Fixed (offload-hold): the running programs are cleared once the run has halted.
+- With halt_aware on, _stage_next also reads nothing ahead near a run's expected end; `stage_holds`
+  counts those skips.
+- Tests: test_board's `test_run_clock_is_there_while_the_host_serves_a_run` (fails on the old
+  wait); test_qwen35_moe's v2 live-card prefill now needs holds > 0 (26 there; 0 before the fix);
+  `test_halt_aware_reads_no_part_ahead_near_a_runs_end`.
+- The card's generate loop is one run with no clock, so it holds nothing; its halt comes once a
+  generation.
+
+The lead's rulings on pfv2:
+- read-ahead (`ra`) becomes the default for moe_card and the server (it landed as part of
+  session 18's v2, below).
+- halt_aware stays opt-in until a card session shows it holding, in a re-measure of the 35B
+  prefill, ra against v2.
+- The 35B decode hints (top 4, n 1) get a confirm session against the then-default parts.
+  They become the default only at >= 2% with both pairs positive.
+
+On the card: session 18 (2026-10-02 16:09-16:28 opentpu; build 542fc43a; tree offload-hold
+651876c, with the fix; 12 runs, all bit for bit; one lock). Each part ran a warm-up first. The
+prefill is the 35B's layer-major prefill with the layer-ahead predictor (`--layer-major 2
+--layer-ahead hint --ahead-part 4096`), A = ra and B = v2 in A B B A order.
+
+| run | wall s | device s | halts seen late, s | misses | parts read ahead | holds | stage holds | part ms |
+|:--|--:|--:|--:|--:|--:|--:|--:|--:|
+| W (ra, warm-up) | 13.204 | 11.491 | 1.195 | 1621 | 5189 | 0 | 0 | 1.894 |
+| A1 (ra) | 12.701 | 11.128 | 1.075 | 1606 | 5210 | 0 | 0 | 0.932 |
+| B1 (v2) | 12.425 | 11.531 | 0.338 | 2349 | 3861 | 21902 | 2746 | 1.344 |
+| B2 (v2) | 12.024 | 11.193 | 0.344 | 2145 | 3980 | 26004 | 2613 | 0.925 |
+| A2 (ra) | 12.732 | 11.182 | 1.029 | 1620 | 5189 | 0 | 0 | 1.077 |
+
+"Halts seen late" is prefill_time's halted_s - device_s: each run's start to its halt seen,
+past its device time.
+- The pairs B - A: -0.276 and -0.708 s. The mean is **-0.492 s (-3.9%)**.
+- The gain is the host seeing halts sooner. Wall - device - between fell from 1.18 / 1.14 s
+  (ra) to 0.44 / 0.45 s (v2). The hold acts now, at 8-10 held polls a run, and the halts are
+  seen 0.71 s sooner, about 0.27 ms a run.
+- It costs device time. The held polls send nothing, so fewer experts land ahead: about
+  1,280 fewer parts read ahead, about 630 more misses a prompt (+39%), and +0.21 s on the
+  device (the means, B against A; +0.40 s in the first pair, +0.01 s in the second).
+- A possible next step, not tried: near a run's end, send a part sized to the time left
+  instead of none.
+- The 26B is untested with the fixed hold and stage_holds. pfv2's +0.018 s was measured
+  before the fix. Its re-measure was to ride with gemma4's expert-major B session (13.11),
+  which runs both models.
+
+The decode part: the 35B, a warm-up, then A B C C B A.
+- A has no hints.
+- B is hints top 4, n 1 (`--hint-drop --hint-part 1632`) with ra.
+- C is the same hints with v2.
+
+| run | tok/s | misses a token | hinted landed |
+|:--|--:|--:|--:|
+| W (warm-up, no hints) | 5.29 | 102.85 | |
+| A1 / A2 | 5.34 / 5.26 | 102.85 | |
+| B1 / B2 | 5.37 / 5.39 | 80.42 / 80.37 | 3912 / 3916 |
+| C1 / C2 | 5.35 / 5.34 | 80.54 / 80.54 | 3892 / 3892 |
+
+- B against A: pairs +0.030 and +0.130 tok/s, mean **+1.51%**.
+- C against A: pairs +0.010 and +0.080 tok/s, mean **+0.85%**. pfv2's B was this same mode
+  and measured +2.09%.
+- v2 held nothing in the decode. C - B (-0.02, -0.05 tok/s) is inside the A pairs' own
+  spread (0.08).
+
+halt_aware's known limit in the decode:
+- The card's generate loop is one run a generation, so run_clock() has no earlier run of its
+  length and nothing is held.
+- With a run a token, it would still hold little. T0, the least of a program's last 16 run
+  times, comes from cycles that count the card's waits. Every decode run waits on about 100
+  misses, so T0 already holds waits, and adding the run's own waits counts them twice. The
+  expected end then lands late.
+- Not chased, since the hints are off (12.10).
+
+The lead's rulings, applied:
+- v2 becomes the default (`moe_card --idle-parts v2`, `ExpertServer.halt_aware` on). It
+  holds on the card, the 35B prefill is faster in both pairs, and every run was bit for bit.
+- The hints stay off. On v2, the default from the first ruling, they gain +0.85%, under the
+  2% bar. On ra the gain is +1.51%, also under it. They are closed (12.10).
 
 Tests: test_offload_server's `test_idle_parts_go_as_one_call_each_and_are_read_ahead` (an idle
 part's calls with and without, a request's misses with the lead cut, the staged reads, a

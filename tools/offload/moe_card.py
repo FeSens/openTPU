@@ -131,7 +131,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          legacy_serve: bool = False, embed_runs: bool = False,
          poll_idle: str | None = None, prefill_trace: str | None = None,
          layer_ahead: str | None = None, ahead_part: int | None = None,
-         idle_parts: str = "v1", expert_major: bool = False) -> dict:
+         idle_parts: str = "v2", expert_major: bool = False) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -426,7 +426,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 ahead_part=eng.ahead_part if eng.layer_hint or eng.expert_major else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
                 legacy_serve=legacy_serve, poll_idle=poll_idle,
-                idle_parts=dict(mode=idle_parts, holds=srv.holds,
+                idle_parts=dict(mode=idle_parts, holds=srv.holds, stage_holds=srv.stage_holds,
                                 part_ms=srv.part_s and round(srv.part_s * 1e3, 3),
                                 staged=getattr(srv.mem, "staged", None)),
                 pacer=dict(sleeps=pacer.sleeps, slept_s=round(pacer.slept, 3),
@@ -509,11 +509,11 @@ def main():
                          "default 0: token by token)")
     ap.add_argument("--per-layer-slots", action="store_true",
                     help="--layer-major with each layer's own slots (default: pooled)")
-    ap.add_argument("--idle-parts", choices=IDLE_PARTS, default="v1",
+    ap.add_argument("--idle-parts", choices=IDLE_PARTS, default="v2",
                     help="the hinted / ahead experts' parts on idle polls (docs/offload.md "
-                         "13.12): v1 as before (cut in two, each read after the last one's "
-                         "DMA); ra read ahead, one call each; halt none started near a run's "
-                         "expected end; v2 both")
+                         "13.12): ra read ahead, one call each; v1 as before (cut in two, "
+                         "each read after the last one's DMA); halt none started near a run's "
+                         "expected end; v2 both (the default since session 18)")
     ap.add_argument("--layer-ahead", metavar="index|hint|TRACES",
                     help="--layer-major with pooled slots: the next MoE layer's experts sent "
                          "while a layer runs (docs/offload.md 13.7), each layer's in index "
