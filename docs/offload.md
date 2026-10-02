@@ -2962,45 +2962,76 @@ The card side (Engine(layer_ahead="hint"), moe_card --layer-ahead hint):
   same rows when the mixers' output projections are zero, so that a layer's route reads its
   input.
 
-### 13.10 The predictor on the card (session pfhint)
+### 13.10 The predictor on the card (sessions pfhint and pfhint2: opt-in, no gain yet)
 
-Session pfhint (gemma4, 2026-10-02 10:56-11:04 opentpu, one otpu-lock): production fmvf
-542fc43a, tree 5051032 (main with offload-head, offload-ahint's queue append and the hint
-programs). R = 2, pooled, 16 tokens. All four runs were bit-exact: the 35B gave lmtime's
-95426ebacc3b40a9, the 26B q26ref16's 90e6b6e06e19da99. The ISA references of the hinted programs
-match the old ones too (omarchy, 35B q35ref16 88225ff781699291, 26B q26ref16).
+Two sessions (gemma4, 2026-10-02, one otpu-lock each, production fmvf 542fc43a), R = 2, pooled,
+16 tokens. Every run was bit-exact: the 35B gave lmtime's 95426ebacc3b40a9, the 26B q26ref16's
+90e6b6e06e19da99. The ISA references of the hinted programs match the old ones (omarchy: 35B
+q35ref16 88225ff781699291, 26B q26ref16).
+- pfhint (10:56-11:04 opentpu, tree 5051032): one pair a model, base first.
+- pfhint2 (11:29-11:48, tree ca913e4: the same programs, plus moe_card --ahead-part): base, hint
+  with 1 MiB parts, hint with 4 MiB parts (one part an expert), twice a model, in that order.
 
-| | 35B base | 35B predictor | 26B base | 26B predictor |
-|:--|--:|--:|--:|--:|
-| prefill wall, s | 13.107 | **12.387 (-0.72)** | 15.861 | **15.676 (-0.19)** |
-| predicted (13.9) | | -1.4 (+-0.7) | | 0 to -1 |
-| device, s | 12.031 | 10.949 | 15.547 | 15.114 |
-| demand serve, s | 6.79 | 2.24 | 4.18 | 0.76 |
-| misses | 6241 | 1902 | 2234 | 214 |
-| hints / ids queued / landed | | 2535 / 5568 / 4856 | | 1798 / 2273 / 2259 |
+Halts late is the sum over runs of the time from the run's device end (start + cycles) to the
+host seeing HALTED.
 
-The README's rule (the lead's) was: a 35B gain of at least 0.7 s, and a 26B loss of at most
-0.3 s, each against its base in the same lock. Both pass, the 35B by 0.02 s on one pair.
+| session | run | wall, s | device, s | halts late, s | serve, s | misses | landed ahead |
+|:--|:--|--:|--:|--:|--:|--:|--:|
+| pfhint | 35B base | 13.107 | 12.031 | 0.63 | 6.79 | 6241 | |
+| pfhint | 35B hint 1 MiB | 12.387 | 10.949 | 0.92 | 2.24 | 1902 | 4856 |
+| pfhint2 | 35B base 1 | 13.162 | 12.044 | 0.64 | 6.83 | 6241 | |
+| pfhint2 | 35B hint 1 MiB | 12.906 | 11.378 | 1.04 | 3.05 | 2213 | 4466 |
+| pfhint2 | 35B hint 4 MiB | 12.677 | 11.126 | 1.09 | 2.33 | 1602 | 5215 |
+| pfhint2 | 35B base 2 | 12.455 | 11.728 | 0.24 | 5.93 | 6241 | |
+| pfhint2 | 35B hint 1 MiB | 12.445 | 11.042 | 0.95 | 2.43 | 1987 | 4741 |
+| pfhint2 | 35B hint 4 MiB | 12.402 | 10.939 | 0.99 | 2.01 | 1550 | 5283 |
+| pfhint | 26B base | 15.861 | 15.547 | 0.15 | 4.18 | 2234 | |
+| pfhint | 26B hint 1 MiB | 15.676 | 15.114 | 0.39 | 0.76 | 214 | 2259 |
+| pfhint2 | 26B base 1 | 15.894 | 15.560 | 0.13 | 4.18 | 2234 | |
+| pfhint2 | 26B hint 1 MiB | 15.743 | 15.100 | 0.38 | 0.73 | 214 | 2259 |
+| pfhint2 | 26B hint 4 MiB | 15.821 | 15.116 | 0.45 | 0.74 | 213 | 2260 |
+| pfhint2 | 26B base 2 | 15.817 | 15.544 | 0.12 | 4.12 | 2234 | |
+| pfhint2 | 26B hint 1 MiB | 15.694 | 15.124 | 0.37 | 0.76 | 214 | 2259 |
+| pfhint2 | 26B hint 4 MiB | 15.777 | 15.117 | 0.44 | 0.75 | 213 | 2260 |
 
-Paired run by run (the same runs, zero misses in both):
-- The hint's own cost is as predicted: +47 us a DeltaNet run on the 35B, +37 to 41 us a run on
-  the 26B.
-- Contention, measured again: a zero-miss run with parts in flight is +15% (35B DeltaNet
-  +0.54 ms on 3.30; 26B +1.1 ms on 7.26). 13.8 had 13-16%.
+The lead's rule, on pfhint2's means: the 35B must gain at least 0.7 s, and the 26B lose at most
+0.3 s.
+- 35B: 1 MiB -0.13 s, 4 MiB -0.27 s. It fails.
+- 26B: 1 MiB -0.14 s, 4 MiB -0.06 s.
+- The default stays off for both. The 26B's 0.9% is not enough on its own.
 
-Where the 35B's predicted -1.4 s went:
-- The link is the limit. It was busy 9.4 of the prompt's 12.4 s (parts 6.80 s, requests 2.24,
-  hints 0.38).
-- About 700 of the 5568 queued experts were never sent before their layer's queue was
-  replaced, and became misses. The model had 918 misses where the card had 1902.
-- An expert takes two 1 MiB parts: 0.76 ms, then 0.62 ms for the 0.59 MiB rest, with 0.085 ms
-  gaps between link events. A fit gives about 0.42 ms fixed a part plus 0.33 ms a MiB, so the
-  fixed cost is most of it.
-- Contention costs about 1 s of compute. Halts are seen later: the host's time beyond device
-  and between-run time rose 0.29 s, as in 13.8.
+The run order explains pfhint's -0.72 s. A model's first run after its pool is read is slow:
+35B base 1 against base 2 was 6.83 against 5.93 s of serve, because pool reads still hit the
+disk, and 0.64 against 0.24 s of halts late, because the host is busy serving when a run halts.
+pfhint's base ran first. In pfhint2's second, warm triple the 35B gains 0.01 s (1 MiB) and 0.05 s
+(4 MiB). Card A/B sessions now start with an unmeasured warm-up run and use ABBA order.
 
-The 26B's misses already overlapped its dense MLP (beside the request), so removing them
-saved little of its wall time, and contention takes most of what is left.
+Where it goes (pfhint2's warm triple, 35B base 2 against 4 MiB):
+- Device -0.79 s. The 4691 avoided misses save more card wait than contention and the router
+  cost. The router costs +47 us a 35B run, +37-41 us a 26B run, as 13.9 estimated.
+  Contention was measured again at +15% on zero-miss runs with parts in flight (13.8: 13-16%).
+- Halts late +0.75 s (0.24 to 0.99 s). 1311 runs ended with a part in flight and were seen a
+  median 0.69 ms late. At 1 MiB parts, 1925 runs were seen 0.46 ms late. The host's part DMA
+  blocks it, so it sees a run's end only after the part.
+- 26B: device -0.44 s, halts late +0.25 to 0.32 s.
 
-Next: whole-expert parts (one fixed cost an expert instead of two). On the 35B that is about
-2.2 s of link time back. Offload has the per-part figure for its own part path.
+The 35B's link was busy 9.4 of the prompt's 12.4 s at 1 MiB parts. A part cost about 0.42 ms
+fixed plus 0.33 ms a MiB. offload traced the fixed cost:
+- each idle part goes as two DMA records (the lead cut meant for a miss), at 122 us each;
+- staging (the pool read and the iovecs) is not overlapped;
+- the last part writes the entry in a call of its own;
+- the poll's mailbox read sits between parts.
+
+Open items:
+1. Halt-aware idle parts: no idle part starts when the run's expected end (BoardBackend's
+   expected time for the program, from its start) is closer than the part's time. Requests
+   are still served at once. This would recover most of the halts' +0.75 s (35B) and +0.3 s
+   (26B), at the cost of some streaming.
+2. The part path (offload): one record an idle part, and staging read ahead under the DMA.
+   About 0.49 ms a 1 MiB part, against 0.76 now. Shorter parts also shorten the halt delay.
+3. A design with less contention. Contention is per byte written during compute (DRAM
+   bandwidth): about 1.1 s on both models. Fewer bytes per run (higher precision), or
+   streaming only in the card's DRAM-idle phases, which needs a signal from the card.
+
+The predictor stays opt-in (--layer-ahead hint, --ahead-part). Its card check repeats after
+items 1 and 2.
