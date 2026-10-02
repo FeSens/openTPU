@@ -346,6 +346,54 @@ def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
         a._pool.shutdown()
 
 
+
+def test_layer_ahead_sends_the_next_layers_experts(tiny, monkeypatch):
+    """Engine(layer_ahead=orders): prefill_layers turns the server's layer ahead on
+    (begin_prefill(ahead=True)) and gives it each MoE layer's experts in the order's, as global
+    ids, between runs (ExpertServer.ahead_layer): the first layer's after begin_prefill, the
+    next layer's before each layer's first run, the first layer's again before the last layer
+    of a chunk another chunk follows (17 rows in chunks of 12 and 5). With the link's idle time
+    between runs (polls until none sends: the ISA simulator polls only while a run waits) the
+    queued experts land: fewer misses than without, the logits and the decode steps after
+    token by token's bit for bit."""
+    from opentpu.llm import qwen35 as Q35
+    monkeypatch.setattr(Q35, "PREFILL_CHUNK", 12)
+    spec, W = _untied(tiny)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
+    order = [[(e * 3 + j) % E for e in range(6)] for j in range(len(KINDS))]
+    a, b, ref = (Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K, **kw)
+                 for kw in ({"layer_major": 2, "layer_ahead": order}, {"layer_major": 2}, {}))
+    srv, calls = a.server, []
+    ahead, begin, run = srv.ahead_layer, srv.begin_prefill, a.backend.run
+
+    def ahead_layer(j, ids):
+        calls.append((j, list(ids)))
+        ahead(j, ids)
+
+    def idle_then_run(*args, **kw):             # the link's idle time before each run
+        while srv.poll():
+            pass
+        return run(*args, **kw)
+    srv.ahead_layer, a.backend.run = ahead_layer, idle_then_run
+    srv.begin_prefill = lambda **kw: (calls.append(("begin", kw)), begin(**kw))
+    toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 21)]
+    m0 = a.server.misses, b.server.misses
+    la, lb, lr = a.prefill(toks), b.prefill(toks), ref.prefill(toks)
+    assert a.image.prefill_rows == 12 and a.pos == len(toks)
+    assert calls[0] == ("begin", {"ahead": True})
+    assert [j for j, _ in calls[1:]] == [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
+    assert all(ids == [j * E + e for e in order[j]] for j, ids in calls[1:])
+    assert srv.aheads == 12 and srv.landed > 0
+    assert np.array_equal(la.view(np.uint32), lr.view(np.uint32))
+    assert np.array_equal(lb.view(np.uint32), lr.view(np.uint32))
+    assert a.server.misses - m0[0] < b.server.misses - m0[1]
+    for t in (5, 6):
+        assert np.array_equal(a.step(t).view(np.uint32), ref.step(t).view(np.uint32))
+    a.layer_ahead, got = True, []                # True: each layer's experts in index order
+    a._send_ahead(lambda j, ids: got.append((j, ids)), 2)
+    assert got == [(2, list(range(2 * E, 3 * E)))]
+
+
 def _hinted(spec):
     return replace(spec, moe=replace(spec.moe, hint=True))
 
@@ -535,9 +583,10 @@ def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
 
 
 def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
-    """tools/offload/moe_card.py --layer-major 2 --prefill-trace (ISA): the prompt's timeline
-    holds each run (the embed runs, the layer runs by key, the head last) and each request with
-    its ids and misses, as many as the result's prefill_time and prefill_requests count."""
+    """tools/offload/moe_card.py --layer-major 2 --layer-ahead index --prefill-trace (ISA): the
+    prompt's timeline holds each run (the embed runs, the layer runs by key, the head last) and
+    each request with its ids and misses, as many as the result's prefill_time and
+    prefill_requests count; the layer ahead called once a MoE layer."""
     import json
     import pickle
     import runpy
@@ -560,7 +609,7 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", [
         "moe_card.py", str(m), "--check", str(tmp_path / "ref.json"), "-n", "1", "--cap", "256",
         "--cfg", str(tmp_path / "cfg.pkl"), "--experts", str(2 * K), "--layer-major", "2",
-        "--prefill-trace", str(tr), "--out", str(out)])
+        "--layer-ahead", "index", "--prefill-trace", str(tr), "--out", str(out)])
     runpy.run_path(str(Path(__file__).resolve().parents[1] / "tools" / "offload" / "moe_card.py"),
                    run_name="__main__")
     r, t = json.loads(out.read_text()), json.loads(tr.read_text())
@@ -573,3 +622,4 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     assert all(x[1] <= x[2] for x in t["runs"])                 # started, then done
     assert len(t["requests"]) == len(t["misses"]) == pt["requests"] == r["prefill_requests"]
     assert sum(t["misses"]) == r["prefill_misses"] and all(e[2] == "d" for e in t["events"])
+    assert r["layer_ahead"] == "index" and pt["ahead"]["calls"] == len(KINDS)  # (one chunk)
