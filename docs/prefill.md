@@ -339,6 +339,27 @@ prefill at R = 4 goes from 6,820,714 to 6,789,479 cycles (-0.46%), the MTP verif
 5,771,493 to 5,741,573 (-0.52%). Merging the convolution's two channel blocks per tap (a
 (tap, block) taps layout) would save about a cycle per VOP.
 
+**Rows a run: R = 3 against R = 2.** PAIR (4-bit weights only) streams the weights ceil(R / 2)
+times, so on fp4 R = 3 pays R = 4's MXU time; int8 streams once per pass of up to MCOLS rows.
+Cycles a row and layer (the slope from 4 to 8 layers; a mix's layer types measured apart, with
+OTPU_FORMATS setting every layer, then weighted by their layers; int8 head, cap 4096, no
+logits), and R = 2 against R = 3 in the co-sim and in MXU time (the roofline):
+
+| model | layers | R = 3 | R = 2 | co-sim | MXU time |
+|---|---|---|---|---|---|
+| Qwen3.5-4B fp4, position 544 | all | 322.3K | 278.0K | -13.8% (card -13.3%) | -25% |
+| Phi-4-mini mix, bucket 1 (position 128) | 24 fp4 MLP | 277.9K | 279.2K | +0.5% | -6.2% |
+| | 8 int8 | 291.0K | 431.1K | +48% | +49% |
+| | model | 281.2K | 317.2K | +12.8% | +7.7% |
+| SmolLM3-3B mix, bucket 16 (position 3968) | 27 fp4 gate/up | 255.1K | 281.2K | +10.2% | +5.8% |
+| | 9 int8 | 263.6K | 372.0K | +41% | +43% |
+| | model | 257.2K | 303.9K | +18.1% | +15.1% |
+
+The MXU time overstates R - 1's gain by 3-11 points: an R = 2 run reaches ~89% of its MXU
+roofline against ~95% at R = 3 (a run's and a layer's work outside the MXU goes over fewer
+rows). Hence the probe's margin: R steps down only where the PAIR-aware MXU cost a row is at
+least 10% lower. The two mixes keep R = 3, the 4B takes R = 2.
+
 **Later (RTL area: the MCOLS = 4 build is at ~97% of the FPGA's slices).**
 - **DSTEP over several rows.** If one DSTEP stepped a head's R rows in one pass over the state at
   no extra cost, the 0.8B's prefill at R = 4 would take -28.6% (6.82 -> 4.87 M cycles, port B
