@@ -272,6 +272,25 @@ probe and fit_chunk), so they compare alike. A mix falls between, at about 2/3 o
 blocks 4-bit (by the weights' shapes: Phi-4-mini's mix about 56% fp4 blocks, SmolLM3's
 about 43%, both keep 3); the 4B, fp4 and its mix, goes from 3 rows to 2.
 
+**Card, the row choice** (fmvf 542fc43a, 2026-10-02, tree 666b2ef 13:14 and 5dd7823 14:15-14:18
+opentpu; one engine a model, warm-ups first, then A / B / B / A; tokens equal in every phase,
+and the 4B's R = 3 and R = 2 splits give the same 16 tokens a turn):
+
+| model | prompt | A | B | per pair (B - A) |
+|---|---|---|---|---|
+| Qwen3.5-4B fp4 (A: R = 3, B: R = 2) | 237 | 18.350 / 18.360 | 15.904 / 15.932 | -2.437 s (-13.3%) |
+| | 24 | 1.893 / 1.896 | 1.639 / 1.642 | -0.254 s |
+| | 13 at 252 | 1.097 / 1.099 | 0.971 / 0.973 | -0.126 s |
+| Qwen3-0.6B int8 (A: off, B: on at R = 8) | 236 | 2.203 / 2.215 | 2.145 / 2.143 | -0.065 s (-2.9%) |
+| LFM2.5-230M int8 (A: on at R = 8, B: off) | 238 | 0.749 / 0.746 | 1.925 / 1.953 | off +1.19 s |
+
+The 4B's device cycles fall 13.5% (2441.7 -> 2113.1 M, 79 -> 119 runs), the co-sim's 13.8%;
+mxu_time a row at R = 2 against 3: the 4B fp4 -24.9%, its mix -18.8%, LFM2-2.6B's mix -22.3%
+(they take 2), Phi-4-mini int8 +49.2%, its mix +7.7%, SmolLM3's mix +17.4%, E2B int8 +49.1%
+(they keep 3). Qwen3-0.6B (0.6B, 8 rows a run in bucket 1) now prefills its 236 tokens in
+today's 30 runs, 2.9% faster than today's route; its device cycles are still 5.4% more (the
+open item below).
+
 **The rule (prefill.covers).** A prompt takes prompt runs when in every bucket it touches
 R_max(bucket) >= today's rows there (Qwen3.5: up to one pass), so no bucket streams the weights
 or runs more often; otherwise Engine.prefill_chunks and MTPDecoder.prefill take today's route
