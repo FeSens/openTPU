@@ -981,3 +981,64 @@ def test_simulator_child_dies_with_its_parent(tmp_path):
         time.sleep(0.05)
     os.kill(child, signal.SIGKILL)
     raise AssertionError("the simulator outlived its parent")
+
+
+@pytest.mark.parametrize("board", [False, True])
+def test_additive_mask_block_rtl(have_verilator, board):
+    """A prompt run's masked attention block (attention.Additive, docs/prefill.md 9): the score
+    tile loaded with a mask (-0 where a token counts, -inf past it), then MM ACC + RMAX of
+    q.K^T (int8 K with token scales) into it, beside today's way (MM, the +inf / -inf row, VOP
+    MIN by column, VOP RMAX). The RTL's ACC keeps -inf + s = -inf and its RMAX takes the max
+    after the add, as the ISA simulator; on the ISA the two tiles and their maxima are the same
+    bits. Rows 1-4, the row's position 0-255 in the block (-1: every token masked, a sliding
+    window's first block at its last position), K blocks 1 and 2."""
+    from opentpu.isasim import board_config
+    from opentpu.llm.qwen3 import amask_table
+    cfg = board_config(DRAM_BYTES=1 << 22, PAIR=True)
+    D, N = cfg.D, 256
+    Q, K, KS, ZA, ZM = 0, 0x10000, 0x40000, 0x50000, 0x160000
+    rng = np.random.default_rng(7)
+    img = np.zeros(1 << 22, np.uint8)
+    img[K:K + N * 2 * D] = rng.integers(-127, 128, N * 2 * D).astype(np.int8).view(np.uint8)
+    img[KS:KS + 8 * N] = rng.uniform(0.01, 0.1, 2 * N).astype(np.float32).view(np.uint8)
+    tab = amask_table(N, cfg.MCOLS)                        # [position, MCOLS, N + 1]
+    tab = np.concatenate([np.full((1, cfg.MCOLS, N + 1), -np.inf, np.float32), tab])
+    tab[0, :, N] = -0.0                                    # (position -1: all masked)
+    img[ZA:ZA + tab.nbytes] = tab.view(np.uint8).ravel()
+    img[ZM:ZM + 8 * N] = np.concatenate([np.full(N, np.inf, np.float32),
+                                         np.full(N, -np.inf, np.float32)]).view(np.uint8)
+    prog, cases, t, qa = [], [], 0, Q
+    for M, tpos, KB in [(1, 0, 1), (2, 255, 2), (3, 77, 1), (4, 1, 2), (4, 0, 1), (4, 255, 1),
+                        (3, 254, 2), (4, -1, 1)]:
+        q = (rng.standard_normal((M, KB * D)) * 2).astype(np.float32)
+        img[qa:qa + q.nbytes] = q.view(np.uint8).ravel()
+        tq = t
+        ta = tq + M * KB * D                               # the additive tile (rows of N + 1)
+        tb = ta + M * (N + 1) + M                          # today's tile, its row, its maxima
+        tz = tb + M * N
+        tx = tz + N
+        t = tx + M
+        prog += [I.ld(qa, tq, M * KB * D), I.qact(tq, M, 0, KB, KB * D, row=True),
+                 I.ld(ZA + tab[0].nbytes * (tpos + 1), ta, (M - 1) * (N + 1) + N),
+                 I.mm(K, KS, ta, N, KB, KB * D, N + 1, M, 0, 4 * KB, acc=True, rmax=True),
+                 I.mm(K, KS, tb, N, KB, KB * D, N, M, 0, 4 * KB),
+                 I.ld(ZM + 4 * (N - 1 - tpos), tz, N),
+                 I.vop(I.V_MIN, tb, tb, tz, M, N, N, N, 0, I.B_COL),
+                 I.vop(I.V_RMAX, tx, tb, 0, M, N, 1, N, 0)]
+        cases.append((M, tpos, ta, tb, tx))
+        qa += q.nbytes + 64
+    prog.append(I.halt())
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    tm = m.slices[0].tmem
+    for M, tpos, ta, tb, tx in cases:
+        a = np.stack([tm[ta + j * (N + 1):ta + j * (N + 1) + N] for j in range(M)])
+        b = tm[tb:tb + M * N].reshape(M, N)
+        assert np.array_equal(a, b), (M, tpos)            # the same bits, -0 included
+        amax = tm[ta + M * (N + 1):ta + M * (N + 1) + M]
+        assert np.array_equal(amax, tm[tx:tx + M]), (M, tpos)
+        f = a.view(np.float32)
+        assert np.isneginf(f[:, tpos + 1:]).all() and np.isfinite(f[:, :tpos + 1]).all()
+    kw = dict(uarch=rtlsim.BOARD_UARCH, axi=True, boot=True) if board else {}
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], **kw)
+    assert np.array_equal(np.asarray(tmems[0]).view(np.uint32), tm)
+    assert np.array_equal(drams[0][:len(m.slices[0].dram)], m.slices[0].dram)

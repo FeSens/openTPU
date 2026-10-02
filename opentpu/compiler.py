@@ -1145,13 +1145,22 @@ class Builder:
     def load(self, t: Tensor, out: Tile | None = None) -> Tile:
         if not t.shape:
             raise CompileError("cannot load a scalar")
+        # into a tile whose rows have the source's stride (a padded score buffer and its mask
+        # tile, attention.Additive): one LD, the pad words between the rows included
+        strided = out is not None and len(t.shape) == 2 and t.shape[0] > 1 and \
+            t.strides[1] == 1 and out.rs == t.strides[0] > t.shape[1]
         if out is None:
             out = self.alloc(t.shape)
         else:
             self.check_live(out)
-            if out.shape != tuple(t.shape) or not out.contiguous:
+            if out.shape != tuple(t.shape) or not (out.contiguous or strided):
                 raise CompileError(f"load: out {out} is not a contiguous {t.shape} tile")
             self.bump_version(out.buf)
+        if strided:
+            ra, imm = self.addr(t.base)
+            n = (t.shape[0] - 1) * out.rs + t.shape[1]
+            self.emit(I.ld(imm, out.base, n, ra=ra, comment="load rows"))
+            return out
         if len(t.shape) == 1:
             if t.strides[0] != 1:
                 raise CompileError("strided 1-D loads are not supported")

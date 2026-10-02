@@ -400,3 +400,53 @@ prefill at R = 4 goes from 6,820,714 to 6,789,479 cycles (-0.46%), the MTP verif
   lanes, one pass for R rows saves only the fill, about -2.5% on the 0.8B. The gain needs 16
   lanes.
 - **MCOLS = 8:** the 0.8B's prefill at R = 4 -17.2% (1.705 -> 1.413 M cycles a row).
+
+## 9. The additive mask (prompt runs)
+
+A prompt run's row attends over its bucket with its last block masked (attention.Bucket; a
+sliding window's first block too, Gemma 4). Masked as min(s, row) such a block takes four
+instructions: the MM of q.K^T, an LD of the +inf / -inf row, a VOP MIN by column and a VOP
+RMAX (the MXU's row maxima would see the masked scores). Added instead, it takes two: an LD of
+the row's mask tile into the score buffer, then the MM accumulating q.K^T into it with the row
+maxima (ACC + RMAX: docs/isa.md, the maxima of the values written, after the add).
+
+- **Exact.** The tile holds -0 where a token counts and -inf past it: s + -0 = s for every s
+  (-0 included; +0 would turn a -0 score into +0) and s + -inf = -inf = min(s, -inf), so the
+  scores, their maxima and everything after are bit for bit today's. RTL co-sim of one masked
+  block both ways (tests/test_rtl.py test_additive_mask_block_rtl: 1-4 rows, the row's position
+  -1 / 0 / 1 / 77 / 254 / 255 in the block, K blocks 1 and 2): RTL = ISA on the board's
+  micro-architecture (AXI, boot) and the default one; the RTL's ACC read-modify-write keeps
+  -inf + s = -inf and its RMAX takes the max after the add.
+- **No NaN.** A Bucket's row is never fully masked (its own token is in its last block). A
+  Gemma 4 sliding window's first block is, at tpos + r = 255 (the window starts at the next
+  block's first token), as it is today: the online softmax starts at m = -1e30, so its max
+  stays finite and exp2(-inf - m) = +0; no -inf - (-inf).
+- **Tables.** LD is one-dimensional (it cannot repeat a row into M tile rows), so the image
+  holds the tiles: per position q of an attention block, MCOLS rows of the block's entries and
+  a pad word (the score buffer's odd row stride; qwen3.amask_table), -0 for c <= q: 1 MiB at
+  256 x MCOLS 4. Gemma 4 adds the window starts' opposite table (1 MiB) and its prompt runs no
+  longer compute their mask rows (`_pos_rows`, 9 instructions a row). Only dense images with
+  lookup tables (the ones that run prompt runs) hold them; MoE images keep their slots. A row's
+  tile is at the table + (tpos + r) x its stride: an argument register, no instruction.
+  Decode at a run-time position keeps its mask rows.
+- **DRAM fit** (fit_check, the board configuration, caps 2048 and 4096): every layout keeps its
+  fit and its choices; the tightest, E4B int8 at 4096, 4092.2 -> 4094.2 MiB (PLE table on the
+  host either way, its formats unchanged), E2B's mix at 4096 4068.5 -> 4070.5 MiB with its int8
+  PLE table on the card.
+
+Instructions of the prompt runs' L programs at each bucket's R_max:
+
+| layout | run | before | after |
+|---|---|---|---|
+| Gemma 4 E2B mix | bucket 2, 4 rows | 4106 | 3975 |
+| Gemma 4 E2B int8 | bucket 6 (and 9, 12, 15), 4 rows | 4123 | 3992 |
+| LFM2.5-230M | bucket 8 (and 11, 14), 4 rows | 4138 | 4074 |
+| Qwen3-0.6B | bucket 1, 8 rows | 1904 | 1776 |
+| LFM2-2.6B int8 / mix | bucket 1, 4 rows | 3620 | 3428 |
+| Qwen3.5 (0.8B, 2B, 4B) | any | | -16 |
+
+The runs that did not fit IMEM by 10-42 instructions now do: E2B's mix takes 4 rows in bucket
+2 (was 3), E2B int8 4 in buckets 6, 9, 12 and 15, LFM2.5-230M 4 in buckets 8, 11 and 14, and
+every bucket of the 16 layouts is covered (a prompt there took today's route before). No other
+R_max changes (the next size stays over 4096: LFM2-2.6B int8 bucket 2 at 4 rows 4676 -> 4484,
+SmolLM3's mix bucket 16 at 4 rows 4311 -> 4247, E2B int8 bucket 16 at 4 rows 4299 -> 4168).

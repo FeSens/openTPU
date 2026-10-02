@@ -83,7 +83,7 @@ from ..compiler import Affine, DevVar, KVDesc, QTensor, Tensor, current
 from ..isasim import Config
 from ..kernels import gather as GA
 from ..kernels import mailbox as MB
-from ..kernels.attention import Blocks, Bucket, _attend_heads
+from ..kernels.attention import Additive, Blocks, Bucket, _attend_heads
 from ..kernels.lib import gelu_tanh, rmsnorm, rope
 from ..kernels.mlp import _chunk, swiglu_down
 from . import formats as FM
@@ -92,7 +92,7 @@ from . import moe as MO
 from .lfm2 import plan
 from ..host.offload import LINE, BackendDram, ExpertServer, Layout, RowLayout, RowServer
 from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, RunPos, _Bump, _lm_head, _lm_head_rows, _qdesc,
-                    _tdesc, fill_logits, step_descriptors)
+                    _tdesc, amask_table, fill_logits, step_descriptors)
 
 SLIDE, FULL = "sliding", "full"
 
@@ -900,6 +900,9 @@ class Image:
                            "onehot": {f: b.alloc(4 * cfg.MCOLS * D * GA.onehot_blocks(
                                D, cfg.MCOLS, "int8" if f == "int8" else "fp4")) for f in fmts},
                            "gen": G.alloc(b, spec, cap, block)}       # the decode loop's area
+            if not spec.experts:    # the prompt runs' mask tiles, ends then starts (Additive)
+                self.lookup.update(amask=b.alloc(2 * amask_table(block, cfg.MCOLS).nbytes),
+                                   amask_M=cfg.MCOLS)
         self.offload = None
         if mo:                      # path (a)'s words and expert slots (docs/offload.md)
             self.fmt = MO.ExpertFormat(H, mo.ffn, D, self.efmt)
@@ -1015,6 +1018,9 @@ class Image:
                 [self.rope_rows(range(self.cap)),
                  np.zeros((self.cap, self.ps // 4 - self.rw), np.float32)], axis=1))
             put(lk["iota"], np.arange(self.block, dtype=np.float32))
+            if "amask" in lk:
+                put(lk["amask"], np.concatenate([amask_table(self.block, lk["amask_M"]),
+                                                 amask_table(self.block, lk["amask_M"], True)]))
             for f, addr in lk["onehot"].items():
                 put(addr, GA.onehot(D, cfg.MCOLS, "int8" if f == "int8" else "fp4"))
             G.build(lambda s, addr, a: put(addr, a), 0, 1, spec, self.cap, lk["gen"])
@@ -1202,7 +1208,9 @@ class Image:
             raise ValueError(f"the image is laid out for attention blocks of {self.block}")
         if R > self.rows:
             raise ValueError(f"{R} rows, the image's I/O area holds {self.rows}")
-        pos = RunRows(blocks, block, (blocks - 1) * block, 0, self.cap, R, 0)
+        lk = self.lookup
+        amask = (lk["amask"], 4 * lk["amask_M"] * (block + 1)) if "amask" in lk else None
+        pos = RunRows(blocks, block, (blocks - 1) * block, 0, self.cap, R, 0, amask)
         b = gemma4_prompt_run.trace(self.cfg, 0, {"m": self.descriptors(0), "pos": pos, "R": R,
                                                   "kind": kind, "block": block})
         return [b.finish()], list(b.run_args)
@@ -1419,20 +1427,30 @@ def _slide_seq(m, p, block: int):
     nw, nr = m.spec.window // block, m.ring // block
     run = isinstance(p, RunPos)
     mb = m.mask.base + 4 * 2 * block * getattr(p, "row", 0)  # its mask pair (a run's row)
+    end = _row_add(p, block) or Tensor(mb, (block,), (1,))
     B = p.blocks if run else p // block + 1         # the position's block + 1
     if B <= nw:                                     # the window reaches position 0
         if not run:
             return p + 1
         return Blocks([(i * block, block, None) for i in range(B - 1)] +
-                      [((B - 1) * block, block, Tensor(mb, (block,), (1,)))])
+                      [((B - 1) * block, block, end)])
     t = None if run else p % block
-    start = Tensor(mb + 4 * block, (block,), (1,)) if run else \
-        Tensor(Affine(m.z2 + 4 * (block - 1 - t)), (block,), (1,))
+    start = (_row_add(p, block, start=True) or Tensor(mb + 4 * block, (block,), (1,))) if run \
+        else Tensor(Affine(m.z2 + 4 * (block - 1 - t)), (block,), (1,))
     items = [(((B - 1 - nw) % nr) * block, block, start)]
     items += [(((B - 1 - nw + j) % nr) * block, block, None) for j in range(1, nw)]
     e = ((B - 1) % nr) * block
-    items.append((e, block, Tensor(mb, (block,), (1,))) if run else (e, t + 1, None))
+    items.append((e, block, end) if run else (e, t + 1, None))
     return Blocks(items)
+
+
+def _row_add(p, block: int, start: bool = False):
+    """A prompt run's row (a _RowPos with the image's mask tiles): its block-end (or window
+    start) mask as an attention.Additive tile at its position in the block, else None."""
+    if getattr(p, "amask", None) is None:
+        return None
+    base, step = p.amask
+    return Additive(Affine(base + (block * step if start else 0)) + p.tpos * step)
 
 
 def _full_seq(m, p, block: int):
@@ -1441,7 +1459,7 @@ def _full_seq(m, p, block: int):
     from .qwen3 import RunPos
     if isinstance(p, RunPos):
         return Bucket(p.blocks, m.mask.base + 4 * 2 * block * getattr(p, "row", 0)
-                      - 4 * (p.blocks - 1) * block)
+                      - 4 * (p.blocks - 1) * block, _row_add(p, block))
     return p + 1
 
 
@@ -1610,12 +1628,13 @@ def _gathered(m, pos):
     return e.reshape(1, H), pe, _pos_rows(m, pos)
 
 
-def _pos_rows(m, pos, R: int = 1):
+def _pos_rows(m, pos, R: int = 1, masks: bool = True):
     """At a run-time position: the RoPE rows [R, rw] of it and the R - 1 after it (in its
     attention block), and each one's mask rows -> its pair of m.mask's rows (end: +inf where
-    the block's token <= tpos; start: the opposite)."""
+    the block's token <= tpos; start: the opposite); not with `masks` False (a prompt run's
+    rows take the image's mask tiles instead: _row_add)."""
     ropes = ol.load(m.rope_t[pos.pos:pos.pos + R, :])       # [R, rw]
-    for r in range(R):
+    for r in range(R if masks else 0):
         tp = ol.load(m.iota[pos.tpos + r:pos.tpos + r + 1])     # [1]: tpos + r as a float
         end = ((tp - ol.load(m.iota)) + 0.5) * BIG * BIG    # +inf where c <= tpos + r
         mb = m.mask.base + 4 * 2 * m.block * r
@@ -1632,6 +1651,7 @@ class _RowPos(RunPos):
     def __init__(self, rp: RunPos, r: int):     # (not RunPos's: the same run-time values)
         self.blocks, self.block, self.lo, self.t0 = rp.blocks, rp.block, rp.lo, rp.t0
         self.tpos, self.pos, self.bucket, self.row = rp.tpos + r, rp.pos + r, None, r
+        self.amask = getattr(rp, "amask", None)     # a prompt run's mask tiles (_row_add)
 
 
 def _gathered_rows(m, tokens):
@@ -1700,7 +1720,7 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
     if isinstance(pos, RunRows):
         R = pos.R
         e, pe = _gathered_out(m, pos), None
-        ropes = _pos_rows(m, pos, R)
+        ropes = _pos_rows(m, pos, R, masks=pos.amask is None)
         pos = [_RowPos(pos, r) for r in range(R)]
     elif isinstance(pos, RunPos):
         e, pe, ropes = _gathered(m, pos)
