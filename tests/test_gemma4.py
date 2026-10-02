@@ -526,12 +526,12 @@ def test_real_model_programs_fit():
         assert len(ra) == 6
     with pytest.raises(CompileError, match="TMEM"):
         img.compile_rows([(0, p) for p in range(8)], [7])
-    # the recommended mix (docs/formats.md): the shared layers' attention and MLP in fp4, the
-    # int8 PLE table on the card beside them; the layer loops int8's (the split is at 15)
+    # the recommended mix (docs/formats.md): the shared layers' MLP and layers 15-24's attention
+    # in fp4, the int8 PLE table on the card beside them; three runs (the splits at 15 and 25)
     mix = spec.image(board_config(), 4096, 1, 8, "mix", lookup=True)
-    assert spec.mix == "attn@15-34=fp4,mlp@15-34=fp4" and mix.formats == spec.mix
+    assert spec.mix == "attn@15-24=fp4,mlp@15-34=fp4" and mix.formats == spec.mix
     assert (mix.ple_format, mix.ple_host, mix.head_format) == ("int8", False, "int8")
-    assert len(mix.runs) == len(img.runs) == 2 and mix.nbytes < 1 << 32
+    assert len(img.runs) == 2 and len(mix.runs) == 3 and mix.nbytes < 1 << 32
     progs, _ = mix.compile_decode(16, 15 * 256)
     assert 8 * len(progs[0]) <= board_config().IMEM_WORDS
 

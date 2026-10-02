@@ -17,15 +17,17 @@ In short:
   (`tools/formats_scan.py`). It is about ΔNLL against int8 (its % is about the perplexity
   change in %), without the noise of the sampled tokens.
 - **Rule.** A mix qualifies if dKL% <= 0.1 x its decode gain in % over int8, with at most two
-  layer layouts (Qwen3.5: one) and the LM head in int8. The default is the fastest mix at least
+  layer layouts (Qwen3.5: one) unless the compile check passes (decode and prompt runs, buckets
+  1 and 16: Gemma 4), and the LM head in int8. The default is the fastest mix at least
   1 SE under its bar; a dKL gap under 2 SE is a tie, which goes to the mix with fewer runs.
   Finals are at 2000 tokens.
 - **Choices.** Phi-4-mini: `mlp@4-29=fp4`, 31% faster than int8 for dKL 2.8% (fp4: 64% for
   16%). Qwen3.5-4B: `delta=fp4,mlp=fp4` (the attention layers int8), 56% for 5.3% (fp4: 64% for
   6.5%, on its bar). SmolLM3-3B: `gateup@9-35=fp4`, 23% for 2.1%. LFM2-2.6B:
   `conv=fp4,mlp=fp4` (the attention layers int8), 77% for 7.4% (fp4: 82% for 11.8%). Gemma 4
-  E2B: `attn@15-34=fp4,mlp@15-34=fp4` (the KV-shared layers), 35% for 3.3% against int8 with
-  the int8 PLE table (fp4 layers: 61% for about 21%). Qwen3.5-2B: none qualifies. On the card
+  E2B: `attn@15-24=fp4,mlp@15-34=fp4` (the KV-shared layers' MLP, layers 15-24's attention),
+  30% for 2.6% against int8 with the int8 PLE table (fp4 layers: 56% for about 21%).
+  Qwen3.5-2B: none qualifies. On the card
   the mixes run at the predicted speed (within 0.1%), and their images give the ISA simulator's
   tokens (Phi's and SmolLM3's through a proxy).
 
@@ -62,7 +64,9 @@ bucket 1 / 16:
 | LFM2-2.6B | 1806 / 3510 (5 runs) | 1974 / 3678 (`mlp@7-20`, 5 runs), 2358 / 4630 (`mlp@0-14`, 8 runs) |
 
 Gemma 4 E2B, resident decode at bucket 16: 1769 instructions in int8, 1735 with
-`attn@15-34=fp4,mlp@15-34=fp4` (2 runs), 2418 with a boundary at layer 10 too (4 runs).
+`attn@15-34=fp4,mlp@15-34=fp4` (2 runs), 2579 with `attn@15-24=fp4,mlp@15-34=fp4` (3 runs), 2418
+with a boundary at layer 10 too (4 runs). Its prompt runs ([prefill.md](prefill.md)) take fewer
+rows with more bodies: [gemma4.md](gemma4.md) has R_max by bucket.
 
 - **Qwen3 and the Llama-likes** (SmolLM3, Phi-4-mini): a body is one layer, so two layouts in
   up to three runs fit.
@@ -72,7 +76,9 @@ Gemma 4 E2B, resident decode at bucket 16: 1769 instructions in int8, 1735 with
   boundary falls on a run boundary, and adds runs elsewhere.
 - **Gemma 4**: a body per (attention kind, own K / V, MLP width, formats): E2B has four (sliding
   and global, in the layers with their own K / V and in the KV-shared ones from 15) in two runs.
-  A format boundary at 15 adds none; one at 10 adds two bodies and two runs, which still fit.
+  A format boundary at 15 adds none; one at 10 or 25 adds two bodies and a run or two, which
+  still fit. For Gemma 4 the compile check replaces the two-layout limit: decode and the prompt
+  runs compile and fit the IMEM in buckets 1 and 16.
 
 In DRAM each layer block has its kind's size in its formats group (`Image.loc`,
 `Image._off`), so an fp4 block takes fp4's bytes. The Qwen3.5-4B image fits the card's 4 GiB
@@ -103,12 +109,13 @@ from int8's.
 Decode time per token is linear in the weight bytes b: T(b) = T4 + k (b - B4) cycles at 133.33
 MHz, with T4 and B4 the card's fp4 (int8 head) decode and its bytes, and k from the card's
 int8 and fp4 pair of the same model (Phi-4-mini 8.13 K cycles per MB) or family (Qwen3.5: the
-2B's, 8.15; the 4B's int8 image does not fit the card; Gemma 4 E2B: its fp4 layers with the
-int8 and the fp4 head, 8.11). The gain is T(int8) / T(b) - 1.
+2B's, 8.15; the 4B's int8 image does not fit the card; Gemma 4 E2B: session mix4's int8 and
+fp4 on fmvf, 8.04). The gain is T(int8) / T(b) - 1.
 
 A mix qualifies if dKL% <= 0.1 x gain%: 0.1% of perplexity for each 1% of speed. Among the
-qualifying mixes with at most two layouts (Qwen3.5: one) the fastest wins; a dKL gap under 2
-SE is a tie, and the tie goes to fewer runs. The LM head stays int8 in every mix.
+qualifying mixes with at most two layouts (Qwen3.5: one; more where the compile check passes,
+Gemma 4) the fastest wins; a dKL gap under 2 SE is a tie, and the tie goes to fewer runs. The
+LM head stays int8 in every mix.
 
 A default needs at least 1 SE of margin under its bar, so that the noise of one text cannot
 flip it. A faster mix that qualifies inside 1 SE is not the default; it is listed below with
@@ -224,9 +231,11 @@ time up to the head's input (its KV-shared layers read earlier layers' K / V), t
 over the soft-capped head for every variant. The kinds are attn, gateup, down and ple (a
 layer's PLE gate and projection; unranged, the PLE model projection too), the groups the layers
 with their own K / V and the KV-shared ones, each halved at a multiple of five (0-9, 10-14,
-15-24, 25-34). The card point is build B's fp4 layers with the int8 head ([gemma4.md](gemma4.md):
-12.611 M cycles, 1475 MB a token; the fp4 head 10.981 M for 201 MB less, k 8.11). int8 layers
-read 2351 MB a token, a projected 6.59 tok/s.
+15-24, 25-34). The speeds are session mix4's on fmvf (below): measured for int8, the first
+mix and fp4 layers, else the session's model, T(b) = 13.375 + 8.04 (b - 1412 MB) M cycles at
+133.33 MHz (it gives the measured mix within 0.1%). The first estimates took build B's fp4
+point ([gemma4.md](gemma4.md): 12.611 M cycles, 1475 MB a token), on which every gain was about
+3 points high.
 
 **The PLE table** stays on the card, with its lookup: in int8 where the image leaves room for
 it, else in fp4 (the image tries int8 on the card, then fp4 on the card; the host only with
@@ -244,26 +253,36 @@ cost least (down@15-24 +0.32%, gate / up@15-24 +0.71%, attention@15-24 and @25-3
 +0.32%); the attention of layers 10-14 (+5.5%) and the PLE kinds (ple@10-14 +3.1%) the most.
 Finals, 2000 tokens:
 
-| Formats | Runs | Image (PLE table) | dKL % (SE) | Perplexity vs int8 % (SE) | MB | tok/s (est.) | Gain | Bar | Margin |
+| Formats | Runs | Image (PLE table) | dKL % (SE) | Perplexity vs int8 % (SE) | MB | tok/s | Gain | Bar | Margin |
 |:--|:-:|:--|--:|--:|--:|--:|--:|--:|--:|
-| int8, `OTPU_PLE_HOST=1` (the reference) | 2 | 2.24 GiB (int8, host) | 0 | 0 | 2351 | 6.56 | | | |
-| int8 | 2 | 3.42 GiB (fp4) | +2.42 (0.08) | +2.82 (0.61) | 2351 | 6.59 | +0.6% | 0.06 | -29 SE |
-| **`attn@15-34=fp4,mlp@15-34=fp4`** | 2 | 3.92 GiB (int8) | **+3.34 (0.08)** | +3.90 (0.67) | 1709 | 8.88 | +35.4% | 3.54 | 2.5 SE |
-| `mlp=fp4` | 2 | 3.79 GiB (int8) | +5.90 (0.14) | +5.61 (0.94) | 1572 | 9.59 | +46.2% | 4.62 | -9.2 SE |
-| `attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | 3.74 GiB (int8) | +6.01 (0.14) | +6.23 (0.93) | 1520 | 9.89 | +50.8% | 5.08 | -6.6 SE |
-| `attn@15-34=fp4,mlp=fp4` | 2 | 3.72 GiB (int8) | +7.01 (0.16) | +7.56 (1.01) | 1497 | 10.03 | +53.0% | 5.30 | -10.8 SE |
-| `attn@0-9=fp4,attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | 3.70 GiB (int8) | +7.41 (0.20) | +8.54 (1.00) | 1478 | 10.15 | +54.7% | 5.47 | -9.7 SE |
-| `attn@0-9=fp4,attn@15-34=fp4,mlp=fp4` | 4 | 3.68 GiB (int8) | +8.57 (0.23) | +9.69 (1.08) | 1454 | 10.30 | +57.0% | 5.70 | -12.6 SE |
-| fp4, int8 head (900 tokens) | 2 | 3.64 GiB (int8) | about +21 | | 1412 | 10.57 | +61% | 6.1 | fails |
+| int8, `OTPU_PLE_HOST=1` (the reference) | 2 | 2.24 GiB (int8, host) | 0 | 0 | 2351 | 6.39 (card) | | | |
+| int8 | 2 | 3.42 GiB (fp4) | +2.42 (0.08) | +2.82 (0.61) | 2351 | 6.37 (card) | -0.3% | | fails |
+| `mlp@15-34=fp4` | 2 | 3.99 GiB (int8; fp4 at 4096) | +2.25 (0.05) | +2.86 (0.56) | 1784 | 8.15 | +27.5% | 2.75 | 9.1 SE |
+| **`attn@15-24=fp4,mlp@15-34=fp4`** | 3 | 3.95 GiB (int8) | **+2.60 (0.06)** | +3.08 (0.59) | 1747 | 8.30 (card) | +30.0% | 3.00 | 6.7 SE |
+| `attn@15-34=fp4,gateup@15-34=fp4,down@0-9=fp4,down@15-24=fp4` | 5 | 3.96 GiB (int8) | +3.20 (0.08) | +3.99 (0.70) | 1756 | 8.26 | +29.3% | 2.93 | -3.3 SE |
+| `attn@15-34=fp4,mlp@15-34=fp4` | 2 | 3.92 GiB (int8) | +3.34 (0.08) | +3.90 (0.67) | 1709 | 8.47 (card) | +32.5% | 3.25 | -1.1 SE |
+| `mlp=fp4` | 2 | 3.79 GiB (int8) | +5.90 (0.14) | +5.61 (0.94) | 1572 | 9.09 | +42.4% | 4.24 | -11.9 SE |
+| `attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | 3.74 GiB (int8) | +6.01 (0.14) | +6.23 (0.93) | 1520 | 9.36 | +46.6% | 4.66 | -9.7 SE |
+| `attn@15-34=fp4,mlp=fp4` | 2 | 3.72 GiB (int8) | +7.01 (0.16) | +7.56 (1.01) | 1497 | 9.49 | +48.5% | 4.85 | -13.6 SE |
+| `attn@0-9=fp4,attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | 3.70 GiB (int8) | +7.41 (0.20) | +8.54 (1.00) | 1478 | 9.59 | +50.2% | 5.02 | -12.0 SE |
+| `attn@0-9=fp4,attn@15-34=fp4,mlp=fp4` | 4 | 3.68 GiB (int8) | +8.57 (0.23) | +9.69 (1.08) | 1454 | 9.72 | +52.2% | 5.22 | -14.7 SE |
+| fp4, int8 head (900 tokens) | 2 | 3.64 GiB (int8) | about +21 | | 1412 | 9.97 (card) | +56.1% | 5.6 | fails |
 
-Image: at 2048 tokens, of the card's 4 GiB, with the PLE table the image takes.
+Image: at 2048 tokens, of the card's 4 GiB, with the PLE table the image takes. Gain over the
+reference's 20.875 M cycles.
 
-The default is `attn@15-34=fp4,mlp@15-34=fp4`, 2.5 SE under its bar: the KV-shared layers'
-attention and MLP in fp4, the layers with their own K / V and every PLE weight in int8. Its
-boundary is the own / shared one, which already splits the layer loops, so it runs int8's two
-runs, and its image keeps the int8 PLE table on the card (3.92 GiB at 2048 tokens, 3.94 at
-4096). Against int8 with the fp4 table the faster mixes would qualify (`attn@15-34=fp4,mlp=fp4`
-+4.59% for +52.1%, 4.1 SE under); counted against the accurate int8 they are 7-13 SE over.
+The default is `attn@15-24=fp4,mlp@15-34=fp4`, 6.7 SE under its bar (session mix5, below): the
+KV-shared layers' MLP and the attention of layers 15-24 in fp4; the layers with their own K / V,
+the attention of layers 25-34 and every PLE weight in int8. It runs three layer runs (boundaries
+at 15 and 25; six layer bodies, resident decode 2579 instructions), and its image keeps the int8
+PLE table on the card at 2048 and 4096 tokens (3.955 and 3.973 GiB, 46 and 28 MiB spare). Its
+prompt runs hold fewer rows in IMEM, which costs long prompts time to the first token
+([gemma4.md](gemma4.md)). The attention of layers 25-34 in fp4 as well
+(`attn@15-34=fp4,mlp@15-34=fp4`, 2% faster, two runs) costs 0.74 points and puts that mix 1.1 SE
+over its bar; `mlp@15-34=fp4` alone (9.1 SE under, 2% slower) keeps the int8 table only up to
+about 2048 tokens (10 MiB spare) and takes the fp4 table at 4096, so it is not a default. Against
+int8 with the fp4 table the faster mixes would qualify (`attn@15-34=fp4,mlp=fp4` +4.59% for
++48.9%); the bar is the accurate int8's, so the degraded table does not loosen it.
 
 ## On the card
 
@@ -301,6 +320,37 @@ tok/s:
 - **The decode loop on the card** (session mix3, tree chat-auto, `refs.py card --card-loop` with
   wformat "mix"): the 4B's and LFM2-2.6B's mixes and the Qwen3-0.6B proxy give the ISA
   simulator's tokens with every decode step in the card's generate loop.
+
+**Session mix4** (production fmvf `deploy_fmvf_542fc43a`, 2026-10-02, tree g4-formats e4d6b73;
+`tools/qual/perf.py` as above; the E2B runs after a discarded warm-up, in ABBA order, each
+configuration's two runs within 0.01%):
+
+| Model | Weights | Decode | Mcycles / token | Prefill | DRAM while decoding |
+|:--|:--|--:|--:|--:|--:|
+| Gemma 4 E2B | int8, the PLE table int8 on the host (`OTPU_PLE_HOST=1`) | 6.39 | 20.875 | 28.3 | 94%, 2496 MB/token |
+| Gemma 4 E2B | int8 (the fp4 PLE table on the card) | 6.37 | 20.929 | 28.3 | 93%, 2497 MB/token |
+| Gemma 4 E2B | `attn@15-34=fp4,mlp@15-34=fp4` (int8 table), the first pick | 8.47 | 15.751 | 29.1 | 92%, 1855 MB/token |
+| Gemma 4 E2B | fp4, int8 head (int8 table) | 9.97 | 13.375 | 29.4 | 91%, 1558 MB/token |
+| Phi-4-mini | **mix** `mlp@4-29=fp4` | **5.39** | 24.759 | 14.7 | 96%, 3030 MB/token |
+
+- **E2B.** With the session's int8 and fp4 points (k 8.04) the tok/s model predicts the first
+  pick at 15.764 M cycles (measured 15.751). Its estimate had come from build B's fp4 point
+  (12.611 M cycles, 1475 MB a token); on this tree and build the same image reads 1558 MB at
+  13.375, so every gain was about 3 points high: that mix is 32.5% faster than int8 with the
+  host table (estimated 35.4%), which puts it 1.1 SE over its bar. The E2B section's speeds are
+  this session's, and its default the next mix that qualifies. The host table costs nothing
+  measurable in perf.py's per-token loop. `refs.py card` passes for the first pick, resident
+  and with the decode loop on the card.
+- **Phi-4-mini.** The new mix, 24.759 M cycles: the pa session's model gives 25.03 on pa, and
+  fmvf decodes 1-4% faster.
+
+**Session mix5** (fmvf `deploy_fmvf_542fc43a`, 2026-10-02, tree g4-formats 96ff6c8 on main
+1f9e69e; perf.py after a discarded warm-up, the two runs identical): E2B's
+`attn@15-24=fp4,mlp@15-34=fp4` decodes at **8.30** tok/s, 16.058 M cycles a token (the model:
+16.068), 30.0% faster than int8 with the host table; perf.py's 512-token prefill 29.0 tok/s
+(128 runs of 4 rows on today's route). `refs.py card --prompt-runs` passes, resident and with the
+decode loop on the card (a 13-token prompt in four prompt runs). A 1500-token prompt takes 100.3-
+101.4 s to the first token (warm; [gemma4.md](gemma4.md)).
 
 **otpu-chat's default** (`--wformat auto`, session mix3; one prompt, 18-85 tokens in each
 model's chat template, greedy, 64 tokens; device / wall tok/s): Phi-4-mini 5.3 / 5.26 (`mix:
