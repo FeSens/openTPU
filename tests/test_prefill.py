@@ -33,7 +33,7 @@ def test_split():
 def _static(eng, toks, R_max):
     """Engine.prefill as compile-time runs (compile_rows) of the prompt runs' split."""
     p0, img, B = eng.pos, eng.image, eng.block
-    for p, R, kind in PF.split(p0, p0 + len(toks), R_max, B, eng.spec.conv_k):
+    for p, R, kind in PF.split(p0, p0 + len(toks), R_max, B, PF.conv_k(eng)):
         rows, lr, tk = [(0, p + j) for j in range(R)], [R - 1] if kind == "L" else [], \
             toks[p - p0:p - p0 + R]
         lg = eng._run_rows(rows, tk, lr, img.compile_rows(rows, lr, B, tokens=tk))
@@ -54,6 +54,13 @@ def _drams(eng, P):
 
 
 def _model(case):
+    if case.startswith("qwen3"):         # Qwen3 (no convolutions: every run at a run-time position)
+        from test_autodecode import _tiny
+        W, spec = _tiny("qwen3")
+        if case == "qwen3-emb8":
+            spec = dataclasses.replace(spec, embed="int8")
+        S = 2 if case == "qwen3-design" else 1
+        return W, spec, device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S), {}
     if case == "kh16":
         _, W, spec = _tiny_model(16, 16, init=0.2)
         return W, spec, board_config(DRAM_BYTES=1 << 26, DSTEP=True, STREAM=True, PAIR=True), {}
@@ -71,6 +78,9 @@ def _model(case):
     ("emb8", 37, 30),       # the int8 embedding (a scaled row gather per token)
     ("fp4", 37, 30),        # 4-bit weights with PAIR: runs of more than MCOLS / 2 rows
     ("design", 37, 30),     # two slices, 8 MXU columns: runs of 8 rows
+    ("qwen3", 250, 20),     # Qwen3 (qwen3_rows), one slice
+    ("qwen3-design", 37, 30),
+    ("qwen3-emb8", 37, 30),     # the int8 embedding (Llama-likes: SmolLM3, Phi-4-mini)
 ])
 def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     """Two prompts, the second from where the first left (a chat's next turn): each one's last
@@ -91,9 +101,9 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     assert [s["rows"] for s in a.stats] == [s["rows"] for s in b.stats]
     assert a.pos == b.pos == P1 + P2
     assert all(np.array_equal(x, y) for x, y in zip(_drams(a, P1 + P2), _drams(b, P1 + P2)))
-    runs = PF.split(0, P1, R_max, 256, spec.conv_k) + PF.split(P1, P1 + P2, R_max, 256,
-                                                               spec.conv_k)
-    keys = {(k, R, "at", p) if p < spec.conv_k - 1 else (k, R, p // 256 + 1)
+    K = PF.conv_k(a)
+    runs = PF.split(0, P1, R_max, 256, K) + PF.split(P1, P1 + P2, R_max, 256, K)
+    keys = {(k, R, "at", p) if p < K - 1 else (k, R, p // 256 + 1)
             for p, R, k in runs} | {("L", R_max, 2)}       # (r_max's: the last bucket's L)
     assert {(k[1], k[2], k[3], k[4]) if k[3] == "at" else (k[1], k[2], k[3])
             for k in a._prompt_progs} == keys
@@ -103,7 +113,8 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     # (fit_chunk's runs) gives the same logits, states and windows, and the next step's logits
     c = Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw)
     assert all(np.array_equal(x, c.prefill(t)) for x, t in zip(got, (p1, p2)))
-    assert all(np.array_equal(x, y) for x, y in zip(_states(a, spec, 0), _states(c, spec, 0)))
+    if K > 1:
+        assert all(np.array_equal(x, y) for x, y in zip(_states(a, spec, 0), _states(c, spec, 0)))
     assert np.array_equal(a.step(5), c.step(5))
 
 
@@ -117,7 +128,7 @@ def _static_mtp(dec, R_max):
         P = p0 + len(toks)
         if p0 == 0:
             dec.slot = 0
-        for p, R, kind in PF.split(p0, P, R_max, eng.block, eng.spec.conv_k):
+        for p, R, kind in PF.split(p0, P, R_max, eng.block, PF.conv_k(eng)):
             i = p - p0
             dec._run(img.compile_rows([(0, p + j) for j in range(R)],
                                       [R - 1] if kind == "L" else [], eng.block,

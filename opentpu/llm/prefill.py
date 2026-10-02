@@ -37,6 +37,12 @@ def split(p0: int, P: int, R_max: int, block: int, K: int) -> list[tuple[int, in
     return runs
 
 
+def conv_k(eng) -> int:
+    """The model's convolution taps (Qwen3.5's DeltaNet, LFM2's): its first conv_k - 1
+    positions run at compile-time positions; 1 without."""
+    return getattr(eng.spec, "conv_k", 1)
+
+
 def supported(eng) -> bool:
     """The engine's image runs prompts this way: a dense model's resident image, without
     rows the host writes before each run."""
@@ -52,21 +58,20 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
     (runs_words) the program assembled once: a run of another program loads its words, not
     an assembly of them (3-5 ms a run; MTP's rows and M runs alternate). hidden, slot: MTP's
     rows (their hidden stored, the states' slot); M's take neither."""
-    img, block, K = eng.image, eng.block, eng.spec.conv_k
+    img, block = eng.image, eng.block
     if kind == "M":
         hidden, slot = False, 0
     done = eng.__dict__.setdefault("_prompt_progs", {})
-    if p < K - 1:
+    kw = dict(hidden=hidden, slot=slot) if hidden or slot else {}
+    if p < conv_k(eng) - 1:
+        blocks, kw["p0"] = 0, p
         what = ("prompt", kind, R, "at", p, hidden, slot)
-
-        def compile():
-            return img.compile_prompt_run(0, R, kind, block, hidden, slot, p0=p), None
     else:
         blocks = p // block + 1
         what = ("prompt", kind, R, blocks, hidden, slot)
 
-        def compile():
-            return img.compile_prompt_run(blocks, R, kind, block, hidden, slot), None
+    def compile():
+        return img.compile_prompt_run(blocks, R, kind, block, **kw), None
     if what not in done:
         progs = eng.cached(what, compile)[0]
         if not G.fits(img, progs):
@@ -89,7 +94,7 @@ def r_max(eng) -> int:
         return eng._prompt_rmax
     img, block = eng.image, eng.block
     last = (img.cap - 1) // block * block               # the last bucket's first position
-    p = max(last, eng.spec.conv_k - 1)
+    p = max(last, conv_k(eng) - 1)
     for R in range(min(img.cfg.MCOLS, img.rows, img.cap - p), 0, -1):
         try:
             programs(eng, p, R, "L")
@@ -112,7 +117,7 @@ def write_tokens(eng, p0: int, tokens) -> None:
 
 def run(eng, progs, p: int, R: int) -> dict:
     """One run at position p (its tpos word written first)."""
-    if p >= eng.spec.conv_k - 1:
+    if p >= conv_k(eng) - 1:
         g = eng.image.lookup["gen"]
         for s in range(eng.cfg.S):
             eng.backend.write(s, g["state"] + 4 * G.S_TPOS,
@@ -141,7 +146,7 @@ def chunks(eng, tokens):
         return
     R_max = r_max(eng)
     write_tokens(eng, p0, tokens)
-    for p, R, kind in split(p0, P, R_max, eng.block, eng.spec.conv_k):
+    for p, R, kind in split(p0, P, R_max, eng.block, conv_k(eng)):
         progs = programs(eng, p, R, kind)
         if kind == "L":
             eng._prefetch(P)            # the first decode step's, while the device runs
@@ -163,7 +168,7 @@ def mtp(dec, tokens, st, pick=None, on_run=None):
     R_max = r_max(eng)
     st.compile_s += time.perf_counter() - t0
     write_tokens(eng, p0, toks)
-    for p, R, kind in split(p0, P, R_max, eng.block, eng.spec.conv_k):
+    for p, R, kind in split(p0, P, R_max, eng.block, conv_k(eng)):
         t0 = time.perf_counter()
         rows, mp = programs(eng, p, R, kind, True, dec.slot), programs(eng, p, R, "M")
         st.compile_s += time.perf_counter() - t0

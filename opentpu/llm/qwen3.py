@@ -897,6 +897,19 @@ class Image(EmbedHost):
                                                **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
+    def compile_prompt_run(self, blocks: int, R: int, kind: str, block: int = ATTN_BLOCK):
+        """qwen3_prompt_run's programs (docs/prefill.md), one per slice: R rows of a prompt at
+        a run-time position of bucket `blocks` (the position in the state's tpos word)."""
+        if not self.lookup:
+            raise ValueError("a prompt run needs lookup tables (lookup=True)")
+        if kind not in ("P", "L"):
+            raise ValueError(f"prompt run kind {kind!r}")
+        pos = RunRows(blocks, block, (blocks - 1) * block, self.lookup["zmask"], self.cap, R, 0)
+        return [qwen3_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
+                                                     "R": R, "kind": kind,
+                                                     "block": block}).finish()
+                for s in range(self.cfg.S)]
+
     # ---- kernel descriptors
     def descriptors(self, sid: int) -> SimpleNamespace:
         spec, cfg = self.spec, self.cfg
@@ -1276,6 +1289,34 @@ class OutTokens:
         self.k = k
 
 
+class TposWords:
+    """A prompt run's position (docs/prefill.md): with a RunRows, the run-time arguments come
+    from the generate state's tpos word (the compiler's run_words: no host arguments), loaded
+    at the program's start once the kernel has named them; with a compile-time position,
+    nothing. `with TposWords(m, pos): kernel(...)`."""
+
+    def __init__(self, m, pos):
+        self.m, self.run = m, isinstance(pos, RunRows)
+
+    def __enter__(self):
+        if self.run:
+            b = current()
+            self.tw = ol.load(self.m.gen.state[G.S_TPOS:G.S_TPOS + 1])
+            self.at = b.stack[-1][-1]
+            b.run_words = {"tpos": self.tw.base}
+        return self
+
+    def __exit__(self, *exc):
+        if self.run and exc[0] is None:
+            b = current()
+            body = b.stack[-1]
+            i = next(j for j, x in enumerate(body) if x is self.at) + 1
+            body[i:i] = [I.rld(15 - k, self.tw.base, mul=int(c), comment=f"argument {c}*{v.name}")
+                         for k, (v, c) in enumerate(b.run_args)]
+            b.run_words = None
+        return False
+
+
 def _embed_word(m, t):
     """_embed of the token id in the one-word tile t (a prefill run's, docs/prefill.md): its
     row's address from a scratch register (RLD MUL into a compiler.DevVar) instead of a
@@ -1514,6 +1555,15 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None):
         x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
         x.set(_mlp(x, lw, spec))
     _lm_head_rows(x, m, spec, logit_rows)
+
+
+@ol.jit
+def qwen3_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK):
+    """A prompt run of R rows (docs/prefill.md), qwen3_rows with its tokens from out[]: kind
+    "P", or "L" (the prompt's last run: its last row's logits). pos: a RunRows (toks_at 0) at
+    the run-time position in the generate state's tpos word (TposWords)."""
+    with TposWords(m, pos):
+        qwen3_rows.fn(m, pos, [R - 1] if kind == "L" else [], block)
 
 
 def head_rows_chunk(rows: int) -> int:
