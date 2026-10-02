@@ -349,8 +349,12 @@ configuration's two runs within 0.01%):
 `attn@15-24=fp4,mlp@15-34=fp4` decodes at **8.30** tok/s, 16.058 M cycles a token (the model:
 16.068), 30.0% faster than int8 with the host table; perf.py's 512-token prefill 29.0 tok/s
 (128 runs of 4 rows on today's route). `refs.py card --prompt-runs` passes, resident and with the
-decode loop on the card (a 13-token prompt in four prompt runs). A 1500-token prompt takes 100.3-
-101.4 s to the first token (warm; [gemma4.md](gemma4.md)).
+decode loop on the card (a 13-token prompt in four prompt runs). A 1500-token prompt at a
+2048-token cap takes 100.3 s to the first token (warm) on today's route: 536 runs, 31 s of them
+host compiles. The first pick would take prompt runs, an estimated 62 s. The cause is an IMEM
+limit, not the mix's arithmetic: bucket 2's prompt run of 4 rows is 4106 instructions of 4096,
+so prompts past 256 tokens leave prompt runs; prompts within bucket 1 are unaffected. A fix in
+the prompt runs is in progress ([gemma4.md](gemma4.md), [prefill.md](prefill.md) 7).
 
 **otpu-chat's default** (`--wformat auto`, session mix3; one prompt, 18-85 tokens in each
 model's chat template, greedy, 64 tokens; device / wall tok/s): Phi-4-mini 5.3 / 5.26 (`mix:

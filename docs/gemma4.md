@@ -234,8 +234,10 @@ token warm (98.7 cold), 69.3 s of it on the device (a run 129-146 ms at 4 rows i
 the next run outlasts the device's. The first pick would take prompt runs, 375 of 4 rows:
 estimated 62 s (59.4 on the device by the weights model above, the rest of a row as the mix's
 measured runs; 1.9-3.3 s for the prompt runs' whole-bucket attention; 0.7 ms a run on the host).
-With bucket 2 covered the mix would take prompt runs too (estimated 72 s); with attention looped
-over blocks instead of unrolled, 4 rows in every bucket.
+Prompts within bucket 1 (up to 256 tokens) take prompt runs of 4 rows, as the first pick's. With
+bucket 2 covered the mix would take prompt runs too (estimated 72 s); with attention looped over
+blocks instead of unrolled ([prefill.md](prefill.md) 7), 4 rows in every bucket. The fix, in the
+prompt runs, is in progress.
 
 ## 26B-A4B: accuracy
 
