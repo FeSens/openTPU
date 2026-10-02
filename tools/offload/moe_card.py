@@ -303,7 +303,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         requests=len(req),                          # slots, the logits' read
         serve_s=round(sum(e[1] - e[0] for e in req), 3),
         host={k: round(v, 3) for k, v in tm.items()},   # (all the prompt's: none before)
-        counters={k: v - snap_pre[k] for k, v in snap_end.items()} if snap_end else None)
+        counters={k: v - snap_pre[k] for k, v in snap_end.items()} if snap_end else None,
+        ahead=dict(calls=srv.aheads, landed=srv.landed, dropped=srv.dropped,  # (the layer
+                   promoted=srv.promoted) if eng.layer_ahead else None)       # ahead's)
     if prefill_trace:                           # the prompt's timeline (s from its start)
         z = lambda v: None if v is None else round(v - t_pre, 6)    # noqa: E731
         Path(prefill_trace).write_text(json.dumps(dict(
