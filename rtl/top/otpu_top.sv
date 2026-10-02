@@ -58,7 +58,7 @@ module otpu_top
     logic [31:0]   a_addr, a_wdata, a_rdata, a_rdata2, b_addr;
     logic [3:0]    a_be;
     logic [D*8-1:0] b_rdata;
-    logic          a_rdy, b_rdy, wr_idle, sw_req, sw_rdy;
+    logic          a_rdy, b_rdy, wr_idle, sw_req, sw_rdy, a_inval;
     logic [31:0]   sw_addr, sw_wdata;
     logic [3:0]    sw_be;
 
@@ -78,7 +78,7 @@ module otpu_top
       logic [1:0][63:0] wmask;
       logic [1:0][15:0] wdone;
       otpu_native_dram #(.D(D)) u_adapt (
-        .clk, .rst(sys_rst),
+        .clk, .rst(sys_rst), .a_flush(rst || ld_start || a_inval),   // as otpu_board
         .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
         .a_be_x(a_be), .a_rvalid, .a_rdata, .a_rdata2,
         .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
@@ -95,7 +95,7 @@ module otpu_top
           .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone), .dump);
       end else begin : g_model
         otpu_native_mem #(.WORDS(DRAM_WORDS), .LAT(DRAM_LAT), .SID(s)) u_mem (
-          .clk, .rst(sys_rst),
+          .clk, .rst(sys_rst), .run_rst(rst),
           .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
           .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
           .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone), .dump);
@@ -124,7 +124,7 @@ module otpu_top
       .coll_req(coll_req[s]), .coll_cmd(coll_cmd[s]), .coll_ack,
       .coll_ren(coll_ren[s]), .coll_raddr(coll_raddr[s]), .coll_rdata(coll_rdata[s]),
       .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl[s]), .coll_gnt,
-      .halted(halted[s]), .error(error[s]), .wait_to(), .icount(icount[s]), .pf(), .dump);
+      .halted(halted[s]), .error(error[s]), .wait_to(), .a_inval, .icount(icount[s]), .pf(), .dump);
   end
 
   otpu_coll #(.S(S), .LANES(LANES)) u_coll (

@@ -2991,7 +2991,7 @@ reg           crg_pll_power_down = 1'd0;
 wire          crg_pll_reset;
 reg     [3:0] crg_reset_counter = 4'd15;
 reg           crg_rst0 = 1'd0;
-(* max_fanout = 256 *)
+(* max_fanout = 64 *)
 reg           crg_rst1 = 1'd1;
 (* dont_touch = "true" *)
 wire          crg_s7mmcm_clkin_signal;
