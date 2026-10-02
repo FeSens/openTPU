@@ -49,6 +49,9 @@ else:
     elif tool == "refs.py" and a[1] == "card":
         print(f"  [PASS] model {a[3]} {a[4]}/{a[5]}{' resident' if '--resident' in a else ''}: "
               "'The capital of France is Paris.'")
+    elif tool == "turnaround.py":
+        print("  [PASS] DRAM turnarounds, data: 1500 runs in 30.0 s")
+        print("  [PASS] DRAM turnarounds, ECC: ch0 sec 0 ded 0, ch1 sec 0 ded 0")
     elif tool == "waitw.py":
         print("  [PASS] WAITW on the host's writes: 200 rounds")
         print("  [PASS] WAITW timeout: ERROR at the timeout")
@@ -99,7 +102,8 @@ def summary(text):
 
 def test_a_clean_run(qual):
     text, checks = qual()
-    assert summary(text) == ("0", "14"), text[-2000:]      # the 2 selftests' + 12 token-exact
+    # the 2 selftests', the 12 token-exact runs' and the 2 DRAM turnaround lines
+    assert summary(text) == ("0", "16"), text[-2000:]
     assert checks.count("[PASS] model") == 12 and "[FAIL]" not in checks
     assert "prefill + decode counters" in text and "warm soak: " in text
 
@@ -126,7 +130,7 @@ def test_a_failed_token_exact_run(qual):
 def test_the_decode_loop_on_the_card(qual):
     # a bitstream with CAPS bit30: the six token-exact runs again on the card's decode loop
     text, checks = qual(GEN="1")
-    assert summary(text) == ("0", "20"), text[-2000:]
+    assert summary(text) == ("0", "22"), text[-2000:]
     assert "decode loop on the card (6 token-exact + 3 x 2 decode_profile)" in text
     text, checks = qual(GEN="1", QUAL_CRASH="--model qwen35 --tokens 96")    # the sampled run
     assert "decode_profile card loop qwen35 fp4 int8 sampled: exit 1" in checks
@@ -138,13 +142,25 @@ def test_the_decode_loop_on_the_card(qual):
 def test_waitw_on_the_host_writes(qual):
     # a bitstream with CAPS bit31: tools/qual/waitw.py after the warm diag, its lines counted
     text, checks = qual(WAITW="1")
-    assert summary(text) == ("0", "16"), text[-2000:]
+    assert summary(text) == ("0", "18"), text[-2000:]
     assert "WAITW (CAPS bit31): yes" in text and "=== WAITW on the host's writes" in text
     assert "[PASS] WAITW timeout" in checks
     text, checks = qual(WAITW="1", QUAL_CRASH="waitw.py")
     assert "[FAIL] WAITW on the host's writes: waitw: exit 1" in checks
     text, _ = qual()
     assert "WAITW (CAPS bit31): no" in text and "=== WAITW" not in text
+
+
+def test_the_dram_turnarounds(qual):
+    # tools/qual/turnaround.py before the final selftest, in every qual: its lines counted, a
+    # crash a FAIL line
+    text, checks = qual()
+    assert "=== DRAM turnarounds + ECC (30 s)" in text
+    assert "[PASS] DRAM turnarounds, ECC: ch0 sec 0 ded 0" in checks
+    assert text.index("=== DRAM turnarounds") < text.index("=== final selftest")
+    text, checks = qual(QUAL_CRASH="turnaround.py", TURN="5")
+    assert "=== DRAM turnarounds + ECC (5 s)" in text
+    assert "[FAIL] DRAM turnarounds + ECC (5 s): turnaround: exit 1" in checks
 
 
 def test_a_failed_soak_run_ends_the_soak(qual):
@@ -157,7 +173,7 @@ def test_runs_picks_the_models(qual, tmp_path):
     """RUNS: the references, prefill, decode_profile (4-bit only) and token-exact runs of the
     models it names, and no others."""
     text, checks = qual(RUNS="lfm2-2.6b:int8:- smollm3:fp4:int8")
-    assert summary(text) == ("0", "6"), text[-2000:]       # the 2 selftests' + 4 token-exact
+    assert summary(text) == ("0", "8"), text[-2000:]    # 2 selftests, 4 token-exact, 2 turnaround
     assert "[PASS] model lfm2-2.6b int8/-" in checks and "[PASS] model smollm3 fp4/int8 " \
         "resident" in checks and "qwen3" not in checks
     assert "compute --runs lfm2-2.6b:int8:- smollm3:fp4:int8" in (tmp_path / "out/refs.log") \
@@ -172,7 +188,7 @@ def test_without_models_the_model_phases_are_skipped(qual):
     text, checks = qual(models=False)
     assert "[FAIL] load + selftest: no checkpoint for lfm2" in checks and "models link" in checks
     assert "prefill + decode counters" not in text and "token-exact" not in text
-    assert "diag warm" in text and summary(text) == ("1", "2"), text[-2000:]
+    assert "diag warm" in text and summary(text) == ("1", "4"), text[-2000:]
 
 
 def test_prebuild_outside_the_lock_then_the_lock(qual):
@@ -181,9 +197,9 @@ def test_prebuild_outside_the_lock_then_the_lock(qual):
     text, checks = qual()
     assert "prebuilt qwen3:fp4:int8 lfm2:fp4:int8 qwen35:fp4:int8" in text
     assert text.index("=== prebuild outside the card lock") < text.index("################")
-    assert summary(text) == ("0", "14"), text[-2000:]
+    assert summary(text) == ("0", "16"), text[-2000:]
     text, _ = qual(PREBUILD="0")
     assert "=== prebuild outside the card lock;" in text and "prebuilt" not in text
-    assert summary(text) == ("0", "14"), text[-2000:]
+    assert summary(text) == ("0", "16"), text[-2000:]
     text, _ = qual(OTPU_LOCK_HELD="xdma0")
-    assert "=== prebuild" not in text and summary(text) == ("0", "14"), text[-2000:]
+    assert "=== prebuild" not in text and summary(text) == ("0", "16"), text[-2000:]
