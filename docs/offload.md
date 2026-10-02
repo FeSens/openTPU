@@ -1792,6 +1792,9 @@ Column meanings in the table below:
   g2fix). The card's compute is the same (RUNNING - DMA_BUSY 1.85 G). The host's windows are
   0.2-0.4 s longer: head +0.15-0.23 s, body +0.13-0.19 s.
 
+- LFM2-8B-A1B's new programs are proven on the ISA simulator only: its pool is not on opentpu.
+  Its next card run must include a token-exact check against its own ISA reference.
+
 Next, host only: send the answer after the first expert's lead DMA (between its two parts on
 the link, ~35-50 us), and cut the head's own steps.
 - serve_emu's probe of the head (35B, OLD), medians from seen:
@@ -2448,6 +2451,30 @@ Lazy's decode starts with fewer of each layer's experts (26B: 84 against 67 miss
 the first 16), and pays about 0.7-0.8 s for it in all, less than eager's restore; the
 prefetches find little idle link time beside decode's misses. The pooled prefill misses 5.4
 experts a prompt token on the 26B, 15.1 on the 35B.
+
+The layer ahead (`ExpertServer.ahead_layer(j, ids)`, gemma4's prefill schedule, 2026-10-02).
+While one layer's runs go, the link's idle polls stream the next layer's experts, most wanted
+first (a profile's order), so its runs find them in slots:
+- `begin_prefill(ahead=True, part=...)` turns it on for the prefill. `part` is the bytes an idle
+  poll sends of an expert, and end_prefill gives the server its own part back.
+- `prefill_layers` calls `ahead_layer` only between runs: once after begin_prefill for the first
+  MoE layer, then before each layer's first run of a chunk for the next one.
+- Each call serves the card's last request first (`settle`) and stops arming that request's
+  tags, since the halted run zeroed them.
+- Each call replaces the last one's queue. Queued experts without a slot leave the queue. An
+  expert already on its way is dropped and its slot freed; its tag and entry were never written.
+  On gemma4's event model of the pooled R = 2 traces this beats keeping a FIFO at short prompts,
+  where the queue would fill with layers that have already run.
+- A queued expert takes a slot only when its first part goes, so a call that is replaced
+  evicts nothing. It takes a free slot, else (pooled) the oldest expert outside layers j - 1 and
+  j. Those are the only layers the runs until the next call can read: no slot the running layer
+  may use changes under it.
+- A request that names a queued expert takes it as a miss. A request that names one on its way
+  sends its rest with its tag (promoted), as for a hint.
+- `end_prefill` drops the queue and the expert on its way.
+- Without pooled slots, only free slots are used.
+- Tests: test_offload_server's ahead tests: idle-poll landing in order, replace, promote and
+  miss, victims outside the running layers, settle and end_prefill.
 
 ### 13.5 Tests and status
 
