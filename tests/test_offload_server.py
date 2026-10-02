@@ -72,6 +72,25 @@ def test_misses_evict_the_least_recent_not_requested():
     assert _entry(mem, lay, 0)[1] == 1.0 and _entry(mem, lay, 6)[1] == 1.0
 
 
+def test_ahead_sees_a_requests_misses_before_the_first_is_staged():
+    """ExpertServer.ahead (moe_card --willneed: PoolFile.willneed) is called with a request's
+    missing ids, before the first of them is read from the pool; a request of hits only does
+    not call it."""
+    lay, mem, srv = _setup(warm=[0, 1, 2])
+    seen, reads = [], []
+    pool = srv.pool
+    srv.pool = lambda g: (reads.append(g), pool(g))[1]
+    srv.ahead = lambda ids: seen.append((list(ids), len(reads)))
+    _post(mem, lay, 1, [5, 4])
+    srv.poll()
+    _post(mem, lay, 2, [0, 6])                      # 0 hits (2 was a victim)
+    srv.poll()
+    assert seen == [([5, 4], 0), ([6], 2)] and reads == [5, 4, 6]
+    _post(mem, lay, 3, [6, 0])                      # hits only
+    srv.poll()
+    assert len(seen) == 2
+
+
 def test_one_request_at_a_time():
     lay, mem, srv = _setup()
     for s in range(1, 6):
@@ -386,6 +405,7 @@ def test_pool_file_counts_its_reads_by_the_page_cache(tmp_path):
     os.truncate(f, slot * n)                            # experts 4 and 5: holes
     for split, hole in ((False, 4), (True, 5)):
         pf = PoolFile(f, slot, split=split)
+        pf.willneed([1, 2])                             # (a hint to the kernel, or nothing)
         if pf.resident(range(n)) is None:
             pytest.skip("no mincore here")
         np.asarray(pf.get(1))

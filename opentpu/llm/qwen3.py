@@ -209,29 +209,53 @@ def load_weights(model_dir, mtp: bool = False) -> Weights:
 class LazyWeights(dict):
     """load_weights' names over a checkpoint's safetensors files, each tensor read as fp32 when
     it is asked for and not kept: for a model whose fp32 weights would not fit host RAM (a
-    MoE; its experts are packed one at a time, opentpu.llm.moe)."""
+    MoE; its experts are packed one at a time, opentpu.llm.moe). release() gives the files'
+    pages back once the image is built (a later read reopens its file)."""
 
     def __init__(self, model_dir):
         super().__init__()
         from safetensors import safe_open
-        self._at = {}
+        self._at, self._h = {}, {}          # name -> (file, its name there); file -> handle
         for f in sorted(Path(model_dir).glob("*.safetensors")):
-            h = safe_open(str(f), "pt")
+            h = self._h[str(f)] = safe_open(str(f), "pt")
             for k in h.keys():
                 if not k.startswith(("model.visual.", "mtp.")):
-                    self._at[k.replace("model.language_model.", "model.", 1)] = (h, k)
+                    self._at[k.replace("model.language_model.", "model.", 1)] = (str(f), k)
+
+    def _open(self, k):
+        from safetensors import safe_open
+        f, name = self._at[k]
+        if f not in self._h:
+            self._h[f] = safe_open(f, "pt")
+        return self._h[f], name
 
     def __getitem__(self, k):
         import torch
-        h, name = self._at[k]
+        h, name = self._open(k)
         return h.get_tensor(name).to(torch.float32).numpy()
 
     def part(self, k, i):
         """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
         read alone."""
         import torch
-        h, name = self._at[k]
+        h, name = self._open(k)
         return h.get_slice(name)[i].to(torch.float32).numpy()
+
+    def release(self) -> None:
+        """Close the files (safe_open maps each whole: the pages a read touched stay mapped,
+        and the kernel keeps them over other page cache, a pool file's) and drop their pages
+        (POSIX_FADV_DONTNEED, where the host has it). A tensor read after reopens its file."""
+        import gc
+        import os
+        files = list(self._h)
+        self._h.clear()
+        gc.collect()                        # (a handle in a cycle would keep its map)
+        for f in files if hasattr(os, "posix_fadvise") else ():
+            fd = os.open(f, os.O_RDONLY)
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(fd)
 
     def __contains__(self, k):
         return k in self._at
