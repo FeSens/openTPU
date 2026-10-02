@@ -2078,8 +2078,10 @@ Column meanings in the table below:
   contention. The tail (critical end to the poll's return) grew 0.2-0.3 s with the deferred
   touches, but the next post is never sooner than 1.4 ms after it.
 - The 35B prefill pair (pooled, R = 2, layer-major, one run each): wall 13.04 (M) and 13.08 s
-  (H); demand serve 6.41 and 6.28 s for the same 6241 misses. The prompt is bound by the card's
-  runs (12.1-12.3 s), so the head's gain does not reach its wall time.
+  (H); demand serve 6.41 and 6.28 s for the same 6241 misses. With one run each, both
+  differences are inside the noise. The prompt is bound by the card's runs (12.1-12.3 s), so the
+  head's gain cannot reach its wall time. gemma4's 7.10 s demand serve on main (pfahead) came
+  from another session's state.
 
 ## 11. Gemma 4 26B-A4B: design note
 
