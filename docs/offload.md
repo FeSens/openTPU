@@ -1792,6 +1792,9 @@ Column meanings in the table below:
   g2fix). The card's compute is the same (RUNNING - DMA_BUSY 1.85 G). The host's windows are
   0.2-0.4 s longer: head +0.15-0.23 s, body +0.13-0.19 s.
 
+- LFM2-8B-A1B's new programs are proven on the ISA simulator only: its pool is not on opentpu.
+  Its next card run must include a token-exact check against its own ISA reference.
+
 Next, host only: send the answer after the first expert's lead DMA (between its two parts on
 the link, ~35-50 us), and cut the head's own steps.
 - serve_emu's probe of the head (35B, OLD), medians from seen:
@@ -1821,12 +1824,14 @@ Two alternatives:
 
 The recommendation is A first: no bitstream, +2-3% on Gen2, and the ordering test can run on
 the current production bitstream. B later, with the next bitstream that has room for it
-(10.12: parked, nothing measurable after A).
+(10.12: parked; at most 0.3% after A on the emulator's model, up to 1-2% on the 35B by the
+card's answer cost until a software reorder lands).
 
 ### 10.12 Alternative B: a host window onto DRAM (design, ld-memch; parked)
 
-Parked on 2026-10-02: after design A it gains nothing measurable ("What B is worth after A",
-below).
+Parked on 2026-10-02. After design A the emulator shows nothing measurable, but on the card
+A's answer is not hidden yet, so B could still be worth up to 1-2% on the 35B until a software
+reorder lands ("What B is worth after A" and "On the card", below).
 
 B moves the small calls from XDMA's DMA engine to MMIO. The host's 64-byte writes (the answer,
 served, entries, clears) and the poll's reads become loads and stores on a window of BAR0, at
@@ -1944,6 +1949,14 @@ tokens, against main's entry protocol, with a run-to-run spread of 0.05-0.1 s:
 - **The larger host lever is software.** From seen to the first data DMA takes 258 / 309 us
   (median, 35B / 26B): 1.27 / 1.20 s per 128 tokens on the critical path. Only about 20 us of
   it is the row's read; the rest is serve's Python and the pool's read.
+
+**On the card** (offload, session 15, design A on production pa e4db91c9): the answer is not
+hidden. It goes out 232-246 us after the request is seen, the window's first call is cold
+(75-90 us), and the lead expert's DMA starts after it. A's net gain is +1.2-2.8% on the 35B and
++1.7% on the 26B, below the emulator's. So, B after A: at most 0.3% on the emulator's model,
+but the card's answer cost suggests up to +1-2% on the 35B (0.3-0.5 s per 128 tokens) until a
+software reorder lands. That reorder is offload's next step: the answer after the first
+expert's lead DMA. Measure B's case again after it.
 
 **Port H out of context** (omarchy, otpu_native_dram alone, 7.5 ns, D = 128):
 - **WNS +0.208 ns, against main's +0.530.** The worst paths in both are existing ones: the tag
@@ -2438,6 +2451,30 @@ Lazy's decode starts with fewer of each layer's experts (26B: 84 against 67 miss
 the first 16), and pays about 0.7-0.8 s for it in all, less than eager's restore; the
 prefetches find little idle link time beside decode's misses. The pooled prefill misses 5.4
 experts a prompt token on the 26B, 15.1 on the 35B.
+
+The layer ahead (`ExpertServer.ahead_layer(j, ids)`, gemma4's prefill schedule, 2026-10-02).
+While one layer's runs go, the link's idle polls stream the next layer's experts, most wanted
+first (a profile's order), so its runs find them in slots:
+- `begin_prefill(ahead=True, part=...)` turns it on for the prefill. `part` is the bytes an idle
+  poll sends of an expert, and end_prefill gives the server its own part back.
+- `prefill_layers` calls `ahead_layer` only between runs: once after begin_prefill for the first
+  MoE layer, then before each layer's first run of a chunk for the next one.
+- Each call serves the card's last request first (`settle`) and stops arming that request's
+  tags, since the halted run zeroed them.
+- Each call replaces the last one's queue. Queued experts without a slot leave the queue. An
+  expert already on its way is dropped and its slot freed; its tag and entry were never written.
+  On gemma4's event model of the pooled R = 2 traces this beats keeping a FIFO at short prompts,
+  where the queue would fill with layers that have already run.
+- A queued expert takes a slot only when its first part goes, so a call that is replaced
+  evicts nothing. It takes a free slot, else (pooled) the oldest expert outside layers j - 1 and
+  j. Those are the only layers the runs until the next call can read: no slot the running layer
+  may use changes under it.
+- A request that names a queued expert takes it as a miss. A request that names one on its way
+  sends its rest with its tag (promoted), as for a hint.
+- `end_prefill` drops the queue and the expert on its way.
+- Without pooled slots, only free slots are used.
+- Tests: test_offload_server's ahead tests: idle-poll landing in order, replace, promote and
+  miss, victims outside the running layers, settle and end_prefill.
 
 ### 13.5 Tests and status
 
