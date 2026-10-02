@@ -1790,12 +1790,13 @@ def mxu_time(progs) -> float:
     return best
 
 
-# prefer_rows: R - 1 rows take over only at 5% less MXU time a row. mxu_time leaves out what a
-# run pays once (its start, the first weight chunks' latency, the instructions besides the MMs),
-# which R - 1 rows pay n / (n - 1) times as often; the real layouts sit far from the line (the
-# 4B -25% and LFM2-2.6B's mix -22% where 2 rows win, Phi-4-mini's mix +8% and int8 +49% where 3
-# stay), so the margin only keeps a near tie from adding runs.
-PREFER_MARGIN = 0.05
+# prefer_rows: R - 1 rows take over only at 10% less MXU time a row. mxu_time leaves out what a
+# run and a layer pay once (the run's start, the first weight chunks' latency, the instructions
+# besides the MMs), which R - 1 rows spread over fewer rows: in ld-memch's RTL co-sim (board
+# config, DDR3-1066, 133.33 MHz) Phi-4-mini's fp4-MLP layer is 6.1% cheaper a row at 2 rows by
+# mxu_time but 0.5% dearer (2 rows reach 89% of their MXU roofline, 3 rows 95%), and the 4B's
+# -25% is -13.8% (the card: -13.3%). The real layouts' R - 1 picks sit at -19 to -25%.
+PREFER_MARGIN = 0.10
 
 
 def prefer_rows(image, n: int, compile) -> int:

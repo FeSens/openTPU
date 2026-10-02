@@ -264,11 +264,16 @@ program cache, so a later prompt compiles none.
 
 **Odd R.** PAIR exists only for 4-bit MMs (of at most MCOLS / 2 rows): at MCOLS 4 a 4-bit run
 of 3 rows takes 4 rows' MXU time and 2 rows cost 25% less a row by the MXU stream (13.8% in the
-co-sim, the rest is attention and the vector unit), while an int8 MM streams once per MCOLS
-rows, so 3 rows cost 33% less a row than 2. prefer_rows (qwen3) takes R - 1 rows for an odd
-R > 1 where the compiled runs' MXU time a row (mxu_time: each MM's streamed rows x K blocks,
-half of it PAIRed, times its loops' counts) is at least 5% lower; both routes use it (the
-probe and fit_chunk), so they compare alike. A mix falls between, at about 2/3 of its MXU
+co-sim, the rest is attention and the vector unit; on the card the 4B's 237 tokens 18.355 ->
+15.918 s, -13.3%, 79 -> 119 runs), while an int8 MM streams once per MCOLS rows, so 3 rows
+cost 33% less a row than 2. prefer_rows (qwen3) takes R - 1 rows for an odd R > 1 where the
+compiled runs' MXU time a row (mxu_time: each MM's streamed rows x K blocks, half of it
+PAIRed, times its loops' counts) is at least PREFER_MARGIN = 10% lower; both routes use it
+(the probe and fit_chunk), so they compare alike. The margin is ld-memch's co-sim's: mxu_time
+leaves out what a run and a layer pay once, so it overstates R - 1's gain (Phi-4-mini's
+fp4-MLP layer: 6.1% cheaper a row at 2 rows by mxu_time, 0.5% dearer in the co-sim, where 2
+rows reach 89% of their MXU roofline and 3 rows 95%; the 4B: -25%, co-sim -13.8%). A layout
+whose R - 1 lands at 5-15% is co-simmed before its rows change. A mix falls between, at about 2/3 of its MXU
 blocks 4-bit (by the weights' shapes: Phi-4-mini's mix about 56% fp4 blocks, SmolLM3's
 about 43%, both keep 3); the 4B, fp4 and its mix, goes from 3 rows to 2.
 

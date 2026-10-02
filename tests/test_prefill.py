@@ -217,7 +217,7 @@ def test_odd_rows_take_one_less_where_pair_makes_it_cheaper(fp4):
     cycle, so 3 rows (MCOLS 4) take a 4-row run's MXU time and 2 cost less per row (the 4B:
     -13.8% a row in the RTL co-sim); an int8 MM streams once per MCOLS rows, so 3 rows cost
     less per row than 2. Even sizes stay."""
-    from opentpu.llm.qwen3 import mxu_time, prefer_rows
+    from opentpu.llm.qwen3 import PREFER_MARGIN, mxu_time, prefer_rows
     _, W, spec = _tiny_model(16, 16, init=0.2)
     a = Engine(spec, W, cap=512, cfg=CFG, resident=True, **(FP4 if fp4 else {}))
     img = a.image
@@ -226,7 +226,7 @@ def test_odd_rows_take_one_less_where_pair_makes_it_cheaper(fp4):
         return img.compile_rows([(0, j) for j in range(r)], [], a.block,
                                 tokens=list(range(1, r + 1)))
     t2, t3 = (mxu_time(rows(r)) / r for r in (2, 3))
-    assert (t2 < 0.95 * t3) == fp4
+    assert (t2 <= (1 - PREFER_MARGIN) * t3) == fp4
     assert prefer_rows(img, 3, rows) == (2 if fp4 else 3) and prefer_rows(img, 4, rows) == 4
 
 def _static_mtp(dec, R_max):
