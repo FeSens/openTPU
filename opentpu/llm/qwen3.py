@@ -30,6 +30,7 @@ import numpy as np
 
 from .. import fp32 as F
 from .. import isa as I
+from .. import progcache as PC
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
@@ -1587,6 +1588,12 @@ class Engine:
     mapped pages would stay in the page cache over the pool's, docs/offload.md 10.6; a later
     read reopens its file). Default on; False keeps them. pool_map: the pool file's reads
     touched through a read-only map (PoolFile's mapped, docs/offload.md 10.7). Default on.
+
+    prog_cache: the bucket programs (the generate loop's, the resident decode's, MTP's loop's)
+    come from opentpu/progcache.py: compiled once per process and image layout, and kept on
+    disk for the next process. Default: on when OTPU_PROG_CACHE is set (to a directory, or 1
+    for the default one) and not 0. Off, every engine compiles its own (tests patch the
+    kernels' constants, which the cache's key does not see).
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
@@ -1595,8 +1602,10 @@ class Engine:
                  wformat: str = "int8", head_format: str | None = None,
                  resident: bool = False, experts: int | None = None, pool_file=None,
                  embed_host: bool | None = None, layer_major: int = 0,
-                 release_weights: bool = True, pool_map: bool = True):
+                 release_weights: bool = True, pool_map: bool = True,
+                 prog_cache: bool | None = None):
         self.spec, self.cap, self.block = spec, cap, block
+        self.prog_cache = PC.enabled() if prog_cache is None else bool(prog_cache)
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
         if experts is not None:             # a MoE model's expert slots per layer
@@ -1752,6 +1761,12 @@ class Engine:
         """The step program for `pos`: the precompiled one when it is for `pos`."""
         return self._take(("step", pos), self._compile, pos)
 
+    @property
+    def layout(self) -> tuple:
+        """What decides the image's layout and so its programs (opentpu/progcache.py)."""
+        return (self.spec, self.cfg, self.cap, self.batch, self.rows, self.block,
+                tuple(sorted(self._image_kw.items())))
+
     def _compile_decode(self, blocks: int, lo: int | None = None):
         """lo: the bucket's first position (_worker_decode's; the compile thread gets it too)."""
         lo = max((blocks - 1) * self.block, self._conv_lo) if lo is None else lo
@@ -1768,8 +1783,17 @@ class Engine:
             return None
         b = pos // self.block + 1
         if b not in self._decodes:
-            self._decodes[b] = self._take(("decode", b), self._compile_decode, b)
+            self._decodes[b] = self.cached(self._decode_what(b),
+                                           lambda: self._take(("decode", b),
+                                                              self._compile_decode, b))
         return self._decodes[b]
+
+    def cached(self, what, compile):
+        """compile() -> (programs, run_args), through the program cache with prog_cache."""
+        return PC.get(self.layout, what, compile) if self.prog_cache else compile()
+
+    def _decode_what(self, b: int) -> tuple:
+        return ("decode", b, max((b - 1) * self.block, self._conv_lo))
 
     def _prefetch(self, pos: int) -> None:
         """Precompile the steps at pos .. pos + ahead - 1 (those not in flight yet); resident:
@@ -1778,7 +1802,8 @@ class Engine:
         if self.resident and pos >= self._conv_lo:
             for p in (pos, pos + DECODE_LEAD):
                 b = p // self.block + 1
-                if p < self.cap and b not in self._decodes and ("decode", b) not in queued:
+                if p < self.cap and b not in self._decodes and ("decode", b) not in queued \
+                        and not (self.prog_cache and PC.has(self.layout, self._decode_what(b))):
                     self._submit(("decode", b), self._compile_decode, _worker_decode, b,
                                  max((b - 1) * self.block, self._conv_lo))
             return
@@ -2126,9 +2151,13 @@ class Engine:
         key = (blocks, None if samp is None else samp.key, self.gen_debug)
         if key not in self._gens:
             lo = max((blocks - 1) * self.block, self._conv_lo)
-            progs = G.compile_bucket(self.image, blocks, lo, self.block,
-                                     chain=bool(getattr(self.backend, "chains", False)),
-                                     samp=samp, debug=self.gen_debug, split=self.gen_split)
+            chain = bool(getattr(self.backend, "chains", False))
+            progs = self.cached(("gen", blocks, lo, chain, key[1], self.gen_debug,
+                                 self.gen_split),
+                                lambda: (G.compile_bucket(self.image, blocks, lo, self.block,
+                                                          chain=chain, samp=samp,
+                                                          debug=self.gen_debug,
+                                                          split=self.gen_split), None))[0]
             prep = getattr(self.backend, "prepare", None)
             if prep is not None:
                 for p in (progs if isinstance(progs, tuple) else (progs,)):

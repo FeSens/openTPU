@@ -116,9 +116,11 @@ def run(a) -> None:
         t0 = time.time()
         eng.reset()
         dec = MTPDecoder(eng)
+        seen = []                           # the tokens' times (the device loop's)
         if a.loop == "device":
             dl = a.deadline if a.deadline is not None else 10.0 + 0.5 * a.tokens
-            st = dec.generate_card(ids, max_new=a.tokens, deadline=dl if a.card else None)
+            st = dec.generate_card(ids, max_new=a.tokens, deadline=dl if a.card else None,
+                                   on_token=lambda t: seen.append(time.time()))
         else:
             st = dec.generate(ids, max_new=a.tokens)
         dt = time.time() - t0
@@ -135,6 +137,8 @@ def run(a) -> None:
             r["plain_card"] = pl
             r["mtp_card"] = {"cycles": cyc, "wall": round(dt, 3),
                              "prefill_wall": round(st.prefill_s, 3),
+                             "ttft": round(seen[0] - t0, 3) if seen else None,
+                             "t2": round(seen[1] - t0, 3) if len(seen) > 1 else None,
                              "compile": round(st.compile_s, 3),
                              "prefill_compile": round(st.prefill_compile_s, 3),
                              "slots": [st.slots.count(0), st.slots.count(1)],
@@ -183,12 +187,16 @@ def _plain_card(eng, spec, ids, n):
     got = [int(np.argmax(eng.prefill(ids)))]
     t1 = time.perf_counter()
     k = len(eng.stats)
+    seen = []
     if got[0] not in spec.eos and n > 1:
-        got += eng.generate_card(got[0], n - 1)
+        got += eng.generate_card(got[0], n - 1,
+                                 on_token=lambda t: seen.append(time.perf_counter()))
     t2 = time.perf_counter()
     return got, {"cycles": int(sum(s.get("cycles", 0) for s in eng.stats[k:])),
                  "runs": len(eng.stats) - k,
                  "prefill_wall": round(t1 - t0, 3), "wall": round(t2 - t1, 3),
+                 "ttft": round(t1 - t0, 3),
+                 "t2": round(seen[0] - t0, 3) if seen else None,
                  "core_khz": getattr(eng.backend, "info", {}).get("core_khz", 0)}
 
 
@@ -239,7 +247,8 @@ def card_summary(r) -> None:
               f" | device tok/s plain {n * hz / pl['cycles']:.2f} MTP {n * hz / mc:.2f} "
               f"({pl['cycles'] / mc:.3f}x) | wall tok/s plain {n / pl['wall']:.2f} MTP "
               f"{n / mw:.2f} (host compile {comp:.2f} of {mw:.2f} s) | verify parities "
-              f"{mt['slots']}")
+              f"{mt['slots']}" + (f" | first / second token s: plain {pl['ttft']} / {pl['t2']}, "
+                                  f"MTP {mt['ttft']} / {mt['t2']}" if "ttft" in mt else ""))
     hz = 1e3 * r["prompts"][0]["mtp_card"]["core_khz"]
     n = tot["n"]
     print(f"{r['model']:14s} all: {n} tokens after the first, acceptance "
