@@ -29,6 +29,7 @@ In short:
   E2B: `attn@15-24=fp4,mlp@15-34=fp4` (the KV-shared layers' MLP, layers 15-24's attention),
   30% for 2.6% against int8 with the int8 PLE table (fp4 layers: 56% for about 21%).
   Qwen3.5-2B: none qualifies. Qwen3.5-35B-A3B's fp4 head: +1.55% for 13%, so it stays int8.
+  Gemma 4 26B-A4B: all dense layers in fp4 fail (+7.9% for 56%); its ranges are not run yet.
   On the card the mixes run at the predicted speed (within 0.1%), and their images give the ISA
   simulator's tokens (Phi's and SmolLM3's through a proxy).
 
@@ -308,7 +309,49 @@ low: on E2B's quantized states the same fp4 head costs 35% more than on float on
 | Qwen3.5-35B-A3B | 2000 | +1.549 (0.030) | (not emulated) | 1.01, the 4B's: +1.56 (estimate) |
 
 A proxy that reads low still decides a fail: at or over its bar the head fails; under it the
-proxy would be inconclusive.
+proxy would be inconclusive. The 35B's raw proxy is over its bar, so the decision needs no ratio
+estimate; the 4B's ratio is there for the record.
+
+### Gemma 4 26B-A4B's dense layers
+
+The 26B ([offload.md](offload.md) section 11, [gemma4.md](gemma4.md)) runs int8 dense layers
+(attention and the dense MLP beside the MoE), fp4 experts streamed into slots and the fp4 head.
+fp4 dense layers would read less a token and free slots on the card: offload's model
+(2026-10-02, against session 17's 3.68 tok/s at 18 slots a layer, 35.0 s per 128 tokens) gives a
+row freeing F MB R x 9.1 ms per 128 tokens of reads (R = F) and floor(F / 103.4) slots a layer
+from cachesim's misses; the gain is saved / (35.0 - saved). The scan (`formats_scan.py scan
+--base experts=fp4,head=fp4`: every row on the card's experts and head) groups the layers 0-11
+and 12-29; its rows' bytes and bars:
+
+| Row | MB a token (dense + head) | Freed | Slots a layer | Gain | Bar | dKL % (SE), 900 tokens |
+|:--|--:|--:|--:|--:|--:|--:|
+| int8 (the card) | 2095 | | 18 | | | 0 (float: -3.82, SE 0.16) |
+| fp4 (all dense) | 1275 | 820 | +7 | +56.3% | 5.63 | **+7.93 (0.61)**: fails, 3.7 SE over |
+| `attn=fp4` | 1540 | 555 | +5 | +34.3% | 3.43 | |
+| `gateup=fp4` | 1916 | 178 | +1 | +7.7% | 0.77 | |
+| `down=fp4` | 2008 | 87 | +0 | +2.3% | 0.23 | |
+| `attn@0-11=fp4` | 1873 | 222 | +2 | +11.9% | 1.19 | |
+| `attn@12-29=fp4` | 1762 | 333 | +3 | +18.7% | 1.87 | |
+| `gateup@0-11=fp4` | 2023 | 71 | +0 | +1.9% | 0.19 | |
+| `gateup@12-29=fp4` | 1988 | 107 | +1 | +5.6% | 0.56 | |
+| `down@0-11=fp4` | 2060 | 35 | +0 | +0.9% | 0.09 | |
+| `down@12-29=fp4` | 2043 | 52 | +0 | +1.4% | 0.14 | |
+
+The attention is two thirds of the dense bytes (555 of 820 MB). Measured so far (omarchy,
+2026-10-02, 900 tokens of docs/isa.md): the card's own formats sit 3.82% (SE 0.16) from float
+(perplexity 19.18 against 18.27), and all dense layers in fp4 cost +7.93% (SE 0.61) for +56%,
+3.7 SE over their bar; the rest of the scan is not run. It resumes from its caches on omarchy
+(tree-g26, the variants' head inputs in `g26-scan.json.xl` with the first attention row's
+per-layer checkpoint, the experts' 4-bit cache `qc26`, 11 GB):
+
+    cd ~/otpu-build/models3/tree-g26 && PYTHONPATH=$PWD OTPU_IMAGE_CACHE=~/otpu-build/models3/qc26 \
+      OTPU_IMAGE_CACHE_GB=16 python tools/formats_scan.py scan models/gemma-4-26B-A4B \
+      ~/otpu-build/models3/g26-scan.json --tokens 900 --base experts=fp4,head=fp4
+
+(about 16 min a variant once the experts are cached, 12 in pass 1 and about 8 in pass 2; a tree
+whose emulation sources differ recomputes every variant). A row that qualifies needs its finals
+at 2000 tokens; one just under a slot step gets only the reads term unless the slots go uneven
+per layer (offload: a small gemma4.py change).
 
 ## On the card
 
