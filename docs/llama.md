@@ -11,7 +11,8 @@ other models.
 ```sh
 hf download HuggingFaceTB/SmolLM3-3B --local-dir models/SmolLM3-3B
 hf download microsoft/Phi-4-mini-instruct --local-dir models/Phi-4-mini-instruct
-otpu-chat --model smollm3 --backend board            # int8: closest to Hugging Face (Accuracy)
+otpu-chat --model smollm3 --backend board            # its mix, gateup@9-35=fp4 (docs/formats.md)
+otpu-chat --model smollm3 --backend board --wformat int8   # closest to Hugging Face (Accuracy)
 otpu-chat --model phi4-mini --backend board --wformat fp4 --head-format int8
 python3 tools/compare_hf.py --model phi4-mini --cfg board --tokens 16   # ISA simulator vs HF
 python3 tools/perf_qwen.py --model smollm3 --layers 4 --pos 128 --ddr 1066 --mhz 133.33

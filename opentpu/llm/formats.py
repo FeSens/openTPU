@@ -13,7 +13,8 @@ caller, else the OTPU_FORMATS environment variable, else the model's own default
 
 The Qwen3 / Llama-like, LFM2 and Qwen3.5 models also have a named choice, wformat "mix": int8
 with the model's recommended formats string (Spec.mix, from MIXES: docs/formats.md), unless
-the caller or OTPU_FORMATS gives one. wformat int8, int4 and fp4 stay uniform.
+the caller or OTPU_FORMATS gives one. wformat int8, int4 and fp4 stay uniform. wformat "auto"
+(otpu-chat's default, auto()) is "mix" where the model has a mix, else int8.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import os
 
 FORMATS = ("int8", "int4", "fp4")
 MIX = "mix"                 # the named choice: int8 with the model's mix (Spec.mix)
+AUTO = "auto"               # "mix" where the model has one, else int8 (otpu-chat's default)
 
 # the recommended mixes over int8 (wformat "mix", docs/formats.md), by (model_type, layers,
 # hidden size, vocabulary) of the checkpoint's config
@@ -36,6 +38,14 @@ def mix_for(config: dict) -> str:
     """The recommended mix of a checkpoint's (text) config, "" for none."""
     return MIXES.get((config.get("model_type"), config.get("num_hidden_layers"),
                       config.get("hidden_size"), config.get("vocab_size")), "")
+
+
+def auto(spec, wformat: str) -> str:
+    """wformat "auto": "mix" where the model has a recommended mix (Spec.mix), else int8; any
+    other wformat is itself."""
+    if wformat != AUTO:
+        return wformat
+    return MIX if getattr(spec, "mix", "") else "int8"
 
 
 def named(spec, wformat: str, formats: str | None) -> tuple:

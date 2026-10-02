@@ -41,6 +41,8 @@ def test_named_mix(monkeypatch):
     with pytest.raises(ValueError, match="no recommended mix"):
         FM.named(SimpleNamespace(mix=""), "mix", None)
     assert FM.mix_for({"model_type": "none"}) == ""
+    assert FM.auto(spec, "auto") == "mix" and FM.auto(SimpleNamespace(mix=""), "auto") == "int8"
+    assert FM.auto(SimpleNamespace(), "auto") == "int8" and FM.auto(spec, "fp4") == "fp4"
 
 
 def test_mixes():
