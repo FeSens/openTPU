@@ -1965,6 +1965,7 @@ Cycles per token against main (4-bit layers unless noted):
 | TMEM: 2 writes per bank and cycle (1) | -3.53% | | |
 | **TMEM arbiter: the VPU ahead of the MXU drain** | **-2.97%** | **-2.41%** | **-0.41%** |
 | the same, Qwen3 8-bit (main 5,617,507) | -2.01% | | |
+| dispatch window 32 on top of VPU-first (against VPU-first) | -0.08% | -0.08% | |
 | the next head's score MMs ahead of the PV MM (program order; ISA results unchanged) | -0.03% | +0.09% | |
 
 - **The idle time is attention's softmax.** Making EXP2SUB free takes away about as much as the
@@ -1986,7 +1987,61 @@ Cycles per token against main (4-bit layers unless noted):
     next MM's weights through them, and 2048 chunks change nothing.
   - Moving the next head's score MMs ahead of the PV MM changes nothing either: the VPU, not
     the MXU's order, was the slow part.
-  - A 32-entry window is worth 0.6-0.7% but costs the window's hazard logic at 133.33 MHz.
+  - A 32-entry window is worth 0.6-0.7% alone but only 0.08% on top of VPU-first (the gaps it
+    filled were the softmax's), and it costs the window's hazard logic at 133.33 MHz.
+
+### The fused build: fastmux and VPU-first (2026-10-02)
+
+One build at 133.33 MHz carries both: main 5372244, fastmux 5a088e5 (the core with `FASTMUX`,
+"The chooser and the turnarounds" above) and vpu-first ed66aba (the arbiter's order, "The core's
+own gaps"). Its BUILD_ID is the sha of the branch's last commit. The 32-entry window stays out:
+on top of VPU-first it is worth 0.08%, not the 1% that would pay for its hazard logic.
+
+**The slice out of context** (`otpu_slice` alone at the board's generics: MCOLS 4, LANES 8,
+WIN 16, RPB 64, WPB 1; 7.5 ns; the build's synthesis and implementation directives; omarchy).
+Synthesis spreads the arbiter's LUTs into the units and the grant ports leave the hierarchy, so
+the arbiter's paths are found by their ends: a unit's write request into another unit's grant.
+
+| | main | VPU-first |
+|---|---|---|
+| WNS (neither is the arbiter: route-only paths) | +0.052 ns (MXU weight register -> DSP, 0 levels) | +0.081 ns (ACT RAM write index fanout, 1 level) |
+| the VPU's write request (hen / hrot) -> worst | +1.077 ns (-> TMEM write address, 8 levels) | +0.669 ns (-> the MXU's grant enables, 9 levels) |
+| DMA -> the MXU's grant enables | +0.506 ns (9 levels) | +0.861 ns (8 levels) |
+| the MXU -> the VPU's grant (WBUF enable) | +1.175 ns (9 levels) | (no path: the MXU is after the VPU) |
+| a unit -> the TMEM write ports (the grants gate them), worst | +0.182 ns | +0.478 ns |
+| Slice LUTs | 105,500 | 104,281 |
+
+- **The new path is the VPU's request into the MXU's grant:** +0.669 ns. It runs the VPU's
+  bank flip-flops through the bank masks and the priority chain into the drain's clock enables:
+  6.59 ns, 86% of it route.
+- **Nothing near the arbiter got worse.** Every cross-unit path in the table has at least
+  +0.48 ns in VPU-first, against +0.18 ns at worst in main. Placement moves these by a few
+  tenths from run to run, and the whole design runs about 0.2 ns tighter than out of context,
+  so the margin holds.
+
+**The predictions** (whole-token co-simulation, the qualification's operating point: pos 544,
+int8 head, 133.33 MHz, DDR3-1066). The card's column is production pa e4db91c9's qualification
+(`qual.sh`'s prefill + decode counters), and the expected column is that times the co-simulated
+change:
+
+| | main, cycles | fused, cycles | change | the card now, Mcycles | expected | device tok/s |
+|---|---|---|---|---|---|---|
+| Qwen3 4-bit | 3,844,073 | 3,696,899 | -3.83% | 3.878 | 3.730 | 34.38 -> 35.75 |
+| LFM2 4-bit | 1,398,439 | 1,355,035 | -3.10% | 1.413 | 1.369 | 94.36 -> 97.38 |
+| Qwen3.5 4-bit | 4,841,349 | 4,765,281 | -1.57% | 4.895 | 4.818 | 27.24 -> 27.67 |
+| Qwen3 8-bit | 5,617,507 | 5,471,471 | -2.60% | 5.650 | 5.503 | 23.60 -> 24.23 |
+| LFM2 8-bit | 2,055,625 | 2,012,426 | -2.10% | 2.069 | 2.026 | 64.44 -> 65.83 |
+| Qwen3.5 8-bit | 6,830,385 | 6,764,651 | -0.96% | 6.884 | 6.818 | 19.37 -> 19.56 |
+
+- Together the two do a little better than their sum. On the 4-bit models, fastmux alone gives
+  -0.74 / -0.35 / -0.86% and VPU-first alone -2.97 / -2.41 / -0.41%, which sum to
+  -3.71 / -2.76 / -1.27%.
+- memeff's build met its predictions within 0.1 points. Read more than 0.3 points short as a
+  miss to explain.
+
+**Qualification:** the usual `qual.sh`, which now carries `turnaround.py` (data against the ISA
+simulator, and the ECC counters for fastmux's rtw 3). The decode table compares the six counters
+with the expected column.
 
 ### The core clock at DDR3-1066: the co-simulated grid
 
