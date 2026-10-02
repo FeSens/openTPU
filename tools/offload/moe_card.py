@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 PROMPT = "What is the capital of France? Answer in one sentence."
+IDLE_PARTS = ("v1", "ra", "halt", "v2")      # --idle-parts (docs/offload.md 13.12)
 
 
 def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) -> dict:
@@ -129,7 +130,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          release_weights: bool = True, willneed: bool = True, pool_map: bool = True,
          legacy_serve: bool = False, embed_runs: bool = False,
          poll_idle: str | None = None, prefill_trace: str | None = None,
-         layer_ahead: str | None = None, ahead_part: int | None = None) -> dict:
+         layer_ahead: str | None = None, ahead_part: int | None = None,
+         idle_parts: str = "v1") -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -177,15 +179,15 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     srv.history, per_req = [], []               # each request's ids and misses
     serve, pool_of, mem = srv.serve, srv.pool, srv.mem
     tm = dict(serve=0.0, pool=0.0, write=0.0, read=0.0, stage=0.0, flush=0.0,   # host's s
-              poll=0.0, hint=0.0)
+              poll=0.0, hint=0.0, ahead=0.0)
 
     calls = dict.fromkeys(tm, 0)                # and how many calls
 
     def timed(part, f):
-        def g(*a):
+        def g(*a, **kw):
             t0 = time.perf_counter()
             try:
-                return f(*a)
+                return f(*a, **kw)
             finally:
                 tm[part] += time.perf_counter() - t0
                 calls[part] += 1
@@ -201,10 +203,15 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         srv.part = hint_part
     srv.drop = hint_drop
     srv.hint_n, srv.hint_top = hint_n, hint_top
+    if idle_parts not in IDLE_PARTS:            # idle parts (docs/offload.md 13.12): read
+        raise ValueError(f"idle parts {idle_parts!r}")  # ahead, one call; halt-aware
+    srv.read_ahead, srv.halt_aware = idle_parts in ("ra", "v2"), idle_parts in ("halt", "v2")
     srv.pool = timed("pool", pool_of)
     mem.write, mem.read = timed("write", mem.write), timed("read", mem.read)
     if hasattr(mem, "write_slot"):              # BoardDram: staging (the main thread), and
         mem.write_slot = timed("stage", mem.write_slot)     # waiting for the DMA thread
+        if hasattr(mem, "stage"):               # the idle parts' read-ahead (beside a DMA)
+            mem.stage = timed("ahead", mem.stage)
         mem.flush = timed("flush", mem.flush)
     if callable(getattr(eng.backend, "host", None)):
         polled = [eng.backend.host]             # (the decode's may be a PollPacer's)
@@ -413,6 +420,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 ahead_part=eng.ahead_part if eng.layer_hint else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
                 legacy_serve=legacy_serve, poll_idle=poll_idle,
+                idle_parts=dict(mode=idle_parts, holds=srv.holds,
+                                part_ms=srv.part_s and round(srv.part_s * 1e3, 3),
+                                staged=getattr(srv.mem, "staged", None)),
                 pacer=dict(sleeps=pacer.sleeps, slept_s=round(pacer.slept, 3),
                            kinds=len(pacer.gaps)) if pacer is not None else None,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
@@ -493,6 +503,11 @@ def main():
                          "default 0: token by token)")
     ap.add_argument("--per-layer-slots", action="store_true",
                     help="--layer-major with each layer's own slots (default: pooled)")
+    ap.add_argument("--idle-parts", choices=IDLE_PARTS, default="v1",
+                    help="the hinted / ahead experts' parts on idle polls (docs/offload.md "
+                         "13.12): v1 as before (cut in two, each read after the last one's "
+                         "DMA); ra read ahead, one call each; halt none started near a run's "
+                         "expected end; v2 both")
     ap.add_argument("--layer-ahead", metavar="index|hint|TRACES",
                     help="--layer-major with pooled slots: the next MoE layer's experts sent "
                          "while a layer runs (docs/offload.md 13.7), each layer's in index "
@@ -541,7 +556,7 @@ def main():
              a.hint_n, a.hint_top, a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
              not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
              not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace,
-             a.layer_ahead, a.ahead_part << 10 if a.ahead_part else None)
+             a.layer_ahead, a.ahead_part << 10 if a.ahead_part else None, a.idle_parts)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

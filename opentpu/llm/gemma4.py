@@ -58,6 +58,8 @@ Pieces:
   gemma4_step       the ol kernel for one decode token (host inputs, or gathered on the device
                     at a run-time position)
   gemma4_rows       R consecutive prompt tokens per device run (chunked prefill)
+  gemma4_prompt_run a prompt run (docs/prefill.md): R rows at a run-time position, their
+                    tokens from the generate area's out[]
 
 Weights are int8 or 4-bit (quant.py) with int8 activations (W8A8 / W4A8), the LM head int8 or
 4-bit, the PLE table int8 or 4-bit (ple_format); decoding runs on qwen3.Engine (one sequence).
@@ -73,10 +75,11 @@ from types import SimpleNamespace
 import numpy as np
 
 from .. import fp32 as F
+from .. import isa as I
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
-from ..compiler import Affine, KVDesc, QTensor, Tensor
+from ..compiler import Affine, DevVar, KVDesc, QTensor, Tensor, current
 from ..isasim import Config
 from ..kernels import gather as GA
 from ..kernels import mailbox as MB
@@ -805,7 +808,9 @@ class Image:
         # the layer-major prefill's rows a chunk (a MoE model's: compile_layer_run)
         self.prefill_rows = (PREFILL_CHUNK if spec.experts else 0) if prefill_rows is None \
             else prefill_rows
-        mr = RUN_ROWS if self.prefill_rows else 1       # mask rows: a pair for each run row
+        # mask rows: a pair for each row of a run at a run-time position (a layer run's; with
+        # lookup tables a prompt run's, up to the I/O rows)
+        mr = RUN_ROWS if self.prefill_rows else (R if lookup else 1)
         self.io = {"x": b.alloc(4 * H * R), "pe": b.alloc(4 * self.ple_S * D * R),
                    "rope": b.alloc(4 * self.rw * R), "gf": b.alloc(4 * H),
                    "logits": b.alloc(4 * spec.vocab * R), "pli": b.alloc(4 * R * L * P),
@@ -1192,6 +1197,32 @@ class Image:
                                                 "pos": [p for _, p in rows],
                                                 "logit_rows": list(logit_rows),
                                                 "block": block, **kw}).finish()]
+
+    def compile_prompt_run(self, blocks: int, R: int, kind: str, block: int = ATTN_BLOCK):
+        """gemma4_prompt_run's (programs, run_args) (docs/prefill.md): R rows of a prompt at a
+        run-time position of bucket `blocks` (the state's tpos word: qwen3.RunWords), their
+        tokens from out[]; with ple_host the PLE slot's rows, which the host writes before the
+        run (prompt_host_rows)."""
+        from .qwen3 import RunRows
+        if not self.lookup:
+            raise ValueError("a prompt run needs lookup tables (lookup=True)")
+        if self.spec.experts:
+            raise ValueError("a MoE model's prompt runs layer-major (prefill_layers)")
+        if kind not in ("P", "L"):
+            raise ValueError(f"prompt run kind {kind!r}")
+        if block != self.block:
+            raise ValueError(f"the image is laid out for attention blocks of {self.block}")
+        if R > self.rows:
+            raise ValueError(f"{R} rows, the image's I/O area holds {self.rows}")
+        pos = RunRows(blocks, block, (blocks - 1) * block, 0, self.cap, R, 0)
+        b = gemma4_prompt_run.trace(self.cfg, 0, {"m": self.descriptors(0), "pos": pos, "R": R,
+                                                  "kind": kind, "block": block})
+        return [b.finish()], list(b.run_args)
+
+    @property
+    def prompt_host_rows(self) -> bool:
+        """A prompt run reads rows the host writes before it (host_rows: ple_host's records)."""
+        return bool(self.ple_host)
 
     # ---- kernel descriptors
     def descriptors(self, sid: int = 0) -> SimpleNamespace:
@@ -1663,6 +1694,39 @@ def _gathered_rows(m, tokens):
     return e
 
 
+def _gathered_out(m, pos):
+    """_gathered_rows of a prompt run (docs/prefill.md; pos a qwen3.RunRows): the tokens of
+    out[pos .. pos + R) (the generate area's), each one's table rows at an address from
+    scratch registers (RLD MUL of its word, as qwen3._embed_word), not run-time arguments;
+    with ple_host the PLE slot's row r, which the host writes before the run."""
+    b, H = current(), m.spec.hidden
+    tk = ol.load(m.gen.out[pos.pos:pos.pos + pos.R])
+    e = ol.empty([pos.R, H])
+    for fmt, tab in ((m.head_format, m.head), (m.ple_format, m.ple))[:2 if m.ple else 1]:
+        oh = ol.quantize(ol.load(m.onehot["int8" if fmt == "int8" else "4bit"]))
+        for r in range(pos.R):
+            if tab is m.ple and m.ple_host:
+                ol.store(m.pe[r, :], GA.gather_record(oh, tab, r, fmt, m.S))
+                continue
+            t = tk[r:r + 1]
+            b.check_live(t)
+            rd, rs = b.scratch(), b.scratch()
+            b.emit(I.rld(rd, t.base, mul=tab.rs, comment="the token's row"))
+            b.emit(I.rld(rs, t.base, mul=tab.srs, comment="its scales"))
+            one = QTensor(Affine.of(tab.data) + DevVar("token row", rd),
+                          Affine.of(tab.scale) + DevVar("token scales", rs), (1, tab.shape[1]),
+                          tab.rs, tab.srs, tab.D, wf=tab.wf)
+            if tab is m.head:
+                e[r, :].set(GA.gather_row(oh, one, 0, fmt))
+            else:
+                ol.store(m.pe[r, :], GA.gather_record(oh, one, 0, fmt, m.S))
+            b.unscratch(rd)
+            b.unscratch(rs)
+        del oh
+    del tk
+    return e
+
+
 @ol.jit
 def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
     """Token rows at consecutive positions `pos` (a list), or one decode token at a RunPos
@@ -1670,11 +1734,16 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
     repeated unit of the plan), the final norm and the LM head of the rows in `logit_rows`
     (a contiguous range; empty: none, a prefill chunk before the last). The rows' inputs: with
     `tokens` (compile-time ids) gathered on the device (_gathered_rows), else the host's (rows
-    of m.x, m.pe, m.rope)."""
-    from .qwen3 import RunPos
+    of m.x, m.pe, m.rope). pos a RunRows: a prompt run's rows (gemma4_prompt_run)."""
+    from .qwen3 import RunPos, RunRows
     fill_logits(m)
     spec = m.spec
-    if isinstance(pos, RunPos):
+    if isinstance(pos, RunRows):
+        R = pos.R
+        e, pe = _gathered_out(m, pos), None
+        ropes = _pos_rows(m, pos, R)
+        pos = [_RowPos(pos, r) for r in range(R)]
+    elif isinstance(pos, RunPos):
         e, pe, ropes = _gathered(m, pos)
         R = 1
     elif tokens is not None:
@@ -1717,6 +1786,16 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
         _lm_head(x, m, spec)            # a sampler's sink gets the capped logits (spec.softcap)
     elif logit_rows:
         _lm_head_rows(x, m, spec, list(logit_rows))
+
+
+@ol.jit
+def gemma4_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK):
+    """A prompt run of R rows (docs/prefill.md), gemma4_step's rows with their tokens from
+    out[]: kind "P", or "L" (the prompt's last run: its last row's logits). pos: a RunRows
+    (toks_at 0) at the run-time position in the generate state's tpos word (RunWords)."""
+    from .qwen3 import RunWords
+    with RunWords(m, pos):
+        gemma4_step.fn(m, pos, [R - 1] if kind == "L" else [], block)
 
 
 @ol.jit

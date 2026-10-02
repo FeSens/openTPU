@@ -46,7 +46,7 @@ chose); each row then sums its own k in its router's order, so a row's result is
 for bit. `moe_hint_rows` is moe_hint on R rows: a layer-major run's hint for the next layer, its
 router on the run's output rows (section 13.9).
 
-Expert-major (sections 13.11, 13.12) splits a layer-major MoE layer over a chunk's runs: each
+Expert-major (sections 13.11, 13.13) splits a layer-major MoE layer over a chunk's runs: each
 run's `moe_prologue_rows` routes its rows, keeps their ids, weights and norm in the rows' records
 of a scratch (em_record; the server carves it from the first expert slots for the prefill), and
 posts the experts as a need line; then one `moe_expert_run` a layer runs each expert its rows

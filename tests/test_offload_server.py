@@ -353,6 +353,157 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hin
     assert float(np.frombuffer(ba.read(lay.served, 4), np.float32)[0]) == seq
 
 
+@pytest.mark.parametrize("ahead", [True, False])
+def test_idle_parts_go_as_one_call_each_and_are_read_ahead(ahead, tmp_path):
+    """read_ahead (docs/offload.md 13.12): on BoardDram (CHASH, a split pool file) an idle
+    poll's part was read by the poll before (stage, beside that poll's DMA: a part's, or the
+    hint's served) and goes as one DMA call per channel; one not read ahead (the first after
+    ahead_layer) keeps the lead cut. A request first drops the staged part (its pair free
+    again). ahead_layer's next expert takes its slot when its part is staged. The card's
+    memories stay as Board.write leaves them, with read_ahead and without (each idle part of 2
+    blocks cut in two)."""
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import RUN, BackendDram, BoardDram, PoolFile, to_split
+
+    def board():
+        b = Board(FakeTransport(ch_bytes=1 << 21, devname=None))
+        b.info()["caps"]["chash"] = True
+        return b
+
+    slot = 4 * RUN
+    x = np.random.default_rng(3).integers(0, 256, (24, slot), dtype=np.uint8)
+    f = tmp_path / "pool.bin"
+    f.write_bytes(b"".join(to_split(r).tobytes() for r in x))
+    pf = PoolFile(f, slot, split=True)
+    lay = Layout.build(4096, 8, 2, (3, 3, 3), slot)
+    ba, bb = board(), board()
+    fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay, pieces=2), lay, pf.get,
+                        policy="lfu", part=2 * RUN)
+    plain = ExpertServer(BackendDram(SimpleNamespace(write=lambda s, a, d: bb.write(a, d),
+                                                     read=lambda s, a, n: bb.read(a, n))),
+                         lay, lambda g: x[g], policy="lfu", part=2 * RUN)
+    fast.read_ahead = ahead
+    m = fast.mem
+    recs, staged, dma, stage = [], [], m._dma, m.stage
+    m._dma = lambda *a, **kw: (recs.append(a[3] if len(a) > 3 else 0), dma(*a, **kw))
+    m.stage = lambda *a: (lambda h: (staged.append(h is not None), h)[1])(stage(*a))
+    for srv in (fast, plain):
+        srv.load([0, 1, 8, 9, 16, 17])
+    seq, G = 0, 24
+
+    def poll():
+        n0 = len(recs)
+        assert fast.poll() == plain.poll()
+        for c in (0, 1):
+            assert np.array_equal(ba.t.ch[c], bb.t.ch[c]), c
+        return len(recs) - n0
+
+    def post(ids):
+        nonlocal seq
+        seq += 1
+        for b in (ba, bb):
+            b.write(lay.row, np.array(ids + [0] * (LINE // 4 - len(ids)), np.float32))
+            b.write(lay.mbox, np.float32(seq).tobytes())
+        return poll()
+    r = 1 if ahead else 2                           # an idle part's DMA calls (or a lead cut)
+    post([G + 2, G + 3])                            # hint: 2 and 3 take slots, 4 parts to send
+    assert staged == ([True] if ahead else [])      # 2's first part read beside served
+    assert poll() == r                              # ... sent, and 2's second part read
+    assert poll() == r and fast.pending == {3: 0}   # 2's second (with its tag): staged
+    assert len(m._held) == ahead                    # 3's first part staged
+    assert post([3, 1]) == 3                        # a request first: 3's staged part dropped;
+    assert not m._held and fast.promoted == 1       # its misses as before: the first (3's rest)
+    assert m._free.qsize() == m.depth               # with the lead cut, the next (1) one call
+    assert post([4, 5]) == 3
+    for srv in (fast, plain):                       # pooled: 20 a free slot, 21 a victim
+        srv.begin_prefill(ahead=True)               # of layer 0 (outside 1 and 2)
+        srv.ahead_layer(2, [20, 21])
+    assert poll() == 2 and 20 in fast.lru[2] and 21 not in fast.lru[2]     # (not read ahead)
+    assert poll() == r and (21 in fast.lru[2]) == ahead     # 21's slot taken as it is staged
+    while fast.pending or fast.queue:
+        assert poll() == r
+    assert poll() == 0 and fast.landed == plain.landed == 2 and not m._held
+    assert fast.bytes == plain.bytes and fast.misses == plain.misses
+    assert sum(staged) == (6 if ahead else 0)       # each idle part but 20's first (3's
+                                                    # first dropped)
+
+
+def test_halt_aware_idle_parts_wait_near_a_runs_expected_end():
+    """halt_aware (docs/offload.md 13.12): no idle part starts while the running program's
+    expected end is nearer than a part takes (part_s, or PART_S0 + part / PART_GBS before any
+    is measured), so its halt is not seen after a part. The end: the memory's run_clock (the
+    run's start and its time with no waits) plus the run's own waits (each request with misses,
+    seen to served; a new run starts them at 0). A request is served at once all the same; a
+    run past its end by HOLD_LATE, or with no clock, gets parts again. Off: no hold."""
+    import time
+
+    from opentpu.host.offload import HOLD_LATE, PART_GBS, PART_S0
+    lay, mem, srv, G = _hint_setup()
+    clock = [None]
+    mem.run_clock = lambda: clock[0]
+
+    def run(left):                                  # a run started now, `left` its time
+        clock[0] = (time.perf_counter(), left)
+    srv.halt_aware = True
+    _post(mem, lay, 1, [G + 3, G + 4])              # 3 and 4 hinted: 6 parts to send
+    assert srv.poll() == 1 and len(srv.pending) == 2
+    need = PART_S0 + srv.part / PART_GBS
+    run(need / 2)                                   # the run ends before a part would
+    assert srv.poll() == 0 and srv.poll() == 0 and srv.holds == 2
+    assert dict(srv.pending) == {3: 0, 4: 0} and srv._waits == 0.0
+    _post(mem, lay, 2, [E + 0, E + 1])              # a request (layer 1, 2 misses): served at
+    assert srv.poll() == 1 and _served(mem, lay) == 2.0 and srv.holds == 2   # once, its time
+    assert srv._waits > 0                           # the run's own wait
+    srv._wait(2 * need)                             # (a wait of 2 parts: the end moves out)
+    assert srv.poll() == 1 and srv.pending[3] == srv.part and srv.part_s is not None
+    srv.part_s = 1.0                                # (measured parts of a second)
+    run(0.5)                                        # a new run: its waits from 0
+    assert srv.poll() == 0 and srv._waits == 0.0 and srv.holds == 3
+    assert srv.poll() == 0 and srv.holds == 4
+    run(-2 * HOLD_LATE)                             # past its end: parts again
+    assert srv.poll() == 1
+    run(0.5)
+    srv.halt_aware = False                          # off: no hold
+    assert srv.poll() == 1 and srv.holds == 4
+    clock[0], srv.halt_aware = None, True           # no clock: no hold
+    while srv.pending:
+        assert srv.poll() == 1
+    assert _landed(mem, lay, srv, 3) and _landed(mem, lay, srv, 4)
+
+
+def test_a_held_idle_poll_leaves_no_dma_in_flight():
+    """halt_aware holding the first part of an ahead expert that has just taken a victim's
+    slot (_next_ahead clears the victim's entry, a DMA): the poll flushes before it returns 0,
+    so the next poll's read of seq meets no DMA in flight (BoardDram.read raises with one)."""
+    import time
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import RUN, BoardDram
+
+    class Slow(FakeTransport):
+        def mem_write(self, ch, off, data):
+            time.sleep(5e-3)
+            super().mem_write(ch, off, data)
+
+    lay = Layout.build(4096, 8, 2, (2, 2, 2), RUN)
+    srv = ExpertServer(BoardDram(SimpleNamespace(board=Board(Slow(ch_bytes=1 << 21,
+                                                                  devname=None))), lay),
+                       lay, lambda g: np.full(RUN, g + 1, np.uint8), policy="lfu", part=RUN)
+    srv.load([0, 1, 8, 9, 16, 17])                  # every slot full: 20 needs a victim
+    srv.begin_prefill(ahead=True)
+    srv.ahead_layer(2, [20])
+    srv.halt_aware, srv.mem.run_clock = True, lambda: (time.perf_counter(), 1e-6)
+    assert srv.poll() == 0 and srv.holds == 1 and 20 in srv.pending
+    assert srv.poll() == 0 and srv.holds == 2       # (its read of seq: no DMA in flight)
+    srv.halt_aware = False
+    assert srv.poll() == 1 and not srv.pending and srv.landed == 1
+
+
 def test_board_dram_raises_a_dma_error_at_flush():
     """A DMA call that fails in BoardDram's worker is raised by the next flush (ExpertServer.poll
     calls it), not lost."""
@@ -743,6 +894,41 @@ def test_a_request_withdraws_its_layers_unnamed_hints_with_drop():
     _post(mem, lay, 4, [7, 4])                      # 7 takes 3's slot: 0 stays
     srv.poll()
     assert set(srv.lru[0]) == {0, 4, 7} and _landed(mem, lay, srv, 7)
+
+
+def test_an_expert_landed_in_the_poll_before_a_request_is_answered():
+    """docs/offload.md 12.8: a request posted while an idle poll lands one of its experts
+    (after the poll read seq, before the expert's entry landed): the card may read that entry
+    as missing and wait on its answer word. The host serves that expert as a hit, so the
+    request's answer names its slot all the same (its tag landed with it), even with no miss.
+    An expert landed two polls before a request is not answered (the card reads its entry
+    after the poll between read seq, by when the entry had landed)."""
+    from opentpu.host.offload import RUN
+    lay, mem, srv, G = _hint_setup(slot=RUN)        # experts of one part
+    _post(mem, lay, 1, [G + 3, G + 4])              # hint: 3 and 4 take slots (2 and 1 leave)
+    assert srv.poll() == 1 and dict(srv.pending) == {3: 0, 4: 0}
+    read, posted = mem.read, []
+
+    def late(a, n):                                 # the card posts right after the poll's
+        r = read(a, n)                              # read of seq
+        if a == lay.mbox and not posted:
+            posted.append(1)
+            _post(mem, lay, 2, [0, 3])
+        return r
+    mem.read = late
+    assert _entry(mem, lay, 3) == (0, 0.0)          # what the card reads: 3 missing
+    assert srv.poll() == 1 and dict(srv.pending) == {4: 0}  # this poll lands 3 (its entry)
+    mem.read = read
+    assert _landed(mem, lay, srv, 3)
+    assert srv.poll() == 1 and srv.misses == 0 and srv.late == 1    # 0 and 3: hits
+    ans = np.frombuffer(mem.read(lay.answer, 8), np.uint32)
+    assert ans[1] == srv.lru[0][3] and ans[0] == 0  # 3's slot named, 0's not
+    mem.write(lay.answer, np.zeros(2, np.uint32))   # (the card zeroes it)
+    assert srv.poll() == 1 and not srv.pending      # 4 lands, then a poll with nothing
+    assert srv.poll() == 0
+    _post(mem, lay, 3, [4, 0])
+    assert srv.poll() == 1 and srv.late == 1
+    assert not np.frombuffer(mem.read(lay.answer, 8), np.uint32).any()
 
 
 def test_hint_caps_send_the_first_n_of_its_top_ids_not_in_a_slot():

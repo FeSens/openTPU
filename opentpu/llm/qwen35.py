@@ -62,7 +62,6 @@ from types import SimpleNamespace
 import numpy as np
 
 from .. import fp32 as F
-from .. import isa as I
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
@@ -77,8 +76,8 @@ from .lfm2 import _place, plan, run_layers
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
-from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, _attention,
-                    _attention_rows, _Bump,
+from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, RunWords,
+                    _attention, _attention_rows, _Bump,
                     _embed, _fake_q, _fake_w, _formats, _gather, _inputs, _inputs_rows,
                     _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc, _mlp,
                     _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode, rope_tables,
@@ -1166,9 +1165,10 @@ class Image(EmbedHost):
 
     def compile_prompt_run(self, blocks: int, R: int, kind: str, block: int = ATTN_BLOCK,
                            hidden: bool = False, slot: int = 0, p0: int | None = None):
-        """qwen35_prompt_run's programs (docs/prefill.md), one per slice: R rows of a prompt
-        at a run-time position of bucket `blocks` (from conv_k - 1; the position in the state's
-        tpos word), or at the compile-time position p0 (the rows before conv_k - 1)."""
+        """qwen35_prompt_run's (programs, run_args) (docs/prefill.md), a program per slice: R
+        rows of a prompt at a run-time position of bucket `blocks` (from conv_k - 1; the
+        position in the state's tpos word), or at the compile-time position p0 (the rows
+        before conv_k - 1; no run_args)."""
         spec = self.spec
         if spec.moe is not None:
             raise ValueError("a MoE model's prompt runs layer by layer (compile_layer_run)")
@@ -1184,10 +1184,11 @@ class Image(EmbedHost):
                           1 if kind == "M" else 0)
         else:
             pos = p0
-        return [qwen35_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s, slot),
-                                                      "pos": pos, "R": R, "kind": kind,
-                                                      "block": block, "hidden": hidden}).finish()
-                for s in range(self.cfg.S)]
+        bs = [qwen35_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s, slot), "pos": pos,
+                                                    "R": R, "kind": kind, "block": block,
+                                                    "hidden": hidden})
+              for s in range(self.cfg.S)]
+        return [b.finish() for b in bs], list(bs[0].run_args)
 
     def compile_mtp_run(self, blocks: int, lo: int, R: int, block: int = ATTN_BLOCK,
                         h0: int = 0):
@@ -2267,23 +2268,12 @@ def qwen35_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK, hidden
     tokens of the positions after them). pos: a RunRows (toks_at 0, M's 1) at the run-time
     position in the generate state's tpos word (run_words: no host arguments), or the run's
     first position, a compile-time one (the rows before conv_k - 1). hidden: MTP's rows."""
-    b = current()
-    run = isinstance(pos, RunRows)
-    if run:
-        tw = ol.load(m.gen.state[G.S_TPOS:G.S_TPOS + 1])
-        at = b.stack[-1][-1]
-        b.run_words = {"tpos": tw.base}
-    toks = None if run else OutTokens(1 if kind == "M" else 0)
-    if kind == "M":
-        qwen35_mtp.fn(m, pos, R, block, tokens=toks)
-    else:
-        qwen35_rows.fn(m, pos, R, [R - 1] if kind == "L" else [], block, toks, False, hidden)
-    if run:                     # the arguments from the tpos word, at the program's start
-        body = b.stack[-1]
-        i = next(j for j, x in enumerate(body) if x is at) + 1
-        body[i:i] = [I.rld(15 - k, tw.base, mul=int(c), comment=f"argument {c}*{v.name}")
-                     for k, (v, c) in enumerate(b.run_args)]
-        b.run_words = None
+    toks = None if isinstance(pos, RunRows) else OutTokens(1 if kind == "M" else 0)
+    with RunWords(m, pos):
+        if kind == "M":
+            qwen35_mtp.fn(m, pos, R, block, tokens=toks)
+        else:
+            qwen35_rows.fn(m, pos, R, [R - 1] if kind == "L" else [], block, toks, False, hidden)
 
 
 @ol.jit

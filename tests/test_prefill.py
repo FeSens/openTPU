@@ -9,10 +9,9 @@ import numpy as np
 import pytest
 
 from opentpu.isasim import board_config
-from opentpu.llm import generate as G
 from opentpu.llm import prefill as PF
 from opentpu.llm.mtp import MTPDecoder, MTPStats, mtp_engine
-from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+from opentpu.llm.qwen3 import PREFILL_ROWS, RUN_WORDS, Engine, device_config
 
 from test_mtp import CFG, FP4, _mtp_kv, _mtp_weights, _states
 from test_qwen35 import _tiny_model
@@ -28,12 +27,15 @@ def test_split():
     assert PF.split(250, 263, 4, 256, 4) == [(250, 4, "P"), (254, 2, "P"), (256, 4, "P"),
                                              (260, 3, "L")]
     assert PF.split(37, 38, 4, 256, 4) == [(37, 1, "L")]
+    # R_max per bucket: 3 rows in bucket 1, 1 in bucket 2
+    assert PF.split(250, 259, lambda b: 3 if b == 1 else 1, 256, 4) == [
+        (250, 3, "P"), (253, 3, "P"), (256, 1, "P"), (257, 1, "P"), (258, 1, "L")]
 
 
 def _static(eng, toks, R_max):
     """Engine.prefill as compile-time runs (compile_rows) of the prompt runs' split."""
     p0, img, B = eng.pos, eng.image, eng.block
-    for p, R, kind in PF.split(p0, p0 + len(toks), R_max, B, eng.spec.conv_k):
+    for p, R, kind in PF.split(p0, p0 + len(toks), R_max, B, PF.conv_k(eng)):
         rows, lr, tk = [(0, p + j) for j in range(R)], [R - 1] if kind == "L" else [], \
             toks[p - p0:p - p0 + R]
         lg = eng._run_rows(rows, tk, lr, img.compile_rows(rows, lr, B, tokens=tk))
@@ -42,18 +44,27 @@ def _static(eng, toks, R_max):
 
 
 def _drams(eng, P):
-    """Each slice's DRAM but the prompt runs' own words: out[0 .. P] and the state's tpos."""
+    """Each slice's DRAM but the prompt runs' own words: out[0 .. P] and the state's run
+    words (tpos, LFM2's ring words: qwen3.RUN_WORDS)."""
     g = eng.image.lookup["gen"]
     out = []
     for s in eng.backend.machine.slices:
         d = s.dram.copy()
         d[g["out"]:g["out"] + 4 * (P + 1)] = 0
-        d[g["state"] + 4 * G.S_TPOS:g["state"] + 4 * G.S_TPOS + 4] = 0
+        for w in RUN_WORDS.values():
+            d[g["state"] + 4 * w:g["state"] + 4 * w + 4] = 0
         out.append(d)
     return out
 
 
 def _model(case):
+    if case.startswith(("qwen3", "lfm2")):  # Qwen3 (no convolutions: every run at a run-time
+        from test_autodecode import _tiny   # position), LFM2 (its 3-tap convolutions' ring)
+        W, spec = _tiny(case.split("-")[0])
+        if case == "qwen3-emb8":
+            spec = dataclasses.replace(spec, embed="int8")
+        S = 2 if case.endswith("-design") else 1
+        return W, spec, device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S), {}
     if case == "kh16":
         _, W, spec = _tiny_model(16, 16, init=0.2)
         return W, spec, board_config(DRAM_BYTES=1 << 26, DSTEP=True, STREAM=True, PAIR=True), {}
@@ -71,6 +82,11 @@ def _model(case):
     ("emb8", 37, 30),       # the int8 embedding (a scaled row gather per token)
     ("fp4", 37, 30),        # 4-bit weights with PAIR: runs of more than MCOLS / 2 rows
     ("design", 37, 30),     # two slices, 8 MXU columns: runs of 8 rows
+    ("qwen3", 250, 20),     # Qwen3 (qwen3_rows), one slice
+    ("qwen3-design", 37, 30),
+    ("qwen3-emb8", 37, 30),     # the int8 embedding (Llama-likes: SmolLM3, Phi-4-mini)
+    ("lfm2", 250, 20),
+    ("lfm2-design", 37, 30),
 ])
 def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     """Two prompts, the second from where the first left (a chat's next turn): each one's last
@@ -83,18 +99,20 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     a = Engine(spec, W, cap=512, cfg=cfg, resident=True, prompt_runs=True, **kw)
     assert PF.supported(a)
     got = [a.prefill(p1), a.prefill(p2)]
-    R_max = a._prompt_rmax
-    assert R_max == min(cfg.MCOLS, a.image.rows)
+    rm = a._prompt_rmax                      # the tiny models: every bucket's the most rows
+    assert set(rm.values()) == {(min(cfg.MCOLS, a.image.rows), True)}
+    R_max = lambda blocks: rm[blocks][0]
     b = Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw)
     want = [_static(b, p1, R_max), _static(b, p2, R_max)]
     assert all(np.array_equal(x, y) for x, y in zip(got, want))
     assert [s["rows"] for s in a.stats] == [s["rows"] for s in b.stats]
     assert a.pos == b.pos == P1 + P2
     assert all(np.array_equal(x, y) for x, y in zip(_drams(a, P1 + P2), _drams(b, P1 + P2)))
-    runs = PF.split(0, P1, R_max, 256, spec.conv_k) + PF.split(P1, P1 + P2, R_max, 256,
-                                                               spec.conv_k)
-    keys = {(k, R, "at", p) if p < spec.conv_k - 1 else (k, R, p // 256 + 1)
-            for p, R, k in runs} | {("L", R_max, 2)}       # (r_max's: the last bucket's L)
+    K = PF.conv_k(a)
+    runs = PF.split(0, P1, R_max, 256, K) + PF.split(P1, P1 + P2, R_max, 256, K)
+    keys = {(k, R, "at", p) if p < K - 1 else (k, R, p // 256 + 1)
+            for p, R, k in runs} | {("L", R, b) for b, (R, _) in rm.items()}  # (r_max's probes)
+    assert sorted(rm) == sorted({p // 256 + 1 for p, _, _ in runs})
     assert {(k[1], k[2], k[3], k[4]) if k[3] == "at" else (k[1], k[2], k[3])
             for k in a._prompt_progs} == keys
     if case == "fp4":
@@ -103,9 +121,40 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     # (fit_chunk's runs) gives the same logits, states and windows, and the next step's logits
     c = Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw)
     assert all(np.array_equal(x, c.prefill(t)) for x, t in zip(got, (p1, p2)))
-    assert all(np.array_equal(x, y) for x, y in zip(_states(a, spec, 0), _states(c, spec, 0)))
+    if "linear" in getattr(spec, "kinds", ()):     # Qwen3.5's DeltaNet states and windows
+        assert all(np.array_equal(x, y) for x, y in zip(_states(a, spec, 0), _states(c, spec, 0)))
     assert np.array_equal(a.step(5), c.step(5))
 
+
+
+def test_todays_route_where_it_fits_more_rows(monkeypatch):
+    """prefill.covers: where today's prefill (compile_rows) fits more rows in a bucket than its
+    prompt run (here bucket 2's prompt programs held to 2 rows), a prompt that reaches the
+    bucket takes today's runs (their rows, logits and the next step); one in bucket 1 still
+    takes prompt runs."""
+    from opentpu.compiler import CompileError
+    W, spec, cfg, _ = _model("qwen3")
+    r = np.random.default_rng(3)
+    p1, p2 = ([int(t) for t in r.integers(0, 1000, n)] for n in (30, 240))
+    a = Engine(spec, W, cap=512, cfg=cfg, resident=True, prompt_runs=True)
+    real = a.image.compile_prompt_run
+
+    def held(blocks, R, *args, **kw):
+        if blocks == 2 and R > 2:
+            raise CompileError("TMEM exhausted (the test's bucket 2)")
+        return real(blocks, R, *args, **kw)
+    monkeypatch.setattr(a.image, "compile_prompt_run", held)
+    c = Engine(spec, W, cap=512, cfg=cfg, resident=True)
+    R = min(cfg.MCOLS, a.image.rows)
+    assert R > 3
+    assert np.array_equal(a.prefill(p1), c.prefill(p1))
+    assert [s["rows"] for s in a.stats] == [n for _, n, _ in PF.split(0, 30, R, 256, 1)]
+    na, nc = len(a.stats), len(c.stats)
+    assert np.array_equal(a.prefill(p2), c.prefill(p2))
+    assert a._prompt_rmax == {1: (R, True), 2: (2, False)}
+    assert [s["rows"] for s in a.stats[na:]] == [s["rows"] for s in c.stats[nc:]]
+    assert {k for k in a._prompt_progs if k[3] == 2} == {("prompt", "L", 2, 2, False, 0)}
+    assert np.array_equal(a.step(5), c.step(5))
 
 def _static_mtp(dec, R_max):
     """MTPDecoder.prefill as compile-time runs of the prompt runs' split: the rows (hidden,
@@ -117,7 +166,7 @@ def _static_mtp(dec, R_max):
         P = p0 + len(toks)
         if p0 == 0:
             dec.slot = 0
-        for p, R, kind in PF.split(p0, P, R_max, eng.block, eng.spec.conv_k):
+        for p, R, kind in PF.split(p0, P, R_max, eng.block, PF.conv_k(eng)):
             i = p - p0
             dec._run(img.compile_rows([(0, p + j) for j in range(R)],
                                       [R - 1] if kind == "L" else [], eng.block,
@@ -146,8 +195,7 @@ def test_mtp_prompt_runs_are_compile_time_runs(P1):
     p1, p2 = [int(t) for t in r.integers(0, 1000, P1)], [int(t) for t in r.integers(0, 1000, 9)]
     a = MTPDecoder(mtp_engine(spec, W, cap=512, cfg=CFG, prompt_runs=True))
     b = MTPDecoder(mtp_engine(spec, W, cap=512, cfg=CFG))
-    R_max = PF.r_max(a.eng)
-    b.prefill = _static_mtp(b, R_max)
+    b.prefill = _static_mtp(b, lambda blocks: PF.r_max(a.eng, blocks))
     sa, sb = a.generate(p1, max_new=6), b.generate(p1, max_new=6)
     assert sa.tokens == sb.tokens and a.slot == b.slot and a.eng.pos == b.eng.pos
     plain = Engine(spec, W, cap=512, cfg=CFG, resident=True, prompt_runs=True)
@@ -197,5 +245,32 @@ def test_prompt_programs_come_from_the_cache(tmp_path, monkeypatch):
     s = dict(PC.stats)
     got, eng = run(True)
     assert got == want and PC.stats["compile"] == s["compile"]
-    assert PC.stats["disk"] - s["disk"] == NK + len(eng._prompt_progs)
+    # (and R_max: progcache.fact)
+    assert PC.stats["disk"] - s["disk"] == NK + len(eng._prompt_progs) + len(eng._prompt_rmax)
+    PC.clear()
+
+
+def test_bucket_1_programs_are_warmed_at_start(tmp_path, monkeypatch):
+    """prefill.warm: an engine with the pipeline compiles bucket 1's prompt programs on a thread
+    as it starts, so a prompt in bucket 1 compiles none and gives the logits of an engine
+    without it; a new process's engine takes R_max and the programs from the program cache
+    (no compile)."""
+    from opentpu import progcache as PC
+    monkeypatch.setenv("OTPU_PROG_CACHE", str(tmp_path))
+    PC.clear()
+    _, W, spec = _tiny_model(8, init=0.2)
+    prompt = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 21)]
+    eng = Engine(spec, W, cap=512, cfg=CFG, resident=True, prompt_runs=True, pipeline=True,
+                 prog_cache=True)
+    eng._prompt_warm.join(timeout=600)
+    warmed = set(eng._prompt_progs)
+    assert len(warmed) == 2 + PF.r_max(eng, 1)          # first run, P, L of every R
+    lg = eng.prefill(prompt)
+    assert set(eng._prompt_progs) == warmed
+    assert np.array_equal(lg, Engine(spec, W, cap=512, cfg=CFG, resident=True,
+                                     prompt_runs=True).prefill(prompt))
+    PC.clear()
+    s = dict(PC.stats)
+    again = Engine(spec, W, cap=512, cfg=CFG, resident=True, prompt_runs=True, prog_cache=True)
+    assert np.array_equal(again.prefill(prompt), lg) and PC.stats["compile"] == s["compile"]
     PC.clear()

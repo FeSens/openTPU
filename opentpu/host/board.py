@@ -24,6 +24,7 @@ the temperature: info() reports regmap 1 and snapshot() returns None.
 """
 from __future__ import annotations
 
+import collections
 import concurrent.futures
 import fcntl
 import mmap
@@ -88,6 +89,7 @@ STREAM_RETRY = 0.1e-3           # probe again after this when it is not complete
 STREAM_PROBE = 0.5e-3           # probe interval when no completion time is known yet
 TAIL_SETTLE = 5e-3              # after HALTED: how long the last stores may take to land
 WR_SETTLE = 2e-3                # after HALTED: the longest wait for WR_IDLE
+RUN_CLOCK_N = 16                # run_clock: a program's time with no waits, the least of its last 16 runs
 HOST_IDLE = 50e-6               # BoardBackend.host: the sleep between polls it had nothing for
                                 # (a transport's host_idle instead: XdmaTransport's 0)
 HOST_TAKE = 1e-3                # run_generate with a host hook: out[] read at most this often (its
@@ -1001,6 +1003,7 @@ class BoardBackend:
         # run of a program of its length took (the first decode run after a prefill chunk,
         # expected to take the chunk's 25 ms, was seen 14 ms late on the card)
         self._expects: dict[int, float] = {}
+        self._t0s: dict = {}                # program length -> its last runs' seconds (run_clock)
         self._key = 0
         self._ratio = 1.0                   # run wall time / (CYCLES / CORE_KHZ), smoothed
         self._seen = None                   # HALTED seen by the streamed wait (perf_counter)
@@ -1144,6 +1147,17 @@ class BoardBackend:
         self.board.start(trace=self.trace)
         self._running, self._stream = programs, stream
 
+    def run_clock(self) -> tuple | None:
+        """(the started run's start, perf_counter; its time with no waits: the shortest of the
+        last RUN_CLOCK_N runs of its program's length, seen wall time per device second as
+        _next_expect's ratio), or None with no run started or none of its length before
+        (docs/offload.md 13.12: the expert server adds the run's own waits on it and holds idle
+        parts back near its end)."""
+        ts = self._t0s.get(self._key)
+        if self._running is None or not ts:
+            return None
+        return self.board._t_run, min(ts)
+
     def wait(self, feed=None) -> dict:
         """Wait for the started program; returns its counters (run's second half). After a
         start(stream=...), feed(offset, words) gets every piece of the logits (byte offset in
@@ -1163,6 +1177,9 @@ class BoardBackend:
             raise
         khz = self.info["core_khz"]
         self._expects[self._key] = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
+        if khz:
+            self._t0s.setdefault(self._key, collections.deque(maxlen=RUN_CLOCK_N)).append(
+                st["cycles"] / (khz * 1e3) * self._ratio)
         self.last = (programs, st)
         if self.status is not None:
             self.status.token(st["cycles"], khz, dram=self._layout(True))

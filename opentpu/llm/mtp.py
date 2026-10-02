@@ -145,8 +145,8 @@ class MTPDecoder:
                              f"{self.img.cap}, and the next token needs a position")
         if p0 == 0:
             self.slot = 0
-        if self.eng.prompt_runs and PF.supported(self.eng):     # docs/prefill.md
-            a0, draft = PF.mtp(self, toks, st, pick, on_run)
+        if self.eng.prompt_runs and PF.supported(self.eng) and PF.covers(self.eng, p0, P):
+            a0, draft = PF.mtp(self, toks, st, pick, on_run)    # docs/prefill.md
             self.draft = draft
             return a0, draft
         a0 = draft = None
