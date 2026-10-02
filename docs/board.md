@@ -2,13 +2,14 @@
 
 The board build: one openTPU slice (D = 128, 4 MXU columns with the systolic MXU, 8 VPU lanes,
 64K-word TMEM) on a Kintex-7 xc7k480t-ffg1156-2, with both DDR3 channels (2 x 2 GiB) behind the
-LiteDRAM core ([litedram.md](litedram.md)), and the host PC over PCIe Gen1 x8 (Xilinx XDMA). The host compiles each token's
+LiteDRAM core ([litedram.md](litedram.md)), and the host PC over PCIe Gen2 x8 (Xilinx XDMA; Gen1 x8 with
+PCIE_GEN=1). The host compiles each token's
 program, loads it and runs it; `otpu-chat --backend board` chats with Qwen3-0.6B (or LFM2.5-230M,
 or Qwen3.5-0.8B) on it.
 
 ```
- host PC ── PCIe Gen1 x8 ── XDMA ──┬── AXI-Lite (BAR0) ── control registers, LiteDRAM CSRs, XADC
-                                   └── AXI4 128b @125 MHz ── otpu_axi_split2 ──┐ (bit 31: channel)
+ host PC ── PCIe Gen2 x8 ── XDMA ──┬── AXI-Lite (BAR0) ── control registers, LiteDRAM CSRs, XADC
+                                   └── AXI4 128b @250 MHz ── otpu_axi_split2 ──┐ (bit 31: channel)
                                                                                │
     otpu_board (core_clk) ── native 512b ch0 ── otpu_mem_ch ── LiteDRAM ch0 ── DDR3 CH0 (2 GiB)
       slice + otpu_native_dram ── ch1 ───────── otpu_mem_ch ── LiteDRAM ch1 ── DDR3 CH1 (2 GiB)
@@ -224,8 +225,10 @@ sudo otpu-setup --rescan     # remove + rescan the card, bind the driver, read t
 otpu-setup --check           # the whole host setup, the card and the link
 ```
 
-Expect the link at Gen1 x8 (2.5 GT/s, `LnkCap` also 2.5GT/s x8): the XDMA is configured for
-Gen1 (section 5), so 2.5 GT/s is not a downtrained link. Device ID 7028 is set in the block
+Expect the link at the card's own `LnkCap`: 5 GT/s x8 on a Gen2 bitstream (PCIE_GEN 2, the default
+since g2fix 0885d436, 2026-10-01: 2.29 GB/s host to card on opentpu), 2.5 GT/s x8 on a Gen1 one
+(PCIE_GEN=1, section 5), where 2.5 GT/s is not a downtrained link. `otpu-diag` and `otpu-setup
+--check` compare the link with the card's own speed. Device ID 7028 is set in the block
 design (Xilinx's default for a 7-series Gen2 x8 core; 7018 would be Gen1 x8; both are in the
 XDMA driver's table, so the driver binds either way). The block design also sets the class
 (12 00 00, processing accelerator), subsystem 10ee:4f54 and revision 01; bitstreams built
@@ -570,7 +573,7 @@ so the 8250 driver probes the card: a udev rule sets `driver_override=xdma` (now
 | clk_mig | VCO / 3 | MMCM /3 | MIG system clock at DDR3-1066 (266.667 MHz) and 1333 (333.333 MHz) |
 | ui_clk0/1 | 100 MHz (133 / 162.5 / 167 / 200 at 1066 / 1300 / 1333 / 1600) | MIG | MIG AXI side, 512 bit |
 | DDR3 CK | 400 MHz (533 / 650 / 667 / 800) | MIG PLL | memory |
-| axi_aclk | 125 MHz | XDMA | PCIe AXI side, 128 bit (Gen1 x8) |
+| axi_aclk | 250 MHz (125 at Gen1) | XDMA | PCIe AXI side, 128 bit (Gen2 x8; PCIE_GEN=1: Gen1 x8) |
 
 Decode is DRAM-bound: every token streams all weights once. The accelerator consumes one
 128-byte chunk per core cycle at its peak; each DDR3 channel (x64) delivers 8 bytes per CK edge.
@@ -589,8 +592,9 @@ paths at their own clocks (100 / 125 MHz), XDMA 125 MHz (fixed by the IP at Gen1
 efficiency (refresh, row misses, read/write turnaround) is ~70-85 %, which the accelerator's
 deep prefetch absorbs; a core clock above 100 MHz buys nothing at DDR3-800. Host transfers
 per token are small (program ~40 KB, logits 600 KB): the one-time weight upload (~820 MB) takes
-~0.5-0.7 s at Gen1 x8 (2 GB/s). Gen1 rather than Gen2: at Gen2 the PCIe block runs a
-500 MHz user clock whose IP-placed paths missed timing by ~0.1 ns (Vivado 2026.1, 80 MHz build).
+~0.5-0.7 s at Gen1 x8 (2 GB/s). Gen1 was the setting until 2026-10-01: at Gen2 the PCIe block runs a
+500 MHz user clock whose IP-placed paths missed timing by ~0.1 ns (Vivado 2026.1, 80 MHz build);
+the pcie-gen2 fixes (docs/offload.md section 6, userclk1_reroute.tcl) made Gen2 x8 the default.
 
 ### DRAM efficiency
 

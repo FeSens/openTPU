@@ -103,13 +103,22 @@ class Diag:
 
 # ------------------------------------------------------------------------------ platform
 def pcie_link(dev: str) -> tuple:
-    """(speed, width) of the card's link from sysfs, or None."""
+    """(speed, width, max speed, max width) of the card's link from sysfs, or None. The max is the
+    card's own (its LnkCap: the bitstream's PCIE_GEN, 2.5 GT/s at Gen1 x8, 5.0 GT/s at Gen2 x8)."""
     base = Path(f"/sys/class/xdma/{Path(dev).name}_user/device")
     try:
-        return ((base / "current_link_speed").read_text().strip(),
-                (base / "current_link_width").read_text().strip())
+        return tuple((base / f).read_text().strip() for f in
+                     ("current_link_speed", "current_link_width", "max_link_speed",
+                      "max_link_width"))
     except OSError:
         return None
+
+
+def link_verdict(lk: tuple) -> tuple[bool, str]:
+    """pcie_link's link against the card's own: its bitstream's speed (Gen1 or Gen2) at x8."""
+    sp, wd, msp, mwd = lk
+    ok = sp.split()[0] == msp.split()[0] and wd == "8"
+    return ok, f"{sp} x{wd} (the card's {msp} x{mwd}: expected its speed at x8)"
 
 
 def driver_state(dev: str) -> tuple[bool, str]:
@@ -181,8 +190,10 @@ def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
         hints.append("no openTPU answers on BAR0: link down, bitstream not loaded, or the "
                      "card was reprogrammed after enumeration (otpu-setup --rescan)")
     if st.get("PCIe link") == FAIL:
-        hints.append("PCIe below Gen1 x8: lane order / GT placement (board.md section 6.3), "
-                     "or the slot's width")
+        hints.append("PCIe link below the card's own (its bitstream's Gen at x8): a lower speed "
+                     "is a link that did not retrain after a reload (otpu-setup --rescan, else a "
+                     "warm reboot) or a slower root port; a narrower one is lane order / GT "
+                     "placement (board.md section 6.3) or the slot's width")
     for c in (0, 1):
         if st.get(f"DDR3 calibration channel {c}") == FAIL:
             hints.append(f"channel {c} did not calibrate: LiteDRAM bitstreams: the host's "
@@ -305,8 +316,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
             lk = pcie_link(dev)
             if lk is None:
                 return SKIP, "no sysfs link information (lspci -vv: LnkSta)"
-            ok = lk[0].startswith("2.5") and lk[1] == "8"
-            return ok, f"{lk[0]} x{lk[1]} (expected 2.5 GT/s x8)"
+            return link_verdict(lk)
         d.check("platform", "PCIe link", pcie)
         d.check("platform", "XDMA driver", lambda: driver_state(dev))
 

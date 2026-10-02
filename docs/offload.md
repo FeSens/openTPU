@@ -692,6 +692,32 @@ gains 30% and Qwen3.5-35B 39%, which do once they are the target. The build to t
 timing-only FAST=1 CORE_MHZ=100 build with `pl_link_cap_max_link_speed {5.0_GT/s}` and
 `axisten_freq {250}` in `bd_native.tcl`.
 
+**Feasibility, 2026-10-01 (ld-memch, before any build).** The verdict's condition is met: the
+35B runs end to end on the card and its token is link-bound (107 of 258 ms in PCIe writes at
+1.455 GB/s).
+- **The host takes 5 GT/s.** opentpu's root port (00:01.0, Haswell's PEG x16) reads
+  `max_link_speed` 8.0 GT/s and runs the card at x8, 2.5 GT/s. The card (01:00.0) advertises 2.5
+  GT/s because the XDMA is built for Gen1. Device ID 7028 is already Xilinx's Gen2 x8 default.
+- **What runs in xdma_aclk** (125 -> 250 MHz; XDMA's 7-series Gen2 x8 has a 128-bit AXI side at
+  250 MHz, and the PCIe block's userclk1 goes from 250 to 500 MHz). Its worst path in the memeff
+  build (f8c6c950) is +0.555 ns at 8 ns: our read data, from u_ch0's read FIFO through
+  otpu_axi_split2 into XDMA's read buffer, 6.74 of 7.23 ns route (the channel's bridge sits by
+  its DDR3 bank, XDMA by the PCIe block). XDMA's own worst are its reset fanouts (6.5 ns, 95%
+  route), which a 4 ns constraint makes the tools replicate.
+
+| part | plan |
+|---|---|
+| XDMA (DMA engine at 250 MHz; the PCIe block's userclk1 at 500 MHz) | a supported -2 configuration. The earlier attempt's misses were the IP's own block RAM paths at 500 MHz (~0.1 ns). Levers: a pblock for the IP by the PCIe block and its GTX quad, phys_opt on those cells, place / route directives |
+| the DMA master's boundary (M_AXI_DMA) | register every channel at XDMA (an AXI register slice in the block design, fully registered) and put otpu_mem_ch's read data out of a register (it is the FIFO's asynchronous read today, through the split's mux), so no path crosses the die in one 4 ns cycle |
+| otpu_axi_split2 | stays at 250 MHz (order FIFOs, valids from registers); out-of-context check, pipelined if it misses |
+| otpu_mem_ch's XDMA side (x2) | the burst packing (16 -> 64-byte beats), B, the read return and the FIFOs' xclk ends at 250 MHz; out-of-context (tools/memch_ooc.tcl) at 4 ns. otpu_mem_ch.tcl's crossing constraints follow xclk's period |
+| the LiteDRAM CSR crossing | moved out of xdma_aclk: M_AXI_MEMCAL on the SmartConnect's core_clk side, the core's ctl_clk = core_clk (the core crosses it into sys as now; no regeneration; BAR0 0x10000 unchanged). otpu_top_native.tcl's CSR max delays follow it |
+| the AXI-Lite SmartConnect | only its slave side (XDMA's AXI-Lite master) stays at 250 MHz, all three masters on core_clk; Xilinx IP, it crosses the clocks itself |
+
+- **The probe build** (step 2): FAST=1, CORE_MHZ=100, `pl_link_cap_max_link_speed {5.0_GT/s}`,
+  `axisten_freq {250}`, xdma_aclk's FREQ_HZ 250 MHz. It reports WNS per clock (userclk1 at 500 MHz
+  first) before any of the RTL above changes.
+
 ## 7. Gemma 4 E4B: the per-layer embeddings from the host
 
 E4B is dense, and misses 4 GiB only by its PLE table (262,144 x 42 x 256 = 2.82 B parameters).

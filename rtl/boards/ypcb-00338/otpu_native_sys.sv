@@ -9,6 +9,8 @@
 //        host runs through its CSRs; opentpu/host/memcal.py).
 //   calib: each channel's calibration flag in its controller's clock (STATUS CALIB0/1; synchronized
 //        in otpu_board).
+//   XREG: register slices on both sides of the split (otpu_dma_split REG; PCIe Gen2: xclk at 250
+//        MHz, the top's PCIE_GEN). 0: none, as at Gen1.
 module otpu_native_sys #(
   parameter int MCOLS = 2,
   parameter int ACT_ROWS = MCOLS,
@@ -20,7 +22,8 @@ module otpu_native_sys #(
   parameter logic [31:0] BUILD_ID = 32'h0,
   parameter int DDR_MTS = 0,
   parameter bit DSTEP = 1'b1,
-  parameter bit HOSTCAL = 1'b0
+  parameter bit HOSTCAL = 1'b0,
+  parameter bit XREG = 1'b0
 ) (
   // core clock and reset (synchronous, high), XDMA's clock and reset
   input  logic                  clk,
@@ -99,14 +102,17 @@ module otpu_native_sys #(
   logic [1:0][63:0]  n_wmask;
   logic [1:0][15:0]  n_wdone;
   logic [1:0]        n_err;
-  // XDMA's per channel (otpu_axi_split2's masters)
-  logic [1:0]        m_awvalid, m_awready, m_wvalid, m_wready, m_bvalid, m_bready;
+  // XDMA's per channel (otpu_dma_split's masters)
+  logic [1:0]        m_awvalid, m_awready, m_wvalid, m_wready, m_wlast, m_bvalid, m_bready;
   logic [1:0]        m_arvalid, m_arready, m_rvalid, m_rready, m_rlast;
-  logic [1:0][3:0]   m_bid, m_rid;
+  logic [1:0][3:0]   m_awid, m_arid, m_bid, m_rid;
+  logic [1:0][31:0]  m_awaddr, m_araddr;
+  logic [1:0][7:0]   m_awlen, m_arlen;
+  logic [1:0][127:0] m_wdata, m_rdata;
+  logic [1:0][15:0]  m_wstrb;
   logic [1:0][1:0]   m_bresp, m_rresp;
-  logic [1:0][127:0] m_rdata;
 
-  otpu_axi_split2 #(.IDW(4), .DW(128)) u_split (
+  otpu_dma_split #(.REG(XREG), .IDW(4), .DW(128)) u_split (
     .clk(xclk), .rst(xrst),
     .s_awvalid(x_awvalid), .s_awready(x_awready), .s_awid(x_awid), .s_awaddr(x_awaddr),
     .s_awlen(x_awlen), .s_wvalid(x_wvalid), .s_wready(x_wready), .s_wdata(x_wdata),
@@ -114,21 +120,24 @@ module otpu_native_sys #(
     .s_bid(x_bid), .s_bresp(x_bresp), .s_arvalid(x_arvalid), .s_arready(x_arready),
     .s_arid(x_arid), .s_araddr(x_araddr), .s_arlen(x_arlen), .s_rvalid(x_rvalid),
     .s_rready(x_rready), .s_rid(x_rid), .s_rdata(x_rdata), .s_rresp(x_rresp), .s_rlast(x_rlast),
-    .m_awvalid, .m_awready, .m_wvalid, .m_wready, .m_bvalid, .m_bready, .m_bid, .m_bresp,
-    .m_arvalid, .m_arready, .m_rvalid, .m_rready, .m_rid, .m_rdata, .m_rresp, .m_rlast);
+    .m_awvalid, .m_awready, .m_awid, .m_awaddr, .m_awlen, .m_wvalid, .m_wready, .m_wdata,
+    .m_wstrb, .m_wlast, .m_bvalid, .m_bready, .m_bid, .m_bresp, .m_arvalid, .m_arready, .m_arid,
+    .m_araddr, .m_arlen, .m_rvalid, .m_rready, .m_rid, .m_rdata, .m_rresp, .m_rlast);
 
-  // one bridge per channel; XDMA's address, ID, length and write data go to both (the split's
-  // valids select one)
+  // one bridge per channel
   otpu_mem_ch #(.XIDW(4)) u_ch0 (
     .clk, .rst,
     .n_cvalid(n_cvalid[0]), .n_cready(n_cready[0]), .n_cwe(n_cwe[0]), .n_caddr(n_caddr[0]),
     .n_wvalid(n_wvalid[0]), .n_wready(n_wready[0]), .n_wdata(n_wdata[0]), .n_wmask(n_wmask[0]),
     .n_rvalid(n_rvalid[0]), .n_rdata(n_rdata[0]), .n_wdone(n_wdone[0]), .n_err(n_err[0]),
     .xclk, .xrst,
-    .x_awvalid(m_awvalid[0]), .x_awready(m_awready[0]), .x_awid, .x_awaddr, .x_awlen,
-    .x_wvalid(m_wvalid[0]), .x_wready(m_wready[0]), .x_wdata, .x_wstrb, .x_wlast,
+    .x_awvalid(m_awvalid[0]), .x_awready(m_awready[0]), .x_awid(m_awid[0]),
+    .x_awaddr(m_awaddr[0]), .x_awlen(m_awlen[0]),
+    .x_wvalid(m_wvalid[0]), .x_wready(m_wready[0]), .x_wdata(m_wdata[0]),
+    .x_wstrb(m_wstrb[0]), .x_wlast(m_wlast[0]),
     .x_bvalid(m_bvalid[0]), .x_bready(m_bready[0]), .x_bid(m_bid[0]), .x_bresp(m_bresp[0]),
-    .x_arvalid(m_arvalid[0]), .x_arready(m_arready[0]), .x_arid, .x_araddr, .x_arlen,
+    .x_arvalid(m_arvalid[0]), .x_arready(m_arready[0]), .x_arid(m_arid[0]),
+    .x_araddr(m_araddr[0]), .x_arlen(m_arlen[0]),
     .x_rvalid(m_rvalid[0]), .x_rready(m_rready[0]), .x_rid(m_rid[0]), .x_rdata(m_rdata[0]),
     .x_rresp(m_rresp[0]), .x_rlast(m_rlast[0]),
     .uclk(uclk[0]), .urst(urst[0]),
@@ -143,10 +152,13 @@ module otpu_native_sys #(
     .n_wvalid(n_wvalid[1]), .n_wready(n_wready[1]), .n_wdata(n_wdata[1]), .n_wmask(n_wmask[1]),
     .n_rvalid(n_rvalid[1]), .n_rdata(n_rdata[1]), .n_wdone(n_wdone[1]), .n_err(n_err[1]),
     .xclk, .xrst,
-    .x_awvalid(m_awvalid[1]), .x_awready(m_awready[1]), .x_awid, .x_awaddr, .x_awlen,
-    .x_wvalid(m_wvalid[1]), .x_wready(m_wready[1]), .x_wdata, .x_wstrb, .x_wlast,
+    .x_awvalid(m_awvalid[1]), .x_awready(m_awready[1]), .x_awid(m_awid[1]),
+    .x_awaddr(m_awaddr[1]), .x_awlen(m_awlen[1]),
+    .x_wvalid(m_wvalid[1]), .x_wready(m_wready[1]), .x_wdata(m_wdata[1]),
+    .x_wstrb(m_wstrb[1]), .x_wlast(m_wlast[1]),
     .x_bvalid(m_bvalid[1]), .x_bready(m_bready[1]), .x_bid(m_bid[1]), .x_bresp(m_bresp[1]),
-    .x_arvalid(m_arvalid[1]), .x_arready(m_arready[1]), .x_arid, .x_araddr, .x_arlen,
+    .x_arvalid(m_arvalid[1]), .x_arready(m_arready[1]), .x_arid(m_arid[1]),
+    .x_araddr(m_araddr[1]), .x_arlen(m_arlen[1]),
     .x_rvalid(m_rvalid[1]), .x_rready(m_rready[1]), .x_rid(m_rid[1]), .x_rdata(m_rdata[1]),
     .x_rresp(m_rresp[1]), .x_rlast(m_rlast[1]),
     .uclk(uclk[1]), .urst(urst[1]),
