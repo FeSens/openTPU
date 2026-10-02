@@ -1848,7 +1848,8 @@ token against main ff186b1, memeff):
 The breakdown above, again on the production RTL (main 4e0b866: two ports, memeff, port A's
 flush), now in the tree: `OTPU_LDC_BREAK=1 tools/perf_ddr.py ...` passes `+ldc_break` and
 prints and caches each channel's `BRK` line (`sim/verilator/otpu_ldc_mem.sv`). The categories are
-the same, in the same priority order. The co-simulation must run the board's configuration
+the same, in the same priority order; the line also counts the idle gaps and each bank's row
+changes. The co-simulation must run the board's configuration
 (`OTPU_MCOLS=4 OTPU_MXU=systolic OTPU_PAIR=1 OTPU_DSTEP=1 OTPU_STREAM=1`): without the last three
 the program is not the card's (Qwen3 4-bit: 5.37 M cycles against the card's 3.88 M).
 
@@ -1864,13 +1865,27 @@ its last (channel 1 within 0.1 points):
 | rows opening and closing, a bank's timers | 1.5 | 1.3 | 1.3 |
 | the crossbar | 0.2 | 0.2 | 0.3 |
 | nothing asked | 3.6 | 3.2 | 0.9 |
-| of which gaps of 8+ cycles that end in the next beat of a recent read stream (up to 256 a gap) | 1.0 | 0.4 | 0.1 |
+| of which gaps of 8+ cycles that end in the next beat of one of the last 16 read streams (up to 256 a gap) | 1.5 | 0.8 | 0.1 |
+| the same, of the last 4 streams | 1.0 | 0.4 | 0.1 |
+| row changes per bank, in the ports' order (thousands) | 37.7 | 13.3 | 46.5 |
+| of which back to the bank's previous row (two streams in one bank) | 17% | 14% | 19% |
 
 - **memeff's A runs halved the rows' share** (2.2-2.7% before). Refresh is unchanged and
   structural: DDR3 has no per-bank refresh.
+- **The layout.** In a layer's block every matrix's data is followed by its scales and then by
+  the next matrix's data, in the order the layer runs them (q, k, v, o, gate, up, the down
+  parts), so most matrices start on the next beat of the previous one's scale stream. The
+  exceptions are attention (its KV reads come between v and o) and the next layer (after the
+  layer's KV cache).
 - **A sequential prefetch into the core's gaps** would read, in a gap, the next beats of the read
-  stream the gap interrupted. Its bound is the last row: 0.1 to 1.0%. The other gaps end in a
-  new stream (another matrix, the KV cache), whose address only the program knows. Not taken.
+  stream the gap interrupted. Its bound is the gaps that end in such a beat: 0.1 to 1.5% with an
+  oracle choosing among the last 16 streams, 0.1 to 1.0% among the last 4. The other gaps end
+  in a new stream (the KV cache, the next layer's block), whose address only the program knows.
+  Not taken.
+- **Bank-aware placement** could only avoid the rows that two streams take turns at in one bank:
+  14-19% of the row changes, so about 0.2-0.3% of the cycles at the rows' share. Under
+  ROW_BANK_COLUMN every stream longer than 64 KiB crosses all 8 banks, so a placement cannot
+  keep two streams' banks apart anyway (XOR bank hashing, above: 0.1%). Not taken.
 - **The multiplexer's share** is what `fastmux` takes a third to a half of (-0.3 to -1.0%,
   above). The rows' and the crossbar's are under 1.5% together.
 - **So the controller is within about 6% of its data rate on decode,** and no single fix is worth
