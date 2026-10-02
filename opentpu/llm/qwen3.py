@@ -40,7 +40,6 @@ from . import generate as G
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
-from ..host.board import FILL_SENTINEL
 from ..host.offload import BackendDram, RowLayout, RowServer
 from ..kernels import mailbox as MB
 from ..kernels.gather import dequant_row, gather_row, onehot, onehot_blocks
@@ -1169,7 +1168,8 @@ def fill_logits(m) -> None:
 
 def fill_gate(prog) -> int:
     """The ICOUNT past fill_logits' RLD in `prog` (a slice's instructions, or their words): the
-    instructions up to the first RLD, plus the one after it."""
+    instructions up to the first RLD, plus the one after it. (Instructions read back from the
+    program cache have no comments: there the first RLD must be into r0, as the fill's.)"""
     if isinstance(prog, np.ndarray):
         ops = np.asarray(prog, np.uint32).reshape(-1, 8)[:, 0] & 0xFF
         at = np.flatnonzero(ops[:512] == I.RLD)         # near the start: no whole scan
@@ -1180,7 +1180,7 @@ def fill_gate(prog) -> int:
         return int(at[0]) + 2
     for i, ins in enumerate(prog):
         if ins.op == I.RLD:
-            if ins.comment != "logits fill landed":
+            if ins.comment != "logits fill landed" and (ins.comment or ins.rd != 0):
                 raise ValueError("the program's first RLD is not fill_logits'")
             return i + 2
     raise ValueError("no RLD: not a program compiled with fill")
@@ -1861,7 +1861,8 @@ class Engine:
         return PC.get(self.layout, what, compile) if self.prog_cache else compile()
 
     def _decode_what(self, b: int) -> tuple:
-        return ("decode", b, max((b - 1) * self.block, self._conv_lo))
+        what = ("decode", b, max((b - 1) * self.block, self._conv_lo))
+        return what + ("fill",) if self.image.stream_fill else what    # fill_logits' or not
 
     def _prefetch(self, pos: int) -> None:
         """Precompile the steps at pos .. pos + ahead - 1 (those not in flight yet); resident:
