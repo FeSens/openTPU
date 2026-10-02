@@ -897,6 +897,20 @@ class Image(EmbedHost):
                                                **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
+    def compile_prompt_run(self, blocks: int, R: int, kind: str, block: int = ATTN_BLOCK):
+        """qwen3_prompt_run's (programs, run_args) (docs/prefill.md), a program per slice: R
+        rows of a prompt at a run-time position of bucket `blocks` (the position in the state's
+        tpos word; run_args name the words, RunWords)."""
+        if not self.lookup:
+            raise ValueError("a prompt run needs lookup tables (lookup=True)")
+        if kind not in ("P", "L"):
+            raise ValueError(f"prompt run kind {kind!r}")
+        pos = RunRows(blocks, block, (blocks - 1) * block, self.lookup["zmask"], self.cap, R, 0)
+        bs = [qwen3_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos, "R": R,
+                                                   "kind": kind, "block": block})
+              for s in range(self.cfg.S)]
+        return [b.finish() for b in bs], list(bs[0].run_args)
+
     # ---- kernel descriptors
     def descriptors(self, sid: int) -> SimpleNamespace:
         spec, cfg = self.spec, self.cfg
@@ -1278,6 +1292,43 @@ class OutTokens:
         self.k = k
 
 
+S_RINGO = 32        # prompt runs: LFM2's ring rotation after the run (lfm2._ring_store)
+RUN_WORDS = {"tpos": G.S_TPOS, "ring": G.S_RING, "ringo": S_RINGO}
+
+
+class RunWords:
+    """A prompt run's position (docs/prefill.md): with a RunRows, the run-time arguments come
+    from the generate state's words (RUN_WORDS: tpos, LFM2's ring; the compiler's run_words,
+    no host arguments), loaded at the program's start once the kernel has named them, and
+    pos.words gives the kernel their TMEM addresses (LFM2's ringo); with a compile-time
+    position, nothing. `with RunWords(m, pos): kernel(...)`; the host writes the words before
+    each run (prefill.run: those the run_args name and the image's prompt_words)."""
+
+    def __init__(self, m, pos):
+        self.m, self.pos, self.run = m, pos, isinstance(pos, RunRows)
+
+    def __enter__(self):
+        if self.run:
+            b = current()
+            n = max(RUN_WORDS.values()) + 1
+            self.st = ol.load(self.m.gen.state[0:n])
+            self.at = b.stack[-1][-1]
+            b.run_words = {k: self.st.base + w for k, w in RUN_WORDS.items()}
+            self.pos.words = dict(b.run_words)          # (TMEM addresses for the kernel's RLDs)
+        return self
+
+    def __exit__(self, *exc):
+        if self.run and exc[0] is None:
+            b = current()
+            body = b.stack[-1]
+            i = next(j for j, x in enumerate(body) if x is self.at) + 1
+            body[i:i] = [I.rld(15 - k, b.run_words[v.name], mul=int(c),
+                               comment=f"argument {c}*{v.name}")
+                         for k, (v, c) in enumerate(b.run_args)]
+            b.run_words = None
+        return False
+
+
 def _embed_word(m, t):
     """_embed of the token id in the one-word tile t (a prefill run's, docs/prefill.md): its
     row's address from a scratch register (RLD MUL into a compiler.DevVar) instead of a
@@ -1516,6 +1567,15 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None):
         x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
         x.set(_mlp(x, lw, spec))
     _lm_head_rows(x, m, spec, logit_rows)
+
+
+@ol.jit
+def qwen3_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK):
+    """A prompt run of R rows (docs/prefill.md), qwen3_rows with its tokens from out[]: kind
+    "P", or "L" (the prompt's last run: its last row's logits). pos: a RunRows (toks_at 0) at
+    the run-time position in the generate state's tpos word (RunWords)."""
+    with RunWords(m, pos):
+        qwen3_rows.fn(m, pos, [R - 1] if kind == "L" else [], block)
 
 
 def head_rows_chunk(rows: int) -> int:
@@ -1781,7 +1841,9 @@ class Engine:
 
     prompt_runs (docs/prefill.md): prefill_chunks runs a prompt (sequence 0) from programs at
     run-time positions, its tokens from out[] (opentpu/llm/prefill.py): compiled once per
-    bucket and kind, not per prompt. A dense model's resident image (prefill.supported).
+    bucket and kind, not per prompt. A dense model's resident image (prefill.supported). With
+    the pipeline, bucket 1's are loaded or compiled on a thread as the engine starts
+    (prefill.warm).
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
@@ -1912,6 +1974,9 @@ class Engine:
             self._start_pool()
         if hasattr(self.backend, "attach"):
             self.backend.attach(self)
+        if self.prompt_runs:                # bucket 1's prompt programs, ahead (prefill.warm)
+            from . import prefill as PF
+            PF.warm(self)
 
     # ---- the compile pipeline
     def _compile(self, pos: int, tok: int | None = None) -> list:
@@ -2187,10 +2252,11 @@ class Engine:
         With the pipeline, the next run's program (after the last run: the first decode
         step's) is compiled while the device runs the current one."""
         from . import prefill as PF
-        if self.prompt_runs and seq == 0 and chunk is None and PF.supported(self):
+        tokens = [int(t) for t in tokens]
+        if self.prompt_runs and seq == 0 and chunk is None and PF.supported(self) \
+                and PF.covers(self, self.poss[0], self.poss[0] + len(tokens)):
             yield from PF.chunks(self, tokens)          # docs/prefill.md
             return
-        tokens = [int(t) for t in tokens]
         whole = chunk is None               # else runs of exactly `chunk` where they fit
         chunk = self.rows if chunk is None else max(1, min(chunk, self.rows))
         i = 0
