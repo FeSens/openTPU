@@ -2613,7 +2613,7 @@ What is left:
 `Engine(layer_ahead=...)` (`moe_card.py --layer-ahead index|TRACES`) gives the expert server
 the next MoE layer's experts to send while a layer runs: `ExpertServer.ahead_layer(j, ids)`,
 global ids in the order to send. It is called between runs only:
-- for the first MoE layer, after `begin_prefill`;
+- for the first MoE layer, after `begin_prefill(ahead=True)`;
 - for MoE layer j + 1, before each layer j's first run in a chunk;
 - for the first layer again, before a chunk's last layer when another chunk follows.
 
@@ -2645,9 +2645,15 @@ at 64. Cutting the order hurts at 134 rows: the top 128 of the 35B's 256 experts
 against 8.58 s, since the last expert a layer needs sits at rank 253 of 256 on average.
 Predicted prompts: about 9.9 s for the 35B (13.32 s now) and 14.1 s for the 26B (16.25 s).
 
-The server side (offload) builds on the one-call entry. A queued expert takes its slot when
-queued, never one of the last request's, finished layers first. It is sent one part per idle
-poll and its tag rides in its last part. `end_prefill` drops what has not landed. The Engine side
+The server side (offload) builds on the one-call entry:
+- `ahead_layer` serves the card's last request first (`settle`). Then it replaces what earlier
+  calls queued and has not landed.
+- An expert takes its slot only when its first part goes out on an idle poll: any layer's free
+  slot, else the oldest expert outside the queued ids. A dropped entry evicts nothing.
+- Its tag rides in its last part. A request naming a queued, unsent expert takes it as a miss;
+  one naming an expert in flight gets its rest now.
+- `begin_prefill(ahead=True, part=None)` sets the idle-poll part size, by default the server's
+  `part` (`moe_card.py --hint-part`). `end_prefill` drops the queue and anything in flight. The Engine side
 is tested on the ISA simulator against a stub that loads each queued expert at once
 (`test_layer_ahead_sends_the_next_layers_experts`): the call schedule, fewer misses, and the
 logits and decode bit-exact.

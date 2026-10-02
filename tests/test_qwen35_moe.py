@@ -373,13 +373,15 @@ def test_layer_ahead_sends_the_next_layers_experts(tiny, monkeypatch):
                 srv._insert(j, g, slot)
                 srv.order[g] = None
         srv._flush()
-    srv.ahead_layer = ahead_layer
+    srv.ahead_layer, begin = ahead_layer, srv.begin_prefill
+    srv.begin_prefill = lambda ahead=False: (calls.append(("begin", ahead)), begin())
     toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 21)]
     m0 = a.server.misses, b.server.misses
     la, lb, lr = a.prefill(toks), b.prefill(toks), ref.prefill(toks)
     assert a.image.prefill_rows == 12 and a.pos == len(toks)
-    assert [j for j, _ in calls] == [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
-    assert all(ids == [j * E + e for e in order[j]] for j, ids in calls)
+    assert calls[0] == ("begin", True)          # (the server told: begin_prefill(ahead))
+    assert [j for j, _ in calls[1:]] == [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
+    assert all(ids == [j * E + e for e in order[j]] for j, ids in calls[1:])
     assert np.array_equal(la.view(np.uint32), lr.view(np.uint32))
     assert np.array_equal(lb.view(np.uint32), lr.view(np.uint32))
     assert a.server.misses - m0[0] < b.server.misses - m0[1]

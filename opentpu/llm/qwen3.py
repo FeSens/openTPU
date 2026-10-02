@@ -2250,9 +2250,9 @@ class Engine:
             p0 += len(part)
         self._precompile_layers([k for _, runs in chunks for k, _, _ in runs] + ["head"])
         srv = self.server if self.pooled else None
-        if srv is not None and hasattr(srv, "begin_prefill"):
-            srv.begin_prefill()
         send = getattr(srv, "ahead_layer", None) if self.layer_ahead else None
+        if srv is not None and hasattr(srv, "begin_prefill"):
+            srv.begin_prefill(**({"ahead": True} if send is not None else {}))
         if send is not None:
             self._send_ahead(send, 0)
             first, nm = self.spec.moe.first, img.offload.layers
