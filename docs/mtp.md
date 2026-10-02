@@ -1137,9 +1137,12 @@ start where the loop stopped. Two changes make that work.
 **Real models on the ISA simulator.** `tools/mtp_decode.py --loop device --sample ...`, seed 0,
 prompts 0, 3 and 7, 48 tokens: sampled MTP's tokens equal plain sampled decode's.
 - The 2B at chat's default (T 0.7, top-k 20, top-p 0.8): 3/3.
-- The 2B with penalty 1.1: 2/2. Prompt 7 was stopped by omarchy's memory guard.
+- The 2B with penalty 1.1: 3/3 (prompt 7 in a second run, after omarchy's memory guard
+  stopped the first).
 - The 0.8B at chat's default: 3/3. Its acceptance per prompt, 0.62 / 0.68 / 0.47, equals the
   card's below.
+- The 0.8B with penalty 1.1: 3/3.
+- The RTL loop tests pass on main's porta-flush RTL too (d1cb669 merged).
 
 ### 11.7 Phase 4 on the card
 
