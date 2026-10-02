@@ -2129,6 +2129,39 @@ the lead's part and the rest: 43-58 us a request with misses.
 - Recommendation: at about 1% on the 35B, (1) only if a fused build has room. Propose (3) to the
   user first, since it is the cheapest to measure.
 
+### 10.14 The link alone (serve_emu, 2026-10-02): lever 2 parked
+
+ld-memch's H2C sweep (docs/host.md 2) measures a placed write call alone: about 30 us of fixed
+cost plus 345 us a MiB (~3.0 GB/s), and a 64-byte call at 13.3 us. Run inside a card run, the
+same calls cost more (session 16's per-size fit). The serve_emu run on opentpu (emu/link1.jsonl,
+tree 2ce26c5) replays session 16's runs under three calibrations: session 16's own fit, the link
+alone with no --size-cost, and the link alone at 15 us less a data call. All use the card model of
+its own compute (--card-w, 10.13), the default v1 path, and a discarded warm run first.
+
+| calibration (emulated time per 128 tokens) | 26B | 35B |
+|:--|--:|--:|
+| session 16's in-run fit | 36.15 s | 26.96 s |
+| the link alone (two runs) | 34.52 / 34.52 s: -1.63 s (-4.5%) | 25.71 / 25.62 s: -1.29 s (-4.8%) |
+| the link alone, a data call 15 us cheaper | 34.38 s: -0.14 s more (-0.4%) | 25.40 s: -0.27 s more (-1.1%) |
+
+The first row reproduces session 16's emulation (36.2 and 26.8 s). The repeats differ by 0.005 s
+(26B) and 0.09 s (35B).
+
+- Removing the in-run excess entirely is worth about 4.5-4.8%. On the 26B this matches the
+  analytic bound (-1.51 s). On the 35B it is three times the analytic -0.43 s, because the
+  analytic counted only the data records. The 35B's ~19,000 small calls (answers, entries,
+  served) cost 35.6 us each in-run against 13.3 us alone, and that difference is most of its
+  excess.
+- The excess is the card's DRAM traffic slowing the link while the card computes (13.8's
+  contention, on the link's side). The host cannot remove it. B's window writes (10.12; the
+  bsweep emulation) gave ~0 on top of A.
+- The host's own per-call cost is worth 0.4-1.1% (-15 us a data call). Two calls in flight
+  across records (the tag rule: a tag-carrying call only after the call before it returns) is
+  not in the emulator.
+
+So lever 2, the host's link path, is parked behind the idle parts' v2 (13.12). It comes back if
+a session shows the small calls as the gap.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
