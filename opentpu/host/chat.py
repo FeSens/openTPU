@@ -724,6 +724,9 @@ def main(argv=None):
                          "with 4-bit MM support)")
     ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
                     help="weight format of the LM head (default: --wformat)")
+    ap.add_argument("--no-prog-cache", action="store_true",
+                    help="compile the decode loop's bucket programs in every process (by "
+                         "default they are kept on disk: opentpu/progcache.py)")
     ap.add_argument("--mtp", action="store_true",
                     help="Qwen3.5: decode with the model's MTP drafter, the loop on the device "
                          "(docs/mtp.md): the same replies, greedy or sampled, 1.3-1.6x the "
@@ -746,11 +749,12 @@ def main(argv=None):
         if a.mtp:
             from opentpu.llm.mtp import mtp_engine
             eng = mtp_engine(spec, load_weights(path, mtp=True), cap=a.cap, cfg=cfg,
-                             backend=backend, wformat=a.wformat, head_format=a.head_format)
+                             backend=backend, wformat=a.wformat, head_format=a.head_format,
+                             prog_cache=not a.no_prog_cache)
         else:
             eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
                          wformat=a.wformat, head_format=a.head_format,
-                         resident=not a.per_position)
+                         resident=not a.per_position, prog_cache=not a.no_prog_cache)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
     sp = sampling(spec, a)
