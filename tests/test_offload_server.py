@@ -1679,3 +1679,28 @@ def test_need_report_names_the_running_layers_experts_without_an_entry():
     while srv.poll():
         pass
     assert srv.need_report() == "layer 0: 3 experts needed, 0 without an entry"
+
+
+def test_the_isa_hosts_hook_polls_until_the_expert_runs_wait_holds():
+    """qwen3._isa_host, the ISA simulator's WAITW hook (called once when every slice waits; a
+    wait still not holding after it is the timeout): it polls until a waiting slice's WAITW
+    holds, as the host keeps polling while a card waits. An expert run waiting on a need's
+    entry takes one idle poll a part. With nothing to do it stops after one poll."""
+    from types import SimpleNamespace
+    from opentpu.llm.qwen3 import _isa_host
+    lay, mem, srv, _ = _em_setup()
+    N = lay.need_off
+    _post_n(mem, lay, 1, [3 + N, 1 + N])
+
+    class Pass:                                     # the expert run, waiting on 1's entry
+        polling = "WAITW"
+
+        def holds(self, ins):
+            return _entry(mem, lay, 1)[0] != 0
+    m = SimpleNamespace(slices=[Pass()])
+    _isa_host(srv.poll)(m)
+    assert _landed(mem, lay, srv, 3) and _landed(mem, lay, srv, 1)    # (3 first: in order)
+    assert not srv.needs and not srv.pending and srv.needs_landed == 2
+    calls = []
+    _isa_host(lambda: calls.append(1) or 0)(m)
+    assert calls == [1]

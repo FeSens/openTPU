@@ -156,6 +156,12 @@ class Slice:
         self.execute(ins)
         self.advance()
 
+    def holds(self, ins: I.Instr) -> bool:
+        """Whether WAITW ins's condition holds on its DRAM word now (no effect: poll takes it)."""
+        a = (self.reg(ins.ra) + ins.w[0]) & 0xFFFFFFFF
+        v = int(self.m32[self._widx(np.int64(a))])
+        return I.waitw_holds(v, self.reg(ins.rc) + ins.w[2], ins.flags & 3, ins.w[3])
+
     def poll(self, ins: I.Instr) -> bool:
         """WAITW's DRAM read: if its condition holds, T[R[rb] + w2] = the word's bits and True."""
         a = (self.reg(ins.ra) + ins.w[0]) & 0xFFFFFFFF

@@ -1770,6 +1770,18 @@ def _whole_passes(n: int, mc: int) -> int:
     return n if n <= mc else n - n % mc
 
 
+
+def _isa_host(poll):
+    """The ISA simulator's WAITW hook (called when every slice waits on one): the host polls
+    until a waiting slice's WAITW holds or it has nothing left to do, as it keeps polling while
+    a card waits. One poll serves a request whole; an idle poll moves one part of an expert,
+    so an expert run waiting on a need's entry (docs/offload.md 13.11) takes several."""
+    def host(m):
+        for _ in range(1 << 20):
+            if not poll() or any(s.holds(s.polling) for s in m.slices if s.polling is not None):
+                return
+    return host
+
 class Engine:
     """Decoding on an openTPU backend: Qwen3, or any model whose Spec builds an image with
     compile_step and compile_rows (LFM2: opentpu.llm.lfm2; Qwen3.5: opentpu.llm.qwen35).
@@ -1919,7 +1931,7 @@ class Engine:
             poll = servers[0].poll if len(servers) == 1 else \
                 (lambda: sum(x.poll() for x in servers))
             if isinstance(self.backend, IsaBackend):
-                self.backend.machine.host = lambda m: poll()
+                self.backend.machine.host = _isa_host(poll)
             elif hasattr(self.backend, "host"):
                 self.backend.host = poll
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position

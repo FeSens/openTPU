@@ -3462,6 +3462,17 @@ gemma4's.
   not present, and for each whether it is on its way (bytes sent), queued, or in no slot.
 - Counters: `need_lines`, `needs_queued`, `need_hits` (ids already in a slot), `needs_landed`,
   `drained`.
+- On the ISA simulator, the Engine's WAITW hook (`qwen3._isa_host`) polls until a waiting
+  slice's WAITW holds (`isasim.Slice.holds`), or until a poll has nothing to do. The simulator
+  calls its host once when every slice waits, and a wait still not holding after that is the
+  timeout. A request is served whole in one poll, but an expert run waiting on a need's entry
+  takes one idle poll a part. The card's backend polls the same way while a run is in flight.
+
+Checked against the card side (gemma4's expert-major 2ad3129 merged onto this, not pushed):
+test_qwen35_moe's `test_expert_major_prefill_is_bit_exact` (4 cases) and test_gemma4_moe's
+`test_moe_expert_major_prefill_is_bit_exact` (3 cases) pass with this ExpertServer in place of
+their stand-in. The logits, states, KV and decode are bit for bit; up to 48 needs land on
+victims outside the guarded layers, and none is drained at end_prefill.
 
 Open points for the card A/B:
 - In expert-major mode only requests count a use, so end_prefill's lazy restore keeps
