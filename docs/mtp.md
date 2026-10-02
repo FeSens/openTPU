@@ -1131,6 +1131,70 @@ start where the loop stopped. Two changes make that work.
   token counts equal plain Chat's, and the second turn does not restart the context.
 - The phase 3 and 4 loop tests pass with the last D (test_mtp: 36 passed).
 
+**RTL.** With the last D, `test_mtp_loop_on_rtl` and `test_mtp_sampled_loop_on_rtl` pass
+(omarchy, Verilator).
+
+**Real models on the ISA simulator.** `tools/mtp_decode.py --loop device --sample ...`, seed 0,
+prompts 0, 3 and 7, 48 tokens: sampled MTP's tokens equal plain sampled decode's.
+- The 2B at chat's default (T 0.7, top-k 20, top-p 0.8): 3/3.
+- The 2B with penalty 1.1: 2/2. Prompt 7 was stopped by omarchy's memory guard.
+- The 0.8B at chat's default: 3/3. Its acceptance per prompt, 0.62 / 0.68 / 0.47, equals the
+  card's below.
+
+### 11.7 Phase 4 on the card
+
+Production build e4db91c9 (Gen2 x8, pa), 133.33 MHz, fp4 with an int8 head, cap 1024, phase
+0's prompts 0, 3 and 7, 48 tokens, seed 0, one otpu-lock window (2026-10-02 02:58-03:17
+opentpu).
+
+**Sampled, chat's default (T 0.7, top-k 20, top-p 0.8): 9/9 prompts give plain sampled
+decode's tokens.** The 2B with penalty 1.1 gives them too, 3/3. Device tok/s over the 141
+tokens after the first:
+
+| model | plain sampled | MTP sampled | speedup | projected (11.3) | acceptance |
+|---|---|---|---|---|---|
+| Qwen3.5-0.8B | 27.55 | 34.21 | 1.242x | about 1.28x | 0.58 |
+| Qwen3.5-2B | 12.41 | 19.49 | 1.571x | about 1.56x | 0.74 |
+| Qwen3.5-4B | 6.03 | 9.74 | 1.616x | about 1.6x | 0.78 |
+| Qwen3.5-2B, penalty 1.1 | 12.37 | 19.45 | 1.572x | | 0.74 |
+
+- The 0.8B lands under its projection because its sampled acceptance on these prompts is
+  0.58, against the 0.62 projected (phase 0's sampled share applied to M2's 0.68). The 2B and
+  4B meet or pass theirs.
+- The sampler costs little. Plain sampled decode runs within 0.6% of plain greedy (27.55 /
+  12.41 / 6.03 against 27.72 / 12.44 / 6.04 tok/s). The penalty costs the 2B's MTP loop 0.2%.
+
+**The program cache (1a): first and second token times,** greedy, prompt 0, the card's wall
+clock in seconds. Cold is a fresh `OTPU_PROG_CACHE` directory; warm is the next process with
+it.
+
+| model | plain TTFT | plain t2 - TTFT, cold / warm | MTP TTFT | MTP t2 - TTFT, cold / warm |
+|---|---|---|---|---|
+| Qwen3.5-0.8B | 1.17 | 0.179 / 0.058 | 2.33 | 0.586 / 0.113 |
+| Qwen3.5-2B | 1.40 | 0.211 / 0.099 | 2.79 | 0.612 / 0.146 |
+| Qwen3.5-4B | 3.23 | 0.277 / 0.175 | 5.41 | 0.909 / 0.252 |
+
+- The cache takes the bucket compiles out of the second token: 0.10-0.12 s for plain decode's
+  program, and 0.47-0.66 s for MTP's six.
+- Warm, the second token comes one device iteration after the first (a step: 36 / 80 / 166 ms;
+  an MTP iteration: about 46 / 88 / 183 ms), plus 0.01-0.02 s for plain and 0.06-0.07 s for
+  MTP. MTP's extra is the host setting up the run, which includes writing its six programs to
+  the card.
+- TTFT does not change; it is the prefill's. The MTP prefill compiles its runs on the host one
+  after another (1.85-2.9 s, against plain prefill's pipelined compile), which puts MTP's TTFT
+  1.2-2.2 s above plain's. (1b), run-time-position prefill programs, takes that out.
+
+**otpu-chat on the card** (the 2B, fp4, sampled at chat's default, seed 0, a 23-token prompt,
+64 tokens). `--mtp` gives plain chat's reply, compared byte for byte.
+
+| | TTFT | decode tok/s, wall (device) |
+|---|---|---|
+| plain | 1.32 s | 12.15 (12.4) |
+| `--mtp` | 2.23 s | 15.73 (18.1), acceptance 0.62 |
+
+The wall rate trails the device's by MTP's bucket compiles. otpu-chat does not turn the program
+cache on, so a cold process pays them in its first reply.
+
 ## 12. Open questions
 
 - The MTP dataflow (section 6.1) is **confirmed against mlx_vlm 0.6.8**'s Qwen3.5 drafter:
