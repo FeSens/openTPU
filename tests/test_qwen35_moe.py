@@ -363,8 +363,9 @@ def test_layer_ahead_sends_the_next_layers_experts(tiny, monkeypatch):
                  for kw in ({"layer_major": 2, "layer_ahead": order}, {"layer_major": 2}, {}))
     srv, calls = a.server, []
 
-    def ahead_layer(j, ids):                    # (the server's stub: every one loaded now,
-        calls.append((j, list(ids)))            # each victim's entry cleared first)
+    def ahead_layer(j, ids):                    # (the server's stub: the last request
+        calls.append((j, list(ids)))            # served, then every one loaded now, each
+        srv.settle()                            # victim's entry cleared first)
         for g in ids:
             if g not in srv.lru[j]:
                 slot = srv._pool_slot(j, ids)
