@@ -513,6 +513,15 @@ class ExpertServer:
         # request's slots, are clear once a later request is seen)
         self.armed: set = set()
         self._used: set = set()
+        # a layer-major prefill's layer ahead (ahead_layer): its experts not yet given a slot,
+        # most wanted first (each takes one when its first part goes on an idle poll), the ones
+        # of them on their way (in `pending`), and the layers the runs until the next call may
+        # use (no victim from them); begin_prefill's part size while the prefill lasts
+        self.queue: OrderedDict = OrderedDict()
+        self._ahead: set = set()
+        self._spare: frozenset = frozenset()
+        self._part, self._ahead_off = None, False
+        self.aheads = self.landed = 0       # ahead_layer's calls; its experts landed whole
 
     def load(self, warm=()) -> None:
         """At image load: an empty directory, mailbox and answer, every slot's tag zero, then
@@ -559,7 +568,7 @@ class ExpertServer:
                                                 np.float32))
         t0 = time.perf_counter()
         if seq == self.seq:
-            if not self.pending:
+            if not self.pending and not self._next_ahead():
                 return 0
             g = next(iter(self.pending))
             self.step()
@@ -638,6 +647,7 @@ class ExpertServer:
                 if g in self.pending:       # hinted, on its way: the rest now
                     self.misses += 1
                     self.promoted += 1
+                    self._ahead.discard(g)
                     plan.append((g, p, lru[g], True))
                 else:
                     self.hits += 1
@@ -662,7 +672,8 @@ class ExpertServer:
                 self.order[g] = None
                 self.order.move_to_end(g)
         if self.drop:                       # its layer's hints it does not name, withdrawn
-            for g in [g for g in self.pending if g // self.L.E == j and g not in ids]:
+            for g in [g for g in self.pending if g // self.L.E == j and g not in ids
+                      and g not in self._ahead]:
                 del self.pending[g]
                 self.free[j].append(lru.pop(g))
                 self.withdrawn += 1
@@ -731,6 +742,11 @@ class ExpertServer:
         n = self.L.slot_bytes
         if self._send(g, min(a + self.part, n)) == n:
             self.prefetched += 1
+            if g in self._ahead:            # (ahead_layer's: landed, now an expert in a slot)
+                self._ahead.discard(g)
+                self.landed += 1
+                if self.pooled:
+                    self.order[g] = None
 
     def _send(self, g: int, b: int, entry: bool = True) -> int:
         """Hinted expert g's bytes from where it stands to b; its tag with them when that is
@@ -836,11 +852,19 @@ class ExpertServer:
         if seq != self.seq:
             self.poll()
 
-    def begin_prefill(self) -> None:
+    def begin_prefill(self, ahead: bool = False, part: int | None = None) -> None:
         """A layer-major prefill starts (docs/offload.md 13): every slot serves the layer its
         requests name. Hints still on their way are dropped (their slots free; their entries
-        read 0 already)."""
+        read 0 already). ahead: ahead_layer's calls act during it (False: they only settle);
+        part: the bytes an idle poll sends of an expert while it lasts (RUN blocks; default the
+        server's part)."""
+        if part is not None and (part <= 0 or part % RUN):
+            raise ValueError(f"an idle poll's part of {part} bytes (RUN blocks)")
         self.settle()
+        self._drop_ahead()
+        self._ahead_off = not ahead
+        if part is not None:
+            self._part, self.part = self.part, part
         for g in list(self.pending):
             del self.pending[g]
             j = g // self.L.E
@@ -858,6 +882,10 @@ class ExpertServer:
         if restore not in ("lazy", "eager"):
             raise ValueError(f"restore {restore!r}")
         self.settle()
+        self._drop_ahead()
+        self._ahead_off = False
+        if self._part is not None:
+            self.part, self._part = self._part, None
         self.armed -= self._used            # (the prefill's runs are done: the card zeroed
         self._used = set()                  # the last request's tags)
         spare = [a for fr in self.free for a in fr]
@@ -886,6 +914,69 @@ class ExpertServer:
                         self._insert(j, g, self.free[j].pop(0))
         self._flush()
 
+    def ahead_layer(self, j: int, ids) -> None:
+        """A layer-major prefill's next layer (docs/offload.md 13): MoE layer j's experts `ids`
+        (global, most wanted first) go to slots on the link's idle time, before the layer's runs
+        ask for them. Called between runs, and the runs until the next call ask only for layers
+        j - 1 and j (prefill_layers: before layer j - 1's first run of a chunk; the first call,
+        before layer j's own). It replaces what the last call queued: those not in a slot yet
+        leave the queue, and one on its way is dropped (its slot freed; its tag and entry were
+        never written). The card's last request is served first (settle) and its tags, zeroed
+        by the halted run, are no longer armed. Each queued expert takes a slot when its first
+        part goes (an idle poll): a free one, else (pooled) the oldest expert of a layer outside
+        j - 1 and j, so nothing the running layer may read changes under it. A request that
+        names a queued expert takes it as a miss; one on its way, its rest (as a hint's)."""
+        self.settle()
+        self.armed -= self._used
+        self._used = set()
+        self._drop_ahead()
+        if self._ahead_off:
+            return
+        E, L = self.L.E, self.L.layers
+        if not 0 <= j < L or any(g // E != j for g in ids):
+            raise ValueError(f"ahead_layer({j}): ids {list(ids)[:4]}... not all of layer {j}")
+        self.aheads += 1
+        self._spare = frozenset((j, (j - 1) % L))
+        lru = self.lru[j]
+        self.queue = OrderedDict((int(g), None) for g in ids if g not in lru)
+
+    def _drop_ahead(self) -> None:
+        """ahead_layer's queue emptied, and its experts on their way dropped: their slots free
+        (no tag or entry was written for them)."""
+        self.queue.clear()
+        for g in [g for g in self.pending if g in self._ahead]:
+            del self.pending[g]
+            j = g // self.L.E
+            self.free[j].append(self.lru[j].pop(g))
+            self.dropped += 1
+        self._ahead.clear()
+
+    def _next_ahead(self) -> bool:
+        """The next queued expert gets a slot and is on its way (pending); False with none to
+        start, or no slot it may take."""
+        E = self.L.E
+        while self.queue:
+            g = next(iter(self.queue))
+            del self.queue[g]
+            j = g // E
+            if g in self.lru[j]:                # (a request took it meanwhile)
+                continue
+            spare = _Layers(self._spare, E)
+            try:
+                slot = (self._pool_slot(j, spare) if self.pooled else
+                        self._reuse(self.free[j].pop(0)) if self.free[j] else None)
+            except RuntimeError:                # no victim outside the running layers
+                slot = None
+            if slot is None:
+                self.queue.clear()
+                return False
+            self._clear()                       # (a victim's entry before the expert's bytes)
+            self.lru[j][g] = slot
+            self.pending[g] = 0
+            self._ahead.add(g)
+            return True
+        return False
+
     def _insert(self, j: int, g: int, slot: int) -> None:
         """Expert g into a slot outside a request (load's warm experts, an eager restore): its
         bytes, then its entry; no tag (no request waits on it: the card finds it present)."""
@@ -897,6 +988,19 @@ class ExpertServer:
         self._dir_flush()
         self.lru[j][g] = slot
         self.bytes += len(data)
+
+
+class _Layers:
+    """`g in` it: expert g is of one of these layers (ahead_layer's victims stay outside)."""
+
+    def __init__(self, layers, E: int):
+        self.layers, self.E = layers, E
+
+    def __contains__(self, g) -> bool:
+        return g // self.E in self.layers
+
+    def __len__(self) -> int:
+        return len(self.layers) * self.E
 
 
 def _tag_beat(v: int) -> np.ndarray:
@@ -975,8 +1079,8 @@ class PollPacer:
     sleep's own lateness `late`), then polls at the loop's pace, so a request is seen as soon as
     with the loop spinning, with fewer of its card reads (a DMA call each, every ~33 us). A gap
     is measured from served to the poll that saw the next request: a sleep that ran past a post
-    makes the next one shorter. It never sleeps while hinted experts wait for idle polls (their
-    parts go then)."""
+    makes the next one shorter. It never sleeps while hinted or layer-ahead experts wait for idle
+    polls (their parts go then)."""
 
     def __init__(self, servers, share: float = 0.75, keep: int = 8, cap: float = 5e-3,
                  late: float = 100e-6, sleep=time.sleep, clock=time.perf_counter):
@@ -1009,7 +1113,8 @@ class PollPacer:
                 del g[:-self.keep]
             self.key, self.t_served = (i, kind), self.clock()
             g = self.gaps.get(self.key)
-            if g and not any(getattr(x, "pending", None) for x in self.servers):
+            if g and not any(getattr(x, "pending", None) or getattr(x, "queue", None)
+                             for x in self.servers):
                 d = min(self.share * min(g), self.cap) - self.late
                 if d > self.late:
                     self.until = self.t_served + d
