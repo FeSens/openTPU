@@ -20,6 +20,7 @@ import time
 
 import numpy as np
 
+from .. import isa as I
 from ..compiler import CompileError
 from . import generate as G
 
@@ -46,8 +47,10 @@ def supported(eng) -> bool:
             and getattr(eng, "row_server", None) is None)
 
 
-def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0) -> list:
-    """The run's programs (kept by the engine; through its program cache). hidden, slot: MTP's
+def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0):
+    """The run's programs (kept by the engine; through its program cache), or on the card
+    (runs_words) the program assembled once: a run of another program loads its words, not
+    an assembly of them (3-5 ms a run; MTP's rows and M runs alternate). hidden, slot: MTP's
     rows (their hidden stored, the states' slot); M's take neither."""
     img, block, K = eng.image, eng.block, eng.spec.conv_k
     if kind == "M":
@@ -70,7 +73,9 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
             raise CompileError(f"prompt run {what}: {max(map(len, progs))} instructions, "
                                f"IMEM {img.cfg.IMEM_WORDS // 8}")
         prep = getattr(eng.backend, "prepare", None)
-        if prep is not None:
+        if getattr(eng.backend, "runs_words", False) and len(progs) == 1:
+            progs = np.asarray(I.assemble(progs[0]), np.uint32)
+        elif prep is not None:
             prep(progs)
         done[what] = progs
     return done[what]
