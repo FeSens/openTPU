@@ -176,9 +176,12 @@ module otpu_ldc_mem #(
     // at any bank's head (the crossbar); nothing (idle). From the first command to the last.
     // The idle gaps: their lengths, and the gaps after which the next command reads the next
     // channel beat of one of the last 16 read streams (a sequential prefetch could have filled
-    // the gap with it: the cycles, up to 256 per gap). The rows: each bank's row changes in the
-    // ports' command order, and the reopens among them.
+    // the gap with it: the cycles, up to 256 per gap), and the gaps of 24+ cycles (room for a
+    // precharge-all and a refresh). The rows: each bank's row changes in the ports' command
+    // order, and the reopens among them. The refreshes: the refresh commands on the DFI and the
+    // balance's extremes, tREFI (1042 cycles) ticks since reset minus refreshes (DDR3: -8..8).
 `define OTPU_LDC_COL(p) (!u_ctl.core_dfi_p``p``_cs_n && !u_ctl.core_dfi_p``p``_cas_n && u_ctl.core_dfi_p``p``_ras_n)
+`define OTPU_LDC_REF(p) (!u_ctl.core_dfi_p``p``_cs_n && !u_ctl.core_dfi_p``p``_cas_n && !u_ctl.core_dfi_p``p``_ras_n && u_ctl.core_dfi_p``p``_we_n)
 `define OTPU_LDC_CR(n) (u_ctl.core_bankmachine``n``_cmd_valid && (u_ctl.core_bankmachine``n``_cmd_payload_is_read || u_ctl.core_bankmachine``n``_cmd_payload_is_write))
 `define OTPU_LDC_HD(n) u_ctl.core_bankmachine``n``_pipe_valid_source_valid
 `define OTPU_LDC_LV(n) (u_ctl.core_bankmachine``n``_level != 0)
@@ -194,6 +197,9 @@ module otpu_ldc_mem #(
     longint bk_tail [6];                 // since the last command (not counted unless one follows)
     longint g_n [4], g_cyc [4];          // idle gaps of 1-7, 8-63, 64-255, 256+ cycles
     longint g_cont, g_cont_cyc;          // gaps of 8+ followed by a stream's next beat
+    longint g_ref, g_ref_cyc;            // gaps of 24+ cycles (room for a precharge-all + refresh)
+    longint n_refc, t_cyc;               // refresh commands, cycles since reset; the refreshes
+    longint owe, owe_max, owe_min;       // owed (tREFI 1042 ticks minus refreshes), its extremes
     longint gap;
     longint r_act, r_reopen;             // row changes per bank (ROW_BANK_COLUMN: beat bits 9:7
     int     r_open [8], r_prev [8];      // the bank, 24:10 the row), and those back to the row
@@ -202,6 +208,7 @@ module otpu_ldc_mem #(
     initial begin
       brk = $test$plusargs("ldc_break");
       started = 0; gap = 0; g_cont = 0; g_cont_cyc = 0; r_act = 0; r_reopen = 0;
+      g_ref = 0; g_ref_cyc = 0; n_refc = 0; t_cyc = 0; owe_max = 0; owe_min = 0;
       for (int i = 0; i < 8; i++) begin r_open[i] = -1; r_prev[i] = -1; end
       for (int i = 0; i < 6; i++) begin bk[i] = 0; bk_tail[i] = 0; end
       for (int i = 0; i < 4; i++) begin g_n[i] = 0; g_cyc[i] = 0; end
@@ -211,6 +218,11 @@ module otpu_ldc_mem #(
       int k;
       bit cmd;
       cmd = (cv[0] && cr[0]) || (cv[1] && cr[1]);
+      t_cyc++;
+      if (`OTPU_LDC_REF(0) || `OTPU_LDC_REF(1) || `OTPU_LDC_REF(2) || `OTPU_LDC_REF(3)) n_refc++;
+      owe = t_cyc / 1042 - n_refc;
+      if (owe > owe_max) owe_max = owe;
+      if (owe < owe_min) owe_min = owe;
       k = b_col ? 0 : u_ctl.refresher_state != 0 ? 1 : b_cr ? 2 : b_hd ? 3 : (cv != 0 || b_lv) ? 4 : 5;
       if (started) bk_tail[k]++;
       if (k == 5) gap++;
@@ -219,6 +231,7 @@ module otpu_ldc_mem #(
           int j, a, hit;
           j = gap < 8 ? 0 : gap < 64 ? 1 : gap < 256 ? 2 : 3;
           if (started) begin g_n[j]++; g_cyc[j] += gap; end
+          if (started && gap >= 24) begin g_ref++; g_ref_cyc += gap; end
           hit = 0;
           for (int p = 0; p < 2; p++)
             if (cv[p] && cr[p] && !cwe[p])
@@ -249,6 +262,7 @@ module otpu_ldc_mem #(
       end
     end
 `undef OTPU_LDC_COL
+`undef OTPU_LDC_REF
 `undef OTPU_LDC_CR
 `undef OTPU_LDC_HD
 `undef OTPU_LDC_LV
@@ -296,16 +310,18 @@ module otpu_ldc_mem #(
     for (int c = 0; c < 2; c++)
       $display("MEM ch%0d rd=%0d wr=%0d row_miss=%0d rmw=0", c, n_rd[c], n_wr[c], n_miss[c]);
     if (g_ch[0].brk) begin
-      $display("BRK ch0 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d act=%0d reopen=%0d",
+      $display("BRK ch0 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d act=%0d reopen=%0d refgaps=%0d refgapcyc=%0d refs=%0d owe=%0d/%0d",
                g_ch[0].bk[0], g_ch[0].bk[1], g_ch[0].bk[2], g_ch[0].bk[3], g_ch[0].bk[4], g_ch[0].bk[5],
                g_ch[0].g_n[0], g_ch[0].g_n[1], g_ch[0].g_n[2], g_ch[0].g_n[3],
                g_ch[0].g_cyc[0], g_ch[0].g_cyc[1], g_ch[0].g_cyc[2], g_ch[0].g_cyc[3],
-               g_ch[0].g_cont, g_ch[0].g_cont_cyc, g_ch[0].r_act, g_ch[0].r_reopen);
-      $display("BRK ch1 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d act=%0d reopen=%0d",
+               g_ch[0].g_cont, g_ch[0].g_cont_cyc, g_ch[0].r_act, g_ch[0].r_reopen,
+               g_ch[0].g_ref, g_ch[0].g_ref_cyc, g_ch[0].n_refc, g_ch[0].owe_min, g_ch[0].owe_max);
+      $display("BRK ch1 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d act=%0d reopen=%0d refgaps=%0d refgapcyc=%0d refs=%0d owe=%0d/%0d",
                g_ch[1].bk[0], g_ch[1].bk[1], g_ch[1].bk[2], g_ch[1].bk[3], g_ch[1].bk[4], g_ch[1].bk[5],
                g_ch[1].g_n[0], g_ch[1].g_n[1], g_ch[1].g_n[2], g_ch[1].g_n[3],
                g_ch[1].g_cyc[0], g_ch[1].g_cyc[1], g_ch[1].g_cyc[2], g_ch[1].g_cyc[3],
-               g_ch[1].g_cont, g_ch[1].g_cont_cyc, g_ch[1].r_act, g_ch[1].r_reopen);
+               g_ch[1].g_cont, g_ch[1].g_cont_cyc, g_ch[1].r_act, g_ch[1].r_reopen,
+               g_ch[1].g_ref, g_ch[1].g_ref_cyc, g_ch[1].n_refc, g_ch[1].owe_min, g_ch[1].owe_max);
     end
     if (PHYS == 0) begin
       fd = $fopen($sformatf("%s/dram_out_%0d.bin", dir, SID), "wb");

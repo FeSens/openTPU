@@ -14,7 +14,9 @@ the token's cycles without them, a bound for making that work free or hidden. Th
 wrong; only the cycles count. --uarch changes the board's timing-only knobs (WIN, WPB,
 FIFO_DEPTH, ...). --hoist moves attention's score MMs ahead of the previous PV MM; --check runs
 the ISA simulator on both programs first. The image is built once in IMGDIR (perf_ddr.py's).
-Results: docs/litedram.md section 11, "The core's own gaps".
+OTPU_LDC_BREAK=1 adds the controller's cycle breakdown (+ldc_break, sim/verilator/otpu_ldc_mem.sv:
+each channel's BRK line, printed and in the JSON as "brk"). Results: docs/litedram.md section 11,
+"The core's own gaps".
 """
 from __future__ import annotations
 
@@ -126,6 +128,8 @@ def simulate(meta, prog, mhz, ddr, bucket, trace_p: Path, changed: bool,
             (d / "prog_0.hex").symlink_to(meta["hex"])
         (d / "dram_out_0.bin").symlink_to("/dev/null")
         args = [str(exe), f"+dir={d}", f"+max_cycles={MAX_CYCLES}", "+trace", f"+bucket={bucket}"]
+        if os.environ.get("OTPU_LDC_BREAK"):
+            args += ["+ldc_break"]     # the controller's cycle breakdown (otpu_ldc_mem.sv)
         args += rtlsim.ldc_plusargs(ddr, mhz)
         args += [f"+arg{k}={int(v) & 0xFFFFFFFF}" for k, v in enumerate(meta["args"])]
         args += ["+axi_stall=0", f"+axi_seed={rtlsim.MEMORY['SEED']}", "+axi_bw=100",
@@ -238,12 +242,16 @@ def main(argv=None) -> int:
             print(f"hoist check (ISA simulator): {check(meta, prog, run_prog, cfg)}", flush=True)
     cycles = simulate(meta, run_prog, a.mhz, a.ddr, a.bucket, trace_p,
                       bool(drop) or a.hoist, uarch)
-    p = PR.parse(trace_p.read_text(), cfg, [run_prog], a.model)
+    text = trace_p.read_text()
+    p = PR.parse(text, cfg, [run_prog], a.model)
+    brk = {m.group(1): {k: [int(x) for x in v.split("/")] if "/" in v else int(v)
+                        for k, v in re.findall(r"(\w+)=([-\d/]+)", m.group(2))}
+           for m in re.finditer(r"^BRK (ch\d) (.*)$", text, re.M)}
     if not a.keep_trace:
         trace_p.unlink()
     res = analyse(p, run_prog, cycles, a.bucket)
     res.update(model=a.model, format=a.format, mhz=a.mhz, drop=a.drop, uarch=a.uarch,
-               drop_match=a.drop_match, hoist=a.hoist,
+               drop_match=a.drop_match, hoist=a.hoist, brk=brk,
                sim_s=time.time() - t)
     what = ((" drop " + a.drop if a.drop else "") +
             (f" drop /{a.drop_match}/ ({len(drop)} pcs)" if a.drop_match else "") +
@@ -253,6 +261,9 @@ def main(argv=None) -> int:
           f"({100 * res['gap_cycles'] / cycles:.2f}%), "
           f"no port traffic in {res['idle_window_cycles']} "
           f"({100 * res['idle_window_cycles'] / cycles:.2f}%; {a.bucket}-cycle windows)")
+    for ch, v in brk.items():
+        print(f"  BRK {ch} " + " ".join(f"{k}={'/'.join(map(str, x)) if isinstance(x, list) else x}"
+                                       for k, x in v.items()))
     for k, v in sorted(res["by_region"].items(), key=lambda kv: -kv[1]["cycles"])[:20]:
         print(f"  {k:10s} gaps {v['gaps']:5d}  cycles {v['cycles']:8d} "
               f"({100 * v['cycles'] / cycles:5.2f}%)  idle {v['idle_windows']:8d}")
