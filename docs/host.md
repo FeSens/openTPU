@@ -282,6 +282,42 @@ The host's rules:
   WAITW) still go whole. The fix there is an XDMA configuration that cannot lap its buffer
   (fewer outstanding read requests).
 
+**H2C rate at PCIe Gen2 x8.** `tools/h2c_sweep.py` measured it on the card (production 542fc43a,
+opentpu, 2026-10-02 11:50, card idle; the sweep's JSON: docs/data/h2c_sweep_542fc43a.json). The
+writes go straight to `/dev/xdma0_h2c_0` from placed buffers. For each call it records the wall
+time and the thread's CPU time, which covers the driver's work: pinning, mapping, descriptors and
+unpinning.
+
+| call | GB/s, one call at a time | call (us) | CPU (us) | n / (wall - CPU) | two calls in flight |
+|---|---|---|---|---|---|
+| 64 KiB | 1.98 | 32 | 6 | 2.56 | 2.12-2.18 |
+| 256 KiB | 2.67 | 95 | 9 | 3.05 | 2.80-2.84 |
+| 0.83 MB (a 35B record half) | 2.70 | 301 | 22 | 2.99 | 2.93-3.04 |
+| 1 MiB | 2.72 | 378 | 30 | 3.02 | 2.92-2.97 |
+| 1.72 MB (a 26B record half) | 2.76 | 613 | 50 | 3.07 | 2.87-2.90 |
+| 8 MiB | 2.98 | 2818 | 172 | 3.17 | 3.08-3.10 |
+
+- **A call costs about 20-37 us plus 345 us per MiB (3.0 GB/s).** The engine runs at 3.0-3.17
+  GB/s, about 92% of the link. The completion sizes come out at 128 bytes or more: Gen1 reached
+  1.70-1.76 GB/s in September. At that size, Gen2 x8 tops out near 3.4 GB/s.
+- **The 2.3 GB/s figure is the staging copy's.** The selftest and `tools/dma_bench.py` write from
+  buffers that are not placed. Through `XdmaTransport.mem_write`'s staging copy, those calls ran
+  at 2.22 (0.83 MB), 2.33 (1 MiB) and 2.47-2.53 GB/s (4-8 MiB), 14-18% below placed calls.
+  `offload.BoardDram` gathers into page-aligned buffers and is not bounced. Its records took
+  659-661 us (35B) and 1346 us (26B) during the runs of docs/offload.md 10.9. Here, alone on an
+  idle card, they take 627 and 1212 us.
+- **What does not matter:**
+  - The channel: 0, 1 and alternating are equal.
+  - The host pages: private on huge pages, private on 4 KiB pages, or shared (shmem, which
+    `board.placed` and the staging buffer use) are within 3%. Huge pages save only CPU, 15
+    against 22 us on a 0.83 MB call.
+  - The read requests in flight: 8 x 512 B already deliver 3.1 GB/s.
+  - The card's write path: in tb_memch at Gen2's clocks it takes XDMA's full 4.0 GB/s.
+- **Two calls in flight** (threads on h2c_0) gain 5-12% at 0.8-1 MiB and about 4% at 8 MiB: the
+  second call's pinning runs under the first one's transfer. Four in flight gain no more. The
+  driver holds the engine from queueing to completion, so the calls still run one after the other
+  on the engine, but which waiting call goes next is not guaranteed.
+
 **IOMMU.** If DMA transfers fail on a machine with the IOMMU on, boot with `iommu=pt` (Intel:
 `intel_iommu=on iommu=pt`).
 
