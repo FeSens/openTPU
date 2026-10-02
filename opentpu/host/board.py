@@ -31,7 +31,6 @@ import mmap
 import os
 import struct
 import sys
-import tempfile
 import threading
 import time
 from dataclasses import replace
@@ -462,7 +461,7 @@ class SimTransport:
     def flush(self) -> None:
         if not self.script:
             return
-        from opentpu import rtlsim
+        from opentpu import rtlsim, simtmp     # (the simulator's: not on the card's path)
         root = Path(__file__).resolve().parents[2]
         srcs = [rtlsim.RTL / s for s in rtlsim.RTL_SOURCES if not s.endswith("otpu_top.sv")]
         board = root / "rtl/boards/ypcb-00338"
@@ -483,8 +482,7 @@ class SimTransport:
              "MEM_NATIVE": 2 if native == "ld" else 1}
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
-        with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:
-            d = Path(d)
+        with simtmp.tempdir("otpu_board_") as d:
             for c in (0, 1):
                 self.ch[c].view("<u4").astype(">u4").tofile(d / f"ch{c}.bin")
             (d / "host.txt").write_text("\n".join(self.script) + "\n")

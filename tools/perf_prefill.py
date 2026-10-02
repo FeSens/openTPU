@@ -28,7 +28,6 @@ import dataclasses
 import json
 import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -37,7 +36,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from opentpu import rtlsim  # noqa: E402
+from opentpu import rtlsim, simtmp  # noqa: E402
 from opentpu.isasim import board_config  # noqa: E402
 from opentpu.llm import MODELS, load_spec, model_dir  # noqa: E402
 from opentpu.llm.qwen3 import PREFILL_ROWS, fit_chunk, load_weights, rope_tables  # noqa: E402
@@ -112,9 +111,9 @@ class Bench:
         if 8 * len(progs[0]) > cfg.IMEM_WORDS:      # a proxy of the long program: time it
             cfg = dataclasses.replace(cfg, IMEM_WORDS=1 << (8 * len(progs[0]) - 1).bit_length())
         t = time.time()
-        with tempfile.TemporaryDirectory(prefix="otpu_prefill_") as d:
+        with simtmp.tempdir("otpu_prefill_") as d:
             _, _, st = rtlsim.run(cfg, progs, [dram], uarch=rtlsim.BOARD_UARCH, axi=True,
-                                  boot=True, stall=0, bw=self.bw, lat=self.lat, keep=Path(d),
+                                  boot=True, stall=0, bw=self.bw, lat=self.lat, keep=d,
                                   max_cycles=1 << 40)
         print(f"  {n} layers {kind} p0={p0} rows={rows} head={head}: {st['cycles']} cycles "
               f"({time.time() - t:.0f} s)", flush=True)
