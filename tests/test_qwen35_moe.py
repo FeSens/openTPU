@@ -759,3 +759,154 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch, ahead
     assert all(e[2] in "dh" for e in t["events"])
     assert len(hints) == pt["ahead"]["hints"] == (len(KINDS) - 1) * li.count(0) * (ahead == "hint")
     assert r["ahead_part"] == (2 << 20 if ahead == "hint" else None)
+
+
+def _need_server(eng):
+    """A test-only stand-in for the server's expert-major side (docs/offload.md 13.11, which
+    offload's ExpertServer work implements): begin_prefill(expert_major=True, scratch=bytes)
+    takes the slots the scratch covers (moe.em_slots: their experts leave, their entries
+    cleared); a need line (ids from 2 x layers x E: a hint's post, no answer) queues the ids no
+    slot holds. The queue goes out only while an expert run waits on an entry (the ISA
+    simulator calls the host when the card waits): up to the expert waited on, each to a free
+    slot, else the oldest expert's of a layer outside j - 1 .. j + 1 (its entry cleared first),
+    its data and tag, then its entry; so the passes wait expert by expert. end_prefill sends
+    what is left and hands the scratch's slots back with their tag beats zeroed. Returns its
+    record: the need lines' ids (each a list, as posted), the slots carved, the experts sent and
+    the entry waits served."""
+    from types import SimpleNamespace
+    from opentpu.host.offload import _f32, _tag_beat
+    from opentpu.llm.moe import em_slots
+    srv = eng.server
+    L = srv.L
+    G = L.E * L.layers
+    poll, begin, end = srv.poll, srv.begin_prefill, srv.end_prefill
+    st = SimpleNamespace(needs=[], queue=[], carved=[], sent=0, waits=0)
+
+    def layer_of(a):
+        return next(j for j, (a0, n) in enumerate(L.slots) if a0 <= a < a0 + n * L.pitch)
+
+    def begin_prefill(expert_major=False, scratch=0, **kw):
+        begin(**kw)
+        if not expert_major:
+            return
+        st.carved = em_slots(L, scratch)
+        carved = set(st.carved)
+        for lru in srv.lru:
+            for g, a in list(lru.items()):
+                if a in carved:
+                    del lru[g]
+                    srv.order.pop(g, None)
+                    srv._dir(g, 0)
+        for fr in srv.free:
+            fr[:] = [a for a in fr if a not in carved]
+        srv._dir_flush()
+
+    def send(g):
+        j = g // L.E
+        if g in srv.lru[j]:
+            return
+        fr = next((f for f in [srv.free[j]] + srv.free if f), None)
+        if fr is not None:
+            slot = srv._reuse(fr.pop(0))
+        else:
+            v = next((v for v in srv.order if not j - 1 <= v // L.E <= j + 1), None)
+            if v is None:
+                raise RuntimeError(f"no victim outside layers {j - 1}..{j + 1}")
+            del srv.order[v]
+            slot = srv._reuse(srv.lru[v // L.E].pop(v))
+            srv._dir(v, 0)
+            srv._dir_flush()
+        srv._fetch(g, slot)
+        srv.lru[j][g] = slot
+        srv.order[g] = None
+        srv._dir(g, slot)
+        srv._dir_flush()
+        st.sent += 1
+
+    def need_poll():
+        seq, n = (int(v) for v in np.frombuffer(bytes(srv.mem.read(L.mbox, 8)), np.float32))
+        if seq == srv.seq + 1:
+            ids = [int(v) for v in np.frombuffer(bytes(srv.mem.read(L.row, 4 * n)), np.float32)]
+            if ids[0] >= 2 * G:
+                st.needs.append([g - 2 * G for g in ids])
+                for g in st.needs[-1]:
+                    if g not in st.queue and g not in srv.lru[g // L.E]:
+                        st.queue.append(g)
+                srv.seq = seq
+                srv.mem.write(L.served, _f32(seq))
+                return 1
+        return poll()
+
+    def host(m):
+        s0 = m.slices[0]
+        w = s0.polling
+        if w is None or w.w[0] != L.dir:            # (a fence: the line served, no expert)
+            return need_poll()
+        need_poll()
+        g = ((s0.R[w.ra] + w.w[0]) & 0xFFFFFFFF) - L.dir
+        g //= 8
+        if g in st.queue:                           # an expert run waits on expert g
+            st.waits += 1
+            while True:
+                h = st.queue.pop(0)
+                send(h)
+                if h == g:
+                    break
+        return 1
+
+    def end_prefill(restore="lazy"):
+        while st.queue:
+            send(st.queue.pop(0))
+        for a in st.carved:
+            srv.mem.write(a + L.tag, _tag_beat(0))
+            srv.free[layer_of(a)].append(a)
+        end(restore)
+
+    srv.poll, srv.begin_prefill, srv.end_prefill = need_poll, begin_prefill, end_prefill
+    eng.backend.machine.host = host
+    return st
+
+
+@pytest.mark.parametrize("R,skew,wformat,b", [(2, False, "int8", False), (1, False, "int8", False),
+                                             (2, True, "fp4", True), (2, False, "fp4", True)])
+def test_expert_major_prefill_is_bit_exact(tiny, R, skew, wformat, b, monkeypatch):
+    """Expert-major MoE in the layer-major prefill (Engine(expert_major=True), docs/offload.md
+    13.11): each layer's runs route their rows, post the experts they chose as need lines and
+    run the shared expert; then one expert run a layer (the bucketing into passes of two
+    entries of one expert, each pass waiting on its directory entry); the next layer's runs and
+    the head sum the outputs. The logits, the DeltaNet states and windows and the KV cache,
+    and the decode steps after, equal token by token's bit for bit: 40 tokens, the first 3
+    token by token (conv_k - 1), then chunks of 24 and 13 rows (odd counts), 6 slots a layer
+    behind a stand-in server (_need_server: experts sent while the expert runs wait, the
+    scratch carved from the first slots). skew: a router that knows expert 0 alone (its other
+    rows zero), so experts 0 / 1 / 2 take every row: long runs of passes of one expert. b:
+    build B's PAIR, DSTEP and STREAM (a pass's two rows one MM's)."""
+    from opentpu.llm import qwen35 as Q35
+    from opentpu.llm.moe import em_record
+    monkeypatch.setattr(Q35, "PREFILL_CHUNK", 24)
+    spec, W = _untied(tiny)
+    if skew:
+        W = dict(W)
+        for i in range(len(KINDS)):
+            n = f"model.layers.{i}.mlp.gate.weight"
+            W[n] = np.concatenate([W[n][:1], np.zeros_like(W[n][1:])])
+    kw = dict(MCOLS=4, PAIR=True, DSTEP=True, STREAM=True) if b else {}
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=6, wformat=wformat, **kw)
+    a, ref = (Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=6,
+                     wformat=wformat, **kw)
+              for kw in ({"layer_major": R, "expert_major": True}, {}))
+    st = _need_server(a)
+    toks = [int(t) for t in np.random.default_rng(11).integers(0, 1000, 40)]
+    la, lb = a.prefill(toks), ref.prefill(toks)
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    img = a.image
+    assert len(st.carved) == -(-24 * em_record(spec.hidden, K) // img.offload.pitch)
+    runs = sum(-(-n // R) for n in (24, 13))            # (the two chunks)
+    assert len(st.needs) == len(KINDS) * runs and st.sent >= st.waits > 0
+    dram = [e.backend.machine.slices[0].dram[img.layer0:img.head[0]] for e in (a, ref)]
+    assert np.array_equal(*dram)
+    t = int(np.argmax(la))
+    for _ in range(2):
+        ga, gb = a.step(t), ref.step(t)
+        assert np.array_equal(ga.view(np.uint32), gb.view(np.uint32))
+        t = int(np.argmax(ga))

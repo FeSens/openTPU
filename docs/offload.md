@@ -3388,3 +3388,59 @@ request dropping one, ahead_layer's slot at its stage, the card's memories as Bo
 `test_a_held_idle_poll_leaves_no_dma_in_flight`; test_qwen35_moe's live card
 (BoardDram, CHASH, a split pool) bit for bit with v2: the decode hints and the layer-ahead
 prefill (`test_layer_ahead_on_a_live_card_with_idle_parts_v2`), and moe_card's `--idle-parts`.
+
+### 13.13 Expert-major: the card side (Engine(expert_major=True))
+
+The card and Engine parts of 13.11 (opentpu/llm/moe.py, qwen35.py, gemma4.py, qwen3.py), bit for
+bit against token by token on the ISA (tiny Qwen3.5 and Gemma 4). The server parts are offload's
+(13.11); until they land, the tests run a stand-in (tests/test_qwen35_moe.py `_need_server`).
+
+The scratch is one record a chunk row, `moe.em_record(H, k)` bytes, row q's at the first slot's
+address + q x record:
+- X [H]: the row's residual. In expert-major the records replace `xbuf`: the embed runs, layer
+  runs and head read and write X. One run argument, row x record, addresses a run's records, so
+  an attention run keeps its 7 of 8 arguments.
+- OUT [k, H]: the row's experts' outputs, by rank, unweighted.
+- SH [H]: the shared expert's output times its gate (Qwen3.5), or the dense MLP's output after
+  its norm (Gemma 4).
+- The tail: the k global ids, the k weights and the 1 / rms of the norm before the router, padded
+  to whole lines.
+- 35B: 82,048 bytes a row, 26 slots at 512 rows. 26B: 112,768 bytes, 17 slots. `moe.em_slots`
+  lists the slots the scratch covers: the slot area's first ones.
+
+The runs of a MoE layer:
+- A mixer run (`moe_prologue_rows`):
+  - it first ends the layer before for its rows (`moe_combine_rows`; Gemma 4 `_em_end`);
+  - then the mixer, X stored, the norm (its 1 / rms kept), the router and the k best (moe_ffn_rows'
+    loop and expressions);
+  - then the tail stored and the need line posted (`need_off` = 2 x layers x E, a hint's post);
+  - then SH: the shared expert, or Gemma 4's dense MLP beside, while the host streams.
+- The expert run (`moe_expert_run`, one program a layer; run arguments rows and entries = rows x k):
+  1. A loop over the rows loads each row's ids and fills two tables: each entry's row, and its
+     output's place (in lines).
+  2. The bucketing, as ld-memch's kernel. An entry that opens a pass also sets B = A, so an odd
+     count's last pass computes its row twice and stores the same output twice. There is no
+     sink row.
+  3. The passes. Each WAITWs on its expert's directory slot word (!= 0) with MB.TIMEOUT and
+     zeroes the slot's tag. It loads both rows' X and 1 / rms and norms them again with
+     moe_ffn_rows' own expression: Qwen3.5's fused QACT with row and column scales, or Gemma 4's
+     norm times g_exp. Then swiglu_down at the slot, and each output to its place.
+- The head run combines the last layer for its row, then the final norm and the LM head. It runs
+  before end_prefill, which takes the scratch's slots back.
+
+The server's side, as the Engine calls it:
+- begin_prefill(expert_major=True, scratch=bytes) (the first chunk's rows x record) carves
+  em_slots(layout, bytes) for the prefill.
+- A need line is ids from 2G (at most 16 at R = 2, k = 8: one line), no answer, served as a hint
+  is.
+- The expert run reads entries only after its layer's last need line has been posted.
+- end_prefill hands the slots back with their tag beats zeroed, after the head run.
+
+The stand-in streams the queued needs only while an expert run waits on an entry, up to the
+expert waited on. So the passes wait expert by expert; at 6 slots a layer, 48 experts were sent
+on 48 waits.
+
+Compiled for the card (the board's config; the 35B fp4 with an int8 head, the 26B int8 with fp4
+experts; cap 4096): the layer runs take at most 1005 (35B) and 1525 (26B) of IMEM's 4096
+instructions. The expert run at 512 rows is 106 / 128 instructions and fits TMEM: its tables, at
+most 4096 entries and 2304 passes, take about 21K words.

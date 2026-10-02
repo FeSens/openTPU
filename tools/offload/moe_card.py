@@ -131,7 +131,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          legacy_serve: bool = False, embed_runs: bool = False,
          poll_idle: str | None = None, prefill_trace: str | None = None,
          layer_ahead: str | None = None, ahead_part: int | None = None,
-         idle_parts: str = "v1") -> dict:
+         idle_parts: str = "v1", expert_major: bool = False) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -164,6 +164,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                    embed_runs=embed_runs)           # (13.6: a bitstream with port A's fix)
         if layer_ahead:                             # the next layer's experts during a layer's
             ekw.update(layer_ahead=ahead_order(layer_ahead, spec))     # runs (13.7)
+        if expert_major:                            # a layer's experts in one run a chunk
+            ekw.update(expert_major=True)           # (13.11, 13.13)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend,
                  release_weights=release_weights, pool_map=pool_map,  # (10.6, 10.7)
@@ -319,7 +321,10 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         ahead=dict(calls=srv.aheads, landed=srv.landed, dropped=srv.dropped,  # (the layer
                    promoted=srv.promoted, hints=sum(e[2] == "h" for e in pev),  # ahead's;
                    queued=getattr(srv, "hinted_ahead", None))   # the hints' ids it queued)
-        if eng.layer_ahead else None)
+        if eng.layer_ahead else None,
+        need={k: getattr(srv, k, None) for k in ("need_lines", "needs_queued", "need_hits",
+                                                 "needs_landed", "drained")}
+        if expert_major else None)                  # (expert-major's need lines, 13.11)
     if prefill_trace:                           # the prompt's timeline (s from its start)
         z = lambda v: None if v is None else round(v - t_pre, 6)    # noqa: E731
         Path(prefill_trace).write_text(json.dumps(dict(
@@ -417,6 +422,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 pooled=pooled if layer_major else None,
                 embed_runs=embed_runs if layer_major else None,
                 layer_ahead=layer_ahead if layer_major else None,
+                expert_major=expert_major if layer_major else None,
                 ahead_part=eng.ahead_part if eng.layer_hint else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
                 legacy_serve=legacy_serve, poll_idle=poll_idle,
@@ -514,6 +520,10 @@ def main():
                          "order, the card's hints (each layer run's router of the next layer on "
                          "its output rows, 13.9) or by their use in router traces "
                          "(comma-separated .npz)")
+    ap.add_argument("--expert-major", action="store_true",
+                    help="--layer-major with pooled slots: each MoE layer of a chunk routed in "
+                         "its runs, its experts in one expert run (Engine expert_major; "
+                         "docs/offload.md 13.11, 13.13; the server's need lines and scratch)")
     ap.add_argument("--ahead-part", type=int, metavar="KiB",
                     help="--layer-ahead hint: the KiB an idle poll sends of a queued expert "
                          "(default qwen3.AHEAD_PART, 1024; at least a slot: one part an expert)")
@@ -556,7 +566,8 @@ def main():
              a.hint_n, a.hint_top, a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
              not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
              not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace,
-             a.layer_ahead, a.ahead_part << 10 if a.ahead_part else None, a.idle_parts)
+             a.layer_ahead, a.ahead_part << 10 if a.ahead_part else None, a.idle_parts,
+             a.expert_major)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

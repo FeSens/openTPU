@@ -1077,13 +1077,16 @@ class Image(EmbedHost):
                 for s in range(self.cfg.S)]
 
     def compile_layer_run(self, li: int, blocks: int, block: int = ATTN_BLOCK, R: int = 1,
-                          embedded: bool = False, at: int | None = None, hint: bool = False):
+                          embedded: bool = False, at: int | None = None, hint: bool = False,
+                          em: bool = False):
         """(programs, run_args): qwen35_layer_run of layer li, R rows at a run-time position of
         bucket `blocks` (from conv_k - 1: the convolutions' taps) and a run-time row of the
         prefill chunk (run arguments: RunPos.values and "row"), or at the compile-time
         position `at` (the rows before conv_k - 1; embedded); li < 0: qwen35_embed_run. hint:
-        the run ends with the next MoE layer's hint (qwen35_layer_run). The image needs lookup
-        tables and its prefill rows."""
+        the run ends with the next MoE layer's hint (qwen35_layer_run); em: expert-major
+        (docs/offload.md 13.11: the rows in the scratch's records, the MoE's prologue and the
+        last layer's combine; compile_expert_run). The image needs lookup tables and its
+        prefill rows."""
         from ..compiler import RunVar
         spec, K = self.spec, self.spec.conv_k
         if not self.lookup or not self.prefill_rows:
@@ -1093,8 +1096,11 @@ class Image(EmbedHost):
         k = spec.moe.k if spec.moe is not None else 1
         if not 1 <= R <= RUN_ROWS or R * k > LINE // 4:
             raise ValueError(f"{R} rows a layer run")
-        if hint and self.offload is None:
-            raise ValueError("a layer run's hint needs the expert server's words (offload)")
+        if (hint or em) and self.offload is None:
+            raise ValueError("a layer run's hint or expert-major MoE needs the expert server's "
+                             "words (offload)")
+        if hint and em:
+            raise ValueError("expert-major layer runs post their own layer's needs, no hints")
         row = RunVar("row", self.prefill_rows)
         if R > 1 and li == 0 and not embedded and not self.embed_host:
             raise ValueError("layer 0's run of rows gathers them from the host's slot "
@@ -1109,18 +1115,31 @@ class Image(EmbedHost):
             pos.tpos.bound -= R - 1     # the run's last row in the block too: tpos <= block - R
         m = self.descriptors(0)
         if li < 0:
-            b = qwen35_embed_run.trace(self.cfg, 0, {"m": m, "pos": pos, "row": row})
+            b = qwen35_embed_run.trace(self.cfg, 0, {"m": m, "pos": pos, "row": row, "em": em})
         else:
             b = qwen35_layer_run.trace(self.cfg, 0, {"m": m, "li": li, "pos": pos, "row": row,
                                                      "block": block, "R": R,
-                                                     "embedded": embedded, "hint": hint})
+                                                     "embedded": embedded, "hint": hint,
+                                                     "em": em})
         return [b.finish()], list(b.run_args)
 
-    def compile_prefill_head(self):
-        """(programs, run_args): qwen35_prefill_head at a run-time row ("row")."""
+    def compile_prefill_head(self, em: bool = False):
+        """(programs, run_args): qwen35_prefill_head at a run-time row ("row"); em: from the
+        expert-major records, after the last layer's combine."""
         from ..compiler import RunVar
         b = qwen35_prefill_head.trace(self.cfg, 0, {"m": self.descriptors(0),
-                                                    "row": RunVar("row", self.prefill_rows)})
+                                                    "row": RunVar("row", self.prefill_rows),
+                                                    "em": em})
+        return [b.finish()], list(b.run_args)
+
+    def compile_expert_run(self, li: int):
+        """(programs, run_args): moe.moe_expert_run of MoE layer li (expert-major,
+        docs/offload.md 13.11), the chunk's rows and entries (rows x k) run arguments ("rows",
+        "entries")."""
+        if self.offload is None or not self.prefill_rows or self.cfg.S != 1:
+            raise ValueError("an expert run needs the expert server's words, the image's "
+                             "prefill rows and one slice")
+        b = qwen35_expert_run.trace(self.cfg, 0, {"m": self.descriptors(0), "li": li})
         return [b.finish()], list(b.run_args)
 
     def _run_rows(self, kernel, blocks: int, lo: int, R: int, block: int, slot: int, **kw):
@@ -1255,7 +1274,10 @@ class Image(EmbedHost):
             L = self.offload
             dev = SimpleNamespace(mbox=L.mbox, served=L.served, answer=L.answer, dir=L.dir,
                                   tag=L.tag, fmt=self.fmt, hint_off=L.layers * L.E,
-                                  scratch=self.io.get("moe_scratch"))
+                                  scratch=self.io.get("moe_scratch"),
+                                  need_off=2 * L.layers * L.E, em_base=L.slots[0][0],
+                                  em_rec=MO.em_record(H, spec.moe.k),
+                                  em_rows=self.prefill_rows)
         mtp = {}
         if spec.mtp:
             mo, ff = self.mtpo, self.mtp_fc
@@ -2256,7 +2278,7 @@ def qwen35_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK, hidden
 
 @ol.jit
 def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
-                     embedded: bool = False, hint: bool = False):
+                     embedded: bool = False, hint: bool = False, em: bool = False):
     """Layer-major prefill (a MoE model's, docs/offload.md 13: the whole prompt chunk through a
     layer before the next, so that the expert cache serves one layer at a time): the R prompt
     rows from `row` (a run-time value) at the positions pos .. pos + R - 1 (a RunPos, from
@@ -2269,10 +2291,18 @@ def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
     states, windows, KV cache and residual rows the per-position programs make. No router hint
     of its own layer (the run's request follows at once); with `hint`, when layer li + 1 is a
     MoE layer, the run ends with its hint: layer li + 1's router on the output rows
-    (moe.moe_hint_rows; docs/offload.md 13.9), which changes no row."""
+    (moe.moe_hint_rows; docs/offload.md 13.9), which changes no row.
+
+    em: expert-major (docs/offload.md 13.11). The residual rows are the scratch records' X
+    (moe.em_x), not m.xbuf. The run first ends layer li - 1's MoE for its rows
+    (moe.moe_combine_rows: the outputs that layer's expert run stored), and a MoE layer's run
+    ends with its prologue (moe.moe_prologue_rows: the route, the need line, the shared
+    expert), its experts left to the layer's expert run (qwen35_expert_run). Each row's
+    arithmetic is still moe_ffn_rows'."""
     spec, K = m.spec, m.spec.conv_k
     run = isinstance(pos, RunPos)
     p = pos.pos if run else pos
+    X = MO.em_x(m.moe_dev, row, R, spec.hidden) if em else m.xbuf[row:row + R, :]
     if R == 1 and li == 0 and not embedded:
         x, c, s_ = _inputs(m, pos)
     elif li == 0 and not embedded:  # the host's slot rows (its embed_host table), as _inputs_rows
@@ -2281,11 +2311,13 @@ def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
         for r, g in enumerate(_gather(m, m.embed_q, range(R))):
             x[r:r + 1, :].set(g)
     else:
-        x = ol.load(m.xbuf[row:row + R, :])
+        x = ol.load(X)
         if R == 1:
             c, s_ = ol.load(m.cos_t[p, :]), ol.load(m.sin_t[p, :])
         else:
             c, s_ = ol.load(m.cos_t[p:p + R, :]), ol.load(m.sin_t[p:p + R, :])
+    if em and li > 0 and m.layer(li - 1).moe:
+        x.set(MO.moe_combine_rows(x, spec.moe, m.moe_dev, row))
     lw = m.layer(li)
     if lw.kind == LIN:
         if R == 1:
@@ -2301,25 +2333,49 @@ def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
         x.set(_attention_rows(x, lw, c, s_, rows, spec, block, gated=True))
     if not lw.moe:
         x.set(_mlp(x, lw, spec))
+    elif em:
+        ol.store(X, x)
+        MO.moe_prologue_rows(x, lw, spec.moe, m.moe_dev, spec.eps, row)
+        return
     elif R == 1:
         x.set(MO.moe_ffn(x, lw, spec.moe, m.moe_dev, spec.eps))
     else:
         x.set(MO.moe_ffn_rows(x, lw, spec.moe, m.moe_dev, spec.eps))
-    ol.store(m.xbuf[row:row + R, :], x)
+    ol.store(X, x)
     if hint and li + 1 < spec.layers and m.layer(li + 1).moe:
         MO.moe_hint_rows(x, m.layer(li + 1), spec.moe, m.moe_dev, spec.eps)
 
 
 @ol.jit
-def qwen35_embed_run(m, pos, row):
+def qwen35_embed_run(m, pos, row, em: bool = False):
     """A layer-major prefill's input row (runs of more than one row, the rows before conv_k -
-    1): the token's embedding row (pos.tok, from the image's tables) -> m.xbuf[row], as
-    qwen35_step's."""
-    ol.store(m.xbuf[row:row + 1, :], _embed(m, pos.tok))
+    1): the token's embedding row (pos.tok, from the image's tables) -> m.xbuf[row] (em: its
+    record's X), as qwen35_step's."""
+    X = MO.em_x(m.moe_dev, row, 1, m.spec.hidden) if em else m.xbuf[row:row + 1, :]
+    ol.store(X, _embed(m, pos.tok))
 
 
 @ol.jit
-def qwen35_prefill_head(m, row):
+def qwen35_prefill_head(m, row, em: bool = False):
     """After a layer-major prefill's last layer: the final norm and the LM head of the residual
-    stream row m.xbuf[row] (a run-time value) -> m.logits, as qwen35_step's."""
-    _lm_head(ol.load(m.xbuf[row:row + 1, :]), m, m.spec)
+    stream row m.xbuf[row] (a run-time value) -> m.logits, as qwen35_step's. em: the row's
+    record's X, after the last layer's combine (expert-major: its MoE ends here)."""
+    spec = m.spec
+    if not em:
+        _lm_head(ol.load(m.xbuf[row:row + 1, :]), m, spec)
+        return
+    x = ol.load(MO.em_x(m.moe_dev, row, 1, spec.hidden))
+    if m.layer(spec.layers - 1).moe:
+        x.set(MO.moe_combine_rows(x, spec.moe, m.moe_dev, row))
+    _lm_head(x, m, spec)
+
+
+@ol.jit
+def qwen35_expert_run(m, li: int):
+    """Expert-major's expert run of MoE layer li (moe.moe_expert_run, docs/offload.md 13.11):
+    after the layer's runs over a prefill chunk, each expert its rows chose once, in passes of
+    two rows; the chunk's rows and their entries (rows x k) are run arguments."""
+    from ..compiler import RunVar
+    C, k = m.moe_dev.em_rows, m.spec.moe.k
+    MO.moe_expert_run(m.layer(li), m.spec.moe, m.moe_dev, RunVar("rows", C + 1),
+                      RunVar("entries", C * k + 1))
