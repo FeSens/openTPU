@@ -1249,7 +1249,12 @@ every run:
 - The 26B (2.42, 2.39 with release) read nothing from the disk: its 13.2 GB pool fits. Its
   staging (21.4 s for 11,276 experts) is half in the copy path: an expert of 3,446,784 bytes is
   841.5 RUN blocks, so every other slot is not 4 KiB aligned and BoardDram reads it whole and
-  reorders it (`direct` 5618), about 2.85 ms more an expert.
+  reorders it (`direct` 5618), about 2.85 ms more an expert. So `Layout.build` now spaces the
+  slots by whole RUN blocks (`Layout.pitch`: the 26B's 3,448,832, 1.1 MB more for its 540 slots,
+  still 18 a layer in its 4052 MiB image; the 35B's and LFM2.5-8B's slots are whole blocks
+  already) and every expert reads into its runs. The slot addresses are the directory's, so no
+  program changes (program_sha.py: main's hashes under both configurations). Expected: about
+  16 s less staging, the 26B near 2.8 tok/s.
 
 ## 11. Gemma 4 26B-A4B: design note
 
