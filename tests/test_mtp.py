@@ -188,3 +188,91 @@ def test_mtp_needs_paired_verify():
     eng = mtp_engine(spec, _mtp_weights(W, spec), cap=256, cfg=cfg, **FP4)
     with pytest.raises(ValueError, match="MCOLS >= 4"):
         MTPDecoder(eng)
+
+
+def _plain(spec, W, prompt, N, kw, cfg=CFG):
+    """Plain greedy decode's tokens (resident decode, the host loop)."""
+    return Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw).generate(prompt, max_new=N)
+
+
+@pytest.mark.parametrize("P, drafter, fmt, N, stop", [
+    (250, "right", "int8", 16, False),     # V at 254 accepts: the wrap; the last token alone
+    (251, "right", "int8", 15, False),     # 253 -> 255: E, then D1 and the next bucket's V
+    (249, "mixed", "int8", 15, False),     # E at the other parity
+    (250, "wrong", "int8", 12, False),
+    (249, "right", "fp4", 15, False),
+    (250, "mtp", "emb8", 15, False),       # int8 embedding: 10 run-time values in D
+    (252, "right", "int8", 15, True),      # a stop id: the second of an accepted pair
+    (30, "right", "kh16", 6, False)])      # 16 DeltaNet heads: V's arguments move
+def test_mtp_loop_on_the_device_is_plain_greedy(P, drafter, fmt, N, stop):
+    """The MTP loop on the device (docs/mtp.md 10: V, E, D, D1 chained through the buckets'
+    programs, ISA simulator) gives plain greedy decode's tokens across the end of the first
+    attention bucket, whatever the drafts (the device's MTP, or the host's table: all right,
+    every third wrong, all wrong), and leaves the context as plain decode does: the committed
+    DeltaNet states and windows equal, word for word, those of the prompt and the tokens but
+    the last fed one by one. kh16: the 0.8B's and 2B's 16 DeltaNet heads, whose addresses
+    take an argument register of the verify's, so its last arguments move into the released
+    registers of the row tokens', each at its own release (Builder._move_arg)."""
+    _, W, spec = _tiny_model(16, 16) if fmt == "kh16" else _tiny_model(8)
+    cfg = board_config(DRAM_BYTES=1 << 26, DSTEP=True, STREAM=True, PAIR=True) \
+        if fmt == "kh16" else CFG
+    if fmt == "emb8":
+        spec = dataclasses.replace(spec, embed="int8")
+    W = _mtp_weights(W, spec)
+    kw = FP4 if fmt == "fp4" else {}
+    prompt = [int(t) for t in np.random.default_rng(P).integers(0, 1000, P)]
+    want = _plain(spec, W, prompt, N, kw, cfg)
+    ids = None
+    if stop:                                # the first token of a second kind stops it
+        k = next((i for i, t in enumerate(want) if t != want[0]), len(want) - 1)
+        ids = [want[k]]
+        want = want[:k + 1]
+    right = np.zeros(514, np.float32)
+    right[P:P + len(want)] = want
+    drafts = {"right": right, "wrong": (right + 1) % 1000, "mtp": None,
+              "mixed": np.where(np.arange(514) % 3, right, (right + 7) % 1000)}[drafter]
+    eng = mtp_engine(spec, W, cap=512, cfg=cfg, **kw)
+    dec = MTPDecoder(eng)
+    st = dec.generate_card(prompt, max_new=N, stop=ids, drafts=drafts)
+    assert st.tokens == want
+    if drafter == "right" and not stop:
+        assert sum(st.accepted) >= len(want) // 2 - 2
+    if drafter == "wrong":
+        assert not any(st.accepted)
+    ref = Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw)
+    ref.prefill(prompt)
+    for t in want[:-1]:
+        ref.step(t)
+    assert eng.pos == ref.pos == P + len(want) - 1
+    assert all(np.array_equal(a, b) for a, b in
+               zip(_states(eng, spec, dec.slot), _states(ref, spec, 0)))
+
+
+def test_mtp_loop_on_rtl(have_verilator):
+    """The MTP loop on the Verilator RTL (the board's memory path): from the same DRAM state (a
+    251-token prefill on the ISA simulator), one run of the loop across the first bucket's end (V, E, D, D1 and the next
+    bucket's V through HALT CHAIN, both parities, drafts from the host's table, every third
+    wrong): the tokens and the image's DRAM equal the ISA simulator's."""
+    from opentpu import rtlsim
+    from opentpu.llm.rtl_backend import RtlBackend
+    _, W, spec = _tiny_model(8)
+    W = _mtp_weights(W, spec)
+    P, N = 251, 9
+    prompt = [int(t) for t in np.random.default_rng(P).integers(0, 1000, P)]
+    want = _plain(spec, W, prompt, N, {})
+    right = np.zeros(514, np.float32)
+    right[P:P + N] = want
+    drafts = np.where(np.arange(514) % 3, right, (right + 7) % 1000)
+    eng = mtp_engine(spec, W, cap=512, cfg=CFG)
+    dec = MTPDecoder(eng)
+    a0, d = dec.prefill(prompt, MTPStats())
+    isa, n = eng.backend, eng.image.nbytes
+    rtl = RtlBackend(eng.cfg, [isa.machine.slices[0].dram[:n]], uarch=rtlsim.BOARD_UARCH,
+                     axi=True, boot=True)
+    st = dec.loop_card(a0, d, N, drafts=drafts)
+    assert st.tokens == want and 0 < sum(st.accepted) < st.iterations
+    eng.backend, eng.pos, dec.slot = rtl, P, 0
+    eng.__dict__.pop("_mtp_gen")            # the chain area: written again, to the RTL's DRAM
+    got = dec.loop_card(a0, d, N, drafts=drafts)
+    assert got.tokens == want
+    assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])

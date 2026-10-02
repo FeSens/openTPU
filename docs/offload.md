@@ -1121,6 +1121,297 @@ run gave the ISA simulator's tokens and prefill logits bit for bit (`q35ref16`).
 - The polls' reads: 25-27 us each with `BoardDram.read`'s beat read, against 90 us (12.6). The
   link ran at 1.41 GB/s while busy.
 
+### 10.5 Session 9: the paired experts
+
+moe-pair (main d29bfe9) runs the experts' 4-bit MMs paired, as the layers' own; before it every
+expert ran at one block a cycle (its slot address, a register, failed the pairing's alignment
+test). The co-simulation gave LFM2.5-8B +35-40% and the link-bound 35B and 26B +3-4%. Card
+session 9 (2026-10-01, the production build after B, 72256074: B with xdma_rnum_rids 8, Gen1;
+`tools/offload/sessions/session9.sh`, the first run of the repo's `card_moe.sh`) ran both trees
+in one session, A B A B: A main 7d879e6 against its references, B d29bfe9 against the ISA
+simulator's references remade at d29bfe9 (`reference.sh` on omarchy). All 12 runs gave their
+tree's tokens and prefill logits bit for bit.
+
+| tok/s (two runs) | A, unpaired | B, paired | B / A |
+|:--|:--|:--|:--|
+| LFM2.5-8B-A1B, 160 tokens, 28 slots a layer | 10.65, 10.67 | 14.49, 14.53 | **+36.1%** |
+| Qwen3.5-35B-A3B, 128 tokens, the table on the host | 3.40, 3.35 | 2.78, 2.21 | (the host's) |
+| gemma-4-26B-A4B, 128 tokens | 2.69, 2.66 | 2.40, 2.37 | (other tokens) |
+
+- LFM2.5-8B decodes from its slots (0.9 misses a token): its cycles a run fell from 1.98e9 to
+  1.46e9, the co-simulation's gain.
+- The 35B's two trees missed the same experts (102.7 a token) and moved them at the same rate
+  (DMA 16.0-16.3 s, 1.34-1.37 GB/s), but B's staging (the main thread's reads of the pool into
+  the staging buffers, and its waits for a free pair) took 20.2 and 32.3 s against A's 10.5 and
+  11.4, with as much of the pool in the page cache at decode (12.7-16.1 of 17.1 GB) and the same
+  host code: the host's, and it hides the projected 3-4% (below). moe_card now records where
+  staging goes (10.6).
+- The 26B's paired sums changed its tokens (B's equal HF's greedy, as its new reference; A's
+  part from it at token 5, a tie): B's text asks for 88.1 experts a token against 68.6, so its
+  rate is not comparable.
+- The build's H2C ran at 1.34-1.40 GB/s during the runs, against B's 1.41-1.42: the 8 read IDs'
+  cost ld-memch measured.
+
+The card's own share. `decode_cycles` includes the WAITW stalls, and no counter separates them.
+moe_card's `poll` time is each served request's window, from the read that saw it to served
+flushed, so the card's time outside the windows (`decode_cycles` over the clock, less `poll`) is
+what moe-pair changes on the wall at a fixed host. It does not follow the host's speed: B's two
+35B runs' windows differ by 11.7 s, their time outside by 0.05 s.
+
+| ms a token outside the host's windows | A | B | B - A |
+|:--|:--|:--|:--|
+| LFM2.5-8B-A1B (0.9 misses a token) | 85.0, 84.5 | 60.0, 60.3 | -24.6 (-29.0%) |
+| Qwen3.5-35B-A3B | 101.5, 101.1 | 95.9, 96.2 | -5.3 (-5.3%) |
+| gemma-4-26B-A4B (other tokens; the same work a token) | 134.7, 134.3 | 120.5, 120.6 | -14.0 (-10.4%) |
+
+- moe-pair helps the card on all three and hurts none. The 8B is the co-simulation's per-expert
+  gain on the card: 88 experts a token at 0.65 -> 0.36 ms is 25.5 ms, against 24.6.
+- On the link-bound two the experts' gain is mostly hidden. moe_ffn posts the request, runs
+  `beside()`, computes the experts it has, then each missing one as its directory entry lands
+  (each waits on its own entry, not on served). So under the streaming only the last landed
+  expert's compute (a layer that misses) or all k (a layer that misses none) is outside the
+  host's window. On the router traces (lfu_layer at the card's slots) the 35B has 5.5-9.4 layers
+  a token that miss nothing at 74-93 misses a token, which gives 7.0-9.5 ms (5.3 measured at
+  102.7 misses: fewer such layers); the 26B 2.7-5.7, 8.5-12 ms (14.0; its hits partly outside
+  the window too: `beside()` plus 7 x 0.38 ms against its first miss's 3.4 ms).
+- At A's host that is 1.8% of the 35B's decode and 3.7% of the 26B's.
+
+### 10.6 Where the host's staging goes
+
+After session 9's 35B (the same misses and DMA, staging 10.5 -> 20-32 s), moe_card records:
+- `host_decode_s.reads`: the decode's pool reads by where they came from, `cached` (every page in
+  the page cache just before the read: mincore) or `disk`, each [reads, seconds, bytes, bytes
+  not in the cache] (`PoolFile.io`);
+- `host_decode_s.stage_wait`: staging's waits for a free staging pair, the DMA thread's
+  (`BoardDram.wait_s`); the rest of `stage` is the reads and the copies;
+- `pool_warm.at_end`: the pool's bytes in the page cache after the decode, beside `at_decode`;
+- `host_mem` at decode and at its end: the process's and its children's (the compile workers)
+  resident and swapped GB (`rss_file`: the process's mapped files, page cache it may lose), and
+  the host's available, page cache, anonymous and swap used;
+- `device_counters`: the free-running counters' change over the decode (SNAP; MXU_BUSY, DMA_BUSY
+  with the WAITW stalls, DRAM_RD / WR, INSTR, ...);
+- `misses_per_request_decode`: each request's misses (a token's layers in order).
+
+What the 35B needs (cachesim, the decode's misses under lfu_layer at the card's 1680 slots
+replayed against a host cache over the pool; four 2048-token router traces, 128-token windows,
+85 misses a token): disk reads a token by the pool's GB in the page cache:
+
+| pool GB in RAM | LRU (the page cache) | admit the profile's 5000 / 7000 best only (O_DIRECT the rest) | the profile's best pinned (O_DIRECT the rest) | Belady |
+|:--|:--|:--|:--|:--|
+| 8 | 18.5 | 32.4 / 20.6 | 33.9 | 6.2 |
+| 10 | 9.7 | 32.4 / 16.0 | 22.2 | 3.6 |
+| 12 | 4.5 | 32.4 / 15.5 | 13.2 | 2.2 |
+| 14 | 2.2 | 32.4 / 15.5 | 6.9 | 1.8 |
+
+- The page cache's own LRU beats keeping cold experts out of it and pinning a hot set at every
+  size; other slot policies miss more (lru_layer 95 a token, a global LFU 175). The 26B's 13.2 GB
+  pool needs about 8 GB (1.9 disk reads a token; 0.4 at 10).
+- opentpu's SSD (a SATA BX500, btrfs on dm-crypt) reads an expert dropped from the page cache in
+  4.2 ms one at a time (400 MB/s), 3.4-3.6 ms with a request's misses queued at once
+  (POSIX_FADV_WILLNEED, threads, or O_DIRECT in threads): about 3.8 ms more than a cached read.
+- With no disk read a token takes the card's 101 ms outside the windows plus 144 ms of windows
+  (session 5's traces: 0.12-0.26 ms a request plus 1.27-1.36 ms a miss, the link's 1.24 ms): 4.08
+  tok/s; by pool GB in RAM 14 -> 3.95, 12 -> 3.82, 10 -> 3.55, 8 -> 3.17.
+
+So the lever is RAM for the pool. moe_card's `--release-weights` gives the checkpoint's pages back
+after the build (`LazyWeights.release`: safe_open maps each file whole, and the pages the build
+read stay mapped, held over the pool's; the 35B's stripped checkpoint is 4.9 GB, the 26B's 4.5;
+a tensor read after reopens its file). On Linux a 537 MB checkpoint read whole held 526 MB of
+RssFile and its pages; after release() neither. `--willneed` queues a request's misses' reads at
+once (`ExpertServer.ahead`, `PoolFile.willneed`).
+
+Card session 10 (2026-10-01, build 72256074, `tools/offload/sessions/session10.sh`; main d29bfe9's
+programs with this host code, against session 9's references: every run's tokens and prefill
+sha the simulator's) measured both, the 35B at 128 tokens with the same 102.85 misses a token in
+every run:
+
+| run | other checkpoints in the page cache | release | willneed | tok/s | disk reads (s) | staging s | windows s | pool GB cached at decode |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| s10 t | 13.6 GB (the session before's) | | | 2.20 | 3261 (26.4) | 33.7 | 45.9 | 9.35 |
+| s10 r | 13.6 GB | yes | | 3.05 | 1664 (9.4) | 17.0 | 29.6 | 9.64 |
+| s10 rw | 13.6 GB | yes | yes | 3.50 | 1248 (2.5) | 10.4 | 24.2 | 12.70 |
+| s10b t | dropped | | | 3.67 | 226 (1.0) | 8.8 | 22.4 | 16.50 |
+| s10b r | dropped | yes | | **3.79** | 0 | 7.7 | 21.3 | 16.05 |
+
+- The process is not what crowds the pool: 1.3 GB anonymous, its compile workers 0.1 GB (13.3 GB
+  at its peak, the image build). The page cache held the checkpoints a session before had
+  mmapped (Qwen3.5 0.8B / 2B / 4B, 13.6 GB) and the run's own (4.74 GB of RssFile): with MGLRU
+  (opentpu: on) once-mapped pages outlive the pool's read() pages. `fincore` shows them.
+- So the Engine releases the checkpoint itself once the image is written when its experts
+  stream from a pool file (`Engine(release_weights=True)`, the default; a LazyWeights read
+  after reopens its file), moe_card queues a request's disk reads by default (`--keep-weights`,
+  `--no-willneed` for the old way), and card_moe.sh drops every other file of 100 MB or more
+  under ~/openTPU/models and the session directory before each run (`DROPOTHER`, "" for none;
+  DONTNEED only, the next session's loads read them from the SSD; a link out of ~/openTPU and
+  ~/otpu-build is skipped and logged, never opened).
+- The card's side did not change: MXU_BUSY 2.13e9 cycles in every run, RUNNING - DMA_BUSY 1.76e9;
+  only WAITW's share moved. Each request's window (`--hint-trace`): 0.6 ms + 1.57 ms a miss with
+  the pool cached (rw), 1.57 + 2.85 with the disk (t, its 99th percentile 108 ms).
+- 3.79 against the model's 4.08: the build's link (1.33 GB/s, not 1.40) and the windows' 21.3 s
+  against the DMA thread's 16.4 s, each request's first expert staged before the link starts.
+- The 26B (2.42, 2.39 with release) read nothing from the disk: its 13.2 GB pool fits. Its
+  staging (21.4 s for 11,276 experts) is half in the copy path: an expert of 3,446,784 bytes is
+  841.5 RUN blocks, so every other slot is not 4 KiB aligned and BoardDram reads it whole and
+  reorders it (`direct` 5618), about 2.85 ms more an expert. So `Layout.build` now spaces the
+  slots by whole RUN blocks (`Layout.pitch`: the 26B's 3,448,832, 1.1 MB more for its 540 slots,
+  still 18 a layer in its 4052 MiB image; the 35B's and LFM2.5-8B's slots are whole blocks
+  already) and every expert reads into its runs. The slot addresses are the directory's, so no
+  program changes (program_sha.py: main's hashes under both configurations). Card session 11
+  (2026-10-01, `tools/offload/sessions/session12.sh`'s first part, d29bfe9's programs, g26r
+  twice, bit for bit): 2.65 and 2.69 tok/s against 2.39 and 2.42, every expert read in place
+  (`direct` 11,310), staging 21.6 -> 12.3-12.8 s, the windows 38 -> 32 s against the DMA
+  thread's 27.2 (2.8 was expected: the rest is each request's own cost, as the 35B's).
+
+### 10.7 The pool under MGLRU
+
+Session 10's 35B lost its pool's page cache to checkpoints that had been mapped once: the run's
+own (LazyWeights' safe_open maps) and a session before's. With MGLRU (Linux's multi-generational
+LRU: opentpu's 7.2.5 and omarchy's 7.1.4 kernels, `/sys/kernel/mm/lru_gen/enabled` 0x0007) a file
+page some process mapped and touched outlives one read only through read(). The Engine now
+releases its own checkpoint (10.6) and card sessions drop the others (DROPOTHER), but a user's
+host has files a session cannot evict: other models, other applications.
+
+The host test (omarchy: a 1.9 GB memory cgroup, `systemd-run --user --scope -p MemoryMax`; a
+1.0 GB "checkpoint" a child process mapped, touched and left; a 1.5 GB pool warmed, then read 3000
+times in 1.67 MB records of zipf popularity), with PoolFile itself for the first and third rows:
+
+| the pool read by | disk reads | pool resident (of 1.50 GB) | checkpoint resident (of 1.0) |
+|:--|:--|:--|:--|
+| read() (PoolFile before) | 11.0-16.5% | 0.96-1.13 | 0.82-1.00 |
+| read() + POSIX_FADV_WILLNEED | 11.2% | 0.97 | 1.00 |
+| read(), each read touched through a map (PoolFile now) | 0 | 1.50 | 0.45 |
+| memcpy from a map (+ MADV_WILLNEED: the same) | 0 | 1.50 | 0.46 |
+| read(), the run's own checkpoint still mapped | 10.9% | 0.96 | 1.00 |
+| read() + touch, the run's own checkpoint still mapped | 4.6% | 1.40 | 0.56 |
+
+So PoolFile (`mapped`, the default; `Engine(pool_map=False)`, moe_card `--no-pool-map` for
+read() alone) keeps a read-only map of the pool (PROT_READ: its view is not writeable, nothing
+writes through it) and touches every expert it reads or warms through it, a byte a page, after
+the preadv (which keeps the reads' size and their GIL release). The pool's pages then compete
+as mapped ones and the dead checkpoint goes first. Costs:
+- the page tables of the pool's touched pages, 8 bytes per 4 KiB: about 33 MB for the 35B's
+  17.1 GB pool (2 MB per GB);
+- the touch, measured on omarchy for an expert of 1.67 MB already in the page cache: 44 us the
+  first time (fault-around maps 16 pages a fault: about 26 minor faults), 7.9 us after, against
+  214 us for its cached preadv. The warm thread pays the first touches (0.45 s for the 35B's
+  10,240 experts, off the critical path); a decode token's 102.7 misses pay about 0.8 ms;
+- the pool counts in the process's `rss_file` (page cache, as before).
+
+Not tried: MADV_HUGEPAGE (file-backed huge pages need READ_ONLY_THP_FOR_FS and khugepaged; the
+touch already gives the standing). It does not change what the pool needs (about 14 GB of RAM
+for the 35B, 10.6) or the SSD's 4.2 ms an expert.
+
+The card's check, session 12 (2026-10-01, `tools/offload/sessions/session12.sh`, d29bfe9's
+programs, every run bit for bit): card_moe.sh `HOG=dir:dir` mapped and touched the Qwen3.5
+0.8B / 2B / 4B checkpoints (15.6 GB) from another process before each run, with DROPOTHER="",
+then q35e128r (the checkpoint released) with the pool read through read() (A, the tree before
+this change) or touched through its map (B), A B A B:
+
+| run | the pool | tok/s | disk reads (s) | staging s | windows s | pool GB cached at decode, end |
+|:--|:--|:--|:--|:--|:--|:--|
+| A1 | read() | 2.67 | 2387 (15.5) | 23.0 | 35.5 | 8.9, 13.4 |
+| B1 | mapped | **3.71** | 173 (0.4) | 8.6 | 22.1 | 16.7, 16.8 |
+| A2 | read() | 3.08 | 1077 (8.2) | 16.0 | 29.1 | 15.6, 16.7 |
+| B2 | mapped | **3.76** | 2 (0.0) | 8.2 | 21.5 | 17.1, 17.1 |
+
+The mapped pool held its page cache against the other process's checkpoints: 3.71 and 3.76 tok/s
+against session 10's 3.79 with them dropped (10.6), where read() lost 19-30%. B's `rss_file` at
+decode was 16.2-16.7 GB: the pool, mapped (page cache, not the process's own memory).
+
+### 10.8 Each request's own cost
+
+After 10.6 and 10.7 the decode's windows still run about 5 s over the DMA thread's time per 128
+tokens on both models: the 35B's 21.5 s against 16.6 (session 12's B2), the 26B's 32.0 against
+27.2 (session 11). That is why the 26B made 2.69 tok/s and not the 2.8 that 10.6 expected. The
+per-request traces (`--hint-trace`; session 12's B2: 5120 requests, 13,113 misses) fit 0.27 ms
++ 1.50 ms per miss, against 1.26 ms per miss of DMA. The excess is about 0.14 ms per request
+with no miss, 0.4 ms more for a request's first miss, and 0.2 ms for each miss after it.
+
+The card can't tell where that goes, so `tools/offload/serve_emu.py` runs the host side alone on the
+card's host. It drives the real ExpertServer, BoardDram, PoolFile and XdmaTransport code,
+replacing the XDMA calls with waits of the card's costs: 20 us per call plus the bytes at 1.365
+GB/s for a write, and 22 us for a beat read. It replays a session's requests (layer, misses, the
+device's gap), reads the real pool file, and logs every DMA call. On opentpu it fits 0.30-0.33 ms
++ 1.65 ms per miss, close to the card's fit, so its breakdown is used below. The 35B, per
+request with misses (1296 of 1500):
+
+| | before | now |
+|:--|:--|:--|
+| post -> seen (poll loop period / 2 + its read) | 82 us | 26 us |
+| seen -> the link's first expert DMA (row read, serve's Python, the first part's read) | 500 us | 330 us |
+| link idle between calls, per miss (Python, the GIL, flock) | 160 us | 115 us on the critical path |
+| victims' entry clears (a 64-byte call each, plus its gap) | before each expert | after the last entry |
+| device-side stall, post -> last entry landed (mean over all 1500 requests) | 4.01 ms | 3.60 ms |
+
+Four host-side changes:
+- `preadv_iov`: BoardDram reads a split expert through libc's preadv on an iovec array
+  (addresses, lengths) instead of os.preadv on a list of buffers. os.preadv holds the GIL while
+  it gets each buffer (816 per 35B expert, 1684 per 26B expert; about 170 us per expert on
+  opentpu's i7-4790), and the DMA thread waits for that GIL between its calls. Records get
+  `readiov` from `PoolFile.get`, and a hint's part keeps it.
+- `BoardDram.lead` (0.2): a request's first miss is sent in a fifth plus the rest, not two
+  halves. The link starts after 334 KB is read (35B), not 835 KB. Reading runs at about 4.5x the
+  link, so the second part is read before the first one's DMA ends.
+- The victims' entries are cleared at the end of the request, after its last new entry and
+  before served (`ExpertServer._clear`). The card reads only the entries of the ids it posts,
+  so a victim's entry is read only in a later request, after served. The link no longer spends
+  a 64-byte call, about 70 us with its gap, before each miss.
+- The poll loop spins (`XdmaTransport.host_idle` 0; other transports keep HOST_IDLE's 50 us).
+  Each poll's seq read is a DMA call of about 30 us, and that read paces the loop. The 50 us
+  sleep slept about 110 us on the card's host, making the loop period about 140 us. With a
+  host hook, run_generate reads out[] at most every ms (`HOST_TAKE`); its two DMA calls would
+  double the period.
+
+moe_card `--legacy-serve` restores all four for an A/B (halves, buffer lists, each clear
+first, the sleep, out[] every poll).
+
+The emulator compares legacy against now, three runs each of 1500 requests (35B: session 12's
+trace; 26B: session 11's misses at a 1.5 ms gap). Device stall is post -> last entry landed;
+window is seen -> poll returns:
+
+| model | device stall, legacy | now | window, legacy | now |
+|:--|:--|:--|:--|:--|
+| 35B | 6.01-6.07 s | 5.39-5.42 | 6.03-6.09 | 5.67-5.74 |
+| 26B | 13.08-13.26 | 12.14-12.17 | 13.08-13.25 | 12.52-12.53 |
+
+That is -0.42 ms per request on the 35B and -0.63 on the 26B. The emulator's link is about 10%
+slower per miss than the card's, so scaled by 0.85 the prediction is:
+- 35B: -1.9 s per 128 tokens, 3.76 -> about 4.0 tok/s.
+- 26B: -2.0 s, 2.69 -> about 2.8 tok/s.
+
+Card session 13 (2026-10-01, `tools/offload/sessions/session13.sh`, d29bfe9's programs on the
+production build): one tree, `--legacy-serve` (L) against this serving (N), with `--hint-trace`
+and the DMA calls. Every run matched the simulator bit for bit (tokens and prefill sha):
+
+| run | serving | tok/s (device) | decode Gcycles | windows s | window fit (ms) | seen -> first expert DMA, median | link idle before data calls | DMA_BUSY G | MXU_STARVE G |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| 35B L1 | legacy | 3.74 (3.75) | 4.546 | 21.19 | 0.34 + 1.48 / miss | 449 us | 1.16 s | 2.777 | 0.077 |
+| 35B N1 | now | **4.01** (4.02) | 4.241 | 20.23 | 0.33 + 1.41 | 273 us | 0.11 s | 2.416 | 0.105 |
+| 35B L2 | legacy | 3.75 (3.76) | 4.544 | 21.15 | 0.30 + 1.50 | 462 us | 0.95 s | 2.774 | 0.078 |
+| 35B N2 | now | **4.04** (4.05) | 4.217 | 20.02 | 0.34 + 1.39 | 269 us | 0.11 s | 2.386 | 0.108 |
+| 26B L | legacy | 2.62 (2.63) | 6.497 | 33.10 | 0.54 + 2.75 | 716 us | 1.27 s | 2.804 | 0.212 |
+| 26B N | now | **2.78** (2.78) | 6.138 | 31.34 | 0.52 + 2.60 | 316 us | 0.10 s | 2.256 | 0.284 |
+
+- That is +7.2% on the 35B (predicted ~4.0) and +6.1% on the 26B (predicted ~2.8). Decode cycles
+  fell 6.9% and 5.5%; DMA_BUSY (with the WAITW stalls) fell 0.38 G and 0.55 G cycles.
+- The DMA calls show where it came from: the link's idle time before its data calls fell from
+  ~1 s to 0.1 s per 128 tokens, and a request's first expert DMA starts 270-320 us after its
+  request is seen instead of 450-720.
+- Not all of the windows' gain reached the device. MXU_STARVE rose by 0.03 G cycles (35B) and
+  0.07 G (26B), and RUNNING - DMA_BUSY by 0.06 G and 0.19 G (1.4 s on the 26B). That is either
+  the spinning poll's card reads (98k -> 346k on the 35B, 64k -> 456k on the 26B, one every
+  ~33 us outside the windows) competing with the MXU's weight reads, or the earlier expert DMA
+  overlapping the hits' compute. To tell them apart, the next A/B is the poll's sleep alone.
+- The 64-byte calls (entries, clears, served) take 49-68 us each on the card, not 20: 31,346
+  of them per 128 tokens of the 35B, 1.8-2.1 s. Each miss still has its entry call on the
+  critical path.
+
+What remains of the excess is the link's own cost. Each expert takes two calls (one per
+channel) plus its entry's 64-byte call, about 60 us with their gaps. On top of that come the
+row read and served, plus the first part's read. Only a faster link (PCIe Gen2, on hold) or
+fewer calls on the card's side (an expert's present flag in its slot, a program change) would
+remove these.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
@@ -1396,8 +1687,24 @@ byte (BoardDram's one queue).
   idle polls (84 hints, 102 landed, 4 misses against 101 without hints), and the logits and
   tokens are the ISA simulator's with the table on the card and no hints.
 - `test_hints_are_off_by_default`: `Spec.from_hf`'s programs are those of `hint=False`. The
-  35B's default program is the one with the table on the host and no hints (sha256
-  862438adb0e68f58).
+  35B's default program is the one with the table on the host and no hints.
+- `tools/offload/program_sha.py CFGDIR [--cfg card.pkl]` gives the programs' sha256 from the
+  configs alone, under `isasim.board_config()` or the card's configuration (`--cfg`: PAIR,
+  DSTEP, STREAM on). moe-pair (main d29bfe9: the experts' 4-bit MMs paired) changed every MoE
+  program under the card's configuration and none under `board_config()`, whose PAIR is off;
+  moe-prefill (the count word) and fmt-b2 (Qwen3.5's and LFM2's layer blocks moved) changed the
+  MoE programs under both, the logits bit for bit the same:
+
+| programs | before moe-pair (7d879e6), card's | d29bfe9, card's | main f81070d, card's | main f81070d, `board_config()` |
+|:--|:--|:--|:--|:--|
+| LFM2.5-8B-A1B fp4 / int8 head, 28 slots | a8a77ef7dd5d9e68 | f3ee4b46b30a02c8 | b6fa581f65694d84 | 48f9128881c9a8e3 |
+| Qwen3.5-35B-A3B fp4 / int8 head, 32 slots (default: the table on the host) | 98bd49dd45aea3ef | 2fa1b39f30cbae74 | 397058f4f6fa4fee | fd3f913e1fdb8e75 |
+| the same, the table on the card | 6a4ec5701cd4dbbe | a76315cf6f7fbad3 | 591e5a7857d67298 | 24d53322fc433629 |
+| gemma-4-26B-A4B fp4 / int8 head, 22 slots | ae48f2854896caed | 0d547648a5f4815b | 9f227c517759b907 | 5df28254c5c3e5e3 |
+| gemma-4-26B-A4B int8 / fp4 experts / fp4 head, 18 slots (the card's) | a67dd5bb5e3d4dee | 48151736927d3e35 | b593ab41215a2883 | d913f5e18b657a20 |
+| gemma-4 E2B, E4B (dense) | 01b705bf299ef984, f8547a57b9f6b3c2 | the same | the same | d511a6d7a138c7e3, 24be53bc4e6094a4 |
+
+(Before moe-prefill the 35B's default under `board_config()` was 862438adb0e68f58.)
 
 ### 12.5 On the card: session 5
 

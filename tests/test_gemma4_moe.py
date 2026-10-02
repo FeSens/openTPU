@@ -412,7 +412,9 @@ def test_moe_live_card_streams_from_a_split_pool(moe, tmp_path):
     assert got == isa.generate_card(t0, 8, stop_ids=[])
     assert brd.server.misses > misses and card.waits > waits      # served during the loop
     assert brd.server.misses == isa.server.misses
-    assert 0 < brd.server.mem.direct <= brd.server.misses and brd.server.pool_warm
+    # every expert read into its runs: each slot on a RUN block (Layout's pitch; direct
+    # counts the load's experts too)
+    assert brd.server.mem.direct >= brd.server.misses > 0 and brd.server.pool_warm
 
 
 def test_moe_formats(moe):
